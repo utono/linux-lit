@@ -373,6 +373,18 @@ pub fn display_work(state: &mut AppState, work: Work) {
     );
     state.gutter_renderer = Some(renderer);
 
+    // Load chunks for the current work
+    if let Some(media_id) = state.current_work.as_ref().and_then(|w| w.media_id) {
+        if let Ok(conn) = crate::db::queries::open_db() {
+            let abbrev = &state.current_work.as_ref().unwrap().abbrev;
+            if let Ok(chunks) = crate::db::chunks::load_chunks(&conn, abbrev, media_id) {
+                crate::logging::log(&format!("CHUNKS: loaded {} chunks", chunks.len()));
+                state.ab_repeat.chunks = chunks;
+                state.ab_repeat.chunk_index = None;
+            }
+        }
+    }
+
     // Apply font tag to new buffer content
     reapply_font(state);
 

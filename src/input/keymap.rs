@@ -275,6 +275,62 @@ pub fn handle_key(
             crate::app::toggle_sign_column(&mut state.borrow_mut());
             true
         }
+        "x" => {
+            // Next chunk forward: find chunk at cursor, or advance to next
+            let mut s = state.borrow_mut();
+            let lines = s.current_work.as_ref().map(|w| &w.lines[..]);
+            if let Some(lines) = lines {
+                // If no chunk index yet, find chunk at current line
+                if s.ab_repeat.chunk_index.is_none() {
+                    s.ab_repeat.chunk_index = s.ab_repeat.find_chunk_at_line(s.current_line, lines);
+                } else {
+                    // Advance to next chunk
+                    s.ab_repeat.next_chunk();
+                }
+                // Activate loop for current chunk
+                if let Some(idx) = s.ab_repeat.chunk_index {
+                    if let Some(chunk) = s.ab_repeat.chunks.get(idx) {
+                        if let (Some(a), Some(b)) = (chunk.a_time, chunk.b_time) {
+                            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SetAbLoop { a, b });
+                            s.ab_repeat.a_time = Some(a);
+                            s.ab_repeat.b_time = Some(b);
+                            s.ab_repeat.loop_active = true;
+                            crate::logging::log(&format!("CHUNK: looping chunk {} ({:.1}s - {:.1}s)", idx, a, b));
+                        }
+                    }
+                }
+            }
+            true
+        }
+        "y" => {
+            // Previous chunk backward
+            let mut s = state.borrow_mut();
+            if s.ab_repeat.prev_chunk().is_some() {
+                if let Some(idx) = s.ab_repeat.chunk_index {
+                    if let Some(chunk) = s.ab_repeat.chunks.get(idx) {
+                        if let (Some(a), Some(b)) = (chunk.a_time, chunk.b_time) {
+                            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SetAbLoop { a, b });
+                            s.ab_repeat.a_time = Some(a);
+                            s.ab_repeat.b_time = Some(b);
+                            s.ab_repeat.loop_active = true;
+                            crate::logging::log(&format!("CHUNK: looping chunk {} ({:.1}s - {:.1}s)", idx, a, b));
+                        }
+                    }
+                }
+            }
+            true
+        }
+        "Escape" => {
+            let mut s = state.borrow_mut();
+            if s.ab_repeat.loop_active {
+                let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::ClearAbLoop);
+                s.ab_repeat.clear();
+                crate::logging::log("CHUNK: AB loop cleared");
+                true
+            } else {
+                false
+            }
+        }
         _ => false,
     }
 }
