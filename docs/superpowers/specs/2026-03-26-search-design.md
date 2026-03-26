@@ -61,6 +61,10 @@ In `handle_key`, add guards in this order:
 1. **Search bar visible:** `Return` executes search and hides bar, `Escape` hides bar, all other keys pass through to the `Entry` widget (return `false`)
 2. **Search active (bar hidden, highlights shown):** `n` calls `next_match`, `N` calls `prev_match`, any other key calls `clear_search` first then processes normally
 
+## Tab Keybind Behavior
+
+When `n`/`N` lands on a match line and the user presses `Tab`: resume playback (if paused) at `start_time - 0.2s` of the current line's timestamp. This follows the same seek pattern used by dialogue jump (comma/q).
+
 ## Theme Colors
 
 - `search_tag`: use theme's selection/highlight color at reduced opacity
