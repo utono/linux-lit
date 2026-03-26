@@ -294,9 +294,7 @@ pub fn build_window(
                         display_work(&mut s, work);
                         // Set cursor to MRU line (or 0 for first canonical line)
                         s.current_line = last_line.min(
-                            s.current_work
-                                .as_ref()
-                                .map_or(0, |w| w.lines.len().saturating_sub(1)),
+                            s.effective_line_count().saturating_sub(1),
                         );
                     }
                     // Defer highlight + scroll until after GTK lays out the text
@@ -398,11 +396,22 @@ pub fn display_work(state: &mut AppState, work: Work) {
     if let Some(old_renderer) = state.gutter_renderer.take() {
         crate::gutter::remove_gutter_renderer(&state.text_view, &old_renderer);
     }
-    let has_timestamp: Vec<bool> = state
-        .current_work
-        .as_ref()
-        .map(|w| w.lines.iter().map(|l| l.timestamp.is_some()).collect())
-        .unwrap_or_default();
+    let has_timestamp: Vec<bool> = if let Some(ref lm) = state.line_map {
+        lm.buffer_to_work
+            .iter()
+            .map(|opt_idx| {
+                opt_idx
+                    .and_then(|idx| state.current_work.as_ref()?.lines.get(idx)?.timestamp.as_ref())
+                    .is_some()
+            })
+            .collect()
+    } else {
+        state
+            .current_work
+            .as_ref()
+            .map(|w| w.lines.iter().map(|l| l.timestamp.is_some()).collect())
+            .unwrap_or_default()
+    };
     crate::gutter::place_timestamp_marks(&state.buffer, &has_timestamp);
     let renderer = crate::gutter::setup_timestamp_gutter(
         &state.text_view,
@@ -436,6 +445,7 @@ pub fn display_work(state: &mut AppState, work: Work) {
                 state.sign_column_visible.clone(),
                 &state.ab_repeat.chunks,
                 &work.lines,
+                state.line_map.as_ref(),
             );
             state.chunk_renderer = Some(renderer);
         }

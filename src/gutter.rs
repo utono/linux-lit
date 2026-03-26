@@ -89,8 +89,10 @@ enum ChunkPos {
 fn build_chunk_positions(
     chunks: &[crate::db::models::Chunk],
     lines: &[crate::db::models::Line],
+    line_map: Option<&crate::text_file_map::LineMap>,
 ) -> Vec<ChunkPos> {
-    let mut positions = vec![ChunkPos::None; lines.len()];
+    let buf_len = line_map.map_or(lines.len(), |lm| lm.buffer_to_work.len());
+    let mut positions = vec![ChunkPos::None; buf_len];
 
     for chunk in chunks {
         let mut a_idx = None;
@@ -108,6 +110,12 @@ fn build_chunk_positions(
             {
                 b_idx = Some(i);
             }
+        }
+
+        // Translate work-line indices to buffer-line indices if line_map present
+        if let Some(lm) = line_map {
+            a_idx = a_idx.map(|i| lm.work_to_buffer[i]);
+            b_idx = b_idx.map(|i| lm.work_to_buffer[i]);
         }
 
         if let (Some(a), Some(b)) = (a_idx, b_idx) {
@@ -135,8 +143,9 @@ pub fn setup_chunk_gutter(
     visible: Rc<Cell<bool>>,
     chunks: &[crate::db::models::Chunk],
     lines: &[crate::db::models::Line],
+    line_map: Option<&crate::text_file_map::LineMap>,
 ) -> sourceview5::GutterRendererText {
-    let positions = build_chunk_positions(chunks, lines);
+    let positions = build_chunk_positions(chunks, lines, line_map);
     let gutter = sourceview5::prelude::ViewExt::gutter(view, gtk4::TextWindowType::Left);
     let renderer = sourceview5::GutterRendererText::new();
     renderer.set_xpad(2);

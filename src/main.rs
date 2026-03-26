@@ -58,17 +58,25 @@ fn main() {
                 match event {
                     MpvEvent::CursorSync(line_idx) => {
                         let mut s = state_for_events.borrow_mut();
-                        // Don't let MPV sync override cursor when search matches are active
                         if !s.search_matches.is_empty() {
                             continue;
                         }
-                        if s.current_line != line_idx {
-                            s.current_line = line_idx;
+                        // Translate work-line index to buffer-line index if line_map present
+                        let buffer_line = if let Some(ref lm) = s.line_map {
+                            if line_idx < lm.work_to_buffer.len() {
+                                lm.work_to_buffer[line_idx]
+                            } else {
+                                continue;
+                            }
+                        } else {
+                            line_idx
+                        };
+                        if s.current_line != buffer_line {
+                            s.current_line = buffer_line;
                             crate::input::navigation::update_highlight_and_ensure_visible(
                                 &mut s,
                             );
-                            // Continuously save position so MRU restores to playback point
-                            s.config.last_line = line_idx;
+                            s.config.last_line = buffer_line;
                             crate::config::save(&s.config);
                         }
                     }
