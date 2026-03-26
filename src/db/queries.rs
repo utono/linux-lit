@@ -60,6 +60,9 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
                 normalized,
                 speaker,
                 timestamp: None,
+                div1,
+                div2,
+                line_in_div,
             })
         })?
         .collect::<Result<_, _>>()?;

@@ -21,6 +21,9 @@ pub struct Line {
     pub speaker: Option<String>,
     pub is_dialogue: bool,
     pub timestamp: Option<TimeRange>,
+    pub div1: i64,
+    pub div2: i64,
+    pub line_in_div: i64,
 }
 
 #[derive(Debug, Clone, Copy)]
