@@ -115,20 +115,6 @@ pub fn handle_key(
                 crate::input::search::execute_search(&state);
                 return true;
             }
-            "n" => {
-                if !state.borrow().search_matches.is_empty() {
-                    crate::input::search::next_match(&mut state.borrow_mut());
-                    return true;
-                }
-                return false; // no matches yet, let Entry receive the key
-            }
-            "N" => {
-                if !state.borrow().search_matches.is_empty() {
-                    crate::input::search::prev_match(&mut state.borrow_mut());
-                    return true;
-                }
-                return false;
-            }
             "Tab" => {
                 crate::input::search::toggle_playback(&state.borrow());
                 return true;
