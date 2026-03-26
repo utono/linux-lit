@@ -188,12 +188,27 @@ fn ensure_cursor_visible(state: &AppState) {
     // Cursor went off screen — always do a page turn (e-reader style).
     // No nudging — the page is fixed until a turn happens.
     if line_y < page_top {
-        // Went above: show cursor near bottom of new page
-        let target = (line_y + full_line_h * 3.0 - page_size).max(0.0);
+        // Went above: position so old page_top appears at bottom of new page.
+        // This gives reading continuity — you can see where you were.
+        // new_page_top = old_page_top - page_size
+        // But ensure the cursor is also visible (it must be above old_page_top).
+        let anchored = (page_top - page_size).max(0.0);
+        // If cursor would be above the anchored view, adjust to show cursor
+        let target = if line_y < anchored {
+            (line_y - full_line_h).max(0.0)
+        } else {
+            anchored
+        };
         page_turn_to_value(state, target);
     } else {
-        // Went below: show cursor near top of new page
-        let target = (line_y - full_line_h * 2.0).max(0.0);
+        // Went below: position so old page_bottom appears at top of new page.
+        let anchored = page_bottom;
+        // If cursor would be below the anchored view, adjust to show cursor
+        let target = if line_y + full_line_h > anchored + page_size {
+            (line_y - full_line_h * 2.0).max(0.0)
+        } else {
+            anchored
+        };
         page_turn_to_value(state, target);
     }
 }
