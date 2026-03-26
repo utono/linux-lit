@@ -283,7 +283,10 @@ pub fn handle_key(
                 if let Some(lines) = lines {
                     // If no chunk index yet, find chunk at current line
                     if s.ab_repeat.chunk_index.is_none() {
-                        s.ab_repeat.chunk_index = s.ab_repeat.find_chunk_at_line(s.current_line, lines);
+                        let work_idx = s.work_line_for_buffer(s.current_line);
+                        s.ab_repeat.chunk_index = work_idx.and_then(|idx| {
+                            s.ab_repeat.find_chunk_at_line(idx, lines)
+                        });
                     } else {
                         // Advance to next chunk
                         s.ab_repeat.next_chunk();
@@ -309,6 +312,11 @@ pub fn handle_key(
                                                 b_buf = Some(i);
                                             }
                                         }
+                                    }
+                                    // Translate to buffer indices if line_map present
+                                    if let Some(ref lm) = s.line_map {
+                                        a_buf = a_buf.map(|i| lm.work_to_buffer[i]);
+                                        b_buf = b_buf.map(|i| lm.work_to_buffer[i]);
                                     }
                                     s.ab_repeat.a_line = a_buf;
                                     s.ab_repeat.b_line = b_buf;
@@ -355,6 +363,11 @@ pub fn handle_key(
                                                 b_buf = Some(i);
                                             }
                                         }
+                                    }
+                                    // Translate to buffer indices if line_map present
+                                    if let Some(ref lm) = s.line_map {
+                                        a_buf = a_buf.map(|i| lm.work_to_buffer[i]);
+                                        b_buf = b_buf.map(|i| lm.work_to_buffer[i]);
                                     }
                                     s.ab_repeat.a_line = a_buf;
                                     s.ab_repeat.b_line = b_buf;
