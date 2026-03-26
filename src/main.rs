@@ -18,7 +18,7 @@ fn main() {
         // Channel: Tokio → GTK (events)
         let (evt_tx, mut evt_rx) = tokio::sync::mpsc::channel::<MpvEvent>(32);
 
-        // Create Tokio runtime, clone handle for GTK thread, then move runtime to background
+        // Create Tokio runtime, clone handle for GTK thread, move runtime to background thread
         let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
         let tokio_handle = rt.handle().clone();
         std::thread::spawn(move || {
@@ -46,8 +46,47 @@ fn main() {
             }
         });
 
-        let _ = cmd_tx;
+        // Keep cmd_tx alive so the Tokio runtime doesn't shut down
+        // (dropping cmd_tx closes the channel, ending the recv loop and dropping the runtime)
+        std::mem::forget(cmd_tx);
     });
 
     application.run();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_spawn_blocking_via_handle() {
+        // Reproduce the exact runtime pattern used in connect_activate:
+        // Runtime on background thread, handle used from another thread for spawn_blocking
+        let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<MpvCommand>(32);
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let handle = rt.handle().clone();
+        std::thread::spawn(move || {
+            rt.block_on(async move {
+                while let Some(_cmd) = cmd_rx.recv().await {}
+            });
+        });
+
+        // spawn_blocking from outside the runtime, using the handle
+        let result = handle.block_on(async {
+            handle
+                .spawn_blocking(|| {
+                    let conn = db::queries::open_db().unwrap();
+                    db::queries::load_work(&conn, "Ham").unwrap()
+                })
+                .await
+                .unwrap()
+        });
+
+        assert_eq!(result.title, "Hamlet");
+        assert!(result.lines.len() > 4000);
+
+        // Clean up: drop cmd_tx so runtime shuts down
+        drop(cmd_tx);
+    }
 }

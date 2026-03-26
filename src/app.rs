@@ -105,9 +105,10 @@ pub fn build_window(
         });
     }
 
-    // Key event controller — single controller handles all keys
+    // Key event controller — capture phase so we intercept before Entry consumes keys
     let state_for_keys = Rc::clone(&state);
     let key_controller = EventControllerKey::new();
+    key_controller.set_propagation_phase(gtk4::PropagationPhase::Capture);
     key_controller.connect_key_pressed(move |_controller, keyval, _keycode, modifier| {
         let key_name = keyval.name().unwrap_or_default();
 
