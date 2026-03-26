@@ -6,6 +6,7 @@ mod gutter;
 mod input;
 mod logging;
 mod mpv;
+mod text_file_map;
 mod theme;
 mod ui;
 
