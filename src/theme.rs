@@ -237,7 +237,17 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .search-bar {{ background-color: {bg}; color: {fg}; padding: 4px 12px; }} \
          .search-entry {{ background: transparent; border: none; color: {fg}; }} \
          .search-slash {{ color: {fg}; opacity: 0.6; }} \
-         .search-counter {{ color: {fg}; opacity: 0.6; }}",
+         .search-counter {{ color: {fg}; opacity: 0.6; }} \
+         .settings-overlay {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
+           padding: 16px; border-radius: 8px; }} \
+         .settings-title {{ font-size: 18px; font-weight: bold; \
+           margin-bottom: 12px; padding-bottom: 12px; \
+           border-bottom: 1px solid rgba(255,255,255,0.2); }} \
+         .settings-row {{ padding: 8px 12px; margin: 2px 0; border-radius: 4px; }} \
+         .settings-row-selected {{ background-color: rgba(100, 140, 200, 0.8); \
+           border-left: 3px solid rgba(100, 180, 255, 0.9); }} \
+         .settings-footer {{ font-size: 11px; opacity: 0.6; margin-top: 12px; \
+           text-align: center; }}",
         root = theme.root_color,
         bg = theme.text_bg,
         fg = theme.text_fg,

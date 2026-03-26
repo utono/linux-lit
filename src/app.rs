@@ -55,6 +55,7 @@ pub struct AppState {
     pub ab_a_line: Rc<Cell<Option<usize>>>,
     pub ab_b_line: Rc<Cell<Option<usize>>>,
     pub line_map: Option<crate::text_file_map::LineMap>,
+    pub settings_overlay: crate::ui::settings_overlay::SettingsOverlay,
 }
 
 impl AppState {
@@ -191,10 +192,21 @@ pub fn build_window(
     picker.attach(&scrolled);
     picker.overlay.set_vexpand(true);
 
+    // Settings overlay
+    let all_themes = crate::theme::load_all_themes();
+    let settings_overlay = crate::ui::settings_overlay::SettingsOverlay::new(
+        all_themes,
+        &theme.name,
+    );
+
+    // Settings overlay wraps the picker overlay
+    settings_overlay.attach(&picker.overlay);
+    settings_overlay.overlay.set_vexpand(true);
+
     // Search bar at bottom
     let search_bar = SearchBar::new();
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-    vbox.append(&picker.overlay);
+    vbox.append(&settings_overlay.overlay);
     vbox.append(&search_bar.container);
 
     window.set_child(Some(&vbox));
@@ -234,6 +246,7 @@ pub fn build_window(
         ab_a_line: Rc::new(Cell::new(None)),
         ab_b_line: Rc::new(Cell::new(None)),
         line_map: None,
+        settings_overlay,
     }));
 
     // Connect picker search entry filter
