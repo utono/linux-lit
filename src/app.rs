@@ -417,15 +417,16 @@ fn setup_sign_gutter_draw(state: &AppState) {
                     rect.x(),
                     rect.y(),
                 );
-                // Draw dot at vertical center of the first visual line
-                // y is top of paragraph; add pixels_above_lines (14) to reach text start
-                let above = 14.0;
-                let font_px = font_size * 96.0 / 72.0;
-                let cy = y as f64 + above + font_px * 0.5;
-                let bx = 24.0; // left padding
-                let radius = 2.5;
-                cr.arc(bx, cy, radius, 0.0, std::f64::consts::TAU);
-                let _ = cr.fill();
+                // Draw thin vertical bar spanning only the text (excluding paragraph spacing)
+                let above = 14.0; // pixels_above_lines
+                let below = 14.0; // pixels_below_lines
+                let top = y as f64 + above;
+                let bottom = y as f64 + rect.height() as f64 - below;
+                let bx = 40.0; // near right edge of gutter
+                cr.set_line_width(1.5);
+                cr.move_to(bx, top);
+                cr.line_to(bx, bottom);
+                let _ = cr.stroke();
             }
         }
     });
