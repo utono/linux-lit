@@ -161,24 +161,37 @@ fn ensure_cursor_visible(state: &AppState) {
     let page_size = adj.page_size();
     let page_bottom = page_top + page_size;
 
+    // Get the full height of the cursor's paragraph (may be multi-line due to word wrap).
+    // We measure from this line's top to the next line's top.
     let iter_rect = state.text_view.iter_location(&iter);
     let line_y = iter_rect.y() as f64;
-    let line_h = iter_rect.height() as f64;
+    let full_line_h = if let Some(next_iter) = state.buffer.iter_at_line(state.current_line as i32 + 1) {
+        let next_rect = state.text_view.iter_location(&next_iter);
+        (next_rect.y() as f64 - line_y).max(iter_rect.height() as f64)
+    } else {
+        // Last line — use the iter_location height
+        iter_rect.height() as f64
+    };
 
-    if line_y >= page_top && line_y + line_h <= page_bottom {
-        // Already visible — do nothing
+    // Use a margin to prevent oscillation at page boundaries
+    let margin = full_line_h * 0.5;
+
+    if line_y >= page_top - margin && line_y + full_line_h <= page_bottom + margin {
+        // Already visible (within margin) — do nothing
         return;
     }
 
     if line_y < page_top {
         // Cursor went above visible area.
-        // Place cursor near the bottom of the new page (with small margin).
-        let target = (line_y + line_h - page_size + line_h).max(0.0);
+        // Place cursor near the bottom: leave ~2 lines of space below cursor
+        let padding = full_line_h * 2.0;
+        let target = (line_y + full_line_h + padding - page_size).max(0.0);
         page_turn_to_value(state, target);
     } else {
         // Cursor went below visible area.
-        // Place cursor near the top of the new page (with small margin).
-        let target = (line_y - line_h).max(0.0);
+        // Place cursor near the top: leave ~2 lines of space above cursor
+        let padding = full_line_h * 2.0;
+        let target = (line_y - padding).max(0.0);
         page_turn_to_value(state, target);
     }
 }
