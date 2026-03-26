@@ -180,39 +180,21 @@ fn ensure_cursor_visible(state: &AppState) {
             iter_rect.height() as f64
         };
 
-    // Already visible — do nothing
+    // Already visible — do nothing (page stays still)
     if line_y >= page_top && line_y + full_line_h <= page_bottom {
         return;
     }
 
-    // How far off-screen is the cursor?
-    let overshoot = if line_y < page_top {
-        page_top - line_y
+    // Cursor went off screen — always do a page turn (e-reader style).
+    // No nudging — the page is fixed until a turn happens.
+    if line_y < page_top {
+        // Went above: show cursor near bottom of new page
+        let target = (line_y + full_line_h * 3.0 - page_size).max(0.0);
+        page_turn_to_value(state, target);
     } else {
-        (line_y + full_line_h) - page_bottom
-    };
-
-    if overshoot <= full_line_h * 3.0 {
-        // Small move: just nudge the scroll to reveal the cursor line
-        if line_y < page_top {
-            // Nudge up: show cursor at top with a small margin
-            adj.set_value((line_y - full_line_h * 0.5).max(0.0));
-        } else {
-            // Nudge down: show cursor at bottom with a small margin
-            let target = line_y + full_line_h + full_line_h * 0.5 - page_size;
-            adj.set_value(target.max(0.0).min(adj.upper() - page_size));
-        }
-    } else {
-        // Large move: crossfade page turn
-        if line_y < page_top {
-            // Place cursor near bottom of new page
-            let target = (line_y + full_line_h * 3.0 - page_size).max(0.0);
-            page_turn_to_value(state, target);
-        } else {
-            // Place cursor near top of new page
-            let target = (line_y - full_line_h * 2.0).max(0.0);
-            page_turn_to_value(state, target);
-        }
+        // Went below: show cursor near top of new page
+        let target = (line_y - full_line_h * 2.0).max(0.0);
+        page_turn_to_value(state, target);
     }
 }
 

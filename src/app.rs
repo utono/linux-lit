@@ -165,18 +165,27 @@ pub fn build_window(
                 .await;
             match work {
                 Ok(Ok(work)) => {
-                    let mut s = state_clone.borrow_mut();
-                    display_work(&mut s, work);
-                    // Jump to last line
+                    {
+                        let mut s = state_clone.borrow_mut();
+                        display_work(&mut s, work);
+                        if last_line > 0 {
+                            s.current_line = last_line.min(
+                                s.current_work
+                                    .as_ref()
+                                    .map_or(0, |w| w.lines.len().saturating_sub(1)),
+                            );
+                        }
+                    }
+                    // Defer cursor restore until after GTK lays out the text
                     if last_line > 0 {
-                        s.current_line = last_line.min(
-                            s.current_work.as_ref().map_or(0, |w| w.lines.len().saturating_sub(1)),
-                        );
-                        crate::input::navigation::restore_cursor(&mut s);
+                        glib::idle_add_local_once(move || {
+                            crate::input::navigation::restore_cursor(
+                                &mut state_clone.borrow_mut(),
+                            );
+                        });
                     }
                 }
                 Ok(Err(_)) | Err(_) => {
-                    // Work not found — fall back to picker
                     state_clone.borrow().picker.show();
                 }
             }
