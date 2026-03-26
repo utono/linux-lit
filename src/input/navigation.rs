@@ -14,8 +14,9 @@ pub const SEEK_PREROLL: f64 = 0.2;
 /// Used by the MPV client's time-pos sync.
 pub const SYNC_PREROLL: f64 = 0.3;
 
-/// Move cursor by `delta` lines (j/k). Cursor moves within the current page.
-/// When cursor goes past a page boundary, a page turn happens.
+/// Move cursor by `delta` lines (j/k).
+/// Going down: page turn when cursor reaches the last visible line.
+/// Going up: smooth scroll to keep cursor visible.
 pub fn move_cursor(state: &mut AppState, delta: i32) {
     let line_count = match &state.current_work {
         Some(w) => w.lines.len(),
@@ -33,30 +34,16 @@ pub fn move_cursor(state: &mut AppState, delta: i32) {
         return;
     }
 
-    // Page turn before highlighting if cursor is at the last line of the page
-    let page_top = state.page_top_line;
-    let lpp = lines_per_page(state);
-    let page_bottom = page_top + lpp;
-    let page_last = page_top + lpp.saturating_sub(1);
-
-    if new_line < page_top {
-        // Moving up past page top — page turn with cursor near bottom
-        let new_top = new_line.saturating_sub(lpp.saturating_sub(1));
-        set_page(state, new_top);
-    } else if new_line >= page_bottom {
-        // Past page — new page with this line at top
-        set_page(state, new_line);
-    } else if delta > 0 && new_line >= page_last {
-        // Reached last line going down — page turn so this line is at top
-        set_page(state, new_line);
-    } else if delta < 0 && new_line <= page_top {
-        // Reached first line going up — page turn so this line is near bottom
-        let new_top = new_line.saturating_sub(lpp.saturating_sub(1));
-        set_page(state, new_top);
-    }
-
     state.current_line = new_line;
     update_highlight(state);
+
+    if delta > 0 && !is_line_fully_visible(state, new_line) {
+        // Going down past viewport — page turn with this line at top
+        set_page(state, new_line);
+    } else if delta < 0 {
+        scroll_to_cursor(state);
+    }
+
     seek_to_current_line(state);
 }
 
@@ -142,18 +129,6 @@ pub fn jump_to_prev_dialogue(state: &mut AppState) {
             return;
         }
 
-        // At top of page — page backward, cursor to first line of new page
-        if state.current_line == state.page_top_line {
-            let lpp = lines_per_page(state);
-            let retreat = lpp.saturating_sub(PAGE_OVERLAP).max(1);
-            let new_top = state.page_top_line.saturating_sub(retreat);
-            state.current_line = new_top;
-            update_highlight(state);
-            seek_to_current_line(state);
-            set_page(state, new_top);
-            return;
-        }
-
         let mut found = None;
         for i in (0..state.current_line).rev() {
             if work.lines[i].is_dialogue {
@@ -167,14 +142,13 @@ pub fn jump_to_prev_dialogue(state: &mut AppState) {
     if let Some(line_idx) = target {
         state.current_line = line_idx;
         update_highlight(state);
-        ensure_cursor_on_page(state);
+        scroll_to_cursor(state);
         seek_to_current_line(state);
     }
 }
 
 /// Next dialogue line (`q` key).
-/// If cursor is at the last visible line of the page, just page forward (don't move cursor).
-/// Otherwise, jump to the next dialogue line.
+/// Jump to next dialogue line. Page turn when target is not fully visible.
 pub fn jump_to_next_dialogue(state: &mut AppState) {
     let target = {
         let work = match &state.current_work {
@@ -182,16 +156,6 @@ pub fn jump_to_next_dialogue(state: &mut AppState) {
             None => return,
         };
         let line_count = work.lines.len();
-
-        // At bottom of page — page forward, keep cursor
-        let lpp = lines_per_page(state);
-        let page_last = (state.page_top_line + lpp)
-            .saturating_sub(1)
-            .min(line_count.saturating_sub(1));
-        if state.current_line >= page_last {
-            page_forward(state);
-            return;
-        }
 
         let mut found = None;
         for i in (state.current_line + 1)..line_count {
@@ -206,7 +170,9 @@ pub fn jump_to_next_dialogue(state: &mut AppState) {
     if let Some(line_idx) = target {
         state.current_line = line_idx;
         update_highlight(state);
-        ensure_cursor_on_page(state);
+        if !is_line_fully_visible(state, line_idx) {
+            set_page(state, line_idx);
+        }
         seek_to_current_line(state);
     }
 }
@@ -249,6 +215,36 @@ fn ensure_cursor_on_page(state: &mut AppState) {
     } else {
         // At or past last line — new page with this line at top
         set_page(state, state.current_line);
+    }
+}
+
+/// Check if a line is fully visible within the viewport.
+fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
+    let Some(iter) = state.buffer.iter_at_line(line as i32) else {
+        return false;
+    };
+    let visible = state.text_view.visible_rect();
+    let loc = state.text_view.iter_location(&iter);
+    loc.y() >= visible.y() && loc.y() + loc.height() <= visible.y() + visible.height()
+}
+
+/// Scroll just enough to keep the current line visible. No page turn.
+fn scroll_to_cursor(state: &mut AppState) {
+    if let Some(iter) = state.buffer.iter_at_line(state.current_line as i32) {
+        let visible = state.text_view.visible_rect();
+        let loc = state.text_view.iter_location(&iter);
+
+        if loc.y() < visible.y() {
+            // Cursor above viewport — scroll up
+            let target = scroll_value_for_line(state, state.current_line);
+            state.scrolled_window.vadjustment().set_value(target);
+            state.page_top_line = state.current_line;
+        } else if loc.y() + loc.height() > visible.y() + visible.height() {
+            // Cursor below viewport — scroll so cursor is at bottom
+            let adj = state.scrolled_window.vadjustment();
+            let target = (loc.y() + loc.height()) as f64 - adj.page_size();
+            adj.set_value(target.max(0.0));
+        }
     }
 }
 
