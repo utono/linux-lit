@@ -111,19 +111,31 @@ pub fn build_window(
     key_controller.connect_key_pressed(move |_controller, keyval, _keycode, modifier| {
         let key_name = keyval.name().unwrap_or_default();
 
-        // Ctrl+p: toggle library picker
-        if modifier.contains(gtk4::gdk::ModifierType::CONTROL_MASK) && key_name == "p" {
-            let state = state_for_keys.borrow();
-            if state.picker.is_visible() {
-                state.picker.hide();
-            } else {
-                state.picker.show();
+        let is_ctrl = modifier.contains(gtk4::gdk::ModifierType::CONTROL_MASK);
+        let picker_visible = state_for_keys.borrow().picker.is_visible();
+
+        // When picker is visible: Ctrl+n/Ctrl+p navigate, Ctrl+p does NOT close
+        if picker_visible && is_ctrl {
+            match key_name.as_str() {
+                "n" => {
+                    state_for_keys.borrow().picker.move_selection(1);
+                    return glib::Propagation::Stop;
+                }
+                "p" => {
+                    state_for_keys.borrow().picker.move_selection(-1);
+                    return glib::Propagation::Stop;
+                }
+                _ => {}
             }
+        }
+
+        // Ctrl+p: open library picker (only when not visible)
+        if is_ctrl && key_name == "p" && !picker_visible {
+            state_for_keys.borrow().picker.show();
             return glib::Propagation::Stop;
         }
 
         // When picker is visible, handle picker keys
-        let picker_visible = state_for_keys.borrow().picker.is_visible();
         if picker_visible {
             match key_name.as_str() {
                 "Escape" => {
