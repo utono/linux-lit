@@ -49,6 +49,7 @@ pub struct AppState {
     pub media_id: Option<i64>,
     pub sign_column_visible: Rc<Cell<bool>>,
     pub gutter_renderer: Option<sourceview5::GutterRendererText>,
+    pub chunk_renderer: Option<sourceview5::GutterRendererText>,
     pub ab_repeat: crate::ab_repeat::AbRepeatState,
 }
 
@@ -196,6 +197,7 @@ pub fn build_window(
         media_id: None,
         sign_column_visible: Rc::new(Cell::new(false)),
         gutter_renderer: None,
+        chunk_renderer: None,
         ab_repeat: crate::ab_repeat::AbRepeatState::default(),
     }));
 
@@ -385,6 +387,22 @@ pub fn display_work(state: &mut AppState, work: Work) {
         }
     }
 
+    // Set up chunk bar gutter
+    if let Some(old_renderer) = state.chunk_renderer.take() {
+        crate::gutter::remove_gutter_renderer(&state.text_view, &old_renderer);
+    }
+    if !state.ab_repeat.chunks.is_empty() {
+        if let Some(ref work) = state.current_work {
+            let renderer = crate::gutter::setup_chunk_gutter(
+                &state.text_view,
+                state.sign_column_visible.clone(),
+                &state.ab_repeat.chunks,
+                &work.lines,
+            );
+            state.chunk_renderer = Some(renderer);
+        }
+    }
+
     // Apply font tag to new buffer content
     reapply_font(state);
 
@@ -411,8 +429,11 @@ fn rebuild_buffer_text(state: &mut AppState) {
 pub fn toggle_sign_column(state: &mut AppState) {
     let new_val = !state.sign_column_visible.get();
     state.sign_column_visible.set(new_val);
-    // Queue redraw on gutter renderer so query_data re-evaluates visibility
+    // Queue redraw on gutter renderers so query_data re-evaluates visibility
     if let Some(ref renderer) = state.gutter_renderer {
+        renderer.queue_draw();
+    }
+    if let Some(ref renderer) = state.chunk_renderer {
         renderer.queue_draw();
     }
     crate::logging::log(&format!(
