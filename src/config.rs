@@ -8,6 +8,12 @@ pub struct Config {
     pub font_family: String,
     #[serde(default = "default_font_size")]
     pub font_size: u32,
+    #[serde(default = "default_line_spacing")]
+    pub line_spacing: u32,
+    #[serde(default = "default_column_width")]
+    pub column_width: u32,
+    #[serde(default = "default_text_margins")]
+    pub text_margins: u32,
     #[serde(default)]
     pub last_work: Option<String>,
     #[serde(default)]
@@ -31,11 +37,26 @@ fn default_font_size() -> u32 {
     20
 }
 
+fn default_line_spacing() -> u32 {
+    4
+}
+
+fn default_column_width() -> u32 {
+    950
+}
+
+fn default_text_margins() -> u32 {
+    48
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
             font_family: default_font_family(),
             font_size: default_font_size(),
+            line_spacing: default_line_spacing(),
+            column_width: default_column_width(),
+            text_margins: default_text_margins(),
             last_work: None,
             last_line: 0,
         }

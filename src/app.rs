@@ -160,12 +160,12 @@ pub fn build_window(
     );
 
     // Line spacing
-    text_view.set_pixels_above_lines(14);
-    text_view.set_pixels_below_lines(14);
+    text_view.set_pixels_above_lines(config.line_spacing as i32);
+    text_view.set_pixels_below_lines(config.line_spacing as i32);
 
     // Text area padding (inside the text background)
-    text_view.set_left_margin(48);
-    text_view.set_right_margin(48);
+    text_view.set_left_margin(config.text_margins as i32);
+    text_view.set_right_margin(config.text_margins as i32);
     text_view.set_top_margin(24);
 
     // Scrolled window — centered card with wallpaper visible on all sides
@@ -176,7 +176,7 @@ pub fn build_window(
         .vexpand(true)
         .halign(gtk4::Align::Center)
         .valign(gtk4::Align::Fill)
-        .width_request(948)
+        .width_request(config.column_width as i32)
         .margin_top(24)
         .margin_bottom(24)
         .margin_start(24)
