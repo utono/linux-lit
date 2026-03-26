@@ -93,7 +93,20 @@ pub fn execute_search(state_rc: &Rc<RefCell<AppState>>) {
     }
 }
 
-/// Jump to next match, wrapping around.
+/// Toggle playback. If resuming, seek to current line's start_time first.
+pub fn toggle_playback(state: &AppState) {
+    if let Some(ref work) = state.current_work {
+        if let Some(ts) = &work.lines[state.current_line].timestamp {
+            let seek_time = (ts.start - crate::input::navigation::SEEK_PREROLL).max(0.0);
+            // Seek first, then toggle — if paused, this means seek+resume;
+            // if playing, the seek is harmless and toggle pauses.
+            let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::Seek(seek_time));
+        }
+    }
+    let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
+}
+
+/// Jump to next match, wrapping around. Starts playback at match line.
 pub fn next_match(state: &mut AppState) {
     let total = state.search_matches.len();
     if total == 0 {
@@ -106,9 +119,10 @@ pub fn next_match(state: &mut AppState) {
     apply_current_highlight(state);
     state.search_bar.update_counter(state.search_match_idx, total);
     crate::input::navigation::update_highlight_and_ensure_visible(state);
+    seek_and_resume(state);
 }
 
-/// Jump to previous match, wrapping around.
+/// Jump to previous match, wrapping around. Starts playback at match line.
 pub fn prev_match(state: &mut AppState) {
     let total = state.search_matches.len();
     if total == 0 {
@@ -121,14 +135,24 @@ pub fn prev_match(state: &mut AppState) {
     apply_current_highlight(state);
     state.search_bar.update_counter(state.search_match_idx, total);
     crate::input::navigation::update_highlight_and_ensure_visible(state);
+    seek_and_resume(state);
 }
 
-/// Clear all search state: highlights, matches, active flag.
+/// Seek to current line's start_time and resume playback.
+fn seek_and_resume(state: &AppState) {
+    if let Some(ref work) = state.current_work {
+        if let Some(ts) = &work.lines[state.current_line].timestamp {
+            let seek_time = (ts.start - crate::input::navigation::SEEK_PREROLL).max(0.0);
+            let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::ResumeAndSeek(seek_time));
+        }
+    }
+}
+
+/// Clear all search state: highlights and matches.
 pub fn clear_search(state: &mut AppState) {
     clear_highlights(state);
     state.search_matches.clear();
     state.search_match_idx = 0;
-    state.search_active = false;
 }
 
 // --- internal helpers ---

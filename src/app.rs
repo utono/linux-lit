@@ -44,7 +44,6 @@ pub struct AppState {
     pub search_match_idx: usize,
     pub search_tag: gtk4::TextTag,
     pub search_current_tag: gtk4::TextTag,
-    pub search_active: bool,
 }
 
 pub fn build_window(
@@ -183,7 +182,6 @@ pub fn build_window(
         search_match_idx: 0,
         search_tag,
         search_current_tag,
-        search_active: false,
     }));
 
     // Connect picker search entry filter
