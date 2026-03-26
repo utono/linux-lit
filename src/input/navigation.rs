@@ -182,6 +182,10 @@ fn ensure_cursor_visible(state: &AppState, _lines_jumped: usize) {
     // Already visible — do nothing (page stays still).
     // A line is "visible" if its top is within the page (inclusive of edges).
     if line_y >= page_top && line_y <= page_bottom {
+        // Cancel any in-flight animation and restore full opacity
+        let gen = &state.animation_gen;
+        gen.set(gen.get() + 1);
+        state.scrolled_window.set_opacity(1.0);
         return;
     }
 
@@ -225,7 +229,8 @@ fn scroll_to_line_instant(state: &AppState, line: usize) {
 }
 
 /// Animate a page turn as a crossfade: fade out, snap scroll, fade in.
-/// Feels like turning a page on a Kindle — quiet and non-distracting.
+/// Uses a generation counter so stale animations from rapid key presses
+/// don't stomp on the current state.
 fn page_turn_to_value(state: &AppState, target_value: f64) {
     let adj = state.scrolled_window.vadjustment();
     let page_size = adj.page_size();
@@ -235,52 +240,62 @@ fn page_turn_to_value(state: &AppState, target_value: f64) {
         return;
     }
 
+    // Increment generation — any in-flight animation from a previous page turn
+    // will see a stale generation and skip its opacity changes.
+    let gen = &state.animation_gen;
+    gen.set(gen.get() + 1);
+    let current_gen = gen.get();
+    let gen_rc = gen.clone();
+
     let widget = state.scrolled_window.clone();
     let adj_clone = adj.clone();
 
-    // Phase 1: Fade out (0 → 80ms)
-    let fade_out_frames: u64 = 5;
     let frame_ms: u64 = 16;
-
-    for frame in 1..=fade_out_frames {
-        let progress = frame as f64 / fade_out_frames as f64;
-        // Ease-out: fast start, slow end
-        let opacity = 1.0 - progress * progress;
-        let delay = std::time::Duration::from_millis(frame * frame_ms);
-        let w = widget.clone();
-        glib::timeout_add_local_once(delay, move || {
-            w.set_opacity(opacity);
-        });
-    }
-
-    // Phase 2: Snap scroll position at the midpoint (80ms)
-    let snap_delay = std::time::Duration::from_millis((fade_out_frames + 1) * frame_ms);
-    let w = widget.clone();
-    glib::timeout_add_local_once(snap_delay, move || {
-        adj_clone.set_value(clamped_target);
-        w.set_opacity(0.0);
-    });
-
-    // Phase 3: Fade in (96ms → 176ms)
+    let fade_out_frames: u64 = 5;
     let fade_in_frames: u64 = 5;
     let fade_in_start = fade_out_frames + 2;
 
-    for frame in 1..=fade_in_frames {
-        let progress = frame as f64 / fade_in_frames as f64;
-        // Ease-in: slow start, fast end
-        let opacity = progress * progress;
-        let delay = std::time::Duration::from_millis((fade_in_start + frame) * frame_ms);
+    // Phase 1: Fade out
+    for frame in 1..=fade_out_frames {
+        let progress = frame as f64 / fade_out_frames as f64;
+        let opacity = 1.0 - progress * progress;
+        let delay = std::time::Duration::from_millis(frame * frame_ms);
         let w = widget.clone();
+        let g = gen_rc.clone();
         glib::timeout_add_local_once(delay, move || {
-            w.set_opacity(opacity);
+            if g.get() == current_gen { w.set_opacity(opacity); }
         });
     }
 
-    // Ensure opacity is fully restored
+    // Phase 2: Snap scroll position
+    let snap_delay = std::time::Duration::from_millis((fade_out_frames + 1) * frame_ms);
+    let w = widget.clone();
+    let g = gen_rc.clone();
+    glib::timeout_add_local_once(snap_delay, move || {
+        if g.get() == current_gen {
+            adj_clone.set_value(clamped_target);
+            w.set_opacity(0.0);
+        }
+    });
+
+    // Phase 3: Fade in
+    for frame in 1..=fade_in_frames {
+        let progress = frame as f64 / fade_in_frames as f64;
+        let opacity = progress * progress;
+        let delay = std::time::Duration::from_millis((fade_in_start + frame) * frame_ms);
+        let w = widget.clone();
+        let g = gen_rc.clone();
+        glib::timeout_add_local_once(delay, move || {
+            if g.get() == current_gen { w.set_opacity(opacity); }
+        });
+    }
+
+    // Ensure opacity fully restored
     let final_delay = std::time::Duration::from_millis((fade_in_start + fade_in_frames + 1) * frame_ms);
     let w = widget.clone();
+    let g = gen_rc.clone();
     glib::timeout_add_local_once(final_delay, move || {
-        w.set_opacity(1.0);
+        if g.get() == current_gen { w.set_opacity(1.0); }
     });
 }
 

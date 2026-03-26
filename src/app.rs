@@ -22,6 +22,9 @@ pub struct AppState {
     pub scrolled_window: ScrolledWindow,
     pub window: ApplicationWindow,
     pub config: Config,
+    /// Generation counter for crossfade animations. Incremented on each page turn
+    /// so stale animation callbacks don't stomp on opacity.
+    pub animation_gen: std::rc::Rc<std::cell::Cell<u64>>,
 }
 
 pub fn build_window(
@@ -112,6 +115,7 @@ pub fn build_window(
         scrolled_window: scrolled,
         window: window.clone(),
         config,
+        animation_gen: std::rc::Rc::new(std::cell::Cell::new(0)),
     }));
 
     // Connect picker search entry filter
