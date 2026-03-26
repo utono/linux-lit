@@ -229,7 +229,11 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .library-picker {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
            padding: 16px; border-radius: 8px; }} \
          .library-picker entry {{ margin-bottom: 8px; }} \
-         .library-picker row:selected {{ background-color: rgba(100, 140, 200, 0.8); }}",
+         .library-picker row:selected {{ background-color: rgba(100, 140, 200, 0.8); }} \
+         .search-bar {{ background-color: {bg}; color: {fg}; padding: 4px 12px; }} \
+         .search-entry {{ background: transparent; border: none; color: {fg}; }} \
+         .search-slash {{ color: {fg}; opacity: 0.6; }} \
+         .search-counter {{ color: {fg}; opacity: 0.6; }}",
         root = theme.root_color,
         bg = theme.text_bg,
         fg = theme.text_fg,

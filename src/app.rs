@@ -10,6 +10,14 @@ use gtk4::{
 use crate::config::Config;
 use crate::db::models::{Work, WorkSummary};
 use crate::ui::library_picker::LibraryPicker;
+use crate::ui::search_bar::SearchBar;
+
+#[derive(Debug, Clone)]
+pub struct SearchMatch {
+    pub line_index: usize,
+    pub byte_start: usize,
+    pub byte_end: usize,
+}
 
 #[allow(dead_code)]
 pub struct AppState {
@@ -31,6 +39,12 @@ pub struct AppState {
     pub cmd_tx: tokio::sync::mpsc::Sender<crate::mpv::MpvCommand>,
     pub tokio_handle: tokio::runtime::Handle,
     pub playback_speed: f64,
+    pub search_bar: SearchBar,
+    pub search_matches: Vec<SearchMatch>,
+    pub search_match_idx: usize,
+    pub search_tag: gtk4::TextTag,
+    pub search_current_tag: gtk4::TextTag,
+    pub search_active: bool,
 }
 
 pub fn build_window(
@@ -63,6 +77,26 @@ pub fn build_window(
         .foreground(&theme.dim_fg)
         .build();
     buffer.tag_table().add(&dim_tag);
+
+    let search_tag = gtk4::TextTag::builder()
+        .name("search-match")
+        .background(if theme.is_light {
+            "rgba(255, 200, 0, 0.35)"
+        } else {
+            "rgba(255, 200, 0, 0.25)"
+        })
+        .build();
+    buffer.tag_table().add(&search_tag);
+
+    let search_current_tag = gtk4::TextTag::builder()
+        .name("search-current")
+        .background(if theme.is_light {
+            "rgba(255, 140, 0, 0.55)"
+        } else {
+            "rgba(255, 140, 0, 0.45)"
+        })
+        .build();
+    buffer.tag_table().add(&search_current_tag);
 
     let text_view = TextView::builder()
         .buffer(&buffer)
@@ -114,8 +148,15 @@ pub fn build_window(
     let mut picker = LibraryPicker::new();
     picker.set_works(works);
     picker.attach(&scrolled);
+    picker.overlay.set_vexpand(true);
 
-    window.set_child(Some(&picker.overlay));
+    // Search bar at bottom
+    let search_bar = SearchBar::new();
+    let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    vbox.append(&picker.overlay);
+    vbox.append(&search_bar.container);
+
+    window.set_child(Some(&vbox));
 
     let last_work = config.last_work.clone();
     let last_line = config.last_line;
@@ -137,6 +178,12 @@ pub fn build_window(
         cmd_tx,
         tokio_handle: tokio_handle.clone(),
         playback_speed: 1.0,
+        search_bar,
+        search_matches: Vec::new(),
+        search_match_idx: 0,
+        search_tag,
+        search_current_tag,
+        search_active: false,
     }));
 
     // Connect picker search entry filter
