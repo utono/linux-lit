@@ -99,7 +99,7 @@ pub fn build_window(
         .vexpand(true)
         .halign(gtk4::Align::Center)
         .valign(gtk4::Align::Fill)
-        .width_request(768)
+        .width_request(1000)
         .margin_top(24)
         .margin_bottom(24)
         .margin_start(24)
