@@ -178,8 +178,13 @@ pub fn handle_key(
             true
         }
         "Tab" => {
-            let cmd_tx = state.borrow().cmd_tx.clone();
-            let _ = cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
+            let s = state.borrow();
+            if let Some(ref work) = s.current_work {
+                if let Some(ts) = &work.lines[s.current_line].timestamp {
+                    let seek_time = (ts.start - crate::input::navigation::SEEK_PREROLL).max(0.0);
+                    let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::ResumeAndSeek(seek_time));
+                }
+            }
             true
         }
         "exclam" => {
