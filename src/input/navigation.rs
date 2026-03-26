@@ -185,19 +185,21 @@ fn ensure_cursor_visible(state: &AppState, _lines_jumped: usize) {
     }
 
     // Cursor went off screen — always do a page turn (e-reader style).
-    // No nudging — the page is fixed until a turn happens.
     if line_y < page_top {
         // Went above: put cursor at the BOTTOM of the new page.
-        // new_page_top = cursor_bottom - page_size
         let target = (line_y + full_line_h - page_size).max(0.0);
+        crate::logging::log(&format!(
+            "PAGE_UP: line={} line_y={:.0} full_h={:.0} page_top={:.0} page_size={:.0} target={:.0} cursor_from_bottom={:.0}",
+            state.current_line, line_y, full_line_h, page_top, page_size, target, page_size - (line_y - target)
+        ));
         page_turn_to_value(state, target);
     } else {
-        let anchored = page_bottom;
-        let target = if line_y + full_line_h > anchored + page_size {
-            (line_y - full_line_h * 2.0).max(0.0)
-        } else {
-            anchored
-        };
+        // Went below: put cursor at the TOP of the new page.
+        let target = line_y;
+        crate::logging::log(&format!(
+            "PAGE_DN: line={} line_y={:.0} full_h={:.0} page_bottom={:.0} page_size={:.0} target={:.0}",
+            state.current_line, line_y, full_line_h, page_bottom, page_size, target
+        ));
         page_turn_to_value(state, target);
     }
 }

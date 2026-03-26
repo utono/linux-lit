@@ -2,6 +2,7 @@ mod app;
 mod config;
 mod db;
 mod input;
+mod logging;
 mod mpv;
 mod ui;
 
@@ -9,6 +10,11 @@ use gtk4::prelude::*;
 use mpv::{MpvCommand, MpvEvent};
 
 fn main() {
+    // Clear and set up log file
+    let log_path = std::env::var("HOME").unwrap_or_default() + "/utono/linux-lit/linux-lit.log";
+    let _ = std::fs::write(&log_path, "");
+    logging::init(&log_path);
+
     let application = gtk4::Application::builder()
         .application_id("com.utono.linux-lit")
         .build();
