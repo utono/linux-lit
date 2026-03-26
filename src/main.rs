@@ -1,4 +1,5 @@
 mod app;
+mod db;
 mod mpv;
 
 use gtk4::prelude::*;
