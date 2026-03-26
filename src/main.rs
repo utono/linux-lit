@@ -1,5 +1,6 @@
 mod app;
 mod db;
+mod input;
 mod mpv;
 mod ui;
 

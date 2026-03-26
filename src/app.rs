@@ -16,6 +16,9 @@ pub struct AppState {
     pub buffer: TextBuffer,
     pub picker: LibraryPicker,
     pub current_work: Option<Work>,
+    pub current_line: usize,
+    pub highlight_tag: gtk4::TextTag,
+    pub scrolled_window: ScrolledWindow,
     pub window: ApplicationWindow,
 }
 
@@ -32,6 +35,12 @@ pub fn build_window(
         .build();
 
     let buffer = TextBuffer::new(None);
+    let highlight_tag = gtk4::TextTag::builder()
+        .name("current-line")
+        .background("rgba(100, 140, 200, 0.3)")
+        .build();
+    buffer.tag_table().add(&highlight_tag);
+
     let text_view = TextView::builder()
         .buffer(&buffer)
         .editable(false)
@@ -92,6 +101,9 @@ pub fn build_window(
         buffer,
         picker,
         current_work: None,
+        current_line: 0,
+        highlight_tag,
+        scrolled_window: scrolled,
         window: window.clone(),
     }));
 
@@ -216,5 +228,15 @@ pub fn display_work(state: &mut AppState, work: Work) {
     state
         .window
         .set_title(Some(&format!("{} — linux-lit", work.title)));
+    state.current_line = 0;
     state.current_work = Some(work);
+
+    // Apply initial highlight to first line
+    if let Some(iter) = state.buffer.iter_at_line(0) {
+        let mut line_end = iter.clone();
+        if !line_end.ends_line() {
+            line_end.forward_to_line_end();
+        }
+        state.buffer.apply_tag(&state.highlight_tag, &iter, &line_end);
+    }
 }
