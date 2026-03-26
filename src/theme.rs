@@ -129,9 +129,9 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
         .and_then(|cl| str_field(cl, "guibg"))
         .unwrap_or_else(|| {
             if is_light {
-                "rgba(0, 0, 0, 0.12)".to_string()
+                darken_color(&text_bg, 0.90)
             } else {
-                "rgba(255, 255, 255, 0.08)".to_string()
+                lighten_color(&text_bg, 1.25)
             }
         });
 
@@ -193,6 +193,23 @@ fn darken_color(hex: &str, factor: f64) -> String {
         (r as f64 * factor) as u8,
         (g as f64 * factor) as u8,
         (b as f64 * factor) as u8,
+    )
+}
+
+/// Lighten a hex color by a factor (1.0 = unchanged, higher = lighter).
+fn lighten_color(hex: &str, factor: f64) -> String {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() < 6 {
+        return "#444444".to_string();
+    }
+    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0);
+    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0);
+    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0);
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        (r as f64 * factor).min(255.0) as u8,
+        (g as f64 * factor).min(255.0) as u8,
+        (b as f64 * factor).min(255.0) as u8,
     )
 }
 
