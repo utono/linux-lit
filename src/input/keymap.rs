@@ -103,6 +103,85 @@ pub fn handle_key(
         return false;
     }
 
+    // Settings overlay
+    let settings_visible = state.borrow().settings_overlay.is_visible();
+
+    // Ctrl+,: toggle settings overlay
+    if is_ctrl && key_name == "comma" && !settings_visible && !picker_visible {
+        let s = state.borrow();
+        let ls = s.config.line_spacing;
+        let cw = s.config.column_width;
+        let tm = s.config.text_margins;
+        drop(s);
+        state.borrow_mut().settings_overlay.show(ls, cw, tm);
+        return true;
+    }
+
+    // Settings overlay visible — route keys
+    if settings_visible {
+        match key_name {
+            "Escape" => {
+                // Revert to snapshot values
+                let (snap_ls, snap_cw, snap_tm, snap_ti) = state.borrow().settings_overlay.snapshot();
+                {
+                    let mut s = state.borrow_mut();
+                    s.text_view.set_pixels_above_lines(snap_ls as i32);
+                    s.text_view.set_pixels_below_lines(snap_ls as i32);
+                    s.scrolled_window.set_width_request(snap_cw as i32);
+                    s.text_view.set_left_margin(snap_tm as i32);
+                    s.text_view.set_right_margin(snap_tm as i32);
+                    s.config.line_spacing = snap_ls;
+                    s.config.column_width = snap_cw;
+                    s.config.text_margins = snap_tm;
+                    // Revert theme if changed
+                    if let Some(snap_theme) = s.settings_overlay.themes().get(snap_ti) {
+                        let snap_theme = snap_theme.clone();
+                        s.settings_overlay.set_theme_index(snap_ti);
+                        apply_theme_to_state(&mut s, &snap_theme);
+                    }
+                    s.settings_overlay.hide();
+                }
+                return true;
+            }
+            "Return" => {
+                // Confirm: persist config and close
+                {
+                    let mut s = state.borrow_mut();
+                    crate::config::save(&s.config);
+                    s.settings_overlay.hide();
+                }
+                return true;
+            }
+            "j" | "Down" => {
+                state.borrow_mut().settings_overlay.move_selection(1);
+                return true;
+            }
+            "k" | "Up" => {
+                state.borrow_mut().settings_overlay.move_selection(-1);
+                return true;
+            }
+            "h" | "Left" => {
+                let (ls, cw, tm) = {
+                    let s = state.borrow();
+                    (s.config.line_spacing, s.config.column_width, s.config.text_margins)
+                };
+                let change = state.borrow_mut().settings_overlay.adjust_value(-1, ls, cw, tm);
+                apply_settings_change(state, change);
+                return true;
+            }
+            "l" | "Right" => {
+                let (ls, cw, tm) = {
+                    let s = state.borrow();
+                    (s.config.line_spacing, s.config.column_width, s.config.text_margins)
+                };
+                let change = state.borrow_mut().settings_overlay.adjust_value(1, ls, cw, tm);
+                apply_settings_change(state, change);
+                return true;
+            }
+            _ => return true, // consume all other keys when settings visible
+        }
+    }
+
     // Search bar visible — route keys to search entry
     let search_visible = state.borrow().search_bar.is_visible();
     if search_visible {
@@ -408,4 +487,51 @@ pub fn handle_key(
         }
         _ => false,
     }
+}
+
+fn apply_settings_change(
+    state: &Rc<RefCell<crate::app::AppState>>,
+    change: crate::ui::settings_overlay::SettingsChange,
+) {
+    use crate::ui::settings_overlay::SettingsChange;
+    let mut s = state.borrow_mut();
+    match change {
+        SettingsChange::LineSpacing(val) => {
+            s.text_view.set_pixels_above_lines(val as i32);
+            s.text_view.set_pixels_below_lines(val as i32);
+            s.config.line_spacing = val;
+        }
+        SettingsChange::ColumnWidth(val) => {
+            s.scrolled_window.set_width_request(val as i32);
+            s.config.column_width = val;
+        }
+        SettingsChange::TextMargins(val) => {
+            s.text_view.set_left_margin(val as i32);
+            s.text_view.set_right_margin(val as i32);
+            s.config.text_margins = val;
+        }
+        SettingsChange::Theme(theme) => {
+            apply_theme_to_state(&mut s, &theme);
+        }
+        SettingsChange::None => {}
+    }
+}
+
+fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &crate::theme::Theme) {
+    let css = crate::theme::generate_css(theme, &state.config.font_family, state.config.font_size);
+    state.css_provider.load_from_string(&css);
+
+    // Update dim tag foreground
+    state.dim_tag.set_property("foreground", &theme.dim_fg);
+    state.ab_dim_tag.set_property("foreground", &theme.dim_fg);
+
+    // Write .current_theme file
+    let home = std::env::var("HOME").unwrap_or_default();
+    let theme_path = std::path::PathBuf::from(&home)
+        .join("utono/themes/.config/themes/.current_theme");
+    let _ = std::fs::write(&theme_path, &theme.name);
+
+    state.theme = theme.clone();
+
+    crate::logging::log(&format!("SETTINGS: theme changed to {}", theme.display_name));
 }
