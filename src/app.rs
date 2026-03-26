@@ -3,8 +3,8 @@ use std::rc::Rc;
 
 use gtk4::prelude::*;
 use gtk4::{
-    ApplicationWindow, CssProvider, EventControllerKey, ScrolledWindow, TextBuffer, TextView,
-    WrapMode,
+    ApplicationWindow, CssProvider, DrawingArea, EventControllerKey, ScrolledWindow, TextBuffer,
+    TextView, WrapMode,
 };
 
 use crate::config::Config;
@@ -47,7 +47,7 @@ pub struct AppState {
     pub current_time_pos: f64,
     pub media_id: Option<i64>,
     pub sign_column_visible: bool,
-    pub sign_tag: gtk4::TextTag,
+    pub sign_gutter: DrawingArea,
 }
 
 pub fn build_window(
@@ -101,11 +101,11 @@ pub fn build_window(
         .build();
     buffer.tag_table().add(&search_current_tag);
 
-    let sign_tag = gtk4::TextTag::builder()
-        .name("sign")
-        .foreground(&theme.dim_fg)
+    let sign_gutter = DrawingArea::builder()
+        .width_request(32)
         .build();
-    buffer.tag_table().add(&sign_tag);
+    sign_gutter.add_css_class("sign-gutter");
+    sign_gutter.set_visible(false);
 
     let text_view = TextView::builder()
         .buffer(&buffer)
@@ -137,8 +137,10 @@ pub fn build_window(
     text_view.set_right_margin(48);
     text_view.set_top_margin(24);
 
+    // Place sign gutter inside the text view's left border window
+    text_view.set_gutter(gtk4::TextWindowType::Left, Some(&sign_gutter));
+
     // Scrolled window — centered card with wallpaper visible on all sides
-    // ~72 chars at 18pt serif ≈ 768px wide, with top/bottom margin for the card effect
     let scrolled = ScrolledWindow::builder()
         .child(&text_view)
         .hscrollbar_policy(gtk4::PolicyType::Never)
@@ -154,6 +156,14 @@ pub fn build_window(
         .css_classes(vec!["text-card"])
         .overflow(gtk4::Overflow::Hidden)
         .build();
+
+    // Redraw sign gutter on scroll
+    {
+        let gutter = sign_gutter.clone();
+        scrolled.vadjustment().connect_value_changed(move |_| {
+            gutter.queue_draw();
+        });
+    }
 
     // Library picker overlay
     let mut picker = LibraryPicker::new();
@@ -197,7 +207,7 @@ pub fn build_window(
         current_time_pos: 0.0,
         media_id: None,
         sign_column_visible: false,
-        sign_tag,
+        sign_gutter: sign_gutter.clone(),
     }));
 
     // Connect picker search entry filter
@@ -364,57 +374,74 @@ pub fn display_work(state: &mut AppState, work: Work) {
     crate::input::navigation::update_highlight_and_ensure_visible(state);
 }
 
-const SIGN_MARKER: &str = "◆";
-const SIGN_PADDING: &str = "     ";
-
-/// Rebuild the buffer text from current_work, with or without sign column markers.
+/// Rebuild the buffer text from current_work.
 fn rebuild_buffer_text(state: &mut AppState) {
     let work = match &state.current_work {
         Some(w) => w,
         None => return,
     };
-    let show_signs = state.sign_column_visible;
     let text: String = work
         .lines
         .iter()
-        .map(|l| {
-            if show_signs {
-                if l.timestamp.is_some() {
-                    format!("{}{}{}", SIGN_MARKER, SIGN_PADDING, l.text)
-                } else {
-                    format!(" {}{}", SIGN_PADDING, l.text)
-                }
-            } else {
-                l.text.clone()
-            }
-        })
+        .map(|l| l.text.as_str())
         .collect::<Vec<_>>()
         .join("\n");
     state.buffer.set_text(&text);
+    setup_sign_gutter_draw(state);
+}
 
-    // Apply sign tag to marker characters
-    if show_signs {
-        for (i, line) in work.lines.iter().enumerate() {
-            if line.timestamp.is_some() {
-                if let Some(start) = state.buffer.iter_at_line(i as i32) {
-                    let mut end = start;
-                    end.forward_chars(SIGN_MARKER.chars().count() as i32);
-                    state.buffer.apply_tag(&state.sign_tag, &start, &end);
-                }
+/// Set up the sign gutter draw function. The DrawingArea paints ◆ at the Y position
+/// of each timestamped line, reading positions from the main text_view.
+fn setup_sign_gutter_draw(state: &AppState) {
+    let text_view = state.text_view.clone();
+    let buffer = state.buffer.clone();
+    let dim_fg = state.theme.dim_fg.clone();
+    let work_lines: Vec<bool> = match &state.current_work {
+        Some(w) => w.lines.iter().map(|l| l.timestamp.is_some()).collect(),
+        None => return,
+    };
+
+    state.sign_gutter.set_draw_func(move |_area, cr, _width, _height| {
+        let (r, g, b) = parse_hex_color(&dim_fg);
+        cr.set_source_rgb(r, g, b);
+
+        for (i, has_ts) in work_lines.iter().enumerate() {
+            if !*has_ts {
+                continue;
+            }
+            if let Some(iter) = buffer.iter_at_line(i as i32) {
+                let rect = text_view.iter_location(&iter);
+                let (_, y) = text_view.buffer_to_window_coords(
+                    gtk4::TextWindowType::Left,
+                    rect.x(),
+                    rect.y(),
+                );
+                // Draw bullet at vertical center of the first visual line
+                let first_line_h = 20.0; // approximate single line height
+                let cy = y as f64 + first_line_h * 0.5;
+                let radius = 2.0;
+                cr.arc(18.0, cy, radius, 0.0, std::f64::consts::TAU);
+                let _ = cr.fill();
             }
         }
-    }
+    });
+}
+
+fn parse_hex_color(hex: &str) -> (f64, f64, f64) {
+    let hex = hex.trim_start_matches('#');
+    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(128) as f64 / 255.0;
+    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(128) as f64 / 255.0;
+    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(128) as f64 / 255.0;
+    (r, g, b)
 }
 
 /// Toggle sign column visibility.
 pub fn toggle_sign_column(state: &mut AppState) {
     state.sign_column_visible = !state.sign_column_visible;
-    rebuild_buffer_text(state);
-    reapply_font(state);
-    crate::input::navigation::update_highlight_and_ensure_visible(state);
+    state.sign_gutter.set_visible(state.sign_column_visible);
     crate::logging::log(&format!(
         "SIGN: column {}",
-        if state.sign_column_visible { "shown" } else { "hidden" }
+        if state.sign_column_visible { "shown" } else { "hidden" },
     ));
 }
 
