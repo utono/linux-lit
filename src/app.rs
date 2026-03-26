@@ -90,15 +90,20 @@ pub fn build_window(
     text_view.set_right_margin(24);
     text_view.set_top_margin(24);
 
-    // Scrolled window — centered, max width ~72 chars
-    // At 18pt serif, ~10px per char → 720px + 48px padding = ~768px
+    // Scrolled window — centered card with wallpaper visible on all sides
+    // ~72 chars at 18pt serif ≈ 768px wide, with top/bottom margin for the card effect
     let scrolled = ScrolledWindow::builder()
         .child(&text_view)
         .hscrollbar_policy(gtk4::PolicyType::Never)
         .vscrollbar_policy(gtk4::PolicyType::External)
         .vexpand(true)
         .halign(gtk4::Align::Center)
+        .valign(gtk4::Align::Fill)
         .width_request(768)
+        .margin_top(24)
+        .margin_bottom(24)
+        .margin_start(24)
+        .margin_end(24)
         .build();
 
     // Library picker overlay
