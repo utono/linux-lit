@@ -26,6 +26,8 @@ pub struct AppState {
     /// Generation counter for crossfade animations. Incremented on each page turn
     /// so stale animation callbacks don't stomp on opacity.
     pub animation_gen: std::rc::Rc<std::cell::Cell<u64>>,
+    pub cmd_tx: tokio::sync::mpsc::Sender<crate::mpv::MpvCommand>,
+    pub tokio_handle: tokio::runtime::Handle,
 }
 
 pub fn build_window(
@@ -33,6 +35,7 @@ pub fn build_window(
     works: Vec<WorkSummary>,
     tokio_handle: tokio::runtime::Handle,
     config: Config,
+    cmd_tx: tokio::sync::mpsc::Sender<crate::mpv::MpvCommand>,
 ) -> Rc<RefCell<AppState>> {
     let window = ApplicationWindow::builder()
         .application(app)
@@ -118,6 +121,8 @@ pub fn build_window(
         window: window.clone(),
         config,
         animation_gen: std::rc::Rc::new(std::cell::Cell::new(0)),
+        cmd_tx,
+        tokio_handle: tokio_handle.clone(),
     }));
 
     // Connect picker search entry filter
@@ -219,6 +224,60 @@ pub fn display_work(state: &mut AppState, work: Work) {
     state.config.last_work = Some(work.abbrev.clone());
     state.config.last_line = 0;
     crate::config::save(&state.config);
+
+    // Send timestamp data to MPV client
+    {
+        let mut ts_data: Vec<(i64, f64, f64)> = work
+            .timestamps
+            .iter()
+            .map(|t| (t.line_id, t.start, t.end))
+            .collect();
+        ts_data.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        let mut id_to_idx: std::collections::HashMap<i64, usize> =
+            std::collections::HashMap::new();
+        for (i, line) in work.lines.iter().enumerate() {
+            id_to_idx.insert(line.id, i);
+        }
+        let _ = state
+            .cmd_tx
+            .try_send(crate::mpv::MpvCommand::SetTimestamps {
+                timestamps: ts_data,
+                line_id_to_index: id_to_idx,
+            });
+    }
+
+    // Find or launch MPV socket
+    if !work.media_paths.is_empty() {
+        let media_paths = work.media_paths.clone();
+        let cmd_tx = state.cmd_tx.clone();
+        let handle = state.tokio_handle.clone();
+        glib::spawn_future_local(async move {
+            let socket_path = handle
+                .spawn_blocking(move || {
+                    if let Some(path) =
+                        crate::mpv::discovery::find_socket_for_work(&media_paths)
+                    {
+                        return path.to_string_lossy().to_string();
+                    }
+                    let launched = crate::mpv::discovery::launch_mpv(&media_paths[0]);
+                    for _ in 0..60 {
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        if std::path::Path::new(&launched).exists() {
+                            return launched;
+                        }
+                    }
+                    launched
+                })
+                .await
+                .unwrap_or_default();
+
+            if !socket_path.is_empty() {
+                let _ = cmd_tx
+                    .send(crate::mpv::MpvCommand::Connect(socket_path))
+                    .await;
+            }
+        });
+    }
 
     state.current_line = 0;
     state.page_top_line = 0;

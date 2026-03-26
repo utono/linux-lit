@@ -164,6 +164,11 @@ pub fn handle_key(
             navigation::jump_to_next_dialogue(&mut state.borrow_mut());
             true
         }
+        "Tab" => {
+            let cmd_tx = state.borrow().cmd_tx.clone();
+            let _ = cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
+            true
+        }
         _ => false,
     }
 }

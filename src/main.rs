@@ -21,7 +21,7 @@ fn main() {
 
     application.connect_activate(|gtk_app| {
         // Channel: GTK → Tokio (commands)
-        let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<MpvCommand>(32);
+        let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<MpvCommand>(32);
 
         // Channel: Tokio → GTK (events)
         let (evt_tx, mut evt_rx) = tokio::sync::mpsc::channel::<MpvEvent>(32);
@@ -31,10 +31,7 @@ fn main() {
         let tokio_handle = rt.handle().clone();
         std::thread::spawn(move || {
             rt.block_on(async move {
-                while let Some(cmd) = cmd_rx.recv().await {
-                    eprintln!("Tokio received command: {:?}", cmd);
-                }
-                let _ = evt_tx;
+                crate::mpv::client::run(cmd_rx, evt_tx).await;
             });
         });
 
@@ -48,18 +45,37 @@ fn main() {
         let config = config::load();
 
         // Build the window with works list, Tokio handle, and config
-        let _state = app::build_window(gtk_app, works, tokio_handle, config);
+        let state = app::build_window(gtk_app, works, tokio_handle, config, cmd_tx);
 
-        // Attach event receiver to GTK main loop
+        // Process MPV events — CursorSync updates cursor position
+        let state_for_events = std::rc::Rc::clone(&state);
         glib::spawn_future_local(async move {
             while let Some(event) = evt_rx.recv().await {
-                eprintln!("GTK received event: {:?}", event);
+                match event {
+                    MpvEvent::CursorSync(line_idx) => {
+                        let mut s = state_for_events.borrow_mut();
+                        if s.current_line != line_idx {
+                            s.current_line = line_idx;
+                            crate::input::navigation::update_highlight_and_ensure_visible(
+                                &mut s,
+                            );
+                        }
+                    }
+                    MpvEvent::ConnectionStatus(connected) => {
+                        crate::logging::log(&format!("MPV connection: {}", connected));
+                    }
+                    MpvEvent::PlaybackState(playing) => {
+                        crate::logging::log(&format!(
+                            "MPV playback: {}",
+                            if playing { "playing" } else { "paused" }
+                        ));
+                    }
+                }
             }
         });
 
-        // Keep cmd_tx alive so the Tokio runtime doesn't shut down
-        // (dropping cmd_tx closes the channel, ending the recv loop and dropping the runtime)
-        std::mem::forget(cmd_tx);
+        // cmd_tx is stored in AppState — no need for std::mem::forget
+        let _ = state;
     });
 
     application.run();

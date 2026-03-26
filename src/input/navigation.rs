@@ -118,26 +118,42 @@ pub fn page_backward(state: &mut AppState) {
 /// If cursor is at the top line of the page, just page backward (don't move cursor).
 /// Otherwise, jump to the previous dialogue line.
 pub fn jump_to_prev_dialogue(state: &mut AppState) {
-    let work = match &state.current_work {
-        Some(w) => w,
-        None => return,
-    };
-    if state.current_line == 0 {
-        return;
-    }
-
-    // At top of page — page backward, keep cursor
-    if state.current_line == state.page_top_line {
-        page_backward(state);
-        return;
-    }
-
-    for i in (0..state.current_line).rev() {
-        if work.lines[i].is_dialogue {
-            state.current_line = i;
-            update_highlight(state);
-            ensure_cursor_on_page(state);
+    let target = {
+        let work = match &state.current_work {
+            Some(w) => w,
+            None => return,
+        };
+        if state.current_line == 0 {
             return;
+        }
+
+        // At top of page — page backward, keep cursor
+        if state.current_line == state.page_top_line {
+            page_backward(state);
+            return;
+        }
+
+        let mut found = None;
+        for i in (0..state.current_line).rev() {
+            if work.lines[i].is_dialogue {
+                found = Some(i);
+                break;
+            }
+        }
+        found
+    };
+
+    if let Some(line_idx) = target {
+        state.current_line = line_idx;
+        update_highlight(state);
+        ensure_cursor_on_page(state);
+
+        // Seek MPV to line's start time with 0.2s preroll
+        if let Some(ref work) = state.current_work {
+            if let Some(ts) = &work.lines[state.current_line].timestamp {
+                let seek_time = (ts.start - 0.2).max(0.0);
+                let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::Seek(seek_time));
+            }
         }
     }
 }
@@ -146,26 +162,44 @@ pub fn jump_to_prev_dialogue(state: &mut AppState) {
 /// If cursor is at the last visible line of the page, just page forward (don't move cursor).
 /// Otherwise, jump to the next dialogue line.
 pub fn jump_to_next_dialogue(state: &mut AppState) {
-    let work = match &state.current_work {
-        Some(w) => w,
-        None => return,
-    };
-    let line_count = work.lines.len();
+    let target = {
+        let work = match &state.current_work {
+            Some(w) => w,
+            None => return,
+        };
+        let line_count = work.lines.len();
 
-    // At bottom of page — page forward, keep cursor
-    let lpp = lines_per_page(state);
-    let page_last = (state.page_top_line + lpp).saturating_sub(1).min(line_count.saturating_sub(1));
-    if state.current_line >= page_last {
-        page_forward(state);
-        return;
-    }
-
-    for i in (state.current_line + 1)..line_count {
-        if work.lines[i].is_dialogue {
-            state.current_line = i;
-            update_highlight(state);
-            ensure_cursor_on_page(state);
+        // At bottom of page — page forward, keep cursor
+        let lpp = lines_per_page(state);
+        let page_last = (state.page_top_line + lpp)
+            .saturating_sub(1)
+            .min(line_count.saturating_sub(1));
+        if state.current_line >= page_last {
+            page_forward(state);
             return;
+        }
+
+        let mut found = None;
+        for i in (state.current_line + 1)..line_count {
+            if work.lines[i].is_dialogue {
+                found = Some(i);
+                break;
+            }
+        }
+        found
+    };
+
+    if let Some(line_idx) = target {
+        state.current_line = line_idx;
+        update_highlight(state);
+        ensure_cursor_on_page(state);
+
+        // Seek MPV to line's start time with 0.2s preroll
+        if let Some(ref work) = state.current_work {
+            if let Some(ts) = &work.lines[state.current_line].timestamp {
+                let seek_time = (ts.start - 0.2).max(0.0);
+                let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::Seek(seek_time));
+            }
         }
     }
 }
@@ -242,6 +276,12 @@ fn scroll_value_for_line(state: &AppState, line: usize) -> f64 {
 // ---------------------------------------------------------------------------
 // Highlight
 // ---------------------------------------------------------------------------
+
+/// Update highlight and ensure cursor is visible on the current page.
+pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
+    update_highlight(state);
+    ensure_cursor_on_page(state);
+}
 
 /// Remove highlight from old line, apply to new current line.
 fn update_highlight(state: &AppState) {
