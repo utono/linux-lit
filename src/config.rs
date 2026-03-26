@@ -28,7 +28,7 @@ pub const FONT_CYCLE: &[&str] = &[
 ];
 
 fn default_font_size() -> u32 {
-    18
+    20
 }
 
 impl Default for Config {

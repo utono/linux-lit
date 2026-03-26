@@ -102,7 +102,7 @@ pub fn build_window(
     buffer.tag_table().add(&search_current_tag);
 
     let sign_gutter = DrawingArea::builder()
-        .width_request(32)
+        .width_request(48)
         .build();
     sign_gutter.add_css_class("sign-gutter");
     sign_gutter.set_visible(false);
@@ -396,6 +396,7 @@ fn setup_sign_gutter_draw(state: &AppState) {
     let text_view = state.text_view.clone();
     let buffer = state.buffer.clone();
     let dim_fg = state.theme.dim_fg.clone();
+    let font_size = state.config.font_size as f64;
     let work_lines: Vec<bool> = match &state.current_work {
         Some(w) => w.lines.iter().map(|l| l.timestamp.is_some()).collect(),
         None => return,
@@ -416,11 +417,14 @@ fn setup_sign_gutter_draw(state: &AppState) {
                     rect.x(),
                     rect.y(),
                 );
-                // Draw bullet at vertical center of the first visual line
-                let first_line_h = 20.0; // approximate single line height
-                let cy = y as f64 + first_line_h * 0.5;
-                let radius = 2.0;
-                cr.arc(18.0, cy, radius, 0.0, std::f64::consts::TAU);
+                // Draw dot at vertical center of the first visual line
+                // y is top of paragraph; add pixels_above_lines (14) to reach text start
+                let above = 14.0;
+                let font_px = font_size * 96.0 / 72.0;
+                let cy = y as f64 + above + font_px * 0.5;
+                let bx = 24.0; // left padding
+                let radius = 2.5;
+                cr.arc(bx, cy, radius, 0.0, std::f64::consts::TAU);
                 let _ = cr.fill();
             }
         }
@@ -480,7 +484,7 @@ pub fn adjust_font_size(state: &mut AppState, delta: i32) {
 
 /// Reset font size to default (18pt).
 pub fn reset_font_size(state: &mut AppState) {
-    let default = 18u32;
+    let default = 20u32;
     if state.config.font_size == default {
         return;
     }
