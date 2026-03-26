@@ -196,6 +196,15 @@ pub fn build_window(
         });
     }
 
+    // Connect search entry for live search
+    let state_for_search = Rc::clone(&state);
+    {
+        let s = state.borrow();
+        s.search_bar.entry().connect_changed(move |_entry| {
+            crate::input::search::execute_search(&state_for_search);
+        });
+    }
+
     // Key event controller — capture phase so we intercept before Entry consumes keys
     let tokio_handle_for_mru = tokio_handle.clone();
     let state_for_keys = Rc::clone(&state);
