@@ -1,0 +1,213 @@
+use crate::app::AppState;
+use crate::db::models::TimeRange;
+
+const NUDGE_STEP: f64 = 0.2;
+
+/// Re-send timestamps to MPV client after a write, built from Line.timestamp (single source of truth).
+fn resync_mpv_timestamps(state: &AppState) {
+    let work = match &state.current_work {
+        Some(w) => w,
+        None => return,
+    };
+    let mut ts_data: Vec<(i64, f64, f64)> = Vec::new();
+    let mut id_to_idx: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
+    for (i, line) in work.lines.iter().enumerate() {
+        id_to_idx.insert(line.id, i);
+        if let Some(ts) = &line.timestamp {
+            ts_data.push((line.id, ts.start, ts.end));
+        }
+    }
+    ts_data.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    let _ = state
+        .cmd_tx
+        .try_send(crate::mpv::MpvCommand::SetTimestamps {
+            timestamps: ts_data,
+            line_id_to_index: id_to_idx,
+        });
+}
+
+/// Set start time on current line from MPV position (u / Right).
+pub fn set_start_time(state: &mut AppState) -> bool {
+    let media_id = match state.media_id {
+        Some(id) => id,
+        None => return false,
+    };
+    let time_pos = state.current_time_pos;
+    let line_idx = state.current_line;
+
+    {
+        let work = match &mut state.current_work {
+            Some(w) => w,
+            None => return false,
+        };
+        let line = &mut work.lines[line_idx];
+
+        // DB write
+        let conn = match crate::db::queries::open_db_rw() {
+            Ok(c) => c,
+            Err(e) => {
+                crate::logging::log(&format!("TS: open_db_rw failed: {}", e));
+                return false;
+            }
+        };
+        if let Err(e) = crate::db::queries::upsert_start_time(&conn, line.id, media_id, &line.citation, time_pos) {
+            crate::logging::log(&format!("TS: upsert_start_time failed: {}", e));
+            return false;
+        }
+
+        // Update in-memory
+        match &mut line.timestamp {
+            Some(ts) => ts.start = time_pos,
+            None => line.timestamp = Some(TimeRange { start: time_pos, end: 0.0 }),
+        }
+    }
+    crate::logging::log(&format!("TS: set start_time={:.2} line={}", time_pos, line_idx));
+
+    resync_mpv_timestamps(state);
+    true
+}
+
+/// Set end time on current line from MPV position (i).
+pub fn set_end_time(state: &mut AppState) -> bool {
+    let media_id = match state.media_id {
+        Some(id) => id,
+        None => return false,
+    };
+    let time_pos = state.current_time_pos;
+    let line_idx = state.current_line;
+
+    let start_time = {
+        let work = match &mut state.current_work {
+            Some(w) => w,
+            None => return false,
+        };
+        let line = &mut work.lines[line_idx];
+
+        // Guard: must have existing timestamp
+        let start_time = match &line.timestamp {
+            Some(ts) => ts.start,
+            None => return false,
+        };
+
+        let conn = match crate::db::queries::open_db_rw() {
+            Ok(c) => c,
+            Err(e) => {
+                crate::logging::log(&format!("TS: open_db_rw failed: {}", e));
+                return false;
+            }
+        };
+        if let Err(e) = crate::db::queries::update_end_time(&conn, line.id, media_id, time_pos) {
+            crate::logging::log(&format!("TS: update_end_time failed: {}", e));
+            return false;
+        }
+
+        // Update in-memory
+        line.timestamp.as_mut().unwrap().end = time_pos;
+        start_time
+    };
+    crate::logging::log(&format!("TS: set end_time={:.2} line={}", time_pos, line_idx));
+
+    resync_mpv_timestamps(state);
+
+    // Seek to start and resume playback
+    let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::ResumeAndSeek(start_time));
+    true
+}
+
+/// Delete timestamp on current line (BackSpace).
+pub fn delete_timestamp(state: &mut AppState) -> bool {
+    let media_id = match state.media_id {
+        Some(id) => id,
+        None => return false,
+    };
+    let line_idx = state.current_line;
+
+    {
+        let work = match &mut state.current_work {
+            Some(w) => w,
+            None => return false,
+        };
+        let line = &mut work.lines[line_idx];
+
+        // Guard: must have existing timestamp
+        if line.timestamp.is_none() {
+            return false;
+        }
+
+        let conn = match crate::db::queries::open_db_rw() {
+            Ok(c) => c,
+            Err(e) => {
+                crate::logging::log(&format!("TS: open_db_rw failed: {}", e));
+                return false;
+            }
+        };
+        if let Err(e) = crate::db::queries::delete_timestamp(&conn, line.id, media_id) {
+            crate::logging::log(&format!("TS: delete_timestamp failed: {}", e));
+            return false;
+        }
+
+        line.timestamp = None;
+    }
+    crate::logging::log(&format!("TS: deleted timestamp line={}", line_idx));
+
+    resync_mpv_timestamps(state);
+    true
+}
+
+/// Nudge start time by delta seconds (p = -0.2, P = +0.2).
+pub fn nudge_start_time(state: &mut AppState, delta: f64) -> bool {
+    let media_id = match state.media_id {
+        Some(id) => id,
+        None => return false,
+    };
+    let line_idx = state.current_line;
+
+    let new_start = {
+        let work = match &mut state.current_work {
+            Some(w) => w,
+            None => return false,
+        };
+        let line = &mut work.lines[line_idx];
+
+        // Guard: must have existing timestamp
+        let current_start = match &line.timestamp {
+            Some(ts) => ts.start,
+            None => return false,
+        };
+
+        let new_start = (current_start + delta).max(0.0);
+
+        let conn = match crate::db::queries::open_db_rw() {
+            Ok(c) => c,
+            Err(e) => {
+                crate::logging::log(&format!("TS: open_db_rw failed: {}", e));
+                return false;
+            }
+        };
+        if let Err(e) = crate::db::queries::upsert_start_time(&conn, line.id, media_id, &line.citation, new_start) {
+            crate::logging::log(&format!("TS: nudge upsert failed: {}", e));
+            return false;
+        }
+
+        // Update in-memory
+        line.timestamp.as_mut().unwrap().start = new_start;
+        new_start
+    };
+    crate::logging::log(&format!("TS: nudge start_time={:.2} delta={:.1} line={}", new_start, delta, line_idx));
+
+    resync_mpv_timestamps(state);
+
+    // Seek to new position
+    let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::Seek(new_start));
+    true
+}
+
+/// Nudge start backward by 0.2s.
+pub fn nudge_start_backward(state: &mut AppState) -> bool {
+    nudge_start_time(state, -NUDGE_STEP)
+}
+
+/// Nudge start forward by 0.2s.
+pub fn nudge_start_forward(state: &mut AppState) -> bool {
+    nudge_start_time(state, NUDGE_STEP)
+}
