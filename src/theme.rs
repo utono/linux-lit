@@ -223,6 +223,7 @@ fn blend_colors(fg_hex: &str, bg_hex: &str, alpha: f64) -> String {
 pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String {
     format!(
         "window {{ background-color: {root}; }} \
+         .text-card {{ border-radius: 12px; }} \
          textview {{ background-color: {bg}; color: {fg}; }} \
          textview text {{ background-color: {bg}; color: {fg}; \
            font-family: {font}; font-size: {size}pt; }} \

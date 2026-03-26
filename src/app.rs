@@ -46,6 +46,8 @@ pub struct AppState {
     pub search_current_tag: gtk4::TextTag,
     pub current_time_pos: f64,
     pub media_id: Option<i64>,
+    pub sign_column_visible: bool,
+    pub sign_tag: gtk4::TextTag,
 }
 
 pub fn build_window(
@@ -99,6 +101,12 @@ pub fn build_window(
         .build();
     buffer.tag_table().add(&search_current_tag);
 
+    let sign_tag = gtk4::TextTag::builder()
+        .name("sign")
+        .foreground(&theme.dim_fg)
+        .build();
+    buffer.tag_table().add(&sign_tag);
+
     let text_view = TextView::builder()
         .buffer(&buffer)
         .editable(false)
@@ -125,8 +133,8 @@ pub fn build_window(
     text_view.set_pixels_below_lines(14);
 
     // Text area padding (inside the text background)
-    text_view.set_left_margin(24);
-    text_view.set_right_margin(24);
+    text_view.set_left_margin(48);
+    text_view.set_right_margin(48);
     text_view.set_top_margin(24);
 
     // Scrolled window — centered card with wallpaper visible on all sides
@@ -138,11 +146,13 @@ pub fn build_window(
         .vexpand(true)
         .halign(gtk4::Align::Center)
         .valign(gtk4::Align::Fill)
-        .width_request(900)
+        .width_request(948)
         .margin_top(24)
         .margin_bottom(24)
         .margin_start(24)
         .margin_end(24)
+        .css_classes(vec!["text-card"])
+        .overflow(gtk4::Overflow::Hidden)
         .build();
 
     // Library picker overlay
@@ -186,6 +196,8 @@ pub fn build_window(
         search_current_tag,
         current_time_pos: 0.0,
         media_id: None,
+        sign_column_visible: false,
+        sign_tag,
     }));
 
     // Connect picker search entry filter
@@ -275,13 +287,6 @@ pub fn display_work(state: &mut AppState, work: Work) {
     state.search_bar.hide();
     state.current_time_pos = 0.0;
     state.media_id = work.media_id;
-    let text: String = work
-        .lines
-        .iter()
-        .map(|l| l.text.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
-    state.buffer.set_text(&text);
     state
         .window
         .set_title(Some(&format!("{} — linux-lit", work.title)));
@@ -349,11 +354,68 @@ pub fn display_work(state: &mut AppState, work: Work) {
     state.page_top_line = 0;
     state.current_work = Some(work);
 
+    // Build buffer text (with or without sign column)
+    rebuild_buffer_text(state);
+
     // Apply font tag to new buffer content
     reapply_font(state);
 
     // Dim all lines except the current one
     crate::input::navigation::update_highlight_and_ensure_visible(state);
+}
+
+const SIGN_MARKER: &str = "◆";
+const SIGN_PADDING: &str = "     ";
+
+/// Rebuild the buffer text from current_work, with or without sign column markers.
+fn rebuild_buffer_text(state: &mut AppState) {
+    let work = match &state.current_work {
+        Some(w) => w,
+        None => return,
+    };
+    let show_signs = state.sign_column_visible;
+    let text: String = work
+        .lines
+        .iter()
+        .map(|l| {
+            if show_signs {
+                if l.timestamp.is_some() {
+                    format!("{}{}{}", SIGN_MARKER, SIGN_PADDING, l.text)
+                } else {
+                    format!(" {}{}", SIGN_PADDING, l.text)
+                }
+            } else {
+                l.text.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    state.buffer.set_text(&text);
+
+    // Apply sign tag to marker characters
+    if show_signs {
+        for (i, line) in work.lines.iter().enumerate() {
+            if line.timestamp.is_some() {
+                if let Some(start) = state.buffer.iter_at_line(i as i32) {
+                    let mut end = start;
+                    end.forward_chars(SIGN_MARKER.chars().count() as i32);
+                    state.buffer.apply_tag(&state.sign_tag, &start, &end);
+                }
+            }
+        }
+    }
+}
+
+/// Toggle sign column visibility.
+pub fn toggle_sign_column(state: &mut AppState) {
+    state.sign_column_visible = !state.sign_column_visible;
+    rebuild_buffer_text(state);
+    reapply_font(state);
+    crate::input::navigation::update_highlight_and_ensure_visible(state);
+    crate::logging::log(&format!(
+        "SIGN: column {}",
+        if state.sign_column_visible { "shown" } else { "hidden" }
+    ));
 }
 
 /// Reapply font size using a TextTag spanning the entire buffer.

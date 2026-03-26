@@ -271,6 +271,10 @@ pub fn handle_key(
         "P" => {
             crate::input::timestamps::nudge_start_forward(&mut state.borrow_mut())
         }
+        "l" => {
+            crate::app::toggle_sign_column(&mut state.borrow_mut());
+            true
+        }
         _ => false,
     }
 }
