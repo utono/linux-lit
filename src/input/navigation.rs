@@ -180,8 +180,8 @@ fn ensure_cursor_visible(state: &AppState, _lines_jumped: usize) {
         };
 
     // Already visible — do nothing (page stays still).
-    // A line is "visible" if its top is within the page boundaries.
-    if line_y >= page_top && line_y < page_bottom {
+    // A line is "visible" if its top is within the page (inclusive of edges).
+    if line_y >= page_top && line_y <= page_bottom {
         return;
     }
 
