@@ -113,6 +113,7 @@ pub fn handle_key(
             }
             "Return" => {
                 crate::input::search::execute_search(&state);
+                state.borrow().search_bar.hide();
                 return true;
             }
             "Tab" => {
