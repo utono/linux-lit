@@ -6,6 +6,14 @@ use crate::app::AppState;
 // remain visible on the new page for reading continuity.
 const PAGE_OVERLAP: usize = 1;
 
+/// Seconds to seek before a line's start_time when navigating.
+/// Provides audio context so playback doesn't start at a hard cut.
+pub const SEEK_PREROLL: f64 = 0.2;
+
+/// Seconds to highlight a line before playback actually reaches it.
+/// Used by the MPV client's time-pos sync.
+pub const SYNC_PREROLL: f64 = 0.3;
+
 /// Move cursor by `delta` lines (j/k). Cursor moves within the current page.
 /// When cursor goes past a page boundary, a page turn happens.
 pub fn move_cursor(state: &mut AppState, delta: i32) {
@@ -27,24 +35,20 @@ pub fn move_cursor(state: &mut AppState, delta: i32) {
 
     state.current_line = new_line;
     update_highlight(state);
+    seek_to_current_line(state);
 
     // Check if cursor is still on the current page
     let page_top = state.page_top_line;
     let page_bottom = page_top + lines_per_page(state);
 
     if new_line < page_top {
-        // Went above current page — page turn backward.
-        // New page has cursor at the bottom.
         let lpp = lines_per_page(state);
         let new_top = new_line.saturating_sub(lpp.saturating_sub(1));
         set_page(state, new_top);
     } else if new_line >= page_bottom {
-        // Went below current page — page turn forward.
-        // New page has cursor at the top, with overlap from old page.
         let new_top = new_line.saturating_sub(PAGE_OVERLAP);
         set_page(state, new_top);
     }
-    // Otherwise cursor is within the current page — no scroll needed.
 }
 
 /// Jump to the first line.
@@ -90,6 +94,7 @@ pub fn page_forward(state: &mut AppState) {
     // Move cursor to first line of new page (after overlap)
     state.current_line = (new_top + PAGE_OVERLAP).min(line_count - 1);
     update_highlight(state);
+    seek_to_current_line(state);
     set_page(state, new_top);
 }
 
@@ -111,6 +116,7 @@ pub fn page_backward(state: &mut AppState) {
         .map_or(0, |w| w.lines.len());
     state.current_line = new_bottom.min(line_count.saturating_sub(1));
     update_highlight(state);
+    seek_to_current_line(state);
     set_page(state, new_top);
 }
 
@@ -147,14 +153,7 @@ pub fn jump_to_prev_dialogue(state: &mut AppState) {
         state.current_line = line_idx;
         update_highlight(state);
         ensure_cursor_on_page(state);
-
-        // Seek MPV to line's start time with 0.2s preroll
-        if let Some(ref work) = state.current_work {
-            if let Some(ts) = &work.lines[state.current_line].timestamp {
-                let seek_time = (ts.start - 0.2).max(0.0);
-                let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::Seek(seek_time));
-            }
-        }
+        seek_to_current_line(state);
     }
 }
 
@@ -193,14 +192,7 @@ pub fn jump_to_next_dialogue(state: &mut AppState) {
         state.current_line = line_idx;
         update_highlight(state);
         ensure_cursor_on_page(state);
-
-        // Seek MPV to line's start time with 0.2s preroll
-        if let Some(ref work) = state.current_work {
-            if let Some(ts) = &work.lines[state.current_line].timestamp {
-                let seek_time = (ts.start - 0.2).max(0.0);
-                let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::Seek(seek_time));
-            }
-        }
+        seek_to_current_line(state);
     }
 }
 
@@ -241,6 +233,19 @@ fn ensure_cursor_on_page(state: &mut AppState) {
         // Went below — new page with cursor near top (with overlap)
         let new_top = state.current_line.saturating_sub(PAGE_OVERLAP);
         set_page(state, new_top);
+    }
+}
+
+/// Seek MPV to the current line's start time (with preroll).
+/// Called on every cursor movement so audio follows the reader.
+fn seek_to_current_line(state: &AppState) {
+    if let Some(ref work) = state.current_work {
+        if let Some(ts) = &work.lines[state.current_line].timestamp {
+            let seek_time = (ts.start - SEEK_PREROLL).max(0.0);
+            let _ = state
+                .cmd_tx
+                .try_send(crate::mpv::MpvCommand::Seek(seek_time));
+        }
     }
 }
 

@@ -59,6 +59,9 @@ fn main() {
                             crate::input::navigation::update_highlight_and_ensure_visible(
                                 &mut s,
                             );
+                            // Continuously save position so MRU restores to playback point
+                            s.config.last_line = line_idx;
+                            crate::config::save(&s.config);
                         }
                     }
                     MpvEvent::ConnectionStatus(connected) => {

@@ -169,8 +169,7 @@ fn find_line_for_time(
     timestamps: &[(i64, f64, f64)],
     line_id_to_index: &HashMap<i64, usize>,
 ) -> Option<usize> {
-    let preroll = 0.3;
-    let effective_time = time_pos + preroll;
+    let effective_time = time_pos + crate::input::navigation::SYNC_PREROLL;
     let idx = timestamps.partition_point(|ts| ts.1 <= effective_time);
     if idx == 0 {
         return None;
