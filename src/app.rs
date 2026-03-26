@@ -54,6 +54,26 @@ pub struct AppState {
     pub ab_repeat: crate::ab_repeat::AbRepeatState,
     pub ab_a_line: Rc<Cell<Option<usize>>>,
     pub ab_b_line: Rc<Cell<Option<usize>>>,
+    pub line_map: Option<crate::text_file_map::LineMap>,
+}
+
+impl AppState {
+    pub fn effective_line_count(&self) -> usize {
+        if let Some(ref lm) = self.line_map {
+            lm.buffer_to_work.len()
+        } else {
+            self.current_work.as_ref().map_or(0, |w| w.lines.len())
+        }
+    }
+
+    pub fn work_line_for_buffer(&self, buffer_line: usize) -> Option<usize> {
+        if let Some(ref lm) = self.line_map {
+            lm.buffer_to_work.get(buffer_line).copied().flatten()
+        } else {
+            let count = self.current_work.as_ref().map_or(0, |w| w.lines.len());
+            if buffer_line < count { Some(buffer_line) } else { None }
+        }
+    }
 }
 
 pub fn build_window(
@@ -213,6 +233,7 @@ pub fn build_window(
         ab_repeat: crate::ab_repeat::AbRepeatState::default(),
         ab_a_line: Rc::new(Cell::new(None)),
         ab_b_line: Rc::new(Cell::new(None)),
+        line_map: None,
     }));
 
     // Connect picker search entry filter

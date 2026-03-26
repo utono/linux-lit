@@ -5,6 +5,7 @@ pub struct Work {
     pub title: String,
     pub author: String,
     pub work_type: String,
+    pub text_file: Option<String>,
     pub lines: Vec<Line>,
     pub timestamps: Vec<Timestamp>,
     pub media_paths: Vec<String>,

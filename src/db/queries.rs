@@ -35,6 +35,13 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?;
 
+    // text_file column may not exist yet (manual migration) — graceful fallback
+    let text_file: Option<String> = conn.query_row(
+        "SELECT text_file FROM works WHERE abbrev = ?1",
+        [abbrev],
+        |row| row.get(0),
+    ).unwrap_or(None);
+
     let is_prose = line_types::is_prose_work(&work_type);
 
     // 2. Load all lines
@@ -121,6 +128,7 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
         title,
         author,
         work_type,
+        text_file,
         lines,
         timestamps,
         media_paths,
