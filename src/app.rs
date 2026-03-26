@@ -119,93 +119,24 @@ pub fn build_window(
 
     // Key event controller — capture phase so we intercept before Entry consumes keys
     let state_for_keys = Rc::clone(&state);
+    let key_state = Rc::new(RefCell::new(crate::input::keymap::KeyState::default()));
     let key_controller = EventControllerKey::new();
     key_controller.set_propagation_phase(gtk4::PropagationPhase::Capture);
     key_controller.connect_key_pressed(move |_controller, keyval, _keycode, modifier| {
         let key_name = keyval.name().unwrap_or_default();
-
         let is_ctrl = modifier.contains(gtk4::gdk::ModifierType::CONTROL_MASK);
-        let picker_visible = state_for_keys.borrow().picker.is_visible();
-
-        // When picker is visible: Ctrl+n/Ctrl+p navigate, Ctrl+p does NOT close
-        if picker_visible && is_ctrl {
-            match key_name.as_str() {
-                "n" => {
-                    state_for_keys.borrow().picker.move_selection(1);
-                    return glib::Propagation::Stop;
-                }
-                "p" => {
-                    state_for_keys.borrow().picker.move_selection(-1);
-                    return glib::Propagation::Stop;
-                }
-                _ => {}
-            }
+        let consumed = crate::input::keymap::handle_key(
+            &state_for_keys,
+            &key_state,
+            &key_name,
+            is_ctrl,
+            &tokio_handle,
+        );
+        if consumed {
+            glib::Propagation::Stop
+        } else {
+            glib::Propagation::Proceed
         }
-
-        // Ctrl+p: open library picker (only when not visible)
-        if is_ctrl && key_name == "p" && !picker_visible {
-            state_for_keys.borrow().picker.show();
-            return glib::Propagation::Stop;
-        }
-
-        // When picker is visible, handle picker keys
-        if picker_visible {
-            match key_name.as_str() {
-                "Escape" => {
-                    state_for_keys.borrow().picker.hide();
-                    return glib::Propagation::Stop;
-                }
-                "Return" => {
-                    let abbrev = state_for_keys.borrow().picker.selected_abbrev();
-                    if let Some(abbrev) = abbrev {
-                        let state_clone = Rc::clone(&state_for_keys);
-                        let handle = tokio_handle.clone();
-                        glib::spawn_future_local(async move {
-                            let work = handle
-                                .spawn_blocking(move || {
-                                    let conn = crate::db::queries::open_db()
-                                        .expect("Failed to open lit.db");
-                                    crate::db::queries::load_work(&conn, &abbrev)
-                                })
-                                .await;
-                            match work {
-                                Ok(Ok(work)) => {
-                                    let mut s = state_clone.borrow_mut();
-                                    s.picker.hide();
-                                    display_work(&mut s, work);
-                                }
-                                Ok(Err(e)) => eprintln!("Failed to load work: {}", e),
-                                Err(e) => eprintln!("Task join error: {}", e),
-                            }
-                        });
-                    }
-                    return glib::Propagation::Stop;
-                }
-                "Down" => {
-                    state_for_keys.borrow().picker.move_selection(1);
-                    return glib::Propagation::Stop;
-                }
-                "Up" => {
-                    state_for_keys.borrow().picker.move_selection(-1);
-                    return glib::Propagation::Stop;
-                }
-                "j" => {
-                    if !state_for_keys.borrow().picker.search_entry().has_focus() {
-                        state_for_keys.borrow().picker.move_selection(1);
-                        return glib::Propagation::Stop;
-                    }
-                }
-                "k" => {
-                    if !state_for_keys.borrow().picker.search_entry().has_focus() {
-                        state_for_keys.borrow().picker.move_selection(-1);
-                        return glib::Propagation::Stop;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        glib::Propagation::Proceed
     });
     window.add_controller(key_controller);
 
