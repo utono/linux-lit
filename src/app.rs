@@ -159,12 +159,14 @@ pub fn build_window(
         let key_name = keyval.name().unwrap_or_default();
         let is_ctrl = modifier.contains(gtk4::gdk::ModifierType::CONTROL_MASK);
         let is_shift = modifier.contains(gtk4::gdk::ModifierType::SHIFT_MASK);
+        let is_alt = modifier.contains(gtk4::gdk::ModifierType::ALT_MASK);
         let consumed = crate::input::keymap::handle_key(
             &state_for_keys,
             &key_state,
             &key_name,
             is_ctrl,
             is_shift,
+            is_alt,
             &tokio_handle,
         );
         if consumed {
@@ -343,6 +345,40 @@ pub fn reset_font_size(state: &mut AppState) {
     state.config.font_size = default;
     reapply_font(state);
     crate::config::save(&state.config);
+}
+
+/// Cycle font family forward (f) or backward (F).
+pub fn cycle_font(state: &mut AppState, forward: bool) {
+    let cycle = crate::config::FONT_CYCLE;
+    let current = &state.config.font_family;
+    let idx = cycle.iter().position(|f| *f == current).unwrap_or(0);
+    let next = if forward {
+        (idx + 1) % cycle.len()
+    } else {
+        (idx + cycle.len() - 1) % cycle.len()
+    };
+    state.config.font_family = cycle[next].to_string();
+    reapply_font(state);
+    crate::config::save(&state.config);
+    let position = format!("{}/{}", next + 1, cycle.len());
+    let body = format!("{} {}pt", state.config.font_family, state.config.font_size);
+    crate::logging::log(&format!("FONT: cycled to {}", state.config.font_family));
+    let _ = std::process::Command::new("notify-send")
+        .args(["-t", "1500", "-h", "string:x-canonical-private-synchronous:linux-lit-font",
+               &format!("Font [{}]", position), &body])
+        .spawn();
+}
+
+/// Show current font info via desktop notification.
+pub fn show_font_info(state: &AppState) {
+    let cycle = crate::config::FONT_CYCLE;
+    let idx = cycle.iter().position(|f| *f == state.config.font_family).unwrap_or(0);
+    let position = format!("{}/{}", idx + 1, cycle.len());
+    let body = format!("{} {}pt", state.config.font_family, state.config.font_size);
+    let _ = std::process::Command::new("notify-send")
+        .args(["-t", "1500", "-h", "string:x-canonical-private-synchronous:linux-lit-font",
+               &format!("Font [{}]", position), &body])
+        .spawn();
 }
 
 /// Save current position to config (call on quit).

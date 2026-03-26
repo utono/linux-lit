@@ -15,8 +15,17 @@ pub struct Config {
 }
 
 fn default_font_family() -> String {
-    "Georgia".to_string()
+    "Charter".to_string()
 }
+
+pub const FONT_CYCLE: &[&str] = &[
+    "Charter",
+    "Noto Serif",
+    "Source Serif 4",
+    "IBM Plex Serif",
+    "Cormorant Garamond",
+    "Crimson Pro",
+];
 
 fn default_font_size() -> u32 {
     18

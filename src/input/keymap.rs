@@ -18,9 +18,10 @@ pub fn handle_key(
     key_name: &str,
     is_ctrl: bool,
     is_shift: bool,
+    is_alt: bool,
     tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
-    crate::logging::log(&format!("KEY: name={} ctrl={} shift={}", key_name, is_ctrl, is_shift));
+    crate::logging::log(&format!("KEY: name={} ctrl={} shift={} alt={}", key_name, is_ctrl, is_shift, is_alt));
     let picker_visible = state.borrow().picker.is_visible();
 
     // Ctrl+n/Ctrl+p navigate picker list when visible
@@ -120,6 +121,17 @@ pub fn handle_key(
         return true;
     }
 
+    // Alt combos
+    if is_alt {
+        match key_name {
+            "f" => {
+                crate::app::show_font_info(&state.borrow());
+                return true;
+            }
+            _ => return false,
+        }
+    }
+
     // Ctrl combos — page turn navigation (e-reader style)
     if is_ctrl {
         match key_name {
@@ -173,19 +185,25 @@ pub fn handle_key(
         "exclam" => {
             crate::logging::log("FONT: exclam matched, decreasing");
             crate::app::adjust_font_size(&mut state.borrow_mut(), -1);
-            let sz = state.borrow().config.font_size;
-            crate::logging::log(&format!("FONT: size now {}", sz));
+            crate::app::show_font_info(&state.borrow());
             true
         }
         "bar" => {
             crate::logging::log("FONT: bar matched, increasing");
             crate::app::adjust_font_size(&mut state.borrow_mut(), 1);
-            let sz = state.borrow().config.font_size;
-            crate::logging::log(&format!("FONT: size now {}", sz));
+            crate::app::show_font_info(&state.borrow());
             true
         }
         "0" => {
             crate::app::reset_font_size(&mut state.borrow_mut());
+            true
+        }
+        "f" => {
+            crate::app::cycle_font(&mut state.borrow_mut(), true);
+            true
+        }
+        "F" => {
+            crate::app::cycle_font(&mut state.borrow_mut(), false);
             true
         }
         "plus" => {
