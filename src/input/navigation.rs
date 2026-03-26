@@ -18,10 +18,10 @@ pub const SYNC_PREROLL: f64 = 0.3;
 /// Going down: page turn when cursor reaches the last visible line.
 /// Going up: smooth scroll to keep cursor visible.
 pub fn move_cursor(state: &mut AppState, delta: i32) {
-    let line_count = match &state.current_work {
-        Some(w) => w.lines.len(),
-        None => return,
-    };
+    if state.current_work.is_none() {
+        return;
+    }
+    let line_count = state.effective_line_count();
     if line_count == 0 {
         return;
     }
@@ -37,8 +37,8 @@ pub fn move_cursor(state: &mut AppState, delta: i32) {
     state.current_line = new_line;
     update_highlight(state);
 
-    if delta > 0 && !is_line_fully_visible(state, new_line) {
-        // Going down past viewport — page turn with this line at top
+    if delta > 0 && needs_page_turn_down(state, new_line) {
+        // Going down and line is at bottom edge — page turn with this line at top
         set_page(state, new_line);
     } else if delta < 0 {
         scroll_to_cursor(state);
@@ -59,10 +59,10 @@ pub fn jump_to_start(state: &mut AppState) {
 
 /// Jump to the last line.
 pub fn jump_to_end(state: &mut AppState) {
-    let line_count = match &state.current_work {
-        Some(w) => w.lines.len(),
-        None => return,
-    };
+    if state.current_work.is_none() {
+        return;
+    }
+    let line_count = state.effective_line_count();
     if line_count == 0 {
         return;
     }
@@ -75,10 +75,10 @@ pub fn jump_to_end(state: &mut AppState) {
 
 /// Page forward (Ctrl+d/f). Advance by one page with overlap.
 pub fn page_forward(state: &mut AppState) {
-    let line_count = match &state.current_work {
-        Some(w) => w.lines.len(),
-        None => return,
-    };
+    if state.current_work.is_none() {
+        return;
+    }
+    let line_count = state.effective_line_count();
     if line_count == 0 {
         return;
     }
@@ -106,10 +106,7 @@ pub fn page_backward(state: &mut AppState) {
 
     // Move cursor to last line of new page (before overlap)
     let new_bottom = new_top + lpp.saturating_sub(1);
-    let line_count = state
-        .current_work
-        .as_ref()
-        .map_or(0, |w| w.lines.len());
+    let line_count = state.effective_line_count();
     state.current_line = new_bottom.min(line_count.saturating_sub(1));
     update_highlight(state);
     seek_to_current_line(state);
@@ -129,14 +126,22 @@ pub fn jump_to_prev_dialogue(state: &mut AppState) {
             return;
         }
 
-        let mut found = None;
-        for i in (0..state.current_line).rev() {
-            if work.lines[i].is_dialogue {
-                found = Some(i);
-                break;
+        if let Some(ref lm) = state.line_map {
+            lm.dialogue_buffer_lines
+                .iter()
+                .rev()
+                .find(|&&bl| bl < state.current_line)
+                .copied()
+        } else {
+            let mut found = None;
+            for i in (0..state.current_line).rev() {
+                if work.lines[i].is_dialogue {
+                    found = Some(i);
+                    break;
+                }
             }
+            found
         }
-        found
     };
 
     if let Some(line_idx) = target {
@@ -155,22 +160,29 @@ pub fn jump_to_next_dialogue(state: &mut AppState) {
             Some(w) => w,
             None => return,
         };
-        let line_count = work.lines.len();
 
-        let mut found = None;
-        for i in (state.current_line + 1)..line_count {
-            if work.lines[i].is_dialogue {
-                found = Some(i);
-                break;
+        if let Some(ref lm) = state.line_map {
+            lm.dialogue_buffer_lines
+                .iter()
+                .find(|&&bl| bl > state.current_line)
+                .copied()
+        } else {
+            let line_count = work.lines.len();
+            let mut found = None;
+            for i in (state.current_line + 1)..line_count {
+                if work.lines[i].is_dialogue {
+                    found = Some(i);
+                    break;
+                }
             }
+            found
         }
-        found
     };
 
     if let Some(line_idx) = target {
         state.current_line = line_idx;
         update_highlight(state);
-        if !is_line_fully_visible(state, line_idx) {
+        if needs_page_turn_down(state, line_idx) {
             set_page(state, line_idx);
         }
         seek_to_current_line(state);
@@ -228,6 +240,21 @@ fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
     loc.y() >= visible.y() && loc.y() + loc.height() <= visible.y() + visible.height()
 }
 
+/// Check if a line is the last visible line and has no visible blank space
+/// after it (i.e., the next line is not visible or doesn't exist).
+/// Used to trigger page turns when the bottom of the viewport is full.
+fn needs_page_turn_down(state: &AppState, line: usize) -> bool {
+    if !is_line_fully_visible(state, line) {
+        return true;
+    }
+    // Check if the next line's top is visible — if not, we're at the edge
+    let line_count = state.effective_line_count();
+    if line + 1 >= line_count {
+        return false; // at end of document
+    }
+    !is_line_fully_visible(state, line + 1)
+}
+
 /// Scroll just enough to keep the current line visible. No page turn.
 fn scroll_to_cursor(state: &mut AppState) {
     if let Some(iter) = state.buffer.iter_at_line(state.current_line as i32) {
@@ -252,11 +279,13 @@ fn scroll_to_cursor(state: &mut AppState) {
 /// Called on every cursor movement so audio follows the reader.
 fn seek_to_current_line(state: &AppState) {
     if let Some(ref work) = state.current_work {
-        if let Some(ts) = &work.lines[state.current_line].timestamp {
-            let seek_time = (ts.start - SEEK_PREROLL).max(0.0);
-            let _ = state
-                .cmd_tx
-                .try_send(crate::mpv::MpvCommand::Seek(seek_time));
+        if let Some(work_idx) = state.work_line_for_buffer(state.current_line) {
+            if let Some(ts) = &work.lines[work_idx].timestamp {
+                let seek_time = (ts.start - SEEK_PREROLL).max(0.0);
+                let _ = state
+                    .cmd_tx
+                    .try_send(crate::mpv::MpvCommand::Seek(seek_time));
+            }
         }
     }
 }
@@ -299,7 +328,11 @@ fn scroll_value_for_line(state: &AppState, line: usize) -> f64 {
 /// Update highlight and ensure cursor is visible on the current page.
 pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
     update_highlight(state);
-    ensure_cursor_on_page(state);
+    if needs_page_turn_down(state, state.current_line) {
+        set_page(state, state.current_line);
+    } else {
+        ensure_cursor_on_page(state);
+    }
 }
 
 /// Update highlight and center the current line on screen.
@@ -350,7 +383,7 @@ fn crossfade_to(state: &AppState, target_value: f64) {
 fn lines_per_page(state: &AppState) -> usize {
     let adj = state.scrolled_window.vadjustment();
     let page_size = adj.page_size();
-    let line_count = state.current_work.as_ref().map_or(0, |w| w.lines.len());
+    let line_count = state.effective_line_count();
     let start = state.page_top_line;
 
     if line_count == 0 || start >= line_count {
