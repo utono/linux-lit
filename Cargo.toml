@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 gtk4 = { version = "0.9", features = ["v4_12"] }
+sourceview5 = { version = "0.9", features = ["gtk_v4_12"] }
 pango = "0.20"
 glib = "0.20"
 tokio = { version = "1", features = ["full"] }
