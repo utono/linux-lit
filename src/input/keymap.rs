@@ -277,47 +277,87 @@ pub fn handle_key(
         }
         "x" => {
             // Next chunk forward: find chunk at cursor, or advance to next
-            let mut s = state.borrow_mut();
-            let lines = s.current_work.as_ref().map(|w| &w.lines[..]);
-            if let Some(lines) = lines {
-                // If no chunk index yet, find chunk at current line
-                if s.ab_repeat.chunk_index.is_none() {
-                    s.ab_repeat.chunk_index = s.ab_repeat.find_chunk_at_line(s.current_line, lines);
-                } else {
-                    // Advance to next chunk
-                    s.ab_repeat.next_chunk();
-                }
-                // Activate loop for current chunk
-                if let Some(idx) = s.ab_repeat.chunk_index {
-                    if let Some(chunk) = s.ab_repeat.chunks.get(idx) {
-                        if let (Some(a), Some(b)) = (chunk.a_time, chunk.b_time) {
-                            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SetAbLoop { a, b });
-                            s.ab_repeat.a_time = Some(a);
-                            s.ab_repeat.b_time = Some(b);
-                            s.ab_repeat.loop_active = true;
-                            crate::logging::log(&format!("CHUNK: looping chunk {} ({:.1}s - {:.1}s)", idx, a, b));
+            {
+                let mut s = state.borrow_mut();
+                let lines = s.current_work.as_ref().map(|w| &w.lines[..]);
+                if let Some(lines) = lines {
+                    // If no chunk index yet, find chunk at current line
+                    if s.ab_repeat.chunk_index.is_none() {
+                        s.ab_repeat.chunk_index = s.ab_repeat.find_chunk_at_line(s.current_line, lines);
+                    } else {
+                        // Advance to next chunk
+                        s.ab_repeat.next_chunk();
+                    }
+                    // Activate loop for current chunk
+                    if let Some(idx) = s.ab_repeat.chunk_index {
+                        if let Some(chunk) = s.ab_repeat.chunks.get(idx).cloned() {
+                            if let (Some(a), Some(b)) = (chunk.a_time, chunk.b_time) {
+                                let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SetAbLoop { a, b });
+                                s.ab_repeat.a_time = Some(a);
+                                s.ab_repeat.b_time = Some(b);
+                                s.ab_repeat.loop_active = true;
+                                // Resolve chunk lines to buffer line indices
+                                if let Some(ref work) = s.current_work {
+                                    let mut a_buf = None;
+                                    let mut b_buf = None;
+                                    for (i, line) in work.lines.iter().enumerate() {
+                                        if line.div1 == chunk.div1 && Some(line.div2) == chunk.div2 {
+                                            if line.line_in_div == chunk.a_line {
+                                                a_buf = Some(i);
+                                            }
+                                            if line.line_in_div == chunk.b_line {
+                                                b_buf = Some(i);
+                                            }
+                                        }
+                                    }
+                                    s.ab_repeat.a_line = a_buf;
+                                    s.ab_repeat.b_line = b_buf;
+                                }
+                                crate::logging::log(&format!("CHUNK: looping chunk {} ({:.1}s - {:.1}s)", idx, a, b));
+                            }
                         }
                     }
                 }
-            }
+            } // drop borrow_mut before immutable borrow
+            crate::app::apply_ab_dim(&state.borrow());
             true
         }
         "y" => {
             // Previous chunk backward
-            let mut s = state.borrow_mut();
-            if s.ab_repeat.prev_chunk().is_some() {
-                if let Some(idx) = s.ab_repeat.chunk_index {
-                    if let Some(chunk) = s.ab_repeat.chunks.get(idx) {
-                        if let (Some(a), Some(b)) = (chunk.a_time, chunk.b_time) {
-                            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SetAbLoop { a, b });
-                            s.ab_repeat.a_time = Some(a);
-                            s.ab_repeat.b_time = Some(b);
-                            s.ab_repeat.loop_active = true;
-                            crate::logging::log(&format!("CHUNK: looping chunk {} ({:.1}s - {:.1}s)", idx, a, b));
+            {
+                let mut s = state.borrow_mut();
+                if s.ab_repeat.prev_chunk().is_some() {
+                    if let Some(idx) = s.ab_repeat.chunk_index {
+                        if let Some(chunk) = s.ab_repeat.chunks.get(idx).cloned() {
+                            if let (Some(a), Some(b)) = (chunk.a_time, chunk.b_time) {
+                                let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SetAbLoop { a, b });
+                                s.ab_repeat.a_time = Some(a);
+                                s.ab_repeat.b_time = Some(b);
+                                s.ab_repeat.loop_active = true;
+                                // Resolve chunk lines to buffer line indices
+                                if let Some(ref work) = s.current_work {
+                                    let mut a_buf = None;
+                                    let mut b_buf = None;
+                                    for (i, line) in work.lines.iter().enumerate() {
+                                        if line.div1 == chunk.div1 && Some(line.div2) == chunk.div2 {
+                                            if line.line_in_div == chunk.a_line {
+                                                a_buf = Some(i);
+                                            }
+                                            if line.line_in_div == chunk.b_line {
+                                                b_buf = Some(i);
+                                            }
+                                        }
+                                    }
+                                    s.ab_repeat.a_line = a_buf;
+                                    s.ab_repeat.b_line = b_buf;
+                                }
+                                crate::logging::log(&format!("CHUNK: looping chunk {} ({:.1}s - {:.1}s)", idx, a, b));
+                            }
                         }
                     }
                 }
-            }
+            } // drop borrow_mut before immutable borrow
+            crate::app::apply_ab_dim(&state.borrow());
             true
         }
         "Escape" => {
@@ -325,6 +365,7 @@ pub fn handle_key(
             if s.ab_repeat.loop_active {
                 let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::ClearAbLoop);
                 s.ab_repeat.clear();
+                crate::app::remove_ab_dim(&s);
                 crate::logging::log("CHUNK: AB loop cleared");
                 true
             } else {

@@ -29,6 +29,7 @@ pub struct AppState {
     pub current_line: usize,
     pub page_top_line: usize,
     pub dim_tag: gtk4::TextTag,
+    pub ab_dim_tag: gtk4::TextTag,
     pub scrolled_window: ScrolledWindow,
     pub window: ApplicationWindow,
     pub config: Config,
@@ -83,6 +84,12 @@ pub fn build_window(
         .foreground(&theme.dim_fg)
         .build();
     buffer.tag_table().add(&dim_tag);
+
+    let ab_dim_tag = gtk4::TextTag::builder()
+        .name("ab-dim")
+        .foreground(&theme.dim_fg)
+        .build();
+    buffer.tag_table().add(&ab_dim_tag);
 
     let search_tag = gtk4::TextTag::builder()
         .name("search-match")
@@ -179,6 +186,7 @@ pub fn build_window(
         current_line: 0,
         page_top_line: 0,
         dim_tag,
+        ab_dim_tag,
         scrolled_window: scrolled,
         window: window.clone(),
         config,
@@ -518,6 +526,45 @@ pub fn show_font_info(state: &AppState) {
         .args(["-t", "1500", "-h", "string:x-canonical-private-synchronous:linux-lit-font",
                &format!("Font [{}]", position), &body])
         .spawn();
+}
+
+/// Apply AB loop dimming: dim everything outside the A-B line range.
+pub fn apply_ab_dim(state: &AppState) {
+    let buffer = &state.buffer;
+    let tag = &state.ab_dim_tag;
+
+    // First remove any existing AB dim
+    let (buf_start, buf_end) = buffer.bounds();
+    buffer.remove_tag(tag, &buf_start, &buf_end);
+
+    let (a_line, b_line) = match (state.ab_repeat.a_line, state.ab_repeat.b_line) {
+        (Some(a), Some(b)) => (a, b),
+        _ => return,
+    };
+
+    if !state.ab_repeat.loop_active {
+        return;
+    }
+
+    // Dim lines before A
+    if a_line > 0 {
+        if let Some(dim_end) = buffer.iter_at_line(a_line as i32) {
+            buffer.apply_tag(tag, &buf_start, &dim_end);
+        }
+    }
+
+    // Dim lines after B
+    if let Some(dim_start_iter) = buffer.iter_at_line((b_line + 1) as i32) {
+        buffer.apply_tag(tag, &dim_start_iter, &buf_end);
+    }
+}
+
+/// Remove AB loop dimming.
+pub fn remove_ab_dim(state: &AppState) {
+    let buffer = &state.buffer;
+    let tag = &state.ab_dim_tag;
+    let (buf_start, buf_end) = buffer.bounds();
+    buffer.remove_tag(tag, &buf_start, &buf_end);
 }
 
 /// Save current position to config (call on quit).
