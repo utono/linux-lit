@@ -1,6 +1,7 @@
 mod app;
 mod db;
 mod mpv;
+mod ui;
 
 use gtk4::prelude::*;
 use mpv::{MpvCommand, MpvEvent};
