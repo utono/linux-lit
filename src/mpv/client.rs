@@ -86,6 +86,11 @@ async fn handle_command(
                 let _ = send_command(w, r#"{"command":["cycle","pause"]}"#).await;
             }
         }
+        MpvCommand::Pause => {
+            if let Some(w) = writer.as_mut() {
+                let _ = send_command(w, r#"{"command":["set_property","pause",true]}"#).await;
+            }
+        }
         MpvCommand::ResumeAndSeek(time) => {
             if let Some(w) = writer.as_mut() {
                 let cmd = format!(r#"{{"command":["set_property","time-pos",{}]}}"#, time);

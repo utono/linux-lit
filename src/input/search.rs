@@ -81,8 +81,13 @@ pub fn execute_search(state_rc: &Rc<RefCell<AppState>>) {
             .position(|m| m.line_index >= state.current_line)
             .unwrap_or(0);
         state.search_match_idx = idx;
+        let m = &state.search_matches[idx];
+        state.current_line = m.line_index;
         apply_current_highlight(&state);
         state.search_bar.update_counter(idx, total);
+        crate::input::navigation::update_highlight_and_ensure_visible(&mut state);
+        // Pause playback when search finds results
+        let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
     } else {
         state.search_bar.update_counter(0, 0);
     }
