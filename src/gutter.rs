@@ -41,7 +41,8 @@ pub fn setup_timestamp_gutter(
 ) -> sourceview5::GutterRendererText {
     let gutter = sourceview5::prelude::ViewExt::gutter(view, gtk4::TextWindowType::Left);
     let renderer = sourceview5::GutterRendererText::new();
-    renderer.set_xpad(2);
+    renderer.set_xpad(24); // left padding matching original gutter
+    renderer.set_yalign(0.5); // center vertically within line
     gutter.insert(&renderer, 0);
 
     renderer.connect_query_data(move |renderer, _lines_obj, line| {
@@ -59,7 +60,7 @@ pub fn setup_timestamp_gutter(
             } else if b_line.get() == Some(idx) {
                 text_renderer.set_text("\u{25D1}"); // ◑
             } else {
-                text_renderer.set_text("\u{2502}"); // │
+                text_renderer.set_text("\u{2022}"); // •
             }
         } else {
             text_renderer.set_text("");

@@ -81,6 +81,8 @@ pub fn build_window(
     crate::logging::log(&format!("Highlight color: {}", theme.cursor_line_bg));
 
     let buffer = sourceview5::Buffer::new(None);
+    // Disable sourceview5's default style scheme so our CSS controls all colors
+    buffer.set_style_scheme(None::<&sourceview5::StyleScheme>);
     let dim_tag = gtk4::TextTag::builder()
         .name("dim")
         .foreground(&theme.dim_fg)

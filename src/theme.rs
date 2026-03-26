@@ -225,7 +225,9 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
         "window {{ background-color: {root}; }} \
          .text-card {{ border-radius: 12px; }} \
          textview {{ background-color: {bg}; color: {fg}; }} \
-         .sign-gutter {{ background-color: {bg}; }} \
+         textview border {{ background-color: {bg}; }} \
+         textview border.left {{ background-color: {bg}; }} \
+         textview border * {{ background-color: {bg}; background: {bg}; }} \
          textview text {{ background-color: {bg}; color: {fg}; \
            font-family: {font}; font-size: {size}pt; }} \
          .library-picker {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
