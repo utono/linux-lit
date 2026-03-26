@@ -70,23 +70,37 @@ pub fn scan_sockets() -> Vec<PathBuf> {
     sockets
 }
 
-/// Find a socket that matches one of the work's media paths.
-/// Only returns a socket whose path was deterministically derived from a media file.
-/// Does NOT fall back to unrelated sockets.
+/// Find a live socket that matches one of the work's media paths.
+/// Probes each socket to verify MPV is actually running behind it.
+/// Removes stale socket files that fail to connect.
 pub fn find_socket_for_work(media_paths: &[String]) -> Option<PathBuf> {
     for media_path in media_paths {
         let socket_path = derive_socket_path(media_path);
         let path = PathBuf::from(&socket_path);
         if path.exists() {
+            if probe_socket(&path) {
+                crate::logging::log(&format!(
+                    "MPV discovery: live socket {} for media {}",
+                    socket_path, media_path
+                ));
+                return Some(path);
+            }
+            // Stale socket — remove it
             crate::logging::log(&format!(
-                "MPV discovery: found socket {} for media {}",
-                socket_path, media_path
+                "MPV discovery: removing stale socket {}",
+                socket_path
             ));
-            return Some(path);
+            let _ = std::fs::remove_file(&path);
         }
     }
     crate::logging::log("MPV discovery: no matching socket found");
     None
+}
+
+/// Probe a socket to check if MPV is alive behind it.
+/// Tries a synchronous connect — if it succeeds, MPV is running.
+fn probe_socket(path: &Path) -> bool {
+    std::os::unix::net::UnixStream::connect(path).is_ok()
 }
 
 /// Launch MPV for a media file. Sets wayland-app-id to "mpv-lit" so dwl
