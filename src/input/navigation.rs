@@ -14,14 +14,16 @@ pub fn move_cursor(state: &mut AppState, delta: i32) {
         return;
     }
 
+    let old_line = state.current_line;
     let new_line = (state.current_line as i32 + delta)
         .max(0)
         .min(line_count as i32 - 1) as usize;
 
-    if new_line != state.current_line {
+    if new_line != old_line {
         state.current_line = new_line;
         update_highlight(state);
-        ensure_cursor_visible(state);
+        let lines_jumped = (new_line as i32 - old_line as i32).unsigned_abs() as usize;
+        ensure_cursor_visible(state, lines_jumped);
     }
 }
 
@@ -94,15 +96,16 @@ pub fn jump_to_prev_dialogue(state: &mut AppState) {
         Some(w) => w,
         None => return,
     };
-    if state.current_line == 0 {
+    let old_line = state.current_line;
+    if old_line == 0 {
         return;
     }
 
-    for i in (0..state.current_line).rev() {
+    for i in (0..old_line).rev() {
         if work.lines[i].is_dialogue {
             state.current_line = i;
             update_highlight(state);
-            ensure_cursor_visible(state);
+            ensure_cursor_visible(state, old_line - i);
             return;
         }
     }
@@ -114,12 +117,13 @@ pub fn jump_to_next_dialogue(state: &mut AppState) {
         Some(w) => w,
         None => return,
     };
+    let old_line = state.current_line;
     let line_count = work.lines.len();
-    for i in (state.current_line + 1)..line_count {
+    for i in (old_line + 1)..line_count {
         if work.lines[i].is_dialogue {
             state.current_line = i;
             update_highlight(state);
-            ensure_cursor_visible(state);
+            ensure_cursor_visible(state, i - old_line);
             return;
         }
     }
@@ -153,13 +157,8 @@ fn update_highlight(state: &AppState) {
 }
 
 /// Ensure the cursor line is visible. If it's already on screen, do nothing.
-///
-/// Two behaviors based on distance:
-/// - **Small move** (cursor just barely off-screen): nudge scroll to reveal it.
-///   This handles j/k single-line movement — feels like natural reading.
-/// - **Large move** (cursor far off-screen): crossfade page turn.
-///   This handles dialogue jumps, Ctrl+d/u — feels like turning a page.
-fn ensure_cursor_visible(state: &AppState) {
+/// If off screen, always do a full crossfade page turn.
+fn ensure_cursor_visible(state: &AppState, _lines_jumped: usize) {
     let Some(iter) = state.buffer.iter_at_line(state.current_line as i32) else {
         return;
     };
@@ -188,22 +187,12 @@ fn ensure_cursor_visible(state: &AppState) {
     // Cursor went off screen — always do a page turn (e-reader style).
     // No nudging — the page is fixed until a turn happens.
     if line_y < page_top {
-        // Went above: position so old page_top appears at bottom of new page.
-        // This gives reading continuity — you can see where you were.
-        // new_page_top = old_page_top - page_size
-        // But ensure the cursor is also visible (it must be above old_page_top).
-        let anchored = (page_top - page_size).max(0.0);
-        // If cursor would be above the anchored view, adjust to show cursor
-        let target = if line_y < anchored {
-            (line_y - full_line_h).max(0.0)
-        } else {
-            anchored
-        };
+        // Went above: put cursor at the BOTTOM of the new page.
+        // new_page_top = cursor_bottom - page_size
+        let target = (line_y + full_line_h - page_size).max(0.0);
         page_turn_to_value(state, target);
     } else {
-        // Went below: position so old page_bottom appears at top of new page.
         let anchored = page_bottom;
-        // If cursor would be below the anchored view, adjust to show cursor
         let target = if line_y + full_line_h > anchored + page_size {
             (line_y - full_line_h * 2.0).max(0.0)
         } else {
