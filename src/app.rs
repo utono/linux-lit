@@ -48,6 +48,7 @@ pub struct AppState {
     pub current_time_pos: f64,
     pub media_id: Option<i64>,
     pub sign_column_visible: Rc<Cell<bool>>,
+    pub gutter_renderer: Option<sourceview5::GutterRendererText>,
 }
 
 pub fn build_window(
@@ -193,6 +194,7 @@ pub fn build_window(
         current_time_pos: 0.0,
         media_id: None,
         sign_column_visible: Rc::new(Cell::new(false)),
+        gutter_renderer: None,
     }));
 
     // Connect picker search entry filter
@@ -352,6 +354,23 @@ pub fn display_work(state: &mut AppState, work: Work) {
     // Build buffer text (with or without sign column)
     rebuild_buffer_text(state);
 
+    // Set up gutter: remove old renderer, place marks, create new renderer
+    if let Some(old_renderer) = state.gutter_renderer.take() {
+        crate::gutter::remove_gutter_renderer(&state.text_view, &old_renderer);
+    }
+    let has_timestamp: Vec<bool> = state
+        .current_work
+        .as_ref()
+        .map(|w| w.lines.iter().map(|l| l.timestamp.is_some()).collect())
+        .unwrap_or_default();
+    crate::gutter::place_timestamp_marks(&state.buffer, &has_timestamp);
+    let renderer = crate::gutter::setup_timestamp_gutter(
+        &state.text_view,
+        state.sign_column_visible.clone(),
+        has_timestamp,
+    );
+    state.gutter_renderer = Some(renderer);
+
     // Apply font tag to new buffer content
     reapply_font(state);
 
@@ -378,7 +397,10 @@ fn rebuild_buffer_text(state: &mut AppState) {
 pub fn toggle_sign_column(state: &mut AppState) {
     let new_val = !state.sign_column_visible.get();
     state.sign_column_visible.set(new_val);
-    // Gutter renderer show/hide will be wired in Task 5
+    // Queue redraw on gutter renderer so query_data re-evaluates visibility
+    if let Some(ref renderer) = state.gutter_renderer {
+        renderer.queue_draw();
+    }
     crate::logging::log(&format!(
         "SIGN: signs {}",
         if new_val { "shown" } else { "hidden" },

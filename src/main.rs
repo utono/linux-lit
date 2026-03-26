@@ -1,6 +1,7 @@
 mod app;
 mod config;
 mod db;
+mod gutter;
 mod input;
 mod logging;
 mod mpv;
