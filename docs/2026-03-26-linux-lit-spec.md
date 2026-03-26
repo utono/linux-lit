@@ -59,8 +59,8 @@ MPV socket → Tokio task (time-pos observer) → glib channel → GTK main loop
 ## Text Rendering & Display
 
 - GtkTextView in read-only mode
-- Proportional serif fonts via Pango: Georgia, Palatino, Garamond, Noto Serif, Liberation Serif (graceful fallback)
-- Centered text column: left/right margins calculated to achieve ~700-750px content width, recalculated on window resize
+- Proportional serif fonts via Pango: Georgia, Noto Serif, Liberation Serif, Palatino, Garamond, DejaVu Serif (graceful fallback through list)
+- Centered text column: left/right margins set to `(window_width - 700) / 2`, recalculated on window resize via `notify::default-width` signal
 - Line spacing 1.6x via `pixels_above_lines` / `pixels_below_lines`
 - No editable text, no cursor blink, no scrollbar, no line numbers
 - Keyboard events intercepted at window level via GtkEventControllerKey
@@ -95,8 +95,8 @@ MPV socket → Tokio task (time-pos observer) → glib channel → GTK main loop
 
 - **Library listing:** `SELECT abbrev, title, author, work_type FROM works ORDER BY title`
 - **Load work:** `SELECT canonical_text, normalized_text, speaker, source_file, source_line FROM line_mapping WHERE work_abbrev = ? ORDER BY div1, div2, line_in_div`
-- **Timestamps:** `SELECT lm.rowid, lt.start_time, lt.end_time, lt.media_id FROM line_mapping lm JOIN line_timestamps lt ON lt.line_mapping_id = lm.rowid WHERE lm.work_abbrev = ?`
-- **Media lookup:** `SELECT mf.path FROM media_files mf JOIN work_media_associations wma ON wma.media_id = mf.id WHERE wma.work_abbrev = ? ORDER BY wma.priority`
+- **Timestamps:** `SELECT lm.id, lt.start_time, lt.end_time, lt.media_id FROM line_mapping lm JOIN line_timestamps lt ON lt.line_mapping_id = lm.id WHERE lm.work_abbrev = ?`
+- **Media lookup:** `SELECT mf.path FROM media_files mf JOIN work_media_associations wma ON wma.media_id = mf.id WHERE wma.work_abbrev = ? ORDER BY wma.priority DESC`
 
 ### In-Memory Model
 
@@ -110,15 +110,15 @@ struct Work {
     work_type: String,
     lines: Vec<Line>,
     timestamps: Vec<Timestamp>,  // sorted by start_time for binary search
-    media_paths: Vec<String>,
+    media_paths: Vec<String>,    // ordered by priority DESC
 }
 
 struct Line {
-    id: i64,                     // line_mapping rowid
+    id: i64,                     // line_mapping.id
     text: String,                // canonical_text
     normalized: String,          // for search matching
     speaker: Option<String>,
-    is_dialogue: bool,           // precomputed from line_types logic
+    is_dialogue: bool,           // precomputed at load time from work_type + line content
     timestamp: Option<TimeRange>,
 }
 
@@ -126,28 +126,36 @@ struct TimeRange {
     start: f64,
     end: f64,
 }
+
+struct Timestamp {
+    line_id: i64,                // line_mapping.id
+    start: f64,
+    end: f64,
+    media_id: i64,
+}
 ```
 
 ### Dialogue Classification
 
-Precomputed on work load, ported from `lit`'s `line_types.lua`:
+Precomputed on work load, ported from `lit`'s `line_types.lua` (`/home/mlj/utono/lit/plugins/lua/lit_keymaps/line_types.lua`):
 
+**Prose detection:** If `work_type` is one of `novel`, `essay_collection`, `prose_book`, or `prose`, all non-blank lines are treated as dialogue. Skip the patterns below entirely for prose works.
+
+**Non-prose skip patterns** (a line is dialogue if it matches none of these):
 - **Blank:** empty or whitespace-only
-- **Speaker:** all-uppercase name pattern (e.g., `HAMLET.`, `FIRST GENTLEMAN`)
-- **Stage direction:** wrapped in brackets `[...]` (non-prose works only)
+- **Speaker (simple):** all-uppercase name, at least 2 chars after stripping trailing period. Regex: `^[A-Z][A-Z\s.\-']+\.?$` (e.g., `HAMLET.`, `FIRST GENTLEMAN`)
+- **Speaker (with stage direction):** uppercase name followed by optional comma and bracketed text. Regex: `^[A-Z][A-Z\s\-']*,?\s*\[.*\]\.?$` (e.g., `LUCIANA, [to Adriana]`)
+- **Stage direction:** wrapped in brackets `^\[.*\]$` (non-prose works only)
 - **Act/scene marker:** starts with `ACT `, `SCENE `, `PROLOGUE`, `EPILOGUE`
 - **Separator:** starts with `=`
-- **Prose works:** all non-blank lines treated as dialogue
-
-A line is dialogue if it matches none of the above skip patterns.
 
 ## MPV Integration
 
 ### Socket Discovery (5-step priority chain)
 
-Ported from `lit`'s `mpv_sockets.lua`:
+Inspired by `lit`'s `mpv_sockets.lua`, adapted for linux-lit (this is a new design, not a literal port of `lit`'s `get_socket()` flow):
 
-1. **Deterministic prediction** — derive socket path from media file path in the database: `/tmp/mpvsocket-<author>-<basename>`. For yt-dlp media: `mpvsocket-ytdlp-<author>-<basename>`. If path > 95 chars: truncate to 87 chars + 7-char SHA256 suffix
+1. **Deterministic prediction** — for each of the work's media paths (ordered by priority DESC), derive the socket path: `/tmp/mpvsocket-<author>-<basename>`. For yt-dlp media: `mpvsocket-ytdlp-<author>-<basename>`. If path > 95 chars: truncate to 87 chars + 7-char SHA256 suffix. Check if socket file exists via stat
 2. **Scan fallback** — list `/tmp/mpvsocket-*`, stat each to confirm socket type
 3. **IPC probe** — query each live socket's `path` property, match against work's media files
 4. **Single-socket fallback** — if exactly one socket exists in `/tmp`, use it
@@ -175,7 +183,7 @@ Poll for socket existence at 50ms intervals, up to 3 seconds, then connect.
 
 Commands are newline-terminated JSON over Unix domain socket:
 - Get property: `{"command":["get_property","path"]}`
-- Seek: `{"command":["seek",<time>]}`
+- Seek: `{"command":["seek",<time>,"absolute"]}`
 - Pause toggle: `{"command":["cycle","pause"]}`
 - Observe: `{"command":["observe_property",<id>,"<name>"]}`
 
@@ -204,7 +212,7 @@ Theme colors applied via GtkCssProvider — dynamically generated CSS string inj
 ### Theme Switcher (`Ctrl+Shift+\`)
 
 - Modal overlay with filtered list of theme names
-- Type-to-filter with fuzzy matching
+- Type-to-filter with case-insensitive subsequence matching (e.g., "grm" matches "gruvbox-material"). Consider the `fuzzy-matcher` crate or implement simple subsequence match
 - `j`/`k` or arrow keys to navigate, Enter to confirm, Escape to revert
 - Live preview: CSS applied immediately as selection changes
 - Persisted to config.json on confirm
@@ -222,7 +230,7 @@ A `GtkEventControllerKey` attached to the window. All key events intercepted bef
 ### Keymap
 
 **Navigation (no modifier):**
-- `j` / `k` — move cursor one line down/up, scroll to keep visible
+- `j` / `k` — move cursor one line down/up, scroll to keep cursor centered (use `scroll_to_iter` with `within_margin: 0.4`)
 - `gg` — jump to first line (two-key sequence with timeout)
 - `G` — jump to last line
 - `Ctrl+d` / `Ctrl+u` — half-page down/up
@@ -261,7 +269,7 @@ Ported from `lit`'s `line_types.lua` and `navigation.lua`:
 
 - Modal overlay (same pattern as theme switcher)
 - Lists all works from the `works` table: title, author, work_type
-- Type-to-filter with fuzzy matching
+- Type-to-filter with case-insensitive subsequence matching
 - `j`/`k` or arrow keys to navigate, Enter to open, Escape to dismiss
 - Opening a work replaces current buffer — loads all lines, timestamps, and media paths
 
@@ -295,7 +303,12 @@ Ported from `lit`'s `line_types.lua` and `navigation.lua`:
 
 - Created with defaults on first launch if missing
 - Updated on theme change, font change, and work close/quit
+- Atomic writes: write to temp file then rename, to prevent corruption on crash
 - Human-editable, suitable for version control via tty-dotfiles/stow
+
+### Window Title
+
+Display: `<title> — linux-lit` (e.g., `Hamlet — linux-lit`). Show just `linux-lit` when no work is loaded.
 
 ## Project File Structure
 

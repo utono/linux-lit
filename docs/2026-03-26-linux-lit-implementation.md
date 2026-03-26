@@ -12,7 +12,7 @@ Before starting implementation:
 
 1. Ensure the following are installed on Arch Linux:
    - `rust` (rustup with stable toolchain)
-   - `gtk4` and `libadwaita` (system packages)
+   - `gtk4` (system package)
    - `mpv`
    - `sqlite`
 
@@ -57,21 +57,24 @@ Before starting implementation:
 **Steps:**
 
 1. Create `src/db/models.rs`:
-   - Define `Work`, `Line`, `TimeRange`, `Timestamp` structs per spec
+   - Define structs per spec: `Work`, `Line`, `TimeRange`, `Timestamp { line_id: i64, start: f64, end: f64, media_id: i64 }`
    - Derive `Debug`, `Clone` as needed
 
 2. Create `src/db/line_types.rs`:
    - Port dialogue classification from `lit`'s `line_types.lua`:
-     - `is_blank(text) -> bool`
-     - `is_speaker(text) -> bool` — regex: `^[A-Z][A-Z\s.\-']+\.?$`
+     - `is_blank(text) -> bool` — empty or whitespace-only
+     - `is_speaker(text) -> bool` — two patterns:
+       1. Simple: `^[A-Z][A-Z\s.\-']+\.?$` (min 2 chars after stripping trailing period)
+       2. With stage direction: `^[A-Z][A-Z\s\-']*,?\s*\[.*\]\.?$`
      - `is_stage_direction(text) -> bool` — regex: `^\[.*\]$` (non-prose only)
      - `is_act_scene_marker(text) -> bool` — starts with ACT/SCENE/PROLOGUE/EPILOGUE
      - `is_separator(text) -> bool` — starts with `=`
-     - `is_dialogue(text, is_prose: bool) -> bool` — true if none of the above
-   - Reference: `/home/mlj/utono/lit/plugins/lua/lit_core/line_types.lua`
+     - `is_prose_work(work_type) -> bool` — true for: `novel`, `essay_collection`, `prose_book`, `prose`
+     - `classify_line(text, is_prose: bool) -> bool` — for prose works, return true if non-blank; for non-prose, return true if none of the above patterns match
+   - Reference: `/home/mlj/utono/lit/plugins/lua/lit_keymaps/line_types.lua`
 
 3. Create `src/db/queries.rs`:
-   - Open `rusqlite::Connection` to `~/utono/litdb/data/lit.db` with `SQLITE_OPEN_READ_ONLY`
+   - Open `rusqlite::Connection` to `~/utono/litdb/data/lit.db` with `OpenFlags::SQLITE_OPEN_READ_ONLY`
    - `list_works() -> Vec<(String, String, String, String)>` — abbrev, title, author, work_type
    - `load_work(abbrev: &str) -> Work` — runs load work + timestamps + media queries, precomputes `is_dialogue` for each line
    - All queries wrapped in functions that can be called from `spawn_blocking`
@@ -213,7 +216,7 @@ Before starting implementation:
 
 1. Extend `src/config.rs`:
    - `font_family` and `font_size` fields (already in schema)
-   - Default font list: `["Georgia", "Noto Serif", "Liberation Serif", "Palatino", "Garamond", "DejaVu Serif"]`
+   - Default font list (canonical, matches spec): `["Georgia", "Noto Serif", "Liberation Serif", "Palatino", "Garamond", "DejaVu Serif"]`
 
 2. Extend `src/ui/text_view.rs`:
    - `apply_font(family: &str, size: u32)` — update Pango font description on GtkTextView
