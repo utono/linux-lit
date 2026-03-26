@@ -1,11 +1,12 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk4::prelude::*;
 use gtk4::{
-    ApplicationWindow, CssProvider, DrawingArea, EventControllerKey, ScrolledWindow, TextBuffer,
-    TextView, WrapMode,
+    ApplicationWindow, CssProvider, EventControllerKey, ScrolledWindow, WrapMode,
 };
+use sourceview5::prelude::*;
+use sourceview5::View;
 
 use crate::config::Config;
 use crate::db::models::{Work, WorkSummary};
@@ -21,8 +22,8 @@ pub struct SearchMatch {
 
 #[allow(dead_code)]
 pub struct AppState {
-    pub text_view: TextView,
-    pub buffer: TextBuffer,
+    pub text_view: View,
+    pub buffer: sourceview5::Buffer,
     pub picker: LibraryPicker,
     pub current_work: Option<Work>,
     pub current_line: usize,
@@ -46,8 +47,7 @@ pub struct AppState {
     pub search_current_tag: gtk4::TextTag,
     pub current_time_pos: f64,
     pub media_id: Option<i64>,
-    pub sign_column_visible: bool,
-    pub sign_gutter: DrawingArea,
+    pub sign_column_visible: Rc<Cell<bool>>,
 }
 
 pub fn build_window(
@@ -74,7 +74,7 @@ pub fn build_window(
     crate::logging::log(&format!("Theme: {} ({})", theme.display_name, theme.name));
     crate::logging::log(&format!("Highlight color: {}", theme.cursor_line_bg));
 
-    let buffer = TextBuffer::new(None);
+    let buffer = sourceview5::Buffer::new(None);
     let dim_tag = gtk4::TextTag::builder()
         .name("dim")
         .foreground(&theme.dim_fg)
@@ -101,18 +101,15 @@ pub fn build_window(
         .build();
     buffer.tag_table().add(&search_current_tag);
 
-    let sign_gutter = DrawingArea::builder()
-        .width_request(48)
-        .build();
-    sign_gutter.add_css_class("sign-gutter");
-    sign_gutter.set_visible(false);
-
-    let text_view = TextView::builder()
+    let text_view = View::builder()
         .buffer(&buffer)
         .editable(false)
         .cursor_visible(false)
         .wrap_mode(WrapMode::Word)
         .build();
+
+    text_view.set_show_line_numbers(false);
+    text_view.set_highlight_current_line(false);
 
     // Apply theme CSS
     let css_provider = CssProvider::new();
@@ -137,9 +134,6 @@ pub fn build_window(
     text_view.set_right_margin(48);
     text_view.set_top_margin(24);
 
-    // Place sign gutter inside the text view's left border window
-    text_view.set_gutter(gtk4::TextWindowType::Left, Some(&sign_gutter));
-
     // Scrolled window — centered card with wallpaper visible on all sides
     let scrolled = ScrolledWindow::builder()
         .child(&text_view)
@@ -156,14 +150,6 @@ pub fn build_window(
         .css_classes(vec!["text-card"])
         .overflow(gtk4::Overflow::Hidden)
         .build();
-
-    // Redraw sign gutter on scroll
-    {
-        let gutter = sign_gutter.clone();
-        scrolled.vadjustment().connect_value_changed(move |_| {
-            gutter.queue_draw();
-        });
-    }
 
     // Library picker overlay
     let mut picker = LibraryPicker::new();
@@ -206,8 +192,7 @@ pub fn build_window(
         search_current_tag,
         current_time_pos: 0.0,
         media_id: None,
-        sign_column_visible: false,
-        sign_gutter: sign_gutter.clone(),
+        sign_column_visible: Rc::new(Cell::new(false)),
     }));
 
     // Connect picker search entry filter
@@ -387,66 +372,16 @@ fn rebuild_buffer_text(state: &mut AppState) {
         .collect::<Vec<_>>()
         .join("\n");
     state.buffer.set_text(&text);
-    setup_sign_gutter_draw(state);
-}
-
-/// Set up the sign gutter draw function. The DrawingArea paints ◆ at the Y position
-/// of each timestamped line, reading positions from the main text_view.
-fn setup_sign_gutter_draw(state: &AppState) {
-    let text_view = state.text_view.clone();
-    let buffer = state.buffer.clone();
-    let dim_fg = state.theme.dim_fg.clone();
-    let font_size = state.config.font_size as f64;
-    let work_lines: Vec<bool> = match &state.current_work {
-        Some(w) => w.lines.iter().map(|l| l.timestamp.is_some()).collect(),
-        None => return,
-    };
-
-    state.sign_gutter.set_draw_func(move |_area, cr, _width, _height| {
-        let (r, g, b) = parse_hex_color(&dim_fg);
-        cr.set_source_rgb(r, g, b);
-
-        for (i, has_ts) in work_lines.iter().enumerate() {
-            if !*has_ts {
-                continue;
-            }
-            if let Some(iter) = buffer.iter_at_line(i as i32) {
-                let rect = text_view.iter_location(&iter);
-                let (_, y) = text_view.buffer_to_window_coords(
-                    gtk4::TextWindowType::Left,
-                    rect.x(),
-                    rect.y(),
-                );
-                // Draw thin vertical bar spanning only the text (excluding paragraph spacing)
-                let above = 14.0; // pixels_above_lines
-                let below = 14.0; // pixels_below_lines
-                let top = y as f64 + above;
-                let bottom = y as f64 + rect.height() as f64 - below;
-                let bx = 40.0; // near right edge of gutter
-                cr.set_line_width(1.5);
-                cr.move_to(bx, top);
-                cr.line_to(bx, bottom);
-                let _ = cr.stroke();
-            }
-        }
-    });
-}
-
-fn parse_hex_color(hex: &str) -> (f64, f64, f64) {
-    let hex = hex.trim_start_matches('#');
-    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(128) as f64 / 255.0;
-    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(128) as f64 / 255.0;
-    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(128) as f64 / 255.0;
-    (r, g, b)
 }
 
 /// Toggle sign column visibility.
 pub fn toggle_sign_column(state: &mut AppState) {
-    state.sign_column_visible = !state.sign_column_visible;
-    state.sign_gutter.set_visible(state.sign_column_visible);
+    let new_val = !state.sign_column_visible.get();
+    state.sign_column_visible.set(new_val);
+    // Gutter renderer show/hide will be wired in Task 5
     crate::logging::log(&format!(
-        "SIGN: column {}",
-        if state.sign_column_visible { "shown" } else { "hidden" },
+        "SIGN: signs {}",
+        if new_val { "shown" } else { "hidden" },
     ));
 }
 
