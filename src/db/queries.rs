@@ -39,7 +39,7 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
 
     // 2. Load all lines
     let mut line_stmt = conn.prepare(
-        "SELECT id, canonical_text, normalized_text, speaker \
+        "SELECT id, canonical_text, normalized_text, speaker, div1, div2, line_in_div \
          FROM line_mapping WHERE work_abbrev = ?1 \
          ORDER BY div1, div2, line_in_div",
     )?;
@@ -48,8 +48,13 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
             let text: String = row.get(1)?;
             let normalized: String = row.get(2)?;
             let speaker: Option<String> = row.get(3)?;
+            let div1: i64 = row.get(4)?;
+            let div2: i64 = row.get(5)?;
+            let line_in_div: i64 = row.get(6)?;
+            let citation = format!("{}.{}.{}.{}", abbrev, div1, div2, line_in_div);
             Ok(Line {
                 id: row.get(0)?,
+                citation,
                 is_dialogue: line_types::is_dialogue(&text, is_prose),
                 text,
                 normalized,
@@ -115,6 +120,55 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
         timestamps,
         media_paths,
     })
+}
+
+pub fn open_db_rw() -> Result<Connection, rusqlite::Error> {
+    let conn = Connection::open(db_path())?;
+    conn.execute_batch("PRAGMA journal_mode=WAL;")?;
+    Ok(conn)
+}
+
+pub fn upsert_start_time(
+    conn: &Connection,
+    line_mapping_id: i64,
+    media_id: i64,
+    citation: &str,
+    start_time: f64,
+) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "INSERT INTO line_timestamps (citation, line_mapping_id, media_id, start_time, source) \
+         VALUES (?1, ?2, ?3, ?4, 'manual') \
+         ON CONFLICT(line_mapping_id, media_id) \
+         DO UPDATE SET start_time = ?4, updated_at = CURRENT_TIMESTAMP",
+        rusqlite::params![citation, line_mapping_id, media_id, start_time],
+    )?;
+    Ok(())
+}
+
+pub fn update_end_time(
+    conn: &Connection,
+    line_mapping_id: i64,
+    media_id: i64,
+    end_time: f64,
+) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "UPDATE line_timestamps SET end_time = ?3, updated_at = CURRENT_TIMESTAMP \
+         WHERE line_mapping_id = ?1 AND media_id = ?2",
+        rusqlite::params![line_mapping_id, media_id, end_time],
+    )?;
+    Ok(())
+}
+
+pub fn delete_timestamp(
+    conn: &Connection,
+    line_mapping_id: i64,
+    media_id: i64,
+) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "DELETE FROM line_timestamps WHERE line_mapping_id = ?1 AND media_id = ?2",
+        rusqlite::params![line_mapping_id, media_id],
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]

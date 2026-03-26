@@ -14,6 +14,7 @@ pub struct Work {
 #[allow(dead_code)]
 pub struct Line {
     pub id: i64,
+    pub citation: String,
     pub text: String,
     pub normalized: String,
     pub speaker: Option<String>,
