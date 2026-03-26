@@ -240,56 +240,12 @@ fn update_highlight(state: &AppState) {
 // Crossfade animation
 // ---------------------------------------------------------------------------
 
-/// Page turn: snap scroll position immediately, then fade in.
-/// The scroll snap is synchronous so rapid key presses never leave
-/// the view at a stale position. Only the fade-in is animated.
+/// Page turn: snap scroll position instantly.
 fn crossfade_to(state: &AppState, target_value: f64) {
     let adj = state.scrolled_window.vadjustment();
     let page_size = adj.page_size();
     let clamped = target_value.max(0.0).min(adj.upper() - page_size);
-
-    if (clamped - adj.value()).abs() < 1.0 {
-        return;
-    }
-
-    // Cancel any in-flight fade-in from a previous page turn
-    let gen = &state.animation_gen;
-    gen.set(gen.get() + 1);
-    let current_gen = gen.get();
-    let gen_rc = gen.clone();
-
-    let widget = state.scrolled_window.clone();
-
-    // Snap scroll position and set opacity to 0 immediately
     adj.set_value(clamped);
-    state.scrolled_window.set_opacity(0.0);
-
-    // Fade in over ~130ms
-    let fade_in_frames: u64 = 8;
-    let frame_ms: u64 = 16;
-
-    for frame in 1..=fade_in_frames {
-        let progress = frame as f64 / fade_in_frames as f64;
-        let opacity = progress * progress;
-        let delay = std::time::Duration::from_millis(frame * frame_ms);
-        let w = widget.clone();
-        let g = gen_rc.clone();
-        glib::timeout_add_local_once(delay, move || {
-            if g.get() == current_gen {
-                w.set_opacity(opacity);
-            }
-        });
-    }
-
-    // Ensure opacity fully restored
-    let final_delay = std::time::Duration::from_millis((fade_in_frames + 1) * frame_ms);
-    let w = widget.clone();
-    let g = gen_rc.clone();
-    glib::timeout_add_local_once(final_delay, move || {
-        if g.get() == current_gen {
-            w.set_opacity(1.0);
-        }
-    });
 }
 
 // ---------------------------------------------------------------------------
