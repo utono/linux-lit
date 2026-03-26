@@ -171,8 +171,12 @@ fn ensure_cursor_on_page(state: &mut AppState) {
     let lpp = lines_per_page(state);
     let page_bottom = page_top + lpp;
 
+    crate::logging::log(&format!(
+        "ENSURE: cursor={} page=[{}..{}) lpp={}",
+        state.current_line, page_top, page_bottom, lpp
+    ));
+
     if state.current_line >= page_top && state.current_line < page_bottom {
-        // Already on page — nothing to do
         return;
     }
 
@@ -233,6 +237,17 @@ fn update_highlight(state: &AppState) {
             line_end.forward_to_line_end();
         }
         buffer.apply_tag(tag, &iter, &line_end);
+        crate::logging::log(&format!(
+            "HIGHLIGHT: line={} iter_offset={} end_offset={} tag_applied=true",
+            state.current_line,
+            iter.offset(),
+            line_end.offset()
+        ));
+    } else {
+        crate::logging::log(&format!(
+            "HIGHLIGHT: line={} iter_at_line=NONE tag_applied=false",
+            state.current_line
+        ));
     }
 }
 
@@ -252,29 +267,37 @@ fn crossfade_to(state: &AppState, target_value: f64) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Estimate lines per page from viewport height and average line height.
+/// Count how many buffer lines fit in the viewport starting from `page_top_line`.
+/// Measures actual wrapped paragraph heights by checking y-distance between consecutive lines.
 fn lines_per_page(state: &AppState) -> usize {
     let adj = state.scrolled_window.vadjustment();
     let page_size = adj.page_size();
-
-    // Sample a few lines to get average height
-    let mut total_h = 0.0;
-    let mut count = 0;
+    let line_count = state.current_work.as_ref().map_or(0, |w| w.lines.len());
     let start = state.page_top_line;
-    for i in start..(start + 5).min(state.current_work.as_ref().map_or(0, |w| w.lines.len())) {
-        if let Some(iter) = state.buffer.iter_at_line(i as i32) {
-            let rect = state.text_view.iter_location(&iter);
-            if rect.height() > 0 {
-                total_h += rect.height() as f64;
-                count += 1;
-            }
-        }
+
+    if line_count == 0 || start >= line_count {
+        return 15; // fallback
     }
 
-    if count > 0 && total_h > 0.0 {
-        let avg_h = total_h / count as f64;
-        (page_size / avg_h).floor() as usize
-    } else {
-        15 // fallback
+    // Get y position of the page top line
+    let Some(start_iter) = state.buffer.iter_at_line(start as i32) else {
+        return 15;
+    };
+    let start_y = state.text_view.iter_location(&start_iter).y() as f64;
+    let limit_y = start_y + page_size;
+
+    // Walk forward, counting lines whose y position is within the viewport
+    let mut count = 0;
+    for i in start..line_count {
+        let Some(iter) = state.buffer.iter_at_line(i as i32) else {
+            break;
+        };
+        let y = state.text_view.iter_location(&iter).y() as f64;
+        if y >= limit_y {
+            break;
+        }
+        count += 1;
     }
+
+    count.max(1)
 }
