@@ -180,10 +180,8 @@ fn ensure_cursor_visible(state: &AppState, _lines_jumped: usize) {
         };
 
     // Already visible — do nothing (page stays still).
-    // A line is "visible" if its top is on-screen and at least half of it is showing.
-    let visible_top = line_y >= page_top;
-    let visible_bottom = line_y + full_line_h * 0.5 <= page_bottom;
-    if visible_top && visible_bottom {
+    // A line is "visible" if its top is within the page boundaries.
+    if line_y >= page_top && line_y < page_bottom {
         return;
     }
 
