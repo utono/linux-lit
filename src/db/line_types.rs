@@ -133,7 +133,10 @@ mod tests {
     #[test]
     fn test_dialogue_play() {
         assert!(is_dialogue("Who's there?", false));
-        assert!(is_dialogue("Nay, answer me. Stand and unfold yourself.", false));
+        assert!(is_dialogue(
+            "Nay, answer me. Stand and unfold yourself.",
+            false
+        ));
         assert!(!is_dialogue("HAMLET.", false));
         assert!(!is_dialogue("[Exit]", false));
         assert!(!is_dialogue("ACT 1", false));
