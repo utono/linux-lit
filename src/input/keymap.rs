@@ -57,8 +57,8 @@ pub fn handle_key(
                     glib::spawn_future_local(async move {
                         let work = handle
                             .spawn_blocking(move || {
-                                let conn = crate::db::queries::open_db()
-                                    .expect("Failed to open lit.db");
+                                let conn =
+                                    crate::db::queries::open_db().expect("Failed to open lit.db");
                                 crate::db::queries::load_work(&conn, &abbrev)
                             })
                             .await;
@@ -111,23 +111,15 @@ pub fn handle_key(
         }
     }
 
-    // Ctrl combos
+    // Ctrl combos — page turn navigation (e-reader style)
     if is_ctrl {
         match key_name {
-            "d" => {
-                navigation::scroll_half_page(&mut state.borrow_mut(), 1);
+            "d" | "f" => {
+                navigation::page_forward(&mut state.borrow_mut());
                 return true;
             }
-            "u" => {
-                navigation::scroll_half_page(&mut state.borrow_mut(), -1);
-                return true;
-            }
-            "f" => {
-                navigation::scroll_full_page(&mut state.borrow_mut(), 1);
-                return true;
-            }
-            "b" => {
-                navigation::scroll_full_page(&mut state.borrow_mut(), -1);
+            "u" | "b" => {
+                navigation::page_backward(&mut state.borrow_mut());
                 return true;
             }
             _ => return false,
