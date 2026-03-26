@@ -172,10 +172,7 @@ fn ensure_cursor_on_page(state: &mut AppState) {
     let page_bottom = page_top + lpp;
 
     if state.current_line >= page_top && state.current_line < page_bottom {
-        // Already on page — cancel any stale animation, ensure opacity
-        let gen = &state.animation_gen;
-        gen.set(gen.get() + 1);
-        state.scrolled_window.set_opacity(1.0);
+        // Already on page — nothing to do
         return;
     }
 
@@ -243,7 +240,9 @@ fn update_highlight(state: &AppState) {
 // Crossfade animation
 // ---------------------------------------------------------------------------
 
-/// Crossfade to a new scroll position: fade out, snap, fade in.
+/// Page turn: snap scroll position immediately, then fade in.
+/// The scroll snap is synchronous so rapid key presses never leave
+/// the view at a stale position. Only the fade-in is animated.
 fn crossfade_to(state: &AppState, target_value: f64) {
     let adj = state.scrolled_window.vadjustment();
     let page_size = adj.page_size();
@@ -253,23 +252,25 @@ fn crossfade_to(state: &AppState, target_value: f64) {
         return;
     }
 
+    // Cancel any in-flight fade-in from a previous page turn
     let gen = &state.animation_gen;
     gen.set(gen.get() + 1);
     let current_gen = gen.get();
     let gen_rc = gen.clone();
 
     let widget = state.scrolled_window.clone();
-    let adj_clone = adj.clone();
 
+    // Snap scroll position and set opacity to 0 immediately
+    adj.set_value(clamped);
+    state.scrolled_window.set_opacity(0.0);
+
+    // Fade in over ~130ms
+    let fade_in_frames: u64 = 8;
     let frame_ms: u64 = 16;
-    let fade_out_frames: u64 = 5;
-    let fade_in_frames: u64 = 5;
-    let fade_in_start = fade_out_frames + 2;
 
-    // Fade out
-    for frame in 1..=fade_out_frames {
-        let progress = frame as f64 / fade_out_frames as f64;
-        let opacity = 1.0 - progress * progress;
+    for frame in 1..=fade_in_frames {
+        let progress = frame as f64 / fade_in_frames as f64;
+        let opacity = progress * progress;
         let delay = std::time::Duration::from_millis(frame * frame_ms);
         let w = widget.clone();
         let g = gen_rc.clone();
@@ -280,34 +281,8 @@ fn crossfade_to(state: &AppState, target_value: f64) {
         });
     }
 
-    // Snap
-    let snap_delay = std::time::Duration::from_millis((fade_out_frames + 1) * frame_ms);
-    let w = widget.clone();
-    let g = gen_rc.clone();
-    glib::timeout_add_local_once(snap_delay, move || {
-        if g.get() == current_gen {
-            adj_clone.set_value(clamped);
-            w.set_opacity(0.0);
-        }
-    });
-
-    // Fade in
-    for frame in 1..=fade_in_frames {
-        let progress = frame as f64 / fade_in_frames as f64;
-        let opacity = progress * progress;
-        let delay = std::time::Duration::from_millis((fade_in_start + frame) * frame_ms);
-        let w = widget.clone();
-        let g = gen_rc.clone();
-        glib::timeout_add_local_once(delay, move || {
-            if g.get() == current_gen {
-                w.set_opacity(opacity);
-            }
-        });
-    }
-
-    // Restore
-    let final_delay =
-        std::time::Duration::from_millis((fade_in_start + fade_in_frames + 1) * frame_ms);
+    // Ensure opacity fully restored
+    let final_delay = std::time::Duration::from_millis((fade_in_frames + 1) * frame_ms);
     let w = widget.clone();
     let g = gen_rc.clone();
     glib::timeout_add_local_once(final_delay, move || {
