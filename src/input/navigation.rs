@@ -33,26 +33,31 @@ pub fn move_cursor(state: &mut AppState, delta: i32) {
         return;
     }
 
-    state.current_line = new_line;
-    update_highlight(state);
-    seek_to_current_line(state);
-
-    // Check if cursor is still on the current page
+    // Page turn before highlighting if cursor is at the last line of the page
     let page_top = state.page_top_line;
-    let page_bottom = page_top + lines_per_page(state);
+    let lpp = lines_per_page(state);
+    let page_bottom = page_top + lpp;
+    let page_last = page_top + lpp.saturating_sub(1);
 
     if new_line < page_top {
-        let lpp = lines_per_page(state);
+        // Moving up past page top — page turn with cursor near bottom
         let new_top = new_line.saturating_sub(lpp.saturating_sub(1));
         set_page(state, new_top);
     } else if new_line >= page_bottom {
-        let new_top = new_line.saturating_sub(PAGE_OVERLAP);
-        set_page(state, new_top);
-    } else if !is_line_fully_visible(state, new_line) {
-        // Highlight padding may push line below viewport — page turn to show it
-        let new_top = new_line.saturating_sub(PAGE_OVERLAP);
+        // Past page — new page with this line at top
+        set_page(state, new_line);
+    } else if delta > 0 && new_line >= page_last {
+        // Reached last line going down — page turn so this line is at top
+        set_page(state, new_line);
+    } else if delta < 0 && new_line <= page_top {
+        // Reached first line going up — page turn so this line is near bottom
+        let new_top = new_line.saturating_sub(lpp.saturating_sub(1));
         set_page(state, new_top);
     }
+
+    state.current_line = new_line;
+    update_highlight(state);
+    seek_to_current_line(state);
 }
 
 /// Jump to the first line.
@@ -137,9 +142,15 @@ pub fn jump_to_prev_dialogue(state: &mut AppState) {
             return;
         }
 
-        // At top of page — page backward, keep cursor
+        // At top of page — page backward, cursor to first line of new page
         if state.current_line == state.page_top_line {
-            page_backward(state);
+            let lpp = lines_per_page(state);
+            let retreat = lpp.saturating_sub(PAGE_OVERLAP).max(1);
+            let new_top = state.page_top_line.saturating_sub(retreat);
+            state.current_line = new_top;
+            update_highlight(state);
+            seek_to_current_line(state);
+            set_page(state, new_top);
             return;
         }
 
@@ -225,8 +236,10 @@ fn ensure_cursor_on_page(state: &mut AppState) {
         state.current_line, page_top, page_bottom, lpp
     ));
 
-    if state.current_line >= page_top && state.current_line < page_bottom {
-        return;
+    let page_last = page_top + lpp.saturating_sub(1);
+
+    if state.current_line >= page_top && state.current_line < page_last {
+        return; // within page and not at the last line
     }
 
     if state.current_line < page_top {
@@ -234,9 +247,8 @@ fn ensure_cursor_on_page(state: &mut AppState) {
         let new_top = state.current_line.saturating_sub(lpp.saturating_sub(1));
         set_page(state, new_top);
     } else {
-        // Went below — new page with cursor near top (with overlap)
-        let new_top = state.current_line.saturating_sub(PAGE_OVERLAP);
-        set_page(state, new_top);
+        // At or past last line — new page with this line at top
+        set_page(state, state.current_line);
     }
 }
 
@@ -272,13 +284,15 @@ fn set_page_instant(state: &mut AppState, new_top: usize) {
 }
 
 /// Get the vadjustment value that places the given line at the top of the viewport.
+/// Uses the previous line's bottom to avoid its tail peeking above the target line.
 fn scroll_value_for_line(state: &AppState, line: usize) -> f64 {
+    let adj = state.scrolled_window.vadjustment();
+    let max = adj.upper() - adj.page_size();
+
     let Some(iter) = state.buffer.iter_at_line(line as i32) else {
         return 0.0;
     };
     let rect = state.text_view.iter_location(&iter);
-    let adj = state.scrolled_window.vadjustment();
-    let max = adj.upper() - adj.page_size();
     (rect.y() as f64).max(0.0).min(max)
 }
 
@@ -292,30 +306,22 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
     ensure_cursor_on_page(state);
 }
 
-/// Remove highlight from old line, apply to new current line.
+/// Dim all lines except the current one. The current line keeps full foreground.
 fn update_highlight(state: &AppState) {
     let buffer = &state.buffer;
-    let tag = &state.highlight_tag;
-    let (start, end) = buffer.bounds();
-    buffer.remove_tag(tag, &start, &end);
+    let tag = &state.dim_tag;
+    let (buf_start, buf_end) = buffer.bounds();
 
-    if let Some(iter) = buffer.iter_at_line(state.current_line as i32) {
-        let mut line_end = iter;
+    // Apply dim to entire buffer
+    buffer.apply_tag(tag, &buf_start, &buf_end);
+
+    // Remove dim from current line to restore full brightness
+    if let Some(line_start) = buffer.iter_at_line(state.current_line as i32) {
+        let mut line_end = line_start;
         if !line_end.ends_line() {
             line_end.forward_to_line_end();
         }
-        buffer.apply_tag(tag, &iter, &line_end);
-        crate::logging::log(&format!(
-            "HIGHLIGHT: line={} iter_offset={} end_offset={} tag_applied=true",
-            state.current_line,
-            iter.offset(),
-            line_end.offset()
-        ));
-    } else {
-        crate::logging::log(&format!(
-            "HIGHLIGHT: line={} iter_at_line=NONE tag_applied=false",
-            state.current_line
-        ));
+        buffer.remove_tag(tag, &line_start, &line_end);
     }
 }
 
@@ -334,31 +340,6 @@ fn crossfade_to(state: &AppState, target_value: f64) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/// Check if a line fits entirely within the viewport by looking at where
-/// the next line starts. This accounts for word-wrap height and all padding.
-fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
-    let adj = state.scrolled_window.vadjustment();
-    let viewport_bottom = adj.value() + adj.page_size();
-
-    let line_count = state.current_work.as_ref().map_or(0, |w| w.lines.len());
-    if line + 1 < line_count {
-        // Use the top of the next line as the bottom boundary of this line
-        let Some(next_iter) = state.buffer.iter_at_line((line + 1) as i32) else {
-            return true;
-        };
-        let next_y = state.text_view.iter_location(&next_iter).y() as f64;
-        next_y <= viewport_bottom
-    } else {
-        // Last line — use its own rect bottom
-        let Some(iter) = state.buffer.iter_at_line(line as i32) else {
-            return true;
-        };
-        let rect = state.text_view.iter_location(&iter);
-        let line_bottom = rect.y() as f64 + rect.height() as f64;
-        line_bottom <= viewport_bottom
-    }
-}
 
 /// Count how many buffer lines fit in the viewport starting from `page_top_line`.
 /// Uses next-line y positions to measure actual occupied height including all spacing.

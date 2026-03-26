@@ -12,6 +12,7 @@ pub struct Theme {
     pub text_bg: String,          // text area background
     pub text_fg: String,          // text foreground
     pub cursor_line_bg: String,   // current line highlight
+    pub dim_fg: String,           // dimmed text foreground (non-current lines)
     pub cursor_bg: String,        // cursor indicator background
     pub cursor_fg: String,        // cursor indicator foreground
 }
@@ -131,6 +132,9 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
         "rgba(255, 255, 255, 0.08)".to_string()
     };
 
+    // Dim foreground: 40% fg blended toward bg (matching lit's playback sync)
+    let dim_fg = blend_colors(&text_fg, &text_bg, 0.40);
+
     let cursor_bg = highlights
         .get("Cursor")
         .and_then(|c| str_field(c, "guibg"))
@@ -149,6 +153,7 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
         text_bg,
         text_fg,
         cursor_line_bg,
+        dim_fg,
         cursor_bg,
         cursor_fg,
     }
@@ -163,6 +168,7 @@ fn default_theme() -> Theme {
         text_bg: "#282828".to_string(),
         text_fg: "#d4be98".to_string(),
         cursor_line_bg: "rgba(255, 255, 255, 0.08)".to_string(),
+        dim_fg: blend_colors("#d4be98", "#282828", 0.40),
         cursor_bg: "#d4be98".to_string(),
         cursor_fg: "#282828".to_string(),
     }
@@ -189,6 +195,27 @@ fn darken_color(hex: &str, factor: f64) -> String {
         (r as f64 * factor) as u8,
         (g as f64 * factor) as u8,
         (b as f64 * factor) as u8,
+    )
+}
+
+/// Blend two hex colors: result = fg * alpha + bg * (1 - alpha).
+fn blend_colors(fg_hex: &str, bg_hex: &str, alpha: f64) -> String {
+    let fg = fg_hex.trim_start_matches('#');
+    let bg = bg_hex.trim_start_matches('#');
+    if fg.len() < 6 || bg.len() < 6 {
+        return fg_hex.to_string();
+    }
+    let fr = u8::from_str_radix(&fg[0..2], 16).unwrap_or(0) as f64;
+    let fg_g = u8::from_str_radix(&fg[2..4], 16).unwrap_or(0) as f64;
+    let fb = u8::from_str_radix(&fg[4..6], 16).unwrap_or(0) as f64;
+    let br = u8::from_str_radix(&bg[0..2], 16).unwrap_or(0) as f64;
+    let bg_g = u8::from_str_radix(&bg[2..4], 16).unwrap_or(0) as f64;
+    let bb = u8::from_str_radix(&bg[4..6], 16).unwrap_or(0) as f64;
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        (fr * alpha + br * (1.0 - alpha)) as u8,
+        (fg_g * alpha + bg_g * (1.0 - alpha)) as u8,
+        (fb * alpha + bb * (1.0 - alpha)) as u8,
     )
 }
 

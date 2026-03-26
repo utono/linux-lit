@@ -19,7 +19,7 @@ pub struct AppState {
     pub current_work: Option<Work>,
     pub current_line: usize,
     pub page_top_line: usize,
-    pub highlight_tag: gtk4::TextTag,
+    pub dim_tag: gtk4::TextTag,
     pub scrolled_window: ScrolledWindow,
     pub window: ApplicationWindow,
     pub config: Config,
@@ -58,13 +58,11 @@ pub fn build_window(
     crate::logging::log(&format!("Highlight color: {}", theme.cursor_line_bg));
 
     let buffer = TextBuffer::new(None);
-    let highlight_tag = gtk4::TextTag::builder()
-        .name("current-line")
-        .paragraph_background(&theme.cursor_line_bg)
-        .pixels_above_lines(6)
-        .pixels_below_lines(6)
+    let dim_tag = gtk4::TextTag::builder()
+        .name("dim")
+        .foreground(&theme.dim_fg)
         .build();
-    buffer.tag_table().add(&highlight_tag);
+    buffer.tag_table().add(&dim_tag);
 
     let text_view = TextView::builder()
         .buffer(&buffer)
@@ -129,7 +127,7 @@ pub fn build_window(
         current_work: None,
         current_line: 0,
         page_top_line: 0,
-        highlight_tag,
+        dim_tag,
         scrolled_window: scrolled,
         window: window.clone(),
         config,
@@ -299,16 +297,8 @@ pub fn display_work(state: &mut AppState, work: Work) {
     // Apply font tag to new buffer content
     reapply_font(state);
 
-    // Apply initial highlight to first line
-    if let Some(iter) = state.buffer.iter_at_line(0) {
-        let mut line_end = iter;
-        if !line_end.ends_line() {
-            line_end.forward_to_line_end();
-        }
-        state
-            .buffer
-            .apply_tag(&state.highlight_tag, &iter, &line_end);
-    }
+    // Dim all lines except the current one
+    crate::input::navigation::update_highlight_and_ensure_visible(state);
 }
 
 /// Reapply font size using a TextTag spanning the entire buffer.
