@@ -60,6 +60,8 @@ pub fn build_window(
     let highlight_tag = gtk4::TextTag::builder()
         .name("current-line")
         .paragraph_background(&theme.cursor_line_bg)
+        .pixels_above_lines(6)
+        .pixels_below_lines(6)
         .build();
     buffer.tag_table().add(&highlight_tag);
 
