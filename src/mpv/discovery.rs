@@ -89,17 +89,19 @@ pub fn find_socket_for_work(media_paths: &[String]) -> Option<PathBuf> {
     None
 }
 
+/// Launch MPV for a media file. Sets wayland-app-id to "mpv-lit" so dwl
+/// places the window on tag 10 per the rule in dwl config.h.
 pub fn launch_mpv(media_path: &str) -> String {
     let socket_path = derive_socket_path(media_path);
     match std::process::Command::new("mpv")
         .arg(format!("--input-ipc-server={}", socket_path))
         .arg("--pause")
-        .arg("--no-video")
         .arg("--no-terminal")
+        .arg("--wayland-app-id=mpv-lit")
         .arg(media_path)
         .spawn()
     {
-        Ok(_) => crate::logging::log(&format!("MPV: launched for {}", media_path)),
+        Ok(_) => crate::logging::log(&format!("MPV: launched for {} (app-id=mpv-lit)", media_path)),
         Err(e) => crate::logging::log(&format!("MPV: launch failed: {}", e)),
     }
     socket_path
