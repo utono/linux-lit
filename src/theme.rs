@@ -126,7 +126,7 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
 
     // Use semi-transparent overlay to preserve background warmth
     let cursor_line_bg = if is_light {
-        "rgba(0, 0, 0, 0.10)".to_string()
+        "rgba(0, 80, 220, 0.10)".to_string()
     } else {
         "rgba(255, 255, 255, 0.08)".to_string()
     };
