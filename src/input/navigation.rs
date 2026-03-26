@@ -148,8 +148,9 @@ fn update_highlight(state: &AppState) {
 /// Ensure the cursor line is visible. If it's already on screen, do nothing.
 /// If it's off screen, do an e-reader page turn.
 ///
-/// E-reader rule: the line that was at the edge of the old page should appear
-/// at the opposite edge of the new page, providing reading continuity.
+/// The cursor line is placed at the opposite edge from the direction of travel:
+/// - Moved up past top → cursor appears near the bottom of the new page
+/// - Moved down past bottom → cursor appears near the top of the new page
 fn ensure_cursor_visible(state: &AppState) {
     let Some(iter) = state.buffer.iter_at_line(state.current_line as i32) else {
         return;
@@ -170,16 +171,14 @@ fn ensure_cursor_visible(state: &AppState) {
     }
 
     if line_y < page_top {
-        // Went above — page turn backward.
-        // New page: old page_top becomes the bottom of the new view.
-        // So new page_top = old page_top - page_size + overlap (one line).
-        let target = (page_top - page_size + line_h).max(0.0);
+        // Cursor went above visible area.
+        // Place cursor near the bottom of the new page (with small margin).
+        let target = (line_y + line_h - page_size + line_h).max(0.0);
         page_turn_to_value(state, target);
     } else {
-        // Went below — page turn forward.
-        // New page: old page_bottom becomes the top of the new view.
-        // So new page_top = old page_bottom - overlap (one line).
-        let target = (page_bottom - line_h).min(adj.upper() - page_size);
+        // Cursor went below visible area.
+        // Place cursor near the top of the new page (with small margin).
+        let target = (line_y - line_h).max(0.0);
         page_turn_to_value(state, target);
     }
 }
