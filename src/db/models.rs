@@ -44,6 +44,20 @@ pub struct Timestamp {
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
+pub struct Chunk {
+    pub id: i64,
+    pub a_line: i64,    // line_in_div of first line
+    pub b_line: i64,    // line_in_div of last line (inclusive)
+    pub a_time: Option<f64>,
+    pub b_time: Option<f64>,
+    pub a_mid: bool,
+    pub b_mid: bool,
+    pub div1: i64,
+    pub div2: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct WorkSummary {
     pub abbrev: String,
     pub title: String,
