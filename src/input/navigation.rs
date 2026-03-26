@@ -171,8 +171,9 @@ fn ensure_cursor_visible(state: &AppState) {
 
     // Cursor went off screen — do a page turn
     if line_y < page_top + margin {
-        // Went above — page turn backward: place cursor near top
-        page_turn_to_value(state, (line_y - margin).max(0.0));
+        // Went above — page turn backward: place cursor near bottom of new page
+        let target = (line_y - page_size + line_h + margin).max(0.0);
+        page_turn_to_value(state, target);
     } else {
         // Went below — page turn forward: place cursor near top of new page
         page_turn_to_value(state, (line_y - margin).max(0.0));
