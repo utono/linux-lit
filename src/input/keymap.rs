@@ -256,6 +256,21 @@ pub fn handle_key(
                 false
             }
         }
+        "u" | "Right" => {
+            crate::input::timestamps::set_start_time(&mut state.borrow_mut())
+        }
+        "i" => {
+            crate::input::timestamps::set_end_time(&mut state.borrow_mut())
+        }
+        "BackSpace" => {
+            crate::input::timestamps::delete_timestamp(&mut state.borrow_mut())
+        }
+        "p" => {
+            crate::input::timestamps::nudge_start_backward(&mut state.borrow_mut())
+        }
+        "P" => {
+            crate::input::timestamps::nudge_start_forward(&mut state.borrow_mut())
+        }
         _ => false,
     }
 }
