@@ -50,6 +50,7 @@ fn extract_author(media_path: &str, home: &str) -> String {
     "music".to_string()
 }
 
+#[allow(dead_code)]
 pub fn scan_sockets() -> Vec<PathBuf> {
     let mut sockets = Vec::new();
     if let Ok(entries) = std::fs::read_dir("/tmp") {
@@ -69,18 +70,22 @@ pub fn scan_sockets() -> Vec<PathBuf> {
     sockets
 }
 
+/// Find a socket that matches one of the work's media paths.
+/// Only returns a socket whose path was deterministically derived from a media file.
+/// Does NOT fall back to unrelated sockets.
 pub fn find_socket_for_work(media_paths: &[String]) -> Option<PathBuf> {
     for media_path in media_paths {
         let socket_path = derive_socket_path(media_path);
         let path = PathBuf::from(&socket_path);
         if path.exists() {
+            crate::logging::log(&format!(
+                "MPV discovery: found socket {} for media {}",
+                socket_path, media_path
+            ));
             return Some(path);
         }
     }
-    let all_sockets = scan_sockets();
-    if all_sockets.len() == 1 {
-        return Some(all_sockets.into_iter().next().unwrap());
-    }
+    crate::logging::log("MPV discovery: no matching socket found");
     None
 }
 
