@@ -52,6 +52,8 @@ pub struct AppState {
     pub gutter_renderer: Option<sourceview5::GutterRendererText>,
     pub chunk_renderer: Option<sourceview5::GutterRendererText>,
     pub ab_repeat: crate::ab_repeat::AbRepeatState,
+    pub ab_a_line: Rc<Cell<Option<usize>>>,
+    pub ab_b_line: Rc<Cell<Option<usize>>>,
 }
 
 pub fn build_window(
@@ -207,6 +209,8 @@ pub fn build_window(
         gutter_renderer: None,
         chunk_renderer: None,
         ab_repeat: crate::ab_repeat::AbRepeatState::default(),
+        ab_a_line: Rc::new(Cell::new(None)),
+        ab_b_line: Rc::new(Cell::new(None)),
     }));
 
     // Connect picker search entry filter
@@ -380,6 +384,8 @@ pub fn display_work(state: &mut AppState, work: Work) {
         &state.text_view,
         state.sign_column_visible.clone(),
         has_timestamp,
+        state.ab_a_line.clone(),
+        state.ab_b_line.clone(),
     );
     state.gutter_renderer = Some(renderer);
 

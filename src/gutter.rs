@@ -36,6 +36,8 @@ pub fn setup_timestamp_gutter(
     view: &View,
     visible: Rc<Cell<bool>>,
     has_timestamp: Vec<bool>,
+    a_line: Rc<Cell<Option<usize>>>,
+    b_line: Rc<Cell<Option<usize>>>,
 ) -> sourceview5::GutterRendererText {
     let gutter = sourceview5::prelude::ViewExt::gutter(view, gtk4::TextWindowType::Left);
     let renderer = sourceview5::GutterRendererText::new();
@@ -52,7 +54,13 @@ pub fn setup_timestamp_gutter(
         }
         let idx = line as usize;
         if idx < has_timestamp.len() && has_timestamp[idx] {
-            text_renderer.set_text("\u{2502}"); // │
+            if a_line.get() == Some(idx) {
+                text_renderer.set_text("\u{25D0}"); // ◐
+            } else if b_line.get() == Some(idx) {
+                text_renderer.set_text("\u{25D1}"); // ◑
+            } else {
+                text_renderer.set_text("\u{2502}"); // │
+            }
         } else {
             text_renderer.set_text("");
         }

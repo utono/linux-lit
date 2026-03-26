@@ -312,6 +312,8 @@ pub fn handle_key(
                                     }
                                     s.ab_repeat.a_line = a_buf;
                                     s.ab_repeat.b_line = b_buf;
+                                    s.ab_a_line.set(a_buf);
+                                    s.ab_b_line.set(b_buf);
                                 }
                                 crate::logging::log(&format!("CHUNK: looping chunk {} ({:.1}s - {:.1}s)", idx, a, b));
                             }
@@ -319,6 +321,12 @@ pub fn handle_key(
                     }
                 }
             } // drop borrow_mut before immutable borrow
+            {
+                let s = state.borrow();
+                if let Some(ref renderer) = s.gutter_renderer {
+                    renderer.queue_draw();
+                }
+            }
             crate::app::apply_ab_dim(&state.borrow());
             true
         }
@@ -350,6 +358,8 @@ pub fn handle_key(
                                     }
                                     s.ab_repeat.a_line = a_buf;
                                     s.ab_repeat.b_line = b_buf;
+                                    s.ab_a_line.set(a_buf);
+                                    s.ab_b_line.set(b_buf);
                                 }
                                 crate::logging::log(&format!("CHUNK: looping chunk {} ({:.1}s - {:.1}s)", idx, a, b));
                             }
@@ -357,6 +367,12 @@ pub fn handle_key(
                     }
                 }
             } // drop borrow_mut before immutable borrow
+            {
+                let s = state.borrow();
+                if let Some(ref renderer) = s.gutter_renderer {
+                    renderer.queue_draw();
+                }
+            }
             crate::app::apply_ab_dim(&state.borrow());
             true
         }
@@ -365,6 +381,11 @@ pub fn handle_key(
             if s.ab_repeat.loop_active {
                 let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::ClearAbLoop);
                 s.ab_repeat.clear();
+                s.ab_a_line.set(None);
+                s.ab_b_line.set(None);
+                if let Some(ref renderer) = s.gutter_renderer {
+                    renderer.queue_draw();
+                }
                 crate::app::remove_ab_dim(&s);
                 crate::logging::log("CHUNK: AB loop cleared");
                 true
