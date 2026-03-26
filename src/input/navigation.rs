@@ -48,6 +48,10 @@ pub fn move_cursor(state: &mut AppState, delta: i32) {
     } else if new_line >= page_bottom {
         let new_top = new_line.saturating_sub(PAGE_OVERLAP);
         set_page(state, new_top);
+    } else if !is_line_fully_visible(state, new_line) {
+        // Highlight padding may push line below viewport — page turn to show it
+        let new_top = new_line.saturating_sub(PAGE_OVERLAP);
+        set_page(state, new_top);
     }
 }
 
@@ -331,8 +335,33 @@ fn crossfade_to(state: &AppState, target_value: f64) {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Check if a line fits entirely within the viewport by looking at where
+/// the next line starts. This accounts for word-wrap height and all padding.
+fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
+    let adj = state.scrolled_window.vadjustment();
+    let viewport_bottom = adj.value() + adj.page_size();
+
+    let line_count = state.current_work.as_ref().map_or(0, |w| w.lines.len());
+    if line + 1 < line_count {
+        // Use the top of the next line as the bottom boundary of this line
+        let Some(next_iter) = state.buffer.iter_at_line((line + 1) as i32) else {
+            return true;
+        };
+        let next_y = state.text_view.iter_location(&next_iter).y() as f64;
+        next_y <= viewport_bottom
+    } else {
+        // Last line — use its own rect bottom
+        let Some(iter) = state.buffer.iter_at_line(line as i32) else {
+            return true;
+        };
+        let rect = state.text_view.iter_location(&iter);
+        let line_bottom = rect.y() as f64 + rect.height() as f64;
+        line_bottom <= viewport_bottom
+    }
+}
+
 /// Count how many buffer lines fit in the viewport starting from `page_top_line`.
-/// Measures actual wrapped paragraph heights by checking y-distance between consecutive lines.
+/// Uses next-line y positions to measure actual occupied height including all spacing.
 fn lines_per_page(state: &AppState) -> usize {
     let adj = state.scrolled_window.vadjustment();
     let page_size = adj.page_size();
@@ -343,21 +372,30 @@ fn lines_per_page(state: &AppState) -> usize {
         return 15; // fallback
     }
 
-    // Get y position of the page top line
     let Some(start_iter) = state.buffer.iter_at_line(start as i32) else {
         return 15;
     };
     let start_y = state.text_view.iter_location(&start_iter).y() as f64;
     let limit_y = start_y + page_size;
 
-    // Walk forward, counting lines that fit entirely within the viewport
     let mut count = 0;
     for i in start..line_count {
-        let Some(iter) = state.buffer.iter_at_line(i as i32) else {
-            break;
+        // Determine the bottom of line i by looking at where line i+1 starts,
+        // or using iter_location height for the last line in the buffer.
+        let line_bottom = if i + 1 < line_count {
+            if let Some(next_iter) = state.buffer.iter_at_line((i + 1) as i32) {
+                state.text_view.iter_location(&next_iter).y() as f64
+            } else {
+                break;
+            }
+        } else {
+            let Some(iter) = state.buffer.iter_at_line(i as i32) else {
+                break;
+            };
+            let rect = state.text_view.iter_location(&iter);
+            rect.y() as f64 + rect.height() as f64
         };
-        let rect = state.text_view.iter_location(&iter);
-        let line_bottom = rect.y() as f64 + rect.height() as f64;
+
         if line_bottom > limit_y {
             break;
         }
