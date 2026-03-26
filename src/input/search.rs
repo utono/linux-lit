@@ -8,7 +8,11 @@ use crate::app::{AppState, SearchMatch};
 /// Run search against loaded work, update highlights and counter.
 /// Called on every keystroke in the search entry.
 pub fn execute_search(state_rc: &Rc<RefCell<AppState>>) {
-    let mut state = state_rc.borrow_mut();
+    // try_borrow_mut: show() calls set_text("") which fires connect_changed
+    // while state is already borrowed from the "slash" key handler.
+    let Ok(mut state) = state_rc.try_borrow_mut() else {
+        return;
+    };
     let query = state.search_bar.query();
 
     clear_highlights(&state);
