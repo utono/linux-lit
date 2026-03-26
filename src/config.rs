@@ -43,10 +43,13 @@ pub fn load() -> Config {
     if !path.exists() {
         return Config::default();
     }
-    match fs::read_to_string(&path) {
+    let mut config = match fs::read_to_string(&path) {
         Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
         Err(_) => Config::default(),
-    }
+    };
+    // Always start at the default font size regardless of saved value
+    config.font_size = default_font_size();
+    config
 }
 
 pub fn save(config: &Config) {

@@ -129,7 +129,7 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
         .and_then(|cl| str_field(cl, "guibg"))
         .unwrap_or_else(|| {
             if is_light {
-                "rgba(0, 0, 0, 0.06)".to_string()
+                "rgba(0, 0, 0, 0.12)".to_string()
             } else {
                 "rgba(255, 255, 255, 0.08)".to_string()
             }

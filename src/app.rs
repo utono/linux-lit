@@ -58,7 +58,7 @@ pub fn build_window(
     let buffer = TextBuffer::new(None);
     let highlight_tag = gtk4::TextTag::builder()
         .name("current-line")
-        .background(&theme.cursor_line_bg)
+        .paragraph_background(&theme.cursor_line_bg)
         .build();
     buffer.tag_table().add(&highlight_tag);
 
@@ -290,6 +290,9 @@ pub fn display_work(state: &mut AppState, work: Work) {
     state.current_line = 0;
     state.page_top_line = 0;
     state.current_work = Some(work);
+
+    // Apply font tag to new buffer content
+    reapply_font(state);
 
     // Apply initial highlight to first line
     if let Some(iter) = state.buffer.iter_at_line(0) {

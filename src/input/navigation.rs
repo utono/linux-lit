@@ -350,14 +350,15 @@ fn lines_per_page(state: &AppState) -> usize {
     let start_y = state.text_view.iter_location(&start_iter).y() as f64;
     let limit_y = start_y + page_size;
 
-    // Walk forward, counting lines whose y position is within the viewport
+    // Walk forward, counting lines that fit entirely within the viewport
     let mut count = 0;
     for i in start..line_count {
         let Some(iter) = state.buffer.iter_at_line(i as i32) else {
             break;
         };
-        let y = state.text_view.iter_location(&iter).y() as f64;
-        if y >= limit_y {
+        let rect = state.text_view.iter_location(&iter);
+        let line_bottom = rect.y() as f64 + rect.height() as f64;
+        if line_bottom > limit_y {
             break;
         }
         count += 1;
