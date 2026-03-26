@@ -391,6 +391,7 @@ pub fn display_work(state: &mut AppState, work: Work) {
     state.current_work = Some(work);
 
     // Build buffer text (with or without sign column)
+    state.line_map = None;
     rebuild_buffer_text(state);
 
     // Set up gutter: remove old renderer, place marks, create new renderer
@@ -448,11 +449,39 @@ pub fn display_work(state: &mut AppState, work: Work) {
 }
 
 /// Rebuild the buffer text from current_work.
+/// If the work has a text_file and it exists, load from file and build a line map.
+/// Otherwise, join work.lines as before.
 fn rebuild_buffer_text(state: &mut AppState) {
     let work = match &state.current_work {
         Some(w) => w,
         None => return,
     };
+
+    if let Some(ref path) = work.text_file {
+        match std::fs::read_to_string(path) {
+            Ok(contents) => {
+                let file_lines: Vec<String> = contents.lines().map(String::from).collect();
+                let line_map = crate::text_file_map::build_line_map(&file_lines, &work.lines);
+                state.buffer.set_text(&contents);
+                state.line_map = Some(line_map);
+                crate::logging::log(&format!(
+                    "TEXT_FILE: loaded {} lines from {}",
+                    file_lines.len(),
+                    path
+                ));
+                return;
+            }
+            Err(e) => {
+                crate::logging::log(&format!(
+                    "TEXT_FILE: WARNING — failed to read {}: {}",
+                    path, e
+                ));
+            }
+        }
+    }
+
+    // Default: join work.lines
+    state.line_map = None;
     let text: String = work
         .lines
         .iter()
