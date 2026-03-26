@@ -108,9 +108,7 @@ pub fn handle_key(
     if search_visible {
         match key_name {
             "Escape" => {
-                let mut s = state.borrow_mut();
-                s.search_bar.hide();
-                crate::input::search::clear_search(&mut s);
+                state.borrow().search_bar.hide();
                 return true;
             }
             "Return" => {
@@ -254,6 +252,22 @@ pub fn handle_key(
             crate::input::search::clear_search(&mut s);
             s.search_bar.show();
             true
+        }
+        "n" => {
+            if !state.borrow().search_matches.is_empty() {
+                crate::input::search::next_match(&mut state.borrow_mut());
+                true
+            } else {
+                false
+            }
+        }
+        "N" => {
+            if !state.borrow().search_matches.is_empty() {
+                crate::input::search::prev_match(&mut state.borrow_mut());
+                true
+            } else {
+                false
+            }
         }
         _ => false,
     }
