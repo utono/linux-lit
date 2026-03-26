@@ -197,38 +197,64 @@ fn scroll_to_line_instant(state: &AppState, line: usize) {
     adj.set_value(target_value);
 }
 
-/// Animate a smooth page turn to a target scroll value.
-/// Uses ease-in-out for a clean, non-distracting slide.
+/// Animate a page turn as a crossfade: fade out, snap scroll, fade in.
+/// Feels like turning a page on a Kindle — quiet and non-distracting.
 fn page_turn_to_value(state: &AppState, target_value: f64) {
     let adj = state.scrolled_window.vadjustment();
-    let start_value = adj.value();
     let page_size = adj.page_size();
     let clamped_target = target_value.max(0.0).min(adj.upper() - page_size);
-    let distance = clamped_target - start_value;
 
-    if distance.abs() < 1.0 {
+    if (clamped_target - adj.value()).abs() < 1.0 {
         return;
     }
 
-    // 200ms animation, ~60fps
-    let total_frames: u64 = 12;
+    let widget = state.scrolled_window.clone();
+    let adj_clone = adj.clone();
+
+    // Phase 1: Fade out (0 → 80ms)
+    let fade_out_frames: u64 = 5;
     let frame_ms: u64 = 16;
 
-    for frame in 1..=total_frames {
-        let progress = frame as f64 / total_frames as f64;
-        // Ease-in-out cubic: smooth acceleration and deceleration
-        let eased = if progress < 0.5 {
-            4.0 * progress * progress * progress
-        } else {
-            1.0 - (-2.0 * progress + 2.0_f64).powi(3) / 2.0
-        };
-        let value = start_value + distance * eased;
+    for frame in 1..=fade_out_frames {
+        let progress = frame as f64 / fade_out_frames as f64;
+        // Ease-out: fast start, slow end
+        let opacity = 1.0 - progress * progress;
         let delay = std::time::Duration::from_millis(frame * frame_ms);
-        let adj_for_frame = adj.clone();
+        let w = widget.clone();
         glib::timeout_add_local_once(delay, move || {
-            adj_for_frame.set_value(value);
+            w.set_opacity(opacity);
         });
     }
+
+    // Phase 2: Snap scroll position at the midpoint (80ms)
+    let snap_delay = std::time::Duration::from_millis((fade_out_frames + 1) * frame_ms);
+    let w = widget.clone();
+    glib::timeout_add_local_once(snap_delay, move || {
+        adj_clone.set_value(clamped_target);
+        w.set_opacity(0.0);
+    });
+
+    // Phase 3: Fade in (96ms → 176ms)
+    let fade_in_frames: u64 = 5;
+    let fade_in_start = fade_out_frames + 2;
+
+    for frame in 1..=fade_in_frames {
+        let progress = frame as f64 / fade_in_frames as f64;
+        // Ease-in: slow start, fast end
+        let opacity = progress * progress;
+        let delay = std::time::Duration::from_millis((fade_in_start + frame) * frame_ms);
+        let w = widget.clone();
+        glib::timeout_add_local_once(delay, move || {
+            w.set_opacity(opacity);
+        });
+    }
+
+    // Ensure opacity is fully restored
+    let final_delay = std::time::Duration::from_millis((fade_in_start + fade_in_frames + 1) * frame_ms);
+    let w = widget.clone();
+    glib::timeout_add_local_once(final_delay, move || {
+        w.set_opacity(1.0);
+    });
 }
 
 /// Animate a page turn in the given direction (+1 forward, -1 backward).
