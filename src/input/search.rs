@@ -81,7 +81,7 @@ pub fn execute_search(state_rc: &Rc<RefCell<AppState>>) {
         state.current_line = m.line_index;
         apply_current_highlight(&state);
         state.search_bar.update_counter(idx, total);
-        crate::input::navigation::update_highlight_and_ensure_visible(&mut state);
+        crate::input::navigation::update_highlight_and_center(&mut state);
         // Pause playback when search finds results
         let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
     } else {
@@ -114,7 +114,7 @@ pub fn next_match(state: &mut AppState) {
     state.current_line = m.line_index;
     apply_current_highlight(state);
     state.search_bar.update_counter(state.search_match_idx, total);
-    crate::input::navigation::update_highlight_and_ensure_visible(state);
+    crate::input::navigation::update_highlight_and_center(state);
     seek_and_resume(state);
 }
 
@@ -130,7 +130,7 @@ pub fn prev_match(state: &mut AppState) {
     state.current_line = m.line_index;
     apply_current_highlight(state);
     state.search_bar.update_counter(state.search_match_idx, total);
-    crate::input::navigation::update_highlight_and_ensure_visible(state);
+    crate::input::navigation::update_highlight_and_center(state);
     seek_and_resume(state);
 }
 

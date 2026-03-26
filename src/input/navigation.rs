@@ -306,6 +306,14 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
     ensure_cursor_on_page(state);
 }
 
+/// Update highlight and center the current line on screen.
+pub fn update_highlight_and_center(state: &mut AppState) {
+    update_highlight(state);
+    let lpp = lines_per_page(state);
+    let new_top = state.current_line.saturating_sub(lpp / 2);
+    set_page_instant(state, new_top);
+}
+
 /// Dim all lines except the current one. The current line keeps full foreground.
 fn update_highlight(state: &AppState) {
     let buffer = &state.buffer;
