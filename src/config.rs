@@ -20,11 +20,11 @@ fn default_font_family() -> String {
 
 pub const FONT_CYCLE: &[&str] = &[
     "Charter",
+    "Crimson Pro",
     "Noto Serif",
     "Source Serif 4",
     "IBM Plex Serif",
     "Cormorant Garamond",
-    "Crimson Pro",
 ];
 
 fn default_font_size() -> u32 {
