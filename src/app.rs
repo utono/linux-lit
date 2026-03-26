@@ -179,22 +179,19 @@ pub fn build_window(
                     {
                         let mut s = state_clone.borrow_mut();
                         display_work(&mut s, work);
-                        if last_line > 0 {
-                            s.current_line = last_line.min(
-                                s.current_work
-                                    .as_ref()
-                                    .map_or(0, |w| w.lines.len().saturating_sub(1)),
-                            );
-                        }
+                        // Set cursor to MRU line (or 0 for first canonical line)
+                        s.current_line = last_line.min(
+                            s.current_work
+                                .as_ref()
+                                .map_or(0, |w| w.lines.len().saturating_sub(1)),
+                        );
                     }
-                    // Defer cursor restore until after GTK lays out the text
-                    if last_line > 0 {
-                        glib::idle_add_local_once(move || {
-                            crate::input::navigation::restore_cursor(
-                                &mut state_clone.borrow_mut(),
-                            );
-                        });
-                    }
+                    // Defer highlight + scroll until after GTK lays out the text
+                    glib::idle_add_local_once(move || {
+                        crate::input::navigation::restore_cursor(
+                            &mut state_clone.borrow_mut(),
+                        );
+                    });
                 }
                 Ok(Err(_)) | Err(_) => {
                     state_clone.borrow().picker.show();
