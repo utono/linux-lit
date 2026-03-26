@@ -278,6 +278,8 @@ pub fn build_window(
 }
 
 pub fn display_work(state: &mut AppState, work: Work) {
+    crate::input::search::clear_search(state);
+    state.search_bar.hide();
     let text: String = work
         .lines
         .iter()
