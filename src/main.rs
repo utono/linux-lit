@@ -74,6 +74,9 @@ fn main() {
                             if playing { "playing" } else { "paused" }
                         ));
                     }
+                    MpvEvent::TimePos(pos) => {
+                        state_for_events.borrow_mut().current_time_pos = pos;
+                    }
                 }
             }
         });

@@ -8,6 +8,7 @@ pub struct Work {
     pub lines: Vec<Line>,
     pub timestamps: Vec<Timestamp>,
     pub media_paths: Vec<String>,
+    pub media_id: Option<i64>,
 }
 
 #[derive(Debug, Clone)]

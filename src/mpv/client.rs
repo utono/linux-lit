@@ -28,6 +28,7 @@ pub async fn run(
                         }
                         Ok(_) => {
                             if let Some(pos) = parse_time_pos(&line_buf) {
+                                let _ = evt_tx.send(MpvEvent::TimePos(pos)).await;
                                 if let Some(idx) = find_line_for_time(pos, &timestamps, &line_id_to_index) {
                                     let _ = evt_tx.send(MpvEvent::CursorSync(idx)).await;
                                 }

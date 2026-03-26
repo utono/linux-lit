@@ -102,14 +102,16 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
 
     // 6. Load media paths
     let mut media_stmt = conn.prepare(
-        "SELECT mf.path FROM media_files mf \
+        "SELECT mf.id, mf.path FROM media_files mf \
          JOIN work_media_associations wma ON wma.media_id = mf.id \
          WHERE wma.work_abbrev = ?1 \
          ORDER BY wma.priority DESC",
     )?;
-    let media_paths: Vec<String> = media_stmt
-        .query_map([abbrev], |row| row.get(0))?
+    let media_rows: Vec<(i64, String)> = media_stmt
+        .query_map([abbrev], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<Result<_, _>>()?;
+    let media_id = media_rows.first().map(|(id, _)| *id);
+    let media_paths: Vec<String> = media_rows.into_iter().map(|(_, path)| path).collect();
 
     Ok(Work {
         abbrev: abbrev.to_string(),
@@ -119,6 +121,7 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
         lines,
         timestamps,
         media_paths,
+        media_id,
     })
 }
 

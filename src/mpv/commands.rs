@@ -25,4 +25,5 @@ pub enum MpvEvent {
     CursorSync(usize),
     ConnectionStatus(bool),
     PlaybackState(bool),
+    TimePos(f64),
 }

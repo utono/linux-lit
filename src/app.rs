@@ -44,6 +44,8 @@ pub struct AppState {
     pub search_match_idx: usize,
     pub search_tag: gtk4::TextTag,
     pub search_current_tag: gtk4::TextTag,
+    pub current_time_pos: f64,
+    pub media_id: Option<i64>,
 }
 
 pub fn build_window(
@@ -182,6 +184,8 @@ pub fn build_window(
         search_match_idx: 0,
         search_tag,
         search_current_tag,
+        current_time_pos: 0.0,
+        media_id: None,
     }));
 
     // Connect picker search entry filter
@@ -269,6 +273,8 @@ pub fn build_window(
 pub fn display_work(state: &mut AppState, work: Work) {
     crate::input::search::clear_search(state);
     state.search_bar.hide();
+    state.current_time_pos = 0.0;
+    state.media_id = work.media_id;
     let text: String = work
         .lines
         .iter()
