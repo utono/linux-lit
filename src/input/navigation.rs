@@ -114,13 +114,21 @@ pub fn page_backward(state: &mut AppState) {
     set_page(state, new_top);
 }
 
-/// Jump to the previous dialogue line (`,` key).
+/// Previous dialogue line (`,` key).
+/// If cursor is at the top line of the page, just page backward (don't move cursor).
+/// Otherwise, jump to the previous dialogue line.
 pub fn jump_to_prev_dialogue(state: &mut AppState) {
     let work = match &state.current_work {
         Some(w) => w,
         None => return,
     };
     if state.current_line == 0 {
+        return;
+    }
+
+    // At top of page — page backward, keep cursor
+    if state.current_line == state.page_top_line {
+        page_backward(state);
         return;
     }
 
@@ -134,13 +142,24 @@ pub fn jump_to_prev_dialogue(state: &mut AppState) {
     }
 }
 
-/// Jump to the next dialogue line (`q` key).
+/// Next dialogue line (`q` key).
+/// If cursor is at the last visible line of the page, just page forward (don't move cursor).
+/// Otherwise, jump to the next dialogue line.
 pub fn jump_to_next_dialogue(state: &mut AppState) {
     let work = match &state.current_work {
         Some(w) => w,
         None => return,
     };
     let line_count = work.lines.len();
+
+    // At bottom of page — page forward, keep cursor
+    let lpp = lines_per_page(state);
+    let page_last = (state.page_top_line + lpp).saturating_sub(1).min(line_count.saturating_sub(1));
+    if state.current_line >= page_last {
+        page_forward(state);
+        return;
+    }
+
     for i in (state.current_line + 1)..line_count {
         if work.lines[i].is_dialogue {
             state.current_line = i;
