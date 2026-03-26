@@ -124,16 +124,13 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
         darken_color(&text_bg, 0.6)
     });
 
-    let cursor_line_bg = highlights
-        .get("CursorLine")
-        .and_then(|cl| str_field(cl, "guibg"))
-        .unwrap_or_else(|| {
-            if is_light {
-                darken_color(&text_bg, 0.90)
-            } else {
-                lighten_color(&text_bg, 1.25)
-            }
-        });
+    // Always derive highlight from text_bg — theme CursorLine values are
+    // designed for thin cursor lines in editors, not full-paragraph highlights.
+    let cursor_line_bg = if is_light {
+        darken_color(&text_bg, 0.80)
+    } else {
+        lighten_color(&text_bg, 1.25)
+    };
 
     let cursor_bg = highlights
         .get("Cursor")

@@ -54,6 +54,7 @@ pub fn build_window(
         crate::theme::load_theme(&theme_name)
     };
     crate::logging::log(&format!("Theme: {} ({})", theme.display_name, theme.name));
+    crate::logging::log(&format!("Highlight color: {}", theme.cursor_line_bg));
 
     let buffer = TextBuffer::new(None);
     let highlight_tag = gtk4::TextTag::builder()
