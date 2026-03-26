@@ -95,7 +95,7 @@ fn update_highlight(state: &AppState) {
     buffer.remove_tag(tag, &start, &end);
 
     if let Some(iter) = buffer.iter_at_line(state.current_line as i32) {
-        let mut line_end = iter.clone();
+        let mut line_end = iter;
         if !line_end.ends_line() {
             line_end.forward_to_line_end();
         }

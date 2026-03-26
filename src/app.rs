@@ -164,10 +164,12 @@ pub fn display_work(state: &mut AppState, work: Work) {
 
     // Apply initial highlight to first line
     if let Some(iter) = state.buffer.iter_at_line(0) {
-        let mut line_end = iter.clone();
+        let mut line_end = iter;
         if !line_end.ends_line() {
             line_end.forward_to_line_end();
         }
-        state.buffer.apply_tag(&state.highlight_tag, &iter, &line_end);
+        state
+            .buffer
+            .apply_tag(&state.highlight_tag, &iter, &line_end);
     }
 }
