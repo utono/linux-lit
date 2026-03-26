@@ -118,12 +118,18 @@ pub fn handle_key(
                 return true;
             }
             "n" => {
-                crate::input::search::next_match(&mut state.borrow_mut());
-                return true;
+                if !state.borrow().search_matches.is_empty() {
+                    crate::input::search::next_match(&mut state.borrow_mut());
+                    return true;
+                }
+                return false; // no matches yet, let Entry receive the key
             }
             "N" => {
-                crate::input::search::prev_match(&mut state.borrow_mut());
-                return true;
+                if !state.borrow().search_matches.is_empty() {
+                    crate::input::search::prev_match(&mut state.borrow_mut());
+                    return true;
+                }
+                return false;
             }
             _ => return false, // let GTK route to the Entry
         }
