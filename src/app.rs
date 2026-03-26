@@ -10,6 +10,7 @@ use gtk4::{
 use crate::db::models::{Work, WorkSummary};
 use crate::ui::library_picker::LibraryPicker;
 
+#[allow(dead_code)]
 pub struct AppState {
     pub text_view: TextView,
     pub buffer: TextBuffer,

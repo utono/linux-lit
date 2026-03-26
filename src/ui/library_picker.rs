@@ -1,6 +1,6 @@
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Entry, Label, ListBox, ListBoxRow, Overlay, Orientation, ScrolledWindow,
+    Box as GtkBox, Entry, Label, ListBox, ListBoxRow, Orientation, Overlay, ScrolledWindow,
 };
 
 use crate::db::models::WorkSummary;
@@ -27,9 +27,7 @@ impl LibraryPicker {
             .build();
         picker_box.add_css_class("library-picker");
 
-        let search_entry = Entry::builder()
-            .placeholder_text("Filter works...")
-            .build();
+        let search_entry = Entry::builder().placeholder_text("Filter works...").build();
 
         let list_box = ListBox::builder()
             .selection_mode(gtk4::SelectionMode::Single)
@@ -82,10 +80,12 @@ impl LibraryPicker {
         &self.search_entry
     }
 
+    #[allow(dead_code)]
     pub fn list_box(&self) -> &ListBox {
         &self.list_box
     }
 
+    #[allow(dead_code)]
     pub fn picker_box(&self) -> &GtkBox {
         &self.picker_box
     }
@@ -103,7 +103,10 @@ impl LibraryPicker {
             }
 
             let label = Label::builder()
-                .label(&format!("{} — {} ({})", work.title, work.author, work.abbrev))
+                .label(format!(
+                    "{} — {} ({})",
+                    work.title, work.author, work.abbrev
+                ))
                 .halign(gtk4::Align::Start)
                 .build();
 
