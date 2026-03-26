@@ -146,11 +146,12 @@ fn update_highlight(state: &AppState) {
 }
 
 /// Ensure the cursor line is visible. If it's already on screen, do nothing.
-/// If it's off screen, do an e-reader page turn.
 ///
-/// The cursor line is placed at the opposite edge from the direction of travel:
-/// - Moved up past top → cursor appears near the bottom of the new page
-/// - Moved down past bottom → cursor appears near the top of the new page
+/// Two behaviors based on distance:
+/// - **Small move** (cursor just barely off-screen): nudge scroll to reveal it.
+///   This handles j/k single-line movement — feels like natural reading.
+/// - **Large move** (cursor far off-screen): crossfade page turn.
+///   This handles dialogue jumps, Ctrl+d/u — feels like turning a page.
 fn ensure_cursor_visible(state: &AppState) {
     let Some(iter) = state.buffer.iter_at_line(state.current_line as i32) else {
         return;
@@ -161,38 +162,50 @@ fn ensure_cursor_visible(state: &AppState) {
     let page_size = adj.page_size();
     let page_bottom = page_top + page_size;
 
-    // Get the full height of the cursor's paragraph (may be multi-line due to word wrap).
-    // We measure from this line's top to the next line's top.
+    // Get the full height of the cursor's paragraph (may span multiple visual lines).
     let iter_rect = state.text_view.iter_location(&iter);
     let line_y = iter_rect.y() as f64;
-    let full_line_h = if let Some(next_iter) = state.buffer.iter_at_line(state.current_line as i32 + 1) {
-        let next_rect = state.text_view.iter_location(&next_iter);
-        (next_rect.y() as f64 - line_y).max(iter_rect.height() as f64)
-    } else {
-        // Last line — use the iter_location height
-        iter_rect.height() as f64
-    };
+    let full_line_h =
+        if let Some(next_iter) = state.buffer.iter_at_line(state.current_line as i32 + 1) {
+            let next_rect = state.text_view.iter_location(&next_iter);
+            (next_rect.y() as f64 - line_y).max(iter_rect.height() as f64)
+        } else {
+            iter_rect.height() as f64
+        };
 
-    // Use a margin to prevent oscillation at page boundaries
-    let margin = full_line_h * 0.5;
-
-    if line_y >= page_top - margin && line_y + full_line_h <= page_bottom + margin {
-        // Already visible (within margin) — do nothing
+    // Already visible — do nothing
+    if line_y >= page_top && line_y + full_line_h <= page_bottom {
         return;
     }
 
-    if line_y < page_top {
-        // Cursor went above visible area.
-        // Place cursor near the bottom: leave ~2 lines of space below cursor
-        let padding = full_line_h * 2.0;
-        let target = (line_y + full_line_h + padding - page_size).max(0.0);
-        page_turn_to_value(state, target);
+    // How far off-screen is the cursor?
+    let overshoot = if line_y < page_top {
+        page_top - line_y
     } else {
-        // Cursor went below visible area.
-        // Place cursor near the top: leave ~2 lines of space above cursor
-        let padding = full_line_h * 2.0;
-        let target = (line_y - padding).max(0.0);
-        page_turn_to_value(state, target);
+        (line_y + full_line_h) - page_bottom
+    };
+
+    if overshoot <= full_line_h * 3.0 {
+        // Small move: just nudge the scroll to reveal the cursor line
+        if line_y < page_top {
+            // Nudge up: show cursor at top with a small margin
+            adj.set_value((line_y - full_line_h * 0.5).max(0.0));
+        } else {
+            // Nudge down: show cursor at bottom with a small margin
+            let target = line_y + full_line_h + full_line_h * 0.5 - page_size;
+            adj.set_value(target.max(0.0).min(adj.upper() - page_size));
+        }
+    } else {
+        // Large move: crossfade page turn
+        if line_y < page_top {
+            // Place cursor near bottom of new page
+            let target = (line_y + full_line_h * 3.0 - page_size).max(0.0);
+            page_turn_to_value(state, target);
+        } else {
+            // Place cursor near top of new page
+            let target = (line_y - full_line_h * 2.0).max(0.0);
+            page_turn_to_value(state, target);
+        }
     }
 }
 
