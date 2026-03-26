@@ -131,6 +131,10 @@ pub fn handle_key(
                 }
                 return false;
             }
+            "Tab" => {
+                crate::input::search::toggle_playback(&state.borrow());
+                return true;
+            }
             _ => return false, // let GTK route to the Entry
         }
     }
