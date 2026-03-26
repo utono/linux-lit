@@ -6,6 +6,7 @@ use std::collections::HashMap;
 pub enum MpvCommand {
     Seek(f64),
     TogglePause,
+    SetSpeed(f64),
     LoadFile(String),
     Connect(String),
     Disconnect,

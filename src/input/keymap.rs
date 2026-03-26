@@ -188,6 +188,14 @@ pub fn handle_key(
             crate::app::reset_font_size(&mut state.borrow_mut());
             true
         }
+        "plus" => {
+            let mut s = state.borrow_mut();
+            let new_speed = if s.playback_speed == 1.0 { 1.3 } else { 1.0 };
+            s.playback_speed = new_speed;
+            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SetSpeed(new_speed));
+            crate::logging::log(&format!("SPEED: toggled to {}x", new_speed));
+            true
+        }
         _ => false,
     }
 }

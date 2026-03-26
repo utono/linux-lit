@@ -30,6 +30,7 @@ pub struct AppState {
     pub animation_gen: std::rc::Rc<std::cell::Cell<u64>>,
     pub cmd_tx: tokio::sync::mpsc::Sender<crate::mpv::MpvCommand>,
     pub tokio_handle: tokio::runtime::Handle,
+    pub playback_speed: f64,
 }
 
 pub fn build_window(
@@ -104,7 +105,7 @@ pub fn build_window(
         .vexpand(true)
         .halign(gtk4::Align::Center)
         .valign(gtk4::Align::Fill)
-        .width_request(1000)
+        .width_request(900)
         .margin_top(24)
         .margin_bottom(24)
         .margin_start(24)
@@ -137,6 +138,7 @@ pub fn build_window(
         animation_gen: std::rc::Rc::new(std::cell::Cell::new(0)),
         cmd_tx,
         tokio_handle: tokio_handle.clone(),
+        playback_speed: 1.0,
     }));
 
     // Connect picker search entry filter

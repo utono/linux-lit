@@ -20,8 +20,10 @@ cat ~/utono/linux-lit/linux-lit.log
 
 ## Build & Run
 
+Verify changes compile with `cargo build` but do not run the app — the user will run `cargo run` themselves.
+
 ```bash
-cd ~/utono/linux-lit && cargo run 2>&1
+cargo build
 ```
 
 ## Testing
