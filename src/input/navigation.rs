@@ -198,7 +198,9 @@ fn ensure_cursor_visible(state: &AppState, _lines_jumped: usize) {
         page_turn_to_value(state, target);
     } else {
         // Went below: put cursor at the TOP of the new page.
-        let target = line_y;
+        // Mirror of page-up: new_page_top = cursor_top (so cursor is at very top)
+        // But also ensure old page_bottom is near the top for continuity.
+        let target = (line_y - full_line_h).max(0.0);
         crate::logging::log(&format!(
             "PAGE_DN: line={} line_y={:.0} full_h={:.0} page_bottom={:.0} page_size={:.0} target={:.0}",
             state.current_line, line_y, full_line_h, page_bottom, page_size, target
