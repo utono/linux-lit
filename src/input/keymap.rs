@@ -113,6 +113,10 @@ pub fn handle_key(
                 crate::input::search::clear_search(&mut s);
                 return true;
             }
+            "Return" => {
+                crate::input::search::execute_search(&state);
+                return true;
+            }
             "n" => {
                 crate::input::search::next_match(&mut state.borrow_mut());
                 return true;
