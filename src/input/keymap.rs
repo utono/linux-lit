@@ -103,6 +103,32 @@ pub fn handle_key(
         return false;
     }
 
+    // Search bar visible — route keys to search entry
+    let search_visible = state.borrow().search_bar.is_visible();
+    if search_visible {
+        match key_name {
+            "Escape" => {
+                let mut s = state.borrow_mut();
+                s.search_bar.hide();
+                s.search_active = !s.search_matches.is_empty();
+                return true;
+            }
+            "Return" => {
+                let mut s = state.borrow_mut();
+                s.search_bar.hide();
+                s.search_active = !s.search_matches.is_empty();
+                // Jump cursor to current match
+                if !s.search_matches.is_empty() {
+                    let m = &s.search_matches[s.search_match_idx];
+                    s.current_line = m.line_index;
+                    crate::input::navigation::update_highlight_and_ensure_visible(&mut s);
+                }
+                return true;
+            }
+            _ => return false, // let GTK route to the Entry
+        }
+    }
+
     // --- Normal mode (no picker) ---
 
     // gg sequence check
@@ -112,6 +138,12 @@ pub fn handle_key(
             navigation::jump_to_start(&mut state.borrow_mut());
             return true;
         }
+    }
+
+    // Clear search highlights on any key that isn't n/N (and search bar is not visible)
+    let search_active = state.borrow().search_active;
+    if search_active && key_name != "n" && key_name != "N" {
+        crate::input::search::clear_search(&mut state.borrow_mut());
     }
 
     // Ctrl+Shift+l: save position and quit
@@ -218,6 +250,30 @@ pub fn handle_key(
             let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SetSpeed(new_speed));
             crate::logging::log(&format!("SPEED: toggled to {}x", new_speed));
             true
+        }
+        "slash" => {
+            let mut s = state.borrow_mut();
+            crate::input::search::clear_search(&mut s);
+            s.search_bar.show();
+            true
+        }
+        "n" => {
+            let active = state.borrow().search_active;
+            if active {
+                crate::input::search::next_match(&mut state.borrow_mut());
+                true
+            } else {
+                false
+            }
+        }
+        "N" => {
+            let active = state.borrow().search_active;
+            if active {
+                crate::input::search::prev_match(&mut state.borrow_mut());
+                true
+            } else {
+                false
+            }
         }
         _ => false,
     }
