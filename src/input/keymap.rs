@@ -20,6 +20,7 @@ pub fn handle_key(
     is_shift: bool,
     tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
+    crate::logging::log(&format!("KEY: name={} ctrl={} shift={}", key_name, is_ctrl, is_shift));
     let picker_visible = state.borrow().picker.is_visible();
 
     // Ctrl+n/Ctrl+p navigate picker list when visible
@@ -167,6 +168,24 @@ pub fn handle_key(
         "Tab" => {
             let cmd_tx = state.borrow().cmd_tx.clone();
             let _ = cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
+            true
+        }
+        "exclam" => {
+            crate::logging::log("FONT: exclam matched, decreasing");
+            crate::app::adjust_font_size(&mut state.borrow_mut(), -1);
+            let sz = state.borrow().config.font_size;
+            crate::logging::log(&format!("FONT: size now {}", sz));
+            true
+        }
+        "bar" => {
+            crate::logging::log("FONT: bar matched, increasing");
+            crate::app::adjust_font_size(&mut state.borrow_mut(), 1);
+            let sz = state.borrow().config.font_size;
+            crate::logging::log(&format!("FONT: size now {}", sz));
+            true
+        }
+        "0" => {
+            crate::app::reset_font_size(&mut state.borrow_mut());
             true
         }
         _ => false,

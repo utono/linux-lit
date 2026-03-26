@@ -23,6 +23,8 @@ pub struct AppState {
     pub scrolled_window: ScrolledWindow,
     pub window: ApplicationWindow,
     pub config: Config,
+    pub css_provider: CssProvider,
+    pub theme: crate::theme::Theme,
     /// Generation counter for crossfade animations. Incremented on each page turn
     /// so stale animation callbacks don't stomp on opacity.
     pub animation_gen: std::rc::Rc<std::cell::Cell<u64>>,
@@ -127,6 +129,8 @@ pub fn build_window(
         scrolled_window: scrolled,
         window: window.clone(),
         config,
+        css_provider,
+        theme,
         animation_gen: std::rc::Rc::new(std::cell::Cell::new(0)),
         cmd_tx,
         tokio_handle: tokio_handle.clone(),
@@ -297,6 +301,50 @@ pub fn display_work(state: &mut AppState, work: Work) {
             .buffer
             .apply_tag(&state.highlight_tag, &iter, &line_end);
     }
+}
+
+/// Reapply font size using a TextTag spanning the entire buffer.
+fn reapply_font(state: &AppState) {
+    let tag_table = state.buffer.tag_table();
+    // Remove old font tag if it exists
+    if let Some(old) = tag_table.lookup("font-size") {
+        tag_table.remove(&old);
+    }
+    let font_str = format!("{} {}",  state.config.font_family, state.config.font_size);
+    let tag = gtk4::TextTag::builder()
+        .name("font-size")
+        .font(&font_str)
+        .build();
+    tag_table.add(&tag);
+    let start = state.buffer.start_iter();
+    let end = state.buffer.end_iter();
+    state.buffer.apply_tag(&tag, &start, &end);
+    // Also update CSS for consistency
+    let css = crate::theme::generate_css(&state.theme, &state.config.font_family, state.config.font_size);
+    state.css_provider.load_from_string(&css);
+    crate::logging::log(&format!("FONT: reapply_font size={}pt via TextTag", state.config.font_size));
+}
+
+/// Adjust font size by delta, clamp to 8..=72, reapply CSS and repaginate.
+pub fn adjust_font_size(state: &mut AppState, delta: i32) {
+    let new_size = (state.config.font_size as i32 + delta).clamp(8, 72) as u32;
+    if new_size == state.config.font_size {
+        return;
+    }
+    state.config.font_size = new_size;
+    reapply_font(state);
+    crate::config::save(&state.config);
+}
+
+/// Reset font size to default (18pt).
+pub fn reset_font_size(state: &mut AppState) {
+    let default = 18u32;
+    if state.config.font_size == default {
+        return;
+    }
+    state.config.font_size = default;
+    reapply_font(state);
+    crate::config::save(&state.config);
 }
 
 /// Save current position to config (call on quit).
