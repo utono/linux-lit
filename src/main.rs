@@ -4,6 +4,7 @@ mod db;
 mod input;
 mod logging;
 mod mpv;
+mod theme;
 mod ui;
 
 use gtk4::prelude::*;

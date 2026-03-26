@@ -44,10 +44,19 @@ pub fn build_window(
         .default_height(800)
         .build();
 
+    // Load theme
+    let theme_name = crate::theme::current_theme_name();
+    let theme = if theme_name.is_empty() {
+        crate::theme::load_theme("gruvbox-material")
+    } else {
+        crate::theme::load_theme(&theme_name)
+    };
+    crate::logging::log(&format!("Theme: {} ({})", theme.display_name, theme.name));
+
     let buffer = TextBuffer::new(None);
     let highlight_tag = gtk4::TextTag::builder()
         .name("current-line")
-        .background("rgba(100, 140, 200, 0.3)")
+        .background(&theme.cursor_line_bg)
         .build();
     buffer.tag_table().add(&highlight_tag);
 
@@ -58,15 +67,14 @@ pub fn build_window(
         .wrap_mode(WrapMode::Word)
         .build();
 
-    // Apply serif font and picker CSS
+    // Apply theme CSS
     let css_provider = CssProvider::new();
-    css_provider.load_from_string(&format!(
-        "textview {{ font-family: Georgia, 'Noto Serif', 'Liberation Serif', 'DejaVu Serif'; font-size: {}pt; }} \
-         .library-picker {{ background-color: rgba(40, 40, 40, 0.95); color: white; padding: 16px; border-radius: 8px; }} \
-         .library-picker entry {{ margin-bottom: 8px; }} \
-         .library-picker row:selected {{ background-color: rgba(100, 140, 200, 0.8); }}",
-        18
-    ));
+    let css = crate::theme::generate_css(
+        &theme,
+        &config.font_family,
+        config.font_size,
+    );
+    css_provider.load_from_string(&css);
     gtk4::style_context_add_provider_for_display(
         &gtk4::gdk::Display::default().expect("No display"),
         &css_provider,
@@ -77,27 +85,21 @@ pub fn build_window(
     text_view.set_pixels_above_lines(14);
     text_view.set_pixels_below_lines(14);
 
-    // Initial margins
-    text_view.set_left_margin(150);
-    text_view.set_right_margin(150);
+    // Text area padding (inside the text background)
+    text_view.set_left_margin(24);
+    text_view.set_right_margin(24);
+    text_view.set_top_margin(24);
 
-    // Scrolled window — hide scrollbar
+    // Scrolled window — centered, max width ~72 chars
+    // At 18pt serif, ~10px per char → 720px + 48px padding = ~768px
     let scrolled = ScrolledWindow::builder()
         .child(&text_view)
         .hscrollbar_policy(gtk4::PolicyType::Never)
         .vscrollbar_policy(gtk4::PolicyType::External)
         .vexpand(true)
-        .hexpand(true)
+        .halign(gtk4::Align::Center)
+        .width_request(768)
         .build();
-
-    // Recalculate margins on resize
-    let text_view_for_resize = text_view.clone();
-    scrolled.connect_notify_local(Some("width"), move |scrolled, _| {
-        let width = scrolled.width();
-        let margin = ((width - 700) / 2).max(20);
-        text_view_for_resize.set_left_margin(margin);
-        text_view_for_resize.set_right_margin(margin);
-    });
 
     // Library picker overlay
     let mut picker = LibraryPicker::new();
