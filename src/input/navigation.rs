@@ -146,7 +146,10 @@ fn update_highlight(state: &AppState) {
 }
 
 /// Ensure the cursor line is visible. If it's already on screen, do nothing.
-/// If it's off screen, do a smooth page turn to bring it into view.
+/// If it's off screen, do an e-reader page turn.
+///
+/// E-reader rule: the line that was at the edge of the old page should appear
+/// at the opposite edge of the new page, providing reading continuity.
 fn ensure_cursor_visible(state: &AppState) {
     let Some(iter) = state.buffer.iter_at_line(state.current_line as i32) else {
         return;
@@ -161,22 +164,23 @@ fn ensure_cursor_visible(state: &AppState) {
     let line_y = iter_rect.y() as f64;
     let line_h = iter_rect.height() as f64;
 
-    // Comfortable margin: keep cursor at least 1 line height from edges
-    let margin = line_h;
-
-    if line_y >= page_top + margin && line_y + line_h <= page_bottom - margin {
-        // Already visible with margin — do nothing
+    if line_y >= page_top && line_y + line_h <= page_bottom {
+        // Already visible — do nothing
         return;
     }
 
-    // Cursor went off screen — do a page turn
-    if line_y < page_top + margin {
-        // Went above — page turn backward: place cursor near bottom of new page
-        let target = (line_y - page_size + line_h + margin).max(0.0);
+    if line_y < page_top {
+        // Went above — page turn backward.
+        // New page: old page_top becomes the bottom of the new view.
+        // So new page_top = old page_top - page_size + overlap (one line).
+        let target = (page_top - page_size + line_h).max(0.0);
         page_turn_to_value(state, target);
     } else {
-        // Went below — page turn forward: place cursor near top of new page
-        page_turn_to_value(state, (line_y - margin).max(0.0));
+        // Went below — page turn forward.
+        // New page: old page_bottom becomes the top of the new view.
+        // So new page_top = old page_bottom - overlap (one line).
+        let target = (page_bottom - line_h).min(adj.upper() - page_size);
+        page_turn_to_value(state, target);
     }
 }
 
