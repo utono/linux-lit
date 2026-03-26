@@ -17,6 +17,7 @@ pub fn handle_key(
     key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
     is_ctrl: bool,
+    is_shift: bool,
     tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
     let picker_visible = state.borrow().picker.is_visible();
@@ -109,6 +110,13 @@ pub fn handle_key(
             navigation::jump_to_start(&mut state.borrow_mut());
             return true;
         }
+    }
+
+    // Ctrl+Shift+l: save position and quit
+    if is_ctrl && is_shift && key_name == "L" {
+        crate::app::save_position(&mut state.borrow_mut());
+        state.borrow().window.close();
+        return true;
     }
 
     // Ctrl combos — page turn navigation (e-reader style)

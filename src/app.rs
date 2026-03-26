@@ -7,6 +7,7 @@ use gtk4::{
     WrapMode,
 };
 
+use crate::config::Config;
 use crate::db::models::{Work, WorkSummary};
 use crate::ui::library_picker::LibraryPicker;
 
@@ -20,12 +21,14 @@ pub struct AppState {
     pub highlight_tag: gtk4::TextTag,
     pub scrolled_window: ScrolledWindow,
     pub window: ApplicationWindow,
+    pub config: Config,
 }
 
 pub fn build_window(
     app: &gtk4::Application,
     works: Vec<WorkSummary>,
     tokio_handle: tokio::runtime::Handle,
+    config: Config,
 ) -> Rc<RefCell<AppState>> {
     let window = ApplicationWindow::builder()
         .application(app)
@@ -96,6 +99,9 @@ pub fn build_window(
 
     window.set_child(Some(&picker.overlay));
 
+    let last_work = config.last_work.clone();
+    let last_line = config.last_line;
+
     let state = Rc::new(RefCell::new(AppState {
         text_view,
         buffer,
@@ -105,6 +111,7 @@ pub fn build_window(
         highlight_tag,
         scrolled_window: scrolled,
         window: window.clone(),
+        config,
     }));
 
     // Connect picker search entry filter
@@ -118,6 +125,7 @@ pub fn build_window(
     }
 
     // Key event controller — capture phase so we intercept before Entry consumes keys
+    let tokio_handle_for_mru = tokio_handle.clone();
     let state_for_keys = Rc::clone(&state);
     let key_state = Rc::new(RefCell::new(crate::input::keymap::KeyState::default()));
     let key_controller = EventControllerKey::new();
@@ -125,11 +133,13 @@ pub fn build_window(
     key_controller.connect_key_pressed(move |_controller, keyval, _keycode, modifier| {
         let key_name = keyval.name().unwrap_or_default();
         let is_ctrl = modifier.contains(gtk4::gdk::ModifierType::CONTROL_MASK);
+        let is_shift = modifier.contains(gtk4::gdk::ModifierType::SHIFT_MASK);
         let consumed = crate::input::keymap::handle_key(
             &state_for_keys,
             &key_state,
             &key_name,
             is_ctrl,
+            is_shift,
             &tokio_handle,
         );
         if consumed {
@@ -142,8 +152,38 @@ pub fn build_window(
 
     window.present();
 
-    // Show picker on startup
-    state.borrow().picker.show();
+    // Startup: load MRU work or show picker
+    if let Some(abbrev) = last_work {
+        let state_clone = Rc::clone(&state);
+        let handle = tokio_handle_for_mru;
+        glib::spawn_future_local(async move {
+            let work = handle
+                .spawn_blocking(move || {
+                    let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
+                    crate::db::queries::load_work(&conn, &abbrev)
+                })
+                .await;
+            match work {
+                Ok(Ok(work)) => {
+                    let mut s = state_clone.borrow_mut();
+                    display_work(&mut s, work);
+                    // Jump to last line
+                    if last_line > 0 {
+                        s.current_line = last_line.min(
+                            s.current_work.as_ref().map_or(0, |w| w.lines.len().saturating_sub(1)),
+                        );
+                        crate::input::navigation::restore_cursor(&mut s);
+                    }
+                }
+                Ok(Err(_)) | Err(_) => {
+                    // Work not found — fall back to picker
+                    state_clone.borrow().picker.show();
+                }
+            }
+        });
+    } else {
+        state.borrow().picker.show();
+    }
 
     state
 }
@@ -159,6 +199,12 @@ pub fn display_work(state: &mut AppState, work: Work) {
     state
         .window
         .set_title(Some(&format!("{} — linux-lit", work.title)));
+
+    // Save MRU to config
+    state.config.last_work = Some(work.abbrev.clone());
+    state.config.last_line = 0;
+    crate::config::save(&state.config);
+
     state.current_line = 0;
     state.current_work = Some(work);
 
@@ -171,5 +217,14 @@ pub fn display_work(state: &mut AppState, work: Work) {
         state
             .buffer
             .apply_tag(&state.highlight_tag, &iter, &line_end);
+    }
+}
+
+/// Save current position to config (call on quit).
+pub fn save_position(state: &mut AppState) {
+    if let Some(work) = &state.current_work {
+        state.config.last_work = Some(work.abbrev.clone());
+        state.config.last_line = state.current_line;
+        crate::config::save(&state.config);
     }
 }

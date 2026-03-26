@@ -127,6 +127,13 @@ pub fn jump_to_next_dialogue(state: &mut AppState) {
 
 // ---------------------------------------------------------------------------
 // Internal helpers
+/// Restore cursor position after loading a work (used on startup with MRU).
+/// Updates highlight and scrolls to the saved line.
+pub fn restore_cursor(state: &mut AppState) {
+    update_highlight(state);
+    scroll_to_line_instant(state, state.current_line);
+}
+
 // ---------------------------------------------------------------------------
 
 /// Remove highlight from old line, apply to new current line.

@@ -1,4 +1,5 @@
 mod app;
+mod config;
 mod db;
 mod input;
 mod mpv;
@@ -37,8 +38,11 @@ fn main() {
             db::queries::list_works(&conn).expect("Failed to list works")
         };
 
-        // Build the window with works list and Tokio handle for async DB operations
-        let _state = app::build_window(gtk_app, works, tokio_handle);
+        // Load config
+        let config = config::load();
+
+        // Build the window with works list, Tokio handle, and config
+        let _state = app::build_window(gtk_app, works, tokio_handle, config);
 
         // Attach event receiver to GTK main loop
         glib::spawn_future_local(async move {
@@ -68,9 +72,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let handle = rt.handle().clone();
         std::thread::spawn(move || {
-            rt.block_on(async move {
-                while let Some(_cmd) = cmd_rx.recv().await {}
-            });
+            rt.block_on(async move { while let Some(_cmd) = cmd_rx.recv().await {} });
         });
 
         // spawn_blocking from outside the runtime, using the handle
