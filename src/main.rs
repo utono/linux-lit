@@ -1,3 +1,4 @@
+mod ab_repeat;
 mod app;
 mod config;
 mod db;

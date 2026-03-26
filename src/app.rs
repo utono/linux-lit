@@ -49,6 +49,7 @@ pub struct AppState {
     pub media_id: Option<i64>,
     pub sign_column_visible: Rc<Cell<bool>>,
     pub gutter_renderer: Option<sourceview5::GutterRendererText>,
+    pub ab_repeat: crate::ab_repeat::AbRepeatState,
 }
 
 pub fn build_window(
@@ -195,6 +196,7 @@ pub fn build_window(
         media_id: None,
         sign_column_visible: Rc::new(Cell::new(false)),
         gutter_renderer: None,
+        ab_repeat: crate::ab_repeat::AbRepeatState::default(),
     }));
 
     // Connect picker search entry filter

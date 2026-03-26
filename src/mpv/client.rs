@@ -128,6 +128,24 @@ async fn handle_command(
             *line_id_to_index = map;
             crate::logging::log(&format!("MPV: loaded {} timestamps", timestamps.len()));
         }
+        MpvCommand::SetAbLoop { a, b } => {
+            if let Some(w) = writer.as_mut() {
+                let cmd_a = format!(r#"{{"command":["set_property","ab-loop-a",{}]}}"#, a);
+                let cmd_b = format!(r#"{{"command":["set_property","ab-loop-b",{}]}}"#, b);
+                let seek = format!(r#"{{"command":["seek",{},"absolute"]}}"#, a);
+                let _ = send_command(w, &cmd_a).await;
+                let _ = send_command(w, &cmd_b).await;
+                let _ = send_command(w, &seek).await;
+            }
+        }
+        MpvCommand::ClearAbLoop => {
+            if let Some(w) = writer.as_mut() {
+                let cmd_a = r#"{"command":["set_property","ab-loop-a","no"]}"#;
+                let cmd_b = r#"{"command":["set_property","ab-loop-b","no"]}"#;
+                let _ = send_command(w, cmd_a).await;
+                let _ = send_command(w, cmd_b).await;
+            }
+        }
     }
 }
 

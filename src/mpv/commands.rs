@@ -16,6 +16,8 @@ pub enum MpvCommand {
         timestamps: Vec<(i64, f64, f64)>,
         line_id_to_index: HashMap<i64, usize>,
     },
+    SetAbLoop { a: f64, b: f64 },
+    ClearAbLoop,
 }
 
 /// Events sent from the Tokio runtime back to the GTK UI thread.
