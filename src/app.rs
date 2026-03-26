@@ -18,6 +18,7 @@ pub struct AppState {
     pub picker: LibraryPicker,
     pub current_work: Option<Work>,
     pub current_line: usize,
+    pub page_top_line: usize,
     pub highlight_tag: gtk4::TextTag,
     pub scrolled_window: ScrolledWindow,
     pub window: ApplicationWindow,
@@ -111,6 +112,7 @@ pub fn build_window(
         picker,
         current_work: None,
         current_line: 0,
+        page_top_line: 0,
         highlight_tag,
         scrolled_window: scrolled,
         window: window.clone(),
@@ -219,6 +221,7 @@ pub fn display_work(state: &mut AppState, work: Work) {
     crate::config::save(&state.config);
 
     state.current_line = 0;
+    state.page_top_line = 0;
     state.current_work = Some(work);
 
     // Apply initial highlight to first line

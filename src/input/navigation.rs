@@ -2,29 +2,49 @@ use gtk4::prelude::*;
 
 use crate::app::AppState;
 
-/// Move cursor by `delta` lines. Only triggers a page turn if cursor
-/// moves beyond the visible area.
+// Page overlap: when turning pages, this many lines from the old page
+// remain visible on the new page for reading continuity.
+const PAGE_OVERLAP: usize = 1;
+
+/// Move cursor by `delta` lines (j/k). Cursor moves within the current page.
+/// When cursor goes past a page boundary, a page turn happens.
 pub fn move_cursor(state: &mut AppState, delta: i32) {
-    let work = match &state.current_work {
-        Some(w) => w,
+    let line_count = match &state.current_work {
+        Some(w) => w.lines.len(),
         None => return,
     };
-    let line_count = work.lines.len();
     if line_count == 0 {
         return;
     }
 
-    let old_line = state.current_line;
     let new_line = (state.current_line as i32 + delta)
         .max(0)
         .min(line_count as i32 - 1) as usize;
 
-    if new_line != old_line {
-        state.current_line = new_line;
-        update_highlight(state);
-        let lines_jumped = (new_line as i32 - old_line as i32).unsigned_abs() as usize;
-        ensure_cursor_visible(state, lines_jumped);
+    if new_line == state.current_line {
+        return;
     }
+
+    state.current_line = new_line;
+    update_highlight(state);
+
+    // Check if cursor is still on the current page
+    let page_top = state.page_top_line;
+    let page_bottom = page_top + lines_per_page(state);
+
+    if new_line < page_top {
+        // Went above current page — page turn backward.
+        // New page has cursor at the bottom.
+        let lpp = lines_per_page(state);
+        let new_top = new_line.saturating_sub(lpp.saturating_sub(1));
+        set_page(state, new_top);
+    } else if new_line >= page_bottom {
+        // Went below current page — page turn forward.
+        // New page has cursor at the top, with overlap from old page.
+        let new_top = new_line.saturating_sub(PAGE_OVERLAP);
+        set_page(state, new_top);
+    }
+    // Otherwise cursor is within the current page — no scroll needed.
 }
 
 /// Jump to the first line.
@@ -34,7 +54,7 @@ pub fn jump_to_start(state: &mut AppState) {
     }
     state.current_line = 0;
     update_highlight(state);
-    scroll_to_line_instant(state, 0);
+    set_page_instant(state, 0);
 }
 
 /// Jump to the last line.
@@ -48,46 +68,50 @@ pub fn jump_to_end(state: &mut AppState) {
     }
     state.current_line = line_count - 1;
     update_highlight(state);
-    scroll_to_line_instant(state, state.current_line);
+    let lpp = lines_per_page(state);
+    let new_top = line_count.saturating_sub(lpp);
+    set_page_instant(state, new_top);
 }
 
-/// Page forward — like turning to the next page of an e-reader.
-/// Moves viewport by one page with 2 lines of overlap for reading continuity.
-/// Cursor moves to the first line of the new page.
+/// Page forward (Ctrl+d/f). Advance by one page with overlap.
 pub fn page_forward(state: &mut AppState) {
-    let work = match &state.current_work {
-        Some(w) => w,
+    let line_count = match &state.current_work {
+        Some(w) => w.lines.len(),
         None => return,
     };
-    let line_count = work.lines.len();
     if line_count == 0 {
         return;
     }
 
-    let visible_lines = visible_line_count(state);
-    let overlap = 2;
-    let advance = (visible_lines as i32 - overlap).max(1);
+    let lpp = lines_per_page(state);
+    let advance = lpp.saturating_sub(PAGE_OVERLAP).max(1);
+    let new_top = (state.page_top_line + advance).min(line_count.saturating_sub(1));
 
-    let new_line = ((state.current_line as i32 + advance) as usize).min(line_count - 1);
-    state.current_line = new_line;
+    // Move cursor to first line of new page (after overlap)
+    state.current_line = (new_top + PAGE_OVERLAP).min(line_count - 1);
     update_highlight(state);
-    page_turn_animate(state, 1);
+    set_page(state, new_top);
 }
 
-/// Page backward — like turning to the previous page.
+/// Page backward (Ctrl+u/b). Go back by one page with overlap.
 pub fn page_backward(state: &mut AppState) {
     if state.current_work.is_none() {
         return;
     }
 
-    let visible_lines = visible_line_count(state);
-    let overlap = 2;
-    let retreat = (visible_lines as i32 - overlap).max(1);
+    let lpp = lines_per_page(state);
+    let retreat = lpp.saturating_sub(PAGE_OVERLAP).max(1);
+    let new_top = state.page_top_line.saturating_sub(retreat);
 
-    let new_line = (state.current_line as i32 - retreat).max(0) as usize;
-    state.current_line = new_line;
+    // Move cursor to last line of new page (before overlap)
+    let new_bottom = new_top + lpp.saturating_sub(1);
+    let line_count = state
+        .current_work
+        .as_ref()
+        .map_or(0, |w| w.lines.len());
+    state.current_line = new_bottom.min(line_count.saturating_sub(1));
     update_highlight(state);
-    page_turn_animate(state, -1);
+    set_page(state, new_top);
 }
 
 /// Jump to the previous dialogue line (`,` key).
@@ -96,16 +120,15 @@ pub fn jump_to_prev_dialogue(state: &mut AppState) {
         Some(w) => w,
         None => return,
     };
-    let old_line = state.current_line;
-    if old_line == 0 {
+    if state.current_line == 0 {
         return;
     }
 
-    for i in (0..old_line).rev() {
+    for i in (0..state.current_line).rev() {
         if work.lines[i].is_dialogue {
             state.current_line = i;
             update_highlight(state);
-            ensure_cursor_visible(state, old_line - i);
+            ensure_cursor_on_page(state);
             return;
         }
     }
@@ -117,27 +140,87 @@ pub fn jump_to_next_dialogue(state: &mut AppState) {
         Some(w) => w,
         None => return,
     };
-    let old_line = state.current_line;
     let line_count = work.lines.len();
-    for i in (old_line + 1)..line_count {
+    for i in (state.current_line + 1)..line_count {
         if work.lines[i].is_dialogue {
             state.current_line = i;
             update_highlight(state);
-            ensure_cursor_visible(state, i - old_line);
+            ensure_cursor_on_page(state);
             return;
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// Internal helpers
 /// Restore cursor position after loading a work (used on startup with MRU).
-/// Updates highlight and scrolls to the saved line.
 pub fn restore_cursor(state: &mut AppState) {
     update_highlight(state);
-    scroll_to_line_instant(state, state.current_line);
+    // Place cursor's page so cursor is near the top
+    let new_top = state.current_line.saturating_sub(PAGE_OVERLAP);
+    set_page_instant(state, new_top);
 }
 
+// ---------------------------------------------------------------------------
+// Page management
+// ---------------------------------------------------------------------------
+
+/// Ensure cursor is on the current page. If not, page turn to show it.
+/// For backward movement, cursor appears near page bottom.
+/// For forward movement, cursor appears near page top.
+fn ensure_cursor_on_page(state: &mut AppState) {
+    let page_top = state.page_top_line;
+    let lpp = lines_per_page(state);
+    let page_bottom = page_top + lpp;
+
+    if state.current_line >= page_top && state.current_line < page_bottom {
+        // Already on page — cancel any stale animation, ensure opacity
+        let gen = &state.animation_gen;
+        gen.set(gen.get() + 1);
+        state.scrolled_window.set_opacity(1.0);
+        return;
+    }
+
+    if state.current_line < page_top {
+        // Went above — new page with cursor near bottom
+        let new_top = state.current_line.saturating_sub(lpp.saturating_sub(1));
+        set_page(state, new_top);
+    } else {
+        // Went below — new page with cursor near top (with overlap)
+        let new_top = state.current_line.saturating_sub(PAGE_OVERLAP);
+        set_page(state, new_top);
+    }
+}
+
+/// Set the page top line and scroll to it with crossfade animation.
+fn set_page(state: &mut AppState, new_top: usize) {
+    state.page_top_line = new_top;
+    let target = scroll_value_for_line(state, new_top);
+    crate::logging::log(&format!(
+        "PAGE_TURN: top_line={} cursor={} target={:.0}",
+        new_top, state.current_line, target
+    ));
+    crossfade_to(state, target);
+}
+
+/// Set the page top line and scroll instantly (no animation). For gg/G/restore.
+fn set_page_instant(state: &mut AppState, new_top: usize) {
+    state.page_top_line = new_top;
+    let target = scroll_value_for_line(state, new_top);
+    state.scrolled_window.vadjustment().set_value(target);
+}
+
+/// Get the vadjustment value that places the given line at the top of the viewport.
+fn scroll_value_for_line(state: &AppState, line: usize) -> f64 {
+    let Some(iter) = state.buffer.iter_at_line(line as i32) else {
+        return 0.0;
+    };
+    let rect = state.text_view.iter_location(&iter);
+    let adj = state.scrolled_window.vadjustment();
+    let max = adj.upper() - adj.page_size();
+    (rect.y() as f64).max(0.0).min(max)
+}
+
+// ---------------------------------------------------------------------------
+// Highlight
 // ---------------------------------------------------------------------------
 
 /// Remove highlight from old line, apply to new current line.
@@ -156,92 +239,20 @@ fn update_highlight(state: &AppState) {
     }
 }
 
-/// Ensure the cursor line is visible. If it's already on screen, do nothing.
-/// If off screen, always do a full crossfade page turn.
-fn ensure_cursor_visible(state: &AppState, _lines_jumped: usize) {
-    let Some(iter) = state.buffer.iter_at_line(state.current_line as i32) else {
-        return;
-    };
+// ---------------------------------------------------------------------------
+// Crossfade animation
+// ---------------------------------------------------------------------------
 
+/// Crossfade to a new scroll position: fade out, snap, fade in.
+fn crossfade_to(state: &AppState, target_value: f64) {
     let adj = state.scrolled_window.vadjustment();
-    let page_top = adj.value();
     let page_size = adj.page_size();
-    let page_bottom = page_top + page_size;
+    let clamped = target_value.max(0.0).min(adj.upper() - page_size);
 
-    // Get the full height of the cursor's paragraph (may span multiple visual lines).
-    let iter_rect = state.text_view.iter_location(&iter);
-    let line_y = iter_rect.y() as f64;
-    let full_line_h =
-        if let Some(next_iter) = state.buffer.iter_at_line(state.current_line as i32 + 1) {
-            let next_rect = state.text_view.iter_location(&next_iter);
-            (next_rect.y() as f64 - line_y).max(iter_rect.height() as f64)
-        } else {
-            iter_rect.height() as f64
-        };
-
-    // Already visible — do nothing (page stays still).
-    // A line is "visible" if its top is within the page (inclusive of edges).
-    if line_y >= page_top && line_y <= page_bottom {
-        // Cancel any in-flight animation and restore full opacity
-        let gen = &state.animation_gen;
-        gen.set(gen.get() + 1);
-        state.scrolled_window.set_opacity(1.0);
+    if (clamped - adj.value()).abs() < 1.0 {
         return;
     }
 
-    // Cursor went off screen — always do a page turn (e-reader style).
-    if line_y < page_top {
-        // Went above: put cursor at the BOTTOM of the new page.
-        let target = (line_y + full_line_h - page_size).max(0.0);
-        crate::logging::log(&format!(
-            "PAGE_UP: line={} line_y={:.0} full_h={:.0} page_top={:.0} page_size={:.0} target={:.0} cursor_from_bottom={:.0}",
-            state.current_line, line_y, full_line_h, page_top, page_size, target, page_size - (line_y - target)
-        ));
-        page_turn_to_value(state, target);
-    } else {
-        // Went below: put cursor at the TOP of the new page.
-        // Mirror of page-up: new_page_top = cursor_top (so cursor is at very top)
-        // But also ensure old page_bottom is near the top for continuity.
-        let target = (line_y - full_line_h).max(0.0);
-        crate::logging::log(&format!(
-            "PAGE_DN: line={} line_y={:.0} full_h={:.0} page_bottom={:.0} page_size={:.0} target={:.0}",
-            state.current_line, line_y, full_line_h, page_bottom, page_size, target
-        ));
-        page_turn_to_value(state, target);
-    }
-}
-
-/// Instant scroll — no animation. Used for gg/G jumps.
-fn scroll_to_line_instant(state: &AppState, line: usize) {
-    let Some(iter) = state.buffer.iter_at_line(line as i32) else {
-        return;
-    };
-
-    let iter_rect = state.text_view.iter_location(&iter);
-    let target_y = iter_rect.y() as f64;
-
-    let adj = state.scrolled_window.vadjustment();
-    let page_size = adj.page_size();
-    let margin = page_size * 0.1;
-
-    let target_value = (target_y - margin).max(0.0).min(adj.upper() - page_size);
-    adj.set_value(target_value);
-}
-
-/// Animate a page turn as a crossfade: fade out, snap scroll, fade in.
-/// Uses a generation counter so stale animations from rapid key presses
-/// don't stomp on the current state.
-fn page_turn_to_value(state: &AppState, target_value: f64) {
-    let adj = state.scrolled_window.vadjustment();
-    let page_size = adj.page_size();
-    let clamped_target = target_value.max(0.0).min(adj.upper() - page_size);
-
-    if (clamped_target - adj.value()).abs() < 1.0 {
-        return;
-    }
-
-    // Increment generation — any in-flight animation from a previous page turn
-    // will see a stale generation and skip its opacity changes.
     let gen = &state.animation_gen;
     gen.set(gen.get() + 1);
     let current_gen = gen.get();
@@ -255,7 +266,7 @@ fn page_turn_to_value(state: &AppState, target_value: f64) {
     let fade_in_frames: u64 = 5;
     let fade_in_start = fade_out_frames + 2;
 
-    // Phase 1: Fade out
+    // Fade out
     for frame in 1..=fade_out_frames {
         let progress = frame as f64 / fade_out_frames as f64;
         let opacity = 1.0 - progress * progress;
@@ -263,22 +274,24 @@ fn page_turn_to_value(state: &AppState, target_value: f64) {
         let w = widget.clone();
         let g = gen_rc.clone();
         glib::timeout_add_local_once(delay, move || {
-            if g.get() == current_gen { w.set_opacity(opacity); }
+            if g.get() == current_gen {
+                w.set_opacity(opacity);
+            }
         });
     }
 
-    // Phase 2: Snap scroll position
+    // Snap
     let snap_delay = std::time::Duration::from_millis((fade_out_frames + 1) * frame_ms);
     let w = widget.clone();
     let g = gen_rc.clone();
     glib::timeout_add_local_once(snap_delay, move || {
         if g.get() == current_gen {
-            adj_clone.set_value(clamped_target);
+            adj_clone.set_value(clamped);
             w.set_opacity(0.0);
         }
     });
 
-    // Phase 3: Fade in
+    // Fade in
     for frame in 1..=fade_in_frames {
         let progress = frame as f64 / fade_in_frames as f64;
         let opacity = progress * progress;
@@ -286,49 +299,51 @@ fn page_turn_to_value(state: &AppState, target_value: f64) {
         let w = widget.clone();
         let g = gen_rc.clone();
         glib::timeout_add_local_once(delay, move || {
-            if g.get() == current_gen { w.set_opacity(opacity); }
+            if g.get() == current_gen {
+                w.set_opacity(opacity);
+            }
         });
     }
 
-    // Ensure opacity fully restored
-    let final_delay = std::time::Duration::from_millis((fade_in_start + fade_in_frames + 1) * frame_ms);
+    // Restore
+    let final_delay =
+        std::time::Duration::from_millis((fade_in_start + fade_in_frames + 1) * frame_ms);
     let w = widget.clone();
     let g = gen_rc.clone();
     glib::timeout_add_local_once(final_delay, move || {
-        if g.get() == current_gen { w.set_opacity(1.0); }
+        if g.get() == current_gen {
+            w.set_opacity(1.0);
+        }
     });
 }
 
-/// Animate a page turn in the given direction (+1 forward, -1 backward).
-/// Places the cursor line near the top of the new page.
-fn page_turn_animate(state: &AppState, _direction: i32) {
-    let Some(iter) = state.buffer.iter_at_line(state.current_line as i32) else {
-        return;
-    };
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
-    let iter_rect = state.text_view.iter_location(&iter);
-    let line_y = iter_rect.y() as f64;
-    let line_h = iter_rect.height() as f64;
-
-    // Place the cursor line near the top with a small margin
-    let target_value = (line_y - line_h).max(0.0);
-    page_turn_to_value(state, target_value);
-}
-
-/// Estimate the number of visible lines on screen.
-fn visible_line_count(state: &AppState) -> usize {
+/// Estimate lines per page from viewport height and average line height.
+fn lines_per_page(state: &AppState) -> usize {
     let adj = state.scrolled_window.vadjustment();
     let page_size = adj.page_size();
 
-    // Get line height from a sample line
-    if let Some(iter) = state.buffer.iter_at_line(0) {
-        let rect = state.text_view.iter_location(&iter);
-        let line_h = rect.height() as f64;
-        if line_h > 0.0 {
-            return (page_size / line_h).floor() as usize;
+    // Sample a few lines to get average height
+    let mut total_h = 0.0;
+    let mut count = 0;
+    let start = state.page_top_line;
+    for i in start..(start + 5).min(state.current_work.as_ref().map_or(0, |w| w.lines.len())) {
+        if let Some(iter) = state.buffer.iter_at_line(i as i32) {
+            let rect = state.text_view.iter_location(&iter);
+            if rect.height() > 0 {
+                total_h += rect.height() as f64;
+                count += 1;
+            }
         }
     }
 
-    // Fallback
-    20
+    if count > 0 && total_h > 0.0 {
+        let avg_h = total_h / count as f64;
+        (page_size / avg_h).floor() as usize
+    } else {
+        15 // fallback
+    }
 }
