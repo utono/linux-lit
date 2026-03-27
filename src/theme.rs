@@ -256,12 +256,12 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .keybind-key {{ background-color: rgba(255, 255, 255, 0.08); \
            border-radius: 3px; min-width: 68px; padding: 3px 6px; }} \
          .keybind-key-unbound {{ opacity: 0.25; }} \
-         .keybind-label-bare {{ color: #7db8f0; font-size: 11px; font-weight: bold; }} \
-         .keybind-label-ctrl {{ color: #d4a052; font-size: 11px; font-weight: bold; }} \
-         .keybind-label-alt {{ color: #c47dd4; font-size: 11px; font-weight: bold; }} \
-         .keybind-label-ctrlalt {{ color: #d45050; font-size: 11px; font-weight: bold; }} \
-         .keybind-action {{ color: rgba(255, 255, 255, 0.5); font-size: 9px; }} \
-         .keybind-row-header {{ font-size: 9px; letter-spacing: 2px; \
+         .keybind-label-bare {{ color: #7db8f0; font-size: 44px; font-weight: bold; }} \
+         .keybind-label-ctrl {{ color: #d4a052; font-size: 44px; font-weight: bold; }} \
+         .keybind-label-alt {{ color: #c47dd4; font-size: 44px; font-weight: bold; }} \
+         .keybind-label-ctrlalt {{ color: #d45050; font-size: 44px; font-weight: bold; }} \
+         .keybind-action {{ color: rgba(255, 255, 255, 0.5); font-size: 36px; }} \
+         .keybind-row-header {{ font-size: 36px; letter-spacing: 2px; \
            color: rgba(255, 255, 255, 0.35); margin-bottom: 4px; }} \
          .keybind-legend {{ border-top: 1px solid rgba(255, 255, 255, 0.1); \
            margin-top: 12px; padding-top: 8px; }}",

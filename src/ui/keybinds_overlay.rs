@@ -1,5 +1,5 @@
 use gtk4::prelude::*;
-use gtk4::{Box as GtkBox, Label, Orientation, Overlay};
+use gtk4::{Box as GtkBox, CssProvider, Label, Orientation, Overlay};
 
 #[derive(Clone, Copy)]
 enum ModifierType {
@@ -113,7 +113,14 @@ const OTHER_ROW: &[KeybindEntry] = &[
 pub struct KeybindsOverlay {
     pub overlay: Overlay,
     container: GtkBox,
+    scale_provider: CssProvider,
+    scale: f64,
 }
+
+const DEFAULT_SCALE: f64 = 1.0;
+const SCALE_STEP: f64 = 0.1;
+const MIN_SCALE: f64 = 0.5;
+const MAX_SCALE: f64 = 2.0;
 
 impl KeybindsOverlay {
     pub fn new() -> Self {
@@ -239,7 +246,15 @@ impl KeybindsOverlay {
 
         container.append(&legend);
 
-        KeybindsOverlay { overlay, container }
+        // Scoped CSS provider for font scaling
+        let scale_provider = CssProvider::new();
+        gtk4::style_context_add_provider_for_display(
+            &gtk4::gdk::Display::default().unwrap(),
+            &scale_provider,
+            gtk4::STYLE_PROVIDER_PRIORITY_USER + 1,
+        );
+
+        KeybindsOverlay { overlay, container, scale_provider, scale: DEFAULT_SCALE }
     }
 
     pub fn show(&self) {
@@ -252,6 +267,31 @@ impl KeybindsOverlay {
 
     pub fn is_visible(&self) -> bool {
         self.container.is_visible()
+    }
+
+    pub fn adjust_scale(&mut self, delta: i32) {
+        let new_scale = (self.scale + delta as f64 * SCALE_STEP).clamp(MIN_SCALE, MAX_SCALE);
+        self.scale = new_scale;
+        self.apply_scale();
+    }
+
+    pub fn reset_scale(&mut self) {
+        self.scale = DEFAULT_SCALE;
+        self.apply_scale();
+    }
+
+    fn apply_scale(&self) {
+        let key_size = (44.0 * self.scale) as u32;
+        let action_size = (36.0 * self.scale) as u32;
+        let header_size = (36.0 * self.scale) as u32;
+        let css = format!(
+            ".keybind-label-bare, .keybind-label-ctrl, .keybind-label-alt, .keybind-label-ctrlalt \
+             {{ font-size: {}px; }} \
+             .keybind-action {{ font-size: {}px; }} \
+             .keybind-row-header {{ font-size: {}px; }}",
+            key_size, action_size, header_size,
+        );
+        self.scale_provider.load_from_string(&css);
     }
 
     pub fn attach(&self, base: &impl IsA<gtk4::Widget>) {

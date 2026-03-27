@@ -355,8 +355,18 @@ pub fn handle_key(
                 state.borrow().keybinds_overlay.hide();
                 return true;
             }
-            // Allow font size keys to pass through
-            "exclam" | "bar" | "0" => {}
+            "exclam" => {
+                state.borrow_mut().keybinds_overlay.adjust_scale(-1);
+                return true;
+            }
+            "bar" => {
+                state.borrow_mut().keybinds_overlay.adjust_scale(1);
+                return true;
+            }
+            "0" => {
+                state.borrow_mut().keybinds_overlay.reset_scale();
+                return true;
+            }
             _ => return true, // consume all other keys when keybinds visible
         }
     }
