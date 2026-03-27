@@ -1,4 +1,5 @@
 use crate::db::models::Line;
+use crate::db::line_types;
 
 /// Bidirectional map between a plain-text file's line indices and DB work line indices.
 #[derive(Debug, Clone)]
@@ -7,7 +8,7 @@ pub struct LineMap {
     pub buffer_to_work: Vec<Option<usize>>,
     /// For each DB work_lines index, the buffer line index it maps to.
     pub work_to_buffer: Vec<usize>,
-    /// Buffer line indices that contain dialogue (matched DB lines where is_dialogue is true).
+    /// Buffer line indices that contain dialogue (matched or unmatched).
     pub dialogue_buffer_lines: Vec<usize>,
 }
 
@@ -38,7 +39,7 @@ const WINDOW: usize = 50;
 /// - On a match beyond the current cursor: verify that the next non-empty file line
 ///   also matches the next DB row. If the confirmation check fails, skip this candidate.
 /// - Log match percentage; warn if < 80%.
-pub fn build_line_map(file_lines: &[String], work_lines: &[Line]) -> LineMap {
+pub fn build_line_map(file_lines: &[String], work_lines: &[Line], is_prose: bool) -> LineMap {
     let norm_file: Vec<String> = file_lines.iter().map(|l| normalize(l)).collect();
 
     let n_buf = file_lines.len();
@@ -106,12 +107,19 @@ pub fn build_line_map(file_lines: &[String], work_lines: &[Line]) -> LineMap {
         }
     }
 
-    // Collect dialogue buffer lines
+    // Collect dialogue buffer lines (matched via DB, unmatched via text classification)
     let mut dialogue_buffer_lines: Vec<usize> = Vec::new();
     for (buf_idx, work_idx_opt) in buffer_to_work.iter().enumerate() {
-        if let Some(wi) = work_idx_opt {
-            if work_lines[*wi].is_dialogue {
-                dialogue_buffer_lines.push(buf_idx);
+        match work_idx_opt {
+            Some(wi) => {
+                if work_lines[*wi].is_dialogue {
+                    dialogue_buffer_lines.push(buf_idx);
+                }
+            }
+            None => {
+                if line_types::is_dialogue(&file_lines[buf_idx], is_prose) {
+                    dialogue_buffer_lines.push(buf_idx);
+                }
             }
         }
     }
@@ -184,7 +192,7 @@ mod tests {
             make_line(2, "that is the question", "that is the question", true),
         ];
 
-        let map = build_line_map(&file_lines, &work_lines);
+        let map = build_line_map(&file_lines, &work_lines, false);
 
         // Buffer lines 3 and 4 should match work lines 0 and 1
         assert_eq!(map.buffer_to_work[3], Some(0));
@@ -199,7 +207,7 @@ mod tests {
         assert_eq!(map.work_to_buffer[0], 3);
         assert_eq!(map.work_to_buffer[1], 4);
 
-        // Both lines are dialogue
+        // Both matched lines are dialogue; unmatched ACT/HAMLET/blank are not (play mode)
         assert_eq!(map.dialogue_buffer_lines, vec![3, 4]);
     }
 
@@ -229,7 +237,7 @@ mod tests {
             make_line(3, "Different content", "different content", false),
         ];
 
-        let map = build_line_map(&file_lines, &work_lines);
+        let map = build_line_map(&file_lines, &work_lines, false);
 
         // "First line" at buf 0 should match work row 0 — db_cursor advances to 1
         assert_eq!(map.buffer_to_work[0], Some(0));

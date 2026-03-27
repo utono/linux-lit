@@ -277,16 +277,37 @@ fn scroll_to_cursor(state: &mut AppState) {
 
 /// Seek MPV to the current line's start time (with preroll).
 /// Called on every cursor movement so audio follows the reader.
-fn seek_to_current_line(state: &AppState) {
-    if let Some(ref work) = state.current_work {
-        if let Some(work_idx) = state.work_line_for_buffer(state.current_line) {
-            if let Some(ts) = &work.lines[work_idx].timestamp {
-                let seek_time = (ts.start - SEEK_PREROLL).max(0.0);
-                let _ = state
-                    .cmd_tx
-                    .try_send(crate::mpv::MpvCommand::Seek(seek_time));
+/// When the target line has a timestamp, suppresses CursorSync briefly while MPV
+/// processes the seek. When it has no timestamp, suppresses indefinitely so the
+/// cursor stays where the user put it.
+fn seek_to_current_line(state: &mut AppState) {
+    let has_timestamp = state
+        .current_work
+        .as_ref()
+        .and_then(|work| {
+            state
+                .work_line_for_buffer(state.current_line)
+                .and_then(|wi| work.lines[wi].timestamp.as_ref())
+        })
+        .is_some();
+
+    if has_timestamp {
+        // Brief suppression while MPV processes the seek
+        state.suppress_sync_until =
+            Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
+        if let Some(ref work) = state.current_work {
+            if let Some(work_idx) = state.work_line_for_buffer(state.current_line) {
+                if let Some(ts) = &work.lines[work_idx].timestamp {
+                    let seek_time = (ts.start - SEEK_PREROLL).max(0.0);
+                    let _ = state
+                        .cmd_tx
+                        .try_send(crate::mpv::MpvCommand::Seek(seek_time));
+                }
             }
         }
+    } else {
+        // No timestamp — suppress indefinitely so cursor stays put
+        state.suppress_sync_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(86400));
     }
 }
 

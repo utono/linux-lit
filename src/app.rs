@@ -59,6 +59,9 @@ pub struct AppState {
     pub settings_overlay: crate::ui::settings_overlay::SettingsOverlay,
     pub media_picker: MediaPicker,
     pub dialogue_formatting_active: bool,
+    /// When set, CursorSync events are suppressed until this instant passes.
+    /// Prevents playback sync from overriding manual navigation.
+    pub suppress_sync_until: Option<std::time::Instant>,
 }
 
 impl AppState {
@@ -256,6 +259,7 @@ pub fn build_window(
         settings_overlay,
         media_picker,
         dialogue_formatting_active: false,
+        suppress_sync_until: None,
     }));
 
     // Connect picker search entry filter
@@ -510,7 +514,8 @@ fn rebuild_buffer_text(state: &mut AppState) {
         match std::fs::read_to_string(path) {
             Ok(contents) => {
                 let file_lines: Vec<String> = contents.lines().map(String::from).collect();
-                let line_map = crate::text_file_map::build_line_map(&file_lines, &work.lines);
+                let is_prose = crate::db::line_types::is_prose_work(&work.work_type);
+                let line_map = crate::text_file_map::build_line_map(&file_lines, &work.lines, is_prose);
                 state.buffer.set_text(&contents);
                 state.line_map = Some(line_map);
                 crate::logging::log(&format!(

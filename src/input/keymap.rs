@@ -336,7 +336,7 @@ pub fn handle_key(
                 return true;
             }
             "Tab" => {
-                crate::input::search::toggle_playback(&state.borrow());
+                crate::input::search::toggle_playback(&mut state.borrow_mut());
                 return true;
             }
             _ => return false, // let GTK route to the Entry
@@ -418,7 +418,7 @@ pub fn handle_key(
             true
         }
         "Tab" => {
-            crate::input::search::toggle_playback(&state.borrow());
+            crate::input::search::toggle_playback(&mut state.borrow_mut());
             true
         }
         "exclam" => {

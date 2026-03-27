@@ -61,6 +61,12 @@ fn main() {
                         if !s.search_matches.is_empty() {
                             continue;
                         }
+                        if let Some(until) = s.suppress_sync_until {
+                            if std::time::Instant::now() < until {
+                                continue;
+                            }
+                            s.suppress_sync_until = None;
+                        }
                         // Translate work-line index to buffer-line index if line_map present
                         let buffer_line = if let Some(ref lm) = s.line_map {
                             if line_idx < lm.work_to_buffer.len() {

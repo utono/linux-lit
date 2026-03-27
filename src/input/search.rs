@@ -117,7 +117,9 @@ pub fn execute_search(state_rc: &Rc<RefCell<AppState>>) {
 }
 
 /// Toggle playback. If resuming, seek to current line's start_time first.
-pub fn toggle_playback(state: &AppState) {
+/// Clears sync suppression so cursor tracking resumes.
+pub fn toggle_playback(state: &mut AppState) {
+    state.suppress_sync_until = None;
     if let Some(ref work) = state.current_work {
         if let Some(work_idx) = state.work_line_for_buffer(state.current_line) {
             if let Some(ts) = &work.lines[work_idx].timestamp {
