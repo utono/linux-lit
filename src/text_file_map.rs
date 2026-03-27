@@ -13,9 +13,13 @@ pub struct LineMap {
 }
 
 /// Normalize a line of text to match the DB's `normalized_text` column:
-/// trim, lowercase, strip non-alphanumeric chars (keep spaces), collapse whitespace.
+/// strip bracketed stage directions, trim, lowercase, strip non-alphanumeric
+/// chars (keep spaces), collapse whitespace.
 pub fn normalize(s: &str) -> String {
-    let lowered = s.trim().to_lowercase();
+    // Remove bracketed stage directions like [To Fool.] that appear in text
+    // files but not in DB canonical_text
+    let without_brackets = strip_brackets(s);
+    let lowered = without_brackets.trim().to_lowercase();
     let filtered: String = lowered
         .chars()
         .filter(|c| c.is_alphanumeric() || *c == ' ')
@@ -25,6 +29,21 @@ pub fn normalize(s: &str) -> String {
         .split_whitespace()
         .collect::<Vec<&str>>()
         .join(" ")
+}
+
+/// Remove all `[...]` bracketed text from a string.
+fn strip_brackets(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut depth = 0usize;
+    for ch in s.chars() {
+        match ch {
+            '[' => depth += 1,
+            ']' if depth > 0 => depth -= 1,
+            _ if depth == 0 => result.push(ch),
+            _ => {}
+        }
+    }
+    result
 }
 
 const WINDOW: usize = 50;

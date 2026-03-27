@@ -51,6 +51,7 @@ pub struct AppState {
     pub current_time_pos: f64,
     pub media_id: Option<i64>,
     pub sign_column_visible: Rc<Cell<bool>>,
+    pub has_timestamp: Rc<RefCell<Vec<bool>>>,
     pub gutter_renderer: Option<sourceview5::GutterRendererText>,
     pub chunk_renderer: Option<sourceview5::GutterRendererText>,
     pub ab_repeat: crate::ab_repeat::AbRepeatState,
@@ -273,6 +274,7 @@ pub fn build_window(
         current_time_pos: 0.0,
         media_id: None,
         sign_column_visible: Rc::new(Cell::new(false)),
+        has_timestamp: Rc::new(RefCell::new(Vec::new())),
         gutter_renderer: None,
         chunk_renderer: None,
         ab_repeat: crate::ab_repeat::AbRepeatState::default(),
@@ -482,27 +484,30 @@ pub fn display_work(state: &mut AppState, work: Work) {
     if let Some(old_renderer) = state.gutter_renderer.take() {
         crate::gutter::remove_gutter_renderer(&state.text_view, &old_renderer);
     }
-    let has_timestamp: Vec<bool> = if let Some(ref lm) = state.line_map {
-        lm.buffer_to_work
-            .iter()
-            .map(|opt_idx| {
-                opt_idx
-                    .and_then(|idx| state.current_work.as_ref()?.lines.get(idx)?.timestamp.as_ref())
-                    .is_some()
-            })
-            .collect()
-    } else {
-        state
-            .current_work
-            .as_ref()
-            .map(|w| w.lines.iter().map(|l| l.timestamp.is_some()).collect())
-            .unwrap_or_default()
-    };
-    crate::gutter::place_timestamp_marks(&state.buffer, &has_timestamp);
+    {
+        let new_has_ts: Vec<bool> = if let Some(ref lm) = state.line_map {
+            lm.buffer_to_work
+                .iter()
+                .map(|opt_idx| {
+                    opt_idx
+                        .and_then(|idx| state.current_work.as_ref()?.lines.get(idx)?.timestamp.as_ref())
+                        .is_some()
+                })
+                .collect()
+        } else {
+            state
+                .current_work
+                .as_ref()
+                .map(|w| w.lines.iter().map(|l| l.timestamp.is_some()).collect())
+                .unwrap_or_default()
+        };
+        *state.has_timestamp.borrow_mut() = new_has_ts;
+    }
+    crate::gutter::place_timestamp_marks(&state.buffer, &state.has_timestamp.borrow());
     let renderer = crate::gutter::setup_timestamp_gutter(
         &state.text_view,
         state.sign_column_visible.clone(),
-        has_timestamp,
+        state.has_timestamp.clone(),
         state.ab_a_line.clone(),
         state.ab_b_line.clone(),
     );
@@ -1029,6 +1034,12 @@ pub fn apply_ab_dim(state: &AppState) {
     };
 
     if !state.ab_repeat.loop_active {
+        return;
+    }
+
+    // Don't dim lines when navigating chunks — the chunk gutter bar
+    // already indicates the active range.
+    if state.ab_repeat.chunk_index.is_some() {
         return;
     }
 

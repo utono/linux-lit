@@ -1,3 +1,5 @@
+use gtk4::prelude::*;
+
 use crate::app::AppState;
 use crate::db::models::TimeRange;
 
@@ -30,12 +32,21 @@ fn resync_mpv_timestamps(state: &AppState) {
 pub fn set_start_time(state: &mut AppState) -> bool {
     let media_id = match state.media_id {
         Some(id) => id,
-        None => return false,
+        None => {
+            crate::logging::log("TS: set_start_time failed: no media_id");
+            return false;
+        }
     };
     let time_pos = state.current_time_pos;
     let line_idx = match state.work_line_for_buffer(state.current_line) {
         Some(i) => i,
-        None => return false,
+        None => {
+            crate::logging::log(&format!(
+                "TS: set_start_time failed: no work line for buffer line {}",
+                state.current_line
+            ));
+            return false;
+        }
     };
 
     {
@@ -67,6 +78,94 @@ pub fn set_start_time(state: &mut AppState) -> bool {
     crate::logging::log(&format!("TS: set start_time={:.2} line={}", time_pos, line_idx));
 
     resync_mpv_timestamps(state);
+
+    // Update sign column for this line
+    let buffer_line = state.current_line;
+    {
+        let mut ht = state.has_timestamp.borrow_mut();
+        if buffer_line < ht.len() {
+            ht[buffer_line] = true;
+        }
+    }
+    if let Some(ref renderer) = state.gutter_renderer {
+        renderer.queue_draw();
+    }
+
+    true
+}
+
+/// Play the current line from its start time (a).
+pub fn play_current_line(state: &mut AppState) -> bool {
+    let line_idx = match state.work_line_for_buffer(state.current_line) {
+        Some(i) => i,
+        None => return false,
+    };
+    let start = match state.current_work.as_ref().and_then(|w| w.lines[line_idx].timestamp.as_ref()) {
+        Some(ts) => ts.start,
+        None => return false,
+    };
+    let seek_time = (start - crate::input::navigation::SEEK_PREROLL).max(0.0);
+    let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::ResumeAndSeek(seek_time));
+    // Suppress cursor sync so cursor stays on this line
+    state.suppress_sync_until = Some(
+        std::time::Instant::now() + std::time::Duration::from_millis(500),
+    );
+    true
+}
+
+/// Set chapter on current line from MPV position (.).
+pub fn set_chapter(state: &mut AppState) -> bool {
+    let media_id = match state.media_id {
+        Some(id) => id,
+        None => return false,
+    };
+    let time_pos = state.current_time_pos;
+    let line_idx = match state.work_line_for_buffer(state.current_line) {
+        Some(i) => i,
+        None => return false,
+    };
+
+    {
+        let work = match &mut state.current_work {
+            Some(w) => w,
+            None => return false,
+        };
+        let line = &mut work.lines[line_idx];
+
+        let conn = match crate::db::queries::open_db_rw() {
+            Ok(c) => c,
+            Err(e) => {
+                crate::logging::log(&format!("TS: open_db_rw failed: {}", e));
+                return false;
+            }
+        };
+        if let Err(e) = crate::db::queries::upsert_chapter(&conn, line.id, media_id, &line.citation, time_pos) {
+            crate::logging::log(&format!("TS: upsert_chapter failed: {}", e));
+            return false;
+        }
+
+        // Update in-memory
+        match &mut line.timestamp {
+            Some(ts) => ts.start = time_pos,
+            None => line.timestamp = Some(TimeRange { start: time_pos, end: 0.0 }),
+        }
+    }
+    crate::logging::log(&format!("TS: set chapter start_time={:.2} line={}", time_pos, line_idx));
+
+    resync_mpv_timestamps(state);
+
+    // Update sign column for this line
+    let buffer_line = state.current_line;
+    {
+        let mut ht = state.has_timestamp.borrow_mut();
+        if buffer_line < ht.len() {
+            ht[buffer_line] = true;
+        }
+    }
+    if let Some(ref renderer) = state.gutter_renderer {
+        renderer.queue_draw();
+    }
+
     true
 }
 

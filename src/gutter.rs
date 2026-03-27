@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk4::prelude::*;
@@ -35,7 +35,7 @@ pub fn place_timestamp_marks(buffer: &SrcBuffer, has_timestamp: &[bool]) {
 pub fn setup_timestamp_gutter(
     view: &View,
     visible: Rc<Cell<bool>>,
-    has_timestamp: Vec<bool>,
+    has_timestamp: Rc<RefCell<Vec<bool>>>,
     a_line: Rc<Cell<Option<usize>>>,
     b_line: Rc<Cell<Option<usize>>>,
 ) -> sourceview5::GutterRendererText {
@@ -54,7 +54,8 @@ pub fn setup_timestamp_gutter(
             return;
         }
         let idx = line as usize;
-        if idx < has_timestamp.len() && has_timestamp[idx] {
+        let ts = has_timestamp.borrow();
+        if idx < ts.len() && ts[idx] {
             if a_line.get() == Some(idx) {
                 text_renderer.set_text("\u{25D0}"); // ◐
             } else if b_line.get() == Some(idx) {

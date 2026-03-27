@@ -433,20 +433,24 @@ pub fn handle_key(
             navigation::jump_to_next_dialogue(&mut state.borrow_mut());
             true
         }
-        "o" => {
-            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::SeekRelative(-3.5));
+        "o" | "e" | "O" | "E" => {
+            let offset = match key_name {
+                "o" => -3.5,
+                "e" => 3.5,
+                "O" => -60.0,
+                "E" => 60.0,
+                _ => unreachable!(),
+            };
+            let mut s = state.borrow_mut();
+            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SeekRelative(offset));
+            // Suppress cursor sync so the seek doesn't move the cursor line
+            s.suppress_sync_until = Some(
+                std::time::Instant::now() + std::time::Duration::from_secs(86400),
+            );
             true
         }
-        "e" => {
-            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::SeekRelative(3.5));
-            true
-        }
-        "O" => {
-            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::SeekRelative(-60.0));
-            true
-        }
-        "E" => {
-            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::SeekRelative(60.0));
+        "a" => {
+            crate::input::timestamps::play_current_line(&mut state.borrow_mut());
             true
         }
         "Tab" => {
@@ -509,6 +513,9 @@ pub fn handle_key(
         }
         "u" | "Right" => {
             crate::input::timestamps::set_start_time(&mut state.borrow_mut())
+        }
+        "period" => {
+            crate::input::timestamps::set_chapter(&mut state.borrow_mut())
         }
         "i" => {
             crate::input::timestamps::set_end_time(&mut state.borrow_mut())
@@ -587,6 +594,7 @@ pub fn handle_key(
                 }
             }
             crate::app::apply_ab_dim(&state.borrow());
+            crate::input::navigation::position_chunk(&mut state.borrow_mut());
             true
         }
         "y" => {
@@ -638,6 +646,7 @@ pub fn handle_key(
                 }
             }
             crate::app::apply_ab_dim(&state.borrow());
+            crate::input::navigation::position_chunk(&mut state.borrow_mut());
             true
         }
         "m" => {
@@ -671,13 +680,17 @@ pub fn handle_key(
             if s.ab_repeat.loop_active {
                 let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::ClearAbLoop);
                 s.ab_repeat.clear();
+                s.ab_repeat.chunk_index = None;
                 s.ab_a_line.set(None);
                 s.ab_b_line.set(None);
+                s.suppress_sync_until = None;
                 if let Some(ref renderer) = s.gutter_renderer {
                     renderer.queue_draw();
                 }
                 crate::app::remove_ab_dim(&s);
                 crate::logging::log("CHUNK: AB loop cleared");
+                drop(s);
+                crate::input::navigation::update_highlight_and_center(&mut state.borrow_mut());
                 true
             } else {
                 false

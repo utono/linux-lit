@@ -61,6 +61,10 @@ fn main() {
                         if !s.search_matches.is_empty() {
                             continue;
                         }
+                        // During chunk mode, don't let CursorSync move the view
+                        if s.ab_repeat.chunk_index.is_some() {
+                            continue;
+                        }
                         if let Some(until) = s.suppress_sync_until {
                             if std::time::Instant::now() < until {
                                 continue;

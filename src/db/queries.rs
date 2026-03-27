@@ -205,6 +205,23 @@ pub fn upsert_start_time(
     Ok(())
 }
 
+pub fn upsert_chapter(
+    conn: &Connection,
+    line_mapping_id: i64,
+    media_id: i64,
+    citation: &str,
+    start_time: f64,
+) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "INSERT INTO line_timestamps (citation, line_mapping_id, media_id, start_time, source, is_chapter) \
+         VALUES (?1, ?2, ?3, ?4, 'manual', 1) \
+         ON CONFLICT(line_mapping_id, media_id) \
+         DO UPDATE SET start_time = ?4, is_chapter = 1, updated_at = CURRENT_TIMESTAMP",
+        rusqlite::params![citation, line_mapping_id, media_id, start_time],
+    )?;
+    Ok(())
+}
+
 pub fn update_end_time(
     conn: &Connection,
     line_mapping_id: i64,

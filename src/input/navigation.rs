@@ -426,6 +426,16 @@ pub fn update_highlight_and_center(state: &mut AppState) {
     set_page_instant(state, new_top);
 }
 
+/// Position chunk's first line ~5 lines from top, move cursor there, update highlight.
+pub fn position_chunk(state: &mut AppState) {
+    if let Some(a_line) = state.ab_repeat.a_line {
+        state.current_line = a_line;
+        update_highlight(state);
+        let new_top = a_line.saturating_sub(5);
+        set_page_instant(state, new_top);
+    }
+}
+
 /// Dim all lines except the current one. The current line keeps full foreground.
 fn update_highlight(state: &AppState) {
     let buffer = &state.buffer;
@@ -442,6 +452,21 @@ fn update_highlight(state: &AppState) {
             line_end.forward_to_line_end();
         }
         buffer.remove_tag(tag, &line_start, &line_end);
+    }
+
+    // When a chunk is active, undim all lines within the chunk range
+    if state.ab_repeat.chunk_index.is_some() {
+        if let (Some(a), Some(b)) = (state.ab_repeat.a_line, state.ab_repeat.b_line) {
+            for line_idx in a..=b {
+                if let Some(line_start) = buffer.iter_at_line(line_idx as i32) {
+                    let mut line_end = line_start;
+                    if !line_end.ends_line() {
+                        line_end.forward_to_line_end();
+                    }
+                    buffer.remove_tag(tag, &line_start, &line_end);
+                }
+            }
+        }
     }
 }
 
