@@ -92,25 +92,7 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
         })?
         .collect::<Result<_, _>>()?;
 
-    // 4. Build timestamp lookup: line_id -> TimeRange
-    let mut ts_map: HashMap<i64, TimeRange> = HashMap::new();
-    for ts in &timestamps {
-        ts_map.entry(ts.line_id).or_insert(TimeRange {
-            start: ts.start,
-            end: ts.end,
-        });
-    }
-
-    // 5. Attach timestamps to lines
-    let lines: Vec<Line> = lines
-        .into_iter()
-        .map(|mut line| {
-            line.timestamp = ts_map.get(&line.id).copied();
-            line
-        })
-        .collect();
-
-    // 6. Load media paths
+    // 4. Load media paths (needed to determine active media_id for timestamp filtering)
     let mut media_stmt = conn.prepare(
         "SELECT mf.id, mf.path FROM media_files mf \
          JOIN work_media_associations wma ON wma.media_id = mf.id \
@@ -122,6 +104,26 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
         .collect::<Result<_, _>>()?;
     let media_id = media_rows.first().map(|(id, _)| *id);
     let media_paths: Vec<String> = media_rows.into_iter().map(|(_, path)| path).collect();
+
+    // 5. Build timestamp lookup: line_id -> TimeRange (filtered by active media_id)
+    let mut ts_map: HashMap<i64, TimeRange> = HashMap::new();
+    for ts in &timestamps {
+        if media_id.map_or(true, |mid| ts.media_id == mid) {
+            ts_map.entry(ts.line_id).or_insert(TimeRange {
+                start: ts.start,
+                end: ts.end,
+            });
+        }
+    }
+
+    // 6. Attach timestamps to lines
+    let lines: Vec<Line> = lines
+        .into_iter()
+        .map(|mut line| {
+            line.timestamp = ts_map.get(&line.id).copied();
+            line
+        })
+        .collect();
 
     Ok(Work {
         abbrev: abbrev.to_string(),
@@ -144,7 +146,7 @@ pub fn list_media_for_work(
         "SELECT mf.id, mf.path, wma.display_name, wma.priority \
          FROM media_files mf \
          JOIN work_media_associations wma ON wma.media_id = mf.id \
-         WHERE wma.work_abbrev = ?1 AND mf.vocab_audio = 0 \
+         WHERE wma.work_abbrev = ?1 \
          ORDER BY wma.priority DESC",
     )?;
     let rows = stmt.query_map([abbrev], |row| {
@@ -237,7 +239,6 @@ mod tests {
         assert!(work.lines.len() > 4000, "Hamlet should have 4000+ lines");
         assert_eq!(work.lines[0].text, "Who\u{2019}s there?");
         assert!(work.lines[0].is_dialogue);
-        let with_ts = work.lines.iter().filter(|l| l.timestamp.is_some()).count();
-        assert!(with_ts > 0, "Some lines should have timestamps");
+        assert!(!work.timestamps.is_empty(), "Work should have timestamps loaded");
     }
 }

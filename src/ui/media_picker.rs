@@ -146,11 +146,19 @@ fn format_media_label(item: &MediaItem) -> String {
             return name.clone();
         }
     }
-    // Fall back to filename from path
-    Path::new(&item.path)
-        .file_name()
-        .map(|f| f.to_string_lossy().to_string())
-        .unwrap_or_else(|| item.path.clone())
+    // Fall back to parent_dir/filename from path
+    let p = Path::new(&item.path);
+    let filename = p.file_name().unwrap_or_default().to_string_lossy();
+    let parent = p
+        .parent()
+        .and_then(|pp| pp.file_name())
+        .map(|d| d.to_string_lossy())
+        .unwrap_or_default();
+    if parent.is_empty() {
+        filename.to_string()
+    } else {
+        format!("{}/{}", parent, filename)
+    }
 }
 
 fn subsequence_match(filter: &str, target: &str) -> bool {

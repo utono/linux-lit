@@ -365,11 +365,13 @@ pub fn display_work(state: &mut AppState, work: Work) {
     state.config.last_line = 0;
     crate::config::save(&state.config);
 
-    // Send timestamp data to MPV client
+    // Send timestamp data to MPV client (filtered by active media_id)
     {
+        let active_media_id = state.media_id;
         let mut ts_data: Vec<(i64, f64, f64)> = work
             .timestamps
             .iter()
+            .filter(|t| active_media_id.map_or(true, |mid| t.media_id == mid))
             .map(|t| (t.line_id, t.start, t.end))
             .collect();
         ts_data.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -708,7 +710,7 @@ pub fn adjust_font_size(state: &mut AppState, delta: i32) {
 
 /// Reset font size to default (18pt).
 pub fn reset_font_size(state: &mut AppState) {
-    let default = 20u32;
+    let default = 16u32;
     if state.config.font_size == default {
         return;
     }

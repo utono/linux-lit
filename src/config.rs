@@ -34,7 +34,7 @@ pub const FONT_CYCLE: &[&str] = &[
 ];
 
 fn default_font_size() -> u32 {
-    20
+    16
 }
 
 pub const DEFAULT_LINE_SPACING: u32 = 4;

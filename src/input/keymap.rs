@@ -106,6 +106,21 @@ pub fn handle_key(
     // Media picker
     let media_picker_visible = state.borrow().media_picker.is_visible();
 
+    // Ctrl+n/Ctrl+p navigate media picker list when visible
+    if media_picker_visible && is_ctrl {
+        match key_name {
+            "n" => {
+                state.borrow().media_picker.move_selection(1);
+                return true;
+            }
+            "p" => {
+                state.borrow().media_picker.move_selection(-1);
+                return true;
+            }
+            _ => {}
+        }
+    }
+
     if media_picker_visible {
         match key_name {
             "Escape" => {
@@ -141,6 +156,30 @@ pub fn handle_key(
                         if !socket_path.is_empty() {
                             let mut s = state_clone.borrow_mut();
                             s.media_id = Some(media_id);
+                            // Re-send timestamps filtered by new media_id
+                            if let Some(ref work) = s.current_work {
+                                let mut ts_data: Vec<(i64, f64, f64)> = work
+                                    .timestamps
+                                    .iter()
+                                    .filter(|t| t.media_id == media_id)
+                                    .map(|t| (t.line_id, t.start, t.end))
+                                    .collect();
+                                ts_data.sort_by(|a, b| {
+                                    a.1.partial_cmp(&b.1)
+                                        .unwrap_or(std::cmp::Ordering::Equal)
+                                });
+                                let mut id_to_idx: std::collections::HashMap<i64, usize> =
+                                    std::collections::HashMap::new();
+                                for (i, line) in work.lines.iter().enumerate() {
+                                    id_to_idx.insert(line.id, i);
+                                }
+                                let _ = s.cmd_tx.try_send(
+                                    crate::mpv::MpvCommand::SetTimestamps {
+                                        timestamps: ts_data,
+                                        line_id_to_index: id_to_idx,
+                                    },
+                                );
+                            }
                             let _ = s
                                 .cmd_tx
                                 .try_send(crate::mpv::MpvCommand::Connect(socket_path));
