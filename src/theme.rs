@@ -247,7 +247,24 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .settings-row-selected {{ background-color: rgba(100, 140, 200, 0.8); \
            border-left: 3px solid rgba(100, 180, 255, 0.9); }} \
          .settings-footer {{ font-size: 11px; opacity: 0.6; margin-top: 12px; \
-           text-align: center; }}",
+           text-align: center; }} \
+         .action-popup {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
+           padding: 16px; border-radius: 8px; }} \
+         .action-separator {{ opacity: 0.3; margin: 4px 12px; }} \
+         .keybinds-overlay {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
+           padding: 16px; border-radius: 8px; }} \
+         .keybind-key {{ background-color: rgba(255, 255, 255, 0.08); \
+           border-radius: 3px; min-width: 68px; padding: 3px 6px; }} \
+         .keybind-key-unbound {{ opacity: 0.25; }} \
+         .keybind-label-bare {{ color: #7db8f0; font-size: 11px; font-weight: bold; }} \
+         .keybind-label-ctrl {{ color: #d4a052; font-size: 11px; font-weight: bold; }} \
+         .keybind-label-alt {{ color: #c47dd4; font-size: 11px; font-weight: bold; }} \
+         .keybind-label-ctrlalt {{ color: #d45050; font-size: 11px; font-weight: bold; }} \
+         .keybind-action {{ color: rgba(255, 255, 255, 0.5); font-size: 9px; }} \
+         .keybind-row-header {{ font-size: 9px; letter-spacing: 2px; \
+           color: rgba(255, 255, 255, 0.35); margin-bottom: 4px; }} \
+         .keybind-legend {{ border-top: 1px solid rgba(255, 255, 255, 0.1); \
+           margin-top: 12px; padding-top: 8px; }}",
         root = theme.root_color,
         bg = theme.text_bg,
         fg = theme.text_fg,
