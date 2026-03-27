@@ -78,6 +78,7 @@ pub struct AppState {
     pub selection_tag: gtk4::TextTag,
     pub action_popup: Option<crate::input::visual::ActionPopupState>,
     pub action_popup_widget: crate::ui::action_popup::ActionPopup,
+    pub keybinds_overlay: crate::ui::keybinds_overlay::KeybindsOverlay,
 }
 
 impl AppState {
@@ -251,14 +252,19 @@ pub fn build_window(
     settings_overlay.attach(&media_picker.overlay);
     settings_overlay.overlay.set_vexpand(true);
 
+    // Keybinds overlay wraps the settings overlay
+    let keybinds_overlay = crate::ui::keybinds_overlay::KeybindsOverlay::new();
+    keybinds_overlay.attach(&settings_overlay.overlay);
+    keybinds_overlay.overlay.set_vexpand(true);
+
     // Action popup overlay for visual mode
     let action_popup_widget = crate::ui::action_popup::ActionPopup::new();
-    settings_overlay.overlay.add_overlay(&action_popup_widget.container);
+    keybinds_overlay.overlay.add_overlay(&action_popup_widget.container);
 
     // Search bar at bottom
     let search_bar = SearchBar::new();
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-    vbox.append(&settings_overlay.overlay);
+    vbox.append(&keybinds_overlay.overlay);
     vbox.append(&search_bar.container);
 
     window.set_child(Some(&vbox));
@@ -314,6 +320,7 @@ pub fn build_window(
         selection_tag,
         action_popup: None,
         action_popup_widget,
+        keybinds_overlay,
     }));
 
     // Connect picker search entry filter
