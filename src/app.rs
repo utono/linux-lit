@@ -77,6 +77,7 @@ pub struct AppState {
     pub undo_stack: Vec<crate::input::visual::UndoEntry>,
     pub selection_tag: gtk4::TextTag,
     pub action_popup: Option<crate::input::visual::ActionPopupState>,
+    pub action_popup_widget: crate::ui::action_popup::ActionPopup,
 }
 
 impl AppState {
@@ -250,6 +251,10 @@ pub fn build_window(
     settings_overlay.attach(&media_picker.overlay);
     settings_overlay.overlay.set_vexpand(true);
 
+    // Action popup overlay for visual mode
+    let action_popup_widget = crate::ui::action_popup::ActionPopup::new();
+    settings_overlay.overlay.add_overlay(&action_popup_widget.container);
+
     // Search bar at bottom
     let search_bar = SearchBar::new();
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
@@ -308,6 +313,7 @@ pub fn build_window(
         undo_stack: Vec::new(),
         selection_tag,
         action_popup: None,
+        action_popup_widget,
     }));
 
     // Connect picker search entry filter
