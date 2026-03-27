@@ -11,6 +11,7 @@ pub struct AbRepeatState {
     pub chunk_index: Option<usize>,
 }
 
+#[allow(dead_code)]
 impl AbRepeatState {
     pub fn set_a(&mut self, line: usize, time: f64) {
         self.a_line = Some(line);

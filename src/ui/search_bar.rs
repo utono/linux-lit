@@ -57,6 +57,7 @@ impl SearchBar {
         self.container.is_visible()
     }
 
+    #[allow(dead_code)]
     pub fn entry(&self) -> &Entry {
         &self.entry
     }

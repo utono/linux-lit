@@ -2,7 +2,7 @@ use rusqlite::{Connection, OpenFlags};
 use std::collections::HashMap;
 
 use super::line_types;
-use super::models::{Line, TimeRange, Timestamp, Work, WorkSummary};
+use super::models::{Line, MediaItem, TimeRange, Timestamp, Work, WorkSummary};
 
 fn db_path() -> String {
     let home = std::env::var("HOME").expect("HOME environment variable not set");
@@ -134,6 +134,28 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
         media_paths,
         media_id,
     })
+}
+
+pub fn list_media_for_work(
+    conn: &Connection,
+    abbrev: &str,
+) -> Result<Vec<MediaItem>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT mf.id, mf.path, wma.display_name, wma.priority \
+         FROM media_files mf \
+         JOIN work_media_associations wma ON wma.media_id = mf.id \
+         WHERE wma.work_abbrev = ?1 AND mf.vocab_audio = 0 \
+         ORDER BY wma.priority DESC",
+    )?;
+    let rows = stmt.query_map([abbrev], |row| {
+        Ok(MediaItem {
+            media_id: row.get(0)?,
+            path: row.get(1)?,
+            display_name: row.get(2)?,
+            priority: row.get(3)?,
+        })
+    })?;
+    rows.collect()
 }
 
 pub fn open_db_rw() -> Result<Connection, rusqlite::Error> {

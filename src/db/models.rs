@@ -65,3 +65,11 @@ pub struct WorkSummary {
     pub author: String,
     pub work_type: String,
 }
+
+#[derive(Debug, Clone)]
+pub struct MediaItem {
+    pub media_id: i64,
+    pub path: String,
+    pub display_name: Option<String>,
+    pub priority: i32,
+}

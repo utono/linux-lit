@@ -103,6 +103,76 @@ pub fn handle_key(
         return false;
     }
 
+    // Media picker
+    let media_picker_visible = state.borrow().media_picker.is_visible();
+
+    if media_picker_visible {
+        match key_name {
+            "Escape" => {
+                state.borrow().media_picker.hide();
+                return true;
+            }
+            "Return" => {
+                let selected_path = state.borrow().media_picker.selected_media_path();
+                let selected_id = state.borrow().media_picker.selected_media_id();
+                if let (Some(path), Some(media_id)) = (selected_path, selected_id) {
+                    let state_clone = Rc::clone(state);
+                    let handle = tokio_handle.clone();
+                    glib::spawn_future_local(async move {
+                        let socket_path = handle
+                            .spawn_blocking(move || {
+                                if let Some(sock) =
+                                    crate::mpv::discovery::find_socket_for_work(&[path.clone()])
+                                {
+                                    return sock.to_string_lossy().to_string();
+                                }
+                                let launched = crate::mpv::discovery::launch_mpv(&path);
+                                for _ in 0..60 {
+                                    std::thread::sleep(std::time::Duration::from_millis(50));
+                                    if std::path::Path::new(&launched).exists() {
+                                        return launched;
+                                    }
+                                }
+                                launched
+                            })
+                            .await
+                            .unwrap_or_default();
+
+                        if !socket_path.is_empty() {
+                            let mut s = state_clone.borrow_mut();
+                            s.media_id = Some(media_id);
+                            let _ = s
+                                .cmd_tx
+                                .try_send(crate::mpv::MpvCommand::Connect(socket_path));
+                            s.media_picker.hide();
+                            crate::logging::log(&format!(
+                                "MEDIA: switched to media_id={}",
+                                media_id
+                            ));
+                        }
+                    });
+                }
+                return true;
+            }
+            "Down" | "j" => {
+                let is_search_focused = state.borrow().media_picker.search_entry().has_focus();
+                if key_name == "Down" || !is_search_focused {
+                    state.borrow().media_picker.move_selection(1);
+                    return true;
+                }
+            }
+            "Up" | "k" => {
+                let is_search_focused = state.borrow().media_picker.search_entry().has_focus();
+                if key_name == "Up" || !is_search_focused {
+                    state.borrow().media_picker.move_selection(-1);
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        return false;
+    }
+
     // Settings overlay
     let settings_visible = state.borrow().settings_overlay.is_visible();
 
@@ -497,6 +567,32 @@ pub fn handle_key(
                 }
             }
             crate::app::apply_ab_dim(&state.borrow());
+            true
+        }
+        "m" => {
+            let abbrev = state
+                .borrow()
+                .current_work
+                .as_ref()
+                .map(|w| w.abbrev.clone());
+            if let Some(abbrev) = abbrev {
+                let state_clone = Rc::clone(state);
+                let handle = tokio_handle.clone();
+                glib::spawn_future_local(async move {
+                    let items = handle
+                        .spawn_blocking(move || {
+                            let conn =
+                                crate::db::queries::open_db().expect("Failed to open lit.db");
+                            crate::db::queries::list_media_for_work(&conn, &abbrev)
+                                .unwrap_or_default()
+                        })
+                        .await
+                        .unwrap_or_default();
+                    let mut s = state_clone.borrow_mut();
+                    s.media_picker.set_items(items);
+                    s.media_picker.show();
+                });
+            }
             true
         }
         "Escape" => {

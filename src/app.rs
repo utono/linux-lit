@@ -11,6 +11,7 @@ use sourceview5::View;
 use crate::config::Config;
 use crate::db::models::{Work, WorkSummary};
 use crate::ui::library_picker::LibraryPicker;
+use crate::ui::media_picker::MediaPicker;
 use crate::ui::search_bar::SearchBar;
 
 #[derive(Debug, Clone)]
@@ -56,6 +57,7 @@ pub struct AppState {
     pub ab_b_line: Rc<Cell<Option<usize>>>,
     pub line_map: Option<crate::text_file_map::LineMap>,
     pub settings_overlay: crate::ui::settings_overlay::SettingsOverlay,
+    pub media_picker: MediaPicker,
     pub dialogue_formatting_active: bool,
 }
 
@@ -193,15 +195,19 @@ pub fn build_window(
     picker.attach(&scrolled);
     picker.overlay.set_vexpand(true);
 
-    // Settings overlay
+    // Media picker overlay wraps the library picker overlay
+    let media_picker = MediaPicker::new();
+    media_picker.attach(&picker.overlay);
+    media_picker.overlay.set_vexpand(true);
+
+    // Settings overlay wraps the media picker overlay
     let all_themes = crate::theme::load_all_themes();
     let settings_overlay = crate::ui::settings_overlay::SettingsOverlay::new(
         all_themes,
         &theme.name,
     );
 
-    // Settings overlay wraps the picker overlay
-    settings_overlay.attach(&picker.overlay);
+    settings_overlay.attach(&media_picker.overlay);
     settings_overlay.overlay.set_vexpand(true);
 
     // Search bar at bottom
@@ -248,6 +254,7 @@ pub fn build_window(
         ab_b_line: Rc::new(Cell::new(None)),
         line_map: None,
         settings_overlay,
+        media_picker,
         dialogue_formatting_active: false,
     }));
 
@@ -258,6 +265,19 @@ pub fn build_window(
         s.picker.search_entry().connect_changed(move |entry| {
             let text = entry.text();
             state_for_filter.borrow().picker.populate_list(&text);
+        });
+    }
+
+    // Connect media picker search entry filter
+    let state_for_media_filter = Rc::clone(&state);
+    {
+        let s = state.borrow();
+        s.media_picker.search_entry().connect_changed(move |entry| {
+            let text = entry.text();
+            state_for_media_filter
+                .borrow()
+                .media_picker
+                .populate_list(&text);
         });
     }
 
