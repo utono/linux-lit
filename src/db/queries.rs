@@ -177,6 +177,147 @@ pub fn load_translations(
     Ok(map)
 }
 
+/// Load all vocab words + variants for matching against buffer text.
+/// Returns a HashSet of lowercase words (base words + variants).
+pub fn load_vocab_words(
+    conn: &Connection,
+    _work_abbrev: &str,
+) -> Result<std::collections::HashSet<String>, rusqlite::Error> {
+    let mut words = std::collections::HashSet::new();
+
+    let mut stmt = conn.prepare("SELECT LOWER(word) FROM vocab_words")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    for row in rows {
+        words.insert(row?);
+    }
+
+    let mut stmt = conn.prepare("SELECT LOWER(v.variant) FROM vocab_word_variants v")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    for row in rows {
+        words.insert(row?);
+    }
+
+    Ok(words)
+}
+
+/// Load definition and sources for a vocab word.
+pub fn load_vocab_definition(
+    conn: &Connection,
+    word: &str,
+) -> Option<(String, Vec<String>)> {
+    let result: Result<(String, Option<String>), _> = conn.query_row(
+        "SELECT w.definition, GROUP_CONCAT(s.source) \
+         FROM vocab_words w \
+         LEFT JOIN vocab_word_sources s ON s.word_id = w.id \
+         WHERE LOWER(w.word) = ?1 \
+         GROUP BY w.id",
+        [word.to_lowercase()],
+        |row| Ok((
+            row.get::<_, Option<String>>(0)?.unwrap_or_default(),
+            row.get::<_, Option<String>>(1)?,
+        )),
+    );
+    match result {
+        Ok((def, sources_str)) => {
+            let sources: Vec<String> = sources_str
+                .map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
+                .unwrap_or_default();
+            if def.is_empty() { None } else { Some((def, sources)) }
+        }
+        Err(_) => None,
+    }
+}
+
+pub struct VocabEtymology {
+    pub prefix: Option<String>,
+    pub prefix_gloss: Option<String>,
+    pub root: Option<String>,
+    pub root_base: Option<String>,
+    pub root_gloss: Option<String>,
+    pub suffix: Option<String>,
+    pub suffix_gloss: Option<String>,
+}
+
+/// Load etymology breakdown from vocab_rhetoric.
+pub fn load_vocab_etymology(
+    conn: &Connection,
+    word: &str,
+) -> Option<VocabEtymology> {
+    conn.query_row(
+        "SELECT vr.prefix, vr.prefix_gloss, vr.root, vr.root_base, \
+         vr.root_gloss, vr.suffix, vr.suffix_gloss \
+         FROM vocab_rhetoric vr \
+         JOIN vocab_words vw ON vr.word_id = vw.id \
+         WHERE LOWER(vw.word) = ?1",
+        [word.to_lowercase()],
+        |row| Ok(VocabEtymology {
+            prefix: row.get::<_, Option<String>>(0)?,
+            prefix_gloss: row.get::<_, Option<String>>(1)?,
+            root: row.get::<_, Option<String>>(2)?,
+            root_base: row.get::<_, Option<String>>(3)?,
+            root_gloss: row.get::<_, Option<String>>(4)?,
+            suffix: row.get::<_, Option<String>>(5)?,
+            suffix_gloss: row.get::<_, Option<String>>(6)?,
+        }),
+    ).ok()
+}
+
+/// Load a vocab-word gloss for a word near a given line.
+pub fn load_vocab_gloss(
+    conn: &Connection,
+    word: &str,
+    work_abbrev: &str,
+    line_citation: &str,
+) -> Option<String> {
+    let word_id: i64 = conn.query_row(
+        "SELECT id FROM vocab_words WHERE LOWER(word) = ?1",
+        [word.to_lowercase()],
+        |row| row.get(0),
+    ).ok()?;
+
+    conn.query_row(
+        "SELECT g.gloss_text FROM glosses g \
+         JOIN passages p ON g.passage_id = p.id \
+         WHERE g.gloss_type = 'vocab-word' \
+         AND g.word_id = ?1 \
+         AND p.work_abbrev = ?2 \
+         AND p.start_citation <= ?3 \
+         AND p.end_citation >= ?3",
+        rusqlite::params![word_id, work_abbrev, line_citation],
+        |row| row.get::<_, String>(0),
+    ).ok()
+}
+
+/// List all vocab words found in a work's text, with occurrence counts.
+pub fn load_vocab_word_list(
+    conn: &Connection,
+    work_abbrev: &str,
+) -> Result<Vec<(String, usize)>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT canonical_text FROM line_mapping WHERE work_abbrev = ?1 \
+         ORDER BY div1, div2, line_in_div"
+    )?;
+    let lines: Vec<String> = stmt.query_map([work_abbrev], |row| {
+        row.get::<_, String>(0)
+    })?.collect::<Result<_, _>>()?;
+
+    let vocab = load_vocab_words(conn, work_abbrev)?;
+
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for line in &lines {
+        for token in line.split(|c: char| !c.is_alphanumeric() && c != '\'' && c != '\u{2019}') {
+            let lower = token.to_lowercase();
+            if vocab.contains(&lower) {
+                *counts.entry(lower).or_insert(0) += 1;
+            }
+        }
+    }
+
+    let mut result: Vec<(String, usize)> = counts.into_iter().collect();
+    result.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(result)
+}
+
 pub fn list_media_for_work(
     conn: &Connection,
     abbrev: &str,
@@ -345,6 +486,32 @@ mod tests {
         // Hamlet may or may not have translations — just verify no crash
         // and that the return type is correct
         assert!(translations.len() >= 0);
+    }
+
+    #[test]
+    fn test_load_vocab_words() {
+        let conn = open_db().unwrap();
+        let words = load_vocab_words(&conn, "Ham").unwrap();
+        assert!(!words.is_empty(), "Should have vocab words for Hamlet");
+    }
+
+    #[test]
+    fn test_load_vocab_definition() {
+        let conn = open_db().unwrap();
+        let words = load_vocab_words(&conn, "Ham").unwrap();
+        if let Some(word) = words.iter().next() {
+            let def = load_vocab_definition(&conn, word);
+            let _ = def;
+        }
+    }
+
+    #[test]
+    fn test_load_vocab_word_list() {
+        let conn = open_db().unwrap();
+        let list = load_vocab_word_list(&conn, "Ham").unwrap();
+        if list.len() > 1 {
+            assert!(list[0].0 <= list[1].0, "Should be alphabetically sorted");
+        }
     }
 
     #[test]
