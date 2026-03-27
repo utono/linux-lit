@@ -22,6 +22,15 @@ pub struct SearchMatch {
     pub byte_end: usize,
 }
 
+pub struct PendingCorrection {
+    pub start: usize,
+    pub end: usize,
+    pub db_lines: Vec<crate::db::models::Line>,
+    pub abbrev: String,
+    pub text_file: Option<String>,
+    pub corrected_text: String,
+}
+
 #[allow(dead_code)]
 pub struct AppState {
     pub text_view: View,
@@ -79,6 +88,8 @@ pub struct AppState {
     pub action_popup: Option<crate::input::visual::ActionPopupState>,
     pub action_popup_widget: crate::ui::action_popup::ActionPopup,
     pub keybinds_overlay: crate::ui::keybinds_overlay::KeybindsOverlay,
+    pub correction_overlay: crate::ui::correction_overlay::CorrectionOverlay,
+    pub pending_correction: Option<PendingCorrection>,
 }
 
 impl AppState {
@@ -257,14 +268,19 @@ pub fn build_window(
     keybinds_overlay.attach(&settings_overlay.overlay);
     keybinds_overlay.overlay.set_vexpand(true);
 
+    // Correction overlay wraps the keybinds overlay
+    let correction_overlay = crate::ui::correction_overlay::CorrectionOverlay::new();
+    correction_overlay.attach(&keybinds_overlay.overlay);
+    correction_overlay.overlay.set_vexpand(true);
+
     // Action popup overlay for visual mode
     let action_popup_widget = crate::ui::action_popup::ActionPopup::new();
-    keybinds_overlay.overlay.add_overlay(&action_popup_widget.container);
+    correction_overlay.overlay.add_overlay(&action_popup_widget.container);
 
     // Search bar at bottom
     let search_bar = SearchBar::new();
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-    vbox.append(&keybinds_overlay.overlay);
+    vbox.append(&correction_overlay.overlay);
     vbox.append(&search_bar.container);
 
     window.set_child(Some(&vbox));
@@ -321,6 +337,8 @@ pub fn build_window(
         action_popup: None,
         action_popup_widget,
         keybinds_overlay,
+        correction_overlay,
+        pending_correction: None,
     }));
 
     // Connect picker search entry filter
