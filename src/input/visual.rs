@@ -257,10 +257,113 @@ fn format_line_metadata(state: &AppState, buffer_line: usize, text: &str) -> Str
     }
 }
 
-fn action_merge(_state: &mut AppState) {
-    // Implemented in Task 9
+fn action_merge(state: &mut AppState) {
+    // Extract selection range
+    let (start, end) = match &state.visual_selection {
+        Some(s) => s.range(),
+        None => return,
+    };
+    if start == end {
+        crate::logging::log("VISUAL: merge requires multiple lines");
+        return;
+    }
+
+    let work = match &state.current_work {
+        Some(w) => w,
+        None => return,
+    };
+
+    // Collect the DB lines for the selection range
+    let mut db_lines: Vec<crate::db::models::Line> = Vec::new();
+    for buf_line in start..=end {
+        if let Some(work_idx) = state.work_line_for_buffer(buf_line) {
+            if let Some(line) = work.lines.get(work_idx) {
+                db_lines.push(line.clone());
+            }
+        }
+    }
+    if db_lines.len() < 2 {
+        return;
+    }
+
+    // Build merged text
+    let merged_text: String = db_lines
+        .iter()
+        .map(|l| l.text.trim())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let first_id = db_lines[0].id;
+    let delete_ids: Vec<i64> = db_lines[1..].iter().map(|l| l.id).collect();
+
+    // Capture undo entry - extract text_file info before dropping work borrow
+    let text_file = work.text_file.clone();
+    let file_backup = text_file.as_ref().and_then(|path| {
+        std::fs::read_to_string(path).ok().map(|content| (path.clone(), content))
+    });
+    state.undo_stack.push(UndoEntry {
+        db_lines: db_lines.clone(),
+        file_backup,
+        cursor_line: state.current_line,
+    });
+
+    // Write to DB
+    match crate::db::queries::open_db_rw() {
+        Ok(conn) => {
+            if let Err(e) = crate::db::queries::merge_lines(&conn, first_id, &merged_text, &delete_ids) {
+                crate::logging::log(&format!("VISUAL: merge DB error: {}", e));
+                state.undo_stack.pop();
+                return;
+            }
+        }
+        Err(e) => {
+            crate::logging::log(&format!("VISUAL: open_db_rw failed: {}", e));
+            state.undo_stack.pop();
+            return;
+        }
+    }
+
+    // Update text file if it exists
+    if let Some(ref path) = text_file {
+        if let Ok(contents) = std::fs::read_to_string(path) {
+            let mut file_lines: Vec<String> = contents.lines().map(|l| l.to_string()).collect();
+            if end < file_lines.len() {
+                file_lines.splice(start..=end, std::iter::once(merged_text.clone()));
+                let _ = std::fs::write(path, file_lines.join("\n"));
+            }
+        }
+    }
+
+    crate::logging::log(&format!("VISUAL: merged {} lines into 1", db_lines.len()));
+
+    // Reload the work to refresh buffer
+    reload_current_work(state);
 }
 
 fn action_external_command(_state: &mut AppState, _command: &str) {
     // Implemented in Task 10
+}
+
+/// Reload the current work from DB and refresh the display.
+fn reload_current_work(state: &mut AppState) {
+    let abbrev = match &state.current_work {
+        Some(w) => w.abbrev.clone(),
+        None => return,
+    };
+    let saved_line = state.current_line;
+
+    match crate::db::queries::open_db() {
+        Ok(conn) => {
+            match crate::db::queries::load_work(&conn, &abbrev) {
+                Ok(work) => {
+                    crate::app::display_work(state, work);
+                    let new_count = state.effective_line_count();
+                    state.current_line = saved_line.min(new_count.saturating_sub(1));
+                    crate::input::navigation::update_highlight_and_ensure_visible(state);
+                }
+                Err(e) => crate::logging::log(&format!("VISUAL: reload work failed: {}", e)),
+            }
+        }
+        Err(e) => crate::logging::log(&format!("VISUAL: open_db failed: {}", e)),
+    }
 }
