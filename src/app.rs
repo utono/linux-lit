@@ -595,7 +595,8 @@ fn apply_dialogue_formatting(state: &mut AppState) {
 
     // Remove old formatting tags if they exist
     let tag_table = state.buffer.tag_table();
-    for name in &["dialogue-indent", "speaker-gap", "stage-direction-gap"] {
+    for name in &["dialogue-indent", "speaker-gap", "stage-direction-gap",
+                   "speaker-name", "stage-direction-style", "act-scene-header"] {
         if let Some(old) = tag_table.lookup(name) {
             tag_table.remove(&old);
         }
@@ -620,9 +621,29 @@ fn apply_dialogue_formatting(state: &mut AppState) {
         .pixels_above_lines(10)
         .build();
 
+    let speaker_name_tag = gtk4::TextTag::builder()
+        .name("speaker-name")
+        .variant(pango::Variant::SmallCaps)
+        .scale(0.85)
+        .build();
+
+    let stage_italic_tag = gtk4::TextTag::builder()
+        .name("stage-direction-style")
+        .style(pango::Style::Italic)
+        .build();
+
+    let act_scene_tag = gtk4::TextTag::builder()
+        .name("act-scene-header")
+        .weight(700)
+        .pixels_above_lines(20)
+        .build();
+
     tag_table.add(&indent_tag);
     tag_table.add(&speaker_gap_tag);
     tag_table.add(&stage_gap_tag);
+    tag_table.add(&speaker_name_tag);
+    tag_table.add(&stage_italic_tag);
+    tag_table.add(&act_scene_tag);
 
     // Apply tags per line
     for i in 0..line_count {
@@ -646,11 +667,13 @@ fn apply_dialogue_formatting(state: &mut AppState) {
             continue;
         } else if line_types::is_speaker(text) {
             state.buffer.apply_tag(&speaker_gap_tag, &line_start, &line_end);
+            state.buffer.apply_tag(&speaker_name_tag, &line_start, &line_end);
         } else if line_types::is_stage_direction(text) {
             state.buffer.apply_tag(&stage_gap_tag, &line_start, &line_end);
             state.buffer.apply_tag(&indent_tag, &line_start, &line_end);
+            state.buffer.apply_tag(&stage_italic_tag, &line_start, &line_end);
         } else if line_types::is_act_scene_marker(text) || line_types::is_separator(text) {
-            continue;
+            state.buffer.apply_tag(&act_scene_tag, &line_start, &line_end);
         } else {
             // Dialogue line — indent
             state.buffer.apply_tag(&indent_tag, &line_start, &line_end);

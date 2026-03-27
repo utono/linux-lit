@@ -33,7 +33,10 @@ pub fn set_start_time(state: &mut AppState) -> bool {
         None => return false,
     };
     let time_pos = state.current_time_pos;
-    let line_idx = state.current_line;
+    let line_idx = match state.work_line_for_buffer(state.current_line) {
+        Some(i) => i,
+        None => return false,
+    };
 
     {
         let work = match &mut state.current_work {
@@ -74,7 +77,10 @@ pub fn set_end_time(state: &mut AppState) -> bool {
         None => return false,
     };
     let time_pos = state.current_time_pos;
-    let line_idx = state.current_line;
+    let line_idx = match state.work_line_for_buffer(state.current_line) {
+        Some(i) => i,
+        None => return false,
+    };
 
     let start_time = {
         let work = match &mut state.current_work {
@@ -120,7 +126,10 @@ pub fn delete_timestamp(state: &mut AppState) -> bool {
         Some(id) => id,
         None => return false,
     };
-    let line_idx = state.current_line;
+    let line_idx = match state.work_line_for_buffer(state.current_line) {
+        Some(i) => i,
+        None => return false,
+    };
 
     {
         let work = match &mut state.current_work {
@@ -160,7 +169,10 @@ pub fn nudge_start_time(state: &mut AppState, delta: f64) -> bool {
         Some(id) => id,
         None => return false,
     };
-    let line_idx = state.current_line;
+    let line_idx = match state.work_line_for_buffer(state.current_line) {
+        Some(i) => i,
+        None => return false,
+    };
 
     let new_start = {
         let work = match &mut state.current_work {

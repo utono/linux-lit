@@ -153,7 +153,10 @@ pub fn jump_to_prev_dialogue(state: &mut AppState) {
     if let Some(line_idx) = target {
         state.current_line = line_idx;
         update_highlight(state);
-        scroll_to_cursor(state);
+        match state.config.navigation_mode {
+            crate::config::NavigationMode::Scroll => center_cursor(state),
+            crate::config::NavigationMode::EReader => scroll_to_cursor(state),
+        }
         seek_to_current_line(state);
     }
 }
@@ -188,8 +191,13 @@ pub fn jump_to_next_dialogue(state: &mut AppState) {
     if let Some(line_idx) = target {
         state.current_line = line_idx;
         update_highlight(state);
-        if needs_page_turn_down(state, line_idx) {
-            set_page(state, line_idx);
+        match state.config.navigation_mode {
+            crate::config::NavigationMode::Scroll => center_cursor(state),
+            crate::config::NavigationMode::EReader => {
+                if needs_page_turn_down(state, line_idx) {
+                    set_page(state, line_idx);
+                }
+            }
         }
         seek_to_current_line(state);
     }
@@ -303,6 +311,10 @@ fn center_cursor(state: &mut AppState) {
     let line_y = scroll_value_for_line(state, state.current_line);
     let half_page = adj.page_size() / 2.0;
     let centered = (line_y - half_page).max(0.0).min(max_scroll);
+    crate::logging::log(&format!(
+        "CENTER: line={} line_y={:.0} half_page={:.0} centered={:.0} max={:.0} old_val={:.0}",
+        state.current_line, line_y, half_page, centered, max_scroll, adj.value()
+    ));
     adj.set_value(centered);
 }
 
@@ -380,10 +392,15 @@ fn scroll_value_for_line(state: &AppState, line: usize) -> f64 {
 /// Update highlight and ensure cursor is visible on the current page.
 pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
     update_highlight(state);
-    if needs_page_turn_down(state, state.current_line) {
-        set_page(state, state.current_line);
-    } else {
-        ensure_cursor_on_page(state);
+    match state.config.navigation_mode {
+        crate::config::NavigationMode::Scroll => center_cursor(state),
+        crate::config::NavigationMode::EReader => {
+            if needs_page_turn_down(state, state.current_line) {
+                set_page(state, state.current_line);
+            } else {
+                ensure_cursor_on_page(state);
+            }
+        }
     }
 }
 
