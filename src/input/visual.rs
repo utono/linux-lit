@@ -1,7 +1,6 @@
 use gtk4::prelude::*;
 
 use crate::app::AppState;
-use crate::db::models::Line;
 
 /// Tracks the visual selection range (anchor..cursor).
 pub struct SelectionState {
@@ -25,12 +24,6 @@ impl SelectionState {
     }
 }
 
-/// A snapshot of state before a destructive action, for undo.
-pub struct UndoEntry {
-    pub db_lines: Vec<Line>,
-    pub file_backup: Option<(String, String)>,
-    pub cursor_line: usize,
-}
 
 /// Apply the selection_tag to all lines in the visual selection range.
 /// Also removes dim_tag from those lines so they appear at full brightness.
@@ -125,7 +118,7 @@ pub struct ActionPopupState {
 }
 
 /// Built-in action names, in display order.
-pub const BUILTIN_ACTIONS: &[&str] = &["Copy", "Copy with metadata", "Merge lines", "Correct with LLM"];
+pub const BUILTIN_ACTIONS: &[&str] = &["Gloss with LLM", "Copy", "Copy with metadata"];
 
 /// Determine which built-in actions are available for the current work.
 pub fn available_builtin_actions(_state: &AppState) -> Vec<&'static str> {
@@ -167,13 +160,12 @@ pub fn execute_action(
 
     if index < builtin_count {
         match index {
-            0 => action_copy(&mut state_rc.borrow_mut(), false),
-            1 => action_copy(&mut state_rc.borrow_mut(), true),
-            2 => action_merge(&mut state_rc.borrow_mut()),
-            3 => {
-                action_correct_with_llm(state_rc);
+            0 => {
+                action_gloss_with_llm(state_rc);
                 return; // async — don't exit visual mode yet
             }
+            1 => action_copy(&mut state_rc.borrow_mut(), false),
+            2 => action_copy(&mut state_rc.borrow_mut(), true),
             _ => {}
         }
     } else {
@@ -265,88 +257,6 @@ fn format_line_metadata(state: &AppState, buffer_line: usize, text: &str) -> Str
     }
 }
 
-fn action_merge(state: &mut AppState) {
-    // Extract selection range
-    let (start, end) = match &state.visual_selection {
-        Some(s) => s.range(),
-        None => return,
-    };
-    if start == end {
-        crate::logging::log("VISUAL: merge requires multiple lines");
-        return;
-    }
-
-    let work = match &state.current_work {
-        Some(w) => w,
-        None => return,
-    };
-
-    // Collect the DB lines for the selection range
-    let mut db_lines: Vec<crate::db::models::Line> = Vec::new();
-    for buf_line in start..=end {
-        if let Some(work_idx) = state.work_line_for_buffer(buf_line) {
-            if let Some(line) = work.lines.get(work_idx) {
-                db_lines.push(line.clone());
-            }
-        }
-    }
-    if db_lines.len() < 2 {
-        return;
-    }
-
-    // Build merged text
-    let merged_text: String = db_lines
-        .iter()
-        .map(|l| l.text.trim())
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    let first_id = db_lines[0].id;
-    let delete_ids: Vec<i64> = db_lines[1..].iter().map(|l| l.id).collect();
-
-    // Capture undo entry - extract text_file info before dropping work borrow
-    let text_file = work.text_file.clone();
-    let file_backup = text_file.as_ref().and_then(|path| {
-        std::fs::read_to_string(path).ok().map(|content| (path.clone(), content))
-    });
-    state.undo_stack.push(UndoEntry {
-        db_lines: db_lines.clone(),
-        file_backup,
-        cursor_line: state.current_line,
-    });
-
-    // Write to DB
-    match crate::db::queries::open_db_rw() {
-        Ok(conn) => {
-            if let Err(e) = crate::db::queries::merge_lines(&conn, first_id, &merged_text, &delete_ids) {
-                crate::logging::log(&format!("VISUAL: merge DB error: {}", e));
-                state.undo_stack.pop();
-                return;
-            }
-        }
-        Err(e) => {
-            crate::logging::log(&format!("VISUAL: open_db_rw failed: {}", e));
-            state.undo_stack.pop();
-            return;
-        }
-    }
-
-    // Update text file if it exists
-    if let Some(ref path) = text_file {
-        if let Ok(contents) = std::fs::read_to_string(path) {
-            let mut file_lines: Vec<String> = contents.lines().map(|l| l.to_string()).collect();
-            if end < file_lines.len() {
-                file_lines.splice(start..=end, std::iter::once(merged_text.clone()));
-                let _ = std::fs::write(path, file_lines.join("\n"));
-            }
-        }
-    }
-
-    crate::logging::log(&format!("VISUAL: merged {} lines into 1", db_lines.len()));
-
-    // Reload the work to refresh buffer
-    reload_current_work(state);
-}
 
 fn action_external_command(state: &mut AppState, command: &str) {
     // Extract selection range
@@ -428,28 +338,16 @@ fn action_external_command(state: &mut AppState, command: &str) {
     let text_file = work.text_file.clone();
     let old_ids: Vec<i64> = db_lines.iter().map(|l| l.id).collect();
 
-    // Capture undo entry
-    let file_backup = text_file.as_ref().and_then(|path| {
-        std::fs::read_to_string(path).ok().map(|content| (path.clone(), content))
-    });
-    state.undo_stack.push(UndoEntry {
-        db_lines,
-        file_backup,
-        cursor_line: state.current_line,
-    });
-
     // Write to DB
     match crate::db::queries::open_db_rw() {
         Ok(conn) => {
             if let Err(e) = crate::db::queries::replace_lines(&conn, &abbrev, &old_ids, &new_lines) {
                 crate::logging::log(&format!("VISUAL: replace DB error: {}", e));
-                state.undo_stack.pop();
                 return;
             }
         }
         Err(e) => {
             crate::logging::log(&format!("VISUAL: open_db_rw failed: {}", e));
-            state.undo_stack.pop();
             return;
         }
     }
@@ -473,61 +371,12 @@ fn action_external_command(state: &mut AppState, command: &str) {
     reload_current_work(state);
 }
 
-/// Undo the last destructive visual mode action.
-pub fn undo_last_action(state: &mut AppState) {
-    let entry = match state.undo_stack.pop() {
-        Some(e) => e,
-        None => {
-            crate::logging::log("VISUAL: nothing to undo");
-            return;
-        }
-    };
 
-    let abbrev = match &state.current_work {
-        Some(w) => w.abbrev.clone(),
-        None => return,
-    };
-
-    // Restore DB lines
-    match crate::db::queries::open_db_rw() {
-        Ok(conn) => {
-            if let Err(e) = crate::db::queries::restore_lines(&conn, &abbrev, &entry.db_lines) {
-                crate::logging::log(&format!("VISUAL: undo DB restore failed: {}", e));
-                return;
-            }
-        }
-        Err(e) => {
-            crate::logging::log(&format!("VISUAL: undo open_db_rw failed: {}", e));
-            return;
-        }
-    }
-
-    // Restore file if backup exists
-    if let Some((path, content)) = &entry.file_backup {
-        if let Err(e) = std::fs::write(path, content) {
-            crate::logging::log(&format!("VISUAL: undo file restore failed: {}", e));
-        }
-    }
-
-    crate::logging::log("VISUAL: undo successful");
-
-    // Reload and restore cursor
-    let saved_cursor = entry.cursor_line;
-    reload_current_work(state);
-    let line_count = state.effective_line_count();
-    state.current_line = saved_cursor.min(line_count.saturating_sub(1));
-    crate::input::navigation::update_highlight_and_ensure_visible(state);
-}
-
-fn action_correct_with_llm(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
-    let (start, end, input_text, db_lines, abbrev, text_file, endpoint, model, tokio_handle) = {
+fn action_gloss_with_llm(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+    let (input_text, endpoint, model, tokio_handle) = {
         let state = state_rc.borrow();
         let (start, end) = match &state.visual_selection {
             Some(s) => s.range(),
-            None => return,
-        };
-        let work = match &state.current_work {
-            Some(w) => w,
             None => return,
         };
 
@@ -542,22 +391,8 @@ fn action_correct_with_llm(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>)
             }
         }
 
-        let mut db_lines: Vec<crate::db::models::Line> = Vec::new();
-        for buf_line in start..=end {
-            if let Some(work_idx) = state.work_line_for_buffer(buf_line) {
-                if let Some(line) = work.lines.get(work_idx) {
-                    db_lines.push(line.clone());
-                }
-            }
-        }
-
         (
-            start,
-            end,
             selected_lines.join("\n"),
-            db_lines,
-            work.abbrev.clone(),
-            work.text_file.clone(),
             state.config.ollama_endpoint.clone(),
             state.config.ollama_model.clone(),
             state.tokio_handle.clone(),
@@ -566,35 +401,32 @@ fn action_correct_with_llm(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>)
 
     exit_visual_mode(&mut state_rc.borrow_mut());
 
-    crate::logging::log("VISUAL: starting LLM correction");
+    crate::logging::log("VISUAL: starting LLM gloss");
+    {
+        let mut s = state_rc.borrow_mut();
+        s.gloss_original_text = Some(input_text.clone());
+        s.correction_overlay.show_loading();
+    }
 
     let state_for_result = std::rc::Rc::clone(state_rc);
+    let original = input_text.clone();
 
     glib::spawn_future_local(async move {
         let result = tokio_handle
             .spawn(async move {
-                crate::ollama::correct_text(&endpoint, &model, &input_text).await
+                crate::ollama::gloss_text(&endpoint, &model, &input_text).await
             })
             .await;
 
-        let mut state = state_for_result.borrow_mut();
+        let state = state_for_result.borrow();
 
         match result {
-            Ok(Ok(corrected)) => {
-                let original: String = db_lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n");
-                state.pending_correction = Some(crate::app::PendingCorrection {
-                    start,
-                    end,
-                    db_lines,
-                    abbrev,
-                    text_file,
-                    corrected_text: corrected.clone(),
-                });
-                state.correction_overlay.show(&original, &corrected);
-                crate::logging::log("VISUAL: correction overlay shown");
+            Ok(Ok(gloss)) => {
+                state.correction_overlay.show(&original, &gloss);
+                crate::logging::log("VISUAL: gloss overlay shown");
             }
             Ok(Err(e)) => {
-                crate::logging::log(&format!("VISUAL: LLM correction error: {}", e));
+                crate::logging::log(&format!("VISUAL: LLM gloss error: {}", e));
                 state.correction_overlay.show(&format!("Error: {}", e), "");
             }
             Err(e) => {

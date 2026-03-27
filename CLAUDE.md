@@ -47,6 +47,6 @@ cargo clippy
 
 ## External Data
 
-- Database: `~/utono/litdb/data/lit.db` (read-only)
+- Database: `~/utono/litdb/data/lit.db` (read-write)
 - Themes: `~/utono/themes/.config/themes/themes-unified.json`
 - Config: `~/.config/linux-lit/config.json`

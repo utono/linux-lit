@@ -22,14 +22,6 @@ pub struct SearchMatch {
     pub byte_end: usize,
 }
 
-pub struct PendingCorrection {
-    pub start: usize,
-    pub end: usize,
-    pub db_lines: Vec<crate::db::models::Line>,
-    pub abbrev: String,
-    pub text_file: Option<String>,
-    pub corrected_text: String,
-}
 
 #[allow(dead_code)]
 pub struct AppState {
@@ -83,13 +75,12 @@ pub struct AppState {
     /// the end time. Used for untimestamped lines that follow a timestamped one.
     pub pending_advance: Option<(f64, usize)>,
     pub visual_selection: Option<crate::input::visual::SelectionState>,
-    pub undo_stack: Vec<crate::input::visual::UndoEntry>,
     pub selection_tag: gtk4::TextTag,
     pub action_popup: Option<crate::input::visual::ActionPopupState>,
     pub action_popup_widget: crate::ui::action_popup::ActionPopup,
     pub keybinds_overlay: crate::ui::keybinds_overlay::KeybindsOverlay,
     pub correction_overlay: crate::ui::correction_overlay::CorrectionOverlay,
-    pub pending_correction: Option<PendingCorrection>,
+    pub gloss_original_text: Option<String>,
 }
 
 impl AppState {
@@ -269,7 +260,7 @@ pub fn build_window(
     keybinds_overlay.overlay.set_vexpand(true);
 
     // Correction overlay wraps the keybinds overlay
-    let correction_overlay = crate::ui::correction_overlay::CorrectionOverlay::new();
+    let correction_overlay = crate::ui::correction_overlay::CorrectionOverlay::new(config.column_width);
     correction_overlay.attach(&keybinds_overlay.overlay);
     correction_overlay.overlay.set_vexpand(true);
 
@@ -279,6 +270,7 @@ pub fn build_window(
 
     // Search bar at bottom
     let search_bar = SearchBar::new();
+
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     vbox.append(&correction_overlay.overlay);
     vbox.append(&search_bar.container);
@@ -332,13 +324,12 @@ pub fn build_window(
         suppress_sync_until: None,
         pending_advance: None,
         visual_selection: None,
-        undo_stack: Vec::new(),
         selection_tag,
         action_popup: None,
         action_popup_widget,
         keybinds_overlay,
         correction_overlay,
-        pending_correction: None,
+        gloss_original_text: None,
     }));
 
     // Connect picker search entry filter
@@ -508,7 +499,6 @@ pub fn display_work(state: &mut AppState, work: Work) {
     state.current_line = 0;
     state.page_top_line = 0;
     state.visual_selection = None;
-    state.undo_stack.clear();
     state.current_work = Some(work);
 
     // Build buffer text (with or without sign column)

@@ -265,21 +265,6 @@ pub fn delete_timestamp(
 }
 
 /// Merge multiple lines into one. Updates the first line's text and deletes the rest.
-pub fn merge_lines(
-    conn: &Connection,
-    first_line_id: i64,
-    merged_text: &str,
-    delete_ids: &[i64],
-) -> Result<(), rusqlite::Error> {
-    conn.execute(
-        "UPDATE line_mapping SET canonical_text = ?2, normalized_text = ?2 WHERE id = ?1",
-        rusqlite::params![first_line_id, merged_text],
-    )?;
-    for &id in delete_ids {
-        conn.execute("DELETE FROM line_mapping WHERE id = ?1", [id])?;
-    }
-    Ok(())
-}
 
 /// Replace a set of lines with new text lines. Updates the first line,
 /// deletes excess old lines, or inserts new lines if output has more.
@@ -331,56 +316,6 @@ pub fn replace_lines(
     Ok(())
 }
 
-/// Restore lines from an undo entry. Deletes any lines that replaced them,
-/// then re-inserts the originals.
-pub fn restore_lines(
-    conn: &Connection,
-    work_abbrev: &str,
-    original_lines: &[crate::db::models::Line],
-) -> Result<(), rusqlite::Error> {
-    if original_lines.is_empty() {
-        return Ok(());
-    }
-
-    // Get current line IDs in the same div range to clean up
-    let first = &original_lines[0];
-    let last = &original_lines[original_lines.len() - 1];
-    let mut stmt = conn.prepare(
-        "SELECT id FROM line_mapping WHERE work_abbrev = ?1 AND div1 = ?2 AND div2 = ?3 \
-         AND line_in_div >= ?4 AND line_in_div <= ?5",
-    )?;
-    let current_ids: Vec<i64> = stmt
-        .query_map(
-            rusqlite::params![work_abbrev, first.div1, first.div2, first.line_in_div, last.line_in_div],
-            |row| row.get(0),
-        )?
-        .collect::<Result<_, _>>()?;
-
-    // Delete current lines in range
-    for id in &current_ids {
-        conn.execute("DELETE FROM line_mapping WHERE id = ?1", [id])?;
-    }
-
-    // Re-insert originals with their original IDs
-    for line in original_lines {
-        conn.execute(
-            "INSERT INTO line_mapping (id, work_abbrev, canonical_text, normalized_text, speaker, div1, div2, line_in_div) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            rusqlite::params![
-                line.id,
-                work_abbrev,
-                line.text,
-                line.normalized,
-                line.speaker,
-                line.div1,
-                line.div2,
-                line.line_in_div,
-            ],
-        )?;
-    }
-
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {

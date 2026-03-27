@@ -13,7 +13,8 @@ impl ActionPopup {
             .orientation(Orientation::Vertical)
             .spacing(0)
             .halign(gtk4::Align::Center)
-            .valign(gtk4::Align::Center)
+            .valign(gtk4::Align::Start)
+            .margin_top(80)
             .width_request(350)
             .build();
         container.add_css_class("action-popup");

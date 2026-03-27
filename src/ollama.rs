@@ -19,18 +19,26 @@ impl fmt::Display for OllamaError {
     }
 }
 
-const SYSTEM_PROMPT: &str = "\
-You are correcting mistranscribed audiobook text. \
-Fix ONLY words that are obviously wrong due to speech-to-text mishearing \
-(homophones, phonetically similar but wrong words). \
-Do NOT rephrase, restructure, or improve the text. \
-Preserve original line breaks exactly. \
-Output ONLY the corrected text with no commentary.";
+const GLOSS_PROMPT: &str = "\
+You are helping a reader understand a passage from a literary or historical text. \
+Paraphrase the passage in clear, modern English. \
+Explain any archaic terms, allusions, or complex sentence structures. \
+Be concise — aim for roughly the same length as the original. \
+Output ONLY the paraphrase with no preamble.";
 
-pub async fn correct_text(
+pub async fn gloss_text(
     endpoint: &str,
     model: &str,
     text: &str,
+) -> Result<String, OllamaError> {
+    generate(endpoint, model, GLOSS_PROMPT, text).await
+}
+
+async fn generate(
+    endpoint: &str,
+    model: &str,
+    system: &str,
+    prompt: &str,
 ) -> Result<String, OllamaError> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -41,8 +49,8 @@ pub async fn correct_text(
 
     let body = serde_json::json!({
         "model": model,
-        "system": SYSTEM_PROMPT,
-        "prompt": text,
+        "system": system,
+        "prompt": prompt,
         "stream": false
     });
 

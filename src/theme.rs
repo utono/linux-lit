@@ -248,9 +248,13 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
            border-left: 3px solid rgba(100, 180, 255, 0.9); }} \
          .settings-footer {{ font-size: 11px; opacity: 0.6; margin-top: 12px; \
            text-align: center; }} \
-         .action-popup {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
-           padding: 16px; border-radius: 8px; }} \
-         .action-separator {{ opacity: 0.3; margin: 4px 12px; }} \
+         .action-popup {{ background-color: {bg}; color: {fg}; \
+           padding: 16px; border-radius: 12px; border: 1px solid {dim}; }} \
+         .action-popup .settings-title {{ border-bottom: 1px solid {dim}; }} \
+         .action-popup .settings-row-selected {{ background-color: {cursor_bg}; \
+           color: {cursor_fg}; border-left: 3px solid {cursor_bg}; }} \
+         .action-popup .settings-footer {{ color: {dim}; }} \
+         .action-separator {{ color: {dim}; opacity: 0.3; margin: 4px 12px; }} \
          .keybinds-overlay {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
            padding: 16px; border-radius: 8px; }} \
          .keybind-key {{ background-color: rgba(255, 255, 255, 0.08); \
@@ -265,19 +269,26 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
            color: rgba(255, 255, 255, 0.35); margin-bottom: 4px; }} \
          .keybind-legend {{ border-top: 1px solid rgba(255, 255, 255, 0.1); \
            margin-top: 12px; padding-top: 8px; }} \
-         .correction-overlay {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
-           padding: 24px; border-radius: 8px; min-width: 600px; }} \
-         .correction-title {{ font-size: 18px; font-weight: bold; \
-           margin-bottom: 8px; }} \
-         .correction-header {{ font-size: 13px; font-weight: bold; \
-           color: rgba(255, 255, 255, 0.5); letter-spacing: 2px; }} \
-         .correction-text {{ font-size: 15px; \
-           font-family: monospace; }} \
-         .correction-hint {{ font-size: 13px; \
-           color: rgba(255, 255, 255, 0.5); margin-top: 8px; }}",
+         .correction-scrim {{ background-color: rgba(0, 0, 0, 0.3); }} \
+         .correction-overlay {{ background-color: {bg}; color: {fg}; \
+           padding: 24px; border-radius: 12px; \
+           border: 1px solid {dim}; }} \
+         .correction-title {{ font-size: {size}pt; font-weight: bold; \
+           margin-bottom: 12px; padding-bottom: 12px; \
+           border-bottom: 1px solid {dim}; }} \
+         .correction-header {{ font-size: 11px; font-weight: bold; \
+           color: {dim}; letter-spacing: 2px; margin-top: 8px; margin-bottom: 4px; }} \
+         .correction-text {{ font-family: {font}; font-size: {size}pt; }} \
+         .correction-hint {{ font-size: 11px; \
+           color: {dim}; margin-top: 12px; padding-top: 8px; \
+           border-top: 1px solid {dim}; }} \
+",
         root = theme.root_color,
         bg = theme.text_bg,
         fg = theme.text_fg,
+        dim = theme.dim_fg,
+        cursor_bg = theme.cursor_bg,
+        cursor_fg = theme.cursor_fg,
         font = font_family,
         size = font_size,
     )

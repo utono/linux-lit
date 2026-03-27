@@ -349,16 +349,15 @@ pub fn handle_key(
         }
     }
 
-    // --- Correction overlay (when visible) ---
-    let correction_visible = state.borrow().correction_overlay.is_visible();
-    if correction_visible {
+    // --- Gloss overlay (when visible) ---
+    let gloss_visible = state.borrow().correction_overlay.is_visible();
+    if gloss_visible {
         match key_name {
-            "y" => {
-                accept_correction(state);
+            "r" => {
+                retry_gloss(state);
                 return true;
             }
-            "n" | "Escape" => {
-                state.borrow_mut().pending_correction = None;
+            "Escape" | "n" => {
                 state.borrow().correction_overlay.hide();
                 return true;
             }
@@ -655,12 +654,7 @@ pub fn handle_key(
             }
         }
         "u" => {
-            if !state.borrow().undo_stack.is_empty() {
-                crate::input::visual::undo_last_action(&mut state.borrow_mut());
-                true
-            } else {
-                crate::input::timestamps::set_start_time(&mut state.borrow_mut())
-            }
+            crate::input::timestamps::set_start_time(&mut state.borrow_mut())
         }
         "Right" => {
             crate::input::timestamps::set_start_time(&mut state.borrow_mut())
@@ -868,64 +862,50 @@ fn apply_settings_change(
     }
 }
 
-fn accept_correction(state_rc: &Rc<RefCell<AppState>>) {
-    let pending = {
-        let mut state = state_rc.borrow_mut();
-        state.correction_overlay.hide();
-        state.pending_correction.take()
+fn retry_gloss(state_rc: &Rc<RefCell<AppState>>) {
+    let (original, endpoint, model, tokio_handle) = {
+        let state = state_rc.borrow();
+        let original = match &state.gloss_original_text {
+            Some(t) => t.clone(),
+            None => return,
+        };
+        (
+            original,
+            state.config.ollama_endpoint.clone(),
+            state.config.ollama_model.clone(),
+            state.tokio_handle.clone(),
+        )
     };
 
-    let pending = match pending {
-        Some(p) => p,
-        None => return,
-    };
+    crate::logging::log("VISUAL: retrying LLM gloss");
+    state_rc.borrow().correction_overlay.show_loading();
 
-    let new_lines: Vec<String> = pending.corrected_text.lines().map(|l| l.to_string()).collect();
-    if new_lines.is_empty() {
-        crate::logging::log("VISUAL: corrected text was empty");
-        return;
-    }
+    let state_for_result = Rc::clone(state_rc);
+    let original_for_display = original.clone();
 
-    let old_ids: Vec<i64> = pending.db_lines.iter().map(|l| l.id).collect();
-    let file_backup = pending.text_file.as_ref().and_then(|path| {
-        std::fs::read_to_string(path).ok().map(|content| (path.clone(), content))
-    });
+    glib::spawn_future_local(async move {
+        let result = tokio_handle
+            .spawn(async move {
+                crate::ollama::gloss_text(&endpoint, &model, &original).await
+            })
+            .await;
 
-    let mut state = state_rc.borrow_mut();
+        let state = state_for_result.borrow();
 
-    state.undo_stack.push(crate::input::visual::UndoEntry {
-        db_lines: pending.db_lines,
-        file_backup,
-        cursor_line: pending.start,
-    });
-
-    match crate::db::queries::open_db_rw() {
-        Ok(conn) => {
-            if let Err(e) = crate::db::queries::replace_lines(&conn, &pending.abbrev, &old_ids, &new_lines) {
-                crate::logging::log(&format!("VISUAL: correction DB error: {}", e));
-                state.undo_stack.pop();
-                return;
+        match result {
+            Ok(Ok(gloss)) => {
+                state.correction_overlay.show(&original_for_display, &gloss);
+                crate::logging::log("VISUAL: gloss overlay refreshed with retry");
+            }
+            Ok(Err(e)) => {
+                crate::logging::log(&format!("VISUAL: LLM gloss retry error: {}", e));
+                state.correction_overlay.show(&format!("Error: {}", e), "");
+            }
+            Err(e) => {
+                crate::logging::log(&format!("VISUAL: tokio join error on gloss retry: {}", e));
             }
         }
-        Err(e) => {
-            crate::logging::log(&format!("VISUAL: correction open_db_rw failed: {}", e));
-            state.undo_stack.pop();
-            return;
-        }
-    }
-
-    if let Some(ref path) = pending.text_file {
-        if let Ok(contents) = std::fs::read_to_string(path) {
-            let mut file_lines: Vec<String> = contents.lines().map(|l| l.to_string()).collect();
-            if pending.end < file_lines.len() {
-                file_lines.splice(pending.start..=pending.end, new_lines.iter().cloned());
-                let _ = std::fs::write(path, file_lines.join("\n"));
-            }
-        }
-    }
-
-    crate::logging::log(&format!("VISUAL: correction applied, {} lines", new_lines.len()));
-    crate::input::visual::reload_current_work(&mut state);
+    });
 }
 
 fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &crate::theme::Theme) {
