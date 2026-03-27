@@ -161,8 +161,7 @@ pub fn build_window(
 
     let translation_text_tag = gtk4::TextTag::builder()
         .name("translation-text")
-        .style(pango::Style::Italic)
-        .left_margin(60)
+        .weight(700)
         .build();
     buffer.tag_table().add(&translation_text_tag);
 
@@ -344,6 +343,7 @@ pub fn build_window(
     });
     window.add_controller(key_controller);
 
+    window.fullscreen();
     window.present();
 
     // Startup: load MRU work or show picker
@@ -786,7 +786,7 @@ fn show_translations(state: &mut AppState) {
         if let Some(wi) = work_idx {
             if let Some(line) = work.lines.get(wi) {
                 if let Some(translation) = state.translations.get(&line.id) {
-                    inserts.push((buf_line, format!("        {}", translation)));
+                    inserts.push((buf_line, translation.to_string()));
                 }
             }
         }

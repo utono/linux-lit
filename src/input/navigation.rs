@@ -107,8 +107,8 @@ pub fn page_forward(state: &mut AppState) {
     let advance = lpp.saturating_sub(PAGE_OVERLAP).max(1);
     let new_top = (state.page_top_line + advance).min(line_count.saturating_sub(1));
 
-    // Move cursor to first line of new page (after overlap)
-    state.current_line = (new_top + PAGE_OVERLAP).min(line_count - 1);
+    // Move cursor to center of the new page
+    state.current_line = (new_top + lpp / 2).min(line_count - 1);
     update_highlight(state);
     seek_to_current_line(state);
     set_page(state, new_top);
@@ -124,10 +124,9 @@ pub fn page_backward(state: &mut AppState) {
     let retreat = lpp.saturating_sub(PAGE_OVERLAP).max(1);
     let new_top = state.page_top_line.saturating_sub(retreat);
 
-    // Move cursor to last line of new page (before overlap)
-    let new_bottom = new_top + lpp.saturating_sub(1);
     let line_count = state.effective_line_count();
-    state.current_line = new_bottom.min(line_count.saturating_sub(1));
+    // Move cursor to center of the new page
+    state.current_line = (new_top + lpp / 2).min(line_count.saturating_sub(1));
     update_highlight(state);
     seek_to_current_line(state);
     set_page(state, new_top);
