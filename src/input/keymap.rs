@@ -347,6 +347,18 @@ pub fn handle_key(
         }
     }
 
+    // --- Keybinds overlay (when visible) ---
+    let keybinds_visible = state.borrow().keybinds_overlay.is_visible();
+    if keybinds_visible {
+        match key_name {
+            "Escape" => {
+                state.borrow().keybinds_overlay.hide();
+                return true;
+            }
+            _ => return true, // consume all keys when keybinds visible
+        }
+    }
+
     // --- Action popup (when visible) ---
     let action_popup_visible = state.borrow().action_popup.is_some();
     if action_popup_visible && is_ctrl {
@@ -377,7 +389,7 @@ pub fn handle_key(
             "Return" => {
                 let selected_idx = state.borrow().action_popup_widget.selected_index();
                 crate::input::visual::close_action_popup(&mut state.borrow_mut());
-                crate::input::visual::execute_action(&mut state.borrow_mut(), selected_idx, tokio_handle);
+                crate::input::visual::execute_action(state, selected_idx, tokio_handle);
                 return true;
             }
             "Escape" => {
@@ -468,6 +480,15 @@ pub fn handle_key(
     // Ctrl combos — page turn navigation (e-reader style)
     if is_ctrl {
         match key_name {
+            "slash" => {
+                let s = state.borrow();
+                if s.keybinds_overlay.is_visible() {
+                    s.keybinds_overlay.hide();
+                } else {
+                    s.keybinds_overlay.show();
+                }
+                return true;
+            }
             "d" | "f" => {
                 navigation::page_forward(&mut state.borrow_mut());
                 return true;
