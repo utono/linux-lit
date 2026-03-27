@@ -128,7 +128,7 @@ fn build_diff_markup(original: &str, corrected: &str, is_original: bool) -> Stri
             if j > 0 {
                 result.push(' ');
             }
-            let differs = other_words.get(j).map_or(true, |other| other != word);
+            let differs = other_words.get(j) != Some(word);
             let escaped = glib::markup_escape_text(word);
             if differs {
                 let color = if is_original { "#cc3333" } else { "#228833" };
