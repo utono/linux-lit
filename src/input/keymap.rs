@@ -349,9 +349,43 @@ pub fn handle_key(
 
     // --- Action popup (when visible) ---
     let action_popup_visible = state.borrow().action_popup.is_some();
+    if action_popup_visible && is_ctrl {
+        match key_name {
+            "n" => {
+                let mut s = state.borrow_mut();
+                s.action_popup_widget.move_selection(1);
+                let idx = s.action_popup_widget.selected_index();
+                if let Some(ref mut popup) = s.action_popup {
+                    popup.selected_index = idx;
+                }
+                return true;
+            }
+            "p" => {
+                let mut s = state.borrow_mut();
+                s.action_popup_widget.move_selection(-1);
+                let idx = s.action_popup_widget.selected_index();
+                if let Some(ref mut popup) = s.action_popup {
+                    popup.selected_index = idx;
+                }
+                return true;
+            }
+            _ => {}
+        }
+    }
     if action_popup_visible {
-        // Will be implemented in Task 6
-        return true;
+        match key_name {
+            "Return" => {
+                let selected_idx = state.borrow().action_popup_widget.selected_index();
+                crate::input::visual::close_action_popup(&mut state.borrow_mut());
+                crate::input::visual::execute_action(&mut state.borrow_mut(), selected_idx, tokio_handle);
+                return true;
+            }
+            "Escape" => {
+                crate::input::visual::close_action_popup(&mut state.borrow_mut());
+                return true;
+            }
+            _ => return true, // consume all keys when popup visible
+        }
     }
 
     // --- Visual mode ---
@@ -384,7 +418,7 @@ pub fn handle_key(
                 return true;
             }
             "Return" => {
-                // Open action popup — implemented in Task 6
+                crate::input::visual::open_action_popup(&mut state.borrow_mut());
                 return true;
             }
             _ => {

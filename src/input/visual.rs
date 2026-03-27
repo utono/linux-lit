@@ -123,3 +123,71 @@ pub fn extend_to_end(state: &mut AppState) {
 pub struct ActionPopupState {
     pub selected_index: usize,
 }
+
+/// Built-in action names, in display order.
+pub const BUILTIN_ACTIONS: &[&str] = &["Copy", "Copy with metadata", "Merge lines"];
+
+/// Determine which built-in actions are available for the current work.
+pub fn available_builtin_actions(_state: &AppState) -> Vec<&'static str> {
+    BUILTIN_ACTIONS.to_vec()
+}
+
+/// Open the action popup menu.
+pub fn open_action_popup(state: &mut AppState) {
+    let builtins = available_builtin_actions(state);
+    let externals: Vec<(String, String)> = state
+        .config
+        .visual_mode_commands
+        .iter()
+        .map(|c| (c.name.clone(), c.command.clone()))
+        .collect();
+    state.action_popup_widget.show_actions(
+        &builtins.iter().map(|s| *s).collect::<Vec<_>>(),
+        &externals,
+    );
+    state.action_popup = Some(ActionPopupState { selected_index: 0 });
+    crate::logging::log("VISUAL: action popup opened");
+}
+
+/// Close the action popup without executing.
+pub fn close_action_popup(state: &mut AppState) {
+    state.action_popup = None;
+    state.action_popup_widget.hide();
+    crate::logging::log("VISUAL: action popup closed");
+}
+
+/// Execute the action at the given index.
+/// Indices 0..N are built-in actions, N.. are external commands.
+pub fn execute_action(state: &mut AppState, index: usize, _tokio_handle: &tokio::runtime::Handle) {
+    let builtin_count = available_builtin_actions(state).len();
+
+    if index < builtin_count {
+        match index {
+            0 => action_copy(state, false),
+            1 => action_copy(state, true),
+            2 => action_merge(state),
+            _ => {}
+        }
+    } else {
+        let ext_index = index - builtin_count;
+        let command = state.config.visual_mode_commands.get(ext_index).map(|c| c.command.clone());
+        if let Some(cmd) = command {
+            action_external_command(state, &cmd);
+        }
+    }
+
+    // Exit visual mode after action
+    exit_visual_mode(state);
+}
+
+fn action_copy(_state: &mut AppState, _with_metadata: bool) {
+    // Implemented in Task 7
+}
+
+fn action_merge(_state: &mut AppState) {
+    // Implemented in Task 9
+}
+
+fn action_external_command(_state: &mut AppState, _command: &str) {
+    // Implemented in Task 10
+}
