@@ -3,7 +3,7 @@ use gtk4::{Box as GtkBox, Label, Orientation, Overlay};
 
 use crate::theme::Theme;
 
-const NUM_SETTINGS: usize = 4;
+const NUM_SETTINGS: usize = 5;
 
 #[derive(Clone)]
 struct SettingsSnapshot {
@@ -11,6 +11,7 @@ struct SettingsSnapshot {
     column_width: u32,
     text_margins: u32,
     theme_index: usize,
+    navigation_mode: crate::config::NavigationMode,
 }
 
 pub struct SettingsOverlay {
@@ -22,6 +23,7 @@ pub struct SettingsOverlay {
     snapshot: SettingsSnapshot,
     themes: Vec<Theme>,
     theme_index: usize,
+    navigation_mode: crate::config::NavigationMode,
 }
 
 impl SettingsOverlay {
@@ -45,7 +47,7 @@ impl SettingsOverlay {
         container.append(&title);
 
         // Setting names
-        let names = ["Line Spacing", "Column Width", "Text Margins", "Theme"];
+        let names = ["Line Spacing", "Column Width", "Text Margins", "Theme", "Navigation"];
 
         let mut rows = Vec::new();
         let mut value_labels = Vec::new();
@@ -100,21 +102,25 @@ impl SettingsOverlay {
                 column_width: 950,
                 text_margins: 48,
                 theme_index,
+                navigation_mode: crate::config::NavigationMode::default(),
             },
             themes,
             theme_index,
+            navigation_mode: crate::config::NavigationMode::default(),
         }
     }
 
-    pub fn show(&mut self, line_spacing: u32, column_width: u32, text_margins: u32) {
+    pub fn show(&mut self, line_spacing: u32, column_width: u32, text_margins: u32, navigation_mode: crate::config::NavigationMode) {
         self.snapshot = SettingsSnapshot {
             line_spacing,
             column_width,
             text_margins,
             theme_index: self.theme_index,
+            navigation_mode,
         };
+        self.navigation_mode = navigation_mode;
         self.selected = 0;
-        self.update_displayed_values(line_spacing, column_width, text_margins);
+        self.update_displayed_values(line_spacing, column_width, text_margins, navigation_mode);
         self.update_row_highlight();
         self.container.set_visible(true);
     }
@@ -147,6 +153,7 @@ impl SettingsOverlay {
         line_spacing: u32,
         column_width: u32,
         text_margins: u32,
+        navigation_mode: crate::config::NavigationMode,
     ) -> SettingsChange {
         match self.selected {
             0 => {
@@ -179,16 +186,30 @@ impl SettingsOverlay {
                 self.value_labels[3].set_label(&format!("\u{25C0} {} \u{25B6}", theme.display_name));
                 SettingsChange::Theme(Box::new(theme.clone()))
             }
+            4 => {
+                let new_mode = match navigation_mode {
+                    crate::config::NavigationMode::Scroll => crate::config::NavigationMode::EReader,
+                    crate::config::NavigationMode::EReader => crate::config::NavigationMode::Scroll,
+                };
+                self.navigation_mode = new_mode;
+                let label = match new_mode {
+                    crate::config::NavigationMode::Scroll => "Scroll",
+                    crate::config::NavigationMode::EReader => "E-Reader",
+                };
+                self.value_labels[4].set_label(&format!("\u{25C0} {} \u{25B6}", label));
+                SettingsChange::Navigation(new_mode)
+            }
             _ => SettingsChange::None,
         }
     }
 
-    pub fn snapshot(&self) -> (u32, u32, u32, usize) {
+    pub fn snapshot(&self) -> (u32, u32, u32, usize, crate::config::NavigationMode) {
         (
             self.snapshot.line_spacing,
             self.snapshot.column_width,
             self.snapshot.text_margins,
             self.snapshot.theme_index,
+            self.snapshot.navigation_mode,
         )
     }
 
@@ -200,13 +221,22 @@ impl SettingsOverlay {
         &self.themes
     }
 
-    pub fn update_displayed_values(&self, line_spacing: u32, column_width: u32, text_margins: u32) {
+    pub fn navigation_mode(&self) -> crate::config::NavigationMode {
+        self.navigation_mode
+    }
+
+    pub fn update_displayed_values(&self, line_spacing: u32, column_width: u32, text_margins: u32, navigation_mode: crate::config::NavigationMode) {
         self.value_labels[0].set_label(&format!("\u{25C0} {}px \u{25B6}", line_spacing));
         self.value_labels[1].set_label(&format!("\u{25C0} {}px \u{25B6}", column_width));
         self.value_labels[2].set_label(&format!("\u{25C0} {}px \u{25B6}", text_margins));
         if let Some(theme) = self.themes.get(self.theme_index) {
             self.value_labels[3].set_label(&format!("\u{25C0} {} \u{25B6}", theme.display_name));
         }
+        let nav_label = match navigation_mode {
+            crate::config::NavigationMode::Scroll => "Scroll",
+            crate::config::NavigationMode::EReader => "E-Reader",
+        };
+        self.value_labels[4].set_label(&format!("\u{25C0} {} \u{25B6}", nav_label));
     }
 
     fn update_row_highlight(&self) {
@@ -225,5 +255,6 @@ pub enum SettingsChange {
     ColumnWidth(u32),
     TextMargins(u32),
     Theme(Box<Theme>),
+    Navigation(crate::config::NavigationMode),
     None,
 }
