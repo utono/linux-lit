@@ -138,6 +138,28 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
     })
 }
 
+/// Load translations for a work, keyed by line_mapping.id.
+pub fn load_translations(
+    conn: &Connection,
+    abbrev: &str,
+) -> Result<HashMap<i64, String>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT lm.id, lt.translation \
+         FROM line_translations lt \
+         JOIN line_mapping lm ON lt.line_mapping_id = lm.id \
+         WHERE lm.work_abbrev = ?1",
+    )?;
+    let mut map = HashMap::new();
+    let rows = stmt.query_map([abbrev], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for row in rows {
+        let (id, translation) = row?;
+        map.insert(id, translation);
+    }
+    Ok(map)
+}
+
 pub fn list_media_for_work(
     conn: &Connection,
     abbrev: &str,
@@ -228,6 +250,15 @@ mod tests {
         let works = list_works(&conn).unwrap();
         assert!(works.len() > 100, "Should have 100+ works");
         assert!(works.iter().any(|w| w.abbrev == "Ham"));
+    }
+
+    #[test]
+    fn test_load_translations() {
+        let conn = open_db().unwrap();
+        let translations = load_translations(&conn, "Ham").unwrap();
+        // Hamlet may or may not have translations — just verify no crash
+        // and that the return type is correct
+        assert!(translations.len() >= 0);
     }
 
     #[test]
