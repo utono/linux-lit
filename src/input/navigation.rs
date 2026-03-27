@@ -37,11 +37,17 @@ pub fn move_cursor(state: &mut AppState, delta: i32) {
     state.current_line = new_line;
     update_highlight(state);
 
-    if delta > 0 && needs_page_turn_down(state, new_line) {
-        // Going down and line is at bottom edge — page turn with this line at top
-        set_page(state, new_line);
-    } else if delta < 0 {
-        scroll_to_cursor(state);
+    match state.config.navigation_mode {
+        crate::config::NavigationMode::Scroll => {
+            center_cursor(state);
+        }
+        crate::config::NavigationMode::EReader => {
+            if delta > 0 && needs_page_turn_down(state, new_line) {
+                set_page(state, new_line);
+            } else if delta < 0 {
+                scroll_to_cursor(state);
+            }
+        }
     }
 
     seek_to_current_line(state);
@@ -192,9 +198,20 @@ pub fn jump_to_next_dialogue(state: &mut AppState) {
 /// Restore cursor position after loading a work (used on startup with MRU).
 pub fn restore_cursor(state: &mut AppState) {
     update_highlight(state);
-    // Place cursor's page so cursor is near the top
-    let new_top = state.current_line.saturating_sub(PAGE_OVERLAP);
-    set_page_instant(state, new_top);
+    match state.config.navigation_mode {
+        crate::config::NavigationMode::Scroll => {
+            let adj = state.scrolled_window.vadjustment();
+            let max_scroll = adj.upper() - adj.page_size();
+            let line_y = scroll_value_for_line(state, state.current_line);
+            let half_page = adj.page_size() / 2.0;
+            let centered = (line_y - half_page).max(0.0).min(max_scroll.max(0.0));
+            adj.set_value(centered);
+        }
+        crate::config::NavigationMode::EReader => {
+            let new_top = state.current_line.saturating_sub(PAGE_OVERLAP);
+            set_page_instant(state, new_top);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -273,6 +290,20 @@ fn scroll_to_cursor(state: &mut AppState) {
             adj.set_value(target.max(0.0));
         }
     }
+}
+
+/// Scroll the viewport so the current line is vertically centered.
+/// Near document edges, clamps so no blank space appears (scrolloff behavior).
+fn center_cursor(state: &mut AppState) {
+    let adj = state.scrolled_window.vadjustment();
+    let max_scroll = adj.upper() - adj.page_size();
+    if max_scroll <= 0.0 {
+        return;
+    }
+    let line_y = scroll_value_for_line(state, state.current_line);
+    let half_page = adj.page_size() / 2.0;
+    let centered = (line_y - half_page).max(0.0).min(max_scroll);
+    adj.set_value(centered);
 }
 
 /// Seek MPV to the current line's start time (with preroll).
