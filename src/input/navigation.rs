@@ -493,6 +493,9 @@ fn update_highlight(state: &AppState) {
             }
         }
     }
+
+    // When visual selection is active, undim and highlight selected lines
+    crate::input::visual::apply_selection_highlight(state);
 }
 
 // ---------------------------------------------------------------------------
