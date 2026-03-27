@@ -340,8 +340,129 @@ fn action_merge(state: &mut AppState) {
     reload_current_work(state);
 }
 
-fn action_external_command(_state: &mut AppState, _command: &str) {
-    // Implemented in Task 10
+fn action_external_command(state: &mut AppState, command: &str) {
+    // Extract selection range
+    let (start, end) = match &state.visual_selection {
+        Some(s) => s.range(),
+        None => return,
+    };
+
+    let work = match &state.current_work {
+        Some(w) => w,
+        None => return,
+    };
+
+    // Collect buffer text for selection
+    let mut selected_text = Vec::new();
+    for buf_line in start..=end {
+        if let Some(line_start) = state.buffer.iter_at_line(buf_line as i32) {
+            let mut line_end = line_start;
+            if !line_end.ends_line() {
+                line_end.forward_to_line_end();
+            }
+            selected_text.push(state.buffer.text(&line_start, &line_end, false).to_string());
+        }
+    }
+    let input = selected_text.join("\n");
+
+    // Collect DB lines for undo
+    let mut db_lines: Vec<crate::db::models::Line> = Vec::new();
+    for buf_line in start..=end {
+        if let Some(work_idx) = state.work_line_for_buffer(buf_line) {
+            if let Some(line) = work.lines.get(work_idx) {
+                db_lines.push(line.clone());
+            }
+        }
+    }
+
+    // Run external command
+    use std::process::{Command, Stdio};
+    use std::io::Write;
+    let result = Command::new("sh")
+        .args(["-c", command])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            if let Some(ref mut stdin) = child.stdin {
+                stdin.write_all(input.as_bytes())?;
+            }
+            drop(child.stdin.take());
+            child.wait_with_output()
+        });
+
+    let output = match result {
+        Ok(output) => {
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                crate::logging::log(&format!(
+                    "VISUAL: command '{}' failed ({}): {}",
+                    command, output.status, stderr
+                ));
+                return;
+            }
+            String::from_utf8_lossy(&output.stdout).to_string()
+        }
+        Err(e) => {
+            crate::logging::log(&format!("VISUAL: command '{}' spawn failed: {}", command, e));
+            return;
+        }
+    };
+
+    let new_lines: Vec<String> = output.lines().map(|l| l.to_string()).collect();
+    if new_lines.is_empty() {
+        crate::logging::log("VISUAL: command returned empty output, skipping");
+        return;
+    }
+
+    let abbrev = work.abbrev.clone();
+    let text_file = work.text_file.clone();
+    let old_ids: Vec<i64> = db_lines.iter().map(|l| l.id).collect();
+
+    // Capture undo entry
+    let file_backup = text_file.as_ref().and_then(|path| {
+        std::fs::read_to_string(path).ok().map(|content| (path.clone(), content))
+    });
+    state.undo_stack.push(UndoEntry {
+        db_lines,
+        file_backup,
+        cursor_line: state.current_line,
+    });
+
+    // Write to DB
+    match crate::db::queries::open_db_rw() {
+        Ok(conn) => {
+            if let Err(e) = crate::db::queries::replace_lines(&conn, &abbrev, &old_ids, &new_lines) {
+                crate::logging::log(&format!("VISUAL: replace DB error: {}", e));
+                state.undo_stack.pop();
+                return;
+            }
+        }
+        Err(e) => {
+            crate::logging::log(&format!("VISUAL: open_db_rw failed: {}", e));
+            state.undo_stack.pop();
+            return;
+        }
+    }
+
+    // Update text file if it exists
+    if let Some(ref path) = text_file {
+        if let Ok(contents) = std::fs::read_to_string(path) {
+            let mut file_lines: Vec<String> = contents.lines().map(|l| l.to_string()).collect();
+            if end < file_lines.len() {
+                file_lines.splice(start..=end, new_lines.iter().cloned());
+                let _ = std::fs::write(path, file_lines.join("\n"));
+            }
+        }
+    }
+
+    crate::logging::log(&format!(
+        "VISUAL: command '{}' replaced {} lines with {} lines",
+        command, old_ids.len(), new_lines.len(),
+    ));
+
+    reload_current_work(state);
 }
 
 /// Reload the current work from DB and refresh the display.
