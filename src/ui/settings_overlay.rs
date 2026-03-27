@@ -221,10 +221,6 @@ impl SettingsOverlay {
         &self.themes
     }
 
-    pub fn navigation_mode(&self) -> crate::config::NavigationMode {
-        self.navigation_mode
-    }
-
     pub fn update_displayed_values(&self, line_spacing: u32, column_width: u32, text_margins: u32, navigation_mode: crate::config::NavigationMode) {
         self.value_labels[0].set_label(&format!("\u{25C0} {}px \u{25B6}", line_spacing));
         self.value_labels[1].set_label(&format!("\u{25C0} {}px \u{25B6}", column_width));
