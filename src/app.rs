@@ -69,6 +69,9 @@ pub struct AppState {
     /// When set, CursorSync events are suppressed until this instant passes.
     /// Prevents playback sync from overriding manual navigation.
     pub suppress_sync_until: Option<std::time::Instant>,
+    /// When set, advance cursor to the given buffer line once time_pos exceeds
+    /// the end time. Used for untimestamped lines that follow a timestamped one.
+    pub pending_advance: Option<(f64, usize)>,
 }
 
 impl AppState {
@@ -285,6 +288,7 @@ pub fn build_window(
         translation_dim_tag,
         translation_text_tag,
         suppress_sync_until: None,
+        pending_advance: None,
     }));
 
     // Connect picker search entry filter

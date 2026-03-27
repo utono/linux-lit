@@ -111,6 +111,18 @@ async fn handle_command(
                 let _ = send_command(w, &cmd).await;
             }
         }
+        MpvCommand::SeekRelative(offset) => {
+            if let Some(w) = writer.as_mut() {
+                let cmd = format!(r#"{{"command":["seek",{},"relative","exact"]}}"#, offset);
+                let _ = send_command(w, &cmd).await;
+            }
+        }
+        MpvCommand::VolumeAdjust(delta) => {
+            if let Some(w) = writer.as_mut() {
+                let cmd = format!(r#"{{"command":["add","volume",{}]}}"#, delta);
+                let _ = send_command(w, &cmd).await;
+            }
+        }
         MpvCommand::LoadFile(path) => {
             if let Some(w) = writer.as_mut() {
                 let cmd = format!(

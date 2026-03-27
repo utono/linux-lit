@@ -5,6 +5,8 @@ use std::collections::HashMap;
 #[allow(dead_code)]
 pub enum MpvCommand {
     Seek(f64),
+    SeekRelative(f64),
+    VolumeAdjust(f64),
     TogglePause,
     Pause,
     ResumeAndSeek(f64),

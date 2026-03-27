@@ -70,7 +70,12 @@ fn main() {
                         // Translate work-line index to buffer-line index if line_map present
                         let buffer_line = if let Some(ref lm) = s.line_map {
                             if line_idx < lm.work_to_buffer.len() {
-                                lm.work_to_buffer[line_idx]
+                                let bl = lm.work_to_buffer[line_idx];
+                                // Verify this is a real mapping (unmatched work lines default to 0)
+                                if lm.buffer_to_work.get(bl) != Some(&Some(line_idx)) {
+                                    continue;
+                                }
+                                bl
                             } else {
                                 continue;
                             }
@@ -85,6 +90,28 @@ fn main() {
                             s.config.last_line = buffer_line;
                             crate::config::save(&s.config);
                         }
+                        // Check if the next dialogue line lacks a timestamp;
+                        // if so, schedule an advance when the current line's audio ends.
+                        s.pending_advance = None;
+                        if let Some(ref work) = s.current_work {
+                            if let Some(end_time) = work.lines.get(line_idx).and_then(|l| l.timestamp.as_ref()).map(|ts| ts.end) {
+                                // Find next dialogue buffer line
+                                let next_dialogue = if let Some(ref lm) = s.line_map {
+                                    lm.dialogue_buffer_lines.iter().find(|&&bl| bl > buffer_line).copied()
+                                } else {
+                                    let lc = work.lines.len();
+                                    ((buffer_line + 1)..lc).find(|&i| work.lines[i].is_dialogue)
+                                };
+                                if let Some(next_bl) = next_dialogue {
+                                    // Check if the next dialogue line is untimestamped
+                                    let next_wi = s.work_line_for_buffer(next_bl);
+                                    let next_has_ts = next_wi.and_then(|wi| work.lines[wi].timestamp.as_ref()).is_some();
+                                    if !next_has_ts {
+                                        s.pending_advance = Some((end_time, next_bl));
+                                    }
+                                }
+                            }
+                        }
                     }
                     MpvEvent::ConnectionStatus(connected) => {
                         crate::logging::log(&format!("MPV connection: {}", connected));
@@ -96,7 +123,26 @@ fn main() {
                         ));
                     }
                     MpvEvent::TimePos(pos) => {
-                        state_for_events.borrow_mut().current_time_pos = pos;
+                        let mut s = state_for_events.borrow_mut();
+                        s.current_time_pos = pos;
+                        // Advance to untimestamped next line when current line's audio ends
+                        if let Some((end_time, next_bl)) = s.pending_advance {
+                            if pos >= end_time {
+                                s.pending_advance = None;
+                                if s.current_line != next_bl {
+                                    s.current_line = next_bl;
+                                    // Suppress sync so cursor stays on this untimestamped line
+                                    s.suppress_sync_until = Some(
+                                        std::time::Instant::now() + std::time::Duration::from_secs(86400),
+                                    );
+                                    crate::input::navigation::update_highlight_and_ensure_visible(
+                                        &mut s,
+                                    );
+                                    s.config.last_line = next_bl;
+                                    crate::config::save(&s.config);
+                                }
+                            }
+                        }
                     }
                 }
             }

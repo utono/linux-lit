@@ -391,6 +391,14 @@ pub fn handle_key(
                 navigation::page_backward(&mut state.borrow_mut());
                 return true;
             }
+            "Up" => {
+                let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(5.0));
+                return true;
+            }
+            "Down" => {
+                let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(-5.0));
+                return true;
+            }
             _ => return false,
         }
     }
@@ -423,6 +431,22 @@ pub fn handle_key(
         }
         "q" => {
             navigation::jump_to_next_dialogue(&mut state.borrow_mut());
+            true
+        }
+        "o" => {
+            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::SeekRelative(-3.5));
+            true
+        }
+        "e" => {
+            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::SeekRelative(3.5));
+            true
+        }
+        "O" => {
+            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::SeekRelative(-60.0));
+            true
+        }
+        "E" => {
+            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::SeekRelative(60.0));
             true
         }
         "Tab" => {
