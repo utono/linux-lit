@@ -248,7 +248,7 @@ pub fn handle_key(
                     }
                     s.scrolled_window.set_width_request(snap_cw as i32);
                     s.text_view.set_left_margin(snap_tm as i32);
-                    s.text_view.set_right_margin(snap_tm as i32);
+                    s.text_view.set_right_margin(snap_tm as i32 + crate::config::EXTRA_RIGHT_MARGIN);
                     s.config.line_spacing = snap_ls;
                     s.config.column_width = snap_cw;
                     s.config.text_margins = snap_tm;
@@ -316,7 +316,7 @@ pub fn handle_key(
                 }
                 s.scrolled_window.set_width_request(cw as i32);
                 s.text_view.set_left_margin(tm as i32);
-                s.text_view.set_right_margin(tm as i32);
+                s.text_view.set_right_margin(tm as i32 + crate::config::EXTRA_RIGHT_MARGIN);
                 s.config.line_spacing = ls;
                 s.config.column_width = cw;
                 s.config.text_margins = tm;
@@ -493,6 +493,20 @@ pub fn handle_key(
     }
 
     // Alt combos
+    if is_alt && key_name == "backslash" {
+        let mut s = state.borrow_mut();
+        s.vocab_highlight_visible = !s.vocab_highlight_visible;
+        if s.vocab_highlight_visible {
+            crate::app::apply_vocab_highlighting(&s);
+        } else {
+            crate::app::remove_vocab_highlighting(&s);
+        }
+        s.config.vocab_highlight_visible = s.vocab_highlight_visible;
+        crate::config::save(&s.config);
+        crate::logging::log(&format!("VOCAB: highlighting {}", if s.vocab_highlight_visible { "on" } else { "off" }));
+        return true;
+    }
+
     if is_alt {
         match key_name {
             "f" => {
@@ -757,6 +771,28 @@ pub fn handle_key(
             }
             true
         }
+        "w" => {
+            navigation::jump_to_next_vocab(&mut state.borrow_mut());
+            true
+        }
+        "W" => {
+            navigation::jump_to_prev_vocab(&mut state.borrow_mut());
+            true
+        }
+        "backslash" => {
+            let mut s = state.borrow_mut();
+            s.definition_panel_visible = !s.definition_panel_visible;
+            if s.definition_panel_visible {
+                s.definition_panel.show();
+                if let Some(m) = s.vocab_matches.iter().find(|m| m.line_index == s.current_line) {
+                    let word = m.word.clone();
+                    crate::app::update_definition_panel(&s, &word);
+                }
+            } else {
+                s.definition_panel.hide();
+            }
+            true
+        }
         "Escape" => {
             let mut s = state.borrow_mut();
             if s.ab_repeat.loop_active {
@@ -849,7 +885,7 @@ fn apply_settings_change(
         }
         SettingsChange::TextMargins(val) => {
             s.text_view.set_left_margin(val as i32);
-            s.text_view.set_right_margin(val as i32);
+            s.text_view.set_right_margin(val as i32 + crate::config::EXTRA_RIGHT_MARGIN);
             s.config.text_margins = val;
         }
         SettingsChange::Theme(theme) => {

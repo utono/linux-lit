@@ -250,8 +250,8 @@ pub fn restore_cursor(state: &mut AppState) {
             let adj = state.scrolled_window.vadjustment();
             let max_scroll = adj.upper() - adj.page_size();
             let line_y = scroll_value_for_line(state, state.current_line);
-            let half_page = adj.page_size() / 2.0;
-            let centered = (line_y - half_page).max(0.0).min(max_scroll.max(0.0));
+            let offset = adj.page_size() * 0.15;
+            let centered = (line_y - offset).max(0.0).min(max_scroll.max(0.0));
             adj.set_value(centered);
         }
         crate::config::NavigationMode::EReader => {
@@ -348,11 +348,11 @@ fn center_cursor(state: &mut AppState) {
         return;
     }
     let line_y = scroll_value_for_line(state, state.current_line);
-    let half_page = adj.page_size() / 2.0;
-    let centered = (line_y - half_page).max(0.0).min(max_scroll);
+    let offset = adj.page_size() * 0.15;
+    let centered = (line_y - offset).max(0.0).min(max_scroll);
     crate::logging::log(&format!(
-        "CENTER: line={} line_y={:.0} half_page={:.0} centered={:.0} max={:.0} old_val={:.0}",
-        state.current_line, line_y, half_page, centered, max_scroll, adj.value()
+        "CENTER: line={} line_y={:.0} offset={:.0} centered={:.0} max={:.0} old_val={:.0}",
+        state.current_line, line_y, offset, centered, max_scroll, adj.value()
     ));
     adj.set_value(centered);
 }
@@ -557,4 +557,92 @@ fn lines_per_page(state: &AppState) -> usize {
     }
 
     count.max(1)
+}
+
+/// Jump to the next vocab word occurrence after current position.
+pub fn jump_to_next_vocab(state: &mut AppState) {
+    if state.vocab_matches.is_empty() {
+        return;
+    }
+
+    let next_idx = match state.vocab_match_idx {
+        Some(idx) => {
+            if idx + 1 < state.vocab_matches.len() {
+                idx + 1
+            } else {
+                0
+            }
+        }
+        None => {
+            state.vocab_matches
+                .iter()
+                .position(|m| m.line_index > state.current_line)
+                .unwrap_or(0)
+        }
+    };
+
+    state.vocab_match_idx = Some(next_idx);
+    let target_line = state.vocab_matches[next_idx].line_index;
+    state.current_line = target_line;
+    update_highlight(state);
+    update_highlight_and_center(state);
+    seek_to_current_line(state);
+
+    state.definition_panel_visible = true;
+    state.definition_panel.show();
+    let word = state.vocab_matches[next_idx].word.clone();
+    crate::app::update_definition_panel(state, &word);
+}
+
+/// Jump to a specific vocab match index. Used by concordance picker.
+pub fn jump_to_vocab_at(state: &mut AppState, match_idx: usize) {
+    if match_idx >= state.vocab_matches.len() {
+        return;
+    }
+    state.vocab_match_idx = Some(match_idx);
+    let target_line = state.vocab_matches[match_idx].line_index;
+    state.current_line = target_line;
+    update_highlight(state);
+    update_highlight_and_center(state);
+    seek_to_current_line(state);
+
+    state.definition_panel_visible = true;
+    state.definition_panel.show();
+    let word = state.vocab_matches[match_idx].word.clone();
+    crate::app::update_definition_panel(state, &word);
+}
+
+/// Jump to the previous vocab word occurrence before current position.
+pub fn jump_to_prev_vocab(state: &mut AppState) {
+    if state.vocab_matches.is_empty() {
+        return;
+    }
+
+    let prev_idx = match state.vocab_match_idx {
+        Some(idx) => {
+            if idx > 0 {
+                idx - 1
+            } else {
+                state.vocab_matches.len() - 1
+            }
+        }
+        None => {
+            state.vocab_matches
+                .iter()
+                .rposition(|m| m.line_index < state.current_line)
+                .unwrap_or(state.vocab_matches.len() - 1)
+        }
+    };
+
+    state.vocab_match_idx = Some(prev_idx);
+    let target_line = state.vocab_matches[prev_idx].line_index;
+    state.current_line = target_line;
+    update_highlight(state);
+    update_highlight_and_center(state);
+    seek_to_current_line(state);
+
+    state.definition_panel_visible = true;
+    state.definition_panel.show();
+    let word = state.vocab_matches[prev_idx].word.clone();
+    crate::app::update_definition_panel(state, &word);
 }
