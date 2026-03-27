@@ -180,8 +180,81 @@ pub fn execute_action(state: &mut AppState, index: usize, _tokio_handle: &tokio:
     exit_visual_mode(state);
 }
 
-fn action_copy(_state: &mut AppState, _with_metadata: bool) {
-    // Implemented in Task 7
+fn action_copy(state: &mut AppState, with_metadata: bool) {
+    let (start, end) = match &state.visual_selection {
+        Some(s) => s.range(),
+        None => return,
+    };
+    // Collect raw text first (borrows buffer), then apply metadata (borrows state).
+    let raw_lines: Vec<(usize, String)> = {
+        let buffer = &state.buffer;
+        (start..=end)
+            .filter_map(|line_idx| {
+                buffer.iter_at_line(line_idx as i32).map(|line_start| {
+                    let mut line_end = line_start;
+                    if !line_end.ends_line() {
+                        line_end.forward_to_line_end();
+                    }
+                    let text = buffer.text(&line_start, &line_end, false).to_string();
+                    (line_idx, text)
+                })
+            })
+            .collect()
+    };
+
+    let mut lines_text = Vec::new();
+    for (line_idx, text) in raw_lines {
+        if with_metadata {
+            let meta = format_line_metadata(state, line_idx, &text);
+            lines_text.push(meta);
+        } else {
+            lines_text.push(text);
+        }
+    }
+
+    let output = lines_text.join("\n");
+    // Pipe to wl-copy
+    use std::process::{Command, Stdio};
+    use std::io::Write;
+    match Command::new("wl-copy").stdin(Stdio::piped()).spawn() {
+        Ok(mut child) => {
+            if let Some(ref mut stdin) = child.stdin {
+                let _ = stdin.write_all(output.as_bytes());
+            }
+            let _ = child.wait();
+            crate::logging::log(&format!("VISUAL: copied {} lines to clipboard", end - start + 1));
+        }
+        Err(e) => {
+            crate::logging::log(&format!("VISUAL: wl-copy failed: {}", e));
+        }
+    }
+}
+
+/// Format a line with metadata: [line_num] SPEAKER (start-end): text
+fn format_line_metadata(state: &AppState, buffer_line: usize, text: &str) -> String {
+    let work = match &state.current_work {
+        Some(w) => w,
+        None => return format!("[{}] {}", buffer_line + 1, text),
+    };
+
+    let work_idx = state.work_line_for_buffer(buffer_line);
+    let line = work_idx.and_then(|i| work.lines.get(i));
+
+    match line {
+        Some(line) => {
+            let mut parts = Vec::new();
+            parts.push(format!("[{}]", buffer_line + 1));
+            if let Some(ref speaker) = line.speaker {
+                parts.push(speaker.clone());
+            }
+            if let Some(ref ts) = line.timestamp {
+                parts.push(format!("({:.1}-{:.1})", ts.start, ts.end));
+            }
+            parts.push(format!(":{}", text));
+            parts.join(" ")
+        }
+        None => format!("[{}] {}", buffer_line + 1, text),
+    }
 }
 
 fn action_merge(_state: &mut AppState) {
