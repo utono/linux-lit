@@ -26,9 +26,23 @@ pub fn move_cursor(state: &mut AppState, delta: i32) {
         return;
     }
 
-    let new_line = (state.current_line as i32 + delta)
+    let mut new_line = (state.current_line as i32 + delta)
         .max(0)
         .min(line_count as i32 - 1) as usize;
+
+    // Skip over translation lines
+    if state.translations_visible && !state.translation_lines.is_empty() {
+        let direction = if delta > 0 { 1i32 } else { -1i32 };
+        while new_line < state.translation_lines.len()
+            && state.translation_lines[new_line]
+        {
+            let next = new_line as i32 + direction;
+            if next < 0 || next >= line_count as i32 {
+                break;
+            }
+            new_line = next as usize;
+        }
+    }
 
     if new_line == state.current_line {
         return;
