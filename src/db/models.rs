@@ -25,6 +25,9 @@ pub struct Line {
     pub div1: i64,
     pub div2: i64,
     pub line_in_div: i64,
+    /// Whether this line is spoken in the active media file.
+    /// None = no spoken-status data (treat as spoken). Some(false) = skip on dialogue nav.
+    pub is_spoken: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -71,5 +74,4 @@ pub struct MediaItem {
     pub media_id: i64,
     pub path: String,
     pub display_name: Option<String>,
-    pub priority: i32,
 }

@@ -70,6 +70,7 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
                 div1,
                 div2,
                 line_in_div,
+                is_spoken: None,
             })
         })?
         .collect::<Result<_, _>>()?;
@@ -116,11 +117,27 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
         }
     }
 
-    // 6. Attach timestamps to lines
+    // 5b. Load spoken status for the active media
+    let mut spoken_map: HashMap<i64, bool> = HashMap::new();
+    if let Some(mid) = media_id {
+        let mut spoken_stmt = conn.prepare(
+            "SELECT line_mapping_id, is_spoken FROM line_spoken_status WHERE media_id = ?1",
+        )?;
+        let rows = spoken_stmt.query_map([mid], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)? != 0))
+        })?;
+        for row in rows {
+            let (lm_id, spoken) = row?;
+            spoken_map.insert(lm_id, spoken);
+        }
+    }
+
+    // 6. Attach timestamps and spoken status to lines
     let lines: Vec<Line> = lines
         .into_iter()
         .map(|mut line| {
             line.timestamp = ts_map.get(&line.id).copied();
+            line.is_spoken = spoken_map.get(&line.id).copied();
             line
         })
         .collect();
@@ -165,7 +182,7 @@ pub fn list_media_for_work(
     abbrev: &str,
 ) -> Result<Vec<MediaItem>, rusqlite::Error> {
     let mut stmt = conn.prepare(
-        "SELECT mf.id, mf.path, wma.display_name, wma.priority \
+        "SELECT mf.id, mf.path, wma.display_name \
          FROM media_files mf \
          JOIN work_media_associations wma ON wma.media_id = mf.id \
          WHERE wma.work_abbrev = ?1 \
@@ -176,7 +193,6 @@ pub fn list_media_for_work(
             media_id: row.get(0)?,
             path: row.get(1)?,
             display_name: row.get(2)?,
-            priority: row.get(3)?,
         })
     })?;
     rows.collect()

@@ -69,12 +69,23 @@ pub fn move_cursor(state: &mut AppState, delta: i32) {
 
 /// Jump to the first line.
 pub fn jump_to_start(state: &mut AppState) {
-    if state.current_work.is_none() {
-        return;
-    }
-    state.current_line = 0;
+    let work = match &state.current_work {
+        Some(w) => w,
+        None => return,
+    };
+
+    let target = if let Some(ref lm) = state.line_map {
+        lm.dialogue_buffer_lines.first().copied().unwrap_or(0)
+    } else {
+        work.lines
+            .iter()
+            .position(|l| l.is_dialogue)
+            .unwrap_or(0)
+    };
+
+    state.current_line = target;
     update_highlight(state);
-    set_page_instant(state, 0);
+    set_page_instant(state, target);
 }
 
 /// Jump to the last line.
@@ -135,7 +146,9 @@ pub fn page_backward(state: &mut AppState) {
 /// Previous dialogue line (`,` key).
 /// If cursor is at the top line of the page, just page backward (don't move cursor).
 /// Otherwise, jump to the previous dialogue line.
+/// When a media_id is active, skips lines marked as not spoken in that media.
 pub fn jump_to_prev_dialogue(state: &mut AppState) {
+    let has_media = state.media_id.is_some();
     let target = {
         let work = match &state.current_work {
             Some(w) => w,
@@ -146,7 +159,12 @@ pub fn jump_to_prev_dialogue(state: &mut AppState) {
         }
 
         if let Some(ref lm) = state.line_map {
-            lm.dialogue_buffer_lines
+            let lines = if has_media {
+                &lm.spoken_dialogue_buffer_lines
+            } else {
+                &lm.dialogue_buffer_lines
+            };
+            lines
                 .iter()
                 .rev()
                 .find(|&&bl| bl < state.current_line)
@@ -154,7 +172,9 @@ pub fn jump_to_prev_dialogue(state: &mut AppState) {
         } else {
             let mut found = None;
             for i in (0..state.current_line).rev() {
-                if work.lines[i].is_dialogue {
+                if work.lines[i].is_dialogue
+                    && (!has_media || work.lines[i].is_spoken != Some(false))
+                {
                     found = Some(i);
                     break;
                 }
@@ -176,7 +196,9 @@ pub fn jump_to_prev_dialogue(state: &mut AppState) {
 
 /// Next dialogue line (`q` key).
 /// Jump to next dialogue line. Page turn when target is not fully visible.
+/// When a media_id is active, skips lines marked as not spoken in that media.
 pub fn jump_to_next_dialogue(state: &mut AppState) {
+    let has_media = state.media_id.is_some();
     let target = {
         let work = match &state.current_work {
             Some(w) => w,
@@ -184,15 +206,19 @@ pub fn jump_to_next_dialogue(state: &mut AppState) {
         };
 
         if let Some(ref lm) = state.line_map {
-            lm.dialogue_buffer_lines
-                .iter()
-                .find(|&&bl| bl > state.current_line)
-                .copied()
+            let lines = if has_media {
+                &lm.spoken_dialogue_buffer_lines
+            } else {
+                &lm.dialogue_buffer_lines
+            };
+            lines.iter().find(|&&bl| bl > state.current_line).copied()
         } else {
             let line_count = work.lines.len();
             let mut found = None;
             for i in (state.current_line + 1)..line_count {
-                if work.lines[i].is_dialogue {
+                if work.lines[i].is_dialogue
+                    && (!has_media || work.lines[i].is_spoken != Some(false))
+                {
                     found = Some(i);
                     break;
                 }
