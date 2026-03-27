@@ -264,7 +264,17 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .keybind-row-header {{ font-size: 36px; letter-spacing: 2px; \
            color: rgba(255, 255, 255, 0.35); margin-bottom: 4px; }} \
          .keybind-legend {{ border-top: 1px solid rgba(255, 255, 255, 0.1); \
-           margin-top: 12px; padding-top: 8px; }}",
+           margin-top: 12px; padding-top: 8px; }} \
+         .correction-overlay {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
+           padding: 24px; border-radius: 8px; min-width: 600px; }} \
+         .correction-title {{ font-size: 18px; font-weight: bold; \
+           margin-bottom: 8px; }} \
+         .correction-header {{ font-size: 13px; font-weight: bold; \
+           color: rgba(255, 255, 255, 0.5); letter-spacing: 2px; }} \
+         .correction-text {{ font-size: 15px; \
+           font-family: monospace; }} \
+         .correction-hint {{ font-size: 13px; \
+           color: rgba(255, 255, 255, 0.5); margin-top: 8px; }}",
         root = theme.root_color,
         bg = theme.text_bg,
         fg = theme.text_fg,
