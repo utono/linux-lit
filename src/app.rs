@@ -742,6 +742,196 @@ pub fn toggle_sign_column(state: &mut AppState) {
     ));
 }
 
+/// Toggle translation lines below original text.
+/// When showing: dims all lines, inserts translation text below matched lines.
+/// When hiding: removes inserted lines and dim tag.
+pub fn toggle_translations(state: &mut AppState) {
+    if state.translations.is_empty() {
+        crate::logging::log("TRANSLATIONS: no translations for this work");
+        return;
+    }
+
+    if state.translations_visible {
+        hide_translations(state);
+    } else {
+        show_translations(state);
+    }
+}
+
+fn show_translations(state: &mut AppState) {
+    let work = match &state.current_work {
+        Some(w) => w,
+        None => return,
+    };
+
+    // Build a list of (buffer_line, translation_text) pairs
+    let mut inserts: Vec<(usize, String)> = Vec::new();
+    let line_count = state.buffer.line_count() as usize;
+
+    for buf_line in 0..line_count {
+        let work_idx = state.work_line_for_buffer(buf_line);
+        if let Some(wi) = work_idx {
+            if let Some(line) = work.lines.get(wi) {
+                if let Some(translation) = state.translations.get(&line.id) {
+                    inserts.push((buf_line, format!("        {}", translation)));
+                }
+            }
+        }
+    }
+
+    // Insert bottom-to-top to avoid index shifting
+    for (buf_line, text) in inserts.iter().rev() {
+        let line_end = if let Some(mut iter) = state.buffer.iter_at_line(*buf_line as i32) {
+            if !iter.ends_line() {
+                iter.forward_to_line_end();
+            }
+            iter
+        } else {
+            continue;
+        };
+        state.buffer.insert(&mut line_end.clone(), &format!("\n{}", text));
+    }
+
+    // Build translation_lines tracking vector
+    let new_line_count = state.buffer.line_count() as usize;
+    let mut tl = vec![false; new_line_count];
+
+    let mut orig_idx = 0;
+    let orig_line_count = line_count;
+    let mut buf_idx = 0;
+    let work_lines = &work.lines;
+    while orig_idx < orig_line_count && buf_idx < new_line_count {
+        tl[buf_idx] = false;
+        let work_idx = if let Some(ref lm) = state.line_map {
+            lm.buffer_to_work.get(orig_idx).copied().flatten()
+        } else if orig_idx < work_lines.len() {
+            Some(orig_idx)
+        } else {
+            None
+        };
+        let has_translation = work_idx
+            .and_then(|wi| work_lines.get(wi))
+            .and_then(|line| state.translations.get(&line.id))
+            .is_some();
+        buf_idx += 1;
+        if has_translation && buf_idx < new_line_count {
+            tl[buf_idx] = true;
+            buf_idx += 1;
+        }
+        orig_idx += 1;
+    }
+    state.translation_lines = tl;
+
+    // Apply translation-dim tag to entire buffer
+    let (buf_start, buf_end) = state.buffer.bounds();
+    state.buffer.apply_tag(&state.translation_dim_tag, &buf_start, &buf_end);
+
+    // Apply translation-text tag to translation lines, remove dim from them
+    for (i, is_trans) in state.translation_lines.iter().enumerate() {
+        if *is_trans {
+            if let Some(line_start) = state.buffer.iter_at_line(i as i32) {
+                let mut line_end = line_start;
+                if !line_end.ends_line() {
+                    line_end.forward_to_line_end();
+                }
+                state.buffer.remove_tag(&state.translation_dim_tag, &line_start, &line_end);
+                state.buffer.apply_tag(&state.translation_text_tag, &line_start, &line_end);
+            }
+        }
+    }
+
+    // Adjust current_line and page_top_line to account for inserted lines
+    state.current_line = map_line_after_insert(state.current_line, &inserts);
+    state.page_top_line = map_line_after_insert(state.page_top_line, &inserts);
+
+    state.translations_visible = true;
+
+    reapply_font(state);
+    crate::input::navigation::update_highlight_and_ensure_visible(state);
+
+    crate::logging::log(&format!(
+        "TRANSLATIONS: shown ({} translation lines inserted)",
+        inserts.len(),
+    ));
+}
+
+/// Map an original buffer line index to its new position after translation inserts.
+fn map_line_after_insert(orig_line: usize, inserts: &[(usize, String)]) -> usize {
+    let mut offset = 0;
+    for (buf_line, _) in inserts {
+        if *buf_line < orig_line {
+            offset += 1;
+        } else {
+            break;
+        }
+    }
+    orig_line + offset
+}
+
+fn hide_translations(state: &mut AppState) {
+    // Remove translation lines from buffer bottom-to-top
+    let line_count = state.buffer.line_count() as usize;
+    for i in (0..line_count).rev() {
+        if i < state.translation_lines.len() && state.translation_lines[i] {
+            let line_start = if i > 0 {
+                if let Some(mut iter) = state.buffer.iter_at_line((i - 1) as i32) {
+                    if !iter.ends_line() {
+                        iter.forward_to_line_end();
+                    }
+                    iter
+                } else {
+                    continue;
+                }
+            } else {
+                state.buffer.start_iter()
+            };
+            let line_end = if let Some(mut iter) = state.buffer.iter_at_line(i as i32) {
+                if !iter.ends_line() {
+                    iter.forward_to_line_end();
+                }
+                iter
+            } else {
+                continue;
+            };
+            state.buffer.delete(&mut line_start.clone(), &mut line_end.clone());
+        }
+    }
+
+    // Remove tags from entire buffer
+    let (buf_start, buf_end) = state.buffer.bounds();
+    state.buffer.remove_tag(&state.translation_dim_tag, &buf_start, &buf_end);
+    state.buffer.remove_tag(&state.translation_text_tag, &buf_start, &buf_end);
+
+    // Reverse-map current_line and page_top_line
+    let old_current = state.current_line;
+    let old_top = state.page_top_line;
+    state.current_line = map_line_before_insert(old_current, &state.translation_lines);
+    state.page_top_line = map_line_before_insert(old_top, &state.translation_lines);
+
+    state.translation_lines.clear();
+    state.translations_visible = false;
+
+    reapply_font(state);
+    crate::input::navigation::update_highlight_and_ensure_visible(state);
+
+    crate::logging::log("TRANSLATIONS: hidden");
+}
+
+/// Map a buffer line index (with translations) back to the original line index.
+fn map_line_before_insert(buf_line: usize, translation_lines: &[bool]) -> usize {
+    let mut orig = 0;
+    for i in 0..=buf_line.min(translation_lines.len().saturating_sub(1)) {
+        if i < translation_lines.len() && translation_lines[i] {
+            // Skip translation lines
+        } else if i == buf_line {
+            return orig;
+        } else {
+            orig += 1;
+        }
+    }
+    orig
+}
+
 /// Reapply font size using a TextTag spanning the entire buffer.
 fn reapply_font(state: &AppState) {
     let tag_table = state.buffer.tag_table();
