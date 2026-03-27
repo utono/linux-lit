@@ -41,6 +41,7 @@ pub fn handle_key(
 
     // Ctrl+p: open picker when hidden
     if is_ctrl && key_name == "p" && !picker_visible {
+        state.borrow().correction_overlay.hide();
         state.borrow().picker.show();
         return true;
     }
@@ -217,6 +218,7 @@ pub fn handle_key(
 
     // Ctrl+,: toggle settings overlay
     if is_ctrl && key_name == "comma" && !settings_visible && !picker_visible {
+        state.borrow().correction_overlay.hide();
         let s = state.borrow();
         let ls = s.config.line_spacing;
         let cw = s.config.column_width;
@@ -344,6 +346,23 @@ pub fn handle_key(
                 return true;
             }
             _ => return false, // let GTK route to the Entry
+        }
+    }
+
+    // --- Correction overlay (when visible) ---
+    let correction_visible = state.borrow().correction_overlay.is_visible();
+    if correction_visible {
+        match key_name {
+            "y" => {
+                accept_correction(state);
+                return true;
+            }
+            "n" | "Escape" => {
+                state.borrow_mut().pending_correction = None;
+                state.borrow().correction_overlay.hide();
+                return true;
+            }
+            _ => return true, // consume all other keys while overlay is open
         }
     }
 
@@ -502,6 +521,7 @@ pub fn handle_key(
                     s.media_picker.hide();
                     s.settings_overlay.hide();
                     s.search_bar.hide();
+                    s.correction_overlay.hide();
                     s.keybinds_overlay.show();
                 }
                 return true;
@@ -736,6 +756,7 @@ pub fn handle_key(
                         .await
                         .unwrap_or_default();
                     let mut s = state_clone.borrow_mut();
+                    s.correction_overlay.hide();
                     s.media_picker.set_items(items);
                     s.media_picker.show();
                 });
@@ -845,6 +866,66 @@ fn apply_settings_change(
         }
         SettingsChange::None => {}
     }
+}
+
+fn accept_correction(state_rc: &Rc<RefCell<AppState>>) {
+    let pending = {
+        let mut state = state_rc.borrow_mut();
+        state.correction_overlay.hide();
+        state.pending_correction.take()
+    };
+
+    let pending = match pending {
+        Some(p) => p,
+        None => return,
+    };
+
+    let new_lines: Vec<String> = pending.corrected_text.lines().map(|l| l.to_string()).collect();
+    if new_lines.is_empty() {
+        crate::logging::log("VISUAL: corrected text was empty");
+        return;
+    }
+
+    let old_ids: Vec<i64> = pending.db_lines.iter().map(|l| l.id).collect();
+    let file_backup = pending.text_file.as_ref().and_then(|path| {
+        std::fs::read_to_string(path).ok().map(|content| (path.clone(), content))
+    });
+
+    let mut state = state_rc.borrow_mut();
+
+    state.undo_stack.push(crate::input::visual::UndoEntry {
+        db_lines: pending.db_lines,
+        file_backup,
+        cursor_line: pending.start,
+    });
+
+    match crate::db::queries::open_db_rw() {
+        Ok(conn) => {
+            if let Err(e) = crate::db::queries::replace_lines(&conn, &pending.abbrev, &old_ids, &new_lines) {
+                crate::logging::log(&format!("VISUAL: correction DB error: {}", e));
+                state.undo_stack.pop();
+                return;
+            }
+        }
+        Err(e) => {
+            crate::logging::log(&format!("VISUAL: correction open_db_rw failed: {}", e));
+            state.undo_stack.pop();
+            return;
+        }
+    }
+
+    if let Some(ref path) = pending.text_file {
+        if let Ok(contents) = std::fs::read_to_string(path) {
+            let mut file_lines: Vec<String> = contents.lines().map(|l| l.to_string()).collect();
+            if pending.end < file_lines.len() {
+                file_lines.splice(pending.start..=pending.end, new_lines.iter().cloned());
+                let _ = std::fs::write(path, file_lines.join("\n"));
+            }
+        }
+    }
+
+    crate::logging::log(&format!("VISUAL: correction applied, {} lines", new_lines.len()));
+    crate::input::visual::reload_current_work(&mut state);
 }
 
 fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &crate::theme::Theme) {
