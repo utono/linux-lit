@@ -41,6 +41,8 @@ pub struct Config {
     pub ollama_model: String,
     #[serde(default = "default_ollama_endpoint")]
     pub ollama_endpoint: String,
+    #[serde(default = "default_vocab_highlight_visible")]
+    pub vocab_highlight_visible: bool,
 }
 
 fn default_font_family() -> String {
@@ -61,8 +63,9 @@ pub fn default_font_size() -> u32 {
 }
 
 pub const DEFAULT_LINE_SPACING: u32 = 5;
-pub const DEFAULT_COLUMN_WIDTH: u32 = 950;
+pub const DEFAULT_COLUMN_WIDTH: u32 = 750;
 pub const DEFAULT_TEXT_MARGINS: u32 = 48;
+pub const EXTRA_RIGHT_MARGIN: i32 = 24;
 
 fn default_line_spacing() -> u32 {
     DEFAULT_LINE_SPACING
@@ -84,6 +87,10 @@ fn default_ollama_endpoint() -> String {
     "http://localhost:11434".to_string()
 }
 
+fn default_vocab_highlight_visible() -> bool {
+    true
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -98,6 +105,7 @@ impl Default for Config {
             visual_mode_commands: Vec::new(),
             ollama_model: default_ollama_model(),
             ollama_endpoint: default_ollama_endpoint(),
+            vocab_highlight_visible: default_vocab_highlight_visible(),
         }
     }
 }
