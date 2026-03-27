@@ -347,13 +347,64 @@ pub fn handle_key(
         }
     }
 
+    // --- Action popup (when visible) ---
+    let action_popup_visible = state.borrow().action_popup.is_some();
+    if action_popup_visible {
+        // Will be implemented in Task 6
+        return true;
+    }
+
+    // --- Visual mode ---
+    let in_visual = state.borrow().visual_selection.is_some();
+    if in_visual {
+        match key_name {
+            "j" => {
+                crate::input::visual::move_selection_cursor(&mut state.borrow_mut(), 1);
+                return true;
+            }
+            "k" => {
+                crate::input::visual::move_selection_cursor(&mut state.borrow_mut(), -1);
+                return true;
+            }
+            "G" => {
+                crate::input::visual::extend_to_end(&mut state.borrow_mut());
+                return true;
+            }
+            "g" => {
+                // In visual mode, 'g' starts gg sequence to extend to start
+                key_state.borrow_mut().pending_g = true;
+                let ks = Rc::clone(key_state);
+                glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
+                    ks.borrow_mut().pending_g = false;
+                });
+                return true;
+            }
+            "Escape" | "V" => {
+                crate::input::visual::exit_visual_mode(&mut state.borrow_mut());
+                return true;
+            }
+            "Return" => {
+                // Open action popup — implemented in Task 6
+                return true;
+            }
+            _ => {
+                // Consume all other keys in visual mode
+                return true;
+            }
+        }
+    }
+
     // --- Normal mode (no picker) ---
 
     // gg sequence check
     if key_state.borrow().pending_g {
         key_state.borrow_mut().pending_g = false;
         if key_name == "g" {
-            navigation::jump_to_start(&mut state.borrow_mut());
+            if state.borrow().visual_selection.is_some() {
+                crate::input::visual::extend_to_start(&mut state.borrow_mut());
+            } else {
+                navigation::jump_to_start(&mut state.borrow_mut());
+            }
             return true;
         }
     }
@@ -631,6 +682,10 @@ pub fn handle_key(
             } else {
                 false
             }
+        }
+        "V" => {
+            crate::input::visual::enter_visual_mode(&mut state.borrow_mut());
+            true
         }
         _ => false,
     }

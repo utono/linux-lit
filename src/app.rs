@@ -76,6 +76,7 @@ pub struct AppState {
     pub visual_selection: Option<crate::input::visual::SelectionState>,
     pub undo_stack: Vec<crate::input::visual::UndoEntry>,
     pub selection_tag: gtk4::TextTag,
+    pub action_popup: Option<crate::input::visual::ActionPopupState>,
 }
 
 impl AppState {
@@ -306,6 +307,7 @@ pub fn build_window(
         visual_selection: None,
         undo_stack: Vec::new(),
         selection_tag,
+        action_popup: None,
     }));
 
     // Connect picker search entry filter
