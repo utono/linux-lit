@@ -12,6 +12,12 @@ pub enum NavigationMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisualModeCommand {
+    pub name: String,
+    pub command: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default = "default_font_family")]
     pub font_family: String,
@@ -29,6 +35,8 @@ pub struct Config {
     pub last_work: Option<String>,
     #[serde(default)]
     pub last_line: usize,
+    #[serde(default)]
+    pub visual_mode_commands: Vec<VisualModeCommand>,
 }
 
 fn default_font_family() -> String {
@@ -48,7 +56,7 @@ pub fn default_font_size() -> u32 {
     16
 }
 
-pub const DEFAULT_LINE_SPACING: u32 = 4;
+pub const DEFAULT_LINE_SPACING: u32 = 5;
 pub const DEFAULT_COLUMN_WIDTH: u32 = 950;
 pub const DEFAULT_TEXT_MARGINS: u32 = 48;
 
@@ -75,6 +83,7 @@ impl Default for Config {
             navigation_mode: NavigationMode::default(),
             last_work: None,
             last_line: 0,
+            visual_mode_commands: Vec::new(),
         }
     }
 }
