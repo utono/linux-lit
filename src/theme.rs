@@ -291,6 +291,16 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .correction-hint {{ font-size: 11px; \
            color: {dim}; margin-top: 12px; padding-top: 8px; \
            border-top: 1px solid {dim}; }} \
+         .definition-panel {{ background-color: {bg}; color: {fg}; \
+           border-radius: 12px; padding: 20px 24px; }} \
+         .definition-header {{ font-size: 11px; color: {dim}; \
+           letter-spacing: 2px; font-weight: bold; }} \
+         .definition-word {{ font-size: 16px; }} \
+         .definition-text {{ opacity: 0.85; font-size: {size}pt; font-family: {font}; }} \
+         .definition-etymology {{ opacity: 0.7; font-size: 12px; }} \
+         .definition-gloss {{ opacity: 0.7; font-size: 12px; }} \
+         .definition-hint {{ font-size: 11px; color: {dim}; \
+           border-top: 1px solid {dim}; padding-top: 8px; margin-top: 12px; }} \
 ",
         root = theme.root_color,
         bg = theme.text_bg,

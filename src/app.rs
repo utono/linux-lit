@@ -1171,3 +1171,149 @@ pub fn save_position(state: &mut AppState) {
         crate::config::save(&state.config);
     }
 }
+
+/// Tokenize buffer lines and find vocab word matches.
+fn build_vocab_matches(state: &mut AppState) {
+    state.vocab_matches.clear();
+    state.vocab_match_idx = None;
+
+    if state.vocab_words.is_empty() {
+        return;
+    }
+
+    let line_count = state.effective_line_count();
+    let buffer_text = state.buffer.text(
+        &state.buffer.start_iter(),
+        &state.buffer.end_iter(),
+        false,
+    );
+
+    for (line_idx, line_text) in buffer_text.lines().enumerate() {
+        if line_idx >= line_count {
+            break;
+        }
+        let mut char_offset = 0usize;
+        let mut in_word = false;
+        let mut word_start = 0usize;
+        let mut word_buf = String::new();
+
+        for ch in line_text.chars() {
+            let is_word_char = ch.is_alphanumeric() || ch == '\'' || ch == '\u{2019}';
+            if is_word_char {
+                if !in_word {
+                    word_start = char_offset;
+                    word_buf.clear();
+                    in_word = true;
+                }
+                word_buf.push(ch);
+            } else if in_word {
+                let lower = word_buf.to_lowercase();
+                if state.vocab_words.contains(&lower) {
+                    state.vocab_matches.push(VocabMatch {
+                        word: lower,
+                        line_index: line_idx,
+                        char_start: word_start,
+                        char_end: char_offset,
+                    });
+                }
+                in_word = false;
+            }
+            char_offset += 1;
+        }
+        if in_word {
+            let lower = word_buf.to_lowercase();
+            if state.vocab_words.contains(&lower) {
+                state.vocab_matches.push(VocabMatch {
+                    word: lower,
+                    line_index: line_idx,
+                    char_start: word_start,
+                    char_end: char_offset,
+                });
+            }
+        }
+    }
+}
+
+/// Apply the vocab-word TextTag to all matches in the buffer.
+pub fn apply_vocab_highlighting(state: &AppState) {
+    for m in &state.vocab_matches {
+        let mut line_iter = state.buffer.iter_at_line(m.line_index as i32);
+        if let Some(ref mut iter) = line_iter {
+            let mut start = iter.clone();
+            start.forward_chars(m.char_start as i32);
+            let mut end = iter.clone();
+            end.forward_chars(m.char_end as i32);
+            state.buffer.apply_tag(&state.vocab_tag, &start, &end);
+        }
+    }
+}
+
+/// Remove all vocab-word tags from the buffer.
+pub fn remove_vocab_highlighting(state: &AppState) {
+    let start = state.buffer.start_iter();
+    let end = state.buffer.end_iter();
+    state.buffer.remove_tag(&state.vocab_tag, &start, &end);
+}
+
+/// Update the definition panel with data for the given vocab word.
+pub fn update_definition_panel(state: &AppState, word: &str) {
+    let conn = match crate::db::queries::open_db() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let definition = crate::db::queries::load_vocab_definition(&conn, word);
+    let etymology = crate::db::queries::load_vocab_etymology(&conn, word);
+
+    let gloss = state.current_work.as_ref().and_then(|work| {
+        let work_line = state.work_line_for_buffer(state.current_line)?;
+        let line = work.lines.get(work_line)?;
+        crate::db::queries::load_vocab_gloss(&conn, word, &work.abbrev, &line.citation)
+    });
+
+    let etym_markup = etymology.map(|e| {
+        let mut parts = Vec::new();
+        if let Some(ref prefix) = e.prefix {
+            let gloss = e.prefix_gloss.as_deref().unwrap_or("");
+            parts.push(format!(
+                "<span foreground=\"{}\">{}</span> \"{}\"",
+                state.theme.vocab_fg,
+                glib::markup_escape_text(prefix),
+                glib::markup_escape_text(gloss)
+            ));
+        }
+        if let Some(ref root) = e.root {
+            let gloss = e.root_gloss.as_deref().unwrap_or("");
+            if !parts.is_empty() {
+                parts.push(" + ".to_string());
+            }
+            parts.push(format!(
+                "<span foreground=\"{}\">{}</span> \"{}\"",
+                state.theme.vocab_fg,
+                glib::markup_escape_text(root),
+                glib::markup_escape_text(gloss)
+            ));
+        }
+        if let Some(ref suffix) = e.suffix {
+            let gloss = e.suffix_gloss.as_deref().unwrap_or("");
+            if !parts.is_empty() {
+                parts.push(" + ".to_string());
+            }
+            parts.push(format!(
+                "<span foreground=\"{}\">{}</span> \"{}\"",
+                state.theme.vocab_fg,
+                glib::markup_escape_text(suffix),
+                glib::markup_escape_text(gloss)
+            ));
+        }
+        parts.join("")
+    });
+
+    state.definition_panel.update(
+        word,
+        definition.as_ref().map(|(d, _)| d.as_str()),
+        etym_markup.as_deref(),
+        gloss.as_deref(),
+        &state.theme.vocab_fg,
+    );
+}
