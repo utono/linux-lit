@@ -78,7 +78,7 @@ impl SettingsOverlay {
 
         // Footer
         let footer = Label::builder()
-            .label("j/k navigate · h/l adjust · Enter confirm · Esc revert")
+            .label("j/k navigate · h/l adjust · r reset · Enter confirm · Esc revert")
             .css_classes(vec!["settings-footer"])
             .build();
         container.append(&footer);
@@ -114,7 +114,7 @@ impl SettingsOverlay {
             theme_index: self.theme_index,
         };
         self.selected = 0;
-        self.update_value_labels(line_spacing, column_width, text_margins);
+        self.update_displayed_values(line_spacing, column_width, text_margins);
         self.update_row_highlight();
         self.container.set_visible(true);
     }
@@ -177,7 +177,7 @@ impl SettingsOverlay {
                 self.theme_index = new_idx;
                 let theme = &self.themes[new_idx];
                 self.value_labels[3].set_label(&format!("\u{25C0} {} \u{25B6}", theme.display_name));
-                SettingsChange::Theme(theme.clone())
+                SettingsChange::Theme(Box::new(theme.clone()))
             }
             _ => SettingsChange::None,
         }
@@ -200,7 +200,7 @@ impl SettingsOverlay {
         &self.themes
     }
 
-    fn update_value_labels(&self, line_spacing: u32, column_width: u32, text_margins: u32) {
+    pub fn update_displayed_values(&self, line_spacing: u32, column_width: u32, text_margins: u32) {
         self.value_labels[0].set_label(&format!("\u{25C0} {}px \u{25B6}", line_spacing));
         self.value_labels[1].set_label(&format!("\u{25C0} {}px \u{25B6}", column_width));
         self.value_labels[2].set_label(&format!("\u{25C0} {}px \u{25B6}", text_margins));
@@ -224,6 +224,6 @@ pub enum SettingsChange {
     LineSpacing(u32),
     ColumnWidth(u32),
     TextMargins(u32),
-    Theme(Theme),
+    Theme(Box<Theme>),
     None,
 }

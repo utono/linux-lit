@@ -50,14 +50,12 @@ pub fn build_line_map(file_lines: &[String], work_lines: &[Line]) -> LineMap {
 
     let mut db_cursor: usize = 0; // current position in work_lines
     let mut matched: usize = 0;
-    let mut total_non_empty: usize = 0;
 
     for buf_idx in 0..n_buf {
         let nf = &norm_file[buf_idx];
         if nf.is_empty() {
             continue;
         }
-        total_non_empty += 1;
 
         // Search forward in work_lines within the window
         let window_end = (db_cursor + WINDOW).min(n_work);
@@ -88,15 +86,11 @@ pub fn build_line_map(file_lines: &[String], work_lines: &[Line]) -> LineMap {
                             break;
                         }
                     }
-                    match (next_buf, next_db) {
-                        (Some((_bi2, nb)), Some((_wi2, nd))) => {
-                            if nb != nd {
-                                // Confirmation failed — skip this candidate
-                                continue 'outer;
-                            }
+                    if let (Some((_bi2, nb)), Some((_wi2, nd))) = (next_buf, next_db) {
+                        if nb != nd {
+                            // Confirmation failed — skip this candidate
+                            continue 'outer;
                         }
-                        // If there is no next file line or no next DB row, accept the match
-                        _ => {}
                     }
                 }
                 found = Some(wi);
@@ -122,19 +116,18 @@ pub fn build_line_map(file_lines: &[String], work_lines: &[Line]) -> LineMap {
         }
     }
 
-    // Log match statistics
-    let pct = if total_non_empty > 0 {
-        (matched as f64 / total_non_empty as f64) * 100.0
+    // Log match statistics (percentage is against work_lines, not file lines)
+    let pct = if n_work > 0 {
+        (matched as f64 / n_work as f64) * 100.0
     } else {
-        0.0
+        100.0
     };
-    let msg = format!(
-        "text_file_map: matched {}/{} non-empty lines ({:.1}%)",
-        matched, total_non_empty, pct
-    );
-    crate::logging::log(&msg);
-    if pct < 80.0 && total_non_empty > 0 {
-        crate::logging::log("text_file_map: WARNING match rate < 80%");
+    crate::logging::log(&format!(
+        "LINEMAP: matched {}/{} work lines ({:.1}%)",
+        matched, n_work, pct
+    ));
+    if pct < 80.0 {
+        crate::logging::log("LINEMAP: WARNING — less than 80% matched, text file may be stale or wrong");
     }
 
     LineMap {

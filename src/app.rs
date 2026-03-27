@@ -56,6 +56,7 @@ pub struct AppState {
     pub ab_b_line: Rc<Cell<Option<usize>>>,
     pub line_map: Option<crate::text_file_map::LineMap>,
     pub settings_overlay: crate::ui::settings_overlay::SettingsOverlay,
+    pub dialogue_formatting_active: bool,
 }
 
 impl AppState {
@@ -247,6 +248,7 @@ pub fn build_window(
         ab_b_line: Rc::new(Cell::new(None)),
         line_map: None,
         settings_overlay,
+        dialogue_formatting_active: false,
     }));
 
     // Connect picker search entry filter
@@ -403,7 +405,9 @@ pub fn display_work(state: &mut AppState, work: Work) {
 
     // Build buffer text (with or without sign column)
     state.line_map = None;
+    state.dialogue_formatting_active = false;
     rebuild_buffer_text(state);
+    apply_dialogue_formatting(state);
 
     // Set up gutter: remove old renderer, place marks, create new renderer
     if let Some(old_renderer) = state.gutter_renderer.take() {
@@ -512,6 +516,124 @@ fn rebuild_buffer_text(state: &mut AppState) {
         .collect::<Vec<_>>()
         .join("\n");
     state.buffer.set_text(&text);
+}
+
+/// Apply dialogue indentation and tight spacing for text-file mode.
+/// Scans buffer lines for speaker patterns. If speakers found:
+/// - Sets global line spacing to 0
+/// - Applies "dialogue-indent" tag (extra left margin) to dialogue lines
+/// - Applies "speaker-gap" tag (extra pixels above) to speaker lines
+/// - Applies "stage-direction-gap" tag to stage directions
+fn apply_dialogue_formatting(state: &mut AppState) {
+    use crate::db::line_types;
+
+    // Only in text-file mode
+    if state.line_map.is_none() {
+        state.dialogue_formatting_active = false;
+        return;
+    }
+
+    // Scan first 200 lines for any speaker
+    let line_count = state.buffer.line_count() as usize;
+    let scan_limit = line_count.min(200);
+    let mut has_speakers = false;
+    for i in 0..scan_limit {
+        let iter = match state.buffer.iter_at_line(i as i32) {
+            Some(it) => it,
+            None => continue,
+        };
+        let end = if i + 1 < line_count {
+            state.buffer.iter_at_line((i + 1) as i32).unwrap_or_else(|| state.buffer.end_iter())
+        } else {
+            state.buffer.end_iter()
+        };
+        let text = state.buffer.text(&iter, &end, false);
+        let text = text.trim_end_matches('\n');
+        if line_types::is_speaker(text) {
+            has_speakers = true;
+            break;
+        }
+    }
+
+    if !has_speakers {
+        state.dialogue_formatting_active = false;
+        return;
+    }
+
+    state.dialogue_formatting_active = true;
+
+    // Set global spacing to 0
+    state.text_view.set_pixels_above_lines(0);
+    state.text_view.set_pixels_below_lines(0);
+
+    // Remove old formatting tags if they exist
+    let tag_table = state.buffer.tag_table();
+    for name in &["dialogue-indent", "speaker-gap", "stage-direction-gap"] {
+        if let Some(old) = tag_table.lookup(name) {
+            tag_table.remove(&old);
+        }
+    }
+
+    // Create tags
+    let base_margin = state.text_view.left_margin();
+    let speaker_gap = state.config.line_spacing.max(1) as i32;
+
+    let indent_tag = gtk4::TextTag::builder()
+        .name("dialogue-indent")
+        .left_margin(base_margin + 60)
+        .build();
+
+    let speaker_gap_tag = gtk4::TextTag::builder()
+        .name("speaker-gap")
+        .pixels_above_lines(speaker_gap * 5)
+        .build();
+
+    let stage_gap_tag = gtk4::TextTag::builder()
+        .name("stage-direction-gap")
+        .pixels_above_lines(10)
+        .build();
+
+    tag_table.add(&indent_tag);
+    tag_table.add(&speaker_gap_tag);
+    tag_table.add(&stage_gap_tag);
+
+    // Apply tags per line
+    for i in 0..line_count {
+        let line_start = match state.buffer.iter_at_line(i as i32) {
+            Some(iter) => iter,
+            None => continue,
+        };
+        let line_end = if i + 1 < line_count {
+            match state.buffer.iter_at_line((i + 1) as i32) {
+                Some(iter) => iter,
+                None => state.buffer.end_iter(),
+            }
+        } else {
+            state.buffer.end_iter()
+        };
+
+        let text = state.buffer.text(&line_start, &line_end, false);
+        let text = text.trim_end_matches('\n');
+
+        if line_types::is_blank(text) {
+            continue;
+        } else if line_types::is_speaker(text) {
+            state.buffer.apply_tag(&speaker_gap_tag, &line_start, &line_end);
+        } else if line_types::is_stage_direction(text) {
+            state.buffer.apply_tag(&stage_gap_tag, &line_start, &line_end);
+            state.buffer.apply_tag(&indent_tag, &line_start, &line_end);
+        } else if line_types::is_act_scene_marker(text) || line_types::is_separator(text) {
+            continue;
+        } else {
+            // Dialogue line — indent
+            state.buffer.apply_tag(&indent_tag, &line_start, &line_end);
+        }
+    }
+
+    crate::logging::log(&format!(
+        "FORMATTING: applied dialogue formatting ({} lines)",
+        line_count
+    ));
 }
 
 /// Toggle sign column visibility.

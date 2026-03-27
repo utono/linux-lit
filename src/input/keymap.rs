@@ -125,8 +125,15 @@ pub fn handle_key(
                 let (snap_ls, snap_cw, snap_tm, snap_ti) = state.borrow().settings_overlay.snapshot();
                 {
                     let mut s = state.borrow_mut();
-                    s.text_view.set_pixels_above_lines(snap_ls as i32);
-                    s.text_view.set_pixels_below_lines(snap_ls as i32);
+                    if s.dialogue_formatting_active {
+                        let tag_table = s.buffer.tag_table();
+                        if let Some(tag) = tag_table.lookup("speaker-gap") {
+                            tag.set_property("pixels-above-lines", snap_ls.max(1) as i32 * 5);
+                        }
+                    } else {
+                        s.text_view.set_pixels_above_lines(snap_ls as i32);
+                        s.text_view.set_pixels_below_lines(snap_ls as i32);
+                    }
                     s.scrolled_window.set_width_request(snap_cw as i32);
                     s.text_view.set_left_margin(snap_tm as i32);
                     s.text_view.set_right_margin(snap_tm as i32);
@@ -146,7 +153,7 @@ pub fn handle_key(
             "Return" => {
                 // Confirm: persist config and close
                 {
-                    let mut s = state.borrow_mut();
+                    let s = state.borrow_mut();
                     crate::config::save(&s.config);
                     s.settings_overlay.hide();
                 }
@@ -176,6 +183,30 @@ pub fn handle_key(
                 };
                 let change = state.borrow_mut().settings_overlay.adjust_value(1, ls, cw, tm);
                 apply_settings_change(state, change);
+                return true;
+            }
+            "r" => {
+                // Reset to defaults
+                let mut s = state.borrow_mut();
+                let ls = crate::config::DEFAULT_LINE_SPACING;
+                let cw = crate::config::DEFAULT_COLUMN_WIDTH;
+                let tm = crate::config::DEFAULT_TEXT_MARGINS;
+                if s.dialogue_formatting_active {
+                    let tag_table = s.buffer.tag_table();
+                    if let Some(tag) = tag_table.lookup("speaker-gap") {
+                        tag.set_property("pixels-above-lines", ls.max(1) as i32 * 5);
+                    }
+                } else {
+                    s.text_view.set_pixels_above_lines(ls as i32);
+                    s.text_view.set_pixels_below_lines(ls as i32);
+                }
+                s.scrolled_window.set_width_request(cw as i32);
+                s.text_view.set_left_margin(tm as i32);
+                s.text_view.set_right_margin(tm as i32);
+                s.config.line_spacing = ls;
+                s.config.column_width = cw;
+                s.config.text_margins = tm;
+                s.settings_overlay.update_displayed_values(ls, cw, tm);
                 return true;
             }
             _ => return true, // consume all other keys when settings visible
@@ -497,8 +528,15 @@ fn apply_settings_change(
     let mut s = state.borrow_mut();
     match change {
         SettingsChange::LineSpacing(val) => {
-            s.text_view.set_pixels_above_lines(val as i32);
-            s.text_view.set_pixels_below_lines(val as i32);
+            if s.dialogue_formatting_active {
+                let tag_table = s.buffer.tag_table();
+                if let Some(tag) = tag_table.lookup("speaker-gap") {
+                    tag.set_property("pixels-above-lines", val.max(1) as i32 * 5);
+                }
+            } else {
+                s.text_view.set_pixels_above_lines(val as i32);
+                s.text_view.set_pixels_below_lines(val as i32);
+            }
             s.config.line_spacing = val;
         }
         SettingsChange::ColumnWidth(val) => {

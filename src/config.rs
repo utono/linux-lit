@@ -37,16 +37,20 @@ fn default_font_size() -> u32 {
     20
 }
 
+pub const DEFAULT_LINE_SPACING: u32 = 4;
+pub const DEFAULT_COLUMN_WIDTH: u32 = 950;
+pub const DEFAULT_TEXT_MARGINS: u32 = 48;
+
 fn default_line_spacing() -> u32 {
-    4
+    DEFAULT_LINE_SPACING
 }
 
 fn default_column_width() -> u32 {
-    950
+    DEFAULT_COLUMN_WIDTH
 }
 
 fn default_text_margins() -> u32 {
-    48
+    DEFAULT_TEXT_MARGINS
 }
 
 impl Default for Config {
