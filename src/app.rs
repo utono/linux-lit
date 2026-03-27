@@ -73,6 +73,9 @@ pub struct AppState {
     /// When set, advance cursor to the given buffer line once time_pos exceeds
     /// the end time. Used for untimestamped lines that follow a timestamped one.
     pub pending_advance: Option<(f64, usize)>,
+    pub visual_selection: Option<crate::input::visual::SelectionState>,
+    pub undo_stack: Vec<crate::input::visual::UndoEntry>,
+    pub selection_tag: gtk4::TextTag,
 }
 
 impl AppState {
@@ -164,6 +167,16 @@ pub fn build_window(
         .weight(700)
         .build();
     buffer.tag_table().add(&translation_text_tag);
+
+    let selection_tag = gtk4::TextTag::builder()
+        .name("visual-selection")
+        .background(if theme.is_light {
+            "rgba(38, 109, 211, 0.15)"
+        } else {
+            "rgba(68, 138, 255, 0.25)"
+        })
+        .build();
+    buffer.tag_table().add(&selection_tag);
 
     let text_view = View::builder()
         .buffer(&buffer)
@@ -290,6 +303,9 @@ pub fn build_window(
         translation_text_tag,
         suppress_sync_until: None,
         pending_advance: None,
+        visual_selection: None,
+        undo_stack: Vec::new(),
+        selection_tag,
     }));
 
     // Connect picker search entry filter
@@ -458,6 +474,8 @@ pub fn display_work(state: &mut AppState, work: Work) {
 
     state.current_line = 0;
     state.page_top_line = 0;
+    state.visual_selection = None;
+    state.undo_stack.clear();
     state.current_work = Some(work);
 
     // Build buffer text (with or without sign column)

@@ -358,8 +358,8 @@ pub fn handle_key(
         }
     }
 
-    // Ctrl+Shift+l: save position and quit
-    if is_ctrl && is_shift && key_name == "L" {
+    // Ctrl+Alt+l: save position and quit
+    if is_ctrl && is_alt && key_name == "l" {
         crate::app::save_position(&mut state.borrow_mut());
         state.borrow().window.close();
         return true;
@@ -720,6 +720,14 @@ fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &crate::theme::
     state.dim_tag.set_property("foreground", &theme.dim_fg);
     state.ab_dim_tag.set_property("foreground", &theme.dim_fg);
     state.translation_dim_tag.set_property("foreground", &theme.dim_fg);
+    state.selection_tag.set_property(
+        "background",
+        if theme.is_light {
+            "rgba(38, 109, 211, 0.15)"
+        } else {
+            "rgba(68, 138, 255, 0.25)"
+        },
+    );
 
     // Write .current_theme file
     let home = std::env::var("HOME").unwrap_or_default();
