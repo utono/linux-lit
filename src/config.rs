@@ -2,6 +2,20 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NavigationMode {
+    Scroll,
+    #[serde(rename = "ereader")]
+    EReader,
+}
+
+impl Default for NavigationMode {
+    fn default() -> Self {
+        NavigationMode::Scroll
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default = "default_font_family")]
@@ -14,6 +28,8 @@ pub struct Config {
     pub column_width: u32,
     #[serde(default = "default_text_margins")]
     pub text_margins: u32,
+    #[serde(default)]
+    pub navigation_mode: NavigationMode,
     #[serde(default)]
     pub last_work: Option<String>,
     #[serde(default)]
@@ -61,6 +77,7 @@ impl Default for Config {
             line_spacing: default_line_spacing(),
             column_width: default_column_width(),
             text_margins: default_text_margins(),
+            navigation_mode: NavigationMode::default(),
             last_work: None,
             last_line: 0,
         }
