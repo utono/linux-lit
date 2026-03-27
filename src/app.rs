@@ -22,6 +22,13 @@ pub struct SearchMatch {
     pub byte_end: usize,
 }
 
+#[derive(Debug, Clone)]
+pub struct VocabMatch {
+    pub word: String,
+    pub line_index: usize,
+    pub char_start: usize,
+    pub char_end: usize,
+}
 
 #[allow(dead_code)]
 pub struct AppState {
@@ -81,6 +88,13 @@ pub struct AppState {
     pub keybinds_overlay: crate::ui::keybinds_overlay::KeybindsOverlay,
     pub correction_overlay: crate::ui::correction_overlay::CorrectionOverlay,
     pub gloss_original_text: Option<String>,
+    pub vocab_words: std::collections::HashSet<String>,
+    pub vocab_matches: Vec<VocabMatch>,
+    pub vocab_match_idx: Option<usize>,
+    pub vocab_tag: gtk4::TextTag,
+    pub vocab_highlight_visible: bool,
+    pub definition_panel_visible: bool,
+    pub definition_panel: crate::ui::definition_panel::DefinitionPanel,
 }
 
 impl AppState {
@@ -183,6 +197,12 @@ pub fn build_window(
         .build();
     buffer.tag_table().add(&selection_tag);
 
+    let vocab_tag = gtk4::TextTag::builder()
+        .name("vocab-word")
+        .foreground(&theme.vocab_fg)
+        .build();
+    buffer.tag_table().add(&vocab_tag);
+
     let text_view = View::builder()
         .buffer(&buffer)
         .editable(false)
@@ -213,7 +233,7 @@ pub fn build_window(
 
     // Text area padding (inside the text background)
     text_view.set_left_margin(config.text_margins as i32);
-    text_view.set_right_margin(config.text_margins as i32);
+    text_view.set_right_margin(config.text_margins as i32 + crate::config::EXTRA_RIGHT_MARGIN);
     text_view.set_top_margin(24);
 
     // Scrolled window — centered card with wallpaper visible on all sides
@@ -222,21 +242,31 @@ pub fn build_window(
         .hscrollbar_policy(gtk4::PolicyType::Never)
         .vscrollbar_policy(gtk4::PolicyType::External)
         .vexpand(true)
-        .halign(gtk4::Align::Center)
         .valign(gtk4::Align::Fill)
         .width_request(config.column_width as i32)
-        .margin_top(24)
-        .margin_bottom(24)
-        .margin_start(24)
-        .margin_end(24)
         .css_classes(vec!["text-card"])
         .overflow(gtk4::Overflow::Hidden)
         .build();
 
+    // Definition panel (right side)
+    let definition_panel = crate::ui::definition_panel::DefinitionPanel::new();
+
+    // Horizontal box: text card + definition panel
+    let content_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 16);
+    content_hbox.set_halign(gtk4::Align::Center);
+    content_hbox.set_valign(gtk4::Align::Fill);
+    content_hbox.set_vexpand(true);
+    content_hbox.set_margin_top(24);
+    content_hbox.set_margin_bottom(24);
+    content_hbox.set_margin_start(24);
+    content_hbox.set_margin_end(24);
+    content_hbox.append(&scrolled);
+    content_hbox.append(&definition_panel.container);
+
     // Library picker overlay
     let mut picker = LibraryPicker::new();
     picker.set_works(works);
-    picker.attach(&scrolled);
+    picker.attach(&content_hbox);
     picker.overlay.set_vexpand(true);
 
     // Media picker overlay wraps the library picker overlay
@@ -279,6 +309,7 @@ pub fn build_window(
 
     let last_work = config.last_work.clone();
     let last_line = config.last_line;
+    let vocab_highlight_visible = config.vocab_highlight_visible;
 
     let state = Rc::new(RefCell::new(AppState {
         text_view,
@@ -330,6 +361,13 @@ pub fn build_window(
         keybinds_overlay,
         correction_overlay,
         gloss_original_text: None,
+        vocab_words: std::collections::HashSet::new(),
+        vocab_matches: Vec::new(),
+        vocab_match_idx: None,
+        vocab_tag,
+        vocab_highlight_visible,
+        definition_panel_visible: false,
+        definition_panel,
     }));
 
     // Connect picker search entry filter
@@ -520,6 +558,22 @@ pub fn display_work(state: &mut AppState, work: Work) {
     }
     rebuild_buffer_text(state);
     apply_dialogue_formatting(state);
+
+    // Load vocab words and apply highlighting
+    if let Some(ref work) = state.current_work {
+        if let Ok(conn) = crate::db::queries::open_db() {
+            state.vocab_words = crate::db::queries::load_vocab_words(&conn, &work.abbrev)
+                .unwrap_or_default();
+            crate::logging::log(&format!(
+                "VOCAB: loaded {} vocab words",
+                state.vocab_words.len(),
+            ));
+        }
+    }
+    build_vocab_matches(state);
+    if state.vocab_highlight_visible {
+        apply_vocab_highlighting(state);
+    }
 
     // Set up gutter: remove old renderer, place marks, create new renderer
     if let Some(old_renderer) = state.gutter_renderer.take() {
