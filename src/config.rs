@@ -2,18 +2,13 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NavigationMode {
+    #[default]
     Scroll,
     #[serde(rename = "ereader")]
     EReader,
-}
-
-impl Default for NavigationMode {
-    fn default() -> Self {
-        NavigationMode::Scroll
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
