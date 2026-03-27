@@ -372,6 +372,10 @@ pub fn handle_key(
                 crate::app::show_font_info(&state.borrow());
                 return true;
             }
+            "i" => {
+                crate::app::toggle_translations(&mut state.borrow_mut());
+                return true;
+            }
             _ => return false,
         }
     }
@@ -704,6 +708,7 @@ fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &crate::theme::
     // Update dim tag foreground
     state.dim_tag.set_property("foreground", &theme.dim_fg);
     state.ab_dim_tag.set_property("foreground", &theme.dim_fg);
+    state.translation_dim_tag.set_property("foreground", &theme.dim_fg);
 
     // Write .current_theme file
     let home = std::env::var("HOME").unwrap_or_default();
