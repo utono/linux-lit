@@ -95,6 +95,7 @@ pub struct AppState {
     pub vocab_highlight_visible: bool,
     pub definition_panel_visible: bool,
     pub definition_panel: crate::ui::definition_panel::DefinitionPanel,
+    pub concordance_picker: crate::ui::concordance_picker::ConcordancePicker,
 }
 
 impl AppState {
@@ -294,15 +295,20 @@ pub fn build_window(
     correction_overlay.attach(&keybinds_overlay.overlay);
     correction_overlay.overlay.set_vexpand(true);
 
+    // Concordance picker wraps the correction overlay
+    let concordance_picker = crate::ui::concordance_picker::ConcordancePicker::new();
+    concordance_picker.attach(&correction_overlay.overlay);
+    concordance_picker.overlay.set_vexpand(true);
+
     // Action popup overlay for visual mode
     let action_popup_widget = crate::ui::action_popup::ActionPopup::new();
-    correction_overlay.overlay.add_overlay(&action_popup_widget.container);
+    concordance_picker.overlay.add_overlay(&action_popup_widget.container);
 
     // Search bar at bottom
     let search_bar = SearchBar::new();
 
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-    vbox.append(&correction_overlay.overlay);
+    vbox.append(&concordance_picker.overlay);
     vbox.append(&search_bar.container);
 
     window.set_child(Some(&vbox));
@@ -368,6 +374,7 @@ pub fn build_window(
         vocab_highlight_visible,
         definition_panel_visible: false,
         definition_panel,
+        concordance_picker,
     }));
 
     // Connect picker search entry filter
@@ -390,6 +397,16 @@ pub fn build_window(
                 .borrow()
                 .media_picker
                 .populate_list(&text);
+        });
+    }
+
+    // Connect concordance picker search entry filter
+    let state_for_concordance_filter = Rc::clone(&state);
+    {
+        let s = state.borrow();
+        s.concordance_picker.search_entry().connect_changed(move |entry| {
+            let text = entry.text();
+            state_for_concordance_filter.borrow().concordance_picker.populate_list(&text);
         });
     }
 

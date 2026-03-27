@@ -1,4 +1,5 @@
 pub mod action_popup;
+pub mod concordance_picker;
 pub mod correction_overlay;
 pub mod definition_panel;
 pub mod keybinds_overlay;

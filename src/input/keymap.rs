@@ -389,6 +389,38 @@ pub fn handle_key(
         }
     }
 
+    // --- Concordance picker overlay ---
+    if state.borrow().concordance_picker.is_visible() {
+        match key_name {
+            "j" => {
+                state.borrow().concordance_picker.move_selection(1);
+                return true;
+            }
+            "k" => {
+                state.borrow().concordance_picker.move_selection(-1);
+                return true;
+            }
+            "Return" => {
+                let selected = state.borrow().concordance_picker.selected_word();
+                if let Some(word) = selected {
+                    {
+                        state.borrow().concordance_picker.hide();
+                    }
+                    let mut s = state.borrow_mut();
+                    if let Some(idx) = s.vocab_matches.iter().position(|m| m.word == word) {
+                        navigation::jump_to_vocab_at(&mut s, idx);
+                    }
+                }
+                return true;
+            }
+            "Escape" => {
+                state.borrow().concordance_picker.hide();
+                return true;
+            }
+            _ => return true,
+        }
+    }
+
     // --- Action popup (when visible) ---
     let action_popup_visible = state.borrow().action_popup.is_some();
     if action_popup_visible && is_ctrl {
@@ -536,6 +568,31 @@ pub fn handle_key(
                     s.search_bar.hide();
                     s.correction_overlay.hide();
                     s.keybinds_overlay.show();
+                }
+                return true;
+            }
+            "backslash" => {
+                let abbrev = state
+                    .borrow()
+                    .current_work
+                    .as_ref()
+                    .map(|w| w.abbrev.clone());
+                if let Some(abbrev) = abbrev {
+                    let state_clone = Rc::clone(state);
+                    let handle = tokio_handle.clone();
+                    glib::spawn_future_local(async move {
+                        let words = handle
+                            .spawn_blocking(move || {
+                                let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
+                                crate::db::queries::load_vocab_word_list(&conn, &abbrev)
+                                    .unwrap_or_default()
+                            })
+                            .await
+                            .unwrap_or_default();
+                        let mut s = state_clone.borrow_mut();
+                        s.concordance_picker.set_words(words);
+                        s.concordance_picker.show();
+                    });
                 }
                 return true;
             }

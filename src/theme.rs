@@ -301,6 +301,8 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .definition-gloss {{ opacity: 0.7; font-size: 12px; }} \
          .definition-hint {{ font-size: 11px; color: {dim}; \
            border-top: 1px solid {dim}; padding-top: 8px; margin-top: 12px; }} \
+         .concordance-picker {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
+           padding: 16px; border-radius: 8px; }} \
 ",
         root = theme.root_color,
         bg = theme.text_bg,
