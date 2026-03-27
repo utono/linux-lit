@@ -15,6 +15,7 @@ pub struct Theme {
     pub dim_fg: String,           // dimmed text foreground (non-current lines)
     pub cursor_bg: String,        // cursor indicator background
     pub cursor_fg: String,        // cursor indicator foreground
+    pub vocab_fg: String,         // vocabulary word highlight foreground
 }
 
 fn themes_path() -> PathBuf {
@@ -145,6 +146,13 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
         .and_then(|c| str_field(c, "guifg"))
         .unwrap_or_else(|| text_bg.clone());
 
+    let vocab_fg = highlights
+        .get("VocabWord")
+        .and_then(|c| str_field(c, "guifg"))
+        .unwrap_or_else(|| {
+            if is_light { "#8a6534".to_string() } else { "#d8a657".to_string() }
+        });
+
     Theme {
         name: name.to_string(),
         display_name,
@@ -156,6 +164,7 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
         dim_fg,
         cursor_bg,
         cursor_fg,
+        vocab_fg,
     }
 }
 
@@ -171,6 +180,7 @@ fn default_theme() -> Theme {
         dim_fg: blend_colors("#d4be98", "#282828", 0.40),
         cursor_bg: "#d4be98".to_string(),
         cursor_fg: "#282828".to_string(),
+        vocab_fg: "#d8a657".to_string(),
     }
 }
 
@@ -246,8 +256,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .settings-row {{ padding: 8px 12px; margin: 2px 0; border-radius: 4px; }} \
          .settings-row-selected {{ background-color: rgba(100, 140, 200, 0.8); \
            border-left: 3px solid rgba(100, 180, 255, 0.9); }} \
-         .settings-footer {{ font-size: 11px; opacity: 0.6; margin-top: 12px; \
-           text-align: center; }} \
+         .settings-footer {{ font-size: 11px; opacity: 0.6; margin-top: 12px; }} \
          .action-popup {{ background-color: {bg}; color: {fg}; \
            padding: 16px; border-radius: 12px; border: 1px solid {dim}; }} \
          .action-popup .settings-title {{ border-bottom: 1px solid {dim}; }} \
