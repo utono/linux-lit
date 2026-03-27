@@ -70,6 +70,7 @@ impl ActionPopup {
         let footer = Label::builder()
             .label("Ctrl+n/p navigate · Enter confirm · Esc cancel")
             .css_classes(vec!["settings-footer"])
+            .halign(gtk4::Align::Center)
             .build();
         self.container.append(&footer);
 

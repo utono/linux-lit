@@ -47,7 +47,7 @@ impl SettingsOverlay {
         container.append(&title);
 
         // Setting names
-        let names = ["Line Spacing", "Column Width", "Text Margins", "Theme", "Navigation"];
+        let names = ["Theme", "Line Spacing", "Column Width", "Text Margins", "Navigation"];
 
         let mut rows = Vec::new();
         let mut value_labels = Vec::new();
@@ -82,6 +82,7 @@ impl SettingsOverlay {
         let footer = Label::builder()
             .label("j/k navigate · h/l adjust · r reset · Enter confirm · Esc revert")
             .css_classes(vec!["settings-footer"])
+            .halign(gtk4::Align::Center)
             .build();
         container.append(&footer);
 
@@ -99,7 +100,7 @@ impl SettingsOverlay {
             selected: 0,
             snapshot: SettingsSnapshot {
                 line_spacing: 5,
-                column_width: 950,
+                column_width: 750,
                 text_margins: 48,
                 theme_index,
                 navigation_mode: crate::config::NavigationMode::default(),
@@ -157,24 +158,6 @@ impl SettingsOverlay {
     ) -> SettingsChange {
         match self.selected {
             0 => {
-                // Line Spacing: 0-20, step 1
-                let new_val = (line_spacing as i32 + delta).clamp(0, 20) as u32;
-                self.value_labels[0].set_label(&format!("\u{25C0} {}px \u{25B6}", new_val));
-                SettingsChange::LineSpacing(new_val)
-            }
-            1 => {
-                // Column Width: 400-1200, step 50
-                let new_val = (column_width as i32 + delta * 50).clamp(400, 1200) as u32;
-                self.value_labels[1].set_label(&format!("\u{25C0} {}px \u{25B6}", new_val));
-                SettingsChange::ColumnWidth(new_val)
-            }
-            2 => {
-                // Text Margins: 8-96, step 4
-                let new_val = (text_margins as i32 + delta * 4).clamp(8, 96) as u32;
-                self.value_labels[2].set_label(&format!("\u{25C0} {}px \u{25B6}", new_val));
-                SettingsChange::TextMargins(new_val)
-            }
-            3 => {
                 // Theme: cycle through loaded themes
                 let len = self.themes.len();
                 if len == 0 {
@@ -183,8 +166,26 @@ impl SettingsOverlay {
                 let new_idx = (self.theme_index as i32 + delta).rem_euclid(len as i32) as usize;
                 self.theme_index = new_idx;
                 let theme = &self.themes[new_idx];
-                self.value_labels[3].set_label(&format!("\u{25C0} {} \u{25B6}", theme.display_name));
+                self.value_labels[0].set_label(&format!("\u{25C0} {} \u{25B6}", theme.display_name));
                 SettingsChange::Theme(Box::new(theme.clone()))
+            }
+            1 => {
+                // Line Spacing: 0-20, step 1
+                let new_val = (line_spacing as i32 + delta).clamp(0, 20) as u32;
+                self.value_labels[1].set_label(&format!("\u{25C0} {}px \u{25B6}", new_val));
+                SettingsChange::LineSpacing(new_val)
+            }
+            2 => {
+                // Column Width: 400-1200, step 50
+                let new_val = (column_width as i32 + delta * 50).clamp(400, 1200) as u32;
+                self.value_labels[2].set_label(&format!("\u{25C0} {}px \u{25B6}", new_val));
+                SettingsChange::ColumnWidth(new_val)
+            }
+            3 => {
+                // Text Margins: 8-96, step 4
+                let new_val = (text_margins as i32 + delta * 4).clamp(8, 96) as u32;
+                self.value_labels[3].set_label(&format!("\u{25C0} {}px \u{25B6}", new_val));
+                SettingsChange::TextMargins(new_val)
             }
             4 => {
                 let new_mode = match navigation_mode {
@@ -222,12 +223,12 @@ impl SettingsOverlay {
     }
 
     pub fn update_displayed_values(&self, line_spacing: u32, column_width: u32, text_margins: u32, navigation_mode: crate::config::NavigationMode) {
-        self.value_labels[0].set_label(&format!("\u{25C0} {}px \u{25B6}", line_spacing));
-        self.value_labels[1].set_label(&format!("\u{25C0} {}px \u{25B6}", column_width));
-        self.value_labels[2].set_label(&format!("\u{25C0} {}px \u{25B6}", text_margins));
         if let Some(theme) = self.themes.get(self.theme_index) {
-            self.value_labels[3].set_label(&format!("\u{25C0} {} \u{25B6}", theme.display_name));
+            self.value_labels[0].set_label(&format!("\u{25C0} {} \u{25B6}", theme.display_name));
         }
+        self.value_labels[1].set_label(&format!("\u{25C0} {}px \u{25B6}", line_spacing));
+        self.value_labels[2].set_label(&format!("\u{25C0} {}px \u{25B6}", column_width));
+        self.value_labels[3].set_label(&format!("\u{25C0} {}px \u{25B6}", text_margins));
         let nav_label = match navigation_mode {
             crate::config::NavigationMode::Scroll => "Scroll",
             crate::config::NavigationMode::EReader => "E-Reader",
