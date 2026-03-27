@@ -457,6 +457,20 @@ pub fn display_work(state: &mut AppState, work: Work) {
     // Build buffer text (with or without sign column)
     state.line_map = None;
     state.dialogue_formatting_active = false;
+    state.translations_visible = false;
+    state.translation_lines = Vec::new();
+    // Load translations for this work
+    if let Some(ref work) = state.current_work {
+        if let Ok(conn) = crate::db::queries::open_db() {
+            state.translations = crate::db::queries::load_translations(&conn, &work.abbrev)
+                .unwrap_or_default();
+            crate::logging::log(&format!(
+                "TRANSLATIONS: loaded {} translations for {}",
+                state.translations.len(),
+                work.abbrev,
+            ));
+        }
+    }
     rebuild_buffer_text(state);
     apply_dialogue_formatting(state);
 
