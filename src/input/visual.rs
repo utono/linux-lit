@@ -125,7 +125,7 @@ pub struct ActionPopupState {
 }
 
 /// Built-in action names, in display order.
-pub const BUILTIN_ACTIONS: &[&str] = &["Copy", "Copy with metadata", "Merge lines", "Correct with Claude"];
+pub const BUILTIN_ACTIONS: &[&str] = &["Copy", "Copy with metadata", "Merge lines", "Correct with LLM"];
 
 /// Determine which built-in actions are available for the current work.
 pub fn available_builtin_actions(_state: &AppState) -> Vec<&'static str> {
@@ -171,7 +171,7 @@ pub fn execute_action(
             1 => action_copy(&mut state_rc.borrow_mut(), true),
             2 => action_merge(&mut state_rc.borrow_mut()),
             3 => {
-                action_correct_with_claude(state_rc);
+                action_correct_with_llm(state_rc);
                 return; // async — don't exit visual mode yet
             }
             _ => {}
@@ -519,8 +519,8 @@ pub fn undo_last_action(state: &mut AppState) {
     crate::input::navigation::update_highlight_and_ensure_visible(state);
 }
 
-fn action_correct_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
-    let (start, end, input_text, db_lines, abbrev, text_file) = {
+fn action_correct_with_llm(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+    let (start, end, input_text, db_lines, abbrev, text_file, endpoint, model, tokio_handle) = {
         let state = state_rc.borrow();
         let (start, end) = match &state.visual_selection {
             Some(s) => s.range(),
@@ -531,7 +531,6 @@ fn action_correct_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState
             None => return,
         };
 
-        // Collect buffer text
         let mut selected_lines = Vec::new();
         for buf_line in start..=end {
             if let Some(line_start) = state.buffer.iter_at_line(buf_line as i32) {
@@ -543,7 +542,6 @@ fn action_correct_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState
             }
         }
 
-        // Collect DB lines for undo
         let mut db_lines: Vec<crate::db::models::Line> = Vec::new();
         for buf_line in start..=end {
             if let Some(work_idx) = state.work_line_for_buffer(buf_line) {
@@ -553,168 +551,61 @@ fn action_correct_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState
             }
         }
 
-        (start, end, selected_lines.join("\n"), db_lines, work.abbrev.clone(), work.text_file.clone())
-    }; // state borrow dropped here
+        (
+            start,
+            end,
+            selected_lines.join("\n"),
+            db_lines,
+            work.abbrev.clone(),
+            work.text_file.clone(),
+            state.config.ollama_endpoint.clone(),
+            state.config.ollama_model.clone(),
+            state.tokio_handle.clone(),
+        )
+    };
 
-    // Write input to temp file
-    let tmp_dir = std::env::temp_dir().join("linux-lit-claude");
-    let _ = std::fs::create_dir_all(&tmp_dir);
-    let input_path = tmp_dir.join("input.txt");
-    let output_path = tmp_dir.join("output.txt");
-    let done_path = tmp_dir.join("done");
-
-    let _ = std::fs::remove_file(&output_path);
-    let _ = std::fs::remove_file(&done_path);
-    let _ = std::fs::write(&input_path, &input_text);
-
-    // Launch interactive claude session in a terminal.
-    // Uses --dangerously-skip-permissions so it can write files without prompting.
-    // Pipes the prompt via echo so stdin closes after, causing claude to exit when done.
-    // Write a CLAUDE.md in the temp dir so Claude has context
-    let claude_md = format!(
-        "# Transcript Correction Task\n\n\
-        You are correcting mistranscribed audiobook text.\n\n\
-        1. Read `input.txt`\n\
-        2. Fix ONLY words that are obviously wrong due to speech-to-text mishearing \
-        (homophones, phonetically similar but wrong words)\n\
-        3. Do NOT rephrase, restructure, or improve the text\n\
-        4. Write the corrected text to `output.txt`, preserving original line breaks exactly\n\
-        5. Create an empty file `done` as a completion signal\n"
-    );
-    let _ = std::fs::write(tmp_dir.join("CLAUDE.md"), &claude_md);
-
-    let script = format!(
-        "cd {} && claude --dangerously-skip-permissions",
-        tmp_dir.display(),
-    );
-
-    use std::process::Command;
-    let _ = Command::new("kitty")
-        .args(["--start-as", "maximized", "--title", "Claude Correction", "sh", "-c", &script])
-        .spawn();
-
-    crate::logging::log("VISUAL: launched Claude correction in terminal");
-
-    // Exit visual mode now
     exit_visual_mode(&mut state_rc.borrow_mut());
 
-    // Poll for the done signal without blocking the UI
-    let old_ids: Vec<i64> = db_lines.iter().map(|l| l.id).collect();
-    let file_backup = text_file.as_ref().and_then(|path| {
-        std::fs::read_to_string(path).ok().map(|content| (path.clone(), content))
-    });
-    let state_for_poll = std::rc::Rc::clone(state_rc);
+    crate::logging::log("VISUAL: starting LLM correction");
 
-    let confirm_path = tmp_dir.join("confirm");
-    let reject_path = tmp_dir.join("reject");
-    let _ = std::fs::remove_file(&confirm_path);
-    let _ = std::fs::remove_file(&reject_path);
-    let input_path_for_diff = input_path.clone();
+    let state_for_result = std::rc::Rc::clone(state_rc);
 
-    glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
-        if !done_path.exists() {
-            return glib::ControlFlow::Continue;
-        }
+    glib::spawn_future_local(async move {
+        let result = tokio_handle
+            .spawn(async move {
+                crate::ollama::correct_text(&endpoint, &model, &input_text).await
+            })
+            .await;
 
-        // Claude finished — check if we already launched the diff review
-        if confirm_path.exists() {
-            // User accepted — apply the correction
-            let corrected = match std::fs::read_to_string(&output_path) {
-                Ok(text) => text,
-                Err(e) => {
-                    crate::logging::log(&format!("VISUAL: failed to read correction output: {}", e));
-                    return glib::ControlFlow::Break;
-                }
-            };
+        let mut state = state_for_result.borrow_mut();
 
-            let new_lines: Vec<String> = corrected.lines().map(|l| l.to_string()).collect();
-            if new_lines.is_empty() {
-                crate::logging::log("VISUAL: correction output was empty");
-                return glib::ControlFlow::Break;
+        match result {
+            Ok(Ok(corrected)) => {
+                let original: String = db_lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n");
+                state.pending_correction = Some(crate::app::PendingCorrection {
+                    start,
+                    end,
+                    db_lines,
+                    abbrev,
+                    text_file,
+                    corrected_text: corrected.clone(),
+                });
+                state.correction_overlay.show(&original, &corrected);
+                crate::logging::log("VISUAL: correction overlay shown");
             }
-
-            let mut state = state_for_poll.borrow_mut();
-
-            state.undo_stack.push(UndoEntry {
-                db_lines: db_lines.clone(),
-                file_backup: file_backup.clone(),
-                cursor_line: start,
-            });
-
-            match crate::db::queries::open_db_rw() {
-                Ok(conn) => {
-                    if let Err(e) = crate::db::queries::replace_lines(&conn, &abbrev, &old_ids, &new_lines) {
-                        crate::logging::log(&format!("VISUAL: correction DB error: {}", e));
-                        state.undo_stack.pop();
-                        return glib::ControlFlow::Break;
-                    }
-                }
-                Err(e) => {
-                    crate::logging::log(&format!("VISUAL: correction open_db_rw failed: {}", e));
-                    state.undo_stack.pop();
-                    return glib::ControlFlow::Break;
-                }
+            Ok(Err(e)) => {
+                crate::logging::log(&format!("VISUAL: LLM correction error: {}", e));
+                state.correction_overlay.show(&format!("Error: {}", e), "");
             }
-
-            if let Some(ref path) = text_file {
-                if let Ok(contents) = std::fs::read_to_string(path) {
-                    let mut file_lines: Vec<String> = contents.lines().map(|l| l.to_string()).collect();
-                    if end < file_lines.len() {
-                        file_lines.splice(start..=end, new_lines.iter().cloned());
-                        let _ = std::fs::write(path, file_lines.join("\n"));
-                    }
-                }
+            Err(e) => {
+                crate::logging::log(&format!("VISUAL: tokio join error: {}", e));
             }
-
-            crate::logging::log(&format!("VISUAL: correction applied, {} lines", new_lines.len()));
-            let _ = std::fs::remove_dir_all(done_path.parent().unwrap());
-
-            reload_current_work(&mut state);
-            return glib::ControlFlow::Break;
         }
-
-        if reject_path.exists() {
-            crate::logging::log("VISUAL: correction rejected by user");
-            let _ = std::fs::remove_dir_all(done_path.parent().unwrap());
-            return glib::ControlFlow::Break;
-        }
-
-        // First time seeing done — launch diff review in terminal
-        if !output_path.exists() {
-            crate::logging::log("VISUAL: done signal but no output file");
-            let _ = std::fs::remove_dir_all(done_path.parent().unwrap());
-            return glib::ControlFlow::Break;
-        }
-
-        let review_script = format!(
-            r#"echo "=== ORIGINAL ===" && cat {input} && echo "" && \
-echo "=== CORRECTED ===" && cat {output} && echo "" && \
-echo "---" && diff --color=always {input} {output} || true && echo "" && \
-echo "Accept corrections? (y/n)" && \
-read -r answer && \
-if [ "$answer" = "y" ] || [ "$answer" = "Y" ]; then \
-  touch {confirm}; \
-else \
-  touch {reject}; \
-fi"#,
-            input = input_path_for_diff.display(),
-            output = output_path.display(),
-            confirm = confirm_path.display(),
-            reject = reject_path.display(),
-        );
-
-        use std::process::Command;
-        let _ = Command::new("kitty")
-            .args(["--start-as", "maximized", "--title", "Review Corrections", "sh", "-c", &review_script])
-            .spawn();
-
-        crate::logging::log("VISUAL: launched correction review");
-        glib::ControlFlow::Continue
     });
 }
 
 /// Reload the current work from DB and refresh the display.
-fn reload_current_work(state: &mut AppState) {
+pub fn reload_current_work(state: &mut AppState) {
     let abbrev = match &state.current_work {
         Some(w) => w.abbrev.clone(),
         None => return,
