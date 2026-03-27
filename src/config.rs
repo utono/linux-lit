@@ -44,7 +44,7 @@ pub const FONT_CYCLE: &[&str] = &[
     "Cormorant Garamond",
 ];
 
-fn default_font_size() -> u32 {
+pub fn default_font_size() -> u32 {
     16
 }
 
