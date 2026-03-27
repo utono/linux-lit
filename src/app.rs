@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use gtk4::prelude::*;
@@ -59,6 +60,12 @@ pub struct AppState {
     pub settings_overlay: crate::ui::settings_overlay::SettingsOverlay,
     pub media_picker: MediaPicker,
     pub dialogue_formatting_active: bool,
+    pub translations: HashMap<i64, String>,
+    pub translations_visible: bool,
+    /// Tracks which buffer lines are inserted translation lines.
+    pub translation_lines: Vec<bool>,
+    pub translation_dim_tag: gtk4::TextTag,
+    pub translation_text_tag: gtk4::TextTag,
     /// When set, CursorSync events are suppressed until this instant passes.
     /// Prevents playback sync from overriding manual navigation.
     pub suppress_sync_until: Option<std::time::Instant>,
@@ -141,6 +148,19 @@ pub fn build_window(
         })
         .build();
     buffer.tag_table().add(&search_current_tag);
+
+    let translation_dim_tag = gtk4::TextTag::builder()
+        .name("translation-dim")
+        .foreground(&theme.dim_fg)
+        .build();
+    buffer.tag_table().add(&translation_dim_tag);
+
+    let translation_text_tag = gtk4::TextTag::builder()
+        .name("translation-text")
+        .style(pango::Style::Italic)
+        .left_margin(60)
+        .build();
+    buffer.tag_table().add(&translation_text_tag);
 
     let text_view = View::builder()
         .buffer(&buffer)
@@ -259,6 +279,11 @@ pub fn build_window(
         settings_overlay,
         media_picker,
         dialogue_formatting_active: false,
+        translations: HashMap::new(),
+        translations_visible: false,
+        translation_lines: Vec::new(),
+        translation_dim_tag,
+        translation_text_tag,
         suppress_sync_until: None,
     }));
 
