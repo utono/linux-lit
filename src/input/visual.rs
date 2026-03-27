@@ -465,6 +465,52 @@ fn action_external_command(state: &mut AppState, command: &str) {
     reload_current_work(state);
 }
 
+/// Undo the last destructive visual mode action.
+pub fn undo_last_action(state: &mut AppState) {
+    let entry = match state.undo_stack.pop() {
+        Some(e) => e,
+        None => {
+            crate::logging::log("VISUAL: nothing to undo");
+            return;
+        }
+    };
+
+    let abbrev = match &state.current_work {
+        Some(w) => w.abbrev.clone(),
+        None => return,
+    };
+
+    // Restore DB lines
+    match crate::db::queries::open_db_rw() {
+        Ok(conn) => {
+            if let Err(e) = crate::db::queries::restore_lines(&conn, &abbrev, &entry.db_lines) {
+                crate::logging::log(&format!("VISUAL: undo DB restore failed: {}", e));
+                return;
+            }
+        }
+        Err(e) => {
+            crate::logging::log(&format!("VISUAL: undo open_db_rw failed: {}", e));
+            return;
+        }
+    }
+
+    // Restore file if backup exists
+    if let Some((path, content)) = &entry.file_backup {
+        if let Err(e) = std::fs::write(path, content) {
+            crate::logging::log(&format!("VISUAL: undo file restore failed: {}", e));
+        }
+    }
+
+    crate::logging::log("VISUAL: undo successful");
+
+    // Reload and restore cursor
+    let saved_cursor = entry.cursor_line;
+    reload_current_work(state);
+    let line_count = state.effective_line_count();
+    state.current_line = saved_cursor.min(line_count.saturating_sub(1));
+    crate::input::navigation::update_highlight_and_ensure_visible(state);
+}
+
 /// Reload the current work from DB and refresh the display.
 fn reload_current_work(state: &mut AppState) {
     let abbrev = match &state.current_work {

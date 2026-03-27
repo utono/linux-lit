@@ -596,7 +596,15 @@ pub fn handle_key(
                 false
             }
         }
-        "u" | "Right" => {
+        "u" => {
+            if !state.borrow().undo_stack.is_empty() {
+                crate::input::visual::undo_last_action(&mut state.borrow_mut());
+                true
+            } else {
+                crate::input::timestamps::set_start_time(&mut state.borrow_mut())
+            }
+        }
+        "Right" => {
             crate::input::timestamps::set_start_time(&mut state.borrow_mut())
         }
         "period" => {
