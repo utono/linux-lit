@@ -37,6 +37,10 @@ pub struct Config {
     pub last_line: usize,
     #[serde(default)]
     pub visual_mode_commands: Vec<VisualModeCommand>,
+    #[serde(default = "default_ollama_model")]
+    pub ollama_model: String,
+    #[serde(default = "default_ollama_endpoint")]
+    pub ollama_endpoint: String,
 }
 
 fn default_font_family() -> String {
@@ -72,6 +76,14 @@ fn default_text_margins() -> u32 {
     DEFAULT_TEXT_MARGINS
 }
 
+fn default_ollama_model() -> String {
+    "qwen2.5:7b".to_string()
+}
+
+fn default_ollama_endpoint() -> String {
+    "http://localhost:11434".to_string()
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -84,6 +96,8 @@ impl Default for Config {
             last_work: None,
             last_line: 0,
             visual_mode_commands: Vec::new(),
+            ollama_model: default_ollama_model(),
+            ollama_endpoint: default_ollama_endpoint(),
         }
     }
 }
