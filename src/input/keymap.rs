@@ -355,7 +355,9 @@ pub fn handle_key(
                 state.borrow().keybinds_overlay.hide();
                 return true;
             }
-            _ => return true, // consume all keys when keybinds visible
+            // Allow font size keys to pass through
+            "exclam" | "bar" | "0" => {}
+            _ => return true, // consume all other keys when keybinds visible
         }
     }
 
@@ -485,6 +487,11 @@ pub fn handle_key(
                 if s.keybinds_overlay.is_visible() {
                     s.keybinds_overlay.hide();
                 } else {
+                    // Hide other overlays before showing keybinds
+                    s.picker.hide();
+                    s.media_picker.hide();
+                    s.settings_overlay.hide();
+                    s.search_bar.hide();
                     s.keybinds_overlay.show();
                 }
                 return true;

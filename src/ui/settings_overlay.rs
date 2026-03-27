@@ -98,7 +98,7 @@ impl SettingsOverlay {
             value_labels,
             selected: 0,
             snapshot: SettingsSnapshot {
-                line_spacing: 4,
+                line_spacing: 5,
                 column_width: 950,
                 text_margins: 48,
                 theme_index,
