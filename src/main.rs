@@ -17,12 +17,24 @@ use mpv::{MpvCommand, MpvEvent};
 
 fn main() {
     // Clear and set up log file
-    let log_path = std::env::var("HOME").unwrap_or_default() + "/utono/linux-lit/linux-lit.log";
+    let home = std::env::var("HOME").unwrap_or_default();
+    let log_filename = if mode::is_dev_mode() {
+        "linux-lit-dev.log"
+    } else {
+        "linux-lit-release.log"
+    };
+    let log_path = format!("{}/utono/linux-lit/{}", home, log_filename);
     let _ = std::fs::write(&log_path, "");
     logging::init(&log_path);
 
+    let app_id = if mode::is_dev_mode() {
+        "com.utono.linux-lit.dev"
+    } else {
+        "com.utono.linux-lit"
+    };
+
     let application = gtk4::Application::builder()
-        .application_id("com.utono.linux-lit")
+        .application_id(app_id)
         .build();
 
     application.connect_activate(|gtk_app| {
