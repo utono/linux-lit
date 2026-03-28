@@ -30,4 +30,5 @@ pub enum MpvEvent {
     ConnectionStatus(bool),
     PlaybackState(bool),
     TimePos(f64),
+    ThemeChanged,
 }

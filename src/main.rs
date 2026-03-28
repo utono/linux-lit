@@ -149,6 +149,9 @@ fn main() {
                             }
                         }
                     }
+                    MpvEvent::ThemeChanged => {
+                        // TODO: handler implemented in task 3
+                    }
                 }
             }
         });
