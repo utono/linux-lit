@@ -1368,12 +1368,16 @@ pub fn show_vocab_popup(state: &AppState) {
     }
     let idx = state.vocab_popup_index;
     let total = state.vocab_popup_data.len();
+    let work_abbrev = state.current_work.as_ref()
+        .map(|w| w.abbrev.as_str())
+        .unwrap_or("");
     state.vocab_popup.update(
         &state.vocab_popup_data[idx],
         idx,
         total,
         state.vocab_popup_view,
         &state.theme.vocab_fg,
+        work_abbrev,
     );
     state.vocab_popup.show();
 }

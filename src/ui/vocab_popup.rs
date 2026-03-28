@@ -122,14 +122,16 @@ impl VocabPopup {
         total: usize,
         view: VocabView,
         vocab_fg: &str,
+        work_abbrev: &str,
     ) {
         // Clear content
         while let Some(child) = self.content_box.first_child() {
             self.content_box.remove(&child);
         }
 
-        // Header and counter
-        self.header_label.set_visible(false);
+        // Header: work abbreviation
+        self.header_label.set_text(work_abbrev);
+        self.header_label.set_visible(true);
 
         if total > 1 {
             self.counter_label.set_text(&format!("{} / {}", index + 1, total));
