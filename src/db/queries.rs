@@ -228,6 +228,7 @@ pub fn load_vocab_definition(
     }
 }
 
+#[allow(dead_code)]
 pub struct VocabEtymology {
     pub prefix: Option<String>,
     pub prefix_gloss: Option<String>,

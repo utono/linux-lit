@@ -585,13 +585,15 @@ pub fn jump_to_next_vocab(state: &mut AppState) {
     let target_line = state.vocab_matches[next_idx].line_index;
     state.current_line = target_line;
     update_highlight(state);
-    update_highlight_and_center(state);
+    match state.config.navigation_mode {
+        crate::config::NavigationMode::Scroll => center_cursor(state),
+        crate::config::NavigationMode::EReader => {
+            if needs_page_turn_down(state, target_line) {
+                set_page(state, target_line);
+            }
+        }
+    }
     seek_to_current_line(state);
-
-    state.definition_panel_visible = true;
-    state.definition_panel.show();
-    let word = state.vocab_matches[next_idx].word.clone();
-    crate::app::update_definition_panel(state, &word);
 }
 
 /// Jump to a specific vocab match index. Used by concordance picker.
@@ -603,13 +605,15 @@ pub fn jump_to_vocab_at(state: &mut AppState, match_idx: usize) {
     let target_line = state.vocab_matches[match_idx].line_index;
     state.current_line = target_line;
     update_highlight(state);
-    update_highlight_and_center(state);
+    match state.config.navigation_mode {
+        crate::config::NavigationMode::Scroll => center_cursor(state),
+        crate::config::NavigationMode::EReader => {
+            if needs_page_turn_down(state, target_line) {
+                set_page(state, target_line);
+            }
+        }
+    }
     seek_to_current_line(state);
-
-    state.definition_panel_visible = true;
-    state.definition_panel.show();
-    let word = state.vocab_matches[match_idx].word.clone();
-    crate::app::update_definition_panel(state, &word);
 }
 
 /// Jump to the previous vocab word occurrence before current position.
@@ -638,11 +642,9 @@ pub fn jump_to_prev_vocab(state: &mut AppState) {
     let target_line = state.vocab_matches[prev_idx].line_index;
     state.current_line = target_line;
     update_highlight(state);
-    update_highlight_and_center(state);
+    match state.config.navigation_mode {
+        crate::config::NavigationMode::Scroll => center_cursor(state),
+        crate::config::NavigationMode::EReader => scroll_to_cursor(state),
+    }
     seek_to_current_line(state);
-
-    state.definition_panel_visible = true;
-    state.definition_panel.show();
-    let word = state.vocab_matches[prev_idx].word.clone();
-    crate::app::update_definition_panel(state, &word);
 }

@@ -22,6 +22,8 @@ cat ~/utono/linux-lit/linux-lit.log
 
 Verify changes compile with `cargo build` but do not run the app — the user will run `cargo run` themselves.
 
+**Important:** `cargo run` is for development only. Only run one instance at a time — multiple instances share the same log file and database, and restarting one won't update the other.
+
 ```bash
 cargo build
 ```

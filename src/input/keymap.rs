@@ -87,18 +87,6 @@ pub fn handle_key(
                 state.borrow().picker.move_selection(-1);
                 return true;
             }
-            "j" => {
-                if !state.borrow().picker.search_entry().has_focus() {
-                    state.borrow().picker.move_selection(1);
-                    return true;
-                }
-            }
-            "k" => {
-                if !state.borrow().picker.search_entry().has_focus() {
-                    state.borrow().picker.move_selection(-1);
-                    return true;
-                }
-            }
             _ => {}
         }
         return false;
@@ -616,6 +604,29 @@ pub fn handle_key(
         }
     }
 
+    // Vocab popup keys
+    if state.borrow().vocab_popup.is_visible() {
+        match key_name {
+            "n" => {
+                crate::app::vocab_popup_next(&mut state.borrow_mut());
+                return true;
+            }
+            "g" => {
+                crate::app::vocab_popup_toggle_view(&mut state.borrow_mut());
+                return true;
+            }
+            "h" | "Escape" => {
+                crate::app::close_vocab_popup(&state.borrow());
+                return true;
+            }
+            "Tab" => {
+                crate::input::search::toggle_playback(&mut state.borrow_mut());
+                return true;
+            }
+            _ => return false,
+        }
+    }
+
     // Single keys
     match key_name {
         "j" => {
@@ -828,26 +839,16 @@ pub fn handle_key(
             }
             true
         }
-        "w" => {
+        "r" => {
             navigation::jump_to_next_vocab(&mut state.borrow_mut());
             true
         }
-        "W" => {
+        "R" => {
             navigation::jump_to_prev_vocab(&mut state.borrow_mut());
             true
         }
-        "backslash" => {
-            let mut s = state.borrow_mut();
-            s.definition_panel_visible = !s.definition_panel_visible;
-            if s.definition_panel_visible {
-                s.definition_panel.show();
-                if let Some(m) = s.vocab_matches.iter().find(|m| m.line_index == s.current_line) {
-                    let word = m.word.clone();
-                    crate::app::update_definition_panel(&s, &word);
-                }
-            } else {
-                s.definition_panel.hide();
-            }
+        "h" => {
+            crate::app::open_vocab_popup(&mut state.borrow_mut());
             true
         }
         "Escape" => {

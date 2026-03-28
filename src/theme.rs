@@ -293,6 +293,8 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
            border-top: 1px solid {dim}; }} \
          .definition-panel {{ background-color: {bg}; color: {fg}; \
            border-radius: 12px; padding: 20px 24px; }} \
+         .vocab-popup {{ background-color: {bg}; color: {fg}; \
+           padding: 16px 20px; border-radius: 12px; border: 1px solid {dim}; }} \
          .definition-header {{ font-size: 11px; color: {dim}; \
            letter-spacing: 2px; font-weight: bold; }} \
          .definition-word {{ font-size: 16px; }} \
