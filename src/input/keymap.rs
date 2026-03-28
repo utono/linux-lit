@@ -56,6 +56,11 @@ pub fn handle_key(
             "Return" => {
                 let abbrev = state.borrow().picker.selected_abbrev();
                 if let Some(abbrev) = abbrev {
+                    {
+                        let s = state.borrow();
+                        s.picker.hide();
+                        s.correction_overlay.show_loading_message("Loading...");
+                    }
                     let state_clone = Rc::clone(state);
                     let handle = tokio_handle.clone();
                     glib::spawn_future_local(async move {
@@ -68,12 +73,28 @@ pub fn handle_key(
                             .await;
                         match work {
                             Ok(Ok(work)) => {
-                                let mut s = state_clone.borrow_mut();
-                                s.picker.hide();
-                                crate::app::display_work(&mut s, work);
+                                {
+                                    let mut s = state_clone.borrow_mut();
+                                    s.correction_overlay.hide();
+                                    crate::app::display_work(&mut s, work);
+                                }
+                                // Defer scroll until after GTK lays out the text
+                                glib::idle_add_local_once(move || {
+                                    crate::input::navigation::restore_cursor(
+                                        &mut state_clone.borrow_mut(),
+                                    );
+                                });
                             }
-                            Ok(Err(e)) => eprintln!("Failed to load work: {}", e),
-                            Err(e) => eprintln!("Task join error: {}", e),
+                            Ok(Err(e)) => {
+                                let s = state_clone.borrow();
+                                s.correction_overlay.hide();
+                                eprintln!("Failed to load work: {}", e);
+                            }
+                            Err(e) => {
+                                let s = state_clone.borrow();
+                                s.correction_overlay.hide();
+                                eprintln!("Task join error: {}", e);
+                            }
                         }
                     });
                 }

@@ -6,8 +6,11 @@ pub struct CorrectionOverlay {
     scrim: gtk4::Box,
     container: gtk4::Box,
     title: Label,
+    orig_header: Label,
     original_label: Label,
+    corr_header: Label,
     corrected_label: Label,
+    hint: Label,
 }
 
 impl CorrectionOverlay {
@@ -79,8 +82,11 @@ impl CorrectionOverlay {
             scrim,
             container,
             title,
+            orig_header,
             original_label,
+            corr_header,
             corrected_label,
+            hint,
         }
     }
 
@@ -96,19 +102,27 @@ impl CorrectionOverlay {
         let corr_markup = build_diff_markup(original, corrected, false);
         self.original_label.set_markup(&orig_markup);
         self.corrected_label.set_markup(&corr_markup);
+        self.orig_header.set_visible(true);
         self.original_label.set_visible(true);
+        self.corr_header.set_visible(true);
         self.corrected_label.set_visible(true);
+        self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
     }
 
     pub fn show_loading(&self) {
-        self.title.set_text("Glossing...");
-        self.original_label.set_text("");
-        self.corrected_label.set_text("");
+        self.show_loading_message("Glossing...");
+    }
+
+    pub fn show_loading_message(&self, message: &str) {
+        self.title.set_text(message);
+        self.orig_header.set_visible(false);
         self.original_label.set_visible(false);
+        self.corr_header.set_visible(false);
         self.corrected_label.set_visible(false);
-        self.scrim.set_visible(true);
+        self.hint.set_visible(false);
+        self.scrim.set_visible(false);
         self.container.set_visible(true);
     }
 

@@ -443,7 +443,6 @@ pub fn build_window(
     });
     window.add_controller(key_controller);
 
-    window.fullscreen();
     window.present();
 
     // Startup: load MRU work or show picker
@@ -487,6 +486,11 @@ pub fn build_window(
 }
 
 pub fn display_work(state: &mut AppState, work: Work) {
+    // Save position of the outgoing work before switching
+    if let Some(ref old_work) = state.current_work {
+        state.config.work_positions.insert(old_work.abbrev.clone(), state.current_line);
+    }
+
     crate::input::search::clear_search(state);
     state.search_bar.hide();
     state.current_time_pos = 0.0;
@@ -496,8 +500,9 @@ pub fn display_work(state: &mut AppState, work: Work) {
         .set_title(Some(&format!("{} — linux-lit", work.title)));
 
     // Save MRU to config
+    let saved_line = state.config.work_positions.get(&work.abbrev).copied().unwrap_or(0);
     state.config.last_work = Some(work.abbrev.clone());
-    state.config.last_line = 0;
+    state.config.last_line = saved_line;
     crate::config::save(&state.config);
 
     // Send timestamp data to MPV client (filtered by active media_id)
@@ -556,7 +561,7 @@ pub fn display_work(state: &mut AppState, work: Work) {
         });
     }
 
-    state.current_line = 0;
+    state.current_line = saved_line;
     state.page_top_line = 0;
     state.visual_selection = None;
     state.current_work = Some(work);
@@ -665,6 +670,11 @@ pub fn display_work(state: &mut AppState, work: Work) {
 
     // Apply font tag to new buffer content
     reapply_font(state);
+
+    // Clamp saved line to buffer bounds and restore cursor position
+    state.current_line = state.current_line.min(
+        state.effective_line_count().saturating_sub(1),
+    );
 
     // Dim all lines except the current one
     crate::input::navigation::update_highlight_and_ensure_visible(state);
@@ -1188,8 +1198,10 @@ pub fn remove_ab_dim(state: &AppState) {
 /// Save current position to config (call on quit).
 pub fn save_position(state: &mut AppState) {
     if let Some(work) = &state.current_work {
-        state.config.last_work = Some(work.abbrev.clone());
+        let abbrev = work.abbrev.clone();
+        state.config.last_work = Some(abbrev.clone());
         state.config.last_line = state.current_line;
+        state.config.work_positions.insert(abbrev, state.current_line);
         crate::config::save(&state.config);
     }
 }
