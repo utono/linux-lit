@@ -250,7 +250,7 @@ pub fn restore_cursor(state: &mut AppState) {
             let adj = state.scrolled_window.vadjustment();
             let max_scroll = adj.upper() - adj.page_size();
             let line_y = scroll_value_for_line(state, state.current_line);
-            let offset = adj.page_size() * 0.15;
+            let offset = adj.page_size() * 0.35;
             let centered = (line_y - offset).max(0.0).min(max_scroll.max(0.0));
             adj.set_value(centered);
         }
@@ -348,7 +348,7 @@ fn center_cursor(state: &mut AppState) {
         return;
     }
     let line_y = scroll_value_for_line(state, state.current_line);
-    let offset = adj.page_size() * 0.15;
+    let offset = adj.page_size() * 0.35;
     let centered = (line_y - offset).max(0.0).min(max_scroll);
     crate::logging::log(&format!(
         "CENTER: line={} line_y={:.0} offset={:.0} centered={:.0} max={:.0} old_val={:.0}",
