@@ -58,6 +58,7 @@ pub fn handle_key(
                 if let Some(abbrev) = abbrev {
                     {
                         let s = state.borrow();
+                        let _ = s.cmd_tx.try_send(crate::mpv::commands::MpvCommand::Pause);
                         s.picker.hide();
                         s.correction_overlay.show_loading_message("Loading...");
                     }
@@ -1039,6 +1040,9 @@ pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &cra
             "rgba(68, 138, 255, 0.25)"
         },
     );
+
+    // Update vocab tag foreground
+    state.vocab_tag.set_property("foreground", &theme.vocab_fg);
 
     // Write .current_theme file
     let home = std::env::var("HOME").unwrap_or_default();

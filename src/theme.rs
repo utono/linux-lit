@@ -146,12 +146,18 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
         .and_then(|c| str_field(c, "guifg"))
         .unwrap_or_else(|| text_bg.clone());
 
-    let vocab_fg = highlights
+    let vocab_orig = highlights
         .get("VocabWord")
         .and_then(|c| str_field(c, "guifg"))
         .unwrap_or_else(|| {
             if is_light { "#8a6534".to_string() } else { "#d8a657".to_string() }
         });
+
+    let vocab_fg = if is_light {
+        choose_vocab_fg(&text_fg, &cursor_bg, &vocab_orig)
+    } else {
+        vocab_orig
+    };
 
     Theme {
         name: name.to_string(),
@@ -227,6 +233,101 @@ fn blend_colors(fg_hex: &str, bg_hex: &str, alpha: f64) -> String {
         (fg_g * alpha + bg_g * (1.0 - alpha)) as u8,
         (fb * alpha + bb * (1.0 - alpha)) as u8,
     )
+}
+
+/// Parse a hex color to (r, g, b) floats in [0, 1].
+fn hex_to_rgb(hex: &str) -> (f64, f64, f64) {
+    let h = hex.trim_start_matches('#');
+    if h.len() < 6 {
+        return (0.0, 0.0, 0.0);
+    }
+    let r = u8::from_str_radix(&h[0..2], 16).unwrap_or(0) as f64 / 255.0;
+    let g = u8::from_str_radix(&h[2..4], 16).unwrap_or(0) as f64 / 255.0;
+    let b = u8::from_str_radix(&h[4..6], 16).unwrap_or(0) as f64 / 255.0;
+    (r, g, b)
+}
+
+/// Convert (r, g, b) floats to hex string.
+fn rgb_to_hex(r: f64, g: f64, b: f64) -> String {
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        (r * 255.0).round() as u8,
+        (g * 255.0).round() as u8,
+        (b * 255.0).round() as u8,
+    )
+}
+
+/// Convert RGB to HSL. Returns (h, s, l) with h in [0,1], s in [0,1], l in [0,1].
+fn rgb_to_hsl(r: f64, g: f64, b: f64) -> (f64, f64, f64) {
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) / 2.0;
+    if (max - min).abs() < 1e-10 {
+        return (0.0, 0.0, l);
+    }
+    let d = max - min;
+    let s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
+    let h = if (max - r).abs() < 1e-10 {
+        let mut h = (g - b) / d;
+        if g < b { h += 6.0; }
+        h / 6.0
+    } else if (max - g).abs() < 1e-10 {
+        ((b - r) / d + 2.0) / 6.0
+    } else {
+        ((r - g) / d + 4.0) / 6.0
+    };
+    (h, s, l)
+}
+
+/// Convert HSL to RGB.
+fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (f64, f64, f64) {
+    if s.abs() < 1e-10 {
+        return (l, l, l);
+    }
+    let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
+    let p = 2.0 * l - q;
+    let hue_to_rgb = |t: f64| -> f64 {
+        let t = ((t % 1.0) + 1.0) % 1.0;
+        if t < 1.0 / 6.0 { p + (q - p) * 6.0 * t }
+        else if t < 1.0 / 2.0 { q }
+        else if t < 2.0 / 3.0 { p + (q - p) * (2.0 / 3.0 - t) * 6.0 }
+        else { p }
+    };
+    (hue_to_rgb(h + 1.0 / 3.0), hue_to_rgb(h), hue_to_rgb(h - 1.0 / 3.0))
+}
+
+/// Hue distance in degrees [0, 180] between two hex colors.
+fn hue_distance(c1: &str, c2: &str) -> f64 {
+    let (h1, _, _) = rgb_to_hsl(hex_to_rgb(c1).0, hex_to_rgb(c1).1, hex_to_rgb(c1).2);
+    let (h2, _, _) = rgb_to_hsl(hex_to_rgb(c2).0, hex_to_rgb(c2).1, hex_to_rgb(c2).2);
+    let d = (h1 - h2).abs();
+    d.min(1.0 - d) * 360.0
+}
+
+/// Choose a vocab foreground color that is visually distinct from text_fg.
+/// Picks the best candidate from vocab_orig and cursor_bg, or derives one
+/// by rotating text_fg hue by 150 degrees.
+fn choose_vocab_fg(text_fg: &str, cursor_bg: &str, vocab_orig: &str) -> String {
+    let min_distance = 50.0;
+    let vocab_dist = hue_distance(text_fg, vocab_orig);
+    let cursor_dist = hue_distance(text_fg, cursor_bg);
+
+    // Pick whichever candidate has more hue distance
+    if vocab_dist >= cursor_dist && vocab_dist > min_distance {
+        return vocab_orig.to_string();
+    }
+    if cursor_dist > min_distance {
+        return cursor_bg.to_string();
+    }
+
+    // Neither is distinct enough — derive by rotating text_fg hue
+    let (r, g, b) = hex_to_rgb(text_fg);
+    let (h, s, l) = rgb_to_hsl(r, g, b);
+    let new_h = (h + 150.0 / 360.0) % 1.0;
+    let new_s = s.max(0.45);
+    let new_l = l.clamp(0.30, 0.45);
+    let (r2, g2, b2) = hsl_to_rgb(new_h, new_s, new_l);
+    rgb_to_hex(r2, g2, b2)
 }
 
 /// Generate GTK CSS for a theme.
