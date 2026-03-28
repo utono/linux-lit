@@ -1002,7 +1002,7 @@ fn retry_gloss(state_rc: &Rc<RefCell<AppState>>) {
     });
 }
 
-fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &crate::theme::Theme) {
+pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &crate::theme::Theme) {
     let css = crate::theme::generate_css(theme, &state.config.font_family, state.config.font_size);
     state.css_provider.load_from_string(&css);
 
