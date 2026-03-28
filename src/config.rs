@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -35,6 +36,8 @@ pub struct Config {
     pub last_work: Option<String>,
     #[serde(default)]
     pub last_line: usize,
+    #[serde(default)]
+    pub work_positions: HashMap<String, usize>,
     #[serde(default)]
     pub visual_mode_commands: Vec<VisualModeCommand>,
     #[serde(default = "default_ollama_model")]
@@ -102,6 +105,7 @@ impl Default for Config {
             navigation_mode: NavigationMode::default(),
             last_work: None,
             last_line: 0,
+            work_positions: HashMap::new(),
             visual_mode_commands: Vec::new(),
             ollama_model: default_ollama_model(),
             ollama_endpoint: default_ollama_endpoint(),
@@ -112,7 +116,12 @@ impl Default for Config {
 
 fn config_path() -> PathBuf {
     let home = std::env::var("HOME").expect("HOME not set");
-    PathBuf::from(home).join(".config/linux-lit/config.json")
+    let filename = if crate::mode::is_dev_mode() {
+        "config-dev.json"
+    } else {
+        "config.json"
+    };
+    PathBuf::from(home).join(".config/linux-lit").join(filename)
 }
 
 pub fn load() -> Config {
