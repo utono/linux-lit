@@ -83,6 +83,7 @@ impl ActionPopup {
         self.container.set_visible(false);
     }
 
+    #[allow(dead_code)]
     pub fn is_visible(&self) -> bool {
         self.container.is_visible()
     }

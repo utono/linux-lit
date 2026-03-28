@@ -4,6 +4,7 @@ use gtk4::{Box as GtkBox, Label, Orientation, ScrolledWindow};
 pub struct DefinitionPanel {
     pub container: GtkBox,
     scrolled: ScrolledWindow,
+    #[allow(dead_code)]
     content_box: GtkBox,
     header_label: Label,
     word_label: Label,
@@ -12,6 +13,7 @@ pub struct DefinitionPanel {
     etymology_label: Label,
     gloss_header: Label,
     gloss_label: Label,
+    #[allow(dead_code)]
     hint_label: Label,
 }
 
@@ -125,10 +127,12 @@ impl DefinitionPanel {
         self.container.set_visible(false);
     }
 
+    #[allow(dead_code)]
     pub fn is_visible(&self) -> bool {
         self.container.is_visible()
     }
 
+    #[allow(dead_code)]
     pub fn toggle(&self) {
         self.container.set_visible(!self.container.is_visible());
     }

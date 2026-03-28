@@ -232,6 +232,7 @@ pub struct VocabEtymology {
     pub prefix: Option<String>,
     pub prefix_gloss: Option<String>,
     pub root: Option<String>,
+    #[allow(dead_code)]
     pub root_base: Option<String>,
     pub root_gloss: Option<String>,
     pub suffix: Option<String>,
