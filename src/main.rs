@@ -5,6 +5,7 @@ mod db;
 mod gutter;
 mod input;
 mod logging;
+mod mode;
 mod ollama;
 mod mpv;
 mod text_file_map;
