@@ -36,6 +36,19 @@ fn main() {
         let tokio_handle = rt.handle().clone();
         std::thread::spawn(move || {
             rt.block_on(async move {
+                // SIGUSR1 listener for external theme changes
+                let signal_evt_tx = evt_tx.clone();
+                tokio::spawn(async move {
+                    let mut sig = tokio::signal::unix::signal(
+                        tokio::signal::unix::SignalKind::user_defined1(),
+                    )
+                    .expect("Failed to register SIGUSR1 handler");
+                    loop {
+                        sig.recv().await;
+                        let _ = signal_evt_tx.send(MpvEvent::ThemeChanged).await;
+                    }
+                });
+
                 crate::mpv::client::run(cmd_rx, evt_tx).await;
             });
         });
@@ -150,7 +163,14 @@ fn main() {
                         }
                     }
                     MpvEvent::ThemeChanged => {
-                        // TODO: handler implemented in task 3
+                        let mut s = state_for_events.borrow_mut();
+                        let theme_name = crate::theme::current_theme_name();
+                        let theme = if theme_name.is_empty() {
+                            crate::theme::load_theme("gruvbox-material")
+                        } else {
+                            crate::theme::load_theme(&theme_name)
+                        };
+                        crate::input::keymap::apply_theme_to_state(&mut s, &theme);
                     }
                 }
             }
