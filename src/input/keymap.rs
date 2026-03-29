@@ -343,6 +343,7 @@ pub fn handle_key(
     if search_visible {
         match key_name {
             "Escape" => {
+                crate::input::search::clear_search(&mut state.borrow_mut());
                 state.borrow().search_bar.hide();
                 return true;
             }
@@ -892,6 +893,9 @@ pub fn handle_key(
                 crate::logging::log("CHUNK: AB loop cleared");
                 drop(s);
                 crate::input::navigation::update_highlight_and_center(&mut state.borrow_mut());
+                true
+            } else if !s.search_matches.is_empty() {
+                crate::input::search::clear_search(&mut s);
                 true
             } else {
                 false
