@@ -144,11 +144,11 @@ pub fn set_chapter(state: &mut AppState) -> bool {
             return false;
         }
 
-        // Update in-memory
-        match &mut line.timestamp {
-            Some(ts) => ts.start = time_pos,
-            None => line.timestamp = Some(TimeRange { start: time_pos, end: 0.0 }),
+        // Update in-memory: only set start_time if no timestamp exists yet
+        if line.timestamp.is_none() {
+            line.timestamp = Some(TimeRange { start: time_pos, end: 0.0 });
         }
+        line.is_chapter = true;
     }
     crate::logging::log(&format!("TS: set chapter start_time={:.2} line={}", time_pos, line_idx));
 

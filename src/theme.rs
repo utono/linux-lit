@@ -365,20 +365,37 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
            color: {cursor_fg}; border-left: 3px solid {cursor_bg}; }} \
          .action-popup .settings-footer {{ color: {dim}; }} \
          .action-separator {{ color: {dim}; opacity: 0.3; margin: 4px 12px; }} \
-         .keybinds-overlay {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
-           padding: 16px; border-radius: 8px; }} \
-         .keybind-key {{ background-color: rgba(255, 255, 255, 0.08); \
-           border-radius: 3px; min-width: 68px; padding: 3px 6px; }} \
-         .keybind-key-unbound {{ opacity: 0.25; }} \
-         .keybind-label-bare {{ color: #7db8f0; font-size: 44px; font-weight: bold; }} \
-         .keybind-label-ctrl {{ color: #d4a052; font-size: 44px; font-weight: bold; }} \
-         .keybind-label-alt {{ color: #c47dd4; font-size: 44px; font-weight: bold; }} \
-         .keybind-label-ctrlalt {{ color: #d45050; font-size: 44px; font-weight: bold; }} \
-         .keybind-action {{ color: rgba(255, 255, 255, 0.5); font-size: 36px; }} \
-         .keybind-row-header {{ font-size: 36px; letter-spacing: 2px; \
-           color: rgba(255, 255, 255, 0.35); margin-bottom: 4px; }} \
-         .keybind-legend {{ border-top: 1px solid rgba(255, 255, 255, 0.1); \
+         .keybinds-overlay {{ background-color: rgba(26, 26, 26, 0.95); color: white; \
+           padding: 20px; border-radius: 10px; }} \
+         .kb-row {{ }} \
+         .kb-key {{ background-color: #2a2a2a; border: 1px solid #444444; \
+           border-radius: 5px; padding: 3px 5px; min-height: 42px; }} \
+         .kb-key-bound {{ background-color: #1a3a2a; border-color: #3a6a4a; }} \
+         .kb-key-bound-shift {{ background-color: #1a2a3a; border-color: #3a4a6a; }} \
+         .kb-key-bound-both {{ background-color: #1a3a2a; border-color: #3a6a4a; }} \
+         .kb-key-unbound {{ opacity: 0.5; }} \
+         .kb-char {{ font-size: 22px; font-weight: bold; color: #888888; }} \
+         .kb-char-bound {{ color: #88ff88; }} \
+         .kb-char-shift {{ color: #88aaff; }} \
+         .kb-char-both {{ color: #88ff88; }} \
+         .kb-shifted {{ font-size: 14px; color: #666666; }} \
+         .kb-shifted-active {{ color: #6688cc; }} \
+         .kb-action {{ font-size: 12px; color: #66cc66; }} \
+         .kb-shift-action {{ font-size: 11px; color: #6688cc; }} \
+         .kb-arrow {{ background-color: #2a2a2a; border: 1px solid #444444; \
+           border-radius: 4px; padding: 2px 4px; min-width: 38px; min-height: 36px; }} \
+         .kb-arrow-bound {{ background-color: #1a3a2a; border-color: #3a6a4a; }} \
+         .kb-arrow-bound-both {{ background-color: #1a3a2a; border-color: #3a6a4a; }} \
+         .kb-arrow-char {{ font-size: 18px; color: #88ff88; }} \
+         .kb-arrow-action {{ font-size: 10px; color: #66cc66; }} \
+         .kb-legend {{ border-top: 1px solid rgba(255, 255, 255, 0.1); \
            margin-top: 12px; padding-top: 8px; }} \
+         .kb-legend-swatch {{ min-width: 14px; min-height: 14px; \
+           border-radius: 3px; border: 1px solid #555555; }} \
+         .kb-legend-bound {{ background-color: #1a3a2a; border-color: #3a6a4a; }} \
+         .kb-legend-shift {{ background-color: #1a2a3a; border-color: #3a4a6a; }} \
+         .kb-legend-both {{ background-color: #1a3a2a; border-color: #3a6a4a; }} \
+         .kb-legend-unbound {{ background-color: #2a2a2a; border-color: #444444; }} \
          .correction-scrim {{ background-color: rgba(0, 0, 0, 0.3); }} \
          .correction-overlay {{ background-color: {bg}; color: {fg}; \
            padding: 24px; border-radius: 12px; \

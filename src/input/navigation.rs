@@ -242,6 +242,96 @@ pub fn jump_to_next_dialogue(state: &mut AppState) {
     }
 }
 
+/// Previous chapter line (`[` key).
+pub fn jump_to_prev_chapter(state: &mut AppState) {
+    let target = {
+        let work = match &state.current_work {
+            Some(w) => w,
+            None => return,
+        };
+        if state.current_line == 0 {
+            return;
+        }
+        if let Some(ref lm) = state.line_map {
+            let mut found = None;
+            for bl in (0..state.current_line).rev() {
+                if let Some(Some(wi)) = lm.buffer_to_work.get(bl) {
+                    if work.lines[*wi].is_chapter {
+                        found = Some(bl);
+                        break;
+                    }
+                }
+            }
+            found
+        } else {
+            let mut found = None;
+            for i in (0..state.current_line).rev() {
+                if work.lines[i].is_chapter {
+                    found = Some(i);
+                    break;
+                }
+            }
+            found
+        }
+    };
+
+    if let Some(line_idx) = target {
+        state.current_line = line_idx;
+        update_highlight(state);
+        match state.config.navigation_mode {
+            crate::config::NavigationMode::Scroll => center_cursor(state),
+            crate::config::NavigationMode::EReader => scroll_to_cursor(state),
+        }
+        seek_to_current_line(state);
+    }
+}
+
+/// Next chapter line (`{` key).
+pub fn jump_to_next_chapter(state: &mut AppState) {
+    let line_count = state.effective_line_count();
+    let target = {
+        let work = match &state.current_work {
+            Some(w) => w,
+            None => return,
+        };
+        if let Some(ref lm) = state.line_map {
+            let mut found = None;
+            for bl in (state.current_line + 1)..lm.buffer_to_work.len() {
+                if let Some(Some(wi)) = lm.buffer_to_work.get(bl) {
+                    if work.lines[*wi].is_chapter {
+                        found = Some(bl);
+                        break;
+                    }
+                }
+            }
+            found
+        } else {
+            let mut found = None;
+            for i in (state.current_line + 1)..line_count {
+                if work.lines[i].is_chapter {
+                    found = Some(i);
+                    break;
+                }
+            }
+            found
+        }
+    };
+
+    if let Some(line_idx) = target {
+        state.current_line = line_idx;
+        update_highlight(state);
+        match state.config.navigation_mode {
+            crate::config::NavigationMode::Scroll => center_cursor(state),
+            crate::config::NavigationMode::EReader => {
+                if needs_page_turn_down(state, line_idx) {
+                    set_page(state, line_idx);
+                }
+            }
+        }
+        seek_to_current_line(state);
+    }
+}
+
 /// Restore cursor position after loading a work (used on startup with MRU).
 pub fn restore_cursor(state: &mut AppState) {
     update_highlight(state);

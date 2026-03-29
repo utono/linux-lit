@@ -70,6 +70,7 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
                 div1,
                 div2,
                 line_in_div,
+                is_chapter: false,
                 is_spoken: None,
             })
         })?
@@ -117,7 +118,20 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
         }
     }
 
-    // 5b. Load spoken status for the active media
+    // 5b. Build chapter lookup: line_id -> bool (filtered by active media_id)
+    let mut chapter_map: HashMap<i64, bool> = HashMap::new();
+    if let Some(mid) = media_id {
+        let mut ch_stmt = conn.prepare(
+            "SELECT line_mapping_id FROM line_timestamps \
+             WHERE media_id = ?1 AND is_chapter = 1",
+        )?;
+        let rows = ch_stmt.query_map([mid], |row| row.get::<_, i64>(0))?;
+        for row in rows {
+            chapter_map.insert(row?, true);
+        }
+    }
+
+    // 5c. Load spoken status for the active media
     let mut spoken_map: HashMap<i64, bool> = HashMap::new();
     if let Some(mid) = media_id {
         let mut spoken_stmt = conn.prepare(
@@ -137,6 +151,7 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
         .into_iter()
         .map(|mut line| {
             line.timestamp = ts_map.get(&line.id).copied();
+            line.is_chapter = chapter_map.contains_key(&line.id);
             line.is_spoken = spoken_map.get(&line.id).copied();
             line
         })
@@ -375,7 +390,7 @@ pub fn upsert_chapter(
         "INSERT INTO line_timestamps (citation, line_mapping_id, media_id, start_time, source, is_chapter) \
          VALUES (?1, ?2, ?3, ?4, 'manual', 1) \
          ON CONFLICT(line_mapping_id, media_id) \
-         DO UPDATE SET start_time = ?4, is_chapter = 1, updated_at = CURRENT_TIMESTAMP",
+         DO UPDATE SET is_chapter = 1, updated_at = CURRENT_TIMESTAMP",
         rusqlite::params![citation, line_mapping_id, media_id, start_time],
     )?;
     Ok(())

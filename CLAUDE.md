@@ -47,6 +47,10 @@ cargo clippy
 - `src/ui/library_picker.rs` — Ctrl+p work picker with fuzzy filter
 - `src/logging.rs` — file-based debug logging
 
+## Keyboard Layout
+
+The user's keyboard layout is Real Programmers Dvorak, defined in `~/utono/rpd`. Keys like `[` and `{` are on separate physical keys (not shift-related). Check the layout when adding keybinds.
+
 ## External Data
 
 - Database: `~/utono/litdb/data/lit.db` (read-write)

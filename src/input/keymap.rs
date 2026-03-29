@@ -764,6 +764,14 @@ pub fn handle_key(
         "period" => {
             crate::input::timestamps::set_chapter(&mut state.borrow_mut())
         }
+        "bracketleft" => {
+            crate::input::navigation::jump_to_prev_chapter(&mut state.borrow_mut());
+            true
+        }
+        "braceleft" => {
+            crate::input::navigation::jump_to_next_chapter(&mut state.borrow_mut());
+            true
+        }
         "i" => {
             crate::input::timestamps::set_end_time(&mut state.borrow_mut())
         }
