@@ -39,8 +39,43 @@ pub fn handle_key(
         }
     }
 
-    // Ctrl+p: open picker when hidden
+    // Ctrl+Shift+p: open concordance word picker
+    if is_ctrl && is_shift && key_name == "P" {
+        let state_clone = Rc::clone(state);
+        let handle = tokio_handle.clone();
+        glib::spawn_future_local(async move {
+            let words = handle
+                .spawn_blocking(move || {
+                    let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
+                    crate::db::concordance::load_global_vocab_words(&conn)
+                        .unwrap_or_default()
+                })
+                .await
+                .unwrap_or_default();
+            let mut s = state_clone.borrow_mut();
+            s.concordance_word_picker.set_words(words);
+            s.concordance_word_picker.show();
+        });
+        return true;
+    }
+
+    // Ctrl+Alt+p: open concordance occurrence list
+    if is_ctrl && is_alt && key_name == "p" {
+        let s = state.borrow();
+        if let Some(conc) = &s.concordance_state {
+            s.concordance_list_picker
+                .show(&conc.occurrences, conc.current_index);
+        }
+        return true;
+    }
+
+    // Ctrl+p: open picker when hidden (also clears concordance mode)
     if is_ctrl && key_name == "p" && !picker_visible {
+        {
+            let mut s = state.borrow_mut();
+            s.concordance_state = None;
+            s.concordance_bar.hide();
+        }
         state.borrow().correction_overlay.hide();
         state.borrow().picker.show();
         return true;
@@ -429,6 +464,123 @@ pub fn handle_key(
                 return true;
             }
             _ => return true,
+        }
+    }
+
+    // --- Concordance word picker (when visible) ---
+    let conc_word_picker_visible = state.borrow().concordance_word_picker.is_visible();
+    if conc_word_picker_visible {
+        match key_name {
+            "Escape" => {
+                state.borrow().concordance_word_picker.hide();
+                return true;
+            }
+            "Return" => {
+                let selected = state.borrow().concordance_word_picker.selected_word();
+                state.borrow().concordance_word_picker.hide();
+                if let Some(word) = selected {
+                    let state_clone = Rc::clone(state);
+                    let handle = tokio_handle.clone();
+                    let word_clone = word.clone();
+                    glib::spawn_future_local(async move {
+                        let hits = handle
+                            .spawn_blocking(move || {
+                                let conn = crate::db::queries::open_db()
+                                    .expect("Failed to open lit.db");
+                                crate::db::concordance::find_word_occurrences(&conn, &word_clone)
+                                    .unwrap_or_default()
+                            })
+                            .await
+                            .unwrap_or_default();
+                        if hits.is_empty() {
+                            return;
+                        }
+                        let conc_hits: Vec<crate::concordance::ConcordanceHit> = hits
+                            .into_iter()
+                            .map(|h| crate::concordance::ConcordanceHit {
+                                work_abbrev: h.work_abbrev,
+                                work_title: h.title,
+                                author: h.author,
+                                line_mapping_id: h.line_mapping_id,
+                                div1: h.div1,
+                                div2: h.div2,
+                                line_in_div: h.line_in_div,
+                                canonical_text: h.canonical_text,
+                                has_audio: h.has_audio,
+                            })
+                            .collect();
+                        let conc_state = crate::concordance::ConcordanceState::new(
+                            word.clone(),
+                            conc_hits,
+                        );
+                        let mut s = state_clone.borrow_mut();
+                        s.concordance_bar.update(&conc_state.status_label(), &conc_state.status_work());
+                        s.concordance_state = Some(conc_state);
+                        drop(s);
+                        navigation::concordance_jump_to_current(&state_clone, &handle);
+                    });
+                }
+                return true;
+            }
+            _ => {
+                if is_ctrl && key_name == "n" {
+                    state.borrow().concordance_word_picker.move_selection(1);
+                    return true;
+                }
+                if is_ctrl && key_name == "p" {
+                    state.borrow().concordance_word_picker.move_selection(-1);
+                    return true;
+                }
+                // Let entry handle text input
+                return false;
+            }
+        }
+    }
+
+    // --- Concordance list picker (when visible) ---
+    let conc_list_picker_visible = state.borrow().concordance_list_picker.is_visible();
+    if conc_list_picker_visible {
+        match key_name {
+            "Escape" => {
+                state.borrow().concordance_list_picker.hide();
+                return true;
+            }
+            "Return" => {
+                let selected = state.borrow().concordance_list_picker.selected_index();
+                state.borrow().concordance_list_picker.hide();
+                if let Some(idx) = selected {
+                    {
+                        let mut s = state.borrow_mut();
+                        if let Some(conc) = &mut s.concordance_state {
+                            conc.current_index = idx;
+                        }
+                    }
+                    navigation::concordance_jump_to_current(state, tokio_handle);
+                }
+                return true;
+            }
+            "j" | "n" => {
+                state.borrow().concordance_list_picker.move_selection(1);
+                return true;
+            }
+            "k" | "p" => {
+                if !is_ctrl {
+                    state.borrow().concordance_list_picker.move_selection(-1);
+                    return true;
+                }
+                return false;
+            }
+            _ => {
+                if is_ctrl && key_name == "n" {
+                    state.borrow().concordance_list_picker.move_selection(1);
+                    return true;
+                }
+                if is_ctrl && key_name == "p" {
+                    state.borrow().concordance_list_picker.move_selection(-1);
+                    return true;
+                }
+                return false;
+            }
         }
     }
 
@@ -868,11 +1020,33 @@ pub fn handle_key(
             true
         }
         "r" => {
-            navigation::jump_to_next_vocab(&mut state.borrow_mut());
+            let has_concordance = state.borrow().concordance_state.is_some();
+            if has_concordance {
+                let advanced = {
+                    let mut s = state.borrow_mut();
+                    s.concordance_state.as_mut().map(|c| c.advance()).unwrap_or(false)
+                };
+                if advanced {
+                    navigation::concordance_jump_to_current(state, tokio_handle);
+                }
+            } else {
+                navigation::jump_to_next_vocab(&mut state.borrow_mut());
+            }
             true
         }
         "R" => {
-            navigation::jump_to_prev_vocab(&mut state.borrow_mut());
+            let has_concordance = state.borrow().concordance_state.is_some();
+            if has_concordance {
+                let retreated = {
+                    let mut s = state.borrow_mut();
+                    s.concordance_state.as_mut().map(|c| c.retreat()).unwrap_or(false)
+                };
+                if retreated {
+                    navigation::concordance_jump_to_current(state, tokio_handle);
+                }
+            } else {
+                navigation::jump_to_prev_vocab(&mut state.borrow_mut());
+            }
             true
         }
         "h" => {
@@ -886,6 +1060,16 @@ pub fn handle_key(
             true
         }
         "Escape" => {
+            // Clear concordance mode on Escape
+            {
+                let has_conc = state.borrow().concordance_state.is_some();
+                if has_conc {
+                    let mut s = state.borrow_mut();
+                    s.concordance_state = None;
+                    s.concordance_bar.hide();
+                    return true;
+                }
+            }
             let mut s = state.borrow_mut();
             if s.ab_repeat.loop_active {
                 let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::ClearAbLoop);

@@ -99,6 +99,10 @@ pub struct AppState {
     pub vocab_popup_view: crate::ui::vocab_popup::VocabView,
     pub vocab_popup_auto: bool,
     pub concordance_picker: crate::ui::concordance_picker::ConcordancePicker,
+    pub concordance_state: Option<crate::concordance::ConcordanceState>,
+    pub concordance_word_picker: crate::ui::concordance_word_picker::ConcordanceWordPicker,
+    pub concordance_list_picker: crate::ui::concordance_list_picker::ConcordanceListPicker,
+    pub concordance_bar: crate::ui::concordance_bar::ConcordanceBar,
 }
 
 impl AppState {
@@ -304,15 +308,29 @@ pub fn build_window(
     concordance_picker.attach(&correction_overlay.overlay);
     concordance_picker.overlay.set_vexpand(true);
 
+    // Concordance word picker wraps the concordance picker
+    let concordance_word_picker = crate::ui::concordance_word_picker::ConcordanceWordPicker::new();
+    concordance_word_picker.attach(&concordance_picker.overlay);
+    concordance_word_picker.overlay.set_vexpand(true);
+
+    // Concordance list picker wraps the word picker
+    let concordance_list_picker = crate::ui::concordance_list_picker::ConcordanceListPicker::new();
+    concordance_list_picker.attach(&concordance_word_picker.overlay);
+    concordance_list_picker.overlay.set_vexpand(true);
+
     // Action popup overlay for visual mode
     let action_popup_widget = crate::ui::action_popup::ActionPopup::new();
-    concordance_picker.overlay.add_overlay(&action_popup_widget.container);
+    concordance_list_picker.overlay.add_overlay(&action_popup_widget.container);
+
+    // Concordance status bar
+    let concordance_bar = crate::ui::concordance_bar::ConcordanceBar::new();
 
     // Search bar at bottom
     let search_bar = SearchBar::new();
 
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-    vbox.append(&concordance_picker.overlay);
+    vbox.append(&concordance_list_picker.overlay);
+    vbox.append(&concordance_bar.container);
     vbox.append(&search_bar.container);
 
     window.set_child(Some(&vbox));
@@ -382,6 +400,10 @@ pub fn build_window(
         vocab_popup_view: crate::ui::vocab_popup::VocabView::Definition,
         vocab_popup_auto: false,
         concordance_picker,
+        concordance_state: None,
+        concordance_word_picker,
+        concordance_list_picker,
+        concordance_bar,
     }));
 
     // Connect picker search entry filter
@@ -414,6 +436,15 @@ pub fn build_window(
         s.concordance_picker.search_entry().connect_changed(move |entry| {
             let text = entry.text();
             state_for_concordance_filter.borrow().concordance_picker.populate_list(&text);
+        });
+    }
+
+    // Connect concordance word picker search entry filter
+    let state_for_conc_word_filter = Rc::clone(&state);
+    {
+        let s = state.borrow();
+        s.concordance_word_picker.entry().connect_changed(move |_| {
+            state_for_conc_word_filter.borrow().concordance_word_picker.filter_changed();
         });
     }
 

@@ -1,3 +1,6 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use gtk4::prelude::*;
 
 use crate::app::AppState;
@@ -752,4 +755,159 @@ pub fn jump_to_prev_vocab(state: &mut AppState) {
         crate::config::NavigationMode::EReader => scroll_to_cursor(state),
     }
     seek_to_current_line(state);
+}
+
+// --- Cross-work concordance navigation ---
+
+/// Jump to the current concordance occurrence.
+/// Loads the work if different from current, positions cursor on the line.
+pub fn concordance_jump_to_current(
+    state: &Rc<RefCell<AppState>>,
+    handle: &tokio::runtime::Handle,
+) {
+    let (target_abbrev, target_line_id) = {
+        let s = state.borrow();
+        let conc = match &s.concordance_state {
+            Some(c) => c,
+            None => return,
+        };
+        let hit = match conc.current_hit() {
+            Some(h) => h,
+            None => return,
+        };
+        (hit.work_abbrev.clone(), hit.line_mapping_id)
+    };
+
+    let current_abbrev = state
+        .borrow()
+        .current_work
+        .as_ref()
+        .map(|w| w.abbrev.clone());
+
+    if current_abbrev.as_deref() != Some(&target_abbrev) {
+        // Need to load a different work
+        let state_clone = Rc::clone(state);
+        let handle_clone = handle.clone();
+        let abbrev = target_abbrev.clone();
+
+        // Check if preloaded work matches
+        let preloaded = {
+            let mut s = state_clone.borrow_mut();
+            if let Some(conc) = &mut s.concordance_state {
+                if conc
+                    .preloaded_work
+                    .as_ref()
+                    .map(|p| p.work_abbrev == abbrev)
+                    .unwrap_or(false)
+                {
+                    conc.preloaded_work.take()
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(preloaded) = preloaded {
+            // Use preloaded work
+            let mut s = state_clone.borrow_mut();
+            crate::app::display_work(&mut s, preloaded.work);
+            concordance_position_cursor(&mut s, target_line_id);
+            concordance_update_bar(&s);
+            drop(s);
+            concordance_preload_next(&state_clone, &handle_clone);
+        } else {
+            // Async load via spawn_blocking
+            glib::spawn_future_local(async move {
+                let work = handle_clone
+                    .spawn_blocking(move || {
+                        let conn =
+                            crate::db::queries::open_db().expect("Failed to open lit.db");
+                        crate::db::queries::load_work(&conn, &abbrev).ok()
+                    })
+                    .await
+                    .unwrap_or(None);
+                if let Some(work) = work {
+                    let mut s = state_clone.borrow_mut();
+                    crate::app::display_work(&mut s, work);
+                    concordance_position_cursor(&mut s, target_line_id);
+                    concordance_update_bar(&s);
+                    drop(s);
+                    concordance_preload_next(&state_clone, &handle_clone);
+                }
+            });
+        }
+    } else {
+        // Same work, just move cursor
+        let mut s = state.borrow_mut();
+        concordance_position_cursor(&mut s, target_line_id);
+        concordance_update_bar(&s);
+        drop(s);
+        concordance_preload_next(state, handle);
+    }
+}
+
+/// Position cursor on the line with the given line_mapping_id.
+fn concordance_position_cursor(state: &mut AppState, line_mapping_id: i64) {
+    if let Some(work) = &state.current_work {
+        if let Some(idx) = work.lines.iter().position(|l| l.id == line_mapping_id) {
+            state.current_line = idx;
+            update_highlight(state);
+            center_cursor(state);
+            seek_to_current_line(state);
+        }
+    }
+}
+
+/// Update the concordance status bar from current state.
+fn concordance_update_bar(state: &AppState) {
+    if let Some(conc) = &state.concordance_state {
+        state
+            .concordance_bar
+            .update(&conc.status_label(), &conc.status_work());
+    }
+}
+
+/// Kick off background preload of the next work in the concordance direction.
+fn concordance_preload_next(
+    state: &Rc<RefCell<AppState>>,
+    handle: &tokio::runtime::Handle,
+) {
+    let next_abbrev = {
+        let s = state.borrow();
+        let conc = match &s.concordance_state {
+            Some(c) => c,
+            None => return,
+        };
+        // Preload in forward direction
+        match conc.next_work_abbrev(1) {
+            Some(a) if Some(a) != s.current_work.as_ref().map(|w| w.abbrev.as_str()) => {
+                a.to_string()
+            }
+            _ => return,
+        }
+    };
+
+    let state_clone = Rc::clone(state);
+    let handle_clone = handle.clone();
+    let abbrev = next_abbrev;
+    glib::spawn_future_local(async move {
+        let work = handle_clone
+            .spawn_blocking(move || {
+                let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
+                crate::db::queries::load_work(&conn, &abbrev).ok()
+            })
+            .await
+            .unwrap_or(None);
+        if let Some(work) = work {
+            let mut s = state_clone.borrow_mut();
+            if let Some(conc) = &mut s.concordance_state {
+                conc.preloaded_work = Some(crate::concordance::PreloadedWork {
+                    work_abbrev: work.abbrev.clone(),
+                    work,
+                });
+            }
+        }
+    });
 }

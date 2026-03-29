@@ -6,16 +6,15 @@ GTK4 Rust literature reader with e-reader pagination, MPV audio sync, and vim-st
 
 The app writes debug logs to:
 
-```
-~/utono/linux-lit/linux-lit.log
-```
+- **Dev build** (`cargo run`): `~/utono/linux-lit/linux-lit-dev.log`
+- **Release build**: `~/utono/linux-lit/linux-lit-release.log`
 
 The log is cleared on every app launch. Use `log_fmt!()` macro (from `src/logging.rs`) to add log lines.
 
 When fixing bugs, **always read the log first** before proposing changes:
 
 ```bash
-cat ~/utono/linux-lit/linux-lit.log
+cat ~/utono/linux-lit/linux-lit-dev.log
 ```
 
 ## Build & Run

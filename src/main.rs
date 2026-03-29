@@ -1,5 +1,6 @@
 mod ab_repeat;
 mod app;
+mod concordance;
 mod config;
 mod db;
 mod gutter;
