@@ -1,5 +1,5 @@
 use gtk4::prelude::*;
-use gtk4::{Box as GtkBox, Label, Orientation, Overlay};
+use gtk4::{Box as GtkBox, Fixed, Label, Orientation, Overlay};
 
 /// Data for a single vocab word: definition + etymology + gloss.
 pub struct VocabWordData {
@@ -18,6 +18,7 @@ pub enum VocabView {
 
 pub struct VocabPopup {
     pub overlay: Overlay,
+    fixed: Fixed,
     container: GtkBox,
     content_box: GtkBox,
     header_label: Label,
@@ -28,6 +29,7 @@ pub struct VocabPopup {
 impl VocabPopup {
     pub fn new() -> Self {
         let overlay = Overlay::new();
+        let fixed = Fixed::new();
 
         let content_box = GtkBox::builder()
             .orientation(Orientation::Vertical)
@@ -55,14 +57,6 @@ impl VocabPopup {
         header_row.append(&spacer);
         header_row.append(&counter_label);
 
-        let scrolled = gtk4::ScrolledWindow::builder()
-            .child(&content_box)
-            .hscrollbar_policy(gtk4::PolicyType::Never)
-            .vscrollbar_policy(gtk4::PolicyType::Automatic)
-            .propagate_natural_height(true)
-            .max_content_height(300)
-            .build();
-
         let footer_label = Label::builder()
             .halign(gtk4::Align::Center)
             .build();
@@ -71,18 +65,19 @@ impl VocabPopup {
         let container = GtkBox::builder()
             .orientation(Orientation::Vertical)
             .spacing(0)
-            .halign(gtk4::Align::Center)
-            .valign(gtk4::Align::Start)
-            .width_request(500)
+            .width_request(350)
             .build();
         container.add_css_class("vocab-popup");
         container.append(&header_row);
-        container.append(&scrolled);
+        container.append(&content_box);
         container.append(&footer_label);
         container.set_visible(false);
 
+        fixed.put(&container, 0.0, 0.0);
+
         VocabPopup {
             overlay,
+            fixed,
             container,
             content_box,
             header_label,
@@ -93,7 +88,7 @@ impl VocabPopup {
 
     pub fn attach(&self, base: &impl IsA<gtk4::Widget>) {
         self.overlay.set_child(Some(base));
-        self.overlay.add_overlay(&self.container);
+        self.overlay.add_overlay(&self.fixed);
         self.container.set_visible(false);
     }
 
@@ -101,9 +96,9 @@ impl VocabPopup {
         self.container.set_visible(true);
     }
 
-    /// Set the top margin to position the popup below a given y coordinate.
-    pub fn set_y_position(&self, y: i32) {
-        self.container.set_margin_top(y);
+    /// Position the popup at absolute (x, y) within the overlay.
+    pub fn set_position(&self, x: f64, y: f64) {
+        self.fixed.move_(&self.container, x, y);
     }
 
     pub fn hide(&self) {

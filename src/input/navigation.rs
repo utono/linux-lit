@@ -441,6 +441,7 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
             }
         }
     }
+    auto_show_vocab_popup(state);
 }
 
 /// Update highlight and center the current line on screen.
@@ -449,6 +450,20 @@ pub fn update_highlight_and_center(state: &mut AppState) {
     let lpp = lines_per_page(state);
     let new_top = state.current_line.saturating_sub(lpp / 2);
     set_page_instant(state, new_top);
+    auto_show_vocab_popup(state);
+}
+
+/// If vocab auto-popup is enabled, show/update the popup for the current line.
+fn auto_show_vocab_popup(state: &mut AppState) {
+    if !state.vocab_popup_auto {
+        return;
+    }
+    // If popup is already visible, refresh it for the new line
+    if state.vocab_popup.is_visible() {
+        crate::app::refresh_vocab_popup(state);
+    } else {
+        crate::app::open_vocab_popup(state);
+    }
 }
 
 /// Position chunk's first line ~5 lines from top, move cursor there, update highlight.

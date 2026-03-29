@@ -97,6 +97,7 @@ pub struct AppState {
     pub vocab_popup_data: Vec<crate::ui::vocab_popup::VocabWordData>,
     pub vocab_popup_index: usize,
     pub vocab_popup_view: crate::ui::vocab_popup::VocabView,
+    pub vocab_popup_auto: bool,
     pub concordance_picker: crate::ui::concordance_picker::ConcordancePicker,
 }
 
@@ -379,6 +380,7 @@ pub fn build_window(
         vocab_popup_data: Vec::new(),
         vocab_popup_index: 0,
         vocab_popup_view: crate::ui::vocab_popup::VocabView::Definition,
+        vocab_popup_auto: false,
         concordance_picker,
     }));
 
@@ -1340,36 +1342,39 @@ pub fn open_vocab_popup(state: &mut AppState) {
     state.vocab_popup_index = 0;
     state.vocab_popup_view = VocabView::Definition;
 
-    // Position popup below the highlighted line (accounting for wrapped text)
-    if let Some(mut iter) = state.buffer.iter_at_line(state.current_line as i32) {
-        // Move to end of this buffer line to get the bottom of the last wrapped row
-        if !iter.ends_line() {
-            iter.forward_to_line_end();
-        }
-        let buf_loc = state.text_view.iter_location(&iter);
-        let bottom_y = buf_loc.y() + buf_loc.height();
-        let (_, wy) = state.text_view.buffer_to_window_coords(
-            gtk4::TextWindowType::Widget,
-            0,
-            bottom_y,
-        );
-        let point = gtk4::graphene::Point::new(0.0, wy as f32);
-        if let Some(out) = state.text_view.compute_point(
-            &state.vocab_popup.overlay,
-            &point,
-        ) {
-            state.vocab_popup.set_y_position((out.y() as i32 + 4).max(0));
-        }
-    }
-
-    state.scrolled_window.set_opacity(0.3);
+    position_vocab_popup(state);
     show_vocab_popup(state);
 }
 
-/// Hide the vocab popup and restore text opacity.
+/// Position the vocab popup to the right of the text card, aligned with the current line.
+fn position_vocab_popup(state: &AppState) {
+    if let Some(iter) = state.buffer.iter_at_line(state.current_line as i32) {
+        let buf_loc = state.text_view.iter_location(&iter);
+        let (_, wy) = state.text_view.buffer_to_window_coords(
+            gtk4::TextWindowType::Widget,
+            0,
+            buf_loc.y(),
+        );
+
+        // Get the right edge of the scrolled window in overlay coordinates
+        let right_point = gtk4::graphene::Point::new(
+            state.scrolled_window.width() as f32,
+            wy as f32,
+        );
+        if let Some(out) = state.scrolled_window.compute_point(
+            &state.vocab_popup.overlay,
+            &right_point,
+        ) {
+            let x = (out.x() as f64 + 12.0).max(0.0);
+            let y = (out.y() as f64).max(0.0);
+            state.vocab_popup.set_position(x, y);
+        }
+    }
+}
+
+/// Hide the vocab popup.
 pub fn close_vocab_popup(state: &AppState) {
     state.vocab_popup.hide();
-    state.scrolled_window.set_opacity(1.0);
 }
 
 /// Render the current vocab popup entry.
@@ -1392,6 +1397,66 @@ pub fn show_vocab_popup(state: &AppState) {
         work_abbrev,
     );
     state.vocab_popup.show();
+}
+
+/// Refresh the vocab popup for the current line during playback sync.
+/// If the new line has vocab words, update the popup content and position.
+/// If it has none, close the popup.
+pub fn refresh_vocab_popup(state: &mut AppState) {
+    if !state.vocab_popup.is_visible() {
+        return;
+    }
+
+    use crate::ui::vocab_popup::{VocabWordData, VocabView};
+
+    let conn = match crate::db::queries::open_db() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let work_abbrev = state.current_work.as_ref().map(|w| w.abbrev.clone());
+    let citation = state.current_work.as_ref().and_then(|work| {
+        let work_line = state.work_line_for_buffer(state.current_line)?;
+        let line = work.lines.get(work_line)?;
+        Some(line.citation.clone())
+    });
+
+    let mut seen = std::collections::HashSet::new();
+    let words: Vec<String> = state
+        .vocab_matches
+        .iter()
+        .filter(|m| m.line_index == state.current_line)
+        .filter(|m| seen.insert(m.word.clone()))
+        .map(|m| m.word.clone())
+        .collect();
+
+    if words.is_empty() {
+        close_vocab_popup(state);
+        return;
+    }
+
+    state.vocab_popup_data = words
+        .into_iter()
+        .map(|w| {
+            let definition = crate::db::queries::load_vocab_definition(&conn, &w)
+                .map(|(d, _)| d);
+            let etymology_markup = crate::db::queries::load_vocab_etymology(&conn, &w)
+                .map(|e| format_etymology(&e, &state.theme.vocab_fg));
+            let gloss = match (&work_abbrev, &citation) {
+                (Some(abbrev), Some(cit)) => {
+                    crate::db::queries::load_vocab_gloss(&conn, &w, abbrev, cit)
+                }
+                _ => None,
+            };
+            VocabWordData { word: w, definition, etymology_markup, gloss }
+        })
+        .collect();
+
+    state.vocab_popup_index = 0;
+    state.vocab_popup_view = VocabView::Definition;
+
+    position_vocab_popup(state);
+    show_vocab_popup(state);
 }
 
 /// Cycle to the next vocab word in the popup.

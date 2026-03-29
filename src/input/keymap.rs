@@ -626,7 +626,7 @@ pub fn handle_key(
         }
     }
 
-    // Vocab popup keys
+    // Vocab popup keys (when popup is visible and auto mode is on)
     if state.borrow().vocab_popup.is_visible() {
         match key_name {
             "n" => {
@@ -637,15 +637,12 @@ pub fn handle_key(
                 crate::app::vocab_popup_toggle_view(&mut state.borrow_mut());
                 return true;
             }
-            "h" | "Escape" => {
-                crate::app::close_vocab_popup(&state.borrow());
-                return true;
-            }
             "Tab" => {
                 crate::input::search::toggle_playback(&mut state.borrow_mut());
                 return true;
             }
-            _ => return false,
+            // Let h, j, k, Escape, and other keys fall through to normal handling
+            _ => {}
         }
     }
 
@@ -870,7 +867,13 @@ pub fn handle_key(
             true
         }
         "h" => {
-            crate::app::open_vocab_popup(&mut state.borrow_mut());
+            let mut s = state.borrow_mut();
+            s.vocab_popup_auto = !s.vocab_popup_auto;
+            if s.vocab_popup_auto {
+                crate::app::open_vocab_popup(&mut s);
+            } else {
+                crate::app::close_vocab_popup(&s);
+            }
             true
         }
         "Escape" => {
