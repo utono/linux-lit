@@ -105,10 +105,8 @@ pub struct AppState {
     pub concordance_bar: crate::ui::concordance_bar::ConcordanceBar,
     /// Index of the current sentence group (for prose with text_file).
     pub current_sentence_group: Option<usize>,
-    /// Scheduled scroll to a buffer line when time_pos reaches the threshold.
-    /// (threshold_time, target_buffer_line). Used to delay scrolling until
-    /// 0.2s before the next sentence starts in prose mode.
-    pub pending_sentence_scroll: Option<(f64, usize)>,
+    /// Tracks the start line of the current paragraph to detect transitions.
+    pub current_paragraph_start: Option<usize>,
 }
 
 impl AppState {
@@ -143,6 +141,40 @@ impl AppState {
             }
         }
         false
+    }
+
+    /// Return the line range (start..end exclusive) of the current paragraph
+    /// (contiguous non-blank lines around current_line).
+    pub fn current_paragraph_range(&self) -> std::ops::Range<usize> {
+        let line_count = self.buffer.line_count() as usize;
+        if self.current_line >= line_count {
+            return 0..0;
+        }
+
+        let is_blank = |line: usize| -> bool {
+            let Some(start_it) = self.buffer.iter_at_line(line as i32) else {
+                return true;
+            };
+            let mut end_it = start_it;
+            if !end_it.ends_line() {
+                end_it.forward_to_line_end();
+            }
+            self.buffer.text(&start_it, &end_it, false).trim().is_empty()
+        };
+
+        // Find paragraph start: walk backwards from current_line
+        let mut start = self.current_line;
+        while start > 0 && !is_blank(start - 1) {
+            start -= 1;
+        }
+
+        // Find paragraph end (exclusive): walk forwards from current_line
+        let mut end = self.current_line + 1;
+        while end < line_count && !is_blank(end) {
+            end += 1;
+        }
+
+        start..end
     }
 }
 
@@ -427,7 +459,7 @@ pub fn build_window(
         concordance_list_picker,
         concordance_bar,
         current_sentence_group: None,
-        pending_sentence_scroll: None,
+        current_paragraph_start: None,
     }));
 
     // Connect picker search entry filter
@@ -1368,20 +1400,25 @@ pub fn open_vocab_popup(state: &mut AppState) {
         Some(line.citation.clone())
     });
 
-    // Collect unique vocab words on current line (or sentence group)
+    // Collect unique vocab words in the current paragraph
+    let para_range = state.current_paragraph_range();
+    crate::logging::log(&format!(
+        "VOCAB POPUP: current_line={} paragraph={}..{}", state.current_line, para_range.start, para_range.end
+    ));
     let mut seen = std::collections::HashSet::new();
     let words: Vec<String> = state
         .vocab_matches
         .iter()
-        .filter(|m| state.is_in_current_sentence(m.line_index))
+        .filter(|m| para_range.contains(&m.line_index))
         .filter(|m| seen.insert(m.word.clone()))
         .map(|m| m.word.clone())
         .collect();
 
     if words.is_empty() {
-        crate::logging::log("VOCAB POPUP: no vocab words on current line");
+        crate::logging::log("VOCAB POPUP: no vocab words in current paragraph");
         return;
     }
+    crate::logging::log(&format!("VOCAB POPUP: {} words: {:?}", words.len(), words));
 
     state.vocab_popup_data = words
         .into_iter()
@@ -1487,11 +1524,12 @@ pub fn refresh_vocab_popup(state: &mut AppState) {
         Some(line.citation.clone())
     });
 
+    let para_range = state.current_paragraph_range();
     let mut seen = std::collections::HashSet::new();
     let words: Vec<String> = state
         .vocab_matches
         .iter()
-        .filter(|m| state.is_in_current_sentence(m.line_index))
+        .filter(|m| para_range.contains(&m.line_index))
         .filter(|m| seen.insert(m.word.clone()))
         .map(|m| m.word.clone())
         .collect();

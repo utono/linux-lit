@@ -534,6 +534,30 @@ pub fn update_highlight_only(state: &mut AppState) {
     auto_show_vocab_popup(state);
 }
 
+/// Scroll so that a paragraph's first line lands at the cursor position
+/// (~35% down the viewport). Used when playback crosses a paragraph boundary.
+pub fn scroll_paragraph_to_top(state: &mut AppState, para_start: usize) {
+    match state.config.navigation_mode {
+        crate::config::NavigationMode::Scroll => {
+            let adj = state.scrolled_window.vadjustment();
+            let max_scroll = adj.upper() - adj.page_size();
+            if max_scroll <= 0.0 {
+                return;
+            }
+            let line_y = scroll_value_for_line(state, para_start);
+            let offset = adj.page_size() * 0.35;
+            let val = (line_y - offset).max(0.0).min(max_scroll);
+            adj.set_value(val);
+        }
+        crate::config::NavigationMode::EReader => {
+            let lpp = lines_per_page(state);
+            let cursor_offset = lpp * 35 / 100;
+            let new_top = para_start.saturating_sub(cursor_offset);
+            set_page(state, new_top);
+        }
+    }
+}
+
 /// Scroll to make the current line visible without re-applying highlight.
 /// Used for deferred prose sentence scrolling.
 pub fn ensure_visible_no_highlight(state: &mut AppState) {
@@ -598,6 +622,37 @@ pub fn position_chunk(state: &mut AppState) {
 
 /// Update visual state for the current line (visual selection highlighting).
 fn update_highlight(state: &AppState) {
+    let buffer = &state.buffer;
+    let tag = &state.dim_tag;
+    let (buf_start, buf_end) = buffer.bounds();
+
+    // Dim the entire buffer
+    buffer.apply_tag(tag, &buf_start, &buf_end);
+
+    // Undim the current line
+    if let Some(line_start) = buffer.iter_at_line(state.current_line as i32) {
+        let mut line_end = line_start;
+        if !line_end.ends_line() {
+            line_end.forward_to_line_end();
+        }
+        buffer.remove_tag(tag, &line_start, &line_end);
+    }
+
+    // When a chunk is active, undim all lines within the chunk range
+    if state.ab_repeat.chunk_index.is_some() {
+        if let (Some(a), Some(b)) = (state.ab_repeat.a_line, state.ab_repeat.b_line) {
+            for line_idx in a..=b {
+                if let Some(line_start) = buffer.iter_at_line(line_idx as i32) {
+                    let mut line_end = line_start;
+                    if !line_end.ends_line() {
+                        line_end.forward_to_line_end();
+                    }
+                    buffer.remove_tag(tag, &line_start, &line_end);
+                }
+            }
+        }
+    }
+
     // When visual selection is active, highlight selected lines
     crate::input::visual::apply_selection_highlight(state);
 }
