@@ -654,6 +654,12 @@ pub fn display_work(state: &mut AppState, work: Work) {
             ));
         }
     }
+    if let Some(ref work) = state.current_work {
+        if !work.phrases.is_empty() {
+            crate::logging::log(&format!("PHRASES: loaded {} phrases", work.phrases.len()));
+        }
+    }
+
     build_vocab_matches(state);
     if state.vocab_highlight_visible {
         apply_vocab_highlighting(state);
