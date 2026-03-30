@@ -385,8 +385,11 @@ pub fn sentence_group_index(groups: &[SentenceGroup], buffer_line: usize) -> Opt
 }
 
 /// Find the sentence group containing `buffer_line`, if any.
+/// Note: mid-line boundaries cause adjacent groups to share a line (e.g. [0..1, 0..2]).
+/// Binary search may return either group for the shared line. This is acceptable because
+/// update_highlight uses whichever group contains current_line, and during playback the
+/// cursor advances to the later group naturally.
 pub fn sentence_group_for(groups: &[SentenceGroup], buffer_line: usize) -> Option<&SentenceGroup> {
-    // Binary search: groups are sorted and non-overlapping
     groups
         .binary_search_by(|g| {
             if buffer_line < g.line_range.start {
