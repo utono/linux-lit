@@ -203,10 +203,35 @@ fn main() {
                             "MPV playback: {}",
                             if playing { "playing" } else { "paused" }
                         ));
+                        if !playing {
+                            let mut s = state_for_events.borrow_mut();
+                            crate::input::navigation::exit_phrase_mode(&mut s);
+                        }
                     }
                     MpvEvent::TimePos(pos) => {
                         let mut s = state_for_events.borrow_mut();
                         s.current_time_pos = pos;
+
+                        // Phrase highlighting during playback
+                        if let Some(ref work) = s.current_work {
+                            if !work.phrases.is_empty() {
+                                let new_idx = crate::input::navigation::find_phrase_for_time(
+                                    &work.phrases, pos,
+                                );
+                                if new_idx != s.current_phrase {
+                                    if !s.phrase_playing {
+                                        // Entering phrase mode — remove dim tags
+                                        let (bs, be) = s.buffer.bounds();
+                                        s.buffer.remove_tag(&s.dim_tag, &bs, &be);
+                                        s.phrase_playing = true;
+                                    }
+                                    crate::input::navigation::update_phrase_highlight(
+                                        &mut s, new_idx,
+                                    );
+                                }
+                            }
+                        }
+
                         // Advance to untimestamped next line when current line's audio ends
                         if let Some((end_time, next_bl)) = s.pending_advance {
                             if pos >= end_time {

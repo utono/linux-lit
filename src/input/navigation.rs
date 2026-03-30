@@ -602,6 +602,98 @@ fn auto_show_vocab_popup(state: &mut AppState) {
     }
 }
 
+/// Find the phrase index for a given time position using binary search.
+pub fn find_phrase_for_time(phrases: &[crate::db::models::Phrase], time_pos: f64) -> Option<usize> {
+    if phrases.is_empty() {
+        return None;
+    }
+    let idx = phrases.partition_point(|p| p.start_time <= time_pos);
+    if idx == 0 {
+        return None;
+    }
+    let phrase = &phrases[idx - 1];
+    if time_pos <= phrase.end_time {
+        Some(idx - 1)
+    } else {
+        None
+    }
+}
+
+/// Apply phrase highlight tag to the active phrase, removing from previous position.
+pub fn update_phrase_highlight(state: &mut AppState, new_phrase_idx: Option<usize>) {
+    let buffer = &state.buffer;
+    let tag = &state.phrase_tag;
+
+    // Remove old phrase highlight
+    if state.current_phrase.is_some() {
+        let (buf_start, buf_end) = buffer.bounds();
+        buffer.remove_tag(tag, &buf_start, &buf_end);
+    }
+
+    state.current_phrase = new_phrase_idx;
+
+    let phrase_idx = match new_phrase_idx {
+        Some(idx) => idx,
+        None => return,
+    };
+
+    let work = match &state.current_work {
+        Some(w) => w,
+        None => return,
+    };
+
+    let phrase = match work.phrases.get(phrase_idx) {
+        Some(p) => p,
+        None => return,
+    };
+
+    // Find buffer line for this phrase's line_id
+    let work_idx = work.lines.iter().position(|l| l.id == phrase.line_id);
+    let buffer_line = match work_idx {
+        Some(wi) => {
+            if let Some(ref lm) = state.line_map {
+                if wi < lm.work_to_buffer.len() {
+                    lm.work_to_buffer[wi]
+                } else {
+                    return;
+                }
+            } else {
+                wi
+            }
+        }
+        None => return,
+    };
+
+    // Apply tag to character range
+    if let Some(line_start) = buffer.iter_at_line(buffer_line as i32) {
+        let mut start_iter = line_start;
+        start_iter.set_line_offset(phrase.start_char as i32);
+
+        let mut end_iter = line_start;
+        end_iter.set_line_offset(phrase.end_char as i32);
+
+        buffer.apply_tag(tag, &start_iter, &end_iter);
+    }
+
+    // Update current_line to track the phrase's line for scrolling
+    if state.current_line != buffer_line {
+        state.current_line = buffer_line;
+        ensure_visible_no_highlight(state);
+    }
+}
+
+/// Remove phrase highlighting and revert to sentence dim model.
+pub fn exit_phrase_mode(state: &mut AppState) {
+    if state.phrase_playing {
+        let (buf_start, buf_end) = state.buffer.bounds();
+        state.buffer.remove_tag(&state.phrase_tag, &buf_start, &buf_end);
+        state.current_phrase = None;
+        state.phrase_playing = false;
+        // Restore sentence highlighting
+        update_highlight(state);
+    }
+}
+
 /// Position chunk's first line ~5 lines from top, move cursor there, update highlight.
 pub fn position_chunk(state: &mut AppState) {
     if let Some(a_line) = state.ab_repeat.a_line {
