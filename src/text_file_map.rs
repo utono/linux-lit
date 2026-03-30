@@ -225,11 +225,14 @@ fn ends_sentence_at_eol(line: &str) -> bool {
     matches!(effective, '.' | '!' | '?')
 }
 
-/// Check for an intra-line sentence boundary: sentence-ending punctuation
-/// (optionally followed by a closing quote) followed by a space and an
-/// uppercase letter (e.g. "...fog. On such an afternoon").
-fn has_mid_line_sentence_boundary(line: &str) -> bool {
-    let chars: Vec<char> = line.trim().chars().collect();
+/// Find the character offset of a mid-line sentence boundary.
+/// Returns the character offset (not byte offset) of the first character
+/// of the new sentence (the uppercase letter after punctuation + optional
+/// quote + space). This is a character offset suitable for
+/// `TextIter::set_line_offset()`.
+/// Returns None if no mid-line boundary exists.
+fn find_mid_line_sentence_boundary(line: &str) -> Option<usize> {
+    let chars: Vec<char> = line.chars().collect();
     for i in 0..chars.len() {
         if matches!(chars[i], '.' | '!' | '?') {
             let mut j = i + 1;
@@ -239,11 +242,15 @@ fn has_mid_line_sentence_boundary(line: &str) -> bool {
             }
             // Expect space then uppercase
             if j + 1 < chars.len() && chars[j] == ' ' && chars[j + 1].is_uppercase() {
-                return true;
+                return Some(j + 1);
             }
         }
     }
-    false
+    None
+}
+
+fn has_mid_line_sentence_boundary(line: &str) -> bool {
+    find_mid_line_sentence_boundary(line).is_some()
 }
 
 #[cfg(test)]
@@ -546,6 +553,67 @@ mod tests {
         assert_eq!(sentence_group_for(&groups, 7), Some(&sg(6..8)));
         assert_eq!(sentence_group_for(&groups, 11), Some(&sg(9..12)));
         assert_eq!(sentence_group_for(&groups, 12), None);
+    }
+
+    #[test]
+    fn test_find_mid_line_sentence_boundary() {
+        // Basic case: period + space + uppercase
+        // "end of the fog. On such an afternoon"
+        //  0123456789012345^-- char 16 is 'O'
+        assert_eq!(
+            find_mid_line_sentence_boundary("end of the fog. On such an afternoon"),
+            Some(16)
+        );
+
+        // Exclamation mark
+        // "incredible! The next day"
+        //  0123456789012^-- char 12 is 'T'
+        assert_eq!(
+            find_mid_line_sentence_boundary("incredible! The next day"),
+            Some(12)
+        );
+
+        // Question mark
+        // "is it? Yes it is."
+        //  0123456^-- char 7 is 'Y'
+        assert_eq!(
+            find_mid_line_sentence_boundary("is it? Yes it is."),
+            Some(7)
+        );
+
+        // Closing quote before space
+        // "the end." And then"
+        //  0123456789^-- char 10 is 'A'
+        assert_eq!(
+            find_mid_line_sentence_boundary("the end.\" And then"),
+            Some(10)
+        );
+
+        // Right double quote (U+201D) — note: U+201D is 1 char
+        // "the end.\u{201D} And then"
+        //  0123456789^-- char 10 is 'A'
+        assert_eq!(
+            find_mid_line_sentence_boundary("the end.\u{201D} And then"),
+            Some(10)
+        );
+
+        // No boundary
+        assert_eq!(
+            find_mid_line_sentence_boundary("no boundary here at all"),
+            None
+        );
+
+        // Period but no uppercase after
+        assert_eq!(
+            find_mid_line_sentence_boundary("Mr. smith went home"),
+            None
+        );
+
+        // Period at end of line (not mid-line)
+        assert_eq!(
+            find_mid_line_sentence_boundary("the end."),
+            None
+        );
     }
 
     #[test]
