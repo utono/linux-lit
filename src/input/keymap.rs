@@ -802,11 +802,11 @@ pub fn handle_key(
     // Single keys
     match key_name {
         "j" => {
-            navigation::move_cursor(&mut state.borrow_mut(), 1);
+            navigation::scroll_viewport(&mut state.borrow_mut(), 1);
             true
         }
         "k" => {
-            navigation::move_cursor(&mut state.borrow_mut(), -1);
+            navigation::scroll_viewport(&mut state.borrow_mut(), -1);
             true
         }
         "g" => {

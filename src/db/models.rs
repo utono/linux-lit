@@ -37,6 +37,8 @@ pub struct Line {
 pub struct TimeRange {
     pub start: f64,
     pub end: f64,
+    pub sentence_start: Option<f64>,
+    pub sentence_end: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -46,6 +48,8 @@ pub struct Timestamp {
     pub start: f64,
     pub end: f64,
     pub media_id: i64,
+    pub sentence_start: Option<f64>,
+    pub sentence_end: Option<f64>,
 }
 
 #[derive(Debug, Clone)]

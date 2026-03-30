@@ -118,7 +118,7 @@ pub struct ActionPopupState {
 }
 
 /// Built-in action names, in display order.
-pub const BUILTIN_ACTIONS: &[&str] = &["Gloss with LLM", "Copy", "Copy with metadata"];
+pub const BUILTIN_ACTIONS: &[&str] = &["Copy", "Copy with metadata", "Gloss with ollama"];
 
 /// Determine which built-in actions are available for the current work.
 pub fn available_builtin_actions(_state: &AppState) -> Vec<&'static str> {
@@ -160,12 +160,12 @@ pub fn execute_action(
 
     if index < builtin_count {
         match index {
-            0 => {
+            0 => action_copy(&mut state_rc.borrow_mut(), false),
+            1 => action_copy(&mut state_rc.borrow_mut(), true),
+            2 => {
                 action_gloss_with_llm(state_rc);
                 return; // async — don't exit visual mode yet
             }
-            1 => action_copy(&mut state_rc.borrow_mut(), false),
-            2 => action_copy(&mut state_rc.borrow_mut(), true),
             _ => {}
         }
     } else {

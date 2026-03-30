@@ -78,7 +78,8 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
 
     // 3. Load timestamps
     let mut ts_stmt = conn.prepare(
-        "SELECT lt.line_mapping_id, lt.start_time, lt.end_time, lt.media_id \
+        "SELECT lt.line_mapping_id, lt.start_time, lt.end_time, lt.media_id, \
+         lt.sentence_start_time, lt.sentence_end_time \
          FROM line_timestamps lt \
          JOIN line_mapping lm ON lt.line_mapping_id = lm.id \
          WHERE lm.work_abbrev = ?1",
@@ -90,6 +91,8 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
                 start: row.get::<_, Option<f64>>(1)?.unwrap_or(0.0),
                 end: row.get::<_, Option<f64>>(2)?.unwrap_or(0.0),
                 media_id: row.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                sentence_start: row.get::<_, Option<f64>>(4)?,
+                sentence_end: row.get::<_, Option<f64>>(5)?,
             })
         })?
         .collect::<Result<_, _>>()?;
@@ -114,6 +117,8 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
             ts_map.entry(ts.line_id).or_insert(TimeRange {
                 start: ts.start,
                 end: ts.end,
+                sentence_start: ts.sentence_start,
+                sentence_end: ts.sentence_end,
             });
         }
     }
