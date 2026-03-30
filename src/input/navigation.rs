@@ -641,18 +641,43 @@ fn update_highlight(state: &AppState) {
     // Apply dim to entire buffer
     buffer.apply_tag(tag, &buf_start, &buf_end);
 
-    // Remove dim from current line (or sentence group for prose) to restore full brightness
-    let sentence_range = state.line_map.as_ref().and_then(|lm| {
+    // Remove dim from current sentence group (with character-level precision on boundary lines)
+    let sentence_group = state.line_map.as_ref().and_then(|lm| {
         crate::text_file_map::sentence_group_for(&lm.sentence_groups, state.current_line)
     });
-    if let Some(group) = sentence_range {
+    if let Some(group) = sentence_group {
+        let first_line = group.line_range.start;
+        let last_line = group.line_range.end.saturating_sub(1);
         for line_idx in group.line_range.clone() {
             if let Some(line_start) = buffer.iter_at_line(line_idx as i32) {
                 let mut line_end = line_start;
                 if !line_end.ends_line() {
                     line_end.forward_to_line_end();
                 }
-                buffer.remove_tag(tag, &line_start, &line_end);
+
+                let undim_start = if line_idx == first_line && group.start_col > 0 {
+                    // First line: undim from start_col to end of line
+                    let mut iter = line_start;
+                    iter.set_line_offset(group.start_col as i32);
+                    iter
+                } else {
+                    line_start
+                };
+
+                let undim_end = if line_idx == last_line {
+                    if let Some(end_col) = group.end_col {
+                        // Last line: undim from start of line to end_col
+                        let mut iter = line_start;
+                        iter.set_line_offset(end_col as i32);
+                        iter
+                    } else {
+                        line_end
+                    }
+                } else {
+                    line_end
+                };
+
+                buffer.remove_tag(tag, &undim_start, &undim_end);
             }
         }
     } else if let Some(line_start) = buffer.iter_at_line(state.current_line as i32) {
