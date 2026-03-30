@@ -189,8 +189,10 @@ pub fn build_line_map(file_lines: &[String], work_lines: &[Line], is_prose: bool
 
     // Sentence groups: contiguous buffer-line ranges forming sentences (prose only)
     let sentence_groups = if is_prose {
-        build_sentence_groups_from_db(&buffer_to_work, work_lines)
-            .unwrap_or_else(|| build_sentence_groups(file_lines))
+        let mut groups = build_sentence_groups_from_db(&buffer_to_work, work_lines)
+            .unwrap_or_else(|| build_sentence_groups(file_lines));
+        apply_mid_line_offsets(&mut groups, file_lines);
+        groups
     } else {
         Vec::new()
     };
@@ -252,6 +254,39 @@ fn find_mid_line_sentence_boundary(line: &str) -> Option<usize> {
 #[cfg(test)]
 fn ends_sentence(line: &str) -> bool {
     ends_sentence_at_eol(line) || find_mid_line_sentence_boundary(line).is_some()
+}
+
+/// Scan adjacent sentence groups for mid-line boundaries and populate
+/// `start_col`/`end_col` on shared boundary lines. Works on both DB-driven
+/// and heuristic groups.
+fn apply_mid_line_offsets(groups: &mut [SentenceGroup], file_lines: &[String]) {
+    for i in 0..groups.len().saturating_sub(1) {
+        let cur_last = groups[i].line_range.end.saturating_sub(1);
+        let next_first = groups[i + 1].line_range.start;
+
+        // Only applies when adjacent groups share a boundary line or are on consecutive lines
+        // Check the last line of the current group for a mid-line sentence boundary
+        if cur_last < file_lines.len() {
+            if let Some(split) = find_mid_line_sentence_boundary(&file_lines[cur_last]) {
+                // Current group ends at the split point on its last line
+                if groups[i].end_col.is_none() {
+                    groups[i].end_col = Some(split);
+                }
+                // Next group starts at the split point — extend its range to include the shared line
+                if next_first == cur_last {
+                    // Already shares the line
+                    if groups[i + 1].start_col == 0 {
+                        groups[i + 1].start_col = split;
+                    }
+                } else if next_first == cur_last + 1 {
+                    // Adjacent lines — the next group's first line is the line after;
+                    // the split is on cur_last, so extend the next group to include it
+                    groups[i + 1].line_range.start = cur_last;
+                    groups[i + 1].start_col = split;
+                }
+            }
+        }
+    }
 }
 
 /// Build sentence groups from DB-provided sentence_start_time values.
@@ -735,5 +770,44 @@ mod tests {
         // This means "B. C" won't be detected as a separate boundary on the same line.
         // This is acceptable for word-level splitting — a known limitation.
         assert!(groups.len() >= 2);
+    }
+
+    #[test]
+    fn test_apply_mid_line_offsets_on_db_style_groups() {
+        // Simulate DB-produced groups: each line belongs to one group, no char offsets
+        let file_lines: Vec<String> = vec![
+            "Jarndyce and Jarndyce shall be got out of the office. Shirking and".into(),
+            "sharking in all their many varieties.".into(),
+        ];
+        let mut groups = vec![
+            SentenceGroup { line_range: 0..1, start_col: 0, end_col: None },
+            SentenceGroup { line_range: 1..2, start_col: 0, end_col: None },
+        ];
+        apply_mid_line_offsets(&mut groups, &file_lines);
+
+        // First group should now end at the split point on line 0
+        assert_eq!(groups[0].end_col, Some(54)); // "...office. " then 'S' at char 54
+        // Second group should now start at line 0 with start_col at the split
+        assert_eq!(groups[1].line_range.start, 0);
+        assert_eq!(groups[1].start_col, 54);
+    }
+
+    #[test]
+    fn test_apply_mid_line_offsets_no_boundary() {
+        // Adjacent groups where the boundary line has no mid-line split
+        let file_lines: Vec<String> = vec![
+            "This line ends with a period.".into(),
+            "This line starts a new sentence.".into(),
+        ];
+        let mut groups = vec![
+            SentenceGroup { line_range: 0..1, start_col: 0, end_col: None },
+            SentenceGroup { line_range: 1..2, start_col: 0, end_col: None },
+        ];
+        apply_mid_line_offsets(&mut groups, &file_lines);
+
+        // No mid-line boundary — groups unchanged
+        assert_eq!(groups[0].end_col, None);
+        assert_eq!(groups[1].start_col, 0);
+        assert_eq!(groups[1].line_range.start, 1);
     }
 }
