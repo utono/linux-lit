@@ -227,6 +227,34 @@ fn ends_sentence_at_eol(line: &str) -> bool {
     matches!(effective, '.' | '!' | '?')
 }
 
+/// Common abbreviations that end with a period but don't end a sentence.
+const ABBREVIATIONS: &[&str] = &[
+    "Mr", "Mrs", "Ms", "Dr", "St", "Rev", "Prof", "Gen", "Gov", "Sgt",
+    "Capt", "Lt", "Col", "Jr", "Sr", "vs", "etc", "Vol", "No",
+];
+
+/// Check if the word immediately before `dot_pos` (a period) in `chars` is an abbreviation.
+fn is_abbreviation(chars: &[char], dot_pos: usize) -> bool {
+    // Walk backwards from the character before the dot to find the word start
+    if dot_pos == 0 {
+        return false;
+    }
+    let end = dot_pos; // exclusive — the dot itself
+    let mut start = dot_pos;
+    for k in (0..dot_pos).rev() {
+        if chars[k].is_alphabetic() {
+            start = k;
+        } else {
+            break;
+        }
+    }
+    if start == end {
+        return false;
+    }
+    let word: String = chars[start..end].iter().collect();
+    ABBREVIATIONS.iter().any(|&abbr| abbr == word)
+}
+
 /// Find the character offset of a mid-line sentence boundary.
 /// Returns the character offset (not byte offset) of the first character
 /// of the new sentence (the uppercase letter after punctuation + optional
@@ -237,6 +265,10 @@ fn find_mid_line_sentence_boundary(line: &str) -> Option<usize> {
     let chars: Vec<char> = line.chars().collect();
     for i in 0..chars.len() {
         if matches!(chars[i], '.' | '!' | '?') {
+            // Skip abbreviations (only relevant for periods)
+            if chars[i] == '.' && is_abbreviation(&chars, i) {
+                continue;
+            }
             let mut j = i + 1;
             // Skip optional closing quote
             if j < chars.len() && matches!(chars[j], '"' | '\'' | '\u{201D}' | '\u{2019}') {
@@ -705,6 +737,28 @@ mod tests {
         assert_eq!(
             find_mid_line_sentence_boundary("Mr. smith went home"),
             None
+        );
+
+        // Abbreviation with uppercase after — not a sentence boundary
+        assert_eq!(
+            find_mid_line_sentence_boundary("Mr. Tangle on his legs again."),
+            None
+        );
+
+        // Multiple abbreviations in a line
+        assert_eq!(
+            find_mid_line_sentence_boundary("Dr. Smith and Mrs. Jones arrived."),
+            None
+        );
+
+        // Abbreviation followed by real sentence boundary
+        // "said Mr. Tangle prematurely. In reference,"
+        //  0         1         2
+        //  0123456789012345678901234567890
+        // The "Mr. T" is an abbreviation (skip), but ". I" at pos 27 is a real boundary
+        assert_eq!(
+            find_mid_line_sentence_boundary("said Mr. Tangle prematurely. In reference,"),
+            Some(29)
         );
 
         // Period at end of line (not mid-line)
