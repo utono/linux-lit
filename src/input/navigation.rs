@@ -54,7 +54,7 @@ pub fn move_cursor(state: &mut AppState, delta: i32) {
     state.current_line = new_line;
     update_highlight(state);
 
-    center_cursor(state);
+    scroll_to_cursor(state);
 
     auto_show_vocab_popup(state);
 }
@@ -137,113 +137,97 @@ pub fn page_backward(state: &mut AppState) {
 
 /// Previous dialogue line (`,` key).
 /// If cursor is at the top line of the page, just page backward (don't move cursor).
-/// Otherwise, jump to the previous dialogue line.
-/// When a media_id is active, skips lines marked as not spoken in that media.
-pub fn jump_to_prev_dialogue(state: &mut AppState) {
-    let has_media = state.media_id.is_some();
-    let target = {
-        let work = match &state.current_work {
-            Some(w) => w,
-            None => return,
-        };
-        if state.current_line == 0 {
-            return;
-        }
+/// Previous paragraph (`,` key).
+/// Jump to the first non-blank line of the previous paragraph (separated by blank lines).
+pub fn jump_to_prev_paragraph(state: &mut AppState) {
+    let line_count = state.buffer.line_count() as usize;
+    if state.current_line == 0 || line_count == 0 {
+        return;
+    }
 
-        if let Some(ref lm) = state.line_map {
-            // Prose with sentence groups: navigate between sentences
-            if !lm.sentence_groups.is_empty() {
-                prev_sentence_start(&lm.sentence_groups, state.current_line)
-            } else {
-                let lines = if has_media {
-                    &lm.spoken_dialogue_buffer_lines
-                } else {
-                    &lm.dialogue_buffer_lines
-                };
-                lines
-                    .iter()
-                    .rev()
-                    .find(|&&bl| bl < state.current_line)
-                    .copied()
-            }
-        } else {
-            let mut found = None;
-            for i in (0..state.current_line).rev() {
-                if work.lines[i].is_dialogue
-                    && (!has_media || work.lines[i].is_spoken != Some(false))
-                {
-                    found = Some(i);
-                    break;
-                }
-            }
-            found
+    let buffer = &state.buffer;
+    let mut i = state.current_line.saturating_sub(1);
+
+    // Skip blank lines immediately above
+    while i > 0 && is_blank_buffer_line(buffer, i) {
+        i -= 1;
+    }
+    // Skip non-blank lines (current paragraph body)
+    while i > 0 && !is_blank_buffer_line(buffer, i) {
+        i -= 1;
+    }
+    // Now i is on a blank line (or 0). Find the first non-blank line of the paragraph above.
+    // If i is 0 and non-blank, that's the target. Otherwise advance past the blank.
+    let target = if is_blank_buffer_line(buffer, i) {
+        // We're between paragraphs — but we want the paragraph *above*, so go up more
+        // Actually we've already passed through the paragraph above. The first non-blank
+        // line after this blank gap is the start of the paragraph we just skipped through.
+        // We need to find the start of the paragraph we were in.
+        // Re-approach: from i, go forward to find the first non-blank line.
+        let mut start = i + 1;
+        while start < line_count && is_blank_buffer_line(buffer, start) {
+            start += 1;
         }
+        if start < line_count && start < state.current_line {
+            Some(start)
+        } else {
+            // Fallback: go to line 0
+            Some(0)
+        }
+    } else {
+        // i is 0 and non-blank — find the true start of this paragraph
+        Some(0)
     };
 
     if let Some(line_idx) = target {
         state.current_line = line_idx;
         update_highlight(state);
-        match state.config.navigation_mode {
-            crate::config::NavigationMode::Scroll => center_cursor(state),
-            crate::config::NavigationMode::EReader => scroll_to_cursor(state),
-        }
+        center_cursor(state);
         seek_to_current_line(state);
         auto_show_vocab_popup(state);
     }
 }
 
-/// Next dialogue line (`q` key).
-/// Jump to next dialogue line. Page turn when target is not fully visible.
-/// When a media_id is active, skips lines marked as not spoken in that media.
-pub fn jump_to_next_dialogue(state: &mut AppState) {
-    let has_media = state.media_id.is_some();
-    let target = {
-        let work = match &state.current_work {
-            Some(w) => w,
-            None => return,
-        };
+/// Next paragraph (`q` key).
+/// Jump to the first non-blank line of the next paragraph (separated by blank lines).
+pub fn jump_to_next_paragraph(state: &mut AppState) {
+    let line_count = state.buffer.line_count() as usize;
+    if line_count == 0 {
+        return;
+    }
 
-        if let Some(ref lm) = state.line_map {
-            // Prose with sentence groups: navigate between sentences
-            if !lm.sentence_groups.is_empty() {
-                next_sentence_start(&lm.sentence_groups, state.current_line)
-            } else {
-                let lines = if has_media {
-                    &lm.spoken_dialogue_buffer_lines
-                } else {
-                    &lm.dialogue_buffer_lines
-                };
-                lines.iter().find(|&&bl| bl > state.current_line).copied()
-            }
-        } else {
-            let line_count = work.lines.len();
-            let mut found = None;
-            for i in (state.current_line + 1)..line_count {
-                if work.lines[i].is_dialogue
-                    && (!has_media || work.lines[i].is_spoken != Some(false))
-                {
-                    found = Some(i);
-                    break;
-                }
-            }
-            found
-        }
-    };
+    let buffer = &state.buffer;
+    let mut i = state.current_line + 1;
 
-    if let Some(line_idx) = target {
-        state.current_line = line_idx;
+    // Skip remaining lines of current paragraph
+    while i < line_count && !is_blank_buffer_line(buffer, i) {
+        i += 1;
+    }
+    // Skip blank lines between paragraphs
+    while i < line_count && is_blank_buffer_line(buffer, i) {
+        i += 1;
+    }
+
+    if i < line_count {
+        state.current_line = i;
         update_highlight(state);
-        match state.config.navigation_mode {
-            crate::config::NavigationMode::Scroll => center_cursor(state),
-            crate::config::NavigationMode::EReader => {
-                if needs_page_turn_down(state, line_idx) {
-                    set_page(state, line_idx);
-                }
-            }
-        }
+        center_cursor(state);
         seek_to_current_line(state);
         auto_show_vocab_popup(state);
     }
+}
+
+/// Check if a buffer line is blank (empty or whitespace only).
+fn is_blank_buffer_line(buffer: &sourceview5::Buffer, line: usize) -> bool {
+    let Some(start) = buffer.iter_at_line(line as i32) else {
+        return true;
+    };
+    let mut end = start;
+    if !end.ends_line() {
+        end.forward_to_line_end();
+    }
+    let text = buffer.text(&start, &end, false);
+    text.trim().is_empty()
 }
 
 /// Previous chapter line (`[` key).
@@ -554,7 +538,7 @@ pub fn update_highlight_only(state: &mut AppState) {
 /// Used for deferred prose sentence scrolling.
 pub fn ensure_visible_no_highlight(state: &mut AppState) {
     match state.config.navigation_mode {
-        crate::config::NavigationMode::Scroll => center_cursor(state),
+        crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
         crate::config::NavigationMode::EReader => {
             if needs_page_turn_down(state, state.current_line) {
                 set_page(state, state.current_line);
@@ -568,7 +552,7 @@ pub fn ensure_visible_no_highlight(state: &mut AppState) {
 pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
     update_highlight(state);
     match state.config.navigation_mode {
-        crate::config::NavigationMode::Scroll => center_cursor(state),
+        crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
         crate::config::NavigationMode::EReader => {
             if needs_page_turn_down(state, state.current_line) {
                 set_page(state, state.current_line);
@@ -602,98 +586,6 @@ fn auto_show_vocab_popup(state: &mut AppState) {
     }
 }
 
-/// Find the phrase index for a given time position using binary search.
-pub fn find_phrase_for_time(phrases: &[crate::db::models::Phrase], time_pos: f64) -> Option<usize> {
-    if phrases.is_empty() {
-        return None;
-    }
-    let idx = phrases.partition_point(|p| p.start_time <= time_pos);
-    if idx == 0 {
-        return None;
-    }
-    let phrase = &phrases[idx - 1];
-    if time_pos <= phrase.end_time {
-        Some(idx - 1)
-    } else {
-        None
-    }
-}
-
-/// Apply phrase highlight tag to the active phrase, removing from previous position.
-pub fn update_phrase_highlight(state: &mut AppState, new_phrase_idx: Option<usize>) {
-    let buffer = &state.buffer;
-    let tag = &state.phrase_tag;
-
-    // Remove old phrase highlight
-    if state.current_phrase.is_some() {
-        let (buf_start, buf_end) = buffer.bounds();
-        buffer.remove_tag(tag, &buf_start, &buf_end);
-    }
-
-    state.current_phrase = new_phrase_idx;
-
-    let phrase_idx = match new_phrase_idx {
-        Some(idx) => idx,
-        None => return,
-    };
-
-    let work = match &state.current_work {
-        Some(w) => w,
-        None => return,
-    };
-
-    let phrase = match work.phrases.get(phrase_idx) {
-        Some(p) => p,
-        None => return,
-    };
-
-    // Find buffer line for this phrase's line_id
-    let work_idx = work.lines.iter().position(|l| l.id == phrase.line_id);
-    let buffer_line = match work_idx {
-        Some(wi) => {
-            if let Some(ref lm) = state.line_map {
-                if wi < lm.work_to_buffer.len() {
-                    lm.work_to_buffer[wi]
-                } else {
-                    return;
-                }
-            } else {
-                wi
-            }
-        }
-        None => return,
-    };
-
-    // Apply tag to character range
-    if let Some(line_start) = buffer.iter_at_line(buffer_line as i32) {
-        let mut start_iter = line_start;
-        start_iter.set_line_offset(phrase.start_char as i32);
-
-        let mut end_iter = line_start;
-        end_iter.set_line_offset(phrase.end_char as i32);
-
-        buffer.apply_tag(tag, &start_iter, &end_iter);
-    }
-
-    // Update current_line to track the phrase's line for scrolling
-    if state.current_line != buffer_line {
-        state.current_line = buffer_line;
-        ensure_visible_no_highlight(state);
-    }
-}
-
-/// Remove phrase highlighting and revert to sentence dim model.
-pub fn exit_phrase_mode(state: &mut AppState) {
-    if state.phrase_playing {
-        let (buf_start, buf_end) = state.buffer.bounds();
-        state.buffer.remove_tag(&state.phrase_tag, &buf_start, &buf_end);
-        state.current_phrase = None;
-        state.phrase_playing = false;
-        // Restore sentence highlighting
-        update_highlight(state);
-    }
-}
-
 /// Position chunk's first line ~5 lines from top, move cursor there, update highlight.
 pub fn position_chunk(state: &mut AppState) {
     if let Some(a_line) = state.ab_repeat.a_line {
@@ -704,98 +596,9 @@ pub fn position_chunk(state: &mut AppState) {
     }
 }
 
-/// Find the start of the previous sentence group relative to `current_line`.
-fn prev_sentence_start(groups: &[crate::text_file_map::SentenceGroup], current_line: usize) -> Option<usize> {
-    for g in groups.iter().rev() {
-        if g.line_range.start < current_line {
-            return Some(g.line_range.start);
-        }
-    }
-    None
-}
-
-/// Find the start of the next sentence group relative to `current_line`.
-fn next_sentence_start(groups: &[crate::text_file_map::SentenceGroup], current_line: usize) -> Option<usize> {
-    for g in groups.iter() {
-        if g.line_range.start > current_line {
-            return Some(g.line_range.start);
-        }
-    }
-    None
-}
-
-/// Dim all lines except the current one. The current line keeps full foreground.
+/// Update visual state for the current line (visual selection highlighting).
 fn update_highlight(state: &AppState) {
-    let buffer = &state.buffer;
-    let tag = &state.dim_tag;
-    let (buf_start, buf_end) = buffer.bounds();
-
-    // Apply dim to entire buffer
-    buffer.apply_tag(tag, &buf_start, &buf_end);
-
-    // Remove dim from current sentence group (with character-level precision on boundary lines)
-    let sentence_group = state.line_map.as_ref().and_then(|lm| {
-        crate::text_file_map::sentence_group_for(&lm.sentence_groups, state.current_line)
-    });
-    if let Some(group) = sentence_group {
-        let first_line = group.line_range.start;
-        let last_line = group.line_range.end.saturating_sub(1);
-        for line_idx in group.line_range.clone() {
-            if let Some(line_start) = buffer.iter_at_line(line_idx as i32) {
-                let mut line_end = line_start;
-                if !line_end.ends_line() {
-                    line_end.forward_to_line_end();
-                }
-
-                let undim_start = if line_idx == first_line && group.start_col > 0 {
-                    // First line: undim from start_col to end of line
-                    let mut iter = line_start;
-                    iter.set_line_offset(group.start_col as i32);
-                    iter
-                } else {
-                    line_start
-                };
-
-                let undim_end = if line_idx == last_line {
-                    if let Some(end_col) = group.end_col {
-                        // Last line: undim from start of line to end_col
-                        let mut iter = line_start;
-                        iter.set_line_offset(end_col as i32);
-                        iter
-                    } else {
-                        line_end
-                    }
-                } else {
-                    line_end
-                };
-
-                buffer.remove_tag(tag, &undim_start, &undim_end);
-            }
-        }
-    } else if let Some(line_start) = buffer.iter_at_line(state.current_line as i32) {
-        let mut line_end = line_start;
-        if !line_end.ends_line() {
-            line_end.forward_to_line_end();
-        }
-        buffer.remove_tag(tag, &line_start, &line_end);
-    }
-
-    // When a chunk is active, undim all lines within the chunk range
-    if state.ab_repeat.chunk_index.is_some() {
-        if let (Some(a), Some(b)) = (state.ab_repeat.a_line, state.ab_repeat.b_line) {
-            for line_idx in a..=b {
-                if let Some(line_start) = buffer.iter_at_line(line_idx as i32) {
-                    let mut line_end = line_start;
-                    if !line_end.ends_line() {
-                        line_end.forward_to_line_end();
-                    }
-                    buffer.remove_tag(tag, &line_start, &line_end);
-                }
-            }
-        }
-    }
-
-    // When visual selection is active, undim and highlight selected lines
+    // When visual selection is active, highlight selected lines
     crate::input::visual::apply_selection_highlight(state);
 }
 

@@ -231,6 +231,7 @@ fn ends_sentence_at_eol(line: &str) -> bool {
 const ABBREVIATIONS: &[&str] = &[
     "Mr", "Mrs", "Ms", "Dr", "St", "Rev", "Prof", "Gen", "Gov", "Sgt",
     "Capt", "Lt", "Col", "Jr", "Sr", "vs", "etc", "Vol", "No",
+    "Hon", "Esq", "Messrs", "Dept", "Inc", "Corp", "Bros",
 ];
 
 /// Check if the word immediately before `dot_pos` (a period) in `chars` is an abbreviation.

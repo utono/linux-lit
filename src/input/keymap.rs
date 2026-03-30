@@ -822,11 +822,11 @@ pub fn handle_key(
             true
         }
         "comma" => {
-            navigation::jump_to_prev_dialogue(&mut state.borrow_mut());
+            navigation::jump_to_prev_paragraph(&mut state.borrow_mut());
             true
         }
         "q" => {
-            navigation::jump_to_next_dialogue(&mut state.borrow_mut());
+            navigation::jump_to_next_paragraph(&mut state.borrow_mut());
             true
         }
         "o" | "e" | "O" | "E" => {

@@ -98,9 +98,6 @@ pub struct AppState {
     pub vocab_popup_index: usize,
     pub vocab_popup_view: crate::ui::vocab_popup::VocabView,
     pub vocab_popup_auto: bool,
-    pub phrase_tag: gtk4::TextTag,
-    pub current_phrase: Option<usize>,
-    pub phrase_playing: bool,
     pub concordance_picker: crate::ui::concordance_picker::ConcordancePicker,
     pub concordance_state: Option<crate::concordance::ConcordanceState>,
     pub concordance_word_picker: crate::ui::concordance_word_picker::ConcordanceWordPicker,
@@ -235,16 +232,6 @@ pub fn build_window(
         .foreground(&theme.vocab_fg)
         .build();
     buffer.tag_table().add(&vocab_tag);
-
-    let phrase_tag = gtk4::TextTag::builder()
-        .name("phrase-highlight")
-        .background(if theme.is_light {
-            "rgba(66, 133, 244, 0.20)"
-        } else {
-            "rgba(100, 180, 255, 0.25)"
-        })
-        .build();
-    buffer.tag_table().add(&phrase_tag);
 
     let text_view = View::builder()
         .buffer(&buffer)
@@ -434,9 +421,6 @@ pub fn build_window(
         vocab_popup_index: 0,
         vocab_popup_view: crate::ui::vocab_popup::VocabView::Definition,
         vocab_popup_auto: false,
-        phrase_tag,
-        current_phrase: None,
-        phrase_playing: false,
         concordance_picker,
         concordance_state: None,
         concordance_word_picker,
