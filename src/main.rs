@@ -116,9 +116,58 @@ fn main() {
                         };
                         if s.current_line != buffer_line {
                             s.current_line = buffer_line;
-                            crate::input::navigation::update_highlight_and_ensure_visible(
-                                &mut s,
-                            );
+
+                            // Check if we're in prose sentence-group mode
+                            let new_sg = s.line_map.as_ref().and_then(|lm| {
+                                if lm.sentence_groups.is_empty() {
+                                    return None;
+                                }
+                                crate::text_file_map::sentence_group_index(
+                                    &lm.sentence_groups,
+                                    buffer_line,
+                                )
+                            });
+
+                            if new_sg.is_some() {
+                                let old_sg = s.current_sentence_group;
+                                s.current_sentence_group = new_sg;
+
+                                // Always update highlight (sentence undimming)
+                                crate::input::navigation::update_highlight_only(&mut s);
+
+                                if old_sg != new_sg {
+                                    // Sentence changed — schedule scroll for 0.2s before
+                                    // the next sentence's start_time
+                                    let scroll_target = buffer_line;
+                                    let next_sg_start_time = new_sg.and_then(|sg_idx| {
+                                        let lm = s.line_map.as_ref()?;
+                                        let group = lm.sentence_groups.get(sg_idx)?;
+                                        // Find the start_time of the first line in this group
+                                        let work = s.current_work.as_ref()?;
+                                        let wi = s.work_line_for_buffer(group.line_range.start)?;
+                                        work.lines.get(wi)?.timestamp.as_ref().map(|ts| ts.start)
+                                    });
+                                    if let Some(start_time) = next_sg_start_time {
+                                        let threshold = (start_time - 0.2).max(0.0);
+                                        if s.current_time_pos >= threshold {
+                                            // Already past threshold, scroll now
+                                            crate::input::navigation::ensure_visible_no_highlight(&mut s);
+                                        } else {
+                                            s.pending_sentence_scroll =
+                                                Some((threshold, scroll_target));
+                                        }
+                                    } else {
+                                        // No timestamp info, scroll immediately
+                                        crate::input::navigation::ensure_visible_no_highlight(&mut s);
+                                    }
+                                }
+                            } else {
+                                s.current_sentence_group = None;
+                                crate::input::navigation::update_highlight_and_ensure_visible(
+                                    &mut s,
+                                );
+                            }
+
                             crate::app::refresh_vocab_popup(&mut s);
                             s.config.last_line = buffer_line;
                             crate::config::save(&s.config);
@@ -175,6 +224,13 @@ fn main() {
                                     s.config.last_line = next_bl;
                                     crate::config::save(&s.config);
                                 }
+                            }
+                        }
+                        // Deferred scroll for prose sentence mode
+                        if let Some((threshold, _)) = s.pending_sentence_scroll {
+                            if pos >= threshold {
+                                s.pending_sentence_scroll = None;
+                                crate::input::navigation::ensure_visible_no_highlight(&mut s);
                             }
                         }
                     }

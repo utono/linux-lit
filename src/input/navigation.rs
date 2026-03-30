@@ -54,20 +54,9 @@ pub fn move_cursor(state: &mut AppState, delta: i32) {
     state.current_line = new_line;
     update_highlight(state);
 
-    match state.config.navigation_mode {
-        crate::config::NavigationMode::Scroll => {
-            center_cursor(state);
-        }
-        crate::config::NavigationMode::EReader => {
-            if delta > 0 && needs_page_turn_down(state, new_line) {
-                set_page(state, new_line);
-            } else if delta < 0 {
-                scroll_to_cursor(state);
-            }
-        }
-    }
+    center_cursor(state);
 
-    seek_to_current_line(state);
+    auto_show_vocab_popup(state);
 }
 
 /// Jump to the first line.
@@ -162,16 +151,21 @@ pub fn jump_to_prev_dialogue(state: &mut AppState) {
         }
 
         if let Some(ref lm) = state.line_map {
-            let lines = if has_media {
-                &lm.spoken_dialogue_buffer_lines
+            // Prose with sentence groups: navigate between sentences
+            if !lm.sentence_groups.is_empty() {
+                prev_sentence_start(&lm.sentence_groups, state.current_line)
             } else {
-                &lm.dialogue_buffer_lines
-            };
-            lines
-                .iter()
-                .rev()
-                .find(|&&bl| bl < state.current_line)
-                .copied()
+                let lines = if has_media {
+                    &lm.spoken_dialogue_buffer_lines
+                } else {
+                    &lm.dialogue_buffer_lines
+                };
+                lines
+                    .iter()
+                    .rev()
+                    .find(|&&bl| bl < state.current_line)
+                    .copied()
+            }
         } else {
             let mut found = None;
             for i in (0..state.current_line).rev() {
@@ -194,6 +188,7 @@ pub fn jump_to_prev_dialogue(state: &mut AppState) {
             crate::config::NavigationMode::EReader => scroll_to_cursor(state),
         }
         seek_to_current_line(state);
+        auto_show_vocab_popup(state);
     }
 }
 
@@ -209,12 +204,17 @@ pub fn jump_to_next_dialogue(state: &mut AppState) {
         };
 
         if let Some(ref lm) = state.line_map {
-            let lines = if has_media {
-                &lm.spoken_dialogue_buffer_lines
+            // Prose with sentence groups: navigate between sentences
+            if !lm.sentence_groups.is_empty() {
+                next_sentence_start(&lm.sentence_groups, state.current_line)
             } else {
-                &lm.dialogue_buffer_lines
-            };
-            lines.iter().find(|&&bl| bl > state.current_line).copied()
+                let lines = if has_media {
+                    &lm.spoken_dialogue_buffer_lines
+                } else {
+                    &lm.dialogue_buffer_lines
+                };
+                lines.iter().find(|&&bl| bl > state.current_line).copied()
+            }
         } else {
             let line_count = work.lines.len();
             let mut found = None;
@@ -242,6 +242,7 @@ pub fn jump_to_next_dialogue(state: &mut AppState) {
             }
         }
         seek_to_current_line(state);
+        auto_show_vocab_popup(state);
     }
 }
 
@@ -504,6 +505,26 @@ fn set_page_instant(state: &mut AppState, new_top: usize) {
     state.scrolled_window.vadjustment().set_value(target);
 }
 
+/// Scroll the viewport by a fixed step without moving the cursor or seeking audio.
+/// `delta` is +1 for down, -1 for up.  Scrolls by approximately one wrapped line height.
+pub fn scroll_viewport(state: &mut AppState, delta: i32) {
+    let adj = state.scrolled_window.vadjustment();
+    let max_scroll = adj.upper() - adj.page_size();
+    if max_scroll <= 0.0 {
+        return;
+    }
+    // Use the height of the current line as the scroll step
+    let step = state.buffer.iter_at_line(state.current_line as i32)
+        .map(|iter| {
+            let rect = state.text_view.iter_location(&iter);
+            rect.height() as f64
+        })
+        .unwrap_or(30.0)
+        .max(20.0);
+    let new_val = (adj.value() + step * delta as f64).max(0.0).min(max_scroll);
+    adj.set_value(new_val);
+}
+
 /// Get the vadjustment value that places the given line at the top of the viewport.
 /// Uses the previous line's bottom to avoid its tail peeking above the target line.
 fn scroll_value_for_line(state: &AppState, line: usize) -> f64 {
@@ -522,6 +543,28 @@ fn scroll_value_for_line(state: &AppState, line: usize) -> f64 {
 // ---------------------------------------------------------------------------
 
 /// Update highlight and ensure cursor is visible on the current page.
+/// Update highlight only (no scrolling). Used for prose sentence mode where
+/// scrolling is deferred until the next sentence is about to start.
+pub fn update_highlight_only(state: &mut AppState) {
+    update_highlight(state);
+    auto_show_vocab_popup(state);
+}
+
+/// Scroll to make the current line visible without re-applying highlight.
+/// Used for deferred prose sentence scrolling.
+pub fn ensure_visible_no_highlight(state: &mut AppState) {
+    match state.config.navigation_mode {
+        crate::config::NavigationMode::Scroll => center_cursor(state),
+        crate::config::NavigationMode::EReader => {
+            if needs_page_turn_down(state, state.current_line) {
+                set_page(state, state.current_line);
+            } else {
+                ensure_cursor_on_page(state);
+            }
+        }
+    }
+}
+
 pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
     update_highlight(state);
     match state.config.navigation_mode {
@@ -569,6 +612,26 @@ pub fn position_chunk(state: &mut AppState) {
     }
 }
 
+/// Find the start of the previous sentence group relative to `current_line`.
+fn prev_sentence_start(groups: &[crate::text_file_map::SentenceGroup], current_line: usize) -> Option<usize> {
+    for g in groups.iter().rev() {
+        if g.line_range.start < current_line {
+            return Some(g.line_range.start);
+        }
+    }
+    None
+}
+
+/// Find the start of the next sentence group relative to `current_line`.
+fn next_sentence_start(groups: &[crate::text_file_map::SentenceGroup], current_line: usize) -> Option<usize> {
+    for g in groups.iter() {
+        if g.line_range.start > current_line {
+            return Some(g.line_range.start);
+        }
+    }
+    None
+}
+
 /// Dim all lines except the current one. The current line keeps full foreground.
 fn update_highlight(state: &AppState) {
     let buffer = &state.buffer;
@@ -578,8 +641,21 @@ fn update_highlight(state: &AppState) {
     // Apply dim to entire buffer
     buffer.apply_tag(tag, &buf_start, &buf_end);
 
-    // Remove dim from current line to restore full brightness
-    if let Some(line_start) = buffer.iter_at_line(state.current_line as i32) {
+    // Remove dim from current line (or sentence group for prose) to restore full brightness
+    let sentence_range = state.line_map.as_ref().and_then(|lm| {
+        crate::text_file_map::sentence_group_for(&lm.sentence_groups, state.current_line)
+    });
+    if let Some(group) = sentence_range {
+        for line_idx in group.line_range.clone() {
+            if let Some(line_start) = buffer.iter_at_line(line_idx as i32) {
+                let mut line_end = line_start;
+                if !line_end.ends_line() {
+                    line_end.forward_to_line_end();
+                }
+                buffer.remove_tag(tag, &line_start, &line_end);
+            }
+        }
+    } else if let Some(line_start) = buffer.iter_at_line(state.current_line as i32) {
         let mut line_end = line_start;
         if !line_end.ends_line() {
             line_end.forward_to_line_end();

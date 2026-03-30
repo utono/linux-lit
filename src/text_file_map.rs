@@ -1,5 +1,18 @@
+use std::ops::Range;
+
 use crate::db::models::Line;
 use crate::db::line_types;
+
+/// A sentence group with character-level boundary info for partial-line highlighting.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SentenceGroup {
+    /// Buffer line indices covered by this sentence.
+    pub line_range: Range<usize>,
+    /// Character offset on the first line where the sentence begins (0 = start of line).
+    pub start_col: usize,
+    /// Character offset on the last line where the sentence ends (None = end of line).
+    pub end_col: Option<usize>,
+}
 
 /// Bidirectional map between a plain-text file's line indices and DB work line indices.
 #[derive(Debug, Clone)]
@@ -13,6 +26,8 @@ pub struct LineMap {
     /// Dialogue buffer lines filtered to only spoken lines (for media-aware navigation).
     /// Excludes lines where `is_spoken == Some(false)`.
     pub spoken_dialogue_buffer_lines: Vec<usize>,
+    /// Contiguous ranges of buffer lines forming sentences (prose text_file works only).
+    pub sentence_groups: Vec<SentenceGroup>,
 }
 
 /// Normalize a line of text to match the DB's `normalized_text` column:
@@ -172,12 +187,200 @@ pub fn build_line_map(file_lines: &[String], work_lines: &[Line], is_prose: bool
         .copied()
         .collect();
 
+    // Sentence groups: contiguous buffer-line ranges forming sentences (prose only)
+    let sentence_groups = if is_prose {
+        build_sentence_groups_from_db(&buffer_to_work, work_lines)
+            .unwrap_or_else(|| build_sentence_groups(file_lines))
+    } else {
+        Vec::new()
+    };
+
     LineMap {
         buffer_to_work,
         work_to_buffer,
         dialogue_buffer_lines,
         spoken_dialogue_buffer_lines,
+        sentence_groups,
     }
+}
+
+/// Returns true if `line` ends with sentence-terminating punctuation,
+/// optionally followed by closing quotes.
+/// Check if the line ends with sentence-terminating punctuation (possibly + closing quote).
+fn ends_sentence_at_eol(line: &str) -> bool {
+    let trimmed = line.trim_end();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let mut chars = trimmed.chars().rev();
+    let last = match chars.next() {
+        Some(c) => c,
+        None => return false,
+    };
+    let effective = if matches!(last, '"' | '\'' | '\u{201D}' | '\u{2019}') {
+        chars.next().unwrap_or(last)
+    } else {
+        last
+    };
+    matches!(effective, '.' | '!' | '?')
+}
+
+/// Check for an intra-line sentence boundary: sentence-ending punctuation
+/// (optionally followed by a closing quote) followed by a space and an
+/// uppercase letter (e.g. "...fog. On such an afternoon").
+fn has_mid_line_sentence_boundary(line: &str) -> bool {
+    let chars: Vec<char> = line.trim().chars().collect();
+    for i in 0..chars.len() {
+        if matches!(chars[i], '.' | '!' | '?') {
+            let mut j = i + 1;
+            // Skip optional closing quote
+            if j < chars.len() && matches!(chars[j], '"' | '\'' | '\u{201D}' | '\u{2019}') {
+                j += 1;
+            }
+            // Expect space then uppercase
+            if j + 1 < chars.len() && chars[j] == ' ' && chars[j + 1].is_uppercase() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+fn ends_sentence(line: &str) -> bool {
+    ends_sentence_at_eol(line) || has_mid_line_sentence_boundary(line)
+}
+
+/// Build sentence groups from DB-provided sentence_start_time values.
+///
+/// Groups consecutive buffer lines that share the same sentence_start_time.
+/// Returns None if no sentence time data exists (triggers text-heuristic fallback).
+fn build_sentence_groups_from_db(
+    buffer_to_work: &[Option<usize>],
+    work_lines: &[Line],
+) -> Option<Vec<SentenceGroup>> {
+    // Check if any lines have sentence time data
+    let has_data = work_lines.iter().any(|l| {
+        l.timestamp.as_ref().and_then(|t| t.sentence_start).is_some()
+    });
+    if !has_data {
+        return None;
+    }
+
+    let mut groups: Vec<SentenceGroup> = Vec::new();
+    let mut group_start: Option<usize> = None;
+    let mut current_sentence_start: Option<f64> = None;
+
+    for (buf_idx, work_idx_opt) in buffer_to_work.iter().enumerate() {
+        let sentence_start = work_idx_opt
+            .and_then(|wi| work_lines[wi].timestamp.as_ref())
+            .and_then(|t| t.sentence_start);
+
+        match (sentence_start, current_sentence_start) {
+            (Some(ss), Some(css)) if (ss - css).abs() < 0.001 => {
+                // Same sentence — extend the group
+            }
+            (Some(ss), _) => {
+                // New sentence — close previous group if any
+                if let Some(start) = group_start {
+                    groups.push(SentenceGroup { line_range: start..buf_idx, start_col: 0, end_col: None });
+                }
+                group_start = Some(buf_idx);
+                current_sentence_start = Some(ss);
+            }
+            (None, _) => {
+                // No sentence data (blank line, unmapped line) — close group
+                if let Some(start) = group_start {
+                    groups.push(SentenceGroup { line_range: start..buf_idx, start_col: 0, end_col: None });
+                }
+                group_start = None;
+                current_sentence_start = None;
+            }
+        }
+    }
+    // Close trailing group
+    if let Some(start) = group_start {
+        groups.push(SentenceGroup { line_range: start..buffer_to_work.len(), start_col: 0, end_col: None });
+    }
+
+    Some(groups)
+}
+
+/// Group buffer lines into sentence ranges. A sentence boundary occurs when:
+/// - A line ends with sentence-terminating punctuation (possibly + closing quote)
+/// - A line contains a mid-line sentence boundary (the line belongs to the old
+///   group and also starts the next group)
+/// - A blank line is encountered
+fn build_sentence_groups(file_lines: &[String]) -> Vec<SentenceGroup> {
+    let mut groups = Vec::new();
+    let mut start: Option<usize> = None;
+
+    for (i, line) in file_lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            // Blank line closes any open group
+            if let Some(s) = start.take() {
+                groups.push(SentenceGroup { line_range: s..i, start_col: 0, end_col: None });
+            }
+            continue;
+        }
+
+        if start.is_none() {
+            start = Some(i);
+        }
+
+        if has_mid_line_sentence_boundary(trimmed) {
+            // Mid-line boundary: close the current group before this line,
+            // and start the new group at this line.
+            let s = start.take().unwrap();
+            if i > s {
+                groups.push(SentenceGroup { line_range: s..i, start_col: 0, end_col: None });
+            }
+            start = Some(i);
+        } else if ends_sentence_at_eol(trimmed) {
+            // End-of-line boundary: close the current group
+            groups.push(SentenceGroup { line_range: start.take().unwrap()..i + 1, start_col: 0, end_col: None });
+        }
+    }
+
+    // Close any trailing group
+    if let Some(s) = start {
+        groups.push(SentenceGroup { line_range: s..file_lines.len(), start_col: 0, end_col: None });
+    }
+
+    groups
+}
+
+/// Find the index of the sentence group containing `buffer_line`, if any.
+pub fn sentence_group_index(groups: &[SentenceGroup], buffer_line: usize) -> Option<usize> {
+    groups
+        .binary_search_by(|g| {
+            if buffer_line < g.line_range.start {
+                std::cmp::Ordering::Greater
+            } else if buffer_line >= g.line_range.end {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        })
+        .ok()
+}
+
+/// Find the sentence group containing `buffer_line`, if any.
+pub fn sentence_group_for(groups: &[SentenceGroup], buffer_line: usize) -> Option<&SentenceGroup> {
+    // Binary search: groups are sorted and non-overlapping
+    groups
+        .binary_search_by(|g| {
+            if buffer_line < g.line_range.start {
+                std::cmp::Ordering::Greater
+            } else if buffer_line >= g.line_range.end {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        })
+        .ok()
+        .map(|idx| &groups[idx])
 }
 
 #[cfg(test)]
@@ -285,5 +488,84 @@ mod tests {
 
         // "Something else entirely" at buf 2 does not match "different content" — no match.
         assert_eq!(map.buffer_to_work[2], None);
+    }
+
+    #[test]
+    fn test_ends_sentence() {
+        assert!(ends_sentence("conducted."));
+        assert!(ends_sentence("world!"));
+        assert!(ends_sentence("really?"));
+        assert!(ends_sentence("end.\""));
+        assert!(ends_sentence("end.\u{201D}"));
+        assert!(ends_sentence("end.'"));
+        // Mr. ends with `.` so returns true — known acceptable edge case
+        assert!(ends_sentence("Mr."));
+    }
+
+    #[test]
+    fn test_build_sentence_groups() {
+        let lines: Vec<String> = vec![
+            "The first ray of light which illumines the gloom, and converts into a".into(),
+            "dazzling brilliancy that obscurity in which the earlier history of the".into(),
+            "public career of the immortal Pickwick would appear to be involved, is".into(),
+            "derived from the perusal of the following entry in the Transactions of".into(),
+            "the Pickwick Club.".into(),
+            "".into(),
+            "Next paragraph starts here and".into(),
+            "continues on this line.".into(),
+        ];
+        let groups = build_sentence_groups(&lines);
+        // First sentence: lines 0..5
+        assert_eq!(groups[0].line_range, 0..5);
+        // Second sentence: lines 6..8
+        assert_eq!(groups[1].line_range, 6..8);
+        assert_eq!(groups.len(), 2);
+    }
+
+    #[test]
+    fn test_build_sentence_groups_multiple_sentences_no_blank() {
+        let lines: Vec<String> = vec![
+            "First sentence ends here.".into(),
+            "Second sentence starts and".into(),
+            "ends here!".into(),
+            "Third sentence.".into(),
+        ];
+        let groups = build_sentence_groups(&lines);
+        assert_eq!(groups[0].line_range, 0..1);
+        assert_eq!(groups[1].line_range, 1..3);
+        assert_eq!(groups[2].line_range, 3..4);
+    }
+
+    #[test]
+    fn test_sentence_group_for() {
+        let sg = |r: Range<usize>| SentenceGroup { line_range: r, start_col: 0, end_col: None };
+        let groups = vec![sg(0..5), sg(6..8), sg(9..12)];
+        assert_eq!(sentence_group_for(&groups, 0), Some(&sg(0..5)));
+        assert_eq!(sentence_group_for(&groups, 4), Some(&sg(0..5)));
+        assert_eq!(sentence_group_for(&groups, 5), None); // blank line between groups
+        assert_eq!(sentence_group_for(&groups, 7), Some(&sg(6..8)));
+        assert_eq!(sentence_group_for(&groups, 11), Some(&sg(9..12)));
+        assert_eq!(sentence_group_for(&groups, 12), None);
+    }
+
+    #[test]
+    fn test_sentence_group_struct() {
+        let sg = SentenceGroup {
+            line_range: 0..5,
+            start_col: 0,
+            end_col: None,
+        };
+        assert_eq!(sg.line_range, 0..5);
+        assert_eq!(sg.start_col, 0);
+        assert_eq!(sg.end_col, None);
+
+        let sg2 = SentenceGroup {
+            line_range: 5..8,
+            start_col: 19,
+            end_col: Some(25),
+        };
+        assert!(sg2.line_range.contains(&6));
+        assert_eq!(sg2.start_col, 19);
+        assert_eq!(sg2.end_col, Some(25));
     }
 }

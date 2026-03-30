@@ -103,6 +103,12 @@ pub struct AppState {
     pub concordance_word_picker: crate::ui::concordance_word_picker::ConcordanceWordPicker,
     pub concordance_list_picker: crate::ui::concordance_list_picker::ConcordanceListPicker,
     pub concordance_bar: crate::ui::concordance_bar::ConcordanceBar,
+    /// Index of the current sentence group (for prose with text_file).
+    pub current_sentence_group: Option<usize>,
+    /// Scheduled scroll to a buffer line when time_pos reaches the threshold.
+    /// (threshold_time, target_buffer_line). Used to delay scrolling until
+    /// 0.2s before the next sentence starts in prose mode.
+    pub pending_sentence_scroll: Option<(f64, usize)>,
 }
 
 impl AppState {
@@ -121,6 +127,22 @@ impl AppState {
             let count = self.current_work.as_ref().map_or(0, |w| w.lines.len());
             if buffer_line < count { Some(buffer_line) } else { None }
         }
+    }
+
+    /// Check if a buffer line is within the currently highlighted sentence group.
+    pub fn is_in_current_sentence(&self, line_index: usize) -> bool {
+        if line_index == self.current_line {
+            return true;
+        }
+        if let Some(ref lm) = self.line_map {
+            if let Some(group) = crate::text_file_map::sentence_group_for(
+                &lm.sentence_groups,
+                self.current_line,
+            ) {
+                return group.line_range.contains(&line_index);
+            }
+        }
+        false
     }
 }
 
@@ -404,6 +426,8 @@ pub fn build_window(
         concordance_word_picker,
         concordance_list_picker,
         concordance_bar,
+        current_sentence_group: None,
+        pending_sentence_scroll: None,
     }));
 
     // Connect picker search entry filter
@@ -1338,12 +1362,12 @@ pub fn open_vocab_popup(state: &mut AppState) {
         Some(line.citation.clone())
     });
 
-    // Collect unique vocab words on current line
+    // Collect unique vocab words on current line (or sentence group)
     let mut seen = std::collections::HashSet::new();
     let words: Vec<String> = state
         .vocab_matches
         .iter()
-        .filter(|m| m.line_index == state.current_line)
+        .filter(|m| state.is_in_current_sentence(m.line_index))
         .filter(|m| seen.insert(m.word.clone()))
         .map(|m| m.word.clone())
         .collect();
@@ -1377,9 +1401,14 @@ pub fn open_vocab_popup(state: &mut AppState) {
     show_vocab_popup(state);
 }
 
-/// Position the vocab popup to the right of the text card, aligned with the current line.
+/// Position the vocab popup to the right of the text card, aligned with the top of the
+/// highlighted sentence group (or the current line if no group is found).
 fn position_vocab_popup(state: &AppState) {
-    if let Some(iter) = state.buffer.iter_at_line(state.current_line as i32) {
+    let anchor_line = state.line_map.as_ref()
+        .and_then(|lm| crate::text_file_map::sentence_group_for(&lm.sentence_groups, state.current_line))
+        .map(|g| g.line_range.start)
+        .unwrap_or(state.current_line);
+    if let Some(iter) = state.buffer.iter_at_line(anchor_line as i32) {
         let buf_loc = state.text_view.iter_location(&iter);
         let (_, wy) = state.text_view.buffer_to_window_coords(
             gtk4::TextWindowType::Widget,
@@ -1456,7 +1485,7 @@ pub fn refresh_vocab_popup(state: &mut AppState) {
     let words: Vec<String> = state
         .vocab_matches
         .iter()
-        .filter(|m| m.line_index == state.current_line)
+        .filter(|m| state.is_in_current_sentence(m.line_index))
         .filter(|m| seen.insert(m.word.clone()))
         .map(|m| m.word.clone())
         .collect();
