@@ -249,13 +249,9 @@ fn find_mid_line_sentence_boundary(line: &str) -> Option<usize> {
     None
 }
 
-fn has_mid_line_sentence_boundary(line: &str) -> bool {
-    find_mid_line_sentence_boundary(line).is_some()
-}
-
 #[cfg(test)]
 fn ends_sentence(line: &str) -> bool {
-    ends_sentence_at_eol(line) || has_mid_line_sentence_boundary(line)
+    ends_sentence_at_eol(line) || find_mid_line_sentence_boundary(line).is_some()
 }
 
 /// Build sentence groups from DB-provided sentence_start_time values.
@@ -313,46 +309,61 @@ fn build_sentence_groups_from_db(
     Some(groups)
 }
 
-/// Group buffer lines into sentence ranges. A sentence boundary occurs when:
+/// Group buffer lines into sentence ranges with character-level boundary info.
+/// A sentence boundary occurs when:
 /// - A line ends with sentence-terminating punctuation (possibly + closing quote)
-/// - A line contains a mid-line sentence boundary (the line belongs to the old
-///   group and also starts the next group)
+/// - A line contains a mid-line sentence boundary
 /// - A blank line is encountered
 fn build_sentence_groups(file_lines: &[String]) -> Vec<SentenceGroup> {
     let mut groups = Vec::new();
-    let mut start: Option<usize> = None;
+    let mut start_line: Option<usize> = None;
+    let mut start_col: usize = 0;
 
     for (i, line) in file_lines.iter().enumerate() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
-            // Blank line closes any open group
-            if let Some(s) = start.take() {
-                groups.push(SentenceGroup { line_range: s..i, start_col: 0, end_col: None });
+            if let Some(s) = start_line.take() {
+                groups.push(SentenceGroup {
+                    line_range: s..i,
+                    start_col,
+                    end_col: None,
+                });
+                start_col = 0;
             }
             continue;
         }
 
-        if start.is_none() {
-            start = Some(i);
+        if start_line.is_none() {
+            start_line = Some(i);
         }
 
-        if has_mid_line_sentence_boundary(trimmed) {
-            // Mid-line boundary: close the current group before this line,
-            // and start the new group at this line.
-            let s = start.take().unwrap();
-            if i > s {
-                groups.push(SentenceGroup { line_range: s..i, start_col: 0, end_col: None });
-            }
-            start = Some(i);
+        if let Some(split) = find_mid_line_sentence_boundary(line) {
+            // Close the current group: it ends on this line at the split point
+            let s = start_line.take().unwrap();
+            groups.push(SentenceGroup {
+                line_range: s..i + 1,
+                start_col,
+                end_col: Some(split),
+            });
+            // Start a new group on this same line at the split point
+            start_line = Some(i);
+            start_col = split;
         } else if ends_sentence_at_eol(trimmed) {
-            // End-of-line boundary: close the current group
-            groups.push(SentenceGroup { line_range: start.take().unwrap()..i + 1, start_col: 0, end_col: None });
+            groups.push(SentenceGroup {
+                line_range: start_line.take().unwrap()..i + 1,
+                start_col,
+                end_col: None,
+            });
+            start_col = 0;
         }
     }
 
-    // Close any trailing group
-    if let Some(s) = start {
-        groups.push(SentenceGroup { line_range: s..file_lines.len(), start_col: 0, end_col: None });
+    if let Some(s) = start_line {
+        groups.push(SentenceGroup {
+            line_range: s..file_lines.len(),
+            start_col,
+            end_col: None,
+        });
     }
 
     groups
@@ -522,10 +533,12 @@ mod tests {
             "continues on this line.".into(),
         ];
         let groups = build_sentence_groups(&lines);
-        // First sentence: lines 0..5
         assert_eq!(groups[0].line_range, 0..5);
-        // Second sentence: lines 6..8
+        assert_eq!(groups[0].start_col, 0);
+        assert_eq!(groups[0].end_col, None);
         assert_eq!(groups[1].line_range, 6..8);
+        assert_eq!(groups[1].start_col, 0);
+        assert_eq!(groups[1].end_col, None);
         assert_eq!(groups.len(), 2);
     }
 
@@ -539,20 +552,67 @@ mod tests {
         ];
         let groups = build_sentence_groups(&lines);
         assert_eq!(groups[0].line_range, 0..1);
+        assert_eq!(groups[0].start_col, 0);
+        assert_eq!(groups[0].end_col, None);
         assert_eq!(groups[1].line_range, 1..3);
+        assert_eq!(groups[1].start_col, 0);
+        assert_eq!(groups[1].end_col, None);
         assert_eq!(groups[2].line_range, 3..4);
+        assert_eq!(groups[2].start_col, 0);
+        assert_eq!(groups[2].end_col, None);
     }
 
     #[test]
     fn test_sentence_group_for() {
-        let sg = |r: Range<usize>| SentenceGroup { line_range: r, start_col: 0, end_col: None };
-        let groups = vec![sg(0..5), sg(6..8), sg(9..12)];
-        assert_eq!(sentence_group_for(&groups, 0), Some(&sg(0..5)));
-        assert_eq!(sentence_group_for(&groups, 4), Some(&sg(0..5)));
-        assert_eq!(sentence_group_for(&groups, 5), None); // blank line between groups
-        assert_eq!(sentence_group_for(&groups, 7), Some(&sg(6..8)));
-        assert_eq!(sentence_group_for(&groups, 11), Some(&sg(9..12)));
+        let groups = vec![
+            SentenceGroup { line_range: 0..5, start_col: 0, end_col: None },
+            SentenceGroup { line_range: 6..8, start_col: 0, end_col: None },
+            SentenceGroup { line_range: 9..12, start_col: 0, end_col: None },
+        ];
+        assert_eq!(sentence_group_for(&groups, 0).map(|g| &g.line_range), Some(&(0..5)));
+        assert_eq!(sentence_group_for(&groups, 4).map(|g| &g.line_range), Some(&(0..5)));
+        assert_eq!(sentence_group_for(&groups, 5), None);
+        assert_eq!(sentence_group_for(&groups, 7).map(|g| &g.line_range), Some(&(6..8)));
+        assert_eq!(sentence_group_for(&groups, 11).map(|g| &g.line_range), Some(&(9..12)));
         assert_eq!(sentence_group_for(&groups, 12), None);
+    }
+
+    #[test]
+    fn test_build_sentence_groups_mid_line_offsets() {
+        let lines: Vec<String> = vec![
+            "First sentence ends here. Second starts now and".into(),
+            "continues on this line.".into(),
+        ];
+        let groups = build_sentence_groups(&lines);
+
+        // First group: just the beginning of line 0 up to the split point
+        assert_eq!(groups[0].line_range, 0..1);
+        assert_eq!(groups[0].start_col, 0);
+        assert_eq!(groups[0].end_col, Some(26)); // "First sentence ends here. " = 26 chars, split at 'S'
+
+        // Second group: rest of line 0 through line 1
+        assert_eq!(groups[1].line_range, 0..2);
+        assert_eq!(groups[1].start_col, 26);
+        assert_eq!(groups[1].end_col, None); // ends at EOL of line 1
+    }
+
+    #[test]
+    fn test_build_sentence_groups_no_mid_line_boundary() {
+        // No mid-line boundaries — start_col=0, end_col=None for all groups
+        let lines: Vec<String> = vec![
+            "The first ray of light which illumines the gloom, and converts into a".into(),
+            "dazzling brilliancy.".into(),
+            "".into(),
+            "Next paragraph.".into(),
+        ];
+        let groups = build_sentence_groups(&lines);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].line_range, 0..2);
+        assert_eq!(groups[0].start_col, 0);
+        assert_eq!(groups[0].end_col, None);
+        assert_eq!(groups[1].line_range, 3..4);
+        assert_eq!(groups[1].start_col, 0);
+        assert_eq!(groups[1].end_col, None);
     }
 
     #[test]
