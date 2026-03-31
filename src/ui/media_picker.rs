@@ -90,9 +90,11 @@ impl MediaPicker {
         }
 
         let filter_lower = filter.to_lowercase();
+        let max_priority = self.items.iter().map(|i| i.priority).max().unwrap_or(0);
 
         for item in &self.items {
-            let display = format_media_label(item);
+            let is_default = item.priority == max_priority && max_priority > 0;
+            let display = format_media_label(item, is_default);
             if !filter.is_empty() {
                 let target = display.to_lowercase();
                 if !subsequence_match(&filter_lower, &target) {
@@ -129,6 +131,19 @@ impl MediaPicker {
             .map(|item| item.path.clone())
     }
 
+    pub fn set_default(&mut self, media_id: i64, new_priority: i64) {
+        for item in &mut self.items {
+            if item.media_id == media_id {
+                item.priority = new_priority;
+            } else {
+                item.priority = 10;
+            }
+        }
+        // Re-sort by priority descending
+        self.items.sort_by(|a, b| b.priority.cmp(&a.priority));
+        self.populate_list("");
+    }
+
     pub fn move_selection(&self, delta: i32) {
         if let Some(current) = self.list_box.selected_row() {
             let idx = current.index();
@@ -140,14 +155,25 @@ impl MediaPicker {
     }
 }
 
-fn format_media_label(item: &MediaItem) -> String {
-    if let Some(ref name) = item.display_name {
+fn format_media_label(item: &MediaItem, is_default: bool) -> String {
+    let base = if let Some(ref name) = item.display_name {
         if !name.is_empty() {
-            return name.clone();
+            name.clone()
+        } else {
+            format_path(&item.path)
         }
+    } else {
+        format_path(&item.path)
+    };
+    if is_default {
+        format!("* {}", base)
+    } else {
+        format!("  {}", base)
     }
-    // Fall back to parent_dir/filename from path
-    let p = Path::new(&item.path);
+}
+
+fn format_path(path: &str) -> String {
+    let p = Path::new(path);
     let filename = p.file_name().unwrap_or_default().to_string_lossy();
     let parent = p
         .parent()

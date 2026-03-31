@@ -345,7 +345,7 @@ pub fn list_media_for_work(
     abbrev: &str,
 ) -> Result<Vec<MediaItem>, rusqlite::Error> {
     let mut stmt = conn.prepare(
-        "SELECT mf.id, mf.path, wma.display_name \
+        "SELECT mf.id, mf.path, wma.display_name, wma.priority \
          FROM media_files mf \
          JOIN work_media_associations wma ON wma.media_id = mf.id \
          WHERE wma.work_abbrev = ?1 \
@@ -356,9 +356,36 @@ pub fn list_media_for_work(
             media_id: row.get(0)?,
             path: row.get(1)?,
             display_name: row.get(2)?,
+            priority: row.get(3)?,
         })
     })?;
     rows.collect()
+}
+
+pub fn set_media_priority(
+    conn: &Connection,
+    abbrev: &str,
+    media_id: i64,
+) -> Result<(), rusqlite::Error> {
+    // Find the current max priority for this work
+    let max_priority: i64 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(priority), 10) FROM work_media_associations WHERE work_abbrev = ?1",
+            [abbrev],
+            |row| row.get(0),
+        )?;
+    // Set all other media for this work to priority 10
+    conn.execute(
+        "UPDATE work_media_associations SET priority = 10 WHERE work_abbrev = ?1",
+        [abbrev],
+    )?;
+    // Set the selected one to max + 10 (or at least 20)
+    let new_priority = (max_priority + 10).max(20);
+    conn.execute(
+        "UPDATE work_media_associations SET priority = ?1 WHERE work_abbrev = ?2 AND media_id = ?3",
+        rusqlite::params![new_priority, abbrev, media_id],
+    )?;
+    Ok(())
 }
 
 pub fn open_db_rw() -> Result<Connection, rusqlite::Error> {

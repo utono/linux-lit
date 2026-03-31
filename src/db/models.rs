@@ -80,4 +80,5 @@ pub struct MediaItem {
     pub media_id: i64,
     pub path: String,
     pub display_name: Option<String>,
+    pub priority: i64,
 }

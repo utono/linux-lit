@@ -88,11 +88,20 @@ const BOTTOM_ROW: &[KeyDef] = &[
     bare("k", "K", "cursor \u{2191}"),
     bare("x", "X", "next chunk"),
     key("b", "B", "", "", &[("C-b", "pg back")]),
-    bare("m", "M", "media picker"),
+    key("m", "M", "media picker", "", &[("p", "set default")]),
     ub("w", "W"),
     key("v", "V", "", "V: visual mode", &[]),
     ub("z", "Z"),
 ];
+
+const SHIFT_KEY: KeyDef = ub("Shift", "");
+const SPACEBAR_ROW_CTRL: KeyDef = ub("Ctrl", "");
+const SPACEBAR_ROW_FN: KeyDef = ub("Fn", "");
+const SPACEBAR_ROW_WIN: KeyDef = ub("Win", "");
+const SPACEBAR_ROW_ALT_L: KeyDef = ub("Alt", "");
+const SPACEBAR_ROW_SPACE: KeyDef = bare("Space", "", "vocab popup");
+const SPACEBAR_ROW_ALT_R: KeyDef = ub("Alt", "");
+const SPACEBAR_ROW_CTRL_R: KeyDef = ub("Ctrl", "");
 
 const SEQ_GG: KeyDef = bare("gg", "", "go to start");
 const SEQ_G: KeyDef = key("G", "", "", "go to end", &[]);
@@ -123,8 +132,9 @@ const PAD: f64 = 20.0; // outer padding
 
 /// Total width of the keyboard area (number row = 13 keys + bksp + gaps)
 const KB_W: f64 = 13.0 * KEY_W + BKSP_W + 13.0 * GAP;
-/// Total rows: 4 main + gap + seq/arrow rows
+/// Total rows: 4 main + spacebar row + gap + seq/arrow rows
 const KB_H: f64 = 4.0 * KEY_H + 3.0 * GAP  // main rows
+    + GAP + KEY_H                              // spacebar row
     + 12.0                                     // gap before seq row
     + KEY_H                                    // seq row
     + GAP + ARROW_H                            // arrow bottom row
@@ -184,25 +194,48 @@ fn build_layout() -> AllKeys {
         x += KEY_W + GAP;
     }
 
-    // Row 3: Bottom row (shifted right)
+    // Row 3: Bottom row (Shift + alpha keys)
     let y3 = y2 + KEY_H + GAP;
-    // Shift so ' starts about half a key right of 'a'
-    // 'a' starts at ESC_W + GAP = 104. Half key = 28. So bottom starts at ~132.
-    let bottom_offset = ESC_W + GAP + KEY_W * 0.45;
-    x = bottom_offset;
+    // 'a' starts at ESC_W + GAP = 124. Shift fills from 0 to just before '
+    let bottom_alpha_offset = ESC_W + GAP + KEY_W * 0.45;
+    let shift_w = bottom_alpha_offset - GAP;
+    add(0.0, y3, shift_w, KEY_H, &SHIFT_KEY, &mut defs, &mut rects);
+    x = bottom_alpha_offset;
     for def in BOTTOM_ROW {
         add(x, y3, KEY_W, KEY_H, def, &mut defs, &mut rects);
         x += KEY_W + GAP;
     }
 
-    // Row 4: Sequences (gg, G) + up arrow
-    let y4 = y3 + KEY_H + 12.0;
-    add(0.0, y4, KEY_W * 1.4, KEY_H, &SEQ_GG, &mut defs, &mut rects);
-    add(KEY_W * 1.4 + GAP, y4, KEY_W, KEY_H, &SEQ_G, &mut defs, &mut rects);
+    // Row 4: Spacebar row
+    // Ctrl + Fn below Shift (equal width, splitting Shift's width)
+    // Then Win, Alt, Space, Alt, Ctrl
+    let y4 = y3 + KEY_H + GAP;
+    let half_shift = (shift_w - GAP) / 2.0;
+    add(0.0, y4, half_shift, KEY_H, &SPACEBAR_ROW_CTRL, &mut defs, &mut rects);
+    add(half_shift + GAP, y4, half_shift, KEY_H, &SPACEBAR_ROW_FN, &mut defs, &mut rects);
+
+    // Win and Alt between Shift area and spacebar
+    let win_x = bottom_alpha_offset;
+    add(win_x, y4, KEY_W, KEY_H, &SPACEBAR_ROW_WIN, &mut defs, &mut rects);
+    add(win_x + KEY_W + GAP, y4, KEY_W, KEY_H, &SPACEBAR_ROW_ALT_L, &mut defs, &mut rects);
+
+    // Spacebar: left edge under 'j' (bottom row index 2), right edge under 'm' (bottom row index 6)
+    let j_x = bottom_alpha_offset + 2.0 * (KEY_W + GAP);                // left edge of 'j'
+    let m_right = bottom_alpha_offset + 6.0 * (KEY_W + GAP) + KEY_W;    // right edge of 'm'
+    add(j_x, y4, m_right - j_x, KEY_H, &SPACEBAR_ROW_SPACE, &mut defs, &mut rects);
+
+    // Alt and Ctrl after spacebar
+    add(m_right + GAP, y4, KEY_W, KEY_H, &SPACEBAR_ROW_ALT_R, &mut defs, &mut rects);
+    add(m_right + GAP + KEY_W + GAP, y4, KEY_W, KEY_H, &SPACEBAR_ROW_CTRL_R, &mut defs, &mut rects);
+
+    // Row 5: Sequences (gg, G) + up arrow
+    let y5 = y4 + KEY_H + 12.0;
+    add(0.0, y5, KEY_W * 1.4, KEY_H, &SEQ_GG, &mut defs, &mut rects);
+    add(KEY_W * 1.4 + GAP, y5, KEY_W, KEY_H, &SEQ_G, &mut defs, &mut rects);
 
     // Arrow keys — inverted T on far right
     // Bottom row of arrows: left, down, right
-    let arrow_y_bottom = y4 + KEY_H + GAP;
+    let arrow_y_bottom = y5 + KEY_H + GAP;
     let arrow_right_edge = KB_W;
     let arrow_left_x = arrow_right_edge - 3.0 * ARROW_W - 2.0 * GAP;
     add(arrow_left_x, arrow_y_bottom, ARROW_W, ARROW_H, &ARROW_LEFT, &mut defs, &mut rects);
@@ -211,7 +244,7 @@ fn build_layout() -> AllKeys {
 
     // Up arrow: centered above down arrow
     let up_x = arrow_left_x + ARROW_W + GAP;
-    add(up_x, y4, ARROW_W, ARROW_H, &ARROW_UP, &mut defs, &mut rects);
+    add(up_x, y5, ARROW_W, ARROW_H, &ARROW_UP, &mut defs, &mut rects);
 
     AllKeys { defs, rects }
 }

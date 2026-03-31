@@ -306,6 +306,55 @@ pub fn handle_key(
                     return true;
                 }
             }
+            "p" => {
+                let is_search_focused = state.borrow().media_picker.search_entry().has_focus();
+                if !is_search_focused {
+                    let selected_id = state.borrow().media_picker.selected_media_id();
+                    let abbrev = state
+                        .borrow()
+                        .current_work
+                        .as_ref()
+                        .map(|w| w.abbrev.clone());
+                    if let (Some(media_id), Some(abbrev)) = (selected_id, abbrev) {
+                        match crate::db::queries::open_db_rw() {
+                            Ok(conn) => {
+                                if let Err(e) =
+                                    crate::db::queries::set_media_priority(&conn, &abbrev, media_id)
+                                {
+                                    crate::logging::log(&format!(
+                                        "MEDIA: set_media_priority failed: {}",
+                                        e
+                                    ));
+                                } else {
+                                    let max_pri: i64 = conn
+                                        .query_row(
+                                            "SELECT priority FROM work_media_associations \
+                                             WHERE work_abbrev = ?1 AND media_id = ?2",
+                                            rusqlite::params![&abbrev, media_id],
+                                            |row| row.get(0),
+                                        )
+                                        .unwrap_or(20);
+                                    state
+                                        .borrow_mut()
+                                        .media_picker
+                                        .set_default(media_id, max_pri);
+                                    crate::logging::log(&format!(
+                                        "MEDIA: set default media_id={} for {}",
+                                        media_id, abbrev
+                                    ));
+                                }
+                            }
+                            Err(e) => {
+                                crate::logging::log(&format!(
+                                    "MEDIA: open_db_rw failed: {}",
+                                    e
+                                ));
+                            }
+                        }
+                    }
+                    return true;
+                }
+            }
             _ => {}
         }
         return false;
@@ -854,6 +903,15 @@ pub fn handle_key(
 
     // Single keys
     match key_name {
+        "space" => {
+            let mut s = state.borrow_mut();
+            if s.vocab_popup.is_visible() {
+                crate::app::close_vocab_popup(&s);
+            } else {
+                crate::app::open_vocab_popup(&mut s);
+            }
+            true
+        }
         "j" => {
             navigation::scroll_viewport(&mut state.borrow_mut(), 1);
             true

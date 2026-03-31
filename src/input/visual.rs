@@ -176,7 +176,14 @@ pub fn execute_action(
         }
     }
 
-    // Exit visual mode after action
+    // Move cursor to the first selected line, then exit visual mode
+    {
+        let mut s = state_rc.borrow_mut();
+        if let Some(ref sel) = s.visual_selection {
+            let (start, _) = sel.range();
+            s.current_line = start;
+        }
+    }
     exit_visual_mode(&mut state_rc.borrow_mut());
 }
 
