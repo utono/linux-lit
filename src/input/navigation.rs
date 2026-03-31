@@ -653,7 +653,8 @@ fn update_highlight(state: &AppState) {
         }
     }
 
-    // When visual selection is active, highlight selected lines
+    // When visual selection is active, clear stale highlight then re-apply
+    crate::input::visual::clear_selection_highlight(state);
     crate::input::visual::apply_selection_highlight(state);
 }
 
