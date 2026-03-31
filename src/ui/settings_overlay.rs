@@ -176,14 +176,14 @@ impl SettingsOverlay {
                 SettingsChange::LineSpacing(new_val)
             }
             2 => {
-                // Column Width: 400-1200, step 50
-                let new_val = (column_width as i32 + delta * 50).clamp(400, 1200) as u32;
+                // Column Width: 400-1200, step 25
+                let new_val = (column_width as i32 + delta * 25).clamp(400, 1200) as u32;
                 self.value_labels[2].set_label(&format!("\u{25C0} {}px \u{25B6}", new_val));
                 SettingsChange::ColumnWidth(new_val)
             }
             3 => {
-                // Text Margins: 8-96, step 4
-                let new_val = (text_margins as i32 + delta * 4).clamp(8, 96) as u32;
+                // Text Margins: 4-96, step 4
+                let new_val = (text_margins as i32 + delta * 4).clamp(4, 96) as u32;
                 self.value_labels[3].set_label(&format!("\u{25C0} {}px \u{25B6}", new_val));
                 SettingsChange::TextMargins(new_val)
             }

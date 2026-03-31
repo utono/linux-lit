@@ -304,6 +304,7 @@ pub fn build_window(
         .hscrollbar_policy(gtk4::PolicyType::Never)
         .vscrollbar_policy(gtk4::PolicyType::External)
         .vexpand(true)
+        .hexpand(false)
         .valign(gtk4::Align::Fill)
         .width_request(config.column_width as i32)
         .css_classes(vec!["text-card"])

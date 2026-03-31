@@ -41,7 +41,7 @@ pub fn setup_timestamp_gutter(
 ) -> sourceview5::GutterRendererText {
     let gutter = sourceview5::prelude::ViewExt::gutter(view, gtk4::TextWindowType::Left);
     let renderer = sourceview5::GutterRendererText::new();
-    renderer.set_xpad(24); // left padding matching original gutter
+    renderer.set_xpad(4); // minimal left padding for gutter
     renderer.set_yalign(0.5); // center vertically within line
     gutter.insert(&renderer, 0);
 
