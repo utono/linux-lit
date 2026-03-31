@@ -220,17 +220,33 @@ impl LibraryPicker {
                         self.add_author_row(&group.author, group.works.len());
                     }
                 } else {
-                    let matches = find_matching_authors(filter, &self.groups);
-                    if matches.len() == 1 {
-                        // Auto-drill: show works for the single match directly.
-                        for work in &matches[0].works {
-                            self.add_work_row(work);
-                        }
-                    } else {
-                        for group in &matches {
+                    // Show authors whose name matches, plus individual works
+                    // whose title/abbrev matches (with author context).
+                    let filter_lower = filter.to_lowercase();
+                    let mut has_rows = false;
+
+                    // First: authors whose name matches the filter
+                    for group in &self.groups {
+                        if author_name_matches(&filter_lower, &group.author) {
                             self.add_author_row(&group.author, group.works.len());
+                            has_rows = true;
                         }
                     }
+
+                    // Second: individual works that match (skip if author already shown)
+                    for group in &self.groups {
+                        if author_name_matches(&filter_lower, &group.author) {
+                            continue; // author already listed above
+                        }
+                        for work in &group.works {
+                            if subsequence_match_work(&filter_lower, work) {
+                                self.add_work_row(work);
+                                has_rows = true;
+                            }
+                        }
+                    }
+
+                    let _ = has_rows;
                 }
             }
             PickerLevel::Works(author) => {
@@ -278,14 +294,20 @@ impl LibraryPicker {
     }
 
     fn add_work_row(&self, work: &WorkSummary) {
+        let show_author = matches!(&self.level, PickerLevel::Authors);
         let hbox = GtkBox::builder()
             .orientation(Orientation::Horizontal)
             .spacing(8)
             .hexpand(true)
             .build();
 
+        let display = if show_author {
+            format!("{} — {}", work.title, work.author)
+        } else {
+            work.title.clone()
+        };
         let title_label = Label::builder()
-            .label(&work.title)
+            .label(&display)
             .halign(gtk4::Align::Start)
             .hexpand(true)
             .build();
@@ -349,20 +371,6 @@ fn subsequence_chars(filter: &str, target: &str) -> bool {
         }
     }
     true
-}
-
-/// Return groups whose author name matches the filter OR whose works contain a match.
-pub fn find_matching_authors<'a>(filter: &str, groups: &'a [AuthorGroup]) -> Vec<&'a AuthorGroup> {
-    let filter_lower = filter.to_lowercase();
-    groups
-        .iter()
-        .filter(|g| {
-            author_name_matches(filter, &g.author)
-                || g.works
-                    .iter()
-                    .any(|w| subsequence_match_work(&filter_lower, w))
-        })
-        .collect()
 }
 
 // Keep the old name as an alias so existing callers (tests) still compile.
@@ -440,20 +448,29 @@ mod tests {
         ];
         let groups = group_works(&works);
 
-        // "oliver" matches a work by Dickens but not by Shakespeare.
-        let matches = find_matching_authors("oliver", &groups);
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].author, "Dickens, Charles");
+        // "oliver" matches Oliver Twist by Dickens (work-level match)
+        let filter = "oliver".to_lowercase();
+        let matching_works: Vec<&WorkSummary> = groups
+            .iter()
+            .flat_map(|g| g.works.iter())
+            .filter(|w| subsequence_match_work(&filter, w))
+            .collect();
+        assert_eq!(matching_works.len(), 1);
+        assert_eq!(matching_works[0].title, "Oliver Twist");
 
-        // "ham" matches Shakespeare's Hamlet.
-        let matches2 = find_matching_authors("ham", &groups);
-        assert_eq!(matches2.len(), 1);
-        assert_eq!(matches2[0].author, "Shakespeare");
+        // "ham" matches Hamlet
+        let filter2 = "ham".to_lowercase();
+        let matching2: Vec<&WorkSummary> = groups
+            .iter()
+            .flat_map(|g| g.works.iter())
+            .filter(|w| subsequence_match_work(&filter2, w))
+            .collect();
+        assert_eq!(matching2.len(), 1);
+        assert_eq!(matching2[0].title, "Hamlet");
 
-        // "dick" matches the author name "Dickens, Charles".
-        let matches3 = find_matching_authors("dick", &groups);
-        assert_eq!(matches3.len(), 1);
-        assert_eq!(matches3[0].author, "Dickens, Charles");
+        // "dick" matches author name "Dickens, Charles"
+        assert!(author_name_matches("dick", "Dickens, Charles"));
+        assert!(!author_name_matches("dick", "Shakespeare"));
     }
 
     // ── Pre-existing tests (keep passing) ────────────────────────────────
