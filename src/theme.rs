@@ -341,10 +341,11 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          textview border * {{ background-color: {bg}; background: {bg}; }} \
          textview text {{ background-color: {bg}; color: {fg}; \
            font-family: {font}; font-size: {size}pt; }} \
-         .library-picker {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
-           padding: 16px; border-radius: 8px; }} \
+         .library-picker {{ background-color: {bg}; color: {fg}; \
+           padding: 16px; border-radius: 12px; border: 1px solid {dim}; }} \
          .library-picker entry {{ margin-bottom: 8px; }} \
-         .library-picker row:selected {{ background-color: rgba(100, 140, 200, 0.8); }} \
+         .library-picker row:selected {{ background-color: {cursor_bg}; color: {cursor_fg}; }} \
+         .library-picker-scrim {{ background-color: rgba(0, 0, 0, 0.3); }} \
          .search-bar {{ background-color: {bg}; color: {fg}; padding: 4px 12px; }} \
          .search-entry {{ background: transparent; border: none; color: {fg}; }} \
          .search-slash {{ color: {fg}; opacity: 0.6; }} \

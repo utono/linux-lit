@@ -11,6 +11,56 @@ pub struct KeyState {
     pub pending_g: bool,
 }
 
+fn load_selected_work(
+    state: &Rc<RefCell<crate::app::AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+) {
+    let abbrev = state.borrow().picker.selected_abbrev();
+    if let Some(abbrev) = abbrev {
+        {
+            let s = state.borrow();
+            let _ = s.cmd_tx.try_send(crate::mpv::commands::MpvCommand::Pause);
+            s.picker.hide();
+            s.correction_overlay.show_loading_message("Loading...");
+        }
+        let state_clone = Rc::clone(state);
+        let handle = tokio_handle.clone();
+        glib::spawn_future_local(async move {
+            let work = handle
+                .spawn_blocking(move || {
+                    let conn =
+                        crate::db::queries::open_db().expect("Failed to open lit.db");
+                    crate::db::queries::load_work(&conn, &abbrev)
+                })
+                .await;
+            match work {
+                Ok(Ok(work)) => {
+                    {
+                        let mut s = state_clone.borrow_mut();
+                        s.correction_overlay.hide();
+                        crate::app::display_work(&mut s, work);
+                    }
+                    glib::idle_add_local_once(move || {
+                        crate::input::navigation::restore_cursor(
+                            &mut state_clone.borrow_mut(),
+                        );
+                    });
+                }
+                Ok(Err(e)) => {
+                    let s = state_clone.borrow();
+                    s.correction_overlay.hide();
+                    eprintln!("Failed to load work: {}", e);
+                }
+                Err(e) => {
+                    let s = state_clone.borrow();
+                    s.correction_overlay.hide();
+                    eprintln!("Task join error: {}", e);
+                }
+            }
+        });
+    }
+}
+
 /// Handle a key press. Returns true if consumed.
 pub fn handle_key(
     state: &Rc<RefCell<AppState>>,
@@ -85,56 +135,53 @@ pub fn handle_key(
     if picker_visible {
         match key_name {
             "Escape" => {
-                state.borrow().picker.hide();
+                let level = state.borrow().picker.level().clone();
+                match level {
+                    crate::ui::library_picker::PickerLevel::Works(_) => {
+                        state.borrow_mut().picker.go_back_to_authors();
+                    }
+                    crate::ui::library_picker::PickerLevel::Authors => {
+                        state.borrow().picker.hide();
+                    }
+                }
                 return true;
             }
             "Return" => {
-                let abbrev = state.borrow().picker.selected_abbrev();
-                if let Some(abbrev) = abbrev {
-                    {
-                        let s = state.borrow();
-                        let _ = s.cmd_tx.try_send(crate::mpv::commands::MpvCommand::Pause);
-                        s.picker.hide();
-                        s.correction_overlay.show_loading_message("Loading...");
-                    }
-                    let state_clone = Rc::clone(state);
-                    let handle = tokio_handle.clone();
-                    glib::spawn_future_local(async move {
-                        let work = handle
-                            .spawn_blocking(move || {
-                                let conn =
-                                    crate::db::queries::open_db().expect("Failed to open lit.db");
-                                crate::db::queries::load_work(&conn, &abbrev)
-                            })
-                            .await;
-                        match work {
-                            Ok(Ok(work)) => {
-                                {
-                                    let mut s = state_clone.borrow_mut();
-                                    s.correction_overlay.hide();
-                                    crate::app::display_work(&mut s, work);
-                                }
-                                // Defer scroll until after GTK lays out the text
-                                glib::idle_add_local_once(move || {
-                                    crate::input::navigation::restore_cursor(
-                                        &mut state_clone.borrow_mut(),
-                                    );
-                                });
-                            }
-                            Ok(Err(e)) => {
-                                let s = state_clone.borrow();
-                                s.correction_overlay.hide();
-                                eprintln!("Failed to load work: {}", e);
-                            }
-                            Err(e) => {
-                                let s = state_clone.borrow();
-                                s.correction_overlay.hide();
-                                eprintln!("Task join error: {}", e);
+                let level = state.borrow().picker.level().clone();
+                match level {
+                    crate::ui::library_picker::PickerLevel::Authors => {
+                        let selected_name = state
+                            .borrow()
+                            .picker
+                            .list_box()
+                            .selected_row()
+                            .map(|r| r.widget_name().to_string());
+                        if let Some(name) = selected_name {
+                            if name.starts_with("author:") {
+                                let author = name.trim_start_matches("author:").to_string();
+                                state.borrow_mut().picker.enter_author(&author);
+                            } else {
+                                load_selected_work(state, tokio_handle);
                             }
                         }
-                    });
+                        return true;
+                    }
+                    crate::ui::library_picker::PickerLevel::Works(_) => {
+                        load_selected_work(state, tokio_handle);
+                        return true;
+                    }
                 }
-                return true;
+            }
+            "BackSpace" => {
+                let level = state.borrow().picker.level().clone();
+                if let crate::ui::library_picker::PickerLevel::Works(_) = level {
+                    let text = state.borrow().picker.search_entry().text().to_string();
+                    if text.is_empty() {
+                        state.borrow_mut().picker.go_back_to_authors();
+                        return true;
+                    }
+                }
+                return false;
             }
             "Down" => {
                 state.borrow().picker.move_selection(1);
