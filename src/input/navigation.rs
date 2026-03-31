@@ -328,7 +328,7 @@ pub fn restore_cursor(state: &mut AppState) {
             let adj = state.scrolled_window.vadjustment();
             let max_scroll = adj.upper() - adj.page_size();
             let line_y = scroll_value_for_line(state, state.current_line);
-            let offset = adj.page_size() * 0.35;
+            let offset = adj.page_size() * 0.15;
             let centered = (line_y - offset).max(0.0).min(max_scroll.max(0.0));
             adj.set_value(centered);
         }
@@ -399,22 +399,7 @@ fn needs_page_turn_down(state: &AppState, line: usize) -> bool {
 
 /// Scroll just enough to keep the current line visible. No page turn.
 fn scroll_to_cursor(state: &mut AppState) {
-    if let Some(iter) = state.buffer.iter_at_line(state.current_line as i32) {
-        let visible = state.text_view.visible_rect();
-        let loc = state.text_view.iter_location(&iter);
-
-        if loc.y() < visible.y() {
-            // Cursor above viewport — scroll up
-            let target = scroll_value_for_line(state, state.current_line);
-            state.scrolled_window.vadjustment().set_value(target);
-            state.page_top_line = state.current_line;
-        } else if loc.y() + loc.height() > visible.y() + visible.height() {
-            // Cursor below viewport — scroll so cursor is at bottom
-            let adj = state.scrolled_window.vadjustment();
-            let target = (loc.y() + loc.height()) as f64 - adj.page_size();
-            adj.set_value(target.max(0.0));
-        }
-    }
+    center_cursor(state);
 }
 
 /// Scroll the viewport so the current line is vertically centered.
@@ -426,7 +411,7 @@ fn center_cursor(state: &mut AppState) {
         return;
     }
     let line_y = scroll_value_for_line(state, state.current_line);
-    let offset = adj.page_size() * 0.35;
+    let offset = adj.page_size() * 0.15;
     let centered = (line_y - offset).max(0.0).min(max_scroll);
     crate::logging::log(&format!(
         "CENTER: line={} line_y={:.0} offset={:.0} centered={:.0} max={:.0} old_val={:.0}",
@@ -545,7 +530,7 @@ pub fn scroll_paragraph_to_top(state: &mut AppState, para_start: usize) {
                 return;
             }
             let line_y = scroll_value_for_line(state, para_start);
-            let offset = adj.page_size() * 0.35;
+            let offset = adj.page_size() * 0.15;
             let val = (line_y - offset).max(0.0).min(max_scroll);
             adj.set_value(val);
         }
