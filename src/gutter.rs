@@ -3,27 +3,8 @@ use std::rc::Rc;
 
 use gtk4::prelude::*;
 use sourceview5::prelude::*;
-use sourceview5::{Buffer as SrcBuffer, View};
+use sourceview5::View;
 
-const MARK_TIMESTAMP: &str = "timestamp";
-
-/// Place sourceview5::Mark on each timestamped line.
-pub fn place_timestamp_marks(buffer: &SrcBuffer, has_timestamp: &[bool]) {
-    // Clear old timestamp marks
-    let start = buffer.start_iter();
-    let end = buffer.end_iter();
-    buffer.remove_source_marks(&start, &end, Some(MARK_TIMESTAMP));
-
-    for (i, &has_ts) in has_timestamp.iter().enumerate() {
-        if !has_ts {
-            continue;
-        }
-        if let Some(iter) = buffer.iter_at_line(i as i32) {
-            let mark_name = format!("ts-{}", i);
-            buffer.create_source_mark(Some(&mark_name), MARK_TIMESTAMP, &iter);
-        }
-    }
-}
 
 /// Set up a gutter renderer that shows "│" for timestamped lines.
 ///

@@ -151,35 +151,6 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
         }
     }
 
-    // 5d. Load phrase timestamps for the active media
-    let phrases: Vec<super::models::Phrase> = if let Some(mid) = media_id {
-        match conn.prepare(
-            "SELECT pt.line_mapping_id, pt.start_time, pt.end_time, \
-             pt.start_char, pt.end_char \
-             FROM phrase_timestamps pt \
-             JOIN line_mapping lm ON pt.line_mapping_id = lm.id \
-             WHERE lm.work_abbrev = ?1 AND pt.media_id = ?2 \
-             ORDER BY pt.start_time",
-        ) {
-            Ok(mut stmt) => {
-                stmt.query_map(rusqlite::params![abbrev, mid], |row| {
-                    Ok(super::models::Phrase {
-                        line_id: row.get(0)?,
-                        start_time: row.get(1)?,
-                        end_time: row.get(2)?,
-                        start_char: row.get::<_, i64>(3)? as usize,
-                        end_char: row.get::<_, i64>(4)? as usize,
-                    })
-                }).ok()
-                .map(|rows| rows.filter_map(|r| r.ok()).collect())
-                .unwrap_or_default()
-            }
-            Err(_) => Vec::new(), // table doesn't exist yet
-        }
-    } else {
-        Vec::new()
-    };
-
     // 6. Attach timestamps and spoken status to lines
     let lines: Vec<Line> = lines
         .into_iter()
@@ -201,7 +172,6 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
         timestamps,
         media_paths,
         media_id,
-        phrases,
     })
 }
 

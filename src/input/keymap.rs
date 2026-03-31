@@ -26,6 +26,7 @@ fn load_selected_work(
         let state_clone = Rc::clone(state);
         let handle = tokio_handle.clone();
         glib::spawn_future_local(async move {
+            let t_db = std::time::Instant::now();
             let work = handle
                 .spawn_blocking(move || {
                     let conn =
@@ -33,6 +34,7 @@ fn load_selected_work(
                     crate::db::queries::load_work(&conn, &abbrev)
                 })
                 .await;
+            crate::logging::log(&format!("TIMING: load_work DB query {:.0}ms", t_db.elapsed().as_millis()));
             match work {
                 Ok(Ok(work)) => {
                     {
@@ -127,7 +129,8 @@ pub fn handle_key(
             s.concordance_bar.hide();
         }
         state.borrow().correction_overlay.hide();
-        state.borrow_mut().picker.show();
+        state.borrow_mut().picker.show_prepare();
+        state.borrow().picker.show_finish();
         return true;
     }
 
@@ -139,6 +142,7 @@ pub fn handle_key(
                 match level {
                     crate::ui::library_picker::PickerLevel::Works(_) => {
                         state.borrow_mut().picker.go_back_to_authors();
+                        state.borrow().picker.refresh_after_level_change();
                     }
                     crate::ui::library_picker::PickerLevel::Authors => {
                         state.borrow().picker.hide();
@@ -160,6 +164,7 @@ pub fn handle_key(
                             if name.starts_with("author:") {
                                 let author = name.trim_start_matches("author:").to_string();
                                 state.borrow_mut().picker.enter_author(&author);
+                                state.borrow().picker.refresh_after_level_change();
                             } else {
                                 load_selected_work(state, tokio_handle);
                             }
@@ -178,6 +183,7 @@ pub fn handle_key(
                     let text = state.borrow().picker.search_entry().text().to_string();
                     if text.is_empty() {
                         state.borrow_mut().picker.go_back_to_authors();
+                        state.borrow().picker.refresh_after_level_change();
                         return true;
                     }
                 }

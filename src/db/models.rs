@@ -10,7 +10,6 @@ pub struct Work {
     pub timestamps: Vec<Timestamp>,
     pub media_paths: Vec<String>,
     pub media_id: Option<i64>,
-    pub phrases: Vec<Phrase>,
 }
 
 #[derive(Debug, Clone)]
@@ -51,16 +50,6 @@ pub struct Timestamp {
     pub media_id: i64,
     pub sentence_start: Option<f64>,
     pub sentence_end: Option<f64>,
-}
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct Phrase {
-    pub line_id: i64,
-    pub start_time: f64,
-    pub end_time: f64,
-    pub start_char: usize,
-    pub end_char: usize,
 }
 
 #[derive(Debug, Clone)]

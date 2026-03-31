@@ -566,12 +566,14 @@ pub fn build_window(
                     });
                 }
                 Ok(Err(_)) | Err(_) => {
-                    state_clone.borrow_mut().picker.show();
+                    state_clone.borrow_mut().picker.show_prepare();
+                    state_clone.borrow().picker.show_finish();
                 }
             }
         });
     } else {
-        state.borrow_mut().picker.show();
+        state.borrow_mut().picker.show_prepare();
+        state.borrow().picker.show_finish();
     }
 
     state
@@ -675,10 +677,15 @@ pub fn display_work(state: &mut AppState, work: Work) {
             ));
         }
     }
+    let t0 = std::time::Instant::now();
     rebuild_buffer_text(state);
+    crate::logging::log(&format!("TIMING: rebuild_buffer_text {:.0}ms", t0.elapsed().as_millis()));
+    let t1 = std::time::Instant::now();
     apply_dialogue_formatting(state);
+    crate::logging::log(&format!("TIMING: apply_dialogue_formatting {:.0}ms", t1.elapsed().as_millis()));
 
     // Load vocab words and apply highlighting
+    let t2 = std::time::Instant::now();
     if let Some(ref work) = state.current_work {
         if let Ok(conn) = crate::db::queries::open_db() {
             state.vocab_words = crate::db::queries::load_vocab_words(&conn, &work.abbrev)
@@ -689,17 +696,17 @@ pub fn display_work(state: &mut AppState, work: Work) {
             ));
         }
     }
-    if let Some(ref work) = state.current_work {
-        if !work.phrases.is_empty() {
-            crate::logging::log(&format!("PHRASES: loaded {} phrases", work.phrases.len()));
-        }
-    }
-
+    crate::logging::log(&format!("TIMING: load_vocab_words {:.0}ms", t2.elapsed().as_millis()));
+    let t3 = std::time::Instant::now();
     build_vocab_matches(state);
+    crate::logging::log(&format!("TIMING: build_vocab_matches {:.0}ms", t3.elapsed().as_millis()));
     if state.vocab_highlight_visible {
+        let t4 = std::time::Instant::now();
         apply_vocab_highlighting(state);
+        crate::logging::log(&format!("TIMING: apply_vocab_highlighting {:.0}ms", t4.elapsed().as_millis()));
     }
 
+    let t5 = std::time::Instant::now();
     // Set up gutter: remove old renderer, place marks, create new renderer
     if let Some(old_renderer) = state.gutter_renderer.take() {
         crate::gutter::remove_gutter_renderer(&state.text_view, &old_renderer);
@@ -723,7 +730,6 @@ pub fn display_work(state: &mut AppState, work: Work) {
         };
         *state.has_timestamp.borrow_mut() = new_has_ts;
     }
-    crate::gutter::place_timestamp_marks(&state.buffer, &state.has_timestamp.borrow());
     let renderer = crate::gutter::setup_timestamp_gutter(
         &state.text_view,
         state.sign_column_visible.clone(),
@@ -762,12 +768,16 @@ pub fn display_work(state: &mut AppState, work: Work) {
         }
     }
 
+    crate::logging::log(&format!("TIMING: gutter setup {:.0}ms", t5.elapsed().as_millis()));
+
     // Set per-author default font size
     let author = state.current_work.as_ref().map(|w| w.author.as_str()).unwrap_or("");
     state.config.font_size = if author == "Shakespeare" { 18 } else { crate::config::default_font_size() };
 
     // Apply font tag to new buffer content
+    let t6 = std::time::Instant::now();
     reapply_font(state);
+    crate::logging::log(&format!("TIMING: reapply_font {:.0}ms", t6.elapsed().as_millis()));
 
     // Clamp saved line to buffer bounds and restore cursor position
     state.current_line = state.current_line.min(
@@ -775,7 +785,10 @@ pub fn display_work(state: &mut AppState, work: Work) {
     );
 
     // Dim all lines except the current one
+    let t7 = std::time::Instant::now();
     crate::input::navigation::update_highlight_and_ensure_visible(state);
+    crate::logging::log(&format!("TIMING: update_highlight {:.0}ms", t7.elapsed().as_millis()));
+    crate::logging::log(&format!("TIMING: display_work total {:.0}ms", t0.elapsed().as_millis()));
 }
 
 /// Rebuild the buffer text from current_work.

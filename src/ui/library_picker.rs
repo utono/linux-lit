@@ -134,10 +134,17 @@ impl LibraryPicker {
         self.populate_list("");
     }
 
-    pub fn show(&mut self) {
+    /// Prepare picker for showing — mutates level only.
+    /// Call `show_finish()` after dropping the mutable borrow.
+    pub fn show_prepare(&mut self) {
         self.level = PickerLevel::Authors;
+    }
+
+    /// Complete showing — does GTK widget updates that may trigger signals.
+    pub fn show_finish(&self) {
         self.picker_box.set_visible(true);
         self.scrim.set_visible(true);
+        self.search_entry.set_placeholder_text(Some("Filter authors..."));
         self.search_entry.set_text("");
         self.search_entry.grab_focus();
         self.populate_list("");
@@ -163,7 +170,6 @@ impl LibraryPicker {
         &self.search_entry
     }
 
-    #[allow(dead_code)]
     pub fn list_box(&self) -> &ListBox {
         &self.list_box
     }
@@ -177,22 +183,28 @@ impl LibraryPicker {
         &self.level
     }
 
+    /// Set level to a specific author's works — mutates level only.
+    /// Call `refresh_after_level_change()` after dropping the mutable borrow.
     pub fn enter_author(&mut self, author: &str) {
         self.level = PickerLevel::Works(author.to_string());
-        self.search_entry.set_text("");
-        self.populate_list("");
-        if let Some(first) = self.list_box.row_at_index(0) {
-            self.list_box.select_row(Some(&first));
-        }
     }
 
+    /// Set level back to authors — mutates level only.
+    /// Call `refresh_after_level_change()` after dropping the mutable borrow.
     pub fn go_back_to_authors(&mut self) {
         self.level = PickerLevel::Authors;
+    }
+
+    /// Update widgets after a level change. Safe to call under `&self` borrow.
+    pub fn refresh_after_level_change(&self) {
+        let placeholder = match &self.level {
+            PickerLevel::Authors => "Filter authors...",
+            PickerLevel::Works(_) => "Filter works...",
+        };
+        self.search_entry.set_placeholder_text(Some(placeholder));
         self.search_entry.set_text("");
         self.populate_list("");
-        if let Some(first) = self.list_box.row_at_index(0) {
-            self.list_box.select_row(Some(&first));
-        }
+        self.search_entry.grab_focus();
     }
 
     pub fn populate_list(&self, filter: &str) {
