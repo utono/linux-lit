@@ -256,22 +256,11 @@ fn key_colors(def: &KeyDef) -> ((f64, f64, f64), (f64, f64, f64), (f64, f64, f64
     let has_bare = !def.action.is_empty();
     let has_shift = !def.shift_action.is_empty();
     let has_mod = !def.modifiers.is_empty();
-
-    if has_bare && (has_shift || has_mod) {
-        // both/modifier: green-ish
-        ((0.102, 0.227, 0.165), (0.227, 0.416, 0.29), (0.533, 1.0, 0.533))
-    } else if has_bare {
-        // bare bound: green
-        ((0.102, 0.227, 0.165), (0.227, 0.416, 0.29), (0.533, 1.0, 0.533))
-    } else if has_shift {
-        // shift only: blue
-        ((0.102, 0.165, 0.227), (0.227, 0.29, 0.416), (0.533, 0.667, 1.0))
-    } else if has_mod {
-        // modifier only: green-ish
-        ((0.102, 0.227, 0.165), (0.227, 0.416, 0.29), (0.533, 1.0, 0.533))
+    let bound = has_bare || has_shift || has_mod;
+    if bound {
+        ((0.949, 0.914, 0.882), (0.875, 0.855, 0.851), (0.341, 0.322, 0.475))
     } else {
-        // unbound: dark gray
-        ((0.165, 0.165, 0.165), (0.267, 0.267, 0.267), (0.4, 0.4, 0.4))
+        ((1.0, 0.98, 0.953), (0.949, 0.914, 0.882), (0.596, 0.576, 0.647))
     }
 }
 
@@ -281,7 +270,7 @@ fn draw_keyboard(cr: &gtk4::cairo::Context, layout: &AllKeys, tooltip_idx: Optio
     // Background
     let total_w = KB_W + 2.0 * PAD;
     let total_h = KB_H + 2.0 * PAD;
-    cr.set_source_rgba(0.1, 0.1, 0.1, 0.95);
+    cr.set_source_rgba(0.341, 0.322, 0.475, 0.95);
     rounded_rect(cr, 0.0, 0.0, total_w, total_h, 10.0);
     let _ = cr.fill();
 
@@ -312,9 +301,9 @@ fn draw_keyboard(cr: &gtk4::cairo::Context, layout: &AllKeys, tooltip_idx: Optio
         // Shifted character (small, top-right)
         if !def.shifted.is_empty() {
             let shifted_col = if !def.shift_action.is_empty() || (!def.action.is_empty() && !def.modifiers.is_empty()) {
-                (0.4, 0.533, 0.8) // active blue
+                (0.565, 0.478, 0.663) // iris
             } else {
-                (0.4, 0.4, 0.4) // dim
+                (0.596, 0.576, 0.647) // muted/text_unbound
             };
             cr.set_source_rgb(shifted_col.0, shifted_col.1, shifted_col.2);
             cr.set_font_size(14.0);
@@ -326,7 +315,7 @@ fn draw_keyboard(cr: &gtk4::cairo::Context, layout: &AllKeys, tooltip_idx: Optio
 
         // Action label (bare key)
         if !def.action.is_empty() {
-            cr.set_source_rgb(0.4, 0.8, 0.4);
+            cr.set_source_rgb(0.157, 0.412, 0.514);
             cr.set_font_size(12.0);
             cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
             let _ = cr.move_to(rect.x + 7.0, rect.y + rect.h - 8.0);
@@ -335,7 +324,7 @@ fn draw_keyboard(cr: &gtk4::cairo::Context, layout: &AllKeys, tooltip_idx: Optio
 
         // Shift action label
         if !def.shift_action.is_empty() {
-            cr.set_source_rgb(0.4, 0.533, 0.8);
+            cr.set_source_rgb(0.565, 0.478, 0.663);
             cr.set_font_size(11.0);
             cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
             let y_pos = if !def.action.is_empty() {
@@ -362,16 +351,16 @@ fn draw_keyboard(cr: &gtk4::cairo::Context, layout: &AllKeys, tooltip_idx: Optio
     // Legend
     let legend_y = KB_H - 20.0;
     let legend_items: &[((f64, f64, f64), &str)] = &[
-        ((0.102, 0.227, 0.165), "bare key"),
-        ((0.102, 0.165, 0.227), "shift only"),
-        ((0.102, 0.227, 0.165), "both / modifier"),
-        ((0.165, 0.165, 0.165), "unbound"),
+        ((0.949, 0.914, 0.882), "bare key"),
+        ((0.949, 0.914, 0.882), "shift only"),
+        ((0.949, 0.914, 0.882), "both / modifier"),
+        ((1.0, 0.98, 0.953), "unbound"),
     ];
     let legend_colors: &[(f64, f64, f64)] = &[
-        (0.533, 1.0, 0.533),
-        (0.533, 0.667, 1.0),
-        (0.667, 0.667, 0.667),
-        (0.4, 0.4, 0.4),
+        (0.157, 0.412, 0.514),  // pine
+        (0.565, 0.478, 0.663),  // iris
+        (0.475, 0.459, 0.576),  // subtle
+        (0.596, 0.576, 0.647),  // muted
     ];
 
     let mut lx = 0.0;
@@ -393,13 +382,13 @@ fn draw_keyboard(cr: &gtk4::cairo::Context, layout: &AllKeys, tooltip_idx: Optio
     }
 
     // Alt+ indicator
-    cr.set_source_rgb(0.8, 0.533, 1.0);
+    cr.set_source_rgb(0.565, 0.478, 0.663);
     cr.set_font_size(13.0);
     let _ = cr.move_to(lx, legend_y + 13.0);
     let _ = cr.show_text("\u{2022} Alt+");
 
     // Close hint (right side)
-    cr.set_source_rgb(0.4, 0.8, 0.4);
+    cr.set_source_rgb(0.475, 0.459, 0.576);
     cr.set_font_size(13.0);
     cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
     let hint = "Esc to close \u{00b7} C-/ to toggle";
@@ -428,12 +417,12 @@ fn draw_tooltip(cr: &gtk4::cairo::Context, rect: &KeyRect, def: &KeyDef) {
     let tt_y = rect.y - tt_h - 6.0;
 
     // Background
-    cr.set_source_rgba(0.13, 0.13, 0.13, 0.95);
+    cr.set_source_rgba(0.341, 0.322, 0.475, 0.95);
     rounded_rect(cr, tt_x, tt_y, tt_w, tt_h, 4.0);
     let _ = cr.fill();
 
     // Border
-    cr.set_source_rgb(0.33, 0.33, 0.33);
+    cr.set_source_rgb(0.475, 0.459, 0.576);
     rounded_rect(cr, tt_x + 0.5, tt_y + 0.5, tt_w - 1.0, tt_h - 1.0, 4.0);
     cr.set_line_width(1.0);
     let _ = cr.stroke();
@@ -442,9 +431,9 @@ fn draw_tooltip(cr: &gtk4::cairo::Context, rect: &KeyRect, def: &KeyDef) {
     for (i, line) in lines.iter().enumerate() {
         // Color based on modifier type
         if line.starts_with("M-") {
-            cr.set_source_rgb(0.8, 0.533, 1.0); // purple for Alt
+            cr.set_source_rgb(0.565, 0.478, 0.663); // iris
         } else {
-            cr.set_source_rgb(0.533, 0.667, 1.0); // blue for Ctrl
+            cr.set_source_rgb(0.706, 0.388, 0.478); // love
         }
         let _ = cr.move_to(tt_x + 10.0, tt_y + 18.0 + i as f64 * 18.0);
         let _ = cr.show_text(line);
