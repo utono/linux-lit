@@ -566,12 +566,12 @@ pub fn build_window(
                     });
                 }
                 Ok(Err(_)) | Err(_) => {
-                    state_clone.borrow().picker.show();
+                    state_clone.borrow_mut().picker.show();
                 }
             }
         });
     } else {
-        state.borrow().picker.show();
+        state.borrow_mut().picker.show();
     }
 
     state

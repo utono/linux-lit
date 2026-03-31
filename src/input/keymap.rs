@@ -77,7 +77,7 @@ pub fn handle_key(
             s.concordance_bar.hide();
         }
         state.borrow().correction_overlay.hide();
-        state.borrow().picker.show();
+        state.borrow_mut().picker.show();
         return true;
     }
 
