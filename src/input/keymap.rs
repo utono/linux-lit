@@ -291,7 +291,7 @@ pub fn handle_key(
                         s.text_view.set_pixels_above_lines(snap_ls as i32);
                         s.text_view.set_pixels_below_lines(snap_ls as i32);
                     }
-                    s.scrolled_window.set_width_request(snap_cw as i32);
+                    s.content_hbox.set_width_request(snap_cw as i32);
                     s.text_view.set_left_margin(snap_tm as i32);
                     s.text_view.set_right_margin(snap_tm as i32 + crate::config::EXTRA_RIGHT_MARGIN);
                     s.config.line_spacing = snap_ls;
@@ -359,7 +359,7 @@ pub fn handle_key(
                     s.text_view.set_pixels_above_lines(ls as i32);
                     s.text_view.set_pixels_below_lines(ls as i32);
                 }
-                s.scrolled_window.set_width_request(cw as i32);
+                s.content_hbox.set_width_request(cw as i32);
                 s.text_view.set_left_margin(tm as i32);
                 s.text_view.set_right_margin(tm as i32 + crate::config::EXTRA_RIGHT_MARGIN);
                 s.config.line_spacing = ls;
@@ -1159,7 +1159,7 @@ fn apply_settings_change(
             s.config.line_spacing = val;
         }
         SettingsChange::ColumnWidth(val) => {
-            s.scrolled_window.set_width_request(val as i32);
+            s.content_hbox.set_width_request(val as i32);
             s.config.column_width = val;
         }
         SettingsChange::TextMargins(val) => {

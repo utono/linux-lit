@@ -41,6 +41,7 @@ pub struct AppState {
     pub dim_tag: gtk4::TextTag,
     pub ab_dim_tag: gtk4::TextTag,
     pub scrolled_window: ScrolledWindow,
+    pub content_hbox: gtk4::Box,
     pub window: ApplicationWindow,
     pub config: Config,
     pub css_provider: CssProvider,
@@ -304,18 +305,18 @@ pub fn build_window(
         .hscrollbar_policy(gtk4::PolicyType::Never)
         .vscrollbar_policy(gtk4::PolicyType::External)
         .vexpand(true)
-        .hexpand(false)
+        .hexpand(true)
         .valign(gtk4::Align::Fill)
-        .width_request(config.column_width as i32)
         .css_classes(vec!["text-card"])
         .overflow(gtk4::Overflow::Hidden)
         .build();
 
-    // Centered text card container
+    // Centered text card container — width_request controls the card width
     let content_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
     content_hbox.set_halign(gtk4::Align::Center);
     content_hbox.set_valign(gtk4::Align::Fill);
     content_hbox.set_vexpand(true);
+    content_hbox.set_width_request(config.column_width as i32);
     content_hbox.set_margin_top(24);
     content_hbox.set_margin_bottom(24);
     content_hbox.set_margin_start(24);
@@ -404,6 +405,7 @@ pub fn build_window(
         dim_tag,
         ab_dim_tag,
         scrolled_window: scrolled,
+        content_hbox: content_hbox.clone(),
         window: window.clone(),
         config,
         css_provider,
