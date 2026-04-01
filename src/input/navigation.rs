@@ -154,6 +154,9 @@ pub fn jump_to_prev_paragraph(state: &mut AppState) {
             update_highlight(state);
             center_cursor(state);
             seek_to_current_line(state);
+            // Suppress CursorSync so audio doesn't pull cursor away while browsing
+            state.suppress_sync_until =
+                Some(std::time::Instant::now() + std::time::Duration::from_secs(86400));
             auto_show_vocab_popup(state);
         }
         return;
@@ -212,6 +215,9 @@ pub fn jump_to_next_paragraph(state: &mut AppState) {
             update_highlight(state);
             center_cursor(state);
             seek_to_current_line(state);
+            // Suppress CursorSync so audio doesn't pull cursor away while browsing
+            state.suppress_sync_until =
+                Some(std::time::Instant::now() + std::time::Duration::from_secs(86400));
             auto_show_vocab_popup(state);
         }
         return;
