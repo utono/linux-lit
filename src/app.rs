@@ -663,6 +663,7 @@ pub fn display_work(state: &mut AppState, work: Work) {
     // Build buffer text (with or without sign column)
     state.line_map = None;
     state.dialogue_formatting_active = false;
+    state.text_view.set_left_margin(state.config.text_margins as i32);
     state.translations_visible = false;
     state.translation_lines = Vec::new();
     // Load translations for this work
@@ -892,8 +893,12 @@ fn apply_dialogue_formatting(state: &mut AppState) {
         }
     }
 
+    // Widen left margin for stage plays so speaker names aren't flush with card edge
+    let play_left_margin = state.text_view.left_margin() + 80;
+    state.text_view.set_left_margin(play_left_margin);
+
     // Create tags
-    let base_margin = state.text_view.left_margin();
+    let base_margin = play_left_margin;
     let speaker_gap = state.config.line_spacing.max(1) as i32;
 
     let indent_tag = gtk4::TextTag::builder()

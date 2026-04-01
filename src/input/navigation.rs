@@ -146,6 +146,19 @@ pub fn jump_to_prev_paragraph(state: &mut AppState) {
     }
 
     let buffer = &state.buffer;
+
+    // In plays, jump to the previous dialogue line
+    if state.dialogue_formatting_active {
+        if let Some(target) = prev_dialogue_line(buffer, state.current_line) {
+            state.current_line = target;
+            update_highlight(state);
+            center_cursor(state);
+            seek_to_current_line(state);
+            auto_show_vocab_popup(state);
+        }
+        return;
+    }
+
     let mut i = state.current_line.saturating_sub(1);
 
     // Skip blank lines immediately above
@@ -159,11 +172,6 @@ pub fn jump_to_prev_paragraph(state: &mut AppState) {
     // Now i is on a blank line (or 0). Find the first non-blank line of the paragraph above.
     // If i is 0 and non-blank, that's the target. Otherwise advance past the blank.
     let target = if is_blank_buffer_line(buffer, i) {
-        // We're between paragraphs — but we want the paragraph *above*, so go up more
-        // Actually we've already passed through the paragraph above. The first non-blank
-        // line after this blank gap is the start of the paragraph we just skipped through.
-        // We need to find the start of the paragraph we were in.
-        // Re-approach: from i, go forward to find the first non-blank line.
         let mut start = i + 1;
         while start < line_count && is_blank_buffer_line(buffer, start) {
             start += 1;
@@ -171,11 +179,9 @@ pub fn jump_to_prev_paragraph(state: &mut AppState) {
         if start < line_count && start < state.current_line {
             Some(start)
         } else {
-            // Fallback: go to line 0
             Some(0)
         }
     } else {
-        // i is 0 and non-blank — find the true start of this paragraph
         Some(0)
     };
 
@@ -190,6 +196,7 @@ pub fn jump_to_prev_paragraph(state: &mut AppState) {
 
 /// Next paragraph (`q` key).
 /// Jump to the first non-blank line of the next paragraph (separated by blank lines).
+/// In plays, jump to the next dialogue line instead.
 pub fn jump_to_next_paragraph(state: &mut AppState) {
     let line_count = state.buffer.line_count() as usize;
     if line_count == 0 {
@@ -197,6 +204,19 @@ pub fn jump_to_next_paragraph(state: &mut AppState) {
     }
 
     let buffer = &state.buffer;
+
+    // In plays, jump to the next dialogue line
+    if state.dialogue_formatting_active {
+        if let Some(target) = next_dialogue_line(buffer, state.current_line, line_count) {
+            state.current_line = target;
+            update_highlight(state);
+            center_cursor(state);
+            seek_to_current_line(state);
+            auto_show_vocab_popup(state);
+        }
+        return;
+    }
+
     let mut i = state.current_line + 1;
 
     // Skip remaining lines of current paragraph
@@ -219,15 +239,62 @@ pub fn jump_to_next_paragraph(state: &mut AppState) {
 
 /// Check if a buffer line is blank (empty or whitespace only).
 fn is_blank_buffer_line(buffer: &sourceview5::Buffer, line: usize) -> bool {
+    let text = buffer_line_text(buffer, line);
+    text.trim().is_empty()
+}
+
+/// Get the text content of a buffer line.
+fn buffer_line_text(buffer: &sourceview5::Buffer, line: usize) -> String {
     let Some(start) = buffer.iter_at_line(line as i32) else {
-        return true;
+        return String::new();
     };
     let mut end = start;
     if !end.ends_line() {
         end.forward_to_line_end();
     }
-    let text = buffer.text(&start, &end, false);
-    text.trim().is_empty()
+    buffer.text(&start, &end, false).to_string()
+}
+
+/// Check if a buffer line is a dialogue line (not blank, speaker, stage direction, or marker).
+fn is_dialogue_line(buffer: &sourceview5::Buffer, line: usize) -> bool {
+    use crate::db::line_types;
+    let text = buffer_line_text(buffer, line);
+    let trimmed = text.trim();
+    !trimmed.is_empty()
+        && !line_types::is_speaker(trimmed)
+        && !line_types::is_stage_direction(trimmed)
+        && !line_types::is_act_scene_marker(trimmed)
+        && !line_types::is_separator(trimmed)
+}
+
+/// Find the next dialogue line after `current`.
+fn next_dialogue_line(buffer: &sourceview5::Buffer, current: usize, line_count: usize) -> Option<usize> {
+    let mut i = current + 1;
+    while i < line_count {
+        if is_dialogue_line(buffer, i) {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Find the previous dialogue line before `current`.
+fn prev_dialogue_line(buffer: &sourceview5::Buffer, current: usize) -> Option<usize> {
+    if current == 0 {
+        return None;
+    }
+    let mut i = current - 1;
+    loop {
+        if is_dialogue_line(buffer, i) {
+            return Some(i);
+        }
+        if i == 0 {
+            break;
+        }
+        i -= 1;
+    }
+    None
 }
 
 /// Previous chapter line (`[` key).

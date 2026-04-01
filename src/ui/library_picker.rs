@@ -343,6 +343,21 @@ impl LibraryPicker {
             let new_idx = (idx + delta).max(0);
             if let Some(row) = self.list_box.row_at_index(new_idx) {
                 self.list_box.select_row(Some(&row));
+                // Scroll the selected row into view within the ScrolledWindow
+                if let Some(adj) = self.list_box.adjustment() {
+                    if let Some(bounds) = row.compute_bounds(&self.list_box) {
+                        let y = bounds.y() as f64;
+                        let row_height = bounds.height() as f64;
+                        let page_size = adj.page_size();
+                        let current_val = adj.value();
+
+                        if y < current_val {
+                            adj.set_value(y);
+                        } else if y + row_height > current_val + page_size {
+                            adj.set_value(y + row_height - page_size);
+                        }
+                    }
+                }
             }
         }
     }
