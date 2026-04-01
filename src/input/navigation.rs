@@ -151,12 +151,12 @@ pub fn jump_to_prev_paragraph(state: &mut AppState) {
     if state.dialogue_formatting_active {
         if let Some(target) = prev_dialogue_line(buffer, state.current_line) {
             state.current_line = target;
+            // Clear stale pending_advance so old advance state doesn't bounce
+            state.pending_advance = None;
+            state.pending_advance_ignore_bl = None;
             update_highlight(state);
             center_cursor(state);
             seek_to_current_line(state);
-            // Suppress CursorSync so audio doesn't pull cursor away while browsing
-            state.suppress_sync_until =
-                Some(std::time::Instant::now() + std::time::Duration::from_secs(86400));
             auto_show_vocab_popup(state);
         }
         return;
@@ -212,12 +212,12 @@ pub fn jump_to_next_paragraph(state: &mut AppState) {
     if state.dialogue_formatting_active {
         if let Some(target) = next_dialogue_line(buffer, state.current_line, line_count) {
             state.current_line = target;
+            // Clear stale pending_advance so old advance state doesn't bounce
+            state.pending_advance = None;
+            state.pending_advance_ignore_bl = None;
             update_highlight(state);
             center_cursor(state);
             seek_to_current_line(state);
-            // Suppress CursorSync so audio doesn't pull cursor away while browsing
-            state.suppress_sync_until =
-                Some(std::time::Instant::now() + std::time::Duration::from_secs(86400));
             auto_show_vocab_popup(state);
         }
         return;
