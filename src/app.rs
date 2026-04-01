@@ -80,8 +80,11 @@ pub struct AppState {
     /// Prevents playback sync from overriding manual navigation.
     pub suppress_sync_until: Option<std::time::Instant>,
     /// When set, advance cursor to the given buffer line once time_pos exceeds
-    /// the end time. Used for untimestamped lines that follow a timestamped one.
-    pub pending_advance: Option<(f64, usize)>,
+    /// the end time. Fields: (end_time, next_buffer_line, source_work_line_idx).
+    pub pending_advance: Option<(f64, usize, usize)>,
+    /// The work-line index whose pending_advance already fired. Prevents CursorSync
+    /// from re-scheduling the same advance in a loop.
+    pub pending_advance_done_for: Option<usize>,
     pub visual_selection: Option<crate::input::visual::SelectionState>,
     pub selection_tag: gtk4::TextTag,
     pub action_popup: Option<crate::input::visual::ActionPopupState>,
@@ -439,6 +442,7 @@ pub fn build_window(
         translation_text_tag,
         suppress_sync_until: None,
         pending_advance: None,
+        pending_advance_done_for: None,
         visual_selection: None,
         selection_tag,
         action_popup: None,
