@@ -184,9 +184,27 @@ fn main() {
                                 s.pending_advance = None;
                                 if s.current_line != next_bl {
                                     s.current_line = next_bl;
-                                    // Suppress sync so cursor stays on this untimestamped line
+                                    // Suppress CursorSync until the next timestamped line starts,
+                                    // so the cursor isn't pulled back to the previous timestamped line.
+                                    // Find the next timestamped work-line's start_time to set a deadline.
+                                    let suppress_secs = if let Some(ref work) = s.current_work {
+                                        let next_wi = s.work_line_for_buffer(next_bl);
+                                        // Scan forward from the untimestamped line to find the next timestamped one
+                                        let start_wi = next_wi.map(|w| w + 1).unwrap_or(0);
+                                        let next_ts_start = (start_wi..work.lines.len())
+                                            .find_map(|wi| work.lines[wi].timestamp.as_ref().map(|ts| ts.start));
+                                        if let Some(next_start) = next_ts_start {
+                                            // Suppress until just before the next timestamped line
+                                            let remaining = (next_start - pos - crate::input::navigation::SYNC_PREROLL).max(0.0);
+                                            remaining
+                                        } else {
+                                            5.0 // no more timestamped lines; brief suppress
+                                        }
+                                    } else {
+                                        5.0
+                                    };
                                     s.suppress_sync_until = Some(
-                                        std::time::Instant::now() + std::time::Duration::from_secs(86400),
+                                        std::time::Instant::now() + std::time::Duration::from_secs_f64(suppress_secs),
                                     );
                                     crate::input::navigation::update_highlight_and_ensure_visible(
                                         &mut s,
