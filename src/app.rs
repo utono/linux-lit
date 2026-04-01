@@ -82,9 +82,10 @@ pub struct AppState {
     /// When set, advance cursor to the given buffer line once time_pos exceeds
     /// the end time. Fields: (end_time, next_buffer_line, source_work_line_idx).
     pub pending_advance: Option<(f64, usize, usize)>,
-    /// The work-line index whose pending_advance already fired. Prevents CursorSync
-    /// from re-scheduling the same advance in a loop.
-    pub pending_advance_done_for: Option<usize>,
+    /// After pending_advance fires, ignore CursorSync that would pull the cursor
+    /// back to this buffer line (the timestamped source line). Cleared when
+    /// CursorSync targets any other line.
+    pub pending_advance_ignore_bl: Option<usize>,
     pub visual_selection: Option<crate::input::visual::SelectionState>,
     pub selection_tag: gtk4::TextTag,
     pub action_popup: Option<crate::input::visual::ActionPopupState>,
@@ -442,7 +443,7 @@ pub fn build_window(
         translation_text_tag,
         suppress_sync_until: None,
         pending_advance: None,
-        pending_advance_done_for: None,
+        pending_advance_ignore_bl: None,
         visual_selection: None,
         selection_tag,
         action_popup: None,

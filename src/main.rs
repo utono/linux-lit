@@ -114,6 +114,14 @@ fn main() {
                         } else {
                             line_idx
                         };
+                        // After a pending_advance, ignore CursorSync that would
+                        // pull the cursor back to the source timestamped line.
+                        if s.pending_advance_ignore_bl == Some(buffer_line) {
+                            continue;
+                        }
+                        // CursorSync targets a different line — clear the guard
+                        s.pending_advance_ignore_bl = None;
+
                         if s.current_line != buffer_line {
                             s.current_line = buffer_line;
 
@@ -144,16 +152,8 @@ fn main() {
                         }
                         // Check if the next dialogue line lacks a timestamp;
                         // if so, schedule an advance when the current line's audio ends.
-                        // Skip if this line_idx already had its advance consumed (prevents
-                        // oscillation when CursorSync keeps returning to the same line).
                         s.pending_advance = None;
-                        let already_done = s.pending_advance_done_for == Some(line_idx);
-                        if !already_done {
-                            s.pending_advance_done_for = None;
-                        }
-                        if already_done {
-                            // Already advanced past this line — don't re-schedule
-                        } else if let Some(ref work) = s.current_work {
+                        if let Some(ref work) = s.current_work {
                             if let Some(end_time) = work.lines.get(line_idx).and_then(|l| l.timestamp.as_ref()).map(|ts| ts.end) {
                                 // Find next dialogue buffer line
                                 let next_dialogue = if let Some(ref lm) = s.line_map {
@@ -187,20 +187,14 @@ fn main() {
                         s.current_time_pos = pos;
 
                         // Advance to untimestamped next line when current line's audio ends
-                        if let Some((end_time, next_bl, source_wi)) = s.pending_advance {
+                        if let Some((end_time, next_bl, _source_wi)) = s.pending_advance {
                             if pos >= end_time {
+                                // Record the current buffer line so CursorSync won't
+                                // pull the cursor back to the source timestamped line.
+                                s.pending_advance_ignore_bl = Some(s.current_line);
                                 s.pending_advance = None;
-                                s.pending_advance_done_for = Some(source_wi);
                                 if s.current_line != next_bl {
                                     s.current_line = next_bl;
-                                    // Brief suppress so the previous timestamped line's
-                                    // CursorSync doesn't immediately pull the cursor back.
-                                    // Keep it short — the audio may jump to a different
-                                    // part of the text (e.g. out-of-order scenes in BBC
-                                    // productions) and CursorSync must be free to follow.
-                                    s.suppress_sync_until = Some(
-                                        std::time::Instant::now() + std::time::Duration::from_millis(500),
-                                    );
                                     crate::input::navigation::update_highlight_and_ensure_visible(
                                         &mut s,
                                     );
