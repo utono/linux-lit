@@ -97,7 +97,7 @@ fn default_vocab_highlight_visible() -> bool {
 }
 
 fn default_dim_enabled() -> bool {
-    true
+    false
 }
 
 impl Default for Config {

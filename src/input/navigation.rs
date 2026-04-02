@@ -422,27 +422,18 @@ pub fn restore_cursor(state: &mut AppState) {
 /// For backward movement, cursor appears near page bottom.
 /// For forward movement, cursor appears near page top.
 fn ensure_cursor_on_page(state: &mut AppState) {
-    let page_top = state.page_top_line;
-    let lpp = lines_per_page(state);
-    let page_bottom = page_top + lpp;
-
     crate::logging::log(&format!(
-        "ENSURE: cursor={} page=[{}..{}) lpp={}",
-        state.current_line, page_top, page_bottom, lpp
+        "ENSURE: cursor={} page_top={}",
+        state.current_line, state.page_top_line
     ));
 
-    let page_last = page_top + lpp.saturating_sub(1);
-
-    if state.current_line >= page_top && state.current_line < page_last {
-        return; // within page and not at the last line
-    }
-
-    if state.current_line < page_top {
+    if state.current_line < state.page_top_line {
         // Went above — new page with cursor near bottom
+        let lpp = lines_per_page(state);
         let new_top = state.current_line.saturating_sub(lpp.saturating_sub(1));
         set_page(state, new_top);
-    } else {
-        // At or past last line — new page with this line at top
+    } else if needs_page_turn_down(state, state.current_line) {
+        // At or past last fully visible line — new page with this line at top
         set_page(state, state.current_line);
     }
 }
@@ -710,9 +701,21 @@ fn update_highlight(state: &AppState) {
     let tag = &state.dim_tag;
     let (buf_start, buf_end) = buffer.bounds();
 
+    // Always clear cursor line background from previous position
+    let cl_tag = &state.cursor_line_tag;
+    buffer.remove_tag(cl_tag, &buf_start, &buf_end);
+
     if !state.dim_enabled {
         // Remove all dimming when disabled
         buffer.remove_tag(tag, &buf_start, &buf_end);
+        // Apply cursor line background so the current line is still visible
+        if let Some(line_start) = buffer.iter_at_line(state.current_line as i32) {
+            let mut line_end = line_start;
+            if !line_end.ends_line() {
+                line_end.forward_to_line_end();
+            }
+            buffer.apply_tag(cl_tag, &line_start, &line_end);
+        }
         return;
     }
 

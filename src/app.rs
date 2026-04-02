@@ -39,6 +39,7 @@ pub struct AppState {
     pub current_line: usize,
     pub page_top_line: usize,
     pub dim_tag: gtk4::TextTag,
+    pub cursor_line_tag: gtk4::TextTag,
     pub ab_dim_tag: gtk4::TextTag,
     pub scrolled_window: ScrolledWindow,
     pub content_hbox: gtk4::Box,
@@ -224,6 +225,12 @@ pub fn build_window(
         .foreground(&theme.dim_fg)
         .build();
     buffer.tag_table().add(&ab_dim_tag);
+
+    let cursor_line_tag = gtk4::TextTag::builder()
+        .name("cursor-line")
+        .paragraph_background(&theme.cursor_line_bg)
+        .build();
+    buffer.tag_table().add(&cursor_line_tag);
 
     let search_tag = gtk4::TextTag::builder()
         .name("search-match")
@@ -411,6 +418,7 @@ pub fn build_window(
         current_line: 0,
         page_top_line: 0,
         dim_tag,
+        cursor_line_tag,
         ab_dim_tag,
         scrolled_window: scrolled,
         content_hbox: content_hbox.clone(),
