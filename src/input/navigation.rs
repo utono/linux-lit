@@ -583,7 +583,7 @@ fn set_page(state: &mut AppState, new_top: usize) {
     // Scroll to new position
     clear_old_page_dim(state);
     state.page_top_line = new_top;
-    let scroll_line = new_top.saturating_sub(2);
+    let scroll_line = new_top.saturating_sub(1);
     if let Some(iter) = state.buffer.iter_at_line(scroll_line as i32) {
         let mut end = iter;
         if !end.ends_line() {
@@ -620,7 +620,7 @@ fn set_page(state: &mut AppState, new_top: usize) {
 fn set_page_instant(state: &mut AppState, new_top: usize) {
     clear_old_page_dim(state);
     state.page_top_line = new_top;
-    let scroll_line = new_top.saturating_sub(2);
+    let scroll_line = new_top.saturating_sub(1);
     if let Some(iter) = state.buffer.iter_at_line(scroll_line as i32) {
         let mut end = iter;
         if !end.ends_line() {
