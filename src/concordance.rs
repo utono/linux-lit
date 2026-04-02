@@ -1,5 +1,6 @@
 /// A single occurrence of a word in a work's line_mapping.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ConcordanceHit {
     pub work_abbrev: String,
     pub work_title: String,

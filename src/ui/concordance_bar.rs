@@ -6,6 +6,7 @@ pub struct ConcordanceBar {
     pub container: GtkBox,
     word_label: Label,
     position_label: Label,
+    #[allow(dead_code)]
     hint_label: Label,
 }
 
@@ -54,6 +55,7 @@ impl ConcordanceBar {
     }
 
     /// Generate CSS for the bar based on theme colors.
+    #[allow(dead_code)]
     pub fn css(bg: &str, fg: &str) -> String {
         format!(
             ".concordance-bar {{ background: {}; padding: 4px 12px; }}

@@ -140,6 +140,7 @@ impl AppState {
     }
 
     /// Check if a buffer line is within the currently highlighted sentence group.
+    #[allow(dead_code)]
     pub fn is_in_current_sentence(&self, line_index: usize) -> bool {
         if line_index == self.current_line {
             return true;

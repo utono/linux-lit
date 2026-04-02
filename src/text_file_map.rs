@@ -25,6 +25,7 @@ pub struct LineMap {
     pub dialogue_buffer_lines: Vec<usize>,
     /// Dialogue buffer lines filtered to only spoken lines (for media-aware navigation).
     /// Excludes lines where `is_spoken == Some(false)`.
+    #[allow(dead_code)]
     pub spoken_dialogue_buffer_lines: Vec<usize>,
     /// Contiguous ranges of buffer lines forming sentences (prose text_file works only).
     pub sentence_groups: Vec<SentenceGroup>,
@@ -438,6 +439,7 @@ fn build_sentence_groups(file_lines: &[String]) -> Vec<SentenceGroup> {
 }
 
 /// Find the index of the sentence group containing `buffer_line`, if any.
+#[allow(dead_code)]
 pub fn sentence_group_index(groups: &[SentenceGroup], buffer_line: usize) -> Option<usize> {
     groups
         .binary_search_by(|g| {

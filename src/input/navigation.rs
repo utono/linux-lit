@@ -20,6 +20,7 @@ pub const SYNC_PREROLL: f64 = 0.3;
 /// Move cursor by `delta` lines (j/k).
 /// Going down: page turn when cursor reaches the last visible line.
 /// Going up: smooth scroll to keep cursor visible.
+#[allow(dead_code)]
 pub fn move_cursor(state: &mut AppState, delta: i32) {
     if state.current_work.is_none() {
         return;
