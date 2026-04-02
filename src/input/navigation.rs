@@ -398,7 +398,9 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => center_cursor(state),
             crate::config::NavigationMode::EReader => {
-                if needs_page_turn_down(state, line_idx) {
+                let lpp = lines_per_page(state);
+                let threshold = state.page_top_line + lpp.saturating_sub(2);
+                if line_idx >= threshold {
                     set_page(state, line_idx);
                 }
             }
@@ -429,42 +431,6 @@ pub fn restore_cursor(state: &mut AppState) {
 // ---------------------------------------------------------------------------
 // Page management
 // ---------------------------------------------------------------------------
-
-/// Ensure cursor is on the current page. If not, page turn to show it.
-/// For backward movement, cursor appears near page bottom.
-/// For forward movement, cursor appears near page top.
-fn ensure_cursor_on_page(state: &mut AppState) {
-    let lpp = lines_per_page(state);
-    let page_end = state.page_top_line + lpp.saturating_sub(2);
-
-    crate::logging::log(&format!(
-        "ENSURE: cursor={} page_top={} lpp={} page_end={}",
-        state.current_line, state.page_top_line, lpp, page_end
-    ));
-
-    if state.current_line < state.page_top_line {
-        // Went above — new page with cursor near bottom
-        let new_top = state.current_line.saturating_sub(lpp.saturating_sub(1));
-        set_page(state, new_top);
-    } else if state.current_line >= page_end {
-        // At or past threshold — new page with this line at top
-        set_page(state, state.current_line);
-    }
-}
-
-/// Check if a line fits within the viewport with one line of bottom padding.
-/// Used by `q`/`,` navigation to trigger page turns with breathing room.
-fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
-    let Some(iter) = state.buffer.iter_at_line(line as i32) else {
-        return false;
-    };
-    let adj = state.scrolled_window.vadjustment();
-    let scroll_y = adj.value() as i32;
-    let page_height = adj.page_size() as i32;
-    let (y, h) = state.text_view.line_yrange(&iter);
-    // Require one full line height of space below for bottom padding
-    y >= scroll_y && y + h + h <= scroll_y + page_height
-}
 
 /// Check if a line is on screen at all (no padding requirement).
 /// Used by playback sync to avoid premature page turns.
@@ -499,21 +465,6 @@ fn should_page_turn_forward(state: &AppState, line: usize) -> bool {
         return false;
     }
     !is_line_on_screen(state, line + 2)
-}
-
-/// Check if a line is the last visible line and has no visible blank space
-/// after it (i.e., the next line is not visible or doesn't exist).
-/// Used to trigger page turns when the bottom of the viewport is full.
-fn needs_page_turn_down(state: &AppState, line: usize) -> bool {
-    if !is_line_fully_visible(state, line) {
-        return true;
-    }
-    // Check if the next line is fully visible — if not, we're at the edge
-    let line_count = state.effective_line_count();
-    if line + 1 >= line_count {
-        return false; // at end of document
-    }
-    !is_line_fully_visible(state, line + 1)
 }
 
 /// Scroll just enough to keep the current line visible. No page turn.
@@ -724,18 +675,6 @@ pub fn scroll_paragraph_to_top(state: &mut AppState, para_start: usize) {
     }
 }
 
-/// Scroll to make the current line visible without re-applying highlight.
-/// Used for deferred prose sentence scrolling.
-pub fn ensure_visible_no_highlight(state: &mut AppState) {
-    match state.config.navigation_mode {
-        crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
-        crate::config::NavigationMode::EReader => {
-            if !is_line_on_screen(state, state.current_line) {
-                set_page(state, state.current_line);
-            }
-        }
-    }
-}
 
 pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
     update_highlight(state);
@@ -862,18 +801,6 @@ fn update_highlight(state: &AppState) {
 
 
 // ---------------------------------------------------------------------------
-// Crossfade animation
-// ---------------------------------------------------------------------------
-
-/// Page turn: snap scroll position instantly.
-fn crossfade_to(state: &AppState, target_value: f64) {
-    let adj = state.scrolled_window.vadjustment();
-    let page_size = adj.page_size();
-    let clamped = target_value.max(0.0).min(adj.upper() - page_size);
-    adj.set_value(clamped);
-}
-
-// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -937,7 +864,9 @@ pub fn jump_to_next_vocab(state: &mut AppState) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
-            if needs_page_turn_down(state, target_line) {
+            let lpp = lines_per_page(state);
+            let threshold = state.page_top_line + lpp.saturating_sub(2);
+            if target_line >= threshold {
                 set_page(state, target_line);
             }
         }
@@ -957,7 +886,9 @@ pub fn jump_to_vocab_at(state: &mut AppState, match_idx: usize) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
-            if needs_page_turn_down(state, target_line) {
+            let lpp = lines_per_page(state);
+            let threshold = state.page_top_line + lpp.saturating_sub(2);
+            if target_line >= threshold {
                 set_page(state, target_line);
             }
         }
