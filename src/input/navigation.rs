@@ -448,7 +448,7 @@ fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
     let scroll_y = adj.value() as i32;
     let page_height = adj.page_size() as i32;
     let loc = state.text_view.iter_location(&iter);
-    let padding = single_line_height(state) as i32;
+    let padding = (single_line_height(state) * 1.5).round() as i32;
     let bottom = scroll_y + page_height - padding;
     loc.y() >= scroll_y && loc.y() + loc.height() <= bottom
 }
@@ -602,7 +602,8 @@ fn scroll_value_for_line(state: &AppState, line: usize) -> f64 {
         return 0.0;
     };
     let rect = state.text_view.iter_location(&iter);
-    let padding = single_line_height(state);
+    // Use 1.5x line height for generous top padding
+    let padding = (single_line_height(state) * 1.5).round();
     (rect.y() as f64 - padding).max(0.0).min(max)
 }
 
@@ -771,7 +772,7 @@ fn hide_clipped_lines(state: &AppState) {
     let adj = state.scrolled_window.vadjustment();
     let scroll_y = adj.value() as i32;
     let page_height = adj.page_size() as i32;
-    let padding = single_line_height(state) as i32;
+    let padding = (single_line_height(state) * 1.5).round() as i32;
     let bottom = scroll_y + page_height - padding;
     let viewport_end = scroll_y + page_height;
 
@@ -814,17 +815,17 @@ fn crossfade_to(state: &AppState, target_value: f64) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Get the height of a single unwrapped line (text + above/below spacing).
+/// Get the height of a single visual line of text using Pango font metrics.
+/// Returns the font line height plus above/below spacing.
 fn single_line_height(state: &AppState) -> f64 {
-    // Use a known line to measure; fall back to a reasonable estimate
-    let Some(iter) = state.buffer.iter_at_line(state.current_line as i32) else {
-        return 30.0;
-    };
-    let rect = state.text_view.iter_location(&iter);
-    let text_h = rect.height() as f64;
+    let pango_ctx = state.text_view.pango_context();
+    let font_desc = pango_ctx.font_description().unwrap();
+    let metrics = pango_ctx.metrics(Some(&font_desc), None);
+    let ascent = metrics.ascent() as f64 / pango::SCALE as f64;
+    let descent = metrics.descent() as f64 / pango::SCALE as f64;
     let above = state.text_view.pixels_above_lines() as f64;
     let below = state.text_view.pixels_below_lines() as f64;
-    text_h + above + below
+    ascent + descent + above + below
 }
 
 /// Count how many content lines fit in the viewport, minus 2 for padding
@@ -837,8 +838,8 @@ fn lines_per_page(state: &AppState) -> usize {
         return 15;
     }
     let total_lines = (page_size / line_h).floor() as usize;
-    // Subtract 2 for top/bottom padding lines
-    total_lines.saturating_sub(2).max(1)
+    // Subtract 3 for top/bottom padding (1.5 lines each)
+    total_lines.saturating_sub(3).max(1)
 }
 
 /// Jump to the next vocab word occurrence after current position.
