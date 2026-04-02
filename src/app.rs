@@ -332,13 +332,13 @@ pub fn build_window(
     // Top padding spacer inside the card
     let top_spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
     top_spacer.set_height_request(16);
-    top_spacer.add_css_class("text-card");
+    top_spacer.add_css_class("card-spacer");
     card_box.append(&top_spacer);
     card_box.append(&scrolled);
     // Bottom padding spacer inside the card
     let bottom_spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
     bottom_spacer.set_height_request(16);
-    bottom_spacer.add_css_class("text-card");
+    bottom_spacer.add_css_class("card-spacer");
     card_box.append(&bottom_spacer);
 
     // Centered text card container — width_request controls the card width

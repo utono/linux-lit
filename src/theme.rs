@@ -335,6 +335,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
     format!(
         "window {{ background-color: {root}; }} \
          .text-card {{ border-radius: 12px; }} \
+         .card-spacer {{ background-color: {bg}; }} \
          textview {{ background-color: {bg}; color: {fg}; }} \
          textview border {{ background-color: {bg}; }} \
          textview border.left {{ background-color: {bg}; }} \
