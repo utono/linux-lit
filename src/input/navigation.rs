@@ -525,9 +525,11 @@ fn scroll_after_jump_backward(state: &mut AppState) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
-            let page_top = state.page_top_line;
-            if state.current_line <= page_top {
-                // At or above the first line — new page with cursor near bottom
+            // Only page-turn backward when the cursor is on the top visible line
+            // (i.e., the line above it is off-screen or doesn't exist)
+            let at_top = state.current_line == 0
+                || !is_line_on_screen(state, state.current_line.saturating_sub(1));
+            if at_top {
                 let lpp = lines_per_page(state);
                 let new_top = state.current_line.saturating_sub(lpp.saturating_sub(1));
                 set_page(state, new_top);
