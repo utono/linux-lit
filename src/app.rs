@@ -39,7 +39,6 @@ pub struct AppState {
     pub current_line: usize,
     pub page_top_line: usize,
     pub dim_tag: gtk4::TextTag,
-    pub clipped_tag: gtk4::TextTag,
     pub cursor_line_tag: gtk4::TextTag,
     pub ab_dim_tag: gtk4::TextTag,
     pub scrolled_window: ScrolledWindow,
@@ -227,14 +226,6 @@ pub fn build_window(
         .build();
     buffer.tag_table().add(&ab_dim_tag);
 
-    let clipped_tag = gtk4::TextTag::builder()
-        .name("clipped")
-        .foreground(&theme.text_bg)
-        .build();
-    buffer.tag_table().add(&clipped_tag);
-    // Highest priority so it overrides all other foreground tags
-    clipped_tag.set_priority(buffer.tag_table().size() - 1);
-
     let cursor_line_tag = gtk4::TextTag::builder()
         .name("cursor-line")
         .paragraph_background(&theme.cursor_line_bg)
@@ -334,29 +325,7 @@ pub fn build_window(
         .overflow(gtk4::Overflow::Hidden)
         .build();
 
-    // Card overlay — scrolled window with opaque fade bars at top/bottom
-    // that mask content scrolling beneath, creating clipped padding zones
-    let card_overlay = gtk4::Overlay::new();
-    card_overlay.set_child(Some(&scrolled));
-    card_overlay.add_css_class("text-card");
-    card_overlay.set_overflow(gtk4::Overflow::Hidden);
-    card_overlay.set_vexpand(true);
-
-    // Top fade bar — opaque strip matching text background
-    let top_bar = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-    top_bar.set_height_request(16);
-    top_bar.set_valign(gtk4::Align::Start);
-    top_bar.set_hexpand(true);
-    top_bar.add_css_class("card-spacer");
-    card_overlay.add_overlay(&top_bar);
-
-    // Bottom fade bar — opaque strip matching text background
-    let bottom_bar = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-    bottom_bar.set_height_request(16);
-    bottom_bar.set_valign(gtk4::Align::End);
-    bottom_bar.set_hexpand(true);
-    bottom_bar.add_css_class("card-spacer");
-    card_overlay.add_overlay(&bottom_bar);
+    scrolled.add_css_class("text-card");
 
     // Centered text card container — width_request controls the card width
     let content_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
@@ -368,7 +337,7 @@ pub fn build_window(
     content_hbox.set_margin_bottom(24);
     content_hbox.set_margin_start(24);
     content_hbox.set_margin_end(24);
-    content_hbox.append(&card_overlay);
+    content_hbox.append(&scrolled);
 
     // Vocab popup overlay (centered, like settings)
     let vocab_popup = crate::ui::vocab_popup::VocabPopup::new();
@@ -451,7 +420,6 @@ pub fn build_window(
         current_line: 0,
         page_top_line: 0,
         dim_tag,
-        clipped_tag,
         cursor_line_tag,
         ab_dim_tag,
         scrolled_window: scrolled,
