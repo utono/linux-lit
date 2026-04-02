@@ -58,7 +58,7 @@ pub fn move_cursor(state: &mut AppState, delta: i32) {
         crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
         crate::config::NavigationMode::EReader => {
             let lpp = lines_per_page(state);
-            let threshold = state.page_top_line + lpp.saturating_sub(3);
+            let threshold = state.page_top_line + lpp.saturating_sub(1);
             if state.current_line >= threshold {
                 set_page(state, state.current_line);
             } else if state.current_line <= state.page_top_line {
@@ -401,7 +401,7 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
             crate::config::NavigationMode::Scroll => center_cursor(state),
             crate::config::NavigationMode::EReader => {
                 let lpp = lines_per_page(state);
-                let threshold = state.page_top_line + lpp.saturating_sub(3);
+                let threshold = state.page_top_line + lpp.saturating_sub(1);
                 if line_idx >= threshold {
                     set_page(state, line_idx);
                 }
@@ -462,7 +462,7 @@ fn scroll_after_jump_forward(state: &mut AppState, prev_line: usize) {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
             let lpp = lines_per_page(state);
-            let threshold = state.page_top_line + lpp.saturating_sub(3);
+            let threshold = state.page_top_line + lpp.saturating_sub(1);
             if state.current_line >= threshold {
                 set_page(state, prev_line);
             }
@@ -698,7 +698,7 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
             // current line at the top (the line being played becomes the
             // first line of the new page).
             let lpp = lines_per_page(state);
-            let threshold = state.page_top_line + lpp.saturating_sub(3);
+            let threshold = state.page_top_line + lpp.saturating_sub(1);
             if state.current_line >= threshold
                 || !is_line_on_screen(state, state.current_line)
             {
@@ -880,7 +880,7 @@ pub fn jump_to_next_vocab(state: &mut AppState) {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
             let lpp = lines_per_page(state);
-            let threshold = state.page_top_line + lpp.saturating_sub(3);
+            let threshold = state.page_top_line + lpp.saturating_sub(1);
             if target_line >= threshold {
                 set_page(state, target_line);
             }
@@ -902,7 +902,7 @@ pub fn jump_to_vocab_at(state: &mut AppState, match_idx: usize) {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
             let lpp = lines_per_page(state);
-            let threshold = state.page_top_line + lpp.saturating_sub(3);
+            let threshold = state.page_top_line + lpp.saturating_sub(1);
             if target_line >= threshold {
                 set_page(state, target_line);
             }
