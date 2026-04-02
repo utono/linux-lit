@@ -37,9 +37,11 @@ pub struct AppState {
     pub picker: LibraryPicker,
     pub current_work: Option<Work>,
     pub current_line: usize,
+    pub prev_highlight_line: std::cell::Cell<Option<usize>>,
     pub page_top_line: usize,
     pub dim_tag: gtk4::TextTag,
     pub cursor_line_tag: gtk4::TextTag,
+    pub cursor_fade_tag: gtk4::TextTag,
     pub ab_dim_tag: gtk4::TextTag,
     pub page_turn_overlay: gtk4::Overlay,
     pub scrolled_window: ScrolledWindow,
@@ -233,6 +235,12 @@ pub fn build_window(
         .build();
     buffer.tag_table().add(&cursor_line_tag);
 
+    let cursor_fade_tag = gtk4::TextTag::builder()
+        .name("cursor-fade")
+        .paragraph_background(&theme.cursor_line_bg)
+        .build();
+    buffer.tag_table().add(&cursor_fade_tag);
+
     let search_tag = gtk4::TextTag::builder()
         .name("search-match")
         .background(if theme.is_light {
@@ -425,9 +433,11 @@ pub fn build_window(
         picker,
         current_work: None,
         current_line: 0,
+        prev_highlight_line: std::cell::Cell::new(None),
         page_top_line: 0,
         dim_tag,
         cursor_line_tag,
+        cursor_fade_tag,
         ab_dim_tag,
         page_turn_overlay: page_turn_overlay.clone(),
         scrolled_window: scrolled,

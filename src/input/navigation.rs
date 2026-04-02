@@ -741,12 +741,17 @@ pub fn position_chunk(state: &mut AppState) {
     }
 }
 
+/// Duration for cursor line highlight crossfade in milliseconds.
+const HIGHLIGHT_FADE_MS: f64 = 500.0;
+
 /// Update visual state for the current line. Only applies dim/cursor tags
 /// to the visible range (page_top_line +/- margin) for performance.
+/// When dim is off, fades out the old cursor highlight smoothly.
 fn update_highlight(state: &AppState) {
     let buffer = &state.buffer;
     let tag = &state.dim_tag;
     let cl_tag = &state.cursor_line_tag;
+    let fade_tag = &state.cursor_fade_tag;
 
     // Compute visible range with margin for scroll overshoot
     let lpp = lines_per_page(state);
@@ -768,7 +773,51 @@ fn update_highlight(state: &AppState) {
     if !state.dim_enabled {
         // Remove dimming in visible range
         buffer.remove_tag(tag, &vis_start_iter, &vis_end_iter);
-        // Apply cursor line background
+
+        // Apply fade-out to the old cursor line (if it changed)
+        if let Some(old_line) = state.prev_highlight_line.get() {
+            if old_line != state.current_line {
+                // Remove any existing fade, then apply to old line
+                buffer.remove_tag(fade_tag, &buf_start, &buf_end);
+                if let Some(old_start) = buffer.iter_at_line(old_line as i32) {
+                    let mut old_end = old_start;
+                    if !old_end.ends_line() {
+                        old_end.forward_to_line_end();
+                    }
+                    buffer.apply_tag(fade_tag, &old_start, &old_end);
+                }
+                // Start fade-out animation on the fade tag
+                let fade_tag_clone = fade_tag.clone();
+                let start_time = std::cell::Cell::new(None::<f64>);
+                let buf_clone = buffer.clone();
+                state.text_view.add_tick_callback(move |_widget, clock| {
+                    let now = clock.frame_time() as f64 / 1_000.0;
+                    let t0 = start_time.get();
+                    let t0 = match t0 {
+                        Some(t) => t,
+                        None => {
+                            start_time.set(Some(now));
+                            now
+                        }
+                    };
+                    let elapsed = now - t0;
+                    let progress = (elapsed / HIGHLIGHT_FADE_MS).min(1.0);
+                    let alpha = (1.0 - progress) as f32 * 0.10; // max alpha 0.10
+                    use gtk4::prelude::TextTagExt;
+                    fade_tag_clone.set_paragraph_background_rgba(Some(
+                        &gtk4::gdk::RGBA::new(0.0, 0.3, 0.86, alpha),
+                    ));
+                    if progress >= 1.0 {
+                        let (s, e) = buf_clone.bounds();
+                        buf_clone.remove_tag(&fade_tag_clone, &s, &e);
+                        return glib::ControlFlow::Break;
+                    }
+                    glib::ControlFlow::Continue
+                });
+            }
+        }
+
+        // Apply cursor line background to new line
         if let Some(line_start) = buffer.iter_at_line(state.current_line as i32) {
             let mut line_end = line_start;
             if !line_end.ends_line() {
@@ -776,6 +825,7 @@ fn update_highlight(state: &AppState) {
             }
             buffer.apply_tag(cl_tag, &line_start, &line_end);
         }
+        state.prev_highlight_line.set(Some(state.current_line));
         return;
     }
 
@@ -812,6 +862,7 @@ fn update_highlight(state: &AppState) {
     // When visual selection is active, clear stale highlight then re-apply
     crate::input::visual::clear_selection_highlight(state);
     crate::input::visual::apply_selection_highlight(state);
+    state.prev_highlight_line.set(Some(state.current_line));
 }
 
 
