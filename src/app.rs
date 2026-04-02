@@ -312,6 +312,7 @@ pub fn build_window(
     text_view.set_left_margin(config.text_margins as i32);
     text_view.set_right_margin(config.text_margins as i32 + crate::config::EXTRA_RIGHT_MARGIN);
     text_view.set_top_margin(24);
+    text_view.set_bottom_margin(24);
 
     // Scrolled window — centered card with wallpaper visible on all sides
     let scrolled = ScrolledWindow::builder()

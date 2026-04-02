@@ -547,12 +547,16 @@ fn seek_to_current_line(state: &mut AppState) {
 }
 
 /// Set the page top line and scroll to it with crossfade animation.
+/// Scrolls so that `new_top` appears with some padding above it by
+/// targeting the previous line's position (overlap provides context).
 fn set_page(state: &mut AppState, new_top: usize) {
     state.page_top_line = new_top;
-    let target = scroll_value_for_line(state, new_top);
+    // Scroll to 1 line before new_top so there's visual padding at the top
+    let scroll_line = new_top.saturating_sub(PAGE_OVERLAP);
+    let target = scroll_value_for_line(state, scroll_line);
     crate::logging::log(&format!(
-        "PAGE_TURN: top_line={} cursor={} target={:.0}",
-        new_top, state.current_line, target
+        "PAGE_TURN: top_line={} scroll_line={} cursor={} target={:.0}",
+        new_top, scroll_line, state.current_line, target
     ));
     crossfade_to(state, target);
 }
