@@ -600,11 +600,31 @@ fn seek_to_current_line(state: &mut AppState) {
     }
 }
 
-/// Set the page top line and scroll so the line is fully visible at the top
+/// Clear dim tags from the old visible range before a page turn.
+/// Called before page_top_line is updated.
+fn clear_old_page_dim(state: &AppState) {
+    if !state.dim_enabled {
+        return;
+    }
+    let buffer = &state.buffer;
+    let tag = &state.dim_tag;
+    let lpp = lines_per_page(state);
+    let margin = 5;
+    let old_start = state.page_top_line.saturating_sub(margin);
+    let old_end = (state.page_top_line + lpp + margin)
+        .min(state.effective_line_count());
+    let start_iter = buffer.iter_at_line(old_start as i32)
+        .unwrap_or_else(|| buffer.start_iter());
+    let end_iter = buffer.iter_at_line(old_end as i32)
+        .unwrap_or_else(|| buffer.end_iter());
+    buffer.remove_tag(tag, &start_iter, &end_iter);
+}
+
 /// Set the page top line and scroll so the line is fully visible with
 /// one line of padding above it. Scrolls to the END of the line two
 /// before `new_top` at yalign=0.0, so one full line acts as top padding.
 fn set_page(state: &mut AppState, new_top: usize) {
+    clear_old_page_dim(state);
     state.page_top_line = new_top;
     let scroll_line = new_top.saturating_sub(2);
     if let Some(iter) = state.buffer.iter_at_line(scroll_line as i32) {
@@ -618,6 +638,7 @@ fn set_page(state: &mut AppState, new_top: usize) {
 
 /// Set the page top line and scroll instantly (no animation). For gg/G/restore.
 fn set_page_instant(state: &mut AppState, new_top: usize) {
+    clear_old_page_dim(state);
     state.page_top_line = new_top;
     let scroll_line = new_top.saturating_sub(2);
     if let Some(iter) = state.buffer.iter_at_line(scroll_line as i32) {
@@ -767,20 +788,33 @@ pub fn position_chunk(state: &mut AppState) {
     }
 }
 
-/// Update visual state for the current line (visual selection highlighting).
+/// Update visual state for the current line. Only applies dim/cursor tags
+/// to the visible range (page_top_line +/- margin) for performance.
 fn update_highlight(state: &AppState) {
     let buffer = &state.buffer;
     let tag = &state.dim_tag;
-    let (buf_start, buf_end) = buffer.bounds();
-
-    // Always clear cursor line background from previous position
     let cl_tag = &state.cursor_line_tag;
-    buffer.remove_tag(cl_tag, &buf_start, &buf_end);
+
+    // Compute visible range with margin for scroll overshoot
+    let lpp = lines_per_page(state);
+    let margin = 5;
+    let vis_start = state.page_top_line.saturating_sub(margin);
+    let vis_end = (state.page_top_line + lpp + margin)
+        .min(state.effective_line_count());
+
+    // Get iters for visible range
+    let vis_start_iter = buffer.iter_at_line(vis_start as i32)
+        .unwrap_or_else(|| buffer.start_iter());
+    let vis_end_iter = buffer.iter_at_line(vis_end as i32)
+        .unwrap_or_else(|| buffer.end_iter());
+
+    // Clear cursor line tag in visible range only
+    buffer.remove_tag(cl_tag, &vis_start_iter, &vis_end_iter);
 
     if !state.dim_enabled {
-        // Remove all dimming when disabled
-        buffer.remove_tag(tag, &buf_start, &buf_end);
-        // Apply cursor line background so the current line is still visible
+        // Remove dimming in visible range
+        buffer.remove_tag(tag, &vis_start_iter, &vis_end_iter);
+        // Apply cursor line background
         if let Some(line_start) = buffer.iter_at_line(state.current_line as i32) {
             let mut line_end = line_start;
             if !line_end.ends_line() {
@@ -791,8 +825,8 @@ fn update_highlight(state: &AppState) {
         return;
     }
 
-    // Dim the entire buffer
-    buffer.apply_tag(tag, &buf_start, &buf_end);
+    // Dim visible range
+    buffer.apply_tag(tag, &vis_start_iter, &vis_end_iter);
 
     // Undim the current line
     if let Some(line_start) = buffer.iter_at_line(state.current_line as i32) {
@@ -803,10 +837,13 @@ fn update_highlight(state: &AppState) {
         buffer.remove_tag(tag, &line_start, &line_end);
     }
 
-    // When a chunk is active, undim all lines within the chunk range
+    // When a chunk is active, undim lines within the chunk range
+    // (only the portion that overlaps with visible range)
     if state.ab_repeat.chunk_index.is_some() {
         if let (Some(a), Some(b)) = (state.ab_repeat.a_line, state.ab_repeat.b_line) {
-            for line_idx in a..=b {
+            let chunk_start = a.max(vis_start);
+            let chunk_end = b.min(vis_end.saturating_sub(1));
+            for line_idx in chunk_start..=chunk_end {
                 if let Some(line_start) = buffer.iter_at_line(line_idx as i32) {
                     let mut line_end = line_start;
                     if !line_end.ends_line() {

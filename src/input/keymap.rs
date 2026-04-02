@@ -809,6 +809,11 @@ pub fn handle_key(
             "d" => {
                 let mut s = state.borrow_mut();
                 s.dim_enabled = !s.dim_enabled;
+                if !s.dim_enabled {
+                    // Clear dim from entire buffer since only visible range was managed
+                    let (start, end) = s.buffer.bounds();
+                    s.buffer.remove_tag(&s.dim_tag, &start, &end);
+                }
                 navigation::update_highlight_only(&mut s);
                 s.config.dim_enabled = s.dim_enabled;
                 crate::config::save(&s.config);
