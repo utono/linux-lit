@@ -157,7 +157,7 @@ pub fn jump_to_prev_paragraph(state: &mut AppState) {
             state.pending_advance = None;
             state.pending_advance_ignore_bl = None;
             update_highlight(state);
-            scroll_after_jump(state);
+            scroll_after_jump_backward(state);
             seek_to_current_line(state);
             auto_show_vocab_popup(state);
         }
@@ -193,7 +193,7 @@ pub fn jump_to_prev_paragraph(state: &mut AppState) {
     if let Some(line_idx) = target {
         state.current_line = line_idx;
         update_highlight(state);
-        scroll_after_jump(state);
+        scroll_after_jump_backward(state);
         seek_to_current_line(state);
         auto_show_vocab_popup(state);
     }
@@ -218,7 +218,7 @@ pub fn jump_to_next_paragraph(state: &mut AppState) {
             state.pending_advance = None;
             state.pending_advance_ignore_bl = None;
             update_highlight(state);
-            scroll_after_jump(state);
+            scroll_after_jump_forward(state);
             seek_to_current_line(state);
             auto_show_vocab_popup(state);
         }
@@ -239,7 +239,7 @@ pub fn jump_to_next_paragraph(state: &mut AppState) {
     if i < line_count {
         state.current_line = i;
         update_highlight(state);
-        scroll_after_jump(state);
+        scroll_after_jump_forward(state);
         seek_to_current_line(state);
         auto_show_vocab_popup(state);
     }
@@ -477,12 +477,32 @@ fn scroll_to_cursor(state: &mut AppState) {
     center_cursor(state);
 }
 
-/// Mode-aware scroll after a jump (`,`/`q` paragraph or dialogue navigation).
-/// In scroll mode, centers the cursor. In e-reader mode, only page-turns if needed.
-fn scroll_after_jump(state: &mut AppState) {
+/// Mode-aware scroll after a forward jump (`q` / next paragraph or dialogue).
+/// In scroll mode, centers the cursor. In e-reader mode, moves cursor down
+/// the page; when it reaches the last line, page-turns with that line at top.
+fn scroll_after_jump_forward(state: &mut AppState) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => ensure_cursor_on_page(state),
+    }
+}
+
+/// Mode-aware scroll after a backward jump (`,` / prev paragraph or dialogue).
+/// In scroll mode, centers the cursor. In e-reader mode, cursor moves up the
+/// page; when it reaches the first line (or above), page-turns with the cursor
+/// line at the bottom of the new page (inverse of `q` forward behavior).
+fn scroll_after_jump_backward(state: &mut AppState) {
+    match state.config.navigation_mode {
+        crate::config::NavigationMode::Scroll => center_cursor(state),
+        crate::config::NavigationMode::EReader => {
+            let page_top = state.page_top_line;
+            if state.current_line <= page_top {
+                // At or above the first line — new page with cursor near bottom
+                let lpp = lines_per_page(state);
+                let new_top = state.current_line.saturating_sub(lpp.saturating_sub(1));
+                set_page(state, new_top);
+            }
+        }
     }
 }
 
