@@ -6,8 +6,8 @@ use std::path::PathBuf;
 #[derive(Debug, Default, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NavigationMode {
-    #[default]
     Scroll,
+    #[default]
     #[serde(rename = "ereader")]
     EReader,
 }
@@ -46,6 +46,8 @@ pub struct Config {
     pub ollama_endpoint: String,
     #[serde(default = "default_vocab_highlight_visible")]
     pub vocab_highlight_visible: bool,
+    #[serde(default = "default_dim_enabled")]
+    pub dim_enabled: bool,
 }
 
 fn default_font_family() -> String {
@@ -66,9 +68,9 @@ pub fn default_font_size() -> u32 {
 }
 
 pub const DEFAULT_LINE_SPACING: u32 = 5;
-pub const DEFAULT_COLUMN_WIDTH: u32 = 1000;
+pub const DEFAULT_COLUMN_WIDTH: u32 = 1100;
 pub const DEFAULT_TEXT_MARGINS: u32 = 48;
-pub const EXTRA_RIGHT_MARGIN: i32 = 14;
+pub const EXTRA_RIGHT_MARGIN: i32 = 28;
 
 fn default_line_spacing() -> u32 {
     DEFAULT_LINE_SPACING
@@ -94,6 +96,10 @@ fn default_vocab_highlight_visible() -> bool {
     true
 }
 
+fn default_dim_enabled() -> bool {
+    true
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -110,6 +116,7 @@ impl Default for Config {
             ollama_model: default_ollama_model(),
             ollama_endpoint: default_ollama_endpoint(),
             vocab_highlight_visible: default_vocab_highlight_visible(),
+            dim_enabled: default_dim_enabled(),
         }
     }
 }

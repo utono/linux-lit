@@ -73,7 +73,8 @@ pub fn scan_sockets() -> Vec<PathBuf> {
 /// Find a live socket that matches one of the work's media paths.
 /// Probes each socket to verify MPV is actually running behind it.
 /// Removes stale socket files that fail to connect.
-pub fn find_socket_for_work(media_paths: &[String]) -> Option<PathBuf> {
+/// Returns (socket_path, matched_media_path).
+pub fn find_socket_for_work(media_paths: &[String]) -> Option<(PathBuf, String)> {
     for media_path in media_paths {
         let socket_path = derive_socket_path(media_path);
         let path = PathBuf::from(&socket_path);
@@ -83,7 +84,7 @@ pub fn find_socket_for_work(media_paths: &[String]) -> Option<PathBuf> {
                     "MPV discovery: live socket {} for media {}",
                     socket_path, media_path
                 ));
-                return Some(path);
+                return Some((path, media_path.clone()));
             }
             // Stale socket — remove it
             crate::logging::log(&format!(
@@ -111,6 +112,7 @@ pub fn launch_mpv(media_path: &str) -> String {
         .arg(format!("--input-ipc-server={}", socket_path))
         .arg("--pause")
         .arg("--no-terminal")
+        .arg("--volume=20")
         .arg("--wayland-app-id=mpv-lit")
         .arg(media_path)
         .spawn()

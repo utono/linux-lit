@@ -9,6 +9,8 @@ pub struct Work {
     pub lines: Vec<Line>,
     pub timestamps: Vec<Timestamp>,
     pub media_paths: Vec<String>,
+    /// Parallel to media_paths: the media_id for each path.
+    pub media_ids: Vec<i64>,
     pub media_id: Option<i64>,
 }
 

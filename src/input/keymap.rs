@@ -235,7 +235,7 @@ pub fn handle_key(
                     glib::spawn_future_local(async move {
                         let socket_path = handle
                             .spawn_blocking(move || {
-                                if let Some(sock) =
+                                if let Some((sock, _)) =
                                     crate::mpv::discovery::find_socket_for_work(&[path.clone()])
                                 {
                                     return sock.to_string_lossy().to_string();
@@ -806,6 +806,15 @@ pub fn handle_key(
 
     if is_alt {
         match key_name {
+            "d" => {
+                let mut s = state.borrow_mut();
+                s.dim_enabled = !s.dim_enabled;
+                navigation::update_highlight_only(&mut s);
+                s.config.dim_enabled = s.dim_enabled;
+                crate::config::save(&s.config);
+                crate::logging::log(&format!("DIM: {}", if s.dim_enabled { "on" } else { "off" }));
+                return true;
+            }
             "f" => {
                 crate::app::show_font_info(&state.borrow());
                 return true;
@@ -906,7 +915,7 @@ pub fn handle_key(
         "space" => {
             let mut s = state.borrow_mut();
             if s.vocab_popup.is_visible() {
-                crate::app::close_vocab_popup(&s);
+                crate::app::close_vocab_popup(&mut s);
             } else {
                 crate::app::open_vocab_popup(&mut s);
             }
@@ -1021,8 +1030,21 @@ pub fn handle_key(
         "u" => {
             crate::input::timestamps::set_start_time(&mut state.borrow_mut())
         }
+        "Left" => {
+            let mut s = state.borrow_mut();
+            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SeekRelative(-30.0));
+            s.suppress_sync_until = Some(
+                std::time::Instant::now() + std::time::Duration::from_secs(86400),
+            );
+            true
+        }
         "Right" => {
-            crate::input::timestamps::set_start_time(&mut state.borrow_mut())
+            let mut s = state.borrow_mut();
+            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SeekRelative(30.0));
+            s.suppress_sync_until = Some(
+                std::time::Instant::now() + std::time::Duration::from_secs(86400),
+            );
+            true
         }
         "period" => {
             crate::input::timestamps::set_chapter(&mut state.borrow_mut())
@@ -1166,7 +1188,7 @@ pub fn handle_key(
             if s.vocab_popup_auto {
                 crate::app::open_vocab_popup(&mut s);
             } else {
-                crate::app::close_vocab_popup(&s);
+                crate::app::close_vocab_popup(&mut s);
             }
             true
         }

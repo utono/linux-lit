@@ -108,6 +108,7 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
         .query_map([abbrev], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<Result<_, _>>()?;
     let media_id = media_rows.first().map(|(id, _)| *id);
+    let media_ids: Vec<i64> = media_rows.iter().map(|(id, _)| *id).collect();
     let media_paths: Vec<String> = media_rows.into_iter().map(|(_, path)| path).collect();
 
     // 5. Build timestamp lookup: line_id -> TimeRange (filtered by active media_id)
@@ -171,6 +172,7 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
         lines,
         timestamps,
         media_paths,
+        media_ids,
         media_id,
     })
 }

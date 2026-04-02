@@ -78,6 +78,7 @@ pub fn jump_to_start(state: &mut AppState) {
     state.current_line = target;
     update_highlight(state);
     set_page_instant(state, target);
+    seek_to_current_line(state);
 }
 
 /// Jump to the last line.
@@ -94,6 +95,7 @@ pub fn jump_to_end(state: &mut AppState) {
     let lpp = lines_per_page(state);
     let new_top = line_count.saturating_sub(lpp);
     set_page_instant(state, new_top);
+    seek_to_current_line(state);
 }
 
 /// Page forward (Ctrl+d/f). Advance by one page with overlap.
@@ -155,7 +157,7 @@ pub fn jump_to_prev_paragraph(state: &mut AppState) {
             state.pending_advance = None;
             state.pending_advance_ignore_bl = None;
             update_highlight(state);
-            center_cursor(state);
+            scroll_after_jump(state);
             seek_to_current_line(state);
             auto_show_vocab_popup(state);
         }
@@ -191,7 +193,7 @@ pub fn jump_to_prev_paragraph(state: &mut AppState) {
     if let Some(line_idx) = target {
         state.current_line = line_idx;
         update_highlight(state);
-        center_cursor(state);
+        scroll_after_jump(state);
         seek_to_current_line(state);
         auto_show_vocab_popup(state);
     }
@@ -216,7 +218,7 @@ pub fn jump_to_next_paragraph(state: &mut AppState) {
             state.pending_advance = None;
             state.pending_advance_ignore_bl = None;
             update_highlight(state);
-            center_cursor(state);
+            scroll_after_jump(state);
             seek_to_current_line(state);
             auto_show_vocab_popup(state);
         }
@@ -237,7 +239,7 @@ pub fn jump_to_next_paragraph(state: &mut AppState) {
     if i < line_count {
         state.current_line = i;
         update_highlight(state);
-        center_cursor(state);
+        scroll_after_jump(state);
         seek_to_current_line(state);
         auto_show_vocab_popup(state);
     }
@@ -401,7 +403,7 @@ pub fn restore_cursor(state: &mut AppState) {
             let adj = state.scrolled_window.vadjustment();
             let max_scroll = adj.upper() - adj.page_size();
             let line_y = scroll_value_for_line(state, state.current_line);
-            let offset = adj.page_size() * 0.15;
+            let offset = adj.page_size() * 0.25;
             let centered = (line_y - offset).max(0.0).min(max_scroll.max(0.0));
             adj.set_value(centered);
         }
@@ -475,6 +477,15 @@ fn scroll_to_cursor(state: &mut AppState) {
     center_cursor(state);
 }
 
+/// Mode-aware scroll after a jump (`,`/`q` paragraph or dialogue navigation).
+/// In scroll mode, centers the cursor. In e-reader mode, only page-turns if needed.
+fn scroll_after_jump(state: &mut AppState) {
+    match state.config.navigation_mode {
+        crate::config::NavigationMode::Scroll => center_cursor(state),
+        crate::config::NavigationMode::EReader => ensure_cursor_on_page(state),
+    }
+}
+
 /// Scroll the viewport so the current line is vertically centered.
 /// Near document edges, clamps so no blank space appears (scrolloff behavior).
 fn center_cursor(state: &mut AppState) {
@@ -484,7 +495,7 @@ fn center_cursor(state: &mut AppState) {
         return;
     }
     let line_y = scroll_value_for_line(state, state.current_line);
-    let offset = adj.page_size() * 0.15;
+    let offset = adj.page_size() * 0.25;
     let centered = (line_y - offset).max(0.0).min(max_scroll);
     crate::logging::log(&format!(
         "CENTER: line={} line_y={:.0} offset={:.0} centered={:.0} max={:.0} old_val={:.0}",
@@ -499,33 +510,28 @@ fn center_cursor(state: &mut AppState) {
 /// processes the seek. When it has no timestamp, suppresses indefinitely so the
 /// cursor stays where the user put it.
 fn seek_to_current_line(state: &mut AppState) {
-    let has_timestamp = state
-        .current_work
-        .as_ref()
-        .and_then(|work| {
-            state
-                .work_line_for_buffer(state.current_line)
-                .and_then(|wi| work.lines[wi].timestamp.as_ref())
-        })
-        .is_some();
+    let work = match state.current_work.as_ref() {
+        Some(w) => w,
+        None => return,
+    };
 
-    if has_timestamp {
-        // Brief suppression while MPV processes the seek
+    let work_idx = match state.work_line_for_buffer(state.current_line) {
+        Some(wi) => wi,
+        None => return,
+    };
+
+    if let Some(ts) = &work.lines[work_idx].timestamp {
+        // Exact timestamp — brief suppression while MPV processes the seek
         state.suppress_sync_until =
             Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
-        if let Some(ref work) = state.current_work {
-            if let Some(work_idx) = state.work_line_for_buffer(state.current_line) {
-                if let Some(ts) = &work.lines[work_idx].timestamp {
-                    let seek_time = (ts.start - SEEK_PREROLL).max(0.0);
-                    let _ = state
-                        .cmd_tx
-                        .try_send(crate::mpv::MpvCommand::Seek(seek_time));
-                }
-            }
-        }
+        let seek_time = (ts.start - SEEK_PREROLL).max(0.0);
+        let _ = state
+            .cmd_tx
+            .try_send(crate::mpv::MpvCommand::Seek(seek_time));
     } else {
         // No timestamp — suppress indefinitely so cursor stays put
-        state.suppress_sync_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(86400));
+        state.suppress_sync_until =
+            Some(std::time::Instant::now() + std::time::Duration::from_secs(86400));
     }
 }
 
@@ -603,7 +609,7 @@ pub fn scroll_paragraph_to_top(state: &mut AppState, para_start: usize) {
                 return;
             }
             let line_y = scroll_value_for_line(state, para_start);
-            let offset = adj.page_size() * 0.15;
+            let offset = adj.page_size() * 0.25;
             let val = (line_y - offset).max(0.0).min(max_scroll);
             adj.set_value(val);
         }
@@ -683,6 +689,12 @@ fn update_highlight(state: &AppState) {
     let buffer = &state.buffer;
     let tag = &state.dim_tag;
     let (buf_start, buf_end) = buffer.bounds();
+
+    if !state.dim_enabled {
+        // Remove all dimming when disabled
+        buffer.remove_tag(tag, &buf_start, &buf_end);
+        return;
+    }
 
     // Dim the entire buffer
     buffer.apply_tag(tag, &buf_start, &buf_end);

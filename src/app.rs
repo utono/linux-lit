@@ -97,12 +97,15 @@ pub struct AppState {
     pub vocab_matches: Vec<VocabMatch>,
     pub vocab_match_idx: Option<usize>,
     pub vocab_tag: gtk4::TextTag,
+    pub dim_enabled: bool,
     pub vocab_highlight_visible: bool,
     pub vocab_popup: crate::ui::vocab_popup::VocabPopup,
     pub vocab_popup_data: Vec<crate::ui::vocab_popup::VocabWordData>,
     pub vocab_popup_index: usize,
     pub vocab_popup_view: crate::ui::vocab_popup::VocabView,
     pub vocab_popup_auto: bool,
+    /// Paragraph start line when the vocab popup was last positioned.
+    pub vocab_popup_para_start: Option<usize>,
     pub concordance_picker: crate::ui::concordance_picker::ConcordancePicker,
     pub concordance_state: Option<crate::concordance::ConcordanceState>,
     pub concordance_word_picker: crate::ui::concordance_word_picker::ConcordanceWordPicker,
@@ -397,6 +400,7 @@ pub fn build_window(
 
     let last_work = config.last_work.clone();
     let last_line = config.last_line;
+    let dim_enabled = config.dim_enabled;
     let vocab_highlight_visible = config.vocab_highlight_visible;
 
     let state = Rc::new(RefCell::new(AppState {
@@ -455,12 +459,14 @@ pub fn build_window(
         vocab_matches: Vec::new(),
         vocab_match_idx: None,
         vocab_tag,
+        dim_enabled,
         vocab_highlight_visible,
         vocab_popup,
         vocab_popup_data: Vec::new(),
         vocab_popup_index: 0,
         vocab_popup_view: crate::ui::vocab_popup::VocabView::Definition,
         vocab_popup_auto: false,
+        vocab_popup_para_start: None,
         concordance_picker,
         concordance_state: None,
         concordance_word_picker,
@@ -630,27 +636,68 @@ pub fn display_work(state: &mut AppState, work: Work) {
     // Find or launch MPV socket
     if !work.media_paths.is_empty() {
         let media_paths = work.media_paths.clone();
+        // Build path→media_id lookup for matching discovered socket to correct timestamps
+        let path_to_mid: std::collections::HashMap<String, i64> = work
+            .media_paths
+            .iter()
+            .zip(work.media_ids.iter())
+            .map(|(p, id)| (p.clone(), *id))
+            .collect();
+        let timestamps = work.timestamps.clone();
+        let lines = work.lines.clone();
+        let default_media_id = state.media_id;
         let cmd_tx = state.cmd_tx.clone();
         let handle = state.tokio_handle.clone();
         glib::spawn_future_local(async move {
-            let socket_path = handle
+            let (socket_path, matched_media_path) = handle
                 .spawn_blocking(move || {
-                    if let Some(path) =
+                    if let Some((sock, matched)) =
                         crate::mpv::discovery::find_socket_for_work(&media_paths)
                     {
-                        return path.to_string_lossy().to_string();
+                        return (sock.to_string_lossy().to_string(), Some(matched));
                     }
                     let launched = crate::mpv::discovery::launch_mpv(&media_paths[0]);
                     for _ in 0..60 {
                         std::thread::sleep(std::time::Duration::from_millis(50));
                         if std::path::Path::new(&launched).exists() {
-                            return launched;
+                            return (launched, Some(media_paths[0].clone()));
                         }
                     }
-                    launched
+                    (launched, Some(media_paths[0].clone()))
                 })
                 .await
                 .unwrap_or_default();
+
+            // If the discovered socket matches a different media file, re-send timestamps
+            if let Some(ref matched_path) = matched_media_path {
+                let matched_mid = path_to_mid.get(matched_path).copied();
+                if matched_mid.is_some() && matched_mid != default_media_id {
+                    let mid = matched_mid.unwrap();
+                    crate::logging::log(&format!(
+                        "MPV discovery: switching active media_id from {:?} to {} for {}",
+                        default_media_id, mid, matched_path
+                    ));
+                    let mut ts_data: Vec<(i64, f64, f64)> = timestamps
+                        .iter()
+                        .filter(|t| t.media_id == mid)
+                        .map(|t| (t.line_id, t.start, t.end))
+                        .collect();
+                    ts_data.sort_by(|a, b| {
+                        a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                    let mut id_to_idx: std::collections::HashMap<i64, usize> =
+                        std::collections::HashMap::new();
+                    for (i, line) in lines.iter().enumerate() {
+                        id_to_idx.insert(line.id, i);
+                    }
+                    let _ = cmd_tx
+                        .send(crate::mpv::MpvCommand::SetTimestamps {
+                            timestamps: ts_data,
+                            line_id_to_index: id_to_idx,
+                        })
+                        .await;
+                }
+            }
 
             if !socket_path.is_empty() {
                 let _ = cmd_tx
@@ -1472,11 +1519,12 @@ pub fn open_vocab_popup(state: &mut AppState) {
 
 /// Position the vocab popup to the right of the text card, aligned with the top of the
 /// highlighted sentence group (or the current line if no group is found).
-fn position_vocab_popup(state: &AppState) {
+fn position_vocab_popup(state: &mut AppState) {
     let anchor_line = state.line_map.as_ref()
         .and_then(|lm| crate::text_file_map::sentence_group_for(&lm.sentence_groups, state.current_line))
         .map(|g| g.line_range.start)
         .unwrap_or(state.current_line);
+    state.vocab_popup_para_start = Some(anchor_line);
     if let Some(iter) = state.buffer.iter_at_line(anchor_line as i32) {
         let buf_loc = state.text_view.iter_location(&iter);
         let (_, wy) = state.text_view.buffer_to_window_coords(
@@ -1485,25 +1533,27 @@ fn position_vocab_popup(state: &AppState) {
             buf_loc.y(),
         );
 
-        // Get the right edge of the scrolled window in overlay coordinates
-        let right_point = gtk4::graphene::Point::new(
+        // Transform the anchor line's y from text_view coords to overlay coords
+        let tv_point = gtk4::graphene::Point::new(0.0, wy as f32);
+        let sw_point = gtk4::graphene::Point::new(
             state.scrolled_window.width() as f32,
-            wy as f32,
+            0.0,
         );
-        if let Some(out) = state.scrolled_window.compute_point(
-            &state.vocab_popup.overlay,
-            &right_point,
+        if let (Some(tv_out), Some(sw_out)) = (
+            state.text_view.compute_point(&state.vocab_popup.overlay, &tv_point),
+            state.scrolled_window.compute_point(&state.vocab_popup.overlay, &sw_point),
         ) {
-            let x = (out.x() as f64 + 12.0).max(0.0);
-            let y = (out.y() as f64).max(0.0);
+            let x = (sw_out.x() as f64 + 12.0).max(0.0);
+            let y = (tv_out.y() as f64).max(0.0);
             state.vocab_popup.set_position(x, y);
         }
     }
 }
 
 /// Hide the vocab popup.
-pub fn close_vocab_popup(state: &AppState) {
+pub fn close_vocab_popup(state: &mut AppState) {
     state.vocab_popup.hide();
+    state.vocab_popup_para_start = None;
 }
 
 /// Render the current vocab popup entry.
@@ -1585,7 +1635,14 @@ pub fn refresh_vocab_popup(state: &mut AppState) {
     state.vocab_popup_index = 0;
     state.vocab_popup_view = VocabView::Definition;
 
-    position_vocab_popup(state);
+    // Only reposition if the paragraph changed
+    let new_para_start = state.line_map.as_ref()
+        .and_then(|lm| crate::text_file_map::sentence_group_for(&lm.sentence_groups, state.current_line))
+        .map(|g| g.line_range.start)
+        .unwrap_or(state.current_line);
+    if state.vocab_popup_para_start != Some(new_para_start) {
+        position_vocab_popup(state);
+    }
     show_vocab_popup(state);
 }
 
