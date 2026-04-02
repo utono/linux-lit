@@ -556,7 +556,7 @@ fn clear_old_page_dim(state: &AppState) {
 }
 
 /// Crossfade duration in milliseconds.
-const CROSSFADE_MS: f64 = 750.0;
+const CROSSFADE_MS: f64 = 650.0;
 
 /// Set the page top line with a fade-in transition. Sets text view opacity
 /// to 0, scrolls to new position, then fades opacity back to 1.
