@@ -58,7 +58,7 @@ pub fn move_cursor(state: &mut AppState, delta: i32) {
         crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
         crate::config::NavigationMode::EReader => {
             let lpp = lines_per_page(state);
-            let threshold = state.page_top_line + lpp.saturating_sub(2);
+            let threshold = state.page_top_line + lpp.saturating_sub(3);
             if state.current_line >= threshold {
                 set_page(state, state.current_line);
             } else if state.current_line <= state.page_top_line {
@@ -399,7 +399,7 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
             crate::config::NavigationMode::Scroll => center_cursor(state),
             crate::config::NavigationMode::EReader => {
                 let lpp = lines_per_page(state);
-                let threshold = state.page_top_line + lpp.saturating_sub(2);
+                let threshold = state.page_top_line + lpp.saturating_sub(3);
                 if line_idx >= threshold {
                     set_page(state, line_idx);
                 }
@@ -479,7 +479,7 @@ fn scroll_after_jump_forward(state: &mut AppState) {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
             let lpp = lines_per_page(state);
-            let threshold = state.page_top_line + lpp.saturating_sub(2);
+            let threshold = state.page_top_line + lpp.saturating_sub(3);
             if state.current_line >= threshold {
                 set_page(state, state.current_line);
             }
@@ -895,7 +895,7 @@ pub fn jump_to_next_vocab(state: &mut AppState) {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
             let lpp = lines_per_page(state);
-            let threshold = state.page_top_line + lpp.saturating_sub(2);
+            let threshold = state.page_top_line + lpp.saturating_sub(3);
             if target_line >= threshold {
                 set_page(state, target_line);
             }
@@ -917,7 +917,7 @@ pub fn jump_to_vocab_at(state: &mut AppState, match_idx: usize) {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
             let lpp = lines_per_page(state);
-            let threshold = state.page_top_line + lpp.saturating_sub(2);
+            let threshold = state.page_top_line + lpp.saturating_sub(3);
             if target_line >= threshold {
                 set_page(state, target_line);
             }
