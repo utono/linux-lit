@@ -41,6 +41,7 @@ pub struct AppState {
     pub dim_tag: gtk4::TextTag,
     pub cursor_line_tag: gtk4::TextTag,
     pub ab_dim_tag: gtk4::TextTag,
+    pub page_turn_overlay: gtk4::Overlay,
     pub scrolled_window: ScrolledWindow,
     pub content_hbox: gtk4::Box,
     pub window: ApplicationWindow,
@@ -327,6 +328,12 @@ pub fn build_window(
 
     scrolled.add_css_class("text-card");
 
+    // Page turn overlay — used for crossfade transition
+    let page_turn_overlay = gtk4::Overlay::new();
+    page_turn_overlay.set_child(Some(&scrolled));
+    page_turn_overlay.set_vexpand(true);
+    page_turn_overlay.set_hexpand(true);
+
     // Centered text card container — width_request controls the card width
     let content_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
     content_hbox.set_halign(gtk4::Align::Center);
@@ -337,7 +344,7 @@ pub fn build_window(
     content_hbox.set_margin_bottom(24);
     content_hbox.set_margin_start(24);
     content_hbox.set_margin_end(24);
-    content_hbox.append(&scrolled);
+    content_hbox.append(&page_turn_overlay);
 
     // Vocab popup overlay (centered, like settings)
     let vocab_popup = crate::ui::vocab_popup::VocabPopup::new();
@@ -422,6 +429,7 @@ pub fn build_window(
         dim_tag,
         cursor_line_tag,
         ab_dim_tag,
+        page_turn_overlay: page_turn_overlay.clone(),
         scrolled_window: scrolled,
         content_hbox: content_hbox.clone(),
         window: window.clone(),

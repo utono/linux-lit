@@ -571,10 +571,21 @@ fn clear_old_page_dim(state: &AppState) {
     buffer.remove_tag(tag, &start_iter, &end_iter);
 }
 
-/// Set the page top line and scroll so the line is fully visible with
-/// one line of padding above it. Scrolls to the END of the line two
-/// before `new_top` at yalign=0.0, so one full line acts as top padding.
+/// Crossfade duration in milliseconds.
+const CROSSFADE_MS: f64 = 200.0;
+
+/// Set the page top line with a crossfade transition. Captures a snapshot
+/// of the current page, scrolls underneath, then fades the snapshot out.
 fn set_page(state: &mut AppState, new_top: usize) {
+    // Capture snapshot of current content before scrolling
+    let paintable = gtk4::WidgetPaintable::new(Some(&state.scrolled_window));
+    let picture = gtk4::Picture::for_paintable(&paintable);
+    picture.set_can_shrink(true);
+    picture.set_hexpand(true);
+    picture.set_vexpand(true);
+    state.page_turn_overlay.add_overlay(&picture);
+
+    // Scroll to new position underneath the snapshot
     clear_old_page_dim(state);
     state.page_top_line = new_top;
     let scroll_line = new_top.saturating_sub(2);
@@ -585,6 +596,31 @@ fn set_page(state: &mut AppState, new_top: usize) {
         }
         state.text_view.scroll_to_iter(&mut end, 0.0, true, 0.0, 0.0);
     }
+
+    // Animate the snapshot opacity from 1.0 to 0.0
+    let overlay = state.page_turn_overlay.clone();
+    let start_time = std::cell::Cell::new(None::<f64>);
+    let pic = picture.clone();
+    picture.add_tick_callback(move |widget, clock| {
+        let now = clock.frame_time() as f64 / 1_000.0; // microseconds to milliseconds
+        let t0 = start_time.get();
+        let t0 = match t0 {
+            Some(t) => t,
+            None => {
+                start_time.set(Some(now));
+                now
+            }
+        };
+        let elapsed = now - t0;
+        let progress = (elapsed / CROSSFADE_MS).min(1.0);
+        widget.set_opacity(1.0 - progress);
+
+        if progress >= 1.0 {
+            overlay.remove_overlay(&pic);
+            return glib::ControlFlow::Break;
+        }
+        glib::ControlFlow::Continue
+    });
 }
 
 /// Set the page top line and scroll instantly (no animation). For gg/G/restore.
