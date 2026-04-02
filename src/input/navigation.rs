@@ -438,8 +438,8 @@ fn ensure_cursor_on_page(state: &mut AppState) {
     }
 }
 
-/// Check if a line's full visual extent (including pixels_above/below_lines)
-/// fits within the viewport.
+/// Check if a line fits within the viewport with one line of bottom padding.
+/// Used by `q`/`,` navigation to trigger page turns with breathing room.
 fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
     let Some(iter) = state.buffer.iter_at_line(line as i32) else {
         return false;
@@ -450,6 +450,41 @@ fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
     let (y, h) = state.text_view.line_yrange(&iter);
     // Require one full line height of space below for bottom padding
     y >= scroll_y && y + h + h <= scroll_y + page_height
+}
+
+/// Check if a line is on screen at all (no padding requirement).
+/// Used by playback sync to avoid premature page turns.
+fn is_line_on_screen(state: &AppState, line: usize) -> bool {
+    let Some(iter) = state.buffer.iter_at_line(line as i32) else {
+        return false;
+    };
+    let adj = state.scrolled_window.vadjustment();
+    let scroll_y = adj.value() as i32;
+    let page_height = adj.page_size() as i32;
+    let (y, h) = state.text_view.line_yrange(&iter);
+    y >= scroll_y && y + h <= scroll_y + page_height
+}
+
+/// Check if a forward page turn should occur: the line is off-screen,
+/// or is the last or second-to-last visible line on screen.
+fn should_page_turn_forward(state: &AppState, line: usize) -> bool {
+    if !is_line_on_screen(state, line) {
+        return true;
+    }
+    // Check if the next two lines are off-screen (making this the last or second-to-last)
+    let line_count = state.effective_line_count();
+    if line + 1 >= line_count {
+        return false;
+    }
+    // Last visible: next line is off-screen
+    if !is_line_on_screen(state, line + 1) {
+        return true;
+    }
+    // Second-to-last: line after next is off-screen
+    if line + 2 >= line_count {
+        return false;
+    }
+    !is_line_on_screen(state, line + 2)
 }
 
 /// Check if a line is the last visible line and has no visible blank space
@@ -641,10 +676,14 @@ pub fn scroll_paragraph_to_top(state: &mut AppState, para_start: usize) {
             adj.set_value(val);
         }
         crate::config::NavigationMode::EReader => {
-            let lpp = lines_per_page(state);
-            let cursor_offset = lpp * 35 / 100;
-            let new_top = para_start.saturating_sub(cursor_offset);
-            set_page(state, new_top);
+            // Only page-turn if the paragraph start is off-screen
+            if !is_line_on_screen(state, para_start) {
+                crate::logging::log(&format!(
+                    "PARA_SCROLL: para_start={} page_top={}",
+                    para_start, state.page_top_line
+                ));
+                set_page(state, para_start);
+            }
         }
     }
 }
@@ -655,10 +694,8 @@ pub fn ensure_visible_no_highlight(state: &mut AppState) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
         crate::config::NavigationMode::EReader => {
-            if needs_page_turn_down(state, state.current_line) {
+            if !is_line_on_screen(state, state.current_line) {
                 set_page(state, state.current_line);
-            } else {
-                ensure_cursor_on_page(state);
             }
         }
     }
@@ -669,10 +706,14 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
         crate::config::NavigationMode::EReader => {
-            if needs_page_turn_down(state, state.current_line) {
+            // Only page-turn when the cursor is on the last or second-to-last
+            // visible line, or off-screen entirely.
+            if should_page_turn_forward(state, state.current_line) {
+                crate::logging::log(&format!(
+                    "SYNC_PAGE_TURN: cursor={} page_top={}",
+                    state.current_line, state.page_top_line
+                ));
                 set_page(state, state.current_line);
-            } else {
-                ensure_cursor_on_page(state);
             }
         }
     }
