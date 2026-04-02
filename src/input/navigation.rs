@@ -54,7 +54,19 @@ pub fn move_cursor(state: &mut AppState, delta: i32) {
     state.current_line = new_line;
     update_highlight(state);
 
-    scroll_to_cursor(state);
+    match state.config.navigation_mode {
+        crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
+        crate::config::NavigationMode::EReader => {
+            let lpp = lines_per_page(state);
+            let threshold = state.page_top_line + lpp.saturating_sub(2);
+            if state.current_line >= threshold {
+                set_page(state, state.current_line);
+            } else if state.current_line <= state.page_top_line {
+                let new_top = state.current_line.saturating_sub(lpp.saturating_sub(1));
+                set_page(state, new_top);
+            }
+        }
+    }
 
     auto_show_vocab_popup(state);
 }
@@ -525,18 +537,12 @@ fn scroll_after_jump_forward(state: &mut AppState) {
 }
 
 /// Mode-aware scroll after a backward jump (`,` / prev paragraph or dialogue).
-/// In scroll mode, centers the cursor. In e-reader mode, cursor moves up the
-/// page; when it reaches the first line (or above), page-turns with the cursor
-/// line at the bottom of the new page (inverse of `q` forward behavior).
+/// In e-reader mode, page-turns when cursor reaches the top line of the page.
 fn scroll_after_jump_backward(state: &mut AppState) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
-            // Only page-turn backward when the cursor is on the top visible line
-            // (i.e., the line above it is off-screen or doesn't exist)
-            let at_top = state.current_line == 0
-                || !is_line_on_screen(state, state.current_line.saturating_sub(1));
-            if at_top {
+            if state.current_line <= state.page_top_line {
                 let lpp = lines_per_page(state);
                 let new_top = state.current_line.saturating_sub(lpp.saturating_sub(1));
                 set_page(state, new_top);
