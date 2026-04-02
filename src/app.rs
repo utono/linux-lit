@@ -39,6 +39,7 @@ pub struct AppState {
     pub current_line: usize,
     pub page_top_line: usize,
     pub dim_tag: gtk4::TextTag,
+    pub clipped_tag: gtk4::TextTag,
     pub cursor_line_tag: gtk4::TextTag,
     pub ab_dim_tag: gtk4::TextTag,
     pub scrolled_window: ScrolledWindow,
@@ -225,6 +226,14 @@ pub fn build_window(
         .foreground(&theme.dim_fg)
         .build();
     buffer.tag_table().add(&ab_dim_tag);
+
+    let clipped_tag = gtk4::TextTag::builder()
+        .name("clipped")
+        .foreground(&theme.text_bg)
+        .build();
+    buffer.tag_table().add(&clipped_tag);
+    // Highest priority so it overrides all other foreground tags
+    clipped_tag.set_priority(buffer.tag_table().size() - 1);
 
     let cursor_line_tag = gtk4::TextTag::builder()
         .name("cursor-line")
@@ -442,6 +451,7 @@ pub fn build_window(
         current_line: 0,
         page_top_line: 0,
         dim_tag,
+        clipped_tag,
         cursor_line_tag,
         ab_dim_tag,
         scrolled_window: scrolled,

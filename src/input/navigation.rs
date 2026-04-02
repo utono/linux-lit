@@ -438,20 +438,19 @@ fn ensure_cursor_on_page(state: &mut AppState) {
     }
 }
 
-/// Check if a line is fully visible within the viewport, accounting for
-/// the 16px overlay bars at top and bottom that mask scrolled content.
-const OVERLAY_BAR_HEIGHT: i32 = 16;
-
+/// Check if a line is fully visible within the content area of the viewport
+/// (excluding the top and bottom padding lines).
 fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
     let Some(iter) = state.buffer.iter_at_line(line as i32) else {
         return false;
     };
-    let visible = state.text_view.visible_rect();
+    let adj = state.scrolled_window.vadjustment();
+    let scroll_y = adj.value() as i32;
+    let page_height = adj.page_size() as i32;
     let loc = state.text_view.iter_location(&iter);
-    let top = visible.y() + OVERLAY_BAR_HEIGHT;
-    let bottom = visible.y() + visible.height() - OVERLAY_BAR_HEIGHT
-        - state.text_view.pixels_below_lines();
-    loc.y() >= top && loc.y() + loc.height() <= bottom
+    let padding = single_line_height(state) as i32;
+    let bottom = scroll_y + page_height - padding;
+    loc.y() >= scroll_y && loc.y() + loc.height() <= bottom
 }
 
 /// Check if a line is the last visible line and has no visible blank space
@@ -570,6 +569,7 @@ fn set_page_instant(state: &mut AppState, new_top: usize) {
     state.page_top_line = new_top;
     let target = scroll_value_for_line(state, new_top);
     state.scrolled_window.vadjustment().set_value(target);
+    hide_clipped_lines(state);
 }
 
 /// Scroll the viewport by a fixed step without moving the cursor or seeking audio.
@@ -592,7 +592,8 @@ pub fn scroll_viewport(state: &mut AppState, delta: i32) {
     adj.set_value(new_val);
 }
 
-/// Get the vadjustment value that places the given line below the top overlay bar.
+/// Get the vadjustment value that places the given line with one line of
+/// padding above it (the line appears below one blank line's worth of space).
 fn scroll_value_for_line(state: &AppState, line: usize) -> f64 {
     let adj = state.scrolled_window.vadjustment();
     let max = adj.upper() - adj.page_size();
@@ -601,8 +602,8 @@ fn scroll_value_for_line(state: &AppState, line: usize) -> f64 {
         return 0.0;
     };
     let rect = state.text_view.iter_location(&iter);
-    // Subtract overlay bar height so the line appears below the top bar
-    (rect.y() as f64 - OVERLAY_BAR_HEIGHT as f64).max(0.0).min(max)
+    let padding = single_line_height(state);
+    (rect.y() as f64 - padding).max(0.0).min(max)
 }
 
 // ---------------------------------------------------------------------------
@@ -759,6 +760,43 @@ fn update_highlight(state: &AppState) {
     crate::input::visual::apply_selection_highlight(state);
 }
 
+/// Apply the clipped tag (foreground = background) to any line whose bottom
+/// extends into the bottom padding zone, making it invisible.
+fn hide_clipped_lines(state: &AppState) {
+    let buffer = &state.buffer;
+    let tag = &state.clipped_tag;
+    let (buf_start, buf_end) = buffer.bounds();
+    buffer.remove_tag(tag, &buf_start, &buf_end);
+
+    let adj = state.scrolled_window.vadjustment();
+    let scroll_y = adj.value() as i32;
+    let page_height = adj.page_size() as i32;
+    let padding = single_line_height(state) as i32;
+    let bottom = scroll_y + page_height - padding;
+    let viewport_end = scroll_y + page_height;
+
+    // Find the line at the bottom padding boundary
+    let Some(iter_at_bottom) = state.text_view.iter_at_location(0, bottom) else {
+        return;
+    };
+    let bottom_line = iter_at_bottom.line() as usize;
+
+    let start = bottom_line.saturating_sub(1);
+    let end = (bottom_line + 4).min(state.effective_line_count());
+
+    for i in start..end {
+        let Some(line_start) = buffer.iter_at_line(i as i32) else { continue };
+        let loc = state.text_view.iter_location(&line_start);
+        if loc.y() + loc.height() > bottom && loc.y() < viewport_end {
+            let mut line_end = line_start;
+            if !line_end.ends_line() {
+                line_end.forward_to_line_end();
+            }
+            buffer.apply_tag(tag, &line_start, &line_end);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Crossfade animation
 // ---------------------------------------------------------------------------
@@ -769,55 +807,38 @@ fn crossfade_to(state: &AppState, target_value: f64) {
     let page_size = adj.page_size();
     let clamped = target_value.max(0.0).min(adj.upper() - page_size);
     adj.set_value(clamped);
+    hide_clipped_lines(state);
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Count how many buffer lines fit in the viewport starting from `page_top_line`.
-/// Uses next-line y positions to measure actual occupied height including all spacing.
+/// Get the height of a single unwrapped line (text + above/below spacing).
+fn single_line_height(state: &AppState) -> f64 {
+    // Use a known line to measure; fall back to a reasonable estimate
+    let Some(iter) = state.buffer.iter_at_line(state.current_line as i32) else {
+        return 30.0;
+    };
+    let rect = state.text_view.iter_location(&iter);
+    let text_h = rect.height() as f64;
+    let above = state.text_view.pixels_above_lines() as f64;
+    let below = state.text_view.pixels_below_lines() as f64;
+    text_h + above + below
+}
+
+/// Count how many content lines fit in the viewport, minus 2 for padding
+/// (one blank line of padding at top and one at bottom).
 fn lines_per_page(state: &AppState) -> usize {
     let adj = state.scrolled_window.vadjustment();
     let page_size = adj.page_size();
-    let line_count = state.effective_line_count();
-    let start = state.page_top_line;
-
-    if line_count == 0 || start >= line_count {
-        return 15; // fallback
-    }
-
-    let Some(start_iter) = state.buffer.iter_at_line(start as i32) else {
+    let line_h = single_line_height(state);
+    if line_h <= 0.0 {
         return 15;
-    };
-    let start_y = state.text_view.iter_location(&start_iter).y() as f64;
-    let limit_y = start_y + page_size - (2 * OVERLAY_BAR_HEIGHT) as f64;
-
-    let mut count = 0;
-    for i in start..line_count {
-        // Determine the bottom of line i by looking at where line i+1 starts,
-        // or using iter_location height for the last line in the buffer.
-        let line_bottom = if i + 1 < line_count {
-            if let Some(next_iter) = state.buffer.iter_at_line((i + 1) as i32) {
-                state.text_view.iter_location(&next_iter).y() as f64
-            } else {
-                break;
-            }
-        } else {
-            let Some(iter) = state.buffer.iter_at_line(i as i32) else {
-                break;
-            };
-            let rect = state.text_view.iter_location(&iter);
-            rect.y() as f64 + rect.height() as f64
-        };
-
-        if line_bottom > limit_y {
-            break;
-        }
-        count += 1;
     }
-
-    count.max(1)
+    let total_lines = (page_size / line_h).floor() as usize;
+    // Subtract 2 for top/bottom padding lines
+    total_lines.saturating_sub(2).max(1)
 }
 
 /// Jump to the next vocab word occurrence after current position.
