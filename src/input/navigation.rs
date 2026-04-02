@@ -747,8 +747,9 @@ fn update_highlight(state: &AppState) {
     let vis_end_iter = buffer.iter_at_line(vis_end as i32)
         .unwrap_or_else(|| buffer.end_iter());
 
-    // Clear cursor line tag in visible range only
-    buffer.remove_tag(cl_tag, &vis_start_iter, &vis_end_iter);
+    // Clear cursor line tag from full buffer (lightweight — only one line has it)
+    let (buf_start, buf_end) = buffer.bounds();
+    buffer.remove_tag(cl_tag, &buf_start, &buf_end);
 
     if !state.dim_enabled {
         // Remove dimming in visible range
