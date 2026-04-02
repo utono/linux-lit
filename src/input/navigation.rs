@@ -438,14 +438,20 @@ fn ensure_cursor_on_page(state: &mut AppState) {
     }
 }
 
-/// Check if a line is fully visible within the viewport.
+/// Check if a line is fully visible within the viewport, accounting for
+/// the 16px overlay bars at top and bottom that mask scrolled content.
+const OVERLAY_BAR_HEIGHT: i32 = 16;
+
 fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
     let Some(iter) = state.buffer.iter_at_line(line as i32) else {
         return false;
     };
     let visible = state.text_view.visible_rect();
     let loc = state.text_view.iter_location(&iter);
-    loc.y() >= visible.y() && loc.y() + loc.height() <= visible.y() + visible.height()
+    let top = visible.y() + OVERLAY_BAR_HEIGHT;
+    let bottom = visible.y() + visible.height() - OVERLAY_BAR_HEIGHT
+        - state.text_view.pixels_below_lines();
+    loc.y() >= top && loc.y() + loc.height() <= bottom
 }
 
 /// Check if a line is the last visible line and has no visible blank space
@@ -455,7 +461,7 @@ fn needs_page_turn_down(state: &AppState, line: usize) -> bool {
     if !is_line_fully_visible(state, line) {
         return true;
     }
-    // Check if the next line's top is visible — if not, we're at the edge
+    // Check if the next line is fully visible — if not, we're at the edge
     let line_count = state.effective_line_count();
     if line + 1 >= line_count {
         return false; // at end of document
@@ -551,12 +557,10 @@ fn seek_to_current_line(state: &mut AppState) {
 /// targeting the previous line's position (overlap provides context).
 fn set_page(state: &mut AppState, new_top: usize) {
     state.page_top_line = new_top;
-    // Scroll to 1 line before new_top so there's context from the previous page
-    let scroll_line = new_top.saturating_sub(PAGE_OVERLAP);
-    let target = scroll_value_for_line(state, scroll_line);
+    let target = scroll_value_for_line(state, new_top);
     crate::logging::log(&format!(
-        "PAGE_TURN: top_line={} scroll_line={} cursor={} target={:.0}",
-        new_top, scroll_line, state.current_line, target
+        "PAGE_TURN: top_line={} cursor={} target={:.0}",
+        new_top, state.current_line, target
     ));
     crossfade_to(state, target);
 }
@@ -588,7 +592,7 @@ pub fn scroll_viewport(state: &mut AppState, delta: i32) {
     adj.set_value(new_val);
 }
 
-/// Get the vadjustment value that places the given line at the top of the viewport.
+/// Get the vadjustment value that places the given line below the top overlay bar.
 fn scroll_value_for_line(state: &AppState, line: usize) -> f64 {
     let adj = state.scrolled_window.vadjustment();
     let max = adj.upper() - adj.page_size();
@@ -597,7 +601,8 @@ fn scroll_value_for_line(state: &AppState, line: usize) -> f64 {
         return 0.0;
     };
     let rect = state.text_view.iter_location(&iter);
-    (rect.y() as f64).max(0.0).min(max)
+    // Subtract overlay bar height so the line appears below the top bar
+    (rect.y() as f64 - OVERLAY_BAR_HEIGHT as f64).max(0.0).min(max)
 }
 
 // ---------------------------------------------------------------------------
@@ -786,7 +791,7 @@ fn lines_per_page(state: &AppState) -> usize {
         return 15;
     };
     let start_y = state.text_view.iter_location(&start_iter).y() as f64;
-    let limit_y = start_y + page_size;
+    let limit_y = start_y + page_size - (2 * OVERLAY_BAR_HEIGHT) as f64;
 
     let mut count = 0;
     for i in start..line_count {
