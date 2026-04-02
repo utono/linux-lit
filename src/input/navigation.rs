@@ -225,12 +225,13 @@ pub fn jump_to_next_paragraph(state: &mut AppState) {
     // In plays, jump to the next dialogue line
     if state.dialogue_formatting_active {
         if let Some(target) = next_dialogue_line(buffer, state.current_line, line_count) {
+            let prev_line = state.current_line;
             state.current_line = target;
             // Clear stale pending_advance so old advance state doesn't bounce
             state.pending_advance = None;
             state.pending_advance_ignore_bl = None;
             update_highlight(state);
-            scroll_after_jump_forward(state);
+            scroll_after_jump_forward(state, prev_line);
             seek_to_current_line(state);
             auto_show_vocab_popup(state);
         }
@@ -249,9 +250,10 @@ pub fn jump_to_next_paragraph(state: &mut AppState) {
     }
 
     if i < line_count {
+        let prev_line = state.current_line;
         state.current_line = i;
         update_highlight(state);
-        scroll_after_jump_forward(state);
+        scroll_after_jump_forward(state, prev_line);
         seek_to_current_line(state);
         auto_show_vocab_popup(state);
     }
@@ -445,27 +447,6 @@ fn is_line_on_screen(state: &AppState, line: usize) -> bool {
     y >= scroll_y && y + h <= scroll_y + page_height
 }
 
-/// Check if a forward page turn should occur: the line is off-screen,
-/// or is the last or second-to-last visible line on screen.
-fn should_page_turn_forward(state: &AppState, line: usize) -> bool {
-    if !is_line_on_screen(state, line) {
-        return true;
-    }
-    // Check if the next two lines are off-screen (making this the last or second-to-last)
-    let line_count = state.effective_line_count();
-    if line + 1 >= line_count {
-        return false;
-    }
-    // Last visible: next line is off-screen
-    if !is_line_on_screen(state, line + 1) {
-        return true;
-    }
-    // Second-to-last: line after next is off-screen
-    if line + 2 >= line_count {
-        return false;
-    }
-    !is_line_on_screen(state, line + 2)
-}
 
 /// Scroll just enough to keep the current line visible. No page turn.
 fn scroll_to_cursor(state: &mut AppState) {
@@ -473,15 +454,17 @@ fn scroll_to_cursor(state: &mut AppState) {
 }
 
 /// Mode-aware scroll after a forward jump (`q` / next paragraph or dialogue).
-/// In e-reader mode, page-turns when cursor reaches the last two lines of the page.
-fn scroll_after_jump_forward(state: &mut AppState) {
+/// `prev_line` is the cursor position before the jump. In e-reader mode, if the
+/// new position triggers a page turn, the previous line becomes the top of the
+/// new page (continuity — last line of old page = first line of new page).
+fn scroll_after_jump_forward(state: &mut AppState, prev_line: usize) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
             let lpp = lines_per_page(state);
             let threshold = state.page_top_line + lpp.saturating_sub(3);
             if state.current_line >= threshold {
-                set_page(state, state.current_line);
+                set_page(state, prev_line);
             }
         }
     }
@@ -710,13 +693,15 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
         crate::config::NavigationMode::EReader => {
-            // Only page-turn when the cursor is on the last or second-to-last
-            // visible line, or off-screen entirely.
-            if should_page_turn_forward(state, state.current_line) {
-                crate::logging::log(&format!(
-                    "SYNC_PAGE_TURN: cursor={} page_top={}",
-                    state.current_line, state.page_top_line
-                ));
+            // Use the same line-count threshold as user navigation.
+            // When the cursor reaches the threshold, page-turn with the
+            // current line at the top (the line being played becomes the
+            // first line of the new page).
+            let lpp = lines_per_page(state);
+            let threshold = state.page_top_line + lpp.saturating_sub(3);
+            if state.current_line >= threshold
+                || !is_line_on_screen(state, state.current_line)
+            {
                 set_page(state, state.current_line);
             }
         }
