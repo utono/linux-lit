@@ -551,7 +551,7 @@ fn seek_to_current_line(state: &mut AppState) {
 /// targeting the previous line's position (overlap provides context).
 fn set_page(state: &mut AppState, new_top: usize) {
     state.page_top_line = new_top;
-    // Scroll to 1 line before new_top so there's visual padding at the top
+    // Scroll to 1 line before new_top so there's context from the previous page
     let scroll_line = new_top.saturating_sub(PAGE_OVERLAP);
     let target = scroll_value_for_line(state, scroll_line);
     crate::logging::log(&format!(
@@ -589,7 +589,6 @@ pub fn scroll_viewport(state: &mut AppState, delta: i32) {
 }
 
 /// Get the vadjustment value that places the given line at the top of the viewport.
-/// Uses the previous line's bottom to avoid its tail peeking above the target line.
 fn scroll_value_for_line(state: &AppState, line: usize) -> f64 {
     let adj = state.scrolled_window.vadjustment();
     let max = adj.upper() - adj.page_size();

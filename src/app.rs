@@ -322,9 +322,24 @@ pub fn build_window(
         .vexpand(true)
         .hexpand(true)
         .valign(gtk4::Align::Fill)
-        .css_classes(vec!["text-card"])
         .overflow(gtk4::Overflow::Hidden)
         .build();
+
+    // Card wrapper — provides border-radius and top/bottom padding around the scroll area
+    let card_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    card_box.add_css_class("text-card");
+    card_box.set_overflow(gtk4::Overflow::Hidden);
+    // Top padding spacer inside the card
+    let top_spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    top_spacer.set_height_request(16);
+    top_spacer.add_css_class("text-card");
+    card_box.append(&top_spacer);
+    card_box.append(&scrolled);
+    // Bottom padding spacer inside the card
+    let bottom_spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    bottom_spacer.set_height_request(16);
+    bottom_spacer.add_css_class("text-card");
+    card_box.append(&bottom_spacer);
 
     // Centered text card container — width_request controls the card width
     let content_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
@@ -336,7 +351,7 @@ pub fn build_window(
     content_hbox.set_margin_bottom(24);
     content_hbox.set_margin_start(24);
     content_hbox.set_margin_end(24);
-    content_hbox.append(&scrolled);
+    content_hbox.append(&card_box);
 
     // Vocab popup overlay (centered, like settings)
     let vocab_popup = crate::ui::vocab_popup::VocabPopup::new();
