@@ -574,16 +574,44 @@ fn clear_old_page_dim(state: &AppState) {
 /// Crossfade duration in milliseconds.
 const CROSSFADE_MS: f64 = 200.0;
 
-/// Set the page top line with a crossfade transition. Captures a snapshot
-/// of the current page, scrolls underneath, then fades the snapshot out.
+/// Set the page top line with a crossfade transition. Captures a static
+/// texture of the current page, scrolls underneath, then fades the texture out.
 fn set_page(state: &mut AppState, new_top: usize) {
-    // Capture snapshot of current content before scrolling
-    let paintable = gtk4::WidgetPaintable::new(Some(&state.scrolled_window));
-    let picture = gtk4::Picture::for_paintable(&paintable);
-    picture.set_can_shrink(true);
-    picture.set_hexpand(true);
-    picture.set_vexpand(true);
-    state.page_turn_overlay.add_overlay(&picture);
+    // Capture a static texture of the current content before scrolling
+    let sw = &state.scrolled_window;
+    let width = sw.width();
+    let height = sw.height();
+
+    let picture = if width > 0 && height > 0 {
+        let paintable = gtk4::WidgetPaintable::new(Some(sw));
+        let snapshot = gtk4::Snapshot::new();
+        paintable.snapshot(
+            &snapshot,
+            width as f64,
+            height as f64,
+        );
+        snapshot.to_node().and_then(|node| {
+            sw.native()
+                .and_then(|n| n.renderer())
+                .map(|renderer| {
+                    let texture = renderer.render_texture(
+                        &node,
+                        Some(&gtk4::graphene::Rect::new(0.0, 0.0, width as f32, height as f32)),
+                    );
+                    let pic = gtk4::Picture::for_paintable(&texture);
+                    pic.set_can_shrink(true);
+                    pic.set_hexpand(true);
+                    pic.set_vexpand(true);
+                    pic
+                })
+        })
+    } else {
+        None
+    };
+
+    if let Some(ref pic) = picture {
+        state.page_turn_overlay.add_overlay(pic);
+    }
 
     // Scroll to new position underneath the snapshot
     clear_old_page_dim(state);
@@ -598,29 +626,31 @@ fn set_page(state: &mut AppState, new_top: usize) {
     }
 
     // Animate the snapshot opacity from 1.0 to 0.0
-    let overlay = state.page_turn_overlay.clone();
-    let start_time = std::cell::Cell::new(None::<f64>);
-    let pic = picture.clone();
-    picture.add_tick_callback(move |widget, clock| {
-        let now = clock.frame_time() as f64 / 1_000.0; // microseconds to milliseconds
-        let t0 = start_time.get();
-        let t0 = match t0 {
-            Some(t) => t,
-            None => {
-                start_time.set(Some(now));
-                now
-            }
-        };
-        let elapsed = now - t0;
-        let progress = (elapsed / CROSSFADE_MS).min(1.0);
-        widget.set_opacity(1.0 - progress);
+    if let Some(picture) = picture {
+        let overlay = state.page_turn_overlay.clone();
+        let start_time = std::cell::Cell::new(None::<f64>);
+        let pic = picture.clone();
+        picture.add_tick_callback(move |widget, clock| {
+            let now = clock.frame_time() as f64 / 1_000.0;
+            let t0 = start_time.get();
+            let t0 = match t0 {
+                Some(t) => t,
+                None => {
+                    start_time.set(Some(now));
+                    now
+                }
+            };
+            let elapsed = now - t0;
+            let progress = (elapsed / CROSSFADE_MS).min(1.0);
+            widget.set_opacity(1.0 - progress);
 
-        if progress >= 1.0 {
-            overlay.remove_overlay(&pic);
-            return glib::ControlFlow::Break;
-        }
-        glib::ControlFlow::Continue
-    });
+            if progress >= 1.0 {
+                overlay.remove_overlay(&pic);
+                return glib::ControlFlow::Break;
+            }
+            glib::ControlFlow::Continue
+        });
+    }
 }
 
 /// Set the page top line and scroll instantly (no animation). For gg/G/restore.
