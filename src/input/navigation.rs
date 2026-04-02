@@ -422,18 +422,20 @@ pub fn restore_cursor(state: &mut AppState) {
 /// For backward movement, cursor appears near page bottom.
 /// For forward movement, cursor appears near page top.
 fn ensure_cursor_on_page(state: &mut AppState) {
+    let lpp = lines_per_page(state);
+    let page_end = state.page_top_line + lpp.saturating_sub(2);
+
     crate::logging::log(&format!(
-        "ENSURE: cursor={} page_top={}",
-        state.current_line, state.page_top_line
+        "ENSURE: cursor={} page_top={} lpp={} page_end={}",
+        state.current_line, state.page_top_line, lpp, page_end
     ));
 
     if state.current_line < state.page_top_line {
         // Went above — new page with cursor near bottom
-        let lpp = lines_per_page(state);
         let new_top = state.current_line.saturating_sub(lpp.saturating_sub(1));
         set_page(state, new_top);
-    } else if needs_page_turn_down(state, state.current_line) {
-        // At or past last fully visible line — new page with this line at top
+    } else if state.current_line >= page_end {
+        // At or past threshold — new page with this line at top
         set_page(state, state.current_line);
     }
 }
@@ -508,12 +510,17 @@ fn scroll_to_cursor(state: &mut AppState) {
 }
 
 /// Mode-aware scroll after a forward jump (`q` / next paragraph or dialogue).
-/// In scroll mode, centers the cursor. In e-reader mode, moves cursor down
-/// the page; when it reaches the last line, page-turns with that line at top.
+/// In e-reader mode, page-turns when cursor reaches the last two lines of the page.
 fn scroll_after_jump_forward(state: &mut AppState) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
-        crate::config::NavigationMode::EReader => ensure_cursor_on_page(state),
+        crate::config::NavigationMode::EReader => {
+            let lpp = lines_per_page(state);
+            let threshold = state.page_top_line + lpp.saturating_sub(2);
+            if state.current_line >= threshold {
+                set_page(state, state.current_line);
+            }
+        }
     }
 }
 
