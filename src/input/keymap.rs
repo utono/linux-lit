@@ -390,8 +390,8 @@ pub fn handle_key(
                             tag.set_property("pixels-above-lines", snap_ls.max(1) as i32 * 5);
                         }
                     } else {
-                        s.text_view.set_pixels_above_lines(snap_ls as i32);
-                        s.text_view.set_pixels_below_lines(snap_ls as i32);
+                        s.text_view.set_pixels_above_lines((snap_ls as i32).max(0));
+                        s.text_view.set_pixels_below_lines((snap_ls as i32).max(0));
                     }
                     s.content_hbox.set_width_request(snap_cw as i32);
                     s.text_view.set_left_margin(snap_tm as i32);
@@ -458,8 +458,8 @@ pub fn handle_key(
                         tag.set_property("pixels-above-lines", ls.max(1) as i32 * 5);
                     }
                 } else {
-                    s.text_view.set_pixels_above_lines(ls as i32);
-                    s.text_view.set_pixels_below_lines(ls as i32);
+                    s.text_view.set_pixels_above_lines((ls as i32).max(0));
+                    s.text_view.set_pixels_below_lines((ls as i32).max(0));
                 }
                 s.content_hbox.set_width_request(cw as i32);
                 s.text_view.set_left_margin(tm as i32);
@@ -1286,8 +1286,8 @@ fn apply_settings_change(
                     tag.set_property("pixels-above-lines", val.max(1) as i32 * 5);
                 }
             } else {
-                s.text_view.set_pixels_above_lines(val as i32);
-                s.text_view.set_pixels_below_lines(val as i32);
+                s.text_view.set_pixels_above_lines((val as i32).max(0));
+                s.text_view.set_pixels_below_lines((val as i32).max(0));
             }
             s.config.line_spacing = val;
         }

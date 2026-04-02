@@ -448,9 +448,8 @@ fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
     let scroll_y = adj.value() as i32;
     let page_height = adj.page_size() as i32;
     let (y, h) = state.text_view.line_yrange(&iter);
-    // Add half a line height as bottom margin to prevent clipping
-    let margin = (h as f64 * 0.5).round() as i32;
-    y >= scroll_y && y + h + margin <= scroll_y + page_height
+    // Require one full line height of space below for bottom padding
+    y >= scroll_y && y + h + h <= scroll_y + page_height
 }
 
 /// Check if a line is the last visible line and has no visible blank space
@@ -551,38 +550,32 @@ fn seek_to_current_line(state: &mut AppState) {
     }
 }
 
-/// Set the page top line and scroll so the line is fully visible at the top.
-/// Scrolls to place the END of the previous line at yalign=0.0, which
-/// guarantees the target line (and its ascenders) appear fully below.
+/// Set the page top line and scroll so the line is fully visible at the top
+/// Set the page top line and scroll so the line is fully visible with
+/// one line of padding above it. Scrolls to the END of the line two
+/// before `new_top` at yalign=0.0, so one full line acts as top padding.
 fn set_page(state: &mut AppState, new_top: usize) {
     state.page_top_line = new_top;
-    if new_top > 0 {
-        // Place the end of the previous line at the top of the viewport
-        if let Some(prev_iter) = state.buffer.iter_at_line((new_top - 1) as i32) {
-            let mut end = prev_iter;
-            if !end.ends_line() {
-                end.forward_to_line_end();
-            }
-            state.text_view.scroll_to_iter(&mut end, 0.0, true, 0.0, 0.0);
+    let scroll_line = new_top.saturating_sub(2);
+    if let Some(iter) = state.buffer.iter_at_line(scroll_line as i32) {
+        let mut end = iter;
+        if !end.ends_line() {
+            end.forward_to_line_end();
         }
-    } else if let Some(mut iter) = state.buffer.iter_at_line(0) {
-        state.text_view.scroll_to_iter(&mut iter, 0.0, true, 0.0, 0.0);
+        state.text_view.scroll_to_iter(&mut end, 0.0, true, 0.0, 0.0);
     }
 }
 
 /// Set the page top line and scroll instantly (no animation). For gg/G/restore.
 fn set_page_instant(state: &mut AppState, new_top: usize) {
     state.page_top_line = new_top;
-    if new_top > 0 {
-        if let Some(prev_iter) = state.buffer.iter_at_line((new_top - 1) as i32) {
-            let mut end = prev_iter;
-            if !end.ends_line() {
-                end.forward_to_line_end();
-            }
-            state.text_view.scroll_to_iter(&mut end, 0.0, true, 0.0, 0.0);
+    let scroll_line = new_top.saturating_sub(2);
+    if let Some(iter) = state.buffer.iter_at_line(scroll_line as i32) {
+        let mut end = iter;
+        if !end.ends_line() {
+            end.forward_to_line_end();
         }
-    } else if let Some(mut iter) = state.buffer.iter_at_line(0) {
-        state.text_view.scroll_to_iter(&mut iter, 0.0, true, 0.0, 0.0);
+        state.text_view.scroll_to_iter(&mut end, 0.0, true, 0.0, 0.0);
     }
 }
 
@@ -616,11 +609,8 @@ fn scroll_value_for_line(state: &AppState, line: usize) -> f64 {
     let Some(iter) = state.buffer.iter_at_line(line as i32) else {
         return 0.0;
     };
-    let (y, h) = state.text_view.line_yrange(&iter);
-    // Subtract half a line height as top padding so the first line is never clipped.
-    // line_yrange.y may equal iter_location.y when pixels_above_lines is 0.
-    let padding = (h as f64 * 0.5).round();
-    (y as f64 - padding).max(0.0).min(max)
+    let (y, _h) = state.text_view.line_yrange(&iter);
+    (y as f64).max(0.0).min(max)
 }
 
 // ---------------------------------------------------------------------------

@@ -942,7 +942,7 @@ fn apply_dialogue_formatting(state: &mut AppState) {
 
     state.dialogue_formatting_active = true;
 
-    // Set global spacing to 0
+    // Set global spacing to 0 for dialogue formatting
     state.text_view.set_pixels_above_lines(0);
     state.text_view.set_pixels_below_lines(0);
 

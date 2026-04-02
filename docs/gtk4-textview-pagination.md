@@ -4,83 +4,107 @@
 
 linux-lit uses a GTK4 `sourceview5::View` (subclass of `GtkTextView`) inside a `ScrolledWindow` for e-reader-style paginated display. Page turns snap the scroll position to show a specific line at the top of the viewport. The challenge: ensuring no lines are clipped at the top or bottom of each "page."
 
-## Key Discovery: `iter_location` vs `line_yrange`
+## Key API Methods
 
-GTK4's `GtkTextView` has two methods for getting a line's position:
+### `iter_location(&iter)` vs `line_yrange(&iter)`
 
-- **`iter_location(&iter)`** — Returns the bounding box of the character's *glyph area* only. The `y` coordinate is the top of the text glyphs. `pixels_above_lines` spacing sits above this y, and `pixels_below_lines` sits below `y + height`. Neither is included.
+- **`iter_location(&iter)`** — Returns the bounding box of the character's *glyph area* only. `y` is the top of the text glyphs. `pixels_above_lines` and `pixels_below_lines` are NOT included.
 
-- **`line_yrange(&iter)`** — Returns `(y, height)` for the *full visual extent* of the line, including `pixels_above_lines` and `pixels_below_lines`. This is the authoritative measurement of the complete line area.
+- **`line_yrange(&iter)`** — Returns `(y, height)`. Per GTK docs: "Gets the y coordinate of the top of the line containing `iter`, and the height of the line. The coordinate is a buffer coordinate; convert to window coordinates with `buffer_to_window_coords()`."
+
+**Important caveat**: when `pixels_above_lines=0` and `pixels_below_lines=0` (which happens when the user's config sets `line_spacing: 0`), `line_yrange` returns identical values to `iter_location`. There is no inherent spacing to work with.
+
+### `scroll_to_iter`
 
 ```
-Layout of a single buffer line:
-
-  line_yrange.y ──►  ┌─────────────────────────┐
-                     │  pixels_above_lines      │
-  iter_location.y ─► ├─────────────────────────┤
-                     │  text glyphs (ascenders  │
-                     │  to descenders)          │
-                     ├─────────────────────────┤
-                     │  pixels_below_lines      │
-  line_yrange.y+h ─► └─────────────────────────┘
+gtk_text_view_scroll_to_iter(
+    text_view, iter,
+    within_margin,  // [0.0, 0.5) fraction of screen as margin
+    use_align,      // TRUE = use xalign/yalign positioning
+    xalign,         // 0.0=left, 1.0=right
+    yalign          // 0.0=top, 1.0=bottom
+)
 ```
+
+- `within_margin` shrinks the effective viewport from all four edges by this fraction. A value of 0.03 means 3% margin on each side (~25px on a typical screen).
+- When `use_align=TRUE` and `yalign=0.0`, the iter is placed at the top of the effective viewport (after the margin).
+- **Caveat**: may not work correctly before layout is computed. `scroll_to_mark` is more reliable but requires creating a mark.
+- Returns TRUE if scrolling occurred.
+
+### `scroll_to_mark`
+
+Same parameters as `scroll_to_iter` but deferred until line heights are validated (idle handler). More reliable for initial positioning.
+
+Sources:
+- https://docs.gtk.org/gtk4/method.TextView.scroll_to_iter.html
+- https://docs.gtk.org/gtk4/method.TextView.get_line_yrange.html
+- https://docs.gtk.org/gtk4/method.TextView.get_iter_location.html
 
 ## Failed Approaches
 
-Several approaches were tried before discovering `line_yrange`:
+Several approaches were tried before finding the working solution:
 
-- **Overlay bars**: Opaque `gtk4::Box` widgets placed via `gtk4::Overlay` at the top/bottom of the scrolled window to mask clipped content. This fights GTK's scroll system — the text view doesn't know about the overlay, so `visible_rect()` and scroll coordinates don't account for it.
+- **Manual `adj.set_value()` with `iter_location.y()`**: Clips text because `iter_location` returns glyph bounds without spacing. Subtracting fixed pixel offsets is fragile across font sizes.
 
-- **Manual pixel offsets**: Subtracting fixed amounts (16px, 24px, etc.) from `iter_location.y()` to create top padding. Fragile because `iter_location` excludes line spacing, and the offset varies with font size.
+- **Manual `adj.set_value()` with `line_yrange.y()`**: When `pixels_above/below_lines=0`, identical to `iter_location` — still clips.
 
-- **`hide_clipped_lines`**: Applying a text tag with `foreground = background_color` to lines partially behind overlay bars. Performance-heavy (ran on every cursor movement) and unreliable because `visible_rect()` may not update synchronously after `adj.set_value()`.
+- **Overlay bars**: Opaque `gtk4::Box` widgets placed via `gtk4::Overlay` at the top/bottom of the scrolled window to mask clipped content. The text view doesn't know about the overlay, so `visible_rect()` and scroll coordinates don't account for it.
 
-- **CSS padding on ScrolledWindow**: `padding-top`/`padding-bottom` on `.text-card` — GTK4 `ScrolledWindow` ignores CSS padding for scrollable content.
+- **`hide_clipped_lines`**: Applying a text tag with `foreground = background_color` to lines partially behind overlay bars. Performance-heavy and unreliable because `visible_rect()` may not update synchronously after `adj.set_value()`.
 
-- **Card spacer widgets**: `gtk4::Box` spacers inside a vertical box wrapper with the text-card class. The spacers get the card background but don't reduce the scrolled window's viewport — text still scrolls to the edges.
+- **CSS padding on ScrolledWindow**: GTK4 `ScrolledWindow` ignores CSS padding for scrollable content.
 
-## Correct Approach
+- **Card spacer widgets**: `gtk4::Box` spacers inside a vertical box wrapper. The spacers don't reduce the scrolled window's viewport.
 
-Use `line_yrange()` everywhere instead of `iter_location()`:
+- **`scroll_to_iter` with `yalign=0.0` on the target line**: Places the iter's glyph rectangle at the viewport top, but ascenders of the top line extend above `iter_location.y()` and get clipped.
 
-### `scroll_value_for_line`
+## Working Solution
+
+### Page Turn Scroll Positioning
+
+Use `scroll_to_iter` on the **end of a line before the target**, not on the target line itself:
 
 ```rust
-fn scroll_value_for_line(state: &AppState, line: usize) -> f64 {
-    let (y, _h) = state.text_view.line_yrange(&iter);
-    (y as f64).max(0.0).min(max)
+fn set_page(state: &mut AppState, new_top: usize) {
+    state.page_top_line = new_top;
+    // Scroll to end of line (new_top - 2) so line (new_top - 1) is
+    // the overlap line and new_top is the first content line.
+    let scroll_line = new_top.saturating_sub(2);
+    if let Some(iter) = state.buffer.iter_at_line(scroll_line as i32) {
+        let mut end = iter;
+        if !end.ends_line() {
+            end.forward_to_line_end();
+        }
+        // within_margin=0.03 creates ~3% padding at top/bottom
+        state.text_view.scroll_to_iter(&mut end, 0.03, true, 0.0, 0.0);
+    }
 }
 ```
 
-Scrolling to `line_yrange.y` places the line's `pixels_above_lines` spacing at the viewport top edge, so the text starts below it — never clipped.
+Why this works: by scrolling to the END of a line 2 before the target, the viewport top is positioned at the bottom of that line's glyph area. The next line (overlap/padding) appears fully below, and the target content line appears below that. The `within_margin` adds additional breathing room.
 
-### `is_line_fully_visible`
+### Visibility Check for Page Turn Trigger
 
 ```rust
 fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
     let (y, h) = state.text_view.line_yrange(&iter);
-    y >= scroll_y && y + h <= scroll_y + page_height
+    // Require one full line height below for bottom padding
+    y >= scroll_y && y + h + h <= scroll_y + page_height
 }
 ```
 
-Checks that the entire line area (including below-spacing) fits in the viewport. A line partially extending past the bottom is correctly identified as not fully visible, triggering a page turn.
+Requiring space for an additional line height below the last content line ensures the page turns before any line gets clipped at the bottom.
 
-### `lines_per_page`
+### Page Turn Trigger
 
 ```rust
-fn lines_per_page(state: &AppState) -> usize {
-    let (start_y, _) = state.text_view.line_yrange(&start_iter);
-    let limit = start_y + page_size;
-    for i in start..line_count {
-        let (y, h) = state.text_view.line_yrange(&iter);
-        if y + h > limit { break; }
-        count += 1;
-    }
-    count
+fn needs_page_turn_down(state: &AppState, line: usize) -> bool {
+    if !is_line_fully_visible(state, line) { return true; }
+    let line_count = state.effective_line_count();
+    if line + 1 >= line_count { return false; }
+    !is_line_fully_visible(state, line + 1)
 }
 ```
-
-Counts lines whose full extent fits within the viewport height.
 
 ## Coordinate System
 
@@ -89,10 +113,9 @@ The `vadjustment` coordinate system matches `line_yrange` / `iter_location` buff
 - `adj.value()` = buffer y-coordinate of the viewport's top edge
 - `adj.page_size()` = viewport height in pixels
 - `adj.upper()` = total buffer height
-- A line is visible when `line_yrange.y >= adj.value()` and `line_yrange.y + h <= adj.value() + page_size`
 
 ## Other Notes
 
-- `set_top_margin()` / `set_bottom_margin()` on the text view add space at the very start/end of the document only — they don't affect mid-document page turns.
-- Foliate (the Linux e-reader) uses WebKit with CSS multi-column layout, not GtkTextView — a fundamentally different approach.
-- `scroll_to_iter` / `scroll_to_mark` with `within_margin` provide minimum-scroll behavior but don't snap to whole-line boundaries, making them unsuitable for e-reader pagination.
+- `set_top_margin()` / `set_bottom_margin()` add space at the very start/end of the document only — they don't affect mid-document page turns.
+- Foliate (the Linux e-reader) uses WebKit with CSS multi-column layout, not GtkTextView.
+- `scroll_to_mark` is preferred over `scroll_to_iter` when called before layout is validated (e.g., during `display_work`).
