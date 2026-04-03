@@ -4,6 +4,7 @@ use std::rc::Rc;
 use gtk4::prelude::*;
 
 use crate::app::AppState;
+use crate::log_fmt;
 
 // Page overlap: when turning pages, this many lines from the old page
 // remain visible on the new page for reading continuity.
@@ -460,7 +461,16 @@ fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
         buf_y,
     );
     let widget_height = state.text_view.height();
-    win_y >= 0 && win_y + h <= widget_height
+    // Subtract the bottom_clip height — lines covered by it are not fully visible
+    let clip_height = state.bottom_clip.height();
+    let visible = win_y >= 0 && win_y + h <= widget_height - clip_height;
+    if !visible {
+        log_fmt!(
+            "VISIBLE: line={} win_y={} h={} widget_h={} clip_h={} => NOT visible",
+            line, win_y, h, widget_height, clip_height
+        );
+    }
+    visible
 }
 
 
@@ -581,17 +591,22 @@ const CROSSFADE_MS: f64 = 650.0;
 /// Set the page top line with a fade-in transition. Sets text view opacity
 /// to 0, scrolls to new position, then fades opacity back to 1.
 fn set_page(state: &mut AppState, new_top: usize) {
-    // Fade out: set opacity to 0 before scrolling
-    state.text_view.set_opacity(0.0);
+    log_fmt!(
+        "PAGE_TURN: new_top={} old_top={} current_line={}",
+        new_top, state.page_top_line, state.current_line
+    );
+    // Fade out: set opacity to 0 on the entire card assembly before scrolling
+    state.card_vbox.set_opacity(0.0);
 
     // Scroll to new position
     clear_old_page_dim(state);
     state.page_top_line = new_top;
     snap_scroll_to_line(state, new_top);
 
-    // Fade in: animate opacity from 0 to 1
+    // Fade in: animate opacity from 0 to 1 on the card assembly
+    let card_vbox = state.card_vbox.clone();
     let start_time = std::cell::Cell::new(None::<f64>);
-    state.text_view.add_tick_callback(move |widget, clock| {
+    state.card_vbox.add_tick_callback(move |_widget, clock| {
         let now = clock.frame_time() as f64 / 1_000.0;
         let t0 = start_time.get();
         let t0 = match t0 {
@@ -603,10 +618,10 @@ fn set_page(state: &mut AppState, new_top: usize) {
         };
         let elapsed = now - t0;
         let progress = (elapsed / CROSSFADE_MS).min(1.0);
-        widget.set_opacity(progress);
+        card_vbox.set_opacity(progress);
 
         if progress >= 1.0 {
-            widget.set_opacity(1.0);
+            card_vbox.set_opacity(1.0);
             return glib::ControlFlow::Break;
         }
         glib::ControlFlow::Continue
@@ -639,32 +654,20 @@ fn snap_scroll_to_line(state: &mut AppState, line: usize) {
     });
 }
 
+/// Charter 19pt line height (pixels), including line_spacing above+below.
+const LINE_HEIGHT: i32 = 31;
+
 /// Compute the gap between the last fully visible line and the viewport bottom,
 /// then set the bottom_clip overlay height to cover it.
 fn update_bottom_clip(
     text_view: &sourceview5::View,
     bottom_clip: &gtk4::Box,
-    page_top: usize,
-    line_count: usize,
+    _page_top: usize,
+    _line_count: usize,
 ) {
     let widget_height = text_view.height();
-    let buffer = text_view.buffer();
-    let mut used = 0;
-    for i in page_top..line_count {
-        let Some(iter) = buffer.iter_at_line(i as i32) else { break };
-        let (buf_y, h) = text_view.line_yrange(&iter);
-        let (_, win_y) = text_view.buffer_to_window_coords(
-            gtk4::TextWindowType::Widget,
-            0,
-            buf_y,
-        );
-        if win_y + h > widget_height {
-            break;
-        }
-        used = win_y + h;
-    }
-    let gap = (widget_height - used).max(0);
-    bottom_clip.set_height_request(gap);
+    let remainder = widget_height % LINE_HEIGHT;
+    bottom_clip.set_height_request(remainder);
 }
 
 /// Scroll the viewport by a fixed step without moving the cursor or seeking audio.
@@ -748,6 +751,10 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
         crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
         crate::config::NavigationMode::EReader => {
             if !is_line_fully_visible(state, state.current_line) {
+                log_fmt!(
+                    "SYNC_PAGE: ensure_visible triggered, current_line={} page_top={}",
+                    state.current_line, state.page_top_line
+                );
                 set_page(state, state.current_line);
             }
         }

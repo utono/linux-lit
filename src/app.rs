@@ -45,6 +45,9 @@ pub struct AppState {
     pub ab_dim_tag: gtk4::TextTag,
     pub page_turn_overlay: gtk4::Overlay,
     pub bottom_clip: gtk4::Box,
+    pub top_spacer: gtk4::Box,
+    pub bottom_spacer: gtk4::Box,
+    pub card_vbox: gtk4::Box,
     pub scrolled_window: ScrolledWindow,
     pub content_hbox: gtk4::Box,
     pub window: ApplicationWindow,
@@ -322,8 +325,8 @@ pub fn build_window(
     // Text area padding (inside the text background)
     text_view.set_left_margin(config.text_margins as i32);
     text_view.set_right_margin(config.text_margins as i32 + crate::config::EXTRA_RIGHT_MARGIN);
-    text_view.set_top_margin(24);
-    text_view.set_bottom_margin(24);
+    text_view.set_top_margin(0);
+    text_view.set_bottom_margin(0);
 
     // Scrolled window — centered card with wallpaper visible on all sides
     let scrolled = ScrolledWindow::builder()
@@ -336,7 +339,7 @@ pub fn build_window(
         .overflow(gtk4::Overflow::Hidden)
         .build();
 
-    scrolled.add_css_class("text-card");
+    scrolled.add_css_class("card-middle");
 
     // Page turn overlay — used for crossfade transition
     let page_turn_overlay = gtk4::Overlay::new();
@@ -350,8 +353,27 @@ pub fn build_window(
     bottom_clip.set_valign(gtk4::Align::End);
     bottom_clip.set_hexpand(true);
     bottom_clip.set_height_request(0);
-    bottom_clip.add_css_class("text-card");
+    bottom_clip.add_css_class("card-middle");
     page_turn_overlay.add_overlay(&bottom_clip);
+
+    // Top spacer — one line height, rounded top corners only
+    let top_spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    top_spacer.set_hexpand(true);
+    top_spacer.set_height_request(24); // updated dynamically after font metrics known
+    top_spacer.add_css_class("card-top");
+
+    // Bottom spacer — one line height, rounded bottom corners only
+    let bottom_spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    bottom_spacer.set_hexpand(true);
+    bottom_spacer.set_height_request(24); // updated dynamically after font metrics known
+    bottom_spacer.add_css_class("card-bottom");
+
+    // Vertical card assembly: top spacer + text card + bottom spacer
+    let card_vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    card_vbox.set_vexpand(true);
+    card_vbox.append(&top_spacer);
+    card_vbox.append(&page_turn_overlay);
+    card_vbox.append(&bottom_spacer);
 
     // Centered text card container — width_request controls the card width
     let content_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
@@ -363,7 +385,7 @@ pub fn build_window(
     content_hbox.set_margin_bottom(24);
     content_hbox.set_margin_start(24);
     content_hbox.set_margin_end(24);
-    content_hbox.append(&page_turn_overlay);
+    content_hbox.append(&card_vbox);
 
     // Vocab popup (bottom-right, full window width)
     let vocab_popup = crate::ui::vocab_popup::VocabPopup::new();
@@ -463,6 +485,9 @@ pub fn build_window(
         ab_dim_tag,
         page_turn_overlay: page_turn_overlay.clone(),
         bottom_clip,
+        top_spacer,
+        bottom_spacer,
+        card_vbox,
         scrolled_window: scrolled,
         content_hbox: content_hbox.clone(),
         window: window.clone(),
@@ -1293,6 +1318,15 @@ fn map_line_before_insert(buf_line: usize, translation_lines: &[bool]) -> usize 
 }
 
 /// Reapply font size using a TextTag spanning the entire buffer.
+/// Charter 19pt line height (pixels), including line_spacing above+below.
+const LINE_HEIGHT: i32 = 31;
+
+/// Update top/bottom spacer heights to match one line of text.
+fn update_spacer_heights(state: &AppState) {
+    state.top_spacer.set_height_request(LINE_HEIGHT);
+    state.bottom_spacer.set_height_request(LINE_HEIGHT);
+}
+
 fn reapply_font(state: &AppState) {
     let tag_table = state.buffer.tag_table();
     // Remove old font tag if it exists
@@ -1312,6 +1346,7 @@ fn reapply_font(state: &AppState) {
     let css = crate::theme::generate_css(&state.theme, &state.config.font_family, state.config.font_size);
     state.css_provider.load_from_string(&css);
     crate::logging::log(&format!("FONT: reapply_font size={}pt via TextTag", state.config.font_size));
+    update_spacer_heights(state);
 }
 
 /// Adjust font size by delta, clamp to 8..=72, reapply CSS and repaginate.
