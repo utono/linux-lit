@@ -118,6 +118,8 @@ pub struct AppState {
     pub current_sentence_group: Option<usize>,
     /// Tracks the start line of the current paragraph to detect transitions.
     pub current_paragraph_start: Option<usize>,
+    pub sync_enabled: bool,
+    pub sync_icon: gtk4::Label,
 }
 
 impl AppState {
@@ -419,6 +421,16 @@ pub fn build_window(
     // Add vocab popup to full-width overlay so it appears to the right of the text card
     vocab_popup.attach_to(&concordance_list_picker.overlay);
 
+    // Sync-off indicator (lower-left corner of window, hidden by default)
+    let sync_icon = gtk4::Label::new(Some("⇄\u{0338}"));
+    sync_icon.set_valign(gtk4::Align::End);
+    sync_icon.set_halign(gtk4::Align::Start);
+    sync_icon.set_margin_start(12);
+    sync_icon.set_margin_bottom(12);
+    sync_icon.add_css_class("sync-off-icon");
+    sync_icon.set_visible(false);
+    concordance_list_picker.overlay.add_overlay(&sync_icon);
+
     // Concordance status bar
     let concordance_bar = crate::ui::concordance_bar::ConcordanceBar::new();
 
@@ -512,6 +524,8 @@ pub fn build_window(
         concordance_bar,
         current_sentence_group: None,
         current_paragraph_start: None,
+        sync_enabled: true,
+        sync_icon,
     }));
 
     // Connect picker search entry filter

@@ -15,7 +15,7 @@ pub const SEEK_PREROLL: f64 = 0.2;
 
 /// Seconds to highlight a line before playback actually reaches it.
 /// Used by the MPV client's time-pos sync.
-pub const SYNC_PREROLL: f64 = 0.3;
+pub const SYNC_PREROLL: f64 = 0.0;
 
 /// Move cursor by `delta` lines (j/k).
 /// Going down: page turn when cursor reaches the last visible line.

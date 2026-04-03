@@ -982,6 +982,13 @@ pub fn handle_key(
             crate::input::search::toggle_playback(&mut state.borrow_mut());
             true
         }
+        "s" => {
+            let mut s = state.borrow_mut();
+            s.sync_enabled = !s.sync_enabled;
+            s.sync_icon.set_visible(!s.sync_enabled);
+            crate::logging::log(&format!("SYNC: {}", if s.sync_enabled { "enabled" } else { "disabled" }));
+            true
+        }
         "exclam" => {
             crate::logging::log("FONT: exclam matched, decreasing");
             crate::app::adjust_font_size(&mut state.borrow_mut(), -1);

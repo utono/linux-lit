@@ -86,6 +86,9 @@ fn main() {
                 match event {
                     MpvEvent::CursorSync(line_idx) => {
                         let mut s = state_for_events.borrow_mut();
+                        if !s.sync_enabled {
+                            continue;
+                        }
                         if !s.search_matches.is_empty() {
                             continue;
                         }
@@ -187,20 +190,22 @@ fn main() {
                         s.current_time_pos = pos;
 
                         // Advance to untimestamped next line when current line's audio ends
-                        if let Some((end_time, next_bl, _source_wi)) = s.pending_advance {
-                            if pos >= end_time {
-                                // Record the current buffer line so CursorSync won't
-                                // pull the cursor back to the source timestamped line.
-                                s.pending_advance_ignore_bl = Some(s.current_line);
-                                s.pending_advance = None;
-                                if s.current_line != next_bl {
-                                    s.current_line = next_bl;
-                                    crate::input::navigation::update_highlight_and_ensure_visible(
-                                        &mut s,
-                                    );
-                                    crate::app::refresh_vocab_popup(&mut s);
-                                    s.config.last_line = next_bl;
-                                    crate::config::save(&s.config);
+                        if s.sync_enabled {
+                            if let Some((end_time, next_bl, _source_wi)) = s.pending_advance {
+                                if pos >= end_time {
+                                    // Record the current buffer line so CursorSync won't
+                                    // pull the cursor back to the source timestamped line.
+                                    s.pending_advance_ignore_bl = Some(s.current_line);
+                                    s.pending_advance = None;
+                                    if s.current_line != next_bl {
+                                        s.current_line = next_bl;
+                                        crate::input::navigation::update_highlight_and_ensure_visible(
+                                            &mut s,
+                                        );
+                                        crate::app::refresh_vocab_popup(&mut s);
+                                        s.config.last_line = next_bl;
+                                        crate::config::save(&s.config);
+                                    }
                                 }
                             }
                         }
