@@ -65,13 +65,7 @@ pub fn move_cursor(state: &mut AppState, delta: i32) {
                     let new_top = state.current_line.saturating_sub(lpp.saturating_sub(1));
                     set_page(state, new_top, PageDirection::Backward);
                 } else {
-                    let next = state.current_line + 1;
-                    let line_count = state.effective_line_count();
-                    if next < line_count {
-                        set_page(state, next, PageDirection::Forward);
-                    } else {
-                        set_page(state, state.current_line, PageDirection::Forward);
-                    }
+                    set_page(state, state.current_line, PageDirection::Forward);
                 }
             }
         }
@@ -484,19 +478,13 @@ fn scroll_to_cursor(state: &mut AppState) {
 /// `prev_line` is the cursor position before the jump. In e-reader mode, if the
 /// new position triggers a page turn, the previous line becomes the top of the
 /// new page (continuity — last line of old page = first line of new page).
-fn scroll_after_jump_forward(state: &mut AppState, prev_line: usize) {
+fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
             if !is_line_fully_visible(state, state.current_line) {
-                // Start new page at the line after the last fully visible one
-                let new_top = prev_line + 1;
-                let line_count = state.effective_line_count();
-                if new_top < line_count {
-                    set_page(state, new_top, PageDirection::Forward);
-                } else {
-                    set_page(state, prev_line, PageDirection::Forward);
-                }
+                // Put the target line at the top of the new page
+                set_page(state, state.current_line, PageDirection::Forward);
             }
         }
     }
