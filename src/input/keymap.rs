@@ -371,8 +371,9 @@ pub fn handle_key(
         let cw = s.config.column_width;
         let tm = s.config.text_margins;
         let nm = s.config.navigation_mode;
+        let ts = s.config.transition_style;
         drop(s);
-        state.borrow_mut().settings_overlay.show(ls, cw, tm, nm);
+        state.borrow_mut().settings_overlay.show(ls, cw, tm, nm, ts);
         return true;
     }
 
@@ -381,7 +382,7 @@ pub fn handle_key(
         match key_name {
             "Escape" => {
                 // Revert to snapshot values
-                let (snap_ls, snap_cw, snap_tm, snap_ti, snap_nm) = state.borrow().settings_overlay.snapshot();
+                let (snap_ls, snap_cw, snap_tm, snap_ti, snap_nm, snap_ts) = state.borrow().settings_overlay.snapshot();
                 {
                     let mut s = state.borrow_mut();
                     if s.dialogue_formatting_active {
@@ -400,6 +401,7 @@ pub fn handle_key(
                     s.config.column_width = snap_cw;
                     s.config.text_margins = snap_tm;
                     s.config.navigation_mode = snap_nm;
+                    s.config.transition_style = snap_ts;
                     // Revert theme if changed
                     if let Some(snap_theme) = s.settings_overlay.themes().get(snap_ti) {
                         let snap_theme = snap_theme.clone();
@@ -428,20 +430,20 @@ pub fn handle_key(
                 return true;
             }
             "h" | "Left" => {
-                let (ls, cw, tm, nm) = {
+                let (ls, cw, tm, nm, ts) = {
                     let s = state.borrow();
-                    (s.config.line_spacing, s.config.column_width, s.config.text_margins, s.config.navigation_mode)
+                    (s.config.line_spacing, s.config.column_width, s.config.text_margins, s.config.navigation_mode, s.config.transition_style)
                 };
-                let change = state.borrow_mut().settings_overlay.adjust_value(-1, ls, cw, tm, nm);
+                let change = state.borrow_mut().settings_overlay.adjust_value(-1, ls, cw, tm, nm, ts);
                 apply_settings_change(state, change);
                 return true;
             }
             "l" | "Right" => {
-                let (ls, cw, tm, nm) = {
+                let (ls, cw, tm, nm, ts) = {
                     let s = state.borrow();
-                    (s.config.line_spacing, s.config.column_width, s.config.text_margins, s.config.navigation_mode)
+                    (s.config.line_spacing, s.config.column_width, s.config.text_margins, s.config.navigation_mode, s.config.transition_style)
                 };
-                let change = state.borrow_mut().settings_overlay.adjust_value(1, ls, cw, tm, nm);
+                let change = state.borrow_mut().settings_overlay.adjust_value(1, ls, cw, tm, nm, ts);
                 apply_settings_change(state, change);
                 return true;
             }
@@ -452,6 +454,7 @@ pub fn handle_key(
                 let cw = crate::config::DEFAULT_COLUMN_WIDTH;
                 let tm = crate::config::DEFAULT_TEXT_MARGINS;
                 let nm = crate::config::NavigationMode::default();
+                let ts = crate::config::TransitionStyle::default();
                 if s.dialogue_formatting_active {
                     let tag_table = s.buffer.tag_table();
                     if let Some(tag) = tag_table.lookup("speaker-gap") {
@@ -468,7 +471,8 @@ pub fn handle_key(
                 s.config.column_width = cw;
                 s.config.text_margins = tm;
                 s.config.navigation_mode = nm;
-                s.settings_overlay.update_displayed_values(ls, cw, tm, nm);
+                s.config.transition_style = ts;
+                s.settings_overlay.update_displayed_values(ls, cw, tm, nm, ts);
                 return true;
             }
             _ => return true, // consume all other keys when settings visible
@@ -1325,6 +1329,9 @@ fn apply_settings_change(
         }
         SettingsChange::Navigation(mode) => {
             s.config.navigation_mode = mode;
+        }
+        SettingsChange::Transition(style) => {
+            s.config.transition_style = style;
         }
         SettingsChange::None => {}
     }
