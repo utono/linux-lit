@@ -63,14 +63,14 @@ pub fn move_cursor(state: &mut AppState, delta: i32) {
                 if state.current_line < state.page_top_line {
                     let lpp = lines_per_page(state);
                     let new_top = state.current_line.saturating_sub(lpp.saturating_sub(1));
-                    set_page(state, new_top);
+                    set_page(state, new_top, PageDirection::Backward);
                 } else {
                     let next = state.current_line + 1;
                     let line_count = state.effective_line_count();
                     if next < line_count {
-                        set_page(state, next);
+                        set_page(state, next, PageDirection::Forward);
                     } else {
-                        set_page(state, state.current_line);
+                        set_page(state, state.current_line, PageDirection::Forward);
                     }
                 }
             }
@@ -137,7 +137,7 @@ pub fn page_forward(state: &mut AppState) {
     state.current_line = (new_top + lpp / 2).min(line_count - 1);
     update_highlight(state);
     seek_to_current_line(state);
-    set_page(state, new_top);
+    set_page(state, new_top, PageDirection::Forward);
 }
 
 /// Page backward (Ctrl+u/b). Go back by one page with overlap.
@@ -155,7 +155,7 @@ pub fn page_backward(state: &mut AppState) {
     state.current_line = (new_top + lpp / 2).min(line_count.saturating_sub(1));
     update_highlight(state);
     seek_to_current_line(state);
-    set_page(state, new_top);
+    set_page(state, new_top, PageDirection::Backward);
 }
 
 /// Previous dialogue line (`,` key).
@@ -410,7 +410,8 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
             crate::config::NavigationMode::Scroll => center_cursor(state),
             crate::config::NavigationMode::EReader => {
                 if !is_line_fully_visible(state, line_idx) {
-                    set_page(state, line_idx);
+                    let dir = if line_idx >= state.page_top_line { PageDirection::Forward } else { PageDirection::Backward };
+                    set_page(state, line_idx, dir);
                 }
             }
         }
@@ -492,9 +493,9 @@ fn scroll_after_jump_forward(state: &mut AppState, prev_line: usize) {
                 let new_top = prev_line + 1;
                 let line_count = state.effective_line_count();
                 if new_top < line_count {
-                    set_page(state, new_top);
+                    set_page(state, new_top, PageDirection::Forward);
                 } else {
-                    set_page(state, prev_line);
+                    set_page(state, prev_line, PageDirection::Forward);
                 }
             }
         }
@@ -510,7 +511,7 @@ fn scroll_after_jump_backward(state: &mut AppState) {
             if state.current_line < state.page_top_line {
                 let lpp = lines_per_page(state);
                 let new_top = state.current_line.saturating_sub(lpp.saturating_sub(1));
-                set_page(state, new_top);
+                set_page(state, new_top, PageDirection::Backward);
             }
         }
     }
@@ -585,12 +586,20 @@ fn clear_old_page_dim(state: &AppState) {
     buffer.remove_tag(tag, &start_iter, &end_iter);
 }
 
+/// Direction of a page turn, used by the Slide transition.
+#[derive(Clone, Copy)]
+enum PageDirection {
+    Forward,
+    Backward,
+}
+
 /// Crossfade duration in milliseconds.
 const CROSSFADE_MS: f64 = 650.0;
 
 /// Set the page top line with a fade-in transition. Sets text view opacity
 /// to 0, scrolls to new position, then fades opacity back to 1.
-fn set_page(state: &mut AppState, new_top: usize) {
+fn set_page(state: &mut AppState, new_top: usize, direction: PageDirection) {
+    let _ = direction;
     log_fmt!(
         "PAGE_TURN: new_top={} old_top={} current_line={}",
         new_top, state.page_top_line, state.current_line
@@ -738,7 +747,8 @@ pub fn scroll_paragraph_to_top(state: &mut AppState, para_start: usize) {
                     "PARA_SCROLL: para_start={} page_top={}",
                     para_start, state.page_top_line
                 ));
-                set_page(state, para_start);
+                let dir = if para_start >= state.page_top_line { PageDirection::Forward } else { PageDirection::Backward };
+                set_page(state, para_start, dir);
             }
         }
     }
@@ -755,7 +765,8 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
                     "SYNC_PAGE: ensure_visible triggered, current_line={} page_top={}",
                     state.current_line, state.page_top_line
                 );
-                set_page(state, state.current_line);
+                let dir = if state.current_line >= state.page_top_line { PageDirection::Forward } else { PageDirection::Backward };
+                set_page(state, state.current_line, dir);
             }
         }
     }
@@ -981,7 +992,7 @@ pub fn jump_to_next_vocab(state: &mut AppState) {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
             if !is_line_fully_visible(state, target_line) {
-                set_page(state, target_line);
+                set_page(state, target_line, PageDirection::Forward);
             }
         }
     }
@@ -1001,7 +1012,8 @@ pub fn jump_to_vocab_at(state: &mut AppState, match_idx: usize) {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
             if !is_line_fully_visible(state, target_line) {
-                set_page(state, target_line);
+                let dir = if target_line >= state.page_top_line { PageDirection::Forward } else { PageDirection::Backward };
+                set_page(state, target_line, dir);
             }
         }
     }
