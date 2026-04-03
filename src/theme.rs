@@ -400,6 +400,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .kb-legend-both {{ background-color: #1a3a2a; border-color: #3a6a4a; }} \
          .kb-legend-unbound {{ background-color: #2a2a2a; border-color: #444444; }} \
          .sync-off-icon {{ font-size: 20px; color: {dim}; opacity: 0.7; }} \
+         .word-status {{ font-size: 16px; color: {fg}; opacity: 0.85; }} \
          .correction-scrim {{ background-color: rgba(0, 0, 0, 0.3); }} \
          .correction-overlay {{ background-color: {bg}; color: {fg}; \
            padding: 24px; border-radius: 12px; \

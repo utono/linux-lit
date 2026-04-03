@@ -123,6 +123,10 @@ pub struct AppState {
     pub current_paragraph_start: Option<usize>,
     pub sync_enabled: bool,
     pub sync_icon: gtk4::Label,
+    pub word_status_label: gtk4::Label,
+    pub word_cycle_line: Option<usize>,
+    pub word_cycle_index: usize,
+    pub word_status_timer: Rc<Cell<u64>>,
 }
 
 impl AppState {
@@ -453,6 +457,16 @@ pub fn build_window(
     sync_icon.set_visible(false);
     concordance_list_picker.overlay.add_overlay(&sync_icon);
 
+    // Word-copy status indicator (lower-left corner, hidden by default)
+    let word_status_label = gtk4::Label::new(None);
+    word_status_label.set_valign(gtk4::Align::End);
+    word_status_label.set_halign(gtk4::Align::Start);
+    word_status_label.set_margin_start(12);
+    word_status_label.set_margin_bottom(40);
+    word_status_label.add_css_class("word-status");
+    word_status_label.set_visible(false);
+    concordance_list_picker.overlay.add_overlay(&word_status_label);
+
     // Concordance status bar
     let concordance_bar = crate::ui::concordance_bar::ConcordanceBar::new();
 
@@ -551,6 +565,10 @@ pub fn build_window(
         current_paragraph_start: None,
         sync_enabled: true,
         sync_icon,
+        word_status_label,
+        word_cycle_line: None,
+        word_cycle_index: 0,
+        word_status_timer: Rc::new(Cell::new(0)),
     }));
 
     // Connect picker search entry filter
