@@ -596,45 +596,121 @@ enum PageDirection {
 /// Crossfade duration in milliseconds.
 const CROSSFADE_MS: f64 = 650.0;
 
-/// Set the page top line with a fade-in transition. Sets text view opacity
-/// to 0, scrolls to new position, then fades opacity back to 1.
+/// Set the page top line with an animated transition based on config.transition_style.
 fn set_page(state: &mut AppState, new_top: usize, direction: PageDirection) {
-    let _ = direction;
     log_fmt!(
-        "PAGE_TURN: new_top={} old_top={} current_line={}",
-        new_top, state.page_top_line, state.current_line
+        "PAGE_TURN: new_top={} old_top={} current_line={} transition={:?}",
+        new_top, state.page_top_line, state.current_line, state.config.transition_style
     );
-    // Fade out: set opacity to 0 on the entire card assembly before scrolling
-    state.card_vbox.set_opacity(0.0);
 
-    // Scroll to new position
-    clear_old_page_dim(state);
-    state.page_top_line = new_top;
-    snap_scroll_to_line(state, new_top);
-
-    // Fade in: animate opacity from 0 to 1 on the card assembly
-    let card_vbox = state.card_vbox.clone();
-    let start_time = std::cell::Cell::new(None::<f64>);
-    state.card_vbox.add_tick_callback(move |_widget, clock| {
-        let now = clock.frame_time() as f64 / 1_000.0;
-        let t0 = start_time.get();
-        let t0 = match t0 {
-            Some(t) => t,
-            None => {
-                start_time.set(Some(now));
-                now
-            }
-        };
-        let elapsed = now - t0;
-        let progress = (elapsed / CROSSFADE_MS).min(1.0);
-        card_vbox.set_opacity(progress);
-
-        if progress >= 1.0 {
-            card_vbox.set_opacity(1.0);
-            return glib::ControlFlow::Break;
+    match state.config.transition_style {
+        crate::config::TransitionStyle::Instant => {
+            clear_old_page_dim(state);
+            state.page_top_line = new_top;
+            snap_scroll_to_line(state, new_top);
         }
-        glib::ControlFlow::Continue
-    });
+        crate::config::TransitionStyle::Crossfade => {
+            // Capture snapshot of current page
+            let paintable = gtk4::WidgetPaintable::new(Some(&state.card_vbox));
+            let snapshot_pic = gtk4::Picture::for_paintable(&paintable);
+            snapshot_pic.set_content_fit(gtk4::ContentFit::Fill);
+            state.page_turn_overlay.add_overlay(&snapshot_pic);
+
+            // Scroll to new position (hidden behind snapshot)
+            state.card_vbox.set_opacity(0.0);
+            clear_old_page_dim(state);
+            state.page_top_line = new_top;
+            snap_scroll_to_line(state, new_top);
+
+            // Animate crossfade: snapshot fades out, live content fades in
+            let card_vbox = state.card_vbox.clone();
+            let overlay = state.page_turn_overlay.clone();
+            let start_time = std::cell::Cell::new(None::<f64>);
+            state.card_vbox.add_tick_callback(move |_widget, clock| {
+                let now = clock.frame_time() as f64 / 1_000.0;
+                let t0 = match start_time.get() {
+                    Some(t) => t,
+                    None => {
+                        start_time.set(Some(now));
+                        now
+                    }
+                };
+                let elapsed = now - t0;
+                let progress = (elapsed / CROSSFADE_MS).min(1.0);
+                card_vbox.set_opacity(progress);
+                snapshot_pic.set_opacity(1.0 - progress);
+
+                if progress >= 1.0 {
+                    card_vbox.set_opacity(1.0);
+                    overlay.remove_overlay(&snapshot_pic);
+                    return glib::ControlFlow::Break;
+                }
+                glib::ControlFlow::Continue
+            });
+        }
+        crate::config::TransitionStyle::Slide => {
+            // Capture snapshot of current page
+            let paintable = gtk4::WidgetPaintable::new(Some(&state.card_vbox));
+            let snapshot_pic = gtk4::Picture::for_paintable(&paintable);
+            snapshot_pic.set_content_fit(gtk4::ContentFit::Fill);
+            state.page_turn_overlay.add_overlay(&snapshot_pic);
+
+            // Get the widget width for slide distance
+            let width = state.card_vbox.width() as f64;
+
+            // Scroll to new position (hidden behind snapshot)
+            state.card_vbox.set_opacity(0.0);
+            clear_old_page_dim(state);
+            state.page_top_line = new_top;
+            snap_scroll_to_line(state, new_top);
+
+            // Animate slide: snapshot slides out, live content slides in
+            let card_vbox = state.card_vbox.clone();
+            let overlay = state.page_turn_overlay.clone();
+            let start_time = std::cell::Cell::new(None::<f64>);
+            let is_forward = matches!(direction, PageDirection::Forward);
+            state.card_vbox.add_tick_callback(move |_widget, clock| {
+                let now = clock.frame_time() as f64 / 1_000.0;
+                let t0 = match start_time.get() {
+                    Some(t) => t,
+                    None => {
+                        start_time.set(Some(now));
+                        // Show live content immediately (it slides in from off-screen)
+                        card_vbox.set_opacity(1.0);
+                        now
+                    }
+                };
+                let elapsed = now - t0;
+                let progress = (elapsed / CROSSFADE_MS).min(1.0);
+                // Ease-out cubic for smoother deceleration
+                let eased = 1.0 - (1.0 - progress).powi(3);
+                let offset = (width * eased) as i32;
+
+                if is_forward {
+                    // Snapshot slides left, content slides in from right
+                    snapshot_pic.set_margin_start(0);
+                    snapshot_pic.set_margin_end(offset);
+                    card_vbox.set_margin_start(width as i32 - offset);
+                    card_vbox.set_margin_end(0);
+                } else {
+                    // Snapshot slides right, content slides in from left
+                    snapshot_pic.set_margin_start(offset);
+                    snapshot_pic.set_margin_end(0);
+                    card_vbox.set_margin_start(0);
+                    card_vbox.set_margin_end(width as i32 - offset);
+                }
+
+                if progress >= 1.0 {
+                    // Clean up: remove snapshot, reset margins
+                    overlay.remove_overlay(&snapshot_pic);
+                    card_vbox.set_margin_start(0);
+                    card_vbox.set_margin_end(0);
+                    return glib::ControlFlow::Break;
+                }
+                glib::ControlFlow::Continue
+            });
+        }
+    }
 }
 
 /// Set the page top line and scroll instantly (no animation). For gg/G/restore.
