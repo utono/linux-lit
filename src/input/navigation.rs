@@ -7,7 +7,7 @@ use crate::app::AppState;
 
 // Page overlap: when turning pages, this many lines from the old page
 // remain visible on the new page for reading continuity.
-const PAGE_OVERLAP: usize = 1;
+const PAGE_OVERLAP: usize = 0;
 
 /// Seconds to seek before a line's start_time when navigating.
 /// Provides audio context so playback doesn't start at a hard cut.
@@ -58,13 +58,20 @@ pub fn move_cursor(state: &mut AppState, delta: i32) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
         crate::config::NavigationMode::EReader => {
-            let lpp = lines_per_page(state);
-            let threshold = state.page_top_line + lpp.saturating_sub(1);
-            if state.current_line >= threshold {
-                set_page(state, state.current_line);
-            } else if state.current_line <= state.page_top_line {
-                let new_top = state.current_line.saturating_sub(lpp.saturating_sub(1));
-                set_page(state, new_top);
+            if !is_line_fully_visible(state, state.current_line) {
+                if state.current_line < state.page_top_line {
+                    let lpp = lines_per_page(state);
+                    let new_top = state.current_line.saturating_sub(lpp.saturating_sub(1));
+                    set_page(state, new_top);
+                } else {
+                    let next = state.current_line + 1;
+                    let line_count = state.effective_line_count();
+                    if next < line_count {
+                        set_page(state, next);
+                    } else {
+                        set_page(state, state.current_line);
+                    }
+                }
             }
         }
     }
@@ -401,9 +408,7 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => center_cursor(state),
             crate::config::NavigationMode::EReader => {
-                let lpp = lines_per_page(state);
-                let threshold = state.page_top_line + lpp.saturating_sub(1);
-                if line_idx >= threshold {
+                if !is_line_fully_visible(state, line_idx) {
                     set_page(state, line_idx);
                 }
             }
@@ -438,14 +443,24 @@ pub fn restore_cursor(state: &mut AppState) {
 /// Check if a line is on screen at all (no padding requirement).
 /// Used by playback sync to avoid premature page turns.
 fn is_line_on_screen(state: &AppState, line: usize) -> bool {
+    is_line_fully_visible(state, line)
+}
+
+/// Check whether a buffer line is fully visible in the viewport.
+/// Uses buffer_to_window_coords to convert line_yrange into widget space,
+/// then compares against the widget's allocated height.
+fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
     let Some(iter) = state.buffer.iter_at_line(line as i32) else {
         return false;
     };
-    let adj = state.scrolled_window.vadjustment();
-    let scroll_y = adj.value() as i32;
-    let page_height = adj.page_size() as i32;
-    let (y, h) = state.text_view.line_yrange(&iter);
-    y >= scroll_y && y + h <= scroll_y + page_height
+    let (buf_y, h) = state.text_view.line_yrange(&iter);
+    let (_, win_y) = state.text_view.buffer_to_window_coords(
+        gtk4::TextWindowType::Widget,
+        0,
+        buf_y,
+    );
+    let widget_height = state.text_view.height();
+    win_y >= 0 && win_y + h <= widget_height
 }
 
 
@@ -462,10 +477,15 @@ fn scroll_after_jump_forward(state: &mut AppState, prev_line: usize) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
-            let lpp = lines_per_page(state);
-            let threshold = state.page_top_line + lpp.saturating_sub(1);
-            if state.current_line >= threshold {
-                set_page(state, prev_line);
+            if !is_line_fully_visible(state, state.current_line) {
+                // Start new page at the line after the last fully visible one
+                let new_top = prev_line + 1;
+                let line_count = state.effective_line_count();
+                if new_top < line_count {
+                    set_page(state, new_top);
+                } else {
+                    set_page(state, prev_line);
+                }
             }
         }
     }
@@ -477,7 +497,7 @@ fn scroll_after_jump_backward(state: &mut AppState) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
-            if state.current_line <= state.page_top_line {
+            if state.current_line < state.page_top_line {
                 let lpp = lines_per_page(state);
                 let new_top = state.current_line.saturating_sub(lpp.saturating_sub(1));
                 set_page(state, new_top);
@@ -567,14 +587,7 @@ fn set_page(state: &mut AppState, new_top: usize) {
     // Scroll to new position
     clear_old_page_dim(state);
     state.page_top_line = new_top;
-    let scroll_line = new_top.saturating_sub(1);
-    if let Some(iter) = state.buffer.iter_at_line(scroll_line as i32) {
-        let mut end = iter;
-        if !end.ends_line() {
-            end.forward_to_line_end();
-        }
-        state.text_view.scroll_to_iter(&mut end, 0.0, true, 0.0, 0.0);
-    }
+    snap_scroll_to_line(state, new_top);
 
     // Fade in: animate opacity from 0 to 1
     let start_time = std::cell::Cell::new(None::<f64>);
@@ -604,14 +617,54 @@ fn set_page(state: &mut AppState, new_top: usize) {
 fn set_page_instant(state: &mut AppState, new_top: usize) {
     clear_old_page_dim(state);
     state.page_top_line = new_top;
-    let scroll_line = new_top.saturating_sub(1);
-    if let Some(iter) = state.buffer.iter_at_line(scroll_line as i32) {
-        let mut end = iter;
-        if !end.ends_line() {
-            end.forward_to_line_end();
-        }
-        state.text_view.scroll_to_iter(&mut end, 0.0, true, 0.0, 0.0);
+    snap_scroll_to_line(state, new_top);
+}
+
+/// Scroll so `line` is at the top of the viewport, then size the bottom clip
+/// overlay to hide any partially-visible line at the bottom of the page.
+fn snap_scroll_to_line(state: &mut AppState, line: usize) {
+    // Position the target line at the very top of the viewport
+    if let Some(mut iter) = state.buffer.iter_at_line(line as i32) {
+        state.text_view.scroll_to_iter(&mut iter, 0.0, true, 0.0, 0.0);
     }
+
+    // Schedule the clip height update for the next frame, after GTK has
+    // completed the scroll and updated line layout positions.
+    let text_view = state.text_view.clone();
+    let bottom_clip = state.bottom_clip.clone();
+    let page_top = line;
+    let line_count = state.effective_line_count();
+    glib::idle_add_local_once(move || {
+        update_bottom_clip(&text_view, &bottom_clip, page_top, line_count);
+    });
+}
+
+/// Compute the gap between the last fully visible line and the viewport bottom,
+/// then set the bottom_clip overlay height to cover it.
+fn update_bottom_clip(
+    text_view: &sourceview5::View,
+    bottom_clip: &gtk4::Box,
+    page_top: usize,
+    line_count: usize,
+) {
+    let widget_height = text_view.height();
+    let buffer = text_view.buffer();
+    let mut used = 0;
+    for i in page_top..line_count {
+        let Some(iter) = buffer.iter_at_line(i as i32) else { break };
+        let (buf_y, h) = text_view.line_yrange(&iter);
+        let (_, win_y) = text_view.buffer_to_window_coords(
+            gtk4::TextWindowType::Widget,
+            0,
+            buf_y,
+        );
+        if win_y + h > widget_height {
+            break;
+        }
+        used = win_y + h;
+    }
+    let gap = (widget_height - used).max(0);
+    bottom_clip.set_height_request(gap);
 }
 
 /// Scroll the viewport by a fixed step without moving the cursor or seeking audio.
@@ -694,15 +747,7 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
         crate::config::NavigationMode::EReader => {
-            // Use the same line-count threshold as user navigation.
-            // When the cursor reaches the threshold, page-turn with the
-            // current line at the top (the line being played becomes the
-            // first line of the new page).
-            let lpp = lines_per_page(state);
-            let threshold = state.page_top_line + lpp.saturating_sub(1);
-            if state.current_line >= threshold
-                || !is_line_on_screen(state, state.current_line)
-            {
+            if !is_line_fully_visible(state, state.current_line) {
                 set_page(state, state.current_line);
             }
         }
@@ -826,6 +871,9 @@ fn update_highlight(state: &AppState) {
             }
             buffer.apply_tag(cl_tag, &line_start, &line_end);
         }
+        // When visual selection is active, apply highlight even when dim is off
+        crate::input::visual::clear_selection_highlight(state);
+        crate::input::visual::apply_selection_highlight(state);
         state.prev_highlight_line.set(Some(state.current_line));
         return;
     }
@@ -871,11 +919,9 @@ fn update_highlight(state: &AppState) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Count how many buffer lines fit in the viewport starting from `page_top_line`.
-/// Uses `line_yrange` to measure full line extent including spacing.
+/// Count how many buffer lines are fully visible starting from `page_top_line`.
+/// Uses buffer_to_window_coords to accurately detect clipped lines.
 fn lines_per_page(state: &AppState) -> usize {
-    let adj = state.scrolled_window.vadjustment();
-    let page_size = adj.page_size() as i32;
     let line_count = state.effective_line_count();
     let start = state.page_top_line;
 
@@ -883,17 +929,9 @@ fn lines_per_page(state: &AppState) -> usize {
         return 15;
     }
 
-    let Some(start_iter) = state.buffer.iter_at_line(start as i32) else {
-        return 15;
-    };
-    let (start_y, _) = state.text_view.line_yrange(&start_iter);
-    let limit = start_y + page_size;
-
     let mut count = 0;
     for i in start..line_count {
-        let Some(iter) = state.buffer.iter_at_line(i as i32) else { break };
-        let (y, h) = state.text_view.line_yrange(&iter);
-        if y + h > limit {
+        if !is_line_fully_visible(state, i) {
             break;
         }
         count += 1;
@@ -931,9 +969,7 @@ pub fn jump_to_next_vocab(state: &mut AppState) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
-            let lpp = lines_per_page(state);
-            let threshold = state.page_top_line + lpp.saturating_sub(1);
-            if target_line >= threshold {
+            if !is_line_fully_visible(state, target_line) {
                 set_page(state, target_line);
             }
         }
@@ -953,9 +989,7 @@ pub fn jump_to_vocab_at(state: &mut AppState, match_idx: usize) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
-            let lpp = lines_per_page(state);
-            let threshold = state.page_top_line + lpp.saturating_sub(1);
-            if target_line >= threshold {
+            if !is_line_fully_visible(state, target_line) {
                 set_page(state, target_line);
             }
         }

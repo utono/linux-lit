@@ -756,6 +756,10 @@ pub fn handle_key(
                 crate::input::visual::exit_visual_mode(&mut state.borrow_mut());
                 return true;
             }
+            "y" => {
+                crate::input::visual::yank_selection(&mut state.borrow_mut());
+                return true;
+            }
             "Return" => {
                 crate::input::visual::open_action_popup(&mut state.borrow_mut());
                 return true;

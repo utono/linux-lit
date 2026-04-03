@@ -80,6 +80,12 @@ pub fn enter_visual_mode(state: &mut AppState) {
     crate::logging::log(&format!("VISUAL: entered at line {}", state.current_line));
 }
 
+/// Yank (copy) the visual selection to clipboard, then exit visual mode.
+pub fn yank_selection(state: &mut AppState) {
+    action_copy(state, false);
+    exit_visual_mode(state);
+}
+
 /// Exit visual mode: clear selection and highlighting.
 pub fn exit_visual_mode(state: &mut AppState) {
     if state.visual_selection.is_some() {

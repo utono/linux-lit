@@ -44,6 +44,7 @@ pub struct AppState {
     pub cursor_fade_tag: gtk4::TextTag,
     pub ab_dim_tag: gtk4::TextTag,
     pub page_turn_overlay: gtk4::Overlay,
+    pub bottom_clip: gtk4::Box,
     pub scrolled_window: ScrolledWindow,
     pub content_hbox: gtk4::Box,
     pub window: ApplicationWindow,
@@ -341,6 +342,15 @@ pub fn build_window(
     page_turn_overlay.set_vexpand(true);
     page_turn_overlay.set_hexpand(true);
 
+    // Bottom clip bar — covers partially-visible lines at the bottom of a page.
+    // Height is set dynamically by snap_scroll_to_line.
+    let bottom_clip = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    bottom_clip.set_valign(gtk4::Align::End);
+    bottom_clip.set_hexpand(true);
+    bottom_clip.set_height_request(0);
+    bottom_clip.add_css_class("text-card");
+    page_turn_overlay.add_overlay(&bottom_clip);
+
     // Centered text card container — width_request controls the card width
     let content_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
     content_hbox.set_halign(gtk4::Align::Center);
@@ -440,6 +450,7 @@ pub fn build_window(
         cursor_fade_tag,
         ab_dim_tag,
         page_turn_overlay: page_turn_overlay.clone(),
+        bottom_clip,
         scrolled_window: scrolled,
         content_hbox: content_hbox.clone(),
         window: window.clone(),
