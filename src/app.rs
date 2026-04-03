@@ -108,8 +108,6 @@ pub struct AppState {
     pub vocab_popup_index: usize,
     pub vocab_popup_view: crate::ui::vocab_popup::VocabView,
     pub vocab_popup_auto: bool,
-    /// Paragraph start line when the vocab popup was last positioned.
-    pub vocab_popup_para_start: Option<usize>,
     pub concordance_picker: crate::ui::concordance_picker::ConcordancePicker,
     pub concordance_state: Option<crate::concordance::ConcordanceState>,
     pub concordance_word_picker: crate::ui::concordance_word_picker::ConcordanceWordPicker,
@@ -355,15 +353,13 @@ pub fn build_window(
     content_hbox.set_margin_end(24);
     content_hbox.append(&page_turn_overlay);
 
-    // Vocab popup overlay (centered, like settings)
+    // Vocab popup (bottom-right, full window width)
     let vocab_popup = crate::ui::vocab_popup::VocabPopup::new();
-    vocab_popup.attach(&content_hbox);
-    vocab_popup.overlay.set_vexpand(true);
 
     // Library picker overlay
     let mut picker = LibraryPicker::new();
     picker.set_works(works);
-    picker.attach(&vocab_popup.overlay);
+    picker.attach(&content_hbox);
     picker.overlay.set_vexpand(true);
 
     // Media picker overlay wraps the library picker overlay
@@ -409,6 +405,9 @@ pub fn build_window(
     // Action popup overlay for visual mode
     let action_popup_widget = crate::ui::action_popup::ActionPopup::new();
     concordance_list_picker.overlay.add_overlay(&action_popup_widget.container);
+
+    // Add vocab popup to full-width overlay so it appears to the right of the text card
+    vocab_popup.attach_to(&concordance_list_picker.overlay);
 
     // Concordance status bar
     let concordance_bar = crate::ui::concordance_bar::ConcordanceBar::new();
@@ -495,7 +494,6 @@ pub fn build_window(
         vocab_popup_index: 0,
         vocab_popup_view: crate::ui::vocab_popup::VocabView::Definition,
         vocab_popup_auto: false,
-        vocab_popup_para_start: None,
         concordance_picker,
         concordance_state: None,
         concordance_word_picker,
@@ -1542,47 +1540,31 @@ pub fn open_vocab_popup(state: &mut AppState) {
     state.vocab_popup_index = 0;
     state.vocab_popup_view = VocabView::Definition;
 
-    position_vocab_popup(state);
+    update_vocab_popup_margin(state);
     show_vocab_popup(state);
 }
 
-/// Position the vocab popup to the right of the text card, aligned with the top of the
-/// highlighted sentence group (or the current line if no group is found).
-fn position_vocab_popup(state: &mut AppState) {
-    let anchor_line = state.line_map.as_ref()
-        .and_then(|lm| crate::text_file_map::sentence_group_for(&lm.sentence_groups, state.current_line))
-        .map(|g| g.line_range.start)
-        .unwrap_or(state.current_line);
-    state.vocab_popup_para_start = Some(anchor_line);
-    if let Some(iter) = state.buffer.iter_at_line(anchor_line as i32) {
-        let buf_loc = state.text_view.iter_location(&iter);
-        let (_, wy) = state.text_view.buffer_to_window_coords(
-            gtk4::TextWindowType::Widget,
-            0,
-            buf_loc.y(),
-        );
-
-        // Transform the anchor line's y from text_view coords to overlay coords
-        let tv_point = gtk4::graphene::Point::new(0.0, wy as f32);
-        let sw_point = gtk4::graphene::Point::new(
-            state.scrolled_window.width() as f32,
-            0.0,
-        );
-        if let (Some(tv_out), Some(sw_out)) = (
-            state.text_view.compute_point(&state.vocab_popup.overlay, &tv_point),
-            state.scrolled_window.compute_point(&state.vocab_popup.overlay, &sw_point),
-        ) {
-            let x = (sw_out.x() as f64 + 12.0).max(0.0);
-            let y = (tv_out.y() as f64).max(0.0);
-            state.vocab_popup.set_position(x, y);
-        }
+/// Set the vocab popup's left margin so it starts just right of the text card.
+fn update_vocab_popup_margin(state: &AppState) {
+    let window = state.text_view.root()
+        .and_then(|r| r.downcast::<gtk4::Window>().ok());
+    let window = match window {
+        Some(w) => w,
+        None => return,
+    };
+    let sw_right = gtk4::graphene::Point::new(
+        state.scrolled_window.width() as f32,
+        0.0,
+    );
+    if let Some(pt) = state.scrolled_window.compute_point(&window, &sw_right) {
+        let margin = (pt.x() as i32 + 12).max(0);
+        state.vocab_popup.set_margin_start(margin);
     }
 }
 
 /// Hide the vocab popup.
 pub fn close_vocab_popup(state: &mut AppState) {
     state.vocab_popup.hide();
-    state.vocab_popup_para_start = None;
 }
 
 /// Render the current vocab popup entry.
@@ -1601,7 +1583,6 @@ pub fn show_vocab_popup(state: &AppState) {
         idx,
         total,
         state.vocab_popup_view,
-        &state.theme.vocab_fg,
         work_abbrev,
     );
     state.vocab_popup.show();
@@ -1640,7 +1621,6 @@ pub fn refresh_vocab_popup(state: &mut AppState) {
         .collect();
 
     if words.is_empty() {
-        close_vocab_popup(state);
         return;
     }
 
@@ -1663,15 +1643,6 @@ pub fn refresh_vocab_popup(state: &mut AppState) {
 
     state.vocab_popup_index = 0;
     state.vocab_popup_view = VocabView::Definition;
-
-    // Only reposition if the paragraph changed
-    let new_para_start = state.line_map.as_ref()
-        .and_then(|lm| crate::text_file_map::sentence_group_for(&lm.sentence_groups, state.current_line))
-        .map(|g| g.line_range.start)
-        .unwrap_or(state.current_line);
-    if state.vocab_popup_para_start != Some(new_para_start) {
-        position_vocab_popup(state);
-    }
     show_vocab_popup(state);
 }
 

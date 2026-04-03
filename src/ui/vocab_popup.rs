@@ -1,5 +1,5 @@
 use gtk4::prelude::*;
-use gtk4::{Box as GtkBox, Fixed, Label, Orientation, Overlay};
+use gtk4::{Box as GtkBox, Label, Orientation};
 
 /// Data for a single vocab word: definition + etymology + gloss.
 pub struct VocabWordData {
@@ -17,8 +17,6 @@ pub enum VocabView {
 }
 
 pub struct VocabPopup {
-    pub overlay: Overlay,
-    fixed: Fixed,
     container: GtkBox,
     content_box: GtkBox,
     header_label: Label,
@@ -28,9 +26,6 @@ pub struct VocabPopup {
 
 impl VocabPopup {
     pub fn new() -> Self {
-        let overlay = Overlay::new();
-        let fixed = Fixed::new();
-
         let content_box = GtkBox::builder()
             .orientation(Orientation::Vertical)
             .spacing(0)
@@ -65,7 +60,9 @@ impl VocabPopup {
         let container = GtkBox::builder()
             .orientation(Orientation::Vertical)
             .spacing(0)
-            .width_request(350)
+            .valign(gtk4::Align::End)
+            .margin_end(5)
+            .margin_bottom(24)
             .build();
         container.add_css_class("vocab-popup");
         container.append(&header_row);
@@ -73,11 +70,7 @@ impl VocabPopup {
         container.append(&footer_label);
         container.set_visible(false);
 
-        fixed.put(&container, 0.0, 0.0);
-
         VocabPopup {
-            overlay,
-            fixed,
             container,
             content_box,
             header_label,
@@ -86,19 +79,19 @@ impl VocabPopup {
         }
     }
 
-    pub fn attach(&self, base: &impl IsA<gtk4::Widget>) {
-        self.overlay.set_child(Some(base));
-        self.overlay.add_overlay(&self.fixed);
+    /// Add the popup as an overlay child of a full-width Overlay widget.
+    pub fn attach_to(&self, overlay: &gtk4::Overlay) {
+        overlay.add_overlay(&self.container);
         self.container.set_visible(false);
+    }
+
+    /// Set the left margin so the popup starts to the right of the text card.
+    pub fn set_margin_start(&self, margin: i32) {
+        self.container.set_margin_start(margin);
     }
 
     pub fn show(&self) {
         self.container.set_visible(true);
-    }
-
-    /// Position the popup at absolute (x, y) within the overlay.
-    pub fn set_position(&self, x: f64, y: f64) {
-        self.fixed.move_(&self.container, x, y);
     }
 
     pub fn hide(&self) {
@@ -109,6 +102,7 @@ impl VocabPopup {
         self.container.is_visible()
     }
 
+
     /// Render the popup content for a given word and view.
     pub fn update(
         &self,
@@ -116,7 +110,6 @@ impl VocabPopup {
         index: usize,
         total: usize,
         view: VocabView,
-        vocab_fg: &str,
         work_abbrev: &str,
     ) {
         // Clear content
@@ -141,11 +134,7 @@ impl VocabPopup {
             .margin_bottom(12)
             .build();
         word_label.add_css_class("definition-word");
-        word_label.set_markup(&format!(
-            "<span foreground=\"{}\">{}</span>",
-            glib::markup_escape_text(vocab_fg),
-            glib::markup_escape_text(&data.word),
-        ));
+        word_label.set_text(&data.word);
         self.content_box.append(&word_label);
 
         match view {

@@ -69,7 +69,7 @@ pub fn default_font_size() -> u32 {
 
 pub const DEFAULT_LINE_SPACING: u32 = 5;
 pub const DEFAULT_COLUMN_WIDTH: u32 = 1200;
-pub const DEFAULT_TEXT_MARGINS: u32 = 48;
+pub const DEFAULT_TEXT_MARGINS: u32 = 40;
 pub const EXTRA_RIGHT_MARGIN: i32 = 28;
 
 fn default_line_spacing() -> u32 {

@@ -413,16 +413,16 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
            border-top: 1px solid {dim}; }} \
          .definition-panel {{ background-color: {bg}; color: {fg}; \
            border-radius: 12px; padding: 20px 24px; }} \
-         .vocab-popup {{ background-color: {bg}; color: {fg}; \
-           padding: 16px 20px; border-radius: 12px; border: 1px solid {dim}; }} \
-         .definition-header {{ font-size: 11px; color: {dim}; \
+         .vocab-popup {{ background-color: {root}; color: {bg}; \
+           padding: 16px 20px; border-radius: 12px; }} \
+         .vocab-popup .definition-header {{ font-size: 11px; color: {vocab_popup_dim}; \
            letter-spacing: 2px; font-weight: bold; }} \
-         .definition-word {{ font-size: 16px; }} \
-         .definition-text {{ opacity: 0.85; font-size: {size}pt; font-family: {font}; }} \
-         .definition-etymology {{ opacity: 0.7; font-size: 12px; }} \
-         .definition-gloss {{ opacity: 0.7; font-size: 12px; }} \
-         .definition-hint {{ font-size: 11px; color: {dim}; \
-           border-top: 1px solid {dim}; padding-top: 8px; margin-top: 12px; }} \
+         .vocab-popup .definition-word {{ font-size: 16px; color: {bg}; }} \
+         .vocab-popup .definition-text {{ opacity: 0.85; font-size: 16px; color: {bg}; }} \
+         .vocab-popup .definition-etymology {{ opacity: 0.7; font-size: 12px; color: {bg}; }} \
+         .vocab-popup .definition-gloss {{ opacity: 0.7; font-size: 12px; color: {bg}; }} \
+         .vocab-popup .definition-hint {{ font-size: 11px; color: {vocab_popup_dim}; \
+           border-top: 1px solid {vocab_popup_border}; padding-top: 8px; margin-top: 12px; }} \
          .concordance-picker {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
            padding: 16px; border-radius: 8px; }} \
          .concordance-bar {{ background-color: {root}; padding: 4px 12px; }} \
@@ -444,6 +444,8 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
         cursor_bg = theme.cursor_bg,
         cursor_fg = theme.cursor_fg,
         vocab = theme.vocab_fg,
+        vocab_popup_dim = blend_colors(&theme.text_bg, &theme.root_color, 0.45),
+        vocab_popup_border = blend_colors(&theme.text_bg, &theme.root_color, 0.25),
         font = font_family,
         size = font_size,
     )
