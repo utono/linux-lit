@@ -62,7 +62,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key("l", "L", "toggle signs", "", &[("C-M-l", "save+quit")]),
     key("/", "?", "search", "", &[("C-/", "keybinds")]),
     ub("@", "^"),
-    ub("\\", "#"),
+    key("\\", "#", "vocab ▶", "◀ vocab", &[]),
 ];
 const TAB_KEY: KeyDef = bare("Tab", "", "play/pause");
 

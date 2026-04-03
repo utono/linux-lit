@@ -902,11 +902,11 @@ pub fn handle_key(
     // Vocab popup keys (when popup is visible and auto mode is on)
     if state.borrow().vocab_popup.is_visible() {
         match key_name {
-            "n" => {
+            "backslash" => {
                 crate::app::vocab_popup_next(&mut state.borrow_mut());
                 return true;
             }
-            "N" => {
+            "numbersign" => {
                 crate::app::vocab_popup_prev(&mut state.borrow_mut());
                 return true;
             }
