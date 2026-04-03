@@ -596,6 +596,35 @@ enum PageDirection {
 /// Crossfade duration in milliseconds.
 const CROSSFADE_MS: f64 = 650.0;
 
+/// Capture the current card_vbox as a static Picture overlay.
+/// Uses WidgetPaintable → Snapshot → RenderNode → Texture to freeze the frame.
+/// Returns the Picture (already added to page_turn_overlay) or None if capture fails.
+fn capture_page_snapshot(state: &AppState) -> Option<gtk4::Picture> {
+    let widget = &state.card_vbox;
+    let w = widget.width();
+    let h = widget.height();
+    if w <= 0 || h <= 0 {
+        return None;
+    }
+
+    // Create a live paintable, render it into a snapshot, then freeze as texture
+    let paintable = gtk4::WidgetPaintable::new(Some(widget));
+    let snapshot = gtk4::Snapshot::new();
+    use gtk4::prelude::PaintableExt;
+    paintable.snapshot(&snapshot, w as f64, h as f64);
+
+    let node = snapshot.to_node()?;
+    let native = widget.native()?;
+    let renderer = native.renderer()?;
+    let viewport = gtk4::graphene::Rect::new(0.0, 0.0, w as f32, h as f32);
+    let texture = renderer.render_texture(&node, Some(&viewport));
+
+    let pic = gtk4::Picture::for_paintable(&texture);
+    pic.set_content_fit(gtk4::ContentFit::Fill);
+    state.page_turn_overlay.add_overlay(&pic);
+    Some(pic)
+}
+
 /// Set the page top line with an animated transition based on config.transition_style.
 fn set_page(state: &mut AppState, new_top: usize, direction: PageDirection) {
     log_fmt!(
@@ -610,11 +639,14 @@ fn set_page(state: &mut AppState, new_top: usize, direction: PageDirection) {
             snap_scroll_to_line(state, new_top);
         }
         crate::config::TransitionStyle::Crossfade => {
-            // Capture snapshot of current page
-            let paintable = gtk4::WidgetPaintable::new(Some(&state.card_vbox));
-            let snapshot_pic = gtk4::Picture::for_paintable(&paintable);
-            snapshot_pic.set_content_fit(gtk4::ContentFit::Fill);
-            state.page_turn_overlay.add_overlay(&snapshot_pic);
+            // Capture static snapshot of current page
+            let Some(snapshot_pic) = capture_page_snapshot(state) else {
+                // Fallback to instant if capture fails
+                clear_old_page_dim(state);
+                state.page_top_line = new_top;
+                snap_scroll_to_line(state, new_top);
+                return;
+            };
 
             // Scroll to new position (hidden behind snapshot)
             state.card_vbox.set_opacity(0.0);
@@ -649,11 +681,13 @@ fn set_page(state: &mut AppState, new_top: usize, direction: PageDirection) {
             });
         }
         crate::config::TransitionStyle::Slide => {
-            // Capture snapshot of current page
-            let paintable = gtk4::WidgetPaintable::new(Some(&state.card_vbox));
-            let snapshot_pic = gtk4::Picture::for_paintable(&paintable);
-            snapshot_pic.set_content_fit(gtk4::ContentFit::Fill);
-            state.page_turn_overlay.add_overlay(&snapshot_pic);
+            // Capture static snapshot of current page
+            let Some(snapshot_pic) = capture_page_snapshot(state) else {
+                clear_old_page_dim(state);
+                state.page_top_line = new_top;
+                snap_scroll_to_line(state, new_top);
+                return;
+            };
 
             // Get the widget width for slide distance
             let width = state.card_vbox.width() as f64;
