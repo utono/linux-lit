@@ -12,6 +12,15 @@ pub enum NavigationMode {
     EReader,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TransitionStyle {
+    #[default]
+    Crossfade,
+    Slide,
+    Instant,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisualModeCommand {
     pub name: String,
@@ -32,6 +41,8 @@ pub struct Config {
     pub text_margins: u32,
     #[serde(default)]
     pub navigation_mode: NavigationMode,
+    #[serde(default)]
+    pub transition_style: TransitionStyle,
     #[serde(default)]
     pub last_work: Option<String>,
     #[serde(default)]
@@ -109,6 +120,7 @@ impl Default for Config {
             column_width: default_column_width(),
             text_margins: default_text_margins(),
             navigation_mode: NavigationMode::default(),
+            transition_style: TransitionStyle::default(),
             last_work: None,
             last_line: 0,
             work_positions: HashMap::new(),
