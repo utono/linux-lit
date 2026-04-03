@@ -1305,3 +1305,94 @@ fn concordance_preload_next(
         }
     });
 }
+
+/// Cycle through words on the current line, copying each to the system clipboard.
+/// Each press advances to the next word; wraps after the last word.
+/// Shows the copied word in a status label that auto-hides after 2 seconds.
+pub fn word_cycle_copy(state: &mut AppState) {
+    let work = match &state.current_work {
+        Some(w) => w,
+        None => return,
+    };
+
+    // Map buffer line to work line index
+    let work_line_idx = if let Some(ref lm) = state.line_map {
+        match lm.buffer_to_work.get(state.current_line).copied().flatten() {
+            Some(idx) => idx,
+            None => return,
+        }
+    } else {
+        state.current_line
+    };
+
+    let line = match work.lines.get(work_line_idx) {
+        Some(l) => l,
+        None => return,
+    };
+
+    // Extract words: split on whitespace, strip leading/trailing non-alphanumeric
+    let words: Vec<String> = line
+        .text
+        .split_whitespace()
+        .filter_map(|token| {
+            let stripped: String = token
+                .trim_matches(|c: char| !c.is_alphanumeric())
+                .to_string();
+            if stripped.is_empty() {
+                None
+            } else {
+                Some(stripped)
+            }
+        })
+        .collect();
+
+    if words.is_empty() {
+        return;
+    }
+
+    // Reset index if we moved to a different line
+    let idx = if state.word_cycle_line == Some(state.current_line) {
+        state.word_cycle_index % words.len()
+    } else {
+        0
+    };
+
+    let word = &words[idx];
+
+    // Copy to clipboard via wl-copy
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    match Command::new("wl-copy").stdin(Stdio::piped()).spawn() {
+        Ok(mut child) => {
+            if let Some(ref mut stdin) = child.stdin {
+                let _ = stdin.write_all(word.as_bytes());
+            }
+            let _ = child.wait();
+        }
+        Err(e) => {
+            log_fmt!("WORD_COPY: wl-copy failed: {}", e);
+            return;
+        }
+    }
+
+    log_fmt!("WORD_COPY: copied '{}' (word {}/{})", word, idx + 1, words.len());
+
+    // Update cycle state
+    state.word_cycle_line = Some(state.current_line);
+    state.word_cycle_index = idx + 1; // next press gets the next word (mod len happens above)
+
+    // Show status label
+    state.word_status_label.set_label(word);
+    state.word_status_label.set_visible(true);
+
+    // Bump timer generation to cancel any pending hide
+    let gen = state.word_status_timer.get() + 1;
+    state.word_status_timer.set(gen);
+    let timer_rc = state.word_status_timer.clone();
+    let label = state.word_status_label.clone();
+    glib::timeout_add_local_once(std::time::Duration::from_secs(2), move || {
+        if timer_rc.get() == gen {
+            label.set_visible(false);
+        }
+    });
+}
