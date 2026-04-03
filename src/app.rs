@@ -1680,6 +1680,18 @@ pub fn vocab_popup_next(state: &mut AppState) {
     show_vocab_popup(state);
 }
 
+pub fn vocab_popup_prev(state: &mut AppState) {
+    if state.vocab_popup_data.is_empty() {
+        return;
+    }
+    if state.vocab_popup_index == 0 {
+        state.vocab_popup_index = state.vocab_popup_data.len() - 1;
+    } else {
+        state.vocab_popup_index -= 1;
+    }
+    show_vocab_popup(state);
+}
+
 /// Toggle between definition and gloss view.
 pub fn vocab_popup_toggle_view(state: &mut AppState) {
     use crate::ui::vocab_popup::VocabView;

@@ -906,6 +906,10 @@ pub fn handle_key(
                 crate::app::vocab_popup_next(&mut state.borrow_mut());
                 return true;
             }
+            "N" => {
+                crate::app::vocab_popup_prev(&mut state.borrow_mut());
+                return true;
+            }
             "g" => {
                 crate::app::vocab_popup_toggle_view(&mut state.borrow_mut());
                 return true;

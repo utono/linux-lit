@@ -110,16 +110,15 @@ impl VocabPopup {
         index: usize,
         total: usize,
         view: VocabView,
-        work_abbrev: &str,
+        _work_abbrev: &str,
     ) {
         // Clear content
         while let Some(child) = self.content_box.first_child() {
             self.content_box.remove(&child);
         }
 
-        // Header: work abbreviation
-        self.header_label.set_text(work_abbrev);
-        self.header_label.set_visible(true);
+        // Header: hide work abbreviation
+        self.header_label.set_visible(false);
 
         if total > 1 {
             self.counter_label.set_text(&format!("{} / {}", index + 1, total));
@@ -192,16 +191,6 @@ impl VocabPopup {
             }
         }
 
-        // Footer
-        let mut hints = Vec::new();
-        if total > 1 {
-            hints.push("n next word");
-        }
-        match view {
-            VocabView::Definition => hints.push("g gloss"),
-            VocabView::Gloss => hints.push("g definition"),
-        }
-        hints.push("h close");
-        self.footer_label.set_text(&hints.join(" \u{00B7} "));
+        self.footer_label.set_visible(false);
     }
 }
