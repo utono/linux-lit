@@ -1254,6 +1254,10 @@ pub fn handle_key(
             crate::input::visual::enter_visual_mode(&mut state.borrow_mut());
             true
         }
+        "w" => {
+            navigation::word_cycle_copy(&mut state.borrow_mut());
+            true
+        }
         _ => false,
     }
 }
