@@ -764,14 +764,18 @@ pub fn update_highlight_and_center(state: &mut AppState) {
     auto_show_vocab_popup(state);
 }
 
-/// If vocab auto-popup is enabled, show/update the popup for the current line.
+/// If vocab auto-popup is enabled, show/update the popup when the paragraph changes.
 fn auto_show_vocab_popup(state: &mut AppState) {
     if !state.vocab_popup_auto {
         return;
     }
-    // If popup is already visible, refresh it for the new line
     if state.vocab_popup.is_visible() {
-        crate::app::refresh_vocab_popup(state);
+        // Only refresh when paragraph changes — avoid resetting word/view
+        // position on every line advance within the same paragraph.
+        let para = state.current_paragraph_range();
+        if state.current_paragraph_start != Some(para.start) {
+            crate::app::refresh_vocab_popup(state);
+        }
     } else {
         crate::app::open_vocab_popup(state);
     }

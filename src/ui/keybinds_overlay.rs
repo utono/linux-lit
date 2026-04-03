@@ -76,7 +76,7 @@ const HOME_ROW: &[KeyDef] = &[
     ub("h", "H"),
     ub("t", "T"),
     key("n", "N", "next match", "N: prev match", &[]),
-    ub("s", "S"),
+    bare("s", "S", "sync tog"),
     ub("-", "_"),
 ];
 const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
