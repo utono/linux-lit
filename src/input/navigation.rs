@@ -995,11 +995,13 @@ fn update_highlight(state: &mut AppState) {
                 // Animate fade-out: alpha from 1.0 → 0.0, 150ms, ease-out-quad
                 let fade_tag_clone = fade_tag.clone();
                 let buf_clone = buffer.clone();
+                let (rc_r, rc_g, rc_b) = crate::theme::root_color_rgb(&state.theme.root_color);
+                let fade_alpha_max = if state.theme.is_light { 0.13_f32 } else { 0.15_f32 };
                 let target = adw::CallbackAnimationTarget::new(move |value| {
-                    let alpha = value as f32 * 0.10; // match cursor_line_bg alpha
+                    let alpha = value as f32 * fade_alpha_max;
                     use gtk4::prelude::TextTagExt;
                     fade_tag_clone.set_paragraph_background_rgba(Some(
-                        &gtk4::gdk::RGBA::new(0.0, 0.314, 0.863, alpha),
+                        &gtk4::gdk::RGBA::new(rc_r, rc_g, rc_b, alpha),
                     ));
                     if value <= 0.0 {
                         let (s, e) = buf_clone.bounds();

@@ -126,11 +126,17 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
         darken_color(&text_bg, 0.6)
     });
 
-    // Use semi-transparent overlay to preserve background warmth
-    let cursor_line_bg = if is_light {
-        "rgba(0, 80, 220, 0.10)".to_string()
-    } else {
-        "rgba(255, 255, 255, 0.08)".to_string()
+    // Derive highlight from rootcolor so it matches dwl border tint
+    let cursor_line_bg = {
+        let (r, g, b) = hex_to_rgb(&root_color);
+        let alpha = if is_light { 0.13 } else { 0.15 };
+        format!(
+            "rgba({}, {}, {}, {:.2})",
+            (r * 255.0).round() as u8,
+            (g * 255.0).round() as u8,
+            (b * 255.0).round() as u8,
+            alpha
+        )
     };
 
     // Dim foreground: 40% fg blended toward bg (matching lit's playback sync)
@@ -245,6 +251,12 @@ fn hex_to_rgb(hex: &str) -> (f64, f64, f64) {
     let g = u8::from_str_radix(&h[2..4], 16).unwrap_or(0) as f64 / 255.0;
     let b = u8::from_str_radix(&h[4..6], 16).unwrap_or(0) as f64 / 255.0;
     (r, g, b)
+}
+
+/// Parse a hex color string to (r, g, b) as f32 for GDK RGBA.
+pub fn root_color_rgb(hex: &str) -> (f32, f32, f32) {
+    let (r, g, b) = hex_to_rgb(hex);
+    (r as f32, g as f32, b as f32)
 }
 
 /// Convert (r, g, b) floats to hex string.
