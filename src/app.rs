@@ -6,6 +6,7 @@ use gtk4::prelude::*;
 use gtk4::{
     ApplicationWindow, CssProvider, EventControllerKey, ScrolledWindow, WrapMode,
 };
+use libadwaita as adw;
 use sourceview5::prelude::*;
 use sourceview5::View;
 
@@ -54,9 +55,11 @@ pub struct AppState {
     pub config: Config,
     pub css_provider: CssProvider,
     pub theme: crate::theme::Theme,
-    /// Generation counter for crossfade animations. Incremented on each page turn
-    /// so stale animation callbacks don't stomp on opacity.
-    pub animation_gen: std::rc::Rc<std::cell::Cell<u64>>,
+    /// Active page-turn animation (crossfade or slide). Stored so it can be
+    /// cancelled via .skip() if a new page turn fires mid-flight.
+    pub page_turn_anim: Option<adw::TimedAnimation>,
+    /// Active cursor highlight fade-out animation.
+    pub cursor_fade_anim: Option<adw::TimedAnimation>,
     pub cmd_tx: tokio::sync::mpsc::Sender<crate::mpv::MpvCommand>,
     pub tokio_handle: tokio::runtime::Handle,
     pub playback_speed: f64,
@@ -508,7 +511,8 @@ pub fn build_window(
         config,
         css_provider,
         theme,
-        animation_gen: std::rc::Rc::new(std::cell::Cell::new(0)),
+        page_turn_anim: None,
+        cursor_fade_anim: None,
         cmd_tx,
         tokio_handle: tokio_handle.clone(),
         playback_speed: 1.0,
