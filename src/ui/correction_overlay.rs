@@ -11,6 +11,7 @@ pub struct CorrectionOverlay {
     corr_header: Label,
     corrected_label: Label,
     hint: Label,
+    full_width: i32,
 }
 
 impl CorrectionOverlay {
@@ -87,6 +88,7 @@ impl CorrectionOverlay {
             corr_header,
             corrected_label,
             hint,
+            full_width: column_width as i32 + 100,
         }
     }
 
@@ -97,6 +99,10 @@ impl CorrectionOverlay {
     }
 
     pub fn show(&self, original: &str, corrected: &str) {
+        // Restore top-aligned position and full width for gloss display
+        self.container.set_valign(Align::Start);
+        self.container.set_margin_top(80);
+        self.container.set_width_request(self.full_width);
         self.title.set_text("Gloss");
         let orig_markup = build_diff_markup(original, corrected, true);
         let corr_markup = build_diff_markup(original, corrected, false);
@@ -123,6 +129,10 @@ impl CorrectionOverlay {
         self.corrected_label.set_visible(false);
         self.hint.set_visible(false);
         self.scrim.set_visible(false);
+        // Center the loading message within the card area
+        self.container.set_valign(Align::Center);
+        self.container.set_margin_top(0);
+        self.container.set_width_request(-1); // auto-size to content
         self.container.set_visible(true);
     }
 
