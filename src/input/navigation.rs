@@ -2,6 +2,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use gtk4::prelude::*;
+use libadwaita as adw;
+use libadwaita::prelude::AnimationExt;
 
 use crate::app::AppState;
 use crate::log_fmt;
@@ -581,8 +583,6 @@ enum PageDirection {
     Backward,
 }
 
-/// Crossfade duration in milliseconds.
-const CROSSFADE_MS: f64 = 650.0;
 
 /// Capture the current card_vbox as a static Picture overlay.
 /// Uses WidgetPaintable → Snapshot → RenderNode → Texture to freeze the frame.
@@ -595,19 +595,31 @@ fn capture_page_snapshot(state: &AppState) -> Option<gtk4::Picture> {
         return None;
     }
 
-    // Create a live paintable, render it into a snapshot, then freeze as texture
+    // Try the texture approach first (frozen snapshot, immune to opacity changes)
     let paintable = gtk4::WidgetPaintable::new(Some(widget));
     let snapshot = gtk4::Snapshot::new();
     use gtk4::prelude::PaintableExt;
     paintable.snapshot(&snapshot, w as f64, h as f64);
 
-    let node = snapshot.to_node()?;
-    let native = widget.native()?;
-    let renderer = native.renderer()?;
-    let viewport = gtk4::graphene::Rect::new(0.0, 0.0, w as f32, h as f32);
-    let texture = renderer.render_texture(&node, Some(&viewport));
+    if let Some(node) = snapshot.to_node() {
+        if let Some(native) = widget.native() {
+            if let Some(renderer) = native.renderer() {
+                let viewport = gtk4::graphene::Rect::new(0.0, 0.0, w as f32, h as f32);
+                let texture = renderer.render_texture(&node, Some(&viewport));
+                let pic = gtk4::Picture::for_paintable(&texture);
+                pic.set_content_fit(gtk4::ContentFit::Fill);
+                state.page_turn_overlay.add_overlay(&pic);
+                return Some(pic);
+            }
+        }
+    }
 
-    let pic = gtk4::Picture::for_paintable(&texture);
+    // Fallback: create a WidgetPaintable, then immediately disconnect it
+    // from the widget so it becomes a frozen snapshot of the current frame.
+    // Texture path failed (e.g. stale GPU state after suspend/resume).
+    let wp = gtk4::WidgetPaintable::new(Some(widget));
+    wp.set_widget(gtk4::Widget::NONE);
+    let pic = gtk4::Picture::for_paintable(&wp);
     pic.set_content_fit(gtk4::ContentFit::Fill);
     state.page_turn_overlay.add_overlay(&pic);
     Some(pic)
@@ -629,44 +641,45 @@ fn set_page(state: &mut AppState, new_top: usize, direction: PageDirection) {
         crate::config::TransitionStyle::Crossfade => {
             // Capture static snapshot of current page
             let Some(snapshot_pic) = capture_page_snapshot(state) else {
-                // Fallback to instant if capture fails
                 clear_old_page_dim(state);
                 state.page_top_line = new_top;
                 snap_scroll_to_line(state, new_top);
                 return;
             };
 
-            // Scroll to new position (hidden behind snapshot)
-            state.card_vbox.set_opacity(0.0);
+            // Cancel any in-flight page animation
+            if let Some(prev) = state.page_turn_anim.take() {
+                prev.skip();
+            }
+
+            // Update page underneath (live content stays fully opaque)
             clear_old_page_dim(state);
             state.page_top_line = new_top;
             snap_scroll_to_line(state, new_top);
+            state.card_vbox.set_opacity(1.0);
 
-            // Animate crossfade: snapshot fades out, live content fades in
-            let card_vbox = state.card_vbox.clone();
+            // Fade out the snapshot overlay: 1.0 → 0.0, 250ms, ease-out-cubic
             let overlay = state.page_turn_overlay.clone();
-            let start_time = std::cell::Cell::new(None::<f64>);
-            state.card_vbox.add_tick_callback(move |_widget, clock| {
-                let now = clock.frame_time() as f64 / 1_000.0;
-                let t0 = match start_time.get() {
-                    Some(t) => t,
-                    None => {
-                        start_time.set(Some(now));
-                        now
-                    }
-                };
-                let elapsed = now - t0;
-                let progress = (elapsed / CROSSFADE_MS).min(1.0);
-                card_vbox.set_opacity(progress);
-                snapshot_pic.set_opacity(1.0 - progress);
-
-                if progress >= 1.0 {
-                    card_vbox.set_opacity(1.0);
-                    overlay.remove_overlay(&snapshot_pic);
-                    return glib::ControlFlow::Break;
-                }
-                glib::ControlFlow::Continue
+            let snap = snapshot_pic.clone();
+            let target = adw::CallbackAnimationTarget::new(move |value| {
+                snap.set_opacity(value);
             });
+            let anim = adw::TimedAnimation::new(
+                &snapshot_pic,
+                1.0,  // from
+                0.0,  // to
+                250,  // duration ms
+                target,
+            );
+            anim.set_easing(adw::Easing::EaseOutCubic);
+
+            let snap_cleanup = snapshot_pic.clone();
+            anim.connect_done(move |_| {
+                overlay.remove_overlay(&snap_cleanup);
+            });
+
+            anim.play();
+            state.page_turn_anim = Some(anim);
         }
         crate::config::TransitionStyle::Slide => {
             // Capture static snapshot of current page
@@ -677,60 +690,59 @@ fn set_page(state: &mut AppState, new_top: usize, direction: PageDirection) {
                 return;
             };
 
-            // Get the widget width for slide distance
+            // Cancel any in-flight page animation
+            if let Some(prev) = state.page_turn_anim.take() {
+                prev.skip();
+            }
+
             let width = state.card_vbox.width() as f64;
 
-            // Scroll to new position (hidden behind snapshot)
-            state.card_vbox.set_opacity(0.0);
+            // Update page underneath, show live content immediately
             clear_old_page_dim(state);
             state.page_top_line = new_top;
             snap_scroll_to_line(state, new_top);
+            state.card_vbox.set_opacity(1.0);
+            state.card_vbox.set_margin_start(0);
+            state.card_vbox.set_margin_end(0);
 
-            // Animate slide: snapshot slides out, live content slides in
-            let card_vbox = state.card_vbox.clone();
+            // Animate snapshot sliding out: 0.0 → 1.0 progress, 250ms, ease-out-cubic
             let overlay = state.page_turn_overlay.clone();
-            let start_time = std::cell::Cell::new(None::<f64>);
+            let card = state.card_vbox.clone();
+            let snap = snapshot_pic.clone();
             let is_forward = matches!(direction, PageDirection::Forward);
-            state.card_vbox.add_tick_callback(move |_widget, clock| {
-                let now = clock.frame_time() as f64 / 1_000.0;
-                let t0 = match start_time.get() {
-                    Some(t) => t,
-                    None => {
-                        start_time.set(Some(now));
-                        // Show live content immediately (it slides in from off-screen)
-                        card_vbox.set_opacity(1.0);
-                        now
-                    }
-                };
-                let elapsed = now - t0;
-                let progress = (elapsed / CROSSFADE_MS).min(1.0);
-                // Ease-out cubic for smoother deceleration
-                let eased = 1.0 - (1.0 - progress).powi(3);
-                let offset = (width * eased) as i32;
-
+            let target = adw::CallbackAnimationTarget::new(move |progress| {
+                let offset = (width * progress) as i32;
                 if is_forward {
-                    // Snapshot slides left, content slides in from right
-                    snapshot_pic.set_margin_start(0);
-                    snapshot_pic.set_margin_end(offset);
-                    card_vbox.set_margin_start(width as i32 - offset);
-                    card_vbox.set_margin_end(0);
+                    snap.set_margin_start(0);
+                    snap.set_margin_end(offset);
+                    card.set_margin_start((width as i32) - offset);
+                    card.set_margin_end(0);
                 } else {
-                    // Snapshot slides right, content slides in from left
-                    snapshot_pic.set_margin_start(offset);
-                    snapshot_pic.set_margin_end(0);
-                    card_vbox.set_margin_start(0);
-                    card_vbox.set_margin_end(width as i32 - offset);
+                    snap.set_margin_start(offset);
+                    snap.set_margin_end(0);
+                    card.set_margin_start(0);
+                    card.set_margin_end((width as i32) - offset);
                 }
-
-                if progress >= 1.0 {
-                    // Clean up: remove snapshot, reset margins
-                    overlay.remove_overlay(&snapshot_pic);
-                    card_vbox.set_margin_start(0);
-                    card_vbox.set_margin_end(0);
-                    return glib::ControlFlow::Break;
-                }
-                glib::ControlFlow::Continue
             });
+            let anim = adw::TimedAnimation::new(
+                &snapshot_pic,
+                0.0,  // from
+                1.0,  // to
+                250,  // duration ms
+                target,
+            );
+            anim.set_easing(adw::Easing::EaseOutCubic);
+
+            let snap_cleanup = snapshot_pic.clone();
+            let card_cleanup = state.card_vbox.clone();
+            anim.connect_done(move |_| {
+                overlay.remove_overlay(&snap_cleanup);
+                card_cleanup.set_margin_start(0);
+                card_cleanup.set_margin_end(0);
+            });
+
+            anim.play();
+            state.page_turn_anim = Some(anim);
         }
     }
 }
