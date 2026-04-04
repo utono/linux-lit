@@ -584,11 +584,11 @@ enum PageDirection {
 }
 
 
-/// Capture the current card_vbox as a static Picture overlay.
+/// Capture the scrolled text area as a static Picture overlay.
 /// Uses WidgetPaintable → Snapshot → RenderNode → Texture to freeze the frame.
 /// Returns the Picture (already added to page_turn_overlay) or None if capture fails.
 fn capture_page_snapshot(state: &AppState) -> Option<gtk4::Picture> {
-    let widget = &state.card_vbox;
+    let widget = &state.scrolled_window;
     let w = widget.width();
     let h = widget.height();
     if w <= 0 || h <= 0 {
@@ -608,6 +608,7 @@ fn capture_page_snapshot(state: &AppState) -> Option<gtk4::Picture> {
                 let texture = renderer.render_texture(&node, Some(&viewport));
                 let pic = gtk4::Picture::for_paintable(&texture);
                 pic.set_content_fit(gtk4::ContentFit::Fill);
+                pic.set_size_request(w, h);
                 state.page_turn_overlay.add_overlay(&pic);
                 return Some(pic);
             }
@@ -621,6 +622,7 @@ fn capture_page_snapshot(state: &AppState) -> Option<gtk4::Picture> {
     wp.set_widget(gtk4::Widget::NONE);
     let pic = gtk4::Picture::for_paintable(&wp);
     pic.set_content_fit(gtk4::ContentFit::Fill);
+    pic.set_size_request(w, h);
     state.page_turn_overlay.add_overlay(&pic);
     Some(pic)
 }
@@ -652,23 +654,30 @@ fn set_page(state: &mut AppState, new_top: usize, direction: PageDirection) {
                 prev.skip();
             }
 
-            // Update page underneath (live content stays fully opaque)
+            // Hide the scrolled window while GTK scrolls to the new position.
+            // The snapshot sits in the overlay at full opacity, covering the gap.
+            // We hide scrolled_window (not card_vbox) so the snapshot remains visible.
+            state.scrolled_window.set_opacity(0.0);
             clear_old_page_dim(state);
             state.page_top_line = new_top;
             snap_scroll_to_line(state, new_top);
-            state.card_vbox.set_opacity(1.0);
 
-            // Fade out the snapshot overlay: 1.0 → 0.0, 250ms, ease-out-cubic
+            // Fade out the snapshot overlay: 1.0 → 0.0, 400ms, ease-out-cubic.
+            // The callback reveals the scrolled window on the first frame,
+            // after GTK has completed the scroll.
             let overlay = state.page_turn_overlay.clone();
+            let scrolled = state.scrolled_window.clone();
             let snap = snapshot_pic.clone();
             let target = adw::CallbackAnimationTarget::new(move |value| {
+                // value goes 1.0 → 0.0: snapshot fades out, scrolled fades in
                 snap.set_opacity(value);
+                scrolled.set_opacity(1.0 - value);
             });
             let anim = adw::TimedAnimation::new(
                 &snapshot_pic,
                 1.0,  // from
                 0.0,  // to
-                250,  // duration ms
+                700,  // duration ms
                 target,
             );
             anim.set_easing(adw::Easing::EaseOutCubic);
@@ -697,20 +706,27 @@ fn set_page(state: &mut AppState, new_top: usize, direction: PageDirection) {
 
             let width = state.card_vbox.width() as f64;
 
-            // Update page underneath, show live content immediately
+            // Hide scrolled window while GTK scrolls to the new position
+            state.scrolled_window.set_opacity(0.0);
             clear_old_page_dim(state);
             state.page_top_line = new_top;
             snap_scroll_to_line(state, new_top);
-            state.card_vbox.set_opacity(1.0);
             state.card_vbox.set_margin_start(0);
             state.card_vbox.set_margin_end(0);
 
-            // Animate snapshot sliding out: 0.0 → 1.0 progress, 250ms, ease-out-cubic
+            // Animate snapshot sliding out: 0.0 → 1.0 progress, 250ms, ease-out-cubic.
+            // Reveals scrolled window on the first frame after scroll settles.
             let overlay = state.page_turn_overlay.clone();
             let card = state.card_vbox.clone();
+            let scrolled = state.scrolled_window.clone();
             let snap = snapshot_pic.clone();
             let is_forward = matches!(direction, PageDirection::Forward);
+            let revealed = std::cell::Cell::new(false);
             let target = adw::CallbackAnimationTarget::new(move |progress| {
+                if !revealed.get() {
+                    scrolled.set_opacity(1.0);
+                    revealed.set(true);
+                }
                 let offset = (width * progress) as i32;
                 if is_forward {
                     snap.set_margin_start(0);
@@ -967,14 +983,14 @@ fn update_highlight(state: &mut AppState) {
                     buffer.apply_tag(fade_tag, &old_start, &old_end);
                 }
 
-                // Animate fade-out: alpha from 1.0 → 0.0, 150ms, ease-out-cubic
+                // Animate fade-out: alpha from 1.0 → 0.0, 150ms, ease-out-quad
                 let fade_tag_clone = fade_tag.clone();
                 let buf_clone = buffer.clone();
                 let target = adw::CallbackAnimationTarget::new(move |value| {
-                    let alpha = value as f32 * 0.10; // max alpha 0.10
+                    let alpha = value as f32 * 0.10; // match cursor_line_bg alpha
                     use gtk4::prelude::TextTagExt;
                     fade_tag_clone.set_paragraph_background_rgba(Some(
-                        &gtk4::gdk::RGBA::new(0.0, 0.3, 0.86, alpha),
+                        &gtk4::gdk::RGBA::new(0.0, 0.314, 0.863, alpha),
                     ));
                     if value <= 0.0 {
                         let (s, e) = buf_clone.bounds();
@@ -986,10 +1002,10 @@ fn update_highlight(state: &mut AppState) {
                     &state.text_view,
                     1.0,  // from
                     0.0,  // to
-                    150,  // duration ms
+                    800,  // duration ms
                     target,
                 );
-                anim.set_easing(adw::Easing::EaseOutCubic);
+                anim.set_easing(adw::Easing::EaseOutQuad);
                 anim.play();
                 state.cursor_fade_anim = Some(anim);
             }
