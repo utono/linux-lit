@@ -792,8 +792,13 @@ fn snap_scroll_to_line(state: &mut AppState, line: usize) {
     });
 }
 
-/// Charter 19pt line height (pixels), including line_spacing above+below.
-const LINE_HEIGHT: i32 = 31;
+/// Measure the pixel height of a representative buffer line.
+fn measure_line_height(text_view: &sourceview5::View) -> i32 {
+    let buf = text_view.buffer();
+    let iter = buf.iter_at_line(0).unwrap_or_else(|| buf.start_iter());
+    let (_y, h) = text_view.line_yrange(&iter);
+    h.max(1)
+}
 
 /// Compute the gap between the last fully visible line and the viewport bottom,
 /// then set the bottom_clip overlay height to cover it.
@@ -804,7 +809,8 @@ fn update_bottom_clip(
     _line_count: usize,
 ) {
     let widget_height = text_view.height();
-    let remainder = widget_height % LINE_HEIGHT;
+    let line_height = measure_line_height(text_view);
+    let remainder = widget_height % line_height;
     bottom_clip.set_height_request(remainder);
 }
 

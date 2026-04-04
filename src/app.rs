@@ -1348,14 +1348,21 @@ fn map_line_before_insert(buf_line: usize, translation_lines: &[bool]) -> usize 
     orig
 }
 
+/// Measure the pixel height of a representative buffer line.
+fn measure_line_height(text_view: &sourceview5::View) -> i32 {
+    let buf = text_view.buffer();
+    let iter = buf.iter_at_line(0).unwrap_or_else(|| buf.start_iter());
+    let (_y, h) = text_view.line_yrange(&iter);
+    h.max(1)
+}
+
 /// Reapply font size using a TextTag spanning the entire buffer.
-/// Charter 19pt line height (pixels), including line_spacing above+below.
-const LINE_HEIGHT: i32 = 31;
 
 /// Update top/bottom spacer heights to match one line of text.
 fn update_spacer_heights(state: &AppState) {
-    state.top_spacer.set_height_request(LINE_HEIGHT);
-    state.bottom_spacer.set_height_request(LINE_HEIGHT);
+    let line_height = measure_line_height(&state.text_view);
+    state.top_spacer.set_height_request(line_height);
+    state.bottom_spacer.set_height_request(line_height);
 }
 
 fn reapply_font(state: &AppState) {
