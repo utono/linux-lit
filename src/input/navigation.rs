@@ -681,7 +681,7 @@ fn set_page(state: &mut AppState, new_top: usize, direction: PageDirection) {
                 &snapshot_pic,
                 1.0,  // from
                 0.0,  // to
-                1200, // duration ms
+                900,  // duration ms
                 target,
             );
             anim.set_easing(adw::Easing::Linear);
