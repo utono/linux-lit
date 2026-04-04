@@ -130,6 +130,11 @@ pub struct AppState {
     pub word_cycle_line: Option<usize>,
     pub word_cycle_index: usize,
     pub word_status_timer: Rc<Cell<u64>>,
+    /// True while display_work is replacing the buffer. CursorSync and other
+    /// layout-dependent callbacks must skip when this is set because GTK
+    /// hasn't laid out the new content yet. Cleared in an idle callback after
+    /// the layout has settled.
+    pub loading_work: Rc<Cell<bool>>,
 }
 
 impl AppState {
@@ -582,6 +587,7 @@ pub fn build_window(
         word_cycle_line: None,
         word_cycle_index: 0,
         word_status_timer: Rc::new(Cell::new(0)),
+        loading_work: Rc::new(Cell::new(false)),
     }));
 
     // Connect picker search entry filter
@@ -699,6 +705,8 @@ pub fn build_window(
 }
 
 pub fn display_work(state: &mut AppState, work: Work) {
+    state.loading_work.set(true);
+
     // Save position of the outgoing work before switching
     if let Some(ref old_work) = state.current_work {
         state.config.work_positions.insert(old_work.abbrev.clone(), state.current_line);

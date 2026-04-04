@@ -89,6 +89,9 @@ fn main() {
                 match event {
                     MpvEvent::CursorSync(line_idx) => {
                         let mut s = state_for_events.borrow_mut();
+                        if s.loading_work.get() {
+                            continue;
+                        }
                         if !s.sync_enabled {
                             continue;
                         }
@@ -195,7 +198,7 @@ fn main() {
                         s.current_time_pos = pos;
 
                         // Advance to untimestamped next line when current line's audio ends
-                        if s.sync_enabled {
+                        if s.sync_enabled && !s.loading_work.get() {
                             if let Some((end_time, next_bl, _source_wi)) = s.pending_advance {
                                 if pos >= end_time {
                                     // Record the current buffer line so CursorSync won't

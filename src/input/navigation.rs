@@ -929,6 +929,7 @@ pub fn update_highlight_deferred_scroll(state: &mut AppState) {
 
     let text_view = state.text_view.clone();
     let bottom_clip = state.bottom_clip.clone();
+    let loading_flag = state.loading_work.clone();
     let line = state.current_line;
     let line_count = state.effective_line_count();
     let buffer = state.buffer.clone();
@@ -937,6 +938,7 @@ pub fn update_highlight_deferred_scroll(state: &mut AppState) {
             text_view.scroll_to_iter(&mut iter, 0.0, true, 0.0, 0.0);
         }
         update_bottom_clip(&text_view, &bottom_clip, line, line_count);
+        loading_flag.set(false);
     });
 }
 
