@@ -14,6 +14,7 @@ mod theme;
 mod ui;
 
 use gtk4::prelude::*;
+use libadwaita as adw;
 use mpv::{MpvCommand, MpvEvent};
 
 fn main() {
@@ -33,6 +34,8 @@ fn main() {
     } else {
         "com.utono.linux-lit"
     };
+
+    adw::init().expect("Failed to initialize libadwaita");
 
     let application = gtk4::Application::builder()
         .application_id(app_id)
