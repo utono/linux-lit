@@ -348,11 +348,11 @@ pub fn build_window(
 
     scrolled.add_css_class("card-middle");
 
-    // Page turn overlay — used for crossfade transition
-    let page_turn_overlay = gtk4::Overlay::new();
-    page_turn_overlay.set_child(Some(&scrolled));
-    page_turn_overlay.set_vexpand(true);
-    page_turn_overlay.set_hexpand(true);
+    // Scrolled overlay — holds the bottom clip bar over the scrolled text area
+    let scrolled_overlay = gtk4::Overlay::new();
+    scrolled_overlay.set_child(Some(&scrolled));
+    scrolled_overlay.set_vexpand(true);
+    scrolled_overlay.set_hexpand(true);
 
     // Bottom clip bar — covers partially-visible lines at the bottom of a page.
     // Height is set dynamically by snap_scroll_to_line.
@@ -361,7 +361,7 @@ pub fn build_window(
     bottom_clip.set_hexpand(true);
     bottom_clip.set_height_request(0);
     bottom_clip.add_css_class("card-middle");
-    page_turn_overlay.add_overlay(&bottom_clip);
+    scrolled_overlay.add_overlay(&bottom_clip);
 
     // Top spacer — one line height, rounded top corners only
     let top_spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
@@ -379,8 +379,17 @@ pub fn build_window(
     let card_vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     card_vbox.set_vexpand(true);
     card_vbox.append(&top_spacer);
-    card_vbox.append(&page_turn_overlay);
+    card_vbox.append(&scrolled_overlay);
     card_vbox.append(&bottom_spacer);
+
+    // Page turn overlay — wraps the entire card for crossfade snapshots.
+    // Snapshot is placed here as a sibling of card_vbox so fading card_vbox
+    // opacity doesn't also hide the snapshot.
+    let page_turn_overlay = gtk4::Overlay::new();
+    page_turn_overlay.set_child(Some(&card_vbox));
+    page_turn_overlay.set_vexpand(true);
+    page_turn_overlay.set_hexpand(true);
+    page_turn_overlay.add_css_class("page-turn-overlay");
 
     // Centered text card container — width_request controls the card width
     let content_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
@@ -392,7 +401,7 @@ pub fn build_window(
     content_hbox.set_margin_bottom(24);
     content_hbox.set_margin_start(24);
     content_hbox.set_margin_end(24);
-    content_hbox.append(&card_vbox);
+    content_hbox.append(&page_turn_overlay);
 
     // Vocab popup (bottom-right, full window width)
     let vocab_popup = crate::ui::vocab_popup::VocabPopup::new();

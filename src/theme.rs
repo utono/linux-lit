@@ -334,6 +334,7 @@ fn choose_vocab_fg(text_fg: &str, cursor_bg: &str, vocab_orig: &str) -> String {
 pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String {
     format!(
         "window {{ background-color: {root}; }} \
+         .page-turn-overlay {{ background-color: {bg}; border-radius: 12px; }} \
          .card-top {{ background-color: {bg}; border-radius: 12px 12px 0 0; }} \
          .card-middle {{ border-radius: 0; }} \
          .card-bottom {{ background-color: {bg}; border-radius: 0 0 12px 12px; }} \

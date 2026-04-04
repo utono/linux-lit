@@ -584,11 +584,11 @@ enum PageDirection {
 }
 
 
-/// Capture the scrolled text area as a static Picture overlay.
+/// Capture the entire card (spacers + text) as a static Picture overlay.
 /// Uses WidgetPaintable → Snapshot → RenderNode → Texture to freeze the frame.
 /// Returns the Picture (already added to page_turn_overlay) or None if capture fails.
 fn capture_page_snapshot(state: &AppState) -> Option<gtk4::Picture> {
-    let widget = &state.scrolled_window;
+    let widget = &state.card_vbox;
     let w = widget.width();
     let h = widget.height();
     if w <= 0 || h <= 0 {
@@ -654,33 +654,37 @@ fn set_page(state: &mut AppState, new_top: usize, direction: PageDirection) {
                 prev.skip();
             }
 
-            // Hide the scrolled window while GTK scrolls to the new position.
-            // The snapshot sits in the overlay at full opacity, covering the gap.
-            // We hide scrolled_window (not card_vbox) so the snapshot remains visible.
-            state.scrolled_window.set_opacity(0.0);
+            // Hide the card while GTK scrolls to the new position.
+            // The snapshot is a sibling overlay in page_turn_overlay (which wraps
+            // card_vbox), so hiding card_vbox doesn't hide the snapshot.
+            state.card_vbox.set_opacity(0.0);
             clear_old_page_dim(state);
             state.page_top_line = new_top;
             snap_scroll_to_line(state, new_top);
 
-            // Fade out the snapshot overlay: 1.0 → 0.0, 400ms, ease-out-cubic.
-            // The callback reveals the scrolled window on the first frame,
-            // after GTK has completed the scroll.
+            // Gentle crossfade: value goes 1.0 → 0.0 over 800ms.
+            // New content fades in fast (quadratic), snapshot fades out slow
+            // (inverse quadratic). Keeps combined brightness near 100%.
             let overlay = state.page_turn_overlay.clone();
-            let scrolled = state.scrolled_window.clone();
+            let card = state.card_vbox.clone();
             let snap = snapshot_pic.clone();
             let target = adw::CallbackAnimationTarget::new(move |value| {
-                // value goes 1.0 → 0.0: snapshot fades out, scrolled fades in
-                snap.set_opacity(value);
-                scrolled.set_opacity(1.0 - value);
+                let t = 1.0 - value as f64; // progress 0→1
+                // Smoothstep S-curve for gentle timing
+                let s = t * t * (3.0 - 2.0 * t);
+                // Use sine/cosine on the smoothstepped value to preserve
+                // total brightness: sin²+cos² = 1, no dark dip at midpoint.
+                card.set_opacity((s * std::f64::consts::FRAC_PI_2).sin());
+                snap.set_opacity((s * std::f64::consts::FRAC_PI_2).cos());
             });
             let anim = adw::TimedAnimation::new(
                 &snapshot_pic,
                 1.0,  // from
                 0.0,  // to
-                700,  // duration ms
+                1200, // duration ms
                 target,
             );
-            anim.set_easing(adw::Easing::EaseOutCubic);
+            anim.set_easing(adw::Easing::Linear);
 
             let snap_cleanup = snapshot_pic.clone();
             anim.connect_done(move |_| {
@@ -706,8 +710,8 @@ fn set_page(state: &mut AppState, new_top: usize, direction: PageDirection) {
 
             let width = state.card_vbox.width() as f64;
 
-            // Hide scrolled window while GTK scrolls to the new position
-            state.scrolled_window.set_opacity(0.0);
+            // Hide card while GTK scrolls to the new position
+            state.card_vbox.set_opacity(0.0);
             clear_old_page_dim(state);
             state.page_top_line = new_top;
             snap_scroll_to_line(state, new_top);
@@ -715,16 +719,15 @@ fn set_page(state: &mut AppState, new_top: usize, direction: PageDirection) {
             state.card_vbox.set_margin_end(0);
 
             // Animate snapshot sliding out: 0.0 → 1.0 progress, 250ms, ease-out-cubic.
-            // Reveals scrolled window on the first frame after scroll settles.
+            // Reveals card on the first frame after scroll settles.
             let overlay = state.page_turn_overlay.clone();
             let card = state.card_vbox.clone();
-            let scrolled = state.scrolled_window.clone();
             let snap = snapshot_pic.clone();
             let is_forward = matches!(direction, PageDirection::Forward);
             let revealed = std::cell::Cell::new(false);
             let target = adw::CallbackAnimationTarget::new(move |progress| {
                 if !revealed.get() {
-                    scrolled.set_opacity(1.0);
+                    card.set_opacity(1.0);
                     revealed.set(true);
                 }
                 let offset = (width * progress) as i32;
