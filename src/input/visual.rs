@@ -464,7 +464,6 @@ pub fn reload_current_work(state: &mut AppState) {
                     crate::app::display_work(state, work);
                     let new_count = state.effective_line_count();
                     state.current_line = saved_line.min(new_count.saturating_sub(1));
-                    crate::input::navigation::update_highlight_and_ensure_visible(state);
                 }
                 Err(e) => crate::logging::log(&format!("VISUAL: reload work failed: {}", e)),
             }

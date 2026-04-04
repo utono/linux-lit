@@ -228,6 +228,7 @@ pub fn build_window(
     } else {
         crate::theme::load_theme(&theme_name)
     };
+    crate::logging::log("BUILD: loading_work guard active");
     crate::logging::log(&format!("Theme: {} ({})", theme.display_name, theme.name));
     crate::logging::log(&format!("Highlight color: {}", theme.cursor_line_bg));
 
@@ -702,6 +703,40 @@ pub fn build_window(
     }
 
     state
+}
+
+/// Tear down the current display state: cancel animations, remove snapshot
+/// overlays, clear the buffer, and reset card opacity. Called before showing
+/// the library picker so that display_work starts from a clean slate.
+pub fn clear_display(state: &mut AppState) {
+    state.loading_work.set(true);
+
+    // Cancel in-flight animations (drop without skip to avoid stale callbacks)
+    state.page_turn_anim = None;
+    state.cursor_fade_anim = None;
+
+    // Remove snapshot overlays left by page turn animations
+    {
+        let overlay = &state.page_turn_overlay;
+        let card = &state.card_vbox;
+        let mut to_remove = Vec::new();
+        let mut child = overlay.first_child();
+        while let Some(c) = child {
+            let next = c.next_sibling();
+            if &c != card.upcast_ref::<gtk4::Widget>() {
+                to_remove.push(c);
+            }
+            child = next;
+        }
+        for c in to_remove {
+            overlay.remove_overlay(&c);
+        }
+    }
+
+    // Restore card visibility and clear the buffer so GTK drops all layout
+    // state. display_work will rebuild from scratch.
+    state.card_vbox.set_opacity(1.0);
+    state.buffer.set_text("");
 }
 
 pub fn display_work(state: &mut AppState, work: Work) {

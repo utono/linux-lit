@@ -37,16 +37,9 @@ fn load_selected_work(
             crate::logging::log(&format!("TIMING: load_work DB query {:.0}ms", t_db.elapsed().as_millis()));
             match work {
                 Ok(Ok(work)) => {
-                    {
-                        let mut s = state_clone.borrow_mut();
-                        s.correction_overlay.hide();
-                        crate::app::display_work(&mut s, work);
-                    }
-                    glib::idle_add_local_once(move || {
-                        crate::input::navigation::restore_cursor(
-                            &mut state_clone.borrow_mut(),
-                        );
-                    });
+                    let mut s = state_clone.borrow_mut();
+                    s.correction_overlay.hide();
+                    crate::app::display_work(&mut s, work);
                 }
                 Ok(Err(e)) => {
                     let s = state_clone.borrow();
@@ -127,6 +120,7 @@ pub fn handle_key(
             let mut s = state.borrow_mut();
             s.concordance_state = None;
             s.concordance_bar.hide();
+            crate::app::clear_display(&mut s);
         }
         state.borrow().correction_overlay.hide();
         state.borrow_mut().picker.show_prepare();

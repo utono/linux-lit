@@ -427,21 +427,39 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
 
 /// Restore cursor position after loading a work (used on startup with MRU).
 pub fn restore_cursor(state: &mut AppState) {
+    state.page_top_line = state.current_line;
     update_highlight(state);
-    match state.config.navigation_mode {
-        crate::config::NavigationMode::Scroll => {
-            let adj = state.scrolled_window.vadjustment();
+
+    let text_view = state.text_view.clone();
+    let bottom_clip = state.bottom_clip.clone();
+    let scrolled_window = state.scrolled_window.clone();
+    let loading_flag = state.loading_work.clone();
+    let line = state.current_line;
+    let line_count = state.effective_line_count();
+    let buffer = state.buffer.clone();
+    let is_ereader = matches!(
+        state.config.navigation_mode,
+        crate::config::NavigationMode::EReader
+    );
+    glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
+        if is_ereader {
+            if let Some(mut iter) = buffer.iter_at_line(line as i32) {
+                text_view.scroll_to_iter(&mut iter, 0.0, true, 0.0, 0.0);
+            }
+            update_bottom_clip(&text_view, &bottom_clip, line, line_count);
+        } else {
+            let adj = scrolled_window.vadjustment();
             let max_scroll = adj.upper() - adj.page_size();
-            let line_y = scroll_value_for_line(state, state.current_line);
-            let offset = adj.page_size() * 0.25;
-            let centered = (line_y - offset).max(0.0).min(max_scroll.max(0.0));
-            adj.set_value(centered);
+            if max_scroll > 0.0 {
+                let offset = adj.page_size() * 0.25;
+                // Estimate scroll position from line number
+                let frac = line as f64 / line_count.max(1) as f64;
+                let val = (frac * adj.upper() - offset).max(0.0).min(max_scroll);
+                adj.set_value(val);
+            }
         }
-        crate::config::NavigationMode::EReader => {
-            let new_top = state.current_line.saturating_sub(PAGE_OVERLAP);
-            set_page_instant(state, new_top);
-        }
-    }
+        loading_flag.set(false);
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -458,6 +476,11 @@ fn is_line_on_screen(state: &AppState, line: usize) -> bool {
 /// Uses buffer_to_window_coords to convert line_yrange into widget space,
 /// then compares against the widget's allocated height.
 fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
+    // During work loading, GTK layout is stale — report all lines as visible
+    // to prevent bogus page turns that crash the app.
+    if state.loading_work.get() {
+        return true;
+    }
     let Some(iter) = state.buffer.iter_at_line(line as i32) else {
         return false;
     };
@@ -641,6 +664,11 @@ fn capture_page_snapshot(state: &AppState) -> Option<gtk4::Picture> {
 
 /// Set the page top line with an animated transition based on config.transition_style.
 fn set_page(state: &mut AppState, new_top: usize, direction: PageDirection) {
+    // During work loading, GTK layout is invalid — skip page turns entirely.
+    if state.loading_work.get() {
+        log_fmt!("PAGE_TURN: SKIPPED (loading_work=true) new_top={}", new_top);
+        return;
+    }
     log_fmt!(
         "PAGE_TURN: new_top={} old_top={} current_line={} transition={:?}",
         new_top, state.page_top_line, state.current_line, state.config.transition_style
@@ -920,8 +948,8 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
     auto_show_vocab_popup(state);
 }
 
-/// Set page_top and apply highlight tags, then defer the actual scroll to an
-/// idle callback so GTK has time to lay out the new buffer content. Used by
+/// Set page_top and apply highlight tags, then defer the actual scroll to a
+/// timeout callback so GTK has time to lay out the new buffer content. Used by
 /// display_work after replacing the entire buffer text.
 pub fn update_highlight_deferred_scroll(state: &mut AppState) {
     state.page_top_line = state.current_line;
@@ -933,7 +961,7 @@ pub fn update_highlight_deferred_scroll(state: &mut AppState) {
     let line = state.current_line;
     let line_count = state.effective_line_count();
     let buffer = state.buffer.clone();
-    glib::idle_add_local_once(move || {
+    glib::timeout_add_local_once(std::time::Duration::from_millis(50), move || {
         if let Some(mut iter) = buffer.iter_at_line(line as i32) {
             text_view.scroll_to_iter(&mut iter, 0.0, true, 0.0, 0.0);
         }
@@ -1115,6 +1143,11 @@ fn update_highlight(state: &mut AppState) {
 /// Count how many buffer lines are fully visible starting from `page_top_line`.
 /// Uses buffer_to_window_coords to accurately detect clipped lines.
 fn lines_per_page(state: &AppState) -> usize {
+    // During work loading, GTK layout is invalid — return a reasonable estimate.
+    if state.loading_work.get() {
+        return 35;
+    }
+
     let line_count = state.effective_line_count();
     let start = state.page_top_line;
 
