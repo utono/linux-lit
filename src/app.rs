@@ -945,9 +945,10 @@ pub fn display_work(state: &mut AppState, work: Work) {
         state.effective_line_count().saturating_sub(1),
     );
 
-    // Dim all lines except the current one
+    // Dim all lines except the current one; defer scroll to idle callback
+    // so GTK has time to lay out the new buffer before we query geometry.
     let t7 = std::time::Instant::now();
-    crate::input::navigation::update_highlight_and_ensure_visible(state);
+    crate::input::navigation::update_highlight_deferred_scroll(state);
     crate::logging::log(&format!("TIMING: update_highlight {:.0}ms", t7.elapsed().as_millis()));
     crate::logging::log(&format!("TIMING: display_work total {:.0}ms", t0.elapsed().as_millis()));
 }

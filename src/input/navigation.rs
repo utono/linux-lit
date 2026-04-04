@@ -56,6 +56,7 @@ pub fn move_cursor(state: &mut AppState, delta: i32) {
     }
 
     state.current_line = new_line;
+    state.prev_highlight_line.set(None);
     update_highlight(state);
 
     match state.config.navigation_mode {
@@ -156,8 +157,45 @@ pub fn page_backward(state: &mut AppState) {
 
 /// Previous dialogue line (`,` key).
 /// If cursor is at the top line of the page, just page backward (don't move cursor).
-/// Previous paragraph (`,` key).
-/// Jump to the first non-blank line of the previous paragraph (separated by blank lines).
+/// Previous dialogue line (`,` key).
+pub fn jump_to_prev_dialogue(state: &mut AppState) {
+    if state.current_line == 0 {
+        return;
+    }
+    let buffer = &state.buffer;
+    if let Some(target) = prev_dialogue_line(buffer, state.current_line) {
+        state.current_line = target;
+        state.pending_advance = None;
+        state.pending_advance_ignore_bl = None;
+        state.prev_highlight_line.set(None);
+        update_highlight(state);
+        scroll_after_jump_backward(state);
+        seek_to_current_line(state);
+        auto_show_vocab_popup(state);
+    }
+}
+
+/// Next dialogue line (`q` key).
+pub fn jump_to_next_dialogue(state: &mut AppState) {
+    let line_count = state.buffer.line_count() as usize;
+    if line_count == 0 {
+        return;
+    }
+    let buffer = &state.buffer;
+    if let Some(target) = next_dialogue_line(buffer, state.current_line, line_count) {
+        let prev_line = state.current_line;
+        state.current_line = target;
+        state.pending_advance = None;
+        state.pending_advance_ignore_bl = None;
+        update_highlight(state);
+        scroll_after_jump_forward(state, prev_line);
+        seek_to_current_line(state);
+        auto_show_vocab_popup(state);
+    }
+}
+
+/// Previous paragraph (`[` key).
+/// Jump to the first non-blank line of the previous paragraph.
 pub fn jump_to_prev_paragraph(state: &mut AppState) {
     let line_count = state.buffer.line_count() as usize;
     if state.current_line == 0 || line_count == 0 {
@@ -165,22 +203,6 @@ pub fn jump_to_prev_paragraph(state: &mut AppState) {
     }
 
     let buffer = &state.buffer;
-
-    // In plays, jump to the previous dialogue line
-    if state.dialogue_formatting_active {
-        if let Some(target) = prev_dialogue_line(buffer, state.current_line) {
-            state.current_line = target;
-            // Clear stale pending_advance so old advance state doesn't bounce
-            state.pending_advance = None;
-            state.pending_advance_ignore_bl = None;
-            update_highlight(state);
-            scroll_after_jump_backward(state);
-            seek_to_current_line(state);
-            auto_show_vocab_popup(state);
-        }
-        return;
-    }
-
     let mut i = state.current_line.saturating_sub(1);
 
     // Skip blank lines immediately above
@@ -192,7 +214,6 @@ pub fn jump_to_prev_paragraph(state: &mut AppState) {
         i -= 1;
     }
     // Now i is on a blank line (or 0). Find the first non-blank line of the paragraph above.
-    // If i is 0 and non-blank, that's the target. Otherwise advance past the blank.
     let target = if is_blank_buffer_line(buffer, i) {
         let mut start = i + 1;
         while start < line_count && is_blank_buffer_line(buffer, start) {
@@ -210,15 +231,19 @@ pub fn jump_to_prev_paragraph(state: &mut AppState) {
     if let Some(line_idx) = target {
         state.current_line = line_idx;
         update_highlight(state);
-        scroll_after_jump_backward(state);
+        match state.config.navigation_mode {
+            crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
+            crate::config::NavigationMode::EReader => {
+                set_page(state, line_idx, PageDirection::Backward);
+            }
+        }
         seek_to_current_line(state);
         auto_show_vocab_popup(state);
     }
 }
 
-/// Next paragraph (`q` key).
-/// Jump to the first non-blank line of the next paragraph (separated by blank lines).
-/// In plays, jump to the next dialogue line instead.
+/// Next paragraph (`{` key).
+/// Jump to the first non-blank line of the next paragraph.
 pub fn jump_to_next_paragraph(state: &mut AppState) {
     let line_count = state.buffer.line_count() as usize;
     if line_count == 0 {
@@ -226,23 +251,6 @@ pub fn jump_to_next_paragraph(state: &mut AppState) {
     }
 
     let buffer = &state.buffer;
-
-    // In plays, jump to the next dialogue line
-    if state.dialogue_formatting_active {
-        if let Some(target) = next_dialogue_line(buffer, state.current_line, line_count) {
-            let prev_line = state.current_line;
-            state.current_line = target;
-            // Clear stale pending_advance so old advance state doesn't bounce
-            state.pending_advance = None;
-            state.pending_advance_ignore_bl = None;
-            update_highlight(state);
-            scroll_after_jump_forward(state, prev_line);
-            seek_to_current_line(state);
-            auto_show_vocab_popup(state);
-        }
-        return;
-    }
-
     let mut i = state.current_line + 1;
 
     // Skip remaining lines of current paragraph
@@ -361,14 +369,16 @@ pub fn jump_to_prev_chapter(state: &mut AppState) {
         state.current_line = line_idx;
         update_highlight(state);
         match state.config.navigation_mode {
-            crate::config::NavigationMode::Scroll => center_cursor(state),
-            crate::config::NavigationMode::EReader => scroll_to_cursor(state),
+            crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
+            crate::config::NavigationMode::EReader => {
+                set_page(state, line_idx, PageDirection::Backward);
+            }
         }
         seek_to_current_line(state);
     }
 }
 
-/// Next chapter line (`{` key).
+/// Next chapter line.
 pub fn jump_to_next_chapter(state: &mut AppState) {
     let line_count = state.effective_line_count();
     let target = {
@@ -683,7 +693,7 @@ fn set_page(state: &mut AppState, new_top: usize, direction: PageDirection) {
                 &snapshot_pic,
                 1.0,  // from
                 0.0,  // to
-                900,  // duration ms
+                700,  // duration ms
                 target,
             );
             anim.set_easing(adw::Easing::Linear);
@@ -910,6 +920,26 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
     auto_show_vocab_popup(state);
 }
 
+/// Set page_top and apply highlight tags, then defer the actual scroll to an
+/// idle callback so GTK has time to lay out the new buffer content. Used by
+/// display_work after replacing the entire buffer text.
+pub fn update_highlight_deferred_scroll(state: &mut AppState) {
+    state.page_top_line = state.current_line;
+    update_highlight(state);
+
+    let text_view = state.text_view.clone();
+    let bottom_clip = state.bottom_clip.clone();
+    let line = state.current_line;
+    let line_count = state.effective_line_count();
+    let buffer = state.buffer.clone();
+    glib::idle_add_local_once(move || {
+        if let Some(mut iter) = buffer.iter_at_line(line as i32) {
+            text_view.scroll_to_iter(&mut iter, 0.0, true, 0.0, 0.0);
+        }
+        update_bottom_clip(&text_view, &bottom_clip, line, line_count);
+    });
+}
+
 /// Update highlight and center the current line on screen.
 pub fn update_highlight_and_center(state: &mut AppState) {
     update_highlight(state);
@@ -1015,7 +1045,7 @@ fn update_highlight(state: &mut AppState) {
                     &state.text_view,
                     1.0,  // from
                     0.0,  // to
-                    800,  // duration ms
+                    700,  // duration ms
                     target,
                 );
                 anim.set_easing(adw::Easing::EaseOutQuad);

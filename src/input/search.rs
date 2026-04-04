@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use gtk4::prelude::*;
+use libadwaita::prelude::AnimationExt;
 
 use crate::app::{AppState, SearchMatch};
 
@@ -119,14 +120,21 @@ pub fn execute_search(state_rc: &Rc<RefCell<AppState>>) {
 /// Toggle playback. If resuming, seek to current line's start_time first.
 /// Clears sync suppression so cursor tracking resumes.
 pub fn toggle_playback(state: &mut AppState) {
-    state.suppress_sync_until = None;
+    // Suppress cursor fade on the first sync-driven highlight after unpause
+    if let Some(prev) = state.cursor_fade_anim.take() {
+        prev.skip();
+    }
+    state.prev_highlight_line.set(None);
     if let Some(ref work) = state.current_work {
         if let Some(work_idx) = state.work_line_for_buffer(state.current_line) {
             if let Some(ts) = &work.lines[work_idx].timestamp {
                 let seek_time = (ts.start - crate::input::navigation::SEEK_PREROLL).max(0.0);
-                // Seek first, then toggle — if paused, this means seek+resume;
-                // if playing, the seek is harmless and toggle pauses.
                 let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::Seek(seek_time));
+                // Suppress sync briefly so the preroll seek doesn't pull
+                // the cursor back to the previous line
+                state.suppress_sync_until = Some(
+                    std::time::Instant::now() + std::time::Duration::from_millis(500),
+                );
             }
         }
     }

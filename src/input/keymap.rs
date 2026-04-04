@@ -959,11 +959,11 @@ pub fn handle_key(
             true
         }
         "comma" => {
-            navigation::jump_to_prev_paragraph(&mut state.borrow_mut());
+            navigation::jump_to_prev_dialogue(&mut state.borrow_mut());
             true
         }
         "q" => {
-            navigation::jump_to_next_paragraph(&mut state.borrow_mut());
+            navigation::jump_to_next_dialogue(&mut state.borrow_mut());
             true
         }
         "o" | "e" | "O" | "E" => {
@@ -1074,10 +1074,18 @@ pub fn handle_key(
             crate::input::timestamps::set_chapter(&mut state.borrow_mut())
         }
         "bracketleft" => {
-            crate::input::navigation::jump_to_prev_chapter(&mut state.borrow_mut());
+            navigation::jump_to_prev_paragraph(&mut state.borrow_mut());
             true
         }
         "braceleft" => {
+            navigation::jump_to_next_paragraph(&mut state.borrow_mut());
+            true
+        }
+        "2" => {
+            crate::input::navigation::jump_to_prev_chapter(&mut state.borrow_mut());
+            true
+        }
+        "3" => {
             crate::input::navigation::jump_to_next_chapter(&mut state.borrow_mut());
             true
         }
