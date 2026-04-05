@@ -433,10 +433,10 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
            padding: 16px 20px; border-radius: 12px; }} \
          .vocab-popup .definition-header {{ font-size: 11px; color: {vocab_popup_dim}; \
            letter-spacing: 2px; font-weight: bold; }} \
-         .vocab-popup .definition-word {{ font-size: 16px; color: {dim}; }} \
-         .vocab-popup .definition-text {{ opacity: 0.85; font-size: 16px; color: {dim}; }} \
-         .vocab-popup .definition-etymology {{ opacity: 0.7; font-size: 12px; color: {dim}; }} \
-         .vocab-popup .definition-gloss {{ opacity: 0.7; font-size: 12px; color: {dim}; }} \
+         .vocab-popup .definition-word {{ font-size: 16px; color: {fg}; }} \
+         .vocab-popup .definition-text {{ font-size: 16px; color: {fg}; }} \
+         .vocab-popup .definition-etymology {{ opacity: 0.7; font-size: 12px; color: {fg}; }} \
+         .vocab-popup .definition-gloss {{ opacity: 0.7; font-size: 12px; color: {fg}; }} \
          .vocab-popup .definition-hint {{ font-size: 11px; color: {vocab_popup_dim}; \
            border-top: 1px solid {vocab_popup_border}; padding-top: 8px; margin-top: 12px; }} \
          .concordance-picker {{ background-color: rgba(40, 40, 40, 0.95); color: white; \

@@ -68,7 +68,8 @@ pub fn move_cursor(state: &mut AppState, delta: i32) {
                     let new_top = state.current_line.saturating_sub(lpp.saturating_sub(1));
                     set_page(state, new_top, PageDirection::Backward);
                 } else {
-                    set_page(state, state.current_line, PageDirection::Forward);
+                    let new_top = page_turn_top(&state.buffer, state.current_line);
+                    set_page(state, new_top, PageDirection::Forward);
                 }
             }
         }
