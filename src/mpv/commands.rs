@@ -20,6 +20,7 @@ pub enum MpvCommand {
     },
     SetAbLoop { a: f64, b: f64 },
     ClearAbLoop,
+    Quit,
 }
 
 /// Events sent from the Tokio runtime back to the GTK UI thread.

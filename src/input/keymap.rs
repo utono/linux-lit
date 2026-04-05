@@ -54,11 +54,6 @@ fn load_selected_work(
                             s.current_line, s.page_top_line, s.line_map.is_some(), s.effective_line_count()
                         ));
                     }
-                    // Defer scroll until GTK has laid out the new buffer,
-                    // matching the pattern used by the initial app load.
-                    glib::idle_add_local_once(move || {
-                        navigation::restore_cursor(&mut state_clone.borrow_mut());
-                    });
                 }
                 Ok(Err(e)) => {
                     crate::logging::log(&format!("PICKER: load_work error: {}", e));
@@ -139,6 +134,7 @@ fn handle_concordance_word_selection(
                 let _ = std::process::Command::new(&exe)
                     .env("LINUX_LIT_WORK", abbrev)
                     .env("LINUX_LIT_LINE_ID", line_id.to_string())
+                    .env("LINUX_LIT_CONC_WORD", &word)
                     .spawn();
             }
         }
@@ -855,9 +851,10 @@ pub fn handle_key(
         }
     }
 
-    // Ctrl+Alt+l: save position and quit
+    // Ctrl+Alt+l: save position, quit MPV, and close window
     if is_ctrl && is_alt && key_name == "l" {
         crate::app::save_position(&mut state.borrow_mut());
+        let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::Quit);
         state.borrow().window.close();
         return true;
     }

@@ -235,7 +235,7 @@ pub fn jump_to_prev_paragraph(state: &mut AppState) {
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
             crate::config::NavigationMode::EReader => {
-                set_page(state, line_idx, PageDirection::Backward);
+                set_page_instant(state, line_idx);
             }
         }
         seek_to_current_line(state);
@@ -461,67 +461,6 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
     }
 }
 
-/// Restore cursor position after loading a work (used on startup with MRU).
-pub fn restore_cursor(state: &mut AppState) {
-    state.page_top_line = state.current_line;
-    update_highlight(state);
-
-    let text_view = state.text_view.clone();
-    let bottom_clip = state.bottom_clip.clone();
-    let scrolled_window = state.scrolled_window.clone();
-    let loading_flag = state.loading_work.clone();
-    let line = state.current_line;
-    let line_count = state.effective_line_count();
-    crate::logging::log(&format!(
-        "RESTORE_CURSOR: line={} line_count={} loading={}",
-        line, line_count, state.loading_work.get()
-    ));
-    let buffer = state.buffer.clone();
-    let is_ereader = matches!(
-        state.config.navigation_mode,
-        crate::config::NavigationMode::EReader
-    );
-    glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
-        crate::logging::log(&format!(
-            "RESTORE_CURSOR: 100ms callback line={} is_ereader={}", line, is_ereader
-        ));
-        if is_ereader {
-            if let Some(iter) = buffer.iter_at_line(line as i32) {
-                let (y, _h) = text_view.line_yrange(&iter);
-                // Set scroll position directly — scroll_to_iter can silently
-                // fail when GTK widget geometry isn't fully laid out yet.
-                let adj = scrolled_window.vadjustment();
-                let max_scroll = (adj.upper() - adj.page_size()).max(0.0);
-                let val = (y as f64).max(0.0).min(max_scroll);
-                crate::logging::log(&format!(
-                    "RESTORE_CURSOR: scroll line={} y={} val={:.0} max={:.0} page={:.0}",
-                    line, y, val, max_scroll, adj.page_size()
-                ));
-                adj.set_value(val);
-            }
-            update_bottom_clip(&text_view, &bottom_clip, line, line_count);
-
-            // Second clip update after layout has fully settled
-            let tv2 = text_view.clone();
-            let bc2 = bottom_clip.clone();
-            glib::timeout_add_local_once(std::time::Duration::from_millis(200), move || {
-                update_bottom_clip(&tv2, &bc2, line, line_count);
-            });
-        } else {
-            let adj = scrolled_window.vadjustment();
-            let max_scroll = adj.upper() - adj.page_size();
-            if max_scroll > 0.0 {
-                let offset = adj.page_size() * 0.25;
-                // Estimate scroll position from line number
-                let frac = line as f64 / line_count.max(1) as f64;
-                let val = (frac * adj.upper() - offset).max(0.0).min(max_scroll);
-                adj.set_value(val);
-            }
-        }
-        loading_flag.set(false);
-    });
-}
-
 // ---------------------------------------------------------------------------
 // Page management
 // ---------------------------------------------------------------------------
@@ -545,14 +484,16 @@ fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
         return false;
     }
     // Sum line heights from page_top to determine if `line` fits in the viewport.
-    let widget_height = state.text_view.height();
+    // Reserve a descender guard so the last line's descenders aren't clipped.
+    let descender_guard = descender_guard_px(&state.text_view, state.page_top_line);
+    let usable_height = state.text_view.height() - descender_guard;
     let buf = &state.buffer;
     let mut total_height = 0;
     for i in state.page_top_line..=line {
         let Some(iter) = buf.iter_at_line(i as i32) else { return false };
         let (_y, h) = state.text_view.line_yrange(&iter);
         total_height += h;
-        if total_height > widget_height {
+        if total_height > usable_height {
             return false;
         }
     }
@@ -576,7 +517,7 @@ fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize) {
             if !is_line_fully_visible(state, state.current_line) {
                 // Put the dialogue line at the top, backing up to include speaker name
                 let new_top = page_turn_top(&state.buffer, state.current_line);
-                set_page(state, new_top, PageDirection::Forward);
+                set_page_instant(state, new_top);
             }
         }
     }
@@ -591,7 +532,7 @@ fn scroll_after_jump_backward(state: &mut AppState) {
             if state.current_line < state.page_top_line {
                 let lpp = lines_per_page(state);
                 let new_top = state.current_line.saturating_sub(lpp.saturating_sub(1));
-                set_page(state, new_top, PageDirection::Backward);
+                set_page_instant(state, new_top);
             }
         }
     }
@@ -893,7 +834,20 @@ fn snap_scroll_to_line(state: &mut AppState, line: usize) {
     });
 }
 
-/// Set the bottom clip to hide everything below 34 lines of content.
+/// Compute a descender guard in pixels from the first visible line's height.
+/// Uses ~20% of line height, which safely covers font descenders at any size.
+fn descender_guard_px(text_view: &sourceview5::View, page_top: usize) -> i32 {
+    let buf = text_view.buffer();
+    if let Some(iter) = buf.iter_at_line(page_top as i32) {
+        let (_y, h) = text_view.line_yrange(&iter);
+        if h > 0 {
+            return (h / 5).max(6);
+        }
+    }
+    8 // fallback
+}
+
+/// Set the bottom clip to hide everything below the last fully-visible line.
 /// Uses buffer line_yrange (absolute coords) to sum heights from page_top,
 /// avoiding buffer_to_window_coords which may be stale after scroll_to_iter.
 fn update_bottom_clip(
@@ -911,7 +865,11 @@ fn update_bottom_clip(
     let buf = text_view.buffer();
 
     // Walk lines from page_top, summing heights until we exceed the viewport.
-    // The clip hides everything past the last line that fits entirely.
+    // Reserve a descender guard based on the actual font descent so the clip
+    // doesn't eat into the last visible line's descenders (g, p, y, q, j).
+    let descender_guard = descender_guard_px(text_view, page_top);
+    let usable_height = widget_height - descender_guard;
+
     let mut total_height = 0;
     let mut any_nonzero = false;
     for i in page_top..line_count {
@@ -920,20 +878,22 @@ fn update_bottom_clip(
         if h > 0 {
             any_nonzero = true;
         }
-        if total_height + h > widget_height {
+        if total_height + h > usable_height {
             break;
         }
         total_height += h;
     }
 
-    // If no lines have been laid out yet (all heights 0), don't clip —
-    // GTK hasn't computed layout for this region of the buffer.
     if !any_nonzero {
         bottom_clip.set_height_request(0);
         return;
     }
 
     let clip = (widget_height - total_height).max(0);
+    crate::logging::log(&format!(
+        "BOTTOM_CLIP: widget_h={} descent_guard={} usable_h={} total_h={} clip={} page_top={}",
+        widget_height, descender_guard, usable_height, total_height, clip, page_top
+    ));
     bottom_clip.set_height_request(clip);
 }
 
@@ -1036,10 +996,11 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
     auto_show_vocab_popup(state);
 }
 
-/// Set page_top and apply highlight tags, then defer the actual scroll to a
-/// timeout callback so GTK has time to lay out the new buffer content. Used by
-/// display_work after replacing the entire buffer text.
-pub fn update_highlight_deferred_scroll(state: &mut AppState) {
+/// Set page_top and apply highlight tags, then scroll to the target line
+/// using scroll_to_mark (which internally waits for line validation).
+/// After the scroll settles, apply the bottom clip and crossfade the mask
+/// out to reveal the text.
+pub fn update_highlight_deferred_scroll(state: &mut AppState, mask: gtk4::Box) {
     state.page_top_line = state.current_line;
     update_highlight(state);
 
@@ -1049,33 +1010,57 @@ pub fn update_highlight_deferred_scroll(state: &mut AppState) {
     let line = state.current_line;
     let line_count = state.effective_line_count();
     let buffer = state.buffer.clone();
-    // Place a named mark at the target line so scroll_to_mark works even before
-    // GTK has computed layout for that region of the buffer.
-    // Named "deferred-scroll" so concordance_position_after_load can relocate it.
+    let overlay = state.page_turn_overlay.clone();
+
+    // Place a mark at the target line. scroll_to_mark internally defers the
+    // scroll until GTK has validated line heights, avoiding the stale-layout
+    // problem that scroll_to_iter and manual vadjustment suffer from.
     if let Some(existing) = buffer.mark("deferred-scroll") {
         buffer.delete_mark(&existing);
     }
     if let Some(iter) = buffer.iter_at_line(line as i32) {
         buffer.create_mark(Some("deferred-scroll"), &iter, true);
     }
-    let buffer_for_scroll = buffer.clone();
-    glib::timeout_add_local_once(std::time::Duration::from_millis(50), move || {
-        if let Some(mark) = buffer.mark("deferred-scroll") {
-            text_view.scroll_to_mark(&mark, 0.0, true, 0.0, 0.0);
-        }
-        update_bottom_clip(&text_view, &bottom_clip, line, line_count);
-        loading_flag.set(false);
 
-        // Re-scroll after layout has fully settled — the 50ms scroll can
-        // land wrong for large buffers whose layout isn't ready yet.
-        let tv2 = text_view.clone();
-        let bc2 = bottom_clip.clone();
-        glib::timeout_add_local_once(std::time::Duration::from_millis(200), move || {
-            if let Some(mark) = buffer_for_scroll.mark("deferred-scroll") {
-                tv2.scroll_to_mark(&mark, 0.0, true, 0.0, 0.0);
-                buffer_for_scroll.delete_mark(&mark);
+    // scroll_to_mark queues a scroll that fires after line validation.
+    if let Some(mark) = buffer.mark("deferred-scroll") {
+        text_view.scroll_to_mark(&mark, 0.0, true, 0.0, 0.0);
+    }
+
+    // Wait for scroll_to_mark's internal idle to complete, then snap the
+    // scroll position, apply the clip, and crossfade the mask away.
+    let scrolled_window = state.scrolled_window.clone();
+    glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
+        // Snap to the exact Y of the target line so the bottom clip is aligned.
+        if let Some(iter) = buffer.iter_at_line(line as i32) {
+            let (y, _h) = text_view.line_yrange(&iter);
+            let adj = scrolled_window.vadjustment();
+            let max_scroll = (adj.upper() - adj.page_size()).max(0.0);
+            adj.set_value((y as f64).max(0.0).min(max_scroll));
+        }
+
+        // Apply clip after one more idle cycle so the vadjustment change
+        // is processed, then crossfade the mask out.
+        glib::idle_add_local_once(move || {
+            update_bottom_clip(&text_view, &bottom_clip, line, line_count);
+            loading_flag.set(false);
+            if let Some(mark) = buffer.mark("deferred-scroll") {
+                buffer.delete_mark(&mark);
             }
-            update_bottom_clip(&tv2, &bc2, line, line_count);
+
+            // Crossfade the mask out over 600ms to reveal the text smoothly.
+            let mask_ref = mask.clone();
+            let overlay_ref = overlay.clone();
+            let target = adw::CallbackAnimationTarget::new(move |value| {
+                mask_ref.set_opacity(value as f64);
+            });
+            let anim = adw::TimedAnimation::new(&mask, 1.0, 0.0, 600, target);
+            anim.set_easing(adw::Easing::EaseOutCubic);
+            let mask_cleanup = mask.clone();
+            anim.connect_done(move |_| {
+                overlay_ref.remove_overlay(&mask_cleanup);
+            });
+            anim.play();
         });
     });
 }
@@ -1266,14 +1251,16 @@ fn lines_per_page(state: &AppState) -> usize {
     }
 
     // Sum line heights to count how many fit in the viewport.
-    let widget_height = state.text_view.height();
+    // Reserve a descender guard so the last line's descenders aren't clipped.
+    let descender_guard = descender_guard_px(&state.text_view, start);
+    let usable_height = state.text_view.height() - descender_guard;
     let buf = &state.buffer;
     let mut total_height = 0;
     let mut count = 0;
     for i in start..line_count {
         let Some(iter) = buf.iter_at_line(i as i32) else { break };
         let (_y, h) = state.text_view.line_yrange(&iter);
-        if total_height + h > widget_height {
+        if total_height + h > usable_height {
             break;
         }
         total_height += h;
@@ -1454,7 +1441,7 @@ fn concordance_seek(state: &mut AppState, seek_work_idx: usize) {
             state.suppress_sync_until =
                 Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
             let seek_time = (ts.start - SEEK_PREROLL).max(0.0);
-            let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::ResumeAndSeek(seek_time));
+            let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::Seek(seek_time));
         }
     }
 }

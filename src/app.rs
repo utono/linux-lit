@@ -711,25 +711,98 @@ pub fn build_window(
                         .and_then(|s| s.parse().ok());
                     {
                         let mut s = state_clone.borrow_mut();
+                        // Set cursor to MRU line before display_work so the
+                        // single deferred scroll/clip pass uses the right position.
+                        if target_line_id.is_none() {
+                            s.config.work_positions.insert(
+                                work.abbrev.clone(),
+                                last_line,
+                            );
+                        }
                         if target_line_id.is_some() {
                             display_work_at(&mut s, work, target_line_id);
                         } else {
                             display_work(&mut s, work);
                         }
-                        // Set cursor to MRU line (or 0 for first canonical line)
-                        // display_work_at already set current_line for concordance spawns
-                        if target_line_id.is_none() {
-                            s.current_line = last_line.min(
-                                s.effective_line_count().saturating_sub(1),
-                            );
+                    }
+                    // Set up concordance state if this is a concordance spawn
+                    if let Ok(conc_word) = std::env::var("LINUX_LIT_CONC_WORD") {
+                        let s = state_clone.borrow();
+                        let work_abbrev = s.current_work.as_ref().map(|w| w.abbrev.clone());
+                        drop(s);
+                        if let Some(abbrev) = work_abbrev {
+                            let sc = Rc::clone(&state_clone);
+                            let handle2 = handle.clone();
+                            let word = conc_word.clone();
+                            glib::spawn_future_local(async move {
+                                let word_q = word.clone();
+                                let abbrev_q = abbrev.clone();
+                                let hits = handle2
+                                    .spawn_blocking(move || {
+                                        let conn = crate::db::queries::open_db()
+                                            .expect("Failed to open lit.db");
+                                        crate::db::concordance::find_word_occurrences(&conn, &word_q)
+                                            .unwrap_or_default()
+                                    })
+                                    .await
+                                    .unwrap_or_default();
+                                // Filter to only this work's hits
+                                let conc_hits: Vec<crate::concordance::ConcordanceHit> = hits
+                                    .into_iter()
+                                    .filter(|h| h.work_abbrev == abbrev_q)
+                                    .map(|h| crate::concordance::ConcordanceHit {
+                                        work_abbrev: h.work_abbrev,
+                                        work_title: h.title,
+                                        author: h.author,
+                                        line_mapping_id: h.line_mapping_id,
+                                        div1: h.div1,
+                                        div2: h.div2,
+                                        line_in_div: h.line_in_div,
+                                        canonical_text: h.canonical_text,
+                                        has_audio: h.has_audio,
+                                    })
+                                    .collect();
+                                if !conc_hits.is_empty() {
+                                    let conc_state = crate::concordance::ConcordanceState::new(
+                                        word.clone(),
+                                        conc_hits,
+                                    );
+                                    {
+                                        let mut s = sc.borrow_mut();
+                                        s.concordance_bar.update(
+                                            &conc_state.status_label(),
+                                            &conc_state.status_work(),
+                                        );
+                                        s.concordance_state = Some(conc_state);
+                                    }
+                                    // Jump to first hit — positions cursor, highlights, seeks MPV
+                                    crate::input::navigation::concordance_jump_to_current(
+                                        &sc, &handle2,
+                                    );
+                                    // Defer a centered scroll after layout settles
+                                    let sc2 = Rc::clone(&sc);
+                                    glib::timeout_add_local_once(
+                                        std::time::Duration::from_millis(200),
+                                        move || {
+                                            let s = sc2.borrow();
+                                            let adj = s.scrolled_window.vadjustment();
+                                            let max_scroll = adj.upper() - adj.page_size();
+                                            if max_scroll > 0.0 {
+                                                let line_y = if let Some(iter) = s.buffer.iter_at_line(s.current_line as i32) {
+                                                    let (y, _) = s.text_view.line_yrange(&iter);
+                                                    y as f64
+                                                } else {
+                                                    0.0
+                                                };
+                                                let centered = (line_y - adj.page_size() * 0.5).max(0.0).min(max_scroll);
+                                                adj.set_value(centered);
+                                            }
+                                        },
+                                    );
+                                }
+                            });
                         }
                     }
-                    // Defer highlight + scroll until after GTK lays out the text
-                    glib::idle_add_local_once(move || {
-                        crate::input::navigation::restore_cursor(
-                            &mut state_clone.borrow_mut(),
-                        );
-                    });
                 }
                 Ok(Err(_)) | Err(_) => {
                     state_clone.borrow_mut().picker.show_prepare();
@@ -787,6 +860,24 @@ pub fn display_work(state: &mut AppState, work: Work) {
 /// `target_line_id` is a line_mapping_id to position the cursor on after load.
 pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<i64>) {
     state.loading_work.set(true);
+
+    // Place a solid-color mask over the card to hide layout/scroll churn.
+    // The mask will be crossfaded out after the scroll and clip settle.
+    let mask = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    mask.set_vexpand(true);
+    mask.set_hexpand(true);
+    mask.add_css_class("load-mask");
+    let mask_css = gtk4::CssProvider::new();
+    mask_css.load_from_string(&format!(
+        ".load-mask {{ background-color: {}; border-radius: 12px; }}",
+        state.theme.text_bg
+    ));
+    gtk4::style_context_add_provider_for_display(
+        &gtk4::prelude::WidgetExt::display(&state.window),
+        &mask_css,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    state.page_turn_overlay.add_overlay(&mask);
 
     // Save position of the outgoing work before switching
     if let Some(ref old_work) = state.current_work {
@@ -1065,7 +1156,7 @@ pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<
     // Dim all lines except the current one; defer scroll to idle callback
     // so GTK has time to lay out the new buffer before we query geometry.
     let t7 = std::time::Instant::now();
-    crate::input::navigation::update_highlight_deferred_scroll(state);
+    crate::input::navigation::update_highlight_deferred_scroll(state, mask);
     crate::logging::log(&format!("TIMING: update_highlight {:.0}ms", t7.elapsed().as_millis()));
     crate::logging::log(&format!("TIMING: display_work total {:.0}ms", t0.elapsed().as_millis()));
 }

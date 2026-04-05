@@ -158,6 +158,11 @@ async fn handle_command(
                 let _ = send_command(w, cmd_b).await;
             }
         }
+        MpvCommand::Quit => {
+            if let Some(w) = writer.as_mut() {
+                let _ = send_command(w, r#"{"command":["quit"]}"#).await;
+            }
+        }
     }
 }
 
