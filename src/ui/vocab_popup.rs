@@ -60,9 +60,9 @@ impl VocabPopup {
         let container = GtkBox::builder()
             .orientation(Orientation::Vertical)
             .spacing(0)
-            .valign(gtk4::Align::End)
+            .valign(gtk4::Align::Start)
             .margin_end(5)
-            .margin_bottom(24)
+            .margin_top(24)
             .build();
         container.add_css_class("vocab-popup");
         container.append(&header_row);
