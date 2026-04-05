@@ -1438,6 +1438,7 @@ pub fn adjust_font_size(state: &mut AppState, delta: i32) {
     }
     state.config.font_size = new_size;
     reapply_font(state);
+    crate::input::navigation::resnap_page(state);
     crate::config::save(&state.config);
 }
 
@@ -1449,6 +1450,7 @@ pub fn reset_font_size(state: &mut AppState) {
     }
     state.config.font_size = default;
     reapply_font(state);
+    crate::input::navigation::resnap_page(state);
     crate::config::save(&state.config);
 }
 
@@ -1464,6 +1466,7 @@ pub fn cycle_font(state: &mut AppState, forward: bool) {
     };
     state.config.font_family = cycle[next].to_string();
     reapply_font(state);
+    crate::input::navigation::resnap_page(state);
     crate::config::save(&state.config);
     let position = format!("{}/{}", next + 1, cycle.len());
     let body = format!("{} {}pt", state.config.font_family, state.config.font_size);

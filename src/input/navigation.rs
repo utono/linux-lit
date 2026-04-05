@@ -332,6 +332,41 @@ fn prev_dialogue_line(buffer: &sourceview5::Buffer, current: usize) -> Option<us
     None
 }
 
+/// Find the best page-top for a forward page turn targeting `target_line`.
+/// Backs up from the target to include the speaker name and any blank line
+/// between the speaker and the dialogue, so the new page starts with context.
+fn page_turn_top(buffer: &sourceview5::Buffer, target_line: usize) -> usize {
+    use crate::db::line_types;
+    if target_line == 0 {
+        return 0;
+    }
+    let mut top = target_line;
+    // Walk backward over blank lines
+    while top > 0 {
+        let text = buffer_line_text(buffer, top - 1);
+        if text.trim().is_empty() {
+            top -= 1;
+        } else {
+            break;
+        }
+    }
+    // If the line above is a speaker name, include it
+    if top > 0 {
+        let text = buffer_line_text(buffer, top - 1);
+        if line_types::is_speaker(text.trim()) {
+            top -= 1;
+            // Also include a blank line above the speaker
+            if top > 0 {
+                let above = buffer_line_text(buffer, top - 1);
+                if above.trim().is_empty() {
+                    top -= 1;
+                }
+            }
+        }
+    }
+    top
+}
+
 /// Previous chapter line (`[` key).
 pub fn jump_to_prev_chapter(state: &mut AppState) {
     let target = {
@@ -485,16 +520,23 @@ fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
         return false;
     }
     // Sum line heights from page_top to determine if `line` fits in the viewport.
-    // Trigger page turn one line early (use < instead of <=) so playback sync
-    // turns the page as the last line plays.
+    // Reserve one line height so the page turns when the cursor reaches the
+    // last visible line, rather than waiting for the next (off-screen) line.
     let widget_height = state.text_view.height();
     let buf = &state.buffer;
+    let line_h = if let Some(iter) = buf.iter_at_line(line as i32) {
+        let (_y, h) = state.text_view.line_yrange(&iter);
+        h
+    } else {
+        return false;
+    };
+    let budget = widget_height - line_h;
     let mut total_height = 0;
     for i in state.page_top_line..=line {
         let Some(iter) = buf.iter_at_line(i as i32) else { return false };
         let (_y, h) = state.text_view.line_yrange(&iter);
         total_height += h;
-        if total_height > widget_height {
+        if total_height > budget {
             return false;
         }
     }
@@ -516,8 +558,9 @@ fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize) {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
             if !is_line_fully_visible(state, state.current_line) {
-                // Put the target line at the top of the new page
-                set_page(state, state.current_line, PageDirection::Forward);
+                // Put the dialogue line at the top, backing up to include speaker name
+                let new_top = page_turn_top(&state.buffer, state.current_line);
+                set_page(state, new_top, PageDirection::Forward);
             }
         }
     }
@@ -802,6 +845,12 @@ fn set_page(state: &mut AppState, new_top: usize, direction: PageDirection) {
     }
 }
 
+/// Re-scroll to the current page_top and recalculate the bottom clip.
+/// Called after font/size changes that invalidate line heights.
+pub fn resnap_page(state: &mut AppState) {
+    snap_scroll_to_line(state, state.page_top_line);
+}
+
 /// Set the page top line and scroll instantly (no animation). For gg/G/restore.
 fn set_page_instant(state: &mut AppState, new_top: usize) {
     clear_old_page_dim(state);
@@ -943,12 +992,17 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
         crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
         crate::config::NavigationMode::EReader => {
             if !is_line_fully_visible(state, state.current_line) {
+                let new_top = if state.current_line >= state.page_top_line {
+                    page_turn_top(&state.buffer, state.current_line)
+                } else {
+                    state.current_line
+                };
                 log_fmt!(
-                    "SYNC_PAGE: ensure_visible triggered, current_line={} page_top={}",
-                    state.current_line, state.page_top_line
+                    "SYNC_PAGE: ensure_visible triggered, current_line={} page_top={} new_top={}",
+                    state.current_line, state.page_top_line, new_top
                 );
                 let dir = if state.current_line >= state.page_top_line { PageDirection::Forward } else { PageDirection::Backward };
-                set_page(state, state.current_line, dir);
+                set_page(state, new_top, dir);
             }
         }
     }
