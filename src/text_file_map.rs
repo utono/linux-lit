@@ -188,14 +188,12 @@ pub fn build_line_map(file_lines: &[String], work_lines: &[Line], is_prose: bool
         .copied()
         .collect();
 
-    // Sentence groups: contiguous buffer-line ranges forming sentences (prose only)
-    let sentence_groups = if is_prose {
+    // Sentence groups: contiguous buffer-line ranges forming sentences
+    let sentence_groups = {
         let mut groups = build_sentence_groups_from_db(&buffer_to_work, work_lines)
             .unwrap_or_else(|| build_sentence_groups(file_lines));
         apply_mid_line_offsets(&mut groups, file_lines);
         groups
-    } else {
-        Vec::new()
     };
 
     LineMap {

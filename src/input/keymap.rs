@@ -19,6 +19,7 @@ fn load_selected_work(
 ) {
     let abbrev = state.borrow().picker.selected_abbrev();
     if let Some(abbrev) = abbrev {
+        crate::logging::log(&format!("PICKER: selected work '{}'", abbrev));
         {
             let s = state.borrow();
             let _ = s.cmd_tx.try_send(crate::mpv::commands::MpvCommand::Pause);
@@ -29,6 +30,7 @@ fn load_selected_work(
         let handle = tokio_handle.clone();
         glib::spawn_future_local(async move {
             let t_db = std::time::Instant::now();
+            let abbrev_for_log = abbrev.clone();
             let work = handle
                 .spawn_blocking(move || {
                     let conn =
@@ -36,26 +38,124 @@ fn load_selected_work(
                     crate::db::queries::load_work(&conn, &abbrev)
                 })
                 .await;
-            crate::logging::log(&format!("TIMING: load_work DB query {:.0}ms", t_db.elapsed().as_millis()));
+            crate::logging::log(&format!("PICKER: load_work '{}' DB query {:.0}ms", abbrev_for_log, t_db.elapsed().as_millis()));
             match work {
                 Ok(Ok(work)) => {
-                    let mut s = state_clone.borrow_mut();
-                    s.correction_overlay.hide();
-                    crate::app::display_work(&mut s, work);
+                    crate::logging::log(&format!(
+                        "PICKER: loaded '{}' lines={} timestamps={} text_file={:?}",
+                        work.abbrev, work.lines.len(), work.timestamps.len(), work.text_file.is_some()
+                    ));
+                    {
+                        let mut s = state_clone.borrow_mut();
+                        s.correction_overlay.hide();
+                        crate::app::display_work(&mut s, work);
+                        crate::logging::log(&format!(
+                            "PICKER: after display_work current_line={} page_top={} line_map={} effective_lines={}",
+                            s.current_line, s.page_top_line, s.line_map.is_some(), s.effective_line_count()
+                        ));
+                    }
+                    // Defer scroll until GTK has laid out the new buffer,
+                    // matching the pattern used by the initial app load.
+                    glib::idle_add_local_once(move || {
+                        navigation::restore_cursor(&mut state_clone.borrow_mut());
+                    });
                 }
                 Ok(Err(e)) => {
+                    crate::logging::log(&format!("PICKER: load_work error: {}", e));
                     let s = state_clone.borrow();
                     s.correction_overlay.hide();
-                    eprintln!("Failed to load work: {}", e);
                 }
                 Err(e) => {
+                    crate::logging::log(&format!("PICKER: task join error: {}", e));
                     let s = state_clone.borrow();
                     s.correction_overlay.hide();
-                    eprintln!("Task join error: {}", e);
                 }
             }
         });
     }
+}
+
+/// Handle concordance word selection: partition hits by work, set up same-work
+/// concordance state, and spawn new instances for other works.
+fn handle_concordance_word_selection(
+    state: &Rc<RefCell<AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+    word: String,
+) {
+    let state_clone = Rc::clone(state);
+    let handle = tokio_handle.clone();
+    let word_clone = word.clone();
+    glib::spawn_future_local(async move {
+        let hits = handle
+            .spawn_blocking(move || {
+                let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
+                crate::db::concordance::find_word_occurrences(&conn, &word_clone)
+                    .unwrap_or_default()
+            })
+            .await
+            .unwrap_or_default();
+        if hits.is_empty() {
+            return;
+        }
+
+        let current_abbrev = state_clone
+            .borrow()
+            .current_work
+            .as_ref()
+            .map(|w| w.abbrev.clone())
+            .unwrap_or_default();
+
+        // Partition hits by work
+        let mut current_work_hits = Vec::new();
+        let mut other_works: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
+
+        for h in hits {
+            if h.work_abbrev == current_abbrev {
+                current_work_hits.push(crate::concordance::ConcordanceHit {
+                    work_abbrev: h.work_abbrev,
+                    work_title: h.title,
+                    author: h.author,
+                    line_mapping_id: h.line_mapping_id,
+                    div1: h.div1,
+                    div2: h.div2,
+                    line_in_div: h.line_in_div,
+                    canonical_text: h.canonical_text,
+                    has_audio: h.has_audio,
+                });
+            } else {
+                // Keep only the first hit per other work
+                other_works.entry(h.work_abbrev.clone()).or_insert(h.line_mapping_id);
+            }
+        }
+
+        // Spawn a new instance for each other work
+        if !other_works.is_empty() {
+            let exe = std::env::current_exe()
+                .unwrap_or_else(|_| std::path::PathBuf::from("target/debug/linux-lit"));
+            for (abbrev, line_id) in &other_works {
+                crate::logging::log(&format!(
+                    "CONC_SPAWN: work='{}' line_id={}", abbrev, line_id
+                ));
+                let _ = std::process::Command::new(&exe)
+                    .env("LINUX_LIT_WORK", abbrev)
+                    .env("LINUX_LIT_LINE_ID", line_id.to_string())
+                    .spawn();
+            }
+        }
+
+        // Set up concordance state for current work's hits (if any)
+        if !current_work_hits.is_empty() {
+            let conc_state = crate::concordance::ConcordanceState::new(
+                word.clone(),
+                current_work_hits,
+            );
+            let mut s = state_clone.borrow_mut();
+            s.concordance_bar.update(&conc_state.status_label(), &conc_state.status_work());
+            s.concordance_state = Some(conc_state);
+            drop(s);
+            navigation::concordance_jump_to_current(&state_clone, &handle);
+        }
+    });
 }
 
 /// Handle a key press. Returns true if consumed.
@@ -99,9 +199,13 @@ pub fn handle_key(
                 })
                 .await
                 .unwrap_or_default();
-            let mut s = state_clone.borrow_mut();
-            s.concordance_word_picker.set_words(words);
-            s.concordance_word_picker.show();
+            {
+                let mut s = state_clone.borrow_mut();
+                s.concordance_word_picker.set_words(words);
+            }
+            // show() calls set_text("") which triggers connect_changed → borrow(),
+            // so the borrow_mut must be dropped first.
+            state_clone.borrow().concordance_word_picker.show();
         });
         return true;
     }
@@ -560,46 +664,7 @@ pub fn handle_key(
                 let selected = state.borrow().concordance_picker.selected_word();
                 state.borrow().concordance_picker.hide();
                 if let Some(word) = selected {
-                    let state_clone = Rc::clone(state);
-                    let handle = tokio_handle.clone();
-                    let word_clone = word.clone();
-                    glib::spawn_future_local(async move {
-                        let hits = handle
-                            .spawn_blocking(move || {
-                                let conn = crate::db::queries::open_db()
-                                    .expect("Failed to open lit.db");
-                                crate::db::concordance::find_word_occurrences(&conn, &word_clone)
-                                    .unwrap_or_default()
-                            })
-                            .await
-                            .unwrap_or_default();
-                        if hits.is_empty() {
-                            return;
-                        }
-                        let conc_hits: Vec<crate::concordance::ConcordanceHit> = hits
-                            .into_iter()
-                            .map(|h| crate::concordance::ConcordanceHit {
-                                work_abbrev: h.work_abbrev,
-                                work_title: h.title,
-                                author: h.author,
-                                line_mapping_id: h.line_mapping_id,
-                                div1: h.div1,
-                                div2: h.div2,
-                                line_in_div: h.line_in_div,
-                                canonical_text: h.canonical_text,
-                                has_audio: h.has_audio,
-                            })
-                            .collect();
-                        let conc_state = crate::concordance::ConcordanceState::new(
-                            word.clone(),
-                            conc_hits,
-                        );
-                        let mut s = state_clone.borrow_mut();
-                        s.concordance_bar.update(&conc_state.status_label(), &conc_state.status_work());
-                        s.concordance_state = Some(conc_state);
-                        drop(s);
-                        navigation::concordance_jump_to_current(&state_clone, &handle);
-                    });
+                    handle_concordance_word_selection(state, tokio_handle, word);
                 }
                 return true;
             }
@@ -624,46 +689,7 @@ pub fn handle_key(
                 let selected = state.borrow().concordance_word_picker.selected_word();
                 state.borrow().concordance_word_picker.hide();
                 if let Some(word) = selected {
-                    let state_clone = Rc::clone(state);
-                    let handle = tokio_handle.clone();
-                    let word_clone = word.clone();
-                    glib::spawn_future_local(async move {
-                        let hits = handle
-                            .spawn_blocking(move || {
-                                let conn = crate::db::queries::open_db()
-                                    .expect("Failed to open lit.db");
-                                crate::db::concordance::find_word_occurrences(&conn, &word_clone)
-                                    .unwrap_or_default()
-                            })
-                            .await
-                            .unwrap_or_default();
-                        if hits.is_empty() {
-                            return;
-                        }
-                        let conc_hits: Vec<crate::concordance::ConcordanceHit> = hits
-                            .into_iter()
-                            .map(|h| crate::concordance::ConcordanceHit {
-                                work_abbrev: h.work_abbrev,
-                                work_title: h.title,
-                                author: h.author,
-                                line_mapping_id: h.line_mapping_id,
-                                div1: h.div1,
-                                div2: h.div2,
-                                line_in_div: h.line_in_div,
-                                canonical_text: h.canonical_text,
-                                has_audio: h.has_audio,
-                            })
-                            .collect();
-                        let conc_state = crate::concordance::ConcordanceState::new(
-                            word.clone(),
-                            conc_hits,
-                        );
-                        let mut s = state_clone.borrow_mut();
-                        s.concordance_bar.update(&conc_state.status_label(), &conc_state.status_work());
-                        s.concordance_state = Some(conc_state);
-                        drop(s);
-                        navigation::concordance_jump_to_current(&state_clone, &handle);
-                    });
+                    handle_concordance_word_selection(state, tokio_handle, word);
                 }
                 return true;
             }
@@ -1259,10 +1285,14 @@ pub fn handle_key(
                         })
                         .await
                         .unwrap_or_default();
-                    let mut s = state_clone.borrow_mut();
-                    s.correction_overlay.hide();
-                    s.media_picker.set_items(items);
-                    s.media_picker.show();
+                    {
+                        let mut s = state_clone.borrow_mut();
+                        s.correction_overlay.hide();
+                        s.media_picker.set_items(items);
+                    }
+                    // show() calls set_text("") which triggers connect_changed → borrow(),
+                    // so the borrow_mut must be dropped first.
+                    state_clone.borrow().media_picker.show();
                 });
             }
             true
@@ -1270,9 +1300,14 @@ pub fn handle_key(
         "r" => {
             let has_concordance = state.borrow().concordance_state.is_some();
             if has_concordance {
+                let current_abbrev = state.borrow().current_work.as_ref().map(|w| w.abbrev.clone());
                 let advanced = {
                     let mut s = state.borrow_mut();
-                    s.concordance_state.as_mut().map(|c| c.advance()).unwrap_or(false)
+                    if let (Some(conc), Some(ref abbrev)) = (s.concordance_state.as_mut(), &current_abbrev) {
+                        conc.advance_within_work(abbrev)
+                    } else {
+                        false
+                    }
                 };
                 if advanced {
                     navigation::concordance_jump_to_current(state, tokio_handle);
@@ -1285,9 +1320,14 @@ pub fn handle_key(
         "R" => {
             let has_concordance = state.borrow().concordance_state.is_some();
             if has_concordance {
+                let current_abbrev = state.borrow().current_work.as_ref().map(|w| w.abbrev.clone());
                 let retreated = {
                     let mut s = state.borrow_mut();
-                    s.concordance_state.as_mut().map(|c| c.retreat()).unwrap_or(false)
+                    if let (Some(conc), Some(ref abbrev)) = (s.concordance_state.as_mut(), &current_abbrev) {
+                        conc.retreat_within_work(abbrev)
+                    } else {
+                        false
+                    }
                 };
                 if retreated {
                     navigation::concordance_jump_to_current(state, tokio_handle);

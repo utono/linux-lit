@@ -512,8 +512,19 @@ pub fn build_window(
 
     window.set_child(Some(&vbox));
 
-    let last_work = config.last_work.clone();
-    let last_line = config.last_line;
+    // Override startup work/line with env vars (used by concordance cross-work spawn)
+    let (last_work, last_line) = if let Ok(work_abbrev) = std::env::var("LINUX_LIT_WORK") {
+        let line_id: Option<i64> = std::env::var("LINUX_LIT_LINE_ID").ok()
+            .and_then(|s| s.parse().ok());
+        crate::logging::log(&format!(
+            "STARTUP: concordance spawn work='{}' line_id={:?}", work_abbrev, line_id
+        ));
+        // Store line_id for display_work_at to resolve after buffer is built.
+        // Use 0 as placeholder — display_work_at will override with the resolved buf_idx.
+        (Some(work_abbrev), 0)
+    } else {
+        (config.last_work.clone(), config.last_line)
+    };
     let dim_enabled = config.dim_enabled;
     let vocab_highlight_visible = config.vocab_highlight_visible;
 
@@ -695,13 +706,23 @@ pub fn build_window(
                 .await;
             match work {
                 Ok(Ok(work)) => {
+                    // Check if this is a concordance spawn with a target line
+                    let target_line_id: Option<i64> = std::env::var("LINUX_LIT_LINE_ID").ok()
+                        .and_then(|s| s.parse().ok());
                     {
                         let mut s = state_clone.borrow_mut();
-                        display_work(&mut s, work);
+                        if target_line_id.is_some() {
+                            display_work_at(&mut s, work, target_line_id);
+                        } else {
+                            display_work(&mut s, work);
+                        }
                         // Set cursor to MRU line (or 0 for first canonical line)
-                        s.current_line = last_line.min(
-                            s.effective_line_count().saturating_sub(1),
-                        );
+                        // display_work_at already set current_line for concordance spawns
+                        if target_line_id.is_none() {
+                            s.current_line = last_line.min(
+                                s.effective_line_count().saturating_sub(1),
+                            );
+                        }
                     }
                     // Defer highlight + scroll until after GTK lays out the text
                     glib::idle_add_local_once(move || {
@@ -759,6 +780,12 @@ pub fn clear_display(state: &mut AppState) {
 }
 
 pub fn display_work(state: &mut AppState, work: Work) {
+    display_work_at(state, work, None);
+}
+
+/// Load and display a work, optionally overriding the saved cursor position.
+/// `target_line_id` is a line_mapping_id to position the cursor on after load.
+pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<i64>) {
     state.loading_work.set(true);
 
     // Save position of the outgoing work before switching
@@ -1019,6 +1046,21 @@ pub fn display_work(state: &mut AppState, work: Work) {
     state.current_line = state.current_line.min(
         state.effective_line_count().saturating_sub(1),
     );
+
+    // If a concordance target was specified, resolve it to a buffer line
+    if let Some(target_id) = target_line_id {
+        if let Some(work) = &state.current_work {
+            if let Some(work_idx) = work.lines.iter().position(|l| l.id == target_id) {
+                let buf_idx = if let Some(ref lm) = state.line_map {
+                    lm.work_to_buffer[work_idx]
+                } else {
+                    work_idx
+                };
+                state.current_line = buf_idx;
+                state.page_top_line = buf_idx;
+            }
+        }
+    }
 
     // Dim all lines except the current one; defer scroll to idle callback
     // so GTK has time to lay out the new buffer before we query geometry.

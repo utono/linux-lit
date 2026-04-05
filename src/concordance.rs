@@ -54,24 +54,58 @@ impl ConcordanceState {
         self.occurrences.get(next).map(|h| h.work_abbrev.as_str())
     }
 
-    /// Advance index forward. Returns false if already at the end.
+    /// Advance index forward, wrapping to the start after the last occurrence.
     pub fn advance(&mut self) -> bool {
-        if self.current_index + 1 < self.occurrences.len() {
-            self.current_index += 1;
-            true
-        } else {
-            false
+        if self.occurrences.is_empty() {
+            return false;
         }
+        self.current_index = (self.current_index + 1) % self.occurrences.len();
+        true
     }
 
-    /// Move index backward. Returns false if already at the start.
+    /// Move index backward, wrapping to the end before the first occurrence.
     pub fn retreat(&mut self) -> bool {
+        if self.occurrences.is_empty() {
+            return false;
+        }
         if self.current_index > 0 {
             self.current_index -= 1;
-            true
         } else {
-            false
+            self.current_index = self.occurrences.len() - 1;
         }
+        true
+    }
+
+    /// Advance to the next occurrence in the same work. Wraps within same-work hits.
+    pub fn advance_within_work(&mut self, work_abbrev: &str) -> bool {
+        if self.occurrences.is_empty() {
+            return false;
+        }
+        let len = self.occurrences.len();
+        for i in 1..=len {
+            let idx = (self.current_index + i) % len;
+            if self.occurrences[idx].work_abbrev == work_abbrev {
+                self.current_index = idx;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Retreat to the previous occurrence in the same work. Wraps within same-work hits.
+    pub fn retreat_within_work(&mut self, work_abbrev: &str) -> bool {
+        if self.occurrences.is_empty() {
+            return false;
+        }
+        let len = self.occurrences.len();
+        for i in 1..=len {
+            let idx = (self.current_index + len - i) % len;
+            if self.occurrences[idx].work_abbrev == work_abbrev {
+                self.current_index = idx;
+                return true;
+            }
+        }
+        false
     }
 
     /// Current hit, if any.
