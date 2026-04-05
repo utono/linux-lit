@@ -483,6 +483,13 @@ pub fn restore_cursor(state: &mut AppState) {
                 text_view.scroll_to_iter(&mut iter, 0.0, true, 0.0, 0.0);
             }
             update_bottom_clip(&text_view, &bottom_clip, line, line_count);
+
+            // Second clip update after layout has fully settled
+            let tv2 = text_view.clone();
+            let bc2 = bottom_clip.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_millis(200), move || {
+                update_bottom_clip(&tv2, &bc2, line, line_count);
+            });
         } else {
             let adj = scrolled_window.vadjustment();
             let max_scroll = adj.upper() - adj.page_size();
@@ -1020,6 +1027,14 @@ pub fn update_highlight_deferred_scroll(state: &mut AppState) {
         }
         update_bottom_clip(&text_view, &bottom_clip, line, line_count);
         loading_flag.set(false);
+
+        // Schedule a second clip update after layout has fully settled,
+        // to catch cases where line heights weren't final at 50ms.
+        let tv2 = text_view.clone();
+        let bc2 = bottom_clip.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_millis(200), move || {
+            update_bottom_clip(&tv2, &bc2, line, line_count);
+        });
     });
 }
 
