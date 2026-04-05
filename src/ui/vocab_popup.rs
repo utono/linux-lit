@@ -102,6 +102,10 @@ impl VocabPopup {
         self.container.is_visible()
     }
 
+    pub fn widget(&self) -> &GtkBox {
+        &self.container
+    }
+
 
     /// Render the popup content for a given word and view.
     pub fn update(

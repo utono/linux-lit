@@ -2,6 +2,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use gtk4::prelude::*;
+use libadwaita as adw;
+use libadwaita::prelude::AnimationExt;
 
 use crate::app::AppState;
 use crate::input::navigation;
@@ -897,17 +899,56 @@ pub fn handle_key(
         }
     }
 
-    // Vocab popup keys (when popup is visible and auto mode is on)
+    // Vocab popup: backslash/numbersign show popup or cycle words, with 3s auto-hide
+    if key_name == "backslash" || key_name == "numbersign" {
+        let popup_visible = state.borrow().vocab_popup.is_visible();
+        if popup_visible {
+            if key_name == "backslash" {
+                crate::app::vocab_popup_next(&mut state.borrow_mut());
+            } else {
+                crate::app::vocab_popup_prev(&mut state.borrow_mut());
+            }
+        } else {
+            crate::app::open_vocab_popup(&mut state.borrow_mut());
+        }
+        // Reset the auto-hide timer: bump generation, schedule fade after 3s
+        let gen = {
+            let s = state.borrow();
+            let next = s.vocab_popup_fade_gen.get() + 1;
+            s.vocab_popup_fade_gen.set(next);
+            next
+        };
+        let state_clone = Rc::clone(state);
+        glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+            let s = state_clone.borrow();
+            if s.vocab_popup_fade_gen.get() != gen {
+                return; // a newer press reset the timer
+            }
+            if !s.vocab_popup.is_visible() {
+                return;
+            }
+            // Crossfade out the popup
+            let widget = s.vocab_popup.widget().clone();
+            let target = adw::CallbackAnimationTarget::new(move |value| {
+                widget.set_opacity(value as f64);
+                if value <= 0.0 {
+                    widget.set_visible(false);
+                    widget.set_opacity(1.0); // restore for next show
+                }
+            });
+            let anim = adw::TimedAnimation::new(
+                s.vocab_popup.widget(),
+                1.0, 0.0, 500, target,
+            );
+            anim.set_easing(adw::Easing::EaseOutQuad);
+            anim.play();
+        });
+        return true;
+    }
+
+    // Other vocab popup keys (when popup is visible)
     if state.borrow().vocab_popup.is_visible() {
         match key_name {
-            "backslash" => {
-                crate::app::vocab_popup_next(&mut state.borrow_mut());
-                return true;
-            }
-            "numbersign" => {
-                crate::app::vocab_popup_prev(&mut state.borrow_mut());
-                return true;
-            }
             "g" => {
                 crate::app::vocab_popup_toggle_view(&mut state.borrow_mut());
                 return true;
@@ -1408,6 +1449,9 @@ pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &cra
 
     // Update vocab tag foreground
     state.vocab_tag.set_property("foreground", &theme.vocab_fg);
+
+    // Update cursor line highlight from root_color
+    state.cursor_line_tag.set_property("paragraph-background", &theme.cursor_line_bg);
 
     // Write .current_theme file
     let home = std::env::var("HOME").unwrap_or_default();

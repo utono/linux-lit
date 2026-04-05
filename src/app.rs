@@ -115,6 +115,10 @@ pub struct AppState {
     pub vocab_popup_index: usize,
     pub vocab_popup_view: crate::ui::vocab_popup::VocabView,
     pub vocab_popup_auto: bool,
+    /// Generation counter for the vocab popup auto-hide timer. Incremented
+    /// on each backslash/numbersign press; when the timer fires it only hides
+    /// if the generation hasn't changed.
+    pub vocab_popup_fade_gen: Rc<Cell<u64>>,
     pub concordance_picker: crate::ui::concordance_picker::ConcordancePicker,
     pub concordance_state: Option<crate::concordance::ConcordanceState>,
     pub concordance_word_picker: crate::ui::concordance_word_picker::ConcordanceWordPicker,
@@ -575,6 +579,7 @@ pub fn build_window(
         vocab_popup_index: 0,
         vocab_popup_view: crate::ui::vocab_popup::VocabView::Definition,
         vocab_popup_auto: false,
+        vocab_popup_fade_gen: Rc::new(Cell::new(0)),
         concordance_picker,
         concordance_state: None,
         concordance_word_picker,
