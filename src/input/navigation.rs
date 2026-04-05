@@ -481,26 +481,12 @@ fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
     if state.loading_work.get() {
         return true;
     }
-    let Some(iter) = state.buffer.iter_at_line(line as i32) else {
-        return false;
-    };
-    let (buf_y, h) = state.text_view.line_yrange(&iter);
-    let (_, win_y) = state.text_view.buffer_to_window_coords(
-        gtk4::TextWindowType::Widget,
-        0,
-        buf_y,
-    );
-    let widget_height = state.text_view.height();
-    // A line is fully visible only if its entire height fits above the clip zone.
-    let clip_height = state.bottom_clip.height();
-    let visible = win_y >= 0 && (win_y + h) <= widget_height - clip_height;
-    if !visible {
-        log_fmt!(
-            "VISIBLE: line={} win_y={} h={} widget_h={} clip_h={} => NOT visible",
-            line, win_y, h, widget_height, clip_height
-        );
-    }
-    visible
+    // A line is visible if it's within the page budget from page_top.
+    // Use max_lines - 1 so the last visible line triggers a page turn when
+    // the cursor reaches it — this way playback sync turns the page as the
+    // last line plays, rather than waiting for the next (off-screen) line.
+    let max_lines = 33;
+    line >= state.page_top_line && line < state.page_top_line + max_lines
 }
 
 
@@ -830,26 +816,35 @@ fn snap_scroll_to_line(state: &mut AppState, line: usize) {
     });
 }
 
-/// Measure the pixel height of a representative buffer line.
-fn measure_line_height(text_view: &sourceview5::View) -> i32 {
-    let buf = text_view.buffer();
-    let iter = buf.iter_at_line(0).unwrap_or_else(|| buf.start_iter());
-    let (_y, h) = text_view.line_yrange(&iter);
-    h.max(1)
-}
-
-/// Compute the gap between the last fully visible line and the viewport bottom,
-/// then set the bottom_clip overlay height to cover it.
+/// Set the bottom clip to hide everything below 34 lines of content.
+/// Uses buffer line_yrange (absolute coords) to sum heights from page_top,
+/// avoiding buffer_to_window_coords which may be stale after scroll_to_iter.
 fn update_bottom_clip(
     text_view: &sourceview5::View,
     bottom_clip: &gtk4::Box,
-    _page_top: usize,
-    _line_count: usize,
+    page_top: usize,
+    line_count: usize,
 ) {
     let widget_height = text_view.height();
-    let line_height = measure_line_height(text_view);
-    let remainder = widget_height % line_height;
-    bottom_clip.set_height_request(remainder);
+    if widget_height <= 0 {
+        bottom_clip.set_height_request(0);
+        return;
+    }
+
+    let max_lines: usize = 34;
+    let buf = text_view.buffer();
+
+    // Sum heights of up to max_lines lines starting from page_top
+    let mut total_height = 0;
+    let end = (page_top + max_lines).min(line_count);
+    for i in page_top..end {
+        let Some(iter) = buf.iter_at_line(i as i32) else { break };
+        let (_y, h) = text_view.line_yrange(&iter);
+        total_height += h;
+    }
+
+    let clip = (widget_height - total_height).max(0);
+    bottom_clip.set_height_request(clip);
 }
 
 /// Scroll the viewport by a fixed step without moving the cursor or seeking audio.
@@ -1153,9 +1148,10 @@ fn lines_per_page(state: &AppState) -> usize {
         return 15;
     }
 
+    let max_lines = 34;
     let mut count = 0;
     for i in start..line_count {
-        if !is_line_fully_visible(state, i) {
+        if count >= max_lines || !is_line_fully_visible(state, i) {
             break;
         }
         count += 1;
