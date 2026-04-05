@@ -491,11 +491,9 @@ fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
         buf_y,
     );
     let widget_height = state.text_view.height();
-    // A line is visible if its top is above the clip zone. Lines that start
-    // above the clip but extend slightly into it are still readable — only
-    // lines whose top is inside the clip zone are truly hidden.
+    // A line is fully visible only if its entire height fits above the clip zone.
     let clip_height = state.bottom_clip.height();
-    let visible = win_y >= 0 && win_y < widget_height - clip_height;
+    let visible = win_y >= 0 && (win_y + h) <= widget_height - clip_height;
     if !visible {
         log_fmt!(
             "VISIBLE: line={} win_y={} h={} widget_h={} clip_h={} => NOT visible",
