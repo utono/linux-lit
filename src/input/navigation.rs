@@ -485,7 +485,7 @@ fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
     // Use max_lines - 1 so the last visible line triggers a page turn when
     // the cursor reaches it — this way playback sync turns the page as the
     // last line plays, rather than waiting for the next (off-screen) line.
-    let max_lines = 33;
+    let max_lines = 34;
     line >= state.page_top_line && line < state.page_top_line + max_lines
 }
 
@@ -831,7 +831,7 @@ fn update_bottom_clip(
         return;
     }
 
-    let max_lines: usize = 34;
+    let max_lines: usize = 35;
     let buf = text_view.buffer();
 
     // Sum heights of up to max_lines lines starting from page_top
