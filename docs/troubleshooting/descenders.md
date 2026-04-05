@@ -12,10 +12,11 @@ Additionally, `lines_per_page` counted visible lines by walking the buffer and c
 
 ## Fix
 
-**Cap visible lines at 34.** Both `update_bottom_clip` and `lines_per_page` enforce a maximum of 34 buffer lines per page.
+Three components enforce a consistent 35-line page cap:
 
-- `update_bottom_clip` sums the actual `line_yrange` heights of 34 lines from `page_top`, then sets `clip = widget_height - total_height`. With 34 lines at 31px each (1054px) in a 1092px viewport, the clip is 38px — large enough to hide any partial line even with scroll offset imprecision.
-- `lines_per_page` caps its loop at 34 iterations, preventing page turns from advancing past the clipped region.
+- **`update_bottom_clip`** sums actual `line_yrange` heights of 35 lines from `page_top`, then sets `clip = widget_height - total_height`. With 35 lines at 31px each (1085px) in a 1092px viewport, the clip is 7px. The height summation avoids the modulo alignment problem because `line_yrange` values are buffer-absolute, independent of scroll position.
+- **`lines_per_page`** caps its loop at 35 iterations, preventing page turns from advancing past the clipped region.
+- **`is_line_fully_visible`** uses a simple range check: `line >= page_top && line < page_top + 34`. The limit is 34 (one less than the clip cap) so that playback sync triggers a page turn as the last visible line plays, rather than waiting for the next off-screen line.
 
 **Why not `bottom_margin`?** GTK's `set_bottom_margin()` adds padding inside the text view's content area. But the clip overlay sits on top of the scrolled window as a sibling overlay, so it covers the margin too. The margin approach doesn't work with the overlay-based clipping architecture.
 
