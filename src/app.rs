@@ -975,8 +975,7 @@ pub fn display_work(state: &mut AppState, work: Work) {
     crate::logging::log(&format!("TIMING: gutter setup {:.0}ms", t5.elapsed().as_millis()));
 
     // Set per-author default font size
-    let author = state.current_work.as_ref().map(|w| w.author.as_str()).unwrap_or("");
-    state.config.font_size = if author == "Shakespeare" { 18 } else { crate::config::default_font_size() };
+    state.config.font_size = crate::config::default_font_size();
 
     // Apply font tag to new buffer content
     let t6 = std::time::Instant::now();

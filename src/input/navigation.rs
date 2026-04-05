@@ -481,12 +481,24 @@ fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
     if state.loading_work.get() {
         return true;
     }
-    // A line is visible if it's within the page budget from page_top.
-    // Use max_lines - 1 so the last visible line triggers a page turn when
-    // the cursor reaches it — this way playback sync turns the page as the
-    // last line plays, rather than waiting for the next (off-screen) line.
-    let max_lines = 34;
-    line >= state.page_top_line && line < state.page_top_line + max_lines
+    if line < state.page_top_line {
+        return false;
+    }
+    // Sum line heights from page_top to determine if `line` fits in the viewport.
+    // Trigger page turn one line early (use < instead of <=) so playback sync
+    // turns the page as the last line plays.
+    let widget_height = state.text_view.height();
+    let buf = &state.buffer;
+    let mut total_height = 0;
+    for i in state.page_top_line..=line {
+        let Some(iter) = buf.iter_at_line(i as i32) else { return false };
+        let (_y, h) = state.text_view.line_yrange(&iter);
+        total_height += h;
+        if total_height > widget_height {
+            return false;
+        }
+    }
+    true
 }
 
 
@@ -831,15 +843,17 @@ fn update_bottom_clip(
         return;
     }
 
-    let max_lines: usize = 35;
     let buf = text_view.buffer();
 
-    // Sum heights of up to max_lines lines starting from page_top
+    // Walk lines from page_top, summing heights until we exceed the viewport.
+    // The clip hides everything past the last line that fits entirely.
     let mut total_height = 0;
-    let end = (page_top + max_lines).min(line_count);
-    for i in page_top..end {
+    for i in page_top..line_count {
         let Some(iter) = buf.iter_at_line(i as i32) else { break };
         let (_y, h) = text_view.line_yrange(&iter);
+        if total_height + h > widget_height {
+            break;
+        }
         total_height += h;
     }
 
@@ -1148,12 +1162,18 @@ fn lines_per_page(state: &AppState) -> usize {
         return 15;
     }
 
-    let max_lines = 34;
+    // Sum line heights to count how many fit in the viewport.
+    let widget_height = state.text_view.height();
+    let buf = &state.buffer;
+    let mut total_height = 0;
     let mut count = 0;
     for i in start..line_count {
-        if count >= max_lines || !is_line_fully_visible(state, i) {
+        let Some(iter) = buf.iter_at_line(i as i32) else { break };
+        let (_y, h) = state.text_view.line_yrange(&iter);
+        if total_height + h > widget_height {
             break;
         }
+        total_height += h;
         count += 1;
     }
 
