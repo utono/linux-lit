@@ -866,7 +866,14 @@ pub fn display_work(state: &mut AppState, work: Work) {
     // Build buffer text (with or without sign column)
     state.line_map = None;
     state.dialogue_formatting_active = false;
-    state.text_view.set_left_margin(state.config.text_margins as i32);
+    // Poetry/plays get a larger left margin for visual indentation
+    let work_type = state.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("");
+    let left_margin = if crate::db::line_types::is_prose_work(work_type) {
+        state.config.text_margins as i32
+    } else {
+        state.config.text_margins as i32 + 120
+    };
+    state.text_view.set_left_margin(left_margin);
     state.translations_visible = false;
     state.translation_lines = Vec::new();
     // Load translations for this work
@@ -974,8 +981,15 @@ pub fn display_work(state: &mut AppState, work: Work) {
 
     crate::logging::log(&format!("TIMING: gutter setup {:.0}ms", t5.elapsed().as_millis()));
 
-    // Set per-author default font size
-    state.config.font_size = crate::config::default_font_size();
+    // Set font size based on work type: 18pt for plays/poetry, 22pt for prose
+    let is_prose = state.current_work.as_ref()
+        .map(|w| crate::db::line_types::is_prose_work(&w.work_type))
+        .unwrap_or(true);
+    state.config.font_size = if is_prose {
+        crate::config::default_font_size()
+    } else {
+        18
+    };
 
     // Apply font tag to new buffer content
     let t6 = std::time::Instant::now();

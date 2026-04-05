@@ -521,23 +521,14 @@ fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
         return false;
     }
     // Sum line heights from page_top to determine if `line` fits in the viewport.
-    // Reserve one line height so the page turns when the cursor reaches the
-    // last visible line, rather than waiting for the next (off-screen) line.
     let widget_height = state.text_view.height();
     let buf = &state.buffer;
-    let line_h = if let Some(iter) = buf.iter_at_line(line as i32) {
-        let (_y, h) = state.text_view.line_yrange(&iter);
-        h
-    } else {
-        return false;
-    };
-    let budget = widget_height - line_h;
     let mut total_height = 0;
     for i in state.page_top_line..=line {
         let Some(iter) = buf.iter_at_line(i as i32) else { return false };
         let (_y, h) = state.text_view.line_yrange(&iter);
         total_height += h;
-        if total_height > budget {
+        if total_height > widget_height {
             return false;
         }
     }
