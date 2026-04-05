@@ -539,25 +539,67 @@ pub fn handle_key(
 
     // --- Concordance picker overlay ---
     if state.borrow().concordance_picker.is_visible() {
+        if is_ctrl && key_name == "n" {
+            state.borrow().concordance_picker.move_selection(1);
+            return true;
+        }
+        if is_ctrl && key_name == "p" {
+            state.borrow().concordance_picker.move_selection(-1);
+            return true;
+        }
         match key_name {
-            "j" => {
+            "Down" => {
                 state.borrow().concordance_picker.move_selection(1);
                 return true;
             }
-            "k" => {
+            "Up" => {
                 state.borrow().concordance_picker.move_selection(-1);
                 return true;
             }
             "Return" => {
                 let selected = state.borrow().concordance_picker.selected_word();
+                state.borrow().concordance_picker.hide();
                 if let Some(word) = selected {
-                    {
-                        state.borrow().concordance_picker.hide();
-                    }
-                    let mut s = state.borrow_mut();
-                    if let Some(idx) = s.vocab_matches.iter().position(|m| m.word == word) {
-                        navigation::jump_to_vocab_at(&mut s, idx);
-                    }
+                    let state_clone = Rc::clone(state);
+                    let handle = tokio_handle.clone();
+                    let word_clone = word.clone();
+                    glib::spawn_future_local(async move {
+                        let hits = handle
+                            .spawn_blocking(move || {
+                                let conn = crate::db::queries::open_db()
+                                    .expect("Failed to open lit.db");
+                                crate::db::concordance::find_word_occurrences(&conn, &word_clone)
+                                    .unwrap_or_default()
+                            })
+                            .await
+                            .unwrap_or_default();
+                        if hits.is_empty() {
+                            return;
+                        }
+                        let conc_hits: Vec<crate::concordance::ConcordanceHit> = hits
+                            .into_iter()
+                            .map(|h| crate::concordance::ConcordanceHit {
+                                work_abbrev: h.work_abbrev,
+                                work_title: h.title,
+                                author: h.author,
+                                line_mapping_id: h.line_mapping_id,
+                                div1: h.div1,
+                                div2: h.div2,
+                                line_in_div: h.line_in_div,
+                                canonical_text: h.canonical_text,
+                                has_audio: h.has_audio,
+                            })
+                            .collect();
+                        let conc_state = crate::concordance::ConcordanceState::new(
+                            word.clone(),
+                            conc_hits,
+                        );
+                        let mut s = state_clone.borrow_mut();
+                        s.concordance_bar.update(&conc_state.status_label(), &conc_state.status_work());
+                        s.concordance_state = Some(conc_state);
+                        drop(s);
+                        navigation::concordance_jump_to_current(&state_clone, &handle);
+                    });
                 }
                 return true;
             }
@@ -565,8 +607,9 @@ pub fn handle_key(
                 state.borrow().concordance_picker.hide();
                 return true;
             }
-            _ => return true,
+            _ => {}
         }
+        return false;
     }
 
     // --- Concordance word picker (when visible) ---
@@ -872,9 +915,14 @@ pub fn handle_key(
                             })
                             .await
                             .unwrap_or_default();
-                        let mut s = state_clone.borrow_mut();
-                        s.concordance_picker.set_words(words);
-                        s.concordance_picker.show();
+                        {
+                            let mut s = state_clone.borrow_mut();
+                            s.concordance_picker.set_words(words);
+                            s.concordance_picker.show();
+                        }
+                        // set_text triggers connect_changed which borrows state,
+                        // so the mutable borrow must be dropped first.
+                        state_clone.borrow().concordance_picker.search_entry().set_text("");
                     });
                 }
                 return true;
@@ -1299,6 +1347,10 @@ pub fn handle_key(
         }
         "w" => {
             navigation::word_cycle_copy(&mut state.borrow_mut());
+            true
+        }
+        "W" => {
+            navigation::word_collect_copy(&mut state.borrow_mut());
             true
         }
         _ => false,

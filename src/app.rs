@@ -134,6 +134,10 @@ pub struct AppState {
     pub word_cycle_line: Option<usize>,
     pub word_cycle_index: usize,
     pub word_status_timer: Rc<Cell<u64>>,
+    pub word_bold_tag: gtk4::TextTag,
+    pub word_bold_gen: Rc<Cell<u64>>,
+    pub word_collect_words: Vec<String>,
+    pub word_collect_ranges: Vec<(usize, usize)>,
     /// True while display_work is replacing the buffer. CursorSync and other
     /// layout-dependent callbacks must skip when this is set because GTK
     /// hasn't laid out the new content yet. Cleared in an idle callback after
@@ -310,6 +314,12 @@ pub fn build_window(
         .foreground(&theme.vocab_fg)
         .build();
     buffer.tag_table().add(&vocab_tag);
+
+    let word_bold_tag = gtk4::TextTag::builder()
+        .name("word-bold")
+        .underline(pango::Underline::Single)
+        .build();
+    buffer.tag_table().add(&word_bold_tag);
 
     let text_view = View::builder()
         .buffer(&buffer)
@@ -593,6 +603,10 @@ pub fn build_window(
         word_cycle_line: None,
         word_cycle_index: 0,
         word_status_timer: Rc::new(Cell::new(0)),
+        word_bold_tag,
+        word_bold_gen: Rc::new(Cell::new(0)),
+        word_collect_words: Vec::new(),
+        word_collect_ranges: Vec::new(),
         loading_work: Rc::new(Cell::new(false)),
     }));
 
@@ -986,7 +1000,7 @@ pub fn display_work(state: &mut AppState, work: Work) {
 
     crate::logging::log(&format!("TIMING: gutter setup {:.0}ms", t5.elapsed().as_millis()));
 
-    // Set font size based on work type: 18pt for plays/poetry, 22pt for prose
+    // Set font size based on work type: 18pt for plays/poetry, 19pt for prose
     let is_prose = state.current_work.as_ref()
         .map(|w| crate::db::line_types::is_prose_work(&w.work_type))
         .unwrap_or(true);

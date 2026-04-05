@@ -48,7 +48,7 @@ impl ConcordancePicker {
         picker_box.append(&scrolled);
 
         let footer = Label::builder()
-            .label("j/k navigate \u{00B7} Enter jump \u{00B7} Esc close")
+            .label("Type to filter \u{00B7} \u{2191}/\u{2193} navigate \u{00B7} Enter jump \u{00B7} Esc close")
             .build();
         footer.add_css_class("settings-footer");
         picker_box.append(&footer);
@@ -67,11 +67,9 @@ impl ConcordancePicker {
         self.populate_list("");
     }
 
-    pub fn show(&mut self) {
+    pub fn show(&self) {
         self.picker_box.set_visible(true);
-        self.search_entry.set_text("");
         self.search_entry.grab_focus();
-        self.populate_list("");
     }
 
     pub fn hide(&self) {

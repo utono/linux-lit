@@ -1278,26 +1278,6 @@ pub fn jump_to_next_vocab(state: &mut AppState) {
     seek_to_current_line(state);
 }
 
-/// Jump to a specific vocab match index. Used by concordance picker.
-pub fn jump_to_vocab_at(state: &mut AppState, match_idx: usize) {
-    if match_idx >= state.vocab_matches.len() {
-        return;
-    }
-    state.vocab_match_idx = Some(match_idx);
-    let target_line = state.vocab_matches[match_idx].line_index;
-    state.current_line = target_line;
-    update_highlight(state);
-    match state.config.navigation_mode {
-        crate::config::NavigationMode::Scroll => center_cursor(state),
-        crate::config::NavigationMode::EReader => {
-            if !is_line_fully_visible(state, target_line) {
-                let dir = if target_line >= state.page_top_line { PageDirection::Forward } else { PageDirection::Backward };
-                set_page(state, target_line, dir);
-            }
-        }
-    }
-    seek_to_current_line(state);
-}
 
 /// Jump to the previous vocab word occurrence before current position.
 pub fn jump_to_prev_vocab(state: &mut AppState) {
@@ -1489,44 +1469,13 @@ fn concordance_preload_next(
 
 /// Cycle through words on the current line, copying each to the system clipboard.
 /// Each press advances to the next word; wraps after the last word.
-/// Shows the copied word in a status label that auto-hides after 2 seconds.
+/// Briefly bolds the word in the buffer for 2 seconds.
 pub fn word_cycle_copy(state: &mut AppState) {
-    let work = match &state.current_work {
-        Some(w) => w,
-        None => return,
-    };
+    if state.current_work.is_none() {
+        return;
+    }
 
-    // Map buffer line to work line index
-    let work_line_idx = if let Some(ref lm) = state.line_map {
-        match lm.buffer_to_work.get(state.current_line).copied().flatten() {
-            Some(idx) => idx,
-            None => return,
-        }
-    } else {
-        state.current_line
-    };
-
-    let line = match work.lines.get(work_line_idx) {
-        Some(l) => l,
-        None => return,
-    };
-
-    // Extract words: split on whitespace, strip leading/trailing non-alphanumeric
-    let words: Vec<String> = line
-        .text
-        .split_whitespace()
-        .filter_map(|token| {
-            let stripped: String = token
-                .trim_matches(|c: char| !c.is_alphanumeric())
-                .to_string();
-            if stripped.is_empty() {
-                None
-            } else {
-                Some(stripped)
-            }
-        })
-        .collect();
-
+    let words = extract_buffer_line_words(state);
     if words.is_empty() {
         return;
     }
@@ -1538,7 +1487,7 @@ pub fn word_cycle_copy(state: &mut AppState) {
         0
     };
 
-    let word = &words[idx];
+    let (ref word, char_start, char_end) = words[idx];
 
     // Copy to clipboard via wl-copy
     use std::io::Write;
@@ -1560,20 +1509,126 @@ pub fn word_cycle_copy(state: &mut AppState) {
 
     // Update cycle state
     state.word_cycle_line = Some(state.current_line);
-    state.word_cycle_index = idx + 1; // next press gets the next word (mod len happens above)
+    state.word_cycle_index = idx + 1;
 
-    // Show status label
-    state.word_status_label.set_label(word);
-    state.word_status_label.set_visible(true);
+    // Clear multi-word collect state (w is single-word mode)
+    state.word_collect_words.clear();
+    state.word_collect_ranges.clear();
 
-    // Bump timer generation to cancel any pending hide
-    let gen = state.word_status_timer.get() + 1;
-    state.word_status_timer.set(gen);
-    let timer_rc = state.word_status_timer.clone();
-    let label = state.word_status_label.clone();
+    // Remove any previous underline tag, then apply to the current word
+    apply_word_underline(state, &[(char_start, char_end)]);
+}
+
+/// Collect words on the current line, accumulating across presses.
+/// Each W press advances to the next word, appends it to the collection,
+/// and copies all collected words (space-separated) to the clipboard.
+/// Underlines all collected words. Resets on line change.
+pub fn word_collect_copy(state: &mut AppState) {
+    if state.current_work.is_none() {
+        return;
+    }
+
+    let words = extract_buffer_line_words(state);
+    if words.is_empty() {
+        return;
+    }
+
+    // Reset if we moved to a different line
+    let idx = if state.word_cycle_line == Some(state.current_line) {
+        state.word_cycle_index % words.len()
+    } else {
+        state.word_collect_words.clear();
+        state.word_collect_ranges.clear();
+        0
+    };
+
+    let (ref word, char_start, char_end) = words[idx];
+
+    // Append to collection
+    state.word_collect_words.push(word.clone());
+    state.word_collect_ranges.push((char_start, char_end));
+
+    // Copy all collected words to clipboard
+    let phrase = state.word_collect_words.join(" ");
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    match Command::new("wl-copy").stdin(Stdio::piped()).spawn() {
+        Ok(mut child) => {
+            if let Some(ref mut stdin) = child.stdin {
+                let _ = stdin.write_all(phrase.as_bytes());
+            }
+            let _ = child.wait();
+        }
+        Err(e) => {
+            log_fmt!("WORD_COLLECT: wl-copy failed: {}", e);
+            return;
+        }
+    }
+
+    log_fmt!("WORD_COLLECT: copied '{}' ({} words)", phrase, state.word_collect_words.len());
+
+    // Update cycle state
+    state.word_cycle_line = Some(state.current_line);
+    state.word_cycle_index = idx + 1;
+
+    // Underline all collected words
+    let ranges: Vec<(usize, usize)> = state.word_collect_ranges.clone();
+    apply_word_underline(state, &ranges);
+}
+
+/// Extract words from the current buffer line with their char offsets.
+fn extract_buffer_line_words(state: &AppState) -> Vec<(String, usize, usize)> {
+    let buf_line_start = state.buffer.iter_at_line(state.current_line as i32).unwrap();
+    let buf_line_end = {
+        let mut it = buf_line_start;
+        if !it.ends_line() { it.forward_to_line_end(); }
+        it
+    };
+    let buf_line_text = state.buffer.text(&buf_line_start, &buf_line_end, false).to_string();
+
+    let mut words: Vec<(String, usize, usize)> = Vec::new();
+    for token in buf_line_text.split_whitespace() {
+        let token_byte_start = token.as_ptr() as usize - buf_line_text.as_ptr() as usize;
+        let token_char_start = buf_line_text[..token_byte_start].chars().count();
+        let stripped = token.trim_matches(|c: char| !c.is_alphanumeric());
+        if stripped.is_empty() {
+            continue;
+        }
+        let strip_byte_offset = stripped.as_ptr() as usize - token.as_ptr() as usize;
+        let char_start = token_char_start + token[..strip_byte_offset].chars().count();
+        let char_end = char_start + stripped.chars().count();
+        words.push((stripped.to_string(), char_start, char_end));
+    }
+    words
+}
+
+/// Apply the underline tag to the given char ranges on the current line,
+/// removing any previous underline first. Auto-removes after 2 seconds.
+fn apply_word_underline(state: &mut AppState, ranges: &[(usize, usize)]) {
+    let buf = &state.buffer;
+    let tag = &state.word_bold_tag;
+    let (buf_start, buf_end) = (buf.start_iter(), buf.end_iter());
+    buf.remove_tag(tag, &buf_start, &buf_end);
+
+    let line_start = buf.iter_at_line(state.current_line as i32).unwrap();
+    for &(char_start, char_end) in ranges {
+        let mut word_start = line_start;
+        word_start.forward_chars(char_start as i32);
+        let mut word_end = word_start;
+        word_end.forward_chars((char_end - char_start) as i32);
+        buf.apply_tag(tag, &word_start, &word_end);
+    }
+
+    // Auto-remove underline after 2 seconds
+    let gen = state.word_bold_gen.get() + 1;
+    state.word_bold_gen.set(gen);
+    let gen_rc = state.word_bold_gen.clone();
+    let buf_clone = buf.clone();
+    let tag_clone = tag.clone();
     glib::timeout_add_local_once(std::time::Duration::from_secs(2), move || {
-        if timer_rc.get() == gen {
-            label.set_visible(false);
+        if gen_rc.get() == gen {
+            let (s, e) = (buf_clone.start_iter(), buf_clone.end_iter());
+            buf_clone.remove_tag(&tag_clone, &s, &e);
         }
     });
 }

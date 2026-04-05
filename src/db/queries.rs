@@ -318,10 +318,11 @@ pub fn load_vocab_word_list(
     work_abbrev: &str,
 ) -> Result<Vec<(String, usize)>, rusqlite::Error> {
     let mut stmt = conn.prepare(
-        "SELECT canonical_text FROM line_mapping WHERE work_abbrev = ?1 \
+        "SELECT canonical_text FROM line_mapping \
+         WHERE work_abbrev IN (SELECT abbrev FROM works WHERE push_to_device = 1) \
          ORDER BY div1, div2, line_in_div"
     )?;
-    let lines: Vec<String> = stmt.query_map([work_abbrev], |row| {
+    let lines: Vec<String> = stmt.query_map([], |row| {
         row.get::<_, String>(0)
     })?.collect::<Result<_, _>>()?;
 

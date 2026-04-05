@@ -35,8 +35,8 @@ const fn bare(unshifted: &'static str, shifted: &'static str, action: &'static s
 const NUMBER_ROW: &[KeyDef] = &[
     ub("$", "~"),
     bare("+", "1", "toggle speed"),
-    bare("[", "2", "prev ch"),
-    bare("{", "3", "next ch"),
+    key("[", "2", "prev para", "2: prev ch", &[]),
+    key("{", "3", "next para", "3: next ch", &[]),
     ub("(", "4"),
     ub("&", "5"),
     ub("=", "6"),
@@ -58,11 +58,11 @@ const UPPER_ROW: &[KeyDef] = &[
     key("f", "F", "font \u{2192}", "F: \u{2190}", &[("C-f", "pg fwd"), ("M-f", "font info")]),
     ub("g", "G"),
     ub("c", "C"),
-    ub("r", "R"),
+    key("r", "R", "next vocab", "R: prev vocab", &[]),
     key("l", "L", "toggle signs", "", &[("C-M-l", "save+quit")]),
     key("/", "?", "search", "", &[("C-/", "keybinds")]),
     ub("@", "^"),
-    key("\\", "#", "vocab ▶", "◀ vocab", &[]),
+    key("\\", "#", "vocab ▶", "◀ vocab", &[("C-\\", "conc picker"), ("M-\\", "vocab hi")]),
 ];
 const TAB_KEY: KeyDef = bare("Tab", "", "play/pause");
 
@@ -72,8 +72,8 @@ const HOME_ROW: &[KeyDef] = &[
     key("e", "E", "seek +3.5", "E: +60", &[]),
     key("u", "U", "start time", "", &[("C-u", "pg back")]),
     key("i", "I", "set end time", "", &[("M-i", "translations")]),
-    key("d", "D", "", "", &[("C-d", "pg fwd")]),
-    ub("h", "H"),
+    key("d", "D", "", "", &[("C-d", "pg fwd"), ("M-d", "dim tog")]),
+    bare("h", "H", "auto vocab"),
     ub("t", "T"),
     key("n", "N", "next match", "N: prev match", &[]),
     bare("s", "S", "sync tog"),
@@ -89,7 +89,7 @@ const BOTTOM_ROW: &[KeyDef] = &[
     bare("x", "X", "next chunk"),
     key("b", "B", "", "", &[("C-b", "pg back")]),
     key("m", "M", "media picker", "", &[("p", "set default")]),
-    ub("w", "W"),
+    key("w", "W", "copy word", "W: collect", &[]),
     key("v", "V", "", "V: visual mode", &[]),
     ub("z", "Z"),
 ];
@@ -108,8 +108,8 @@ const SEQ_G: KeyDef = key("G", "", "", "go to end", &[]);
 
 const ARROW_UP: KeyDef = key("\u{2191}", "", "", "", &[("C-\u{2191}", "vol +")]);
 const ARROW_DOWN: KeyDef = key("\u{2193}", "", "", "", &[("C-\u{2193}", "vol \u{2212}")]);
-const ARROW_LEFT: KeyDef = bare("\u{2190}", "", "delete ts");
-const ARROW_RIGHT: KeyDef = bare("\u{2192}", "", "start time");
+const ARROW_LEFT: KeyDef = bare("\u{2190}", "", "seek \u{2212}30");
+const ARROW_RIGHT: KeyDef = bare("\u{2192}", "", "seek +30");
 
 // ── Layout constants ─────────────────────────────────────────────────
 

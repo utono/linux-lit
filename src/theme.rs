@@ -439,8 +439,12 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .vocab-popup .definition-gloss {{ opacity: 0.7; font-size: 12px; color: {vocab_popup_fg}; }} \
          .vocab-popup .definition-hint {{ font-size: 11px; color: {vocab_popup_dim}; \
            border-top: 1px solid {vocab_popup_border}; padding-top: 8px; margin-top: 12px; }} \
-         .concordance-picker {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
-           padding: 16px; border-radius: 8px; }} \
+         .concordance-picker {{ background-color: {bg}; color: {fg}; \
+           padding: 16px; border-radius: 12px; border: 1px solid {dim}; }} \
+         .concordance-picker entry {{ margin-bottom: 8px; }} \
+         .concordance-picker row:selected {{ background-color: {cursor_bg}; color: {cursor_fg}; }} \
+         .concordance-picker .settings-title {{ border-bottom: 1px solid {dim}; }} \
+         .concordance-picker .settings-footer {{ color: {dim}; }} \
          .concordance-bar {{ background-color: {root}; padding: 4px 12px; }} \
          .concordance-bar-word {{ color: {vocab}; font-size: 12px; }} \
          .concordance-bar-position {{ color: {dim}; font-size: 12px; }} \

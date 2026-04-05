@@ -29,7 +29,7 @@ pub fn find_word_occurrences(
                 ) AS has_audio
          FROM line_mapping lm
          JOIN works w ON w.abbrev = lm.work_abbrev
-         WHERE lm.normalized_text LIKE ?1
+         WHERE w.push_to_device = 1 AND lm.normalized_text LIKE ?1
          ORDER BY w.author, lm.work_abbrev, lm.div1, COALESCE(lm.div2, 0), lm.line_in_div",
     )?;
     let rows = stmt.query_map([&pattern], |row| {
