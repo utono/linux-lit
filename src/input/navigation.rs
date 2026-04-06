@@ -100,6 +100,25 @@ fn back_up_for_speaker(buffer: &sourceview5::Buffer, line: usize) -> usize {
     }
 }
 
+/// Find the last buffer line whose top edge is visible in the viewport.
+fn last_visible_line(state: &AppState) -> usize {
+    let adj = state.scrolled_window.vadjustment();
+    let viewport_bottom = adj.value() + adj.page_size();
+    let line_count = state.effective_line_count();
+    // Binary search: find the last line whose y <= viewport_bottom
+    let mut last = state.page_top_line;
+    for i in state.page_top_line..line_count {
+        if let Some(iter) = state.buffer.iter_at_line(i as i32) {
+            let (y, _h) = state.text_view.line_yrange(&iter);
+            if (y as f64) > viewport_bottom {
+                break;
+            }
+            last = i;
+        }
+    }
+    last
+}
+
 /// Page forward (Ctrl+d/f). The next page starts at the dialogue line
 /// immediately after the last dialogue line visible on the current page,
 /// backed up by one if preceded by a speaker name.
@@ -112,10 +131,10 @@ pub fn page_forward(state: &mut AppState) {
         return;
     }
 
-    let lpp = lines_per_page(state);
-    let last = last_dialogue_in_page(&state.buffer, state.page_top_line, lpp, line_count);
+    let last_visible = last_visible_line(state);
+    let last = last_dialogue_in_page(&state.buffer, state.page_top_line, last_visible.saturating_sub(state.page_top_line) + 1, line_count);
     let next = next_dialogue_from(&state.buffer, last + 1, line_count);
-    if next == last + 1 && next >= line_count {
+    if next >= line_count {
         return; // already at end
     }
     let new_top = back_up_for_speaker(&state.buffer, next);
