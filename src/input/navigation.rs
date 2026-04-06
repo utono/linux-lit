@@ -404,10 +404,11 @@ pub fn jump_to_prev_chapter(state: &mut AppState) {
     if let Some(line_idx) = target {
         state.current_line = line_idx;
         update_highlight(state);
+        let top = page_turn_top(&state.buffer, line_idx);
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
             crate::config::NavigationMode::EReader => {
-                set_page(state, line_idx, PageDirection::Backward);
+                set_page_instant(state, top);
             }
         }
         seek_to_current_line(state);
@@ -448,13 +449,11 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
     if let Some(line_idx) = target {
         state.current_line = line_idx;
         update_highlight(state);
+        let top = page_turn_top(&state.buffer, line_idx);
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => center_cursor(state),
             crate::config::NavigationMode::EReader => {
-                if !is_line_fully_visible(state, line_idx) {
-                    let dir = if line_idx >= state.page_top_line { PageDirection::Forward } else { PageDirection::Backward };
-                    set_page(state, line_idx, dir);
-                }
+                set_page_instant(state, top);
             }
         }
         seek_to_current_line(state);
@@ -898,21 +897,23 @@ fn update_bottom_clip(
 }
 
 /// Scroll the viewport by a fixed step without moving the cursor or seeking audio.
-/// `delta` is +1 for down, -1 for up.  Scrolls by approximately one wrapped line height.
+/// `delta` is +1 for down, -1 for up.  Scrolls by ~3 line heights per step,
+/// similar to browser-style scrolling.
 pub fn scroll_viewport(state: &mut AppState, delta: i32) {
     let adj = state.scrolled_window.vadjustment();
     let max_scroll = adj.upper() - adj.page_size();
     if max_scroll <= 0.0 {
         return;
     }
-    // Use the height of the current line as the scroll step
-    let step = state.buffer.iter_at_line(state.current_line as i32)
+    // Scroll by 3 line heights per keypress for browser-like feel
+    let line_height = state.buffer.iter_at_line(state.current_line as i32)
         .map(|iter| {
             let rect = state.text_view.iter_location(&iter);
             rect.height() as f64
         })
         .unwrap_or(30.0)
         .max(20.0);
+    let step = line_height * 5.0;
     let new_val = (adj.value() + step * delta as f64).max(0.0).min(max_scroll);
     adj.set_value(new_val);
 }

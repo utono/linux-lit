@@ -1052,6 +1052,14 @@ pub fn handle_key(
             navigation::scroll_viewport(&mut state.borrow_mut(), -1);
             true
         }
+        "Up" => {
+            navigation::jump_to_prev_paragraph(&mut state.borrow_mut());
+            true
+        }
+        "Down" => {
+            navigation::jump_to_next_paragraph(&mut state.borrow_mut());
+            true
+        }
         "g" => {
             key_state.borrow_mut().pending_g = true;
             let ks = Rc::clone(key_state);
@@ -1180,11 +1188,11 @@ pub fn handle_key(
             crate::input::timestamps::set_chapter(&mut state.borrow_mut())
         }
         "bracketleft" => {
-            navigation::jump_to_prev_paragraph(&mut state.borrow_mut());
+            navigation::jump_to_prev_chapter(&mut state.borrow_mut());
             true
         }
         "braceleft" => {
-            navigation::jump_to_next_paragraph(&mut state.borrow_mut());
+            navigation::jump_to_next_chapter(&mut state.borrow_mut());
             true
         }
         "2" => {
