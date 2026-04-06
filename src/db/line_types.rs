@@ -41,11 +41,14 @@ pub fn is_stage_direction(text: &str) -> bool {
 }
 
 pub fn is_act_scene_marker(text: &str) -> bool {
-    let upper = text.trim().to_uppercase();
+    let trimmed = text.trim();
+    let stripped = trimmed.strip_prefix("## ").unwrap_or(trimmed);
+    let upper = stripped.to_uppercase();
     upper.starts_with("ACT ")
         || upper.starts_with("SCENE ")
         || upper.starts_with("PROLOGUE")
         || upper.starts_with("EPILOGUE")
+        || upper.starts_with("INDUCTION")
 }
 
 pub fn is_separator(text: &str) -> bool {
@@ -125,6 +128,11 @@ mod tests {
         assert!(is_act_scene_marker("EPILOGUE"));
         assert!(is_act_scene_marker("Epilogue"));
         assert!(!is_act_scene_marker("Action"));
+        // New: ## headers from cleaned format
+        assert!(is_act_scene_marker("## Act 1, Scene 1"));
+        assert!(is_act_scene_marker("## Prologue"));
+        assert!(is_act_scene_marker("## Epilogue"));
+        assert!(is_act_scene_marker("## Induction"));
     }
 
     #[test]

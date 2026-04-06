@@ -1036,11 +1036,10 @@ pub fn handle_key(
     // Single keys
     match key_name {
         "space" => {
-            let mut s = state.borrow_mut();
-            if s.vocab_popup.is_visible() {
-                crate::app::close_vocab_popup(&mut s);
+            if is_shift {
+                navigation::page_backward(&mut state.borrow_mut());
             } else {
-                crate::app::open_vocab_popup(&mut s);
+                navigation::page_forward(&mut state.borrow_mut());
             }
             true
         }
@@ -1464,9 +1463,18 @@ fn apply_settings_change(
             s.config.column_width = val;
         }
         SettingsChange::TextMargins(val) => {
-            s.text_view.set_left_margin(val as i32);
+            let work_type = s.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("");
+            let left = if crate::db::line_types::is_prose_work(work_type) {
+                val as i32
+            } else {
+                val as i32 + 120
+            };
+            s.text_view.set_left_margin(left);
             s.text_view.set_right_margin(val as i32 + crate::config::EXTRA_RIGHT_MARGIN);
             s.config.text_margins = val;
+            if s.dialogue_formatting_active {
+                crate::app::apply_dialogue_formatting(&mut s);
+            }
         }
         SettingsChange::Theme(theme) => {
             apply_theme_to_state(&mut s, &theme);

@@ -147,9 +147,18 @@ impl SettingsOverlay {
     }
 
     pub fn move_selection(&mut self, delta: i32) {
-        let new = (self.selected as i32 + delta).rem_euclid(NUM_SETTINGS as i32) as usize;
+        let mut new = (self.selected as i32 + delta).rem_euclid(NUM_SETTINGS as i32) as usize;
+        // Skip Transition row (index 5) when Navigation is Scroll
+        if new == 5 && self.is_transition_disabled() {
+            new = (new as i32 + delta).rem_euclid(NUM_SETTINGS as i32) as usize;
+        }
         self.selected = new;
         self.update_row_highlight();
+    }
+
+    /// Transition is disabled when Navigation is Scroll (no page turns).
+    fn is_transition_disabled(&self) -> bool {
+        self.navigation_mode == crate::config::NavigationMode::Scroll
     }
 
     /// Adjust the currently selected setting. Returns the new values to apply live.
@@ -205,9 +214,13 @@ impl SettingsOverlay {
                     crate::config::NavigationMode::EReader => "E-Reader",
                 };
                 self.value_labels[4].set_label(&format!("\u{25C0} {} \u{25B6}", label));
+                self.update_row_highlight();
                 SettingsChange::Navigation(new_mode)
             }
             5 => {
+                if self.is_transition_disabled() {
+                    return SettingsChange::None;
+                }
                 use crate::config::TransitionStyle;
                 let variants = [TransitionStyle::Crossfade, TransitionStyle::Slide, TransitionStyle::Instant];
                 let current_idx = variants.iter().position(|v| *v == transition_style).unwrap_or(0);
@@ -266,11 +279,20 @@ impl SettingsOverlay {
     }
 
     fn update_row_highlight(&self) {
+        let disabled = self.is_transition_disabled();
         for (i, row) in self.rows.iter().enumerate() {
             if i == self.selected {
                 row.add_css_class("settings-row-selected");
             } else {
                 row.remove_css_class("settings-row-selected");
+            }
+            // Gray out Transition row when Navigation is Scroll
+            if i == 5 {
+                if disabled {
+                    row.add_css_class("settings-row-disabled");
+                } else {
+                    row.remove_css_class("settings-row-disabled");
+                }
             }
         }
     }

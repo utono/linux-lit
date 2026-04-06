@@ -373,6 +373,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .settings-row {{ padding: 8px 12px; margin: 2px 0; border-radius: 4px; }} \
          .settings-row-selected {{ background-color: rgba(100, 140, 200, 0.8); \
            border-left: 3px solid rgba(100, 180, 255, 0.9); }} \
+         .settings-row-disabled {{ opacity: 0.35; }} \
          .settings-footer {{ font-size: 11px; opacity: 0.6; margin-top: 12px; }} \
          .action-popup {{ background-color: {bg}; color: {fg}; \
            padding: 16px; border-radius: 12px; border: 1px solid {dim}; }} \

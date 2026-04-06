@@ -99,7 +99,7 @@ const SPACEBAR_ROW_CTRL: KeyDef = ub("Ctrl", "");
 const SPACEBAR_ROW_FN: KeyDef = ub("Fn", "");
 const SPACEBAR_ROW_WIN: KeyDef = ub("Win", "");
 const SPACEBAR_ROW_ALT_L: KeyDef = ub("Alt", "");
-const SPACEBAR_ROW_SPACE: KeyDef = bare("Space", "", "vocab popup");
+const SPACEBAR_ROW_SPACE: KeyDef = key("Space", "", "page ↓", "page ↑", &[]);
 const SPACEBAR_ROW_ALT_R: KeyDef = ub("Alt", "");
 const SPACEBAR_ROW_CTRL_R: KeyDef = ub("Ctrl", "");
 

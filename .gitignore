@@ -1,4 +1,5 @@
 linux-lit-dev.log
 linux-lit-release.log
+linux-lit-stderr.log
 target/
 .superpowers/

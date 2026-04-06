@@ -1191,7 +1191,7 @@ fn rebuild_buffer_text(state: &mut AppState) {
 /// - Applies "dialogue-indent" tag (extra left margin) to dialogue lines
 /// - Applies "speaker-gap" tag (extra pixels above) to speaker lines
 /// - Applies "stage-direction-gap" tag to stage directions
-fn apply_dialogue_formatting(state: &mut AppState) {
+pub fn apply_dialogue_formatting(state: &mut AppState) {
     use crate::db::line_types;
 
     // Only in text-file mode
