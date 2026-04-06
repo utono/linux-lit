@@ -77,11 +77,6 @@ async fn handle_command(
                 }
             }
         }
-        MpvCommand::Disconnect => {
-            *reader = None;
-            *writer = None;
-            let _ = evt_tx.send(MpvEvent::ConnectionStatus(false)).await;
-        }
         MpvCommand::TogglePause => {
             if let Some(w) = writer.as_mut() {
                 let _ = send_command(w, r#"{"command":["cycle","pause"]}"#).await;
@@ -120,15 +115,6 @@ async fn handle_command(
         MpvCommand::VolumeAdjust(delta) => {
             if let Some(w) = writer.as_mut() {
                 let cmd = format!(r#"{{"command":["add","volume",{}]}}"#, delta);
-                let _ = send_command(w, &cmd).await;
-            }
-        }
-        MpvCommand::LoadFile(path) => {
-            if let Some(w) = writer.as_mut() {
-                let cmd = format!(
-                    r#"{{"command":["loadfile","{}"]}}"#,
-                    path.replace('"', r#"\""#)
-                );
                 let _ = send_command(w, &cmd).await;
             }
         }

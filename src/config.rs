@@ -46,8 +46,6 @@ pub struct Config {
     #[serde(default)]
     pub last_work: Option<String>,
     #[serde(default)]
-    pub last_line: usize,
-    #[serde(default)]
     pub work_positions: HashMap<String, usize>,
     #[serde(default)]
     pub visual_mode_commands: Vec<VisualModeCommand>,
@@ -122,7 +120,6 @@ impl Default for Config {
             navigation_mode: NavigationMode::default(),
             transition_style: TransitionStyle::default(),
             last_work: None,
-            last_line: 0,
             work_positions: HashMap::new(),
             visual_mode_commands: Vec::new(),
             ollama_model: default_ollama_model(),

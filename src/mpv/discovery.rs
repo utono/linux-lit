@@ -1,5 +1,4 @@
 use sha2::{Digest, Sha256};
-use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
 
 pub fn derive_socket_path(media_path: &str) -> String {
@@ -48,26 +47,6 @@ fn extract_author(media_path: &str, home: &str) -> String {
         }
     }
     "music".to_string()
-}
-
-#[allow(dead_code)]
-pub fn scan_sockets() -> Vec<PathBuf> {
-    let mut sockets = Vec::new();
-    if let Ok(entries) = std::fs::read_dir("/tmp") {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with("mpvsocket-") {
-                let path = entry.path();
-                if let Ok(meta) = std::fs::symlink_metadata(&path) {
-                    if meta.file_type().is_socket() {
-                        sockets.push(path);
-                    }
-                }
-            }
-        }
-    }
-    sockets.sort();
-    sockets
 }
 
 /// Find a live socket that matches one of the work's media paths.
@@ -126,6 +105,26 @@ pub fn launch_mpv(media_path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::FileTypeExt;
+
+    fn scan_sockets() -> Vec<PathBuf> {
+        let mut sockets = Vec::new();
+        if let Ok(entries) = std::fs::read_dir("/tmp") {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("mpvsocket-") {
+                    let path = entry.path();
+                    if let Ok(meta) = std::fs::symlink_metadata(&path) {
+                        if meta.file_type().is_socket() {
+                            sockets.push(path);
+                        }
+                    }
+                }
+            }
+        }
+        sockets.sort();
+        sockets
+    }
 
     #[test]
     fn test_derive_socket_path_music() {

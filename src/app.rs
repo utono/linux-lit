@@ -531,7 +531,7 @@ pub fn build_window(
     window.set_child(Some(&vbox));
 
     // Override startup work/line with env vars (used by concordance cross-work spawn)
-    let (last_work, _last_line) = if let Ok(work_abbrev) = std::env::var("LINUX_LIT_WORK") {
+    let last_work = if let Ok(work_abbrev) = std::env::var("LINUX_LIT_WORK") {
         let line_id: Option<i64> = std::env::var("LINUX_LIT_LINE_ID").ok()
             .and_then(|s| s.parse().ok());
         crate::logging::log(&format!(
@@ -539,9 +539,9 @@ pub fn build_window(
         ));
         // Store line_id for display_work_at to resolve after buffer is built.
         // Use 0 as placeholder — display_work_at will override with the resolved buf_idx.
-        (Some(work_abbrev), 0)
+        Some(work_abbrev)
     } else {
-        (config.last_work.clone(), config.last_line)
+        config.last_work.clone()
     };
     let dim_enabled = config.dim_enabled;
     let vocab_highlight_visible = config.vocab_highlight_visible;
@@ -919,7 +919,6 @@ pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<
     // Save MRU to config
     let saved_line = state.config.work_positions.get(&work.abbrev).copied().unwrap_or(0);
     state.config.last_work = Some(work.abbrev.clone());
-    state.config.last_line = saved_line;
     crate::config::save(&state.config);
 
     // Send timestamp data to MPV client (filtered by active media_id)
@@ -1841,7 +1840,6 @@ pub fn save_position(state: &mut AppState) {
     if let Some(work) = &state.current_work {
         let abbrev = work.abbrev.clone();
         state.config.last_work = Some(abbrev.clone());
-        state.config.last_line = state.current_line;
         state.config.work_positions.insert(abbrev, state.current_line);
         crate::config::save(&state.config);
     }

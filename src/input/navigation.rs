@@ -8,10 +8,6 @@ use libadwaita::prelude::AnimationExt;
 use crate::app::AppState;
 use crate::log_fmt;
 
-// Page overlap: when turning pages, this many lines from the old page
-// remain visible on the new page for reading continuity.
-const PAGE_OVERLAP: usize = 0;
-
 /// Seconds to seek before a line's start_time when navigating.
 /// Provides audio context so playback doesn't start at a hard cut.
 pub const SEEK_PREROLL: f64 = 0.2;
@@ -23,61 +19,6 @@ pub const SYNC_PREROLL: f64 = 0.0;
 /// Move cursor by `delta` lines (j/k).
 /// Going down: page turn when cursor reaches the last visible line.
 /// Going up: smooth scroll to keep cursor visible.
-#[allow(dead_code)]
-pub fn move_cursor(state: &mut AppState, delta: i32) {
-    if state.current_work.is_none() {
-        return;
-    }
-    let line_count = state.effective_line_count();
-    if line_count == 0 {
-        return;
-    }
-
-    let mut new_line = (state.current_line as i32 + delta)
-        .max(0)
-        .min(line_count as i32 - 1) as usize;
-
-    // Skip over translation lines
-    if state.translations_visible && !state.translation_lines.is_empty() {
-        let direction = if delta > 0 { 1i32 } else { -1i32 };
-        while new_line < state.translation_lines.len()
-            && state.translation_lines[new_line]
-        {
-            let next = new_line as i32 + direction;
-            if next < 0 || next >= line_count as i32 {
-                break;
-            }
-            new_line = next as usize;
-        }
-    }
-
-    if new_line == state.current_line {
-        return;
-    }
-
-    state.current_line = new_line;
-    state.prev_highlight_line.set(None);
-    update_highlight(state);
-
-    match state.config.navigation_mode {
-        crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
-        crate::config::NavigationMode::EReader => {
-            if !is_line_fully_visible(state, state.current_line) {
-                if state.current_line < state.page_top_line {
-                    let lpp = lines_per_page(state);
-                    let new_top = state.current_line.saturating_sub(lpp.saturating_sub(1));
-                    set_page(state, new_top, PageDirection::Backward);
-                } else {
-                    let new_top = page_turn_top(&state.buffer, state.current_line);
-                    set_page(state, new_top, PageDirection::Forward);
-                }
-            }
-        }
-    }
-
-    auto_show_vocab_popup(state);
-}
-
 /// Jump to the first line.
 pub fn jump_to_start(state: &mut AppState) {
     let work = match &state.current_work {
@@ -1387,7 +1328,7 @@ pub fn jump_to_prev_vocab(state: &mut AppState) {
 /// Loads the work if different from current, positions cursor on the line.
 pub fn concordance_jump_to_current(
     state: &Rc<RefCell<AppState>>,
-    handle: &tokio::runtime::Handle,
+    _handle: &tokio::runtime::Handle,
 ) {
     let (target_abbrev, target_line_id) = {
         let s = state.borrow();
@@ -1443,7 +1384,6 @@ pub fn concordance_jump_to_current(
             s.current_line, s.page_top_line
         ));
         drop(s);
-        concordance_preload_next(state, handle);
     }
 }
 
@@ -1543,48 +1483,6 @@ fn concordance_update_bar(state: &AppState) {
 }
 
 /// Kick off background preload of the next work in the concordance direction.
-fn concordance_preload_next(
-    state: &Rc<RefCell<AppState>>,
-    handle: &tokio::runtime::Handle,
-) {
-    let next_abbrev = {
-        let s = state.borrow();
-        let conc = match &s.concordance_state {
-            Some(c) => c,
-            None => return,
-        };
-        // Preload in forward direction
-        match conc.next_work_abbrev(1) {
-            Some(a) if Some(a) != s.current_work.as_ref().map(|w| w.abbrev.as_str()) => {
-                a.to_string()
-            }
-            _ => return,
-        }
-    };
-
-    let state_clone = Rc::clone(state);
-    let handle_clone = handle.clone();
-    let abbrev = next_abbrev;
-    glib::spawn_future_local(async move {
-        let work = handle_clone
-            .spawn_blocking(move || {
-                let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
-                crate::db::queries::load_work(&conn, &abbrev).ok()
-            })
-            .await
-            .unwrap_or(None);
-        if let Some(work) = work {
-            let mut s = state_clone.borrow_mut();
-            if let Some(conc) = &mut s.concordance_state {
-                conc.preloaded_work = Some(crate::concordance::PreloadedWork {
-                    work_abbrev: work.abbrev.clone(),
-                    work,
-                });
-            }
-        }
-    });
-}
-
 /// Cycle through words on the current line, copying each to the system clipboard.
 /// Each press advances to the next word; wraps after the last word.
 /// Briefly bolds the word in the buffer for 2 seconds.

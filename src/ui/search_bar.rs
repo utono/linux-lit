@@ -57,11 +57,6 @@ impl SearchBar {
         self.container.is_visible()
     }
 
-    #[allow(dead_code)]
-    pub fn entry(&self) -> &Entry {
-        &self.entry
-    }
-
     pub fn update_counter(&self, current: usize, total: usize) {
         if total == 0 {
             self.counter.set_label("[0/0]");

@@ -72,7 +72,7 @@ pub fn set_start_time(state: &mut AppState) -> bool {
         // Update in-memory
         match &mut line.timestamp {
             Some(ts) => ts.start = time_pos,
-            None => line.timestamp = Some(TimeRange { start: time_pos, end: 0.0, sentence_start: None, sentence_end: None }),
+            None => line.timestamp = Some(TimeRange { start: time_pos, end: 0.0, sentence_start: None }),
         }
     }
     crate::logging::log(&format!("TS: set start_time={:.2} line={}", time_pos, line_idx));
@@ -174,7 +174,7 @@ pub fn set_chapter(state: &mut AppState) -> bool {
 
         // Update in-memory: only set start_time if no timestamp exists yet
         if line.timestamp.is_none() {
-            line.timestamp = Some(TimeRange { start: time_pos, end: 0.0, sentence_start: None, sentence_end: None });
+            line.timestamp = Some(TimeRange { start: time_pos, end: 0.0, sentence_start: None });
         }
         line.is_chapter = new_val;
     }

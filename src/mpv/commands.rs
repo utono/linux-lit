@@ -11,9 +11,7 @@ pub enum MpvCommand {
     Pause,
     ResumeAndSeek(f64),
     SetSpeed(f64),
-    LoadFile(String),
     Connect(String),
-    Disconnect,
     SetTimestamps {
         timestamps: Vec<(i64, f64, f64)>,
         line_id_to_index: HashMap<i64, usize>,

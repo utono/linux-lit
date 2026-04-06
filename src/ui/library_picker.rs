@@ -174,11 +174,6 @@ impl LibraryPicker {
         &self.list_box
     }
 
-    #[allow(dead_code)]
-    pub fn picker_box(&self) -> &GtkBox {
-        &self.picker_box
-    }
-
     pub fn level(&self) -> &PickerLevel {
         &self.level
     }
@@ -388,17 +383,16 @@ fn subsequence_chars(filter: &str, target: &str) -> bool {
     true
 }
 
-// Keep the old name as an alias so existing callers (tests) still compile.
-#[allow(dead_code)]
-fn subsequence_match(filter: &str, work: &WorkSummary) -> bool {
-    subsequence_match_work(filter, work)
-}
-
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Test-only alias so existing tests can call subsequence_match(filter, work).
+    fn subsequence_match(filter: &str, work: &WorkSummary) -> bool {
+        subsequence_match_work(filter, work)
+    }
 
     fn make_work(abbrev: &str, title: &str, author: &str) -> WorkSummary {
         WorkSummary {

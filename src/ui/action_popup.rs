@@ -83,11 +83,6 @@ impl ActionPopup {
         self.container.set_visible(false);
     }
 
-    #[allow(dead_code)]
-    pub fn is_visible(&self) -> bool {
-        self.container.is_visible()
-    }
-
     pub fn move_selection(&mut self, delta: i32) {
         if self.rows.is_empty() {
             return;

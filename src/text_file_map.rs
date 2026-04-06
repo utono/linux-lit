@@ -23,10 +23,6 @@ pub struct LineMap {
     pub work_to_buffer: Vec<usize>,
     /// Buffer line indices that contain dialogue (matched or unmatched).
     pub dialogue_buffer_lines: Vec<usize>,
-    /// Dialogue buffer lines filtered to only spoken lines (for media-aware navigation).
-    /// Excludes lines where `is_spoken == Some(false)`.
-    #[allow(dead_code)]
-    pub spoken_dialogue_buffer_lines: Vec<usize>,
     /// Contiguous ranges of buffer lines forming sentences (prose text_file works only).
     pub sentence_groups: Vec<SentenceGroup>,
 }
@@ -176,18 +172,6 @@ pub fn build_line_map(file_lines: &[String], work_lines: &[Line], is_prose: bool
         crate::logging::log("LINEMAP: WARNING — less than 80% matched, text file may be stale or wrong");
     }
 
-    // Spoken dialogue lines: exclude lines explicitly marked as not spoken
-    let spoken_dialogue_buffer_lines: Vec<usize> = dialogue_buffer_lines
-        .iter()
-        .filter(|&&buf_idx| {
-            match buffer_to_work[buf_idx] {
-                Some(wi) => work_lines[wi].is_spoken != Some(false),
-                None => true, // unmatched lines: keep (no spoken data)
-            }
-        })
-        .copied()
-        .collect();
-
     // Sentence groups: contiguous buffer-line ranges forming sentences
     let sentence_groups = {
         let mut groups = build_sentence_groups_from_db(&buffer_to_work, work_lines)
@@ -200,7 +184,6 @@ pub fn build_line_map(file_lines: &[String], work_lines: &[Line], is_prose: bool
         buffer_to_work,
         work_to_buffer,
         dialogue_buffer_lines,
-        spoken_dialogue_buffer_lines,
         sentence_groups,
     }
 }

@@ -11,36 +11,13 @@ pub struct AbRepeatState {
     pub chunk_index: Option<usize>,
 }
 
-#[allow(dead_code)]
 impl AbRepeatState {
-    pub fn set_a(&mut self, line: usize, time: f64) {
-        self.a_line = Some(line);
-        self.a_time = Some(time);
-        if let Some(b) = self.b_time {
-            if time >= b {
-                self.b_line = None;
-                self.b_time = None;
-            }
-        }
-        self.loop_active = false;
-    }
-
-    pub fn set_b(&mut self, line: usize, time: f64) {
-        self.b_line = Some(line);
-        self.b_time = Some(time);
-        self.loop_active = false;
-    }
-
     pub fn clear(&mut self) {
         self.a_line = None;
         self.b_line = None;
         self.a_time = None;
         self.b_time = None;
         self.loop_active = false;
-    }
-
-    pub fn can_loop(&self) -> bool {
-        matches!((&self.a_time, &self.b_time), (Some(a), Some(b)) if a < b)
     }
 
     pub fn find_chunk_at_line(&self, line: usize, lines: &[crate::db::models::Line]) -> Option<usize> {

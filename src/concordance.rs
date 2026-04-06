@@ -13,18 +13,11 @@ pub struct ConcordanceHit {
     pub has_audio: bool,
 }
 
-/// Pre-loaded work data, ready to swap into AppState.
-pub struct PreloadedWork {
-    pub work_abbrev: String,
-    pub work: crate::db::models::Work,
-}
-
 /// Cross-work concordance navigation state.
 pub struct ConcordanceState {
     pub word: String,
     pub occurrences: Vec<ConcordanceHit>,
     pub current_index: usize,
-    pub preloaded_work: Option<PreloadedWork>,
 }
 
 impl ConcordanceState {
@@ -33,47 +26,7 @@ impl ConcordanceState {
             word,
             occurrences,
             current_index: 0,
-            preloaded_work: None,
         }
-    }
-
-    /// Work abbreviation of the next occurrence in a given direction.
-    /// direction: 1 for forward, -1 for backward.
-    pub fn next_work_abbrev(&self, direction: i32) -> Option<&str> {
-        let next = if direction > 0 {
-            if self.current_index + 1 < self.occurrences.len() {
-                self.current_index + 1
-            } else {
-                return None;
-            }
-        } else if self.current_index > 0 {
-            self.current_index - 1
-        } else {
-            return None;
-        };
-        self.occurrences.get(next).map(|h| h.work_abbrev.as_str())
-    }
-
-    /// Advance index forward, wrapping to the start after the last occurrence.
-    pub fn advance(&mut self) -> bool {
-        if self.occurrences.is_empty() {
-            return false;
-        }
-        self.current_index = (self.current_index + 1) % self.occurrences.len();
-        true
-    }
-
-    /// Move index backward, wrapping to the end before the first occurrence.
-    pub fn retreat(&mut self) -> bool {
-        if self.occurrences.is_empty() {
-            return false;
-        }
-        if self.current_index > 0 {
-            self.current_index -= 1;
-        } else {
-            self.current_index = self.occurrences.len() - 1;
-        }
-        true
     }
 
     /// Advance to the next occurrence in the same work. Wraps within same-work hits.

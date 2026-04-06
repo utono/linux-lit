@@ -79,7 +79,7 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
     // 3. Load timestamps
     let mut ts_stmt = conn.prepare(
         "SELECT lt.line_mapping_id, lt.start_time, lt.end_time, lt.media_id, \
-         lt.sentence_start_time, lt.sentence_end_time \
+         lt.sentence_start_time \
          FROM line_timestamps lt \
          JOIN line_mapping lm ON lt.line_mapping_id = lm.id \
          WHERE lm.work_abbrev = ?1",
@@ -92,7 +92,6 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
                 end: row.get::<_, Option<f64>>(2)?.unwrap_or(0.0),
                 media_id: row.get::<_, Option<i64>>(3)?.unwrap_or(0),
                 sentence_start: row.get::<_, Option<f64>>(4)?,
-                sentence_end: row.get::<_, Option<f64>>(5)?,
             })
         })?
         .collect::<Result<_, _>>()?;
@@ -119,7 +118,6 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
                 start: ts.start,
                 end: ts.end,
                 sentence_start: ts.sentence_start,
-                sentence_end: ts.sentence_end,
             });
         }
     }
@@ -255,8 +253,6 @@ pub struct VocabEtymology {
     pub prefix: Option<String>,
     pub prefix_gloss: Option<String>,
     pub root: Option<String>,
-    #[allow(dead_code)]
-    pub root_base: Option<String>,
     pub root_gloss: Option<String>,
     pub suffix: Option<String>,
     pub suffix_gloss: Option<String>,
@@ -268,7 +264,7 @@ pub fn load_vocab_etymology(
     word: &str,
 ) -> Option<VocabEtymology> {
     conn.query_row(
-        "SELECT vr.prefix, vr.prefix_gloss, vr.root, vr.root_base, \
+        "SELECT vr.prefix, vr.prefix_gloss, vr.root, \
          vr.root_gloss, vr.suffix, vr.suffix_gloss \
          FROM vocab_rhetoric vr \
          JOIN vocab_words vw ON vr.word_id = vw.id \
@@ -278,10 +274,9 @@ pub fn load_vocab_etymology(
             prefix: row.get::<_, Option<String>>(0)?,
             prefix_gloss: row.get::<_, Option<String>>(1)?,
             root: row.get::<_, Option<String>>(2)?,
-            root_base: row.get::<_, Option<String>>(3)?,
-            root_gloss: row.get::<_, Option<String>>(4)?,
-            suffix: row.get::<_, Option<String>>(5)?,
-            suffix_gloss: row.get::<_, Option<String>>(6)?,
+            root_gloss: row.get::<_, Option<String>>(3)?,
+            suffix: row.get::<_, Option<String>>(4)?,
+            suffix_gloss: row.get::<_, Option<String>>(5)?,
         }),
     ).ok()
 }

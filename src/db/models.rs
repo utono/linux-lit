@@ -40,7 +40,6 @@ pub struct TimeRange {
     pub start: f64,
     pub end: f64,
     pub sentence_start: Option<f64>,
-    pub sentence_end: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -51,7 +50,6 @@ pub struct Timestamp {
     pub end: f64,
     pub media_id: i64,
     pub sentence_start: Option<f64>,
-    pub sentence_end: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -62,8 +60,6 @@ pub struct Chunk {
     pub b_line: i64,    // line_in_div of last line (inclusive)
     pub a_time: Option<f64>,
     pub b_time: Option<f64>,
-    pub a_mid: bool,
-    pub b_mid: bool,
     pub div1: i64,
     pub div2: Option<i64>,
 }

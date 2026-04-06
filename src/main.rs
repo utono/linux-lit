@@ -166,8 +166,6 @@ fn main() {
                             if paragraph_changed {
                                 crate::app::refresh_vocab_popup(&mut s);
                             }
-                            s.config.last_line = buffer_line;
-                            crate::config::save(&s.config);
                         }
                         // Check if the next dialogue line lacks a timestamp;
                         // if so, schedule an advance when the current line's audio ends.
@@ -218,8 +216,6 @@ fn main() {
                                         crate::input::navigation::update_highlight_and_ensure_visible(
                                             &mut s,
                                         );
-                                        s.config.last_line = next_bl;
-                                        crate::config::save(&s.config);
                                     }
                                 }
                             }

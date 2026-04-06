@@ -7,7 +7,7 @@ pub fn load_chunks(
     media_id: i64,
 ) -> Result<Vec<Chunk>, rusqlite::Error> {
     let mut stmt = conn.prepare(
-        "SELECT id, a_line, b_line, a_time, b_time, a_mid, b_mid, div1, div2 \
+        "SELECT id, a_line, b_line, a_time, b_time, div1, div2 \
          FROM chunks \
          WHERE work_abbrev = ?1 AND media_id = ?2 \
          ORDER BY div1, div2, a_line",
@@ -19,10 +19,8 @@ pub fn load_chunks(
             b_line: row.get(2)?,
             a_time: row.get(3)?,
             b_time: row.get(4)?,
-            a_mid: row.get::<_, i64>(5)? != 0,
-            b_mid: row.get::<_, i64>(6)? != 0,
-            div1: row.get(7)?,
-            div2: row.get(8)?,
+            div1: row.get(5)?,
+            div2: row.get(6)?,
         })
     })?;
     rows.collect()
