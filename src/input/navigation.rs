@@ -96,7 +96,8 @@ pub fn jump_to_start(state: &mut AppState) {
 
     state.current_line = target;
     update_highlight(state);
-    set_page_instant(state, target);
+    let top = target.saturating_sub(1);
+    set_page_instant(state, top);
     seek_to_current_line(state);
 }
 
@@ -117,7 +118,50 @@ pub fn jump_to_end(state: &mut AppState) {
     seek_to_current_line(state);
 }
 
-/// Page forward (Ctrl+d/f). Advance by one page with overlap.
+/// Find the next dialogue line at or after `from`.
+fn next_dialogue_from(buffer: &sourceview5::Buffer, from: usize, line_count: usize) -> usize {
+    use crate::db::line_types;
+    for i in from..line_count {
+        let text = buffer_line_text(buffer, i);
+        if !line_types::is_blank(&text) && line_types::is_dialogue(&text, false) {
+            return i;
+        }
+    }
+    from
+}
+
+/// Find the last dialogue line in the range [from, from+count).
+fn last_dialogue_in_page(buffer: &sourceview5::Buffer, from: usize, count: usize, line_count: usize) -> usize {
+    use crate::db::line_types;
+    let end = (from + count).min(line_count);
+    let mut last = from;
+    for i in from..end {
+        let text = buffer_line_text(buffer, i);
+        if !line_types::is_blank(&text) && line_types::is_dialogue(&text, false) {
+            last = i;
+        }
+    }
+    last
+}
+
+/// Given a dialogue line that will be the top of a page, back up one line
+/// if immediately preceded by a speaker name so the speaker is visible.
+fn back_up_for_speaker(buffer: &sourceview5::Buffer, line: usize) -> usize {
+    use crate::db::line_types;
+    if line == 0 {
+        return line;
+    }
+    let prev = buffer_line_text(buffer, line - 1);
+    if line_types::is_speaker(&prev) {
+        line - 1
+    } else {
+        line
+    }
+}
+
+/// Page forward (Ctrl+d/f). The next page starts at the dialogue line
+/// immediately after the last dialogue line visible on the current page,
+/// backed up by one if preceded by a speaker name.
 pub fn page_forward(state: &mut AppState) {
     if state.current_work.is_none() {
         return;
@@ -128,29 +172,33 @@ pub fn page_forward(state: &mut AppState) {
     }
 
     let lpp = lines_per_page(state);
-    let advance = lpp.saturating_sub(PAGE_OVERLAP).max(1);
-    let new_top = (state.page_top_line + advance).min(line_count.saturating_sub(1));
+    let last = last_dialogue_in_page(&state.buffer, state.page_top_line, lpp, line_count);
+    let next = next_dialogue_from(&state.buffer, last + 1, line_count);
+    if next == last + 1 && next >= line_count {
+        return; // already at end
+    }
+    let new_top = back_up_for_speaker(&state.buffer, next);
 
-    // Move cursor to center of the new page
-    state.current_line = (new_top + lpp / 2).min(line_count - 1);
+    state.current_line = next;
     update_highlight(state);
     seek_to_current_line(state);
     set_page(state, new_top, PageDirection::Forward);
 }
 
-/// Page backward (Ctrl+u/b). Go back by one page with overlap.
+/// Page backward (Ctrl+u/b). Go back by one page worth of lines,
+/// find the next dialogue line at that position, and back up for speaker.
 pub fn page_backward(state: &mut AppState) {
     if state.current_work.is_none() {
         return;
     }
 
     let lpp = lines_per_page(state);
-    let retreat = lpp.saturating_sub(PAGE_OVERLAP).max(1);
-    let new_top = state.page_top_line.saturating_sub(retreat);
-
     let line_count = state.effective_line_count();
-    // Move cursor to center of the new page
-    state.current_line = (new_top + lpp / 2).min(line_count.saturating_sub(1));
+    let raw_top = state.page_top_line.saturating_sub(lpp);
+    let next = next_dialogue_from(&state.buffer, raw_top, line_count);
+    let new_top = back_up_for_speaker(&state.buffer, next);
+
+    state.current_line = next;
     update_highlight(state);
     seek_to_current_line(state);
     set_page(state, new_top, PageDirection::Backward);
@@ -560,7 +608,7 @@ fn center_cursor(state: &mut AppState) {
 /// When the target line has a timestamp, suppresses CursorSync briefly while MPV
 /// processes the seek. When it has no timestamp, suppresses indefinitely so the
 /// cursor stays where the user put it.
-fn seek_to_current_line(state: &mut AppState) {
+pub fn seek_to_current_line(state: &mut AppState) {
     let work = match state.current_work.as_ref() {
         Some(w) => w,
         None => return,
@@ -572,9 +620,12 @@ fn seek_to_current_line(state: &mut AppState) {
     };
 
     if let Some(ts) = &work.lines[work_idx].timestamp {
-        // Exact timestamp — brief suppression while MPV processes the seek
-        state.suppress_sync_until =
-            Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
+        // Exact timestamp — brief suppression while MPV processes the seek.
+        // Don't shorten an existing longer suppression (e.g. from display_work).
+        let new_until = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        if state.suppress_sync_until.map_or(true, |existing| new_until > existing) {
+            state.suppress_sync_until = Some(new_until);
+        }
         let seek_time = (ts.start - SEEK_PREROLL).max(0.0);
         let _ = state
             .cmd_tx
@@ -1002,38 +1053,29 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
 /// After the scroll settles, apply the bottom clip and crossfade the mask
 /// out to reveal the text.
 pub fn update_highlight_deferred_scroll(state: &mut AppState, mask: gtk4::Box) {
-    state.page_top_line = state.current_line;
+    // page_top_line is already set by the caller (e.g. display_work_at);
+    // only default to current_line if it wasn't explicitly positioned.
+    if state.page_top_line == 0 && state.current_line > 0 {
+        state.page_top_line = state.current_line;
+    }
     update_highlight(state);
 
     let text_view = state.text_view.clone();
     let bottom_clip = state.bottom_clip.clone();
     let loading_flag = state.loading_work.clone();
-    let line = state.current_line;
+    let scroll_to = state.page_top_line;
+    let current = state.current_line;
     let line_count = state.effective_line_count();
     let buffer = state.buffer.clone();
     let overlay = state.page_turn_overlay.clone();
 
-    // Place a mark at the target line. scroll_to_mark internally defers the
-    // scroll until GTK has validated line heights, avoiding the stale-layout
-    // problem that scroll_to_iter and manual vadjustment suffer from.
-    if let Some(existing) = buffer.mark("deferred-scroll") {
-        buffer.delete_mark(&existing);
-    }
-    if let Some(iter) = buffer.iter_at_line(line as i32) {
-        buffer.create_mark(Some("deferred-scroll"), &iter, true);
-    }
-
-    // scroll_to_mark queues a scroll that fires after line validation.
-    if let Some(mark) = buffer.mark("deferred-scroll") {
-        text_view.scroll_to_mark(&mark, 0.0, true, 0.0, 0.0);
-    }
-
-    // Wait for scroll_to_mark's internal idle to complete, then snap the
-    // scroll position, apply the clip, and crossfade the mask away.
+    // Wait for GTK to validate line heights, then snap scroll position,
+    // apply the clip, and crossfade the mask away. A single deferred snap
+    // avoids the double-scroll flicker from scroll_to_mark + vadjustment.
     let scrolled_window = state.scrolled_window.clone();
     glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
-        // Snap to the exact Y of the target line so the bottom clip is aligned.
-        if let Some(iter) = buffer.iter_at_line(line as i32) {
+        // Snap to the exact Y of the scroll target.
+        if let Some(iter) = buffer.iter_at_line(scroll_to as i32) {
             let (y, _h) = text_view.line_yrange(&iter);
             let adj = scrolled_window.vadjustment();
             let max_scroll = (adj.upper() - adj.page_size()).max(0.0);
@@ -1043,11 +1085,8 @@ pub fn update_highlight_deferred_scroll(state: &mut AppState, mask: gtk4::Box) {
         // Apply clip after one more idle cycle so the vadjustment change
         // is processed, then crossfade the mask out.
         glib::idle_add_local_once(move || {
-            update_bottom_clip(&text_view, &bottom_clip, line, line_count);
+            update_bottom_clip(&text_view, &bottom_clip, current, line_count);
             loading_flag.set(false);
-            if let Some(mark) = buffer.mark("deferred-scroll") {
-                buffer.delete_mark(&mark);
-            }
 
             // Crossfade the mask out over 600ms to reveal the text smoothly.
             let mask_ref = mask.clone();

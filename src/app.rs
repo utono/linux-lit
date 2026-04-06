@@ -411,6 +411,24 @@ pub fn build_window(
     page_turn_overlay.set_hexpand(true);
     page_turn_overlay.add_css_class("page-turn-overlay");
 
+    // Startup mask — covers the card until display_work's own mask takes over.
+    // Prevents flicker from the empty buffer being visible before load completes.
+    let startup_mask = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    startup_mask.set_vexpand(true);
+    startup_mask.set_hexpand(true);
+    startup_mask.add_css_class("load-mask");
+    let startup_mask_css = gtk4::CssProvider::new();
+    startup_mask_css.load_from_string(&format!(
+        ".load-mask {{ background-color: {}; border-radius: 12px; }}",
+        theme.text_bg
+    ));
+    gtk4::style_context_add_provider_for_display(
+        &gtk4::gdk::Display::default().expect("display"),
+        &startup_mask_css,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    page_turn_overlay.add_overlay(&startup_mask);
+
     // Centered text card container — width_request controls the card width
     let content_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
     content_hbox.set_halign(gtk4::Align::Center);
@@ -513,7 +531,7 @@ pub fn build_window(
     window.set_child(Some(&vbox));
 
     // Override startup work/line with env vars (used by concordance cross-work spawn)
-    let (last_work, last_line) = if let Ok(work_abbrev) = std::env::var("LINUX_LIT_WORK") {
+    let (last_work, _last_line) = if let Ok(work_abbrev) = std::env::var("LINUX_LIT_WORK") {
         let line_id: Option<i64> = std::env::var("LINUX_LIT_LINE_ID").ok()
             .and_then(|s| s.parse().ok());
         crate::logging::log(&format!(
@@ -712,14 +730,6 @@ pub fn build_window(
                         .and_then(|s| s.parse().ok());
                     {
                         let mut s = state_clone.borrow_mut();
-                        // Set cursor to MRU line before display_work so the
-                        // single deferred scroll/clip pass uses the right position.
-                        if target_line_id.is_none() {
-                            s.config.work_positions.insert(
-                                work.abbrev.clone(),
-                                last_line,
-                            );
-                        }
                         if target_line_id.is_some() {
                             display_work_at(&mut s, work, target_line_id);
                         } else {
@@ -861,6 +871,19 @@ pub fn display_work(state: &mut AppState, work: Work) {
 /// `target_line_id` is a line_mapping_id to position the cursor on after load.
 pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<i64>) {
     state.loading_work.set(true);
+
+    // Remove any existing mask (e.g. startup mask) before adding a new one.
+    let mut to_remove = Vec::new();
+    let mut child = state.page_turn_overlay.first_child();
+    while let Some(widget) = child {
+        if widget.has_css_class("load-mask") {
+            to_remove.push(widget.clone());
+        }
+        child = widget.next_sibling();
+    }
+    for w in to_remove {
+        state.page_turn_overlay.remove_overlay(&w);
+    }
 
     // Place a solid-color mask over the card to hide layout/scroll churn.
     // The mask will be crossfaded out after the scroll and clip settle.
@@ -1096,6 +1119,22 @@ pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<
         state.effective_line_count().saturating_sub(1),
     );
 
+    // Always start at first dialogue line with viewport showing
+    // the line above (usually a speaker name).
+    if target_line_id.is_none() {
+        let first_dialogue = if let Some(ref lm) = state.line_map {
+            lm.dialogue_buffer_lines.first().copied()
+        } else {
+            state.current_work.as_ref().and_then(|w| {
+                w.lines.iter().position(|l| l.is_dialogue)
+            })
+        };
+        if let Some(target) = first_dialogue {
+            state.current_line = target;
+            state.page_top_line = target.saturating_sub(1);
+        }
+    }
+
     // If a concordance target was specified, resolve it to a buffer line
     if let Some(target_id) = target_line_id {
         if let Some(work) = &state.current_work {
@@ -1109,6 +1148,15 @@ pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<
                 state.page_top_line = buf_idx;
             }
         }
+    }
+
+    // Suppress CursorSync so MPV events from the previous playback position
+    // don't override the initial cursor placement. The window must be long
+    // enough to cover async MPV launch + connection + first time_pos event.
+    // Don't shorten a longer suppression already set by seek_to_current_line.
+    let load_suppress = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    if state.suppress_sync_until.map_or(true, |existing| load_suppress > existing) {
+        state.suppress_sync_until = Some(load_suppress);
     }
 
     // Dim all lines except the current one; defer scroll to idle callback
@@ -1134,11 +1182,12 @@ fn rebuild_buffer_text(state: &mut AppState) {
                 let file_lines: Vec<String> = contents.lines().map(String::from).collect();
                 // Strip blank lines that immediately precede speaker lines —
                 // the speaker-gap tag provides the visual spacing instead.
-                let filtered_lines: Vec<&str> = {
-                    let mut result: Vec<&str> = Vec::with_capacity(file_lines.len());
+                // Strip ## prefix from act/scene headers, and remove blank
+                // lines before speaker lines (speaker-gap tag provides spacing).
+                let cleaned_lines: Vec<String> = {
+                    let mut result: Vec<String> = Vec::with_capacity(file_lines.len());
                     for (i, line) in file_lines.iter().enumerate() {
                         if crate::db::line_types::is_blank(line) {
-                            // Look ahead: skip this blank if the next non-blank line is a speaker
                             let next_non_blank = file_lines[i + 1..]
                                 .iter()
                                 .find(|l| !crate::db::line_types::is_blank(l));
@@ -1148,14 +1197,17 @@ fn rebuild_buffer_text(state: &mut AppState) {
                                 }
                             }
                         }
-                        result.push(line);
+                        if let Some(stripped) = line.strip_prefix("## ") {
+                            result.push(stripped.to_string());
+                        } else {
+                            result.push(line.clone());
+                        }
                     }
                     result
                 };
-                let filtered_contents = filtered_lines.join("\n");
-                let filtered_file_lines: Vec<String> = filtered_lines.iter().map(|s| s.to_string()).collect();
+                let filtered_contents = cleaned_lines.join("\n");
                 let is_prose = crate::db::line_types::is_prose_work(&work.work_type);
-                let line_map = crate::text_file_map::build_line_map(&filtered_file_lines, &work.lines, is_prose);
+                let line_map = crate::text_file_map::build_line_map(&cleaned_lines, &work.lines, is_prose);
                 state.buffer.set_text(&filtered_contents);
                 state.line_map = Some(line_map);
                 crate::logging::log(&format!(

@@ -1079,6 +1079,14 @@ pub fn handle_key(
             navigation::jump_to_next_dialogue(&mut state.borrow_mut());
             true
         }
+        "less" => {
+            navigation::page_backward(&mut state.borrow_mut());
+            true
+        }
+        "Q" => {
+            navigation::page_forward(&mut state.borrow_mut());
+            true
+        }
         "o" | "e" | "O" | "E" => {
             let offset = match key_name {
                 "o" => -3.5,
