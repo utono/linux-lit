@@ -905,7 +905,7 @@ pub fn scroll_viewport(state: &mut AppState, delta: i32) {
     if max_scroll <= 0.0 {
         return;
     }
-    // Scroll by 3 line heights per keypress for browser-like feel
+    // Scroll by 3 line heights per keypress
     let line_height = state.buffer.iter_at_line(state.current_line as i32)
         .map(|iter| {
             let rect = state.text_view.iter_location(&iter);
@@ -913,7 +913,7 @@ pub fn scroll_viewport(state: &mut AppState, delta: i32) {
         })
         .unwrap_or(30.0)
         .max(20.0);
-    let step = line_height * 5.0;
+    let step = line_height * 3.0;
     let new_val = (adj.value() + step * delta as f64).max(0.0).min(max_scroll);
     adj.set_value(new_val);
 }

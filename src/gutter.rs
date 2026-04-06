@@ -46,7 +46,7 @@ pub fn setup_timestamp_gutter(
         let is_ch = idx < ch.len() && ch[idx];
         let ts = has_timestamp.borrow();
         if is_ch {
-            text_renderer.set_text("\u{2666}"); // ♦
+            text_renderer.set_text("\u{25A0}"); // ■
         } else if idx < ts.len() && ts[idx] {
             if a_line.get() == Some(idx) {
                 text_renderer.set_text("\u{25D0}"); // ◐

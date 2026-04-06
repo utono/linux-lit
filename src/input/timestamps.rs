@@ -125,6 +125,31 @@ pub fn set_chapter(state: &mut AppState) -> bool {
         None => return false,
     };
 
+    // If not already a chapter, check for nearby chapters within ±10 seconds
+    {
+        let work = match &state.current_work {
+            Some(w) => w,
+            None => return false,
+        };
+        let line = &work.lines[line_idx];
+        if !line.is_chapter {
+            let nearby = work.lines.iter().enumerate().any(|(i, other)| {
+                i != line_idx
+                    && other.is_chapter
+                    && other.timestamp.as_ref().map_or(false, |ts| {
+                        (ts.start - time_pos).abs() <= 10.0
+                    })
+            });
+            if nearby {
+                crate::logging::log(&format!(
+                    "TS: chapter rejected — another chapter within 10s of {:.2}",
+                    time_pos,
+                ));
+                return false;
+            }
+        }
+    }
+
     {
         let work = match &mut state.current_work {
             Some(w) => w,
