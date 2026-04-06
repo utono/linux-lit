@@ -21,6 +21,7 @@ pub fn setup_timestamp_gutter(
     a_line: Rc<Cell<Option<usize>>>,
     b_line: Rc<Cell<Option<usize>>>,
     left_margin: i32,
+    root_color: &str,
 ) -> sourceview5::GutterRendererText {
     let gutter = sourceview5::prelude::ViewExt::gutter(view, gtk4::TextWindowType::Left);
     let renderer = sourceview5::GutterRendererText::new();
@@ -33,31 +34,34 @@ pub fn setup_timestamp_gutter(
     renderer.set_size_request(gutter_width, -1);
     gutter.insert(&renderer, 0);
 
+    let color = root_color.to_string();
     renderer.connect_query_data(move |renderer, _lines_obj, line| {
         let text_renderer = renderer
             .downcast_ref::<sourceview5::GutterRendererText>()
             .unwrap();
         if !visible.get() {
-            text_renderer.set_text("");
+            text_renderer.set_markup("");
             return;
         }
         let idx = line as usize;
         let ch = is_chapter.borrow();
         let is_ch = idx < ch.len() && ch[idx];
         let ts = has_timestamp.borrow();
-        if is_ch {
-            text_renderer.set_text("\u{25A0}"); // ■
+        let glyph = if is_ch {
+            "\u{25B8}" // ▸
         } else if idx < ts.len() && ts[idx] {
             if a_line.get() == Some(idx) {
-                text_renderer.set_text("\u{25D0}"); // ◐
+                "\u{25D0}" // ◐
             } else if b_line.get() == Some(idx) {
-                text_renderer.set_text("\u{25D1}"); // ◑
+                "\u{25D1}" // ◑
             } else {
-                text_renderer.set_text("\u{2022}"); // •
+                "\u{2022}" // •
             }
         } else {
-            text_renderer.set_text("");
-        }
+            text_renderer.set_markup("");
+            return;
+        };
+        text_renderer.set_markup(&format!("<span foreground=\"{}\">{}</span>", color, glyph));
     });
 
     renderer

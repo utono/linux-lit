@@ -120,6 +120,10 @@ pub fn execute_search(state_rc: &Rc<RefCell<AppState>>) {
 /// Toggle playback. If resuming, seek to current line's start_time first.
 /// Clears sync suppression so cursor tracking resumes.
 pub fn toggle_playback(state: &mut AppState) {
+    // Hide translations when starting playback
+    if state.translations_visible {
+        crate::app::toggle_translations(state);
+    }
     // Suppress cursor fade on the first sync-driven highlight after unpause
     if let Some(prev) = state.cursor_fade_anim.take() {
         prev.skip();
