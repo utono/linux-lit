@@ -999,6 +999,10 @@ pub fn update_highlight_deferred_scroll(state: &mut AppState, mask: gtk4::Box) {
     if state.page_top_line == 0 && state.current_line > 0 {
         state.page_top_line = state.current_line;
     }
+
+    // Hide the text view while we set up the buffer and scroll position.
+    // This prevents any flash of content at the wrong scroll position.
+    state.text_view.set_visible(false);
     update_highlight(state);
 
     let text_view = state.text_view.clone();
@@ -1009,13 +1013,12 @@ pub fn update_highlight_deferred_scroll(state: &mut AppState, mask: gtk4::Box) {
     let line_count = state.effective_line_count();
     let buffer = state.buffer.clone();
     let overlay = state.page_turn_overlay.clone();
-
-    // Wait for GTK to validate line heights, then snap scroll position,
-    // apply the clip, and crossfade the mask away. A single deferred snap
-    // avoids the double-scroll flicker from scroll_to_mark + vadjustment.
     let scrolled_window = state.scrolled_window.clone();
-    glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
-        // Snap to the exact Y of the scroll target.
+
+    // Defer scroll until GTK has validated line heights. The text view is
+    // hidden, so no content is visible during the wait.
+    glib::idle_add_local_once(move || {
+        // Snap scroll to the target line.
         if let Some(iter) = buffer.iter_at_line(scroll_to as i32) {
             let (y, _h) = text_view.line_yrange(&iter);
             let adj = scrolled_window.vadjustment();
@@ -1023,26 +1026,25 @@ pub fn update_highlight_deferred_scroll(state: &mut AppState, mask: gtk4::Box) {
             adj.set_value((y as f64).max(0.0).min(max_scroll));
         }
 
-        // Apply clip after one more idle cycle so the vadjustment change
-        // is processed, then crossfade the mask out.
-        glib::idle_add_local_once(move || {
-            update_bottom_clip(&text_view, &bottom_clip, current, line_count);
-            loading_flag.set(false);
+        update_bottom_clip(&text_view, &bottom_clip, current, line_count);
 
-            // Crossfade the mask out over 600ms to reveal the text smoothly.
-            let mask_ref = mask.clone();
-            let overlay_ref = overlay.clone();
-            let target = adw::CallbackAnimationTarget::new(move |value| {
-                mask_ref.set_opacity(value as f64);
-            });
-            let anim = adw::TimedAnimation::new(&mask, 1.0, 0.0, 600, target);
-            anim.set_easing(adw::Easing::EaseOutCubic);
-            let mask_cleanup = mask.clone();
-            anim.connect_done(move |_| {
-                overlay_ref.remove_overlay(&mask_cleanup);
-            });
-            anim.play();
+        // Make the text view visible again (still behind the opaque mask).
+        text_view.set_visible(true);
+        loading_flag.set(false);
+
+        // Crossfade the mask out to reveal the text.
+        let mask_ref = mask.clone();
+        let overlay_ref = overlay.clone();
+        let target = adw::CallbackAnimationTarget::new(move |value| {
+            mask_ref.set_opacity(value as f64);
         });
+        let anim = adw::TimedAnimation::new(&mask, 1.0, 0.0, 600, target);
+        anim.set_easing(adw::Easing::EaseOutCubic);
+        let mask_cleanup = mask.clone();
+        anim.connect_done(move |_| {
+            overlay_ref.remove_overlay(&mask_cleanup);
+        });
+        anim.play();
     });
 }
 
