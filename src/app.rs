@@ -852,23 +852,9 @@ pub fn display_work(state: &mut AppState, work: Work) {
 pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<i64>) {
     state.loading_work.set(true);
 
-    // Place a solid-color mask over the card to hide layout/scroll churn.
-    // The mask will be crossfaded out after the scroll and clip settle.
-    let mask = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-    mask.set_vexpand(true);
-    mask.set_hexpand(true);
-    mask.add_css_class("load-mask");
-    let mask_css = gtk4::CssProvider::new();
-    mask_css.load_from_string(&format!(
-        ".load-mask {{ background-color: {}; border-radius: 12px; }}",
-        state.theme.text_bg
-    ));
-    gtk4::style_context_add_provider_for_display(
-        &gtk4::prelude::WidgetExt::display(&state.window),
-        &mask_css,
-        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
-    );
-    state.page_turn_overlay.add_overlay(&mask);
+    // Hide the scrolled window to prevent any flash of content at the wrong
+    // scroll position while we rebuild the buffer.
+    state.scrolled_window.set_visible(false);
 
     // Save position of the outgoing work before switching
     if let Some(ref old_work) = state.current_work {
@@ -1125,10 +1111,9 @@ pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<
         state.suppress_sync_until = Some(load_suppress);
     }
 
-    // Dim all lines except the current one; defer scroll to idle callback
-    // so GTK has time to lay out the new buffer before we query geometry.
+    // Apply highlight, snap scroll, show the scrolled window.
     let t7 = std::time::Instant::now();
-    crate::input::navigation::update_highlight_deferred_scroll(state, mask);
+    crate::input::navigation::update_highlight_and_show(state);
     crate::logging::log(&format!("TIMING: update_highlight {:.0}ms", t7.elapsed().as_millis()));
     crate::logging::log(&format!("TIMING: display_work total {:.0}ms", t0.elapsed().as_millis()));
 }

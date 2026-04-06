@@ -989,62 +989,38 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
     auto_show_vocab_popup(state);
 }
 
-/// Set page_top and apply highlight tags, then scroll to the target line
-/// using scroll_to_mark (which internally waits for line validation).
-/// After the scroll settles, apply the bottom clip and crossfade the mask
-/// out to reveal the text.
-pub fn update_highlight_deferred_scroll(state: &mut AppState, mask: gtk4::Box) {
-    // page_top_line is already set by the caller (e.g. display_work_at);
-    // only default to current_line if it wasn't explicitly positioned.
+/// Apply highlight tags, snap scroll to page_top_line, apply bottom clip,
+/// then show the scrolled window. Called at the end of display_work_at
+/// after the buffer and cursor position are fully set up.
+pub fn update_highlight_and_show(state: &mut AppState) {
     if state.page_top_line == 0 && state.current_line > 0 {
         state.page_top_line = state.current_line;
     }
-
-    // Hide the text view while we set up the buffer and scroll position.
-    // This prevents any flash of content at the wrong scroll position.
-    state.text_view.set_visible(false);
     update_highlight(state);
 
-    let text_view = state.text_view.clone();
-    let bottom_clip = state.bottom_clip.clone();
-    let loading_flag = state.loading_work.clone();
     let scroll_to = state.page_top_line;
     let current = state.current_line;
     let line_count = state.effective_line_count();
+
+    // Snap scroll position synchronously. line_yrange may return 0 if GTK
+    // hasn't validated the layout yet, so we defer to an idle callback.
+    let text_view = state.text_view.clone();
+    let bottom_clip = state.bottom_clip.clone();
+    let loading_flag = state.loading_work.clone();
     let buffer = state.buffer.clone();
-    let overlay = state.page_turn_overlay.clone();
     let scrolled_window = state.scrolled_window.clone();
 
-    // Defer scroll until GTK has validated line heights. The text view is
-    // hidden, so no content is visible during the wait.
     glib::idle_add_local_once(move || {
-        // Snap scroll to the target line.
         if let Some(iter) = buffer.iter_at_line(scroll_to as i32) {
             let (y, _h) = text_view.line_yrange(&iter);
             let adj = scrolled_window.vadjustment();
             let max_scroll = (adj.upper() - adj.page_size()).max(0.0);
             adj.set_value((y as f64).max(0.0).min(max_scroll));
         }
-
         update_bottom_clip(&text_view, &bottom_clip, current, line_count);
-
-        // Make the text view visible again (still behind the opaque mask).
-        text_view.set_visible(true);
+        // Show the scrolled window now that scroll position is correct.
+        scrolled_window.set_visible(true);
         loading_flag.set(false);
-
-        // Crossfade the mask out to reveal the text.
-        let mask_ref = mask.clone();
-        let overlay_ref = overlay.clone();
-        let target = adw::CallbackAnimationTarget::new(move |value| {
-            mask_ref.set_opacity(value as f64);
-        });
-        let anim = adw::TimedAnimation::new(&mask, 1.0, 0.0, 600, target);
-        anim.set_easing(adw::Easing::EaseOutCubic);
-        let mask_cleanup = mask.clone();
-        anim.connect_done(move |_| {
-            overlay_ref.remove_overlay(&mask_cleanup);
-        });
-        anim.play();
     });
 }
 
