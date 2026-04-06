@@ -100,21 +100,26 @@ fn back_up_for_speaker(buffer: &sourceview5::Buffer, line: usize) -> usize {
     }
 }
 
-/// Find the last buffer line whose top edge is visible in the viewport.
+/// Find the last buffer line that fits fully in the viewport.
+/// Uses the same height-summing approach as update_bottom_clip.
 fn last_visible_line(state: &AppState) -> usize {
-    let adj = state.scrolled_window.vadjustment();
-    let viewport_bottom = adj.value() + adj.page_size();
+    let widget_height = state.text_view.height();
+    if widget_height <= 0 {
+        return state.page_top_line;
+    }
     let line_count = state.effective_line_count();
-    // Binary search: find the last line whose y <= viewport_bottom
+    let descender = descender_guard_px(&state.text_view, state.page_top_line);
+    let usable = widget_height - descender;
+    let mut total = 0;
     let mut last = state.page_top_line;
     for i in state.page_top_line..line_count {
-        if let Some(iter) = state.buffer.iter_at_line(i as i32) {
-            let (y, _h) = state.text_view.line_yrange(&iter);
-            if (y as f64) > viewport_bottom {
-                break;
-            }
-            last = i;
+        let Some(iter) = state.buffer.iter_at_line(i as i32) else { break };
+        let (_y, h) = state.text_view.line_yrange(&iter);
+        if total + h > usable {
+            break;
         }
+        total += h;
+        last = i;
     }
     last
 }
