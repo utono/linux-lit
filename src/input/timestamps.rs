@@ -139,18 +139,22 @@ pub fn set_chapter(state: &mut AppState) -> bool {
                 return false;
             }
         };
-        if let Err(e) = crate::db::queries::upsert_chapter(&conn, line.id, media_id, &line.citation, time_pos) {
-            crate::logging::log(&format!("TS: upsert_chapter failed: {}", e));
-            return false;
-        }
+        let new_val = match crate::db::queries::upsert_chapter(&conn, line.id, media_id, &line.citation, time_pos) {
+            Ok(v) => v,
+            Err(e) => {
+                crate::logging::log(&format!("TS: upsert_chapter failed: {}", e));
+                return false;
+            }
+        };
 
         // Update in-memory: only set start_time if no timestamp exists yet
         if line.timestamp.is_none() {
             line.timestamp = Some(TimeRange { start: time_pos, end: 0.0, sentence_start: None, sentence_end: None });
         }
-        line.is_chapter = true;
+        line.is_chapter = new_val;
     }
-    crate::logging::log(&format!("TS: set chapter start_time={:.2} line={}", time_pos, line_idx));
+    let is_ch = state.current_work.as_ref().map(|w| w.lines[line_idx].is_chapter).unwrap_or(false);
+    crate::logging::log(&format!("TS: toggle chapter is_chapter={} start_time={:.2} line={}", is_ch, time_pos, line_idx));
 
     resync_mpv_timestamps(state);
 
@@ -160,6 +164,12 @@ pub fn set_chapter(state: &mut AppState) -> bool {
         let mut ht = state.has_timestamp.borrow_mut();
         if buffer_line < ht.len() {
             ht[buffer_line] = true;
+        }
+    }
+    {
+        let mut ch = state.is_chapter_line.borrow_mut();
+        if buffer_line < ch.len() {
+            ch[buffer_line] = is_ch;
         }
     }
     if let Some(ref renderer) = state.gutter_renderer {

@@ -420,15 +420,20 @@ pub fn upsert_chapter(
     media_id: i64,
     citation: &str,
     start_time: f64,
-) -> Result<(), rusqlite::Error> {
+) -> Result<bool, rusqlite::Error> {
     conn.execute(
         "INSERT INTO line_timestamps (citation, line_mapping_id, media_id, start_time, source, is_chapter) \
          VALUES (?1, ?2, ?3, ?4, 'manual', 1) \
          ON CONFLICT(line_mapping_id, media_id) \
-         DO UPDATE SET is_chapter = 1, updated_at = CURRENT_TIMESTAMP",
+         DO UPDATE SET is_chapter = CASE WHEN is_chapter = 1 THEN 0 ELSE 1 END, updated_at = CURRENT_TIMESTAMP",
         rusqlite::params![citation, line_mapping_id, media_id, start_time],
     )?;
-    Ok(())
+    let new_val: bool = conn.query_row(
+        "SELECT is_chapter FROM line_timestamps WHERE line_mapping_id = ?1 AND media_id = ?2",
+        rusqlite::params![line_mapping_id, media_id],
+        |row| row.get(0),
+    )?;
+    Ok(new_val)
 }
 
 pub fn update_end_time(

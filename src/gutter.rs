@@ -6,24 +6,31 @@ use sourceview5::prelude::*;
 use sourceview5::View;
 
 
-/// Set up a gutter renderer that shows "│" for timestamped lines.
+/// Set up a gutter renderer that shows signs for timestamped lines.
 ///
 /// The renderer is inserted into the left gutter. On each visible line,
 /// `query-data` fires and we set text based on the `has_timestamp` vec
-/// and the `visible` toggle.
+/// and the `visible` toggle. Chapter lines show a filled diamond (◆).
 ///
 /// Returns the renderer so the caller can store it for later removal.
 pub fn setup_timestamp_gutter(
     view: &View,
     visible: Rc<Cell<bool>>,
     has_timestamp: Rc<RefCell<Vec<bool>>>,
+    is_chapter: Rc<RefCell<Vec<bool>>>,
     a_line: Rc<Cell<Option<usize>>>,
     b_line: Rc<Cell<Option<usize>>>,
+    left_margin: i32,
 ) -> sourceview5::GutterRendererText {
     let gutter = sourceview5::prelude::ViewExt::gutter(view, gtk4::TextWindowType::Left);
     let renderer = sourceview5::GutterRendererText::new();
-    renderer.set_xpad(4); // minimal left padding for gutter
-    renderer.set_yalign(0.5); // center vertically within line
+    // Consume most of the left margin so signs sit just left of speaker names.
+    // The caller must reduce the text view's left_margin by GUTTER_WIDTH.
+    let gutter_width = (left_margin - 20).max(10);
+    renderer.set_xpad(0);
+    renderer.set_xalign(1.0);
+    renderer.set_yalign(0.5);
+    renderer.set_size_request(gutter_width, -1);
     gutter.insert(&renderer, 0);
 
     renderer.connect_query_data(move |renderer, _lines_obj, line| {
@@ -35,8 +42,12 @@ pub fn setup_timestamp_gutter(
             return;
         }
         let idx = line as usize;
+        let ch = is_chapter.borrow();
+        let is_ch = idx < ch.len() && ch[idx];
         let ts = has_timestamp.borrow();
-        if idx < ts.len() && ts[idx] {
+        if is_ch {
+            text_renderer.set_text("\u{2666}"); // ♦
+        } else if idx < ts.len() && ts[idx] {
             if a_line.get() == Some(idx) {
                 text_renderer.set_text("\u{25D0}"); // ◐
             } else if b_line.get() == Some(idx) {

@@ -72,6 +72,7 @@ pub struct AppState {
     pub media_id: Option<i64>,
     pub sign_column_visible: Rc<Cell<bool>>,
     pub has_timestamp: Rc<RefCell<Vec<bool>>>,
+    pub is_chapter_line: Rc<RefCell<Vec<bool>>>,
     pub gutter_renderer: Option<sourceview5::GutterRendererText>,
     pub chunk_renderer: Option<sourceview5::GutterRendererText>,
     pub ab_repeat: crate::ab_repeat::AbRepeatState,
@@ -564,6 +565,7 @@ pub fn build_window(
         media_id: None,
         sign_column_visible: Rc::new(Cell::new(false)),
         has_timestamp: Rc::new(RefCell::new(Vec::new())),
+        is_chapter_line: Rc::new(RefCell::new(Vec::new())),
         gutter_renderer: None,
         chunk_renderer: None,
         ab_repeat: crate::ab_repeat::AbRepeatState::default(),
@@ -1130,9 +1132,31 @@ fn rebuild_buffer_text(state: &mut AppState) {
         match std::fs::read_to_string(path) {
             Ok(contents) => {
                 let file_lines: Vec<String> = contents.lines().map(String::from).collect();
+                // Strip blank lines that immediately precede speaker lines —
+                // the speaker-gap tag provides the visual spacing instead.
+                let filtered_lines: Vec<&str> = {
+                    let mut result: Vec<&str> = Vec::with_capacity(file_lines.len());
+                    for (i, line) in file_lines.iter().enumerate() {
+                        if crate::db::line_types::is_blank(line) {
+                            // Look ahead: skip this blank if the next non-blank line is a speaker
+                            let next_non_blank = file_lines[i + 1..]
+                                .iter()
+                                .find(|l| !crate::db::line_types::is_blank(l));
+                            if let Some(next) = next_non_blank {
+                                if crate::db::line_types::is_speaker(next) {
+                                    continue;
+                                }
+                            }
+                        }
+                        result.push(line);
+                    }
+                    result
+                };
+                let filtered_contents = filtered_lines.join("\n");
+                let filtered_file_lines: Vec<String> = filtered_lines.iter().map(|s| s.to_string()).collect();
                 let is_prose = crate::db::line_types::is_prose_work(&work.work_type);
-                let line_map = crate::text_file_map::build_line_map(&file_lines, &work.lines, is_prose);
-                state.buffer.set_text(&contents);
+                let line_map = crate::text_file_map::build_line_map(&filtered_file_lines, &work.lines, is_prose);
+                state.buffer.set_text(&filtered_contents);
                 state.line_map = Some(line_map);
                 crate::logging::log(&format!(
                     "TEXT_FILE: loaded {} lines from {}",
@@ -1352,14 +1376,45 @@ fn setup_gutter(state: &mut AppState) {
                 .unwrap_or_default()
         };
         *state.has_timestamp.borrow_mut() = new_has_ts;
+
+        let new_is_ch: Vec<bool> = if let Some(ref lm) = state.line_map {
+            lm.buffer_to_work
+                .iter()
+                .map(|opt_idx| {
+                    opt_idx
+                        .and_then(|idx| Some(state.current_work.as_ref()?.lines.get(idx)?.is_chapter))
+                        .unwrap_or(false)
+                })
+                .collect()
+        } else {
+            state
+                .current_work
+                .as_ref()
+                .map(|w| w.lines.iter().map(|l| l.is_chapter).collect())
+                .unwrap_or_default()
+        };
+        *state.is_chapter_line.borrow_mut() = new_is_ch;
     }
+    let left_margin = state.text_view.left_margin();
+    let gutter_width = (left_margin - 20).max(10);
     let renderer = crate::gutter::setup_timestamp_gutter(
         &state.text_view,
         state.sign_column_visible.clone(),
         state.has_timestamp.clone(),
+        state.is_chapter_line.clone(),
         state.ab_a_line.clone(),
         state.ab_b_line.clone(),
+        left_margin,
     );
+    // Reduce left margin so the gutter absorbs the space instead of pushing text
+    state.text_view.set_left_margin(left_margin - gutter_width);
+    // Also adjust dialogue-indent tag so dialogue lines don't shift right
+    if let Some(buffer) = state.text_view.buffer().downcast_ref::<gtk4::TextBuffer>() {
+        if let Some(tag) = buffer.tag_table().lookup("dialogue-indent") {
+            let old_margin = tag.left_margin();
+            tag.set_left_margin(old_margin - gutter_width);
+        }
+    }
     state.gutter_renderer = Some(renderer);
 
     // Set up chunk bar gutter
