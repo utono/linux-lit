@@ -1652,3 +1652,273 @@ fn apply_word_underline(state: &mut AppState, ranges: &[(usize, usize)]) {
         }
     });
 }
+
+#[cfg(test)]
+mod page_turn_tests {
+    use crate::db::line_types;
+
+    /// Load the cleaned Troilus text, stripping ## prefixes like the app does.
+    fn load_troilus_lines() -> Vec<String> {
+        let path = std::path::Path::new(
+            "/home/mlj/utono/literature/shakespeare-william/folger-cleaned/troilus-and-cressida.txt",
+        );
+        if !path.exists() {
+            panic!("Troilus cleaned file not found at {:?}", path);
+        }
+        let contents = std::fs::read_to_string(path).expect("Failed to read Troilus file");
+        contents
+            .lines()
+            .map(|line| {
+                if let Some(stripped) = line.strip_prefix("## ") {
+                    stripped.to_string()
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect()
+    }
+
+    fn is_dialogue_line(text: &str) -> bool {
+        !line_types::is_blank(text) && line_types::is_dialogue(text, false)
+    }
+
+    /// Collect all dialogue line indices in the file.
+    fn dialogue_indices(lines: &[String]) -> Vec<usize> {
+        lines
+            .iter()
+            .enumerate()
+            .filter(|(_, text)| is_dialogue_line(text))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Simulate next_dialogue_from on plain strings.
+    fn next_dialogue(lines: &[String], from: usize) -> Option<usize> {
+        for i in from..lines.len() {
+            if is_dialogue_line(&lines[i]) {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    /// Simulate last_dialogue_in_page on plain strings.
+    fn last_dialogue_in_range(lines: &[String], from: usize, count: usize) -> usize {
+        let end = (from + count).min(lines.len());
+        let mut last = from;
+        for i in from..end {
+            if is_dialogue_line(&lines[i]) {
+                last = i;
+            }
+        }
+        last
+    }
+
+    /// Simulate back_up_for_speaker on plain strings.
+    fn back_up_for_speaker(lines: &[String], line: usize) -> usize {
+        if line == 0 {
+            return line;
+        }
+        if line_types::is_speaker(&lines[line - 1]) {
+            line - 1
+        } else {
+            line
+        }
+    }
+
+    /// Test page-forward through entire Troilus: every page turn must advance
+    /// to the next dialogue line with no gaps or repeats.
+    #[test]
+    fn test_page_forward_no_gaps_or_repeats() {
+        let lines = load_troilus_lines();
+        let all_dialogue = dialogue_indices(&lines);
+        assert!(
+            all_dialogue.len() > 100,
+            "Expected 100+ dialogue lines, got {}",
+            all_dialogue.len()
+        );
+
+        let page_size = 30; // approximate lines per page
+        let line_count = lines.len();
+
+        // Track which dialogue lines we've highlighted, in order
+        let mut highlighted: Vec<usize> = Vec::new();
+
+        // Start: first dialogue line
+        let first = all_dialogue[0];
+        let mut page_top = back_up_for_speaker(&lines, first);
+        let mut current_line = first;
+        highlighted.push(current_line);
+
+        // Page forward until end
+        let mut iterations = 0;
+        loop {
+            iterations += 1;
+            if iterations > 500 {
+                panic!("Page forward seems stuck after {} iterations", iterations);
+            }
+
+            // Simulate last_fully_visible_line: page_top + page_size
+            let last_visible = (page_top + page_size).min(line_count.saturating_sub(1));
+            let last = last_dialogue_in_range(&lines, page_top, last_visible - page_top + 1);
+            let next = match next_dialogue(&lines, last + 1) {
+                Some(n) => n,
+                None => break, // reached end
+            };
+            if next >= line_count {
+                break;
+            }
+
+            let new_top = back_up_for_speaker(&lines, next);
+            page_top = new_top;
+            current_line = next;
+            highlighted.push(current_line);
+        }
+
+        // Verify: highlighted lines should be strictly increasing
+        for i in 1..highlighted.len() {
+            assert!(
+                highlighted[i] > highlighted[i - 1],
+                "Page forward: highlighted line {} (line {}) is not after {} (line {}), page {}",
+                highlighted[i],
+                lines[highlighted[i]].chars().take(50).collect::<String>(),
+                highlighted[i - 1],
+                lines[highlighted[i - 1]].chars().take(50).collect::<String>(),
+                i
+            );
+        }
+
+        // Verify: every highlighted line is a dialogue line
+        for &h in &highlighted {
+            assert!(
+                is_dialogue_line(&lines[h]),
+                "Highlighted line {} is not dialogue: '{}'",
+                h,
+                &lines[h]
+            );
+        }
+
+        // Verify: no dialogue lines were skipped between consecutive highlights
+        // (i.e., every dialogue line between two highlighted lines was on the same page)
+        for i in 1..highlighted.len() {
+            let prev = highlighted[i - 1];
+            let curr = highlighted[i];
+            // Find all dialogue lines between prev and curr
+            let between: Vec<usize> = all_dialogue
+                .iter()
+                .filter(|&&d| d > prev && d < curr)
+                .copied()
+                .collect();
+            // These should all be on the same page as prev (between page_top and last_visible)
+            // We can't verify exact page boundaries without GTK, but we can verify
+            // the gap isn't larger than page_size (which would mean we skipped a whole page)
+            if !between.is_empty() {
+                let gap = curr - prev;
+                assert!(
+                    gap <= page_size + 10, // allow some slack for speaker/blank lines
+                    "Gap too large between highlights: line {} to {} (gap={}, {} dialogue lines between). Page {}",
+                    prev, curr, gap, between.len(), i
+                );
+            }
+        }
+
+        println!(
+            "Page forward test passed: {} pages, {} to {} ({} dialogue lines total)",
+            highlighted.len(),
+            highlighted[0],
+            highlighted.last().unwrap(),
+            all_dialogue.len()
+        );
+    }
+
+    /// Test page-backward through entire Troilus: starting from the last page,
+    /// every backward page turn must go to an earlier dialogue line.
+    #[test]
+    fn test_page_backward_strictly_decreasing() {
+        let lines = load_troilus_lines();
+        let all_dialogue = dialogue_indices(&lines);
+
+        let page_size = 30;
+        let line_count = lines.len();
+
+        // First, page forward to the end to find the last page
+        let first = all_dialogue[0];
+        let mut page_top = back_up_for_speaker(&lines, first);
+        let mut current_line = first;
+
+        let mut iterations = 0;
+        loop {
+            iterations += 1;
+            if iterations > 500 {
+                break;
+            }
+            let last_visible = (page_top + page_size).min(line_count.saturating_sub(1));
+            let last = last_dialogue_in_range(&lines, page_top, last_visible - page_top + 1);
+            let next = match next_dialogue(&lines, last + 1) {
+                Some(n) => n,
+                None => break,
+            };
+            if next >= line_count {
+                break;
+            }
+            page_top = back_up_for_speaker(&lines, next);
+            current_line = next;
+        }
+
+        // Now page backward from the end
+        let mut highlighted_backward: Vec<usize> = Vec::new();
+        highlighted_backward.push(current_line);
+
+        iterations = 0;
+        loop {
+            iterations += 1;
+            if iterations > 500 {
+                panic!("Page backward seems stuck after {} iterations", iterations);
+            }
+
+            // Simulate page_backward: go back page_size lines, find next dialogue
+            let raw_top = page_top.saturating_sub(page_size);
+            let next = match next_dialogue(&lines, raw_top) {
+                Some(n) => n,
+                None => break,
+            };
+            let new_top = back_up_for_speaker(&lines, next);
+
+            if new_top >= page_top {
+                break; // no progress
+            }
+
+            page_top = new_top;
+            current_line = next;
+            highlighted_backward.push(current_line);
+        }
+
+        // Verify: highlighted lines should be strictly decreasing
+        for i in 1..highlighted_backward.len() {
+            assert!(
+                highlighted_backward[i] < highlighted_backward[i - 1],
+                "Page backward: line {} is not before {} at step {}",
+                highlighted_backward[i],
+                highlighted_backward[i - 1],
+                i
+            );
+        }
+
+        // Verify: all highlighted lines are dialogue
+        for &h in &highlighted_backward {
+            assert!(
+                is_dialogue_line(&lines[h]),
+                "Backward highlighted line {} is not dialogue: '{}'",
+                h,
+                &lines[h]
+            );
+        }
+
+        println!(
+            "Page backward test passed: {} pages, {} down to {}",
+            highlighted_backward.len(),
+            highlighted_backward[0],
+            highlighted_backward.last().unwrap(),
+        );
+    }
+}
