@@ -100,11 +100,11 @@ fn back_up_for_speaker(buffer: &sourceview5::Buffer, line: usize) -> usize {
     }
 }
 
-/// Find the last buffer line that is at least partially visible in the viewport.
-/// Includes lines whose top edge is within the viewport even if they extend
-/// beyond it (wrapped lines partially showing at the bottom). This ensures
-/// that a partially-read line at the bottom of one page is not repeated as
-/// the highlighted line on the next page.
+/// Find the last buffer line that fits entirely within the viewport.
+/// A line is only counted as visible if its full height (including all
+/// wrapped rows) fits within the remaining viewport space. Lines that
+/// would be clipped at the bottom are excluded so they appear on the
+/// next page instead of being skipped.
 fn last_fully_visible_line(state: &AppState) -> usize {
     let widget_height = state.text_view.height();
     if widget_height <= 0 {
@@ -116,8 +116,8 @@ fn last_fully_visible_line(state: &AppState) -> usize {
     for i in state.page_top_line..line_count {
         let Some(iter) = state.buffer.iter_at_line(i as i32) else { break };
         let (_y, h) = state.text_view.line_yrange(&iter);
-        // Include this line if its top edge is within the viewport
-        if total >= widget_height {
+        // Only include this line if it fits entirely within the viewport
+        if total + h > widget_height {
             break;
         }
         last = i;
@@ -1919,6 +1919,160 @@ mod page_turn_tests {
             highlighted_backward.len(),
             highlighted_backward[0],
             highlighted_backward.last().unwrap(),
+        );
+    }
+
+    // --- Prose tests ---
+
+    /// Helper: find next non-blank line at or after `from` (prose mode).
+    fn next_nonblank(lines: &[String], from: usize) -> Option<usize> {
+        for i in from..lines.len() {
+            if !line_types::is_blank(&lines[i]) {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    /// Load a prose file's lines.
+    fn load_prose_lines(path: &str) -> Vec<String> {
+        let p = std::path::Path::new(path);
+        if !p.exists() {
+            panic!("Prose file not found at {}", path);
+        }
+        std::fs::read_to_string(p)
+            .expect("read")
+            .lines()
+            .map(String::from)
+            .collect()
+    }
+
+    /// Test page-forward through Bleak House: every page turn advances
+    /// to the next non-blank line with no repeats.
+    #[test]
+    fn test_page_forward_prose_bleak_house() {
+        let path = "/home/mlj/utono/literature/dickens-charles/bleak-house-prepared.txt";
+        if !std::path::Path::new(path).exists() {
+            eprintln!("SKIP: Bleak House not found");
+            return;
+        }
+        let lines = load_prose_lines(path);
+        let page_size = 30;
+        let line_count = lines.len();
+
+        let first = next_nonblank(&lines, 0).expect("no non-blank lines");
+        let mut page_top = first;
+        let mut current_line = first;
+        let mut highlighted: Vec<usize> = vec![current_line];
+
+        let mut iterations = 0;
+        loop {
+            iterations += 1;
+            if iterations > 5000 { break; }
+
+            let last_visible = (page_top + page_size).min(line_count.saturating_sub(1));
+            // Last non-blank in page range
+            let mut last = page_top;
+            for i in page_top..=last_visible {
+                if i < line_count && !line_types::is_blank(&lines[i]) {
+                    last = i;
+                }
+            }
+            let next = match next_nonblank(&lines, last + 1) {
+                Some(n) => n,
+                None => break,
+            };
+
+            page_top = next;
+            current_line = next;
+            highlighted.push(current_line);
+        }
+
+        for i in 1..highlighted.len() {
+            assert!(
+                highlighted[i] > highlighted[i - 1],
+                "Prose forward: line {} not after {} at page {}",
+                highlighted[i], highlighted[i - 1], i
+            );
+        }
+
+        for &h in &highlighted {
+            assert!(
+                !line_types::is_blank(&lines[h]),
+                "Highlighted line {} is blank", h
+            );
+        }
+
+        println!(
+            "Bleak House forward: {} pages, line {} to {} ({} total lines)",
+            highlighted.len(), highlighted[0], highlighted.last().unwrap(), line_count
+        );
+    }
+
+    /// Test page-backward through Bleak House: strictly decreasing.
+    #[test]
+    fn test_page_backward_prose_bleak_house() {
+        let path = "/home/mlj/utono/literature/dickens-charles/bleak-house-prepared.txt";
+        if !std::path::Path::new(path).exists() {
+            eprintln!("SKIP: Bleak House not found");
+            return;
+        }
+        let lines = load_prose_lines(path);
+        let page_size = 30;
+        let line_count = lines.len();
+
+        // Forward to end
+        let first = next_nonblank(&lines, 0).expect("no non-blank lines");
+        let mut page_top = first;
+        let mut current_line = first;
+
+        let mut iterations = 0;
+        loop {
+            iterations += 1;
+            if iterations > 5000 { break; }
+            let last_visible = (page_top + page_size).min(line_count.saturating_sub(1));
+            let mut last = page_top;
+            for i in page_top..=last_visible {
+                if i < line_count && !line_types::is_blank(&lines[i]) {
+                    last = i;
+                }
+            }
+            let next = match next_nonblank(&lines, last + 1) {
+                Some(n) => n,
+                None => break,
+            };
+            page_top = next;
+            current_line = next;
+        }
+
+        // Backward from end
+        let mut highlighted: Vec<usize> = vec![current_line];
+        iterations = 0;
+        loop {
+            iterations += 1;
+            if iterations > 5000 { break; }
+            let raw_top = page_top.saturating_sub(page_size);
+            let next = match next_nonblank(&lines, raw_top) {
+                Some(n) => n,
+                None => break,
+            };
+            if next >= page_top { break; }
+            page_top = next;
+            current_line = next;
+            highlighted.push(current_line);
+        }
+
+        for i in 1..highlighted.len() {
+            assert!(
+                highlighted[i] < highlighted[i - 1],
+                "Prose backward: line {} not before {} at step {}",
+                highlighted[i], highlighted[i - 1], i
+            );
+        }
+
+        println!(
+            "Bleak House backward: {} pages, {} down to {}",
+            highlighted.len(), highlighted[0], highlighted.last().unwrap()
         );
     }
 }
