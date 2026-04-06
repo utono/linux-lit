@@ -112,7 +112,7 @@ pub fn launch_mpv(media_path: &str) -> String {
         .arg(format!("--input-ipc-server={}", socket_path))
         .arg("--pause")
         .arg("--no-terminal")
-        .arg("--volume=20")
+        .arg("--volume=100")
         .arg("--wayland-app-id=mpv-lit")
         .arg(media_path)
         .spawn()

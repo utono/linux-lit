@@ -295,7 +295,6 @@ pub fn build_window(
 
     let translation_text_tag = gtk4::TextTag::builder()
         .name("translation-text")
-        .weight(700)
         .build();
     buffer.tag_table().add(&translation_text_tag);
 
@@ -1054,40 +1053,16 @@ pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<
         crate::logging::log(&format!("TIMING: apply_vocab_highlighting {:.0}ms", t4.elapsed().as_millis()));
     }
 
-    let t5 = std::time::Instant::now();
-    // Set up gutter: remove old renderer, place marks, create new renderer
+    // Remove old gutter renderers — they'll be recreated lazily on first
+    // sign column toggle (`l` key) via setup_gutter().
     if let Some(old_renderer) = state.gutter_renderer.take() {
         crate::gutter::remove_gutter_renderer(&state.text_view, &old_renderer);
     }
-    {
-        let new_has_ts: Vec<bool> = if let Some(ref lm) = state.line_map {
-            lm.buffer_to_work
-                .iter()
-                .map(|opt_idx| {
-                    opt_idx
-                        .and_then(|idx| state.current_work.as_ref()?.lines.get(idx)?.timestamp.as_ref())
-                        .is_some()
-                })
-                .collect()
-        } else {
-            state
-                .current_work
-                .as_ref()
-                .map(|w| w.lines.iter().map(|l| l.timestamp.is_some()).collect())
-                .unwrap_or_default()
-        };
-        *state.has_timestamp.borrow_mut() = new_has_ts;
+    if let Some(old_renderer) = state.chunk_renderer.take() {
+        crate::gutter::remove_gutter_renderer(&state.text_view, &old_renderer);
     }
-    let renderer = crate::gutter::setup_timestamp_gutter(
-        &state.text_view,
-        state.sign_column_visible.clone(),
-        state.has_timestamp.clone(),
-        state.ab_a_line.clone(),
-        state.ab_b_line.clone(),
-    );
-    state.gutter_renderer = Some(renderer);
 
-    // Load chunks for the current work
+    // Load chunk data (needed for AB repeat, not just gutter display)
     if let Some(media_id) = state.current_work.as_ref().and_then(|w| w.media_id) {
         if let Ok(conn) = crate::db::queries::open_db() {
             let abbrev = &state.current_work.as_ref().unwrap().abbrev;
@@ -1098,25 +1073,6 @@ pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<
             }
         }
     }
-
-    // Set up chunk bar gutter
-    if let Some(old_renderer) = state.chunk_renderer.take() {
-        crate::gutter::remove_gutter_renderer(&state.text_view, &old_renderer);
-    }
-    if !state.ab_repeat.chunks.is_empty() {
-        if let Some(ref work) = state.current_work {
-            let renderer = crate::gutter::setup_chunk_gutter(
-                &state.text_view,
-                state.sign_column_visible.clone(),
-                &state.ab_repeat.chunks,
-                &work.lines,
-                state.line_map.as_ref(),
-            );
-            state.chunk_renderer = Some(renderer);
-        }
-    }
-
-    crate::logging::log(&format!("TIMING: gutter setup {:.0}ms", t5.elapsed().as_millis()));
 
     // Set font size based on work type: 18pt for plays/poetry, 19pt for prose
     let is_prose = state.current_work.as_ref()
@@ -1352,6 +1308,11 @@ fn apply_dialogue_formatting(state: &mut AppState) {
 
 /// Toggle sign column visibility.
 pub fn toggle_sign_column(state: &mut AppState) {
+    // Lazily set up gutter renderers on first toggle
+    if state.gutter_renderer.is_none() {
+        setup_gutter(state);
+    }
+
     let new_val = !state.sign_column_visible.get();
     state.sign_column_visible.set(new_val);
     // Queue redraw on gutter renderers so query_data re-evaluates visibility
@@ -1365,6 +1326,59 @@ pub fn toggle_sign_column(state: &mut AppState) {
         "SIGN: signs {}",
         if new_val { "shown" } else { "hidden" },
     ));
+}
+
+/// Set up gutter renderers (timestamp signs and chunk bars).
+/// Called lazily on first sign column toggle rather than at work load time.
+fn setup_gutter(state: &mut AppState) {
+    if let Some(old_renderer) = state.gutter_renderer.take() {
+        crate::gutter::remove_gutter_renderer(&state.text_view, &old_renderer);
+    }
+    {
+        let new_has_ts: Vec<bool> = if let Some(ref lm) = state.line_map {
+            lm.buffer_to_work
+                .iter()
+                .map(|opt_idx| {
+                    opt_idx
+                        .and_then(|idx| state.current_work.as_ref()?.lines.get(idx)?.timestamp.as_ref())
+                        .is_some()
+                })
+                .collect()
+        } else {
+            state
+                .current_work
+                .as_ref()
+                .map(|w| w.lines.iter().map(|l| l.timestamp.is_some()).collect())
+                .unwrap_or_default()
+        };
+        *state.has_timestamp.borrow_mut() = new_has_ts;
+    }
+    let renderer = crate::gutter::setup_timestamp_gutter(
+        &state.text_view,
+        state.sign_column_visible.clone(),
+        state.has_timestamp.clone(),
+        state.ab_a_line.clone(),
+        state.ab_b_line.clone(),
+    );
+    state.gutter_renderer = Some(renderer);
+
+    // Set up chunk bar gutter
+    if let Some(old_renderer) = state.chunk_renderer.take() {
+        crate::gutter::remove_gutter_renderer(&state.text_view, &old_renderer);
+    }
+    if !state.ab_repeat.chunks.is_empty() {
+        if let Some(ref work) = state.current_work {
+            let renderer = crate::gutter::setup_chunk_gutter(
+                &state.text_view,
+                state.sign_column_visible.clone(),
+                &state.ab_repeat.chunks,
+                &work.lines,
+                state.line_map.as_ref(),
+            );
+            state.chunk_renderer = Some(renderer);
+        }
+    }
+    crate::logging::log("GUTTER: set up on demand");
 }
 
 /// Toggle translation lines below original text.
@@ -1414,7 +1428,7 @@ fn show_translations(state: &mut AppState) {
         } else {
             continue;
         };
-        state.buffer.insert(&mut line_end.clone(), &format!("\n{}", text));
+        state.buffer.insert(&mut line_end.clone(), &format!("\n    {}", text));
     }
 
     // Build translation_lines tracking vector
@@ -1447,11 +1461,14 @@ fn show_translations(state: &mut AppState) {
     }
     state.translation_lines = tl;
 
-    // Apply translation-dim tag to entire buffer
-    let (buf_start, buf_end) = state.buffer.bounds();
-    state.buffer.apply_tag(&state.translation_dim_tag, &buf_start, &buf_end);
+    // Configure the translation tag with current font (italic, 2pt smaller)
+    let trans_size = state.config.font_size.saturating_sub(2);
+    let desc = pango::FontDescription::from_string(
+        &format!("{} Italic {}", state.config.font_family, trans_size),
+    );
+    state.translation_text_tag.set_font_desc(Some(&desc));
 
-    // Apply translation-text tag to translation lines, remove dim from them
+    // Apply translation-text tag to translation lines
     for (i, is_trans) in state.translation_lines.iter().enumerate() {
         if *is_trans {
             if let Some(line_start) = state.buffer.iter_at_line(i as i32) {
@@ -1459,11 +1476,14 @@ fn show_translations(state: &mut AppState) {
                 if !line_end.ends_line() {
                     line_end.forward_to_line_end();
                 }
-                state.buffer.remove_tag(&state.translation_dim_tag, &line_start, &line_end);
                 state.buffer.apply_tag(&state.translation_text_tag, &line_start, &line_end);
             }
         }
     }
+
+    // Ensure translation tag overrides the font-size tag
+    let highest = state.buffer.tag_table().size() - 1;
+    state.translation_text_tag.set_priority(highest);
 
     // Adjust current_line and page_top_line to account for inserted lines
     state.current_line = map_line_after_insert(state.current_line, &inserts);
@@ -1522,9 +1542,8 @@ fn hide_translations(state: &mut AppState) {
         }
     }
 
-    // Remove tags from entire buffer
+    // Remove translation tag from entire buffer
     let (buf_start, buf_end) = state.buffer.bounds();
-    state.buffer.remove_tag(&state.translation_dim_tag, &buf_start, &buf_end);
     state.buffer.remove_tag(&state.translation_text_tag, &buf_start, &buf_end);
 
     // Reverse-map current_line and page_top_line
@@ -1592,6 +1611,15 @@ fn reapply_font(state: &AppState) {
     // Also update CSS for consistency
     let css = crate::theme::generate_css(&state.theme, &state.config.font_family, state.config.font_size);
     state.css_provider.load_from_string(&css);
+    // Keep translation tag in sync (italic, 2pt smaller) and ensure it
+    // overrides the freshly re-added font-size tag.
+    let trans_size = state.config.font_size.saturating_sub(2);
+    let trans_desc = pango::FontDescription::from_string(
+        &format!("{} Italic {}", state.config.font_family, trans_size),
+    );
+    state.translation_text_tag.set_font_desc(Some(&trans_desc));
+    let highest = state.buffer.tag_table().size() - 1;
+    state.translation_text_tag.set_priority(highest);
     crate::logging::log(&format!("FONT: reapply_font size={}pt via TextTag", state.config.font_size));
     update_spacer_heights(state);
 }
