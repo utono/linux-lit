@@ -100,26 +100,28 @@ fn back_up_for_speaker(buffer: &sourceview5::Buffer, line: usize) -> usize {
     }
 }
 
-/// Find the last buffer line that fits fully in the viewport.
-/// Uses the same height-summing approach as update_bottom_clip.
-fn last_visible_line(state: &AppState) -> usize {
+/// Find the last buffer line that is at least partially visible in the viewport.
+/// Includes lines whose top edge is within the viewport even if they extend
+/// beyond it (wrapped lines partially showing at the bottom). This ensures
+/// that a partially-read line at the bottom of one page is not repeated as
+/// the highlighted line on the next page.
+fn last_fully_visible_line(state: &AppState) -> usize {
     let widget_height = state.text_view.height();
     if widget_height <= 0 {
         return state.page_top_line;
     }
     let line_count = state.effective_line_count();
-    let descender = descender_guard_px(&state.text_view, state.page_top_line);
-    let usable = widget_height - descender;
     let mut total = 0;
     let mut last = state.page_top_line;
     for i in state.page_top_line..line_count {
         let Some(iter) = state.buffer.iter_at_line(i as i32) else { break };
         let (_y, h) = state.text_view.line_yrange(&iter);
-        if total + h > usable {
+        // Include this line if its top edge is within the viewport
+        if total >= widget_height {
             break;
         }
-        total += h;
         last = i;
+        total += h;
     }
     last
 }
@@ -136,7 +138,7 @@ pub fn page_forward(state: &mut AppState) {
         return;
     }
 
-    let last_visible = last_visible_line(state);
+    let last_visible = last_fully_visible_line(state);
     let last = last_dialogue_in_page(&state.buffer, state.page_top_line, last_visible.saturating_sub(state.page_top_line) + 1, line_count);
     let next = next_dialogue_from(&state.buffer, last + 1, line_count);
     if next >= line_count {
