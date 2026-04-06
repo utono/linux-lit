@@ -411,24 +411,6 @@ pub fn build_window(
     page_turn_overlay.set_hexpand(true);
     page_turn_overlay.add_css_class("page-turn-overlay");
 
-    // Startup mask — covers the card until display_work's own mask takes over.
-    // Prevents flicker from the empty buffer being visible before load completes.
-    let startup_mask = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-    startup_mask.set_vexpand(true);
-    startup_mask.set_hexpand(true);
-    startup_mask.add_css_class("load-mask");
-    let startup_mask_css = gtk4::CssProvider::new();
-    startup_mask_css.load_from_string(&format!(
-        ".load-mask {{ background-color: {}; border-radius: 12px; }}",
-        theme.text_bg
-    ));
-    gtk4::style_context_add_provider_for_display(
-        &gtk4::gdk::Display::default().expect("display"),
-        &startup_mask_css,
-        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
-    );
-    page_turn_overlay.add_overlay(&startup_mask);
-
     // Centered text card container — width_request controls the card width
     let content_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
     content_hbox.set_halign(gtk4::Align::Center);
@@ -531,17 +513,15 @@ pub fn build_window(
     window.set_child(Some(&vbox));
 
     // Override startup work/line with env vars (used by concordance cross-work spawn)
+    // Only auto-load a work if this is a concordance spawn (env var).
+    // Normal startup always shows the library picker.
     let last_work = if let Ok(work_abbrev) = std::env::var("LINUX_LIT_WORK") {
-        let line_id: Option<i64> = std::env::var("LINUX_LIT_LINE_ID").ok()
-            .and_then(|s| s.parse().ok());
         crate::logging::log(&format!(
-            "STARTUP: concordance spawn work='{}' line_id={:?}", work_abbrev, line_id
+            "STARTUP: concordance spawn work='{}'", work_abbrev
         ));
-        // Store line_id for display_work_at to resolve after buffer is built.
-        // Use 0 as placeholder — display_work_at will override with the resolved buf_idx.
         Some(work_abbrev)
     } else {
-        config.last_work.clone()
+        None
     };
     let dim_enabled = config.dim_enabled;
     let vocab_highlight_visible = config.vocab_highlight_visible;
@@ -871,19 +851,6 @@ pub fn display_work(state: &mut AppState, work: Work) {
 /// `target_line_id` is a line_mapping_id to position the cursor on after load.
 pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<i64>) {
     state.loading_work.set(true);
-
-    // Remove any existing mask (e.g. startup mask) before adding a new one.
-    let mut to_remove = Vec::new();
-    let mut child = state.page_turn_overlay.first_child();
-    while let Some(widget) = child {
-        if widget.has_css_class("load-mask") {
-            to_remove.push(widget.clone());
-        }
-        child = widget.next_sibling();
-    }
-    for w in to_remove {
-        state.page_turn_overlay.remove_overlay(&w);
-    }
 
     // Place a solid-color mask over the card to hide layout/scroll churn.
     // The mask will be crossfaded out after the scroll and clip settle.
