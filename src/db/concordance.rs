@@ -47,17 +47,3 @@ pub fn find_word_occurrences(
     })?;
     rows.collect()
 }
-
-/// Load all vocab words globally (for the cross-work concordance word picker).
-/// Returns (word, 0) across all works. Count is deferred to avoid expensive LIKE join.
-pub fn load_global_vocab_words(
-    conn: &Connection,
-) -> Result<Vec<(String, usize)>, rusqlite::Error> {
-    let mut stmt = conn.prepare(
-        "SELECT word FROM vocab_words ORDER BY word",
-    )?;
-    let rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, 0usize))
-    })?;
-    rows.collect()
-}

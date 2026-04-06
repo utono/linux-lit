@@ -182,27 +182,18 @@ pub fn handle_key(
         }
     }
 
-    // Ctrl+Shift+p: open concordance word picker
+    // Ctrl+Shift+p: open concordance word picker (current work's vocab words only)
     if is_ctrl && is_shift && key_name == "P" {
-        let state_clone = Rc::clone(state);
-        let handle = tokio_handle.clone();
-        glib::spawn_future_local(async move {
-            let words = handle
-                .spawn_blocking(move || {
-                    let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
-                    crate::db::concordance::load_global_vocab_words(&conn)
-                        .unwrap_or_default()
-                })
-                .await
-                .unwrap_or_default();
-            {
-                let mut s = state_clone.borrow_mut();
-                s.concordance_word_picker.set_words(words);
+        let words: Vec<(String, usize)> = {
+            let s = state.borrow();
+            let mut seen = std::collections::BTreeSet::new();
+            for m in &s.vocab_matches {
+                seen.insert(m.word.clone());
             }
-            // show() calls set_text("") which triggers connect_changed → borrow(),
-            // so the borrow_mut must be dropped first.
-            state_clone.borrow().concordance_word_picker.show();
-        });
+            seen.into_iter().map(|w| (w, 0)).collect()
+        };
+        state.borrow_mut().concordance_word_picker.set_words(words);
+        state.borrow().concordance_word_picker.show();
         return true;
     }
 
