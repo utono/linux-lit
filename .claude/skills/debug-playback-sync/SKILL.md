@@ -12,6 +12,16 @@ Diagnose why playback sync failed to turn the page or turned to the wrong line d
 
 Most page-turn failures come down to one question: **which dialogue line should appear at the top of the next page?** The correct answer is always the dialogue line immediately following the last dialogue line on the current page. Start every investigation by identifying that expected next line, then work backward to find why the code didn't land there.
 
+## Diagnostic Priority
+
+The log almost always contains enough information to diagnose the issue. Follow this order:
+1. **Screenshot** — identify the stalled page and expected next page
+2. **Log** — read it carefully; the log line patterns below usually pinpoint the root cause directly
+3. **Code trace** — only if the log doesn't explain the failure
+4. **Database queries** — only if timestamps are suspect (missing start/end times at the boundary)
+
+Skip steps 3-4 if the log already reveals the root cause. Most bugs are visible from the log alone.
+
 ## Step 1: Read the Screenshot and Identify the Expected Next Page
 
 Read the screenshot argument with the Read tool. Identify:
@@ -38,7 +48,12 @@ Look for:
 - `MPV playback: playing/paused` — confirm playback was active during the failure
 - `BOTTOM_CLIP:` — extract `page_top` value for boundary queries
 
-**Key question from the log:** Does `SYNC_ADVANCE` show `current` reaching `last_vis` but never exceeding it? If so, the page-turn condition (`current_line > last_vis`) is never met — the cursor stalls at the bottom line.
+**Quick diagnosis from log patterns:**
+- `PARA_CHANGE on_screen=true` followed by `SYNC_ADVANCE` → `PAGE_TURN`: working correctly (unified flow catches it)
+- `PARA_CHANGE on_screen=true` with NO subsequent `SYNC_ADVANCE`: `update_highlight_and_advance_page` is not being called after `scroll_paragraph_to_top` — check the unified flow in `src/main.rs`
+- `SYNC_ADVANCE` shows `current == last_vis` repeatedly but never `current > last_vis`: timestamp gap — no CursorSync event lands on the line past `last_vis`
+- `SUPPRESSED` entries spanning the entire `playing`→`paused` window: suppression duration too long, check Step 6
+- `CURSOR_SYNC:` entries present but no `SYNC_ADVANCE` at all: `current_line` never changes (buffer_line equals current on every event)
 
 ## Step 3: Enable Sync Logging (if not present)
 
@@ -97,19 +112,22 @@ Replace `<WORK_ABBREV>` with the work abbreviation from the log (e.g. `BH` for B
 
 ## Step 5: Trace the Page-Turn Decision
 
-The CursorSync handler in `src/main.rs` has two scroll paths. Understanding which one fires is critical:
+The CursorSync handler in `src/main.rs` uses a unified flow:
 
-**Path A — Paragraph changed** (`scroll_paragraph_to_top`):
-- Fires when `current_paragraph_range().start` differs from the previous paragraph start
-- In e-reader mode, only page-turns if `!is_line_on_screen(para_start)`
-- **Failure mode:** paragraph start is still partially visible on the current page, so no page turn happens even though the current line is at the bottom
+1. **Paragraph-change check:** If `current_paragraph_range().start` differs from previous, `scroll_paragraph_to_top` runs first. In e-reader mode, this only page-turns if `!is_line_on_screen(para_start)`. If para_start is on-screen, it does nothing.
 
-**Path B — Same paragraph** (`update_highlight_and_advance_page`):
-- Fires when paragraph hasn't changed (within a long paragraph)
-- Page-turns only if `current_line > last_fully_visible_line`
-- **Failure mode:** for prose with long paragraphs, `current_line` equals but doesn't exceed `last_vis` — the highlight reaches the bottom line but the `>` check prevents the turn
+2. **Advance check (always runs):** `update_highlight_and_advance_page` runs unconditionally after the paragraph check. Page-turns if `current_line > last_fully_visible_line`.
 
-**Which path should have fired?** If the log shows `CURSOR_SYNC: PARA_CHANGE` with `on_screen=true`, Path A fired but skipped the page turn. If `SYNC_ADVANCE` shows `current == last_vis` without ever showing `current > last_vis`, Path B's `>` condition was never met.
+This means every CursorSync event that changes `current_line` will check the advance condition, regardless of whether a paragraph change occurred.
+
+**Log pattern for paragraph-change page turns:**
+- `CURSOR_SYNC: PARA_CHANGE para_start=N on_screen=false` → `PARA_SCROLL` (paragraph path turned the page)
+- `CURSOR_SYNC: PARA_CHANGE para_start=N on_screen=true` → `SYNC_ADVANCE` → `PAGE_TURN` (paragraph path skipped, advance path caught it)
+
+**Log pattern for same-paragraph page turns:**
+- `CURSOR_SYNC:` (no PARA_CHANGE) → `SYNC_ADVANCE` → `PAGE_TURN`
+
+**Failure mode to watch for:** `SYNC_ADVANCE` shows `current == last_vis` without ever exceeding it. The `>` condition means the cursor must advance one line PAST the last visible line to trigger the turn. If timestamps are spaced such that sync never lands on that line, the page stalls.
 
 Also check the `TimePos` handler for `pending_advance` logic — this fires for untimestamped lines when the previous line's audio ends. Same `update_highlight_and_advance_page` is called, same `>` condition applies.
 
@@ -131,11 +149,14 @@ Key suppression sources and durations:
 
 1. **Wrong next-page target:** `page_turn_top` doesn't back up far enough (misses speaker name or blank separator above the next dialogue line), or backs up too far (shows end of previous paragraph)
 2. **Page turn never triggers:** `current_line > last_vis` uses strict `>`, so if the cursor reaches but equals `last_vis`, no turn happens. The highlight stalls at the bottom line
-3. **Paragraph-change path skips turn:** `scroll_paragraph_to_top` checks `is_line_on_screen(para_start)` — if the old paragraph's start is still visible, it skips the page turn even though the cursor is at the bottom
-4. **Suppression kills sync:** 86400s suppress from navigation/seek keybinds, never cleared by `toggle_playback`
-5. **`pending_advance` cleared prematurely:** unconditional `None` on every `CursorSync` clears it before it can fire
-6. **`last_fully_visible_line` miscounts:** includes a clipped bottom line as "fully visible", preventing the `>` condition
-7. **`line_map` translation drops events:** `buffer_to_work` verification mismatch silently skips a `CursorSync`
+3. **Suppression kills sync:** 86400s suppress from navigation/seek keybinds, never cleared by `toggle_playback`
+4. **`pending_advance` cleared prematurely:** unconditional `None` on every `CursorSync` clears it before it can fire
+5. **`last_fully_visible_line` miscounts:** includes a clipped bottom line as "fully visible", preventing the `>` condition
+6. **`line_map` translation drops events:** `buffer_to_work` verification mismatch silently skips a `CursorSync`
+
+### Previously Fixed
+
+- **Paragraph-change path skipped advance check (fixed 2026-04):** Before the fix, the CursorSync handler had an if/else split — paragraph changes called `update_highlight_only` + `scroll_paragraph_to_top`, while same-paragraph called `update_highlight_and_advance_page`. If `para_start` was on-screen, neither path would page-turn. Fix: `update_highlight_and_advance_page` now runs unconditionally after both paths.
 
 ## Step 7: Fix and Verify
 

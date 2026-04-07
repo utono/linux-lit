@@ -166,16 +166,17 @@ fn main() {
                                     "CURSOR_SYNC: PARA_CHANGE para_start={} on_screen={}",
                                     para.start, crate::input::navigation::is_line_on_screen(&s, para.start)
                                 ));
-                                crate::input::navigation::update_highlight_only(&mut s);
                                 crate::input::navigation::scroll_paragraph_to_top(
                                     &mut s, para.start,
                                 );
-                            } else {
-                                // Normal line-by-line highlight and scroll
-                                crate::input::navigation::update_highlight_and_advance_page(
-                                    &mut s,
-                                );
                             }
+                            // Highlight + advance page if current line is past last visible.
+                            // This runs for both paragraph-change (where scroll_paragraph_to_top
+                            // may have skipped the turn because para_start was on-screen) and
+                            // normal line-by-line sync.
+                            crate::input::navigation::update_highlight_and_advance_page(
+                                &mut s,
+                            );
 
                             if paragraph_changed {
                                 crate::app::refresh_vocab_popup(&mut s);
