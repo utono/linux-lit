@@ -11,9 +11,10 @@ Run headless page-turn tests for plays and poetry to verify the page-forward and
 ## What It Tests
 
 - **Page forward**: highlighted line is strictly increasing, always dialogue, no large gaps
-- **Page backward**: highlighted line is strictly decreasing, always dialogue
+- **Page backward**: uses `page_history` stack to return to exact previous page — strictly decreasing
 - **Speaker backup**: page top backs up to show speaker name when dialogue starts a page
 - **Line classification**: all lines correctly classified as dialogue/speaker/stage-direction/blank
+- **History round-trip**: forward then backward returns to the same page
 
 ## How to Run
 
@@ -58,9 +59,17 @@ Then use Shift+Q (page forward) and < (page backward) to step through pages. Che
 - No repeated lines between page transitions
 - Bottom clip doesn't cut off text mid-line
 
+## Key Architecture
+
+- `page_forward` pushes `page_top_line` onto `state.page_history` before advancing
+- `page_backward` pops from `state.page_history` for exact reverse navigation
+- `page_history` is cleared on work load (`display_work_at`)
+- `last_fully_visible_line` accounts for line wrapping and bottom clip via height summing
+
 ## When to Use
 
 - After changing `page_forward`, `page_backward`, or related functions in `navigation.rs`
 - After changing `last_fully_visible_line`, `last_dialogue_in_page`, `next_dialogue_from`, or `back_up_for_speaker`
+- After changing `page_history` usage or `AppState` page navigation fields
 - After changing line classification in `line_types.rs`
 - After changing the cleaned text file format or extraction script

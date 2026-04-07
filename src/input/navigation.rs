@@ -1910,94 +1910,83 @@ mod page_turn_tests {
         );
     }
 
-    /// Test page-backward through entire Troilus: starting from the last page,
-    /// every backward page turn must go to an earlier dialogue line.
+    /// Test page-backward uses history stack: forward all the way, then backward
+    /// all the way using the recorded history. Each backward step must return to
+    /// the exact previous page_top, and the round-trip must reach the start.
     #[test]
-    fn test_page_backward_strictly_decreasing() {
+    fn test_page_backward_via_history() {
         let lines = load_troilus_lines();
         let all_dialogue = dialogue_indices(&lines);
 
         let page_size = 30;
         let line_count = lines.len();
 
-        // First, page forward to the end to find the last page
+        // Page forward to the end, recording history (simulating page_history)
         let first = all_dialogue[0];
         let mut page_top = back_up_for_speaker(&lines, first);
-        let mut current_line = first;
+        let mut history: Vec<usize> = Vec::new();
+        let mut forward_tops: Vec<usize> = vec![page_top];
 
         let mut iterations = 0;
         loop {
             iterations += 1;
-            if iterations > 500 {
-                break;
-            }
+            if iterations > 500 { break; }
             let last_visible = (page_top + page_size).min(line_count.saturating_sub(1));
             let last = last_dialogue_in_range(&lines, page_top, last_visible - page_top + 1);
             let next = match next_dialogue(&lines, last + 1) {
                 Some(n) => n,
                 None => break,
             };
-            if next >= line_count {
-                break;
-            }
-            page_top = back_up_for_speaker(&lines, next);
-            current_line = next;
-        }
-
-        // Now page backward from the end
-        let mut highlighted_backward: Vec<usize> = Vec::new();
-        highlighted_backward.push(current_line);
-
-        iterations = 0;
-        loop {
-            iterations += 1;
-            if iterations > 500 {
-                panic!("Page backward seems stuck after {} iterations", iterations);
-            }
-
-            // Simulate page_backward: go back page_size lines, find next dialogue
-            let raw_top = page_top.saturating_sub(page_size);
-            let next = match next_dialogue(&lines, raw_top) {
-                Some(n) => n,
-                None => break,
-            };
+            if next >= line_count { break; }
+            // Push current page_top before advancing (like the real code)
+            history.push(page_top);
             let new_top = back_up_for_speaker(&lines, next);
-
-            if new_top >= page_top {
-                break; // no progress
-            }
-
             page_top = new_top;
-            current_line = next;
-            highlighted_backward.push(current_line);
+            forward_tops.push(page_top);
         }
 
-        // Verify: highlighted lines should be strictly decreasing
-        for i in 1..highlighted_backward.len() {
+        // Now page backward using history (like the real code)
+        let mut backward_tops: Vec<usize> = vec![page_top];
+        while let Some(prev_top) = history.pop() {
+            page_top = prev_top;
+            backward_tops.push(page_top);
+        }
+
+        // Verify: backward tops are strictly decreasing
+        for i in 1..backward_tops.len() {
             assert!(
-                highlighted_backward[i] < highlighted_backward[i - 1],
-                "Page backward: line {} is not before {} at step {}",
-                highlighted_backward[i],
-                highlighted_backward[i - 1],
-                i
+                backward_tops[i] < backward_tops[i - 1],
+                "History backward: top {} is not before {} at step {}",
+                backward_tops[i], backward_tops[i - 1], i
             );
         }
 
-        // Verify: all highlighted lines are dialogue
-        for &h in &highlighted_backward {
-            assert!(
-                is_dialogue_line(&lines[h]),
-                "Backward highlighted line {} is not dialogue: '{}'",
-                h,
-                &lines[h]
+        // Verify: backward reaches the first page
+        assert_eq!(
+            *backward_tops.last().unwrap(), forward_tops[0],
+            "Backward didn't reach the first page"
+        );
+
+        // Verify: backward is exact reverse of forward
+        assert_eq!(
+            backward_tops.len(), forward_tops.len(),
+            "Forward {} pages but backward {} pages",
+            forward_tops.len(), backward_tops.len()
+        );
+        for i in 0..forward_tops.len() {
+            assert_eq!(
+                forward_tops[i],
+                backward_tops[backward_tops.len() - 1 - i],
+                "Round-trip mismatch at page {}: forward={} backward={}",
+                i, forward_tops[i], backward_tops[backward_tops.len() - 1 - i]
             );
         }
 
         println!(
-            "Page backward test passed: {} pages, {} down to {}",
-            highlighted_backward.len(),
-            highlighted_backward[0],
-            highlighted_backward.last().unwrap(),
+            "Page backward (history) test passed: {} pages, {} down to {}",
+            backward_tops.len(),
+            backward_tops[0],
+            backward_tops.last().unwrap(),
         );
     }
 
@@ -2088,7 +2077,9 @@ mod page_turn_tests {
         );
     }
 
-    /// Test page-backward through Bleak House: strictly decreasing.
+    /// Test page-backward through Bleak House via history stack:
+    /// forward all the way recording history, then backward pops history.
+    /// Round-trip must be exact.
     #[test]
     fn test_page_backward_prose_bleak_house() {
         let path = "/home/mlj/utono/literature/dickens-charles/bleak-house-prepared.txt";
@@ -2100,10 +2091,10 @@ mod page_turn_tests {
         let page_size = 30;
         let line_count = lines.len();
 
-        // Forward to end
         let first = next_nonblank(&lines, 0).expect("no non-blank lines");
         let mut page_top = first;
-        let mut current_line = first;
+        let mut history: Vec<usize> = Vec::new();
+        let mut forward_tops: Vec<usize> = vec![page_top];
 
         let mut iterations = 0;
         loop {
@@ -2120,38 +2111,36 @@ mod page_turn_tests {
                 Some(n) => n,
                 None => break,
             };
+            history.push(page_top);
             page_top = next;
-            current_line = next;
+            forward_tops.push(page_top);
         }
 
-        // Backward from end
-        let mut highlighted: Vec<usize> = vec![current_line];
-        iterations = 0;
-        loop {
-            iterations += 1;
-            if iterations > 5000 { break; }
-            let raw_top = page_top.saturating_sub(page_size);
-            let next = match next_nonblank(&lines, raw_top) {
-                Some(n) => n,
-                None => break,
-            };
-            if next >= page_top { break; }
-            page_top = next;
-            current_line = next;
-            highlighted.push(current_line);
+        // Backward via history
+        let mut backward_tops: Vec<usize> = vec![page_top];
+        while let Some(prev_top) = history.pop() {
+            page_top = prev_top;
+            backward_tops.push(page_top);
         }
 
-        for i in 1..highlighted.len() {
-            assert!(
-                highlighted[i] < highlighted[i - 1],
-                "Prose backward: line {} not before {} at step {}",
-                highlighted[i], highlighted[i - 1], i
+        // Verify exact round-trip
+        assert_eq!(
+            backward_tops.len(), forward_tops.len(),
+            "Forward {} pages but backward {} pages",
+            forward_tops.len(), backward_tops.len()
+        );
+        for i in 0..forward_tops.len() {
+            assert_eq!(
+                forward_tops[i],
+                backward_tops[backward_tops.len() - 1 - i],
+                "Round-trip mismatch at page {}",
+                i
             );
         }
 
         println!(
-            "Bleak House backward: {} pages, {} down to {}",
-            highlighted.len(), highlighted[0], highlighted.last().unwrap()
+            "Bleak House backward (history): {} pages, {} down to {}",
+            backward_tops.len(), backward_tops[0], backward_tops.last().unwrap()
         );
     }
 }

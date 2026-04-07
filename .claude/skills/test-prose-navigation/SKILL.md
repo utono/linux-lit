@@ -92,12 +92,20 @@ fn test_page_forward_prose_bleak_house() {
 
 DB abbreviations: BH, PP, TTC, ACC
 
+## Key Architecture
+
+- `page_forward` pushes `page_top_line` onto `state.page_history` before advancing
+- `page_backward` pops from `state.page_history` for exact reverse navigation (no heuristic)
+- `page_history` is cleared on work load (`display_work_at`)
+- In prose mode, `is_dialogue(text, true)` treats ALL non-blank lines as content
+
 ## What to Verify
 
 1. **No gaps**: every non-blank line between two highlighted lines was on the previous page
 2. **No repeats**: highlighted line is always strictly after the previous
 3. **All content**: highlighted lines are non-blank (in prose mode, all non-blank = dialogue)
 4. **Chapter boundaries**: chapter headers and blank lines are correctly skipped
+5. **History round-trip**: forward then backward returns to the same page
 
 ## Interactive Testing
 
