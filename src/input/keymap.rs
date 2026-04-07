@@ -482,13 +482,22 @@ pub fn handle_key(
                         s.text_view.set_pixels_below_lines((snap_ls as i32).max(0));
                     }
                     s.content_hbox.set_width_request(snap_cw as i32);
-                    s.text_view.set_left_margin(snap_tm as i32);
+                    let work_type = s.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("");
+                    let left = if crate::db::line_types::is_prose_work(work_type) {
+                        snap_tm as i32
+                    } else {
+                        snap_tm as i32 + 120
+                    };
+                    s.text_view.set_left_margin(left);
                     s.text_view.set_right_margin(snap_tm as i32 + crate::config::EXTRA_RIGHT_MARGIN);
                     s.config.line_spacing = snap_ls;
                     s.config.column_width = snap_cw;
                     s.config.text_margins = snap_tm;
                     s.config.navigation_mode = snap_nm;
                     s.config.transition_style = snap_ts;
+                    if s.dialogue_formatting_active {
+                        crate::app::apply_dialogue_formatting(&mut s);
+                    }
                     // Revert theme if changed
                     if let Some(snap_theme) = s.settings_overlay.themes().get(snap_ti) {
                         let snap_theme = snap_theme.clone();
@@ -552,13 +561,22 @@ pub fn handle_key(
                     s.text_view.set_pixels_below_lines((ls as i32).max(0));
                 }
                 s.content_hbox.set_width_request(cw as i32);
-                s.text_view.set_left_margin(tm as i32);
+                let work_type = s.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("");
+                let left = if crate::db::line_types::is_prose_work(work_type) {
+                    tm as i32
+                } else {
+                    tm as i32 + 120
+                };
+                s.text_view.set_left_margin(left);
                 s.text_view.set_right_margin(tm as i32 + crate::config::EXTRA_RIGHT_MARGIN);
                 s.config.line_spacing = ls;
                 s.config.column_width = cw;
                 s.config.text_margins = tm;
                 s.config.navigation_mode = nm;
                 s.config.transition_style = ts;
+                if s.dialogue_formatting_active {
+                    crate::app::apply_dialogue_formatting(&mut s);
+                }
                 s.settings_overlay.update_displayed_values(ls, cw, tm, nm, ts);
                 return true;
             }
