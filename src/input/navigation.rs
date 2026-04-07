@@ -100,28 +100,40 @@ fn back_up_for_speaker(buffer: &sourceview5::Buffer, line: usize) -> usize {
     }
 }
 
-/// Find the last buffer line that fits entirely within the viewport.
-/// A line is only counted as visible if its full height (including all
-/// wrapped rows) fits within the remaining viewport space. Lines that
-/// would be clipped at the bottom are excluded so they appear on the
-/// next page instead of being skipped.
+/// Find the last buffer line that fits within the viewport, matching the
+/// bottom clip calculation exactly. A line is included only if its full
+/// height fits in the remaining usable space (widget height minus descender
+/// guard). This ensures page_forward doesn't count clipped lines as "seen".
 fn last_fully_visible_line(state: &AppState) -> usize {
     let widget_height = state.text_view.height();
     if widget_height <= 0 {
         return state.page_top_line;
     }
     let line_count = state.effective_line_count();
+    let descender_guard = descender_guard_px(&state.text_view, state.page_top_line);
+    let usable_height = widget_height - descender_guard;
     let mut total = 0;
     let mut last = state.page_top_line;
     for i in state.page_top_line..line_count {
         let Some(iter) = state.buffer.iter_at_line(i as i32) else { break };
         let (_y, h) = state.text_view.line_yrange(&iter);
-        // Only include this line if it fits entirely within the viewport
-        if total + h > widget_height {
+        // Match update_bottom_clip: line must fully fit in usable space
+        if total + h > usable_height {
             break;
         }
         last = i;
         total += h;
+    }
+    // Back up past trailing speaker names and blank lines so a dangling
+    // speaker at the bottom doesn't count as "visible" content.
+    use crate::db::line_types;
+    while last > state.page_top_line {
+        let text = buffer_line_text(&state.buffer, last);
+        if line_types::is_speaker(&text) || line_types::is_blank(&text) {
+            last -= 1;
+        } else {
+            break;
+        }
     }
     last
 }
@@ -141,10 +153,36 @@ pub fn page_forward(state: &mut AppState) {
     let last_visible = last_fully_visible_line(state);
     let last = last_dialogue_in_page(&state.buffer, state.page_top_line, last_visible.saturating_sub(state.page_top_line) + 1, line_count);
     let next = next_dialogue_from(&state.buffer, last + 1, line_count);
+
+    // Debug: log page forward details
+    {
+        let lv_text = buffer_line_text(&state.buffer, last_visible);
+        let ld_text = buffer_line_text(&state.buffer, last);
+        let nx_text = if next < line_count { buffer_line_text(&state.buffer, next) } else { "(end)".into() };
+        let widget_h = state.text_view.height();
+        let desc_guard = descender_guard_px(&state.text_view, state.page_top_line);
+        log_fmt!("PAGE_FWD: page_top={} last_visible={} last_dialogue={} next={}", state.page_top_line, last_visible, last, next);
+        log_fmt!("PAGE_FWD: widget_h={} desc_guard={} usable_h={}", widget_h, desc_guard, widget_h - desc_guard);
+        log_fmt!("PAGE_FWD: last_visible_text='{}'", lv_text.chars().take(60).collect::<String>());
+        log_fmt!("PAGE_FWD: last_dialogue_text='{}'", ld_text.chars().take(60).collect::<String>());
+        log_fmt!("PAGE_FWD: next_text='{}'", nx_text.chars().take(60).collect::<String>());
+        // Log heights of lines near the boundary
+        for i in last_visible.saturating_sub(2)..=(last_visible + 2).min(line_count - 1) {
+            if let Some(iter) = state.buffer.iter_at_line(i as i32) {
+                let (_y, h) = state.text_view.line_yrange(&iter);
+                let t = buffer_line_text(&state.buffer, i);
+                log_fmt!("PAGE_FWD: line {} h={} '{}'", i, h, t.chars().take(50).collect::<String>());
+            }
+        }
+    }
+
     if next >= line_count {
         return; // already at end
     }
     let new_top = back_up_for_speaker(&state.buffer, next);
+
+    // Remember current page so page_backward can return to it exactly
+    state.page_history.push(state.page_top_line);
 
     state.current_line = next;
     update_highlight(state);
@@ -152,17 +190,19 @@ pub fn page_forward(state: &mut AppState) {
     set_page(state, new_top, PageDirection::Forward);
 }
 
-/// Page backward (Ctrl+u/b). Go back by one page worth of lines,
-/// find the next dialogue line at that position, and back up for speaker.
+/// Page backward (Shift+,). Pop the previous page_top from the history
+/// stack so we return to exactly the same page that page_forward came from.
 pub fn page_backward(state: &mut AppState) {
     if state.current_work.is_none() {
         return;
     }
 
-    let lpp = lines_per_page(state);
+    let Some(prev_top) = state.page_history.pop() else {
+        return; // no history, already at first page
+    };
+
     let line_count = state.effective_line_count();
-    let raw_top = state.page_top_line.saturating_sub(lpp);
-    let next = next_dialogue_from(&state.buffer, raw_top, line_count);
+    let next = next_dialogue_from(&state.buffer, prev_top, line_count);
     let new_top = back_up_for_speaker(&state.buffer, next);
 
     state.current_line = next;
@@ -835,19 +875,23 @@ fn set_page_instant(state: &mut AppState, new_top: usize) {
 /// Scroll so `line` is at the top of the viewport, then size the bottom clip
 /// overlay to hide any partially-visible line at the bottom of the page.
 fn snap_scroll_to_line(state: &mut AppState, line: usize) {
-    // Position the target line at the very top of the viewport
-    if let Some(mut iter) = state.buffer.iter_at_line(line as i32) {
-        state.text_view.scroll_to_iter(&mut iter, 0.0, true, 0.0, 0.0);
+    // Position the target line at the very top of the viewport using
+    // vadjustment for pixel-perfect positioning (scroll_to_iter is imprecise).
+    if let Some(iter) = state.buffer.iter_at_line(line as i32) {
+        let (y, _h) = state.text_view.line_yrange(&iter);
+        let adj = state.scrolled_window.vadjustment();
+        adj.set_value(y as f64);
     }
 
     // Schedule the clip height update for the next frame, after GTK has
     // completed the scroll and updated line layout positions.
     let text_view = state.text_view.clone();
     let bottom_clip = state.bottom_clip.clone();
+    let scrolled_window = state.scrolled_window.clone();
     let page_top = line;
     let line_count = state.effective_line_count();
     glib::idle_add_local_once(move || {
-        update_bottom_clip(&text_view, &bottom_clip, page_top, line_count);
+        update_bottom_clip(&text_view, &bottom_clip, &scrolled_window, page_top, line_count);
     });
 }
 
@@ -870,6 +914,7 @@ fn descender_guard_px(text_view: &sourceview5::View, page_top: usize) -> i32 {
 fn update_bottom_clip(
     text_view: &sourceview5::View,
     bottom_clip: &gtk4::Box,
+    scrolled_window: &gtk4::ScrolledWindow,
     page_top: usize,
     line_count: usize,
 ) {
@@ -889,6 +934,7 @@ fn update_bottom_clip(
 
     let mut total_height = 0;
     let mut any_nonzero = false;
+    let mut last_fit = page_top;
     for i in page_top..line_count {
         let Some(iter) = buf.iter_at_line(i as i32) else { break };
         let (_y, h) = text_view.line_yrange(&iter);
@@ -899,6 +945,7 @@ fn update_bottom_clip(
             break;
         }
         total_height += h;
+        last_fit = i;
     }
 
     if !any_nonzero {
@@ -906,10 +953,42 @@ fn update_bottom_clip(
         return;
     }
 
+    // Hide trailing speaker names (and blank lines before them) so a speaker
+    // name never dangles at the bottom of a page without its dialogue.
+    {
+        use crate::db::line_types;
+        let mut trim = last_fit;
+        while trim > page_top {
+            let text = {
+                let Some(start) = buf.iter_at_line(trim as i32) else { break };
+                let mut end = start;
+                if !end.ends_line() { end.forward_to_line_end(); }
+                buf.text(&start, &end, false).to_string()
+            };
+            if line_types::is_speaker(&text) || line_types::is_blank(&text) {
+                if let Some(iter) = buf.iter_at_line(trim as i32) {
+                    let (_y, h) = text_view.line_yrange(&iter);
+                    total_height -= h;
+                }
+                trim -= 1;
+            } else {
+                break;
+            }
+        }
+    }
+
     let clip = (widget_height - total_height).max(0);
+    let scroll_val = scrolled_window.vadjustment().value();
+    let expected_y = if let Some(iter) = buf.iter_at_line(page_top as i32) {
+        let (y, _h) = text_view.line_yrange(&iter);
+        y as f64
+    } else {
+        -1.0
+    };
+    let scroll_offset = scroll_val - expected_y;
     crate::logging::log(&format!(
-        "BOTTOM_CLIP: widget_h={} descent_guard={} usable_h={} total_h={} clip={} page_top={}",
-        widget_height, descender_guard, usable_height, total_height, clip, page_top
+        "BOTTOM_CLIP: widget_h={} total_h={} clip={} page_top={} scroll_val={:.1} expected_y={:.1} offset={:.1}",
+        widget_height, total_height, clip, page_top, scroll_val, expected_y, scroll_offset
     ));
     bottom_clip.set_height_request(clip);
 }
@@ -1043,7 +1122,7 @@ pub fn update_highlight_and_show(state: &mut AppState) {
             let max_scroll = (adj.upper() - adj.page_size()).max(0.0);
             adj.set_value((y as f64).max(0.0).min(max_scroll));
         }
-        update_bottom_clip(&text_view, &bottom_clip, current, line_count);
+        update_bottom_clip(&text_view, &bottom_clip, &scrolled_window, current, line_count);
         // Show the scrolled window now that scroll position is correct.
         scrolled_window.set_visible(true);
         loading_flag.set(false);
