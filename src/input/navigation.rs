@@ -232,12 +232,14 @@ pub fn page_backward_bottom(state: &mut AppState) {
         return;
     }
     let Some(prev_top) = state.page_history.pop() else {
+        log_fmt!("NAV_BACK: no page_history to pop");
         return;
     };
     let new_top = back_up_for_speaker(&state.buffer, prev_top);
     // Set page first so last_fully_visible_line computes against the new page
     set_page(state, new_top, PageDirection::Backward);
     let last_vis = last_fully_visible_line(state);
+    log_fmt!("NAV_BACK: Shift+comma prev_top={} new_top={} current_line={}", prev_top, new_top, last_vis);
     state.current_line = last_vis;
     state.pending_advance = None;
     state.pending_advance_ignore_bl = None;
@@ -253,10 +255,12 @@ pub fn jump_to_prev_dialogue(state: &mut AppState) {
     }
     let buffer = &state.buffer;
     if let Some(target) = prev_dialogue_line(buffer, state.current_line) {
+        let prev = state.current_line;
         state.current_line = target;
         state.pending_advance = None;
         state.pending_advance_ignore_bl = None;
         state.prev_highlight_line.set(None);
+        log_fmt!("NAV_PREV: comma from={} to={} page_top={}", prev, target, state.page_top_line);
         update_highlight(state);
         scroll_after_jump_backward(state);
         seek_to_current_line(state);
@@ -276,6 +280,7 @@ pub fn jump_to_next_dialogue(state: &mut AppState) {
         state.current_line = target;
         state.pending_advance = None;
         state.pending_advance_ignore_bl = None;
+        log_fmt!("NAV_NEXT: q from={} to={} page_top={}", prev_line, target, state.page_top_line);
         update_highlight(state);
         scroll_after_jump_forward(state, prev_line);
         seek_to_current_line(state);
@@ -606,6 +611,7 @@ fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize) {
                 state.page_history.push(state.page_top_line);
                 // Put the dialogue line at the top, backing up to include speaker name
                 let new_top = page_turn_top(&state.buffer, state.current_line);
+                log_fmt!("NAV_PAGE_FWD: current={} old_top={} new_top={} history_len={}", state.current_line, state.page_top_line, new_top, state.page_history.len());
                 set_page_instant(state, new_top);
             }
         }
@@ -622,6 +628,7 @@ fn scroll_after_jump_backward(state: &mut AppState) {
                 state.page_history.push(state.page_top_line);
                 let lpp = lines_per_page(state);
                 let new_top = state.current_line.saturating_sub(lpp.saturating_sub(1));
+                log_fmt!("NAV_PAGE_BACK: current={} old_top={} new_top={} lpp={} history_len={}", state.current_line, state.page_top_line, new_top, lpp, state.page_history.len());
                 set_page_instant(state, new_top);
             }
         }
@@ -670,11 +677,13 @@ pub fn seek_to_current_line(state: &mut AppState) {
             state.suppress_sync_until = Some(new_until);
         }
         let seek_time = (ts.start - SEEK_PREROLL).max(0.0);
+        log_fmt!("SEEK: line={} work_idx={} start={:.2} seek={:.2} suppress=500ms", state.current_line, work_idx, ts.start, seek_time);
         let _ = state
             .cmd_tx
             .try_send(crate::mpv::MpvCommand::Seek(seek_time));
     } else {
         // No timestamp — suppress indefinitely so cursor stays put
+        log_fmt!("SEEK: line={} work_idx={} NO_TIMESTAMP suppress=86400s", state.current_line, work_idx);
         state.suppress_sync_until =
             Some(std::time::Instant::now() + std::time::Duration::from_secs(86400));
     }

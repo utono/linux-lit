@@ -447,6 +447,14 @@ pub fn handle_key(
         return false;
     }
 
+    // Ctrl+d: toggle debug logging
+    if is_ctrl && key_name == "d" {
+        let enabled = !crate::logging::debug_mode();
+        crate::logging::set_debug_mode(enabled);
+        crate::logging::log_always(&format!("DEBUG_MODE: {}", if enabled { "on" } else { "off" }));
+        return true;
+    }
+
     // Settings overlay
     let settings_visible = state.borrow().settings_overlay.is_visible();
 

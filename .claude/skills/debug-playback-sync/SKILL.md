@@ -32,7 +32,9 @@ Read the screenshot argument with the Read tool. Identify:
 
 Then determine the **expected next page top**: the line of dialogue immediately after the last dialogue line visible on this page. For prose, every non-blank line is dialogue. For plays, dialogue excludes speaker names, stage directions, and act/scene headers.
 
-## Step 2: Read the Log
+## Step 2: Enable Debug Mode and Read the Log
+
+Tell the user to press **Ctrl+d** to enable debug logging before reproducing the issue. The log file will be empty unless debug mode is on.
 
 ```bash
 cat ~/utono/linux-lit/linux-lit-dev.log
