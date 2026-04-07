@@ -40,6 +40,7 @@ pub struct AppState {
     pub current_line: usize,
     pub prev_highlight_line: std::cell::Cell<Option<usize>>,
     pub page_top_line: usize,
+    pub page_history: Vec<usize>,
     pub dim_tag: gtk4::TextTag,
     pub cursor_line_tag: gtk4::TextTag,
     pub cursor_fade_tag: gtk4::TextTag,
@@ -534,6 +535,7 @@ pub fn build_window(
         current_line: 0,
         prev_highlight_line: std::cell::Cell::new(None),
         page_top_line: 0,
+        page_history: Vec::new(),
         dim_tag,
         cursor_line_tag,
         cursor_fade_tag,
@@ -973,6 +975,7 @@ pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<
 
     state.current_line = saved_line;
     state.page_top_line = 0;
+    state.page_history.clear();
     state.visual_selection = None;
     state.current_work = Some(work);
 
