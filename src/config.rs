@@ -57,6 +57,8 @@ pub struct Config {
     pub vocab_highlight_visible: bool,
     #[serde(default = "default_dim_enabled")]
     pub dim_enabled: bool,
+    #[serde(default)]
+    pub show_cursor_line: bool,
 }
 
 fn default_font_family() -> String {
@@ -126,6 +128,7 @@ impl Default for Config {
             ollama_endpoint: default_ollama_endpoint(),
             vocab_highlight_visible: default_vocab_highlight_visible(),
             dim_enabled: default_dim_enabled(),
+            show_cursor_line: false,
         }
     }
 }

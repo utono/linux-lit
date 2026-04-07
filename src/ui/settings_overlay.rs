@@ -3,7 +3,7 @@ use gtk4::{Box as GtkBox, Label, Orientation, Overlay};
 
 use crate::theme::Theme;
 
-const NUM_SETTINGS: usize = 6;
+const NUM_SETTINGS: usize = 7;
 
 #[derive(Clone)]
 struct SettingsSnapshot {
@@ -13,6 +13,7 @@ struct SettingsSnapshot {
     theme_index: usize,
     navigation_mode: crate::config::NavigationMode,
     transition_style: crate::config::TransitionStyle,
+    show_cursor_line: bool,
 }
 
 pub struct SettingsOverlay {
@@ -49,7 +50,7 @@ impl SettingsOverlay {
         container.append(&title);
 
         // Setting names
-        let names = ["Theme", "Line Spacing", "Column Width", "Text Margins", "Navigation", "Transition"];
+        let names = ["Theme", "Line Spacing", "Column Width", "Text Margins", "Navigation", "Transition", "Cursor Line"];
 
         let mut rows = Vec::new();
         let mut value_labels = Vec::new();
@@ -107,6 +108,7 @@ impl SettingsOverlay {
                 theme_index,
                 navigation_mode: crate::config::NavigationMode::default(),
                 transition_style: crate::config::TransitionStyle::default(),
+                show_cursor_line: false,
             },
             themes,
             theme_index,
@@ -115,7 +117,7 @@ impl SettingsOverlay {
         }
     }
 
-    pub fn show(&mut self, line_spacing: u32, column_width: u32, text_margins: u32, navigation_mode: crate::config::NavigationMode, transition_style: crate::config::TransitionStyle) {
+    pub fn show(&mut self, line_spacing: u32, column_width: u32, text_margins: u32, navigation_mode: crate::config::NavigationMode, transition_style: crate::config::TransitionStyle, show_cursor_line: bool) {
         self.snapshot = SettingsSnapshot {
             line_spacing,
             column_width,
@@ -123,11 +125,12 @@ impl SettingsOverlay {
             theme_index: self.theme_index,
             navigation_mode,
             transition_style,
+            show_cursor_line,
         };
         self.navigation_mode = navigation_mode;
         self.transition_style = transition_style;
         self.selected = 0;
-        self.update_displayed_values(line_spacing, column_width, text_margins, navigation_mode, transition_style);
+        self.update_displayed_values(line_spacing, column_width, text_margins, navigation_mode, transition_style, show_cursor_line);
         self.update_row_highlight();
         self.container.set_visible(true);
     }
@@ -171,6 +174,7 @@ impl SettingsOverlay {
         text_margins: u32,
         navigation_mode: crate::config::NavigationMode,
         transition_style: crate::config::TransitionStyle,
+        show_cursor_line: bool,
     ) -> SettingsChange {
         match self.selected {
             0 => {
@@ -235,11 +239,18 @@ impl SettingsOverlay {
                 self.value_labels[5].set_label(&format!("\u{25C0} {} \u{25B6}", label));
                 SettingsChange::Transition(new_style)
             }
+            6 => {
+                // Cursor Line: toggle on/off
+                let new_val = !show_cursor_line;
+                let label = if new_val { "On" } else { "Off" };
+                self.value_labels[6].set_label(&format!("\u{25C0} {} \u{25B6}", label));
+                SettingsChange::CursorLine(new_val)
+            }
             _ => SettingsChange::None,
         }
     }
 
-    pub fn snapshot(&self) -> (u32, u32, u32, usize, crate::config::NavigationMode, crate::config::TransitionStyle) {
+    pub fn snapshot(&self) -> (u32, u32, u32, usize, crate::config::NavigationMode, crate::config::TransitionStyle, bool) {
         (
             self.snapshot.line_spacing,
             self.snapshot.column_width,
@@ -247,6 +258,7 @@ impl SettingsOverlay {
             self.snapshot.theme_index,
             self.snapshot.navigation_mode,
             self.snapshot.transition_style,
+            self.snapshot.show_cursor_line,
         )
     }
 
@@ -258,7 +270,7 @@ impl SettingsOverlay {
         &self.themes
     }
 
-    pub fn update_displayed_values(&self, line_spacing: u32, column_width: u32, text_margins: u32, navigation_mode: crate::config::NavigationMode, transition_style: crate::config::TransitionStyle) {
+    pub fn update_displayed_values(&self, line_spacing: u32, column_width: u32, text_margins: u32, navigation_mode: crate::config::NavigationMode, transition_style: crate::config::TransitionStyle, show_cursor_line: bool) {
         if let Some(theme) = self.themes.get(self.theme_index) {
             self.value_labels[0].set_label(&format!("\u{25C0} {} \u{25B6}", theme.display_name));
         }
@@ -276,6 +288,8 @@ impl SettingsOverlay {
             crate::config::TransitionStyle::Instant => "Instant",
         };
         self.value_labels[5].set_label(&format!("\u{25C0} {} \u{25B6}", transition_label));
+        let cursor_label = if show_cursor_line { "On" } else { "Off" };
+        self.value_labels[6].set_label(&format!("\u{25C0} {} \u{25B6}", cursor_label));
     }
 
     fn update_row_highlight(&self) {
@@ -305,5 +319,6 @@ pub enum SettingsChange {
     Theme(Box<Theme>),
     Navigation(crate::config::NavigationMode),
     Transition(crate::config::TransitionStyle),
+    CursorLine(bool),
     None,
 }

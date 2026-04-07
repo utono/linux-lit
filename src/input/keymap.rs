@@ -459,8 +459,9 @@ pub fn handle_key(
         let tm = s.config.text_margins;
         let nm = s.config.navigation_mode;
         let ts = s.config.transition_style;
+        let cl = s.config.show_cursor_line;
         drop(s);
-        state.borrow_mut().settings_overlay.show(ls, cw, tm, nm, ts);
+        state.borrow_mut().settings_overlay.show(ls, cw, tm, nm, ts, cl);
         return true;
     }
 
@@ -469,7 +470,7 @@ pub fn handle_key(
         match key_name {
             "Escape" => {
                 // Revert to snapshot values
-                let (snap_ls, snap_cw, snap_tm, snap_ti, snap_nm, snap_ts) = state.borrow().settings_overlay.snapshot();
+                let (snap_ls, snap_cw, snap_tm, snap_ti, snap_nm, snap_ts, snap_cl) = state.borrow().settings_overlay.snapshot();
                 {
                     let mut s = state.borrow_mut();
                     if s.dialogue_formatting_active {
@@ -495,9 +496,11 @@ pub fn handle_key(
                     s.config.text_margins = snap_tm;
                     s.config.navigation_mode = snap_nm;
                     s.config.transition_style = snap_ts;
+                    s.config.show_cursor_line = snap_cl;
                     if s.dialogue_formatting_active {
                         crate::app::apply_dialogue_formatting(&mut s);
                     }
+                    crate::input::navigation::update_highlight_only(&mut s);
                     // Revert theme if changed
                     if let Some(snap_theme) = s.settings_overlay.themes().get(snap_ti) {
                         let snap_theme = snap_theme.clone();
@@ -526,20 +529,20 @@ pub fn handle_key(
                 return true;
             }
             "h" | "Left" => {
-                let (ls, cw, tm, nm, ts) = {
+                let (ls, cw, tm, nm, ts, cl) = {
                     let s = state.borrow();
-                    (s.config.line_spacing, s.config.column_width, s.config.text_margins, s.config.navigation_mode, s.config.transition_style)
+                    (s.config.line_spacing, s.config.column_width, s.config.text_margins, s.config.navigation_mode, s.config.transition_style, s.config.show_cursor_line)
                 };
-                let change = state.borrow_mut().settings_overlay.adjust_value(-1, ls, cw, tm, nm, ts);
+                let change = state.borrow_mut().settings_overlay.adjust_value(-1, ls, cw, tm, nm, ts, cl);
                 apply_settings_change(state, change);
                 return true;
             }
             "l" | "Right" => {
-                let (ls, cw, tm, nm, ts) = {
+                let (ls, cw, tm, nm, ts, cl) = {
                     let s = state.borrow();
-                    (s.config.line_spacing, s.config.column_width, s.config.text_margins, s.config.navigation_mode, s.config.transition_style)
+                    (s.config.line_spacing, s.config.column_width, s.config.text_margins, s.config.navigation_mode, s.config.transition_style, s.config.show_cursor_line)
                 };
-                let change = state.borrow_mut().settings_overlay.adjust_value(1, ls, cw, tm, nm, ts);
+                let change = state.borrow_mut().settings_overlay.adjust_value(1, ls, cw, tm, nm, ts, cl);
                 apply_settings_change(state, change);
                 return true;
             }
@@ -574,10 +577,12 @@ pub fn handle_key(
                 s.config.text_margins = tm;
                 s.config.navigation_mode = nm;
                 s.config.transition_style = ts;
+                s.config.show_cursor_line = false;
                 if s.dialogue_formatting_active {
                     crate::app::apply_dialogue_formatting(&mut s);
                 }
-                s.settings_overlay.update_displayed_values(ls, cw, tm, nm, ts);
+                crate::input::navigation::update_highlight_only(&mut s);
+                s.settings_overlay.update_displayed_values(ls, cw, tm, nm, ts, false);
                 return true;
             }
             _ => return true, // consume all other keys when settings visible
@@ -1081,7 +1086,11 @@ pub fn handle_key(
             true
         }
         "comma" => {
-            navigation::jump_to_prev_dialogue(&mut state.borrow_mut());
+            if is_shift {
+                navigation::page_backward_bottom(&mut state.borrow_mut());
+            } else {
+                navigation::jump_to_prev_dialogue(&mut state.borrow_mut());
+            }
             true
         }
         "q" => {
@@ -1092,8 +1101,15 @@ pub fn handle_key(
             navigation::page_backward(&mut state.borrow_mut());
             true
         }
+        "minus" => {
+            let mut s = state.borrow_mut();
+            s.config.show_cursor_line = !s.config.show_cursor_line;
+            crate::input::navigation::update_highlight_only(&mut s);
+            crate::config::save(&s.config);
+            true
+        }
         "Q" => {
-            navigation::page_forward(&mut state.borrow_mut());
+            navigation::cursor_to_page_bottom(&mut state.borrow_mut());
             true
         }
         "o" | "e" | "O" | "E" => {
@@ -1236,55 +1252,11 @@ pub fn handle_key(
             true
         }
         "x" => {
-            // Next chunk forward: find chunk at cursor, or advance to next
-            {
-                let mut s = state.borrow_mut();
-                let lines = s.current_work.as_ref().map(|w| &w.lines[..]);
-                if let Some(lines) = lines {
-                    // If no chunk index yet, find chunk at current line
-                    if s.ab_repeat.chunk_index.is_none() {
-                        let work_idx = s.work_line_for_buffer(s.current_line);
-                        s.ab_repeat.chunk_index = work_idx.and_then(|idx| {
-                            s.ab_repeat.find_chunk_at_line(idx, lines)
-                        });
-                    } else {
-                        // Advance to next chunk
-                        s.ab_repeat.next_chunk();
-                    }
-                    // Activate loop for current chunk
-                    if let Some(idx) = s.ab_repeat.chunk_index {
-                        activate_chunk(&mut s, idx);
-                    }
-                }
-            } // drop borrow_mut before immutable borrow
-            {
-                let s = state.borrow();
-                if let Some(ref renderer) = s.gutter_renderer {
-                    renderer.queue_draw();
-                }
-            }
-            crate::app::apply_ab_dim(&state.borrow());
-            crate::input::navigation::position_chunk(&mut state.borrow_mut());
+            navigation::page_forward(&mut state.borrow_mut());
             true
         }
         "y" => {
-            // Previous chunk backward
-            {
-                let mut s = state.borrow_mut();
-                if s.ab_repeat.prev_chunk().is_some() {
-                    if let Some(idx) = s.ab_repeat.chunk_index {
-                        activate_chunk(&mut s, idx);
-                    }
-                }
-            } // drop borrow_mut before immutable borrow
-            {
-                let s = state.borrow();
-                if let Some(ref renderer) = s.gutter_renderer {
-                    renderer.queue_draw();
-                }
-            }
-            crate::app::apply_ab_dim(&state.borrow());
-            crate::input::navigation::position_chunk(&mut state.borrow_mut());
+            navigation::page_backward(&mut state.borrow_mut());
             true
         }
         "m" => {
@@ -1501,6 +1473,10 @@ fn apply_settings_change(
         }
         SettingsChange::Transition(style) => {
             s.config.transition_style = style;
+        }
+        SettingsChange::CursorLine(val) => {
+            s.config.show_cursor_line = val;
+            crate::input::navigation::update_highlight_only(&mut s);
         }
         SettingsChange::None => {}
     }

@@ -139,6 +139,10 @@ pub fn toggle_playback(state: &mut AppState) {
                 state.suppress_sync_until = Some(
                     std::time::Instant::now() + std::time::Duration::from_millis(500),
                 );
+            } else {
+                // Current line has no timestamp — clear any indefinite suppression
+                // (e.g. from navigate-while-paused) so sync resumes on playback.
+                state.suppress_sync_until = None;
             }
         }
     }

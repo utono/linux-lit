@@ -98,6 +98,7 @@ fn main() {
                     MpvEvent::CursorSync(line_idx) => {
                         let mut s = state_for_events.borrow_mut();
                         if s.loading_work.get() {
+                            crate::logging::log(&format!("CURSOR_SYNC: SKIP loading_work line_idx={}", line_idx));
                             continue;
                         }
                         if !s.sync_enabled {
@@ -112,6 +113,11 @@ fn main() {
                         }
                         if let Some(until) = s.suppress_sync_until {
                             if std::time::Instant::now() < until {
+                                crate::logging::log(&format!(
+                                    "CURSOR_SYNC: SUPPRESSED line_idx={} remaining={:.1}s",
+                                    line_idx,
+                                    until.duration_since(std::time::Instant::now()).as_secs_f64()
+                                ));
                                 continue;
                             }
                             s.suppress_sync_until = None;
@@ -140,6 +146,10 @@ fn main() {
                         s.pending_advance_ignore_bl = None;
 
                         if s.current_line != buffer_line {
+                            crate::logging::log(&format!(
+                                "CURSOR_SYNC: line_idx={} buffer_line={} current={} page_top={}",
+                                line_idx, buffer_line, s.current_line, s.page_top_line
+                            ));
                             s.current_line = buffer_line;
 
                             // Detect paragraph transition before scrolling:
@@ -152,13 +162,17 @@ fn main() {
                                 && old_para_start != Some(para.start);
 
                             if paragraph_changed {
+                                crate::logging::log(&format!(
+                                    "CURSOR_SYNC: PARA_CHANGE para_start={} on_screen={}",
+                                    para.start, crate::input::navigation::is_line_on_screen(&s, para.start)
+                                ));
                                 crate::input::navigation::update_highlight_only(&mut s);
                                 crate::input::navigation::scroll_paragraph_to_top(
                                     &mut s, para.start,
                                 );
                             } else {
                                 // Normal line-by-line highlight and scroll
-                                crate::input::navigation::update_highlight_and_ensure_visible(
+                                crate::input::navigation::update_highlight_and_advance_page(
                                     &mut s,
                                 );
                             }
@@ -213,7 +227,7 @@ fn main() {
                                     s.pending_advance = None;
                                     if s.current_line != next_bl {
                                         s.current_line = next_bl;
-                                        crate::input::navigation::update_highlight_and_ensure_visible(
+                                        crate::input::navigation::update_highlight_and_advance_page(
                                             &mut s,
                                         );
                                     }

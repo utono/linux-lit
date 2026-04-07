@@ -513,16 +513,15 @@ pub fn build_window(
 
     window.set_child(Some(&vbox));
 
-    // Override startup work/line with env vars (used by concordance cross-work spawn)
-    // Only auto-load a work if this is a concordance spawn (env var).
-    // Normal startup always shows the library picker.
+    // Concordance spawns load the work specified by env var.
+    // Normal startup resumes the most recently used work from config.
     let last_work = if let Ok(work_abbrev) = std::env::var("LINUX_LIT_WORK") {
         crate::logging::log(&format!(
             "STARTUP: concordance spawn work='{}'", work_abbrev
         ));
         Some(work_abbrev)
     } else {
-        None
+        config.last_work.clone()
     };
     let dim_enabled = config.dim_enabled;
     let vocab_highlight_visible = config.vocab_highlight_visible;

@@ -211,9 +211,42 @@ pub fn page_backward(state: &mut AppState) {
     set_page(state, new_top, PageDirection::Backward);
 }
 
+/// Move cursor to the last fully visible line on the current page (`Q` key).
+pub fn cursor_to_page_bottom(state: &mut AppState) {
+    if state.current_work.is_none() {
+        return;
+    }
+    let last_vis = last_fully_visible_line(state);
+    if state.current_line != last_vis {
+        state.current_line = last_vis;
+        state.pending_advance = None;
+        state.pending_advance_ignore_bl = None;
+        update_highlight(state);
+        seek_to_current_line(state);
+    }
+}
+
+/// Go to previous page and place cursor on its last visible line (shift+comma).
+pub fn page_backward_bottom(state: &mut AppState) {
+    if state.current_work.is_none() {
+        return;
+    }
+    let Some(prev_top) = state.page_history.pop() else {
+        return;
+    };
+    let new_top = back_up_for_speaker(&state.buffer, prev_top);
+    // Set page first so last_fully_visible_line computes against the new page
+    set_page(state, new_top, PageDirection::Backward);
+    let last_vis = last_fully_visible_line(state);
+    state.current_line = last_vis;
+    state.pending_advance = None;
+    state.pending_advance_ignore_bl = None;
+    update_highlight(state);
+    seek_to_current_line(state);
+}
+
 /// Previous dialogue line (`,` key).
 /// If cursor is at the top line of the page, just page backward (don't move cursor).
-/// Previous dialogue line (`,` key).
 pub fn jump_to_prev_dialogue(state: &mut AppState) {
     if state.current_line == 0 {
         return;
@@ -521,7 +554,7 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
 
 /// Check if a line is on screen at all (no padding requirement).
 /// Used by playback sync to avoid premature page turns.
-fn is_line_on_screen(state: &AppState, line: usize) -> bool {
+pub fn is_line_on_screen(state: &AppState, line: usize) -> bool {
     is_line_fully_visible(state, line)
 }
 
@@ -1097,6 +1130,30 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
     auto_show_vocab_popup(state);
 }
 
+/// Like update_highlight_and_ensure_visible, but turns the page when the
+/// highlight advances past the last visible line. The new page starts with
+/// the new line at the top — no overlap with the previous page's content.
+/// Used by playback sync.
+pub fn update_highlight_and_advance_page(state: &mut AppState) {
+    update_highlight(state);
+    match state.config.navigation_mode {
+        crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
+        crate::config::NavigationMode::EReader => {
+            let last_vis = last_fully_visible_line(state);
+            log_fmt!(
+                "SYNC_ADVANCE: current={} last_vis={} page_top={}",
+                state.current_line, last_vis, state.page_top_line
+            );
+            if state.current_line > last_vis {
+                let new_top = page_turn_top(&state.buffer, state.current_line);
+                state.page_history.push(state.page_top_line);
+                set_page(state, new_top, PageDirection::Forward);
+            }
+        }
+    }
+    auto_show_vocab_popup(state);
+}
+
 /// Apply highlight tags, snap scroll to page_top_line, apply bottom clip,
 /// then show the scrolled window. Called at the end of display_work_at
 /// after the buffer and cursor position are fully set up.
@@ -1199,6 +1256,7 @@ fn update_highlight(state: &mut AppState) {
         buffer.remove_tag(tag, &vis_start_iter, &vis_end_iter);
 
         // Apply fade-out to the old cursor line (if it changed)
+        if state.config.show_cursor_line {
         if let Some(old_line) = state.prev_highlight_line.get() {
             if old_line != state.current_line {
                 // Cancel any in-flight cursor fade
@@ -1245,14 +1303,17 @@ fn update_highlight(state: &mut AppState) {
                 state.cursor_fade_anim = Some(anim);
             }
         }
+        } // show_cursor_line
 
-        // Apply cursor line background to new line
-        if let Some(line_start) = buffer.iter_at_line(state.current_line as i32) {
-            let mut line_end = line_start;
-            if !line_end.ends_line() {
-                line_end.forward_to_line_end();
+        // Apply cursor line background to new line (if enabled)
+        if state.config.show_cursor_line {
+            if let Some(line_start) = buffer.iter_at_line(state.current_line as i32) {
+                let mut line_end = line_start;
+                if !line_end.ends_line() {
+                    line_end.forward_to_line_end();
+                }
+                buffer.apply_tag(cl_tag, &line_start, &line_end);
             }
-            buffer.apply_tag(cl_tag, &line_start, &line_end);
         }
         // When visual selection is active, apply highlight even when dim is off
         crate::input::visual::clear_selection_highlight(state);
