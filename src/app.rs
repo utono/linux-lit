@@ -167,6 +167,12 @@ impl AppState {
         }
     }
 
+    /// Get line_mapping.id for a buffer line, if available.
+    pub fn line_mapping_id_for_buffer(&self, buffer_line: usize) -> Option<i64> {
+        let work_idx = self.work_line_for_buffer(buffer_line)?;
+        self.current_work.as_ref()?.lines.get(work_idx).map(|l| l.id)
+    }
+
     /// Check if a buffer line is within the currently highlighted sentence group.
     #[allow(dead_code)]
     pub fn is_in_current_sentence(&self, line_index: usize) -> bool {
@@ -512,12 +518,14 @@ pub fn build_window(
     word_status_label.set_visible(false);
     concordance_list_picker.overlay.add_overlay(&word_status_label);
 
-    // Page line number indicator (upper-right of card, hidden by default)
+    // Page line number indicator (bottom-center of text column, hidden by default)
     let page_line_label = gtk4::Label::new(None);
-    page_line_label.set_halign(gtk4::Align::End);
-    page_line_label.set_valign(gtk4::Align::Start);
-    page_line_label.set_margin_end(32);
-    page_line_label.set_margin_top(16);
+    page_line_label.set_halign(gtk4::Align::Fill);
+    page_line_label.set_justify(gtk4::Justification::Center);
+    page_line_label.set_valign(gtk4::Align::End);
+    page_line_label.set_margin_start(config.text_margins as i32);
+    page_line_label.set_margin_end(config.text_margins as i32 + crate::config::EXTRA_RIGHT_MARGIN);
+    page_line_label.set_margin_bottom(16);
     page_line_label.add_css_class("page-line-label");
     page_line_label.set_visible(false);
     page_turn_overlay.add_overlay(&page_line_label);
@@ -1077,7 +1085,7 @@ pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<
         }
     }
 
-    // Set font size based on work type: 18pt for plays/poetry, 19pt for prose
+    // Set font size based on work type: 18pt for plays/poetry, 20pt for prose
     let is_prose = state.current_work.as_ref()
         .map(|w| crate::db::line_types::is_prose_work(&w.work_type))
         .unwrap_or(true);
@@ -1135,6 +1143,12 @@ pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<
     let load_suppress = std::time::Instant::now() + std::time::Duration::from_secs(5);
     if state.suppress_sync_until.map_or(true, |existing| load_suppress > existing) {
         state.suppress_sync_until = Some(load_suppress);
+    }
+
+    // Show line_mapping.id for initial load
+    if let Some(lm_id) = state.line_mapping_id_for_buffer(state.page_top_line) {
+        state.page_line_label.set_text(&format!("{}", lm_id));
+        state.page_line_label.set_visible(true);
     }
 
     // Apply highlight, snap scroll, show the scrolled window.

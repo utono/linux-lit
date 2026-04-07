@@ -456,6 +456,39 @@ pub fn handle_key(
         return true;
     }
 
+    // Ctrl+f: page forward
+    if is_ctrl && key_name == "f" {
+        navigation::page_forward(&mut state.borrow_mut());
+        return true;
+    }
+
+    // Ctrl+b: page backward
+    if is_ctrl && key_name == "b" {
+        navigation::page_backward(&mut state.borrow_mut());
+        return true;
+    }
+
+    // Ctrl+y: copy line_mapping.id of current line to clipboard
+    if is_ctrl && key_name == "y" {
+        let s = state.borrow();
+        if let Some(lm_id) = s.line_mapping_id_for_buffer(s.current_line) {
+            let id_str = format!("{}", lm_id);
+            drop(s);
+            if let Ok(mut child) = std::process::Command::new("wl-copy")
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+            {
+                use std::io::Write;
+                if let Some(ref mut stdin) = child.stdin {
+                    let _ = stdin.write_all(id_str.as_bytes());
+                }
+                let _ = child.wait();
+            }
+            crate::logging::log(&format!("CLIPBOARD: copied line_mapping.id={}", id_str));
+        }
+        return true;
+    }
+
     // Settings overlay
     let settings_visible = state.borrow().settings_overlay.is_visible();
 
@@ -500,6 +533,8 @@ pub fn handle_key(
                     };
                     s.text_view.set_left_margin(left);
                     s.text_view.set_right_margin(snap_tm as i32 + crate::config::EXTRA_RIGHT_MARGIN);
+                    s.page_line_label.set_margin_start(snap_tm as i32);
+                    s.page_line_label.set_margin_end(snap_tm as i32 + crate::config::EXTRA_RIGHT_MARGIN);
                     s.config.line_spacing = snap_ls;
                     s.config.column_width = snap_cw;
                     s.config.text_margins = snap_tm;
@@ -581,6 +616,8 @@ pub fn handle_key(
                 };
                 s.text_view.set_left_margin(left);
                 s.text_view.set_right_margin(tm as i32 + crate::config::EXTRA_RIGHT_MARGIN);
+                s.page_line_label.set_margin_start(tm as i32);
+                s.page_line_label.set_margin_end(tm as i32 + crate::config::EXTRA_RIGHT_MARGIN);
                 s.config.line_spacing = ls;
                 s.config.column_width = cw;
                 s.config.text_margins = tm;
@@ -1067,11 +1104,11 @@ pub fn handle_key(
             true
         }
         "j" => {
-            navigation::scroll_viewport(&mut state.borrow_mut(), 1);
+            navigation::cursor_next_dialogue(&mut state.borrow_mut());
             true
         }
         "k" => {
-            navigation::scroll_viewport(&mut state.borrow_mut(), -1);
+            navigation::cursor_prev_line(&mut state.borrow_mut());
             true
         }
         "Up" => {
@@ -1469,6 +1506,8 @@ fn apply_settings_change(
             };
             s.text_view.set_left_margin(left);
             s.text_view.set_right_margin(val as i32 + crate::config::EXTRA_RIGHT_MARGIN);
+            s.page_line_label.set_margin_start(val as i32);
+            s.page_line_label.set_margin_end(val as i32 + crate::config::EXTRA_RIGHT_MARGIN);
             s.config.text_margins = val;
             if s.dialogue_formatting_active {
                 crate::app::apply_dialogue_formatting(&mut s);

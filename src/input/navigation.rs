@@ -205,6 +205,8 @@ pub fn page_backward(state: &mut AppState) {
     let next = next_dialogue_from(&state.buffer, prev_top, line_count);
     let new_top = back_up_for_speaker(&state.buffer, next);
 
+    log_fmt!("PAGE_BWD: prev_top={} next={} new_top={} current_line={}", prev_top, next, new_top, state.current_line);
+
     state.current_line = next;
     update_highlight(state);
     seek_to_current_line(state);
@@ -284,6 +286,39 @@ pub fn jump_to_next_dialogue(state: &mut AppState) {
         update_highlight(state);
         scroll_after_jump_forward(state, prev_line);
         seek_to_current_line(state);
+        auto_show_vocab_popup(state);
+    }
+}
+
+/// Move cursor to previous line without seeking media (`j` key).
+pub fn cursor_prev_line(state: &mut AppState) {
+    if state.current_line == 0 {
+        return;
+    }
+    let target = state.current_line - 1;
+    state.current_line = target;
+    state.pending_advance = None;
+    state.pending_advance_ignore_bl = None;
+    state.prev_highlight_line.set(None);
+    update_highlight(state);
+    scroll_after_jump_backward(state);
+    auto_show_vocab_popup(state);
+}
+
+/// Move cursor to next dialogue line without seeking media (`k` key).
+pub fn cursor_next_dialogue(state: &mut AppState) {
+    let line_count = state.buffer.line_count() as usize;
+    if line_count == 0 {
+        return;
+    }
+    let buffer = &state.buffer;
+    if let Some(target) = next_dialogue_line(buffer, state.current_line, line_count) {
+        let prev_line = state.current_line;
+        state.current_line = target;
+        state.pending_advance = None;
+        state.pending_advance_ignore_bl = None;
+        update_highlight(state);
+        scroll_after_jump_forward(state, prev_line);
         auto_show_vocab_popup(state);
     }
 }
@@ -928,9 +963,11 @@ fn snap_scroll_to_line(state: &mut AppState, line: usize) {
         adj.set_value(y as f64);
     }
 
-    // Update page line number indicator
-    state.page_line_label.set_text(&format!("{}", line + 1));
-    state.page_line_label.set_visible(true);
+    // Update page line indicator with line_mapping.id
+    if let Some(lm_id) = state.line_mapping_id_for_buffer(line) {
+        state.page_line_label.set_text(&format!("{}", lm_id));
+        state.page_line_label.set_visible(true);
+    }
 
     // Schedule the clip height update for the next frame, after GTK has
     // completed the scroll and updated line layout positions.
