@@ -452,6 +452,7 @@ pub fn handle_key(
         let enabled = !crate::logging::debug_mode();
         crate::logging::set_debug_mode(enabled);
         crate::logging::log_always(&format!("DEBUG_MODE: {}", if enabled { "on" } else { "off" }));
+        state.borrow().debug_icon.set_visible(enabled);
         return true;
     }
 
@@ -972,11 +973,11 @@ pub fn handle_key(
                 }
                 return true;
             }
-            "d" | "f" => {
+            "d" | "f" | "u" => {
                 navigation::page_forward(&mut state.borrow_mut());
                 return true;
             }
-            "u" | "b" => {
+            "b" => {
                 navigation::page_backward(&mut state.borrow_mut());
                 return true;
             }

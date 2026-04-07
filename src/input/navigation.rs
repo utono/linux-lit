@@ -928,6 +928,10 @@ fn snap_scroll_to_line(state: &mut AppState, line: usize) {
         adj.set_value(y as f64);
     }
 
+    // Update page line number indicator
+    state.page_line_label.set_text(&format!("{}", line + 1));
+    state.page_line_label.set_visible(true);
+
     // Schedule the clip height update for the next frame, after GTK has
     // completed the scroll and updated line layout positions.
     let text_view = state.text_view.clone();

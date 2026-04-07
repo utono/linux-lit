@@ -132,6 +132,8 @@ pub struct AppState {
     pub current_paragraph_start: Option<usize>,
     pub sync_enabled: bool,
     pub sync_icon: gtk4::Label,
+    pub debug_icon: gtk4::Label,
+    pub page_line_label: gtk4::Label,
     pub word_status_label: gtk4::Label,
     pub word_cycle_line: Option<usize>,
     pub word_cycle_index: usize,
@@ -490,6 +492,16 @@ pub fn build_window(
     sync_icon.set_visible(false);
     concordance_list_picker.overlay.add_overlay(&sync_icon);
 
+    // Debug-mode indicator (lower-left corner, next to sync icon, hidden by default)
+    let debug_icon = gtk4::Label::new(Some("⚙"));
+    debug_icon.set_valign(gtk4::Align::End);
+    debug_icon.set_halign(gtk4::Align::Start);
+    debug_icon.set_margin_start(44);
+    debug_icon.set_margin_bottom(12);
+    debug_icon.add_css_class("debug-icon");
+    debug_icon.set_visible(false);
+    concordance_list_picker.overlay.add_overlay(&debug_icon);
+
     // Word-copy status indicator (lower-left corner, hidden by default)
     let word_status_label = gtk4::Label::new(None);
     word_status_label.set_valign(gtk4::Align::End);
@@ -499,6 +511,16 @@ pub fn build_window(
     word_status_label.add_css_class("word-status");
     word_status_label.set_visible(false);
     concordance_list_picker.overlay.add_overlay(&word_status_label);
+
+    // Page line number indicator (upper-right of card, hidden by default)
+    let page_line_label = gtk4::Label::new(None);
+    page_line_label.set_halign(gtk4::Align::End);
+    page_line_label.set_valign(gtk4::Align::Start);
+    page_line_label.set_margin_end(32);
+    page_line_label.set_margin_top(16);
+    page_line_label.add_css_class("page-line-label");
+    page_line_label.set_visible(false);
+    page_turn_overlay.add_overlay(&page_line_label);
 
     // Concordance status bar
     let concordance_bar = crate::ui::concordance_bar::ConcordanceBar::new();
@@ -610,6 +632,8 @@ pub fn build_window(
         current_paragraph_start: None,
         sync_enabled: true,
         sync_icon,
+        debug_icon,
+        page_line_label,
         word_status_label,
         word_cycle_line: None,
         word_cycle_index: 0,
