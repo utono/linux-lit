@@ -569,6 +569,8 @@ fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize) {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
             if !is_line_fully_visible(state, state.current_line) {
+                // Remember current page for backward navigation
+                state.page_history.push(state.page_top_line);
                 // Put the dialogue line at the top, backing up to include speaker name
                 let new_top = page_turn_top(&state.buffer, state.current_line);
                 set_page_instant(state, new_top);
@@ -584,6 +586,7 @@ fn scroll_after_jump_backward(state: &mut AppState) {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
             if state.current_line < state.page_top_line {
+                state.page_history.push(state.page_top_line);
                 let lpp = lines_per_page(state);
                 let new_top = state.current_line.saturating_sub(lpp.saturating_sub(1));
                 set_page_instant(state, new_top);
