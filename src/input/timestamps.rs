@@ -430,6 +430,127 @@ pub fn nudge_start_time(state: &mut AppState, delta: f64) -> bool {
     true
 }
 
+/// Undo the last timestamp operation (U).
+pub fn undo_timestamp(state: &mut AppState) -> bool {
+    let undo = match state.timestamp_undo.take() {
+        Some(u) => u,
+        None => return false,
+    };
+
+    let conn = match crate::db::queries::open_db_rw() {
+        Ok(c) => c,
+        Err(e) => {
+            crate::logging::log(&format!("TS: undo open_db_rw failed: {}", e));
+            return false;
+        }
+    };
+
+    match &undo.previous {
+        None => {
+            // Row didn't exist before — delete it
+            if let Err(e) = crate::db::queries::delete_timestamp(&conn, undo.line_mapping_id, undo.media_id) {
+                crate::logging::log(&format!("TS: undo delete failed: {}", e));
+                return false;
+            }
+        }
+        Some(snap) => {
+            // Restore the previous row state
+            if let Err(e) = crate::db::queries::restore_timestamp(
+                &conn,
+                undo.line_mapping_id,
+                undo.media_id,
+                &snap.citation,
+                snap.start_time,
+                snap.end_time,
+                snap.is_chapter,
+            ) {
+                crate::logging::log(&format!("TS: undo restore failed: {}", e));
+                return false;
+            }
+        }
+    }
+
+    // Update in-memory state, then extract values for sign column update.
+    // Must drop the mutable borrow of current_work before accessing
+    // state.line_map, state.has_timestamp, etc.
+    let (buffer_line, has_ts, is_ch) = {
+        let work = match &mut state.current_work {
+            Some(w) => w,
+            None => return false,
+        };
+        let line = match work.lines.iter_mut().find(|l| l.id == undo.line_mapping_id) {
+            Some(l) => l,
+            None => return false,
+        };
+
+        match &undo.previous {
+            None => {
+                line.timestamp = None;
+                line.is_chapter = false;
+            }
+            Some(snap) => {
+                match (snap.start_time, snap.end_time) {
+                    (Some(start), end) => {
+                        line.timestamp = Some(TimeRange {
+                            start,
+                            end: end.unwrap_or(0.0),
+                            sentence_start: None,
+                        });
+                    }
+                    (None, _) => {
+                        line.timestamp = None;
+                    }
+                }
+                line.is_chapter = snap.is_chapter;
+            }
+        }
+
+        let has_ts = line.timestamp.is_some();
+        let is_ch = line.is_chapter;
+        let work_idx = work.lines.iter().position(|l| l.id == undo.line_mapping_id);
+        (work_idx, has_ts, is_ch)
+    };
+    // buffer_line here is the work_idx; resolve to actual buffer line
+    let buffer_line = match buffer_line {
+        Some(idx) => {
+            if let Some(ref lm) = state.line_map {
+                lm.work_to_buffer.get(idx).copied()
+            } else {
+                Some(idx)
+            }
+        }
+        None => None,
+    };
+
+    crate::logging::log(&format!(
+        "TS: undo line_mapping_id={} restored={}", undo.line_mapping_id, undo.previous.is_some()
+    ));
+
+    resync_mpv_timestamps(state);
+
+    // Update sign column
+    if let Some(bl) = buffer_line {
+        {
+            let mut ht = state.has_timestamp.borrow_mut();
+            if bl < ht.len() {
+                ht[bl] = has_ts;
+            }
+        }
+        {
+            let mut ch = state.is_chapter_line.borrow_mut();
+            if bl < ch.len() {
+                ch[bl] = is_ch;
+            }
+        }
+    }
+
+    if let Some(ref renderer) = state.gutter_renderer {
+        renderer.queue_draw();
+    }
+
+    true
+}
+
 /// Nudge start backward by 0.2s.
 pub fn nudge_start_backward(state: &mut AppState) -> bool {
     nudge_start_time(state, -NUDGE_STEP)
