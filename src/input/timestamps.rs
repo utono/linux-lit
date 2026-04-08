@@ -81,6 +81,16 @@ pub fn set_start_time(state: &mut AppState) -> bool {
         }
     };
 
+    let line_id = {
+        let work = match &state.current_work {
+            Some(w) => w,
+            None => return false,
+        };
+        work.lines[line_idx].id
+    };
+
+    capture_undo_snapshot(state, line_id, media_id);
+
     {
         let work = match &mut state.current_work {
             Some(w) => w,
@@ -182,6 +192,16 @@ pub fn set_chapter(state: &mut AppState) -> bool {
         }
     }
 
+    let line_id = {
+        let work = match &state.current_work {
+            Some(w) => w,
+            None => return false,
+        };
+        work.lines[line_idx].id
+    };
+
+    capture_undo_snapshot(state, line_id, media_id);
+
     {
         let work = match &mut state.current_work {
             Some(w) => w,
@@ -248,6 +268,16 @@ pub fn set_end_time(state: &mut AppState) -> bool {
         None => return false,
     };
 
+    let line_id = {
+        let work = match &state.current_work {
+            Some(w) => w,
+            None => return false,
+        };
+        work.lines[line_idx].id
+    };
+
+    capture_undo_snapshot(state, line_id, media_id);
+
     let start_time = {
         let work = match &mut state.current_work {
             Some(w) => w,
@@ -297,6 +327,16 @@ pub fn delete_timestamp(state: &mut AppState) -> bool {
         None => return false,
     };
 
+    let line_id = {
+        let work = match &state.current_work {
+            Some(w) => w,
+            None => return false,
+        };
+        work.lines[line_idx].id
+    };
+
+    capture_undo_snapshot(state, line_id, media_id);
+
     {
         let work = match &mut state.current_work {
             Some(w) => w,
@@ -339,6 +379,16 @@ pub fn nudge_start_time(state: &mut AppState, delta: f64) -> bool {
         Some(i) => i,
         None => return false,
     };
+
+    let line_id = {
+        let work = match &state.current_work {
+            Some(w) => w,
+            None => return false,
+        };
+        work.lines[line_idx].id
+    };
+
+    capture_undo_snapshot(state, line_id, media_id);
 
     let new_start = {
         let work = match &mut state.current_work {
