@@ -10,7 +10,7 @@ use sourceview5::View;
 ///
 /// The renderer is inserted into the left gutter. On each visible line,
 /// `query-data` fires and we set text based on the `has_timestamp` vec
-/// and the `visible` toggle. Chapter lines show ▸, manual lines show ◆,
+/// and the `visible` toggle. Chapter lines show ▸, manual lines show ─,
 /// A/B points show ◐/◑, and other timestamped lines show •.
 ///
 /// Returns the renderer so the caller can store it for later removal.
@@ -59,7 +59,7 @@ pub fn setup_timestamp_gutter(
             } else if b_line.get() == Some(idx) {
                 "\u{25D1}" // ◑
             } else if is_man {
-                "\u{25C6}" // ◆
+                "\u{2500}" // ─
             } else {
                 "\u{2022}" // •
             }

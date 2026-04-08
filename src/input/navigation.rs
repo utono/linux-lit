@@ -1214,7 +1214,6 @@ pub fn update_highlight_and_show(state: &mut AppState) {
     update_highlight(state);
 
     let scroll_to = state.page_top_line;
-    let current = state.current_line;
     let line_count = state.effective_line_count();
 
     // Snap scroll position synchronously. line_yrange may return 0 if GTK
@@ -1232,10 +1231,14 @@ pub fn update_highlight_and_show(state: &mut AppState) {
             let max_scroll = (adj.upper() - adj.page_size()).max(0.0);
             adj.set_value((y as f64).max(0.0).min(max_scroll));
         }
-        update_bottom_clip(&text_view, &bottom_clip, &scrolled_window, current, line_count);
-        // Show the scrolled window now that scroll position is correct.
+        // Show the scrolled window so GTK can complete the layout pass.
         scrolled_window.set_visible(true);
-        loading_flag.set(false);
+        // Defer clip calculation to the next idle tick so line_yrange
+        // returns accurate heights after the widget is visible and laid out.
+        glib::idle_add_local_once(move || {
+            update_bottom_clip(&text_view, &bottom_clip, &scrolled_window, scroll_to, line_count);
+            loading_flag.set(false);
+        });
     });
 }
 
