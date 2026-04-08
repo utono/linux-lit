@@ -3,6 +3,22 @@ use gtk4::prelude::*;
 use crate::app::AppState;
 use crate::db::models::TimeRange;
 
+#[derive(Debug, Clone)]
+pub struct TimestampSnapshot {
+    pub citation: String,
+    pub start_time: Option<f64>,
+    pub end_time: Option<f64>,
+    pub is_chapter: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct TimestampUndoState {
+    pub line_mapping_id: i64,
+    pub media_id: i64,
+    /// None = row didn't exist before the operation (undo → DELETE)
+    pub previous: Option<TimestampSnapshot>,
+}
+
 const NUDGE_STEP: f64 = 0.2;
 
 /// Re-send timestamps to MPV client after a write, built from Line.timestamp (single source of truth).
@@ -26,6 +42,22 @@ fn resync_mpv_timestamps(state: &AppState) {
             timestamps: ts_data,
             line_id_to_index: id_to_idx,
         });
+}
+
+/// Capture the current state of a timestamp row before mutating it.
+/// Stores the snapshot in state.timestamp_undo for single-level undo.
+fn capture_undo_snapshot(state: &mut AppState, line_mapping_id: i64, media_id: i64) {
+    let conn = match crate::db::queries::open_db_rw() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let previous = crate::db::queries::get_timestamp_snapshot(&conn, line_mapping_id, media_id)
+        .unwrap_or(None);
+    state.timestamp_undo = Some(TimestampUndoState {
+        line_mapping_id,
+        media_id,
+        previous,
+    });
 }
 
 /// Set start time on current line from MPV position (u / Right).

@@ -147,6 +147,7 @@ pub struct AppState {
     /// hasn't laid out the new content yet. Cleared in an idle callback after
     /// the layout has settled.
     pub loading_work: Rc<Cell<bool>>,
+    pub timestamp_undo: Option<crate::input::timestamps::TimestampUndoState>,
 }
 
 impl AppState {
@@ -651,6 +652,7 @@ pub fn build_window(
         word_collect_words: Vec::new(),
         word_collect_ranges: Vec::new(),
         loading_work: Rc::new(Cell::new(false)),
+        timestamp_undo: None,
     }));
 
     // Connect picker search entry filter
