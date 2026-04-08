@@ -468,24 +468,29 @@ pub fn handle_key(
         return true;
     }
 
-    // Ctrl+y: copy line_mapping.id of current line to clipboard
+    // Ctrl+y: copy line_mapping.id and media_files.id to clipboard
     if is_ctrl && key_name == "y" {
         let s = state.borrow();
-        if let Some(lm_id) = s.line_mapping_id_for_buffer(s.current_line) {
-            let id_str = format!("{}", lm_id);
-            drop(s);
-            if let Ok(mut child) = std::process::Command::new("wl-copy")
-                .stdin(std::process::Stdio::piped())
-                .spawn()
-            {
-                use std::io::Write;
-                if let Some(ref mut stdin) = child.stdin {
-                    let _ = stdin.write_all(id_str.as_bytes());
-                }
-                let _ = child.wait();
+        let lm_id = s.line_mapping_id_for_buffer(s.current_line);
+        let media_id = s.media_id;
+        drop(s);
+        let clip = match (lm_id, media_id) {
+            (Some(l), Some(m)) => format!("{} {}", l, m),
+            (Some(l), None) => format!("{}", l),
+            (None, Some(m)) => format!("- {}", m),
+            (None, None) => return true,
+        };
+        if let Ok(mut child) = std::process::Command::new("wl-copy")
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+        {
+            use std::io::Write;
+            if let Some(ref mut stdin) = child.stdin {
+                let _ = stdin.write_all(clip.as_bytes());
             }
-            crate::logging::log(&format!("CLIPBOARD: copied line_mapping.id={}", id_str));
+            let _ = child.wait();
         }
+        crate::logging::log(&format!("CLIPBOARD: copied {}", clip));
         return true;
     }
 
@@ -1292,6 +1297,9 @@ pub fn handle_key(
         }
         "P" => {
             crate::input::timestamps::nudge_start_forward(&mut state.borrow_mut())
+        }
+        "U" => {
+            crate::input::timestamps::undo_timestamp(&mut state.borrow_mut())
         }
         "l" => {
             crate::app::toggle_sign_column(&mut state.borrow_mut());
