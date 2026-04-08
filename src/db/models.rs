@@ -40,6 +40,7 @@ pub struct TimeRange {
     pub start: f64,
     pub end: f64,
     pub sentence_start: Option<f64>,
+    pub is_manual: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -50,6 +51,7 @@ pub struct Timestamp {
     pub end: f64,
     pub media_id: i64,
     pub sentence_start: Option<f64>,
+    pub is_manual: bool,
 }
 
 #[derive(Debug, Clone)]

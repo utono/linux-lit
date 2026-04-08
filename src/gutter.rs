@@ -10,13 +10,15 @@ use sourceview5::View;
 ///
 /// The renderer is inserted into the left gutter. On each visible line,
 /// `query-data` fires and we set text based on the `has_timestamp` vec
-/// and the `visible` toggle. Chapter lines show a filled diamond (◆).
+/// and the `visible` toggle. Chapter lines show ▸, manual lines show ◆,
+/// A/B points show ◐/◑, and other timestamped lines show •.
 ///
 /// Returns the renderer so the caller can store it for later removal.
 pub fn setup_timestamp_gutter(
     view: &View,
     visible: Rc<Cell<bool>>,
     has_timestamp: Rc<RefCell<Vec<bool>>>,
+    is_manual: Rc<RefCell<Vec<bool>>>,
     is_chapter: Rc<RefCell<Vec<bool>>>,
     a_line: Rc<Cell<Option<usize>>>,
     b_line: Rc<Cell<Option<usize>>>,
@@ -47,6 +49,8 @@ pub fn setup_timestamp_gutter(
         let ch = is_chapter.borrow();
         let is_ch = idx < ch.len() && ch[idx];
         let ts = has_timestamp.borrow();
+        let manual = is_manual.borrow();
+        let is_man = idx < manual.len() && manual[idx];
         let glyph = if is_ch {
             "\u{25B8}" // ▸
         } else if idx < ts.len() && ts[idx] {
@@ -54,6 +58,8 @@ pub fn setup_timestamp_gutter(
                 "\u{25D0}" // ◐
             } else if b_line.get() == Some(idx) {
                 "\u{25D1}" // ◑
+            } else if is_man {
+                "\u{25C6}" // ◆
             } else {
                 "\u{2022}" // •
             }

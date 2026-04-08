@@ -114,7 +114,7 @@ pub fn set_start_time(state: &mut AppState) -> bool {
         // Update in-memory
         match &mut line.timestamp {
             Some(ts) => ts.start = time_pos,
-            None => line.timestamp = Some(TimeRange { start: time_pos, end: 0.0, sentence_start: None }),
+            None => line.timestamp = Some(TimeRange { start: time_pos, end: 0.0, sentence_start: None, is_manual: true }),
         }
     }
     crate::logging::log(&format!("TS: set start_time={:.2} line={}", time_pos, line_idx));
@@ -127,6 +127,10 @@ pub fn set_start_time(state: &mut AppState) -> bool {
         let mut ht = state.has_timestamp.borrow_mut();
         if buffer_line < ht.len() {
             ht[buffer_line] = true;
+        }
+        let mut manual = state.is_manual.borrow_mut();
+        if buffer_line < manual.len() {
+            manual[buffer_line] = true;
         }
     }
     if let Some(ref renderer) = state.gutter_renderer {
@@ -226,7 +230,7 @@ pub fn set_chapter(state: &mut AppState) -> bool {
 
         // Update in-memory: only set start_time if no timestamp exists yet
         if line.timestamp.is_none() {
-            line.timestamp = Some(TimeRange { start: time_pos, end: 0.0, sentence_start: None });
+            line.timestamp = Some(TimeRange { start: time_pos, end: 0.0, sentence_start: None, is_manual: true });
         }
         line.is_chapter = new_val;
     }
@@ -241,6 +245,10 @@ pub fn set_chapter(state: &mut AppState) -> bool {
         let mut ht = state.has_timestamp.borrow_mut();
         if buffer_line < ht.len() {
             ht[buffer_line] = true;
+        }
+        let mut manual = state.is_manual.borrow_mut();
+        if buffer_line < manual.len() {
+            manual[buffer_line] = true;
         }
     }
     {
@@ -473,7 +481,7 @@ pub fn undo_timestamp(state: &mut AppState) -> bool {
     // Update in-memory state, then extract values for sign column update.
     // Must drop the mutable borrow of current_work before accessing
     // state.line_map, state.has_timestamp, etc.
-    let (buffer_line, has_ts, is_ch) = {
+    let (buffer_line, has_ts, is_man, is_ch) = {
         let work = match &mut state.current_work {
             Some(w) => w,
             None => return false,
@@ -495,6 +503,7 @@ pub fn undo_timestamp(state: &mut AppState) -> bool {
                             start,
                             end: end.unwrap_or(0.0),
                             sentence_start: None,
+                            is_manual: true,
                         });
                     }
                     (None, _) => {
@@ -506,9 +515,10 @@ pub fn undo_timestamp(state: &mut AppState) -> bool {
         }
 
         let has_ts = line.timestamp.is_some();
+        let is_man = line.timestamp.as_ref().map_or(false, |t| t.is_manual);
         let is_ch = line.is_chapter;
         let work_idx = work.lines.iter().position(|l| l.id == undo.line_mapping_id);
-        (work_idx, has_ts, is_ch)
+        (work_idx, has_ts, is_man, is_ch)
     };
     // buffer_line here is the work_idx; resolve to actual buffer line
     let buffer_line = match buffer_line {
@@ -534,6 +544,10 @@ pub fn undo_timestamp(state: &mut AppState) -> bool {
             let mut ht = state.has_timestamp.borrow_mut();
             if bl < ht.len() {
                 ht[bl] = has_ts;
+            }
+            let mut manual = state.is_manual.borrow_mut();
+            if bl < manual.len() {
+                manual[bl] = is_man;
             }
         }
         {

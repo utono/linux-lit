@@ -73,6 +73,7 @@ pub struct AppState {
     pub media_id: Option<i64>,
     pub sign_column_visible: Rc<Cell<bool>>,
     pub has_timestamp: Rc<RefCell<Vec<bool>>>,
+    pub is_manual: Rc<RefCell<Vec<bool>>>,
     pub is_chapter_line: Rc<RefCell<Vec<bool>>>,
     pub gutter_renderer: Option<sourceview5::GutterRendererText>,
     pub chunk_renderer: Option<sourceview5::GutterRendererText>,
@@ -595,6 +596,7 @@ pub fn build_window(
         media_id: None,
         sign_column_visible: Rc::new(Cell::new(false)),
         has_timestamp: Rc::new(RefCell::new(Vec::new())),
+        is_manual: Rc::new(RefCell::new(Vec::new())),
         is_chapter_line: Rc::new(RefCell::new(Vec::new())),
         gutter_renderer: None,
         chunk_renderer: None,
@@ -1422,6 +1424,31 @@ fn setup_gutter(state: &mut AppState) {
         };
         *state.has_timestamp.borrow_mut() = new_has_ts;
 
+        let new_is_manual: Vec<bool> = if let Some(ref lm) = state.line_map {
+            lm.buffer_to_work
+                .iter()
+                .map(|opt_idx| {
+                    opt_idx
+                        .and_then(|idx| {
+                            Some(state.current_work.as_ref()?.lines.get(idx)?.timestamp.as_ref()?.is_manual)
+                        })
+                        .unwrap_or(false)
+                })
+                .collect()
+        } else {
+            state
+                .current_work
+                .as_ref()
+                .map(|w| {
+                    w.lines
+                        .iter()
+                        .map(|l| l.timestamp.as_ref().map_or(false, |t| t.is_manual))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        *state.is_manual.borrow_mut() = new_is_manual;
+
         let new_is_ch: Vec<bool> = if let Some(ref lm) = state.line_map {
             lm.buffer_to_work
                 .iter()
@@ -1446,6 +1473,7 @@ fn setup_gutter(state: &mut AppState) {
         &state.text_view,
         state.sign_column_visible.clone(),
         state.has_timestamp.clone(),
+        state.is_manual.clone(),
         state.is_chapter_line.clone(),
         state.ab_a_line.clone(),
         state.ab_b_line.clone(),
