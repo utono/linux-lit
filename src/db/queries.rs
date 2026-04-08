@@ -457,6 +457,50 @@ pub fn delete_timestamp(
     Ok(())
 }
 
+pub fn get_timestamp_snapshot(
+    conn: &Connection,
+    line_mapping_id: i64,
+    media_id: i64,
+) -> Result<Option<crate::input::timestamps::TimestampSnapshot>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT citation, start_time, end_time, is_chapter \
+         FROM line_timestamps \
+         WHERE line_mapping_id = ?1 AND media_id = ?2",
+    )?;
+    let result = stmt.query_row(rusqlite::params![line_mapping_id, media_id], |row| {
+        Ok(crate::input::timestamps::TimestampSnapshot {
+            citation: row.get(0)?,
+            start_time: row.get(1)?,
+            end_time: row.get(2)?,
+            is_chapter: row.get::<_, bool>(3).unwrap_or(false),
+        })
+    });
+    match result {
+        Ok(snap) => Ok(Some(snap)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+pub fn restore_timestamp(
+    conn: &Connection,
+    line_mapping_id: i64,
+    media_id: i64,
+    citation: &str,
+    start_time: Option<f64>,
+    end_time: Option<f64>,
+    is_chapter: bool,
+) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "INSERT INTO line_timestamps (citation, line_mapping_id, media_id, start_time, end_time, source, is_chapter) \
+         VALUES (?1, ?2, ?3, ?4, ?5, 'manual', ?6) \
+         ON CONFLICT(line_mapping_id, media_id) \
+         DO UPDATE SET start_time = ?4, end_time = ?5, is_chapter = ?6, updated_at = CURRENT_TIMESTAMP",
+        rusqlite::params![citation, line_mapping_id, media_id, start_time, end_time, is_chapter],
+    )?;
+    Ok(())
+}
+
 /// Merge multiple lines into one. Updates the first line's text and deletes the rest.
 
 /// Replace a set of lines with new text lines. Updates the first line,
