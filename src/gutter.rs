@@ -20,6 +20,7 @@ pub fn setup_timestamp_gutter(
     has_timestamp: Rc<RefCell<Vec<bool>>>,
     is_manual: Rc<RefCell<Vec<bool>>>,
     is_chapter: Rc<RefCell<Vec<bool>>>,
+    is_bookmarked: Rc<RefCell<Vec<bool>>>,
     a_line: Rc<Cell<Option<usize>>>,
     b_line: Rc<Cell<Option<usize>>>,
     left_margin: i32,
@@ -48,12 +49,17 @@ pub fn setup_timestamp_gutter(
         let idx = line as usize;
         let ch = is_chapter.borrow();
         let is_ch = idx < ch.len() && ch[idx];
+        let bm = is_bookmarked.borrow();
+        let is_bm = idx < bm.len() && bm[idx];
         let ts = has_timestamp.borrow();
+        let has_ts = idx < ts.len() && ts[idx];
         let manual = is_manual.borrow();
         let is_man = idx < manual.len() && manual[idx];
-        let glyph = if is_ch {
+        let glyph = if is_bm {
+            "\u{2605}" // ★
+        } else if is_ch {
             "\u{25B8}" // ▸
-        } else if idx < ts.len() && ts[idx] {
+        } else if has_ts {
             if a_line.get() == Some(idx) {
                 "\u{25D0}" // ◐
             } else if b_line.get() == Some(idx) {

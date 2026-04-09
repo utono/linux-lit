@@ -1513,6 +1513,7 @@ fn setup_gutter(state: &mut AppState) {
         state.has_timestamp.clone(),
         state.is_manual.clone(),
         state.is_chapter_line.clone(),
+        state.is_bookmarked.clone(),
         state.ab_a_line.clone(),
         state.ab_b_line.clone(),
         left_margin,
