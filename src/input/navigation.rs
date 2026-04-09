@@ -588,6 +588,76 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
     }
 }
 
+/// Jump to the next bookmarked line (wraps around).
+pub fn next_bookmark(state: &mut AppState) {
+    let is_bm = state.is_bookmarked.borrow();
+    if is_bm.is_empty() || !is_bm.iter().any(|&b| b) {
+        return;
+    }
+    let line_count = is_bm.len();
+    for offset in 1..=line_count {
+        let idx = (state.current_line + offset) % line_count;
+        if is_bm[idx] {
+            drop(is_bm);
+            state.current_line = idx;
+            update_highlight(state);
+            let top = page_turn_top(&state.buffer, idx);
+            match state.config.navigation_mode {
+                crate::config::NavigationMode::Scroll => center_cursor(state),
+                crate::config::NavigationMode::EReader => {
+                    set_page_instant(state, top);
+                }
+            }
+            seek_to_current_line(state);
+            return;
+        }
+    }
+}
+
+/// Jump to the previous bookmarked line (wraps around).
+pub fn prev_bookmark(state: &mut AppState) {
+    let is_bm = state.is_bookmarked.borrow();
+    if is_bm.is_empty() || !is_bm.iter().any(|&b| b) {
+        return;
+    }
+    let line_count = is_bm.len();
+    for offset in 1..=line_count {
+        let idx = (state.current_line + line_count - offset) % line_count;
+        if is_bm[idx] {
+            drop(is_bm);
+            state.current_line = idx;
+            update_highlight(state);
+            let top = page_turn_top(&state.buffer, idx);
+            match state.config.navigation_mode {
+                crate::config::NavigationMode::Scroll => center_cursor(state),
+                crate::config::NavigationMode::EReader => {
+                    set_page_instant(state, top);
+                }
+            }
+            seek_to_current_line(state);
+            return;
+        }
+    }
+}
+
+/// Jump to a specific buffer line (used by bookmark jump-to-recent).
+pub fn jump_to_line(state: &mut AppState, buffer_line: usize) {
+    let line_count = state.effective_line_count();
+    if buffer_line >= line_count {
+        return;
+    }
+    state.current_line = buffer_line;
+    update_highlight(state);
+    let top = page_turn_top(&state.buffer, buffer_line);
+    match state.config.navigation_mode {
+        crate::config::NavigationMode::Scroll => center_cursor(state),
+        crate::config::NavigationMode::EReader => {
+            set_page_instant(state, top);
+        }
+    }
+    seek_to_current_line(state);
+}
+
 // ---------------------------------------------------------------------------
 // Page management
 // ---------------------------------------------------------------------------
