@@ -1414,7 +1414,9 @@ pub fn handle_key(
                                 bm[buffer_line] = added;
                             }
                         }
-                        s.text_view.queue_draw();
+                        if let Some(ref renderer) = s.gutter_renderer {
+                            renderer.queue_draw();
+                        }
                     }
                 });
             }
