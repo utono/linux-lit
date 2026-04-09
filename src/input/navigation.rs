@@ -599,16 +599,7 @@ pub fn next_bookmark(state: &mut AppState) {
         let idx = (state.current_line + offset) % line_count;
         if is_bm[idx] {
             drop(is_bm);
-            state.current_line = idx;
-            update_highlight(state);
-            let top = page_turn_top(&state.buffer, idx);
-            match state.config.navigation_mode {
-                crate::config::NavigationMode::Scroll => center_cursor(state),
-                crate::config::NavigationMode::EReader => {
-                    set_page_instant(state, top);
-                }
-            }
-            seek_to_current_line(state);
+            jump_to_line(state, idx);
             return;
         }
     }
@@ -625,16 +616,7 @@ pub fn prev_bookmark(state: &mut AppState) {
         let idx = (state.current_line + line_count - offset) % line_count;
         if is_bm[idx] {
             drop(is_bm);
-            state.current_line = idx;
-            update_highlight(state);
-            let top = page_turn_top(&state.buffer, idx);
-            match state.config.navigation_mode {
-                crate::config::NavigationMode::Scroll => center_cursor(state),
-                crate::config::NavigationMode::EReader => {
-                    set_page_instant(state, top);
-                }
-            }
-            seek_to_current_line(state);
+            jump_to_line(state, idx);
             return;
         }
     }
@@ -654,6 +636,11 @@ pub fn jump_to_line(state: &mut AppState, buffer_line: usize) {
         crate::config::NavigationMode::EReader => {
             set_page_instant(state, top);
         }
+    }
+    // Update page label with the target line (page top may be a blank spacer)
+    if let Some(lm_id) = state.line_mapping_id_for_buffer(buffer_line) {
+        state.page_line_label.set_text(&format!("{}", lm_id));
+        state.page_line_label.set_visible(true);
     }
     seek_to_current_line(state);
 }
