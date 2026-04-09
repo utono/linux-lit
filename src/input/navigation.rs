@@ -634,6 +634,7 @@ pub fn jump_to_line(state: &mut AppState, buffer_line: usize) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
+            state.page_history.push(state.page_top_line);
             set_page_instant(state, top);
         }
     }
