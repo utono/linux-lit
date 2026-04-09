@@ -1,4 +1,4 @@
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use std::collections::HashMap;
 
 use super::line_types;
@@ -395,6 +395,67 @@ pub fn open_db_rw() -> Result<Connection, rusqlite::Error> {
     Ok(conn)
 }
 
+/// Ensure the bookmarks table exists in the database.
+pub fn ensure_bookmarks_table(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS bookmarks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            work_abbrev TEXT NOT NULL,
+            line_mapping_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            FOREIGN KEY (work_abbrev) REFERENCES works(abbrev),
+            FOREIGN KEY (line_mapping_id) REFERENCES line_mapping(id),
+            UNIQUE(work_abbrev, line_mapping_id)
+        );"
+    )?;
+    Ok(())
+}
+
+/// Load all bookmarked line_mapping_ids for a work.
+pub fn load_bookmarks(conn: &Connection, work_abbrev: &str) -> Result<Vec<i64>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT line_mapping_id FROM bookmarks WHERE work_abbrev = ?1"
+    )?;
+    let rows = stmt.query_map([work_abbrev], |row| row.get::<_, i64>(0))?;
+    rows.collect()
+}
+
+/// Toggle a bookmark on a line. Returns true if added, false if removed.
+pub fn toggle_bookmark(
+    conn: &Connection,
+    work_abbrev: &str,
+    line_mapping_id: i64,
+) -> Result<bool, rusqlite::Error> {
+    let existing: Option<i64> = conn.query_row(
+        "SELECT id FROM bookmarks WHERE work_abbrev = ?1 AND line_mapping_id = ?2",
+        rusqlite::params![work_abbrev, line_mapping_id],
+        |row| row.get(0),
+    ).optional()?;
+
+    if let Some(id) = existing {
+        conn.execute("DELETE FROM bookmarks WHERE id = ?1", [id])?;
+        Ok(false)
+    } else {
+        conn.execute(
+            "INSERT INTO bookmarks (work_abbrev, line_mapping_id) VALUES (?1, ?2)",
+            rusqlite::params![work_abbrev, line_mapping_id],
+        )?;
+        Ok(true)
+    }
+}
+
+/// Get the line_mapping_id of the most recently created bookmark for a work.
+pub fn most_recent_bookmark(
+    conn: &Connection,
+    work_abbrev: &str,
+) -> Result<Option<i64>, rusqlite::Error> {
+    conn.query_row(
+        "SELECT line_mapping_id FROM bookmarks WHERE work_abbrev = ?1 ORDER BY created_at DESC LIMIT 1",
+        [work_abbrev],
+        |row| row.get(0),
+    ).optional()
+}
+
 pub fn upsert_start_time(
     conn: &Connection,
     line_mapping_id: i64,
@@ -611,6 +672,46 @@ mod tests {
         if list.len() > 1 {
             assert!(list[0].0 <= list[1].0, "Should be alphabetically sorted");
         }
+    }
+
+    #[test]
+    fn test_bookmark_toggle() {
+        let conn = open_db_rw().expect("Failed to open lit.db rw");
+        ensure_bookmarks_table(&conn).expect("Failed to create bookmarks table");
+
+        // Use a known work and line
+        let work_abbrev = "Ham";
+        let line_id: i64 = conn.query_row(
+            "SELECT id FROM line_mapping WHERE work_abbrev = ?1 LIMIT 1",
+            [work_abbrev],
+            |row| row.get(0),
+        ).expect("Hamlet should have lines");
+
+        // Clean up any leftover test bookmark
+        let _ = conn.execute(
+            "DELETE FROM bookmarks WHERE work_abbrev = ?1 AND line_mapping_id = ?2",
+            rusqlite::params![work_abbrev, line_id],
+        );
+
+        // Toggle on
+        let added = toggle_bookmark(&conn, work_abbrev, line_id).unwrap();
+        assert!(added, "First toggle should add bookmark");
+
+        // Should appear in load_bookmarks
+        let bookmarks = load_bookmarks(&conn, work_abbrev).unwrap();
+        assert!(bookmarks.contains(&line_id));
+
+        // Should be the most recent
+        let recent = most_recent_bookmark(&conn, work_abbrev).unwrap();
+        assert_eq!(recent, Some(line_id));
+
+        // Toggle off
+        let removed = toggle_bookmark(&conn, work_abbrev, line_id).unwrap();
+        assert!(!removed, "Second toggle should remove bookmark");
+
+        // Should no longer appear
+        let bookmarks = load_bookmarks(&conn, work_abbrev).unwrap();
+        assert!(!bookmarks.contains(&line_id));
     }
 
     #[test]
