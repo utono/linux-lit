@@ -494,6 +494,37 @@ pub fn handle_key(
         return true;
     }
 
+    // Ctrl+m: open media picker
+    if is_ctrl && key_name == "m" {
+        let abbrev = state
+            .borrow()
+            .current_work
+            .as_ref()
+            .map(|w| w.abbrev.clone());
+        if let Some(abbrev) = abbrev {
+            let state_clone = Rc::clone(state);
+            let handle = tokio_handle.clone();
+            glib::spawn_future_local(async move {
+                let items = handle
+                    .spawn_blocking(move || {
+                        let conn =
+                            crate::db::queries::open_db().expect("Failed to open lit.db");
+                        crate::db::queries::list_media_for_work(&conn, &abbrev)
+                            .unwrap_or_default()
+                    })
+                    .await
+                    .unwrap_or_default();
+                {
+                    let mut s = state_clone.borrow_mut();
+                    s.correction_overlay.hide();
+                    s.media_picker.set_items(items);
+                }
+                state_clone.borrow().media_picker.show();
+            });
+        }
+        return true;
+    }
+
     // Settings overlay
     let settings_visible = state.borrow().settings_overlay.is_visible();
 
@@ -913,6 +944,43 @@ pub fn handle_key(
                 navigation::jump_to_start(&mut state.borrow_mut());
             }
             return true;
+        } else if key_name == "apostrophe" {
+            // g' — jump to most recently created bookmark
+            let abbrev = state
+                .borrow()
+                .current_work
+                .as_ref()
+                .map(|w| w.abbrev.clone());
+            if let Some(abbrev) = abbrev {
+                let state_clone = Rc::clone(state);
+                let handle = tokio_handle.clone();
+                glib::spawn_future_local(async move {
+                    let result = handle
+                        .spawn_blocking(move || {
+                            let conn = crate::db::queries::open_db()
+                                .expect("Failed to open lit.db");
+                            crate::db::queries::most_recent_bookmark(&conn, &abbrev)
+                        })
+                        .await;
+                    if let Ok(Ok(Some(lm_id))) = result {
+                        let mut s = state_clone.borrow_mut();
+                        let buffer_line = if let Some(ref lm) = s.line_map {
+                            s.current_work.as_ref().and_then(|w| {
+                                let work_idx = w.lines.iter().position(|l| l.id == lm_id)?;
+                                Some(lm.work_to_buffer[work_idx])
+                            })
+                        } else {
+                            s.current_work.as_ref().and_then(|w| {
+                                w.lines.iter().position(|l| l.id == lm_id)
+                            })
+                        };
+                        if let Some(bl) = buffer_line {
+                            navigation::jump_to_line(&mut s, bl);
+                        }
+                    }
+                });
+            }
+            return true;
         }
     }
 
@@ -1314,34 +1382,54 @@ pub fn handle_key(
             true
         }
         "m" => {
-            let abbrev = state
-                .borrow()
-                .current_work
-                .as_ref()
-                .map(|w| w.abbrev.clone());
-            if let Some(abbrev) = abbrev {
+            let (abbrev, line_mapping_id, buffer_line) = {
+                let s = state.borrow();
+                let abbrev = s.current_work.as_ref().map(|w| w.abbrev.clone());
+                let lm_id = s.current_work.as_ref().and_then(|w| {
+                    let work_idx = if let Some(ref lm) = s.line_map {
+                        lm.buffer_to_work.get(s.current_line)?.as_ref().copied()
+                    } else {
+                        Some(s.current_line)
+                    };
+                    work_idx.and_then(|wi| w.lines.get(wi).map(|l| l.id))
+                });
+                (abbrev, lm_id, s.current_line)
+            };
+            if let (Some(abbrev), Some(lm_id)) = (abbrev, line_mapping_id) {
                 let state_clone = Rc::clone(state);
                 let handle = tokio_handle.clone();
                 glib::spawn_future_local(async move {
-                    let items = handle
+                    let result = handle
                         .spawn_blocking(move || {
-                            let conn =
-                                crate::db::queries::open_db().expect("Failed to open lit.db");
-                            crate::db::queries::list_media_for_work(&conn, &abbrev)
-                                .unwrap_or_default()
+                            let conn = crate::db::queries::open_db_rw()
+                                .expect("Failed to open lit.db rw");
+                            crate::db::queries::toggle_bookmark(&conn, &abbrev, lm_id)
                         })
-                        .await
-                        .unwrap_or_default();
-                    {
-                        let mut s = state_clone.borrow_mut();
-                        s.correction_overlay.hide();
-                        s.media_picker.set_items(items);
+                        .await;
+                    if let Ok(Ok(added)) = result {
+                        let s = state_clone.borrow();
+                        {
+                            let mut bm = s.is_bookmarked.borrow_mut();
+                            if buffer_line < bm.len() {
+                                bm[buffer_line] = added;
+                            }
+                        }
+                        s.text_view.queue_draw();
                     }
-                    // show() calls set_text("") which triggers connect_changed → borrow(),
-                    // so the borrow_mut must be dropped first.
-                    state_clone.borrow().media_picker.show();
                 });
             }
+            true
+        }
+        "apostrophe" => {
+            if is_shift {
+                navigation::prev_bookmark(&mut state.borrow_mut());
+            } else {
+                navigation::next_bookmark(&mut state.borrow_mut());
+            }
+            true
+        }
+        "quotedbl" => {
+            navigation::prev_bookmark(&mut state.borrow_mut());
             true
         }
         "r" => {
