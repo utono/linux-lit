@@ -75,6 +75,7 @@ pub struct AppState {
     pub has_timestamp: Rc<RefCell<Vec<bool>>>,
     pub is_manual: Rc<RefCell<Vec<bool>>>,
     pub is_chapter_line: Rc<RefCell<Vec<bool>>>,
+    pub is_bookmarked: Rc<RefCell<Vec<bool>>>,
     pub gutter_renderer: Option<sourceview5::GutterRendererText>,
     pub chunk_renderer: Option<sourceview5::GutterRendererText>,
     pub ab_repeat: crate::ab_repeat::AbRepeatState,
@@ -598,6 +599,7 @@ pub fn build_window(
         has_timestamp: Rc::new(RefCell::new(Vec::new())),
         is_manual: Rc::new(RefCell::new(Vec::new())),
         is_chapter_line: Rc::new(RefCell::new(Vec::new())),
+        is_bookmarked: Rc::new(RefCell::new(Vec::new())),
         gutter_renderer: None,
         chunk_renderer: None,
         ab_repeat: crate::ab_repeat::AbRepeatState::default(),
@@ -887,6 +889,13 @@ pub fn display_work(state: &mut AppState, work: Work) {
 /// Load and display a work, optionally overriding the saved cursor position.
 /// `target_line_id` is a line_mapping_id to position the cursor on after load.
 pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<i64>) {
+    static BOOKMARKS_INIT: std::sync::Once = std::sync::Once::new();
+    BOOKMARKS_INIT.call_once(|| {
+        if let Ok(conn) = crate::db::queries::open_db_rw() {
+            let _ = crate::db::queries::ensure_bookmarks_table(&conn);
+        }
+    });
+
     state.loading_work.set(true);
 
     // Hide the scrolled window to prevent any flash of content at the wrong
@@ -1466,6 +1475,35 @@ fn setup_gutter(state: &mut AppState) {
                 .unwrap_or_default()
         };
         *state.is_chapter_line.borrow_mut() = new_is_ch;
+
+        // Populate bookmark flags
+        let bookmark_ids: std::collections::HashSet<i64> = {
+            if let (Some(ref cw), Ok(conn)) = (state.current_work.as_ref(), crate::db::queries::open_db()) {
+                crate::db::queries::load_bookmarks(&conn, &cw.abbrev)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect()
+            } else {
+                std::collections::HashSet::new()
+            }
+        };
+        let new_is_bookmarked: Vec<bool> = if let Some(ref lm) = state.line_map {
+            lm.buffer_to_work
+                .iter()
+                .map(|opt_idx| {
+                    opt_idx
+                        .and_then(|idx| Some(bookmark_ids.contains(&state.current_work.as_ref()?.lines.get(idx)?.id)))
+                        .unwrap_or(false)
+                })
+                .collect()
+        } else {
+            state
+                .current_work
+                .as_ref()
+                .map(|w| w.lines.iter().map(|l| bookmark_ids.contains(&l.id)).collect())
+                .unwrap_or_default()
+        };
+        *state.is_bookmarked.borrow_mut() = new_is_bookmarked;
     }
     let left_margin = state.text_view.left_margin();
     let gutter_width = (left_margin - 20).max(10);
