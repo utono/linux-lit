@@ -456,6 +456,41 @@ pub fn most_recent_bookmark(
     ).optional()
 }
 
+/// Load bookmarks with line text for the picker, sorted by most recent first.
+pub fn load_bookmarks_with_details(
+    conn: &Connection,
+    work_abbrev: &str,
+) -> Result<Vec<super::models::BookmarkItem>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT b.line_mapping_id, lm.canonical_text, b.created_at \
+         FROM bookmarks b \
+         JOIN line_mapping lm ON b.line_mapping_id = lm.id \
+         WHERE b.work_abbrev = ?1 \
+         ORDER BY b.created_at DESC"
+    )?;
+    let rows = stmt.query_map([work_abbrev], |row| {
+        Ok(super::models::BookmarkItem {
+            line_mapping_id: row.get(0)?,
+            line_text: row.get(1)?,
+            created_at: row.get(2)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// Delete a bookmark by work and line_mapping_id.
+pub fn delete_bookmark(
+    conn: &Connection,
+    work_abbrev: &str,
+    line_mapping_id: i64,
+) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "DELETE FROM bookmarks WHERE work_abbrev = ?1 AND line_mapping_id = ?2",
+        rusqlite::params![work_abbrev, line_mapping_id],
+    )?;
+    Ok(())
+}
+
 pub fn upsert_start_time(
     conn: &Connection,
     line_mapping_id: i64,
@@ -712,6 +747,44 @@ mod tests {
         // Should no longer appear
         let bookmarks = load_bookmarks(&conn, work_abbrev).unwrap();
         assert!(!bookmarks.contains(&line_id));
+    }
+
+    #[test]
+    fn test_load_bookmarks_with_details() {
+        let conn = open_db_rw().expect("Failed to open lit.db rw");
+        ensure_bookmarks_table(&conn).expect("Failed to create bookmarks table");
+
+        let work_abbrev = "Ham";
+        let line_id: i64 = conn.query_row(
+            "SELECT id FROM line_mapping WHERE work_abbrev = ?1 LIMIT 1",
+            [work_abbrev],
+            |row| row.get(0),
+        ).expect("Hamlet should have lines");
+
+        // Clean up
+        let _ = conn.execute(
+            "DELETE FROM bookmarks WHERE work_abbrev = ?1 AND line_mapping_id = ?2",
+            rusqlite::params![work_abbrev, line_id],
+        );
+
+        // Add a bookmark
+        toggle_bookmark(&conn, work_abbrev, line_id).unwrap();
+
+        // Load with details
+        let items = load_bookmarks_with_details(&conn, work_abbrev).unwrap();
+        let found = items.iter().find(|i| i.line_mapping_id == line_id);
+        assert!(found.is_some(), "Should find the bookmarked line");
+        let item = found.unwrap();
+        assert!(!item.line_text.is_empty(), "Line text should not be empty");
+        assert!(!item.created_at.is_empty(), "created_at should not be empty");
+
+        // Delete it
+        delete_bookmark(&conn, work_abbrev, line_id).unwrap();
+        let items = load_bookmarks_with_details(&conn, work_abbrev).unwrap();
+        assert!(
+            !items.iter().any(|i| i.line_mapping_id == line_id),
+            "Bookmark should be deleted"
+        );
     }
 
     #[test]

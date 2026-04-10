@@ -82,3 +82,10 @@ pub struct MediaItem {
     pub display_name: Option<String>,
     pub priority: i64,
 }
+
+#[derive(Debug, Clone)]
+pub struct BookmarkItem {
+    pub line_mapping_id: i64,
+    pub line_text: String,
+    pub created_at: String,
+}
