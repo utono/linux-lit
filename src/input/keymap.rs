@@ -289,6 +289,124 @@ pub fn handle_key(
         return false;
     }
 
+    // Bookmark picker
+    let bookmark_picker_visible = state.borrow().bookmark_picker.is_visible();
+
+    if bookmark_picker_visible && is_ctrl {
+        match key_name {
+            "n" => {
+                state.borrow().bookmark_picker.move_selection(1);
+                return true;
+            }
+            "p" => {
+                state.borrow().bookmark_picker.move_selection(-1);
+                return true;
+            }
+            _ => {}
+        }
+    }
+
+    if bookmark_picker_visible {
+        match key_name {
+            "Escape" => {
+                state.borrow().bookmark_picker.hide();
+                return true;
+            }
+            "Return" => {
+                let selected_id = state.borrow().bookmark_picker.selected_line_mapping_id();
+                if let Some(lm_id) = selected_id {
+                    {
+                        let s = state.borrow();
+                        s.bookmark_picker.hide();
+                    }
+                    let mut s = state.borrow_mut();
+                    let buffer_line = if let Some(ref lm) = s.line_map {
+                        s.current_work.as_ref().and_then(|w| {
+                            let work_idx = w.lines.iter().position(|l| l.id == lm_id)?;
+                            Some(lm.work_to_buffer[work_idx])
+                        })
+                    } else {
+                        s.current_work.as_ref().and_then(|w| {
+                            w.lines.iter().position(|l| l.id == lm_id)
+                        })
+                    };
+                    if let Some(bl) = buffer_line {
+                        navigation::jump_to_line(&mut s, bl);
+                    }
+                }
+                return true;
+            }
+            "Delete" | "d" => {
+                let is_search_focused = state.borrow().bookmark_picker.search_entry().has_focus();
+                if key_name == "Delete" || !is_search_focused {
+                    let selected_id = state.borrow().bookmark_picker.selected_line_mapping_id();
+                    let abbrev = state
+                        .borrow()
+                        .current_work
+                        .as_ref()
+                        .map(|w| w.abbrev.clone());
+                    if let (Some(lm_id), Some(abbrev)) = (selected_id, abbrev) {
+                        let state_clone = Rc::clone(state);
+                        let handle = tokio_handle.clone();
+                        glib::spawn_future_local(async move {
+                            let result = handle
+                                .spawn_blocking(move || {
+                                    let conn = crate::db::queries::open_db_rw()
+                                        .expect("Failed to open lit.db rw");
+                                    crate::db::queries::delete_bookmark(&conn, &abbrev, lm_id)
+                                })
+                                .await;
+                            if let Ok(Ok(())) = result {
+                                let mut s = state_clone.borrow_mut();
+                                // Update is_bookmarked vec
+                                let buffer_line = if let Some(ref lm) = s.line_map {
+                                    s.current_work.as_ref().and_then(|w| {
+                                        let work_idx = w.lines.iter().position(|l| l.id == lm_id)?;
+                                        Some(lm.work_to_buffer[work_idx])
+                                    })
+                                } else {
+                                    s.current_work.as_ref().and_then(|w| {
+                                        w.lines.iter().position(|l| l.id == lm_id)
+                                    })
+                                };
+                                if let Some(bl) = buffer_line {
+                                    let mut bm = s.is_bookmarked.borrow_mut();
+                                    if bl < bm.len() {
+                                        bm[bl] = false;
+                                    }
+                                }
+                                if let Some(ref renderer) = s.gutter_renderer {
+                                    renderer.queue_draw();
+                                }
+                                s.bookmark_picker.remove_selected();
+                                if !s.bookmark_picker.has_items() {
+                                    s.bookmark_picker.hide();
+                                }
+                            }
+                        });
+                    }
+                    return true;
+                }
+            }
+            "Down" | "j" => {
+                let is_search_focused = state.borrow().bookmark_picker.search_entry().has_focus();
+                if key_name == "Down" || !is_search_focused {
+                    state.borrow().bookmark_picker.move_selection(1);
+                    return true;
+                }
+            }
+            "Up" | "k" => {
+                let is_search_focused = state.borrow().bookmark_picker.search_entry().has_focus();
+                if key_name == "Up" || !is_search_focused {
+                    state.borrow().bookmark_picker.move_selection(-1);
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        return false;
+    }
+
     // Media picker
     let media_picker_visible = state.borrow().media_picker.is_visible();
 
@@ -494,8 +612,8 @@ pub fn handle_key(
         return true;
     }
 
-    // Ctrl+m: open media picker
-    if is_ctrl && key_name == "m" {
+    // Ctrl+Shift+M: open media picker
+    if is_ctrl && is_shift && key_name == "M" {
         let abbrev = state
             .borrow()
             .current_work
@@ -520,6 +638,37 @@ pub fn handle_key(
                     s.media_picker.set_items(items);
                 }
                 state_clone.borrow().media_picker.show();
+            });
+        }
+        return true;
+    }
+
+    // Ctrl+m: open bookmark picker
+    if is_ctrl && !is_shift && key_name == "m" {
+        let abbrev = state
+            .borrow()
+            .current_work
+            .as_ref()
+            .map(|w| w.abbrev.clone());
+        if let Some(abbrev) = abbrev {
+            let state_clone = Rc::clone(state);
+            let handle = tokio_handle.clone();
+            glib::spawn_future_local(async move {
+                let items = handle
+                    .spawn_blocking(move || {
+                        let conn =
+                            crate::db::queries::open_db().expect("Failed to open lit.db");
+                        crate::db::queries::load_bookmarks_with_details(&conn, &abbrev)
+                            .unwrap_or_default()
+                    })
+                    .await
+                    .unwrap_or_default();
+                {
+                    let mut s = state_clone.borrow_mut();
+                    s.correction_overlay.hide();
+                    s.bookmark_picker.set_items(items);
+                }
+                state_clone.borrow().bookmark_picker.show();
             });
         }
         return true;
