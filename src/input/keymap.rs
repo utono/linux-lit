@@ -208,7 +208,10 @@ pub fn handle_key(
     }
 
     // Ctrl+p: open picker when hidden (also clears concordance mode)
-    if is_ctrl && key_name == "p" && !picker_visible {
+    if is_ctrl && key_name == "p" && !picker_visible
+        && !state.borrow().bookmark_picker.is_visible()
+        && !state.borrow().media_picker.is_visible()
+    {
         {
             let mut s = state.borrow_mut();
             s.concordance_state = None;
