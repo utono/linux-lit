@@ -13,6 +13,7 @@ use sourceview5::View;
 use crate::config::Config;
 use crate::db::models::{Work, WorkSummary};
 use crate::ui::library_picker::LibraryPicker;
+use crate::ui::bookmark_picker::BookmarkPicker;
 use crate::ui::media_picker::MediaPicker;
 use crate::ui::search_bar::SearchBar;
 
@@ -84,6 +85,7 @@ pub struct AppState {
     pub line_map: Option<crate::text_file_map::LineMap>,
     pub settings_overlay: crate::ui::settings_overlay::SettingsOverlay,
     pub media_picker: MediaPicker,
+    pub bookmark_picker: BookmarkPicker,
     pub dialogue_formatting_active: bool,
     pub translations: HashMap<i64, String>,
     pub translations_visible: bool,
@@ -449,14 +451,19 @@ pub fn build_window(
     media_picker.attach(&picker.overlay);
     media_picker.overlay.set_vexpand(true);
 
-    // Settings overlay wraps the media picker overlay
+    // Bookmark picker overlay wraps the media picker overlay
+    let bookmark_picker = BookmarkPicker::new();
+    bookmark_picker.attach(&media_picker.overlay);
+    bookmark_picker.overlay.set_vexpand(true);
+
+    // Settings overlay wraps the bookmark picker overlay
     let all_themes = crate::theme::load_all_themes();
     let settings_overlay = crate::ui::settings_overlay::SettingsOverlay::new(
         all_themes,
         &theme.name,
     );
 
-    settings_overlay.attach(&media_picker.overlay);
+    settings_overlay.attach(&bookmark_picker.overlay);
     settings_overlay.overlay.set_vexpand(true);
 
     // Keybinds overlay wraps the settings overlay
@@ -608,6 +615,7 @@ pub fn build_window(
         line_map: None,
         settings_overlay,
         media_picker,
+        bookmark_picker,
         dialogue_formatting_active: false,
         translations: HashMap::new(),
         translations_visible: false,
@@ -678,6 +686,19 @@ pub fn build_window(
             state_for_media_filter
                 .borrow()
                 .media_picker
+                .populate_list(&text);
+        });
+    }
+
+    // Connect bookmark picker search entry filter
+    let state_for_bookmark_filter = Rc::clone(&state);
+    {
+        let s = state.borrow();
+        s.bookmark_picker.search_entry().connect_changed(move |entry| {
+            let text = entry.text();
+            state_for_bookmark_filter
+                .borrow()
+                .bookmark_picker
                 .populate_list(&text);
         });
     }
