@@ -1107,6 +1107,39 @@ pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<
         crate::gutter::remove_gutter_renderer(&state.text_view, &old_renderer);
     }
 
+    // Populate is_bookmarked eagerly so `'` / `"` bookmark navigation works
+    // before the sign column has ever been toggled. setup_gutter() will
+    // later overwrite this with identical data if the user toggles signs.
+    {
+        let bookmark_ids: std::collections::HashSet<i64> = {
+            if let (Some(ref cw), Ok(conn)) = (state.current_work.as_ref(), crate::db::queries::open_db()) {
+                crate::db::queries::load_bookmarks(&conn, &cw.abbrev)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect()
+            } else {
+                std::collections::HashSet::new()
+            }
+        };
+        let new_is_bookmarked: Vec<bool> = if let Some(ref lm) = state.line_map {
+            lm.buffer_to_work
+                .iter()
+                .map(|opt_idx| {
+                    opt_idx
+                        .and_then(|idx| Some(bookmark_ids.contains(&state.current_work.as_ref()?.lines.get(idx)?.id)))
+                        .unwrap_or(false)
+                })
+                .collect()
+        } else {
+            state
+                .current_work
+                .as_ref()
+                .map(|w| w.lines.iter().map(|l| bookmark_ids.contains(&l.id)).collect())
+                .unwrap_or_default()
+        };
+        *state.is_bookmarked.borrow_mut() = new_is_bookmarked;
+    }
+
     // Load chunk data (needed for AB repeat, not just gutter display)
     if let Some(media_id) = state.current_work.as_ref().and_then(|w| w.media_id) {
         if let Ok(conn) = crate::db::queries::open_db() {
