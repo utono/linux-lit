@@ -326,13 +326,14 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
         }
     }
 
-    // bottom_spacer holds the page-line label. Height = just the label's
-    // own line height — no extra padding. The natural residual from the
-    // bottom_clip (partial line that didn't fit) provides the visual gap
-    // between the last text line and the label, and keeping the spacer
-    // minimal gives scrolled_overlay maximum height so more text lines fit.
+    // Top/bottom spacers: give the card a visible margin above the first
+    // text line and below the last one. Bottom spacer also contains the
+    // page-line label (with valign: End so the upper half-line becomes
+    // breathing room above the label).
     let line_h = measure_line_height(&state.text_view);
-    state.bottom_spacer.set_height_request(line_h);
+    let spacer_h = line_h;
+    state.top_spacer.set_height_request(spacer_h);
+    state.bottom_spacer.set_height_request(spacer_h);
 
     // Label placement:
     //   Tile mode — align the label's left edge with the speaker labels in
@@ -2017,8 +2018,7 @@ fn measure_line_height(text_view: &sourceview5::View) -> i32 {
 fn update_spacer_heights(state: &AppState) {
     let line_height = measure_line_height(&state.text_view);
     state.top_spacer.set_height_request(line_height);
-    // bottom_spacer height is owned by apply_tiled_mode so it can scale with
-    // layout state (tile vs monocle). Don't touch it here.
+    state.bottom_spacer.set_height_request(line_height);
 }
 
 fn reapply_font(state: &AppState) {
