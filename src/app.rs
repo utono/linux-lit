@@ -180,9 +180,21 @@ impl AppState {
 
     /// Text to display in the page-label overlay for the given buffer line.
     /// Plays → act/scene/line citation (e.g. "I.i.15"); other works → line_mapping.id.
+    /// If `buffer_line` is a spacer that doesn't map to a work line, scans
+    /// forward until it finds one.
     pub fn page_label_text_for_buffer(&self, buffer_line: usize) -> Option<String> {
         let work = self.current_work.as_ref()?;
-        let work_idx = self.work_line_for_buffer(buffer_line)?;
+        let total = self.effective_line_count();
+        let mut idx = buffer_line;
+        let work_idx = loop {
+            if let Some(wi) = self.work_line_for_buffer(idx) {
+                break wi;
+            }
+            idx += 1;
+            if idx >= total {
+                return None;
+            }
+        };
         let line = work.lines.get(work_idx)?;
         if work.work_type == "play" {
             if let Some(formatted) = crate::ui::page_label::format_play_citation(
