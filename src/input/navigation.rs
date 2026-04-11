@@ -1012,7 +1012,7 @@ fn set_page_instant(state: &mut AppState, new_top: usize) {
 
 /// Scroll so `line` is at the top of the viewport, then size the bottom clip
 /// overlay to hide any partially-visible line at the bottom of the page.
-fn snap_scroll_to_line(state: &mut AppState, line: usize) {
+pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
     // Position the target line at the very top of the viewport using
     // vadjustment for pixel-perfect positioning (scroll_to_iter is imprecise).
     if let Some(iter) = state.buffer.iter_at_line(line as i32) {

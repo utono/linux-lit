@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static LOG_PATH: OnceLock<String> = OnceLock::new();
-static DEBUG_MODE: AtomicBool = AtomicBool::new(false);
+static DEBUG_MODE: AtomicBool = AtomicBool::new(true);
 
 pub fn init(path: &str) {
     LOG_PATH.set(path.to_string()).ok();

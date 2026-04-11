@@ -712,14 +712,11 @@ pub fn handle_key(
                         s.text_view.set_pixels_above_lines((snap_ls as i32).max(0));
                         s.text_view.set_pixels_below_lines((snap_ls as i32).max(0));
                     }
-                    s.content_hbox.set_width_request(snap_cw as i32);
+                    crate::app::apply_card_sizing(&s.content_hbox, s.window.width(), snap_cw);
                     let work_type = s.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("");
-                    let left = if crate::db::line_types::is_prose_work(work_type) {
-                        snap_tm as i32
-                    } else {
-                        snap_tm as i32 + 120
-                    };
-                    s.text_view.set_left_margin(left);
+                    let is_verse = !crate::db::line_types::is_prose_work(work_type);
+                    let verse_bump = if is_verse { crate::app::verse_left_offset(s.window.width(), snap_cw) } else { 0 };
+                    s.text_view.set_left_margin(snap_tm as i32 + verse_bump);
                     s.text_view.set_right_margin(snap_tm as i32 + crate::config::EXTRA_RIGHT_MARGIN);
                     s.page_line_label.set_margin_start(snap_tm as i32);
                     s.page_line_label.set_margin_end(snap_tm as i32 + crate::config::EXTRA_RIGHT_MARGIN);
@@ -795,14 +792,11 @@ pub fn handle_key(
                     s.text_view.set_pixels_above_lines((ls as i32).max(0));
                     s.text_view.set_pixels_below_lines((ls as i32).max(0));
                 }
-                s.content_hbox.set_width_request(cw as i32);
+                crate::app::apply_card_sizing(&s.content_hbox, s.window.width(), cw);
                 let work_type = s.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("");
-                let left = if crate::db::line_types::is_prose_work(work_type) {
-                    tm as i32
-                } else {
-                    tm as i32 + 120
-                };
-                s.text_view.set_left_margin(left);
+                let is_verse = !crate::db::line_types::is_prose_work(work_type);
+                let verse_bump = if is_verse { crate::app::verse_left_offset(s.window.width(), cw) } else { 0 };
+                s.text_view.set_left_margin(tm as i32 + verse_bump);
                 s.text_view.set_right_margin(tm as i32 + crate::config::EXTRA_RIGHT_MARGIN);
                 s.page_line_label.set_margin_start(tm as i32);
                 s.page_line_label.set_margin_end(tm as i32 + crate::config::EXTRA_RIGHT_MARGIN);
@@ -1744,17 +1738,14 @@ fn apply_settings_change(
             s.config.line_spacing = val;
         }
         SettingsChange::ColumnWidth(val) => {
-            s.content_hbox.set_width_request(val as i32);
+            crate::app::apply_card_sizing(&s.content_hbox, s.window.width(), val);
             s.config.column_width = val;
         }
         SettingsChange::TextMargins(val) => {
             let work_type = s.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("");
-            let left = if crate::db::line_types::is_prose_work(work_type) {
-                val as i32
-            } else {
-                val as i32 + 120
-            };
-            s.text_view.set_left_margin(left);
+            let is_verse = !crate::db::line_types::is_prose_work(work_type);
+            let verse_bump = if is_verse { crate::app::verse_left_offset(s.window.width(), s.config.column_width) } else { 0 };
+            s.text_view.set_left_margin(val as i32 + verse_bump);
             s.text_view.set_right_margin(val as i32 + crate::config::EXTRA_RIGHT_MARGIN);
             s.page_line_label.set_margin_start(val as i32);
             s.page_line_label.set_margin_end(val as i32 + crate::config::EXTRA_RIGHT_MARGIN);

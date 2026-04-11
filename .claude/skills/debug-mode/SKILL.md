@@ -1,15 +1,26 @@
 ---
 name: debug-mode
 description: Use when toggling debug logging on or off in linux-lit, or when debug logs are empty and need to be enabled before reproducing a bug
+argument-hint: on | off
 ---
 
 # Debug Mode
 
-Toggle debug logging in linux-lit with **Ctrl+d**. Debug mode is off by default — no log output is written until enabled.
+Toggle debug logging in linux-lit with **Ctrl+d**. Debug mode is **on by default** at launch — the log captures events from startup without needing any manual enable step.
+
+## Argument Handling
+
+The skill accepts an optional `on` or `off` argument:
+
+- `/debug-mode on` — set `DEBUG_MODE` to `true` in `src/logging.rs` (`AtomicBool::new(true)`); the app launches with logging enabled
+- `/debug-mode off` — set `DEBUG_MODE` to `false`; the app launches silent until the user presses Ctrl+d
+- `/debug-mode` (no arg) — report the current default state from `src/logging.rs`
+
+When changing the default, edit the single line in `src/logging.rs` and rebuild with `cargo build`.
 
 ## Runtime Toggle
 
-- **Ctrl+d** toggles debug mode on/off
+- **Ctrl+d** flips debug mode at runtime regardless of the compile-time default
 - Writes `DEBUG_MODE: on` or `DEBUG_MODE: off` to the log file (always, regardless of mode)
 - All `log_fmt!()` and `crate::logging::log()` calls are gated behind debug mode
 - `crate::logging::log_always()` writes regardless of debug mode (used for the toggle message itself)

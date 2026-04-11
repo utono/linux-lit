@@ -267,6 +267,42 @@ impl AppState {
     }
 }
 
+/// Fit the centered text card to the current window width.
+///
+/// - Wide windows: full `column_width` with 24px outer margins (unchanged).
+/// - Narrow windows: shrink outer margins first (24 → 0), then shrink the
+///   card width itself. Font size is never changed — text reflows instead.
+/// Additional left-margin offset for verse works when the window is wide
+/// enough to absorb it visually (i.e. monocle / untiled layouts).
+///
+/// When the card has ≥240px of total slack around it, the +120 offset produces
+/// the classic indented-verse look. When the card nearly fills the window
+/// (tiled layouts), the offset is dropped so the text stays symmetric inside
+/// the card and isn't pushed off-center.
+pub const VERSE_LEFT_OFFSET: i32 = 120;
+pub fn verse_left_offset(window_width: i32, column_width: u32) -> i32 {
+    let card_w = (column_width as i32).min(window_width.max(1));
+    let slack = window_width - card_w;
+    if slack >= 2 * VERSE_LEFT_OFFSET { VERSE_LEFT_OFFSET } else { 0 }
+}
+
+pub fn apply_card_sizing(content_hbox: &gtk4::Box, window_width: i32, column_width: u32) {
+    const MAX_OUTER_MARGIN: i32 = 24;
+    let ww = window_width.max(0);
+    let cw_cfg = column_width as i32;
+    // Reserve room for margins first; if that overflows, the card itself shrinks.
+    let card_w = cw_cfg.min(ww.max(1));
+    let slack = ww - card_w;
+    let margin = (slack / 2).clamp(0, MAX_OUTER_MARGIN);
+    content_hbox.set_width_request(card_w);
+    content_hbox.set_margin_start(margin);
+    content_hbox.set_margin_end(margin);
+    crate::log_fmt!(
+        "CARD_SIZING: ww={} col_cfg={} card_w={} margin={}",
+        ww, cw_cfg, card_w, margin
+    );
+}
+
 pub fn build_window(
     app: &gtk4::Application,
     works: Vec<WorkSummary>,
@@ -552,7 +588,7 @@ pub fn build_window(
     debug_icon.set_margin_start(44);
     debug_icon.set_margin_bottom(12);
     debug_icon.add_css_class("debug-icon");
-    debug_icon.set_visible(false);
+    debug_icon.set_visible(crate::logging::debug_mode());
     concordance_list_picker.overlay.add_overlay(&debug_icon);
 
     // Word-copy status indicator (lower-left corner, hidden by default)
@@ -703,6 +739,55 @@ pub fn build_window(
         loading_work: Rc::new(Cell::new(false)),
         timestamp_undo: None,
     }));
+
+    // Adapt card width/margins to window size whenever the window resizes
+    // (e.g. dwl switching between tiled and monocle layouts).
+    //
+    // GTK4 has no reliable "widget resized" signal, and on Wayland the window's
+    // default-width property doesn't track compositor-driven resizes. Instead we
+    // poll vbox.width() once per frame via a tick callback and re-apply card
+    // sizing only when it changes meaningfully. A 4px threshold swallows the
+    // 1-2px oscillation GTK produces as the layout re-settles after our own
+    // width_request update — otherwise we'd resize on every frame forever.
+    // After a real resize we also re-snap the current page so the bottom clip
+    // overlay recomputes for the new viewport height.
+    {
+        let content_hbox_tick = content_hbox.clone();
+        let state_for_tick = Rc::clone(&state);
+        let vbox_for_tick = vbox.clone();
+        let last_width: Rc<Cell<i32>> = Rc::new(Cell::new(-1));
+        window.add_tick_callback(move |_win, _clock| {
+            let ww = vbox_for_tick.width();
+            let prev = last_width.get();
+            if (ww - prev).abs() < 4 {
+                return glib::ControlFlow::Continue;
+            }
+            crate::log_fmt!("RESIZE_TICK: vbox.width changed {} -> {}", prev, ww);
+            last_width.set(ww);
+            if ww <= 100 {
+                return glib::ControlFlow::Continue;
+            }
+            if let Ok(mut s) = state_for_tick.try_borrow_mut() {
+                let cw = s.config.column_width;
+                apply_card_sizing(&content_hbox_tick, ww, cw);
+                // Re-apply left margin so verse works toggle their wide/narrow
+                // offset as the tile size crosses the slack threshold.
+                let work_type = s.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("").to_string();
+                let is_verse = !crate::db::line_types::is_prose_work(&work_type);
+                let verse_bump = if is_verse { verse_left_offset(ww, cw) } else { 0 };
+                let new_left = s.config.text_margins as i32 + verse_bump;
+                if s.text_view.left_margin() != new_left {
+                    s.text_view.set_left_margin(new_left);
+                    if s.dialogue_formatting_active {
+                        apply_dialogue_formatting(&mut s);
+                    }
+                }
+                let top = s.page_top_line;
+                crate::input::navigation::snap_scroll_to_line(&mut s, top);
+            }
+            glib::ControlFlow::Continue
+        });
+    }
 
     // Connect picker search entry filter
     let state_for_filter = Rc::clone(&state);
@@ -1087,13 +1172,17 @@ pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<
     // Build buffer text (with or without sign column)
     state.line_map = None;
     state.dialogue_formatting_active = false;
-    // Poetry/plays get a larger left margin for visual indentation
+    // Left margin: symmetric text_margins for prose; verse works get an
+    // additional offset in wide windows (monocle) but stay symmetric when
+    // the card fills a tiled window. See verse_left_offset().
     let work_type = state.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("");
-    let left_margin = if crate::db::line_types::is_prose_work(work_type) {
-        state.config.text_margins as i32
+    let is_verse = !crate::db::line_types::is_prose_work(work_type);
+    let verse_bump = if is_verse {
+        verse_left_offset(state.window.width(), state.config.column_width)
     } else {
-        state.config.text_margins as i32 + 120
+        0
     };
+    let left_margin = state.config.text_margins as i32 + verse_bump;
     state.text_view.set_left_margin(left_margin);
     // Non-prose works (plays, poems, epics) use tight 0px global spacing.
     // Prose uses the configured line_spacing. Reset on every load so the
@@ -1420,12 +1509,10 @@ pub fn apply_dialogue_formatting(state: &mut AppState) {
         }
     }
 
-    // Widen left margin for stage plays so speaker names aren't flush with card edge
-    let play_left_margin = state.text_view.left_margin() + 80;
-    state.text_view.set_left_margin(play_left_margin);
-
-    // Create tags
-    let base_margin = play_left_margin;
+    // Text column is already symmetrically inset by state.config.text_margins,
+    // so speaker names sit at the same left edge as dialogue. Dialogue lines
+    // get an additional indent via the per-tag margin below.
+    let base_margin = state.text_view.left_margin();
     let speaker_gap = state.config.line_spacing.max(1) as i32;
 
     let indent_tag = gtk4::TextTag::builder()
