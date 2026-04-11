@@ -1,0 +1,66 @@
+pub fn to_roman(n: u32) -> Option<String> {
+    if n == 0 || n > 3999 {
+        return None;
+    }
+    const PAIRS: &[(u32, &str)] = &[
+        (1000, "M"), (900, "CM"), (500, "D"), (400, "CD"),
+        (100, "C"), (90, "XC"), (50, "L"), (40, "XL"),
+        (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I"),
+    ];
+    let mut out = String::new();
+    let mut remaining = n;
+    for &(value, numeral) in PAIRS {
+        while remaining >= value {
+            out.push_str(numeral);
+            remaining -= value;
+        }
+    }
+    Some(out)
+}
+
+pub fn format_play_citation(act: i64, scene: i64, line: i64) -> Option<String> {
+    if act < 1 || scene < 1 || line < 1 {
+        return None;
+    }
+    let act_r = to_roman(act as u32)?;
+    let scene_r = to_roman(scene as u32)?.to_lowercase();
+    Some(format!("{}.{}.{}", act_r, scene_r, line))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn roman_basic() {
+        assert_eq!(to_roman(1).as_deref(), Some("I"));
+        assert_eq!(to_roman(4).as_deref(), Some("IV"));
+        assert_eq!(to_roman(5).as_deref(), Some("V"));
+        assert_eq!(to_roman(9).as_deref(), Some("IX"));
+        assert_eq!(to_roman(40).as_deref(), Some("XL"));
+        assert_eq!(to_roman(99).as_deref(), Some("XCIX"));
+        assert_eq!(to_roman(3999).as_deref(), Some("MMMCMXCIX"));
+    }
+
+    #[test]
+    fn roman_out_of_range() {
+        assert_eq!(to_roman(0), None);
+        assert_eq!(to_roman(4000), None);
+    }
+
+    #[test]
+    fn play_citation_typical() {
+        assert_eq!(format_play_citation(1, 1, 15).as_deref(), Some("I.i.15"));
+        assert_eq!(format_play_citation(3, 2, 187).as_deref(), Some("III.ii.187"));
+        assert_eq!(format_play_citation(5, 1, 1).as_deref(), Some("V.i.1"));
+        assert_eq!(format_play_citation(4, 4, 42).as_deref(), Some("IV.iv.42"));
+    }
+
+    #[test]
+    fn play_citation_invalid() {
+        assert_eq!(format_play_citation(0, 1, 1), None);
+        assert_eq!(format_play_citation(1, 0, 1), None);
+        assert_eq!(format_play_citation(1, 1, 0), None);
+        assert_eq!(format_play_citation(-1, 1, 1), None);
+    }
+}

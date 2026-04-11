@@ -639,8 +639,8 @@ pub fn jump_to_line(state: &mut AppState, buffer_line: usize) {
         }
     }
     // Update page label with the target line (page top may be a blank spacer)
-    if let Some(lm_id) = state.line_mapping_id_for_buffer(buffer_line) {
-        state.page_line_label.set_text(&format!("{}", lm_id));
+    if let Some(text) = state.page_label_text_for_buffer(buffer_line) {
+        state.page_line_label.set_text(&text);
         state.page_line_label.set_visible(true);
     }
     seek_to_current_line(state);
@@ -1021,9 +1021,9 @@ fn snap_scroll_to_line(state: &mut AppState, line: usize) {
         adj.set_value(y as f64);
     }
 
-    // Update page line indicator with line_mapping.id
-    if let Some(lm_id) = state.line_mapping_id_for_buffer(line) {
-        state.page_line_label.set_text(&format!("{}", lm_id));
+    // Update page line indicator (citation for plays, line_mapping.id otherwise)
+    if let Some(text) = state.page_label_text_for_buffer(line) {
+        state.page_line_label.set_text(&text);
         state.page_line_label.set_visible(true);
     }
 

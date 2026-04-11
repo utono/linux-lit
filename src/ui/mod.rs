@@ -9,5 +9,6 @@ pub mod keybinds_overlay;
 pub mod library_picker;
 pub mod bookmark_picker;
 pub mod media_picker;
+pub mod page_label;
 pub mod search_bar;
 pub mod settings_overlay;

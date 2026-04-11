@@ -178,6 +178,23 @@ impl AppState {
         self.current_work.as_ref()?.lines.get(work_idx).map(|l| l.id)
     }
 
+    /// Text to display in the page-label overlay for the given buffer line.
+    /// Plays → act/scene/line citation (e.g. "I.i.15"); other works → line_mapping.id.
+    pub fn page_label_text_for_buffer(&self, buffer_line: usize) -> Option<String> {
+        let work = self.current_work.as_ref()?;
+        let work_idx = self.work_line_for_buffer(buffer_line)?;
+        let line = work.lines.get(work_idx)?;
+        if work.work_type == "play" {
+            if let Some(formatted) = crate::ui::page_label::format_play_citation(
+                line.div1, line.div2, line.line_in_div,
+            ) {
+                return Some(formatted);
+            }
+            return Some(line.citation.clone());
+        }
+        Some(format!("{}", line.id))
+    }
+
     /// Check if a buffer line is within the currently highlighted sentence group.
     #[allow(dead_code)]
     pub fn is_in_current_sentence(&self, line_index: usize) -> bool {
@@ -1212,9 +1229,9 @@ pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<
         state.suppress_sync_until = Some(load_suppress);
     }
 
-    // Show line_mapping.id for initial load
-    if let Some(lm_id) = state.line_mapping_id_for_buffer(state.page_top_line) {
-        state.page_line_label.set_text(&format!("{}", lm_id));
+    // Show page label (citation for plays, line_mapping.id otherwise) for initial load
+    if let Some(text) = state.page_label_text_for_buffer(state.page_top_line) {
+        state.page_line_label.set_text(&text);
         state.page_line_label.set_visible(true);
     }
 
