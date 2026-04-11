@@ -19,7 +19,7 @@ fn load_selected_work(
 ) {
     let abbrev = state.borrow().picker.selected_abbrev();
     if let Some(abbrev) = abbrev {
-        crate::logging::log(&format!("PICKER: selected work '{}'", abbrev));
+        crate::logging::log_always(&format!("PICKER: selected work '{}'", abbrev));
         {
             let s = state.borrow();
             let _ = s.cmd_tx.try_send(crate::mpv::commands::MpvCommand::Pause);
@@ -38,7 +38,7 @@ fn load_selected_work(
                     crate::db::queries::load_work(&conn, &abbrev)
                 })
                 .await;
-            crate::logging::log(&format!("PICKER: load_work '{}' DB query {:.0}ms", abbrev_for_log, t_db.elapsed().as_millis()));
+            crate::logging::log_always(&format!("PICKER: load_work '{}' DB query {:.0}ms", abbrev_for_log, t_db.elapsed().as_millis()));
             match work {
                 Ok(Ok(work)) => {
                     crate::logging::log(&format!(
@@ -56,12 +56,12 @@ fn load_selected_work(
                     }
                 }
                 Ok(Err(e)) => {
-                    crate::logging::log(&format!("PICKER: load_work error: {}", e));
+                    crate::logging::log_always(&format!("PICKER: load_work error: {}", e));
                     let s = state_clone.borrow();
                     s.correction_overlay.hide();
                 }
                 Err(e) => {
-                    crate::logging::log(&format!("PICKER: task join error: {}", e));
+                    crate::logging::log_always(&format!("PICKER: task join error: {}", e));
                     let s = state_clone.borrow();
                     s.correction_overlay.hide();
                 }

@@ -1214,6 +1214,12 @@ pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<
                 w.lines.iter().position(|l| l.is_dialogue)
             })
         };
+        crate::logging::log_always(&format!(
+            "DISPLAY_WORK: first_dialogue={:?} line_map={} dialogue_buf_lines={}",
+            first_dialogue,
+            state.line_map.is_some(),
+            state.line_map.as_ref().map(|lm| lm.dialogue_buffer_lines.len()).unwrap_or(0)
+        ));
         if let Some(target) = first_dialogue {
             state.current_line = target;
             state.page_top_line = target.saturating_sub(1);
@@ -1298,11 +1304,23 @@ fn rebuild_buffer_text(state: &mut AppState) {
                 let filtered_contents = cleaned_lines.join("\n");
                 let is_prose = crate::db::line_types::is_prose_work(&work.work_type);
                 let line_map = crate::text_file_map::build_line_map(&cleaned_lines, &work.lines, is_prose);
+                let mapped = line_map.buffer_to_work.iter().filter(|o| o.is_some()).count();
+                let first_mapped = line_map
+                    .buffer_to_work
+                    .iter()
+                    .position(|o| o.is_some());
                 state.buffer.set_text(&filtered_contents);
                 state.line_map = Some(line_map);
-                crate::logging::log(&format!(
-                    "TEXT_FILE: loaded {} lines from {}",
+                crate::logging::log_always(&format!(
+                    "TEXT_FILE: loaded '{}' work_type='{}' is_prose={} file_lines={} cleaned_lines={} work_lines={} mapped_buffer_lines={} first_mapped={:?} path={}",
+                    work.abbrev,
+                    work.work_type,
+                    is_prose,
                     file_lines.len(),
+                    cleaned_lines.len(),
+                    work.lines.len(),
+                    mapped,
+                    first_mapped,
                     path
                 ));
                 return;

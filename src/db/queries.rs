@@ -55,8 +55,8 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
             let text: String = row.get(1)?;
             let normalized: String = row.get(2)?;
             let speaker: Option<String> = row.get(3)?;
-            let div1: i64 = row.get(4)?;
-            let div2: i64 = row.get(5)?;
+            let div1: i64 = row.get::<_, Option<i64>>(4)?.unwrap_or(0);
+            let div2: i64 = row.get::<_, Option<i64>>(5)?.unwrap_or(0);
             let line_in_div: i64 = row.get(6)?;
             let citation = format!("{}.{}.{}.{}", abbrev, div1, div2, line_in_div);
             Ok(Line {
