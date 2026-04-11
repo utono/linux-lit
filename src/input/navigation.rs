@@ -1271,6 +1271,12 @@ pub fn update_highlight_and_show(state: &mut AppState) {
     }
     update_highlight(state);
 
+    // Refresh page label now that page_top_line is finalized.
+    if let Some(text) = state.page_label_text_for_buffer(state.page_top_line) {
+        state.page_line_label.set_text(&text);
+        state.page_line_label.set_visible(true);
+    }
+
     let scroll_to = state.page_top_line;
     let line_count = state.effective_line_count();
 

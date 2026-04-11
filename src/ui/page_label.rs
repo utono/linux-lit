@@ -18,9 +18,26 @@ pub fn to_roman(n: u32) -> Option<String> {
     Some(out)
 }
 
-pub fn format_play_citation(act: i64, scene: i64, line: i64) -> Option<String> {
-    if act < 1 || scene < 1 || line < 1 {
+pub fn format_play_citation(
+    act: i64,
+    scene: i64,
+    line: i64,
+    speaker: Option<&str>,
+) -> Option<String> {
+    if line < 1 {
         return None;
+    }
+    // Prologue / Epilogue cases: div1/div2 may be 0 or out of normal act range.
+    // Detect via speaker label when act/scene don't look like a normal citation.
+    if act < 1 || scene < 1 {
+        return match speaker {
+            Some("PROLOGUE") => Some(format!("Prologue {}", line)),
+            Some("EPILOGUE") => Some(format!("Epilogue {}", line)),
+            _ => None,
+        };
+    }
+    if let Some("EPILOGUE") = speaker {
+        return Some(format!("Epilogue {}", line));
     }
     let act_r = to_roman(act as u32)?;
     let scene_r = to_roman(scene as u32)?.to_lowercase();
@@ -50,17 +67,53 @@ mod tests {
 
     #[test]
     fn play_citation_typical() {
-        assert_eq!(format_play_citation(1, 1, 15).as_deref(), Some("I.i.15"));
-        assert_eq!(format_play_citation(3, 2, 187).as_deref(), Some("III.ii.187"));
-        assert_eq!(format_play_citation(5, 1, 1).as_deref(), Some("V.i.1"));
-        assert_eq!(format_play_citation(4, 4, 42).as_deref(), Some("IV.iv.42"));
+        assert_eq!(format_play_citation(1, 1, 15, None).as_deref(), Some("I.i.15"));
+        assert_eq!(format_play_citation(3, 2, 187, None).as_deref(), Some("III.ii.187"));
+        assert_eq!(format_play_citation(5, 1, 1, None).as_deref(), Some("V.i.1"));
+        assert_eq!(format_play_citation(4, 4, 42, None).as_deref(), Some("IV.iv.42"));
+    }
+
+    #[test]
+    fn play_citation_prologue() {
+        assert_eq!(
+            format_play_citation(0, 0, 1, Some("PROLOGUE")).as_deref(),
+            Some("Prologue 1")
+        );
+        assert_eq!(
+            format_play_citation(0, 0, 31, Some("PROLOGUE")).as_deref(),
+            Some("Prologue 31")
+        );
+    }
+
+    #[test]
+    fn play_citation_epilogue() {
+        assert_eq!(
+            format_play_citation(6, 0, 14, Some("EPILOGUE")).as_deref(),
+            Some("Epilogue 14")
+        );
+        assert_eq!(
+            format_play_citation(6, 0, 1, Some("EPILOGUE")).as_deref(),
+            Some("Epilogue 1")
+        );
+    }
+
+    #[test]
+    fn play_citation_nested_prologue_uses_normal_format() {
+        // Play-within-play prologue (e.g. Ham 3.2, MND 5.1) keeps normal citation.
+        assert_eq!(
+            format_play_citation(3, 2, 1, Some("PROLOGUE")).as_deref(),
+            Some("III.ii.1")
+        );
+        assert_eq!(
+            format_play_citation(5, 1, 5, Some("PROLOGUE")).as_deref(),
+            Some("V.i.5")
+        );
     }
 
     #[test]
     fn play_citation_invalid() {
-        assert_eq!(format_play_citation(0, 1, 1), None);
-        assert_eq!(format_play_citation(1, 0, 1), None);
-        assert_eq!(format_play_citation(1, 1, 0), None);
-        assert_eq!(format_play_citation(-1, 1, 1), None);
+        assert_eq!(format_play_citation(1, 1, 0, None), None);
+        assert_eq!(format_play_citation(0, 0, 1, None), None);
+        assert_eq!(format_play_citation(-1, 1, 1, None), None);
     }
 }

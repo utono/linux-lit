@@ -186,7 +186,10 @@ impl AppState {
         let line = work.lines.get(work_idx)?;
         if work.work_type == "play" {
             if let Some(formatted) = crate::ui::page_label::format_play_citation(
-                line.div1, line.div2, line.line_in_div,
+                line.div1,
+                line.div2,
+                line.line_in_div,
+                line.speaker.as_deref(),
             ) {
                 return Some(formatted);
             }
