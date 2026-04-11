@@ -53,6 +53,7 @@ pub struct AppState {
     pub card_vbox: gtk4::Box,
     pub scrolled_window: ScrolledWindow,
     pub content_hbox: gtk4::Box,
+    pub vbox: gtk4::Box,
     pub window: ApplicationWindow,
     pub config: Config,
     pub css_provider: CssProvider,
@@ -284,6 +285,46 @@ pub fn verse_left_offset(window_width: i32, column_width: u32) -> i32 {
     let card_w = (column_width as i32).min(window_width.max(1));
     let slack = window_width - card_w;
     if slack >= 2 * VERSE_LEFT_OFFSET { VERSE_LEFT_OFFSET } else { 0 }
+}
+
+/// True when the window is narrow enough that the text card nearly fills
+/// it — used to trigger tiled-mode visual adjustments.
+pub fn is_tiled_layout(window_width: i32, column_width: u32) -> bool {
+    let card_w = (column_width as i32).min(window_width.max(1));
+    (window_width - card_w) < 2 * VERSE_LEFT_OFFSET
+}
+
+/// Apply tiled-vs-monocle visual state: verse left offset, root-color
+/// wallpaper masking via the `tiled` CSS class, and page-label padding.
+/// Called from both the resize tick and load_work so the initial render
+/// picks up the right state before the first resize notification.
+pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width: i32) {
+    let cw = state.config.column_width;
+    let tiled = is_tiled_layout(window_width, cw);
+
+    // Root-color masking: paint the vbox with the card bg so no wallpaper
+    // shows through when the card fills the tile.
+    if tiled {
+        root_box.add_css_class("tiled");
+    } else {
+        root_box.remove_css_class("tiled");
+    }
+
+    // Page-line label needs extra breathing room in tile mode where the
+    // bottom clip is tighter. Monocle already has enough natural slack.
+    state.page_line_label.set_margin_bottom(if tiled { 32 } else { 16 });
+
+    // Verse works get the +120 left offset only when untiled.
+    let work_type = state.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("").to_string();
+    let is_verse = !crate::db::line_types::is_prose_work(&work_type);
+    let verse_bump = if is_verse && !tiled { VERSE_LEFT_OFFSET } else { 0 };
+    let new_left = state.config.text_margins as i32 + verse_bump;
+    if state.text_view.left_margin() != new_left {
+        state.text_view.set_left_margin(new_left);
+        if state.dialogue_formatting_active {
+            apply_dialogue_formatting(state);
+        }
+    }
 }
 
 pub fn apply_card_sizing(content_hbox: &gtk4::Box, window_width: i32, column_width: u32) {
@@ -659,6 +700,7 @@ pub fn build_window(
         card_vbox,
         scrolled_window: scrolled,
         content_hbox: content_hbox.clone(),
+        vbox: vbox.clone(),
         window: window.clone(),
         config,
         css_provider,
@@ -770,18 +812,7 @@ pub fn build_window(
             if let Ok(mut s) = state_for_tick.try_borrow_mut() {
                 let cw = s.config.column_width;
                 apply_card_sizing(&content_hbox_tick, ww, cw);
-                // Re-apply left margin so verse works toggle their wide/narrow
-                // offset as the tile size crosses the slack threshold.
-                let work_type = s.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("").to_string();
-                let is_verse = !crate::db::line_types::is_prose_work(&work_type);
-                let verse_bump = if is_verse { verse_left_offset(ww, cw) } else { 0 };
-                let new_left = s.config.text_margins as i32 + verse_bump;
-                if s.text_view.left_margin() != new_left {
-                    s.text_view.set_left_margin(new_left);
-                    if s.dialogue_formatting_active {
-                        apply_dialogue_formatting(&mut s);
-                    }
-                }
+                apply_tiled_mode(&mut s, &vbox_for_tick, ww);
                 let top = s.page_top_line;
                 crate::input::navigation::snap_scroll_to_line(&mut s, top);
             }
@@ -1172,22 +1203,17 @@ pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<
     // Build buffer text (with or without sign column)
     state.line_map = None;
     state.dialogue_formatting_active = false;
-    // Left margin: symmetric text_margins for prose; verse works get an
-    // additional offset in wide windows (monocle) but stay symmetric when
-    // the card fills a tiled window. See verse_left_offset().
-    let work_type = state.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("");
-    let is_verse = !crate::db::line_types::is_prose_work(work_type);
-    let verse_bump = if is_verse {
-        verse_left_offset(state.window.width(), state.config.column_width)
-    } else {
-        0
-    };
-    let left_margin = state.config.text_margins as i32 + verse_bump;
-    state.text_view.set_left_margin(left_margin);
+    // Left margin + tiled-mode visuals. apply_tiled_mode handles the verse
+    // offset for wide windows, the page-label padding, and the root-color
+    // masking CSS class for narrow/tiled windows.
+    let work_type = state.current_work.as_ref().map(|w| w.work_type.clone()).unwrap_or_default();
+    let vbox = state.vbox.clone();
+    let ww = state.window.width();
+    apply_tiled_mode(state, &vbox, ww);
     // Non-prose works (plays, poems, epics) use tight 0px global spacing.
     // Prose uses the configured line_spacing. Reset on every load so the
     // previous work's spacing never leaks through.
-    let ls = if crate::db::line_types::is_prose_work(work_type) {
+    let ls = if crate::db::line_types::is_prose_work(&work_type) {
         state.config.line_spacing as i32
     } else {
         0
