@@ -1214,7 +1214,7 @@ pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<
                 w.lines.iter().position(|l| l.is_dialogue)
             })
         };
-        crate::logging::log_always(&format!(
+        crate::logging::log(&format!(
             "DISPLAY_WORK: first_dialogue={:?} line_map={} dialogue_buf_lines={}",
             first_dialogue,
             state.line_map.is_some(),
@@ -1311,7 +1311,7 @@ fn rebuild_buffer_text(state: &mut AppState) {
                     .position(|o| o.is_some());
                 state.buffer.set_text(&filtered_contents);
                 state.line_map = Some(line_map);
-                crate::logging::log_always(&format!(
+                crate::logging::log(&format!(
                     "TEXT_FILE: loaded '{}' work_type='{}' is_prose={} file_lines={} cleaned_lines={} work_lines={} mapped_buffer_lines={} first_mapped={:?} path={}",
                     work.abbrev,
                     work.work_type,
