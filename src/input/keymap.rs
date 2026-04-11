@@ -718,8 +718,6 @@ pub fn handle_key(
                     let verse_bump = if is_verse { crate::app::verse_left_offset(s.window.width(), snap_cw) } else { 0 };
                     s.text_view.set_left_margin(snap_tm as i32 + verse_bump);
                     s.text_view.set_right_margin(snap_tm as i32 + crate::config::EXTRA_RIGHT_MARGIN);
-                    s.page_line_label.set_margin_start(snap_tm as i32);
-                    s.page_line_label.set_margin_end(snap_tm as i32 + crate::config::EXTRA_RIGHT_MARGIN);
                     s.config.line_spacing = snap_ls;
                     s.config.column_width = snap_cw;
                     s.config.text_margins = snap_tm;
@@ -798,8 +796,6 @@ pub fn handle_key(
                 let verse_bump = if is_verse { crate::app::verse_left_offset(s.window.width(), cw) } else { 0 };
                 s.text_view.set_left_margin(tm as i32 + verse_bump);
                 s.text_view.set_right_margin(tm as i32 + crate::config::EXTRA_RIGHT_MARGIN);
-                s.page_line_label.set_margin_start(tm as i32);
-                s.page_line_label.set_margin_end(tm as i32 + crate::config::EXTRA_RIGHT_MARGIN);
                 s.config.line_spacing = ls;
                 s.config.column_width = cw;
                 s.config.text_margins = tm;
@@ -1747,8 +1743,6 @@ fn apply_settings_change(
             let verse_bump = if is_verse { crate::app::verse_left_offset(s.window.width(), s.config.column_width) } else { 0 };
             s.text_view.set_left_margin(val as i32 + verse_bump);
             s.text_view.set_right_margin(val as i32 + crate::config::EXTRA_RIGHT_MARGIN);
-            s.page_line_label.set_margin_start(val as i32);
-            s.page_line_label.set_margin_end(val as i32 + crate::config::EXTRA_RIGHT_MARGIN);
             s.config.text_margins = val;
             if s.dialogue_formatting_active {
                 crate::app::apply_dialogue_formatting(&mut s);

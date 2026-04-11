@@ -310,11 +310,11 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
         root_box.remove_css_class("tiled");
     }
 
-    // Page-line label needs extra breathing room in tile mode where the
-    // bottom clip is tighter. Monocle already has enough natural slack.
-    state.page_line_label.set_margin_bottom(if tiled { 32 } else { 16 });
-
-    // Verse works get the +120 left offset only when untiled.
+    // Compute and apply the text_view left margin first. Verse works get
+    // the +120 offset only when untiled — that means in tile mode the text
+    // column starts at text_margins (e.g. 48) while in monocle it sits at
+    // text_margins + 120 (e.g. 168). Page-label positioning depends on this
+    // value, so derive it up-front.
     let work_type = state.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("").to_string();
     let is_verse = !crate::db::line_types::is_prose_work(&work_type);
     let verse_bump = if is_verse && !tiled { VERSE_LEFT_OFFSET } else { 0 };
@@ -324,6 +324,26 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
         if state.dialogue_formatting_active {
             apply_dialogue_formatting(state);
         }
+    }
+
+    // bottom_spacer holds the page-line label. Height = just the label's
+    // own line height — no extra padding. The natural residual from the
+    // bottom_clip (partial line that didn't fit) provides the visual gap
+    // between the last text line and the label, and keeping the spacer
+    // minimal gives scrolled_overlay maximum height so more text lines fit.
+    let line_h = measure_line_height(&state.text_view);
+    state.bottom_spacer.set_height_request(line_h);
+
+    // Label placement:
+    //   Tile mode — align the label's left edge with the speaker labels in
+    //   the text column (i.e. the text_view's left_margin we just set).
+    //   Monocle — center the label within the card.
+    if tiled {
+        state.page_line_label.set_halign(gtk4::Align::Start);
+        state.page_line_label.set_margin_start(new_left);
+    } else {
+        state.page_line_label.set_halign(gtk4::Align::Center);
+        state.page_line_label.set_margin_start(0);
     }
 }
 
@@ -643,16 +663,20 @@ pub fn build_window(
     concordance_list_picker.overlay.add_overlay(&word_status_label);
 
     // Page line number indicator (bottom-center of text column, hidden by default)
+    // Page-line label lives inside bottom_spacer as a regular box child so
+    // it participates in normal container layout — no GtkOverlay positioning
+    // quirks. Center + valign Center puts it in the middle of whatever
+    // height bottom_spacer is currently requesting.
     let page_line_label = gtk4::Label::new(None);
-    page_line_label.set_halign(gtk4::Align::Fill);
-    page_line_label.set_justify(gtk4::Justification::Center);
+    page_line_label.set_halign(gtk4::Align::Center);
+    // valign End pushes the label to the bottom of bottom_spacer so any
+    // extra spacer height becomes breathing room ABOVE the label, not
+    // padding below it.
     page_line_label.set_valign(gtk4::Align::End);
-    page_line_label.set_margin_start(config.text_margins as i32);
-    page_line_label.set_margin_end(config.text_margins as i32 + crate::config::EXTRA_RIGHT_MARGIN);
-    page_line_label.set_margin_bottom(16);
+    page_line_label.set_hexpand(true);
     page_line_label.add_css_class("page-line-label");
     page_line_label.set_visible(false);
-    page_turn_overlay.add_overlay(&page_line_label);
+    bottom_spacer.append(&page_line_label);
 
     // Concordance status bar
     let concordance_bar = crate::ui::concordance_bar::ConcordanceBar::new();
@@ -1993,7 +2017,8 @@ fn measure_line_height(text_view: &sourceview5::View) -> i32 {
 fn update_spacer_heights(state: &AppState) {
     let line_height = measure_line_height(&state.text_view);
     state.top_spacer.set_height_request(line_height);
-    state.bottom_spacer.set_height_request(line_height);
+    // bottom_spacer height is owned by apply_tiled_mode so it can scale with
+    // layout state (tile vs monocle). Don't touch it here.
 }
 
 fn reapply_font(state: &AppState) {
