@@ -186,28 +186,33 @@ impl AppState {
         let work = self.current_work.as_ref()?;
         let total = self.effective_line_count();
         let mut idx = buffer_line;
-        let work_idx = loop {
-            if let Some(wi) = self.work_line_for_buffer(idx) {
-                break wi;
+        while idx < total {
+            let Some(work_idx) = self.work_line_for_buffer(idx) else {
+                idx += 1;
+                continue;
+            };
+            let Some(line) = work.lines.get(work_idx) else {
+                idx += 1;
+                continue;
+            };
+            if work.work_type == "play" {
+                if let Some(formatted) = crate::ui::page_label::format_play_citation(
+                    line.div1,
+                    line.div2,
+                    line.line_in_div,
+                    line.speaker.as_deref(),
+                ) {
+                    return Some(formatted);
+                }
+                if !line.citation.is_empty() {
+                    return Some(line.citation.clone());
+                }
+                idx += 1;
+                continue;
             }
-            idx += 1;
-            if idx >= total {
-                return None;
-            }
-        };
-        let line = work.lines.get(work_idx)?;
-        if work.work_type == "play" {
-            if let Some(formatted) = crate::ui::page_label::format_play_citation(
-                line.div1,
-                line.div2,
-                line.line_in_div,
-                line.speaker.as_deref(),
-            ) {
-                return Some(formatted);
-            }
-            return Some(line.citation.clone());
+            return Some(format!("{}", line.id));
         }
-        Some(format!("{}", line.id))
+        None
     }
 
     /// Check if a buffer line is within the currently highlighted sentence group.
@@ -911,15 +916,18 @@ pub fn clear_display(state: &mut AppState) {
     state.page_turn_anim = None;
     state.cursor_fade_anim = None;
 
-    // Remove snapshot overlays left by page turn animations
+    // Remove snapshot overlays left by page turn animations.
+    // Preserve card_vbox (the overlay's main child) and page_line_label
+    // (a persistent overlay that display_work re-populates).
     {
         let overlay = &state.page_turn_overlay;
-        let card = &state.card_vbox;
+        let card: &gtk4::Widget = state.card_vbox.upcast_ref();
+        let label: &gtk4::Widget = state.page_line_label.upcast_ref();
         let mut to_remove = Vec::new();
         let mut child = overlay.first_child();
         while let Some(c) = child {
             let next = c.next_sibling();
-            if &c != card.upcast_ref::<gtk4::Widget>() {
+            if &c != card && &c != label {
                 to_remove.push(c);
             }
             child = next;
@@ -1087,6 +1095,16 @@ pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<
         state.config.text_margins as i32 + 120
     };
     state.text_view.set_left_margin(left_margin);
+    // Non-prose works (plays, poems, epics) use tight 0px global spacing.
+    // Prose uses the configured line_spacing. Reset on every load so the
+    // previous work's spacing never leaks through.
+    let ls = if crate::db::line_types::is_prose_work(work_type) {
+        state.config.line_spacing as i32
+    } else {
+        0
+    };
+    state.text_view.set_pixels_above_lines(ls);
+    state.text_view.set_pixels_below_lines(ls);
     state.translations_visible = false;
     state.translation_lines = Vec::new();
     // Load translations for this work

@@ -335,7 +335,14 @@ impl LibraryPicker {
     pub fn move_selection(&self, delta: i32) {
         if let Some(current) = self.list_box.selected_row() {
             let idx = current.index();
-            let new_idx = (idx + delta).max(0);
+            let mut count = 0i32;
+            while self.list_box.row_at_index(count).is_some() {
+                count += 1;
+            }
+            if count == 0 {
+                return;
+            }
+            let new_idx = ((idx + delta) % count + count) % count;
             if let Some(row) = self.list_box.row_at_index(new_idx) {
                 self.list_box.select_row(Some(&row));
                 // Scroll the selected row into view within the ScrolledWindow
