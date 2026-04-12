@@ -79,6 +79,9 @@ pub struct AppState {
     pub is_chapter_line: Rc<RefCell<Vec<bool>>>,
     pub is_bookmarked: Rc<RefCell<Vec<bool>>>,
     pub gutter_renderer: Option<sourceview5::GutterRendererText>,
+    /// Logical left_margin at the moment the gutter was installed, used to
+    /// detect when monocle↔tiled transitions require rebuilding the gutter.
+    pub gutter_logical_left: Cell<i32>,
     pub chunk_renderer: Option<sourceview5::GutterRendererText>,
     pub ab_repeat: crate::ab_repeat::AbRepeatState,
     pub ab_a_line: Rc<Cell<Option<usize>>>,
@@ -280,7 +283,8 @@ impl AppState {
 /// the classic indented-verse look. When the card nearly fills the window
 /// (tiled layouts), the offset is dropped so the text stays symmetric inside
 /// the card and isn't pushed off-center.
-pub const VERSE_LEFT_OFFSET: i32 = 120;
+pub const VERSE_LEFT_OFFSET: i32 = 260;
+pub const PROSE_LEFT_OFFSET: i32 = 120;
 pub fn verse_left_offset(window_width: i32, column_width: u32) -> i32 {
     let card_w = (column_width as i32).min(window_width.max(1));
     let slack = window_width - card_w;
@@ -317,10 +321,31 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
     // value, so derive it up-front.
     let work_type = state.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("").to_string();
     let is_verse = !crate::db::line_types::is_prose_work(&work_type);
-    let verse_bump = if is_verse && !tiled { VERSE_LEFT_OFFSET } else { 0 };
-    let new_left = state.config.text_margins as i32 + verse_bump;
-    if state.text_view.left_margin() != new_left {
-        state.text_view.set_left_margin(new_left);
+    let left_bump = if tiled {
+        0
+    } else if is_verse {
+        VERSE_LEFT_OFFSET
+    } else {
+        PROSE_LEFT_OFFSET
+    };
+    let logical_left = state.config.text_margins as i32 + left_bump;
+    let gutter_active = state.gutter_renderer.is_some();
+    if gutter_active {
+        // Gutter's baked-in width only matches its creation-time logical left.
+        // If the layout changed, tear down and rebuild so the gutter fits the
+        // new column geometry.
+        if state.gutter_logical_left.get() != logical_left {
+            if let Some(old) = state.gutter_renderer.take() {
+                crate::gutter::remove_gutter_renderer(&state.text_view, &old);
+            }
+            state.text_view.set_left_margin(logical_left);
+            if state.dialogue_formatting_active {
+                apply_dialogue_formatting(state);
+            }
+            setup_gutter(state);
+        }
+    } else if state.text_view.left_margin() != logical_left {
+        state.text_view.set_left_margin(logical_left);
         if state.dialogue_formatting_active {
             apply_dialogue_formatting(state);
         }
@@ -341,7 +366,7 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
     //   Monocle — center the label within the card.
     if tiled {
         state.page_line_label.set_halign(gtk4::Align::Start);
-        state.page_line_label.set_margin_start(new_left);
+        state.page_line_label.set_margin_start(logical_left);
     } else {
         state.page_line_label.set_halign(gtk4::Align::Center);
         state.page_line_label.set_margin_start(0);
@@ -748,6 +773,7 @@ pub fn build_window(
         is_chapter_line: Rc::new(RefCell::new(Vec::new())),
         is_bookmarked: Rc::new(RefCell::new(Vec::new())),
         gutter_renderer: None,
+        gutter_logical_left: Cell::new(0),
         chunk_renderer: None,
         ab_repeat: crate::ab_repeat::AbRepeatState::default(),
         ab_a_line: Rc::new(Cell::new(None)),
@@ -1789,6 +1815,7 @@ fn setup_gutter(state: &mut AppState) {
         }
     }
     state.gutter_renderer = Some(renderer);
+    state.gutter_logical_left.set(left_margin);
 
     // Set up chunk bar gutter
     if let Some(old_renderer) = state.chunk_renderer.take() {
