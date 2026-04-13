@@ -1459,7 +1459,11 @@ pub fn handle_key(
             }
         }
         "u" => {
-            crate::input::timestamps::set_start_time(&mut state.borrow_mut())
+            let ok = crate::input::timestamps::set_start_time(&mut state.borrow_mut());
+            if ok {
+                navigation::cursor_next_dialogue(&mut state.borrow_mut());
+            }
+            ok
         }
         "Left" => {
             let mut s = state.borrow_mut();

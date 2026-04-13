@@ -1,5 +1,7 @@
 use std::ops::Range;
 
+use unicode_normalization::UnicodeNormalization;
+
 use crate::db::models::Line;
 use crate::db::line_types;
 
@@ -35,7 +37,13 @@ pub fn normalize(s: &str) -> String {
     // files but not in DB canonical_text
     let without_brackets = strip_brackets(s);
     let lowered = without_brackets.trim().to_lowercase();
-    let filtered: String = lowered
+    // Decompose Unicode (NFD) and strip combining marks (accents/diacritics)
+    // so that e.g. "belovèd" matches "beloved"
+    let stripped: String = lowered
+        .nfd()
+        .filter(|c| !unicode_normalization::char::is_combining_mark(*c))
+        .collect();
+    let filtered: String = stripped
         .chars()
         .filter(|c| c.is_alphanumeric() || *c == ' ')
         .collect();
@@ -75,6 +83,9 @@ const WINDOW: usize = 50;
 /// - Log match percentage; warn if < 80%.
 pub fn build_line_map(file_lines: &[String], work_lines: &[Line], is_prose: bool) -> LineMap {
     let norm_file: Vec<String> = file_lines.iter().map(|l| normalize(l)).collect();
+    // Re-normalize DB text through the same pipeline (strip_brackets + diacritics)
+    // so stage directions like "[Flourish...]" become empty on both sides.
+    let norm_db: Vec<String> = work_lines.iter().map(|l| normalize(&l.text)).collect();
 
     let n_buf = file_lines.len();
     let n_work = work_lines.len();
@@ -97,7 +108,7 @@ pub fn build_line_map(file_lines: &[String], work_lines: &[Line], is_prose: bool
         let mut found: Option<usize> = None;
 
         'outer: for wi in db_cursor..window_end {
-            let db_norm = &work_lines[wi].normalized;
+            let db_norm = &norm_db[wi];
             if db_norm.is_empty() {
                 continue;
             }
@@ -105,25 +116,35 @@ pub fn build_line_map(file_lines: &[String], work_lines: &[Line], is_prose: bool
                 // If this match is beyond the current cursor, do a confirmation check:
                 // the next non-empty file line should match the next DB row after wi.
                 if wi > db_cursor {
-                    // Find the next non-empty file line
-                    let mut next_buf: Option<(usize, &String)> = None;
-                    for bi2 in (buf_idx + 1)..n_buf {
-                        if !norm_file[bi2].is_empty() {
-                            next_buf = Some((bi2, &norm_file[bi2]));
-                            break;
-                        }
-                    }
                     // Find the next non-empty DB row after wi
-                    let mut next_db: Option<(usize, &String)> = None;
+                    let mut next_db_norm: Option<&String> = None;
                     for wi2 in (wi + 1)..n_work {
-                        if !work_lines[wi2].normalized.is_empty() {
-                            next_db = Some((wi2, &work_lines[wi2].normalized));
+                        if !norm_db[wi2].is_empty() {
+                            next_db_norm = Some(&norm_db[wi2]);
                             break;
                         }
                     }
-                    if let (Some((_bi2, nb)), Some((_wi2, nd))) = (next_buf, next_db) {
-                        if nb != nd {
-                            // Confirmation failed — skip this candidate
+                    // Check whether any of the next few non-empty file lines
+                    // matches the next DB row. Speaker names and stage directions
+                    // in the file have no DB counterpart, so we look ahead up to
+                    // 3 non-empty file lines to find a confirming match.
+                    if let Some(nd) = next_db_norm {
+                        let mut confirmed = false;
+                        let mut seen = 0;
+                        for bi2 in (buf_idx + 1)..n_buf {
+                            if norm_file[bi2].is_empty() {
+                                continue;
+                            }
+                            if &norm_file[bi2] == nd {
+                                confirmed = true;
+                                break;
+                            }
+                            seen += 1;
+                            if seen >= 3 {
+                                break;
+                            }
+                        }
+                        if !confirmed {
                             continue 'outer;
                         }
                     }
@@ -485,6 +506,13 @@ mod tests {
         assert_eq!(normalize(""), "");
         assert_eq!(normalize("He."), "he");
         assert_eq!(normalize("A"), "a");
+        // Accented characters should be stripped to base form
+        assert_eq!(
+            normalize("Long live Lord Titus, my belovèd brother,"),
+            "long live lord titus my beloved brother"
+        );
+        assert_eq!(normalize("circumscribèd"), "circumscribed");
+        assert_eq!(normalize("damnèd"), "damned");
     }
 
     #[test]

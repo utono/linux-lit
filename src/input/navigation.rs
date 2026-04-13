@@ -1285,6 +1285,7 @@ pub fn update_highlight_and_show(state: &mut AppState) {
     let text_view = state.text_view.clone();
     let bottom_clip = state.bottom_clip.clone();
     let loading_flag = state.loading_work.clone();
+    let refresh_flag = state.needs_layout_refresh.clone();
     let buffer = state.buffer.clone();
     let scrolled_window = state.scrolled_window.clone();
 
@@ -1302,6 +1303,10 @@ pub fn update_highlight_and_show(state: &mut AppState) {
         glib::idle_add_local_once(move || {
             update_bottom_clip(&text_view, &bottom_clip, &scrolled_window, scroll_to, line_count);
             loading_flag.set(false);
+            // Signal the resize tick to refresh layout once line metrics
+            // are valid (may take one or more frames after the scrolled
+            // window becomes visible and GTK reflows the text).
+            refresh_flag.set(true);
         });
     });
 }

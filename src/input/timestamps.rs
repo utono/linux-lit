@@ -328,11 +328,20 @@ pub fn set_end_time(state: &mut AppState) -> bool {
 pub fn delete_timestamp(state: &mut AppState) -> bool {
     let media_id = match state.media_id {
         Some(id) => id,
-        None => return false,
+        None => {
+            crate::logging::log("TS: delete_timestamp failed: no media_id");
+            return false;
+        }
     };
     let line_idx = match state.work_line_for_buffer(state.current_line) {
         Some(i) => i,
-        None => return false,
+        None => {
+            crate::logging::log(&format!(
+                "TS: delete_timestamp failed: no work line for buffer line {}",
+                state.current_line
+            ));
+            return false;
+        }
     };
 
     let line_id = {
@@ -354,6 +363,10 @@ pub fn delete_timestamp(state: &mut AppState) -> bool {
 
         // Guard: must have existing timestamp
         if line.timestamp.is_none() {
+            crate::logging::log(&format!(
+                "TS: delete_timestamp failed: no timestamp on work line {} (buffer line {})",
+                line_idx, state.current_line
+            ));
             return false;
         }
 
@@ -374,6 +387,29 @@ pub fn delete_timestamp(state: &mut AppState) -> bool {
     crate::logging::log(&format!("TS: deleted timestamp line={}", line_idx));
 
     resync_mpv_timestamps(state);
+
+    // Update sign column for this line
+    let buffer_line = state.current_line;
+    {
+        let mut ht = state.has_timestamp.borrow_mut();
+        if buffer_line < ht.len() {
+            ht[buffer_line] = false;
+        }
+        let mut manual = state.is_manual.borrow_mut();
+        if buffer_line < manual.len() {
+            manual[buffer_line] = false;
+        }
+    }
+    {
+        let mut ch = state.is_chapter_line.borrow_mut();
+        if buffer_line < ch.len() {
+            ch[buffer_line] = false;
+        }
+    }
+    if let Some(ref renderer) = state.gutter_renderer {
+        renderer.queue_draw();
+    }
+
     true
 }
 

@@ -155,6 +155,9 @@ pub struct AppState {
     /// hasn't laid out the new content yet. Cleared in an idle callback after
     /// the layout has settled.
     pub loading_work: Rc<Cell<bool>>,
+    /// Set when loading_work clears so the resize tick can run a deferred
+    /// layout refresh (apply_tiled_mode + snap) with correct line metrics.
+    pub needs_layout_refresh: Rc<Cell<bool>>,
     pub timestamp_undo: Option<crate::input::timestamps::TimestampUndoState>,
 }
 
@@ -830,6 +833,7 @@ pub fn build_window(
         word_collect_words: Vec::new(),
         word_collect_ranges: Vec::new(),
         loading_work: Rc::new(Cell::new(false)),
+        needs_layout_refresh: Rc::new(Cell::new(false)),
         timestamp_undo: None,
     }));
 
@@ -849,21 +853,76 @@ pub fn build_window(
         let state_for_tick = Rc::clone(&state);
         let vbox_for_tick = vbox.clone();
         let last_width: Rc<Cell<i32>> = Rc::new(Cell::new(-1));
+        let last_height: Rc<Cell<i32>> = Rc::new(Cell::new(-1));
         window.add_tick_callback(move |_win, _clock| {
             let ww = vbox_for_tick.width();
-            let prev = last_width.get();
-            if (ww - prev).abs() < 4 {
+            let prev_w = last_width.get();
+            let width_changed = (ww - prev_w).abs() >= 4;
+
+            // Track text_view height so the bottom clip recomputes when the
+            // compositor settles to a different window height (e.g. first open
+            // before dwl applies the final tile geometry).
+            let hh = if let Ok(s) = state_for_tick.try_borrow() {
+                s.text_view.height()
+            } else {
+                return glib::ControlFlow::Continue;
+            };
+            let prev_h = last_height.get();
+            let height_changed = hh > 0 && (hh - prev_h).abs() >= 4;
+
+            // Check if a deferred layout refresh is needed after work loading.
+            let layout_refresh = if let Ok(s) = state_for_tick.try_borrow() {
+                s.needs_layout_refresh.get()
+            } else {
+                false
+            };
+
+            if !width_changed && !height_changed && !layout_refresh {
                 return glib::ControlFlow::Continue;
             }
-            crate::log_fmt!("RESIZE_TICK: vbox.width changed {} -> {}", prev, ww);
-            last_width.set(ww);
+
+            if width_changed {
+                crate::log_fmt!("RESIZE_TICK: vbox.width changed {} -> {}", prev_w, ww);
+                last_width.set(ww);
+            }
+            if height_changed {
+                crate::log_fmt!("RESIZE_TICK: text_view.height changed {} -> {}", prev_h, hh);
+                last_height.set(hh);
+            }
+
             if ww <= 100 {
                 return glib::ControlFlow::Continue;
             }
             if let Ok(mut s) = state_for_tick.try_borrow_mut() {
-                let cw = s.config.column_width;
-                apply_card_sizing(&content_hbox_tick, ww, cw);
-                apply_tiled_mode(&mut s, &vbox_for_tick, ww);
+                // Skip layout updates while a work is loading — the scrolled
+                // window is hidden, so line_yrange returns inflated heights
+                // that would corrupt spacer sizing and bottom clip.
+                if s.loading_work.get() {
+                    if width_changed {
+                        let cw = s.config.column_width;
+                        apply_card_sizing(&content_hbox_tick, ww, cw);
+                    }
+                    return glib::ControlFlow::Continue;
+                }
+                if layout_refresh {
+                    // After a work load, the scrolled window was just made
+                    // visible.  Wait until it has a real allocated height so
+                    // line_yrange returns accurate values.
+                    let sw_h = s.scrolled_window.height();
+                    if sw_h <= 0 {
+                        crate::log_fmt!("RESIZE_TICK: layout refresh waiting, sw_h={}", sw_h);
+                        return glib::ControlFlow::Continue;
+                    }
+                    crate::log_fmt!("RESIZE_TICK: deferred layout refresh, sw_h={}", sw_h);
+                    s.needs_layout_refresh.set(false);
+                    let cw = s.config.column_width;
+                    apply_card_sizing(&content_hbox_tick, ww, cw);
+                    apply_tiled_mode(&mut s, &vbox_for_tick, ww);
+                } else if width_changed {
+                    let cw = s.config.column_width;
+                    apply_card_sizing(&content_hbox_tick, ww, cw);
+                    apply_tiled_mode(&mut s, &vbox_for_tick, ww);
+                }
                 let top = s.page_top_line;
                 crate::input::navigation::snap_scroll_to_line(&mut s, top);
             }
@@ -2034,9 +2093,27 @@ fn map_line_before_insert(buf_line: usize, translation_lines: &[bool]) -> usize 
 /// Measure the pixel height of a representative buffer line.
 fn measure_line_height(text_view: &sourceview5::View) -> i32 {
     let buf = text_view.buffer();
-    let iter = buf.iter_at_line(0).unwrap_or_else(|| buf.start_iter());
-    let (_y, h) = text_view.line_yrange(&iter);
-    h.max(1)
+    // Find the most common (modal) single-line height by sampling the first
+    // 40 buffer lines.  Long stage directions and blank lines can have very
+    // different heights, so using line 0 alone is unreliable.
+    let sample = buf.line_count().min(40);
+    let mut heights: Vec<i32> = Vec::new();
+    for i in 0..sample {
+        if let Some(iter) = buf.iter_at_line(i) {
+            let (_y, h) = text_view.line_yrange(&iter);
+            if h > 0 {
+                heights.push(h);
+            }
+        }
+    }
+    if heights.is_empty() {
+        return 30; // fallback
+    }
+    heights.sort();
+    // The mode (most common value) is the best representative of a normal
+    // text line.  For a sorted vec the mode sits in the densest cluster —
+    // the median is a good-enough proxy.
+    heights[heights.len() / 2].max(1)
 }
 
 /// Reapply font size using a TextTag spanning the entire buffer.
