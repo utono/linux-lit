@@ -1458,7 +1458,7 @@ pub fn handle_key(
                 false
             }
         }
-        "u" => {
+        "u" | "Right" => {
             let ok = crate::input::timestamps::set_start_time(&mut state.borrow_mut());
             if ok {
                 navigation::cursor_next_dialogue(&mut state.borrow_mut());
@@ -1468,14 +1468,6 @@ pub fn handle_key(
         "Left" => {
             let mut s = state.borrow_mut();
             let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SeekRelative(-30.0));
-            s.suppress_sync_until = Some(
-                std::time::Instant::now() + std::time::Duration::from_secs(86400),
-            );
-            true
-        }
-        "Right" => {
-            let mut s = state.borrow_mut();
-            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SeekRelative(30.0));
             s.suppress_sync_until = Some(
                 std::time::Instant::now() + std::time::Duration::from_secs(86400),
             );

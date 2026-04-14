@@ -49,7 +49,6 @@ pub struct AppState {
     pub page_turn_overlay: gtk4::Overlay,
     pub bottom_clip: gtk4::Box,
     pub top_spacer: gtk4::Box,
-    pub bottom_spacer: gtk4::Box,
     pub card_vbox: gtk4::Box,
     pub scrolled_window: ScrolledWindow,
     pub content_hbox: gtk4::Box,
@@ -354,14 +353,11 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
         }
     }
 
-    // Top/bottom spacers: give the card a visible margin above the first
-    // text line and below the last one. Bottom spacer also contains the
-    // page-line label (with valign: End so the upper half-line becomes
-    // breathing room above the label).
+    // Top spacer: one line of breathing room above the first text line.
+    // The bottom breathing room is provided by bottom_clip + the
+    // page_line_label's bottom margin inside scrolled_overlay.
     let line_h = measure_line_height(&state.text_view);
-    let spacer_h = line_h;
-    state.top_spacer.set_height_request(spacer_h);
-    state.bottom_spacer.set_height_request(spacer_h);
+    state.top_spacer.set_height_request(line_h);
 
     // Label placement:
     //   Tile mode — align the label's left edge with the speaker labels in
@@ -543,7 +539,10 @@ pub fn build_window(
         .overflow(gtk4::Overflow::Hidden)
         .build();
 
-    scrolled.add_css_class("card-middle");
+    // scrolled carries the rounded bottom corners of the card. The top corners
+    // are rounded by top_spacer; the middle (when the card is shown mid-stack)
+    // renders as the same bg as scrolled.
+    scrolled.add_css_class("card-bottom");
 
     // Scrolled overlay — holds the bottom clip bar over the scrolled text area
     let scrolled_overlay = gtk4::Overlay::new();
@@ -552,12 +551,13 @@ pub fn build_window(
     scrolled_overlay.set_hexpand(true);
 
     // Bottom clip bar — covers partially-visible lines at the bottom of a page.
-    // Height is set dynamically by snap_scroll_to_line.
+    // Height is set dynamically by snap_scroll_to_line. The clip sits above
+    // the page_line_label so trimmed text is hidden beneath it.
     let bottom_clip = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
     bottom_clip.set_valign(gtk4::Align::End);
     bottom_clip.set_hexpand(true);
     bottom_clip.set_height_request(0);
-    bottom_clip.add_css_class("card-middle");
+    bottom_clip.add_css_class("card-bottom");
     scrolled_overlay.add_overlay(&bottom_clip);
 
     // Top spacer — one line height, rounded top corners only
@@ -566,18 +566,13 @@ pub fn build_window(
     top_spacer.set_height_request(24); // updated dynamically after font metrics known
     top_spacer.add_css_class("card-top");
 
-    // Bottom spacer — one line height, rounded bottom corners only
-    let bottom_spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-    bottom_spacer.set_hexpand(true);
-    bottom_spacer.set_height_request(24); // updated dynamically after font metrics known
-    bottom_spacer.add_css_class("card-bottom");
-
-    // Vertical card assembly: top spacer + text card + bottom spacer
+    // Vertical card assembly: top spacer + scrolled area. No bottom spacer —
+    // the scrolled area's card-bottom CSS provides the rounded bottom and the
+    // page_line_label is positioned as an overlay inside scrolled_overlay.
     let card_vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     card_vbox.set_vexpand(true);
     card_vbox.append(&top_spacer);
     card_vbox.append(&scrolled_overlay);
-    card_vbox.append(&bottom_spacer);
 
     // Page turn overlay — wraps the entire card for crossfade snapshots.
     // Snapshot is placed here as a sibling of card_vbox so fading card_vbox
@@ -691,21 +686,17 @@ pub fn build_window(
     word_status_label.set_visible(false);
     concordance_list_picker.overlay.add_overlay(&word_status_label);
 
-    // Page line number indicator (bottom-center of text column, hidden by default)
-    // Page-line label lives inside bottom_spacer as a regular box child so
-    // it participates in normal container layout — no GtkOverlay positioning
-    // quirks. Center + valign Center puts it in the middle of whatever
-    // height bottom_spacer is currently requesting.
+    // Page line number indicator — overlay on scrolled_overlay, pinned to the
+    // bottom edge of the card. margin_bottom provides breathing room below
+    // the last visible text line; margin_top keeps it clear of the clip bar.
     let page_line_label = gtk4::Label::new(None);
     page_line_label.set_halign(gtk4::Align::Center);
-    // valign End pushes the label to the bottom of bottom_spacer so any
-    // extra spacer height becomes breathing room ABOVE the label, not
-    // padding below it.
     page_line_label.set_valign(gtk4::Align::End);
-    page_line_label.set_hexpand(true);
+    page_line_label.set_hexpand(false);
+    page_line_label.set_margin_bottom(10);
     page_line_label.add_css_class("page-line-label");
     page_line_label.set_visible(false);
-    bottom_spacer.append(&page_line_label);
+    scrolled_overlay.add_overlay(&page_line_label);
 
     // Concordance status bar
     let concordance_bar = crate::ui::concordance_bar::ConcordanceBar::new();
@@ -749,7 +740,6 @@ pub fn build_window(
         page_turn_overlay: page_turn_overlay.clone(),
         bottom_clip,
         top_spacer,
-        bottom_spacer,
         card_vbox,
         scrolled_window: scrolled,
         content_hbox: content_hbox.clone(),
@@ -2122,7 +2112,8 @@ fn measure_line_height(text_view: &sourceview5::View) -> i32 {
 fn update_spacer_heights(state: &AppState) {
     let line_height = measure_line_height(&state.text_view);
     state.top_spacer.set_height_request(line_height);
-    state.bottom_spacer.set_height_request(line_height);
+    // Bottom breathing room comes from bottom_clip (dynamic, covers partial
+    // and trimmed lines) plus the page_line_label's own margin_bottom.
 }
 
 fn reapply_font(state: &AppState) {
