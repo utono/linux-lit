@@ -96,7 +96,7 @@ impl LibraryPicker {
             .spacing(4)
             .halign(gtk4::Align::Center)
             .valign(gtk4::Align::Center)
-            .width_request(400)
+            .width_request(600)
             .height_request(400)
             .build();
         picker_box.add_css_class("library-picker");
