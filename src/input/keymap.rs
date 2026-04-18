@@ -1086,8 +1086,8 @@ pub fn handle_key(
                 navigation::jump_to_start(&mut state.borrow_mut());
             }
             return true;
-        } else if key_name == "apostrophe" {
-            // g' — jump to most recently created bookmark
+        } else if key_name == "semicolon" {
+            // g; — jump to most recently created bookmark
             let abbrev = state
                 .borrow()
                 .current_work
@@ -1560,7 +1560,7 @@ pub fn handle_key(
             }
             true
         }
-        "apostrophe" => {
+        "semicolon" => {
             if is_shift {
                 navigation::prev_bookmark(&mut state.borrow_mut());
             } else {
@@ -1568,7 +1568,7 @@ pub fn handle_key(
             }
             true
         }
-        "quotedbl" => {
+        "colon" => {
             navigation::prev_bookmark(&mut state.borrow_mut());
             true
         }

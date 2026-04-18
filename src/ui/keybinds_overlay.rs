@@ -50,7 +50,7 @@ const NUMBER_ROW: &[KeyDef] = &[
 const BACKSPACE: KeyDef = bare("\u{232b}", "", "delete ts");
 
 const UPPER_ROW: &[KeyDef] = &[
-    ub(";", ":"),
+    key(";", ":", "next bkmk", "prev bkmk", &[]),
     key(",", "<", "prev dlg", "", &[("C-,", "settings")]),
     bare(".", ">", "set chapter"),
     key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("C-p", "picker")]),
@@ -105,6 +105,7 @@ const SPACEBAR_ROW_CTRL_R: KeyDef = ub("Ctrl", "");
 
 const SEQ_GG: KeyDef = bare("gg", "", "go to start");
 const SEQ_G: KeyDef = key("G", "", "", "go to end", &[]);
+const SEQ_G_SEMI: KeyDef = bare("g;", "", "latest bkmk");
 
 const ARROW_UP: KeyDef = key("\u{2191}", "", "", "", &[("C-\u{2191}", "vol +")]);
 const ARROW_DOWN: KeyDef = key("\u{2193}", "", "", "", &[("C-\u{2193}", "vol \u{2212}")]);
@@ -228,10 +229,11 @@ fn build_layout() -> AllKeys {
     add(m_right + GAP, y4, KEY_W, KEY_H, &SPACEBAR_ROW_ALT_R, &mut defs, &mut rects);
     add(m_right + GAP + KEY_W + GAP, y4, KEY_W, KEY_H, &SPACEBAR_ROW_CTRL_R, &mut defs, &mut rects);
 
-    // Row 5: Sequences (gg, G) + up arrow
+    // Row 5: Sequences (gg, G, g;) + up arrow
     let y5 = y4 + KEY_H + 12.0;
     add(0.0, y5, KEY_W * 1.4, KEY_H, &SEQ_GG, &mut defs, &mut rects);
     add(KEY_W * 1.4 + GAP, y5, KEY_W, KEY_H, &SEQ_G, &mut defs, &mut rects);
+    add(KEY_W * 1.4 + GAP + KEY_W + GAP, y5, KEY_W, KEY_H, &SEQ_G_SEMI, &mut defs, &mut rects);
 
     // Arrow keys — inverted T on far right
     // Bottom row of arrows: left, down, right
