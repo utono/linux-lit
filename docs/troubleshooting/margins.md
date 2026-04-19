@@ -1,3 +1,31 @@
+# Margins & Bottom Clip
+
+## Margin settings by genre
+
+**Card outer margins (same for all genres)** — `src/app.rs:596-599`
+- top: 24px, bottom: 24px, start: 24px, end: 24px
+
+**Top spacer (inside the card, above first text line)** — `src/app.rs:294` (`TOP_SPACER_HEIGHT`), applied at `src/app.rs:364`, `src/app.rs:570`, `src/app.rs:2092`
+- Fixed 40px, chosen to mirror the bottom zone so top/bottom stay symmetric at any font size.
+
+**Bottom breathing room** — `text_view.bottom_margin = 10` + `bottom_clip` (dynamic) + `page_line_label.margin_bottom = 10` (`src/app.rs:700`)
+
+**Text-view left offset (genre-specific)** — `src/app.rs:288-336`
+- Prose: `text_margins + 120px` (monocle) / `text_margins + 0` (tiled)
+- Verse (plays/poetry): `text_margins + 260px` (monocle) / `text_margins + 0` (tiled)
+
+**Line spacing (genre-specific)** — `src/app.rs:1320-1324`
+- Prose: `config.line_spacing`
+- Verse (plays, poems, epics): 0px tight
+
+**Font size (genre-specific)** — `src/app.rs:1428-1432`
+- Prose: `default_font_size()` (20pt)
+- Verse: 18pt
+
+**Top/bottom symmetry:** the card's outer margins are 24px/24px. Inside the card, the top reserves `TOP_SPACER_HEIGHT = 40px` and the bottom reserves roughly the same (`text_view.bottom_margin 10` + page-label ~20 + `page_line_label.margin_bottom 10`). `bottom_clip` only consumes leftover pixels that can't fit a full line, so it doesn't add visible offset when the page fits cleanly.
+
+---
+
 # Bottom Clip & Descender Clipping
 
 This document consolidates the history of a recurring problem: the bottom edge

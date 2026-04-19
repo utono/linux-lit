@@ -287,6 +287,11 @@ impl AppState {
 /// the card and isn't pushed off-center.
 pub const VERSE_LEFT_OFFSET: i32 = 260;
 pub const PROSE_LEFT_OFFSET: i32 = 120;
+
+/// Fixed height for the top spacer above the first text line.
+/// Mirrors the bottom zone (text_view.bottom_margin + page_label height + page_label.margin_bottom)
+/// so the card has visually symmetric top/bottom breathing room at any font size.
+pub const TOP_SPACER_HEIGHT: i32 = 40;
 pub fn verse_left_offset(window_width: i32, column_width: u32) -> i32 {
     let card_w = (column_width as i32).min(window_width.max(1));
     let slack = window_width - card_w;
@@ -353,11 +358,10 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
         }
     }
 
-    // Top spacer: one line of breathing room above the first text line.
-    // The bottom breathing room is provided by bottom_clip + the
-    // page_line_label's bottom margin inside scrolled_overlay.
-    let line_h = measure_line_height(&state.text_view);
-    state.top_spacer.set_height_request(line_h);
+    // Top spacer: fixed breathing room that mirrors the bottom zone
+    // (text_view.bottom_margin + page_line_label height + page_line_label.margin_bottom).
+    // Using a fixed value keeps top/bottom symmetric across font sizes.
+    state.top_spacer.set_height_request(TOP_SPACER_HEIGHT);
 
     // Label placement:
     //   Tile mode — align the label's left edge with the speaker labels in
@@ -563,7 +567,7 @@ pub fn build_window(
     // Top spacer — one line height, rounded top corners only
     let top_spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
     top_spacer.set_hexpand(true);
-    top_spacer.set_height_request(24); // updated dynamically after font metrics known
+    top_spacer.set_height_request(TOP_SPACER_HEIGHT);
     top_spacer.add_css_class("card-top");
 
     // Vertical card assembly: top spacer + scrolled area. No bottom spacer —
@@ -2080,40 +2084,12 @@ fn map_line_before_insert(buf_line: usize, translation_lines: &[bool]) -> usize 
     orig
 }
 
-/// Measure the pixel height of a representative buffer line.
-fn measure_line_height(text_view: &sourceview5::View) -> i32 {
-    let buf = text_view.buffer();
-    // Find the most common (modal) single-line height by sampling the first
-    // 40 buffer lines.  Long stage directions and blank lines can have very
-    // different heights, so using line 0 alone is unreliable.
-    let sample = buf.line_count().min(40);
-    let mut heights: Vec<i32> = Vec::new();
-    for i in 0..sample {
-        if let Some(iter) = buf.iter_at_line(i) {
-            let (_y, h) = text_view.line_yrange(&iter);
-            if h > 0 {
-                heights.push(h);
-            }
-        }
-    }
-    if heights.is_empty() {
-        return 30; // fallback
-    }
-    heights.sort();
-    // The mode (most common value) is the best representative of a normal
-    // text line.  For a sorted vec the mode sits in the densest cluster —
-    // the median is a good-enough proxy.
-    heights[heights.len() / 2].max(1)
-}
-
 /// Reapply font size using a TextTag spanning the entire buffer.
 
-/// Update top/bottom spacer heights to match one line of text.
+/// Keep top spacer at fixed TOP_SPACER_HEIGHT so the card's top breathing
+/// room mirrors the bottom (text_view.bottom_margin + page_label zone).
 fn update_spacer_heights(state: &AppState) {
-    let line_height = measure_line_height(&state.text_view);
-    state.top_spacer.set_height_request(line_height);
-    // Bottom breathing room comes from bottom_clip (dynamic, covers partial
-    // and trimmed lines) plus the page_line_label's own margin_bottom.
+    state.top_spacer.set_height_request(TOP_SPACER_HEIGHT);
 }
 
 fn reapply_font(state: &AppState) {
