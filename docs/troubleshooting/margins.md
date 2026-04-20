@@ -8,7 +8,7 @@
 **Top spacer (inside the card, above first text line)** — `src/app.rs:294` (`TOP_SPACER_HEIGHT`), applied at `src/app.rs:364`, `src/app.rs:570`, `src/app.rs:2092`
 - Fixed 40px, chosen to mirror the bottom zone so top/bottom stay symmetric at any font size.
 
-**Bottom breathing room** — `text_view.bottom_margin = 10` + `bottom_clip` (dynamic) + `page_line_label.margin_bottom = 10` (`src/app.rs:700`)
+**Bottom breathing room** — `text_view.bottom_margin = 40` + `bottom_clip` (dynamic) + `page_line_label.margin_bottom = 10` (`src/app.rs:700`). The 40px matches `TOP_SPACER_HEIGHT` so the last text line and the first text line sit the same distance from the card's rounded edges. Visibility and clip calculations (`last_fully_visible_line`, `is_line_fully_visible`, `update_bottom_clip`, `lines_per_page`) subtract `bottom_margin` from `text_view.height()` because GTK reserves that zone below the last rendered line — it is not available to text.
 
 **Text-view left offset (genre-specific)** — `src/app.rs:288-336`
 - Prose: `text_margins + 120px` (monocle) / `text_margins + 0` (tiled)
@@ -22,7 +22,7 @@
 - Prose: `default_font_size()` (20pt)
 - Verse: 18pt
 
-**Top/bottom symmetry:** the card's outer margins are 24px/24px. Inside the card, the top reserves `TOP_SPACER_HEIGHT = 40px` and the bottom reserves roughly the same (`text_view.bottom_margin 10` + page-label ~20 + `page_line_label.margin_bottom 10`). `bottom_clip` only consumes leftover pixels that can't fit a full line, so it doesn't add visible offset when the page fits cleanly.
+**Top/bottom symmetry:** the card's outer margins are 24px/24px. Inside the card, both ends reserve 40px: `TOP_SPACER_HEIGHT` on top and `text_view.bottom_margin` on the bottom. The page label is overlaid within the bottom 40px (valign: End, `margin_bottom: 10`), so it no longer touches the last line of text. `bottom_clip` only consumes leftover pixels that can't fit a full line, so it doesn't add visible offset when the page fits cleanly.
 
 ---
 
@@ -37,15 +37,15 @@ has resolved one facet while re-creating another.
 
 ```
 card_vbox                (vertical Box)
-├─ top_spacer            (fixed height; one line_h)
-├─ scrolled_overlay      (vexpand — grows to fill remaining space)
-│  ├─ scrolled_window
-│  │  └─ text_view       (sourceview5::View)
-│  └─ bottom_clip        (Overlay child, valign: End, covers bottom N px)
-└─ bottom_spacer         (contains the page-line label at valign: End)
+├─ top_spacer            (fixed TOP_SPACER_HEIGHT = 40px)
+└─ scrolled_overlay      (vexpand — grows to fill remaining space)
+   ├─ scrolled_window
+   │  └─ text_view       (sourceview5::View; bottom_margin = 40px)
+   ├─ bottom_clip        (Overlay child, valign: End, covers bottom N px)
+   └─ page_line_label    (Overlay child, valign: End, margin_bottom 10px)
 ```
 
-Key invariant: `scrolled_overlay.height = card_vbox.height - top_spacer.height - bottom_spacer.height`. Any change to `bottom_spacer` reflows `scrolled_overlay`, which changes `text_view.height()`, which changes how many lines fit, which changes the clip height.
+Key invariant: `scrolled_overlay.height = card_vbox.height - top_spacer.height`. The bottom breathing room lives inside `text_view` as the bottom margin rather than as a sibling spacer, so nothing that depends on clip height feeds back into layout.
 
 ## Facet 1 — Descenders Clipped (original bug)
 
@@ -62,7 +62,7 @@ A second circular dependency existed: `lines_per_page` walked the buffer calling
 - `lines_per_page` caps its walk at the same point.
 - `is_line_fully_visible` uses a plain range check: `line >= page_top && line < page_top + lpp - 1`.
 
-**Why not `text_view.set_bottom_margin()`?** The clip overlay sits on top of the scrolled window as a sibling overlay and would cover any margin. The margin approach is incompatible with the overlay-based architecture.
+**On `text_view.set_bottom_margin()`:** Historically avoided because the clip overlay would visually cover any margin. With the Option 4 layout (label moved into `scrolled_overlay`, `bottom_spacer` removed) the margin approach is viable and is now used for the 40px bottom breathing room. `update_bottom_clip`, `is_line_fully_visible`, `last_fully_visible_line`, and `lines_per_page` subtract `text_view.bottom_margin()` from `usable_height` so pagination does not over-count lines into the reserved padding zone.
 
 **Why not `buffer_to_window_coords`?** It returns stale values inside the `idle_add_local_once` callback where the clip is updated — the scroll from `scroll_to_iter` hasn't fully committed yet. `line_yrange` avoids this.
 
@@ -181,14 +181,23 @@ Attempted fixes 1 and 2 were reverted and Option 4 was implemented.
 
 **Variable bottom gap is now intentional and absorbed.** Pages with trimmed trailing speaker names show a slightly larger visual gap at the bottom (because `bottom_clip` is taller). That gap is inside the card's rounded bottom and reads as natural breathing room, not as a broken layout.
 
+## Facet 4 — Text Touching the Card's Bottom Edge (2026-04-19)
+
+**Symptom:** With the Option 4 layout in place, the last visible line of text sat flush against the rounded bottom of the card. The page label overlay (`valign: End`, `margin_bottom: 10`) rendered on top of that text instead of below it, and the top/bottom breathing room inside the card was visibly asymmetric (40px top, ~10px bottom).
+
+**Root cause:** `text_view.set_bottom_margin(10)` reserved only 10px below the last line. The comment in `margins.md` claimed this plus the overlay label gave ~40px of bottom breathing room, but the label is an overlay and consumes no layout space — only the text-view margin is real padding.
+
+**Fix:** Raise `text_view.set_bottom_margin` from 10 → 40 so the bottom matches `TOP_SPACER_HEIGHT`. All pagination helpers that use `text_view.height()` as viewport size (`last_fully_visible_line`, `is_line_fully_visible`, `update_bottom_clip`, `lines_per_page`) now subtract `text_view.bottom_margin()` from `usable_height`; otherwise they would count lines into the reserved padding zone and trigger a partial-line clip or unwanted page turn.
+
+**Why this doesn't reintroduce the feedback loop:** the bottom margin is a property of `text_view` itself, not a sibling widget. Changing the margin does not reflow `scrolled_overlay`; `text_view.height()` stays constant and GTK shrinks its own text rendering area internally. None of the coupled quantities from Facet 3 are touched.
+
 ## Relevant Code
 
 - `src/input/navigation.rs`:
-  - `update_bottom_clip` — main clip computation, trailing-speaker trim loop
-  - `recompute_bottom_clip_only` — second-pass clip update (attempted fix 2)
+  - `update_bottom_clip` — clip computation, trailing-speaker trim loop; subtracts `bottom_margin` from usable height
+  - `last_fully_visible_line` / `is_line_fully_visible` / `lines_per_page` — pagination helpers using the same bottom-margin-aware cap
   - `descender_guard_px` — per-line-height guard computation
-  - `is_line_fully_visible`, `lines_per_page` — pagination using the same cap
 - `src/app.rs`:
-  - `apply_tiled_mode` — sets `top_spacer` height; previously set `bottom_spacer` too
-  - `update_spacer_heights` — now only updates top_spacer
-  - Widget construction at ~line 560 — `top_spacer`, `bottom_spacer`, `bottom_clip` setup
+  - `apply_tiled_mode` — sets `top_spacer` height from `TOP_SPACER_HEIGHT`
+  - `update_spacer_heights` — only touches `top_spacer`
+  - Widget construction at ~line 530–570 — `text_view.set_bottom_margin(40)`, `top_spacer`, `bottom_clip`, `page_line_label` overlay setup

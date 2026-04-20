@@ -111,7 +111,8 @@ fn last_fully_visible_line(state: &AppState) -> usize {
     }
     let line_count = state.effective_line_count();
     let descender_guard = descender_guard_px(&state.text_view, state.page_top_line);
-    let usable_height = widget_height - descender_guard;
+    let bottom_margin = state.text_view.bottom_margin();
+    let usable_height = widget_height - descender_guard - bottom_margin;
     let mut total = 0;
     let mut last = state.page_top_line;
     for i in state.page_top_line..line_count {
@@ -690,8 +691,11 @@ fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
     }
     // Sum line heights from page_top to determine if `line` fits in the viewport.
     // Reserve a descender guard so the last line's descenders aren't clipped.
+    // Also subtract text_view.bottom_margin — GTK reserves that space below the
+    // last rendered line and it's not available for text.
     let descender_guard = descender_guard_px(&state.text_view, state.page_top_line);
-    let usable_height = state.text_view.height() - descender_guard;
+    let bottom_margin = state.text_view.bottom_margin();
+    let usable_height = state.text_view.height() - descender_guard - bottom_margin;
     let buf = &state.buffer;
     let mut total_height = 0;
     for i in state.page_top_line..=line {
@@ -1093,8 +1097,11 @@ fn update_bottom_clip(
     // Walk lines from page_top, summing heights until we exceed the viewport.
     // Reserve a descender guard based on the actual font descent so the clip
     // doesn't eat into the last visible line's descenders (g, p, y, q, j).
+    // Subtract text_view.bottom_margin — GTK reserves that area below the last
+    // line for padding, and it cannot be used for text rendering.
     let descender_guard = descender_guard_px(text_view, page_top);
-    let usable_height = widget_height - descender_guard;
+    let bottom_margin = text_view.bottom_margin();
+    let usable_height = widget_height - descender_guard - bottom_margin;
 
     let mut total_height = 0;
     let mut any_nonzero = false;
@@ -1520,9 +1527,11 @@ fn lines_per_page(state: &AppState) -> usize {
     }
 
     // Sum line heights to count how many fit in the viewport.
-    // Reserve a descender guard so the last line's descenders aren't clipped.
+    // Reserve a descender guard so the last line's descenders aren't clipped,
+    // and subtract the text_view bottom margin which GTK reserves for padding.
     let descender_guard = descender_guard_px(&state.text_view, start);
-    let usable_height = state.text_view.height() - descender_guard;
+    let bottom_margin = state.text_view.bottom_margin();
+    let usable_height = state.text_view.height() - descender_guard - bottom_margin;
     let buf = &state.buffer;
     let mut total_height = 0;
     let mut count = 0;
