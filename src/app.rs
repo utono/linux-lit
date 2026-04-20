@@ -124,6 +124,7 @@ pub struct AppState {
     pub vocab_popup_index: usize,
     pub vocab_popup_view: crate::ui::vocab_popup::VocabView,
     pub vocab_popup_auto: bool,
+    pub vocab_popup_line: Option<usize>,
     /// Generation counter for the vocab popup auto-hide timer. Incremented
     /// on each backslash/numbersign press; when the timer fires it only hides
     /// if the generation hasn't changed.
@@ -806,6 +807,7 @@ pub fn build_window(
         vocab_popup_index: 0,
         vocab_popup_view: crate::ui::vocab_popup::VocabView::Definition,
         vocab_popup_auto: false,
+        vocab_popup_line: None,
         vocab_popup_fade_gen: Rc::new(Cell::new(0)),
         concordance_picker,
         concordance_state: None,
@@ -2336,22 +2338,22 @@ pub fn open_vocab_popup(state: &mut AppState) {
         Some(line.citation.clone())
     });
 
-    // Collect unique vocab words in the current paragraph
-    let para_range = state.current_paragraph_range();
+    // Collect unique vocab words on the current line
+    let current_line = state.current_line;
     crate::logging::log(&format!(
-        "VOCAB POPUP: current_line={} paragraph={}..{}", state.current_line, para_range.start, para_range.end
+        "VOCAB POPUP: current_line={}", current_line
     ));
     let mut seen = std::collections::HashSet::new();
     let words: Vec<String> = state
         .vocab_matches
         .iter()
-        .filter(|m| para_range.contains(&m.line_index))
+        .filter(|m| m.line_index == current_line)
         .filter(|m| seen.insert(m.word.clone()))
         .map(|m| m.word.clone())
         .collect();
 
     if words.is_empty() {
-        crate::logging::log("VOCAB POPUP: no vocab words in current paragraph");
+        crate::logging::log("VOCAB POPUP: no vocab words on current line");
         return;
     }
     crate::logging::log(&format!("VOCAB POPUP: {} words: {:?}", words.len(), words));
@@ -2375,6 +2377,7 @@ pub fn open_vocab_popup(state: &mut AppState) {
 
     state.vocab_popup_index = 0;
     state.vocab_popup_view = VocabView::Definition;
+    state.vocab_popup_line = Some(current_line);
 
     update_vocab_popup_margin(state);
     show_vocab_popup(state);
@@ -2446,17 +2449,20 @@ pub fn refresh_vocab_popup(state: &mut AppState) {
         Some(line.citation.clone())
     });
 
-    let para_range = state.current_paragraph_range();
+    let current_line = state.current_line;
     let mut seen = std::collections::HashSet::new();
     let words: Vec<String> = state
         .vocab_matches
         .iter()
-        .filter(|m| para_range.contains(&m.line_index))
+        .filter(|m| m.line_index == current_line)
         .filter(|m| seen.insert(m.word.clone()))
         .map(|m| m.word.clone())
         .collect();
 
     if words.is_empty() {
+        state.vocab_popup_data.clear();
+        state.vocab_popup.hide();
+        state.vocab_popup_line = Some(current_line);
         return;
     }
 
@@ -2479,6 +2485,7 @@ pub fn refresh_vocab_popup(state: &mut AppState) {
 
     state.vocab_popup_index = 0;
     state.vocab_popup_view = VocabView::Definition;
+    state.vocab_popup_line = Some(current_line);
     show_vocab_popup(state);
 }
 

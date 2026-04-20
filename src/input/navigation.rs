@@ -188,17 +188,34 @@ pub fn page_forward(state: &mut AppState) {
     update_highlight(state);
     seek_to_current_line(state);
     set_page(state, new_top, PageDirection::Forward);
+    auto_show_vocab_popup(state);
 }
 
 /// Page backward (Shift+,). Pop the previous page_top from the history
 /// stack so we return to exactly the same page that page_forward came from.
+/// When the history stack is empty (e.g. resumed mid-book, or user has paged
+/// back through all history), compute a previous page by stepping one
+/// viewport-height of lines up from the current page_top.
 pub fn page_backward(state: &mut AppState) {
     if state.current_work.is_none() {
         return;
     }
 
-    let Some(prev_top) = state.page_history.pop() else {
-        return; // no history, already at first page
+    let prev_top = match state.page_history.pop() {
+        Some(t) => t,
+        None => {
+            if state.page_top_line == 0 {
+                log_fmt!("PAGE_BWD: no history and at start of work");
+                return;
+            }
+            let lpp = lines_per_page(state).max(1);
+            let fallback = state.page_top_line.saturating_sub(lpp);
+            log_fmt!(
+                "PAGE_BWD: no history — fallback prev_top={} from page_top={} lpp={}",
+                fallback, state.page_top_line, lpp
+            );
+            fallback
+        }
     };
 
     let line_count = state.effective_line_count();
@@ -211,6 +228,7 @@ pub fn page_backward(state: &mut AppState) {
     update_highlight(state);
     seek_to_current_line(state);
     set_page(state, new_top, PageDirection::Backward);
+    auto_show_vocab_popup(state);
 }
 
 /// Move cursor to the last fully visible line on the current page (`Q` key).
@@ -225,6 +243,7 @@ pub fn cursor_to_page_bottom(state: &mut AppState) {
         state.pending_advance_ignore_bl = None;
         update_highlight(state);
         seek_to_current_line(state);
+        auto_show_vocab_popup(state);
     }
 }
 
@@ -247,6 +266,7 @@ pub fn page_backward_bottom(state: &mut AppState) {
     state.pending_advance_ignore_bl = None;
     update_highlight(state);
     seek_to_current_line(state);
+    auto_show_vocab_popup(state);
 }
 
 /// Previous dialogue line (`,` key).
@@ -1325,15 +1345,14 @@ fn auto_show_vocab_popup(state: &mut AppState) {
     if !state.vocab_popup_auto {
         return;
     }
-    if state.vocab_popup.is_visible() {
-        // Only refresh when paragraph changes — avoid resetting word/view
-        // position on every line advance within the same paragraph.
-        let para = state.current_paragraph_range();
-        if state.current_paragraph_start != Some(para.start) {
+    // Refresh whenever the current line changes; the refresh function
+    // decides whether to show (line has vocab words) or hide (line has none).
+    if state.vocab_popup_line != Some(state.current_line) {
+        if state.vocab_popup.is_visible() {
             crate::app::refresh_vocab_popup(state);
+        } else {
+            crate::app::open_vocab_popup(state);
         }
-    } else {
-        crate::app::open_vocab_popup(state);
     }
 }
 
@@ -1555,6 +1574,7 @@ pub fn jump_to_next_vocab(state: &mut AppState) {
         }
     }
     seek_to_current_line(state);
+    auto_show_vocab_popup(state);
 }
 
 
@@ -1589,6 +1609,7 @@ pub fn jump_to_prev_vocab(state: &mut AppState) {
         crate::config::NavigationMode::EReader => scroll_to_cursor(state),
     }
     seek_to_current_line(state);
+    auto_show_vocab_popup(state);
 }
 
 // --- Cross-work concordance navigation ---
