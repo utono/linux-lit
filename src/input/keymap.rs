@@ -1383,9 +1383,10 @@ pub fn handle_key(
             };
             let mut s = state.borrow_mut();
             let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SeekRelative(offset));
-            // Suppress cursor sync so the seek doesn't move the cursor line
+            // Brief suppression while MPV processes the seek; sync resumes afterwards
+            // so the cursor follows audio to the new position.
             s.suppress_sync_until = Some(
-                std::time::Instant::now() + std::time::Duration::from_secs(86400),
+                std::time::Instant::now() + std::time::Duration::from_millis(500),
             );
             true
         }
@@ -1468,8 +1469,9 @@ pub fn handle_key(
         "Left" => {
             let mut s = state.borrow_mut();
             let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SeekRelative(-30.0));
+            // Brief suppression while MPV processes the seek; sync resumes afterwards.
             s.suppress_sync_until = Some(
-                std::time::Instant::now() + std::time::Duration::from_secs(86400),
+                std::time::Instant::now() + std::time::Duration::from_millis(500),
             );
             true
         }
