@@ -179,6 +179,12 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
 }
 
 /// Load translations for a work, keyed by line_mapping.id.
+///
+/// For `-Amb` (Ambrose edition) works, translations are stored against the
+/// base edition's line_mapping rows. If the direct query returns nothing,
+/// fall back to matching Ambrose lines to base-edition lines by
+/// (div1, div2, normalized_text) and key the translations to the Ambrose
+/// line_mapping.id so the app's existing lookup by line.id works unchanged.
 pub fn load_translations(
     conn: &Connection,
     abbrev: &str,
@@ -197,6 +203,31 @@ pub fn load_translations(
         let (id, translation) = row?;
         map.insert(id, translation);
     }
+
+    if map.is_empty() {
+        if let Some(base) = abbrev.strip_suffix("-Amb") {
+            let mut stmt = conn.prepare(
+                "SELECT a.id, MIN(lt.translation) \
+                 FROM line_mapping a \
+                 JOIN line_mapping b \
+                   ON b.work_abbrev = ?2 \
+                  AND b.div1 = a.div1 \
+                  AND b.div2 = a.div2 \
+                  AND b.normalized_text = a.normalized_text \
+                 JOIN line_translations lt ON lt.line_mapping_id = b.id \
+                 WHERE a.work_abbrev = ?1 \
+                 GROUP BY a.id",
+            )?;
+            let rows = stmt.query_map([abbrev, base], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?;
+            for row in rows {
+                let (id, translation) = row?;
+                map.insert(id, translation);
+            }
+        }
+    }
+
     Ok(map)
 }
 
@@ -681,6 +712,27 @@ mod tests {
         // Hamlet may or may not have translations — just verify no crash
         // and that the return type is correct
         assert!(translations.len() >= 0);
+    }
+
+    #[test]
+    fn test_load_translations_ambrose_fallback() {
+        let conn = open_db().unwrap();
+        let translations = load_translations(&conn, "Err-Amb").unwrap();
+        assert!(
+            !translations.is_empty(),
+            "Err-Amb should get translations via -Amb fallback to Err"
+        );
+        let amb_ids: std::collections::HashSet<i64> = conn
+            .prepare("SELECT id FROM line_mapping WHERE work_abbrev='Err-Amb'")
+            .unwrap()
+            .query_map([], |row| row.get::<_, i64>(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert!(
+            translations.keys().all(|k| amb_ids.contains(k)),
+            "Keys must be Err-Amb line_mapping.id, not Err's"
+        );
     }
 
     #[test]
