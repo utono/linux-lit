@@ -150,8 +150,13 @@ fn main() {
 
                         if s.current_line != buffer_line {
                             crate::logging::log(&format!(
-                                "CURSOR_SYNC: line_idx={} buffer_line={} current={} page_top={}",
-                                line_idx, buffer_line, s.current_line, s.page_top_line
+                                "CURSOR_SYNC: line_idx={} buffer_line={} current={} page_top={} translations_visible={} buf_lines={}",
+                                line_idx,
+                                buffer_line,
+                                s.current_line,
+                                s.page_top_line,
+                                s.translations_visible,
+                                s.buffer.line_count(),
                             ));
                             s.current_line = buffer_line;
 

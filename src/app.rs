@@ -111,6 +111,7 @@ pub struct AppState {
     pub action_popup: Option<crate::input::visual::ActionPopupState>,
     pub action_popup_widget: crate::ui::action_popup::ActionPopup,
     pub keybinds_overlay: crate::ui::keybinds_overlay::KeybindsOverlay,
+    pub gamepad_overlay: crate::ui::gamepad_overlay::GamepadOverlay,
     pub correction_overlay: crate::ui::correction_overlay::CorrectionOverlay,
     pub gloss_original_text: Option<String>,
     pub vocab_words: std::collections::HashSet<String>,
@@ -474,6 +475,8 @@ pub fn build_window(
 
     let translation_text_tag = gtk4::TextTag::builder()
         .name("translation-text")
+        .pixels_above_lines(0)
+        .pixels_below_lines(0)
         .build();
     buffer.tag_table().add(&translation_text_tag);
 
@@ -634,9 +637,14 @@ pub fn build_window(
     keybinds_overlay.attach(&settings_overlay.overlay);
     keybinds_overlay.overlay.set_vexpand(true);
 
-    // Correction overlay wraps the keybinds overlay
+    // Gamepad overlay wraps the keybinds overlay
+    let gamepad_overlay = crate::ui::gamepad_overlay::GamepadOverlay::new();
+    gamepad_overlay.attach(&keybinds_overlay.overlay);
+    gamepad_overlay.overlay.set_vexpand(true);
+
+    // Correction overlay wraps the gamepad overlay
     let correction_overlay = crate::ui::correction_overlay::CorrectionOverlay::new(config.column_width);
-    correction_overlay.attach(&keybinds_overlay.overlay);
+    correction_overlay.attach(&gamepad_overlay.overlay);
     correction_overlay.overlay.set_vexpand(true);
 
     // Concordance picker wraps the correction overlay
@@ -794,6 +802,7 @@ pub fn build_window(
         action_popup: None,
         action_popup_widget,
         keybinds_overlay,
+        gamepad_overlay,
         correction_overlay,
         gloss_original_text: None,
         vocab_words: std::collections::HashSet::new(),
@@ -1900,6 +1909,16 @@ pub fn toggle_translations(state: &mut AppState) {
         return;
     }
 
+    crate::logging::log(&format!(
+        "TRANSLATIONS: toggle entry visible={} buf_lines={} translations={} current_line={} page_top={} line_map={}",
+        state.translations_visible,
+        state.buffer.line_count(),
+        state.translations.len(),
+        state.current_line,
+        state.page_top_line,
+        state.line_map.is_some(),
+    ));
+
     if state.translations_visible {
         hide_translations(state);
     } else {
@@ -1910,12 +1929,32 @@ pub fn toggle_translations(state: &mut AppState) {
 fn show_translations(state: &mut AppState) {
     let work = match &state.current_work {
         Some(w) => w,
-        None => return,
+        None => {
+            crate::logging::log("TRANSLATIONS: show aborted — no current_work");
+            return;
+        }
     };
+
+    // Capture the cursor's on-screen y-position BEFORE mutating the buffer.
+    // The cursor is the user's visual anchor — keep it at the same screen
+    // position after inserts so the viewport does not appear to scroll.
+    let pre_adj_value = state.scrolled_window.vadjustment().value();
+    let cursor_screen_y = state
+        .buffer
+        .iter_at_line(state.current_line as i32)
+        .map(|iter| {
+            let (y, _h) = state.text_view.line_yrange(&iter);
+            y as f64 - pre_adj_value
+        });
 
     // Build a list of (buffer_line, translation_text) pairs
     let mut inserts: Vec<(usize, String)> = Vec::new();
     let line_count = state.buffer.line_count() as usize;
+    let lm_len = state
+        .line_map
+        .as_ref()
+        .map(|lm| lm.buffer_to_work.len())
+        .unwrap_or(0);
 
     for buf_line in 0..line_count {
         let work_idx = state.work_line_for_buffer(buf_line);
@@ -1927,6 +1966,14 @@ fn show_translations(state: &mut AppState) {
             }
         }
     }
+
+    crate::logging::log(&format!(
+        "TRANSLATIONS: show scan buf_lines={} line_map_len={} work_lines={} inserts={}",
+        line_count,
+        lm_len,
+        work.lines.len(),
+        inserts.len(),
+    ));
 
     // Insert bottom-to-top to avoid index shifting
     for (buf_line, text) in inserts.iter().rev() {
@@ -1972,7 +2019,7 @@ fn show_translations(state: &mut AppState) {
     state.translation_lines = tl;
 
     // Configure the translation tag with current font (italic, 2pt smaller)
-    let trans_size = state.config.font_size.saturating_sub(2);
+    let trans_size = state.config.font_size.saturating_sub(4);
     let desc = pango::FontDescription::from_string(
         &format!("{} Italic {}", state.config.font_family, trans_size),
     );
@@ -1996,17 +2043,59 @@ fn show_translations(state: &mut AppState) {
     state.translation_text_tag.set_priority(highest);
 
     // Adjust current_line and page_top_line to account for inserted lines
+    let old_current = state.current_line;
+    let old_top = state.page_top_line;
     state.current_line = map_line_after_insert(state.current_line, &inserts);
     state.page_top_line = map_line_after_insert(state.page_top_line, &inserts);
 
     state.translations_visible = true;
 
     reapply_font(state);
-    crate::input::navigation::update_highlight_and_ensure_visible(state);
+    // Repaint the cursor highlight but do NOT page-turn. Restore scroll so
+    // the cursor stays at the same on-screen y-position the user was looking
+    // at before the toggle (anchor on the highlight, not on page_top).
+    crate::input::navigation::update_highlight_only(state);
 
+    let cur_y = state
+        .buffer
+        .iter_at_line(state.current_line as i32)
+        .map(|iter| state.text_view.line_yrange(&iter).0 as f64);
+    let adj = state.scrolled_window.vadjustment();
+    let adj_upper = adj.upper();
+    let adj_page = adj.page_size();
+    let new_adj = match (cur_y, cursor_screen_y) {
+        (Some(y), Some(sy)) => Some((y - sy).max(0.0).min((adj_upper - adj_page).max(0.0))),
+        _ => None,
+    };
     crate::logging::log(&format!(
-        "TRANSLATIONS: shown ({} translation lines inserted)",
+        "TRANSLATIONS: anchor cur_y={:?} cursor_screen_y={:?} upper={} page={} new_adj={:?}",
+        cur_y, cursor_screen_y, adj_upper as i64, adj_page as i64, new_adj
+    ));
+    if let Some(val) = new_adj {
+        adj.set_value(val);
+    }
+
+    let new_buf_lines = state.buffer.line_count() as usize;
+    let lm_len_after = state
+        .line_map
+        .as_ref()
+        .map(|lm| lm.buffer_to_work.len())
+        .unwrap_or(0);
+    let line_map_stale = lm_len_after != new_buf_lines;
+    let post_adj_value = state.scrolled_window.vadjustment().value();
+    crate::logging::log(&format!(
+        "TRANSLATIONS: shown inserted={} buf_lines {}->{} current {}->{} page_top {}->{} line_map_len={} stale={} adj {}->{}",
         inserts.len(),
+        new_buf_lines.saturating_sub(inserts.len()),
+        new_buf_lines,
+        old_current,
+        state.current_line,
+        old_top,
+        state.page_top_line,
+        lm_len_after,
+        line_map_stale,
+        pre_adj_value as i64,
+        post_adj_value as i64,
     ));
 }
 
@@ -2024,6 +2113,17 @@ fn map_line_after_insert(orig_line: usize, inserts: &[(usize, String)]) -> usize
 }
 
 fn hide_translations(state: &mut AppState) {
+    // Capture the cursor's on-screen y-position BEFORE removing lines so we
+    // can restore it afterwards — the cursor is the user's visual anchor.
+    let pre_adj_value = state.scrolled_window.vadjustment().value();
+    let cursor_screen_y = state
+        .buffer
+        .iter_at_line(state.current_line as i32)
+        .map(|iter| {
+            let (y, _h) = state.text_view.line_yrange(&iter);
+            y as f64 - pre_adj_value
+        });
+
     // Remove translation lines from buffer bottom-to-top
     let line_count = state.buffer.line_count() as usize;
     for i in (0..line_count).rev() {
@@ -2059,6 +2159,7 @@ fn hide_translations(state: &mut AppState) {
     // Reverse-map current_line and page_top_line
     let old_current = state.current_line;
     let old_top = state.page_top_line;
+    let pre_hide_buf_lines = line_count;
     state.current_line = map_line_before_insert(old_current, &state.translation_lines);
     state.page_top_line = map_line_before_insert(old_top, &state.translation_lines);
 
@@ -2066,9 +2167,42 @@ fn hide_translations(state: &mut AppState) {
     state.translations_visible = false;
 
     reapply_font(state);
-    crate::input::navigation::update_highlight_and_ensure_visible(state);
+    // Repaint highlight but do NOT page-turn. Restore scroll so the cursor
+    // sits at the same on-screen y-position the user had before the toggle.
+    crate::input::navigation::update_highlight_only(state);
 
-    crate::logging::log("TRANSLATIONS: hidden");
+    let cur_y = state
+        .buffer
+        .iter_at_line(state.current_line as i32)
+        .map(|iter| state.text_view.line_yrange(&iter).0 as f64);
+    let adj = state.scrolled_window.vadjustment();
+    let adj_upper = adj.upper();
+    let adj_page = adj.page_size();
+    let new_adj = match (cur_y, cursor_screen_y) {
+        (Some(y), Some(sy)) => Some((y - sy).max(0.0).min((adj_upper - adj_page).max(0.0))),
+        _ => None,
+    };
+    crate::logging::log(&format!(
+        "TRANSLATIONS: anchor cur_y={:?} cursor_screen_y={:?} upper={} page={} new_adj={:?}",
+        cur_y, cursor_screen_y, adj_upper as i64, adj_page as i64, new_adj
+    ));
+    if let Some(val) = new_adj {
+        adj.set_value(val);
+    }
+
+    let new_buf_lines = state.buffer.line_count() as usize;
+    let post_adj_value = state.scrolled_window.vadjustment().value();
+    crate::logging::log(&format!(
+        "TRANSLATIONS: hidden buf_lines {}->{} current {}->{} page_top {}->{} adj {}->{}",
+        pre_hide_buf_lines,
+        new_buf_lines,
+        old_current,
+        state.current_line,
+        old_top,
+        state.page_top_line,
+        pre_adj_value as i64,
+        post_adj_value as i64,
+    ));
 }
 
 /// Map a buffer line index (with translations) back to the original line index.
@@ -2114,7 +2248,7 @@ fn reapply_font(state: &AppState) {
     state.css_provider.load_from_string(&css);
     // Keep translation tag in sync (italic, 2pt smaller) and ensure it
     // overrides the freshly re-added font-size tag.
-    let trans_size = state.config.font_size.saturating_sub(2);
+    let trans_size = state.config.font_size.saturating_sub(4);
     let trans_desc = pango::FontDescription::from_string(
         &format!("{} Italic {}", state.config.font_family, trans_size),
     );

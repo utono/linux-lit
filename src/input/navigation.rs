@@ -277,7 +277,7 @@ pub fn jump_to_prev_dialogue(state: &mut AppState) {
         return;
     }
     let buffer = &state.buffer;
-    if let Some(target) = prev_dialogue_line(buffer, state.current_line) {
+    if let Some(target) = prev_dialogue_line(buffer, &state.translation_lines, state.current_line) {
         let prev = state.current_line;
         state.current_line = target;
         state.pending_advance = None;
@@ -298,7 +298,7 @@ pub fn jump_to_next_dialogue(state: &mut AppState) {
         return;
     }
     let buffer = &state.buffer;
-    if let Some(target) = next_dialogue_line(buffer, state.current_line, line_count) {
+    if let Some(target) = next_dialogue_line(buffer, &state.translation_lines, state.current_line, line_count) {
         let prev_line = state.current_line;
         state.current_line = target;
         state.pending_advance = None;
@@ -311,12 +311,16 @@ pub fn jump_to_next_dialogue(state: &mut AppState) {
     }
 }
 
-/// Move cursor to previous line without seeking media (`j` key).
+/// Move cursor to previous dialogue line without seeking media (`k` key).
 pub fn cursor_prev_line(state: &mut AppState) {
     if state.current_line == 0 {
         return;
     }
-    let target = state.current_line - 1;
+    let buffer = &state.buffer;
+    let Some(target) = prev_dialogue_line(buffer, &state.translation_lines, state.current_line)
+    else {
+        return;
+    };
     state.current_line = target;
     state.pending_advance = None;
     state.pending_advance_ignore_bl = None;
@@ -333,7 +337,7 @@ pub fn cursor_next_dialogue(state: &mut AppState) {
         return;
     }
     let buffer = &state.buffer;
-    if let Some(target) = next_dialogue_line(buffer, state.current_line, line_count) {
+    if let Some(target) = next_dialogue_line(buffer, &state.translation_lines, state.current_line, line_count) {
         let prev_line = state.current_line;
         state.current_line = target;
         state.pending_advance = None;
@@ -452,11 +456,18 @@ fn is_dialogue_line(buffer: &sourceview5::Buffer, line: usize) -> bool {
         && !line_types::is_separator(trimmed)
 }
 
-/// Find the next dialogue line after `current`.
-fn next_dialogue_line(buffer: &sourceview5::Buffer, current: usize, line_count: usize) -> Option<usize> {
+/// Find the next dialogue line after `current`. Skips translation lines.
+fn next_dialogue_line(
+    buffer: &sourceview5::Buffer,
+    translation_lines: &[bool],
+    current: usize,
+    line_count: usize,
+) -> Option<usize> {
     let mut i = current + 1;
     while i < line_count {
-        if is_dialogue_line(buffer, i) {
+        if !translation_lines.get(i).copied().unwrap_or(false)
+            && is_dialogue_line(buffer, i)
+        {
             return Some(i);
         }
         i += 1;
@@ -464,14 +475,20 @@ fn next_dialogue_line(buffer: &sourceview5::Buffer, current: usize, line_count: 
     None
 }
 
-/// Find the previous dialogue line before `current`.
-fn prev_dialogue_line(buffer: &sourceview5::Buffer, current: usize) -> Option<usize> {
+/// Find the previous dialogue line before `current`. Skips translation lines.
+fn prev_dialogue_line(
+    buffer: &sourceview5::Buffer,
+    translation_lines: &[bool],
+    current: usize,
+) -> Option<usize> {
     if current == 0 {
         return None;
     }
     let mut i = current - 1;
     loop {
-        if is_dialogue_line(buffer, i) {
+        if !translation_lines.get(i).copied().unwrap_or(false)
+            && is_dialogue_line(buffer, i)
+        {
             return Some(i);
         }
         if i == 0 {
