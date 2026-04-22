@@ -11,6 +11,7 @@ use crate::input::navigation;
 #[derive(Default)]
 pub struct KeyState {
     pub pending_g: bool,
+    pub pending_ctrl_slash: bool,
 }
 
 fn load_selected_work(
@@ -851,12 +852,32 @@ pub fn handle_key(
         }
     }
 
+    // --- Gamepad overlay (when visible) ---
+    let gamepad_visible = state.borrow().gamepad_overlay.is_visible();
+    if gamepad_visible {
+        match key_name {
+            "Escape" => {
+                state.borrow().gamepad_overlay.hide();
+                return true;
+            }
+            _ => return true, // consume all other keys when gamepad overlay visible
+        }
+    }
+
     // --- Keybinds overlay (when visible) ---
     let keybinds_visible = state.borrow().keybinds_overlay.is_visible();
     if keybinds_visible {
         match key_name {
             "Escape" => {
                 state.borrow().keybinds_overlay.hide();
+                return true;
+            }
+            "g" if key_state.borrow().pending_ctrl_slash => {
+                // C-/ g chord: swap to gamepad overlay
+                key_state.borrow_mut().pending_ctrl_slash = false;
+                let s = state.borrow();
+                s.keybinds_overlay.hide();
+                s.gamepad_overlay.show();
                 return true;
             }
             "exclam" => {
@@ -1170,8 +1191,7 @@ pub fn handle_key(
                 return true;
             }
             "i" => {
-                crate::app::toggle_translations(&mut state.borrow_mut());
-                return true;
+                return crate::input::timestamps::set_end_time(&mut state.borrow_mut());
             }
             _ => return false,
         }
@@ -1182,8 +1202,9 @@ pub fn handle_key(
         match key_name {
             "slash" => {
                 let s = state.borrow();
-                if s.keybinds_overlay.is_visible() {
+                if s.keybinds_overlay.is_visible() || s.gamepad_overlay.is_visible() {
                     s.keybinds_overlay.hide();
+                    s.gamepad_overlay.hide();
                 } else {
                     // Hide other overlays before showing keybinds
                     s.picker.hide();
@@ -1193,6 +1214,12 @@ pub fn handle_key(
                     s.correction_overlay.hide();
                     s.keybinds_overlay.show();
                 }
+                // Arm the chord so a following 'g' swaps keybinds → gamepad.
+                key_state.borrow_mut().pending_ctrl_slash = true;
+                let ks = Rc::clone(key_state);
+                glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
+                    ks.borrow_mut().pending_ctrl_slash = false;
+                });
                 return true;
             }
             "backslash" => {
@@ -1327,11 +1354,15 @@ pub fn handle_key(
             true
         }
         "Up" => {
-            navigation::jump_to_prev_paragraph(&mut state.borrow_mut());
+            if is_shift {
+                navigation::page_backward_bottom(&mut state.borrow_mut());
+            } else {
+                navigation::jump_to_prev_dialogue(&mut state.borrow_mut());
+            }
             true
         }
         "Down" => {
-            navigation::jump_to_next_paragraph(&mut state.borrow_mut());
+            navigation::jump_to_next_dialogue(&mut state.borrow_mut());
             true
         }
         "g" => {
@@ -1495,7 +1526,8 @@ pub fn handle_key(
             true
         }
         "i" => {
-            crate::input::timestamps::set_end_time(&mut state.borrow_mut())
+            crate::app::toggle_translations(&mut state.borrow_mut());
+            true
         }
         "BackSpace" => {
             crate::input::timestamps::delete_timestamp(&mut state.borrow_mut())

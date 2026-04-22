@@ -90,6 +90,9 @@ fn main() {
         // Build the window with works list, Tokio handle, and config
         let state = app::build_window(gtk_app, works, tokio_handle, config, cmd_tx);
 
+        // Start background reader for the 8BitDo Micro gamepad (no-op if absent).
+        crate::input::gamepad::spawn(std::rc::Rc::clone(&state));
+
         // Process MPV events — CursorSync updates cursor position
         let state_for_events = std::rc::Rc::clone(&state);
         glib::spawn_future_local(async move {

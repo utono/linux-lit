@@ -1,3 +1,4 @@
+pub mod gamepad;
 pub mod keymap;
 pub mod navigation;
 pub mod search;

@@ -71,7 +71,7 @@ const HOME_ROW: &[KeyDef] = &[
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
     key("e", "E", "seek +3.5", "E: +60", &[]),
     key("u", "U", "start time", "", &[("C-u", "pg back")]),
-    key("i", "I", "set end time", "", &[("M-i", "translations")]),
+    key("i", "I", "translations", "", &[("M-i", "set end time")]),
     key("d", "D", "", "", &[("C-d", "pg fwd"), ("M-d", "dim tog")]),
     bare("h", "H", "auto vocab"),
     ub("t", "T"),
@@ -336,6 +336,28 @@ fn draw_keyboard(cr: &gtk4::cairo::Context, layout: &AllKeys, tooltip_idx: Optio
             };
             let _ = cr.move_to(rect.x + 7.0, y_pos);
             let _ = cr.show_text(def.shift_action);
+        }
+
+        // Alt (M-) action label — always rendered when present so the user
+        // doesn't need to hover. Stacks above the shift/bare action lines.
+        if let Some(alt_action) = def.modifiers.iter().find_map(|(combo, act)| {
+            if combo.starts_with("M-") && !combo.contains("C-") { Some(*act) } else { None }
+        }) {
+            cr.set_source_rgb(0.706, 0.388, 0.478); // love-pink (matches tooltip)
+            cr.set_font_size(11.0);
+            cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
+            // Stack above the existing labels:
+            //   bare only       → alt sits at h-22
+            //   bare + shift    → alt sits at h-36
+            //   shift only      → alt sits at h-22
+            //   no other labels → alt sits at h-8
+            let y_pos = match (!def.action.is_empty(), !def.shift_action.is_empty()) {
+                (true, true) => rect.y + rect.h - 36.0,
+                (true, false) | (false, true) => rect.y + rect.h - 22.0,
+                (false, false) => rect.y + rect.h - 8.0,
+            };
+            let _ = cr.move_to(rect.x + 7.0, y_pos);
+            let _ = cr.show_text(&format!("M-{}", alt_action));
         }
     }
 
