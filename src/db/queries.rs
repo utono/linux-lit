@@ -533,7 +533,7 @@ pub fn upsert_start_time(
         "INSERT INTO line_timestamps (citation, line_mapping_id, media_id, start_time, source) \
          VALUES (?1, ?2, ?3, ?4, 'manual') \
          ON CONFLICT(line_mapping_id, media_id) \
-         DO UPDATE SET start_time = ?4, updated_at = CURRENT_TIMESTAMP",
+         DO UPDATE SET start_time = ?4, source = 'manual', updated_at = CURRENT_TIMESTAMP",
         rusqlite::params![citation, line_mapping_id, media_id, start_time],
     )?;
     Ok(())
@@ -550,7 +550,7 @@ pub fn upsert_chapter(
         "INSERT INTO line_timestamps (citation, line_mapping_id, media_id, start_time, source, is_chapter) \
          VALUES (?1, ?2, ?3, ?4, 'manual', 1) \
          ON CONFLICT(line_mapping_id, media_id) \
-         DO UPDATE SET is_chapter = CASE WHEN is_chapter = 1 THEN 0 ELSE 1 END, updated_at = CURRENT_TIMESTAMP",
+         DO UPDATE SET is_chapter = CASE WHEN is_chapter = 1 THEN 0 ELSE 1 END, source = 'manual', updated_at = CURRENT_TIMESTAMP",
         rusqlite::params![citation, line_mapping_id, media_id, start_time],
     )?;
     let new_val: bool = conn.query_row(

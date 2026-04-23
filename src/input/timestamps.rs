@@ -69,7 +69,7 @@ pub fn set_start_time(state: &mut AppState) -> bool {
             return false;
         }
     };
-    let time_pos = state.current_time_pos;
+    let time_pos = (state.current_time_pos - 0.30).max(0.0);
     let line_idx = match state.work_line_for_buffer(state.current_line) {
         Some(i) => i,
         None => {
