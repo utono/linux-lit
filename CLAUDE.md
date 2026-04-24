@@ -50,6 +50,10 @@ cargo clippy
 
 The user's keyboard layout is Real Programmers Dvorak, defined in `~/utono/rpd`. Keys like `[` and `{` are on separate physical keys (not shift-related). Check the layout when adding keybinds.
 
+## Searching for Keybinds
+
+When searching for a keybind in linux-lit, **always check source** — primarily `src/input/keymap.rs` and the handlers in `src/input/` it dispatches to. **Do not use the `keybinds-search` skill or query `~/utono/keybinds/keybinds.db`** for this project; that database is not the source of truth for linux-lit binds and may be stale or incomplete. The Rust source is authoritative.
+
 ## External Data
 
 - Database: `~/utono/litdb/data/lit.db` (read-write)
