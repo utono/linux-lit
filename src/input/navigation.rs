@@ -140,6 +140,31 @@ fn last_fully_visible_line(state: &AppState, top: usize) -> usize {
     last
 }
 
+/// Compute the page-top of the page that follows the page beginning at
+/// `top`, using the same logic as `page_forward`. Returns `line_count` when
+/// there is no further dialogue (i.e. caller is on or past the last page).
+///
+/// Pure with respect to `state` — does not mutate. Used by
+/// `viewport_page_for_line` to count pages from line 0 forward.
+fn next_page_top(state: &AppState, top: usize) -> usize {
+    let line_count = state.effective_line_count();
+    if line_count == 0 || top >= line_count {
+        return line_count;
+    }
+    let last_visible = last_fully_visible_line(state, top);
+    let last = last_dialogue_in_page(
+        &state.buffer,
+        top,
+        last_visible.saturating_sub(top) + 1,
+        line_count,
+    );
+    let next = next_dialogue_from(&state.buffer, last + 1, line_count);
+    if next >= line_count {
+        return line_count;
+    }
+    back_up_for_speaker(&state.buffer, next)
+}
+
 /// Page forward (Ctrl+d/f). The next page starts at the dialogue line
 /// immediately after the last dialogue line visible on the current page,
 /// backed up by one if preceded by a speaker name.
@@ -155,6 +180,7 @@ pub fn page_forward(state: &mut AppState) {
     let last_visible = last_fully_visible_line(state, state.page_top_line);
     let last = last_dialogue_in_page(&state.buffer, state.page_top_line, last_visible.saturating_sub(state.page_top_line) + 1, line_count);
     let next = next_dialogue_from(&state.buffer, last + 1, line_count);
+    let new_top = next_page_top(state, state.page_top_line);
 
     // Debug: log page forward details
     {
@@ -181,7 +207,6 @@ pub fn page_forward(state: &mut AppState) {
     if next >= line_count {
         return; // already at end
     }
-    let new_top = back_up_for_speaker(&state.buffer, next);
 
     // Remember current page so page_backward can return to it exactly
     state.page_history.push(state.page_top_line);
