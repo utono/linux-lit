@@ -218,7 +218,8 @@ impl AppState {
                 idx += 1;
                 continue;
             }
-            return Some(format!("{}", line.id));
+            let page = crate::input::navigation::viewport_page_for_line(self, idx);
+            return Some(crate::ui::page_label::format_prose_label(page, line.id));
         }
         None
     }
