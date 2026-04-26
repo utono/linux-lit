@@ -172,6 +172,7 @@ impl LibraryPicker {
     pub fn set_works(&mut self, works: Vec<WorkSummary>) {
         self.groups = group_works(&works);
         self.level = PickerLevel::Authors;
+        self.update_header();
         self.populate_list("");
     }
 
@@ -188,6 +189,7 @@ impl LibraryPicker {
         self.search_entry.set_placeholder_text(Some("Filter authors..."));
         self.search_entry.set_text("");
         self.search_entry.grab_focus();
+        self.update_header();
         self.populate_list("");
     }
 
@@ -239,8 +241,15 @@ impl LibraryPicker {
         };
         self.search_entry.set_placeholder_text(Some(placeholder));
         self.search_entry.set_text("");
+        self.update_header();
         self.populate_list("");
         self.search_entry.grab_focus();
+    }
+
+    fn update_header(&self) {
+        let (title, crumb) = header_text(&self.level, &self.groups);
+        self.header_title.set_text(&title);
+        self.header_crumb.set_text(&crumb);
     }
 
     pub fn populate_list(&self, filter: &str) {
@@ -431,6 +440,30 @@ fn subsequence_chars(filter: &str, target: &str) -> bool {
     true
 }
 
+/// Compute the (title, crumb) header text pair for the given picker level.
+/// Title format: "LIBRARY — AUTHORS" or "LIBRARY — <AUTHOR NAME>".
+/// Crumb format: "<n> AUTHORS" or "<n> WORKS".
+/// Both strings are uppercase because GTK 4 CSS does not support text-transform.
+pub(crate) fn header_text(level: &PickerLevel, groups: &[AuthorGroup]) -> (String, String) {
+    match level {
+        PickerLevel::Authors => (
+            "LIBRARY — AUTHORS".to_string(),
+            format!("{} AUTHORS", groups.len()),
+        ),
+        PickerLevel::Works(author) => {
+            let count = groups
+                .iter()
+                .find(|g| &g.author == author)
+                .map(|g| g.works.len())
+                .unwrap_or(0);
+            (
+                format!("LIBRARY — {}", author.to_uppercase()),
+                format!("{} WORKS", count),
+            )
+        }
+    }
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -555,5 +588,44 @@ mod tests {
     fn test_subsequence_match_author() {
         let w = make_work("Ham", "Hamlet", "Shakespeare");
         assert!(subsequence_match("shk", &w));
+    }
+
+    // ── Task 3 tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_header_text_for_authors_level() {
+        let groups = vec![
+            AuthorGroup { author: "Shakespeare".into(), works: vec![] },
+            AuthorGroup { author: "Austen".into(), works: vec![] },
+        ];
+        let (title, crumb) = header_text(&PickerLevel::Authors, &groups);
+        assert_eq!(title, "LIBRARY — AUTHORS");
+        assert_eq!(crumb, "2 AUTHORS");
+    }
+
+    #[test]
+    fn test_header_text_for_works_level() {
+        let groups = vec![
+            AuthorGroup {
+                author: "Shakespeare".into(),
+                works: vec![
+                    make_work("Ham", "Hamlet", "Shakespeare"),
+                    make_work("Mac", "Macbeth", "Shakespeare"),
+                ],
+            },
+        ];
+        let level = PickerLevel::Works("Shakespeare".into());
+        let (title, crumb) = header_text(&level, &groups);
+        assert_eq!(title, "LIBRARY — SHAKESPEARE");
+        assert_eq!(crumb, "2 WORKS");
+    }
+
+    #[test]
+    fn test_header_text_for_works_level_unknown_author() {
+        let groups: Vec<AuthorGroup> = vec![];
+        let level = PickerLevel::Works("Nobody".into());
+        let (title, crumb) = header_text(&level, &groups);
+        assert_eq!(title, "LIBRARY — NOBODY");
+        assert_eq!(crumb, "0 WORKS");
     }
 }
