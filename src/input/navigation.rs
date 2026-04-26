@@ -100,22 +100,23 @@ fn back_up_for_speaker(buffer: &sourceview5::Buffer, line: usize) -> usize {
     }
 }
 
-/// Find the last buffer line that fits within the viewport, matching the
-/// bottom clip calculation exactly. A line is included only if its full
-/// height fits in the remaining usable space (widget height minus descender
-/// guard). This ensures page_forward doesn't count clipped lines as "seen".
-fn last_fully_visible_line(state: &AppState) -> usize {
+/// Find the last buffer line that fits within the viewport starting from
+/// `top`, matching the bottom clip calculation exactly. A line is included
+/// only if its full height fits in the remaining usable space (widget height
+/// minus descender guard). This ensures page_forward doesn't count clipped
+/// lines as "seen".
+fn last_fully_visible_line(state: &AppState, top: usize) -> usize {
     let widget_height = state.text_view.height();
     if widget_height <= 0 {
-        return state.page_top_line;
+        return top;
     }
     let line_count = state.effective_line_count();
-    let descender_guard = descender_guard_px(&state.text_view, state.page_top_line);
+    let descender_guard = descender_guard_px(&state.text_view, top);
     let bottom_margin = state.text_view.bottom_margin();
     let usable_height = widget_height - descender_guard - bottom_margin;
     let mut total = 0;
-    let mut last = state.page_top_line;
-    for i in state.page_top_line..line_count {
+    let mut last = top;
+    for i in top..line_count {
         let Some(iter) = state.buffer.iter_at_line(i as i32) else { break };
         let (_y, h) = state.text_view.line_yrange(&iter);
         // Match update_bottom_clip: line must fully fit in usable space
@@ -128,7 +129,7 @@ fn last_fully_visible_line(state: &AppState) -> usize {
     // Back up past trailing speaker names and blank lines so a dangling
     // speaker at the bottom doesn't count as "visible" content.
     use crate::db::line_types;
-    while last > state.page_top_line {
+    while last > top {
         let text = buffer_line_text(&state.buffer, last);
         if line_types::is_speaker(&text) || line_types::is_blank(&text) {
             last -= 1;
@@ -151,7 +152,7 @@ pub fn page_forward(state: &mut AppState) {
         return;
     }
 
-    let last_visible = last_fully_visible_line(state);
+    let last_visible = last_fully_visible_line(state, state.page_top_line);
     let last = last_dialogue_in_page(&state.buffer, state.page_top_line, last_visible.saturating_sub(state.page_top_line) + 1, line_count);
     let next = next_dialogue_from(&state.buffer, last + 1, line_count);
 
@@ -237,7 +238,7 @@ pub fn cursor_to_page_bottom(state: &mut AppState) {
     if state.current_work.is_none() {
         return;
     }
-    let last_vis = last_fully_visible_line(state);
+    let last_vis = last_fully_visible_line(state, state.page_top_line);
     if state.current_line != last_vis {
         state.current_line = last_vis;
         state.pending_advance = None;
@@ -260,7 +261,7 @@ pub fn page_backward_bottom(state: &mut AppState) {
     let new_top = back_up_for_speaker(&state.buffer, prev_top);
     // Set page first so last_fully_visible_line computes against the new page
     set_page(state, new_top, PageDirection::Backward);
-    let last_vis = last_fully_visible_line(state);
+    let last_vis = last_fully_visible_line(state, state.page_top_line);
     log_fmt!("NAV_BACK: Shift+comma prev_top={} new_top={} current_line={}", prev_top, new_top, last_vis);
     state.current_line = last_vis;
     state.pending_advance = None;
@@ -1291,7 +1292,7 @@ pub fn update_highlight_and_advance_page(state: &mut AppState) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
         crate::config::NavigationMode::EReader => {
-            let last_vis = last_fully_visible_line(state);
+            let last_vis = last_fully_visible_line(state, state.page_top_line);
             log_fmt!(
                 "SYNC_ADVANCE: current={} last_vis={} page_top={}",
                 state.current_line, last_vis, state.page_top_line
