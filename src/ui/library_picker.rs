@@ -70,8 +70,12 @@ pub fn group_works(works: &[WorkSummary]) -> Vec<AuthorGroup> {
 pub struct LibraryPicker {
     pub overlay: Overlay,
     picker_box: GtkBox,
+    header_box: GtkBox,
+    header_title: Label,
+    header_crumb: Label,
     search_entry: Entry,
     list_box: ListBox,
+    footer_box: GtkBox,
     scrim: GtkBox,
     groups: Vec<AuthorGroup>,
     level: PickerLevel,
@@ -93,13 +97,36 @@ impl LibraryPicker {
 
         let picker_box = GtkBox::builder()
             .orientation(Orientation::Vertical)
-            .spacing(4)
+            .spacing(0)
             .halign(gtk4::Align::Center)
             .valign(gtk4::Align::Center)
-            .width_request(600)
-            .height_request(400)
+            .width_request(360)
+            .height_request(280)
             .build();
         picker_box.add_css_class("library-picker");
+
+        // Header: title (left) + crumb (right)
+        let header_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .hexpand(true)
+            .build();
+        header_box.add_css_class("library-picker-header");
+
+        let header_title = Label::builder()
+            .label("")
+            .halign(gtk4::Align::Start)
+            .hexpand(true)
+            .build();
+        header_title.add_css_class("library-picker-title");
+
+        let header_crumb = Label::builder()
+            .label("")
+            .halign(gtk4::Align::End)
+            .build();
+        header_crumb.add_css_class("library-picker-crumb");
+
+        header_box.append(&header_title);
+        header_box.append(&header_crumb);
 
         let search_entry = Entry::builder()
             .placeholder_text("Filter authors...")
@@ -114,14 +141,28 @@ impl LibraryPicker {
             .vexpand(true)
             .build();
 
+        // Footer: built empty for now; populated by update_footer() in Task 4.
+        let footer_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(8)
+            .hexpand(true)
+            .build();
+        footer_box.add_css_class("library-picker-footer");
+
+        picker_box.append(&header_box);
         picker_box.append(&search_entry);
         picker_box.append(&scrolled);
+        picker_box.append(&footer_box);
 
         LibraryPicker {
             overlay,
             picker_box,
+            header_box,
+            header_title,
+            header_crumb,
             search_entry,
             list_box,
+            footer_box,
             scrim,
             groups: Vec::new(),
             level: PickerLevel::Authors,
