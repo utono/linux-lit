@@ -358,9 +358,32 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          textview text {{ background-color: {bg}; color: {fg}; \
            font-family: {font}; font-size: {size}pt; }} \
          .library-picker {{ background-color: {bg}; color: {fg}; \
-           padding: 16px; border-radius: 12px; border: 1px solid {dim}; }} \
-         .library-picker entry {{ margin-bottom: 8px; }} \
-         .library-picker row:selected {{ background-color: {cursor_bg}; color: {cursor_fg}; }} \
+           padding: 0; border-radius: 12px; border: 1px solid {dim}; \
+           box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22), \
+                       0 2px 6px rgba(0, 0, 0, 0.08); }} \
+         .library-picker-header {{ padding: 14px 22px 10px; \
+           border-bottom: 1px solid {header_border}; }} \
+         .library-picker-title {{ font-size: 13px; font-weight: 600; \
+           letter-spacing: 2px; color: {dim}; }} \
+         .library-picker-crumb {{ font-size: 12px; color: {dim}; }} \
+         .library-picker entry {{ margin: 12px 18px 8px; \
+           padding: 8px 12px; border: 1px solid {dim}; \
+           border-radius: 8px; background-color: {bg}; color: {fg}; }} \
+         .library-picker entry:focus {{ \
+           box-shadow: 0 0 0 3px {focus_ring}; }} \
+         .library-picker scrolledwindow {{ padding: 4px 8px 10px; }} \
+         .library-picker row {{ padding: 8px 14px; \
+           border-radius: 6px; }} \
+         .library-picker row label.picker-item-detail {{ \
+           font-variant-numeric: tabular-nums; min-width: 32px; \
+           color: {dim}; }} \
+         .library-picker row:selected {{ \
+           background-color: {picker_selection_bg}; color: {cursor_fg}; }} \
+         .library-picker row:selected label.picker-item-detail {{ \
+           color: {cursor_fg}; opacity: 0.8; }} \
+         .library-picker-footer {{ padding: 8px 22px 12px; \
+           border-top: 1px solid {header_border}; \
+           font-size: 11px; letter-spacing: 1.5px; color: {dim}; }} \
          .library-picker-scrim {{ background-color: rgba(0, 0, 0, 0.3); }} \
          .search-bar {{ background-color: {bg}; color: {fg}; padding: 4px 12px; }} \
          .search-entry {{ background: transparent; border: none; color: {fg}; }} \
@@ -471,6 +494,9 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
         vocab_popup_fg = blend_colors(&theme.text_bg, &theme.root_color, 0.60),
         vocab_popup_dim = blend_colors(&theme.text_bg, &theme.root_color, 0.45),
         vocab_popup_border = blend_colors(&theme.text_bg, &theme.root_color, 0.25),
+        focus_ring = blend_colors(&theme.cursor_bg, &theme.text_bg, 0.4),
+        picker_selection_bg = blend_colors(&theme.cursor_bg, &theme.text_bg, 0.5),
+        header_border = blend_colors(&theme.dim_fg, &theme.text_bg, 0.5),
         font = font_family,
         size = font_size,
     )
