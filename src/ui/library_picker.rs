@@ -173,6 +173,7 @@ impl LibraryPicker {
         self.groups = group_works(&works);
         self.level = PickerLevel::Authors;
         self.update_header();
+        self.update_footer();
         self.populate_list("");
     }
 
@@ -190,6 +191,7 @@ impl LibraryPicker {
         self.search_entry.set_text("");
         self.search_entry.grab_focus();
         self.update_header();
+        self.update_footer();
         self.populate_list("");
     }
 
@@ -242,6 +244,7 @@ impl LibraryPicker {
         self.search_entry.set_placeholder_text(Some(placeholder));
         self.search_entry.set_text("");
         self.update_header();
+        self.update_footer();
         self.populate_list("");
         self.search_entry.grab_focus();
     }
@@ -250,6 +253,23 @@ impl LibraryPicker {
         let (title, crumb) = header_text(&self.level, &self.groups);
         self.header_title.set_text(&title);
         self.header_crumb.set_text(&crumb);
+    }
+
+    fn update_footer(&self) {
+        // Remove existing children
+        while let Some(child) = self.footer_box.first_child() {
+            self.footer_box.remove(&child);
+        }
+
+        let hints = footer_hints(&self.level);
+        for (i, hint) in hints.iter().enumerate() {
+            if i > 0 {
+                let sep = Label::builder().label(" · ").build();
+                self.footer_box.append(&sep);
+            }
+            let label = Label::builder().label(*hint).build();
+            self.footer_box.append(&label);
+        }
     }
 
     pub fn populate_list(&self, filter: &str) {
@@ -464,6 +484,20 @@ pub(crate) fn header_text(level: &PickerLevel, groups: &[AuthorGroup]) -> (Strin
     }
 }
 
+/// Footer hint strings for the given picker level, in display order.
+/// Each entry is one segment; the renderer joins them with " · ".
+pub(crate) fn footer_hints(level: &PickerLevel) -> Vec<&'static str> {
+    match level {
+        PickerLevel::Authors => vec!["↑↓ MOVE", "↵ OPEN", "ESC CLOSE"],
+        PickerLevel::Works(_) => vec![
+            "↑↓ MOVE",
+            "↵ OPEN",
+            "BACKSPACE BACK",
+            "ESC CLOSE",
+        ],
+    }
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -627,5 +661,20 @@ mod tests {
         let (title, crumb) = header_text(&level, &groups);
         assert_eq!(title, "LIBRARY — NOBODY");
         assert_eq!(crumb, "0 WORKS");
+    }
+
+    // ── Task 4 tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_footer_hints_for_authors_level() {
+        let hints = footer_hints(&PickerLevel::Authors);
+        assert_eq!(hints, vec!["↑↓ MOVE", "↵ OPEN", "ESC CLOSE"]);
+    }
+
+    #[test]
+    fn test_footer_hints_for_works_level() {
+        let level = PickerLevel::Works("Shakespeare".into());
+        let hints = footer_hints(&level);
+        assert_eq!(hints, vec!["↑↓ MOVE", "↵ OPEN", "BACKSPACE BACK", "ESC CLOSE"]);
     }
 }
