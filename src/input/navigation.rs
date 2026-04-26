@@ -165,6 +165,35 @@ fn next_page_top(state: &AppState, top: usize) -> usize {
     back_up_for_speaker(&state.buffer, next)
 }
 
+/// Return the 1-indexed viewport page that contains `target_line`, computed
+/// by replaying j-key page-forward from line 0. Used by the bottom-overlay
+/// label to display "page - line_id" on prose works.
+///
+/// Returns 1 for an empty work or a target at the start. The loop has a
+/// safety break if `next_page_top` fails to advance, so it cannot run away.
+pub fn viewport_page_for_line(state: &AppState, target_line: usize) -> usize {
+    let line_count = state.effective_line_count();
+    if line_count == 0 {
+        return 1;
+    }
+    let mut page: usize = 1;
+    let mut top: usize = 0;
+    while top < line_count {
+        let next_top = next_page_top(state, top);
+        // target is on the current page if next page starts strictly after it
+        if next_top > target_line {
+            return page;
+        }
+        // safety: no progress means we're stuck — bail with current page
+        if next_top <= top {
+            return page;
+        }
+        top = next_top;
+        page += 1;
+    }
+    page.saturating_sub(1).max(1)
+}
+
 /// Page forward (Ctrl+d/f). The next page starts at the dialogue line
 /// immediately after the last dialogue line visible on the current page,
 /// backed up by one if preceded by a speaker name.
