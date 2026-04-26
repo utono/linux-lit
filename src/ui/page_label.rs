@@ -44,6 +44,13 @@ pub fn format_play_citation(
     Some(format!("{}.{}.{}", act_r, scene_r, line))
 }
 
+/// Format the bottom-overlay label for non-play works as
+/// `"{page} - {line_id}"`, where `page` is the 1-indexed viewport page
+/// containing the highlighted line.
+pub fn format_prose_label(page: usize, line_id: i64) -> String {
+    format!("{} - {}", page, line_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,5 +122,21 @@ mod tests {
         assert_eq!(format_play_citation(1, 1, 0, None), None);
         assert_eq!(format_play_citation(0, 0, 1, None), None);
         assert_eq!(format_play_citation(-1, 1, 1, None), None);
+    }
+
+    #[test]
+    fn prose_label_basic() {
+        assert_eq!(format_prose_label(1, 1234), "1 - 1234");
+        assert_eq!(format_prose_label(34, 5678), "34 - 5678");
+    }
+
+    #[test]
+    fn prose_label_page_one_line_one() {
+        assert_eq!(format_prose_label(1, 1), "1 - 1");
+    }
+
+    #[test]
+    fn prose_label_large_numbers() {
+        assert_eq!(format_prose_label(999, 123456), "999 - 123456");
     }
 }
