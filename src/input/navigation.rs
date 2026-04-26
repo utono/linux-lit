@@ -191,6 +191,10 @@ pub fn viewport_page_for_line(state: &AppState, target_line: usize) -> usize {
         top = next_top;
         page += 1;
     }
+    // Reached only when target_line >= line_count (defensive — not expected
+    // in normal use). The loop incremented `page` one extra time when `top`
+    // advanced to `line_count`; subtract that off. `.max(1)` floors at 1 for
+    // the empty-work case.
     page.saturating_sub(1).max(1)
 }
 
