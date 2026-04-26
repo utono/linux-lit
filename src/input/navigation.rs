@@ -140,16 +140,27 @@ fn last_fully_visible_line(state: &AppState, top: usize) -> usize {
     last
 }
 
-/// Compute the page-top of the page that follows the page beginning at
-/// `top`, using the same logic as `page_forward`. Returns `line_count` when
-/// there is no further dialogue (i.e. caller is on or past the last page).
-///
-/// Pure with respect to `state` — does not mutate. Used by
-/// `viewport_page_for_line` to count pages from line 0 forward.
-fn next_page_top(state: &AppState, top: usize) -> usize {
+/// Result of stepping forward one page from `top`: the new page-top
+/// (after backing up for a speaker) and the next dialogue line that
+/// would become `state.current_line`. Both equal `line_count` when there
+/// is no further dialogue.
+#[derive(Clone, Copy)]
+struct NextPage {
+    /// Page-top of the page that follows `top` — what `set_page` is called
+    /// with. Equals `line_count` if past the last page.
+    new_top: usize,
+    /// First dialogue line on the next page — what `state.current_line`
+    /// should become. Equals `line_count` if past the last page.
+    next_dialogue: usize,
+}
+
+/// Compute the next-page boundary from `top`, using the same logic as
+/// `page_forward`. Returns `{ line_count, line_count }` when there is no
+/// further dialogue. Pure — does not mutate `state`.
+fn next_page_top(state: &AppState, top: usize) -> NextPage {
     let line_count = state.effective_line_count();
     if line_count == 0 || top >= line_count {
-        return line_count;
+        return NextPage { new_top: line_count, next_dialogue: line_count };
     }
     let last_visible = last_fully_visible_line(state, top);
     let last = last_dialogue_in_page(
@@ -158,11 +169,12 @@ fn next_page_top(state: &AppState, top: usize) -> usize {
         last_visible.saturating_sub(top) + 1,
         line_count,
     );
-    let next = next_dialogue_from(&state.buffer, last + 1, line_count);
-    if next >= line_count {
-        return line_count;
+    let next_dialogue = next_dialogue_from(&state.buffer, last + 1, line_count);
+    if next_dialogue >= line_count {
+        return NextPage { new_top: line_count, next_dialogue: line_count };
     }
-    back_up_for_speaker(&state.buffer, next)
+    let new_top = back_up_for_speaker(&state.buffer, next_dialogue);
+    NextPage { new_top, next_dialogue }
 }
 
 /// Return the 1-indexed viewport page that contains `target_line`, computed
@@ -179,7 +191,7 @@ pub fn viewport_page_for_line(state: &AppState, target_line: usize) -> usize {
     let mut page: usize = 1;
     let mut top: usize = 0;
     while top < line_count {
-        let next_top = next_page_top(state, top);
+        let next_top = next_page_top(state, top).new_top;
         // target is on the current page if next page starts strictly after it
         if next_top > target_line {
             return page;
@@ -210,41 +222,15 @@ pub fn page_forward(state: &mut AppState) {
         return;
     }
 
-    let last_visible = last_fully_visible_line(state, state.page_top_line);
-    let last = last_dialogue_in_page(&state.buffer, state.page_top_line, last_visible.saturating_sub(state.page_top_line) + 1, line_count);
-    let next = next_dialogue_from(&state.buffer, last + 1, line_count);
-    let new_top = next_page_top(state, state.page_top_line);
-
-    // Debug: log page forward details
-    {
-        let lv_text = buffer_line_text(&state.buffer, last_visible);
-        let ld_text = buffer_line_text(&state.buffer, last);
-        let nx_text = if next < line_count { buffer_line_text(&state.buffer, next) } else { "(end)".into() };
-        let widget_h = state.text_view.height();
-        let desc_guard = descender_guard_px(&state.text_view, state.page_top_line);
-        log_fmt!("PAGE_FWD: page_top={} last_visible={} last_dialogue={} next={}", state.page_top_line, last_visible, last, next);
-        log_fmt!("PAGE_FWD: widget_h={} desc_guard={} usable_h={}", widget_h, desc_guard, widget_h - desc_guard);
-        log_fmt!("PAGE_FWD: last_visible_text='{}'", lv_text.chars().take(60).collect::<String>());
-        log_fmt!("PAGE_FWD: last_dialogue_text='{}'", ld_text.chars().take(60).collect::<String>());
-        log_fmt!("PAGE_FWD: next_text='{}'", nx_text.chars().take(60).collect::<String>());
-        // Log heights of lines near the boundary
-        for i in last_visible.saturating_sub(2)..=(last_visible + 2).min(line_count - 1) {
-            if let Some(iter) = state.buffer.iter_at_line(i as i32) {
-                let (_y, h) = state.text_view.line_yrange(&iter);
-                let t = buffer_line_text(&state.buffer, i);
-                log_fmt!("PAGE_FWD: line {} h={} '{}'", i, h, t.chars().take(50).collect::<String>());
-            }
-        }
-    }
-
-    if next >= line_count {
+    let NextPage { new_top, next_dialogue } = next_page_top(state, state.page_top_line);
+    if next_dialogue >= line_count {
         return; // already at end
     }
 
     // Remember current page so page_backward can return to it exactly
     state.page_history.push(state.page_top_line);
 
-    state.current_line = next;
+    state.current_line = next_dialogue;
     update_highlight(state);
     seek_to_current_line(state);
     set_page(state, new_top, PageDirection::Forward);
