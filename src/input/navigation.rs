@@ -1031,6 +1031,109 @@ impl PageTurnLock {
     }
 }
 
+/// Result of a single height-summing walk over the buffer starting at a page
+/// top: which line was the last to fully fit, the total pixel height consumed
+/// by lines [page_top, last_fit], and the count of lines included.
+///
+/// Mirrors what foliate-js `getVisibleRange` returns (paginator.js:94-151) —
+/// a single source of truth for "what's on screen right now" that all four
+/// previous callers (`last_fully_visible_line`, `is_line_fully_visible`,
+/// `update_bottom_clip`, `lines_per_page`) project from.
+///
+/// Convention: when the buffer is empty or no line fits, `count == 0` and
+/// `total_height == 0`. `last_fit` is then equal to `page_top` but should be
+/// treated as meaningless by callers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct VisibleRange {
+    pub(crate) last_fit: usize,
+    pub(crate) total_height: i32,
+    pub(crate) count: usize,
+}
+
+/// Walk the buffer from `page_top`, summing line heights against the viewport's
+/// `usable_height` (caller computes that from `widget_height - descender_guard
+/// - bottom_margin`). Returns the largest range that fully fits.
+///
+/// Caller-specific short-circuits (`loading_work`, `widget_height <= 0`, empty
+/// buffer) stay in the callers — they're not part of this kernel.
+///
+/// Mirrors `getVisibleRange` in foliate-js paginator.js (lines 94-151) in
+/// purpose: one canonical visibility computation. Future foliate reads of that
+/// function map directly to this one.
+pub(crate) fn visible_range(
+    text_view: &sourceview5::View,
+    buffer: &sourceview5::Buffer,
+    page_top: usize,
+    line_count: usize,
+    usable_height: i32,
+) -> VisibleRange {
+    let mut total_height: i32 = 0;
+    let mut count: usize = 0;
+    let mut last_fit: usize = page_top;
+    for i in page_top..line_count {
+        let Some(iter) = buffer.iter_at_line(i as i32) else { break };
+        let (_y, h) = text_view.line_yrange(&iter);
+        if total_height + h > usable_height {
+            break;
+        }
+        total_height += h;
+        last_fit = i;
+        count += 1;
+    }
+    VisibleRange { last_fit, total_height, count }
+}
+
+/// Trim trailing speaker-name and blank lines from a `VisibleRange` so a
+/// dangling speaker doesn't appear at the bottom of a page without its
+/// dialogue. Pure variant separated for unit testability — the GTK-bound
+/// `trim_trailing_speakers` wraps this with line_types and line_yrange calls.
+///
+/// Stops at `page_top` so the trim never deletes the page top itself.
+pub(crate) fn trim_trailing_speakers_pure<F, H>(
+    mut range: VisibleRange,
+    page_top: usize,
+    is_speaker_or_blank: F,
+    line_height: H,
+) -> VisibleRange
+where
+    F: Fn(usize) -> bool,
+    H: Fn(usize) -> i32,
+{
+    while range.last_fit > page_top && is_speaker_or_blank(range.last_fit) {
+        range.total_height -= line_height(range.last_fit);
+        range.last_fit -= 1;
+        range.count = range.count.saturating_sub(1);
+    }
+    range
+}
+
+/// GTK-bound wrapper for `trim_trailing_speakers_pure`. Reads line text via
+/// `buffer` and classifies via `crate::db::line_types`; reads heights via
+/// `text_view.line_yrange`.
+pub(crate) fn trim_trailing_speakers(
+    range: VisibleRange,
+    page_top: usize,
+    text_view: &sourceview5::View,
+    buffer: &sourceview5::Buffer,
+) -> VisibleRange {
+    use crate::db::line_types;
+    let is_speaker_or_blank = |i: usize| -> bool {
+        let text = {
+            let Some(start) = buffer.iter_at_line(i as i32) else { return false };
+            let mut end = start;
+            if !end.ends_line() { end.forward_to_line_end(); }
+            buffer.text(&start, &end, false).to_string()
+        };
+        line_types::is_speaker(&text) || line_types::is_blank(&text)
+    };
+    let line_height = |i: usize| -> i32 {
+        let Some(iter) = buffer.iter_at_line(i as i32) else { return 0 };
+        let (_y, h) = text_view.line_yrange(&iter);
+        h
+    };
+    trim_trailing_speakers_pure(range, page_top, is_speaker_or_blank, line_height)
+}
+
 /// Capture the entire card (spacers + text) as a static Picture overlay.
 /// Uses WidgetPaintable → Snapshot → RenderNode → Texture to freeze the frame.
 /// Returns the Picture (already added to page_turn_overlay) or None if capture fails.
@@ -2852,5 +2955,108 @@ mod page_turn_lock_tests {
         lock.release();
         lock.release();
         assert!(!lock.is_locked());
+    }
+}
+
+#[cfg(test)]
+mod visible_range_helpers_tests {
+    use super::{VisibleRange, trim_trailing_speakers_pure};
+
+    fn line_classifier(speakers_or_blanks: &[usize]) -> impl Fn(usize) -> bool + '_ {
+        move |i| speakers_or_blanks.contains(&i)
+    }
+
+    fn line_height(_i: usize) -> i32 {
+        20
+    }
+
+    #[test]
+    fn trim_with_no_trailing_speaker_is_identity() {
+        let range = VisibleRange { last_fit: 5, total_height: 100, count: 6 };
+        let trimmed = trim_trailing_speakers_pure(
+            range,
+            0,
+            &line_classifier(&[]),
+            &line_height,
+        );
+        assert_eq!(trimmed.last_fit, 5);
+        assert_eq!(trimmed.total_height, 100);
+        assert_eq!(trimmed.count, 6);
+    }
+
+    #[test]
+    fn trim_drops_one_trailing_speaker() {
+        let range = VisibleRange { last_fit: 5, total_height: 100, count: 6 };
+        let trimmed = trim_trailing_speakers_pure(
+            range,
+            0,
+            &line_classifier(&[5]),
+            &line_height,
+        );
+        assert_eq!(trimmed.last_fit, 4);
+        assert_eq!(trimmed.total_height, 80);
+        assert_eq!(trimmed.count, 5);
+    }
+
+    #[test]
+    fn trim_drops_speaker_with_preceding_blanks() {
+        // Lines 3 (blank), 4 (blank), 5 (speaker) — all trim.
+        let range = VisibleRange { last_fit: 5, total_height: 120, count: 6 };
+        let trimmed = trim_trailing_speakers_pure(
+            range,
+            0,
+            &line_classifier(&[3, 4, 5]),
+            &line_height,
+        );
+        assert_eq!(trimmed.last_fit, 2);
+        assert_eq!(trimmed.total_height, 60);
+        assert_eq!(trimmed.count, 3);
+    }
+
+    #[test]
+    fn trim_stops_at_dialogue_line() {
+        // Line 5 is speaker, line 4 is dialogue (not in classifier), line 3 is blank.
+        // Trim removes line 5 only — line 4 is dialogue, blocks further trim.
+        let range = VisibleRange { last_fit: 5, total_height: 120, count: 6 };
+        let trimmed = trim_trailing_speakers_pure(
+            range,
+            0,
+            &line_classifier(&[3, 5]), // 4 is dialogue
+            &line_height,
+        );
+        assert_eq!(trimmed.last_fit, 4);
+        assert_eq!(trimmed.total_height, 100);
+        assert_eq!(trimmed.count, 5);
+    }
+
+    #[test]
+    fn trim_does_not_cross_page_top() {
+        // Every line is a speaker, but page_top is 3 — trim must not delete the
+        // page top itself (would leave an empty page).
+        let range = VisibleRange { last_fit: 5, total_height: 60, count: 3 };
+        let trimmed = trim_trailing_speakers_pure(
+            range,
+            3,
+            &line_classifier(&[3, 4, 5]),
+            &line_height,
+        );
+        assert_eq!(trimmed.last_fit, 3, "must leave page_top in place");
+        assert!(trimmed.total_height > 0);
+        assert!(trimmed.count >= 1);
+    }
+
+    #[test]
+    fn trim_with_empty_range_is_noop() {
+        // last_fit == page_top, count == 1 — nothing to trim.
+        let range = VisibleRange { last_fit: 0, total_height: 20, count: 1 };
+        let trimmed = trim_trailing_speakers_pure(
+            range,
+            0,
+            &line_classifier(&[0]),
+            &line_height,
+        );
+        assert_eq!(trimmed.last_fit, 0);
+        assert_eq!(trimmed.total_height, 20);
+        assert_eq!(trimmed.count, 1);
     }
 }
