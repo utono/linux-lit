@@ -49,6 +49,7 @@ fn load_selected_work(
                     {
                         let mut s = state_clone.borrow_mut();
                         s.correction_overlay.hide();
+                        crate::app::clear_display(&mut s);
                         crate::app::display_work(&mut s, work);
                         crate::logging::log(&format!(
                             "PICKER: after display_work current_line={} page_top={} line_map={} effective_lines={}",
@@ -217,7 +218,6 @@ pub fn handle_key(
             let mut s = state.borrow_mut();
             s.concordance_state = None;
             s.concordance_bar.hide();
-            crate::app::clear_display(&mut s);
         }
         state.borrow().correction_overlay.hide();
         state.borrow_mut().picker.show_prepare();
