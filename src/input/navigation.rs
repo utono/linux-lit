@@ -981,6 +981,7 @@ fn clear_old_page_dim(state: &AppState) {
 
 /// Direction of a page turn, used by the Slide transition.
 #[derive(Clone, Copy)]
+#[derive(Debug)]
 enum PageDirection {
     Forward,
     Backward,
@@ -1080,6 +1081,16 @@ fn set_page(state: &mut AppState, new_top: usize, direction: PageDirection) {
         log_fmt!("PAGE_TURN: SKIPPED (loading_work=true) new_top={}", new_top);
         return;
     }
+    // F1: drop racing turns so MPV CursorSync arriving mid-animation can't
+    // compose with a key-driven turn. set_page_instant does not go through
+    // here — it has no animation window.
+    if !state.page_turn_lock.try_acquire() {
+        log_fmt!(
+            "PAGE_TURN: SKIPPED (locked=true) new_top={} old_top={} requested_dir={:?}",
+            new_top, state.page_top_line, direction
+        );
+        return;
+    }
     log_fmt!(
         "PAGE_TURN: new_top={} old_top={} current_line={} transition={:?}",
         new_top, state.page_top_line, state.current_line, state.config.transition_style
@@ -1090,6 +1101,7 @@ fn set_page(state: &mut AppState, new_top: usize, direction: PageDirection) {
             clear_old_page_dim(state);
             state.page_top_line = new_top;
             snap_scroll_to_line(state, new_top);
+            state.page_turn_lock.release();
         }
         crate::config::TransitionStyle::Crossfade => {
             // Capture static snapshot of current page
@@ -1097,6 +1109,7 @@ fn set_page(state: &mut AppState, new_top: usize, direction: PageDirection) {
                 clear_old_page_dim(state);
                 state.page_top_line = new_top;
                 snap_scroll_to_line(state, new_top);
+                state.page_turn_lock.release();
                 return;
             };
 
@@ -1138,8 +1151,10 @@ fn set_page(state: &mut AppState, new_top: usize, direction: PageDirection) {
             anim.set_easing(adw::Easing::Linear);
 
             let snap_cleanup = snapshot_pic.clone();
+            let lock = std::rc::Rc::clone(&state.page_turn_lock);
             anim.connect_done(move |_| {
                 overlay.remove_overlay(&snap_cleanup);
+                lock.release();
             });
 
             anim.play();
@@ -1151,6 +1166,7 @@ fn set_page(state: &mut AppState, new_top: usize, direction: PageDirection) {
                 clear_old_page_dim(state);
                 state.page_top_line = new_top;
                 snap_scroll_to_line(state, new_top);
+                state.page_turn_lock.release();
                 return;
             };
 
@@ -1205,10 +1221,12 @@ fn set_page(state: &mut AppState, new_top: usize, direction: PageDirection) {
 
             let snap_cleanup = snapshot_pic.clone();
             let card_cleanup = state.card_vbox.clone();
+            let lock = std::rc::Rc::clone(&state.page_turn_lock);
             anim.connect_done(move |_| {
                 overlay.remove_overlay(&snap_cleanup);
                 card_cleanup.set_margin_start(0);
                 card_cleanup.set_margin_end(0);
+                lock.release();
             });
 
             anim.play();
