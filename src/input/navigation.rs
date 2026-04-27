@@ -1429,6 +1429,16 @@ pub fn update_highlight_only(state: &mut AppState) {
 /// Scroll so that a paragraph's first line lands at the cursor position
 /// (~35% down the viewport). Used when playback crosses a paragraph boundary.
 pub fn scroll_paragraph_to_top(state: &mut AppState, para_start: usize) {
+    // F1: if a page-turn animation is in flight, drop this sync request.
+    // The next CursorSync after release will pick up the new state.
+    // Mirrors foliate Paginator.goTo's #locked early-return (paginator.js:1023).
+    if state.page_turn_lock.is_locked() {
+        crate::logging::log(&format!(
+            "PARA_SCROLL: SKIP (page_turn_locked) para_start={} page_top={}",
+            para_start, state.page_top_line
+        ));
+        return;
+    }
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => {
             let adj = state.scrolled_window.vadjustment();
