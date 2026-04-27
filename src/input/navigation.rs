@@ -1376,17 +1376,24 @@ pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
     });
 }
 
-/// Compute a descender guard in pixels from the first visible line's height.
-/// Uses ~20% of line height, which safely covers font descenders at any size.
-fn descender_guard_px(text_view: &sourceview5::View, page_top: usize) -> i32 {
-    let buf = text_view.buffer();
-    if let Some(iter) = buf.iter_at_line(page_top as i32) {
-        let (_y, h) = text_view.line_yrange(&iter);
-        if h > 0 {
-            return (h / 5).max(6);
-        }
-    }
-    8 // fallback
+/// Pixel descent of the active font, queried from Pango. Mirrors foliate-js's
+/// approach (paginator.js:83-91) of measuring the engine rather than estimating
+/// from line height — fixes mixed-font-size pages where the bottom line uses a
+/// different font than the page top (translations smaller, chapter titles
+/// larger).
+///
+/// `_page_top` is unused but kept in the signature so the four callers (which
+/// pass it from their local context) don't need to change.
+///
+/// Returns the descent in pixels, with a small safety floor (4 px) and ceiling
+/// (24 px) to prevent absurd values from a missing/broken font from corrupting
+/// the visible-range calculation.
+fn descender_guard_px(text_view: &sourceview5::View, _page_top: usize) -> i32 {
+    use gtk4::prelude::WidgetExt;
+    let ctx = text_view.pango_context();
+    let metrics = ctx.metrics(None, None);
+    let descent_px = metrics.descent() / pango::SCALE;
+    descent_px.clamp(4, 24)
 }
 
 /// Set the bottom clip to hide everything below the last fully-visible line.
