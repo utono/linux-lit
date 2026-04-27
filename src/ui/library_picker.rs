@@ -209,6 +209,33 @@ impl LibraryPicker {
         self.overlay.add_overlay(&self.scrim);
         self.overlay.add_overlay(&self.picker_box);
         self.picker_box.set_visible(false);
+
+        // Responsive sizing: when the picker_box is realized, hook the
+        // toplevel window's width/height notifications so we can update
+        // its size request as the window resizes.
+        let picker_box = self.picker_box.clone();
+        self.picker_box.connect_realize(move |pb| {
+            if let Some(window) = pb.root().and_then(|r| r.downcast::<gtk4::Window>().ok()) {
+                let apply = {
+                    let pb = picker_box.clone();
+                    let window = window.clone();
+                    move || {
+                        let (w, h) = responsive_size(
+                            window.default_width().max(window.width()),
+                            window.default_height().max(window.height()),
+                        );
+                        pb.set_size_request(w, h);
+                    }
+                };
+                // Apply once on realize so the floor isn't visible at startup.
+                apply();
+                // Update on every resize.
+                let apply_for_w = apply.clone();
+                window.connect_default_width_notify(move |_| apply_for_w());
+                let apply_for_h = apply.clone();
+                window.connect_default_height_notify(move |_| apply_for_h());
+            }
+        });
     }
 
     pub fn search_entry(&self) -> &Entry {
@@ -498,6 +525,19 @@ pub(crate) fn footer_hints(level: &PickerLevel) -> Vec<&'static str> {
     }
 }
 
+/// Compute the picker box size request from the toplevel window's allocated
+/// dimensions. Returns (width, height) in pixels.
+///
+/// Width  = clamp(0.6 * window_width,  min = 360, max = 640)
+/// Height = clamp(0.7 * window_height, min = 280, max = 560)
+pub(crate) fn responsive_size(window_w: i32, window_h: i32) -> (i32, i32) {
+    let w = (window_w as f32 * 0.6).round() as i32;
+    let h = (window_h as f32 * 0.7).round() as i32;
+    let w = w.clamp(360, 640);
+    let h = h.clamp(280, 560);
+    (w, h)
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -676,5 +716,31 @@ mod tests {
         let level = PickerLevel::Works("Shakespeare".into());
         let hints = footer_hints(&level);
         assert_eq!(hints, vec!["↑↓ MOVE", "↵ OPEN", "BACKSPACE BACK", "ESC CLOSE"]);
+    }
+
+    // ── Task 5 tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_responsive_size_clamps_to_max() {
+        // Big window — clamp at the 640x560 ceiling.
+        let (w, h) = responsive_size(2400, 1600);
+        assert_eq!(w, 640);
+        assert_eq!(h, 560);
+    }
+
+    #[test]
+    fn test_responsive_size_uses_floor() {
+        // Tiny window — never go below 360x280.
+        let (w, h) = responsive_size(200, 200);
+        assert_eq!(w, 360);
+        assert_eq!(h, 280);
+    }
+
+    #[test]
+    fn test_responsive_size_scales_in_middle() {
+        // 800x600 -> 60% width = 480, 70% height = 420.
+        let (w, h) = responsive_size(800, 600);
+        assert_eq!(w, 480);
+        assert_eq!(h, 420);
     }
 }
