@@ -15,7 +15,7 @@ pub fn open_db() -> Result<Connection, rusqlite::Error> {
 
 pub fn list_works(conn: &Connection) -> Result<Vec<WorkSummary>, rusqlite::Error> {
     let mut stmt =
-        conn.prepare("SELECT abbrev, title, author, work_type FROM works WHERE push_to_device = 1 ORDER BY title")?;
+        conn.prepare("SELECT abbrev, title, author, work_type FROM works ORDER BY title")?;
     let rows = stmt.query_map([], |row| {
         Ok(WorkSummary {
             abbrev: row.get(0)?,
@@ -348,7 +348,6 @@ pub fn load_vocab_word_list(
 ) -> Result<Vec<(String, usize)>, rusqlite::Error> {
     let mut stmt = conn.prepare(
         "SELECT canonical_text FROM line_mapping \
-         WHERE work_abbrev IN (SELECT abbrev FROM works WHERE push_to_device = 1) \
          ORDER BY div1, div2, line_in_div"
     )?;
     let lines: Vec<String> = stmt.query_map([], |row| {
