@@ -125,7 +125,8 @@ fn last_fully_visible_line(state: &AppState, top: usize) -> usize {
     let bottom_margin = state.text_view.bottom_margin();
     let usable_height = widget_height - descender_guard - bottom_margin;
     let range = visible_range(&state.text_view, &state.buffer, top, line_count, usable_height);
-    let trimmed = trim_trailing_speakers(range, top, &state.text_view, &state.buffer);
+    let is_prose = state.is_prose();
+    let trimmed = trim_visible_range(range, top, &state.text_view, &state.buffer, is_prose);
     trimmed.last_fit
 }
 
@@ -906,7 +907,11 @@ fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
         line_count,
         usable_height,
     );
-    line <= range.last_fit && range.count > 0
+    let is_prose = state.is_prose();
+    let trimmed = trim_visible_range(
+        range, state.page_top_line, &state.text_view, &state.buffer, is_prose,
+    );
+    line <= trimmed.last_fit && trimmed.count > 0
 }
 
 
@@ -1392,7 +1397,7 @@ where
         return range; // not in a block
     }
     if block_start <= page_top {
-        return range; // overflow: keep per-line split
+        return range; // overflow: block extends to (or past) page_top
     }
     // Drop lines [block_start, range.last_fit] from the range.
     let mut new_total_height = range.total_height;
@@ -1401,6 +1406,15 @@ where
     }
     let new_last_fit = block_start - 1;
     let new_count = new_last_fit - page_top + 1;
+    // Overflow guard: if trimming would leave half or fewer lines visible,
+    // the block is too tall to fit on one page (e.g., a verse stanza longer
+    // than the viewport sitting just below a speaker). Keep the per-line
+    // split — better to show a useful page that splits mid-block than a
+    // useless 1-line page that just shows the speaker. This is the F9
+    // best-effort policy from the spec ("atomic if it fits, split if not").
+    if new_count * 2 <= range.count {
+        return range;
+    }
     VisibleRange {
         last_fit: new_last_fit,
         total_height: new_total_height,
@@ -1412,6 +1426,7 @@ where
 /// `buffer` and classifies via `crate::db::line_types`.
 ///
 /// Most callers want trim_visible_range instead.
+#[allow(dead_code)]
 pub(crate) fn block_start_for_line(
     buffer: &sourceview5::Buffer,
     page_top: usize,
@@ -1762,7 +1777,8 @@ pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
         let usable_height = widget_height - descender_guard - bottom_margin;
         let line_count = state.effective_line_count();
         let range = visible_range(&state.text_view, &state.buffer, line, line_count, usable_height);
-        let trimmed = trim_trailing_speakers(range, line, &state.text_view, &state.buffer);
+        let is_prose = state.is_prose();
+        let trimmed = trim_visible_range(range, line, &state.text_view, &state.buffer, is_prose);
         state.last_visible_range.set(Some(trimmed));
     } else {
         state.last_visible_range.set(None);
@@ -1858,6 +1874,10 @@ fn update_bottom_clip(
         return;
     }
 
+    // F9: block-atom trim is computed by snap_scroll_to_line via
+    // trim_visible_range; update_bottom_clip is a layout-flush backstop and
+    // intentionally skips block trim — the bottom-clip widget will resync on
+    // the next snap if the trim shifted last_fit.
     let trimmed = trim_trailing_speakers(range, page_top, text_view, &buf_sv);
 
     let clip = (widget_height - trimmed.total_height).max(0);
@@ -3726,6 +3746,26 @@ mod block_atom_tests {
         assert_eq!(trimmed.last_fit, 3);
         assert_eq!(trimmed.count, 4);
         assert_eq!(trimmed.total_height, 80);
+    }
+
+    #[test]
+    fn trim_block_atoms_block_too_tall_keeps_per_line_split() {
+        // Page-top is a speaker; verse stanza extends from line 1 down past
+        // the visible area. block_start = 1 (just below page_top), block_end
+        // = 9 (last_fit). Trimming would leave only line 0 (the speaker)
+        // visible — useless. Overflow guard fires (new_count=1, range.count=10,
+        // 1 * 2 <= 10 → keep per-line split).
+        let range = VisibleRange { last_fit: 9, total_height: 200, count: 10 };
+        let kinds = ['s', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l'];
+        let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
+        let line_height = |_i: usize| 20;
+        let trimmed = trim_block_atoms_pure(
+            range, 0, false,
+            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height,
+        );
+        assert_eq!(trimmed.last_fit, 9, "block too tall: keep original last_fit");
+        assert_eq!(trimmed.count, 10);
+        assert_eq!(trimmed.total_height, 200);
     }
 
     #[test]

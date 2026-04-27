@@ -183,6 +183,15 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Whether the current work is prose (true) or play/poetry (false).
+    /// Returns true when no work is loaded — equivalent to pre-F9 behavior
+    /// (trim_visible_range becomes a no-op on an empty buffer regardless).
+    pub fn is_prose(&self) -> bool {
+        self.current_work.as_ref()
+            .map(|w| crate::db::line_types::is_prose_work(&w.work_type))
+            .unwrap_or(true)
+    }
+
     pub fn effective_line_count(&self) -> usize {
         if let Some(ref lm) = self.line_map {
             lm.buffer_to_work.len()
