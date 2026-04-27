@@ -1385,13 +1385,28 @@ pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
 /// `_page_top` is unused but kept in the signature so the four callers (which
 /// pass it from their local context) don't need to change.
 ///
+/// Reads the active font from the `font-size` TextTag (which `reapply_font`
+/// updates synchronously) rather than the widget's Pango context (which only
+/// reflects font changes after GTK applies the next CSS pass). This avoids a
+/// one-frame race where descender stayed clipped briefly after font cycling.
+///
 /// Returns the descent in pixels, with a small safety floor (4 px) and ceiling
 /// (24 px) to prevent absurd values from a missing/broken font from corrupting
 /// the visible-range calculation.
 fn descender_guard_px(text_view: &sourceview5::View, _page_top: usize) -> i32 {
-    use gtk4::prelude::WidgetExt;
+    use gtk4::prelude::{TextTagExt, TextBufferExt, WidgetExt};
     let ctx = text_view.pango_context();
-    let metrics = ctx.metrics(None, None);
+
+    // Prefer the explicit font from the `font-size` tag we set in reapply_font.
+    // This avoids the GTK CSS-application race where pango_context().metrics()
+    // returns the OLD font's descent for one frame after a font change.
+    let font_desc = text_view
+        .buffer()
+        .tag_table()
+        .lookup("font-size")
+        .and_then(|tag| tag.font_desc());
+
+    let metrics = ctx.metrics(font_desc.as_ref(), None);
     let descent_px = metrics.descent() / pango::SCALE;
     descent_px.clamp(4, 24)
 }
