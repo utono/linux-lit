@@ -390,6 +390,8 @@ impl LibraryPicker {
             .label(&display)
             .halign(gtk4::Align::Start)
             .hexpand(true)
+            .ellipsize(gtk4::pango::EllipsizeMode::End)
+            .xalign(0.0)
             .build();
 
         let abbrev_label = Label::builder()
