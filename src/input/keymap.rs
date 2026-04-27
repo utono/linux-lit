@@ -1510,11 +1510,23 @@ pub fn handle_key(
             crate::input::timestamps::set_chapter(&mut state.borrow_mut())
         }
         "bracketleft" => {
-            navigation::jump_to_prev_chapter(&mut state.borrow_mut());
+            {
+                let mut s = state.borrow_mut();
+                if s.translations_visible {
+                    crate::app::toggle_translations(&mut s);
+                }
+                navigation::jump_to_prev_chapter(&mut s);
+            }
             true
         }
         "braceleft" => {
-            navigation::jump_to_next_chapter(&mut state.borrow_mut());
+            {
+                let mut s = state.borrow_mut();
+                if s.translations_visible {
+                    crate::app::toggle_translations(&mut s);
+                }
+                navigation::jump_to_next_chapter(&mut s);
+            }
             true
         }
         "2" => {
@@ -1526,6 +1538,9 @@ pub fn handle_key(
             true
         }
         "i" => {
+            let s = state.borrow();
+            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
+            drop(s);
             crate::app::toggle_translations(&mut state.borrow_mut());
             true
         }

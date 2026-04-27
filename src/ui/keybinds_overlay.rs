@@ -88,7 +88,7 @@ const BOTTOM_ROW: &[KeyDef] = &[
     bare("k", "K", "cursor \u{2191}"),
     bare("x", "X", "next chunk"),
     key("b", "B", "", "", &[("C-b", "pg back")]),
-    key("m", "M", "media picker", "", &[("p", "set default")]),
+    key("m", "M", "bookmark", "", &[("C-m", "bookmarks"), ("C-S-m", "media picker")]),
     key("w", "W", "copy word", "W: collect", &[]),
     key("v", "V", "", "V: visual mode", &[]),
     ub("z", "Z"),
