@@ -1010,6 +1010,87 @@ impl PageTurnLock {
     }
 }
 
+/// Why the viewport's page changed. Drives which consumers fire inside
+/// `after_page_change`. Mirrors the `reason` field on foliate-js's `relocate`
+/// CustomEvent (paginator.js:952-969).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PageChangeReason {
+    /// User pressed page-forward (x, Ctrl+d, Space).
+    Forward,
+    /// User pressed page-backward (y, Shift+,).
+    Backward,
+    /// User jumped to a specific line (gg, G, jump-to-bookmark via picker).
+    JumpToLine,
+    /// User toggled a bookmark and we're refreshing the cursor on it.
+    JumpToBookmark,
+    /// User jumped to a chapter via [ ] keys.
+    Chapter,
+    /// User jumped to a scene via 2 / 3 keys (plays).
+    Scene,
+    /// User jumped to a vocab match.
+    Vocab,
+    /// User pressed comma/q/j/k for dialogue navigation.
+    Dialogue,
+    /// User pressed [ or { for paragraph navigation.
+    Paragraph,
+    /// MPV CursorSync drove the cursor to a new line; do NOT re-seek MPV.
+    MpvSync,
+    /// Layout refresh after font/size/translation change. Not a navigation.
+    Resnap,
+    /// Work just loaded; AppState is being initialized. Skip most consumers.
+    WorkLoad,
+}
+
+impl PageChangeReason {
+    /// Whether to call `seek_to_current_line` after the page change. False for
+    /// MPV-driven changes (would loop) and pure layout refreshes.
+    pub(crate) fn should_seek(self) -> bool {
+        !matches!(self, Self::MpvSync | Self::Resnap | Self::WorkLoad)
+    }
+
+    /// Whether to call `auto_show_vocab_popup` after the page change. False
+    /// for system-driven changes that the user didn't request.
+    pub(crate) fn should_show_vocab(self) -> bool {
+        !matches!(self, Self::MpvSync | Self::Resnap | Self::WorkLoad)
+    }
+
+    /// Whether to refresh the page label. True for everything except WorkLoad
+    /// (display_work handles label setup itself).
+    pub(crate) fn should_update_label(self) -> bool {
+        !matches!(self, Self::WorkLoad)
+    }
+}
+
+/// Single rendezvous called at the tail of every page-mutating function.
+/// Mirrors the listener pattern around foliate-js's `relocate` CustomEvent
+/// (paginator.js:952-969): one canonical "page changed" signal that all
+/// consumers (page label, vocab popup, MPV seek) project from in a
+/// deterministic order.
+///
+/// Each consumer consults the reason flags so the function shape is
+/// the same for every caller — the differences are in the reason, not in
+/// scattered if/else around the call sites.
+pub(crate) fn after_page_change(state: &mut AppState, reason: PageChangeReason) {
+    if reason.should_update_label() {
+        if let Some(text) = state.page_label_text_for_buffer(state.page_top_line) {
+            state.page_line_label.set_text(&text);
+            state.page_line_label.set_visible(true);
+        }
+    }
+
+    // Highlight always repaints — consumer order matters: highlight first so
+    // downstream consumers (vocab popup positioning) see the new cursor.
+    update_highlight(state);
+
+    if reason.should_seek() {
+        seek_to_current_line(state);
+    }
+
+    if reason.should_show_vocab() {
+        auto_show_vocab_popup(state);
+    }
+}
+
 /// Result of a single height-summing walk over the buffer starting at a page
 /// top: which line was the last to fully fit, the total pixel height consumed
 /// by lines [page_top, last_fit], and the count of lines included.
@@ -3061,5 +3142,51 @@ mod visible_range_helpers_tests {
         assert_eq!(trimmed.last_fit, 0);
         assert_eq!(trimmed.total_height, 20);
         assert_eq!(trimmed.count, 1);
+    }
+}
+
+#[cfg(test)]
+mod after_page_change_tests {
+    use super::PageChangeReason;
+
+    #[test]
+    fn reason_drives_seek_for_user_navigation() {
+        assert!(PageChangeReason::Forward.should_seek());
+        assert!(PageChangeReason::Backward.should_seek());
+        assert!(PageChangeReason::JumpToLine.should_seek());
+        assert!(PageChangeReason::JumpToBookmark.should_seek());
+        assert!(PageChangeReason::Chapter.should_seek());
+        assert!(PageChangeReason::Scene.should_seek());
+    }
+
+    #[test]
+    fn reason_skips_seek_for_system_driven_changes() {
+        assert!(!PageChangeReason::MpvSync.should_seek(),
+            "MPV-driven page change must not re-seek MPV");
+        assert!(!PageChangeReason::Resnap.should_seek(),
+            "resnap is a layout refresh, not a navigation");
+        assert!(!PageChangeReason::WorkLoad.should_seek(),
+            "work load drives its own seek separately");
+    }
+
+    #[test]
+    fn reason_drives_vocab_popup_for_user_navigation() {
+        assert!(PageChangeReason::Forward.should_show_vocab());
+        assert!(PageChangeReason::JumpToBookmark.should_show_vocab());
+    }
+
+    #[test]
+    fn reason_skips_vocab_for_system_changes() {
+        assert!(!PageChangeReason::MpvSync.should_show_vocab());
+        assert!(!PageChangeReason::Resnap.should_show_vocab());
+        assert!(!PageChangeReason::WorkLoad.should_show_vocab());
+    }
+
+    #[test]
+    fn reason_always_updates_label_except_workload() {
+        assert!(PageChangeReason::Forward.should_update_label());
+        assert!(PageChangeReason::MpvSync.should_update_label());
+        assert!(PageChangeReason::Resnap.should_update_label());
+        assert!(!PageChangeReason::WorkLoad.should_update_label());
     }
 }
