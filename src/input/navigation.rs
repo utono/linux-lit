@@ -791,14 +791,17 @@ pub fn is_line_on_screen(state: &AppState, line: usize) -> bool {
 /// guard and the text_view bottom margin (which GTK reserves for padding
 /// and is not available for text rendering).
 fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
-    // During work loading, GTK layout is stale — report all lines as visible
-    // to prevent bogus page turns that crash the app.
     if state.loading_work.get() {
         return true;
     }
     if line < state.page_top_line {
         return false;
     }
+    // F4: fast path — consult the cache populated by snap_scroll_to_line.
+    if let Some(cached) = state.last_visible_range.get() {
+        return line <= cached.last_fit && cached.count > 0;
+    }
+    // Cold-start fallback: recompute via visible_range.
     let widget_height = state.text_view.height();
     if widget_height <= 0 {
         return true;
@@ -1049,6 +1052,12 @@ impl PageChangeReason {
 /// the same for every caller — the differences are in the reason, not in
 /// scattered if/else around the call sites.
 pub(crate) fn after_page_change(state: &mut AppState, reason: PageChangeReason) {
+    // F4: invalidate cache unconditionally; snap_scroll_to_line repopulates
+    // if any scroll happened. For Cursor / Dialogue navigations that don't
+    // page-turn, the next is_line_fully_visible call falls back to recompute
+    // — slightly slower but always correct.
+    state.last_visible_range.set(None);
+
     if reason.should_update_label() {
         if let Some(text) = state.page_label_text_for_buffer(state.page_top_line) {
             state.page_line_label.set_text(&text);
@@ -1437,6 +1446,23 @@ pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
         let (y, _h) = state.text_view.line_yrange(&iter);
         let adj = state.scrolled_window.vadjustment();
         adj.set_value(y as f64);
+    }
+
+    // F4: populate the cache synchronously so MPV sync handlers reading
+    // is_line_fully_visible right after this call see the new range, not
+    // stale state. The idle-scheduled update_bottom_clip below ALSO writes
+    // the cache as a backstop for layout-not-yet-flushed cases.
+    let widget_height = state.text_view.height();
+    if widget_height > 0 {
+        let descender_guard = descender_guard_px(&state.text_view, line);
+        let bottom_margin = state.text_view.bottom_margin();
+        let usable_height = widget_height - descender_guard - bottom_margin;
+        let line_count = state.effective_line_count();
+        let range = visible_range(&state.text_view, &state.buffer, line, line_count, usable_height);
+        let trimmed = trim_trailing_speakers(range, line, &state.text_view, &state.buffer);
+        state.last_visible_range.set(Some(trimmed));
+    } else {
+        state.last_visible_range.set(None);
     }
 
     // Update page line indicator (citation for plays, line_mapping.id otherwise)

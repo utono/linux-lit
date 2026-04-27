@@ -167,6 +167,13 @@ pub struct AppState {
     /// layout refresh (apply_tiled_mode + snap) with correct line metrics.
     pub needs_layout_refresh: Rc<Cell<bool>>,
     pub timestamp_undo: Option<crate::input::timestamps::TimestampUndoState>,
+    /// Cached last visible range from the most recent snap_scroll_to_line or
+    /// update_bottom_clip. None during cold start, after work load, or after
+    /// any after_page_change for a reason that shifts the viewport. Read by
+    /// is_line_fully_visible to avoid recomputing through the height-summing
+    /// loop on every MPV time-pos tick.
+    /// Mirrors foliate-js Paginator.#lastVisibleRange.
+    pub last_visible_range: std::cell::Cell<Option<crate::input::navigation::VisibleRange>>,
 }
 
 impl AppState {
@@ -851,6 +858,7 @@ pub fn build_window(
         loading_work: Rc::new(Cell::new(false)),
         needs_layout_refresh: Rc::new(Cell::new(false)),
         timestamp_undo: None,
+        last_visible_range: std::cell::Cell::new(None),
     }));
 
     // Adapt card width/margins to window size whenever the window resizes
@@ -1322,6 +1330,7 @@ pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<
 
     state.current_line = saved_line;
     state.page_top_line = 0;
+    state.last_visible_range.set(None);
     state.page_history.clear();
     state.visual_selection = None;
     state.current_work = Some(work);
