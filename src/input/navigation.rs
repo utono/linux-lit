@@ -85,19 +85,30 @@ fn last_dialogue_in_page(buffer: &sourceview5::Buffer, from: usize, count: usize
     last
 }
 
-/// Given a dialogue line that will be the top of a page, back up one line
-/// if immediately preceded by a speaker name so the speaker is visible.
+/// Given a dialogue line that will be the top of a page, back up over any
+/// non-dialogue content immediately preceding it: blanks, speakers, stage
+/// directions, and act/scene markers. Stops at the previous dialogue line or
+/// the start of the buffer. Ensures scene-transition context (exit directions,
+/// scene headers, entrance directions, asides) is visible at the top of the
+/// new page rather than skipped between pages.
 fn back_up_for_speaker(buffer: &sourceview5::Buffer, line: usize) -> usize {
     use crate::db::line_types;
-    if line == 0 {
-        return line;
+    let mut top = line;
+    while top > 0 {
+        let prev = buffer_line_text(buffer, top - 1);
+        let trimmed = prev.trim();
+        if trimmed.is_empty()
+            || line_types::is_speaker(trimmed)
+            || line_types::is_stage_direction(trimmed)
+            || line_types::is_act_scene_marker(trimmed)
+            || line_types::is_separator(trimmed)
+        {
+            top -= 1;
+        } else {
+            break;
+        }
     }
-    let prev = buffer_line_text(buffer, line - 1);
-    if line_types::is_speaker(&prev) {
-        line - 1
-    } else {
-        line
-    }
+    top
 }
 
 /// Find the last buffer line that fits within the viewport starting from
@@ -545,38 +556,29 @@ fn prev_dialogue_line(
 }
 
 /// Find the best page-top for a forward page turn targeting `target_line`.
-/// Backs up from the target to include the speaker name and any blank line
-/// between the speaker and the dialogue, so the new page starts with context.
+/// Backs up over any non-dialogue content (blanks, speakers, stage directions,
+/// scene markers) immediately preceding the target so transition context is
+/// visible at the top of the new page rather than dropped between pages.
 fn page_turn_top(buffer: &sourceview5::Buffer, target_line: usize) -> usize {
+    back_up_for_speaker(buffer, target_line)
+}
+
+/// Find the page-top for a chapter jump: walk backward from `target_line` to
+/// the nearest act/scene marker so the viewport starts on the scene title.
+/// Falls back to `page_turn_top` if no marker is found within `MAX_LOOKBACK`.
+fn chapter_page_top(buffer: &sourceview5::Buffer, target_line: usize) -> usize {
     use crate::db::line_types;
-    if target_line == 0 {
-        return 0;
-    }
-    let mut top = target_line;
-    // Walk backward over blank lines
-    while top > 0 {
-        let text = buffer_line_text(buffer, top - 1);
-        if text.trim().is_empty() {
-            top -= 1;
-        } else {
-            break;
+    const MAX_LOOKBACK: usize = 50;
+    let lookback_floor = target_line.saturating_sub(MAX_LOOKBACK);
+    let mut i = target_line;
+    while i > lookback_floor {
+        let text = buffer_line_text(buffer, i - 1);
+        if line_types::is_act_scene_marker(text.trim()) {
+            return i - 1;
         }
+        i -= 1;
     }
-    // If the line above is a speaker name, include it
-    if top > 0 {
-        let text = buffer_line_text(buffer, top - 1);
-        if line_types::is_speaker(text.trim()) {
-            top -= 1;
-            // Also include a blank line above the speaker
-            if top > 0 {
-                let above = buffer_line_text(buffer, top - 1);
-                if above.trim().is_empty() {
-                    top -= 1;
-                }
-            }
-        }
-    }
-    top
+    page_turn_top(buffer, target_line)
 }
 
 /// Previous chapter line (`[` key).
@@ -589,33 +591,32 @@ pub fn jump_to_prev_chapter(state: &mut AppState) {
         if state.current_line == 0 {
             return;
         }
-        if let Some(ref lm) = state.line_map {
-            let mut found = None;
-            for bl in (0..state.current_line).rev() {
-                if let Some(Some(wi)) = lm.buffer_to_work.get(bl) {
-                    if work.lines[*wi].is_chapter {
-                        found = Some(bl);
-                        break;
-                    }
-                }
+        // Find the current chapter's start (the nearest chapter line at or
+        // before current_line). If we're past it, jump there. If we're already
+        // on it, jump to the previous chapter's start.
+        let is_chapter_at = |bl: usize| -> bool {
+            if let Some(ref lm) = state.line_map {
+                lm.buffer_to_work
+                    .get(bl)
+                    .and_then(|o| o.as_ref())
+                    .map(|wi| work.lines[*wi].is_chapter)
+                    .unwrap_or(false)
+            } else {
+                work.lines.get(bl).map(|l| l.is_chapter).unwrap_or(false)
             }
-            found
-        } else {
-            let mut found = None;
-            for i in (0..state.current_line).rev() {
-                if work.lines[i].is_chapter {
-                    found = Some(i);
-                    break;
-                }
-            }
-            found
+        };
+        let current_chapter_start = (0..=state.current_line).rev().find(|&bl| is_chapter_at(bl));
+        match current_chapter_start {
+            Some(start) if start < state.current_line => Some(start),
+            Some(start) => (0..start).rev().find(|&bl| is_chapter_at(bl)),
+            None => (0..state.current_line).rev().find(|&bl| is_chapter_at(bl)),
         }
     };
 
     if let Some(line_idx) = target {
         state.current_line = line_idx;
         update_highlight(state);
-        let top = page_turn_top(&state.buffer, line_idx);
+        let top = chapter_page_top(&state.buffer, line_idx);
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
             crate::config::NavigationMode::EReader => {
@@ -660,7 +661,7 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
     if let Some(line_idx) = target {
         state.current_line = line_idx;
         update_highlight(state);
-        let top = page_turn_top(&state.buffer, line_idx);
+        let top = chapter_page_top(&state.buffer, line_idx);
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => center_cursor(state),
             crate::config::NavigationMode::EReader => {
@@ -2073,14 +2074,64 @@ mod page_turn_tests {
 
     /// Simulate back_up_for_speaker on plain strings.
     fn back_up_for_speaker(lines: &[String], line: usize) -> usize {
-        if line == 0 {
-            return line;
+        let mut top = line;
+        while top > 0 {
+            let trimmed = lines[top - 1].trim();
+            if trimmed.is_empty()
+                || line_types::is_speaker(trimmed)
+                || line_types::is_stage_direction(trimmed)
+                || line_types::is_act_scene_marker(trimmed)
+                || line_types::is_separator(trimmed)
+            {
+                top -= 1;
+            } else {
+                break;
+            }
         }
-        if line_types::is_speaker(&lines[line - 1]) {
-            line - 1
-        } else {
-            line
-        }
+        top
+    }
+
+    #[test]
+    fn test_back_up_for_speaker_includes_stage_direction() {
+        // Comedy of Errors IV.ii — stage direction `[Enter Dromio…]` between
+        // Adriana's curse and Dromio's first dialogue should be included on
+        // the new page, not skipped.
+        let lines: Vec<String> = vec![
+            "curse.",
+            "",
+            "[Enter Dromio of Syracuse with the key.]",
+            "",
+            "DROMIO OF SYRACUSE",
+            "Here, go—the desk, the purse! Sweet, now make",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+
+        // Target: the dialogue line "Here, go—the desk…" at index 5
+        let new_top = back_up_for_speaker(&lines, 5);
+        assert_eq!(
+            new_top, 1,
+            "new page top should land on the blank line above the stage direction (got line {} = '{}')",
+            new_top, lines[new_top]
+        );
+    }
+
+    #[test]
+    fn test_back_up_for_speaker_no_stage_direction() {
+        // Plain speaker without preceding stage direction — behavior unchanged.
+        let lines: Vec<String> = vec![
+            "Previous dialogue line.",
+            "",
+            "ADRIANA",
+            "Ah, but I think him better than I say,",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+
+        let new_top = back_up_for_speaker(&lines, 3);
+        assert_eq!(new_top, 1, "should back up to blank above speaker");
     }
 
     /// Test page-forward through entire Troilus: every page turn must advance
@@ -2420,5 +2471,178 @@ mod page_turn_tests {
             "Bleak House backward (history): {} pages, {} down to {}",
             backward_tops.len(), backward_tops[0], backward_tops.last().unwrap()
         );
+    }
+
+    /// Load the cleaned Comedy of Errors text, stripping ## prefixes like the app does.
+    /// This text contains the IV.ii Dromio entrance stage direction that exposed
+    /// the original gap bug.
+    fn load_comedy_of_errors_lines() -> Vec<String> {
+        let path = std::path::Path::new(
+            "/home/mlj/utono/literature/shakespeare-william/folger-cleaned/the-comedy-of-errors.txt",
+        );
+        if !path.exists() {
+            panic!("Comedy of Errors cleaned file not found at {:?}", path);
+        }
+        let contents = std::fs::read_to_string(path).expect("Failed to read Errors file");
+        contents
+            .lines()
+            .map(|line| {
+                if let Some(stripped) = line.strip_prefix("## ") {
+                    stripped.to_string()
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect()
+    }
+
+    /// A line is "viewable" if it should appear on screen — i.e. anything except
+    /// a blank separator line. Stage directions, scene markers, speakers and
+    /// dialogue are all viewable content.
+    fn is_viewable_line(text: &str) -> bool {
+        !line_types::is_blank(text)
+    }
+
+    /// Simulate `page_turn_top` on plain strings — same semantics as
+    /// `back_up_for_speaker`: walk back over any non-dialogue content.
+    fn page_turn_top_sim(lines: &[String], target_line: usize) -> usize {
+        back_up_for_speaker(lines, target_line)
+    }
+
+    /// Walk a forward-only sequence of viewports, return the union of visited
+    /// `[page_top, last_visible]` ranges. `step` produces the next page_top
+    /// from the current one, returning None when there are no more pages.
+    fn collect_visited_ranges<F>(
+        line_count: usize,
+        page_size: usize,
+        first_top: usize,
+        mut step: F,
+    ) -> Vec<(usize, usize)>
+    where
+        F: FnMut(usize) -> Option<usize>,
+    {
+        let mut ranges: Vec<(usize, usize)> = Vec::new();
+        let mut top = first_top;
+        let mut iterations = 0;
+        loop {
+            let last = (top + page_size).min(line_count.saturating_sub(1));
+            ranges.push((top, last));
+            iterations += 1;
+            if iterations > 1000 {
+                panic!("Forward traversal stuck after {} iterations", iterations);
+            }
+            match step(top) {
+                Some(next) if next > top => top = next,
+                _ => break,
+            }
+        }
+        ranges
+    }
+
+    /// Coverage test: forward-walk Comedy of Errors with `x` (page_forward).
+    /// Every non-blank line — including stage directions, speakers, scene
+    /// markers — must appear in at least one visited viewport.
+    #[test]
+    fn test_x_page_forward_covers_every_line_errors() {
+        let lines = load_comedy_of_errors_lines();
+        let line_count = lines.len();
+        let page_size = 30;
+
+        // Start: top of file, like the app does on initial display.
+        let first_top = 0;
+
+        // step: emulate page_forward — find last dialogue in current page,
+        // then next dialogue after it, then back up for speaker.
+        let lines_ref = &lines;
+        let ranges = collect_visited_ranges(line_count, page_size, first_top, |top| {
+            let last_visible = (top + page_size).min(line_count.saturating_sub(1));
+            let last = last_dialogue_in_range(lines_ref, top, last_visible - top + 1);
+            let next = next_dialogue(lines_ref, last + 1)?;
+            Some(back_up_for_speaker(lines_ref, next))
+        });
+
+        let mut uncovered: Vec<usize> = Vec::new();
+        for (i, text) in lines.iter().enumerate() {
+            if !is_viewable_line(text) {
+                continue;
+            }
+            let covered = ranges.iter().any(|&(a, b)| i >= a && i <= b);
+            if !covered {
+                uncovered.push(i);
+            }
+        }
+        if !uncovered.is_empty() {
+            let preview: Vec<String> = uncovered
+                .iter()
+                .take(8)
+                .map(|&i| format!("  line {}: '{}'", i, lines[i]))
+                .collect();
+            panic!(
+                "x/page_forward left {} viewable lines uncovered (showing first {}):\n{}",
+                uncovered.len(),
+                preview.len(),
+                preview.join("\n"),
+            );
+        }
+    }
+
+    /// Coverage test: forward-walk Comedy of Errors using `j`/`q`
+    /// (cursor_next_dialogue → scroll_after_jump_forward → page_turn_top).
+    /// Every non-blank line must appear in at least one visited viewport.
+    #[test]
+    fn test_j_cursor_next_dialogue_covers_every_line_errors() {
+        let lines = load_comedy_of_errors_lines();
+        let line_count = lines.len();
+        let page_size = 30;
+
+        // Start: top of file like the app does on initial display.
+        let first_top = 0;
+        // First dialogue line is the initial cursor.
+        let first_dialogue = dialogue_indices(&lines)[0];
+
+        // step: emulate j — find next dialogue line. If it falls outside the
+        // current viewport (top..top+page_size), do a page turn using
+        // page_turn_top. Otherwise the cursor moved within the page (no new
+        // viewport range to record), so skip to the next dialogue.
+        let lines_ref = &lines;
+        let mut current_dialogue = first_dialogue;
+        let ranges = collect_visited_ranges(line_count, page_size, first_top, |top| {
+            // advance cursor through dialogue lines until one leaves the viewport
+            let last_visible = (top + page_size).min(line_count.saturating_sub(1));
+            let mut cursor = current_dialogue;
+            loop {
+                let next = next_dialogue(lines_ref, cursor + 1)?;
+                if next > last_visible {
+                    // page turn
+                    current_dialogue = next;
+                    return Some(page_turn_top_sim(lines_ref, next));
+                }
+                cursor = next;
+            }
+        });
+
+        let mut uncovered: Vec<usize> = Vec::new();
+        for (i, text) in lines.iter().enumerate() {
+            if !is_viewable_line(text) {
+                continue;
+            }
+            let covered = ranges.iter().any(|&(a, b)| i >= a && i <= b);
+            if !covered {
+                uncovered.push(i);
+            }
+        }
+        if !uncovered.is_empty() {
+            let preview: Vec<String> = uncovered
+                .iter()
+                .take(8)
+                .map(|&i| format!("  line {}: '{}'", i, lines[i]))
+                .collect();
+            panic!(
+                "j/cursor_next_dialogue left {} viewable lines uncovered (showing first {}):\n{}",
+                uncovered.len(),
+                preview.len(),
+                preview.join("\n"),
+            );
+        }
     }
 }
