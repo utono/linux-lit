@@ -1327,15 +1327,37 @@ pub fn resnap_page(state: &mut AppState) {
 /// touching the scroll position. Use after font / line-height changes that
 /// don't shift `page_top_line` — e.g. translation toggle, where the caller
 /// has already restored a custom scroll value and a full `resnap_page`
-/// would clobber it. Mirrors the idle-scheduling that `snap_scroll_to_line`
-/// uses so callers see the clip refreshed on the next frame.
+/// would clobber it.
 pub fn refresh_bottom_clip(state: &AppState) {
-    let text_view = state.text_view.clone();
-    let bottom_clip = state.bottom_clip.clone();
-    let scrolled_window = state.scrolled_window.clone();
-    let page_top = state.page_top_line;
-    let line_count = state.effective_line_count();
+    schedule_bottom_clip_update(
+        state.text_view.clone(),
+        state.bottom_clip.clone(),
+        state.scrolled_window.clone(),
+        state.page_top_line,
+        state.effective_line_count(),
+    );
+}
+
+/// Fire `update_bottom_clip` twice: once via `idle_add` (covers the common
+/// case where layout is already settled), once via `timeout(100ms)` (covers
+/// post-font-change where GTK's layout pass for new metrics hasn't completed
+/// yet — `line_yrange` returns pre-layout heights on the first pass and the
+/// clip ends up sized for the OLD font's line heights). The second fire reads
+/// post-layout metrics and corrects.
+fn schedule_bottom_clip_update(
+    text_view: sourceview5::View,
+    bottom_clip: gtk4::Box,
+    scrolled_window: gtk4::ScrolledWindow,
+    page_top: usize,
+    line_count: usize,
+) {
+    let tv1 = text_view.clone();
+    let bc1 = bottom_clip.clone();
+    let sw1 = scrolled_window.clone();
     glib::idle_add_local_once(move || {
+        update_bottom_clip(&tv1, &bc1, &sw1, page_top, line_count);
+    });
+    glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
         update_bottom_clip(&text_view, &bottom_clip, &scrolled_window, page_top, line_count);
     });
 }
@@ -1365,15 +1387,16 @@ pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
     }
 
     // Schedule the clip height update for the next frame, after GTK has
-    // completed the scroll and updated line layout positions.
-    let text_view = state.text_view.clone();
-    let bottom_clip = state.bottom_clip.clone();
-    let scrolled_window = state.scrolled_window.clone();
-    let page_top = line;
-    let line_count = state.effective_line_count();
-    glib::idle_add_local_once(move || {
-        update_bottom_clip(&text_view, &bottom_clip, &scrolled_window, page_top, line_count);
-    });
+    // completed the scroll and updated line layout positions. Fires twice
+    // (idle + 100ms timeout) — the timeout backstop catches post-font-change
+    // cases where the first idle pass sees pre-layout line heights.
+    schedule_bottom_clip_update(
+        state.text_view.clone(),
+        state.bottom_clip.clone(),
+        state.scrolled_window.clone(),
+        line,
+        state.effective_line_count(),
+    );
 }
 
 /// Pixel descent of the active font, queried from Pango. Mirrors foliate-js's
