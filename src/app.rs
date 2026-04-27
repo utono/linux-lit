@@ -174,6 +174,12 @@ pub struct AppState {
     /// loop on every MPV time-pos tick.
     /// Mirrors foliate-js Paginator.#lastVisibleRange.
     pub last_visible_range: std::cell::Cell<Option<crate::input::navigation::VisibleRange>>,
+    /// Cached vec of viewport-page top line indices for the current work at
+    /// the current font/size. Built lazily on first need by ensure_page_tops;
+    /// invalidated to None when font/size changes or a new work loads. The
+    /// cache eliminates the O(line_count²) replay-from-line-0 walk that
+    /// viewport_page_for_line used to do on every overlay-label refresh.
+    pub page_tops: std::cell::RefCell<Option<Vec<usize>>>,
 }
 
 impl AppState {
@@ -859,6 +865,7 @@ pub fn build_window(
         needs_layout_refresh: Rc::new(Cell::new(false)),
         timestamp_undo: None,
         last_visible_range: std::cell::Cell::new(None),
+        page_tops: std::cell::RefCell::new(None),
     }));
 
     // Adapt card width/margins to window size whenever the window resizes
@@ -947,6 +954,10 @@ pub fn build_window(
                     apply_card_sizing(&content_hbox_tick, ww, cw);
                     apply_tiled_mode(&mut s, &vbox_for_tick, ww);
                 }
+                // Layout just changed (resize or post-load refresh) — page
+                // boundaries shift, so any cached page_tops index is stale.
+                // Drop it; the next viewport_page_for_line call rebuilds.
+                crate::input::navigation::invalidate_page_tops(&s);
                 let top = s.page_top_line;
                 crate::input::navigation::snap_scroll_to_line(&mut s, top);
             }
@@ -1331,6 +1342,7 @@ pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<
     state.current_line = saved_line;
     state.page_top_line = 0;
     state.last_visible_range.set(None);
+    *state.page_tops.borrow_mut() = None;
     state.page_history.clear();
     state.visual_selection = None;
     state.current_work = Some(work);
@@ -2071,6 +2083,7 @@ fn show_translations(state: &mut AppState) {
     state.translations_visible = true;
 
     reapply_font(state);
+    crate::input::navigation::invalidate_page_tops(state);
     // Repaint the cursor highlight but do NOT page-turn. Restore scroll so
     // the cursor stays at the same on-screen y-position the user was looking
     // at before the toggle (anchor on the highlight, not on page_top).
@@ -2193,6 +2206,7 @@ fn hide_translations(state: &mut AppState) {
     state.translations_visible = false;
 
     reapply_font(state);
+    crate::input::navigation::invalidate_page_tops(state);
     // Repaint highlight but do NOT page-turn. Restore scroll so the cursor
     // sits at the same on-screen y-position the user had before the toggle.
     crate::input::navigation::update_highlight_only(state);
@@ -2300,6 +2314,7 @@ pub fn adjust_font_size(state: &mut AppState, delta: i32) {
     state.config.font_size = new_size;
     reapply_font(state);
     crate::input::navigation::resnap_page(state);
+    crate::input::navigation::invalidate_page_tops(state);
     crate::config::save(&state.config);
 }
 
@@ -2312,6 +2327,7 @@ pub fn reset_font_size(state: &mut AppState) {
     state.config.font_size = default;
     reapply_font(state);
     crate::input::navigation::resnap_page(state);
+    crate::input::navigation::invalidate_page_tops(state);
     crate::config::save(&state.config);
 }
 
@@ -2328,6 +2344,7 @@ pub fn cycle_font(state: &mut AppState, forward: bool) {
     state.config.font_family = cycle[next].to_string();
     reapply_font(state);
     crate::input::navigation::resnap_page(state);
+    crate::input::navigation::invalidate_page_tops(state);
     crate::config::save(&state.config);
     let position = format!("{}/{}", next + 1, cycle.len());
     let body = format!("{} {}pt", state.config.font_family, state.config.font_size);

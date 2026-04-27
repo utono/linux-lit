@@ -166,37 +166,57 @@ fn next_page_top(state: &AppState, top: usize) -> NextPage {
     NextPage { new_top, next_dialogue }
 }
 
-/// Return the 1-indexed viewport page that contains `target_line`, computed
-/// by replaying j-key page-forward from line 0. Used by the bottom-overlay
-/// label to display "page - line_id" on prose works.
-///
-/// Returns 1 for an empty work or a target at the start. The loop has a
-/// safety break if `next_page_top` fails to advance, so it cannot run away.
-pub fn viewport_page_for_line(state: &AppState, target_line: usize) -> usize {
+/// Build the page_tops index by walking next_page_top from line 0 to the end
+/// of the work. Result is the same as repeatedly calling next_page_top from
+/// line 0; cost is O(line_count) once instead of O(line_count²) on every
+/// overlay-label refresh.
+fn build_page_tops(state: &AppState) -> Vec<usize> {
     let line_count = state.effective_line_count();
     if line_count == 0 {
-        return 1;
+        return Vec::new();
     }
-    let mut page: usize = 1;
+    let mut tops = vec![0usize];
     let mut top: usize = 0;
     while top < line_count {
-        let next_top = next_page_top(state, top).new_top;
-        // target is on the current page if next page starts strictly after it
-        if next_top > target_line {
-            return page;
+        let next = next_page_top(state, top).new_top;
+        if next <= top || next >= line_count {
+            break;
         }
-        // safety: no progress means we're stuck — bail with current page
-        if next_top <= top {
-            return page;
-        }
-        top = next_top;
-        page += 1;
+        tops.push(next);
+        top = next;
     }
-    // Reached only when target_line >= line_count (defensive — not expected
-    // in normal use). The loop incremented `page` one extra time when `top`
-    // advanced to `line_count`; subtract that off. `.max(1)` floors at 1 for
-    // the empty-work case.
-    page.saturating_sub(1).max(1)
+    tops
+}
+
+/// Return the 1-indexed viewport page that contains `target_line`. Reads
+/// from the page_tops cache; builds it on first need.
+///
+/// If the text_view hasn't been laid out yet (height ≤ 0), build returns a
+/// degenerate `[0]` index that would lock the label to "page 1". We refuse
+/// to cache that — return 1 directly and leave the cache empty so the next
+/// call after layout completes triggers a real build.
+pub fn viewport_page_for_line(state: &AppState, target_line: usize) -> usize {
+    {
+        let cached = state.page_tops.borrow();
+        if let Some(tops) = cached.as_ref() {
+            return page_for_line_in_index(tops, target_line);
+        }
+    }
+    // Don't build (and cache) before layout — next_page_top returns garbage
+    // when widget_height ≤ 0 and the resulting [0] index would stick.
+    if state.text_view.height() <= 0 {
+        return 1;
+    }
+    let tops = build_page_tops(state);
+    let page = page_for_line_in_index(&tops, target_line);
+    *state.page_tops.borrow_mut() = Some(tops);
+    page
+}
+
+/// Drop the page_tops cache. Called when font/size changes invalidate page
+/// boundaries (resnap_page) and when a new work loads (display_work).
+pub fn invalidate_page_tops(state: &AppState) {
+    *state.page_tops.borrow_mut() = None;
 }
 
 /// Page forward (Ctrl+d/f). The next page starts at the dialogue line
@@ -1104,6 +1124,23 @@ pub(crate) struct VisibleRange {
 /// Caller-specific short-circuits (`loading_work`, `widget_height <= 0`, empty
 /// buffer) stay in the callers — they're not part of this kernel.
 ///
+/// Pure: given a sorted vec of viewport-page top line indices, return the
+/// 1-indexed page that contains `target_line`. Empty index returns 1.
+/// `target_line` past the last page-top returns `tops.len()`.
+///
+/// Mirrors what foliate-js paginator.js does in O(log n) via index lookup
+/// (`atStart`/`atEnd` use page indices, paginator.js:1050-1054), replacing
+/// linux-lit's previous O(n²) replay-from-line-0 walk.
+pub(crate) fn page_for_line_in_index(tops: &[usize], target_line: usize) -> usize {
+    if tops.is_empty() {
+        return 1;
+    }
+    // partition_point returns the index of the first element > target_line.
+    // Because tops[0] is always 0 (the first page), partition_point >= 1 for
+    // any target_line >= 0 — that's exactly the page number we want.
+    tops.partition_point(|&t| t <= target_line).max(1)
+}
+
 /// Mirrors `getVisibleRange` in foliate-js paginator.js (lines 94-151) in
 /// purpose: one canonical visibility computation. Future foliate reads of that
 /// function map directly to this one.
@@ -3197,5 +3234,47 @@ mod after_page_change_tests {
         assert!(PageChangeReason::Cursor.should_show_vocab(),
             "cursor navigation still shows vocab");
         assert!(PageChangeReason::Cursor.should_update_label());
+    }
+}
+
+#[cfg(test)]
+mod page_tops_tests {
+    use super::page_for_line_in_index;
+
+    #[test]
+    fn page_for_line_returns_1_for_empty_index() {
+        let tops: Vec<usize> = vec![];
+        assert_eq!(page_for_line_in_index(&tops, 0), 1);
+        assert_eq!(page_for_line_in_index(&tops, 100), 1);
+    }
+
+    #[test]
+    fn page_for_line_returns_1_for_first_page() {
+        let tops = vec![0, 35, 70, 105]; // page 1 starts at 0, page 2 at 35, etc.
+        assert_eq!(page_for_line_in_index(&tops, 0), 1);
+        assert_eq!(page_for_line_in_index(&tops, 10), 1);
+        assert_eq!(page_for_line_in_index(&tops, 34), 1);
+    }
+
+    #[test]
+    fn page_for_line_returns_2_for_second_page() {
+        let tops = vec![0, 35, 70, 105];
+        assert_eq!(page_for_line_in_index(&tops, 35), 2);
+        assert_eq!(page_for_line_in_index(&tops, 50), 2);
+        assert_eq!(page_for_line_in_index(&tops, 69), 2);
+    }
+
+    #[test]
+    fn page_for_line_handles_target_past_end() {
+        let tops = vec![0, 35, 70, 105];
+        assert_eq!(page_for_line_in_index(&tops, 200), 4);
+    }
+
+    #[test]
+    fn page_for_line_exact_top_match() {
+        let tops = vec![0, 35, 70];
+        // line 35 is the START of page 2 — partition_point gives index 2,
+        // page = 2.
+        assert_eq!(page_for_line_in_index(&tops, 35), 2);
     }
 }
