@@ -2086,6 +2086,12 @@ fn show_translations(state: &mut AppState) {
         adj.set_value(val);
     }
 
+    // Translation toggle changes line heights via reapply_font; refresh the
+    // bottom clip against the new metrics so the last visible line isn't
+    // clipped or surrounded by excess gap. resnap_page would clobber the
+    // anchored adj.set_value above, so use the lighter refresh helper.
+    crate::input::navigation::refresh_bottom_clip(state);
+
     let new_buf_lines = state.buffer.line_count() as usize;
     let lm_len_after = state
         .line_map
@@ -2200,6 +2206,12 @@ fn hide_translations(state: &mut AppState) {
     if let Some(val) = new_adj {
         adj.set_value(val);
     }
+
+    // Translation toggle changes line heights via reapply_font; refresh the
+    // bottom clip against the new metrics so the last visible line isn't
+    // clipped or surrounded by excess gap. resnap_page would clobber the
+    // anchored adj.set_value above, so use the lighter refresh helper.
+    crate::input::navigation::refresh_bottom_clip(state);
 
     let new_buf_lines = state.buffer.line_count() as usize;
     let post_adj_value = state.scrolled_window.vadjustment().value();

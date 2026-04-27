@@ -1323,6 +1323,23 @@ pub fn resnap_page(state: &mut AppState) {
     snap_scroll_to_line(state, state.page_top_line);
 }
 
+/// Re-run `update_bottom_clip` against the current viewport state without
+/// touching the scroll position. Use after font / line-height changes that
+/// don't shift `page_top_line` — e.g. translation toggle, where the caller
+/// has already restored a custom scroll value and a full `resnap_page`
+/// would clobber it. Mirrors the idle-scheduling that `snap_scroll_to_line`
+/// uses so callers see the clip refreshed on the next frame.
+pub fn refresh_bottom_clip(state: &AppState) {
+    let text_view = state.text_view.clone();
+    let bottom_clip = state.bottom_clip.clone();
+    let scrolled_window = state.scrolled_window.clone();
+    let page_top = state.page_top_line;
+    let line_count = state.effective_line_count();
+    glib::idle_add_local_once(move || {
+        update_bottom_clip(&text_view, &bottom_clip, &scrolled_window, page_top, line_count);
+    });
+}
+
 /// Set the page top line and scroll instantly (no animation). For gg/G/restore.
 fn set_page_instant(state: &mut AppState, new_top: usize) {
     clear_old_page_dim(state);
