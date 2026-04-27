@@ -1408,6 +1408,82 @@ where
     }
 }
 
+/// GTK-bound wrapper for `block_start_for_line_pure`. Reads line text via
+/// `buffer` and classifies via `crate::db::line_types`.
+///
+/// Most callers want trim_visible_range instead.
+pub(crate) fn block_start_for_line(
+    buffer: &sourceview5::Buffer,
+    page_top: usize,
+    last_fit: usize,
+    is_prose: bool,
+) -> usize {
+    use crate::db::line_types;
+    let line_text = |i: usize| -> String {
+        let Some(start) = buffer.iter_at_line(i as i32) else { return String::new() };
+        let mut end = start;
+        if !end.ends_line() { end.forward_to_line_end(); }
+        buffer.text(&start, &end, false).to_string()
+    };
+    let is_blank = |i: usize| line_types::is_blank(&line_text(i));
+    let is_speaker = |i: usize| line_types::is_speaker(&line_text(i));
+    let is_stage = |i: usize| line_types::is_stage_direction(&line_text(i));
+    let is_dialogue = |i: usize| line_types::is_dialogue(&line_text(i), is_prose);
+    block_start_for_line_pure(page_top, last_fit, is_prose,
+        &is_blank, &is_speaker, &is_stage, &is_dialogue)
+}
+
+/// GTK-bound wrapper for `trim_block_atoms_pure`. Reads line text and heights
+/// from `text_view`/`buffer`. `is_prose` is the work-type flag (true for novel/
+/// essay/etc., false for plays and poetry).
+///
+/// Most callers want trim_visible_range instead.
+pub(crate) fn trim_block_atoms(
+    range: VisibleRange,
+    page_top: usize,
+    text_view: &sourceview5::View,
+    buffer: &sourceview5::Buffer,
+    is_prose: bool,
+) -> VisibleRange {
+    use crate::db::line_types;
+    let line_text = |i: usize| -> String {
+        let Some(start) = buffer.iter_at_line(i as i32) else { return String::new() };
+        let mut end = start;
+        if !end.ends_line() { end.forward_to_line_end(); }
+        buffer.text(&start, &end, false).to_string()
+    };
+    let is_blank = |i: usize| line_types::is_blank(&line_text(i));
+    let is_speaker = |i: usize| line_types::is_speaker(&line_text(i));
+    let is_stage = |i: usize| line_types::is_stage_direction(&line_text(i));
+    let is_dialogue = |i: usize| line_types::is_dialogue(&line_text(i), is_prose);
+    let line_height = |i: usize| -> i32 {
+        let Some(iter) = buffer.iter_at_line(i as i32) else { return 0 };
+        let (_y, h) = text_view.line_yrange(&iter);
+        h
+    };
+    trim_block_atoms_pure(range, page_top, is_prose,
+        &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height)
+}
+
+/// Canonical composition: apply `trim_trailing_speakers` then `trim_block_atoms`
+/// on a raw `visible_range` result. All callers that compute a visible range
+/// for "what's on this page" should go through this wrapper so both trims
+/// fire in the right order.
+///
+/// Order matters: speaker trim first removes a dangling speaker at the bottom,
+/// then block trim sees the new `last_fit` and decides whether THAT line is
+/// mid-block.
+pub(crate) fn trim_visible_range(
+    range: VisibleRange,
+    page_top: usize,
+    text_view: &sourceview5::View,
+    buffer: &sourceview5::Buffer,
+    is_prose: bool,
+) -> VisibleRange {
+    let r = trim_trailing_speakers(range, page_top, text_view, buffer);
+    trim_block_atoms(r, page_top, text_view, buffer, is_prose)
+}
+
 /// Capture the entire card (spacers + text) as a static Picture overlay.
 /// Uses WidgetPaintable → Snapshot → RenderNode → Texture to freeze the frame.
 /// Returns the Picture (already added to page_turn_overlay) or None if capture fails.
