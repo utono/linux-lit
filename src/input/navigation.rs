@@ -315,30 +315,28 @@ pub fn page_backward(state: &mut AppState) {
         return;
     }
 
-    let prev_top = match state.page_history.pop() {
-        Some(t) => t,
-        None => {
-            if state.page_top_line == 0 {
-                log_fmt!("PAGE_BWD: no history and at start of work");
-                return;
-            }
-            let lpp = lines_per_page(state).max(1);
-            let fallback = state.page_top_line.saturating_sub(lpp);
-            log_fmt!(
-                "PAGE_BWD: no history — fallback prev_top={} from page_top={} lpp={}",
-                fallback, state.page_top_line, lpp
-            );
-            fallback
-        }
+    // History pop wins — preserves exact undo of any forward page-mutating
+    // navigation (page_forward, jump_to_line, chapter, scene, etc.). Only
+    // fall through to prev_page_top when history is empty (resume mid-book
+    // or paged back through all of history).
+    let (new_top, next_dialogue) = if let Some(prev_top) = state.page_history.pop() {
+        let line_count = state.effective_line_count();
+        let next = next_dialogue_from(&state.buffer, prev_top, line_count);
+        let top = back_up_for_speaker(&state.buffer, next);
+        log_fmt!("PAGE_BWD: from history prev_top={} next={} new_top={} current_line={}",
+                 prev_top, next, top, state.current_line);
+        (top, next)
+    } else if state.page_top_line == 0 {
+        log_fmt!("PAGE_BWD: no history and at start of work");
+        return;
+    } else {
+        let np = prev_page_top(state, state.page_top_line);
+        log_fmt!("PAGE_BWD: no history — prev_page_top new_top={} next_dialogue={} from page_top={}",
+                 np.new_top, np.next_dialogue, state.page_top_line);
+        (np.new_top, np.next_dialogue)
     };
 
-    let line_count = state.effective_line_count();
-    let next = next_dialogue_from(&state.buffer, prev_top, line_count);
-    let new_top = back_up_for_speaker(&state.buffer, next);
-
-    log_fmt!("PAGE_BWD: prev_top={} next={} new_top={} current_line={}", prev_top, next, new_top, state.current_line);
-
-    state.current_line = next;
+    state.current_line = next_dialogue;
     set_page(state, new_top, PageDirection::Backward);
     after_page_change(state, PageChangeReason::Backward);
 }
@@ -362,9 +360,19 @@ pub fn page_backward_bottom(state: &mut AppState) {
     if state.current_work.is_none() {
         return;
     }
-    let Some(prev_top) = state.page_history.pop() else {
-        log_fmt!("NAV_BACK: no page_history to pop");
+    let prev_top = if let Some(t) = state.page_history.pop() {
+        t
+    } else if state.page_top_line == 0 {
+        log_fmt!("NAV_BACK_BOTTOM: at start of work, no history");
         return;
+    } else {
+        let np = prev_page_top(state, state.page_top_line);
+        log_fmt!("NAV_BACK_BOTTOM: no history — prev_page_top new_top={} from page_top={}",
+                 np.new_top, state.page_top_line);
+            // Discard np.next_dialogue: this function places the cursor on
+            // the last visible line, computed below via last_fully_visible_line,
+            // not the first dialogue line of the page.
+            np.new_top
     };
     let new_top = back_up_for_speaker(&state.buffer, prev_top);
     // Set page first so last_fully_visible_line computes against the new page
@@ -934,10 +942,22 @@ fn scroll_after_jump_backward(state: &mut AppState) {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
             if state.current_line < state.page_top_line {
-                state.page_history.push(state.page_top_line);
-                let lpp = lines_per_page(state);
-                let new_top = state.current_line.saturating_sub(lpp.saturating_sub(1));
-                log_fmt!("NAV_PAGE_BACK: current={} old_top={} new_top={} lpp={} history_len={}", state.current_line, state.page_top_line, new_top, lpp, state.page_history.len());
+                // Pop history first — undoes the matching forward jump that
+                // pushed page_top (k after j returns to the same viewport,
+                // not a new page that just contains current_line). Fall back
+                // to page_turn_top(current_line) when history is empty so a
+                // cold backward navigation still lands on a real page boundary
+                // instead of the old lpp approximation.
+                let new_top = if let Some(prev_top) = state.page_history.pop() {
+                    log_fmt!("NAV_PAGE_BACK: from history prev_top={} current={} old_top={} history_len={}",
+                             prev_top, state.current_line, state.page_top_line, state.page_history.len());
+                    prev_top
+                } else {
+                    let top = page_turn_top(&state.buffer, state.current_line);
+                    log_fmt!("NAV_PAGE_BACK: no history — page_turn_top new_top={} current={} old_top={}",
+                             top, state.current_line, state.page_top_line);
+                    top
+                };
                 set_page_instant(state, new_top);
             }
         }
