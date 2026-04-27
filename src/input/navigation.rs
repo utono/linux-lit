@@ -36,10 +36,9 @@ pub fn jump_to_start(state: &mut AppState) {
     };
 
     state.current_line = target;
-    update_highlight(state);
     let top = target.saturating_sub(1);
     set_page_instant(state, top);
-    seek_to_current_line(state);
+    after_page_change(state, PageChangeReason::JumpToLine);
 }
 
 /// Jump to the last line.
@@ -52,11 +51,10 @@ pub fn jump_to_end(state: &mut AppState) {
         return;
     }
     state.current_line = line_count - 1;
-    update_highlight(state);
     let lpp = lines_per_page(state);
     let new_top = line_count.saturating_sub(lpp);
     set_page_instant(state, new_top);
-    seek_to_current_line(state);
+    after_page_change(state, PageChangeReason::JumpToLine);
 }
 
 /// Find the next dialogue line at or after `from`.
@@ -222,10 +220,8 @@ pub fn page_forward(state: &mut AppState) {
     state.page_history.push(state.page_top_line);
 
     state.current_line = next_dialogue;
-    update_highlight(state);
-    seek_to_current_line(state);
     set_page(state, new_top, PageDirection::Forward);
-    auto_show_vocab_popup(state);
+    after_page_change(state, PageChangeReason::Forward);
 }
 
 /// Page backward (Shift+,). Pop the previous page_top from the history
@@ -262,10 +258,8 @@ pub fn page_backward(state: &mut AppState) {
     log_fmt!("PAGE_BWD: prev_top={} next={} new_top={} current_line={}", prev_top, next, new_top, state.current_line);
 
     state.current_line = next;
-    update_highlight(state);
-    seek_to_current_line(state);
     set_page(state, new_top, PageDirection::Backward);
-    auto_show_vocab_popup(state);
+    after_page_change(state, PageChangeReason::Backward);
 }
 
 /// Move cursor to the last fully visible line on the current page (`Q` key).
@@ -278,9 +272,7 @@ pub fn cursor_to_page_bottom(state: &mut AppState) {
         state.current_line = last_vis;
         state.pending_advance = None;
         state.pending_advance_ignore_bl = None;
-        update_highlight(state);
-        seek_to_current_line(state);
-        auto_show_vocab_popup(state);
+        after_page_change(state, PageChangeReason::Dialogue);
     }
 }
 
@@ -301,9 +293,7 @@ pub fn page_backward_bottom(state: &mut AppState) {
     state.current_line = last_vis;
     state.pending_advance = None;
     state.pending_advance_ignore_bl = None;
-    update_highlight(state);
-    seek_to_current_line(state);
-    auto_show_vocab_popup(state);
+    after_page_change(state, PageChangeReason::Backward);
 }
 
 /// Previous dialogue line (`,` key).
@@ -320,10 +310,8 @@ pub fn jump_to_prev_dialogue(state: &mut AppState) {
         state.pending_advance_ignore_bl = None;
         state.prev_highlight_line.set(None);
         log_fmt!("NAV_PREV: comma from={} to={} page_top={}", prev, target, state.page_top_line);
-        update_highlight(state);
         scroll_after_jump_backward(state);
-        seek_to_current_line(state);
-        auto_show_vocab_popup(state);
+        after_page_change(state, PageChangeReason::Dialogue);
     }
 }
 
@@ -340,10 +328,8 @@ pub fn jump_to_next_dialogue(state: &mut AppState) {
         state.pending_advance = None;
         state.pending_advance_ignore_bl = None;
         log_fmt!("NAV_NEXT: q from={} to={} page_top={}", prev_line, target, state.page_top_line);
-        update_highlight(state);
         scroll_after_jump_forward(state, prev_line);
-        seek_to_current_line(state);
-        auto_show_vocab_popup(state);
+        after_page_change(state, PageChangeReason::Dialogue);
     }
 }
 
@@ -361,9 +347,8 @@ pub fn cursor_prev_line(state: &mut AppState) {
     state.pending_advance = None;
     state.pending_advance_ignore_bl = None;
     state.prev_highlight_line.set(None);
-    update_highlight(state);
     scroll_after_jump_backward(state);
-    auto_show_vocab_popup(state);
+    after_page_change(state, PageChangeReason::Cursor);
 }
 
 /// Move cursor to next dialogue line without seeking media (`k` key).
@@ -378,9 +363,8 @@ pub fn cursor_next_dialogue(state: &mut AppState) {
         state.current_line = target;
         state.pending_advance = None;
         state.pending_advance_ignore_bl = None;
-        update_highlight(state);
         scroll_after_jump_forward(state, prev_line);
-        auto_show_vocab_popup(state);
+        after_page_change(state, PageChangeReason::Cursor);
     }
 }
 
@@ -420,15 +404,13 @@ pub fn jump_to_prev_paragraph(state: &mut AppState) {
 
     if let Some(line_idx) = target {
         state.current_line = line_idx;
-        update_highlight(state);
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
             crate::config::NavigationMode::EReader => {
                 set_page_instant(state, line_idx);
             }
         }
-        seek_to_current_line(state);
-        auto_show_vocab_popup(state);
+        after_page_change(state, PageChangeReason::Paragraph);
     }
 }
 
@@ -455,10 +437,8 @@ pub fn jump_to_next_paragraph(state: &mut AppState) {
     if i < line_count {
         let prev_line = state.current_line;
         state.current_line = i;
-        update_highlight(state);
         scroll_after_jump_forward(state, prev_line);
-        seek_to_current_line(state);
-        auto_show_vocab_popup(state);
+        after_page_change(state, PageChangeReason::Paragraph);
     }
 }
 
@@ -595,7 +575,6 @@ pub fn jump_to_prev_chapter(state: &mut AppState) {
 
     if let Some(line_idx) = target {
         state.current_line = line_idx;
-        update_highlight(state);
         let top = chapter_page_top(&state.buffer, line_idx);
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
@@ -603,7 +582,7 @@ pub fn jump_to_prev_chapter(state: &mut AppState) {
                 set_page_instant(state, top);
             }
         }
-        seek_to_current_line(state);
+        after_page_change(state, PageChangeReason::Chapter);
     }
 }
 
@@ -640,7 +619,6 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
 
     if let Some(line_idx) = target {
         state.current_line = line_idx;
-        update_highlight(state);
         let top = chapter_page_top(&state.buffer, line_idx);
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => center_cursor(state),
@@ -648,7 +626,7 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
                 set_page_instant(state, top);
             }
         }
-        seek_to_current_line(state);
+        after_page_change(state, PageChangeReason::Chapter);
     }
 }
 
@@ -698,14 +676,13 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
 
     if let (Some(marker_idx), Some(cursor_idx)) = (marker, cursor) {
         state.current_line = cursor_idx;
-        update_highlight(state);
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
             crate::config::NavigationMode::EReader => {
                 set_page_instant(state, marker_idx);
             }
         }
-        seek_to_current_line(state);
+        after_page_change(state, PageChangeReason::Scene);
     }
 }
 
@@ -731,14 +708,13 @@ pub fn jump_to_next_scene(state: &mut AppState) {
 
     if let (Some(marker_idx), Some(cursor_idx)) = (marker, cursor) {
         state.current_line = cursor_idx;
-        update_highlight(state);
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => center_cursor(state),
             crate::config::NavigationMode::EReader => {
                 set_page_instant(state, marker_idx);
             }
         }
-        seek_to_current_line(state);
+        after_page_change(state, PageChangeReason::Scene);
     }
 }
 
@@ -783,7 +759,6 @@ pub fn jump_to_line(state: &mut AppState, buffer_line: usize) {
         return;
     }
     state.current_line = buffer_line;
-    update_highlight(state);
     let top = page_turn_top(&state.buffer, buffer_line);
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
@@ -792,12 +767,13 @@ pub fn jump_to_line(state: &mut AppState, buffer_line: usize) {
             set_page_instant(state, top);
         }
     }
-    // Update page label with the target line (page top may be a blank spacer)
+    // Page label uses the target line, not page_top, because page_top may
+    // be a blank spacer. Override the label after after_page_change runs.
+    after_page_change(state, PageChangeReason::JumpToBookmark);
     if let Some(text) = state.page_label_text_for_buffer(buffer_line) {
         state.page_line_label.set_text(&text);
         state.page_line_label.set_visible(true);
     }
-    seek_to_current_line(state);
 }
 
 // ---------------------------------------------------------------------------
@@ -1031,6 +1007,8 @@ pub(crate) enum PageChangeReason {
     Vocab,
     /// User pressed comma/q/j/k for dialogue navigation.
     Dialogue,
+    /// User pressed k/K for cursor-only movement (no audio seek).
+    Cursor,
     /// User pressed [ or { for paragraph navigation.
     Paragraph,
     /// MPV CursorSync drove the cursor to a new line; do NOT re-seek MPV.
@@ -1045,7 +1023,7 @@ impl PageChangeReason {
     /// Whether to call `seek_to_current_line` after the page change. False for
     /// MPV-driven changes (would loop) and pure layout refreshes.
     pub(crate) fn should_seek(self) -> bool {
-        !matches!(self, Self::MpvSync | Self::Resnap | Self::WorkLoad)
+        !matches!(self, Self::MpvSync | Self::Resnap | Self::WorkLoad | Self::Cursor)
     }
 
     /// Whether to call `auto_show_vocab_popup` after the page change. False
@@ -1984,7 +1962,6 @@ pub fn jump_to_next_vocab(state: &mut AppState) {
     state.vocab_match_idx = Some(next_idx);
     let target_line = state.vocab_matches[next_idx].line_index;
     state.current_line = target_line;
-    update_highlight(state);
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
@@ -1993,8 +1970,7 @@ pub fn jump_to_next_vocab(state: &mut AppState) {
             }
         }
     }
-    seek_to_current_line(state);
-    auto_show_vocab_popup(state);
+    after_page_change(state, PageChangeReason::Vocab);
 }
 
 
@@ -2023,13 +1999,11 @@ pub fn jump_to_prev_vocab(state: &mut AppState) {
     state.vocab_match_idx = Some(prev_idx);
     let target_line = state.vocab_matches[prev_idx].line_index;
     state.current_line = target_line;
-    update_highlight(state);
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => scroll_to_cursor(state),
     }
-    seek_to_current_line(state);
-    auto_show_vocab_popup(state);
+    after_page_change(state, PageChangeReason::Vocab);
 }
 
 // --- Cross-work concordance navigation ---
@@ -3188,5 +3162,14 @@ mod after_page_change_tests {
         assert!(PageChangeReason::MpvSync.should_update_label());
         assert!(PageChangeReason::Resnap.should_update_label());
         assert!(!PageChangeReason::WorkLoad.should_update_label());
+    }
+
+    #[test]
+    fn reason_skips_seek_for_cursor_only_navigation() {
+        assert!(!PageChangeReason::Cursor.should_seek(),
+            "cursor-only navigation must not drag audio");
+        assert!(PageChangeReason::Cursor.should_show_vocab(),
+            "cursor navigation still shows vocab");
+        assert!(PageChangeReason::Cursor.should_update_label());
     }
 }

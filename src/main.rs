@@ -185,6 +185,10 @@ fn main() {
                             crate::input::navigation::update_highlight_and_advance_page(
                                 &mut s,
                             );
+                            crate::input::navigation::after_page_change(
+                                &mut s,
+                                crate::input::navigation::PageChangeReason::MpvSync,
+                            );
 
                             if paragraph_changed {
                                 crate::app::refresh_vocab_popup(&mut s);
