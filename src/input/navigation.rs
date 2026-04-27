@@ -115,7 +115,8 @@ fn back_up_for_speaker(buffer: &sourceview5::Buffer, line: usize) -> usize {
 /// `top`, matching the bottom clip calculation exactly. A line is included
 /// only if its full height fits in the remaining usable space (widget height
 /// minus descender guard). This ensures page_forward doesn't count clipped
-/// lines as "seen".
+/// lines as "seen". Trailing speaker names and blanks are trimmed so a
+/// dangling speaker at the bottom doesn't count as "visible" content.
 fn last_fully_visible_line(state: &AppState, top: usize) -> usize {
     let widget_height = state.text_view.height();
     if widget_height <= 0 {
@@ -125,30 +126,9 @@ fn last_fully_visible_line(state: &AppState, top: usize) -> usize {
     let descender_guard = descender_guard_px(&state.text_view, top);
     let bottom_margin = state.text_view.bottom_margin();
     let usable_height = widget_height - descender_guard - bottom_margin;
-    let mut total = 0;
-    let mut last = top;
-    for i in top..line_count {
-        let Some(iter) = state.buffer.iter_at_line(i as i32) else { break };
-        let (_y, h) = state.text_view.line_yrange(&iter);
-        // Match update_bottom_clip: line must fully fit in usable space
-        if total + h > usable_height {
-            break;
-        }
-        last = i;
-        total += h;
-    }
-    // Back up past trailing speaker names and blank lines so a dangling
-    // speaker at the bottom doesn't count as "visible" content.
-    use crate::db::line_types;
-    while last > top {
-        let text = buffer_line_text(&state.buffer, last);
-        if line_types::is_speaker(&text) || line_types::is_blank(&text) {
-            last -= 1;
-        } else {
-            break;
-        }
-    }
-    last
+    let range = visible_range(&state.text_view, &state.buffer, top, line_count, usable_height);
+    let trimmed = trim_trailing_speakers(range, top, &state.text_view, &state.buffer);
+    trimmed.last_fit
 }
 
 /// Result of stepping forward one page from `top`: the new page-top
@@ -831,8 +811,9 @@ pub fn is_line_on_screen(state: &AppState, line: usize) -> bool {
 }
 
 /// Check whether a buffer line is fully visible in the viewport.
-/// Uses buffer_to_window_coords to convert line_yrange into widget space,
-/// then compares against the widget's allocated height.
+/// Sums line heights from page_top against widget_height minus a descender
+/// guard and the text_view bottom margin (which GTK reserves for padding
+/// and is not available for text rendering).
 fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
     // During work loading, GTK layout is stale — report all lines as visible
     // to prevent bogus page turns that crash the app.
@@ -842,24 +823,22 @@ fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
     if line < state.page_top_line {
         return false;
     }
-    // Sum line heights from page_top to determine if `line` fits in the viewport.
-    // Reserve a descender guard so the last line's descenders aren't clipped.
-    // Also subtract text_view.bottom_margin — GTK reserves that space below the
-    // last rendered line and it's not available for text.
+    let widget_height = state.text_view.height();
+    if widget_height <= 0 {
+        return true;
+    }
     let descender_guard = descender_guard_px(&state.text_view, state.page_top_line);
     let bottom_margin = state.text_view.bottom_margin();
-    let usable_height = state.text_view.height() - descender_guard - bottom_margin;
-    let buf = &state.buffer;
-    let mut total_height = 0;
-    for i in state.page_top_line..=line {
-        let Some(iter) = buf.iter_at_line(i as i32) else { return false };
-        let (_y, h) = state.text_view.line_yrange(&iter);
-        total_height += h;
-        if total_height > usable_height {
-            return false;
-        }
-    }
-    true
+    let usable_height = widget_height - descender_guard - bottom_margin;
+    let line_count = state.effective_line_count();
+    let range = visible_range(
+        &state.text_view,
+        &state.buffer,
+        state.page_top_line,
+        line_count,
+        usable_height,
+    );
+    line <= range.last_fit && range.count > 0
 }
 
 
@@ -1410,64 +1389,30 @@ fn update_bottom_clip(
     }
 
     let buf = text_view.buffer();
+    let buf_sv: sourceview5::Buffer = match buf.downcast::<sourceview5::Buffer>() {
+        Ok(b) => b,
+        Err(_) => {
+            bottom_clip.set_height_request(0);
+            return;
+        }
+    };
 
-    // Walk lines from page_top, summing heights until we exceed the viewport.
-    // Reserve a descender guard based on the actual font descent so the clip
-    // doesn't eat into the last visible line's descenders (g, p, y, q, j).
-    // Subtract text_view.bottom_margin — GTK reserves that area below the last
-    // line for padding, and it cannot be used for text rendering.
     let descender_guard = descender_guard_px(text_view, page_top);
     let bottom_margin = text_view.bottom_margin();
     let usable_height = widget_height - descender_guard - bottom_margin;
 
-    let mut total_height = 0;
-    let mut any_nonzero = false;
-    let mut last_fit = page_top;
-    for i in page_top..line_count {
-        let Some(iter) = buf.iter_at_line(i as i32) else { break };
-        let (_y, h) = text_view.line_yrange(&iter);
-        if h > 0 {
-            any_nonzero = true;
-        }
-        if total_height + h > usable_height {
-            break;
-        }
-        total_height += h;
-        last_fit = i;
-    }
+    let range = visible_range(text_view, &buf_sv, page_top, line_count, usable_height);
 
-    if !any_nonzero {
+    if range.count == 0 || range.total_height == 0 {
         bottom_clip.set_height_request(0);
         return;
     }
 
-    // Hide trailing speaker names (and blank lines before them) so a speaker
-    // name never dangles at the bottom of a page without its dialogue.
-    {
-        use crate::db::line_types;
-        let mut trim = last_fit;
-        while trim > page_top {
-            let text = {
-                let Some(start) = buf.iter_at_line(trim as i32) else { break };
-                let mut end = start;
-                if !end.ends_line() { end.forward_to_line_end(); }
-                buf.text(&start, &end, false).to_string()
-            };
-            if line_types::is_speaker(&text) || line_types::is_blank(&text) {
-                if let Some(iter) = buf.iter_at_line(trim as i32) {
-                    let (_y, h) = text_view.line_yrange(&iter);
-                    total_height -= h;
-                }
-                trim -= 1;
-            } else {
-                break;
-            }
-        }
-    }
+    let trimmed = trim_trailing_speakers(range, page_top, text_view, &buf_sv);
 
-    let clip = (widget_height - total_height).max(0);
+    let clip = (widget_height - trimmed.total_height).max(0);
     let scroll_val = scrolled_window.vadjustment().value();
-    let expected_y = if let Some(iter) = buf.iter_at_line(page_top as i32) {
+    let expected_y = if let Some(iter) = buf_sv.iter_at_line(page_top as i32) {
         let (y, _h) = text_view.line_yrange(&iter);
         y as f64
     } else {
@@ -1476,7 +1421,7 @@ fn update_bottom_clip(
     let scroll_offset = scroll_val - expected_y;
     crate::logging::log(&format!(
         "BOTTOM_CLIP: widget_h={} total_h={} clip={} page_top={} scroll_val={:.1} expected_y={:.1} offset={:.1}",
-        widget_height, total_height, clip, page_top, scroll_val, expected_y, scroll_offset
+        widget_height, trimmed.total_height, clip, page_top, scroll_val, expected_y, scroll_offset
     ));
     bottom_clip.set_height_request(clip);
 }
@@ -1839,9 +1784,9 @@ fn update_highlight(state: &mut AppState) {
 // ---------------------------------------------------------------------------
 
 /// Count how many buffer lines are fully visible starting from `page_top_line`.
-/// Uses buffer_to_window_coords to accurately detect clipped lines.
+/// Returns a calibrated estimate (35) during work load when GTK layout is
+/// invalid, and a small fallback (15) for empty or past-end buffers.
 fn lines_per_page(state: &AppState) -> usize {
-    // During work loading, GTK layout is invalid — return a reasonable estimate.
     if state.loading_work.get() {
         return 35;
     }
@@ -1853,26 +1798,22 @@ fn lines_per_page(state: &AppState) -> usize {
         return 15;
     }
 
-    // Sum line heights to count how many fit in the viewport.
-    // Reserve a descender guard so the last line's descenders aren't clipped,
-    // and subtract the text_view bottom margin which GTK reserves for padding.
-    let descender_guard = descender_guard_px(&state.text_view, start);
-    let bottom_margin = state.text_view.bottom_margin();
-    let usable_height = state.text_view.height() - descender_guard - bottom_margin;
-    let buf = &state.buffer;
-    let mut total_height = 0;
-    let mut count = 0;
-    for i in start..line_count {
-        let Some(iter) = buf.iter_at_line(i as i32) else { break };
-        let (_y, h) = state.text_view.line_yrange(&iter);
-        if total_height + h > usable_height {
-            break;
-        }
-        total_height += h;
-        count += 1;
+    let widget_height = state.text_view.height();
+    if widget_height <= 0 {
+        return 15;
     }
 
-    count.max(1)
+    let descender_guard = descender_guard_px(&state.text_view, start);
+    let bottom_margin = state.text_view.bottom_margin();
+    let usable_height = widget_height - descender_guard - bottom_margin;
+    let range = visible_range(
+        &state.text_view,
+        &state.buffer,
+        start,
+        line_count,
+        usable_height,
+    );
+    range.count.max(1)
 }
 
 /// Jump to the next vocab word occurrence after current position.
