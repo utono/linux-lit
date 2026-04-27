@@ -1,3 +1,4 @@
+use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4::{
     Box as GtkBox, Entry, Label, ListBox, ListBoxRow, Orientation, Overlay, ScrolledWindow,
@@ -210,30 +211,28 @@ impl LibraryPicker {
         self.overlay.add_overlay(&self.picker_box);
         self.picker_box.set_visible(false);
 
-        // Responsive sizing: when the picker_box is realized, hook the
-        // toplevel window's width/height notifications so we can update
-        // its size request as the window resizes.
+        // Responsive sizing: track the toplevel window's allocated size and
+        // update the picker_box size_request on every resize. We use a tick
+        // callback because the property-notify signals on default-width /
+        // default-height only fire when the property is explicitly set via
+        // `set_default_size`, not when the user resizes the window.
+        // attach() is one-shot during app construction so we don't worry
+        // about re-attachment leaking handlers.
         let picker_box = self.picker_box.clone();
         self.picker_box.connect_realize(move |pb| {
             if let Some(window) = pb.root().and_then(|r| r.downcast::<gtk4::Window>().ok()) {
-                let apply = {
-                    let pb = picker_box.clone();
-                    let window = window.clone();
-                    move || {
-                        let (w, h) = responsive_size(
-                            window.default_width().max(window.width()),
-                            window.default_height().max(window.height()),
-                        );
-                        pb.set_size_request(w, h);
+                let pb = picker_box.clone();
+                let last: std::cell::Cell<(i32, i32)> = std::cell::Cell::new((0, 0));
+                window.add_tick_callback(move |win, _frame_clock| {
+                    let w = win.width().max(1);
+                    let h = win.height().max(1);
+                    if (w, h) != last.get() {
+                        last.set((w, h));
+                        let (rw, rh) = responsive_size(w, h);
+                        pb.set_size_request(rw, rh);
                     }
-                };
-                // Apply once on realize so the floor isn't visible at startup.
-                apply();
-                // Update on every resize.
-                let apply_for_w = apply.clone();
-                window.connect_default_width_notify(move |_| apply_for_w());
-                let apply_for_h = apply.clone();
-                window.connect_default_height_notify(move |_| apply_for_h());
+                    glib::ControlFlow::Continue
+                });
             }
         });
     }
