@@ -60,6 +60,13 @@ pub struct AppState {
     /// Active page-turn animation (crossfade or slide). Stored so it can be
     /// cancelled via .skip() if a new page turn fires mid-flight.
     pub page_turn_anim: Option<adw::TimedAnimation>,
+    /// Re-entrancy lock for animated page turns. `set_page` consults this to
+    /// drop racing second turns (e.g. MPV CursorSync arriving mid-animation)
+    /// instead of letting them compose with the in-flight turn. Cleared by the
+    /// animation's connect_done callback. Wrapped in Rc so connect_done
+    /// closures can clone-and-release without a &mut AppState borrow.
+    /// Mirrors foliate-js Paginator.#locked.
+    pub page_turn_lock: std::rc::Rc<crate::input::navigation::PageTurnLock>,
     /// Active cursor highlight fade-out animation.
     pub cursor_fade_anim: Option<adw::TimedAnimation>,
     pub cmd_tx: tokio::sync::mpsc::Sender<crate::mpv::MpvCommand>,
@@ -763,6 +770,9 @@ pub fn build_window(
         css_provider,
         theme,
         page_turn_anim: None,
+        page_turn_lock: std::rc::Rc::new(
+            crate::input::navigation::PageTurnLock::new()
+        ),
         cursor_fade_anim: None,
         cmd_tx,
         tokio_handle: tokio_handle.clone(),
