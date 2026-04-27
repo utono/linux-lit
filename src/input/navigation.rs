@@ -986,6 +986,49 @@ enum PageDirection {
     Backward,
 }
 
+/// Re-entrancy lock for animated page turns.
+///
+/// `set_page` calls `try_acquire` before mutating `page_top_line` or starting
+/// an animation. The animation's `connect_done` callback calls `release`. While
+/// locked, secondary turn requests (typically from MPV `CursorSync` arriving
+/// mid-animation) are dropped so they don't compose with the in-flight turn.
+///
+/// `set_page_instant` does NOT consult the lock — it has no animation, so the
+/// re-entrancy window doesn't exist for that path.
+///
+/// Mirrors foliate-js's `Paginator.#locked` (paginator.js:1060-1071).
+///
+/// Uses `Cell<bool>` rather than `bool` so a `&PageTurnLock` borrow can mutate
+/// it from a `connect_done` closure without a `&mut AppState`.
+pub(crate) struct PageTurnLock {
+    locked: std::cell::Cell<bool>,
+}
+
+impl PageTurnLock {
+    pub(crate) fn new() -> Self {
+        Self { locked: std::cell::Cell::new(false) }
+    }
+
+    /// Attempt to take the lock. Returns true if acquired, false if already held.
+    pub(crate) fn try_acquire(&self) -> bool {
+        if self.locked.get() {
+            false
+        } else {
+            self.locked.set(true);
+            true
+        }
+    }
+
+    /// Release the lock. Idempotent — releasing when unlocked is a no-op.
+    pub(crate) fn release(&self) {
+        self.locked.set(false);
+    }
+
+    /// Peek without mutating.
+    pub(crate) fn is_locked(&self) -> bool {
+        self.locked.get()
+    }
+}
 
 /// Capture the entire card (spacers + text) as a static Picture overlay.
 /// Uses WidgetPaintable → Snapshot → RenderNode → Texture to freeze the frame.
@@ -2734,5 +2777,52 @@ mod page_turn_tests {
                 preview.join("\n"),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod page_turn_lock_tests {
+    use super::PageTurnLock;
+
+    #[test]
+    fn try_acquire_succeeds_when_unlocked() {
+        let lock = PageTurnLock::new();
+        assert!(lock.try_acquire(), "first acquire should succeed");
+        assert!(lock.is_locked(), "lock should be held after acquire");
+    }
+
+    #[test]
+    fn try_acquire_fails_when_locked() {
+        let lock = PageTurnLock::new();
+        assert!(lock.try_acquire());
+        assert!(!lock.try_acquire(), "second acquire should fail");
+        assert!(lock.is_locked(), "lock should still be held after rejected acquire");
+    }
+
+    #[test]
+    fn release_clears_the_lock() {
+        let lock = PageTurnLock::new();
+        lock.try_acquire();
+        lock.release();
+        assert!(!lock.is_locked(), "release should clear the lock");
+        assert!(lock.try_acquire(), "acquire should succeed after release");
+    }
+
+    #[test]
+    fn release_when_unlocked_is_a_noop() {
+        let lock = PageTurnLock::new();
+        lock.release();
+        lock.release();
+        assert!(!lock.is_locked());
+        assert!(lock.try_acquire());
+    }
+
+    #[test]
+    fn double_release_does_not_re_lock() {
+        let lock = PageTurnLock::new();
+        lock.try_acquire();
+        lock.release();
+        lock.release();
+        assert!(!lock.is_locked());
     }
 }
