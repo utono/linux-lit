@@ -363,9 +363,10 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
                        0 2px 6px rgba(0, 0, 0, 0.08); }} \
          .library-picker-header {{ padding: 14px 22px 10px; \
            border-bottom: 1px solid {header_border}; }} \
-         .library-picker-title {{ font-size: 13px; font-weight: 600; \
-           letter-spacing: 2px; color: {dim}; }} \
-         .library-picker-crumb {{ font-size: 12px; color: {dim}; }} \
+         .library-picker-title {{ font-size: 14px; font-weight: 700; \
+           letter-spacing: 2px; color: {fg}; opacity: 0.75; }} \
+         .library-picker-crumb {{ font-size: 13px; color: {fg}; \
+           opacity: 0.65; }} \
          .library-picker entry {{ margin: 12px 18px 8px; \
            padding: 8px 12px; border: 1px solid {dim}; \
            border-radius: 8px; background-color: {bg}; color: {fg}; }} \
@@ -376,14 +377,15 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
            border-radius: 6px; }} \
          .library-picker row label.picker-item-detail {{ \
            font-variant-numeric: tabular-nums; min-width: 32px; \
-           color: {dim}; }} \
+           font-size: 15px; color: {fg}; opacity: 0.7; }} \
          .library-picker row:selected {{ \
            background-color: {picker_selection_bg}; color: {cursor_fg}; }} \
          .library-picker row:selected label.picker-item-detail {{ \
-           color: {cursor_fg}; opacity: 0.8; }} \
+           color: {cursor_fg}; opacity: 1.0; }} \
          .library-picker-footer {{ padding: 8px 22px 12px; \
            border-top: 1px solid {header_border}; \
-           font-size: 11px; letter-spacing: 1.5px; color: {dim}; }} \
+           font-size: 12px; letter-spacing: 1.2px; \
+           color: {fg}; opacity: 0.65; }} \
          .library-picker-scrim {{ background-color: rgba(0, 0, 0, 0.3); }} \
          .search-bar {{ background-color: {bg}; color: {fg}; padding: 4px 12px; }} \
          .search-entry {{ background: transparent; border: none; color: {fg}; }} \
