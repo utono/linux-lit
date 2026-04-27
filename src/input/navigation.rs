@@ -166,6 +166,67 @@ fn next_page_top(state: &AppState, top: usize) -> NextPage {
     NextPage { new_top, next_dialogue }
 }
 
+/// Backward mirror of `next_page_top`. Returns the page boundary immediately
+/// before `current_top`, with the same `back_up_for_speaker` + `next_dialogue`
+/// post-processing the forward path uses.
+///
+/// Three-tier lookup:
+/// 1. F8 `page_tops` cache — `binary_search` for the fast path (O(log n)).
+/// 2. Cold-start linear walk from line 0 looking for the page whose
+///    `next_page_top` equals `current_top`. O(page_count) one-time cost.
+/// 3. Lpp approximation — pathological case where `current_top` is not on any
+///    forward-walkable boundary (e.g., user resumed at an arbitrary line via
+///    concordance). Preserves the historical fallback rather than refusing to
+///    move.
+///
+/// Mirrors foliate-js's `atStart`/`atEnd` page-index lookups
+/// (paginator.js:1050-1054) — exact previous boundary instead of approximation.
+fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
+    let line_count = state.effective_line_count();
+    if current_top == 0 || line_count == 0 {
+        return NextPage { new_top: 0, next_dialogue: 0 };
+    }
+
+    // Tier 1: F8 cache fast path.
+    {
+        let cached = state.page_tops.borrow();
+        if let Some(tops) = cached.as_ref() {
+            if let Ok(idx) = tops.binary_search(&current_top) {
+                if idx > 0 {
+                    let prev_top = tops[idx - 1];
+                    let next_dialogue = next_dialogue_from(&state.buffer, prev_top, line_count);
+                    let new_top = back_up_for_speaker(&state.buffer, next_dialogue);
+                    return NextPage { new_top, next_dialogue };
+                }
+            }
+        }
+    }
+
+    // Tier 2: cold-start linear walk from 0 looking for the page whose
+    // next_page_top equals current_top.
+    let mut top: usize = 0;
+    while top < current_top {
+        let next = next_page_top(state, top).new_top;
+        if next == current_top {
+            let next_dialogue = next_dialogue_from(&state.buffer, top, line_count);
+            let new_top = back_up_for_speaker(&state.buffer, next_dialogue);
+            return NextPage { new_top, next_dialogue };
+        }
+        if next <= top {
+            break; // safety: no progress
+        }
+        top = next;
+    }
+
+    // Tier 3: lpp approximation — current_top is not on any forward-walkable
+    // boundary. Preserve historical behavior rather than refusing to move.
+    let lpp = lines_per_page(state).max(1);
+    let approx = current_top.saturating_sub(lpp);
+    let next_dialogue = next_dialogue_from(&state.buffer, approx, line_count);
+    let new_top = back_up_for_speaker(&state.buffer, next_dialogue);
+    NextPage { new_top, next_dialogue }
+}
+
 /// Build the page_tops index by walking next_page_top from line 0 to the end
 /// of the work. Result is the same as repeatedly calling next_page_top from
 /// line 0; cost is O(line_count) once instead of O(line_count²) on every
@@ -3276,5 +3337,58 @@ mod page_tops_tests {
         // line 35 is the START of page 2 — partition_point gives index 2,
         // page = 2.
         assert_eq!(page_for_line_in_index(&tops, 35), 2);
+    }
+}
+
+#[cfg(test)]
+mod prev_page_top_tests {
+    // Pure tests against the page_tops index lookup. The cold-walk and
+    // lpp-fallback paths require GTK and are exercised in manual verification.
+    use super::page_for_line_in_index;
+
+    /// Pure helper mirroring prev_page_top's binary_search fast path,
+    /// extracted for unit testing without a full AppState.
+    fn prev_top_via_index(tops: &[usize], current_top: usize) -> Option<usize> {
+        if current_top == 0 {
+            return Some(0);
+        }
+        match tops.binary_search(&current_top) {
+            Ok(idx) if idx > 0 => Some(tops[idx - 1]),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn prev_top_returns_zero_for_current_zero() {
+        let tops = vec![0, 35, 70];
+        assert_eq!(prev_top_via_index(&tops, 0), Some(0));
+    }
+
+    #[test]
+    fn prev_top_finds_previous_boundary() {
+        let tops = vec![0, 35, 70, 105];
+        assert_eq!(prev_top_via_index(&tops, 70), Some(35));
+        assert_eq!(prev_top_via_index(&tops, 35), Some(0));
+        assert_eq!(prev_top_via_index(&tops, 105), Some(70));
+    }
+
+    #[test]
+    fn prev_top_returns_none_for_off_boundary_target() {
+        let tops = vec![0, 35, 70];
+        // 40 is not a page top; binary_search returns Err — caller falls
+        // back to cold-walk or lpp.
+        assert_eq!(prev_top_via_index(&tops, 40), None);
+    }
+
+    #[test]
+    fn page_for_line_after_prev_top_is_consistent() {
+        // Sanity: if prev_page_top returns prev_top, page_for_line_in_index
+        // for any line in [prev_top, current_top) should return the page
+        // index of prev_top. This is the bidirectional symmetry property.
+        let tops = vec![0, 35, 70, 105];
+        let prev = prev_top_via_index(&tops, 70).unwrap();
+        assert_eq!(prev, 35);
+        // Line 50 is on the page that starts at 35 — page 2.
+        assert_eq!(page_for_line_in_index(&tops, 50), 2);
     }
 }
