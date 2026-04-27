@@ -71,12 +71,11 @@ pub fn group_works(works: &[WorkSummary]) -> Vec<AuthorGroup> {
 pub struct LibraryPicker {
     pub overlay: Overlay,
     picker_box: GtkBox,
-    header_box: GtkBox,
     header_title: Label,
     header_crumb: Label,
     search_entry: Entry,
     list_box: ListBox,
-    footer_box: GtkBox,
+    footer_label: Label,
     scrim: GtkBox,
     groups: Vec<AuthorGroup>,
     level: PickerLevel,
@@ -142,28 +141,27 @@ impl LibraryPicker {
             .vexpand(true)
             .build();
 
-        // Footer: built empty for now; populated by update_footer() in Task 4.
-        let footer_box = GtkBox::builder()
-            .orientation(Orientation::Horizontal)
-            .spacing(8)
+        // Footer: single label, hint text rebuilt on level change.
+        let footer_label = Label::builder()
+            .label("")
+            .halign(gtk4::Align::Start)
             .hexpand(true)
             .build();
-        footer_box.add_css_class("library-picker-footer");
+        footer_label.add_css_class("library-picker-footer");
 
         picker_box.append(&header_box);
         picker_box.append(&search_entry);
         picker_box.append(&scrolled);
-        picker_box.append(&footer_box);
+        picker_box.append(&footer_label);
 
         LibraryPicker {
             overlay,
             picker_box,
-            header_box,
             header_title,
             header_crumb,
             search_entry,
             list_box,
-            footer_box,
+            footer_label,
             scrim,
             groups: Vec::new(),
             level: PickerLevel::Authors,
@@ -216,6 +214,9 @@ impl LibraryPicker {
         // callback because the property-notify signals on default-width /
         // default-height only fire when the property is explicitly set via
         // `set_default_size`, not when the user resizes the window.
+        // The ~60Hz wakeup is acceptable here: the early-return when (w, h)
+        // hasn't changed reduces the steady-state work to a Cell read and
+        // two integer comparisons.
         // attach() is one-shot during app construction so we don't worry
         // about re-attachment leaking handlers.
         let picker_box = self.picker_box.clone();
@@ -282,20 +283,8 @@ impl LibraryPicker {
     }
 
     fn update_footer(&self) {
-        // Remove existing children
-        while let Some(child) = self.footer_box.first_child() {
-            self.footer_box.remove(&child);
-        }
-
-        let hints = footer_hints(&self.level);
-        for (i, hint) in hints.iter().enumerate() {
-            if i > 0 {
-                let sep = Label::builder().label(" · ").build();
-                self.footer_box.append(&sep);
-            }
-            let label = Label::builder().label(*hint).build();
-            self.footer_box.append(&label);
-        }
+        let text = footer_hints(&self.level).join(" · ");
+        self.footer_label.set_text(&text);
     }
 
     pub fn populate_list(&self, filter: &str) {
@@ -525,10 +514,8 @@ pub(crate) fn footer_hints(level: &PickerLevel) -> Vec<&'static str> {
 }
 
 /// Compute the picker box size request from the toplevel window's allocated
-/// dimensions. Returns (width, height) in pixels.
-///
-/// Width  = clamp(0.6 * window_width,  min = 360, max = 640)
-/// Height = clamp(0.7 * window_height, min = 280, max = 560)
+/// dimensions. Width is 60% of the window clamped to [360, 640]; height is
+/// 70% clamped to [280, 560]. Returns (width, height) in pixels.
 pub(crate) fn responsive_size(window_w: i32, window_h: i32) -> (i32, i32) {
     let w = (window_w as f32 * 0.6).round() as i32;
     let h = (window_h as f32 * 0.7).round() as i32;

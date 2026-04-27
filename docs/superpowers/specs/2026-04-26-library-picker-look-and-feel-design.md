@@ -30,11 +30,19 @@ unfinished:
 
 ## Non-Goals
 
-- Restyling other pickers (`bookmark_picker`, `media_picker`,
-  `concordance_picker`). They reuse some shared classes but are out of scope.
 - New filter/match features.
 - New keybindings.
 - Theming changes affecting any other surface.
+
+## Shared CSS class
+
+`bookmark_picker` and `media_picker` both add `add_css_class("library-picker")`
+to their picker box, so the new container/entry/row/scrolledwindow/selection
+rules apply to them too. This is intentional in this refresh: all three
+pickers share an editorial look. The header/footer rules only apply where the
+matching widgets exist (LibraryPicker only). The responsive sizing hook in
+`attach()` is also LibraryPicker-only — bookmark/media keep their fixed
+600x400.
 
 ## Layout
 
