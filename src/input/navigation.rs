@@ -672,6 +672,96 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
     }
 }
 
+/// Previous scene marker (used for plays on the `2` key).
+///
+/// Walks backward from `current_line` looking for an act/scene marker, then
+/// places the cursor on the first dialogue line of that scene. The viewport
+/// top is pinned to the scene marker via `chapter_page_top` so the scene
+/// header stays visible above the cursorline.
+pub fn jump_to_prev_scene(state: &mut AppState) {
+    use crate::db::line_types;
+    let line_count = state.effective_line_count();
+    let (marker, cursor) = {
+        if state.current_line == 0 {
+            return;
+        }
+        let is_marker_at = |bl: usize| -> bool {
+            let text = buffer_line_text(&state.buffer, bl);
+            line_types::is_act_scene_marker(text.trim())
+        };
+        let current_scene_start = (0..=state.current_line).rev().find(|&bl| is_marker_at(bl));
+        let marker = match current_scene_start {
+            Some(start) if start < state.current_line => {
+                // Cursor sits past the current scene's first dialogue line —
+                // first 2-press should rewind to the start of *this* scene.
+                let cur_first = next_dialogue_line(
+                    &state.buffer,
+                    &state.translation_lines,
+                    start,
+                    line_count,
+                );
+                if cur_first.map(|d| d < state.current_line).unwrap_or(false) {
+                    Some(start)
+                } else {
+                    (0..start).rev().find(|&bl| is_marker_at(bl))
+                }
+            }
+            Some(start) => (0..start).rev().find(|&bl| is_marker_at(bl)),
+            None => (0..state.current_line).rev().find(|&bl| is_marker_at(bl)),
+        };
+        let cursor = marker.and_then(|m| {
+            next_dialogue_line(&state.buffer, &state.translation_lines, m, line_count)
+                .or(Some(m))
+        });
+        (marker, cursor)
+    };
+
+    if let (Some(marker_idx), Some(cursor_idx)) = (marker, cursor) {
+        state.current_line = cursor_idx;
+        update_highlight(state);
+        match state.config.navigation_mode {
+            crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
+            crate::config::NavigationMode::EReader => {
+                set_page_instant(state, marker_idx);
+            }
+        }
+        seek_to_current_line(state);
+    }
+}
+
+/// Next scene marker (used for plays on the `3` key).
+pub fn jump_to_next_scene(state: &mut AppState) {
+    use crate::db::line_types;
+    let line_count = state.effective_line_count();
+    let (marker, cursor) = {
+        let mut marker = None;
+        for bl in (state.current_line + 1)..line_count {
+            let text = buffer_line_text(&state.buffer, bl);
+            if line_types::is_act_scene_marker(text.trim()) {
+                marker = Some(bl);
+                break;
+            }
+        }
+        let cursor = marker.and_then(|m| {
+            next_dialogue_line(&state.buffer, &state.translation_lines, m, line_count)
+                .or(Some(m))
+        });
+        (marker, cursor)
+    };
+
+    if let (Some(marker_idx), Some(cursor_idx)) = (marker, cursor) {
+        state.current_line = cursor_idx;
+        update_highlight(state);
+        match state.config.navigation_mode {
+            crate::config::NavigationMode::Scroll => center_cursor(state),
+            crate::config::NavigationMode::EReader => {
+                set_page_instant(state, marker_idx);
+            }
+        }
+        seek_to_current_line(state);
+    }
+}
+
 /// Jump to the next bookmarked line (wraps around).
 pub fn next_bookmark(state: &mut AppState) {
     let is_bm = state.is_bookmarked.borrow();

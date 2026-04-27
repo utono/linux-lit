@@ -1530,11 +1530,31 @@ pub fn handle_key(
             true
         }
         "2" => {
-            crate::input::navigation::jump_to_prev_chapter(&mut state.borrow_mut());
+            let mut s = state.borrow_mut();
+            let is_play = s
+                .current_work
+                .as_ref()
+                .map(|w| w.work_type == "play")
+                .unwrap_or(false);
+            if is_play {
+                crate::input::navigation::jump_to_prev_scene(&mut s);
+            } else {
+                crate::input::navigation::jump_to_prev_chapter(&mut s);
+            }
             true
         }
         "3" => {
-            crate::input::navigation::jump_to_next_chapter(&mut state.borrow_mut());
+            let mut s = state.borrow_mut();
+            let is_play = s
+                .current_work
+                .as_ref()
+                .map(|w| w.work_type == "play")
+                .unwrap_or(false);
+            if is_play {
+                crate::input::navigation::jump_to_next_scene(&mut s);
+            } else {
+                crate::input::navigation::jump_to_next_chapter(&mut s);
+            }
             true
         }
         "i" => {
