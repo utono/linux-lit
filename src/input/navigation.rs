@@ -1299,6 +1299,115 @@ pub(crate) fn trim_trailing_speakers(
     trim_trailing_speakers_pure(range, page_top, is_speaker_or_blank, line_height)
 }
 
+/// Pure: given closures that classify line kinds, find the start of the
+/// "block" containing `last_fit`. A block is a multi-line stage-direction
+/// run (any work) or a multi-line verse stanza (non-prose works only).
+///
+/// Returns `last_fit` unchanged when `last_fit` is not in a recognized block,
+/// or when the block is just one line (no backup needed).
+///
+/// Stops at `page_top` so the trim never deletes the page top itself.
+///
+/// Mirrors foliate-js's per-element visibility rule (paginator.js:104-106) —
+/// block atomicity instead of per-line visibility.
+pub(crate) fn block_start_for_line_pure<B, S, D, L>(
+    page_top: usize,
+    last_fit: usize,
+    is_prose: bool,
+    is_blank: &B,
+    is_speaker: &S,
+    is_stage: &D,
+    is_dialogue: &L,
+) -> usize
+where
+    B: Fn(usize) -> bool,
+    S: Fn(usize) -> bool,
+    D: Fn(usize) -> bool,
+    L: Fn(usize) -> bool,
+{
+    // Stage takes precedence: a stage-direction line inside a non-prose
+    // work is a stage block, never a verse line.
+    if is_stage(last_fit) {
+        let mut start = last_fit;
+        while start > page_top && is_stage(start - 1) {
+            start -= 1;
+        }
+        // Single-line "block" — not multi-line, no backup needed.
+        if start == last_fit {
+            return last_fit;
+        }
+        return start;
+    }
+
+    // Verse stanza: only in non-prose works, only on dialogue lines.
+    if !is_prose && is_dialogue(last_fit) {
+        let mut start = last_fit;
+        while start > page_top {
+            let prev = start - 1;
+            if is_blank(prev) || is_speaker(prev) || is_stage(prev) {
+                break;
+            }
+            start -= 1;
+        }
+        if start == last_fit {
+            return last_fit;
+        }
+        return start;
+    }
+
+    last_fit
+}
+
+/// Pure: trim a `VisibleRange` so the last fitting line isn't mid-block.
+/// Backs `last_fit` up to the line before block-start when the block fully
+/// fits; returns the range unchanged when the block doesn't fit at all
+/// (`block_start <= page_top` — overflow fallback policy from F9 spec).
+///
+/// `line_height` closure provides per-line heights for `total_height` accounting.
+pub(crate) fn trim_block_atoms_pure<B, S, D, L, H>(
+    range: VisibleRange,
+    page_top: usize,
+    is_prose: bool,
+    is_blank: &B,
+    is_speaker: &S,
+    is_stage: &D,
+    is_dialogue: &L,
+    line_height: &H,
+) -> VisibleRange
+where
+    B: Fn(usize) -> bool,
+    S: Fn(usize) -> bool,
+    D: Fn(usize) -> bool,
+    L: Fn(usize) -> bool,
+    H: Fn(usize) -> i32,
+{
+    if range.count == 0 || range.last_fit == page_top {
+        return range;
+    }
+    let block_start = block_start_for_line_pure(
+        page_top, range.last_fit, is_prose,
+        is_blank, is_speaker, is_stage, is_dialogue,
+    );
+    if block_start == range.last_fit {
+        return range; // not in a block
+    }
+    if block_start <= page_top {
+        return range; // overflow: keep per-line split
+    }
+    // Drop lines [block_start, range.last_fit] from the range.
+    let mut new_total_height = range.total_height;
+    for i in block_start..=range.last_fit {
+        new_total_height -= line_height(i);
+    }
+    let new_last_fit = block_start - 1;
+    let new_count = new_last_fit - page_top + 1;
+    VisibleRange {
+        last_fit: new_last_fit,
+        total_height: new_total_height,
+        count: new_count,
+    }
+}
+
 /// Capture the entire card (spacers + text) as a static Picture overlay.
 /// Uses WidgetPaintable → Snapshot → RenderNode → Texture to freeze the frame.
 /// Returns the Picture (already added to page_turn_overlay) or None if capture fails.
@@ -3410,5 +3519,164 @@ mod prev_page_top_tests {
         assert_eq!(prev, 35);
         // Line 50 is on the page that starts at 35 — page 2.
         assert_eq!(page_for_line_in_index(&tops, 50), 2);
+    }
+}
+
+#[cfg(test)]
+mod block_atom_tests {
+    use super::{VisibleRange, block_start_for_line_pure, trim_block_atoms_pure};
+
+    /// Build classifiers for a synthetic line array.
+    /// `kinds` maps line index → 'b' (blank), 's' (speaker), 'd' (stage dir),
+    /// 'l' (dialogue line).
+    fn classifiers(kinds: &[char]) -> (
+        impl Fn(usize) -> bool + '_,
+        impl Fn(usize) -> bool + '_,
+        impl Fn(usize) -> bool + '_,
+        impl Fn(usize) -> bool + '_,
+    ) {
+        let is_blank = move |i: usize| kinds.get(i).map_or(false, |c| *c == 'b');
+        let is_speaker = move |i: usize| kinds.get(i).map_or(false, |c| *c == 's');
+        let is_stage = move |i: usize| kinds.get(i).map_or(false, |c| *c == 'd');
+        let is_dialogue = move |i: usize| kinds.get(i).map_or(false, |c| *c == 'l');
+        (is_blank, is_speaker, is_stage, is_dialogue)
+    }
+
+    #[test]
+    fn block_start_in_3line_stage_direction_returns_first_dir_line() {
+        // Lines: 0=speaker, 1=dir, 2=dir, 3=dir
+        let kinds = ['s', 'd', 'd', 'd'];
+        let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
+        // last_fit=3 (mid-block), page_top=0, is_prose=false
+        let start = block_start_for_line_pure(0, 3, false, &is_blank, &is_speaker, &is_stage, &is_dialogue);
+        assert_eq!(start, 1, "should back up to first stage-direction line");
+    }
+
+    #[test]
+    fn block_start_at_block_start_returns_unchanged() {
+        // Lines: 0=speaker, 1=dir, 2=dir
+        let kinds = ['s', 'd', 'd'];
+        let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
+        // last_fit=1 (at block start), page_top=0
+        let start = block_start_for_line_pure(0, 1, false, &is_blank, &is_speaker, &is_stage, &is_dialogue);
+        assert_eq!(start, 1, "no backup when last_fit is already block start");
+    }
+
+    #[test]
+    fn block_start_in_verse_stanza_non_prose_returns_stanza_start() {
+        // Lines: 0=speaker, 1=l, 2=l, 3=l, 4=blank
+        let kinds = ['s', 'l', 'l', 'l', 'b'];
+        let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
+        // last_fit=3 (mid-stanza), is_prose=false
+        let start = block_start_for_line_pure(0, 3, false, &is_blank, &is_speaker, &is_stage, &is_dialogue);
+        assert_eq!(start, 1, "verse stanza in non-prose work backs up to stanza start");
+    }
+
+    #[test]
+    fn block_start_in_verse_stanza_prose_returns_unchanged() {
+        // Same lines, but is_prose=true — rule does not apply.
+        let kinds = ['s', 'l', 'l', 'l', 'b'];
+        let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
+        let start = block_start_for_line_pure(0, 3, true, &is_blank, &is_speaker, &is_stage, &is_dialogue);
+        assert_eq!(start, 3, "verse stanza rule skipped for prose works");
+    }
+
+    #[test]
+    fn block_start_single_line_stage_direction_returns_unchanged() {
+        // Lines: 0=speaker, 1=dir, 2=l
+        let kinds = ['s', 'd', 'l'];
+        let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
+        // last_fit=1 (single dir line)
+        let start = block_start_for_line_pure(0, 1, false, &is_blank, &is_speaker, &is_stage, &is_dialogue);
+        assert_eq!(start, 1, "single-line stage direction is not multi-line — no backup");
+    }
+
+    #[test]
+    fn block_start_stops_at_speaker() {
+        // Lines: 0=blank, 1=speaker, 2=l, 3=l (stanza bounded above by speaker)
+        let kinds = ['b', 's', 'l', 'l'];
+        let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
+        // last_fit=3, page_top=0
+        let start = block_start_for_line_pure(0, 3, false, &is_blank, &is_speaker, &is_stage, &is_dialogue);
+        assert_eq!(start, 2, "stanza backup stops at speaker line (returns first dialogue line)");
+    }
+
+    #[test]
+    fn block_start_stops_at_blank() {
+        // Lines: 0=l, 1=blank, 2=l, 3=l (stanza bounded above by blank)
+        let kinds = ['l', 'b', 'l', 'l'];
+        let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
+        let start = block_start_for_line_pure(0, 3, false, &is_blank, &is_speaker, &is_stage, &is_dialogue);
+        assert_eq!(start, 2, "stanza backup stops at blank line (returns first dialogue line after blank)");
+    }
+
+    #[test]
+    fn block_start_in_verse_stanza_bounded_above_by_stage_direction() {
+        // Lines: 0=stage, 1=l, 2=l (stanza after a stage direction)
+        let kinds = ['d', 'l', 'l'];
+        let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
+        let start = block_start_for_line_pure(0, 2, false, &is_blank, &is_speaker, &is_stage, &is_dialogue);
+        assert_eq!(start, 1, "stanza backup stops at stage direction (returns first dialogue line after stage)");
+    }
+
+    #[test]
+    fn trim_block_atoms_block_fully_fits_reduces_count() {
+        let range = VisibleRange { last_fit: 4, total_height: 100, count: 5 };
+        // Lines 0=speaker, 1=l, 2=l, 3=d, 4=d (stage-direction block at end)
+        let kinds = ['s', 'l', 'l', 'd', 'd'];
+        let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
+        let line_height = |_i: usize| 20;
+        let trimmed = trim_block_atoms_pure(
+            range, 0, false,
+            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height,
+        );
+        // Block starts at 3; new last_fit = 2; new count = 3 (lines 0,1,2).
+        assert_eq!(trimmed.last_fit, 2);
+        assert_eq!(trimmed.count, 3);
+        assert_eq!(trimmed.total_height, 60); // dropped lines 3 and 4 at 20px each
+    }
+
+    #[test]
+    fn trim_block_atoms_block_doesnt_fit_returns_unchanged() {
+        // Whole page IS the block — block_start (== 0) <= page_top (== 0).
+        let range = VisibleRange { last_fit: 3, total_height: 80, count: 4 };
+        let kinds = ['d', 'd', 'd', 'd'];
+        let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
+        let line_height = |_i: usize| 20;
+        let trimmed = trim_block_atoms_pure(
+            range, 0, false,
+            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height,
+        );
+        assert_eq!(trimmed.last_fit, 3);
+        assert_eq!(trimmed.count, 4);
+        assert_eq!(trimmed.total_height, 80);
+    }
+
+    #[test]
+    fn trim_block_atoms_empty_range_unchanged() {
+        let range = VisibleRange { last_fit: 0, total_height: 0, count: 0 };
+        let kinds: [char; 0] = [];
+        let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
+        let line_height = |_i: usize| 20;
+        let trimmed = trim_block_atoms_pure(
+            range, 0, false,
+            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height,
+        );
+        assert_eq!(trimmed.count, 0);
+    }
+
+    #[test]
+    fn trim_block_atoms_at_page_top_unchanged() {
+        // last_fit equals page_top — trim is no-op (already minimal).
+        let range = VisibleRange { last_fit: 5, total_height: 20, count: 1 };
+        let kinds = ['l', 'l', 'l', 'l', 'l', 'd'];
+        let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
+        let line_height = |_i: usize| 20;
+        let trimmed = trim_block_atoms_pure(
+            range, 5, false,
+            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height,
+        );
+        assert_eq!(trimmed.last_fit, 5);
+        assert_eq!(trimmed.count, 1);
     }
 }
