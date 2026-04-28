@@ -9,6 +9,7 @@ mod logging;
 mod mode;
 mod ollama;
 mod mpv;
+mod snapshot;
 mod text_file_map;
 mod theme;
 mod ui;
