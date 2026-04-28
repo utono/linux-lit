@@ -25,16 +25,18 @@ pub(crate) fn load_selected_work(
         glib::spawn_future_local(async move {
             let t_db = std::time::Instant::now();
             let abbrev_for_log = abbrev.clone();
-            let work = handle
+            let result = handle
                 .spawn_blocking(move || {
                     let conn =
                         crate::db::queries::open_db().expect("Failed to open lit.db");
-                    crate::db::queries::load_work(&conn, &abbrev)
+                    let work = crate::db::queries::load_work(&conn, &abbrev)?;
+                    let prepared = crate::app::prepare_text_for_display(&work);
+                    Ok::<_, rusqlite::Error>((work, prepared))
                 })
                 .await;
             crate::logging::log(&format!("PICKER: load_work '{}' DB query {:.0}ms", abbrev_for_log, t_db.elapsed().as_millis()));
-            match work {
-                Ok(Ok(work)) => {
+            match result {
+                Ok(Ok((work, prepared))) => {
                     crate::logging::log(&format!(
                         "PICKER: loaded '{}' lines={} timestamps={} text_file={:?}",
                         work.abbrev, work.lines.len(), work.timestamps.len(), work.text_file.is_some()
@@ -43,7 +45,7 @@ pub(crate) fn load_selected_work(
                         let mut s = state_clone.borrow_mut();
                         s.correction_overlay.hide();
                         crate::app::clear_display(&mut s);
-                        crate::app::display_work(&mut s, work);
+                        crate::app::display_work_at_with_prepared(&mut s, work, None, prepared);
                         crate::logging::log(&format!(
                             "PICKER: after display_work current_line={} page_top={} line_map={} effective_lines={}",
                             s.current_line, s.page_top_line, s.line_map.is_some(), s.effective_line_count()

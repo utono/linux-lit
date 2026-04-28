@@ -1132,24 +1132,27 @@ pub fn build_window(
         let state_clone = Rc::clone(&state);
         let handle = tokio_handle_for_mru;
         glib::spawn_future_local(async move {
-            let work = handle
+            // Load work AND precompute its display data (file read +
+            // cleanup + line-map build) all on a blocking thread, so
+            // the GTK main loop only does the synchronous buffer.set_text
+            // + line_map assignment (microseconds, not seconds). This
+            // eliminates the ~3s freeze on Bleak House startup.
+            let result = handle
                 .spawn_blocking(move || {
                     let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
-                    crate::db::queries::load_work(&conn, &abbrev)
+                    let work = crate::db::queries::load_work(&conn, &abbrev)?;
+                    let prepared = prepare_text_for_display(&work);
+                    Ok::<_, rusqlite::Error>((work, prepared))
                 })
                 .await;
-            match work {
-                Ok(Ok(work)) => {
+            match result {
+                Ok(Ok((work, prepared))) => {
                     // Check if this is a concordance spawn with a target line
                     let target_line_id: Option<i64> = std::env::var("LINUX_LIT_LINE_ID").ok()
                         .and_then(|s| s.parse().ok());
                     {
                         let mut s = state_clone.borrow_mut();
-                        if target_line_id.is_some() {
-                            display_work_at(&mut s, work, target_line_id);
-                        } else {
-                            display_work(&mut s, work);
-                        }
+                        display_work_at_with_prepared(&mut s, work, target_line_id, prepared);
                     }
                     // Set up concordance state if this is a concordance spawn
                     if let Ok(conc_word) = std::env::var("LINUX_LIT_CONC_WORD") {
@@ -1286,12 +1289,27 @@ pub fn clear_display(state: &mut AppState) {
 }
 
 pub fn display_work(state: &mut AppState, work: Work) {
-    display_work_at(state, work, None);
+    display_work_at_with_prepared(state, work, None, None);
 }
 
 /// Load and display a work, optionally overriding the saved cursor position.
 /// `target_line_id` is a line_mapping_id to position the cursor on after load.
 pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<i64>) {
+    display_work_at_with_prepared(state, work, target_line_id, None);
+}
+
+/// Like `display_work_at` but accepts a precomputed `PreparedText` to skip
+/// the synchronous file-read + line-map-build step inside
+/// `rebuild_buffer_text`. Caller is expected to have produced `prepared`
+/// off-thread via `prepare_text_for_display(&work)` inside
+/// `tokio::Handle::spawn_blocking`. If `prepared` is None, falls back to
+/// the synchronous path.
+pub fn display_work_at_with_prepared(
+    state: &mut AppState,
+    work: Work,
+    target_line_id: Option<i64>,
+    prepared: Option<PreparedText>,
+) {
     static BOOKMARKS_INIT: std::sync::Once = std::sync::Once::new();
     BOOKMARKS_INIT.call_once(|| {
         if let Ok(conn) = crate::db::queries::open_db_rw() {
@@ -1463,7 +1481,27 @@ pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<
         }
     }
     let t0 = std::time::Instant::now();
-    rebuild_buffer_text(state);
+    if let Some(prep) = prepared {
+        // Heavy work was done off-thread; just apply the result.
+        let mapped = prep.line_map.buffer_to_work.iter().filter(|o| o.is_some()).count();
+        let first_mapped = prep.line_map.buffer_to_work.iter().position(|o| o.is_some());
+        state.buffer.set_text(&prep.filtered_contents);
+        state.line_map = Some(prep.line_map);
+        crate::logging::log(&format!(
+            "TEXT_FILE: loaded '{}' work_type='{}' is_prose={} file_lines={} cleaned_lines={} work_lines={} mapped_buffer_lines={} first_mapped={:?} path={} (prepared off-thread)",
+            prep.abbrev,
+            prep.work_type,
+            prep.is_prose,
+            prep.file_lines_count,
+            prep.cleaned_lines_count,
+            prep.work_lines_count,
+            mapped,
+            first_mapped,
+            prep.path
+        ));
+    } else {
+        rebuild_buffer_text(state);
+    }
     crate::logging::log(&format!("TIMING: rebuild_buffer_text {:.0}ms", t0.elapsed().as_millis()));
     let t1 = std::time::Instant::now();
     apply_dialogue_formatting(state);
@@ -1627,72 +1665,107 @@ pub fn display_work_at(state: &mut AppState, work: Work, target_line_id: Option<
 /// Rebuild the buffer text from current_work.
 /// If the work has a text_file and it exists, load from file and build a line map.
 /// Otherwise, join work.lines as before.
+/// Result of preparing a work's text for display. Produced off the GTK
+/// main thread (file read + cleanup + line-map build), then handed to
+/// `display_work_with_prepared` which only does GTK widget updates.
+pub struct PreparedText {
+    pub abbrev: String,
+    pub work_type: String,
+    pub file_lines_count: usize,
+    pub cleaned_lines_count: usize,
+    pub work_lines_count: usize,
+    pub filtered_contents: String,
+    pub line_map: crate::text_file_map::LineMap,
+    pub path: String,
+    pub is_prose: bool,
+}
+
+/// Heavy precompute: read the work's text file from disk, clean it,
+/// build the line map. Pure CPU + I/O — safe to run inside
+/// `tokio::Handle::spawn_blocking`. The caller then calls
+/// `display_work_with_prepared` on the GTK main thread to apply the
+/// result via `state.buffer.set_text(...)`.
+///
+/// Returns None when the work has no text_file or the file read failed —
+/// caller falls back to the default `display_work` path that joins
+/// `work.lines` synchronously.
+pub fn prepare_text_for_display(work: &Work) -> Option<PreparedText> {
+    let path = work.text_file.as_ref()?;
+    let t_read = std::time::Instant::now();
+    let contents = std::fs::read_to_string(path).ok()?;
+    let file_lines: Vec<String> = contents.lines().map(String::from).collect();
+    crate::logging::log(&format!("PREP: read+split {}ms", t_read.elapsed().as_millis()));
+
+    let t_clean = std::time::Instant::now();
+    let cleaned_lines: Vec<String> = {
+        let mut result: Vec<String> = Vec::with_capacity(file_lines.len());
+        for (i, line) in file_lines.iter().enumerate() {
+            if crate::db::line_types::is_blank(line) {
+                let next_non_blank = file_lines[i + 1..]
+                    .iter()
+                    .find(|l| !crate::db::line_types::is_blank(l));
+                if let Some(next) = next_non_blank {
+                    if crate::db::line_types::is_speaker(next) {
+                        continue;
+                    }
+                }
+            }
+            if let Some(stripped) = line.strip_prefix("## ") {
+                result.push(stripped.to_string());
+            } else {
+                result.push(line.clone());
+            }
+        }
+        result
+    };
+    crate::logging::log(&format!("PREP: clean {}ms ({} -> {} lines)", t_clean.elapsed().as_millis(), file_lines.len(), cleaned_lines.len()));
+
+    let is_prose = crate::db::line_types::is_prose_work(&work.work_type);
+    let t_map = std::time::Instant::now();
+    let line_map = crate::text_file_map::build_line_map(&cleaned_lines, &work.lines, is_prose);
+    crate::logging::log(&format!("PREP: build_line_map {}ms", t_map.elapsed().as_millis()));
+
+    let t_join = std::time::Instant::now();
+    let filtered_contents = cleaned_lines.join("\n");
+    crate::logging::log(&format!("PREP: join {}ms", t_join.elapsed().as_millis()));
+
+    Some(PreparedText {
+        abbrev: work.abbrev.clone(),
+        work_type: work.work_type.clone(),
+        file_lines_count: file_lines.len(),
+        cleaned_lines_count: cleaned_lines.len(),
+        work_lines_count: work.lines.len(),
+        filtered_contents,
+        line_map,
+        path: path.clone(),
+        is_prose,
+    })
+}
+
 fn rebuild_buffer_text(state: &mut AppState) {
     let work = match &state.current_work {
         Some(w) => w,
         None => return,
     };
 
-    if let Some(ref path) = work.text_file {
-        match std::fs::read_to_string(path) {
-            Ok(contents) => {
-                let file_lines: Vec<String> = contents.lines().map(String::from).collect();
-                // Strip blank lines that immediately precede speaker lines —
-                // the speaker-gap tag provides the visual spacing instead.
-                // Strip ## prefix from act/scene headers, and remove blank
-                // lines before speaker lines (speaker-gap tag provides spacing).
-                let cleaned_lines: Vec<String> = {
-                    let mut result: Vec<String> = Vec::with_capacity(file_lines.len());
-                    for (i, line) in file_lines.iter().enumerate() {
-                        if crate::db::line_types::is_blank(line) {
-                            let next_non_blank = file_lines[i + 1..]
-                                .iter()
-                                .find(|l| !crate::db::line_types::is_blank(l));
-                            if let Some(next) = next_non_blank {
-                                if crate::db::line_types::is_speaker(next) {
-                                    continue;
-                                }
-                            }
-                        }
-                        if let Some(stripped) = line.strip_prefix("## ") {
-                            result.push(stripped.to_string());
-                        } else {
-                            result.push(line.clone());
-                        }
-                    }
-                    result
-                };
-                let filtered_contents = cleaned_lines.join("\n");
-                let is_prose = crate::db::line_types::is_prose_work(&work.work_type);
-                let line_map = crate::text_file_map::build_line_map(&cleaned_lines, &work.lines, is_prose);
-                let mapped = line_map.buffer_to_work.iter().filter(|o| o.is_some()).count();
-                let first_mapped = line_map
-                    .buffer_to_work
-                    .iter()
-                    .position(|o| o.is_some());
-                state.buffer.set_text(&filtered_contents);
-                state.line_map = Some(line_map);
-                crate::logging::log(&format!(
-                    "TEXT_FILE: loaded '{}' work_type='{}' is_prose={} file_lines={} cleaned_lines={} work_lines={} mapped_buffer_lines={} first_mapped={:?} path={}",
-                    work.abbrev,
-                    work.work_type,
-                    is_prose,
-                    file_lines.len(),
-                    cleaned_lines.len(),
-                    work.lines.len(),
-                    mapped,
-                    first_mapped,
-                    path
-                ));
-                return;
-            }
-            Err(e) => {
-                crate::logging::log(&format!(
-                    "TEXT_FILE: WARNING — failed to read {}: {}",
-                    path, e
-                ));
-            }
-        }
+    if let Some(prep) = prepare_text_for_display(work) {
+        let mapped = prep.line_map.buffer_to_work.iter().filter(|o| o.is_some()).count();
+        let first_mapped = prep.line_map.buffer_to_work.iter().position(|o| o.is_some());
+        state.buffer.set_text(&prep.filtered_contents);
+        state.line_map = Some(prep.line_map);
+        crate::logging::log(&format!(
+            "TEXT_FILE: loaded '{}' work_type='{}' is_prose={} file_lines={} cleaned_lines={} work_lines={} mapped_buffer_lines={} first_mapped={:?} path={}",
+            prep.abbrev,
+            prep.work_type,
+            prep.is_prose,
+            prep.file_lines_count,
+            prep.cleaned_lines_count,
+            prep.work_lines_count,
+            mapped,
+            first_mapped,
+            prep.path
+        ));
+        return;
     }
 
     // Default: join work.lines

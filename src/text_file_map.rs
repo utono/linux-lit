@@ -33,25 +33,55 @@ pub struct LineMap {
 /// strip bracketed stage directions, trim, lowercase, strip non-alphanumeric
 /// chars (keep spaces), collapse whitespace.
 pub fn normalize(s: &str) -> String {
-    // Remove bracketed stage directions like [To Fool.] that appear in text
-    // files but not in DB canonical_text
-    let without_brackets = strip_brackets(s);
-    let lowered = without_brackets.trim().to_lowercase();
-    // Decompose Unicode (NFD) and strip combining marks (accents/diacritics)
-    // so that e.g. "belovèd" matches "beloved"
-    let stripped: String = lowered
-        .nfd()
-        .filter(|c| !unicode_normalization::char::is_combining_mark(*c))
-        .collect();
-    let filtered: String = stripped
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == ' ')
-        .collect();
-    // Collapse runs of whitespace to a single space and trim again
-    filtered
-        .split_whitespace()
-        .collect::<Vec<&str>>()
-        .join(" ")
+    // Single-pass normalize: strip brackets + lowercase + NFD-strip
+    // combining marks + alphanumeric-only + collapse whitespace, all in one
+    // String allocation. Profiling showed the multi-stage version was the
+    // dominant cost in build_line_map (~1500ms on Bleak House at 71k calls).
+    //
+    // Fast-path: skip if input is empty.
+    if s.is_empty() {
+        return String::new();
+    }
+    let mut result = String::with_capacity(s.len());
+    let mut depth = 0usize; // bracket nesting depth
+    let mut last_was_space = true; // start treating leading whitespace as already-emitted
+    for ch in s.nfd() {
+        // Skip combining marks (diacritics).
+        if unicode_normalization::char::is_combining_mark(ch) {
+            continue;
+        }
+        // Track bracket depth, swallowing chars inside brackets.
+        match ch {
+            '[' => {
+                depth += 1;
+                continue;
+            }
+            ']' if depth > 0 => {
+                depth -= 1;
+                continue;
+            }
+            _ if depth > 0 => continue,
+            _ => {}
+        }
+        // Lowercase + alphanumeric-or-space filter + collapse whitespace.
+        if ch.is_alphanumeric() {
+            for low in ch.to_lowercase() {
+                result.push(low);
+            }
+            last_was_space = false;
+        } else if ch.is_whitespace() || ch == ' ' {
+            if !last_was_space {
+                result.push(' ');
+                last_was_space = true;
+            }
+        }
+        // Other chars (punctuation, etc.) silently dropped.
+    }
+    // Trim trailing space.
+    if result.ends_with(' ') {
+        result.pop();
+    }
+    result
 }
 
 /// Remove all `[...]` bracketed text from a string.
