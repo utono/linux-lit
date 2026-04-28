@@ -1182,7 +1182,18 @@ pub fn build_window(
                 let s = state_clone.borrow();
                 s.buffer.set_text(&t.filtered_contents);
                 drop(s);
-                crate::logging::log("STARTUP: buffer.set_text from phase 1 (line_map pending)");
+                // Apply font size/family + theme CSS immediately so phase 1's
+                // text renders at the configured size, not GTK's default.
+                // Without this, the user sees small unstyled text at ~1.3s
+                // and a jarring "format flash" when reapply_font runs at ~3s
+                // inside display_work_at_with_prepared. Cheap (~3ms) so
+                // running it twice (once here, once again in phase 2's
+                // display_work) is fine.
+                {
+                    let s = state_clone.borrow();
+                    reapply_font(&s);
+                }
+                crate::logging::log("STARTUP: buffer.set_text + font from phase 1 (line_map pending)");
             }
 
             // Phase 2 (off-thread): build line_map.
