@@ -211,6 +211,7 @@ mod tests {
             work_to_buffer: vec![0, 2],
             dialogue_buffer_lines: vec![0, 2],
             sentence_groups: Vec::new(),
+            chapter_breaks: vec![],
         }
     }
 

@@ -28,6 +28,9 @@ pub struct LineMap {
     pub dialogue_buffer_lines: Vec<usize>,
     /// Contiguous ranges of buffer lines forming sentences (prose text_file works only).
     pub sentence_groups: Vec<SentenceGroup>,
+    /// Buffer line indices where a new chapter starts (`Line.is_chapter == true`).
+    /// Sorted ascending. Used by pagination to force page breaks at chapter boundaries.
+    pub chapter_breaks: Vec<usize>,
 }
 
 /// Normalize a line of text to match the DB's `normalized_text` column:
@@ -232,11 +235,19 @@ pub fn build_line_map(file_lines: &[String], work_lines: &[Line], is_prose: bool
         groups
     };
 
+    let mut chapter_breaks = Vec::new();
+    for (work_idx, line) in work_lines.iter().enumerate() {
+        if line.is_chapter && work_idx < work_to_buffer.len() {
+            chapter_breaks.push(work_to_buffer[work_idx]);
+        }
+    }
+
     LineMap {
         buffer_to_work,
         work_to_buffer,
         dialogue_buffer_lines,
         sentence_groups,
+        chapter_breaks,
     }
 }
 
