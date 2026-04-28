@@ -180,6 +180,9 @@ pub struct AppState {
     /// cache eliminates the O(line_count²) replay-from-line-0 walk that
     /// viewport_page_for_line used to do on every overlay-label refresh.
     pub page_tops: std::cell::RefCell<Option<Vec<usize>>>,
+    /// Loaded keybinds. Compiled-in defaults overridden by
+    /// ~/.config/linux-lit/keymap.json if present.
+    pub keymap: crate::input::keymap_config::Keymap,
 }
 
 impl AppState {
@@ -875,6 +878,7 @@ pub fn build_window(
         timestamp_undo: None,
         last_visible_range: std::cell::Cell::new(None),
         page_tops: std::cell::RefCell::new(None),
+        keymap: crate::input::keymap_config::Keymap::load(),
     }));
 
     // Adapt card width/margins to window size whenever the window resizes
