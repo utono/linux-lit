@@ -2011,6 +2011,19 @@ fn update_bottom_clip(
         -1.0
     };
     let scroll_offset = scroll_val - expected_y;
+    // Skip the redundant set_height_request when the clip value would be
+    // unchanged. Calling set_height_request even with the same value forces
+    // GTK to revalidate layout, which can re-shape Pango glyphs by 1-2px
+    // (subpixel positioning). Visible as a "shift then snap back" 100ms
+    // after the work first appears (the post-snap timeout backstop).
+    let cur = bottom_clip.height_request();
+    if cur == clip {
+        crate::logging::log(&format!(
+            "BOTTOM_CLIP: widget_h={} total_h={} clip={} page_top={} scroll_val={:.1} expected_y={:.1} offset={:.1} (unchanged, skipped)",
+            widget_height, trimmed.total_height, clip, page_top, scroll_val, expected_y, scroll_offset
+        ));
+        return;
+    }
     crate::logging::log(&format!(
         "BOTTOM_CLIP: widget_h={} total_h={} clip={} page_top={} scroll_val={:.1} expected_y={:.1} offset={:.1}",
         widget_height, trimmed.total_height, clip, page_top, scroll_val, expected_y, scroll_offset
@@ -2162,11 +2175,11 @@ pub fn update_highlight_and_show(state: &mut AppState) {
     }
     update_highlight(state);
 
-    // Refresh page label now that page_top_line is finalized.
-    if let Some(text) = state.page_label_text_for_buffer(state.page_top_line) {
-        state.page_line_label.set_text(&text);
-        state.page_line_label.set_visible(true);
-    }
+    // Page label is intentionally NOT set here. text_view.height() is still
+    // 0 (scrolled_window is hidden), so viewport_page_for_line would build
+    // a degenerate page_tops index and return page 1, causing a visible
+    // "# - 1" flash. The resize tick refreshes the label once layout
+    // settles (see app.rs deferred-layout-refresh branch).
 
     let scroll_to = state.page_top_line;
     let line_count = state.effective_line_count();

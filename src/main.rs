@@ -31,6 +31,23 @@ fn main() {
     logging::init(&log_path);
     crate::logging::log("STARTUP: main entry");
 
+    // Handle --clear-cache: delete all snapshot files and exit immediately.
+    // Maintenance command; doesn't proceed to launch the window.
+    if std::env::args().any(|a| a == "--clear-cache") {
+        match snapshot::delete_all() {
+            Ok(()) => {
+                println!("Cleared snapshot cache.");
+                crate::logging::log("STARTUP: --clear-cache invoked; cache cleared; exiting");
+            }
+            Err(e) => {
+                eprintln!("Failed to clear snapshot cache: {}", e);
+                crate::logging::log(&format!("STARTUP: --clear-cache failed: {}", e));
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
     let app_id = if mode::is_dev_mode() {
         "com.utono.linux-lit.dev"
     } else {

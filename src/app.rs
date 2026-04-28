@@ -886,7 +886,10 @@ pub fn build_window(
         word_bold_gen: Rc::new(Cell::new(0)),
         word_collect_words: Vec::new(),
         word_collect_ranges: Vec::new(),
-        loading_work: Rc::new(Cell::new(false)),
+        // If we have an MRU work to load, mark loading_work=true now so the
+        // 500ms reveal grace doesn't fire before display_work runs and
+        // expose an empty vbox. Cleared by update_highlight_and_show.
+        loading_work: Rc::new(Cell::new(last_work.is_some())),
         needs_layout_refresh: Rc::new(Cell::new(false)),
         timestamp_undo: None,
         last_visible_range: std::cell::Cell::new(None),
@@ -1005,6 +1008,7 @@ pub fn build_window(
                     }
                     return glib::ControlFlow::Continue;
                 }
+                let mut do_reveal = false;
                 if layout_refresh {
                     // After a work load, the scrolled window was just made
                     // visible.  Wait until it has a real allocated height so
@@ -1018,14 +1022,8 @@ pub fn build_window(
                     s.needs_layout_refresh.set(false);
                     let cw = s.config.column_width;
                     apply_card_sizing(&content_hbox_tick, ww, cw);
-                    // Reveal the content now that layout has settled.
-                    // Opacity was set to 0 in build_window to suppress the
-                    // GTK-default → dwl-tiled startup flicker.
-                    if vbox_for_tick.opacity() < 1.0 {
-                        crate::log_fmt!("STARTUP: revealing vbox (sw_h={})", sw_h);
-                        vbox_for_tick.set_opacity(1.0);
-                    }
                     apply_tiled_mode(&mut s, &vbox_for_tick, ww);
+                    do_reveal = vbox_for_tick.opacity() < 1.0;
                 } else if width_changed {
                     let cw = s.config.column_width;
                     apply_card_sizing(&content_hbox_tick, ww, cw);
@@ -1033,10 +1031,19 @@ pub fn build_window(
                 }
                 // Layout just changed (resize or post-load refresh) — page
                 // boundaries shift, so any cached page_tops index is stale.
-                // Drop it; the next viewport_page_for_line call rebuilds.
+                // Drop it; snap_scroll_to_line below sets the label and the
+                // build_page_tops walk gets amortized into the snap path.
                 crate::input::navigation::invalidate_page_tops(&s);
                 let top = s.page_top_line;
                 crate::input::navigation::snap_scroll_to_line(&mut s, top);
+                // Reveal LAST: apply_tiled_mode, snap_scroll, and the label
+                // update inside snap can all shift visible geometry. Doing
+                // them before opacity=1 keeps everything stable when the
+                // user first sees the window.
+                if do_reveal {
+                    crate::log_fmt!("STARTUP: revealing vbox (sw_h={})", s.scrolled_window.height());
+                    vbox_for_tick.set_opacity(1.0);
+                }
             }
             glib::ControlFlow::Continue
         });
@@ -1728,9 +1735,11 @@ pub fn display_work_at_with_prepared(
         state.effective_line_count().saturating_sub(1),
     );
 
-    // Always start at first dialogue line with viewport showing
-    // the line above (usually a speaker name).
-    if target_line_id.is_none() {
+    // If no saved position and no concordance target, start at first
+    // dialogue line with viewport showing the line above (usually a
+    // speaker name). When current_line > 0 here it came from
+    // config.work_positions — honor the user's saved place.
+    if target_line_id.is_none() && state.current_line == 0 {
         let first_dialogue = if let Some(ref lm) = state.line_map {
             lm.dialogue_buffer_lines.first().copied()
         } else {
@@ -1748,6 +1757,16 @@ pub fn display_work_at_with_prepared(
             state.current_line = target;
             state.page_top_line = target.saturating_sub(1);
         }
+    } else if target_line_id.is_none() {
+        // Saved position path: anchor page_top one line above cursor so
+        // the line preceding the cursor (often a speaker label) is
+        // visible. snap_scroll_to_line in update_highlight_and_show will
+        // adjust as needed if this falls in the middle of a page.
+        state.page_top_line = state.current_line.saturating_sub(1);
+        crate::logging::log(&format!(
+            "DISPLAY_WORK: resumed saved position current_line={} page_top={}",
+            state.current_line, state.page_top_line
+        ));
     }
 
     // If a concordance target was specified, resolve it to a buffer line
@@ -1774,11 +1793,9 @@ pub fn display_work_at_with_prepared(
         state.suppress_sync_until = Some(load_suppress);
     }
 
-    // Show page label (citation for plays, line_mapping.id otherwise) for initial load
-    if let Some(text) = state.page_label_text_for_buffer(state.page_top_line) {
-        state.page_line_label.set_text(&text);
-        state.page_line_label.set_visible(true);
-    }
+    // Page label is set later by the resize tick once layout is valid.
+    // Setting it here would compute a degenerate page=1 because the
+    // scrolled_window is still hidden and text_view.height() is 0.
 
     // Apply highlight, snap scroll, show the scrolled window.
     let t7 = std::time::Instant::now();
