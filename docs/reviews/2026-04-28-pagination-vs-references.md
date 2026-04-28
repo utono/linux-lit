@@ -4,6 +4,23 @@
 **Linux-lit files reviewed:** `src/input/navigation.rs` (2738 lines, full read), `src/app.rs` pagination touchpoints (2695 lines, targeted)
 **References consulted:** `~/Documents/repos/linux-lit/foliate-js/paginator.js` (1130 lines, targeted: `getVisibleRange`, `View.expand`, `Paginator.snap`/`#turnPage`/`#scrollNext`/`#scrollPrev`/`#getVisibleRange`/`#afterScroll`, ResizeObservers, `relocate` event); `~/Documents/repos/linux-lit/bk/src/view.rs` (444 lines, full read)
 
+## Status — closed 2026-04-28
+
+| Finding | Status | Reference |
+|---------|--------|-----------|
+| F1 page turn lock | shipped | `PageTurnLock` |
+| F2 single `visible_range` | shipped | `visible_range` + `trim_trailing_speakers` |
+| F3 `after_page_change` rendezvous | shipped | commits `5fb4d8a` + `7f752a2` |
+| F4 `last_visible_range` cache | shipped | commit `1ed6cad`; later split into raw (visibility) vs trimmed (boundary placement) per `1873899` |
+| F5 Pango descender guard | shipped | commits `e733ed6` + `e398dd4` |
+| F6 resize observer | closed without action | already implemented via tick callback at `app.rs:888` |
+| F7 exact backward boundary | shipped | commits `d550b88`, `e79b14c` |
+| F8 `page_tops` binary-search index | shipped | commit `cfb7fe5` |
+| F9 block-atom trim | shipped | commits `3de6b4c`, `745fb0c`, `2716fa7`, `b5a5760`, `1873899` |
+| F10 `OverlayMode` trait | deferred | review noted "L; do as part of a larger keymap refactor, not standalone for pagination." Pagination payoff is indirect (resize hook), and F6's tick callback already covers the reader resize-resnap case. Revisit when adding a new overlay or hitting friction modifying `keymap.rs`. |
+
+All findings with direct pagination correctness or perf impact have shipped. The review is closed; F10 belongs to a future keymap-focused brainstorm.
+
 ## Summary
 
 Linux-lit's pagination is functionally close to foliate's, but the *shape* of the code has diverged: foliate centralises visibility math in one `getVisibleRange`, gates page turns through one `#turnPage` lock, and broadcasts a single `relocate` event after every scroll, while linux-lit re-implements visibility four times, has no turn lock, and lets each consumer recompute state ad hoc after page changes. The headline win: align linux-lit's pagination to foliate's three pivots (`visible_range`, `turn_lock`, `relocate`) so future paginator.js reads translate line-for-line and three open bug classes (re-entrancy, stale clip, descender drift) become structurally hard to reintroduce.
