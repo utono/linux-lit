@@ -75,13 +75,50 @@ pub fn jump_to_end(state: &mut AppState) {
     // prev_page_top fallback), not back to wherever the user was before G.
     state.page_history.clear();
 
-    // Anchor page_top to buffer end. GTK clamps the scroll automatically
-    // when this is past the last scrollable y; the cursor (target = last
-    // dialogue line) is near the buffer end and lands on this page.
-    // The very last line may clip by a few px if the document doesn't
-    // have enough bottom margin to scroll fully into view (separate bug).
-    let lpp = lines_per_page(state);
-    let new_top = line_count.saturating_sub(lpp);
+    // Compute new_top such that line `new_top`'s y can actually be reached
+    // by GTK's vadjustment (no clamping). The constraint:
+    //   y(new_top) <= upper - page_size
+    //              = (top_margin + content_height + bottom_margin) - page_size
+    // Equivalently, the sum of line heights from new_top to line_count-1
+    // (i.e., `content_below_new_top`) must be >= page_size - bottom_margin
+    // for line `new_top` to be scrollable to the viewport top.
+    //
+    // Walk backward from line_count-1, accumulating heights, stop as soon
+    // as cumulative >= required. The smallest top satisfying this is the
+    // anchor. Sidesteps the GTK scroll-clamp bug seen with the simple
+    // `line_count - lpp` heuristic.
+    let widget_height = state.text_view.height();
+    let new_top = if widget_height > 0 && line_count > 0 {
+        // For jump_to_end, the last buffer line is the last content. There's
+        // no "next page" requiring descender_guard or bottom_margin headroom
+        // — the buffer simply ends. So usable_height = full widget_height.
+        // Walk backward from line_count - 1, accumulating heights; the
+        // smallest top such that total <= widget_height is the new anchor.
+        // This ensures (a) every line from new_top down to line_count - 1
+        // fits in the viewport and (b) y(new_top) is reachable by
+        // vadjustment.set_value (no clamp).
+        let usable_height = widget_height;
+        let mut total: i32 = 0;
+        let mut top = line_count - 1;
+        loop {
+            let Some(iter) = state.buffer.iter_at_line(top as i32) else { break };
+            let (_y, h) = state.text_view.line_yrange(&iter);
+            if total + h > usable_height && top != line_count - 1 {
+                top += 1;
+                break;
+            }
+            total += h;
+            if top == 0 {
+                break;
+            }
+            top -= 1;
+        }
+        top
+    } else {
+        // Layout not ready — fall back to lpp anchor.
+        let lpp = lines_per_page(state);
+        line_count.saturating_sub(lpp)
+    };
     set_page_instant(state, new_top);
     after_page_change(state, PageChangeReason::JumpToLine);
 }
@@ -1821,10 +1858,18 @@ fn set_page_instant(state: &mut AppState, new_top: usize) {
 pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
     // Position the target line at the very top of the viewport using
     // vadjustment for pixel-perfect positioning (scroll_to_iter is imprecise).
+    // GTK's set_value clamps to [0, upper - page_size], so when the requested
+    // y exceeds the document's max scroll (e.g., jump_to_end on the last
+    // page), the actual scroll position is less than y. Detect that case
+    // explicitly: if clamped, the caller's logical page_top is too far —
+    // there's no recovery here in snap_scroll_to_line, but the bottom_clip
+    // overlay's height-based clamp at least keeps the bottom-edge tidy.
     if let Some(iter) = state.buffer.iter_at_line(line as i32) {
         let (y, _h) = state.text_view.line_yrange(&iter);
         let adj = state.scrolled_window.vadjustment();
-        adj.set_value(y as f64);
+        let max_value = (adj.upper() - adj.page_size()).max(0.0);
+        let target = (y as f64).min(max_value);
+        adj.set_value(target);
     }
 
     // F4: populate the cache synchronously so MPV sync handlers reading
@@ -1926,9 +1971,23 @@ fn update_bottom_clip(
         }
     };
 
-    let descender_guard = descender_guard_px(text_view, page_top);
+    // When page_top would render the last buffer line within widget_height,
+    // skip the descender_guard reservation — there's no next page below,
+    // so no risk of half-clipping a "partial line" descender. Just fit
+    // content into widget_height and let bottom_clip cover any whitespace.
     let bottom_margin = text_view.bottom_margin();
-    let usable_height = widget_height - descender_guard - bottom_margin;
+    let descender_guard = descender_guard_px(text_view, page_top);
+    let usable_height = {
+        // Probe: does fitting from page_top with widget_height usable
+        // include line_count - 1? If yes, this is the last page, drop
+        // the descender_guard (and bottom_margin) reservation.
+        let probe = visible_range(text_view, &buf_sv, page_top, line_count, widget_height);
+        if probe.last_fit + 1 >= line_count {
+            widget_height
+        } else {
+            widget_height - descender_guard - bottom_margin
+        }
+    };
 
     let range = visible_range(text_view, &buf_sv, page_top, line_count, usable_height);
 
