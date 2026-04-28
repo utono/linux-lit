@@ -1132,110 +1132,177 @@ pub fn build_window(
         let state_clone = Rc::clone(&state);
         let handle = tokio_handle_for_mru;
         glib::spawn_future_local(async move {
-            // Load work AND precompute its display data (file read +
-            // cleanup + line-map build) all on a blocking thread, so
-            // the GTK main loop only does the synchronous buffer.set_text
-            // + line_map assignment (microseconds, not seconds). This
-            // eliminates the ~3s freeze on Bleak House startup.
-            let result = handle
+            // Two-phase startup to minimize the empty-card freeze:
+            //
+            // Phase 1 (fast, ~50ms): load_work + read file + clean lines.
+            //                        Show buffer text immediately so the
+            //                        user sees content within <1s of
+            //                        launch. Window stays loading_work=true
+            //                        so input is gated.
+            //
+            // Phase 2 (slow, ~1000ms): build_line_map. Without line_map,
+            //                          navigation and many display features
+            //                          don't work, so this still has to
+            //                          finish before clearing loading_work.
+            //                          But it runs while the user is
+            //                          already looking at content.
+            let phase1 = handle
                 .spawn_blocking(move || {
                     let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
                     let work = crate::db::queries::load_work(&conn, &abbrev)?;
-                    let prepared = prepare_text_for_display(&work);
-                    Ok::<_, rusqlite::Error>((work, prepared))
+                    let text_only = prepare_text_only(&work);
+                    Ok::<_, rusqlite::Error>((work, text_only))
                 })
                 .await;
-            match result {
-                Ok(Ok((work, prepared))) => {
-                    // Check if this is a concordance spawn with a target line
-                    let target_line_id: Option<i64> = std::env::var("LINUX_LIT_LINE_ID").ok()
-                        .and_then(|s| s.parse().ok());
-                    {
-                        let mut s = state_clone.borrow_mut();
-                        display_work_at_with_prepared(&mut s, work, target_line_id, prepared);
-                    }
-                    // Set up concordance state if this is a concordance spawn
-                    if let Ok(conc_word) = std::env::var("LINUX_LIT_CONC_WORD") {
-                        let s = state_clone.borrow();
-                        let work_abbrev = s.current_work.as_ref().map(|w| w.abbrev.clone());
-                        drop(s);
-                        if let Some(abbrev) = work_abbrev {
-                            let sc = Rc::clone(&state_clone);
-                            let handle2 = handle.clone();
-                            let word = conc_word.clone();
-                            glib::spawn_future_local(async move {
-                                let word_q = word.clone();
-                                let abbrev_q = abbrev.clone();
-                                let hits = handle2
-                                    .spawn_blocking(move || {
-                                        let conn = crate::db::queries::open_db()
-                                            .expect("Failed to open lit.db");
-                                        crate::db::concordance::find_word_occurrences(&conn, &word_q)
-                                            .unwrap_or_default()
-                                    })
-                                    .await
-                                    .unwrap_or_default();
-                                // Filter to only this work's hits
-                                let conc_hits: Vec<crate::concordance::ConcordanceHit> = hits
-                                    .into_iter()
-                                    .filter(|h| h.work_abbrev == abbrev_q)
-                                    .map(|h| crate::concordance::ConcordanceHit {
-                                        work_abbrev: h.work_abbrev,
-                                        work_title: h.title,
-                                        author: h.author,
-                                        line_mapping_id: h.line_mapping_id,
-                                        div1: h.div1,
-                                        div2: h.div2,
-                                        line_in_div: h.line_in_div,
-                                        canonical_text: h.canonical_text,
-                                        has_audio: h.has_audio,
-                                    })
-                                    .collect();
-                                if !conc_hits.is_empty() {
-                                    let conc_state = crate::concordance::ConcordanceState::new(
-                                        word.clone(),
-                                        conc_hits,
-                                    );
-                                    {
-                                        let mut s = sc.borrow_mut();
-                                        s.concordance_bar.update(
-                                            &conc_state.status_label(),
-                                            &conc_state.status_work(),
-                                        );
-                                        s.concordance_state = Some(conc_state);
-                                    }
-                                    // Jump to first hit — positions cursor, highlights, seeks MPV
-                                    crate::input::navigation::concordance_jump_to_current(
-                                        &sc, &handle2,
-                                    );
-                                    // Defer a centered scroll after layout settles
-                                    let sc2 = Rc::clone(&sc);
-                                    glib::timeout_add_local_once(
-                                        std::time::Duration::from_millis(200),
-                                        move || {
-                                            let s = sc2.borrow();
-                                            let adj = s.scrolled_window.vadjustment();
-                                            let max_scroll = adj.upper() - adj.page_size();
-                                            if max_scroll > 0.0 {
-                                                let line_y = if let Some(iter) = s.buffer.iter_at_line(s.current_line as i32) {
-                                                    let (y, _) = s.text_view.line_yrange(&iter);
-                                                    y as f64
-                                                } else {
-                                                    0.0
-                                                };
-                                                let centered = (line_y - adj.page_size() * 0.5).max(0.0).min(max_scroll);
-                                                adj.set_value(centered);
-                                            }
-                                        },
-                                    );
-                                }
-                            });
-                        }
-                    }
+            let (work, text_only) = match phase1 {
+                Ok(Ok(r)) => r,
+                Ok(Err(e)) => {
+                    crate::logging::log(&format!("STARTUP: load_work error: {}", e));
+                    return;
                 }
-                Ok(Err(_)) | Err(_) => {
-                    state_clone.borrow_mut().picker.show_prepare();
-                    state_clone.borrow().picker.show_finish();
+                Err(e) => {
+                    crate::logging::log(&format!("STARTUP: spawn_blocking phase 1 join error: {}", e));
+                    return;
+                }
+            };
+
+            // Phase 1.5 (main thread): set buffer text immediately if we
+            // have it. This shows content well before line_map is ready.
+            // Cloning cleaned_lines for phase 2; the originals are moved
+            // into the buffer as filtered_contents.
+            let cleaned_lines_for_phase2: Option<Vec<String>> = text_only
+                .as_ref()
+                .map(|t| t.cleaned_lines.clone());
+            let work_lines_for_phase2 = work.lines.clone();
+            let is_prose_for_phase2 = text_only
+                .as_ref()
+                .map(|t| t.is_prose)
+                .unwrap_or(false);
+            if let Some(ref t) = text_only {
+                let s = state_clone.borrow();
+                s.buffer.set_text(&t.filtered_contents);
+                drop(s);
+                crate::logging::log("STARTUP: buffer.set_text from phase 1 (line_map pending)");
+            }
+
+            // Phase 2 (off-thread): build line_map.
+            let line_map = if let Some(cleaned) = cleaned_lines_for_phase2 {
+                let work_lines = work_lines_for_phase2;
+                let is_prose = is_prose_for_phase2;
+                handle
+                    .spawn_blocking(move || {
+                        let t_map = std::time::Instant::now();
+                        let lm = crate::text_file_map::build_line_map(&cleaned, &work_lines, is_prose);
+                        crate::logging::log(&format!(
+                            "PREP: build_line_map (phase 2) {}ms",
+                            t_map.elapsed().as_millis()
+                        ));
+                        lm
+                    })
+                    .await
+                    .ok()
+            } else {
+                None
+            };
+
+            // Reconstruct PreparedText for the existing display_work_at_with_prepared
+            // path — it expects file/clean already done plus the line_map.
+            let prepared = match (text_only, line_map) {
+                (Some(t), Some(lm)) => Some(PreparedText {
+                    abbrev: t.abbrev,
+                    work_type: t.work_type,
+                    file_lines_count: t.file_lines_count,
+                    cleaned_lines_count: t.cleaned_lines_count,
+                    work_lines_count: t.work_lines_count,
+                    filtered_contents: t.filtered_contents,
+                    line_map: lm,
+                    path: t.path,
+                    is_prose: t.is_prose,
+                }),
+                _ => None,
+            };
+
+            {
+                // Check if this is a concordance spawn with a target line
+                let target_line_id: Option<i64> = std::env::var("LINUX_LIT_LINE_ID").ok()
+                    .and_then(|s| s.parse().ok());
+                let mut s = state_clone.borrow_mut();
+                display_work_at_with_prepared(&mut s, work, target_line_id, prepared);
+            }
+            // Set up concordance state if this is a concordance spawn
+            if let Ok(conc_word) = std::env::var("LINUX_LIT_CONC_WORD") {
+                let s = state_clone.borrow();
+                let work_abbrev = s.current_work.as_ref().map(|w| w.abbrev.clone());
+                drop(s);
+                if let Some(abbrev) = work_abbrev {
+                    let sc = Rc::clone(&state_clone);
+                    let handle2 = handle.clone();
+                    let word = conc_word.clone();
+                    glib::spawn_future_local(async move {
+                        let word_q = word.clone();
+                        let abbrev_q = abbrev.clone();
+                        let hits = handle2
+                            .spawn_blocking(move || {
+                                let conn = crate::db::queries::open_db()
+                                    .expect("Failed to open lit.db");
+                                crate::db::concordance::find_word_occurrences(&conn, &word_q)
+                                    .unwrap_or_default()
+                            })
+                            .await
+                            .unwrap_or_default();
+                        // Filter to only this work's hits
+                        let conc_hits: Vec<crate::concordance::ConcordanceHit> = hits
+                            .into_iter()
+                            .filter(|h| h.work_abbrev == abbrev_q)
+                            .map(|h| crate::concordance::ConcordanceHit {
+                                work_abbrev: h.work_abbrev,
+                                work_title: h.title,
+                                author: h.author,
+                                line_mapping_id: h.line_mapping_id,
+                                div1: h.div1,
+                                div2: h.div2,
+                                line_in_div: h.line_in_div,
+                                canonical_text: h.canonical_text,
+                                has_audio: h.has_audio,
+                            })
+                            .collect();
+                        if !conc_hits.is_empty() {
+                            let conc_state = crate::concordance::ConcordanceState::new(
+                                word.clone(),
+                                conc_hits,
+                            );
+                            {
+                                let mut s = sc.borrow_mut();
+                                s.concordance_bar.update(
+                                    &conc_state.status_label(),
+                                    &conc_state.status_work(),
+                                );
+                                s.concordance_state = Some(conc_state);
+                            }
+                            crate::input::navigation::concordance_jump_to_current(
+                                &sc, &handle2,
+                            );
+                            let sc2 = Rc::clone(&sc);
+                            glib::timeout_add_local_once(
+                                std::time::Duration::from_millis(200),
+                                move || {
+                                    let s = sc2.borrow();
+                                    let adj = s.scrolled_window.vadjustment();
+                                    let max_scroll = adj.upper() - adj.page_size();
+                                    if max_scroll > 0.0 {
+                                        let line_y = if let Some(iter) = s.buffer.iter_at_line(s.current_line as i32) {
+                                            let (y, _) = s.text_view.line_yrange(&iter);
+                                            y as f64
+                                        } else {
+                                            0.0
+                                        };
+                                        let centered = (line_y - adj.page_size() * 0.5).max(0.0).min(max_scroll);
+                                        adj.set_value(centered);
+                                    }
+                                },
+                            );
+                        }
+                    });
                 }
             }
         });
@@ -1665,9 +1732,25 @@ pub fn display_work_at_with_prepared(
 /// Rebuild the buffer text from current_work.
 /// If the work has a text_file and it exists, load from file and build a line map.
 /// Otherwise, join work.lines as before.
-/// Result of preparing a work's text for display. Produced off the GTK
-/// main thread (file read + cleanup + line-map build), then handed to
-/// `display_work_with_prepared` which only does GTK widget updates.
+/// First phase of preparing a work for display: file read + cleanup. Fast
+/// (~50ms on Bleak House), produced off the GTK main thread. Lets us call
+/// `state.buffer.set_text(filtered_contents)` and reveal the window
+/// quickly without waiting for the slower line_map build.
+pub struct PreparedTextOnly {
+    pub abbrev: String,
+    pub work_type: String,
+    pub file_lines_count: usize,
+    pub cleaned_lines_count: usize,
+    pub work_lines_count: usize,
+    pub filtered_contents: String,
+    pub cleaned_lines: Vec<String>,
+    pub path: String,
+    pub is_prose: bool,
+}
+
+/// Full prepared text including the line_map. Used by paths that want a
+/// single-shot prep (no two-phase). Produced by
+/// `prepare_text_for_display`.
 pub struct PreparedText {
     pub abbrev: String,
     pub work_type: String,
@@ -1689,6 +1772,73 @@ pub struct PreparedText {
 /// Returns None when the work has no text_file or the file read failed —
 /// caller falls back to the default `display_work` path that joins
 /// `work.lines` synchronously.
+/// Phase 1: read file + clean. Cheap (~50ms on Bleak House). Off-thread
+/// safe. Pair with `build_line_map_for_prepared` to get the full
+/// `PreparedText`, or use directly via `display_work_text_only` to show
+/// content immediately while the line_map builds in the background.
+pub fn prepare_text_only(work: &Work) -> Option<PreparedTextOnly> {
+    let path = work.text_file.as_ref()?;
+    let t_read = std::time::Instant::now();
+    let contents = std::fs::read_to_string(path).ok()?;
+    let file_lines: Vec<String> = contents.lines().map(String::from).collect();
+    crate::logging::log(&format!("PREP: read+split {}ms", t_read.elapsed().as_millis()));
+
+    let t_clean = std::time::Instant::now();
+    let cleaned_lines: Vec<String> = {
+        let mut result: Vec<String> = Vec::with_capacity(file_lines.len());
+        for (i, line) in file_lines.iter().enumerate() {
+            if crate::db::line_types::is_blank(line) {
+                let next_non_blank = file_lines[i + 1..]
+                    .iter()
+                    .find(|l| !crate::db::line_types::is_blank(l));
+                if let Some(next) = next_non_blank {
+                    if crate::db::line_types::is_speaker(next) {
+                        continue;
+                    }
+                }
+            }
+            if let Some(stripped) = line.strip_prefix("## ") {
+                result.push(stripped.to_string());
+            } else {
+                result.push(line.clone());
+            }
+        }
+        result
+    };
+    crate::logging::log(&format!("PREP: clean {}ms ({} -> {} lines)", t_clean.elapsed().as_millis(), file_lines.len(), cleaned_lines.len()));
+
+    let is_prose = crate::db::line_types::is_prose_work(&work.work_type);
+    let t_join = std::time::Instant::now();
+    let filtered_contents = cleaned_lines.join("\n");
+    crate::logging::log(&format!("PREP: join {}ms", t_join.elapsed().as_millis()));
+
+    Some(PreparedTextOnly {
+        abbrev: work.abbrev.clone(),
+        work_type: work.work_type.clone(),
+        file_lines_count: file_lines.len(),
+        cleaned_lines_count: cleaned_lines.len(),
+        work_lines_count: work.lines.len(),
+        filtered_contents,
+        cleaned_lines,
+        path: path.clone(),
+        is_prose,
+    })
+}
+
+/// Phase 2: build_line_map from already-cleaned lines. Slow (~1000ms on
+/// Bleak House). Off-thread safe. Used after `prepare_text_only` +
+/// `display_work_text_only` to complete navigation setup.
+pub fn build_line_map_for_prepared(
+    cleaned_lines: &[String],
+    work_lines: &[crate::db::models::Line],
+    is_prose: bool,
+) -> crate::text_file_map::LineMap {
+    let t_map = std::time::Instant::now();
+    let line_map = crate::text_file_map::build_line_map(cleaned_lines, work_lines, is_prose);
+    crate::logging::log(&format!("PREP: build_line_map {}ms", t_map.elapsed().as_millis()));
+    line_map
+}
+
 pub fn prepare_text_for_display(work: &Work) -> Option<PreparedText> {
     let path = work.text_file.as_ref()?;
     let t_read = std::time::Instant::now();
