@@ -256,7 +256,7 @@ fn main() {
                         } else {
                             crate::theme::load_theme(&theme_name)
                         };
-                        crate::input::keymap::apply_theme_to_state(&mut s, &theme);
+                        crate::input::actions::settings::apply_theme_to_state(&mut s, &theme);
                     }
                 }
             }

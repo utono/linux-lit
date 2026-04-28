@@ -72,90 +72,6 @@ fn load_selected_work(
     }
 }
 
-/// Handle concordance word selection: partition hits by work, set up same-work
-/// concordance state, and spawn new instances for other works.
-fn handle_concordance_word_selection(
-    state: &Rc<RefCell<AppState>>,
-    tokio_handle: &tokio::runtime::Handle,
-    word: String,
-) {
-    let state_clone = Rc::clone(state);
-    let handle = tokio_handle.clone();
-    let word_clone = word.clone();
-    glib::spawn_future_local(async move {
-        let hits = handle
-            .spawn_blocking(move || {
-                let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
-                crate::db::concordance::find_word_occurrences(&conn, &word_clone)
-                    .unwrap_or_default()
-            })
-            .await
-            .unwrap_or_default();
-        if hits.is_empty() {
-            return;
-        }
-
-        let current_abbrev = state_clone
-            .borrow()
-            .current_work
-            .as_ref()
-            .map(|w| w.abbrev.clone())
-            .unwrap_or_default();
-
-        // Partition hits by work
-        let mut current_work_hits = Vec::new();
-        let mut other_works: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
-
-        for h in hits {
-            if h.work_abbrev == current_abbrev {
-                current_work_hits.push(crate::concordance::ConcordanceHit {
-                    work_abbrev: h.work_abbrev,
-                    work_title: h.title,
-                    author: h.author,
-                    line_mapping_id: h.line_mapping_id,
-                    div1: h.div1,
-                    div2: h.div2,
-                    line_in_div: h.line_in_div,
-                    canonical_text: h.canonical_text,
-                    has_audio: h.has_audio,
-                });
-            } else {
-                // Keep only the first hit per other work
-                other_works.entry(h.work_abbrev.clone()).or_insert(h.line_mapping_id);
-            }
-        }
-
-        // Spawn a new instance for each other work
-        if !other_works.is_empty() {
-            let exe = std::env::current_exe()
-                .unwrap_or_else(|_| std::path::PathBuf::from("target/debug/linux-lit"));
-            for (abbrev, line_id) in &other_works {
-                crate::logging::log(&format!(
-                    "CONC_SPAWN: work='{}' line_id={}", abbrev, line_id
-                ));
-                let _ = std::process::Command::new(&exe)
-                    .env("LINUX_LIT_WORK", abbrev)
-                    .env("LINUX_LIT_LINE_ID", line_id.to_string())
-                    .env("LINUX_LIT_CONC_WORD", &word)
-                    .spawn();
-            }
-        }
-
-        // Set up concordance state for current work's hits (if any)
-        if !current_work_hits.is_empty() {
-            let conc_state = crate::concordance::ConcordanceState::new(
-                word.clone(),
-                current_work_hits,
-            );
-            let mut s = state_clone.borrow_mut();
-            s.concordance_bar.update(&conc_state.status_label(), &conc_state.status_work());
-            s.concordance_state = Some(conc_state);
-            drop(s);
-            navigation::concordance_jump_to_current(&state_clone, &handle);
-        }
-    });
-}
-
 /// Handle a key press. Returns true if consumed.
 pub fn handle_key(
     state: &Rc<RefCell<AppState>>,
@@ -733,7 +649,7 @@ pub fn handle_key(
                     if let Some(snap_theme) = s.settings_overlay.themes().get(snap_ti) {
                         let snap_theme = snap_theme.clone();
                         s.settings_overlay.set_theme_index(snap_ti);
-                        apply_theme_to_state(&mut s, &snap_theme);
+                        crate::input::actions::settings::apply_theme_to_state(&mut s, &snap_theme);
                     }
                     s.settings_overlay.hide();
                 }
@@ -762,7 +678,7 @@ pub fn handle_key(
                     (s.config.line_spacing, s.config.column_width, s.config.text_margins, s.config.navigation_mode, s.config.transition_style, s.config.show_cursor_line)
                 };
                 let change = state.borrow_mut().settings_overlay.adjust_value(-1, ls, cw, tm, nm, ts, cl);
-                apply_settings_change(state, change);
+                crate::input::actions::settings::apply_settings_change(state, change);
                 return true;
             }
             "l" | "Right" => {
@@ -771,7 +687,7 @@ pub fn handle_key(
                     (s.config.line_spacing, s.config.column_width, s.config.text_margins, s.config.navigation_mode, s.config.transition_style, s.config.show_cursor_line)
                 };
                 let change = state.borrow_mut().settings_overlay.adjust_value(1, ls, cw, tm, nm, ts, cl);
-                apply_settings_change(state, change);
+                crate::input::actions::settings::apply_settings_change(state, change);
                 return true;
             }
             "r" => {
@@ -919,7 +835,7 @@ pub fn handle_key(
                 let selected = state.borrow().concordance_picker.selected_word();
                 state.borrow().concordance_picker.hide();
                 if let Some(word) = selected {
-                    handle_concordance_word_selection(state, tokio_handle, word);
+                    crate::input::actions::concordance::handle_word_selection(state, tokio_handle, word);
                 }
                 return true;
             }
@@ -944,7 +860,7 @@ pub fn handle_key(
                 let selected = state.borrow().concordance_word_picker.selected_word();
                 state.borrow().concordance_word_picker.hide();
                 if let Some(word) = selected {
-                    handle_concordance_word_selection(state, tokio_handle, word);
+                    crate::input::actions::concordance::handle_word_selection(state, tokio_handle, word);
                 }
                 return true;
             }
@@ -1779,57 +1695,6 @@ fn activate_chunk(s: &mut AppState, idx: usize) {
     }
 }
 
-fn apply_settings_change(
-    state: &Rc<RefCell<crate::app::AppState>>,
-    change: crate::ui::settings_overlay::SettingsChange,
-) {
-    use crate::ui::settings_overlay::SettingsChange;
-    let mut s = state.borrow_mut();
-    match change {
-        SettingsChange::LineSpacing(val) => {
-            if s.dialogue_formatting_active {
-                let tag_table = s.buffer.tag_table();
-                if let Some(tag) = tag_table.lookup("speaker-gap") {
-                    tag.set_property("pixels-above-lines", val.max(1) as i32 * 5);
-                }
-            } else {
-                s.text_view.set_pixels_above_lines((val as i32).max(0));
-                s.text_view.set_pixels_below_lines((val as i32).max(0));
-            }
-            s.config.line_spacing = val;
-        }
-        SettingsChange::ColumnWidth(val) => {
-            crate::app::apply_card_sizing(&s.content_hbox, s.window.width(), val);
-            s.config.column_width = val;
-        }
-        SettingsChange::TextMargins(val) => {
-            let work_type = s.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("");
-            let is_verse = !crate::db::line_types::is_prose_work(work_type);
-            let verse_bump = if is_verse { crate::app::verse_left_offset(s.window.width(), s.config.column_width) } else { 0 };
-            s.text_view.set_left_margin(val as i32 + verse_bump);
-            s.text_view.set_right_margin(val as i32 + crate::config::EXTRA_RIGHT_MARGIN);
-            s.config.text_margins = val;
-            if s.dialogue_formatting_active {
-                crate::app::apply_dialogue_formatting(&mut s);
-            }
-        }
-        SettingsChange::Theme(theme) => {
-            apply_theme_to_state(&mut s, &theme);
-        }
-        SettingsChange::Navigation(mode) => {
-            s.config.navigation_mode = mode;
-        }
-        SettingsChange::Transition(style) => {
-            s.config.transition_style = style;
-        }
-        SettingsChange::CursorLine(val) => {
-            s.config.show_cursor_line = val;
-            crate::input::navigation::update_highlight_only(&mut s);
-        }
-        SettingsChange::None => {}
-    }
-}
-
 fn retry_gloss(state_rc: &Rc<RefCell<AppState>>) {
     let (original, endpoint, model, tokio_handle) = {
         let state = state_rc.borrow();
@@ -1874,38 +1739,4 @@ fn retry_gloss(state_rc: &Rc<RefCell<AppState>>) {
             }
         }
     });
-}
-
-pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &crate::theme::Theme) {
-    let css = crate::theme::generate_css(theme, &state.config.font_family, state.config.font_size);
-    state.css_provider.load_from_string(&css);
-
-    // Update dim tag foreground
-    state.dim_tag.set_property("foreground", &theme.dim_fg);
-    state.ab_dim_tag.set_property("foreground", &theme.dim_fg);
-    state.translation_dim_tag.set_property("foreground", &theme.dim_fg);
-    state.selection_tag.set_property(
-        "background",
-        if theme.is_light {
-            "rgba(38, 109, 211, 0.15)"
-        } else {
-            "rgba(68, 138, 255, 0.25)"
-        },
-    );
-
-    // Update vocab tag foreground
-    state.vocab_tag.set_property("foreground", &theme.vocab_fg);
-
-    // Update cursor line highlight from root_color
-    state.cursor_line_tag.set_property("paragraph-background", &theme.cursor_line_bg);
-
-    // Write .current_theme file
-    let home = std::env::var("HOME").unwrap_or_default();
-    let theme_path = std::path::PathBuf::from(&home)
-        .join("utono/themes/.config/themes/.current_theme");
-    let _ = std::fs::write(&theme_path, &theme.name);
-
-    state.theme = theme.clone();
-
-    crate::logging::log(&format!("SETTINGS: theme changed to {}", theme.display_name));
 }
