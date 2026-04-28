@@ -1,6 +1,7 @@
 pub mod actions;
 pub mod gamepad;
 pub mod keymap;
+pub mod keymap_config;
 pub mod navigation;
 pub mod search;
 pub mod timestamps;
