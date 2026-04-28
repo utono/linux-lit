@@ -435,12 +435,16 @@ pub fn build_window(
     config: Config,
     cmd_tx: tokio::sync::mpsc::Sender<crate::mpv::MpvCommand>,
 ) -> Rc<RefCell<AppState>> {
+    let t_build = std::time::Instant::now();
+    crate::logging::log("STARTUP: build_window enter");
     let window = ApplicationWindow::builder()
         .application(app)
         .title("linux-lit")
         .default_width(1000)
         .default_height(800)
         .build();
+    window.connect_show(|_| crate::logging::log("STARTUP: window connect_show fired"));
+    window.connect_map(|_| crate::logging::log("STARTUP: window connect_map fired"));
 
     // Load theme
     let theme_name = crate::theme::current_theme_name();
@@ -755,6 +759,15 @@ pub fn build_window(
     vbox.append(&concordance_bar.container);
     vbox.append(&search_bar.container);
 
+    // Suppress startup flicker: hide content until the deferred layout
+    // refresh fires (after dwl has tiled the window AND display_work
+    // finishes loading). The tick callback below reveals it on the first
+    // stable layout. Without this, users see content drawn at GTK's default
+    // 1000×800 size, then jump to dwl's tiled size, then jump again as
+    // display_work / bottom_clip recompute. Opacity-only so the window
+    // chrome (including dwl's tile decoration) appears immediately.
+    vbox.set_opacity(0.0);
+
     window.set_child(Some(&vbox));
 
     // Concordance spawns load the work specified by env var.
@@ -881,6 +894,44 @@ pub fn build_window(
         keymap: crate::input::keymap_config::Keymap::load(),
     }));
 
+    // Suppress startup flicker: vbox is hidden (opacity 0) until layout has
+    // settled. Three reveal paths:
+    //   1. Primary (load case): deferred-layout-refresh in the tick
+    //      callback below reveals after display_work + sw_h>0 (the
+    //      authoritative "page is settled" signal). Keeps the window
+    //      invisible during the ~2-3s load.
+    //   2. Picker case: after 500ms, if no work is loading, reveal so
+    //      the picker shows.
+    //   3. Stuck-load fallback: after 5s, reveal regardless. Guards
+    //      against a hung work load leaving the window blank forever.
+    {
+        let vbox_for_reveal = vbox.clone();
+        let state_for_reveal = Rc::clone(&state);
+        glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
+            if vbox_for_reveal.opacity() < 1.0 {
+                let loading = state_for_reveal
+                    .try_borrow()
+                    .map(|s| s.loading_work.get())
+                    .unwrap_or(true);
+                if !loading {
+                    crate::logging::log("STARTUP: revealing vbox (500ms grace, no work loading)");
+                    vbox_for_reveal.set_opacity(1.0);
+                } else {
+                    crate::logging::log("STARTUP: 500ms grace skipped — work loading; waiting for deferred refresh");
+                }
+            }
+        });
+    }
+    {
+        let vbox_for_fallback = vbox.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_secs(5), move || {
+            if vbox_for_fallback.opacity() < 1.0 {
+                crate::logging::log("STARTUP: revealing vbox (5s fallback — load may be stuck)");
+                vbox_for_fallback.set_opacity(1.0);
+            }
+        });
+    }
+
     // Adapt card width/margins to window size whenever the window resizes
     // (e.g. dwl switching between tiled and monocle layouts).
     //
@@ -901,7 +952,13 @@ pub fn build_window(
         window.add_tick_callback(move |_win, _clock| {
             let ww = vbox_for_tick.width();
             let prev_w = last_width.get();
-            let width_changed = (ww - prev_w).abs() >= 4;
+            // 16px threshold swallows the post-startup width oscillation
+            // (observed 10px jitter at ~3.5s after dwl settles + GTK
+            // re-applies card width-request). Real resizes are ≥100s of px
+            // (compositor tile changes), so 16 still catches them.
+            // Exception: the very first allocation (prev_w == -1) always
+            // counts so we initialize the layout.
+            let width_changed = prev_w == -1 || (ww - prev_w).abs() >= 16;
 
             // Track text_view height so the bottom clip recomputes when the
             // compositor settles to a different window height (e.g. first open
@@ -912,7 +969,7 @@ pub fn build_window(
                 return glib::ControlFlow::Continue;
             };
             let prev_h = last_height.get();
-            let height_changed = hh > 0 && (hh - prev_h).abs() >= 4;
+            let height_changed = hh > 0 && (prev_h == -1 || (hh - prev_h).abs() >= 16);
 
             // Check if a deferred layout refresh is needed after work loading.
             let layout_refresh = if let Ok(s) = state_for_tick.try_borrow() {
@@ -961,6 +1018,13 @@ pub fn build_window(
                     s.needs_layout_refresh.set(false);
                     let cw = s.config.column_width;
                     apply_card_sizing(&content_hbox_tick, ww, cw);
+                    // Reveal the content now that layout has settled.
+                    // Opacity was set to 0 in build_window to suppress the
+                    // GTK-default → dwl-tiled startup flicker.
+                    if vbox_for_tick.opacity() < 1.0 {
+                        crate::log_fmt!("STARTUP: revealing vbox (sw_h={})", sw_h);
+                        vbox_for_tick.set_opacity(1.0);
+                    }
                     apply_tiled_mode(&mut s, &vbox_for_tick, ww);
                 } else if width_changed {
                     let cw = s.config.column_width;
@@ -1177,6 +1241,10 @@ pub fn build_window(
         state.borrow().picker.show_finish();
     }
 
+    crate::logging::log(&format!(
+        "STARTUP: build_window exit ({}ms)",
+        t_build.elapsed().as_millis()
+    ));
     state
 }
 

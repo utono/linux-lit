@@ -28,6 +28,7 @@ fn main() {
     let log_path = format!("{}/utono/linux-lit/{}", home, log_filename);
     let _ = std::fs::write(&log_path, "");
     logging::init(&log_path);
+    crate::logging::log("STARTUP: main entry");
 
     let app_id = if mode::is_dev_mode() {
         "com.utono.linux-lit.dev"
@@ -50,6 +51,7 @@ fn main() {
         .build();
 
     application.connect_activate(|gtk_app| {
+        crate::logging::log("STARTUP: connect_activate fired");
         // Channel: GTK → Tokio (commands)
         let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<MpvCommand>(32);
 
