@@ -891,33 +891,7 @@ pub fn handle_key(
                 return true;
             }
             "backslash" => {
-                let abbrev = state
-                    .borrow()
-                    .current_work
-                    .as_ref()
-                    .map(|w| w.abbrev.clone());
-                if let Some(abbrev) = abbrev {
-                    let state_clone = Rc::clone(state);
-                    let handle = tokio_handle.clone();
-                    glib::spawn_future_local(async move {
-                        let words = handle
-                            .spawn_blocking(move || {
-                                let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
-                                crate::db::queries::load_vocab_word_list(&conn, &abbrev)
-                                    .unwrap_or_default()
-                            })
-                            .await
-                            .unwrap_or_default();
-                        {
-                            let mut s = state_clone.borrow_mut();
-                            s.concordance_picker.set_words(words);
-                            s.concordance_picker.show();
-                        }
-                        // set_text triggers connect_changed which borrows state,
-                        // so the mutable borrow must be dropped first.
-                        state_clone.borrow().concordance_picker.search_entry().set_text("");
-                    });
-                }
+                crate::input::actions::concordance::open_picker(state, tokio_handle);
                 return true;
             }
             "d" | "f" | "u" => {

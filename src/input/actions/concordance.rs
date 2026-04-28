@@ -1,6 +1,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use gtk4::prelude::EditableExt;
+
 use crate::app::AppState;
 use crate::input::navigation;
 
@@ -86,4 +88,39 @@ pub(crate) fn handle_word_selection(
             navigation::concordance_jump_to_current(&state_clone, &handle);
         }
     });
+}
+
+/// Open the concordance picker, populating it with the current work's vocab
+/// words. Called from `Ctrl+\`.
+pub(crate) fn open_picker(
+    state: &Rc<RefCell<AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+) {
+    let abbrev = state
+        .borrow()
+        .current_work
+        .as_ref()
+        .map(|w| w.abbrev.clone());
+    if let Some(abbrev) = abbrev {
+        let state_clone = Rc::clone(state);
+        let handle = tokio_handle.clone();
+        glib::spawn_future_local(async move {
+            let words = handle
+                .spawn_blocking(move || {
+                    let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
+                    crate::db::queries::load_vocab_word_list(&conn, &abbrev)
+                        .unwrap_or_default()
+                })
+                .await
+                .unwrap_or_default();
+            {
+                let mut s = state_clone.borrow_mut();
+                s.concordance_picker.set_words(words);
+                s.concordance_picker.show();
+            }
+            // set_text triggers connect_changed which borrows state, so the
+            // mutable borrow must be dropped first.
+            state_clone.borrow().concordance_picker.search_entry().set_text("");
+        });
+    }
 }
