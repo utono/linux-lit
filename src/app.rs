@@ -571,7 +571,11 @@ pub fn build_window(
     text_view.set_left_margin(config.text_margins as i32);
     text_view.set_right_margin(config.text_margins as i32 + crate::config::EXTRA_RIGHT_MARGIN);
     text_view.set_top_margin(0);
-    text_view.set_bottom_margin(40);
+    // Bumped from 40 to 100 so jump_to_end's page_top=line_count-lpp can
+    // scroll the very last buffer line fully into view. With 40px,
+    // GTK's adj.upper() didn't have enough room above the bottom margin
+    // to position the last line; the line clipped by ~16px.
+    text_view.set_bottom_margin(100);
 
     // Scrolled window — centered card with wallpaper visible on all sides
     let scrolled = ScrolledWindow::builder()
