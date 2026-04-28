@@ -3,4 +3,5 @@
 //! verbs as the dispatch target.
 
 pub mod concordance;
+pub mod pickers;
 pub mod settings;
