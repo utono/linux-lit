@@ -1571,12 +1571,63 @@ pub(crate) fn trim_block_atoms(
         &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height)
 }
 
-/// Canonical composition: apply `trim_trailing_speakers`, then `trim_block_atoms`,
+/// Scan (page_top, last_fit] for a line that starts a new chapter or scene
+/// (detected from buffer text via `is_act_scene_marker` or `is_separator`).
+/// If found, clamp last_fit to the line before it so the new section starts
+/// on the next page. Uses text-based detection rather than DB flags so it
+/// works uniformly for prose, verse, and plays.
+fn clamp_at_section_break(
+    range: VisibleRange,
+    page_top: usize,
+    text_view: &sourceview5::View,
+    buffer: &sourceview5::Buffer,
+) -> VisibleRange {
+    use crate::db::line_types;
+    if range.count <= 1 {
+        return range;
+    }
+    // Scan for the first section break strictly after page_top.
+    let mut break_line = None;
+    for i in (page_top + 1)..=range.last_fit {
+        let text = buffer_line_text(buffer, i);
+        let trimmed = text.trim();
+        if line_types::is_act_scene_marker(trimmed) || line_types::is_separator(trimmed) {
+            break_line = Some(i);
+            break;
+        }
+    }
+    let break_line = match break_line {
+        Some(b) => b,
+        None => return range,
+    };
+    let clamped_last = break_line.saturating_sub(1);
+    if clamped_last < page_top {
+        return range;
+    }
+    // Recompute total_height by walking line heights up to clamped_last.
+    let mut total = 0i32;
+    for i in page_top..=clamped_last {
+        if let Some(iter) = buffer.iter_at_line(i as i32) {
+            let (_y, h) = text_view.line_yrange(&iter);
+            total += h;
+        }
+    }
+    VisibleRange {
+        last_fit: clamped_last,
+        total_height: total,
+        count: clamped_last - page_top + 1,
+    }
+}
+
+/// Canonical composition: apply section-break clamping, then
+/// `trim_trailing_speakers`, then `trim_block_atoms`,
 /// then `trim_trailing_speakers` again on the result. All callers that compute a
 /// visible range for "what's on this page" should go through this wrapper so all
 /// trims fire in the right order.
 ///
 /// Order matters:
+/// 0. Section-break clamp first — ensures a new chapter/scene starts at the top
+///    of the next page rather than appearing partway down the current page.
 /// 1. Speaker trim first removes a dangling speaker at the bottom.
 /// 2. Block trim sees the new `last_fit` and decides whether THAT line is
 ///    mid-block; if so, backs up to the line before block-start.
@@ -1592,7 +1643,11 @@ pub(crate) fn trim_visible_range(
     buffer: &sourceview5::Buffer,
     is_prose: bool,
 ) -> VisibleRange {
-    let r = trim_trailing_speakers(range, page_top, text_view, buffer);
+    // Pre-pass: clamp at the first section break (act/scene marker or
+    // separator) strictly inside the range so chapters/scenes always start
+    // at the top of the next page.
+    let r = clamp_at_section_break(range, page_top, text_view, buffer);
+    let r = trim_trailing_speakers(r, page_top, text_view, buffer);
     let r = trim_block_atoms(r, page_top, text_view, buffer, is_prose);
     trim_trailing_speakers(r, page_top, text_view, buffer)
 }
