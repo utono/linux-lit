@@ -810,40 +810,7 @@ pub fn handle_key(
             return true;
         } else if key_name == "semicolon" {
             // g; — jump to most recently created bookmark
-            let abbrev = state
-                .borrow()
-                .current_work
-                .as_ref()
-                .map(|w| w.abbrev.clone());
-            if let Some(abbrev) = abbrev {
-                let state_clone = Rc::clone(state);
-                let handle = tokio_handle.clone();
-                glib::spawn_future_local(async move {
-                    let result = handle
-                        .spawn_blocking(move || {
-                            let conn = crate::db::queries::open_db()
-                                .expect("Failed to open lit.db");
-                            crate::db::queries::most_recent_bookmark(&conn, &abbrev)
-                        })
-                        .await;
-                    if let Ok(Ok(Some(lm_id))) = result {
-                        let mut s = state_clone.borrow_mut();
-                        let buffer_line = if let Some(ref lm) = s.line_map {
-                            s.current_work.as_ref().and_then(|w| {
-                                let work_idx = w.lines.iter().position(|l| l.id == lm_id)?;
-                                Some(lm.work_to_buffer[work_idx])
-                            })
-                        } else {
-                            s.current_work.as_ref().and_then(|w| {
-                                w.lines.iter().position(|l| l.id == lm_id)
-                            })
-                        };
-                        if let Some(bl) = buffer_line {
-                            navigation::jump_to_line(&mut s, bl);
-                        }
-                    }
-                });
-            }
+            crate::input::actions::bookmarks::jump_to_recent_bookmark(state, tokio_handle);
             return true;
         }
     }
@@ -1290,44 +1257,7 @@ pub fn handle_key(
             true
         }
         "m" => {
-            let (abbrev, line_mapping_id, buffer_line) = {
-                let s = state.borrow();
-                let abbrev = s.current_work.as_ref().map(|w| w.abbrev.clone());
-                let lm_id = s.current_work.as_ref().and_then(|w| {
-                    let work_idx = if let Some(ref lm) = s.line_map {
-                        lm.buffer_to_work.get(s.current_line)?.as_ref().copied()
-                    } else {
-                        Some(s.current_line)
-                    };
-                    work_idx.and_then(|wi| w.lines.get(wi).map(|l| l.id))
-                });
-                (abbrev, lm_id, s.current_line)
-            };
-            if let (Some(abbrev), Some(lm_id)) = (abbrev, line_mapping_id) {
-                let state_clone = Rc::clone(state);
-                let handle = tokio_handle.clone();
-                glib::spawn_future_local(async move {
-                    let result = handle
-                        .spawn_blocking(move || {
-                            let conn = crate::db::queries::open_db_rw()
-                                .expect("Failed to open lit.db rw");
-                            crate::db::queries::toggle_bookmark(&conn, &abbrev, lm_id)
-                        })
-                        .await;
-                    if let Ok(Ok(added)) = result {
-                        let s = state_clone.borrow();
-                        {
-                            let mut bm = s.is_bookmarked.borrow_mut();
-                            if buffer_line < bm.len() {
-                                bm[buffer_line] = added;
-                            }
-                        }
-                        if let Some(ref renderer) = s.gutter_renderer {
-                            renderer.queue_draw();
-                        }
-                    }
-                });
-            }
+            crate::input::actions::bookmarks::toggle_bookmark(state, tokio_handle);
             true
         }
         "semicolon" => {
