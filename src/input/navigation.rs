@@ -50,9 +50,39 @@ pub fn jump_to_end(state: &mut AppState) {
     if line_count == 0 {
         return;
     }
-    state.current_line = line_count - 1;
+
+    // Find the last dialogue line in the buffer (skips trailing stage
+    // directions, blanks, exit markers). For prose works there typically
+    // isn't a difference; for plays this lands on the last spoken line.
+    let mut target = line_count - 1;
+    loop {
+        if !state.translation_lines.get(target).copied().unwrap_or(false)
+            && is_dialogue_line(&state.buffer, target)
+        {
+            break;
+        }
+        if target == 0 {
+            break;
+        }
+        target -= 1;
+    }
+    state.current_line = target;
+
+    // Position the page so target is visible. Start from a buffer-end
+    // anchor (line_count - lpp); if last_fully_visible_line doesn't reach
+    // target, advance new_top one line at a time until it does. This
+    // self-corrects when lpp underestimates how many lines actually fit
+    // (variable line heights in plays with mixed dialogue/speakers).
     let lpp = lines_per_page(state);
-    let new_top = line_count.saturating_sub(lpp);
+    let mut new_top = line_count.saturating_sub(lpp);
+    let mut steps = 0;
+    while new_top < target && steps < lpp * 2 {
+        if last_fully_visible_line(state, new_top) >= target {
+            break;
+        }
+        new_top += 1;
+        steps += 1;
+    }
     set_page_instant(state, new_top);
     after_page_change(state, PageChangeReason::JumpToLine);
 }

@@ -321,82 +321,8 @@ pub fn handle_key(
         return false;
     }
 
-    // Ctrl+d: toggle debug logging
-    if is_ctrl && key_name == "d" {
-        let enabled = !crate::logging::debug_mode();
-        crate::logging::set_debug_mode(enabled);
-        crate::logging::log_always(&format!("DEBUG_MODE: {}", if enabled { "on" } else { "off" }));
-        state.borrow().debug_icon.set_visible(enabled);
-        return true;
-    }
-
-    // Ctrl+f: page forward
-    if is_ctrl && key_name == "f" {
-        navigation::page_forward(&mut state.borrow_mut());
-        return true;
-    }
-
-    // Ctrl+b: page backward
-    if is_ctrl && key_name == "b" {
-        navigation::page_backward(&mut state.borrow_mut());
-        return true;
-    }
-
-    // Ctrl+y: copy line_mapping.id and media_files.id to clipboard
-    if is_ctrl && key_name == "y" {
-        let s = state.borrow();
-        let lm_id = s.line_mapping_id_for_buffer(s.current_line);
-        let media_id = s.media_id;
-        drop(s);
-        let clip = match (lm_id, media_id) {
-            (Some(l), Some(m)) => format!("{} {}", l, m),
-            (Some(l), None) => format!("{}", l),
-            (None, Some(m)) => format!("- {}", m),
-            (None, None) => return true,
-        };
-        if let Ok(mut child) = std::process::Command::new("wl-copy")
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-        {
-            use std::io::Write;
-            if let Some(ref mut stdin) = child.stdin {
-                let _ = stdin.write_all(clip.as_bytes());
-            }
-            let _ = child.wait();
-        }
-        crate::logging::log(&format!("CLIPBOARD: copied {}", clip));
-        return true;
-    }
-
-    // Ctrl+Shift+M: open media picker
-    if is_ctrl && is_shift && key_name == "M" {
-        crate::input::actions::pickers::open_media_picker(state, tokio_handle);
-        return true;
-    }
-
-    // Ctrl+m: open bookmark picker
-    if is_ctrl && !is_shift && key_name == "m" {
-        crate::input::actions::pickers::open_bookmark_picker(state, tokio_handle);
-        return true;
-    }
-
     // Settings overlay
     let settings_visible = state.borrow().settings_overlay.is_visible();
-
-    // Ctrl+,: toggle settings overlay
-    if is_ctrl && key_name == "comma" && !settings_visible && !picker_visible {
-        state.borrow().correction_overlay.hide();
-        let s = state.borrow();
-        let ls = s.config.line_spacing;
-        let cw = s.config.column_width;
-        let tm = s.config.text_margins;
-        let nm = s.config.navigation_mode;
-        let ts = s.config.transition_style;
-        let cl = s.config.show_cursor_line;
-        drop(s);
-        state.borrow_mut().settings_overlay.show(ls, cw, tm, nm, ts, cl);
-        return true;
-    }
 
     // Ctrl+n/Ctrl+p navigate settings overlay list (aliases for j/k)
     if settings_visible && is_ctrl {
@@ -763,152 +689,6 @@ pub fn handle_key(
         }
     }
 
-    // Ctrl+Alt+l: save position, quit MPV, and close window
-    if is_ctrl && is_alt && key_name == "l" {
-        crate::app::save_position(&mut state.borrow_mut());
-        let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::Quit);
-        state.borrow().window.close();
-        return true;
-    }
-
-    // Alt combos
-    if is_alt && key_name == "backslash" {
-        let mut s = state.borrow_mut();
-        s.vocab_highlight_visible = !s.vocab_highlight_visible;
-        if s.vocab_highlight_visible {
-            crate::app::apply_vocab_highlighting(&s);
-        } else {
-            crate::app::remove_vocab_highlighting(&s);
-        }
-        s.config.vocab_highlight_visible = s.vocab_highlight_visible;
-        crate::config::save(&s.config);
-        crate::logging::log(&format!("VOCAB: highlighting {}", if s.vocab_highlight_visible { "on" } else { "off" }));
-        return true;
-    }
-
-    if is_alt {
-        match key_name {
-            "d" => {
-                let mut s = state.borrow_mut();
-                s.dim_enabled = !s.dim_enabled;
-                if !s.dim_enabled {
-                    // Clear dim from entire buffer since only visible range was managed
-                    let (start, end) = s.buffer.bounds();
-                    s.buffer.remove_tag(&s.dim_tag, &start, &end);
-                }
-                navigation::update_highlight_only(&mut s);
-                s.config.dim_enabled = s.dim_enabled;
-                crate::config::save(&s.config);
-                crate::logging::log(&format!("DIM: {}", if s.dim_enabled { "on" } else { "off" }));
-                return true;
-            }
-            "f" => {
-                crate::app::show_font_info(&state.borrow());
-                return true;
-            }
-            "i" => {
-                return crate::input::timestamps::set_end_time(&mut state.borrow_mut());
-            }
-            _ => return false,
-        }
-    }
-
-    // Ctrl combos — page turn navigation (e-reader style)
-    if is_ctrl {
-        match key_name {
-            "slash" => {
-                let s = state.borrow();
-                if s.keybinds_overlay.is_visible() || s.gamepad_overlay.is_visible() {
-                    s.keybinds_overlay.hide();
-                    s.gamepad_overlay.hide();
-                } else {
-                    // Hide other overlays before showing keybinds
-                    s.picker.hide();
-                    s.media_picker.hide();
-                    s.settings_overlay.hide();
-                    s.search_bar.hide();
-                    s.correction_overlay.hide();
-                    s.keybinds_overlay.show();
-                }
-                // Arm the chord so a following 'g' swaps keybinds → gamepad.
-                key_state.borrow_mut().pending_ctrl_slash = true;
-                let ks = Rc::clone(key_state);
-                glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
-                    ks.borrow_mut().pending_ctrl_slash = false;
-                });
-                return true;
-            }
-            "backslash" => {
-                crate::input::actions::concordance::open_picker(state, tokio_handle);
-                return true;
-            }
-            "d" | "f" | "u" => {
-                navigation::page_forward(&mut state.borrow_mut());
-                return true;
-            }
-            "b" => {
-                navigation::page_backward(&mut state.borrow_mut());
-                return true;
-            }
-            "Up" => {
-                let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(5.0));
-                return true;
-            }
-            "Down" => {
-                let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(-5.0));
-                return true;
-            }
-            _ => return false,
-        }
-    }
-
-    // Vocab popup: backslash/numbersign show popup or cycle words, with 3s auto-hide
-    if key_name == "backslash" || key_name == "numbersign" {
-        let popup_visible = state.borrow().vocab_popup.is_visible();
-        if popup_visible {
-            if key_name == "backslash" {
-                crate::app::vocab_popup_next(&mut state.borrow_mut());
-            } else {
-                crate::app::vocab_popup_prev(&mut state.borrow_mut());
-            }
-        } else {
-            crate::app::open_vocab_popup(&mut state.borrow_mut());
-        }
-        // Reset the auto-hide timer: bump generation, schedule fade after 3s
-        let gen = {
-            let s = state.borrow();
-            let next = s.vocab_popup_fade_gen.get() + 1;
-            s.vocab_popup_fade_gen.set(next);
-            next
-        };
-        let state_clone = Rc::clone(state);
-        glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-            let s = state_clone.borrow();
-            if s.vocab_popup_fade_gen.get() != gen {
-                return; // a newer press reset the timer
-            }
-            if !s.vocab_popup.is_visible() {
-                return;
-            }
-            // Crossfade out the popup
-            let widget = s.vocab_popup.widget().clone();
-            let target = adw::CallbackAnimationTarget::new(move |value| {
-                widget.set_opacity(value as f64);
-                if value <= 0.0 {
-                    widget.set_visible(false);
-                    widget.set_opacity(1.0); // restore for next show
-                }
-            });
-            let anim = adw::TimedAnimation::new(
-                s.vocab_popup.widget(),
-                1.0, 0.0, 500, target,
-            );
-            anim.set_easing(adw::Easing::EaseOutQuad);
-            anim.play();
-        });
-        return true;
-    }
-
     // Other vocab popup keys (when popup is visible)
     if state.borrow().vocab_popup.is_visible() {
         match key_name {
@@ -925,373 +705,51 @@ pub fn handle_key(
         }
     }
 
-    // Single keys
-    match key_name {
-        "space" => {
-            if is_shift {
-                navigation::page_backward(&mut state.borrow_mut());
-            } else {
-                navigation::page_forward(&mut state.borrow_mut());
-            }
-            true
-        }
-        "j" => {
-            navigation::cursor_next_dialogue(&mut state.borrow_mut());
-            true
-        }
-        "k" => {
-            navigation::cursor_prev_line(&mut state.borrow_mut());
-            true
-        }
-        "Up" => {
-            if is_shift {
-                navigation::page_backward_bottom(&mut state.borrow_mut());
-            } else {
-                navigation::jump_to_prev_dialogue(&mut state.borrow_mut());
-            }
-            true
-        }
-        "Down" => {
-            navigation::jump_to_next_dialogue(&mut state.borrow_mut());
-            true
-        }
-        "g" => {
-            key_state.borrow_mut().pending_g = true;
-            let ks = Rc::clone(key_state);
-            glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
-                ks.borrow_mut().pending_g = false;
-            });
-            true
-        }
-        "G" => {
-            navigation::jump_to_end(&mut state.borrow_mut());
-            true
-        }
-        "comma" => {
-            if is_shift {
-                navigation::page_backward_bottom(&mut state.borrow_mut());
-            } else {
-                navigation::jump_to_prev_dialogue(&mut state.borrow_mut());
-            }
-            true
-        }
-        "q" => {
-            navigation::jump_to_next_dialogue(&mut state.borrow_mut());
-            true
-        }
-        "less" => {
-            navigation::page_backward(&mut state.borrow_mut());
-            true
-        }
-        "minus" => {
-            let mut s = state.borrow_mut();
-            s.config.show_cursor_line = !s.config.show_cursor_line;
-            crate::input::navigation::update_highlight_only(&mut s);
-            crate::config::save(&s.config);
-            true
-        }
-        "Q" => {
-            navigation::cursor_to_page_bottom(&mut state.borrow_mut());
-            true
-        }
-        "o" | "e" | "O" | "E" => {
-            let offset = match key_name {
-                "o" => -3.5,
-                "e" => 3.5,
-                "O" => -60.0,
-                "E" => 60.0,
-                _ => unreachable!(),
-            };
-            let mut s = state.borrow_mut();
-            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SeekRelative(offset));
-            // Brief suppression while MPV processes the seek; sync resumes afterwards
-            // so the cursor follows audio to the new position.
-            s.suppress_sync_until = Some(
-                std::time::Instant::now() + std::time::Duration::from_millis(500),
-            );
-            true
-        }
-        "a" => {
-            crate::input::timestamps::play_current_line(&mut state.borrow_mut());
-            true
-        }
-        "Tab" => {
-            crate::input::search::toggle_playback(&mut state.borrow_mut());
-            true
-        }
-        "s" => {
-            let mut s = state.borrow_mut();
-            s.sync_enabled = !s.sync_enabled;
-            s.sync_icon.set_visible(!s.sync_enabled);
-            crate::logging::log(&format!("SYNC: {}", if s.sync_enabled { "enabled" } else { "disabled" }));
-            true
-        }
-        "exclam" => {
-            crate::logging::log("FONT: exclam matched, decreasing");
-            crate::app::adjust_font_size(&mut state.borrow_mut(), -1);
-            crate::app::show_font_info(&state.borrow());
-            true
-        }
-        "bar" => {
-            crate::logging::log("FONT: bar matched, increasing");
-            crate::app::adjust_font_size(&mut state.borrow_mut(), 1);
-            crate::app::show_font_info(&state.borrow());
-            true
-        }
-        "0" => {
-            crate::app::reset_font_size(&mut state.borrow_mut());
-            true
-        }
-        "f" => {
-            crate::app::cycle_font(&mut state.borrow_mut(), true);
-            true
-        }
-        "F" => {
-            crate::app::cycle_font(&mut state.borrow_mut(), false);
-            true
-        }
-        "plus" => {
-            let mut s = state.borrow_mut();
-            let new_speed = if s.playback_speed == 1.0 { 1.3 } else { 1.0 };
-            s.playback_speed = new_speed;
-            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SetSpeed(new_speed));
-            crate::logging::log(&format!("SPEED: toggled to {}x", new_speed));
-            true
-        }
-        "slash" => {
-            let mut s = state.borrow_mut();
-            crate::input::search::clear_search(&mut s);
-            s.search_bar.show();
-            true
-        }
-        "n" => {
-            if !state.borrow().search_matches.is_empty() {
-                crate::input::search::next_match(&mut state.borrow_mut());
-                true
-            } else {
-                false
-            }
-        }
-        "N" => {
-            if !state.borrow().search_matches.is_empty() {
-                crate::input::search::prev_match(&mut state.borrow_mut());
-                true
-            } else {
-                false
-            }
-        }
-        "u" | "Right" => {
-            let ok = crate::input::timestamps::set_start_time(&mut state.borrow_mut());
-            if ok {
-                navigation::cursor_next_dialogue(&mut state.borrow_mut());
-            }
-            ok
-        }
-        "Left" => {
-            let mut s = state.borrow_mut();
-            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SeekRelative(-30.0));
-            // Brief suppression while MPV processes the seek; sync resumes afterwards.
-            s.suppress_sync_until = Some(
-                std::time::Instant::now() + std::time::Duration::from_millis(500),
-            );
-            true
-        }
-        "period" => {
-            crate::input::timestamps::set_chapter(&mut state.borrow_mut())
-        }
-        "bracketleft" => {
-            {
+    // Escape: special multi-state handler (concordance, AB loop, search clear).
+    // Stays inline — multi-state preconditions don't fit the static Action model.
+    if key_name == "Escape" {
+        // Clear concordance mode on Escape
+        {
+            let has_conc = state.borrow().concordance_state.is_some();
+            if has_conc {
                 let mut s = state.borrow_mut();
-                if s.translations_visible {
-                    crate::app::toggle_translations(&mut s);
-                }
-                navigation::jump_to_prev_chapter(&mut s);
+                s.concordance_state = None;
+                s.concordance_bar.hide();
+                return true;
             }
-            true
         }
-        "braceleft" => {
-            {
-                let mut s = state.borrow_mut();
-                if s.translations_visible {
-                    crate::app::toggle_translations(&mut s);
-                }
-                navigation::jump_to_next_chapter(&mut s);
+        let mut s = state.borrow_mut();
+        if s.ab_repeat.loop_active {
+            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::ClearAbLoop);
+            s.ab_repeat.clear();
+            s.ab_repeat.chunk_index = None;
+            s.ab_a_line.set(None);
+            s.ab_b_line.set(None);
+            s.suppress_sync_until = None;
+            if let Some(ref renderer) = s.gutter_renderer {
+                renderer.queue_draw();
             }
-            true
-        }
-        "2" => {
-            let mut s = state.borrow_mut();
-            let is_play = s
-                .current_work
-                .as_ref()
-                .map(|w| w.work_type == "play")
-                .unwrap_or(false);
-            if is_play {
-                crate::input::navigation::jump_to_prev_scene(&mut s);
-            } else {
-                crate::input::navigation::jump_to_prev_chapter(&mut s);
-            }
-            true
-        }
-        "3" => {
-            let mut s = state.borrow_mut();
-            let is_play = s
-                .current_work
-                .as_ref()
-                .map(|w| w.work_type == "play")
-                .unwrap_or(false);
-            if is_play {
-                crate::input::navigation::jump_to_next_scene(&mut s);
-            } else {
-                crate::input::navigation::jump_to_next_chapter(&mut s);
-            }
-            true
-        }
-        "i" => {
-            let s = state.borrow();
-            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
+            crate::app::remove_ab_dim(&s);
+            crate::logging::log("CHUNK: AB loop cleared");
             drop(s);
-            crate::app::toggle_translations(&mut state.borrow_mut());
-            true
+            crate::input::navigation::update_highlight_and_center(&mut state.borrow_mut());
+            return true;
+        } else if !s.search_matches.is_empty() {
+            crate::input::search::clear_search(&mut s);
+            return true;
+        } else {
+            return false;
         }
-        "BackSpace" => {
-            crate::input::timestamps::delete_timestamp(&mut state.borrow_mut())
-        }
-        "p" => {
-            crate::input::timestamps::nudge_start_backward(&mut state.borrow_mut())
-        }
-        "P" => {
-            crate::input::timestamps::nudge_start_forward(&mut state.borrow_mut())
-        }
-        "U" => {
-            crate::input::timestamps::undo_timestamp(&mut state.borrow_mut())
-        }
-        "l" => {
-            crate::app::toggle_sign_column(&mut state.borrow_mut());
-            true
-        }
-        "x" => {
-            navigation::page_forward(&mut state.borrow_mut());
-            true
-        }
-        "y" => {
-            navigation::page_backward(&mut state.borrow_mut());
-            true
-        }
-        "m" => {
-            crate::input::actions::bookmarks::toggle_bookmark(state, tokio_handle);
-            true
-        }
-        "semicolon" => {
-            if is_shift {
-                navigation::prev_bookmark(&mut state.borrow_mut());
-            } else {
-                navigation::next_bookmark(&mut state.borrow_mut());
-            }
-            true
-        }
-        "colon" => {
-            navigation::prev_bookmark(&mut state.borrow_mut());
-            true
-        }
-        "r" => {
-            let has_concordance = state.borrow().concordance_state.is_some();
-            if has_concordance {
-                let current_abbrev = state.borrow().current_work.as_ref().map(|w| w.abbrev.clone());
-                let advanced = {
-                    let mut s = state.borrow_mut();
-                    if let (Some(conc), Some(ref abbrev)) = (s.concordance_state.as_mut(), &current_abbrev) {
-                        conc.advance_within_work(abbrev)
-                    } else {
-                        false
-                    }
-                };
-                if advanced {
-                    navigation::concordance_jump_to_current(state, tokio_handle);
-                }
-            } else {
-                navigation::jump_to_next_vocab(&mut state.borrow_mut());
-            }
-            true
-        }
-        "R" => {
-            let has_concordance = state.borrow().concordance_state.is_some();
-            if has_concordance {
-                let current_abbrev = state.borrow().current_work.as_ref().map(|w| w.abbrev.clone());
-                let retreated = {
-                    let mut s = state.borrow_mut();
-                    if let (Some(conc), Some(ref abbrev)) = (s.concordance_state.as_mut(), &current_abbrev) {
-                        conc.retreat_within_work(abbrev)
-                    } else {
-                        false
-                    }
-                };
-                if retreated {
-                    navigation::concordance_jump_to_current(state, tokio_handle);
-                }
-            } else {
-                navigation::jump_to_prev_vocab(&mut state.borrow_mut());
-            }
-            true
-        }
-        "h" => {
-            let mut s = state.borrow_mut();
-            s.vocab_popup_auto = !s.vocab_popup_auto;
-            if s.vocab_popup_auto {
-                crate::app::open_vocab_popup(&mut s);
-            } else {
-                crate::app::close_vocab_popup(&mut s);
-            }
-            true
-        }
-        "Escape" => {
-            // Clear concordance mode on Escape
-            {
-                let has_conc = state.borrow().concordance_state.is_some();
-                if has_conc {
-                    let mut s = state.borrow_mut();
-                    s.concordance_state = None;
-                    s.concordance_bar.hide();
-                    return true;
-                }
-            }
-            let mut s = state.borrow_mut();
-            if s.ab_repeat.loop_active {
-                let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::ClearAbLoop);
-                s.ab_repeat.clear();
-                s.ab_repeat.chunk_index = None;
-                s.ab_a_line.set(None);
-                s.ab_b_line.set(None);
-                s.suppress_sync_until = None;
-                if let Some(ref renderer) = s.gutter_renderer {
-                    renderer.queue_draw();
-                }
-                crate::app::remove_ab_dim(&s);
-                crate::logging::log("CHUNK: AB loop cleared");
-                drop(s);
-                crate::input::navigation::update_highlight_and_center(&mut state.borrow_mut());
-                true
-            } else if !s.search_matches.is_empty() {
-                crate::input::search::clear_search(&mut s);
-                true
-            } else {
-                false
-            }
-        }
-        "V" => {
-            crate::input::visual::enter_visual_mode(&mut state.borrow_mut());
-            true
-        }
-        "w" => {
-            navigation::word_cycle_copy(&mut state.borrow_mut());
-            true
-        }
-        "W" => {
-            navigation::word_collect_copy(&mut state.borrow_mut());
-            true
-        }
-        _ => false,
     }
+
+    // Keymap-driven dispatch for everything else. Scope the borrow tightly
+    // so it drops before dispatch_action borrows state itself.
+    let action = state.borrow().keymap.lookup(key_name, is_ctrl, is_shift, is_alt);
+    if let Some(action) = action {
+        return dispatch_action(state, action, key_state, tokio_handle);
+    }
+
+    false
 }
 
 /// Execute an Action by calling its corresponding verb. Returns true if the

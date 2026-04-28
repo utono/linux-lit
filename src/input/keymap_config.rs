@@ -118,14 +118,36 @@ impl Keymap {
     }
 
     pub fn lookup(&self, key: &str, ctrl: bool, shift: bool, alt: bool) -> Option<Action> {
+        // GTK delivers shifted ASCII letters with key_name already
+        // capitalized AND is_shift=true (e.g., Shift+g → "G", shift=true).
+        // The shift modifier is then redundant — strip it before lookup so
+        // bindings can be defined as KeyCombo::plain("G") rather than
+        // requiring KeyCombo::shift("G"). Only applies to single ASCII
+        // uppercase letters; symbols are layout-dependent (e.g., on RPD
+        // Shift+comma may emit ("comma", shift=true) rather than ("less",
+        // shift=false)) and treated as significant.
+        // Ctrl+Shift+X stays distinct from Ctrl+X — only strip when ctrl
+        // and alt are both off.
+        let effective_shift = if !ctrl && !alt && is_uppercase_letter(key) {
+            false
+        } else {
+            shift
+        };
         let combo = KeyCombo {
             key: key.to_string(),
             ctrl,
-            shift,
+            shift: effective_shift,
             alt,
         };
         self.reader.get(&combo).copied()
     }
+}
+
+/// True when the key name is a single ASCII uppercase letter (the shifted
+/// form is encoded in the key name itself, so the shift modifier flag is
+/// redundant).
+fn is_uppercase_letter(key: &str) -> bool {
+    key.len() == 1 && key.chars().next().map_or(false, |c| c.is_ascii_uppercase())
 }
 
 impl Default for Keymap {
