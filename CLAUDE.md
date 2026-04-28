@@ -60,6 +60,37 @@ When searching for a keybind in linux-lit, **always check source** — primarily
 - Themes: `~/utono/themes/.config/themes/themes-unified.json`
 - Config: `~/.config/linux-lit/config.json`
 
+## Keymap Configuration
+
+Reader keybindings are loaded from `~/.config/linux-lit/keymap.json` at
+startup. If the file is missing or malformed, linux-lit falls back to
+compiled-in defaults (see `src/input/keymap_config.rs:default_reader_bindings`).
+
+### Stow workflow
+
+The canonical default keymap is shipped as a stow package at
+`~/tty-dotfiles/linux-lit/.config/linux-lit/keymap.json`. Deploy with:
+
+```bash
+cd ~/tty-dotfiles && stow linux-lit
+```
+
+Restart linux-lit; the new bindings take effect on next launch.
+
+### Customizing bindings
+
+Edit `~/tty-dotfiles/linux-lit/.config/linux-lit/keymap.json` (the stow
+source). Each binding is an object: `{"key": "x", "action": "PageForward"}`.
+Optional modifier flags: `"ctrl": true`, `"shift": true`, `"alt": true`.
+
+Available actions are the variants of `crate::input::actions::Action` —
+see `src/input/actions/mod.rs`. Unknown action names are skipped at load
+with a logged warning; malformed JSON falls back to compiled-in defaults
+entirely.
+
+User overrides take precedence over defaults; bindings not present in
+the JSON keep their compiled-in default.
+
 ## Reference Codebases
 
 When debugging or designing features that overlap with other ebook readers, consult these read-only checkouts at `~/Documents/repos/linux-lit/`. They are reference material, not dependencies — **never import code, only patterns**. Re-clone with `git clone <url>` into that directory if missing.
