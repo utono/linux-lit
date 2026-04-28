@@ -1,12 +1,13 @@
 use std::ops::Range;
 
+use serde::{Deserialize, Serialize};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::db::models::Line;
 use crate::db::line_types;
 
 /// A sentence group with character-level boundary info for partial-line highlighting.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SentenceGroup {
     /// Buffer line indices covered by this sentence.
     pub line_range: Range<usize>,
@@ -17,7 +18,7 @@ pub struct SentenceGroup {
 }
 
 /// Bidirectional map between a plain-text file's line indices and DB work line indices.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LineMap {
     /// For each buffer line index, the DB work_lines index it maps to (None if unmatched).
     pub buffer_to_work: Vec<Option<usize>>,
