@@ -126,6 +126,9 @@ fn last_fully_visible_line(state: &AppState, top: usize) -> usize {
     let usable_height = widget_height - descender_guard - bottom_margin;
     let range = visible_range(&state.text_view, &state.buffer, top, line_count, usable_height);
     let is_prose = state.is_prose();
+    // Trim because this function feeds page-boundary placement decisions
+    // (next_page_top): we don't want to put a partial verse stanza or
+    // dangling speaker at the BOTTOM of the new page.
     let trimmed = trim_visible_range(range, top, &state.text_view, &state.buffer, is_prose);
     trimmed.last_fit
 }
@@ -887,11 +890,14 @@ fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
     if line < state.page_top_line {
         return false;
     }
-    // F4: fast path — consult the cache populated by snap_scroll_to_line.
+    // F4: fast path — consult the cache (raw range — every line genuinely
+    // rendered on screen, no F9 trim applied because "is line N drawn?" is
+    // a different question from "where should the next page boundary land?").
     if let Some(cached) = state.last_visible_range.get() {
         return line <= cached.last_fit && cached.count > 0;
     }
-    // Cold-start fallback: recompute via visible_range.
+    // Cold-start fallback: recompute the raw range. No trim — see comment
+    // above for why visibility-checks use raw, not trimmed.
     let widget_height = state.text_view.height();
     if widget_height <= 0 {
         return true;
@@ -907,11 +913,7 @@ fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
         line_count,
         usable_height,
     );
-    let is_prose = state.is_prose();
-    let trimmed = trim_visible_range(
-        range, state.page_top_line, &state.text_view, &state.buffer, is_prose,
-    );
-    line <= trimmed.last_fit && trimmed.count > 0
+    line <= range.last_fit && range.count > 0
 }
 
 
@@ -1503,14 +1505,20 @@ pub(crate) fn trim_block_atoms(
         &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height)
 }
 
-/// Canonical composition: apply `trim_trailing_speakers` then `trim_block_atoms`
-/// on a raw `visible_range` result. All callers that compute a visible range
-/// for "what's on this page" should go through this wrapper so both trims
-/// fire in the right order.
+/// Canonical composition: apply `trim_trailing_speakers`, then `trim_block_atoms`,
+/// then `trim_trailing_speakers` again on the result. All callers that compute a
+/// visible range for "what's on this page" should go through this wrapper so all
+/// trims fire in the right order.
 ///
-/// Order matters: speaker trim first removes a dangling speaker at the bottom,
-/// then block trim sees the new `last_fit` and decides whether THAT line is
-/// mid-block.
+/// Order matters:
+/// 1. Speaker trim first removes a dangling speaker at the bottom.
+/// 2. Block trim sees the new `last_fit` and decides whether THAT line is
+///    mid-block; if so, backs up to the line before block-start.
+/// 3. Speaker trim AGAIN — block trim usually leaves `last_fit` on a speaker
+///    (the line that introduced the now-removed block), which is itself
+///    dangling-context. Without this second pass, is_line_fully_visible would
+///    treat a fully-visible dialogue line as off-page just because the trim
+///    chain reported `last_fit` on the speaker above it.
 pub(crate) fn trim_visible_range(
     range: VisibleRange,
     page_top: usize,
@@ -1519,7 +1527,8 @@ pub(crate) fn trim_visible_range(
     is_prose: bool,
 ) -> VisibleRange {
     let r = trim_trailing_speakers(range, page_top, text_view, buffer);
-    trim_block_atoms(r, page_top, text_view, buffer, is_prose)
+    let r = trim_block_atoms(r, page_top, text_view, buffer, is_prose);
+    trim_trailing_speakers(r, page_top, text_view, buffer)
 }
 
 /// Capture the entire card (spacers + text) as a static Picture overlay.
@@ -1799,10 +1808,12 @@ pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
         let bottom_margin = state.text_view.bottom_margin();
         let usable_height = widget_height - descender_guard - bottom_margin;
         let line_count = state.effective_line_count();
+        // Cache the RAW range — every line genuinely rendered on screen.
+        // Consumers split into two camps: is_line_fully_visible needs raw
+        // ("is line N drawn?"); last_fully_visible_line needs trimmed
+        // ("where should the next page start?") and applies trim itself.
         let range = visible_range(&state.text_view, &state.buffer, line, line_count, usable_height);
-        let is_prose = state.is_prose();
-        let trimmed = trim_visible_range(range, line, &state.text_view, &state.buffer, is_prose);
-        state.last_visible_range.set(Some(trimmed));
+        state.last_visible_range.set(Some(range));
     } else {
         state.last_visible_range.set(None);
     }
