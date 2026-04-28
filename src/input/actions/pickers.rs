@@ -22,6 +22,7 @@ pub(crate) fn load_selected_work(
         }
         let state_clone = Rc::clone(state);
         let handle = tokio_handle.clone();
+        let handle_for_write = handle.clone();
         glib::spawn_future_local(async move {
             let t_db = std::time::Instant::now();
             let abbrev_for_log = abbrev.clone();
@@ -30,17 +31,59 @@ pub(crate) fn load_selected_work(
                     let conn =
                         crate::db::queries::open_db().expect("Failed to open lit.db");
                     let work = crate::db::queries::load_work(&conn, &abbrev)?;
-                    let prepared = crate::app::prepare_text_for_display(&work);
-                    Ok::<_, rusqlite::Error>((work, prepared))
+                    // Cache check — same pattern as build_window's MRU branch.
+                    let t_read = std::time::Instant::now();
+                    let (prepared, was_miss) = if let Some(snap) = crate::snapshot::read(&work) {
+                        let bytes =
+                            std::fs::metadata(crate::snapshot::cache_path(&work.abbrev))
+                                .map(|m| m.len())
+                                .unwrap_or(0);
+                        crate::logging::log(&format!(
+                            "SNAPSHOT: cache hit {} ({}ms, {} bytes)",
+                            work.abbrev,
+                            t_read.elapsed().as_millis(),
+                            bytes
+                        ));
+                        let work_type = work.work_type.clone();
+                        let prep = crate::app::PreparedText {
+                            abbrev: snap.abbrev,
+                            work_type: work_type.clone(),
+                            file_lines_count: snap.filtered_contents.lines().count(),
+                            cleaned_lines_count: snap.filtered_contents.lines().count(),
+                            work_lines_count: work.lines.len(),
+                            filtered_contents: snap.filtered_contents,
+                            line_map: snap.line_map,
+                            path: snap.text_file_path,
+                            is_prose: crate::db::line_types::is_prose_work(&work_type),
+                        };
+                        (Some(prep), false)
+                    } else {
+                        if !crate::snapshot::cache_path(&work.abbrev).exists() {
+                            crate::logging::log(&format!(
+                                "SNAPSHOT: cache miss {} (file_missing)",
+                                work.abbrev
+                            ));
+                        }
+                        (crate::app::prepare_text_for_display(&work), true)
+                    };
+                    Ok::<_, rusqlite::Error>((work, prepared, was_miss))
                 })
                 .await;
             crate::logging::log(&format!("PICKER: load_work '{}' DB query {:.0}ms", abbrev_for_log, t_db.elapsed().as_millis()));
             match result {
-                Ok(Ok((work, prepared))) => {
+                Ok(Ok((work, prepared, was_cache_miss))) => {
                     crate::logging::log(&format!(
                         "PICKER: loaded '{}' lines={} timestamps={} text_file={:?}",
                         work.abbrev, work.lines.len(), work.timestamps.len(), work.text_file.is_some()
                     ));
+                    // Capture write inputs BEFORE display_work consumes prepared and work.
+                    let write_inputs = if was_cache_miss {
+                        prepared.as_ref().map(|p| {
+                            (work.clone(), p.filtered_contents.clone(), p.line_map.clone())
+                        })
+                    } else {
+                        None
+                    };
                     {
                         let mut s = state_clone.borrow_mut();
                         s.correction_overlay.hide();
@@ -50,6 +93,12 @@ pub(crate) fn load_selected_work(
                             "PICKER: after display_work current_line={} page_top={} line_map={} effective_lines={}",
                             s.current_line, s.page_top_line, s.line_map.is_some(), s.effective_line_count()
                         ));
+                    }
+                    // After display_work: on cache miss with valid prep, write snapshot.
+                    if let Some((w, filtered, line_map)) = write_inputs {
+                        handle_for_write.spawn_blocking(move || {
+                            let _ = crate::snapshot::write(&w, &filtered, &line_map);
+                        });
                     }
                 }
                 Ok(Err(e)) => {
