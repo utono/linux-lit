@@ -36,6 +36,9 @@ pub fn jump_to_start(state: &mut AppState) {
     };
 
     state.current_line = target;
+    // Clear page_history — y after gg should go to the next page forward
+    // (via the natural empty-history path), not pop a stale entry.
+    state.page_history.clear();
     let top = target.saturating_sub(1);
     set_page_instant(state, top);
     after_page_change(state, PageChangeReason::JumpToLine);
@@ -68,21 +71,17 @@ pub fn jump_to_end(state: &mut AppState) {
     }
     state.current_line = target;
 
-    // Position the page so target is visible. Start from a buffer-end
-    // anchor (line_count - lpp); if last_fully_visible_line doesn't reach
-    // target, advance new_top one line at a time until it does. This
-    // self-corrects when lpp underestimates how many lines actually fit
-    // (variable line heights in plays with mixed dialogue/speakers).
+    // Clear page_history — y after G should go to the PREVIOUS page (via
+    // prev_page_top fallback), not back to wherever the user was before G.
+    state.page_history.clear();
+
+    // Anchor page_top to buffer end. GTK clamps the scroll automatically
+    // when this is past the last scrollable y; the cursor (target = last
+    // dialogue line) is near the buffer end and lands on this page.
+    // The very last line may clip by a few px if the document doesn't
+    // have enough bottom margin to scroll fully into view (separate bug).
     let lpp = lines_per_page(state);
-    let mut new_top = line_count.saturating_sub(lpp);
-    let mut steps = 0;
-    while new_top < target && steps < lpp * 2 {
-        if last_fully_visible_line(state, new_top) >= target {
-            break;
-        }
-        new_top += 1;
-        steps += 1;
-    }
+    let new_top = line_count.saturating_sub(lpp);
     set_page_instant(state, new_top);
     after_page_change(state, PageChangeReason::JumpToLine);
 }
