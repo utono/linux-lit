@@ -59,13 +59,13 @@ pub fn is_dialogue(text: &str, is_prose: bool) -> bool {
     if is_blank(text) {
         return false;
     }
+    if is_separator(text) || is_act_scene_marker(text) {
+        return false;
+    }
     if is_prose {
         return true;
     }
-    !is_speaker(text)
-        && !is_stage_direction(text)
-        && !is_act_scene_marker(text)
-        && !is_separator(text)
+    !is_speaker(text) && !is_stage_direction(text)
 }
 
 #[cfg(test)]
@@ -161,5 +161,30 @@ mod tests {
         assert!(is_dialogue("HAMLET.", true));
         assert!(is_dialogue("[Exit]", true));
         assert!(!is_dialogue("", true));
+    }
+
+    #[test]
+    fn test_prose_separator_is_not_dialogue() {
+        assert!(!is_dialogue("= Chapter One", true));
+        assert!(!is_dialogue("========", true));
+    }
+
+    #[test]
+    fn test_prose_act_scene_marker_is_not_dialogue() {
+        assert!(!is_dialogue("ACT 1", true));
+        assert!(!is_dialogue("## Act 3, Scene 2", true));
+        assert!(!is_dialogue("PROLOGUE", true));
+    }
+
+    #[test]
+    fn test_prose_normal_line_still_dialogue() {
+        assert!(is_dialogue("It was the best of times.", true));
+        assert!(is_dialogue("Mr. Jarndyce looked at us.", true));
+    }
+
+    #[test]
+    fn test_prose_blank_still_not_dialogue() {
+        assert!(!is_dialogue("", true));
+        assert!(!is_dialogue("   ", true));
     }
 }
