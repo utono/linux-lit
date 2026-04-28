@@ -1146,15 +1146,45 @@ pub fn build_window(
             //                          finish before clearing loading_work.
             //                          But it runs while the user is
             //                          already looking at content.
+            // Two-phase startup with snapshot cache:
+            //
+            // Phase 1 (off-thread): load_work + try snapshot::read. On cache
+            // hit, return WorkSnapshot. On miss, fall through to
+            // prepare_text_only and the existing two-phase flow.
+            //
+            // The snapshot path skips phase 2 (build_line_map) entirely
+            // because the LineMap was serialized at last save.
             let phase1 = handle
                 .spawn_blocking(move || {
                     let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
                     let work = crate::db::queries::load_work(&conn, &abbrev)?;
-                    let text_only = prepare_text_only(&work);
-                    Ok::<_, rusqlite::Error>((work, text_only))
+                    let t_read = std::time::Instant::now();
+                    let result = if let Some(snap) = crate::snapshot::read(&work) {
+                        let bytes = std::fs::metadata(crate::snapshot::cache_path(&work.abbrev))
+                            .map(|m| m.len())
+                            .unwrap_or(0);
+                        crate::logging::log(&format!(
+                            "SNAPSHOT: cache hit {} ({}ms, {} bytes)",
+                            work.abbrev,
+                            t_read.elapsed().as_millis(),
+                            bytes
+                        ));
+                        SnapshotOrPrep::Snapshot(snap)
+                    } else {
+                        // read() already logged the miss reason if the file
+                        // existed; if it didn't, log file_missing here.
+                        if !crate::snapshot::cache_path(&work.abbrev).exists() {
+                            crate::logging::log(&format!(
+                                "SNAPSHOT: cache miss {} (file_missing)",
+                                work.abbrev
+                            ));
+                        }
+                        SnapshotOrPrep::Prep(prepare_text_only(&work))
+                    };
+                    Ok::<_, rusqlite::Error>((work, result))
                 })
                 .await;
-            let (work, text_only) = match phase1 {
+            let (work, snapshot_or_prep) = match phase1 {
                 Ok(Ok(r)) => r,
                 Ok(Err(e)) => {
                     crate::logging::log(&format!("STARTUP: load_work error: {}", e));
@@ -1166,71 +1196,79 @@ pub fn build_window(
                 }
             };
 
-            // Phase 1.5 (main thread): set buffer text immediately if we
-            // have it. This shows content well before line_map is ready.
-            // Cloning cleaned_lines for phase 2; the originals are moved
-            // into the buffer as filtered_contents.
-            let cleaned_lines_for_phase2: Option<Vec<String>> = text_only
-                .as_ref()
-                .map(|t| t.cleaned_lines.clone());
-            let work_lines_for_phase2 = work.lines.clone();
-            let is_prose_for_phase2 = text_only
-                .as_ref()
-                .map(|t| t.is_prose)
-                .unwrap_or(false);
-            if let Some(ref t) = text_only {
+            // Phase 1.5 (main thread): set buffer text + font from whatever
+            // source we have (snapshot or prep). Same set_text call shape;
+            // text appears at the same point in either case.
+            let filtered_contents_for_phase1: Option<&str> = match &snapshot_or_prep {
+                SnapshotOrPrep::Snapshot(snap) => Some(snap.filtered_contents.as_str()),
+                SnapshotOrPrep::Prep(Some(prep)) => Some(prep.filtered_contents.as_str()),
+                SnapshotOrPrep::Prep(None) => None,
+            };
+            if let Some(text) = filtered_contents_for_phase1 {
                 let s = state_clone.borrow();
-                s.buffer.set_text(&t.filtered_contents);
+                s.buffer.set_text(text);
                 drop(s);
-                // Apply font size/family + theme CSS immediately so phase 1's
-                // text renders at the configured size, not GTK's default.
-                // Without this, the user sees small unstyled text at ~1.3s
-                // and a jarring "format flash" when reapply_font runs at ~3s
-                // inside display_work_at_with_prepared. Cheap (~3ms) so
-                // running it twice (once here, once again in phase 2's
-                // display_work) is fine.
-                {
-                    let s = state_clone.borrow();
-                    reapply_font(&s);
-                }
-                crate::logging::log("STARTUP: buffer.set_text + font from phase 1 (line_map pending)");
+                let s = state_clone.borrow();
+                reapply_font(&s);
+                drop(s);
+                crate::logging::log("STARTUP: buffer.set_text + font from phase 1 (line_map status TBD)");
             }
 
-            // Phase 2 (off-thread): build line_map.
-            let line_map = if let Some(cleaned) = cleaned_lines_for_phase2 {
-                let work_lines = work_lines_for_phase2;
-                let is_prose = is_prose_for_phase2;
-                handle
-                    .spawn_blocking(move || {
-                        let t_map = std::time::Instant::now();
-                        let lm = crate::text_file_map::build_line_map(&cleaned, &work_lines, is_prose);
-                        crate::logging::log(&format!(
-                            "PREP: build_line_map (phase 2) {}ms",
-                            t_map.elapsed().as_millis()
-                        ));
-                        lm
-                    })
-                    .await
-                    .ok()
-            } else {
-                None
+            // Phase 2 (off-thread, cache miss only): build line_map from
+            // the cleaned_lines we already have. Skipped on cache hit.
+            let (prepared, was_cache_miss) = match snapshot_or_prep {
+                SnapshotOrPrep::Snapshot(snap) => {
+                    // Build a PreparedText directly from the snapshot.
+                    let prep = PreparedText {
+                        abbrev: snap.abbrev,
+                        work_type: work.work_type.clone(),
+                        file_lines_count: snap.filtered_contents.lines().count(),
+                        cleaned_lines_count: snap.filtered_contents.lines().count(),
+                        work_lines_count: work.lines.len(),
+                        filtered_contents: snap.filtered_contents,
+                        line_map: snap.line_map,
+                        path: snap.text_file_path,
+                        is_prose: crate::db::line_types::is_prose_work(&work.work_type),
+                    };
+                    (Some(prep), false)
+                }
+                SnapshotOrPrep::Prep(Some(text_only)) => {
+                    let cleaned = text_only.cleaned_lines.clone();
+                    let work_lines = work.lines.clone();
+                    let is_prose = text_only.is_prose;
+                    let line_map = handle
+                        .spawn_blocking(move || {
+                            let t_map = std::time::Instant::now();
+                            let lm = crate::text_file_map::build_line_map(&cleaned, &work_lines, is_prose);
+                            crate::logging::log(&format!(
+                                "PREP: build_line_map (phase 2) {}ms",
+                                t_map.elapsed().as_millis()
+                            ));
+                            lm
+                        })
+                        .await
+                        .ok();
+                    let prep = line_map.map(|lm| PreparedText {
+                        abbrev: text_only.abbrev,
+                        work_type: text_only.work_type,
+                        file_lines_count: text_only.file_lines_count,
+                        cleaned_lines_count: text_only.cleaned_lines_count,
+                        work_lines_count: text_only.work_lines_count,
+                        filtered_contents: text_only.filtered_contents,
+                        line_map: lm,
+                        path: text_only.path,
+                        is_prose: text_only.is_prose,
+                    });
+                    (prep, true)
+                }
+                SnapshotOrPrep::Prep(None) => (None, true),
             };
 
-            // Reconstruct PreparedText for the existing display_work_at_with_prepared
-            // path — it expects file/clean already done plus the line_map.
-            let prepared = match (text_only, line_map) {
-                (Some(t), Some(lm)) => Some(PreparedText {
-                    abbrev: t.abbrev,
-                    work_type: t.work_type,
-                    file_lines_count: t.file_lines_count,
-                    cleaned_lines_count: t.cleaned_lines_count,
-                    work_lines_count: t.work_lines_count,
-                    filtered_contents: t.filtered_contents,
-                    line_map: lm,
-                    path: t.path,
-                    is_prose: t.is_prose,
-                }),
-                _ => None,
+            // Capture write inputs BEFORE display_work consumes prepared.
+            let write_inputs = if was_cache_miss {
+                prepared.as_ref().map(|p| (work.clone(), p.filtered_contents.clone(), p.line_map.clone()))
+            } else {
+                None
             };
 
             {
@@ -1239,6 +1277,15 @@ pub fn build_window(
                     .and_then(|s| s.parse().ok());
                 let mut s = state_clone.borrow_mut();
                 display_work_at_with_prepared(&mut s, work, target_line_id, prepared);
+            }
+
+            // After display_work, if this was a cache miss AND we have
+            // both filtered_contents and line_map (i.e., text_file path
+            // was valid), write the snapshot for next launch.
+            if let Some((w, filtered, line_map)) = write_inputs {
+                handle.spawn_blocking(move || {
+                    let _ = crate::snapshot::write(&w, &filtered, &line_map);
+                });
             }
             // Set up concordance state if this is a concordance spawn
             if let Ok(conc_word) = std::env::var("LINUX_LIT_CONC_WORD") {
@@ -1747,6 +1794,7 @@ pub fn display_work_at_with_prepared(
 /// (~50ms on Bleak House), produced off the GTK main thread. Lets us call
 /// `state.buffer.set_text(filtered_contents)` and reveal the window
 /// quickly without waiting for the slower line_map build.
+#[derive(Clone)]
 pub struct PreparedTextOnly {
     pub abbrev: String,
     pub work_type: String,
@@ -1762,6 +1810,7 @@ pub struct PreparedTextOnly {
 /// Full prepared text including the line_map. Used by paths that want a
 /// single-shot prep (no two-phase). Produced by
 /// `prepare_text_for_display`.
+#[derive(Clone)]
 pub struct PreparedText {
     pub abbrev: String,
     pub work_type: String,
@@ -1772,6 +1821,14 @@ pub struct PreparedText {
     pub line_map: crate::text_file_map::LineMap,
     pub path: String,
     pub is_prose: bool,
+}
+
+/// Result of spawn_blocking 1 in build_window's MRU path: either a fresh
+/// PreparedTextOnly (cache miss, will require build_line_map in spawn_blocking 2)
+/// or a fully-restored WorkSnapshot (cache hit, skip phase 2 entirely).
+enum SnapshotOrPrep {
+    Snapshot(crate::snapshot::WorkSnapshot),
+    Prep(Option<PreparedTextOnly>),
 }
 
 /// Heavy precompute: read the work's text file from disk, clean it,
