@@ -1253,23 +1253,24 @@ pub(crate) fn visible_range(
     VisibleRange { last_fit, total_height, count }
 }
 
-/// Trim trailing speaker-name and blank lines from a `VisibleRange` so a
-/// dangling speaker doesn't appear at the bottom of a page without its
-/// dialogue. Pure variant separated for unit testability — the GTK-bound
-/// `trim_trailing_speakers` wraps this with line_types and line_yrange calls.
+/// Trim trailing dangling-context lines (speakers, blanks, stage directions)
+/// from a `VisibleRange` so the page never ends on a line that exists only
+/// to introduce or annotate the dialogue that should follow it. Pure variant
+/// separated for unit testability — the GTK-bound `trim_trailing_speakers`
+/// wraps this with line_types and line_yrange calls.
 ///
 /// Stops at `page_top` so the trim never deletes the page top itself.
 pub(crate) fn trim_trailing_speakers_pure<F, H>(
     mut range: VisibleRange,
     page_top: usize,
-    is_speaker_or_blank: F,
+    is_dangling_context: F,
     line_height: H,
 ) -> VisibleRange
 where
     F: Fn(usize) -> bool,
     H: Fn(usize) -> i32,
 {
-    while range.last_fit > page_top && is_speaker_or_blank(range.last_fit) {
+    while range.last_fit > page_top && is_dangling_context(range.last_fit) {
         range.total_height -= line_height(range.last_fit);
         range.last_fit -= 1;
         range.count = range.count.saturating_sub(1);
@@ -1279,7 +1280,9 @@ where
 
 /// GTK-bound wrapper for `trim_trailing_speakers_pure`. Reads line text via
 /// `buffer` and classifies via `crate::db::line_types`; reads heights via
-/// `text_view.line_yrange`.
+/// `text_view.line_yrange`. Stage directions are treated as dangling-context
+/// just like speakers — neither should be the last line of a page (they
+/// preface the dialogue that follows, not summarize what came before).
 pub(crate) fn trim_trailing_speakers(
     range: VisibleRange,
     page_top: usize,
@@ -1287,21 +1290,23 @@ pub(crate) fn trim_trailing_speakers(
     buffer: &sourceview5::Buffer,
 ) -> VisibleRange {
     use crate::db::line_types;
-    let is_speaker_or_blank = |i: usize| -> bool {
+    let is_dangling_context = |i: usize| -> bool {
         let text = {
             let Some(start) = buffer.iter_at_line(i as i32) else { return false };
             let mut end = start;
             if !end.ends_line() { end.forward_to_line_end(); }
             buffer.text(&start, &end, false).to_string()
         };
-        line_types::is_speaker(&text) || line_types::is_blank(&text)
+        line_types::is_speaker(&text)
+            || line_types::is_blank(&text)
+            || line_types::is_stage_direction(&text)
     };
     let line_height = |i: usize| -> i32 {
         let Some(iter) = buffer.iter_at_line(i as i32) else { return 0 };
         let (_y, h) = text_view.line_yrange(&iter);
         h
     };
-    trim_trailing_speakers_pure(range, page_top, is_speaker_or_blank, line_height)
+    trim_trailing_speakers_pure(range, page_top, is_dangling_context, line_height)
 }
 
 /// Pure: given closures that classify line kinds, find the start of the
@@ -1398,6 +1403,24 @@ where
     }
     if block_start <= page_top {
         return range; // overflow: block extends to (or past) page_top
+    }
+    // Only trim if the block actually continues past last_fit (i.e., we're
+    // splitting it mid-block). If the next line is OUTSIDE the same block
+    // (a blank, speaker, stage transition, or end of buffer), the block
+    // ends at last_fit and there's nothing to atomicize — leave as-is.
+    let continues = if is_stage(range.last_fit) {
+        // Stage block: continues iff next line is also stage.
+        is_stage(range.last_fit + 1)
+    } else if !is_prose && is_dialogue(range.last_fit) {
+        // Verse stanza: continues iff next line is dialogue (not blank/
+        // speaker/stage which would close the stanza).
+        let next = range.last_fit + 1;
+        !is_blank(next) && !is_speaker(next) && !is_stage(next) && is_dialogue(next)
+    } else {
+        false
+    };
+    if !continues {
+        return range; // block ends here; nothing to atomicize
     }
     // Drop lines [block_start, range.last_fit] from the range.
     let mut new_total_height = range.total_height;
@@ -3717,19 +3740,59 @@ mod block_atom_tests {
 
     #[test]
     fn trim_block_atoms_block_fully_fits_reduces_count() {
+        // Block at lines 3-5; visible range stops at 4 (mid-block — line 5
+        // would render off-screen). Trim backs up to before block start.
         let range = VisibleRange { last_fit: 4, total_height: 100, count: 5 };
-        // Lines 0=speaker, 1=l, 2=l, 3=d, 4=d (stage-direction block at end)
-        let kinds = ['s', 'l', 'l', 'd', 'd'];
+        // Lines 0=speaker, 1=l, 2=l, 3=d, 4=d, 5=d (stage block extends past last_fit)
+        let kinds = ['s', 'l', 'l', 'd', 'd', 'd'];
         let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
         let line_height = |_i: usize| 20;
         let trimmed = trim_block_atoms_pure(
             range, 0, false,
             &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height,
         );
-        // Block starts at 3; new last_fit = 2; new count = 3 (lines 0,1,2).
+        // Block starts at 3 and continues past last_fit (line 5 is also stage);
+        // new last_fit = 2; new count = 3 (lines 0,1,2).
         assert_eq!(trimmed.last_fit, 2);
         assert_eq!(trimmed.count, 3);
         assert_eq!(trimmed.total_height, 60); // dropped lines 3 and 4 at 20px each
+    }
+
+    #[test]
+    fn trim_block_atoms_block_ends_at_last_fit_unchanged() {
+        // Block at lines 3-4 ends exactly at last_fit (line 5 is dialogue,
+        // outside the stage block). No mid-block split — leave range as-is.
+        let range = VisibleRange { last_fit: 4, total_height: 100, count: 5 };
+        let kinds = ['s', 'l', 'l', 'd', 'd', 'l']; // line 5 is dialogue, ends the stage block
+        let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
+        let line_height = |_i: usize| 20;
+        let trimmed = trim_block_atoms_pure(
+            range, 0, false,
+            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height,
+        );
+        assert_eq!(trimmed.last_fit, 4, "block ends at last_fit; no trim");
+        assert_eq!(trimmed.count, 5);
+        assert_eq!(trimmed.total_height, 100);
+    }
+
+    #[test]
+    fn trim_block_atoms_verse_stanza_ends_at_last_fit_unchanged() {
+        // 2-line verse stanza (lines 3-4) ends at last_fit; line 5 is the
+        // next speaker, closing the stanza. No trim — stanza fully fits.
+        // This is the bug case from manual verification: pressing j with
+        // cursor on the previous speaker's last dialogue should not
+        // trigger a page-turn that removes a fully-visible 2-line stanza.
+        let range = VisibleRange { last_fit: 4, total_height: 100, count: 5 };
+        let kinds = ['s', 'l', 'l', 'l', 'l', 's']; // last_fit=4 dialogue, line 5 speaker closes stanza
+        let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
+        let line_height = |_i: usize| 20;
+        let trimmed = trim_block_atoms_pure(
+            range, 0, false,
+            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height,
+        );
+        assert_eq!(trimmed.last_fit, 4, "stanza ends at last_fit; no trim");
+        assert_eq!(trimmed.count, 5);
+        assert_eq!(trimmed.total_height, 100);
     }
 
     #[test]
