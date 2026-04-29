@@ -776,22 +776,8 @@ fn dispatch_action(
         CursorToPageBottom => { navigation::cursor_to_page_bottom(&mut state.borrow_mut()); true }
         JumpToNextDialogue => { navigation::jump_to_next_dialogue(&mut state.borrow_mut()); true }
         JumpToPrevDialogue => { navigation::jump_to_prev_dialogue(&mut state.borrow_mut()); true }
-        JumpToNextChapter => {
-            let mut s = state.borrow_mut();
-            if s.translations_visible {
-                crate::app::toggle_translations(&mut s);
-            }
-            navigation::jump_to_next_chapter(&mut s);
-            true
-        }
-        JumpToPrevChapter => {
-            let mut s = state.borrow_mut();
-            if s.translations_visible {
-                crate::app::toggle_translations(&mut s);
-            }
-            navigation::jump_to_prev_chapter(&mut s);
-            true
-        }
+        JumpToNextChapter => { navigation::jump_to_next_chapter(&mut state.borrow_mut()); true }
+        JumpToPrevChapter => { navigation::jump_to_prev_chapter(&mut state.borrow_mut()); true }
         JumpToNextScene => {
             let mut s = state.borrow_mut();
             let is_play = s.current_work.as_ref().map(|w| w.work_type == "play").unwrap_or(false);

@@ -703,6 +703,9 @@ fn chapter_page_top(buffer: &sourceview5::Buffer, target_line: usize) -> usize {
 
 /// Previous chapter line (`[` key).
 pub fn jump_to_prev_chapter(state: &mut AppState) {
+    if state.translations_visible {
+        crate::app::toggle_translations(state);
+    }
     let target = {
         let work = match &state.current_work {
             Some(w) => w,
@@ -748,6 +751,9 @@ pub fn jump_to_prev_chapter(state: &mut AppState) {
 
 /// Next chapter line.
 pub fn jump_to_next_chapter(state: &mut AppState) {
+    if state.translations_visible {
+        crate::app::toggle_translations(state);
+    }
     let line_count = state.effective_line_count();
     let target = {
         let work = match &state.current_work {
