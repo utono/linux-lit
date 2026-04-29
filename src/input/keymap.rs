@@ -409,12 +409,13 @@ pub fn handle_key(
     // --- Concordance word picker (when visible) ---
     let conc_word_picker_visible = state.borrow().concordance_word_picker.is_visible();
     if conc_word_picker_visible {
-        match key_name {
-            "Escape" => {
+        use crate::input::picker_keys::{resolve_picker_key, PickerAction};
+        match resolve_picker_key(key_name, is_ctrl) {
+            PickerAction::Hide => {
                 state.borrow().concordance_word_picker.hide();
                 return true;
             }
-            "Return" => {
+            PickerAction::Confirm => {
                 let selected = state.borrow().concordance_word_picker.selected_word();
                 state.borrow().concordance_word_picker.hide();
                 if let Some(word) = selected {
@@ -422,19 +423,17 @@ pub fn handle_key(
                 }
                 return true;
             }
-            _ => {
-                if is_ctrl && key_name == "n" {
-                    state.borrow().concordance_word_picker.move_selection(1);
-                    return true;
-                }
-                if is_ctrl && key_name == "p" {
-                    state.borrow().concordance_word_picker.move_selection(-1);
-                    return true;
-                }
-                // Let entry handle text input
-                return false;
+            PickerAction::MoveDown => {
+                state.borrow().concordance_word_picker.move_selection(1);
+                return true;
             }
+            PickerAction::MoveUp => {
+                state.borrow().concordance_word_picker.move_selection(-1);
+                return true;
+            }
+            PickerAction::Unhandled => {}
         }
+        return false;
     }
 
     // --- Concordance list picker (when visible) ---
