@@ -32,6 +32,50 @@ Total left margin in tiled mode:
 
 Read the actual values from source before printing — do not use hardcoded numbers.
 
+After the summary, print ASCII rulers showing proportional layout for each mode.
+Scale to 80 columns total. Use `|` for boundaries and fill regions with labels.
+
+Verse has an additional 60px dialogue indent applied via TextTag (hardcoded in
+`apply_dialogue_formatting`), so the effective text start for dialogue lines is
+`margins + verse_offset + 60`. Speaker names start at `margins + verse_offset`.
+
+**Verse monocle** (card_width from `DEFAULT_COLUMN_WIDTH` in config.rs):
+
+```
+Verse monocle (1200px card):
+|mrg|---verse offset---|indent|    dialogue text    |gut|right|
+| 40|       200        |  60  |       772           | 40| 48  |
+                              ^                     ^
+                         dialogue starts      gutter starts
+|mrg|---verse offset---|  speaker names start here (no indent)
+| 40|       200        |
+```
+
+**Prose monocle:**
+
+```
+Prose monocle (1200px card):
+|mrg|--prose offset-|              text content               | right |
+| 40|      120      |                  972                    | 40+28 |
+                    ^
+               text starts (≈ same visual position as verse dialogue)
+```
+
+**Tiled (all works):**
+
+```
+Tiled (all works):
+|mrg|                    text content                         | right |
+| 40|                       1092                              | 40+28 |
+```
+
+Scale the widths proportionally so the ruler is always 80 chars wide.
+The right side for plays shows `gutter` (40px renderer) + `right` (48px margin when gutter active).
+The right side for prose shows the full `text_margins + EXTRA_RIGHT_MARGIN`.
+Note: prose text start (160px) and verse dialogue start (300px) differ by 140px,
+but verse speaker names (240px) are only 80px right of prose — so the left edges
+look similar at a glance.
+
 ## With arguments: `<constant> <value>`
 
 Change a specific constant. Accepted constant names (case-insensitive):

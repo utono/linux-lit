@@ -439,7 +439,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .kb-legend-unbound {{ background-color: #2a2a2a; border-color: #444444; }} \
          .sync-off-icon {{ font-size: 20px; color: {dim}; opacity: 0.7; }} \
          .debug-icon {{ font-size: 18px; color: {bg}; opacity: 0.85; }} \
-         .page-line-label {{ font-family: 'Crimson Pro'; font-size: 15px; color: {fg}; opacity: 0.85; }} \
+         .page-line-label {{ font-family: {font}; font-size: {label_size}pt; color: {dim}; }} \
          .word-status {{ font-size: 16px; color: {fg}; opacity: 0.85; }} \
          .correction-scrim {{ background-color: rgba(0, 0, 0, 0.3); }} \
          .correction-overlay {{ background-color: {bg}; color: {fg}; \
@@ -499,5 +499,6 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
         header_border = blend_colors(&theme.dim_fg, &theme.text_bg, 0.5),
         font = font_family,
         size = font_size,
+        label_size = (font_size as f32 * 0.7) as u32,
     )
 }
