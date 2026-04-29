@@ -256,6 +256,66 @@ pub(crate) fn confirm_media_selection(
     }
 }
 
+/// Set the selected media as the default (highest priority) for the current
+/// work. Spawns an async task to write to the DB, then updates the picker
+/// widget on completion. Called from the media picker's `p` key.
+pub(crate) fn set_media_default(
+    state: &Rc<RefCell<AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+) {
+    let selected_id = state.borrow().media_picker.selected_media_id();
+    let abbrev = state
+        .borrow()
+        .current_work
+        .as_ref()
+        .map(|w| w.abbrev.clone());
+    if let (Some(media_id), Some(abbrev)) = (selected_id, abbrev) {
+        let state_clone = Rc::clone(state);
+        let handle = tokio_handle.clone();
+        glib::spawn_future_local(async move {
+            let result = handle
+                .spawn_blocking(move || {
+                    let conn = crate::db::queries::open_db_rw()?;
+                    crate::db::queries::set_media_priority(&conn, &abbrev, media_id)?;
+                    let max_pri: i64 = conn
+                        .query_row(
+                            "SELECT priority FROM work_media_associations \
+                             WHERE work_abbrev = ?1 AND media_id = ?2",
+                            rusqlite::params![&abbrev, media_id],
+                            |row| row.get(0),
+                        )
+                        .unwrap_or(20);
+                    crate::logging::log(&format!(
+                        "MEDIA: set default media_id={} for {} (pri={})",
+                        media_id, abbrev, max_pri
+                    ));
+                    Ok::<_, rusqlite::Error>((media_id, max_pri))
+                })
+                .await;
+            match result {
+                Ok(Ok((media_id, max_pri))) => {
+                    state_clone
+                        .borrow_mut()
+                        .media_picker
+                        .set_default(media_id, max_pri);
+                }
+                Ok(Err(e)) => {
+                    crate::logging::log(&format!(
+                        "MEDIA: set_media_default DB error: {}",
+                        e
+                    ));
+                }
+                Err(e) => {
+                    crate::logging::log(&format!(
+                        "MEDIA: set_media_default join error: {}",
+                        e
+                    ));
+                }
+            }
+        });
+    }
+}
+
 /// Delete the selected bookmark from DB and update AppState's is_bookmarked
 /// vec + gutter renderer. Called from the bookmark picker's Delete/d key.
 pub(crate) fn delete_bookmark(
