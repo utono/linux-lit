@@ -439,12 +439,13 @@ pub fn handle_key(
     // --- Concordance list picker (when visible) ---
     let conc_list_picker_visible = state.borrow().concordance_list_picker.is_visible();
     if conc_list_picker_visible {
-        match key_name {
-            "Escape" => {
+        use crate::input::picker_keys::{resolve_picker_key, PickerAction};
+        match resolve_picker_key(key_name, is_ctrl) {
+            PickerAction::Hide => {
                 state.borrow().concordance_list_picker.hide();
                 return true;
             }
-            "Return" => {
+            PickerAction::Confirm => {
                 let selected = state.borrow().concordance_list_picker.selected_index();
                 state.borrow().concordance_list_picker.hide();
                 if let Some(idx) = selected {
@@ -458,29 +459,17 @@ pub fn handle_key(
                 }
                 return true;
             }
-            "j" | "n" => {
+            PickerAction::MoveDown => {
                 state.borrow().concordance_list_picker.move_selection(1);
                 return true;
             }
-            "k" | "p" => {
-                if !is_ctrl {
-                    state.borrow().concordance_list_picker.move_selection(-1);
-                    return true;
-                }
-                return false;
+            PickerAction::MoveUp => {
+                state.borrow().concordance_list_picker.move_selection(-1);
+                return true;
             }
-            _ => {
-                if is_ctrl && key_name == "n" {
-                    state.borrow().concordance_list_picker.move_selection(1);
-                    return true;
-                }
-                if is_ctrl && key_name == "p" {
-                    state.borrow().concordance_list_picker.move_selection(-1);
-                    return true;
-                }
-                return false;
-            }
+            PickerAction::Unhandled => {}
         }
+        return false;
     }
 
     // --- Action popup (when visible) ---
