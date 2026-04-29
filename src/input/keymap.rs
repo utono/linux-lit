@@ -761,6 +761,7 @@ fn dispatch_action(
     key_state: &Rc<RefCell<KeyState>>,
     tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
+    crate::logging::log(&format!("ACTION: {}", action.name()));
     use crate::input::actions::Action::*;
     match action {
         // Page navigation
