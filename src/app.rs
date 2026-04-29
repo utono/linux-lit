@@ -59,7 +59,6 @@ pub struct AppState {
     pub current_line: usize,
     pub prev_highlight_line: std::cell::Cell<Option<usize>>,
     pub page_top_line: usize,
-    pub page_history: Vec<usize>,
     pub dim_tag: gtk4::TextTag,
     pub cursor_line_tag: gtk4::TextTag,
     pub cursor_fade_tag: gtk4::TextTag,
@@ -820,7 +819,6 @@ pub fn build_window(
         current_line: 0,
         prev_highlight_line: std::cell::Cell::new(None),
         page_top_line: 0,
-        page_history: Vec::new(),
         dim_tag,
         cursor_line_tag,
         cursor_fade_tag,
@@ -1606,7 +1604,6 @@ pub fn display_work_at_with_prepared(
     state.page_top_line = 0;
     state.last_visible_range.set(None);
     *state.page_tops.borrow_mut() = None;
-    state.page_history.clear();
     state.visual_selection = None;
     state.current_work = Some(work);
 
@@ -2165,7 +2162,8 @@ pub fn apply_dialogue_formatting(state: &mut AppState) {
     let speaker_name_tag = gtk4::TextTag::builder()
         .name("speaker-name")
         .variant(pango::Variant::SmallCaps)
-        .scale(0.85)
+        .weight(400)
+        .scale(0.75)
         .build();
 
     let stage_italic_tag = gtk4::TextTag::builder()

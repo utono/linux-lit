@@ -36,9 +36,6 @@ pub fn jump_to_start(state: &mut AppState) {
     };
 
     state.current_line = target;
-    // Clear page_history — y after gg should go to the next page forward
-    // (via the natural empty-history path), not pop a stale entry.
-    state.page_history.clear();
     let top = target.saturating_sub(1);
     set_page_instant(state, top);
     after_page_change(state, PageChangeReason::JumpToLine);
@@ -70,10 +67,6 @@ pub fn jump_to_end(state: &mut AppState) {
         target -= 1;
     }
     state.current_line = target;
-
-    // Clear page_history — y after G should go to the PREVIOUS page (via
-    // prev_page_top fallback), not back to wherever the user was before G.
-    state.page_history.clear();
 
     // Compute new_top such that line `new_top`'s y can actually be reached
     // by GTK's vadjustment (no clamping). The constraint:
@@ -368,9 +361,6 @@ pub fn page_forward(state: &mut AppState) {
         return; // already at end
     }
 
-    // Remember current page so page_backward can return to it exactly
-    state.page_history.push(state.page_top_line);
-
     state.current_line = next_dialogue;
     set_page(state, new_top, PageDirection::Forward);
     after_page_change(state, PageChangeReason::Forward);
@@ -386,26 +376,14 @@ pub fn page_backward(state: &mut AppState) {
         return;
     }
 
-    // History pop wins — preserves exact undo of any forward page-mutating
-    // navigation (page_forward, jump_to_line, chapter, scene, etc.). Only
-    // fall through to prev_page_top when history is empty (resume mid-book
-    // or paged back through all of history).
-    let (new_top, next_dialogue) = if let Some(prev_top) = state.page_history.pop() {
-        let line_count = state.effective_line_count();
-        let next = next_dialogue_from(&state.buffer, prev_top, line_count);
-        let top = back_up_for_speaker(&state.buffer, next);
-        log_fmt!("PAGE_BWD: from history prev_top={} next={} new_top={} current_line={}",
-                 prev_top, next, top, state.current_line);
-        (top, next)
-    } else if state.page_top_line == 0 {
-        log_fmt!("PAGE_BWD: no history and at start of work");
+    if state.page_top_line == 0 {
+        log_fmt!("PAGE_BWD: at start of work");
         return;
-    } else {
-        let np = prev_page_top(state, state.page_top_line);
-        log_fmt!("PAGE_BWD: no history — prev_page_top new_top={} next_dialogue={} from page_top={}",
-                 np.new_top, np.next_dialogue, state.page_top_line);
-        (np.new_top, np.next_dialogue)
-    };
+    }
+    let np = prev_page_top(state, state.page_top_line);
+    let (new_top, next_dialogue) = (np.new_top, np.next_dialogue);
+    log_fmt!("PAGE_BWD: prev_page_top new_top={} next_dialogue={} from page_top={}",
+             new_top, next_dialogue, state.page_top_line);
 
     state.current_line = next_dialogue;
     set_page(state, new_top, PageDirection::Backward);
@@ -431,20 +409,14 @@ pub fn page_backward_bottom(state: &mut AppState) {
     if state.current_work.is_none() {
         return;
     }
-    let prev_top = if let Some(t) = state.page_history.pop() {
-        t
-    } else if state.page_top_line == 0 {
-        log_fmt!("NAV_BACK_BOTTOM: at start of work, no history");
+    if state.page_top_line == 0 {
+        log_fmt!("NAV_BACK_BOTTOM: at start of work");
         return;
-    } else {
-        let np = prev_page_top(state, state.page_top_line);
-        log_fmt!("NAV_BACK_BOTTOM: no history — prev_page_top new_top={} from page_top={}",
-                 np.new_top, state.page_top_line);
-            // Discard np.next_dialogue: this function places the cursor on
-            // the last visible line, computed below via last_fully_visible_line,
-            // not the first dialogue line of the page.
-            np.new_top
-    };
+    }
+    let np = prev_page_top(state, state.page_top_line);
+    log_fmt!("NAV_BACK_BOTTOM: prev_page_top new_top={} from page_top={}",
+             np.new_top, state.page_top_line);
+    let prev_top = np.new_top;
     let new_top = back_up_for_speaker(&state.buffer, prev_top);
     // Set page first so last_fully_visible_line computes against the new page
     set_page(state, new_top, PageDirection::Backward);
@@ -956,7 +928,6 @@ pub fn jump_to_line(state: &mut AppState, buffer_line: usize) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
-            state.page_history.push(state.page_top_line);
             set_page_instant(state, top);
         }
     }
@@ -1031,11 +1002,8 @@ fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize) {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
             if !is_line_fully_visible(state, state.current_line) {
-                // Remember current page for backward navigation
-                state.page_history.push(state.page_top_line);
-                // Put the dialogue line at the top, backing up to include speaker name
                 let new_top = page_turn_top(&state.buffer, state.current_line);
-                log_fmt!("NAV_PAGE_FWD: current={} old_top={} new_top={} history_len={}", state.current_line, state.page_top_line, new_top, state.page_history.len());
+                log_fmt!("NAV_PAGE_FWD: current={} old_top={} new_top={}", state.current_line, state.page_top_line, new_top);
                 set_page_instant(state, new_top);
             }
         }
@@ -1049,22 +1017,9 @@ fn scroll_after_jump_backward(state: &mut AppState) {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
             if state.current_line < state.page_top_line {
-                // Pop history first — undoes the matching forward jump that
-                // pushed page_top (k after j returns to the same viewport,
-                // not a new page that just contains current_line). Fall back
-                // to page_turn_top(current_line) when history is empty so a
-                // cold backward navigation still lands on a real page boundary
-                // instead of the old lpp approximation.
-                let new_top = if let Some(prev_top) = state.page_history.pop() {
-                    log_fmt!("NAV_PAGE_BACK: from history prev_top={} current={} old_top={} history_len={}",
-                             prev_top, state.current_line, state.page_top_line, state.page_history.len());
-                    prev_top
-                } else {
-                    let top = page_turn_top(&state.buffer, state.current_line);
-                    log_fmt!("NAV_PAGE_BACK: no history — page_turn_top new_top={} current={} old_top={}",
-                             top, state.current_line, state.page_top_line);
-                    top
-                };
+                let new_top = page_turn_top(&state.buffer, state.current_line);
+                log_fmt!("NAV_PAGE_BACK: page_turn_top new_top={} current={} old_top={}",
+                         new_top, state.current_line, state.page_top_line);
                 set_page_instant(state, new_top);
             }
         }
@@ -2251,7 +2206,6 @@ pub fn update_highlight_and_advance_page(state: &mut AppState) {
             );
             if state.current_line > last_vis {
                 let new_top = page_turn_top(&state.buffer, state.current_line);
-                state.page_history.push(state.page_top_line);
                 set_page(state, new_top, PageDirection::Forward);
             }
         }
@@ -3135,86 +3089,6 @@ mod page_turn_tests {
             highlighted[0],
             highlighted.last().unwrap(),
             all_dialogue.len()
-        );
-    }
-
-    /// Test page-backward uses history stack: forward all the way, then backward
-    /// all the way using the recorded history. Each backward step must return to
-    /// the exact previous page_top, and the round-trip must reach the start.
-    #[test]
-    fn test_page_backward_via_history() {
-        let lines = load_troilus_lines();
-        let all_dialogue = dialogue_indices(&lines);
-
-        let page_size = 30;
-        let line_count = lines.len();
-
-        // Page forward to the end, recording history (simulating page_history)
-        let first = all_dialogue[0];
-        let mut page_top = back_up_for_speaker(&lines, first);
-        let mut history: Vec<usize> = Vec::new();
-        let mut forward_tops: Vec<usize> = vec![page_top];
-
-        let mut iterations = 0;
-        loop {
-            iterations += 1;
-            if iterations > 500 { break; }
-            let last_visible = (page_top + page_size).min(line_count.saturating_sub(1));
-            let last = last_dialogue_in_range(&lines, page_top, last_visible - page_top + 1);
-            let next = match next_dialogue(&lines, last + 1) {
-                Some(n) => n,
-                None => break,
-            };
-            if next >= line_count { break; }
-            // Push current page_top before advancing (like the real code)
-            history.push(page_top);
-            let new_top = back_up_for_speaker(&lines, next);
-            page_top = new_top;
-            forward_tops.push(page_top);
-        }
-
-        // Now page backward using history (like the real code)
-        let mut backward_tops: Vec<usize> = vec![page_top];
-        while let Some(prev_top) = history.pop() {
-            page_top = prev_top;
-            backward_tops.push(page_top);
-        }
-
-        // Verify: backward tops are strictly decreasing
-        for i in 1..backward_tops.len() {
-            assert!(
-                backward_tops[i] < backward_tops[i - 1],
-                "History backward: top {} is not before {} at step {}",
-                backward_tops[i], backward_tops[i - 1], i
-            );
-        }
-
-        // Verify: backward reaches the first page
-        assert_eq!(
-            *backward_tops.last().unwrap(), forward_tops[0],
-            "Backward didn't reach the first page"
-        );
-
-        // Verify: backward is exact reverse of forward
-        assert_eq!(
-            backward_tops.len(), forward_tops.len(),
-            "Forward {} pages but backward {} pages",
-            forward_tops.len(), backward_tops.len()
-        );
-        for i in 0..forward_tops.len() {
-            assert_eq!(
-                forward_tops[i],
-                backward_tops[backward_tops.len() - 1 - i],
-                "Round-trip mismatch at page {}: forward={} backward={}",
-                i, forward_tops[i], backward_tops[backward_tops.len() - 1 - i]
-            );
-        }
-
-        println!(
-            "Page backward (history) test passed: {} pages, {} down to {}",
-            backward_tops.len(),
-            backward_tops[0],
-            backward_tops.last().unwrap(),
         );
     }
 
