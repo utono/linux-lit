@@ -442,9 +442,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .page-line-label {{ font-family: {font}; font-size: {label_size}pt; color: {dim}; }} \
          .word-status {{ font-size: 16px; color: {fg}; opacity: 0.85; }} \
          .correction-scrim {{ background-color: rgba(0, 0, 0, 0.3); }} \
-         .correction-overlay {{ background-color: {bg}; color: {fg}; \
-           padding: 24px; border-radius: 12px; \
-           border: 1px solid {dim}; }} \
+         .correction-overlay {{ background-color: {bg}; color: {fg}; }} \
          .correction-title {{ font-size: {size}pt; font-weight: bold; \
            margin-bottom: 12px; padding-bottom: 12px; \
            border-bottom: 1px solid {dim}; }} \

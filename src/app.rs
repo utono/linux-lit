@@ -702,7 +702,7 @@ pub fn build_window(
     gamepad_overlay.overlay.set_vexpand(true);
 
     // Correction overlay wraps the gamepad overlay
-    let correction_overlay = crate::ui::correction_overlay::CorrectionOverlay::new(config.column_width);
+    let correction_overlay = crate::ui::correction_overlay::CorrectionOverlay::new(config.column_width, config.text_margins);
     correction_overlay.attach(&gamepad_overlay.overlay);
     correction_overlay.overlay.set_vexpand(true);
 

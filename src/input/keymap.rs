@@ -154,6 +154,22 @@ pub fn handle_key(
         }
     }
 
+    // Shift+Tab: toggle gloss overlay for last-viewed gloss
+    if key_name == "ISO_Left_Tab" {
+        let has_gloss = state.borrow().gloss_saved.is_some();
+        if has_gloss {
+            let s = state.borrow();
+            let ctx = s.gloss_context.as_ref().unwrap();
+            let saved = s.gloss_saved.as_ref().unwrap();
+            let h = s.scrolled_window.height();
+            s.correction_overlay.show_gloss(&ctx.source_text, &saved.gloss_text, h);
+            drop(s);
+            state.borrow_mut().input_mode = crate::app::InputMode::GlossOverlay;
+            return true;
+        }
+        return false;
+    }
+
     // Escape: special multi-state handler (concordance, AB loop, search clear).
     // Stays inline — multi-state preconditions don't fit the static Action model.
     if key_name == "Escape" {
@@ -529,8 +545,6 @@ fn handle_gloss_key(
             {
                 let mut s = state.borrow_mut();
                 s.correction_overlay.hide();
-                s.gloss_saved = None;
-                s.gloss_context = None;
                 s.input_mode = crate::app::InputMode::Reader;
             }
             true
@@ -1191,7 +1205,8 @@ fn regenerate_gloss(state_rc: &Rc<RefCell<AppState>>) {
                     });
 
                 let mut s = state_for_result.borrow_mut();
-                s.correction_overlay.show_gloss(&ctx.source_text, &gloss_text);
+                let h = s.scrolled_window.height();
+                s.correction_overlay.show_gloss(&ctx.source_text, &gloss_text, h);
                 s.gloss_saved = saved;
                 crate::logging::log("GLOSS: regenerated");
             }
@@ -1331,7 +1346,8 @@ fn amend_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
                     });
 
                 let mut s = state_for_result.borrow_mut();
-                s.correction_overlay.show_gloss(&ctx.source_text, &gloss_text);
+                let h = s.scrolled_window.height();
+                s.correction_overlay.show_gloss(&ctx.source_text, &gloss_text, h);
                 s.gloss_saved = saved;
                 crate::logging::log("GLOSS: amended");
             }
