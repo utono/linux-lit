@@ -391,8 +391,6 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .search-entry {{ background: transparent; border: none; color: {fg}; }} \
          .search-slash {{ color: {fg}; opacity: 0.6; }} \
          .search-counter {{ color: {fg}; opacity: 0.6; }} \
-         .settings-overlay {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
-           padding: 16px; border-radius: 8px; }} \
          .settings-title {{ font-size: 18px; font-weight: bold; \
            margin-bottom: 12px; padding-bottom: 12px; \
            border-bottom: 1px solid rgba(255,255,255,0.2); }} \
