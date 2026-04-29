@@ -185,3 +185,46 @@ pub fn setup_chunk_gutter(
 
     renderer
 }
+
+pub fn setup_line_number_gutter(
+    view: &View,
+    line_numbers: Rc<RefCell<Vec<Option<i64>>>>,
+    dim_color: &str,
+    font_size_pt: u32,
+) -> sourceview5::GutterRendererText {
+    let gutter = sourceview5::prelude::ViewExt::gutter(view, gtk4::TextWindowType::Right);
+    let renderer = sourceview5::GutterRendererText::new();
+    renderer.set_xpad(4);
+    renderer.set_xalign(1.0);
+    renderer.set_yalign(0.5);
+    renderer.set_size_request(36, -1);
+    gutter.insert(&renderer, 0);
+
+    let color = dim_color.to_string();
+    let pango_size = font_size_pt * 1024;
+    renderer.connect_query_data(move |renderer, _lines_obj, line| {
+        let text_renderer = renderer
+            .downcast_ref::<sourceview5::GutterRendererText>()
+            .unwrap();
+        let idx = line as usize;
+        let nums = line_numbers.borrow();
+        let show = idx < nums.len()
+            && nums[idx].is_some_and(|n| n % 5 == 0);
+        if show {
+            let n = nums[idx].unwrap();
+            text_renderer.set_markup(&format!(
+                "<span foreground=\"{}\" size=\"{}\">{}</span>",
+                color, pango_size, n,
+            ));
+        } else {
+            text_renderer.set_markup("");
+        }
+    });
+
+    renderer
+}
+
+pub fn remove_line_number_renderer(view: &View, renderer: &sourceview5::GutterRendererText) {
+    let gutter = sourceview5::prelude::ViewExt::gutter(view, gtk4::TextWindowType::Right);
+    gutter.remove(renderer);
+}
