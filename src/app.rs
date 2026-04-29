@@ -2575,6 +2575,8 @@ fn show_translations(state: &mut AppState) {
         pre_adj_value as i64,
         post_adj_value as i64,
     ));
+
+    rebuild_line_number_gutter(state);
 }
 
 /// Map an original buffer line index to its new position after translation inserts.
@@ -2688,6 +2690,8 @@ fn hide_translations(state: &mut AppState) {
         pre_adj_value as i64,
         post_adj_value as i64,
     ));
+
+    rebuild_line_number_gutter(state);
 }
 
 /// Map a buffer line index (with translations) back to the original line index.
@@ -2752,6 +2756,36 @@ fn rebuild_line_number_gutter(state: &mut AppState) {
         .map(|w| crate::db::line_types::is_prose_work(&w.work_type))
         .unwrap_or(true);
     if !is_prose {
+        let base: Vec<Option<i64>> = if let Some(ref lm) = state.line_map {
+            lm.buffer_to_work
+                .iter()
+                .map(|opt_idx| {
+                    opt_idx.and_then(|idx| {
+                        state.current_work.as_ref()?.lines.get(idx).map(|l| l.line_in_div)
+                    })
+                })
+                .collect()
+        } else {
+            state.current_work.as_ref()
+                .map(|w| w.lines.iter().map(|l| Some(l.line_in_div)).collect())
+                .unwrap_or_default()
+        };
+        let nums = if state.translations_visible && !state.translation_lines.is_empty() {
+            let mut expanded = Vec::with_capacity(state.translation_lines.len());
+            let mut orig_idx = 0;
+            for &is_trans in &state.translation_lines {
+                if is_trans {
+                    expanded.push(None);
+                } else {
+                    expanded.push(base.get(orig_idx).copied().flatten());
+                    orig_idx += 1;
+                }
+            }
+            expanded
+        } else {
+            base
+        };
+        *state.line_numbers.borrow_mut() = nums;
         let renderer = crate::gutter::setup_line_number_gutter(
             &state.text_view,
             state.line_numbers.clone(),
