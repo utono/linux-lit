@@ -5,4 +5,5 @@ pub mod keymap_config;
 pub mod navigation;
 pub mod search;
 pub mod timestamps;
+pub mod picker_keys;
 pub mod visual;
