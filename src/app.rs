@@ -32,6 +32,24 @@ pub struct VocabMatch {
     pub char_end: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InputMode {
+    Reader,
+    LibraryPicker,
+    BookmarkPicker,
+    MediaPicker,
+    Settings,
+    Search,
+    GlossOverlay,
+    GamepadOverlay,
+    KeybindsOverlay,
+    ConcordancePicker,
+    ConcordanceWordPicker,
+    ConcordanceListPicker,
+    ActionPopup,
+    Visual,
+}
+
 #[allow(dead_code)]
 pub struct AppState {
     pub text_view: View,
@@ -185,6 +203,7 @@ pub struct AppState {
     /// Loaded keybinds. Compiled-in defaults overridden by
     /// ~/.config/linux-lit/keymap.json if present.
     pub keymap: crate::input::keymap_config::Keymap,
+    pub input_mode: InputMode,
 }
 
 impl AppState {
@@ -907,6 +926,7 @@ pub fn build_window(
         last_visible_range: std::cell::Cell::new(None),
         page_tops: std::cell::RefCell::new(None),
         keymap: crate::input::keymap_config::Keymap::load(),
+        input_mode: InputMode::Reader,
     }));
 
     // Suppress startup flicker: vbox is hidden (opacity 0) until layout has
