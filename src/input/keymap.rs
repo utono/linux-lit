@@ -88,498 +88,28 @@ pub fn handle_key(
         return true;
     }
 
-    // Picker-visible keys
-    if picker_visible {
-        match key_name {
-            "Escape" => {
-                let level = state.borrow().picker.level().clone();
-                match level {
-                    crate::ui::library_picker::PickerLevel::Works(_) => {
-                        state.borrow_mut().picker.go_back_to_authors();
-                        state.borrow().picker.refresh_after_level_change();
-                    }
-                    crate::ui::library_picker::PickerLevel::Authors => {
-                        state.borrow().picker.hide();
-                        state.borrow_mut().input_mode = crate::app::InputMode::Reader;
-                    }
-                }
-                return true;
-            }
-            "Return" => {
-                let level = state.borrow().picker.level().clone();
-                match level {
-                    crate::ui::library_picker::PickerLevel::Authors => {
-                        let selected_name = state
-                            .borrow()
-                            .picker
-                            .list_box()
-                            .selected_row()
-                            .map(|r| r.widget_name().to_string());
-                        if let Some(name) = selected_name {
-                            if name.starts_with("author:") {
-                                let author = name.trim_start_matches("author:").to_string();
-                                state.borrow_mut().picker.enter_author(&author);
-                                state.borrow().picker.refresh_after_level_change();
-                            } else {
-                                crate::input::actions::pickers::load_selected_work(state, tokio_handle);
-                            }
-                        }
-                        return true;
-                    }
-                    crate::ui::library_picker::PickerLevel::Works(_) => {
-                        crate::input::actions::pickers::load_selected_work(state, tokio_handle);
-                        return true;
-                    }
-                }
-            }
-            "BackSpace" => {
-                let level = state.borrow().picker.level().clone();
-                if let crate::ui::library_picker::PickerLevel::Works(_) = level {
-                    let text = state.borrow().picker.search_entry().text().to_string();
-                    if text.is_empty() {
-                        state.borrow_mut().picker.go_back_to_authors();
-                        state.borrow().picker.refresh_after_level_change();
-                        return true;
-                    }
-                }
-                return false;
-            }
-            "Down" => {
-                state.borrow().picker.move_selection(1);
-                return true;
-            }
-            "Up" => {
-                state.borrow().picker.move_selection(-1);
-                return true;
-            }
-            _ => {}
-        }
-        return false;
+    // Mode dispatch — delegate to per-mode handler functions
+    let mode = state.borrow().input_mode;
+    if mode != crate::app::InputMode::Reader {
+        return match mode {
+            crate::app::InputMode::LibraryPicker => handle_library_picker_key(state, key_name, is_ctrl, tokio_handle),
+            crate::app::InputMode::BookmarkPicker
+            | crate::app::InputMode::MediaPicker
+            | crate::app::InputMode::ConcordancePicker
+            | crate::app::InputMode::ConcordanceWordPicker
+            | crate::app::InputMode::ConcordanceListPicker => handle_picker_key(state, key_name, is_ctrl, tokio_handle, mode),
+            crate::app::InputMode::Settings => handle_settings_key(state, key_name, is_ctrl),
+            crate::app::InputMode::Search => handle_search_key(state, key_name),
+            crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_name),
+            crate::app::InputMode::GamepadOverlay => handle_gamepad_key(state, key_name),
+            crate::app::InputMode::KeybindsOverlay => handle_keybinds_key(state, key_state, key_name),
+            crate::app::InputMode::ActionPopup => handle_action_popup_key(state, key_name, is_ctrl, tokio_handle),
+            crate::app::InputMode::Visual => handle_visual_key(state, key_state, key_name),
+            crate::app::InputMode::Reader => unreachable!(),
+        };
     }
 
-    // Bookmark picker
-    let bookmark_picker_visible = state.borrow().bookmark_picker.is_visible();
-
-    if bookmark_picker_visible {
-        use crate::input::picker_keys::{resolve_picker_key, PickerAction};
-        match resolve_picker_key(key_name, is_ctrl) {
-            PickerAction::Hide => {
-                state.borrow().bookmark_picker.hide();
-                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
-                return true;
-            }
-            PickerAction::Confirm => {
-                let selected_id = state.borrow().bookmark_picker.selected_line_mapping_id();
-                if let Some(lm_id) = selected_id {
-                    {
-                        let s = state.borrow();
-                        s.bookmark_picker.hide();
-                    }
-                    let mut s = state.borrow_mut();
-                    s.input_mode = crate::app::InputMode::Reader;
-                    let buffer_line = if let Some(ref lm) = s.line_map {
-                        s.current_work.as_ref().and_then(|w| {
-                            let work_idx = w.lines.iter().position(|l| l.id == lm_id)?;
-                            Some(lm.work_to_buffer[work_idx])
-                        })
-                    } else {
-                        s.current_work.as_ref().and_then(|w| {
-                            w.lines.iter().position(|l| l.id == lm_id)
-                        })
-                    };
-                    if let Some(bl) = buffer_line {
-                        navigation::jump_to_line(&mut s, bl);
-                    }
-                }
-                return true;
-            }
-            PickerAction::MoveDown => {
-                state.borrow().bookmark_picker.move_selection(1);
-                return true;
-            }
-            PickerAction::MoveUp => {
-                state.borrow().bookmark_picker.move_selection(-1);
-                return true;
-            }
-            PickerAction::Unhandled => {
-                if key_name == "Delete" || key_name == "d" {
-                    crate::input::actions::pickers::delete_bookmark(state, tokio_handle);
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    // Media picker
-    let media_picker_visible = state.borrow().media_picker.is_visible();
-
-    if media_picker_visible {
-        use crate::input::picker_keys::{resolve_picker_key, PickerAction};
-        match resolve_picker_key(key_name, is_ctrl) {
-            PickerAction::Hide => {
-                state.borrow().media_picker.hide();
-                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
-                return true;
-            }
-            PickerAction::Confirm => {
-                crate::input::actions::pickers::confirm_media_selection(state, tokio_handle);
-                return true;
-            }
-            PickerAction::MoveDown => {
-                state.borrow().media_picker.move_selection(1);
-                return true;
-            }
-            PickerAction::MoveUp => {
-                state.borrow().media_picker.move_selection(-1);
-                return true;
-            }
-            PickerAction::Unhandled => {
-                if key_name == "p" {
-                    let is_search_focused = state.borrow().media_picker.search_entry().has_focus();
-                    if !is_search_focused {
-                        crate::input::actions::pickers::set_media_default(state, tokio_handle);
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
-    }
-
-    // Settings overlay
-    let settings_visible = state.borrow().settings_overlay.is_visible();
-
-    if settings_visible {
-        use crate::input::picker_keys::{resolve_picker_key, PickerAction};
-        match resolve_picker_key(key_name, is_ctrl) {
-            PickerAction::Hide => {
-                crate::input::actions::settings::revert_to_snapshot(state);
-                return true;
-            }
-            PickerAction::Confirm => {
-                {
-                    let mut s = state.borrow_mut();
-                    crate::config::save(&s.config);
-                    s.settings_overlay.hide();
-                    s.input_mode = crate::app::InputMode::Reader;
-                }
-                return true;
-            }
-            PickerAction::MoveDown => {
-                state.borrow_mut().settings_overlay.move_selection(1);
-                return true;
-            }
-            PickerAction::MoveUp => {
-                state.borrow_mut().settings_overlay.move_selection(-1);
-                return true;
-            }
-            PickerAction::Unhandled => {
-                match key_name {
-                    "h" | "Left" => {
-                        let (ls, cw, tm, nm, ts, cl) = {
-                            let s = state.borrow();
-                            (s.config.line_spacing, s.config.column_width, s.config.text_margins, s.config.navigation_mode, s.config.transition_style, s.config.show_cursor_line)
-                        };
-                        let change = state.borrow_mut().settings_overlay.adjust_value(-1, ls, cw, tm, nm, ts, cl);
-                        crate::input::actions::settings::apply_settings_change(state, change);
-                        return true;
-                    }
-                    "l" | "Right" => {
-                        let (ls, cw, tm, nm, ts, cl) = {
-                            let s = state.borrow();
-                            (s.config.line_spacing, s.config.column_width, s.config.text_margins, s.config.navigation_mode, s.config.transition_style, s.config.show_cursor_line)
-                        };
-                        let change = state.borrow_mut().settings_overlay.adjust_value(1, ls, cw, tm, nm, ts, cl);
-                        crate::input::actions::settings::apply_settings_change(state, change);
-                        return true;
-                    }
-                    "r" => {
-                        crate::input::actions::settings::reset_to_defaults(state);
-                        return true;
-                    }
-                    _ => return true, // consume all other keys when settings visible
-                }
-            }
-        }
-    }
-
-    // Search bar visible — route keys to search entry
-    let search_visible = state.borrow().search_bar.is_visible();
-    if search_visible {
-        match key_name {
-            "Escape" => {
-                crate::input::search::clear_search(&mut state.borrow_mut());
-                state.borrow().search_bar.hide();
-                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
-                return true;
-            }
-            "Return" => {
-                crate::input::search::execute_search(&state);
-                state.borrow().search_bar.hide();
-                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
-                return true;
-            }
-            "Tab" => {
-                crate::input::search::toggle_playback(&mut state.borrow_mut());
-                return true;
-            }
-            _ => return false, // let GTK route to the Entry
-        }
-    }
-
-    // --- Gloss overlay (when visible) ---
-    let gloss_visible = state.borrow().correction_overlay.is_visible();
-    if gloss_visible {
-        match key_name {
-            "r" => {
-                retry_gloss(state);
-                return true;
-            }
-            "Escape" | "n" => {
-                state.borrow().correction_overlay.hide();
-                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
-                return true;
-            }
-            _ => return true, // consume all other keys while overlay is open
-        }
-    }
-
-    // --- Gamepad overlay (when visible) ---
-    let gamepad_visible = state.borrow().gamepad_overlay.is_visible();
-    if gamepad_visible {
-        match key_name {
-            "Escape" => {
-                state.borrow().gamepad_overlay.hide();
-                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
-                return true;
-            }
-            _ => return true, // consume all other keys when gamepad overlay visible
-        }
-    }
-
-    // --- Keybinds overlay (when visible) ---
-    let keybinds_visible = state.borrow().keybinds_overlay.is_visible();
-    if keybinds_visible {
-        match key_name {
-            "Escape" => {
-                state.borrow().keybinds_overlay.hide();
-                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
-                return true;
-            }
-            "g" if key_state.borrow().pending_ctrl_slash => {
-                // C-/ g chord: swap to gamepad overlay
-                key_state.borrow_mut().pending_ctrl_slash = false;
-                let s = state.borrow();
-                s.keybinds_overlay.hide();
-                s.gamepad_overlay.show();
-                drop(s);
-                state.borrow_mut().input_mode = crate::app::InputMode::GamepadOverlay;
-                return true;
-            }
-            "exclam" => {
-                state.borrow_mut().keybinds_overlay.adjust_scale(-1);
-                return true;
-            }
-            "bar" => {
-                state.borrow_mut().keybinds_overlay.adjust_scale(1);
-                return true;
-            }
-            "0" => {
-                state.borrow_mut().keybinds_overlay.reset_scale();
-                return true;
-            }
-            _ => return true, // consume all other keys when keybinds visible
-        }
-    }
-
-    // --- Concordance picker overlay ---
-    if state.borrow().concordance_picker.is_visible() {
-        use crate::input::picker_keys::{resolve_picker_key, PickerAction};
-        match resolve_picker_key(key_name, is_ctrl) {
-            PickerAction::Hide => {
-                state.borrow().concordance_picker.hide();
-                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
-                return true;
-            }
-            PickerAction::Confirm => {
-                let selected = state.borrow().concordance_picker.selected_word();
-                state.borrow().concordance_picker.hide();
-                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
-                if let Some(word) = selected {
-                    crate::input::actions::concordance::handle_word_selection(state, tokio_handle, word);
-                }
-                return true;
-            }
-            PickerAction::MoveDown => {
-                state.borrow().concordance_picker.move_selection(1);
-                return true;
-            }
-            PickerAction::MoveUp => {
-                state.borrow().concordance_picker.move_selection(-1);
-                return true;
-            }
-            PickerAction::Unhandled => {}
-        }
-        return false;
-    }
-
-    // --- Concordance word picker (when visible) ---
-    let conc_word_picker_visible = state.borrow().concordance_word_picker.is_visible();
-    if conc_word_picker_visible {
-        use crate::input::picker_keys::{resolve_picker_key, PickerAction};
-        match resolve_picker_key(key_name, is_ctrl) {
-            PickerAction::Hide => {
-                state.borrow().concordance_word_picker.hide();
-                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
-                return true;
-            }
-            PickerAction::Confirm => {
-                let selected = state.borrow().concordance_word_picker.selected_word();
-                state.borrow().concordance_word_picker.hide();
-                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
-                if let Some(word) = selected {
-                    crate::input::actions::concordance::handle_word_selection(state, tokio_handle, word);
-                }
-                return true;
-            }
-            PickerAction::MoveDown => {
-                state.borrow().concordance_word_picker.move_selection(1);
-                return true;
-            }
-            PickerAction::MoveUp => {
-                state.borrow().concordance_word_picker.move_selection(-1);
-                return true;
-            }
-            PickerAction::Unhandled => {}
-        }
-        return false;
-    }
-
-    // --- Concordance list picker (when visible) ---
-    let conc_list_picker_visible = state.borrow().concordance_list_picker.is_visible();
-    if conc_list_picker_visible {
-        use crate::input::picker_keys::{resolve_picker_key, PickerAction};
-        match resolve_picker_key(key_name, is_ctrl) {
-            PickerAction::Hide => {
-                state.borrow().concordance_list_picker.hide();
-                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
-                return true;
-            }
-            PickerAction::Confirm => {
-                let selected = state.borrow().concordance_list_picker.selected_index();
-                state.borrow().concordance_list_picker.hide();
-                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
-                if let Some(idx) = selected {
-                    {
-                        let mut s = state.borrow_mut();
-                        if let Some(conc) = &mut s.concordance_state {
-                            conc.current_index = idx;
-                        }
-                    }
-                    navigation::concordance_jump_to_current(state, tokio_handle);
-                }
-                return true;
-            }
-            PickerAction::MoveDown => {
-                state.borrow().concordance_list_picker.move_selection(1);
-                return true;
-            }
-            PickerAction::MoveUp => {
-                state.borrow().concordance_list_picker.move_selection(-1);
-                return true;
-            }
-            PickerAction::Unhandled => {}
-        }
-        return false;
-    }
-
-    // --- Action popup (when visible) ---
-    let action_popup_visible = state.borrow().action_popup.is_some();
-    if action_popup_visible && is_ctrl {
-        match key_name {
-            "n" => {
-                let mut s = state.borrow_mut();
-                s.action_popup_widget.move_selection(1);
-                let idx = s.action_popup_widget.selected_index();
-                if let Some(ref mut popup) = s.action_popup {
-                    popup.selected_index = idx;
-                }
-                return true;
-            }
-            "p" => {
-                let mut s = state.borrow_mut();
-                s.action_popup_widget.move_selection(-1);
-                let idx = s.action_popup_widget.selected_index();
-                if let Some(ref mut popup) = s.action_popup {
-                    popup.selected_index = idx;
-                }
-                return true;
-            }
-            _ => {}
-        }
-    }
-    if action_popup_visible {
-        match key_name {
-            "Return" => {
-                let selected_idx = state.borrow().action_popup_widget.selected_index();
-                crate::input::visual::close_action_popup(&mut state.borrow_mut());
-                crate::input::visual::execute_action(state, selected_idx, tokio_handle);
-                return true;
-            }
-            "Escape" => {
-                crate::input::visual::close_action_popup(&mut state.borrow_mut());
-                return true;
-            }
-            _ => return true, // consume all keys when popup visible
-        }
-    }
-
-    // --- Visual mode ---
-    let in_visual = state.borrow().visual_selection.is_some();
-    if in_visual {
-        match key_name {
-            "j" => {
-                crate::input::visual::move_selection_cursor(&mut state.borrow_mut(), 1);
-                return true;
-            }
-            "k" => {
-                crate::input::visual::move_selection_cursor(&mut state.borrow_mut(), -1);
-                return true;
-            }
-            "G" => {
-                crate::input::visual::extend_to_end(&mut state.borrow_mut());
-                return true;
-            }
-            "g" => {
-                // In visual mode, 'g' starts gg sequence to extend to start
-                key_state.borrow_mut().pending_g = true;
-                let ks = Rc::clone(key_state);
-                glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
-                    ks.borrow_mut().pending_g = false;
-                });
-                return true;
-            }
-            "Escape" | "V" => {
-                crate::input::visual::exit_visual_mode(&mut state.borrow_mut());
-                return true;
-            }
-            "y" => {
-                crate::input::visual::yank_selection(&mut state.borrow_mut());
-                return true;
-            }
-            "Return" => {
-                crate::input::visual::open_action_popup(&mut state.borrow_mut());
-                return true;
-            }
-            _ => {
-                // Consume all other keys in visual mode
-                return true;
-            }
-        }
-    }
-
-    // --- Normal mode (no picker) ---
+    // --- Reader mode (no overlay) ---
 
     // gg sequence check
     if key_state.borrow().pending_g {
@@ -659,6 +189,468 @@ pub fn handle_key(
     }
 
     false
+}
+
+// ---------------------------------------------------------------------------
+// Per-mode handler functions
+// ---------------------------------------------------------------------------
+
+fn handle_library_picker_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+    is_ctrl: bool,
+    tokio_handle: &tokio::runtime::Handle,
+) -> bool {
+    match key_name {
+        "Escape" => {
+            let level = state.borrow().picker.level().clone();
+            match level {
+                crate::ui::library_picker::PickerLevel::Works(_) => {
+                    state.borrow_mut().picker.go_back_to_authors();
+                    state.borrow().picker.refresh_after_level_change();
+                }
+                crate::ui::library_picker::PickerLevel::Authors => {
+                    state.borrow().picker.hide();
+                    state.borrow_mut().input_mode = crate::app::InputMode::Reader;
+                }
+            }
+            true
+        }
+        "Return" => {
+            let level = state.borrow().picker.level().clone();
+            match level {
+                crate::ui::library_picker::PickerLevel::Authors => {
+                    let selected_name = state
+                        .borrow()
+                        .picker
+                        .list_box()
+                        .selected_row()
+                        .map(|r| r.widget_name().to_string());
+                    if let Some(name) = selected_name {
+                        if name.starts_with("author:") {
+                            let author = name.trim_start_matches("author:").to_string();
+                            state.borrow_mut().picker.enter_author(&author);
+                            state.borrow().picker.refresh_after_level_change();
+                        } else {
+                            crate::input::actions::pickers::load_selected_work(state, tokio_handle);
+                        }
+                    }
+                    true
+                }
+                crate::ui::library_picker::PickerLevel::Works(_) => {
+                    crate::input::actions::pickers::load_selected_work(state, tokio_handle);
+                    true
+                }
+            }
+        }
+        "BackSpace" => {
+            let level = state.borrow().picker.level().clone();
+            if let crate::ui::library_picker::PickerLevel::Works(_) = level {
+                let text = state.borrow().picker.search_entry().text().to_string();
+                if text.is_empty() {
+                    state.borrow_mut().picker.go_back_to_authors();
+                    state.borrow().picker.refresh_after_level_change();
+                    return true;
+                }
+            }
+            false
+        }
+        "Down" => {
+            state.borrow().picker.move_selection(1);
+            true
+        }
+        "Up" => {
+            state.borrow().picker.move_selection(-1);
+            true
+        }
+        _ => {
+            // Ctrl+n/p already handled at top of handle_key; let GTK route
+            // remaining keys to the search entry.
+            if is_ctrl {
+                // Ctrl combos not handled above — don't let GTK insert text
+                false
+            } else {
+                false
+            }
+        }
+    }
+}
+
+fn handle_picker_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+    is_ctrl: bool,
+    tokio_handle: &tokio::runtime::Handle,
+    mode: crate::app::InputMode,
+) -> bool {
+    use crate::app::InputMode;
+    use crate::input::picker_keys::{resolve_picker_key, PickerAction};
+
+    match resolve_picker_key(key_name, is_ctrl) {
+        PickerAction::Hide => {
+            let mut s = state.borrow_mut();
+            match mode {
+                InputMode::BookmarkPicker => { s.bookmark_picker.hide(); s.input_mode = InputMode::Reader; }
+                InputMode::MediaPicker => { s.media_picker.hide(); s.input_mode = InputMode::Reader; }
+                InputMode::ConcordancePicker => { s.concordance_picker.hide(); s.input_mode = InputMode::Reader; }
+                InputMode::ConcordanceWordPicker => { s.concordance_word_picker.hide(); s.input_mode = InputMode::Reader; }
+                InputMode::ConcordanceListPicker => { s.concordance_list_picker.hide(); s.input_mode = InputMode::Reader; }
+                _ => {}
+            }
+            true
+        }
+        PickerAction::Confirm => {
+            match mode {
+                InputMode::BookmarkPicker => {
+                    let selected_id = state.borrow().bookmark_picker.selected_line_mapping_id();
+                    if let Some(lm_id) = selected_id {
+                        {
+                            let s = state.borrow();
+                            s.bookmark_picker.hide();
+                        }
+                        let mut s = state.borrow_mut();
+                        s.input_mode = InputMode::Reader;
+                        let buffer_line = if let Some(ref lm) = s.line_map {
+                            s.current_work.as_ref().and_then(|w| {
+                                let work_idx = w.lines.iter().position(|l| l.id == lm_id)?;
+                                Some(lm.work_to_buffer[work_idx])
+                            })
+                        } else {
+                            s.current_work.as_ref().and_then(|w| {
+                                w.lines.iter().position(|l| l.id == lm_id)
+                            })
+                        };
+                        if let Some(bl) = buffer_line {
+                            navigation::jump_to_line(&mut s, bl);
+                        }
+                    }
+                    true
+                }
+                InputMode::MediaPicker => {
+                    crate::input::actions::pickers::confirm_media_selection(state, tokio_handle);
+                    true
+                }
+                InputMode::ConcordancePicker => {
+                    let selected = state.borrow().concordance_picker.selected_word();
+                    state.borrow().concordance_picker.hide();
+                    state.borrow_mut().input_mode = InputMode::Reader;
+                    if let Some(word) = selected {
+                        crate::input::actions::concordance::handle_word_selection(state, tokio_handle, word);
+                    }
+                    true
+                }
+                InputMode::ConcordanceWordPicker => {
+                    let selected = state.borrow().concordance_word_picker.selected_word();
+                    state.borrow().concordance_word_picker.hide();
+                    state.borrow_mut().input_mode = InputMode::Reader;
+                    if let Some(word) = selected {
+                        crate::input::actions::concordance::handle_word_selection(state, tokio_handle, word);
+                    }
+                    true
+                }
+                InputMode::ConcordanceListPicker => {
+                    let selected = state.borrow().concordance_list_picker.selected_index();
+                    state.borrow().concordance_list_picker.hide();
+                    state.borrow_mut().input_mode = InputMode::Reader;
+                    if let Some(idx) = selected {
+                        {
+                            let mut s = state.borrow_mut();
+                            if let Some(conc) = &mut s.concordance_state {
+                                conc.current_index = idx;
+                            }
+                        }
+                        navigation::concordance_jump_to_current(state, tokio_handle);
+                    }
+                    true
+                }
+                _ => true,
+            }
+        }
+        PickerAction::MoveDown => {
+            match mode {
+                InputMode::BookmarkPicker => state.borrow().bookmark_picker.move_selection(1),
+                InputMode::MediaPicker => state.borrow().media_picker.move_selection(1),
+                InputMode::ConcordancePicker => state.borrow().concordance_picker.move_selection(1),
+                InputMode::ConcordanceWordPicker => state.borrow().concordance_word_picker.move_selection(1),
+                InputMode::ConcordanceListPicker => state.borrow().concordance_list_picker.move_selection(1),
+                _ => {}
+            }
+            true
+        }
+        PickerAction::MoveUp => {
+            match mode {
+                InputMode::BookmarkPicker => state.borrow().bookmark_picker.move_selection(-1),
+                InputMode::MediaPicker => state.borrow().media_picker.move_selection(-1),
+                InputMode::ConcordancePicker => state.borrow().concordance_picker.move_selection(-1),
+                InputMode::ConcordanceWordPicker => state.borrow().concordance_word_picker.move_selection(-1),
+                InputMode::ConcordanceListPicker => state.borrow().concordance_list_picker.move_selection(-1),
+                _ => {}
+            }
+            true
+        }
+        PickerAction::Unhandled => {
+            // Per-mode extras
+            match mode {
+                InputMode::BookmarkPicker => {
+                    if key_name == "Delete" || key_name == "d" {
+                        crate::input::actions::pickers::delete_bookmark(state, tokio_handle);
+                        return true;
+                    }
+                }
+                InputMode::MediaPicker => {
+                    if key_name == "p" {
+                        let is_search_focused = state.borrow().media_picker.search_entry().has_focus();
+                        if !is_search_focused {
+                            crate::input::actions::pickers::set_media_default(state, tokio_handle);
+                            return true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            false
+        }
+    }
+}
+
+fn handle_settings_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+    is_ctrl: bool,
+) -> bool {
+    use crate::input::picker_keys::{resolve_picker_key, PickerAction};
+    match resolve_picker_key(key_name, is_ctrl) {
+        PickerAction::Hide => {
+            crate::input::actions::settings::revert_to_snapshot(state);
+            true
+        }
+        PickerAction::Confirm => {
+            let mut s = state.borrow_mut();
+            crate::config::save(&s.config);
+            s.settings_overlay.hide();
+            s.input_mode = crate::app::InputMode::Reader;
+            true
+        }
+        PickerAction::MoveDown => {
+            state.borrow_mut().settings_overlay.move_selection(1);
+            true
+        }
+        PickerAction::MoveUp => {
+            state.borrow_mut().settings_overlay.move_selection(-1);
+            true
+        }
+        PickerAction::Unhandled => {
+            match key_name {
+                "h" | "Left" => {
+                    let (ls, cw, tm, nm, ts, cl) = {
+                        let s = state.borrow();
+                        (s.config.line_spacing, s.config.column_width, s.config.text_margins, s.config.navigation_mode, s.config.transition_style, s.config.show_cursor_line)
+                    };
+                    let change = state.borrow_mut().settings_overlay.adjust_value(-1, ls, cw, tm, nm, ts, cl);
+                    crate::input::actions::settings::apply_settings_change(state, change);
+                    true
+                }
+                "l" | "Right" => {
+                    let (ls, cw, tm, nm, ts, cl) = {
+                        let s = state.borrow();
+                        (s.config.line_spacing, s.config.column_width, s.config.text_margins, s.config.navigation_mode, s.config.transition_style, s.config.show_cursor_line)
+                    };
+                    let change = state.borrow_mut().settings_overlay.adjust_value(1, ls, cw, tm, nm, ts, cl);
+                    crate::input::actions::settings::apply_settings_change(state, change);
+                    true
+                }
+                "r" => {
+                    crate::input::actions::settings::reset_to_defaults(state);
+                    true
+                }
+                _ => true, // consume all other keys when settings visible
+            }
+        }
+    }
+}
+
+fn handle_search_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+) -> bool {
+    match key_name {
+        "Escape" => {
+            crate::input::search::clear_search(&mut state.borrow_mut());
+            state.borrow().search_bar.hide();
+            state.borrow_mut().input_mode = crate::app::InputMode::Reader;
+            true
+        }
+        "Return" => {
+            crate::input::search::execute_search(&state);
+            state.borrow().search_bar.hide();
+            state.borrow_mut().input_mode = crate::app::InputMode::Reader;
+            true
+        }
+        "Tab" => {
+            crate::input::search::toggle_playback(&mut state.borrow_mut());
+            true
+        }
+        _ => false, // let GTK route to the Entry
+    }
+}
+
+fn handle_gloss_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+) -> bool {
+    match key_name {
+        "r" => {
+            retry_gloss(state);
+            true
+        }
+        "Escape" | "n" => {
+            state.borrow().correction_overlay.hide();
+            state.borrow_mut().input_mode = crate::app::InputMode::Reader;
+            true
+        }
+        _ => true, // consume all other keys while overlay is open
+    }
+}
+
+fn handle_gamepad_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+) -> bool {
+    match key_name {
+        "Escape" => {
+            state.borrow().gamepad_overlay.hide();
+            state.borrow_mut().input_mode = crate::app::InputMode::Reader;
+            true
+        }
+        _ => true, // consume all other keys when gamepad overlay visible
+    }
+}
+
+fn handle_keybinds_key(
+    state: &Rc<RefCell<AppState>>,
+    key_state: &Rc<RefCell<KeyState>>,
+    key_name: &str,
+) -> bool {
+    match key_name {
+        "Escape" => {
+            state.borrow().keybinds_overlay.hide();
+            state.borrow_mut().input_mode = crate::app::InputMode::Reader;
+            true
+        }
+        "g" if key_state.borrow().pending_ctrl_slash => {
+            // C-/ g chord: swap to gamepad overlay
+            key_state.borrow_mut().pending_ctrl_slash = false;
+            let s = state.borrow();
+            s.keybinds_overlay.hide();
+            s.gamepad_overlay.show();
+            drop(s);
+            state.borrow_mut().input_mode = crate::app::InputMode::GamepadOverlay;
+            true
+        }
+        "exclam" => {
+            state.borrow_mut().keybinds_overlay.adjust_scale(-1);
+            true
+        }
+        "bar" => {
+            state.borrow_mut().keybinds_overlay.adjust_scale(1);
+            true
+        }
+        "0" => {
+            state.borrow_mut().keybinds_overlay.reset_scale();
+            true
+        }
+        _ => true, // consume all other keys when keybinds visible
+    }
+}
+
+fn handle_action_popup_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+    is_ctrl: bool,
+    tokio_handle: &tokio::runtime::Handle,
+) -> bool {
+    if is_ctrl {
+        match key_name {
+            "n" => {
+                let mut s = state.borrow_mut();
+                s.action_popup_widget.move_selection(1);
+                let idx = s.action_popup_widget.selected_index();
+                if let Some(ref mut popup) = s.action_popup {
+                    popup.selected_index = idx;
+                }
+                return true;
+            }
+            "p" => {
+                let mut s = state.borrow_mut();
+                s.action_popup_widget.move_selection(-1);
+                let idx = s.action_popup_widget.selected_index();
+                if let Some(ref mut popup) = s.action_popup {
+                    popup.selected_index = idx;
+                }
+                return true;
+            }
+            _ => {}
+        }
+    }
+    match key_name {
+        "Return" => {
+            let selected_idx = state.borrow().action_popup_widget.selected_index();
+            crate::input::visual::close_action_popup(&mut state.borrow_mut());
+            crate::input::visual::execute_action(state, selected_idx, tokio_handle);
+            true
+        }
+        "Escape" => {
+            crate::input::visual::close_action_popup(&mut state.borrow_mut());
+            true
+        }
+        _ => true, // consume all keys when popup visible
+    }
+}
+
+fn handle_visual_key(
+    state: &Rc<RefCell<AppState>>,
+    key_state: &Rc<RefCell<KeyState>>,
+    key_name: &str,
+) -> bool {
+    match key_name {
+        "j" => {
+            crate::input::visual::move_selection_cursor(&mut state.borrow_mut(), 1);
+            true
+        }
+        "k" => {
+            crate::input::visual::move_selection_cursor(&mut state.borrow_mut(), -1);
+            true
+        }
+        "G" => {
+            crate::input::visual::extend_to_end(&mut state.borrow_mut());
+            true
+        }
+        "g" => {
+            // In visual mode, 'g' starts gg sequence to extend to start
+            key_state.borrow_mut().pending_g = true;
+            let ks = Rc::clone(key_state);
+            glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
+                ks.borrow_mut().pending_g = false;
+            });
+            true
+        }
+        "Escape" | "V" => {
+            crate::input::visual::exit_visual_mode(&mut state.borrow_mut());
+            true
+        }
+        "y" => {
+            crate::input::visual::yank_selection(&mut state.borrow_mut());
+            true
+        }
+        "Return" => {
+            crate::input::visual::open_action_popup(&mut state.borrow_mut());
+            true
+        }
+        _ => {
+            // Consume all other keys in visual mode
+            true
+        }
+    }
 }
 
 /// Execute an Action by calling its corresponding verb. Returns true if the
