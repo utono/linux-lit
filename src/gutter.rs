@@ -191,6 +191,7 @@ pub fn setup_line_number_gutter(
     line_numbers: Rc<RefCell<Vec<Option<i64>>>>,
     dim_color: &str,
     font_family: &str,
+    font_size_pt: u32,
 ) -> sourceview5::GutterRendererText {
     let gutter = sourceview5::prelude::ViewExt::gutter(view, gtk4::TextWindowType::Right);
     let renderer = sourceview5::GutterRendererText::new();
@@ -203,7 +204,7 @@ pub fn setup_line_number_gutter(
 
     let color = dim_color.to_string();
     let face = font_family.to_string();
-    let pango_size = 16 * 1024;
+    let pango_size = (font_size_pt as f32 * 0.8) as u32 * 1024;
     renderer.connect_query_data(move |renderer, _lines_obj, line| {
         let text_renderer = renderer
             .downcast_ref::<sourceview5::GutterRendererText>()

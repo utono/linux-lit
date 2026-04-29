@@ -41,7 +41,7 @@ pub fn format_play_citation(
     }
     let act_r = to_roman(act as u32)?;
     let scene_r = to_roman(scene as u32)?.to_lowercase();
-    Some(format!("{}.{}.{}", act_r, scene_r, line))
+    Some(format!("{}.{}", act_r, scene_r))
 }
 
 /// Format the bottom-overlay label for non-play works as
@@ -74,10 +74,10 @@ mod tests {
 
     #[test]
     fn play_citation_typical() {
-        assert_eq!(format_play_citation(1, 1, 15, None).as_deref(), Some("I.i.15"));
-        assert_eq!(format_play_citation(3, 2, 187, None).as_deref(), Some("III.ii.187"));
-        assert_eq!(format_play_citation(5, 1, 1, None).as_deref(), Some("V.i.1"));
-        assert_eq!(format_play_citation(4, 4, 42, None).as_deref(), Some("IV.iv.42"));
+        assert_eq!(format_play_citation(1, 1, 15, None).as_deref(), Some("I.i"));
+        assert_eq!(format_play_citation(3, 2, 187, None).as_deref(), Some("III.ii"));
+        assert_eq!(format_play_citation(5, 1, 1, None).as_deref(), Some("V.i"));
+        assert_eq!(format_play_citation(4, 4, 42, None).as_deref(), Some("IV.iv"));
     }
 
     #[test]
@@ -106,14 +106,13 @@ mod tests {
 
     #[test]
     fn play_citation_nested_prologue_uses_normal_format() {
-        // Play-within-play prologue (e.g. Ham 3.2, MND 5.1) keeps normal citation.
         assert_eq!(
             format_play_citation(3, 2, 1, Some("PROLOGUE")).as_deref(),
-            Some("III.ii.1")
+            Some("III.ii")
         );
         assert_eq!(
             format_play_citation(5, 1, 5, Some("PROLOGUE")).as_deref(),
-            Some("V.i.5")
+            Some("V.i")
         );
     }
 

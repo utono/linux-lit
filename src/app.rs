@@ -322,7 +322,7 @@ impl AppState {
 /// the classic indented-verse look. When the card nearly fills the window
 /// (tiled layouts), the offset is dropped so the text stays symmetric inside
 /// the card and isn't pushed off-center.
-pub const VERSE_LEFT_OFFSET: i32 = 260;
+pub const VERSE_LEFT_OFFSET: i32 = 200;
 pub const PROSE_LEFT_OFFSET: i32 = 120;
 
 /// Fixed height for the top spacer above the first text line.
@@ -1746,6 +1746,7 @@ pub fn display_work_at_with_prepared(
                 state.line_numbers.clone(),
                 &state.theme.dim_fg,
                 &state.config.font_family,
+                state.config.font_size,
             );
             state.text_view.set_right_margin(48);
             state.line_number_renderer = Some(renderer);
@@ -2756,6 +2757,7 @@ fn rebuild_line_number_gutter(state: &mut AppState) {
             state.line_numbers.clone(),
             &state.theme.dim_fg,
             &state.config.font_family,
+            state.config.font_size,
         );
         state.text_view.set_right_margin(48);
         state.line_number_renderer = Some(renderer);
