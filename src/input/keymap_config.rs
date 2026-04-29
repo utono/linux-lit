@@ -167,120 +167,153 @@ fn parse_action(name: &str) -> Option<Action> {
     serde_json::from_str(&json).ok()
 }
 
-/// Compiled-in default reader bindings. Mirrors the inline match arms
-/// currently in keymap.rs:1338-1741 (base-keys block) and the Ctrl+ /
-/// Shift+ / Alt+ combo blocks.
+/// Compiled-in default reader bindings, assembled from per-category
+/// sub-functions. Each sub-function groups bindings by the Action's
+/// Category for organizational clarity; the runtime Keymap is a flat
+/// HashMap.
 pub fn default_reader_bindings() -> HashMap<KeyCombo, Action> {
     let mut m = HashMap::new();
-
-    // Page navigation
-    m.insert(KeyCombo::plain("x"), Action::PageForward);
-    m.insert(KeyCombo::plain("y"), Action::PageBackward);
-    m.insert(KeyCombo::plain("less"), Action::PageBackward);
-    m.insert(KeyCombo::plain("space"), Action::PageForward);
-    m.insert(KeyCombo::shift("space"), Action::PageBackward);
-    m.insert(KeyCombo::ctrl("d"), Action::ToggleDebugLogging);
-    m.insert(KeyCombo::ctrl("f"), Action::PageForward);
-    m.insert(KeyCombo::ctrl("u"), Action::PageForward);
-    m.insert(KeyCombo::ctrl("b"), Action::PageBackward);
-
-    // Cursor / dialogue
-    m.insert(KeyCombo::plain("j"), Action::CursorNextDialogue);
-    m.insert(KeyCombo::plain("k"), Action::CursorPrevLine);
-    m.insert(KeyCombo::plain("Q"), Action::CursorToPageBottom);
-    m.insert(KeyCombo::plain("Up"), Action::JumpToPrevDialogue);
-    m.insert(KeyCombo::shift("Up"), Action::PageBackwardBottom);
-    m.insert(KeyCombo::plain("Down"), Action::JumpToNextDialogue);
-    m.insert(KeyCombo::plain("comma"), Action::JumpToPrevDialogue);
-    m.insert(KeyCombo::shift("comma"), Action::PageBackwardBottom);
-    m.insert(KeyCombo::plain("q"), Action::JumpToNextDialogue);
-
-    // Multi-key chord entry
-    m.insert(KeyCombo::plain("g"), Action::PendingG);
-    m.insert(KeyCombo::plain("G"), Action::JumpToEnd);
-
-    // Chapter / scene
-    m.insert(KeyCombo::plain("bracketleft"), Action::JumpToPrevChapter);
-    m.insert(KeyCombo::plain("braceleft"), Action::JumpToNextChapter);
-    m.insert(KeyCombo::plain("2"), Action::JumpToPrevScene);
-    m.insert(KeyCombo::plain("3"), Action::JumpToNextScene);
-
-    // Bookmarks
-    m.insert(KeyCombo::plain("m"), Action::ToggleBookmark);
-    m.insert(KeyCombo::plain("semicolon"), Action::NextBookmark);
-    m.insert(KeyCombo::shift("semicolon"), Action::PrevBookmark);
-    m.insert(KeyCombo::plain("colon"), Action::PrevBookmark);
-    m.insert(KeyCombo::ctrl("m"), Action::OpenBookmarkPicker);
-
-    // Pickers
-    m.insert(KeyCombo::ctrl("p"), Action::OpenLibraryPicker);
-    m.insert(KeyCombo::ctrl_shift("M"), Action::OpenMediaPicker);
-    m.insert(KeyCombo::ctrl("backslash"), Action::OpenConcordancePicker);
-    m.insert(KeyCombo::ctrl_shift("P"), Action::OpenConcordanceWordPicker);
-    m.insert(KeyCombo::ctrl_alt("p"), Action::OpenConcordanceListPicker);
-    m.insert(KeyCombo::ctrl("comma"), Action::OpenSettingsOverlay);
-    m.insert(KeyCombo::ctrl("slash"), Action::OpenKeybindsOverlay);
-    m.insert(KeyCombo::plain("slash"), Action::OpenSearch);
-
-    // MPV / media
-    m.insert(KeyCombo::plain("s"), Action::TogglePlaybackSync);
-    m.insert(KeyCombo::plain("Tab"), Action::TogglePlayback);
-    m.insert(KeyCombo::plain("o"), Action::SeekShortBackward);
-    m.insert(KeyCombo::plain("e"), Action::SeekShortForward);
-    m.insert(KeyCombo::plain("O"), Action::SeekLongBackward);
-    m.insert(KeyCombo::plain("E"), Action::SeekLongForward);
-    m.insert(KeyCombo::plain("Left"), Action::SeekBackward30);
-    m.insert(KeyCombo::ctrl("Up"), Action::VolumeUp);
-    m.insert(KeyCombo::ctrl("Down"), Action::VolumeDown);
-    m.insert(KeyCombo::plain("plus"), Action::TogglePlaybackSpeed);
-
-    // Vocab / glossing
-    m.insert(KeyCombo::plain("h"), Action::ToggleVocabPopup);
-    m.insert(KeyCombo::plain("backslash"), Action::VocabPopupNext);
-    m.insert(KeyCombo::plain("numbersign"), Action::VocabPopupPrev);
-    m.insert(KeyCombo::plain("r"), Action::JumpToNextVocab);
-    m.insert(KeyCombo::plain("R"), Action::JumpToPrevVocab);
-    m.insert(KeyCombo::alt("backslash"), Action::ToggleVocabHighlight);
-
-    // Visual / selection
-    m.insert(KeyCombo::plain("V"), Action::EnterVisualMode);
-    m.insert(KeyCombo::plain("w"), Action::WordCycleCopy);
-    m.insert(KeyCombo::plain("W"), Action::WordCollectCopy);
-
-    // Translations
-    m.insert(KeyCombo::plain("i"), Action::ToggleTranslations);
-
-    // Settings (in reader)
-    m.insert(KeyCombo::plain("exclam"), Action::AdjustFontSizeDown);
-    m.insert(KeyCombo::plain("bar"), Action::AdjustFontSizeUp);
-    m.insert(KeyCombo::plain("0"), Action::ResetFontSize);
-    m.insert(KeyCombo::plain("f"), Action::CycleFontForward);
-    m.insert(KeyCombo::plain("F"), Action::CycleFontBackward);
-    m.insert(KeyCombo::plain("l"), Action::ToggleSignColumn);
-    m.insert(KeyCombo::plain("minus"), Action::ToggleCursorLine);
-    m.insert(KeyCombo::alt("d"), Action::ToggleDim);
-    m.insert(KeyCombo::alt("f"), Action::ShowFontInfo);
-
-    // Timestamps
-    m.insert(KeyCombo::plain("u"), Action::SetStartTime);
-    m.insert(KeyCombo::plain("Right"), Action::SetStartTime);
-    m.insert(KeyCombo::alt("i"), Action::SetEndTime);
-    m.insert(KeyCombo::plain("period"), Action::SetChapter);
-    m.insert(KeyCombo::plain("BackSpace"), Action::DeleteTimestamp);
-    m.insert(KeyCombo::plain("p"), Action::NudgeStartBackward);
-    m.insert(KeyCombo::plain("P"), Action::NudgeStartForward);
-    m.insert(KeyCombo::plain("U"), Action::UndoTimestamp);
-    m.insert(KeyCombo::plain("a"), Action::PlayCurrentLine);
-
-    // App
-    m.insert(KeyCombo::ctrl_alt("l"), Action::SaveAndQuit);
-    m.insert(KeyCombo::ctrl("y"), Action::CopyLineMappingId);
-
-    // Search (in reader)
-    m.insert(KeyCombo::plain("n"), Action::SearchNextMatch);
-    m.insert(KeyCombo::plain("N"), Action::SearchPrevMatch);
-
+    for (combo, action) in nav_bindings() {
+        m.insert(combo, action);
+    }
+    for (combo, action) in media_bindings() {
+        m.insert(combo, action);
+    }
+    for (combo, action) in vocab_bindings() {
+        m.insert(combo, action);
+    }
+    for (combo, action) in display_bindings() {
+        m.insert(combo, action);
+    }
+    for (combo, action) in selection_bindings() {
+        m.insert(combo, action);
+    }
+    for (combo, action) in timestamp_bindings() {
+        m.insert(combo, action);
+    }
+    for (combo, action) in app_bindings() {
+        m.insert(combo, action);
+    }
     m
+}
+
+fn nav_bindings() -> Vec<(KeyCombo, Action)> {
+    vec![
+        // Page navigation
+        (KeyCombo::plain("x"), Action::PageForward),
+        (KeyCombo::plain("y"), Action::PageBackward),
+        (KeyCombo::plain("less"), Action::PageBackward),
+        (KeyCombo::plain("space"), Action::PageForward),
+        (KeyCombo::shift("space"), Action::PageBackward),
+        (KeyCombo::ctrl("f"), Action::PageForward),
+        (KeyCombo::ctrl("u"), Action::PageForward),
+        (KeyCombo::ctrl("b"), Action::PageBackward),
+        // Cursor / dialogue
+        (KeyCombo::plain("j"), Action::CursorNextDialogue),
+        (KeyCombo::plain("k"), Action::CursorPrevLine),
+        (KeyCombo::plain("Q"), Action::CursorToPageBottom),
+        (KeyCombo::plain("Up"), Action::JumpToPrevDialogue),
+        (KeyCombo::shift("Up"), Action::PageBackwardBottom),
+        (KeyCombo::plain("Down"), Action::JumpToNextDialogue),
+        (KeyCombo::plain("comma"), Action::JumpToPrevDialogue),
+        (KeyCombo::shift("comma"), Action::PageBackwardBottom),
+        (KeyCombo::plain("q"), Action::JumpToNextDialogue),
+        // Multi-key chord entry (gg → JumpToStart)
+        (KeyCombo::plain("g"), Action::PendingG),
+        (KeyCombo::plain("G"), Action::JumpToEnd),
+        // Chapter / scene
+        (KeyCombo::plain("bracketleft"), Action::JumpToPrevChapter),
+        (KeyCombo::plain("braceleft"), Action::JumpToNextChapter),
+        (KeyCombo::plain("2"), Action::JumpToPrevScene),
+        (KeyCombo::plain("3"), Action::JumpToNextScene),
+        // Bookmarks
+        (KeyCombo::plain("m"), Action::ToggleBookmark),
+        (KeyCombo::plain("semicolon"), Action::NextBookmark),
+        (KeyCombo::shift("semicolon"), Action::PrevBookmark),
+        (KeyCombo::plain("colon"), Action::PrevBookmark),
+        (KeyCombo::ctrl("m"), Action::OpenBookmarkPicker),
+    ]
+}
+
+fn media_bindings() -> Vec<(KeyCombo, Action)> {
+    vec![
+        (KeyCombo::plain("s"), Action::TogglePlaybackSync),
+        (KeyCombo::plain("Tab"), Action::TogglePlayback),
+        (KeyCombo::plain("o"), Action::SeekShortBackward),
+        (KeyCombo::plain("e"), Action::SeekShortForward),
+        (KeyCombo::plain("O"), Action::SeekLongBackward),
+        (KeyCombo::plain("E"), Action::SeekLongForward),
+        (KeyCombo::plain("Left"), Action::SeekBackward30),
+        (KeyCombo::ctrl("Up"), Action::VolumeUp),
+        (KeyCombo::ctrl("Down"), Action::VolumeDown),
+        (KeyCombo::plain("plus"), Action::TogglePlaybackSpeed),
+    ]
+}
+
+fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
+    vec![
+        (KeyCombo::plain("h"), Action::ToggleVocabPopup),
+        (KeyCombo::plain("backslash"), Action::VocabPopupNext),
+        (KeyCombo::plain("numbersign"), Action::VocabPopupPrev),
+        (KeyCombo::plain("r"), Action::JumpToNextVocab),
+        (KeyCombo::plain("R"), Action::JumpToPrevVocab),
+        (KeyCombo::alt("backslash"), Action::ToggleVocabHighlight),
+        (KeyCombo::ctrl("backslash"), Action::OpenConcordancePicker),
+        (KeyCombo::ctrl_shift("P"), Action::OpenConcordanceWordPicker),
+        (KeyCombo::ctrl_alt("p"), Action::OpenConcordanceListPicker),
+    ]
+}
+
+fn display_bindings() -> Vec<(KeyCombo, Action)> {
+    vec![
+        (KeyCombo::plain("exclam"), Action::AdjustFontSizeDown),
+        (KeyCombo::plain("bar"), Action::AdjustFontSizeUp),
+        (KeyCombo::plain("0"), Action::ResetFontSize),
+        (KeyCombo::plain("f"), Action::CycleFontForward),
+        (KeyCombo::plain("F"), Action::CycleFontBackward),
+        (KeyCombo::plain("l"), Action::ToggleSignColumn),
+        (KeyCombo::plain("minus"), Action::ToggleCursorLine),
+        (KeyCombo::alt("d"), Action::ToggleDim),
+        (KeyCombo::alt("f"), Action::ShowFontInfo),
+        (KeyCombo::plain("i"), Action::ToggleTranslations),
+        (KeyCombo::ctrl("comma"), Action::OpenSettingsOverlay),
+    ]
+}
+
+fn selection_bindings() -> Vec<(KeyCombo, Action)> {
+    vec![
+        (KeyCombo::plain("V"), Action::EnterVisualMode),
+        (KeyCombo::plain("w"), Action::WordCycleCopy),
+        (KeyCombo::plain("W"), Action::WordCollectCopy),
+    ]
+}
+
+fn timestamp_bindings() -> Vec<(KeyCombo, Action)> {
+    vec![
+        (KeyCombo::plain("u"), Action::SetStartTime),
+        (KeyCombo::plain("Right"), Action::SetStartTime),
+        (KeyCombo::alt("i"), Action::SetEndTime),
+        (KeyCombo::plain("period"), Action::SetChapter),
+        (KeyCombo::plain("BackSpace"), Action::DeleteTimestamp),
+        (KeyCombo::plain("p"), Action::NudgeStartBackward),
+        (KeyCombo::plain("P"), Action::NudgeStartForward),
+        (KeyCombo::plain("U"), Action::UndoTimestamp),
+        (KeyCombo::plain("a"), Action::PlayCurrentLine),
+    ]
+}
+
+fn app_bindings() -> Vec<(KeyCombo, Action)> {
+    vec![
+        (KeyCombo::ctrl("d"), Action::ToggleDebugLogging),
+        (KeyCombo::ctrl("p"), Action::OpenLibraryPicker),
+        (KeyCombo::ctrl_shift("M"), Action::OpenMediaPicker),
+        (KeyCombo::ctrl("slash"), Action::OpenKeybindsOverlay),
+        (KeyCombo::plain("slash"), Action::OpenSearch),
+        (KeyCombo::ctrl_alt("l"), Action::SaveAndQuit),
+        (KeyCombo::ctrl("y"), Action::CopyLineMappingId),
+        (KeyCombo::plain("n"), Action::SearchNextMatch),
+        (KeyCombo::plain("N"), Action::SearchPrevMatch),
+    ]
 }
 
 #[cfg(test)]
