@@ -89,6 +89,14 @@ pub fn handle_key(
         return true;
     }
 
+    // Ctrl+Alt+L: quit from any mode
+    if is_ctrl && is_alt && key_name == "l" {
+        crate::app::save_position(&mut state.borrow_mut());
+        let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::Quit);
+        state.borrow().window.close();
+        return true;
+    }
+
     // Mode dispatch — delegate to per-mode handler functions
     let mode = state.borrow().input_mode;
     if mode != crate::app::InputMode::Reader {
@@ -162,7 +170,7 @@ pub fn handle_key(
             let ctx = s.gloss_context.as_ref().unwrap();
             let saved = s.gloss_saved.as_ref().unwrap();
             let h = s.scrolled_window.height();
-            s.correction_overlay.show_gloss(&ctx.source_text, &saved.gloss_text, h);
+            s.correction_overlay.show_gloss_with_color(&ctx.source_text, &saved.gloss_text, h, Some(&s.theme.root_color));
             drop(s);
             state.borrow_mut().input_mode = crate::app::InputMode::GlossOverlay;
             return true;
@@ -1206,7 +1214,7 @@ fn regenerate_gloss(state_rc: &Rc<RefCell<AppState>>) {
 
                 let mut s = state_for_result.borrow_mut();
                 let h = s.scrolled_window.height();
-                s.correction_overlay.show_gloss(&ctx.source_text, &gloss_text, h);
+                s.correction_overlay.show_gloss_with_color(&ctx.source_text, &gloss_text, h, Some(&s.theme.root_color));
                 s.gloss_saved = saved;
                 crate::logging::log("GLOSS: regenerated");
             }
@@ -1347,7 +1355,7 @@ fn amend_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
 
                 let mut s = state_for_result.borrow_mut();
                 let h = s.scrolled_window.height();
-                s.correction_overlay.show_gloss(&ctx.source_text, &gloss_text, h);
+                s.correction_overlay.show_gloss_with_color(&ctx.source_text, &gloss_text, h, Some(&s.theme.root_color));
                 s.gloss_saved = saved;
                 crate::logging::log("GLOSS: amended");
             }

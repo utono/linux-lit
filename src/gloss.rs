@@ -24,6 +24,7 @@ Rules:
 - Each <verse> tag contains exactly one line of the original
 - Each <gloss> tag contains one flowing prose paragraph (3-4 sentences preferred, never exceed 6)
 - For long speeches (over 8 lines), break into 4-8 line chunks with analysis between each chunk
+- ALWAYS place a <speaker> tag before EVERY group of <verse> lines, even when the speaker has not changed — every quoted block must be preceded by its speaker name
 - No markdown, no bullets, no numbered lists, no headers";
 
 #[derive(Clone)]
