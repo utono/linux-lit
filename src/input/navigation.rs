@@ -150,22 +150,23 @@ fn last_dialogue_in_page(buffer: &sourceview5::Buffer, from: usize, count: usize
 }
 
 /// Given a dialogue line that will be the top of a page, back up over any
-/// non-dialogue content immediately preceding it: blanks, speakers, stage
-/// directions, and act/scene markers. Stops at the previous dialogue line or
-/// the start of the buffer. Ensures scene-transition context (exit directions,
-/// scene headers, entrance directions, asides) is visible at the top of the
-/// new page rather than skipped between pages.
+/// non-dialogue preamble immediately preceding it: blanks, speakers, stage
+/// directions. Stops at (and includes) the first act/scene marker or
+/// separator — those are section boundaries and should be the page top,
+/// not backed past into the previous section's content.
 fn back_up_for_speaker(buffer: &sourceview5::Buffer, line: usize) -> usize {
     use crate::db::line_types;
     let mut top = line;
     while top > 0 {
         let prev = buffer_line_text(buffer, top - 1);
         let trimmed = prev.trim();
+        if line_types::is_act_scene_marker(trimmed) || line_types::is_separator(trimmed) {
+            top -= 1;
+            break;
+        }
         if trimmed.is_empty()
             || line_types::is_speaker(trimmed)
             || line_types::is_stage_direction(trimmed)
-            || line_types::is_act_scene_marker(trimmed)
-            || line_types::is_separator(trimmed)
         {
             top -= 1;
         } else {
@@ -1604,6 +1605,10 @@ fn clamp_at_section_break(
     if clamped_last < page_top {
         return range;
     }
+    // No minimum-content guard here: even a page with just 3 lines before
+    // a scene break is correct — it's the end of the previous scene. The
+    // `clamped_last < page_top` check above already prevents truly empty
+    // pages (break at page_top + 1 with page_top being blank).
     // Recompute total_height by walking line heights up to clamped_last.
     let mut total = 0i32;
     for i in page_top..=clamped_last {
@@ -2051,12 +2056,11 @@ fn update_bottom_clip(
         return;
     }
 
-    // Section-break clamp + trailing-speaker trim. The section-break clamp
-    // ensures the bottom clip hides chapter/scene headings that would
-    // otherwise appear at the bottom of the page — they belong at the top
-    // of the next page.
-    let trimmed = clamp_at_section_break(range, page_top, text_view, &buf_sv);
-    let trimmed = trim_trailing_speakers(trimmed, page_top, text_view, &buf_sv);
+    // F9: block-atom trim is computed by snap_scroll_to_line via
+    // trim_visible_range; update_bottom_clip is a layout-flush backstop and
+    // intentionally skips block trim — the bottom-clip widget will resync on
+    // the next snap if the trim shifted last_fit.
+    let trimmed = trim_trailing_speakers(range, page_top, text_view, &buf_sv);
 
     let clip = (widget_height - trimmed.total_height).max(0);
     let scroll_val = scrolled_window.vadjustment().value();
