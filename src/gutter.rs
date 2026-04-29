@@ -204,7 +204,7 @@ pub fn setup_line_number_gutter(
 
     let color = dim_color.to_string();
     let face = font_family.to_string();
-    let pango_size = (font_size_pt as f32 * 0.8) as u32 * 1024;
+    let pango_size = (font_size_pt as f32 * 0.7) as u32 * 1024;
     renderer.connect_query_data(move |renderer, _lines_obj, line| {
         let text_renderer = renderer
             .downcast_ref::<sourceview5::GutterRendererText>()
