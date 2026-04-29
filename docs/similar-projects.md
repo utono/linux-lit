@@ -75,6 +75,32 @@ Features added to linux-lit since the original survey, mapped to comparable func
 - **Concordance picker with cross-work cycling and word copy/collect** (`db79e5a`, `1755583`) — Kindle's Vocabulary Builder and Readwise both surface per-word context across a library; cross-work cycling resembles ttu-ebook-reader's word-frequency view.
 - **Word cycling + clipboard copy (`w`, `\`, `#`)** (`6fb723c`, `e8eebb3`, `ff6cb63`) — Kindle's "Copy" sheet and Apple Books' selection menu cover the copy step; rapid word cycling for clipboard capture is closer to language-learning tools (Migaku, LingQ) than to general readers.
 
+### Chapter-Aware Pagination: Section Isolation vs Single Buffer
+
+**Foliate's section isolation** (each chapter in its own iframe/document):
+
+- Page breaks at chapter boundaries are free — no scanning needed
+- Memory efficient for huge books — only the current chapter is rendered
+- CSS/layout state can't leak between chapters
+- Backward navigation is trivial — chapter N-1 is a separate document with known page count
+- Cross-chapter search, highlighting, and annotation require multi-document coordination
+- Smooth scroll across chapter boundaries needs careful stitching
+- Audio sync spanning chapters requires mapping between documents
+- No single scroll position — progress is (chapter, page) not a flat offset
+
+**linux-lit's single buffer:**
+
+- Audio sync, vocab highlighting, concordance, bookmarks all operate on one flat index — simple
+- Search, visual mode selection, and scroll work uniformly across the entire work
+- `line_mapping.id` gives a single coordinate space that the DB, MPV timestamps, and UI all share
+- No stitching artifacts at chapter boundaries during scroll mode
+- Must scan buffer text to find chapter boundaries
+- 32k-line buffer means expensive operations like `build_page_tops` walk the entire work
+- GTK TextView layout validation scales with buffer size, not viewport size
+- Chapter-break logic lives in multiple places (trim_visible_range, back_up_for_speaker, next_page_top) instead of being structural
+
+linux-lit's single buffer is the right choice given its audio-sync-first architecture. The flat `line_mapping.id` coordinate space is what makes MPV timestamps, DB bookmarks, and concordance all work together without translation layers. The pagination scanning cost is real but bounded (O(lines_per_page) per page turn, O(total_lines) for page_tops index built once). Switching to section isolation would require reimplementing the entire timestamp/sync/bookmark system around a two-level (chapter, offset) coordinate — a much larger project with marginal pagination benefit.
+
 ### Input & Theming
 
 - **8BitDo Micro gamepad support with overlay and keybind swap** (`93d9891`) — Kindle Oasis page-turn buttons, Kobo Libra/Sage hardware buttons, and BOOX devices with bluetooth remotes all expose a similar "remote page-turn" surface; gamepad-as-remote is a niche pattern.
