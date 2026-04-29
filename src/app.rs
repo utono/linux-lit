@@ -1683,6 +1683,8 @@ pub fn display_work_at_with_prepared(
     }
     if let Some(old_renderer) = state.line_number_renderer.take() {
         crate::gutter::remove_line_number_renderer(&state.text_view, &old_renderer);
+        let right_margin = state.config.text_margins as i32 + crate::config::EXTRA_RIGHT_MARGIN;
+        state.text_view.set_right_margin(right_margin);
     }
 
     // Populate is_bookmarked eagerly so `'` / `"` bookmark navigation works
@@ -1739,13 +1741,13 @@ pub fn display_work_at_with_prepared(
                     .unwrap_or_default()
             };
             *state.line_numbers.borrow_mut() = new_line_numbers;
-            let font_size_pt = (state.config.font_size as f32 * 0.8) as u32;
             let renderer = crate::gutter::setup_line_number_gutter(
                 &state.text_view,
                 state.line_numbers.clone(),
                 &state.theme.dim_fg,
-                font_size_pt,
+                &state.config.font_family,
             );
+            state.text_view.set_right_margin(48);
             state.line_number_renderer = Some(renderer);
         }
     }
@@ -2741,6 +2743,25 @@ fn reapply_font(state: &AppState) {
     update_spacer_heights(state);
 }
 
+fn rebuild_line_number_gutter(state: &mut AppState) {
+    if let Some(old) = state.line_number_renderer.take() {
+        crate::gutter::remove_line_number_renderer(&state.text_view, &old);
+    }
+    let is_prose = state.current_work.as_ref()
+        .map(|w| crate::db::line_types::is_prose_work(&w.work_type))
+        .unwrap_or(true);
+    if !is_prose {
+        let renderer = crate::gutter::setup_line_number_gutter(
+            &state.text_view,
+            state.line_numbers.clone(),
+            &state.theme.dim_fg,
+            &state.config.font_family,
+        );
+        state.text_view.set_right_margin(48);
+        state.line_number_renderer = Some(renderer);
+    }
+}
+
 /// Adjust font size by delta, clamp to 8..=72, reapply CSS and repaginate.
 pub fn adjust_font_size(state: &mut AppState, delta: i32) {
     let new_size = (state.config.font_size as i32 + delta).clamp(8, 72) as u32;
@@ -2749,6 +2770,7 @@ pub fn adjust_font_size(state: &mut AppState, delta: i32) {
     }
     state.config.font_size = new_size;
     reapply_font(state);
+    rebuild_line_number_gutter(state);
     crate::input::navigation::resnap_page(state);
     crate::input::navigation::invalidate_page_tops(state);
     crate::config::save(&state.config);
@@ -2762,6 +2784,7 @@ pub fn reset_font_size(state: &mut AppState) {
     }
     state.config.font_size = default;
     reapply_font(state);
+    rebuild_line_number_gutter(state);
     crate::input::navigation::resnap_page(state);
     crate::input::navigation::invalidate_page_tops(state);
     crate::config::save(&state.config);
