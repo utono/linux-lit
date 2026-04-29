@@ -1069,7 +1069,12 @@ fn dispatch_action(
             let enabled = !crate::logging::debug_mode();
             crate::logging::set_debug_mode(enabled);
             crate::logging::log_always(&format!("DEBUG_MODE: {}", if enabled { "on" } else { "off" }));
-            state.borrow().debug_icon.set_visible(enabled);
+            let icon = state.borrow().debug_icon.clone();
+            icon.set_label(if enabled { "⚙" } else { "⊘" });
+            icon.set_visible(true);
+            glib::timeout_add_local_once(std::time::Duration::from_secs(2), move || {
+                icon.set_visible(false);
+            });
             true
         }
         CopyLineMappingId => {

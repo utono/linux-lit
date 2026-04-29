@@ -46,6 +46,7 @@ pub fn is_act_scene_marker(text: &str) -> bool {
     let upper = stripped.to_uppercase();
     upper.starts_with("ACT ")
         || upper.starts_with("SCENE ")
+        || upper.starts_with("CHAPTER ")
         || upper.starts_with("PROLOGUE")
         || upper.starts_with("EPILOGUE")
         || upper.starts_with("INDUCTION")

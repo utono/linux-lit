@@ -723,8 +723,16 @@ pub fn build_window(
     debug_icon.set_margin_start(44);
     debug_icon.set_margin_bottom(12);
     debug_icon.add_css_class("debug-icon");
-    debug_icon.set_visible(crate::logging::debug_mode());
+    debug_icon.set_visible(false);
     concordance_list_picker.overlay.add_overlay(&debug_icon);
+    // Flash the gear on launch if debug mode is already on.
+    if crate::logging::debug_mode() {
+        debug_icon.set_visible(true);
+        let icon = debug_icon.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_secs(2), move || {
+            icon.set_visible(false);
+        });
+    }
 
     // Word-copy status indicator (lower-left corner, hidden by default)
     let word_status_label = gtk4::Label::new(None);

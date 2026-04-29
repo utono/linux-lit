@@ -2051,11 +2051,12 @@ fn update_bottom_clip(
         return;
     }
 
-    // F9: block-atom trim is computed by snap_scroll_to_line via
-    // trim_visible_range; update_bottom_clip is a layout-flush backstop and
-    // intentionally skips block trim — the bottom-clip widget will resync on
-    // the next snap if the trim shifted last_fit.
-    let trimmed = trim_trailing_speakers(range, page_top, text_view, &buf_sv);
+    // Section-break clamp + trailing-speaker trim. The section-break clamp
+    // ensures the bottom clip hides chapter/scene headings that would
+    // otherwise appear at the bottom of the page — they belong at the top
+    // of the next page.
+    let trimmed = clamp_at_section_break(range, page_top, text_view, &buf_sv);
+    let trimmed = trim_trailing_speakers(trimmed, page_top, text_view, &buf_sv);
 
     let clip = (widget_height - trimmed.total_height).max(0);
     let scroll_val = scrolled_window.vadjustment().value();
