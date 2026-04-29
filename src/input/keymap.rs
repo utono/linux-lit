@@ -379,24 +379,13 @@ pub fn handle_key(
 
     // --- Concordance picker overlay ---
     if state.borrow().concordance_picker.is_visible() {
-        if is_ctrl && key_name == "n" {
-            state.borrow().concordance_picker.move_selection(1);
-            return true;
-        }
-        if is_ctrl && key_name == "p" {
-            state.borrow().concordance_picker.move_selection(-1);
-            return true;
-        }
-        match key_name {
-            "Down" => {
-                state.borrow().concordance_picker.move_selection(1);
+        use crate::input::picker_keys::{resolve_picker_key, PickerAction};
+        match resolve_picker_key(key_name, is_ctrl) {
+            PickerAction::Hide => {
+                state.borrow().concordance_picker.hide();
                 return true;
             }
-            "Up" => {
-                state.borrow().concordance_picker.move_selection(-1);
-                return true;
-            }
-            "Return" => {
+            PickerAction::Confirm => {
                 let selected = state.borrow().concordance_picker.selected_word();
                 state.borrow().concordance_picker.hide();
                 if let Some(word) = selected {
@@ -404,11 +393,15 @@ pub fn handle_key(
                 }
                 return true;
             }
-            "Escape" => {
-                state.borrow().concordance_picker.hide();
+            PickerAction::MoveDown => {
+                state.borrow().concordance_picker.move_selection(1);
                 return true;
             }
-            _ => {}
+            PickerAction::MoveUp => {
+                state.borrow().concordance_picker.move_selection(-1);
+                return true;
+            }
+            PickerAction::Unhandled => {}
         }
         return false;
     }
