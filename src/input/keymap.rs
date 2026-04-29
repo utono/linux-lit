@@ -207,53 +207,34 @@ pub fn handle_key(
     // Media picker
     let media_picker_visible = state.borrow().media_picker.is_visible();
 
-    // Ctrl+n/Ctrl+p navigate media picker list when visible
-    if media_picker_visible && is_ctrl {
-        match key_name {
-            "n" => {
-                state.borrow().media_picker.move_selection(1);
-                return true;
-            }
-            "p" => {
-                state.borrow().media_picker.move_selection(-1);
-                return true;
-            }
-            _ => {}
-        }
-    }
-
     if media_picker_visible {
-        match key_name {
-            "Escape" => {
+        use crate::input::picker_keys::{resolve_picker_key, PickerAction};
+        match resolve_picker_key(key_name, is_ctrl) {
+            PickerAction::Hide => {
                 state.borrow().media_picker.hide();
                 return true;
             }
-            "Return" => {
+            PickerAction::Confirm => {
                 crate::input::actions::pickers::confirm_media_selection(state, tokio_handle);
                 return true;
             }
-            "Down" | "j" => {
-                let is_search_focused = state.borrow().media_picker.search_entry().has_focus();
-                if key_name == "Down" || !is_search_focused {
-                    state.borrow().media_picker.move_selection(1);
-                    return true;
+            PickerAction::MoveDown => {
+                state.borrow().media_picker.move_selection(1);
+                return true;
+            }
+            PickerAction::MoveUp => {
+                state.borrow().media_picker.move_selection(-1);
+                return true;
+            }
+            PickerAction::Unhandled => {
+                if key_name == "p" {
+                    let is_search_focused = state.borrow().media_picker.search_entry().has_focus();
+                    if !is_search_focused {
+                        crate::input::actions::pickers::set_media_default(state, tokio_handle);
+                        return true;
+                    }
                 }
             }
-            "Up" | "k" => {
-                let is_search_focused = state.borrow().media_picker.search_entry().has_focus();
-                if key_name == "Up" || !is_search_focused {
-                    state.borrow().media_picker.move_selection(-1);
-                    return true;
-                }
-            }
-            "p" => {
-                let is_search_focused = state.borrow().media_picker.search_entry().has_focus();
-                if !is_search_focused {
-                    crate::input::actions::pickers::set_media_default(state, tokio_handle);
-                    return true;
-                }
-            }
-            _ => {}
         }
         return false;
     }
