@@ -778,26 +778,8 @@ fn dispatch_action(
         JumpToPrevDialogue => { navigation::jump_to_prev_dialogue(&mut state.borrow_mut()); true }
         JumpToNextChapter => { navigation::jump_to_next_chapter(&mut state.borrow_mut()); true }
         JumpToPrevChapter => { navigation::jump_to_prev_chapter(&mut state.borrow_mut()); true }
-        JumpToNextScene => {
-            let mut s = state.borrow_mut();
-            let is_play = s.current_work.as_ref().map(|w| w.work_type == "play").unwrap_or(false);
-            if is_play {
-                navigation::jump_to_next_scene(&mut s);
-            } else {
-                navigation::jump_to_next_chapter(&mut s);
-            }
-            true
-        }
-        JumpToPrevScene => {
-            let mut s = state.borrow_mut();
-            let is_play = s.current_work.as_ref().map(|w| w.work_type == "play").unwrap_or(false);
-            if is_play {
-                navigation::jump_to_prev_scene(&mut s);
-            } else {
-                navigation::jump_to_prev_chapter(&mut s);
-            }
-            true
-        }
+        JumpToNextScene => { navigation::jump_to_next_section(&mut state.borrow_mut()); true }
+        JumpToPrevScene => { navigation::jump_to_prev_section(&mut state.borrow_mut()); true }
 
         // Bookmarks
         ToggleBookmark => { crate::input::actions::bookmarks::toggle_bookmark(state, tokio_handle); true }

@@ -884,6 +884,33 @@ pub fn jump_to_next_scene(state: &mut AppState) {
     }
 }
 
+/// Jump to the next structural section: scene marker for plays, chapter
+/// for prose. Encapsulates the work_type routing so the dispatch table
+/// stays clean.
+pub fn jump_to_next_section(state: &mut AppState) {
+    let is_play = state.current_work.as_ref()
+        .map(|w| w.work_type == "play")
+        .unwrap_or(false);
+    if is_play {
+        jump_to_next_scene(state);
+    } else {
+        jump_to_next_chapter(state);
+    }
+}
+
+/// Jump to the previous structural section: scene marker for plays,
+/// chapter for prose.
+pub fn jump_to_prev_section(state: &mut AppState) {
+    let is_play = state.current_work.as_ref()
+        .map(|w| w.work_type == "play")
+        .unwrap_or(false);
+    if is_play {
+        jump_to_prev_scene(state);
+    } else {
+        jump_to_prev_chapter(state);
+    }
+}
+
 /// Jump to the next bookmarked line (wraps around).
 pub fn next_bookmark(state: &mut AppState) {
     let is_bm = state.is_bookmarked.borrow();
