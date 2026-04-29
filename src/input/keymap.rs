@@ -242,30 +242,14 @@ pub fn handle_key(
     // Settings overlay
     let settings_visible = state.borrow().settings_overlay.is_visible();
 
-    // Ctrl+n/Ctrl+p navigate settings overlay list (aliases for j/k)
-    if settings_visible && is_ctrl {
-        match key_name {
-            "n" => {
-                state.borrow_mut().settings_overlay.move_selection(1);
-                return true;
-            }
-            "p" => {
-                state.borrow_mut().settings_overlay.move_selection(-1);
-                return true;
-            }
-            _ => {}
-        }
-    }
-
-    // Settings overlay visible — route keys
     if settings_visible {
-        match key_name {
-            "Escape" => {
+        use crate::input::picker_keys::{resolve_picker_key, PickerAction};
+        match resolve_picker_key(key_name, is_ctrl) {
+            PickerAction::Hide => {
                 crate::input::actions::settings::revert_to_snapshot(state);
                 return true;
             }
-            "Return" => {
-                // Confirm: persist config and close
+            PickerAction::Confirm => {
                 {
                     let s = state.borrow_mut();
                     crate::config::save(&s.config);
@@ -273,37 +257,41 @@ pub fn handle_key(
                 }
                 return true;
             }
-            "j" | "Down" => {
+            PickerAction::MoveDown => {
                 state.borrow_mut().settings_overlay.move_selection(1);
                 return true;
             }
-            "k" | "Up" => {
+            PickerAction::MoveUp => {
                 state.borrow_mut().settings_overlay.move_selection(-1);
                 return true;
             }
-            "h" | "Left" => {
-                let (ls, cw, tm, nm, ts, cl) = {
-                    let s = state.borrow();
-                    (s.config.line_spacing, s.config.column_width, s.config.text_margins, s.config.navigation_mode, s.config.transition_style, s.config.show_cursor_line)
-                };
-                let change = state.borrow_mut().settings_overlay.adjust_value(-1, ls, cw, tm, nm, ts, cl);
-                crate::input::actions::settings::apply_settings_change(state, change);
-                return true;
+            PickerAction::Unhandled => {
+                match key_name {
+                    "h" | "Left" => {
+                        let (ls, cw, tm, nm, ts, cl) = {
+                            let s = state.borrow();
+                            (s.config.line_spacing, s.config.column_width, s.config.text_margins, s.config.navigation_mode, s.config.transition_style, s.config.show_cursor_line)
+                        };
+                        let change = state.borrow_mut().settings_overlay.adjust_value(-1, ls, cw, tm, nm, ts, cl);
+                        crate::input::actions::settings::apply_settings_change(state, change);
+                        return true;
+                    }
+                    "l" | "Right" => {
+                        let (ls, cw, tm, nm, ts, cl) = {
+                            let s = state.borrow();
+                            (s.config.line_spacing, s.config.column_width, s.config.text_margins, s.config.navigation_mode, s.config.transition_style, s.config.show_cursor_line)
+                        };
+                        let change = state.borrow_mut().settings_overlay.adjust_value(1, ls, cw, tm, nm, ts, cl);
+                        crate::input::actions::settings::apply_settings_change(state, change);
+                        return true;
+                    }
+                    "r" => {
+                        crate::input::actions::settings::reset_to_defaults(state);
+                        return true;
+                    }
+                    _ => return true, // consume all other keys when settings visible
+                }
             }
-            "l" | "Right" => {
-                let (ls, cw, tm, nm, ts, cl) = {
-                    let s = state.borrow();
-                    (s.config.line_spacing, s.config.column_width, s.config.text_margins, s.config.navigation_mode, s.config.transition_style, s.config.show_cursor_line)
-                };
-                let change = state.borrow_mut().settings_overlay.adjust_value(1, ls, cw, tm, nm, ts, cl);
-                crate::input::actions::settings::apply_settings_change(state, change);
-                return true;
-            }
-            "r" => {
-                crate::input::actions::settings::reset_to_defaults(state);
-                return true;
-            }
-            _ => return true, // consume all other keys when settings visible
         }
     }
 
