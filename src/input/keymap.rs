@@ -155,27 +155,14 @@ pub fn handle_key(
     // Bookmark picker
     let bookmark_picker_visible = state.borrow().bookmark_picker.is_visible();
 
-    if bookmark_picker_visible && is_ctrl {
-        match key_name {
-            "n" => {
-                state.borrow().bookmark_picker.move_selection(1);
-                return true;
-            }
-            "p" => {
-                state.borrow().bookmark_picker.move_selection(-1);
-                return true;
-            }
-            _ => {}
-        }
-    }
-
     if bookmark_picker_visible {
-        match key_name {
-            "Escape" => {
+        use crate::input::picker_keys::{resolve_picker_key, PickerAction};
+        match resolve_picker_key(key_name, is_ctrl) {
+            PickerAction::Hide => {
                 state.borrow().bookmark_picker.hide();
                 return true;
             }
-            "Return" => {
+            PickerAction::Confirm => {
                 let selected_id = state.borrow().bookmark_picker.selected_line_mapping_id();
                 if let Some(lm_id) = selected_id {
                     {
@@ -199,28 +186,20 @@ pub fn handle_key(
                 }
                 return true;
             }
-            "Delete" | "d" => {
-                let is_search_focused = state.borrow().bookmark_picker.search_entry().has_focus();
-                if key_name == "Delete" || !is_search_focused {
+            PickerAction::MoveDown => {
+                state.borrow().bookmark_picker.move_selection(1);
+                return true;
+            }
+            PickerAction::MoveUp => {
+                state.borrow().bookmark_picker.move_selection(-1);
+                return true;
+            }
+            PickerAction::Unhandled => {
+                if key_name == "Delete" || key_name == "d" {
                     crate::input::actions::pickers::delete_bookmark(state, tokio_handle);
                     return true;
                 }
             }
-            "Down" | "j" => {
-                let is_search_focused = state.borrow().bookmark_picker.search_entry().has_focus();
-                if key_name == "Down" || !is_search_focused {
-                    state.borrow().bookmark_picker.move_selection(1);
-                    return true;
-                }
-            }
-            "Up" | "k" => {
-                let is_search_focused = state.borrow().bookmark_picker.search_entry().has_focus();
-                if key_name == "Up" || !is_search_focused {
-                    state.borrow().bookmark_picker.move_selection(-1);
-                    return true;
-                }
-            }
-            _ => {}
         }
         return false;
     }
