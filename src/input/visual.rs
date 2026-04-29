@@ -126,7 +126,7 @@ pub struct ActionPopupState {
 }
 
 /// Built-in action names, in display order.
-pub const BUILTIN_ACTIONS: &[&str] = &["Copy", "Copy with metadata", "Gloss with ollama"];
+pub const BUILTIN_ACTIONS: &[&str] = &["Copy", "Copy with metadata", "Gloss with Claude"];
 
 /// Determine which built-in actions are available for the current work.
 pub fn available_builtin_actions(_state: &AppState) -> Vec<&'static str> {
@@ -173,8 +173,8 @@ pub fn execute_action(
             0 => action_copy(&mut state_rc.borrow_mut(), false),
             1 => action_copy(&mut state_rc.borrow_mut(), true),
             2 => {
-                action_gloss_with_llm(state_rc);
-                return; // async — don't exit visual mode yet
+                action_gloss_with_claude(state_rc);
+                return;
             }
             _ => {}
         }
@@ -389,66 +389,108 @@ fn action_external_command(state: &mut AppState, command: &str) {
 }
 
 
-fn action_gloss_with_llm(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
-    let (input_text, endpoint, model, tokio_handle) = {
+fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+    let (ctx, model, tokio_handle, existing) = {
         let state = state_rc.borrow();
         let (start, end) = match &state.visual_selection {
             Some(s) => s.range(),
             None => return,
         };
+        let work = match &state.current_work {
+            Some(w) => w,
+            None => return,
+        };
 
-        let mut selected_lines = Vec::new();
-        for buf_line in start..=end {
-            if let Some(line_start) = state.buffer.iter_at_line(buf_line as i32) {
-                let mut line_end = line_start;
-                if !line_end.ends_line() {
-                    line_end.forward_to_line_end();
-                }
-                selected_lines.push(state.buffer.text(&line_start, &line_end, false).to_string());
-            }
-        }
+        let selected_lines: Vec<crate::db::models::Line> = (start..=end)
+            .filter_map(|buf_line| {
+                state.work_line_for_buffer(buf_line)
+                    .and_then(|wi| work.lines.get(wi).cloned())
+            })
+            .collect();
 
-        (
-            selected_lines.join("\n"),
-            state.config.ollama_endpoint.clone(),
-            state.config.ollama_model.clone(),
-            state.tokio_handle.clone(),
-        )
+        let ctx = match crate::gloss::build_context(work, &selected_lines) {
+            Some(c) => c,
+            None => return,
+        };
+
+        let existing = match crate::db::queries::open_db() {
+            Ok(conn) => crate::db::queries::find_existing_gloss(
+                &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
+            ).ok().flatten(),
+            Err(_) => None,
+        };
+
+        (ctx, state.config.claude_model.clone(), state.tokio_handle.clone(), existing)
     };
 
     exit_visual_mode(&mut state_rc.borrow_mut());
 
-    crate::logging::log("VISUAL: starting LLM gloss");
+    if let Some(ref saved) = existing {
+        let mut s = state_rc.borrow_mut();
+        s.gloss_original_text = Some(ctx.source_text.clone());
+        s.correction_overlay.show(&ctx.source_text, &saved.gloss_text);
+        s.gloss_saved = Some(saved.clone());
+        s.gloss_context = Some(ctx);
+        s.input_mode = crate::app::InputMode::GlossOverlay;
+        crate::logging::log("GLOSS: showing cached gloss");
+        return;
+    }
+
     {
         let mut s = state_rc.borrow_mut();
-        s.gloss_original_text = Some(input_text.clone());
+        s.gloss_original_text = Some(ctx.source_text.clone());
         s.correction_overlay.show_loading();
         s.input_mode = crate::app::InputMode::GlossOverlay;
     }
 
+    let user_msg = crate::gloss::build_user_message(&ctx, None, None);
     let state_for_result = std::rc::Rc::clone(state_rc);
-    let original = input_text.clone();
 
     glib::spawn_future_local(async move {
         let result = tokio_handle
             .spawn(async move {
-                crate::ollama::gloss_text(&endpoint, &model, &input_text).await
+                crate::gloss::call_claude(&user_msg, &model).await
             })
             .await;
 
-        let state = state_for_result.borrow();
-
         match result {
-            Ok(Ok(gloss)) => {
-                state.correction_overlay.show(&original, &gloss);
-                crate::logging::log("VISUAL: gloss overlay shown");
+            Ok(Ok(gloss_text)) => {
+                if let Ok(conn) = crate::db::queries::open_db_rw() {
+                    let _ = crate::db::queries::save_gloss(
+                        &conn,
+                        &ctx.hash,
+                        &ctx.work_abbrev,
+                        &ctx.start_citation,
+                        &ctx.end_citation,
+                        ctx.act,
+                        ctx.scene,
+                        &ctx.speaker,
+                        &ctx.source_text,
+                        &gloss_text,
+                    );
+                }
+
+                let saved = crate::db::queries::open_db()
+                    .ok()
+                    .and_then(|conn| {
+                        crate::db::queries::find_existing_gloss(
+                            &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
+                        ).ok().flatten()
+                    });
+
+                let mut s = state_for_result.borrow_mut();
+                s.correction_overlay.show(&ctx.source_text, &gloss_text);
+                s.gloss_saved = saved;
+                s.gloss_context = Some(ctx);
+                crate::logging::log("GLOSS: generated and saved new gloss");
             }
             Ok(Err(e)) => {
-                crate::logging::log(&format!("VISUAL: LLM gloss error: {}", e));
-                state.correction_overlay.show(&format!("Error: {}", e), "");
+                let s = state_for_result.borrow();
+                s.correction_overlay.show(&format!("Error: {}", e), "");
+                crate::logging::log(&format!("GLOSS: API error: {}", e));
             }
             Err(e) => {
-                crate::logging::log(&format!("VISUAL: tokio join error: {}", e));
+                crate::logging::log(&format!("GLOSS: tokio join error: {}", e));
             }
         }
     });

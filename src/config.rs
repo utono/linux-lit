@@ -49,10 +49,8 @@ pub struct Config {
     pub work_positions: HashMap<String, usize>,
     #[serde(default)]
     pub visual_mode_commands: Vec<VisualModeCommand>,
-    #[serde(default = "default_ollama_model")]
-    pub ollama_model: String,
-    #[serde(default = "default_ollama_endpoint")]
-    pub ollama_endpoint: String,
+    #[serde(default = "default_claude_model")]
+    pub claude_model: String,
     #[serde(default = "default_vocab_highlight_visible")]
     pub vocab_highlight_visible: bool,
     #[serde(default = "default_dim_enabled")]
@@ -95,12 +93,8 @@ fn default_text_margins() -> u32 {
     DEFAULT_TEXT_MARGINS
 }
 
-fn default_ollama_model() -> String {
-    "qwen2.5:7b".to_string()
-}
-
-fn default_ollama_endpoint() -> String {
-    "http://localhost:11434".to_string()
+fn default_claude_model() -> String {
+    "claude-sonnet-4-6-20250514".to_string()
 }
 
 fn default_vocab_highlight_visible() -> bool {
@@ -124,8 +118,7 @@ impl Default for Config {
             last_work: None,
             work_positions: HashMap::new(),
             visual_mode_commands: Vec::new(),
-            ollama_model: default_ollama_model(),
-            ollama_endpoint: default_ollama_endpoint(),
+            claude_model: default_claude_model(),
             vocab_highlight_visible: default_vocab_highlight_visible(),
             dim_enabled: default_dim_enabled(),
             show_cursor_line: false,

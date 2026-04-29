@@ -683,6 +683,89 @@ pub fn replace_lines(
 }
 
 
+#[derive(Debug, Clone)]
+pub struct SavedGloss {
+    pub gloss_id: i64,
+    pub passage_id: i64,
+    pub gloss_text: String,
+    pub timestamp: String,
+}
+
+pub fn find_existing_gloss(
+    conn: &Connection,
+    work_abbrev: &str,
+    start_citation: &str,
+    end_citation: &str,
+) -> Result<Option<SavedGloss>, rusqlite::Error> {
+    conn.query_row(
+        "SELECT g.id, g.gloss_text, g.timestamp, p.id \
+         FROM glosses g \
+         JOIN passages p ON g.passage_id = p.id \
+         WHERE p.work_abbrev = ?1 \
+           AND p.start_citation = ?2 \
+           AND p.end_citation = ?3 \
+           AND g.gloss_type = 'teacher-generic' \
+         ORDER BY g.timestamp DESC \
+         LIMIT 1",
+        rusqlite::params![work_abbrev, start_citation, end_citation],
+        |row| {
+            Ok(SavedGloss {
+                gloss_id: row.get(0)?,
+                gloss_text: row.get(1)?,
+                timestamp: row.get(2)?,
+                passage_id: row.get(3)?,
+            })
+        },
+    )
+    .optional()
+}
+
+pub fn save_gloss(
+    conn: &Connection,
+    hash: &str,
+    work_abbrev: &str,
+    start_citation: &str,
+    end_citation: &str,
+    act: i64,
+    scene: i64,
+    character: &str,
+    source_text: &str,
+    gloss_text: &str,
+) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "INSERT OR IGNORE INTO passages \
+         (hash, work_abbrev, start_citation, end_citation, act, scene, character, source_text) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        rusqlite::params![hash, work_abbrev, start_citation, end_citation, act, scene, character, source_text],
+    )?;
+
+    let passage_id: i64 = conn.query_row(
+        "SELECT id FROM passages WHERE work_abbrev = ?1 AND start_citation = ?2 AND end_citation = ?3",
+        rusqlite::params![work_abbrev, start_citation, end_citation],
+        |row| row.get(0),
+    )?;
+
+    conn.execute(
+        "INSERT INTO glosses (passage_id, gloss_type, gloss_text) VALUES (?1, 'teacher-generic', ?2)",
+        rusqlite::params![passage_id, gloss_text],
+    )?;
+
+    Ok(())
+}
+
+pub fn update_gloss(conn: &Connection, gloss_id: i64, gloss_text: &str) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "UPDATE glosses SET gloss_text = ?1, timestamp = CURRENT_TIMESTAMP WHERE id = ?2",
+        rusqlite::params![gloss_text, gloss_id],
+    )?;
+    Ok(())
+}
+
+pub fn delete_gloss(conn: &Connection, gloss_id: i64) -> Result<(), rusqlite::Error> {
+    conn.execute("DELETE FROM glosses WHERE id = ?1", [gloss_id])?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

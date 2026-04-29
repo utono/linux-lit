@@ -218,9 +218,10 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("comma"), Action::JumpToPrevDialogue),
         (KeyCombo::shift("comma"), Action::PageBackwardBottom),
         (KeyCombo::plain("q"), Action::JumpToNextDialogue),
-        // Multi-key chord entry (gg → JumpToStart)
+        // Multi-key chord entry (gg → JumpToStart, zt → ScrollCursorTop)
         (KeyCombo::plain("g"), Action::PendingG),
         (KeyCombo::plain("G"), Action::JumpToEnd),
+        (KeyCombo::plain("z"), Action::PendingZ),
         // Chapter / scene
         (KeyCombo::plain("bracketleft"), Action::JumpToPrevChapter),
         (KeyCombo::plain("braceleft"), Action::JumpToNextChapter),
@@ -391,13 +392,13 @@ mod tests {
         let json = r#"{
             "reader": [
                 {"key": "x", "action": "PageBackward"},
-                {"key": "z", "action": "ThisActionDoesNotExist"}
+                {"key": "F12", "action": "ThisActionDoesNotExist"}
             ]
         }"#;
         let km = Keymap::from_json_str(json);
         // Override succeeded for known action:
         assert_eq!(km.lookup("x", false, false, false), Some(Action::PageBackward));
         // Unknown action skipped silently:
-        assert_eq!(km.lookup("z", false, false, false), None);
+        assert_eq!(km.lookup("F12", false, false, false), None);
     }
 }

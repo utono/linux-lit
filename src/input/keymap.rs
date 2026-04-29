@@ -11,6 +11,7 @@ use crate::input::navigation;
 #[derive(Default)]
 pub struct KeyState {
     pub pending_g: bool,
+    pub pending_z: bool,
     pub pending_ctrl_slash: bool,
 }
 
@@ -124,6 +125,15 @@ pub fn handle_key(
         } else if key_name == "semicolon" {
             // g; — jump to most recently created bookmark
             crate::input::actions::bookmarks::jump_to_recent_bookmark(state, tokio_handle);
+            return true;
+        }
+    }
+
+    // zt sequence check
+    if key_state.borrow().pending_z {
+        key_state.borrow_mut().pending_z = false;
+        if key_name == "t" {
+            navigation::scroll_cursor_top(&mut state.borrow_mut());
             return true;
         }
     }
@@ -500,15 +510,24 @@ fn handle_gloss_key(
 ) -> bool {
     match key_name {
         "r" => {
-            retry_gloss(state);
+            regenerate_gloss(state);
+            true
+        }
+        "a" => {
+            show_amend_dialog(state);
             true
         }
         "Escape" | "n" => {
-            state.borrow().correction_overlay.hide();
-            state.borrow_mut().input_mode = crate::app::InputMode::Reader;
+            {
+                let mut s = state.borrow_mut();
+                s.correction_overlay.hide();
+                s.gloss_saved = None;
+                s.gloss_context = None;
+                s.input_mode = crate::app::InputMode::Reader;
+            }
             true
         }
-        _ => true, // consume all other keys while overlay is open
+        _ => true,
     }
 }
 
@@ -985,6 +1004,14 @@ fn dispatch_action(
             });
             true
         }
+        PendingZ => {
+            key_state.borrow_mut().pending_z = true;
+            let ks = Rc::clone(key_state);
+            glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
+                ks.borrow_mut().pending_z = false;
+            });
+            true
+        }
 
         // Search (in reader, when matches present)
         SearchNextMatch => {
@@ -1097,48 +1124,216 @@ fn activate_chunk(s: &mut AppState, idx: usize) {
     }
 }
 
-fn retry_gloss(state_rc: &Rc<RefCell<AppState>>) {
-    let (original, endpoint, model, tokio_handle) = {
+fn regenerate_gloss(state_rc: &Rc<RefCell<AppState>>) {
+    let (ctx, model, tokio_handle, old_gloss_id) = {
         let state = state_rc.borrow();
-        let original = match &state.gloss_original_text {
-            Some(t) => t.clone(),
+        let ctx = match &state.gloss_context {
+            Some(c) => c.clone(),
             None => return,
         };
-        (
-            original,
-            state.config.ollama_endpoint.clone(),
-            state.config.ollama_model.clone(),
-            state.tokio_handle.clone(),
-        )
+        let old_id = state.gloss_saved.as_ref().map(|g| g.gloss_id);
+        (ctx, state.config.claude_model.clone(), state.tokio_handle.clone(), old_id)
     };
 
-    crate::logging::log("VISUAL: retrying LLM gloss");
-    state_rc.borrow().correction_overlay.show_loading();
-    state_rc.borrow_mut().input_mode = crate::app::InputMode::GlossOverlay;
+    if let Some(gid) = old_gloss_id {
+        if let Ok(conn) = crate::db::queries::open_db_rw() {
+            let _ = crate::db::queries::delete_gloss(&conn, gid);
+        }
+    }
 
+    {
+        let mut s = state_rc.borrow_mut();
+        s.gloss_saved = None;
+        s.correction_overlay.show_loading();
+    }
+
+    let user_msg = crate::gloss::build_user_message(&ctx, None, None);
     let state_for_result = Rc::clone(state_rc);
-    let original_for_display = original.clone();
 
     glib::spawn_future_local(async move {
         let result = tokio_handle
             .spawn(async move {
-                crate::ollama::gloss_text(&endpoint, &model, &original).await
+                crate::gloss::call_claude(&user_msg, &model).await
             })
             .await;
 
-        let state = state_for_result.borrow();
-
         match result {
-            Ok(Ok(gloss)) => {
-                state.correction_overlay.show(&original_for_display, &gloss);
-                crate::logging::log("VISUAL: gloss overlay refreshed with retry");
+            Ok(Ok(gloss_text)) => {
+                if let Ok(conn) = crate::db::queries::open_db_rw() {
+                    let _ = crate::db::queries::save_gloss(
+                        &conn,
+                        &ctx.hash,
+                        &ctx.work_abbrev,
+                        &ctx.start_citation,
+                        &ctx.end_citation,
+                        ctx.act,
+                        ctx.scene,
+                        &ctx.speaker,
+                        &ctx.source_text,
+                        &gloss_text,
+                    );
+                }
+
+                let saved = crate::db::queries::open_db()
+                    .ok()
+                    .and_then(|conn| {
+                        crate::db::queries::find_existing_gloss(
+                            &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
+                        ).ok().flatten()
+                    });
+
+                let mut s = state_for_result.borrow_mut();
+                s.correction_overlay.show(&ctx.source_text, &gloss_text);
+                s.gloss_saved = saved;
+                crate::logging::log("GLOSS: regenerated");
             }
             Ok(Err(e)) => {
-                crate::logging::log(&format!("VISUAL: LLM gloss retry error: {}", e));
-                state.correction_overlay.show(&format!("Error: {}", e), "");
+                let s = state_for_result.borrow();
+                s.correction_overlay.show(&format!("Error: {}", e), "");
+                crate::logging::log(&format!("GLOSS: regenerate error: {}", e));
             }
             Err(e) => {
-                crate::logging::log(&format!("VISUAL: tokio join error on gloss retry: {}", e));
+                crate::logging::log(&format!("GLOSS: tokio join error: {}", e));
+            }
+        }
+    });
+}
+
+fn show_amend_dialog(state_rc: &Rc<RefCell<AppState>>) {
+    let window = {
+        let s = state_rc.borrow();
+        s.text_view.root().and_then(|r| r.downcast::<gtk4::Window>().ok())
+    };
+    let parent_window = match window {
+        Some(w) => w,
+        None => return,
+    };
+
+    let dialog = gtk4::Window::builder()
+        .title("Enhancement prompt")
+        .transient_for(&parent_window)
+        .modal(true)
+        .default_width(450)
+        .default_height(160)
+        .build();
+
+    let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
+    vbox.set_margin_top(12);
+    vbox.set_margin_bottom(12);
+    vbox.set_margin_start(12);
+    vbox.set_margin_end(12);
+
+    let label = gtk4::Label::new(Some("Enhancement prompt:"));
+    label.set_halign(gtk4::Align::Start);
+    vbox.append(&label);
+
+    let scrolled = gtk4::ScrolledWindow::new();
+    scrolled.set_vexpand(true);
+    scrolled.set_min_content_height(80);
+
+    let text_view = gtk4::TextView::new();
+    text_view.set_wrap_mode(gtk4::WrapMode::Word);
+    text_view.set_top_margin(6);
+    text_view.set_bottom_margin(6);
+    text_view.set_left_margin(6);
+    text_view.set_right_margin(6);
+    scrolled.set_child(Some(&text_view));
+    vbox.append(&scrolled);
+
+    let hint = gtk4::Label::new(Some("Ctrl+Enter to submit  \u{00b7}  Esc to cancel"));
+    hint.add_css_class("dim-label");
+    hint.set_halign(gtk4::Align::Start);
+    vbox.append(&hint);
+
+    dialog.set_child(Some(&vbox));
+
+    let state_for_key = Rc::clone(state_rc);
+    let dialog_weak = dialog.downgrade();
+    let tv_clone = text_view.clone();
+
+    let key_controller = gtk4::EventControllerKey::new();
+    key_controller.connect_key_pressed(move |_ctrl, keyval, _code, modifier| {
+        let key_name = keyval.name().unwrap_or_default();
+        if key_name == "Escape" {
+            if let Some(d) = dialog_weak.upgrade() {
+                d.close();
+            }
+            return glib::Propagation::Stop;
+        }
+        if key_name == "Return" && modifier.contains(gtk4::gdk::ModifierType::CONTROL_MASK) {
+            let d = match dialog_weak.upgrade() {
+                Some(d) => d,
+                None => return glib::Propagation::Stop,
+            };
+            let buf = tv_clone.buffer();
+            let prompt = buf.text(&buf.start_iter(), &buf.end_iter(), false).to_string();
+            d.close();
+            if !prompt.trim().is_empty() {
+                amend_gloss(&state_for_key, &prompt);
+            }
+            return glib::Propagation::Stop;
+        }
+        glib::Propagation::Proceed
+    });
+    dialog.add_controller(key_controller);
+
+    dialog.present();
+}
+
+fn amend_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
+    let (ctx, model, tokio_handle, existing) = {
+        let state = state_rc.borrow();
+        let ctx = match &state.gloss_context {
+            Some(c) => c.clone(),
+            None => return,
+        };
+        let existing = match &state.gloss_saved {
+            Some(g) => g.clone(),
+            None => return,
+        };
+        (ctx, state.config.claude_model.clone(), state.tokio_handle.clone(), existing)
+    };
+
+    state_rc.borrow().correction_overlay.show_loading();
+
+    let prompt_owned = prompt.to_string();
+    let user_msg = crate::gloss::build_user_message(&ctx, Some(&prompt_owned), Some(&existing.gloss_text));
+    let state_for_result = Rc::clone(state_rc);
+    let gloss_id = existing.gloss_id;
+
+    glib::spawn_future_local(async move {
+        let result = tokio_handle
+            .spawn(async move {
+                crate::gloss::call_claude(&user_msg, &model).await
+            })
+            .await;
+
+        match result {
+            Ok(Ok(gloss_text)) => {
+                if let Ok(conn) = crate::db::queries::open_db_rw() {
+                    let _ = crate::db::queries::update_gloss(&conn, gloss_id, &gloss_text);
+                }
+
+                let saved = crate::db::queries::open_db()
+                    .ok()
+                    .and_then(|conn| {
+                        crate::db::queries::find_existing_gloss(
+                            &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
+                        ).ok().flatten()
+                    });
+
+                let mut s = state_for_result.borrow_mut();
+                s.correction_overlay.show(&ctx.source_text, &gloss_text);
+                s.gloss_saved = saved;
+                crate::logging::log("GLOSS: amended");
+            }
+            Ok(Err(e)) => {
+                let s = state_for_result.borrow();
+                s.correction_overlay.show(&format!("Error: {}", e), "");
+                crate::logging::log(&format!("GLOSS: amend error: {}", e));
+            }
+            Err(e) => {
+                crate::logging::log(&format!("GLOSS: tokio join error: {}", e));
             }
         }
     });

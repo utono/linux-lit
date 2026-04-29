@@ -65,7 +65,7 @@ impl CorrectionOverlay {
         container.append(&corrected_label);
 
         // Hint
-        let hint = Label::new(Some("r = retry  ·  Esc = dismiss"));
+        let hint = Label::new(Some("Esc = close  ·  a = amend  ·  r = regenerate"));
         hint.add_css_class("correction-hint");
         container.append(&hint);
 
