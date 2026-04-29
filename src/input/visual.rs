@@ -76,6 +76,7 @@ pub fn move_selection_cursor(state: &mut AppState, delta: i32) {
 /// Enter visual mode: set anchor at current line.
 pub fn enter_visual_mode(state: &mut AppState) {
     state.visual_selection = Some(SelectionState::new(state.current_line));
+    state.input_mode = crate::app::InputMode::Visual;
     crate::input::navigation::update_highlight_and_ensure_visible(state);
     crate::logging::log(&format!("VISUAL: entered at line {}", state.current_line));
 }
@@ -90,6 +91,7 @@ pub fn yank_selection(state: &mut AppState) {
 pub fn exit_visual_mode(state: &mut AppState) {
     if state.visual_selection.is_some() {
         state.visual_selection = None;
+        state.input_mode = crate::app::InputMode::Reader;
         clear_selection_highlight(state);
         crate::input::navigation::update_highlight_and_ensure_visible(state);
         crate::logging::log("VISUAL: exited");
@@ -145,6 +147,7 @@ pub fn open_action_popup(state: &mut AppState) {
         &externals,
     );
     state.action_popup = Some(ActionPopupState { selected_index: 0 });
+    state.input_mode = crate::app::InputMode::ActionPopup;
     crate::logging::log("VISUAL: action popup opened");
 }
 
@@ -152,6 +155,7 @@ pub fn open_action_popup(state: &mut AppState) {
 pub fn close_action_popup(state: &mut AppState) {
     state.action_popup = None;
     state.action_popup_widget.hide();
+    state.input_mode = crate::app::InputMode::Visual;
     crate::logging::log("VISUAL: action popup closed");
 }
 
@@ -419,6 +423,7 @@ fn action_gloss_with_llm(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
         let mut s = state_rc.borrow_mut();
         s.gloss_original_text = Some(input_text.clone());
         s.correction_overlay.show_loading();
+        s.input_mode = crate::app::InputMode::GlossOverlay;
     }
 
     let state_for_result = std::rc::Rc::clone(state_rc);

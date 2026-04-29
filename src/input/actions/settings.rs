@@ -130,6 +130,7 @@ pub(crate) fn revert_to_snapshot(state: &Rc<RefCell<crate::app::AppState>>) {
         apply_theme_to_state(&mut s, &snap_theme);
     }
     s.settings_overlay.hide();
+    s.input_mode = crate::app::InputMode::Reader;
 }
 
 /// Reset AppState to default settings. Called from `r` in settings overlay.

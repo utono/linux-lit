@@ -20,6 +20,7 @@ pub(crate) fn load_selected_work(
             s.picker.hide();
             s.correction_overlay.show_loading_message("Loading...");
         }
+        state.borrow_mut().input_mode = crate::app::InputMode::Reader;
         let state_clone = Rc::clone(state);
         let handle = tokio_handle.clone();
         let handle_for_write = handle.clone();
@@ -146,6 +147,7 @@ pub(crate) fn open_bookmark_picker(
                 s.bookmark_picker.set_items(items);
             }
             state_clone.borrow().bookmark_picker.show();
+            state_clone.borrow_mut().input_mode = crate::app::InputMode::BookmarkPicker;
         });
     }
 }
@@ -180,6 +182,7 @@ pub(crate) fn open_media_picker(
                 s.media_picker.set_items(items);
             }
             state_clone.borrow().media_picker.show();
+            state_clone.borrow_mut().input_mode = crate::app::InputMode::MediaPicker;
         });
     }
 }
@@ -247,6 +250,7 @@ pub(crate) fn confirm_media_selection(
                     .cmd_tx
                     .try_send(crate::mpv::MpvCommand::Connect(socket_path));
                 s.media_picker.hide();
+                s.input_mode = crate::app::InputMode::Reader;
                 crate::logging::log(&format!(
                     "MEDIA: switched to media_id={}",
                     media_id
@@ -364,6 +368,7 @@ pub(crate) fn delete_bookmark(
                 s.bookmark_picker.remove_selected();
                 if !s.bookmark_picker.has_items() {
                     s.bookmark_picker.hide();
+                    s.input_mode = crate::app::InputMode::Reader;
                 }
             }
         });

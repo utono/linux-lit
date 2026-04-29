@@ -54,6 +54,7 @@ pub fn handle_key(
         };
         state.borrow_mut().concordance_word_picker.set_words(words);
         state.borrow().concordance_word_picker.show();
+        state.borrow_mut().input_mode = crate::app::InputMode::ConcordanceWordPicker;
         return true;
     }
 
@@ -64,6 +65,8 @@ pub fn handle_key(
             s.concordance_list_picker
                 .show(&conc.occurrences, conc.current_index);
         }
+        drop(s);
+        state.borrow_mut().input_mode = crate::app::InputMode::ConcordanceListPicker;
         return true;
     }
 
@@ -81,6 +84,7 @@ pub fn handle_key(
         state.borrow().correction_overlay.hide();
         state.borrow_mut().picker.show_prepare();
         state.borrow().picker.show_finish();
+        state.borrow_mut().input_mode = crate::app::InputMode::LibraryPicker;
         return true;
     }
 
@@ -96,6 +100,7 @@ pub fn handle_key(
                     }
                     crate::ui::library_picker::PickerLevel::Authors => {
                         state.borrow().picker.hide();
+                        state.borrow_mut().input_mode = crate::app::InputMode::Reader;
                     }
                 }
                 return true;
@@ -160,6 +165,7 @@ pub fn handle_key(
         match resolve_picker_key(key_name, is_ctrl) {
             PickerAction::Hide => {
                 state.borrow().bookmark_picker.hide();
+                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
                 return true;
             }
             PickerAction::Confirm => {
@@ -170,6 +176,7 @@ pub fn handle_key(
                         s.bookmark_picker.hide();
                     }
                     let mut s = state.borrow_mut();
+                    s.input_mode = crate::app::InputMode::Reader;
                     let buffer_line = if let Some(ref lm) = s.line_map {
                         s.current_work.as_ref().and_then(|w| {
                             let work_idx = w.lines.iter().position(|l| l.id == lm_id)?;
@@ -212,6 +219,7 @@ pub fn handle_key(
         match resolve_picker_key(key_name, is_ctrl) {
             PickerAction::Hide => {
                 state.borrow().media_picker.hide();
+                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
                 return true;
             }
             PickerAction::Confirm => {
@@ -251,9 +259,10 @@ pub fn handle_key(
             }
             PickerAction::Confirm => {
                 {
-                    let s = state.borrow_mut();
+                    let mut s = state.borrow_mut();
                     crate::config::save(&s.config);
                     s.settings_overlay.hide();
+                    s.input_mode = crate::app::InputMode::Reader;
                 }
                 return true;
             }
@@ -302,11 +311,13 @@ pub fn handle_key(
             "Escape" => {
                 crate::input::search::clear_search(&mut state.borrow_mut());
                 state.borrow().search_bar.hide();
+                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
                 return true;
             }
             "Return" => {
                 crate::input::search::execute_search(&state);
                 state.borrow().search_bar.hide();
+                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
                 return true;
             }
             "Tab" => {
@@ -327,6 +338,7 @@ pub fn handle_key(
             }
             "Escape" | "n" => {
                 state.borrow().correction_overlay.hide();
+                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
                 return true;
             }
             _ => return true, // consume all other keys while overlay is open
@@ -339,6 +351,7 @@ pub fn handle_key(
         match key_name {
             "Escape" => {
                 state.borrow().gamepad_overlay.hide();
+                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
                 return true;
             }
             _ => return true, // consume all other keys when gamepad overlay visible
@@ -351,6 +364,7 @@ pub fn handle_key(
         match key_name {
             "Escape" => {
                 state.borrow().keybinds_overlay.hide();
+                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
                 return true;
             }
             "g" if key_state.borrow().pending_ctrl_slash => {
@@ -359,6 +373,8 @@ pub fn handle_key(
                 let s = state.borrow();
                 s.keybinds_overlay.hide();
                 s.gamepad_overlay.show();
+                drop(s);
+                state.borrow_mut().input_mode = crate::app::InputMode::GamepadOverlay;
                 return true;
             }
             "exclam" => {
@@ -383,11 +399,13 @@ pub fn handle_key(
         match resolve_picker_key(key_name, is_ctrl) {
             PickerAction::Hide => {
                 state.borrow().concordance_picker.hide();
+                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
                 return true;
             }
             PickerAction::Confirm => {
                 let selected = state.borrow().concordance_picker.selected_word();
                 state.borrow().concordance_picker.hide();
+                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
                 if let Some(word) = selected {
                     crate::input::actions::concordance::handle_word_selection(state, tokio_handle, word);
                 }
@@ -413,11 +431,13 @@ pub fn handle_key(
         match resolve_picker_key(key_name, is_ctrl) {
             PickerAction::Hide => {
                 state.borrow().concordance_word_picker.hide();
+                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
                 return true;
             }
             PickerAction::Confirm => {
                 let selected = state.borrow().concordance_word_picker.selected_word();
                 state.borrow().concordance_word_picker.hide();
+                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
                 if let Some(word) = selected {
                     crate::input::actions::concordance::handle_word_selection(state, tokio_handle, word);
                 }
@@ -443,11 +463,13 @@ pub fn handle_key(
         match resolve_picker_key(key_name, is_ctrl) {
             PickerAction::Hide => {
                 state.borrow().concordance_list_picker.hide();
+                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
                 return true;
             }
             PickerAction::Confirm => {
                 let selected = state.borrow().concordance_list_picker.selected_index();
                 state.borrow().concordance_list_picker.hide();
+                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
                 if let Some(idx) = selected {
                     {
                         let mut s = state.borrow_mut();
@@ -692,6 +714,7 @@ fn dispatch_action(
                 state.borrow().correction_overlay.hide();
                 state.borrow_mut().picker.show_prepare();
                 state.borrow().picker.show_finish();
+                state.borrow_mut().input_mode = crate::app::InputMode::LibraryPicker;
             }
             true
         }
@@ -708,6 +731,7 @@ fn dispatch_action(
             };
             state.borrow_mut().concordance_word_picker.set_words(words);
             state.borrow().concordance_word_picker.show();
+            state.borrow_mut().input_mode = crate::app::InputMode::ConcordanceWordPicker;
             true
         }
         OpenConcordanceListPicker => {
@@ -715,6 +739,8 @@ fn dispatch_action(
             if let Some(conc) = &s.concordance_state {
                 s.concordance_list_picker.show(&conc.occurrences, conc.current_index);
             }
+            drop(s);
+            state.borrow_mut().input_mode = crate::app::InputMode::ConcordanceListPicker;
             true
         }
         OpenSettingsOverlay => {
@@ -729,6 +755,7 @@ fn dispatch_action(
                 let cl = s.config.show_cursor_line;
                 drop(s);
                 state.borrow_mut().settings_overlay.show(ls, cw, tm, nm, ts, cl);
+                state.borrow_mut().input_mode = crate::app::InputMode::Settings;
             }
             true
         }
@@ -737,6 +764,8 @@ fn dispatch_action(
             if s.keybinds_overlay.is_visible() || s.gamepad_overlay.is_visible() {
                 s.keybinds_overlay.hide();
                 s.gamepad_overlay.hide();
+                drop(s);
+                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
             } else {
                 s.picker.hide();
                 s.media_picker.hide();
@@ -744,6 +773,8 @@ fn dispatch_action(
                 s.search_bar.hide();
                 s.correction_overlay.hide();
                 s.keybinds_overlay.show();
+                drop(s);
+                state.borrow_mut().input_mode = crate::app::InputMode::KeybindsOverlay;
             }
             key_state.borrow_mut().pending_ctrl_slash = true;
             let ks = Rc::clone(key_state);
@@ -756,6 +787,7 @@ fn dispatch_action(
             let mut s = state.borrow_mut();
             crate::input::search::clear_search(&mut s);
             s.search_bar.show();
+            s.input_mode = crate::app::InputMode::Search;
             true
         }
 
@@ -1090,6 +1122,7 @@ fn retry_gloss(state_rc: &Rc<RefCell<AppState>>) {
 
     crate::logging::log("VISUAL: retrying LLM gloss");
     state_rc.borrow().correction_overlay.show_loading();
+    state_rc.borrow_mut().input_mode = crate::app::InputMode::GlossOverlay;
 
     let state_for_result = Rc::clone(state_rc);
     let original_for_display = original.clone();

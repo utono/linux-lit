@@ -117,6 +117,7 @@ pub(crate) fn open_picker(
                 let mut s = state_clone.borrow_mut();
                 s.concordance_picker.set_words(words);
                 s.concordance_picker.show();
+                s.input_mode = crate::app::InputMode::ConcordancePicker;
             }
             // set_text triggers connect_changed which borrows state, so the
             // mutable borrow must be dropped first.
