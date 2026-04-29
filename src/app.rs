@@ -89,6 +89,8 @@ pub struct AppState {
     /// detect when monocle↔tiled transitions require rebuilding the gutter.
     pub gutter_logical_left: Cell<i32>,
     pub chunk_renderer: Option<sourceview5::GutterRendererText>,
+    pub line_number_renderer: Option<sourceview5::GutterRendererText>,
+    pub line_numbers: Rc<RefCell<Vec<Option<i64>>>>,
     pub ab_repeat: crate::ab_repeat::AbRepeatState,
     pub ab_a_line: Rc<Cell<Option<usize>>>,
     pub ab_b_line: Rc<Cell<Option<usize>>>,
@@ -838,6 +840,8 @@ pub fn build_window(
         gutter_renderer: None,
         gutter_logical_left: Cell::new(0),
         chunk_renderer: None,
+        line_number_renderer: None,
+        line_numbers: Rc::new(RefCell::new(Vec::new())),
         ab_repeat: crate::ab_repeat::AbRepeatState::default(),
         ab_a_line: Rc::new(Cell::new(None)),
         ab_b_line: Rc::new(Cell::new(None)),
@@ -1677,6 +1681,9 @@ pub fn display_work_at_with_prepared(
     if let Some(old_renderer) = state.chunk_renderer.take() {
         crate::gutter::remove_gutter_renderer(&state.text_view, &old_renderer);
     }
+    if let Some(old_renderer) = state.line_number_renderer.take() {
+        crate::gutter::remove_line_number_renderer(&state.text_view, &old_renderer);
+    }
 
     // Populate is_bookmarked eagerly so `'` / `"` bookmark navigation works
     // before the sign column has ever been toggled. setup_gutter() will
@@ -1709,6 +1716,38 @@ pub fn display_work_at_with_prepared(
                 .unwrap_or_default()
         };
         *state.is_bookmarked.borrow_mut() = new_is_bookmarked;
+    }
+
+    // Set up right-side line number gutter for plays/verse
+    {
+        let is_prose = state.current_work.as_ref()
+            .map(|w| crate::db::line_types::is_prose_work(&w.work_type))
+            .unwrap_or(true);
+        if !is_prose {
+            let new_line_numbers: Vec<Option<i64>> = if let Some(ref lm) = state.line_map {
+                lm.buffer_to_work
+                    .iter()
+                    .map(|opt_idx| {
+                        opt_idx.and_then(|idx| {
+                            state.current_work.as_ref()?.lines.get(idx).map(|l| l.line_in_div)
+                        })
+                    })
+                    .collect()
+            } else {
+                state.current_work.as_ref()
+                    .map(|w| w.lines.iter().map(|l| Some(l.line_in_div)).collect())
+                    .unwrap_or_default()
+            };
+            *state.line_numbers.borrow_mut() = new_line_numbers;
+            let font_size_pt = (state.config.font_size as f32 * 0.8) as u32;
+            let renderer = crate::gutter::setup_line_number_gutter(
+                &state.text_view,
+                state.line_numbers.clone(),
+                &state.theme.dim_fg,
+                font_size_pt,
+            );
+            state.line_number_renderer = Some(renderer);
+        }
     }
 
     // Load chunk data (needed for AB repeat, not just gutter display)
