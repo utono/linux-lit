@@ -83,7 +83,7 @@ impl SettingsOverlay {
 
         // Footer
         let footer = Label::builder()
-            .label("j/k navigate · h/l adjust · r reset · Enter confirm · Esc revert")
+            .label("↑↓ navigate · h/l adjust · r reset · Enter confirm · Esc revert")
             .css_classes(vec!["settings-footer"])
             .halign(gtk4::Align::Center)
             .build();
