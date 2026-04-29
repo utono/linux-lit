@@ -1011,13 +1011,7 @@ fn dispatch_action(
         ShowFontInfo => { crate::app::show_font_info(&state.borrow()); true }
 
         // Timestamps
-        SetStartTime => {
-            let ok = crate::input::timestamps::set_start_time(&mut state.borrow_mut());
-            if ok {
-                navigation::cursor_next_dialogue(&mut state.borrow_mut());
-            }
-            ok
-        }
+        SetStartTime => { crate::input::timestamps::set_start_time(&mut state.borrow_mut()); true }
         SetEndTime => crate::input::timestamps::set_end_time(&mut state.borrow_mut()),
         SetChapter => crate::input::timestamps::set_chapter(&mut state.borrow_mut()),
         DeleteTimestamp => crate::input::timestamps::delete_timestamp(&mut state.borrow_mut()),

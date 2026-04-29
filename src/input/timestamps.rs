@@ -137,6 +137,8 @@ pub fn set_start_time(state: &mut AppState) -> bool {
         renderer.queue_draw();
     }
 
+    crate::input::navigation::cursor_next_dialogue(state);
+
     true
 }
 
