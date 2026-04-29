@@ -517,6 +517,14 @@ fn handle_gloss_key(
             show_amend_dialog(state);
             true
         }
+        "j" => {
+            state.borrow().correction_overlay.scroll_gloss(1);
+            true
+        }
+        "k" => {
+            state.borrow().correction_overlay.scroll_gloss(-1);
+            true
+        }
         "Escape" | "n" => {
             {
                 let mut s = state.borrow_mut();
@@ -1183,7 +1191,7 @@ fn regenerate_gloss(state_rc: &Rc<RefCell<AppState>>) {
                     });
 
                 let mut s = state_for_result.borrow_mut();
-                s.correction_overlay.show(&ctx.source_text, &gloss_text);
+                s.correction_overlay.show_gloss(&ctx.source_text, &gloss_text);
                 s.gloss_saved = saved;
                 crate::logging::log("GLOSS: regenerated");
             }
@@ -1323,7 +1331,7 @@ fn amend_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
                     });
 
                 let mut s = state_for_result.borrow_mut();
-                s.correction_overlay.show(&ctx.source_text, &gloss_text);
+                s.correction_overlay.show_gloss(&ctx.source_text, &gloss_text);
                 s.gloss_saved = saved;
                 crate::logging::log("GLOSS: amended");
             }

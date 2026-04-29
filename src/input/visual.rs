@@ -428,7 +428,7 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
     if let Some(ref saved) = existing {
         let mut s = state_rc.borrow_mut();
         s.gloss_original_text = Some(ctx.source_text.clone());
-        s.correction_overlay.show(&ctx.source_text, &saved.gloss_text);
+        s.correction_overlay.show_gloss(&ctx.source_text, &saved.gloss_text);
         s.gloss_saved = Some(saved.clone());
         s.gloss_context = Some(ctx);
         s.input_mode = crate::app::InputMode::GlossOverlay;
@@ -479,7 +479,7 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
                     });
 
                 let mut s = state_for_result.borrow_mut();
-                s.correction_overlay.show(&ctx.source_text, &gloss_text);
+                s.correction_overlay.show_gloss(&ctx.source_text, &gloss_text);
                 s.gloss_saved = saved;
                 s.gloss_context = Some(ctx);
                 crate::logging::log("GLOSS: generated and saved new gloss");

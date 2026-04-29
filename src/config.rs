@@ -94,7 +94,7 @@ fn default_text_margins() -> u32 {
 }
 
 fn default_claude_model() -> String {
-    "claude-sonnet-4-6-20250514".to_string()
+    "claude-opus-4-7".to_string()
 }
 
 fn default_vocab_highlight_visible() -> bool {
@@ -147,6 +147,9 @@ pub fn load() -> Config {
     };
     // Always start at the default font size regardless of saved value
     config.font_size = default_font_size();
+    if config.claude_model.contains("-20") {
+        config.claude_model = default_claude_model();
+    }
     config
 }
 
