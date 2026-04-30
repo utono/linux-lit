@@ -71,8 +71,9 @@ pub fn handle_key(
         return true;
     }
 
-    // Ctrl+p: open picker when hidden (also clears concordance mode)
+    // Ctrl+p: open picker when hidden (also clears concordance mode) — Reader mode only
     if is_ctrl && key_name == "p" && !picker_visible
+        && state.borrow().input_mode == crate::app::InputMode::Reader
         && !state.borrow().bookmark_picker.is_visible()
         && !state.borrow().media_picker.is_visible()
         && !state.borrow().settings_overlay.is_visible()
@@ -109,7 +110,8 @@ pub fn handle_key(
             | crate::app::InputMode::ConcordanceListPicker => handle_picker_key(state, key_name, is_ctrl, tokio_handle, mode),
             crate::app::InputMode::Settings => handle_settings_key(state, key_name, is_ctrl),
             crate::app::InputMode::Search => handle_search_key(state, key_name),
-            crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_name, is_ctrl),
+            crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl),
+            crate::app::InputMode::GlossPrompt => handle_gloss_prompt_key(state, key_name, is_ctrl),
             crate::app::InputMode::GamepadOverlay => handle_gamepad_key(state, key_name),
             crate::app::InputMode::KeybindsOverlay => handle_keybinds_key(state, key_state, key_name),
             crate::app::InputMode::ActionPopup => handle_action_popup_key(state, key_name, is_ctrl, tokio_handle),
@@ -533,9 +535,17 @@ fn handle_search_key(
 
 fn handle_gloss_key(
     state: &Rc<RefCell<AppState>>,
+    key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
     is_ctrl: bool,
 ) -> bool {
+    if key_state.borrow().pending_g {
+        key_state.borrow_mut().pending_g = false;
+        if key_name == "g" {
+            state.borrow().gloss_overlay.scroll_gloss_to_top();
+        }
+        return true;
+    }
     if is_ctrl {
         match key_name {
             "n" => {
@@ -554,16 +564,20 @@ fn handle_gloss_key(
             show_amend_dialog(state);
             true
         }
-        "u" => {
-            navigate_gloss(state, 1);
-            true
-        }
         "c" => {
             copy_gloss_id(state);
             true
         }
         "d" => {
             show_delete_confirmation(state);
+            true
+        }
+        "g" => {
+            key_state.borrow_mut().pending_g = true;
+            true
+        }
+        "G" => {
+            state.borrow().gloss_overlay.scroll_gloss_to_bottom();
             true
         }
         "j" => {
@@ -588,12 +602,11 @@ fn handle_gloss_key(
 
 fn navigate_gloss(state: &Rc<RefCell<AppState>>, delta: i32) {
     let mut s = state.borrow_mut();
-    if s.gloss_list.is_empty() {
+    let len = s.gloss_list.len();
+    if len == 0 {
         return;
     }
-    let new_idx = (s.gloss_index as i32 + delta)
-        .max(0)
-        .min(s.gloss_list.len() as i32 - 1) as usize;
+    let new_idx = ((s.gloss_index as i32 + delta).rem_euclid(len as i32)) as usize;
     if new_idx == s.gloss_index {
         return;
     }
@@ -718,6 +731,46 @@ fn delete_current_gloss(state_rc: &Rc<RefCell<AppState>>) {
         );
         s.gloss_overlay.set_position(new_idx, s.gloss_list.len());
     }
+}
+
+fn handle_gloss_prompt_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+    is_ctrl: bool,
+) -> bool {
+    if key_name == "Escape" {
+        close_gloss_prompt(state);
+        return true;
+    }
+    if is_ctrl && key_name == "Return" {
+        let prompt = {
+            let s = state.borrow();
+            s.gloss_prompt_textview.as_ref()
+                .and_then(|w| w.upgrade())
+                .map(|tv| {
+                    let buf = tv.buffer();
+                    buf.text(&buf.start_iter(), &buf.end_iter(), false).to_string()
+                })
+                .unwrap_or_default()
+        };
+        close_gloss_prompt(state);
+        if !prompt.trim().is_empty() {
+            add_gloss(state, &prompt);
+        }
+        return true;
+    }
+    false
+}
+
+fn close_gloss_prompt(state: &Rc<RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    if let (Some(cw), Some(ow)) = (s.gloss_prompt_container.take(), s.gloss_prompt_overlay.take()) {
+        if let (Some(c), Some(o)) = (cw.upgrade(), ow.upgrade()) {
+            o.remove_overlay(&c);
+        }
+    }
+    s.gloss_prompt_textview = None;
+    s.input_mode = crate::app::InputMode::GlossOverlay;
 }
 
 fn handle_gamepad_key(
@@ -1333,7 +1386,7 @@ fn show_amend_dialog(state_rc: &Rc<RefCell<AppState>>) {
     container.set_width_request(600);
     container.add_css_class("amend-dialog");
 
-    let title = gtk4::Label::new(Some("ENHANCEMENT PROMPT"));
+    let title = gtk4::Label::new(Some("GLOSS PROMPT"));
     title.add_css_class("amend-title");
     title.set_halign(gtk4::Align::Start);
     container.append(&title);
@@ -1362,75 +1415,53 @@ fn show_amend_dialog(state_rc: &Rc<RefCell<AppState>>) {
 
     overlay_parent.add_overlay(&container);
 
-    let state_for_key = Rc::clone(state_rc);
-    let container_weak = container.downgrade();
-    let overlay_weak = overlay_parent.downgrade();
-    let tv_clone = text_view.clone();
-
-    let key_controller = gtk4::EventControllerKey::new();
-    key_controller.connect_key_pressed(move |_ctrl, keyval, _code, modifier| {
-        let key_name = keyval.name().unwrap_or_default();
-        if key_name == "Escape" {
-            if let (Some(c), Some(o)) = (container_weak.upgrade(), overlay_weak.upgrade()) {
-                o.remove_overlay(&c);
-            }
-            return glib::Propagation::Stop;
-        }
-        if key_name == "Return" && modifier.contains(gtk4::gdk::ModifierType::CONTROL_MASK) {
-            let buf = tv_clone.buffer();
-            let prompt = buf.text(&buf.start_iter(), &buf.end_iter(), false).to_string();
-            if let (Some(c), Some(o)) = (container_weak.upgrade(), overlay_weak.upgrade()) {
-                o.remove_overlay(&c);
-            }
-            if !prompt.trim().is_empty() {
-                add_gloss(&state_for_key, &prompt);
-            }
-            return glib::Propagation::Stop;
-        }
-        glib::Propagation::Proceed
-    });
-    text_view.add_controller(key_controller);
+    {
+        let mut s = state_rc.borrow_mut();
+        s.gloss_prompt_container = Some(container.downgrade());
+        s.gloss_prompt_overlay = Some(overlay_parent.downgrade());
+        s.gloss_prompt_textview = Some(text_view.downgrade());
+        s.input_mode = crate::app::InputMode::GlossPrompt;
+    }
 
     text_view.grab_focus();
 }
 
 fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
-    let (ctx, model, tokio_handle, existing_text) = {
+    let (ctx, model, tokio_handle) = {
         let state = state_rc.borrow();
         let ctx = match &state.gloss_context {
             Some(c) => c.clone(),
             None => return,
         };
-        let existing_text = state.gloss_list
-            .get(state.gloss_index)
-            .map(|g| g.gloss_text.clone())
-            .unwrap_or_default();
-        (ctx, state.config.claude_model.clone(), state.tokio_handle.clone(), existing_text)
+        (ctx, state.config.claude_model.clone(), state.tokio_handle.clone())
     };
 
     state_rc.borrow().gloss_overlay.show_loading();
 
     let prompt_owned = prompt.to_string();
     let user_msg = crate::gloss::build_user_message(
-        &ctx, Some(&prompt_owned), Some(&existing_text),
+        &ctx, Some(&prompt_owned), None,
     );
     let state_for_result = Rc::clone(state_rc);
 
     glib::spawn_future_local(async move {
         let result = tokio_handle
             .spawn(async move {
-                crate::gloss::call_claude(&user_msg, &model).await
+                crate::gloss::call_claude_with_prompt(
+                    crate::gloss::USER_QUESTION_PROMPT, &user_msg, &model,
+                ).await
             })
             .await;
 
         match result {
             Ok(Ok(gloss_text)) => {
+                let full_gloss = format!("<gloss>Q: {}</gloss>\n\n{}", prompt_owned, gloss_text);
                 if let Ok(conn) = crate::db::queries::open_db_rw() {
                     let _ = crate::db::queries::save_gloss(
                         &conn, &ctx.hash, &ctx.work_abbrev,
                         &ctx.start_citation, &ctx.end_citation,
                         ctx.act, ctx.scene, &ctx.speaker,
-                        &ctx.source_text, &gloss_text,
+                        &ctx.source_text, &full_gloss,
                     );
                 }
 
@@ -1447,7 +1478,7 @@ fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
                 let h = s.scrolled_window.height();
                 let pairs = ctx.source_line_pairs();
                 s.gloss_overlay.show_gloss_with_color(
-                    &ctx.source_text, &gloss_text, h,
+                    &ctx.source_text, &full_gloss, h,
                     Some(&s.theme.root_color), &pairs,
                 );
                 s.gloss_overlay.set_position(0, all.len());

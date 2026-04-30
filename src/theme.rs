@@ -463,9 +463,10 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .gloss-header {{ font-size: 11px; font-weight: bold; \
            color: {dim}; letter-spacing: 2px; margin-top: 8px; margin-bottom: 4px; }} \
          .gloss-text {{ font-family: {font}; font-size: {size}pt; }} \
-         .gloss-hint {{ font-size: 11px; \
-           color: {dim}; margin-top: 12px; padding-top: 8px; \
+         .gloss-hint {{ font-size: 14px; \
+           color: {dim}; padding-top: 8px; \
            border-top: 1px solid {dim}; }} \
+         .gloss-position {{ font-size: 14px; color: {dim}; }} \
          .definition-panel {{ background-color: {bg}; color: {fg}; \
            border-radius: 12px; padding: 20px 24px; }} \
          .vocab-popup {{ background-color: {root}; color: {bg}; \
@@ -511,6 +512,6 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
         header_border = blend_colors(&theme.dim_fg, &theme.text_bg, 0.5),
         font = font_family,
         size = font_size,
-        label_size = (font_size as f32 * 0.7) as u32,
+        label_size = font_size,
     )
 }

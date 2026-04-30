@@ -41,6 +41,7 @@ pub enum InputMode {
     Settings,
     Search,
     GlossOverlay,
+    GlossPrompt,
     GamepadOverlay,
     KeybindsOverlay,
     ConcordancePicker,
@@ -143,6 +144,9 @@ pub struct AppState {
     pub gloss_list: Vec<crate::db::queries::SavedGloss>,
     pub gloss_index: usize,
     pub gloss_context: Option<crate::gloss::GlossContext>,
+    pub gloss_prompt_container: Option<glib::WeakRef<gtk4::Box>>,
+    pub gloss_prompt_overlay: Option<glib::WeakRef<gtk4::Overlay>>,
+    pub gloss_prompt_textview: Option<glib::WeakRef<gtk4::TextView>>,
     pub vocab_words: std::collections::HashSet<String>,
     pub vocab_matches: Vec<VocabMatch>,
     pub vocab_match_idx: Option<usize>,
@@ -778,6 +782,7 @@ pub fn build_window(
     page_line_label.add_css_class("page-line-label");
     page_line_label.set_visible(false);
     scrolled_overlay.add_overlay(&page_line_label);
+    gloss_overlay.set_page_line_label(&page_line_label);
 
     // Concordance status bar
     let concordance_bar = crate::ui::concordance_bar::ConcordanceBar::new();
@@ -889,6 +894,9 @@ pub fn build_window(
         gloss_list: Vec::new(),
         gloss_index: 0,
         gloss_context: None,
+        gloss_prompt_container: None,
+        gloss_prompt_overlay: None,
+        gloss_prompt_textview: None,
         vocab_words: std::collections::HashSet::new(),
         vocab_matches: Vec::new(),
         vocab_match_idx: None,

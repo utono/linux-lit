@@ -31,6 +31,7 @@ pub struct GlossOverlay {
     bar_color: Rc<RefCell<(f64, f64, f64)>>,
     bar_x: Rc<RefCell<i32>>,
     line_numbers: Rc<RefCell<Vec<LineNumber>>>,
+    page_line_label: Rc<RefCell<Option<gtk4::Label>>>,
     text_margins: i32,
     column_width: i32,
 }
@@ -97,7 +98,7 @@ impl GlossOverlay {
         gloss_view.set_left_margin(text_margins as i32);
         gloss_view.set_right_margin(right_margin);
         gloss_view.set_top_margin(24);
-        gloss_view.set_bottom_margin(12);
+        gloss_view.set_bottom_margin(80);
         gloss_view.add_css_class("gloss-text");
 
         let bar_drawing = gtk4::DrawingArea::new();
@@ -183,19 +184,24 @@ impl GlossOverlay {
 
         container.append(&gloss_scrolled);
 
-        let hint = Label::new(Some("Esc close · a add · d delete · c copy id · Ctrl+n/p navigate"));
-        hint.add_css_class("gloss-hint");
-        hint.set_margin_start(text_margins as i32);
-        hint.set_margin_end(text_margins as i32);
-        hint.set_margin_bottom(8);
-        let position_label = Label::new(None);
-        position_label.add_css_class("gloss-hint");
-        position_label.set_halign(Align::Center);
-        position_label.set_margin_bottom(4);
-        position_label.set_visible(false);
-        container.append(&position_label);
+        let footer_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        footer_box.set_margin_start(text_margins as i32);
+        footer_box.set_margin_end(text_margins as i32);
+        footer_box.set_margin_top(12);
+        footer_box.set_margin_bottom(12);
+        footer_box.add_css_class("gloss-hint");
 
-        container.append(&hint);
+        let hint = Label::new(Some("Esc close · a add · d delete · c copy id · Ctrl+n/p navigate"));
+        hint.set_halign(Align::Start);
+        hint.set_hexpand(true);
+        footer_box.append(&hint);
+
+        let position_label = Label::new(None);
+        position_label.set_halign(Align::End);
+        position_label.set_visible(false);
+        footer_box.append(&position_label);
+
+        container.append(&footer_box);
 
         container.set_visible(false);
 
@@ -223,9 +229,14 @@ impl GlossOverlay {
             bar_color,
             bar_x,
             line_numbers,
+            page_line_label: Rc::new(RefCell::new(None)),
             text_margins: text_margins as i32,
             column_width: column_width as i32,
         }
+    }
+
+    pub fn set_page_line_label(&self, label: &gtk4::Label) {
+        *self.page_line_label.borrow_mut() = Some(label.clone());
     }
 
     pub fn attach(&self, child: &impl IsA<gtk4::Widget>) {
@@ -262,6 +273,9 @@ impl GlossOverlay {
     pub fn show_gloss_with_color(&self, _original: &str, gloss: &str, card_height: i32, root_color: Option<&str>, source_line_numbers: &[(String, i64)]) {
         self.container.set_height_request(card_height);
         self.title.set_visible(false);
+        self.title.set_vexpand(false);
+        self.title.set_valign(Align::Start);
+        self.title.set_halign(Align::Start);
         self.orig_header.set_visible(false);
         self.original_label.set_visible(false);
         self.corr_header.set_visible(false);
@@ -281,6 +295,10 @@ impl GlossOverlay {
         *self.line_numbers.borrow_mut() = nums;
         self.bar_drawing.queue_draw();
 
+        if let Some(ref label) = *self.page_line_label.borrow() {
+            label.set_visible(false);
+        }
+
         self.gloss_scrolled.set_visible(true);
         self.gloss_scrolled.vadjustment().set_value(0.0);
         self.hint.set_visible(true);
@@ -293,14 +311,22 @@ impl GlossOverlay {
     }
 
     pub fn show_loading_message(&self, message: &str) {
+        if let Some(ref label) = *self.page_line_label.borrow() {
+            label.set_visible(false);
+        }
         self.title.set_text(message);
+        self.title.set_visible(true);
+        self.title.set_vexpand(true);
+        self.title.set_valign(Align::Center);
+        self.title.set_halign(Align::Center);
         self.orig_header.set_visible(false);
         self.original_label.set_visible(false);
         self.corr_header.set_visible(false);
         self.corrected_label.set_visible(false);
         self.gloss_scrolled.set_visible(false);
+        self.position_label.set_visible(false);
         self.hint.set_visible(false);
-        self.scrim.set_visible(true);
+        self.scrim.set_visible(false);
         self.container.set_visible(true);
     }
 
@@ -312,9 +338,24 @@ impl GlossOverlay {
         self.bar_drawing.queue_draw();
     }
 
+    pub fn scroll_gloss_to_top(&self) {
+        let adj = self.gloss_scrolled.vadjustment();
+        adj.set_value(adj.lower());
+        self.bar_drawing.queue_draw();
+    }
+
+    pub fn scroll_gloss_to_bottom(&self) {
+        let adj = self.gloss_scrolled.vadjustment();
+        adj.set_value(adj.upper() - adj.page_size());
+        self.bar_drawing.queue_draw();
+    }
+
     pub fn hide(&self) {
         self.container.set_visible(false);
         self.scrim.set_visible(false);
+        if let Some(ref label) = *self.page_line_label.borrow() {
+            label.set_visible(true);
+        }
     }
 
     pub fn set_position(&self, index: usize, total: usize) {

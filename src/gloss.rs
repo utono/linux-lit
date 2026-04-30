@@ -1,6 +1,22 @@
 use crate::claude::ClaudeError;
 use crate::db::models::{Line, Work};
 
+pub const USER_QUESTION_PROMPT: &str = "\
+You are a literary scholar answering a reader's question about a passage from a literary text.
+
+The reader has asked a specific question. Answer it thoroughly, drawing on the passage provided.
+Use your knowledge of the text, its historical context, performance tradition, and literary criticism.
+
+Output format — use these XML tags exactly:
+- <gloss>paragraph of answer</gloss> for each paragraph of your response
+
+Rules:
+- Focus on answering the reader's question directly
+- Support your answer with evidence from the passage and the wider work
+- Each <gloss> tag contains one flowing prose paragraph (3-6 sentences)
+- No markdown, no bullets, no numbered lists, no headers
+- Do not quote the passage back unless directly relevant to the answer";
+
 const TEACHER_GENERIC_PROMPT: &str = "\
 You are a performance-focused teacher helping a reader understand a passage from a literary text.
 
@@ -101,7 +117,7 @@ pub fn build_context(work: &Work, lines: &[Line]) -> Option<GlossContext> {
 
 pub fn build_user_message(
     ctx: &GlossContext,
-    amend_prompt: Option<&str>,
+    user_prompt: Option<&str>,
     existing_gloss: Option<&str>,
 ) -> String {
     let mut msg = format!(
@@ -109,11 +125,12 @@ pub fn build_user_message(
         ctx.work_title, ctx.act, ctx.scene, ctx.speaker, ctx.source_text
     );
 
-    if let (Some(existing), Some(prompt)) = (existing_gloss, amend_prompt) {
-        msg.push_str(&format!(
-            "\n\n---\nPrevious gloss:\n{}\n\n---\nEnhancement request: {}",
-            existing, prompt
-        ));
+    if let Some(prompt) = user_prompt {
+        msg.push_str(&format!("\n\n---\nUser question: {}", prompt));
+    }
+
+    if let Some(existing) = existing_gloss {
+        msg.push_str(&format!("\n\n---\nPrevious gloss for reference:\n{}", existing));
     }
 
     msg
@@ -124,4 +141,12 @@ pub async fn call_claude(
     model: &str,
 ) -> Result<String, ClaudeError> {
     crate::claude::send_message(TEACHER_GENERIC_PROMPT, user_message, model).await
+}
+
+pub async fn call_claude_with_prompt(
+    system_prompt: &str,
+    user_message: &str,
+    model: &str,
+) -> Result<String, ClaudeError> {
+    crate::claude::send_message(system_prompt, user_message, model).await
 }
