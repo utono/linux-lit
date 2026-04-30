@@ -23,6 +23,7 @@ pub struct GlossOverlay {
     corr_header: Label,
     corrected_label: Label,
     hint: Label,
+    position_label: Label,
     gloss_scrolled: gtk4::ScrolledWindow,
     gloss_view: gtk4::TextView,
     bar_drawing: gtk4::DrawingArea,
@@ -182,11 +183,18 @@ impl GlossOverlay {
 
         container.append(&gloss_scrolled);
 
-        let hint = Label::new(Some("Esc = close  ·  a = amend  ·  r = regenerate"));
+        let hint = Label::new(Some("Esc close · a add · d delete · c copy id · Ctrl+n/p navigate"));
         hint.add_css_class("gloss-hint");
         hint.set_margin_start(text_margins as i32);
         hint.set_margin_end(text_margins as i32);
         hint.set_margin_bottom(8);
+        let position_label = Label::new(None);
+        position_label.add_css_class("gloss-hint");
+        position_label.set_halign(Align::Center);
+        position_label.set_margin_bottom(4);
+        position_label.set_visible(false);
+        container.append(&position_label);
+
         container.append(&hint);
 
         container.set_visible(false);
@@ -207,6 +215,7 @@ impl GlossOverlay {
             corr_header,
             corrected_label,
             hint,
+            position_label,
             gloss_scrolled,
             gloss_view,
             bar_drawing,
@@ -306,6 +315,15 @@ impl GlossOverlay {
     pub fn hide(&self) {
         self.container.set_visible(false);
         self.scrim.set_visible(false);
+    }
+
+    pub fn set_position(&self, index: usize, total: usize) {
+        if total > 1 {
+            self.position_label.set_text(&format!("{} / {}", index + 1, total));
+            self.position_label.set_visible(true);
+        } else {
+            self.position_label.set_visible(false);
+        }
     }
 
     pub fn is_visible(&self) -> bool {

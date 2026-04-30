@@ -720,6 +720,36 @@ pub fn find_existing_gloss(
     .optional()
 }
 
+pub fn find_all_glosses(
+    conn: &Connection,
+    work_abbrev: &str,
+    start_citation: &str,
+    end_citation: &str,
+) -> Result<Vec<SavedGloss>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT g.id, g.gloss_text, g.timestamp, p.id \
+         FROM glosses g \
+         JOIN passages p ON g.passage_id = p.id \
+         WHERE p.work_abbrev = ?1 \
+           AND p.start_citation = ?2 \
+           AND p.end_citation = ?3 \
+           AND g.gloss_type = 'teacher-generic' \
+         ORDER BY g.timestamp DESC",
+    )?;
+    let rows = stmt.query_map(
+        rusqlite::params![work_abbrev, start_citation, end_citation],
+        |row| {
+            Ok(SavedGloss {
+                gloss_id: row.get(0)?,
+                gloss_text: row.get(1)?,
+                timestamp: row.get(2)?,
+                passage_id: row.get(3)?,
+            })
+        },
+    )?;
+    rows.collect()
+}
+
 pub fn save_gloss(
     conn: &Connection,
     hash: &str,

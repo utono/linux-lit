@@ -390,7 +390,7 @@ fn action_external_command(state: &mut AppState, command: &str) {
 
 
 fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
-    let (ctx, model, tokio_handle, existing) = {
+    let (ctx, model, tokio_handle, all_glosses) = {
         let state = state_rc.borrow();
         let (start, end) = match &state.visual_selection {
             Some(s) => s.range(),
@@ -413,24 +413,27 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
             None => return,
         };
 
-        let existing = match crate::db::queries::open_db() {
-            Ok(conn) => crate::db::queries::find_existing_gloss(
+        let all_glosses: Vec<crate::db::queries::SavedGloss> = match crate::db::queries::open_db() {
+            Ok(conn) => crate::db::queries::find_all_glosses(
                 &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
-            ).ok().flatten(),
-            Err(_) => None,
+            ).unwrap_or_default(),
+            Err(_) => Vec::new(),
         };
 
-        (ctx, state.config.claude_model.clone(), state.tokio_handle.clone(), existing)
+        (ctx, state.config.claude_model.clone(), state.tokio_handle.clone(), all_glosses)
     };
 
     exit_visual_mode(&mut state_rc.borrow_mut());
 
-    if let Some(ref saved) = existing {
+    if !all_glosses.is_empty() {
         let mut s = state_rc.borrow_mut();
         s.gloss_original_text = Some(ctx.source_text.clone());
         let pairs = ctx.source_line_pairs();
-        s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &saved.gloss_text, s.scrolled_window.height(), Some(&s.theme.root_color), &pairs);
-        s.gloss_saved = Some(saved.clone());
+        let gloss_text = &all_glosses[0].gloss_text;
+        s.gloss_overlay.show_gloss_with_color(&ctx.source_text, gloss_text, s.scrolled_window.height(), Some(&s.theme.root_color), &pairs);
+        s.gloss_overlay.set_position(0, all_glosses.len());
+        s.gloss_list = all_glosses;
+        s.gloss_index = 0;
         s.gloss_context = Some(ctx);
         s.input_mode = crate::app::InputMode::GlossOverlay;
         crate::logging::log("GLOSS: showing cached gloss");
@@ -471,19 +474,22 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
                     );
                 }
 
-                let saved = crate::db::queries::open_db()
+                let all = crate::db::queries::open_db()
                     .ok()
                     .and_then(|conn| {
-                        crate::db::queries::find_existing_gloss(
+                        crate::db::queries::find_all_glosses(
                             &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
-                        ).ok().flatten()
-                    });
+                        ).ok()
+                    })
+                    .unwrap_or_default();
 
                 let mut s = state_for_result.borrow_mut();
                 let h = s.scrolled_window.height();
                 let pairs = ctx.source_line_pairs();
                 s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &gloss_text, h, Some(&s.theme.root_color), &pairs);
-                s.gloss_saved = saved;
+                s.gloss_overlay.set_position(0, all.len());
+                s.gloss_list = all;
+                s.gloss_index = 0;
                 s.gloss_context = Some(ctx);
                 crate::logging::log("GLOSS: generated and saved new gloss");
             }

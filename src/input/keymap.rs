@@ -109,7 +109,7 @@ pub fn handle_key(
             | crate::app::InputMode::ConcordanceListPicker => handle_picker_key(state, key_name, is_ctrl, tokio_handle, mode),
             crate::app::InputMode::Settings => handle_settings_key(state, key_name, is_ctrl),
             crate::app::InputMode::Search => handle_search_key(state, key_name),
-            crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_name),
+            crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_name, is_ctrl),
             crate::app::InputMode::GamepadOverlay => handle_gamepad_key(state, key_name),
             crate::app::InputMode::KeybindsOverlay => handle_keybinds_key(state, key_state, key_name),
             crate::app::InputMode::ActionPopup => handle_action_popup_key(state, key_name, is_ctrl, tokio_handle),
@@ -164,14 +164,16 @@ pub fn handle_key(
 
     // Shift+Tab or Ctrl+g: toggle gloss overlay for last-viewed gloss
     if key_name == "ISO_Left_Tab" || (is_ctrl && key_name == "g") {
-        let has_gloss = state.borrow().gloss_saved.is_some();
+        let has_gloss = !state.borrow().gloss_list.is_empty();
         if has_gloss {
             let s = state.borrow();
+            let idx = s.gloss_index;
+            let gloss = &s.gloss_list[idx];
             let ctx = s.gloss_context.as_ref().unwrap();
-            let saved = s.gloss_saved.as_ref().unwrap();
             let h = s.scrolled_window.height();
             let pairs = ctx.source_line_pairs();
-            s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &saved.gloss_text, h, Some(&s.theme.root_color), &pairs);
+            s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &gloss.gloss_text, h, Some(&s.theme.root_color), &pairs);
+            s.gloss_overlay.set_position(idx, s.gloss_list.len());
             drop(s);
             state.borrow_mut().input_mode = crate::app::InputMode::GlossOverlay;
             return true;
@@ -532,14 +534,36 @@ fn handle_search_key(
 fn handle_gloss_key(
     state: &Rc<RefCell<AppState>>,
     key_name: &str,
+    is_ctrl: bool,
 ) -> bool {
-    match key_name {
-        "r" => {
-            regenerate_gloss(state);
-            true
+    if is_ctrl {
+        match key_name {
+            "n" => {
+                navigate_gloss(state, -1);
+                return true;
+            }
+            "p" => {
+                navigate_gloss(state, 1);
+                return true;
+            }
+            _ => {}
         }
+    }
+    match key_name {
         "a" => {
             show_amend_dialog(state);
+            true
+        }
+        "u" => {
+            navigate_gloss(state, 1);
+            true
+        }
+        "c" => {
+            copy_gloss_id(state);
+            true
+        }
+        "d" => {
+            show_delete_confirmation(state);
             true
         }
         "j" => {
@@ -559,6 +583,140 @@ fn handle_gloss_key(
             true
         }
         _ => true,
+    }
+}
+
+fn navigate_gloss(state: &Rc<RefCell<AppState>>, delta: i32) {
+    let mut s = state.borrow_mut();
+    if s.gloss_list.is_empty() {
+        return;
+    }
+    let new_idx = (s.gloss_index as i32 + delta)
+        .max(0)
+        .min(s.gloss_list.len() as i32 - 1) as usize;
+    if new_idx == s.gloss_index {
+        return;
+    }
+    s.gloss_index = new_idx;
+    let gloss = &s.gloss_list[new_idx];
+    let ctx = s.gloss_context.as_ref().unwrap();
+    let h = s.scrolled_window.height();
+    let pairs = ctx.source_line_pairs();
+    s.gloss_overlay.show_gloss_with_color(
+        &ctx.source_text, &gloss.gloss_text, h,
+        Some(&s.theme.root_color), &pairs,
+    );
+    s.gloss_overlay.set_position(new_idx, s.gloss_list.len());
+}
+
+fn copy_gloss_id(state: &Rc<RefCell<AppState>>) {
+    let s = state.borrow();
+    if let Some(gloss) = s.gloss_list.get(s.gloss_index) {
+        let id = gloss.gloss_id.to_string();
+        let _ = std::process::Command::new("wl-copy")
+            .arg(&id)
+            .spawn();
+        crate::logging::log(&format!("GLOSS: copied id {} to clipboard", id));
+    }
+}
+
+fn show_delete_confirmation(state_rc: &Rc<RefCell<AppState>>) {
+    let gloss_id = {
+        let s = state_rc.borrow();
+        match s.gloss_list.get(s.gloss_index) {
+            Some(g) => g.gloss_id,
+            None => return,
+        }
+    };
+
+    let overlay_parent = {
+        let s = state_rc.borrow();
+        s.action_popup_widget.container.parent()
+    };
+    let overlay_parent = match overlay_parent {
+        Some(p) => p.downcast::<gtk4::Overlay>().ok(),
+        None => None,
+    };
+    let overlay_parent = match overlay_parent {
+        Some(o) => o,
+        None => return,
+    };
+
+    let container = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
+    container.set_halign(gtk4::Align::Center);
+    container.set_valign(gtk4::Align::Center);
+    container.set_width_request(400);
+    container.add_css_class("amend-dialog");
+
+    let label = gtk4::Label::new(Some(&format!("Delete gloss {}?", gloss_id)));
+    label.add_css_class("amend-title");
+    label.set_halign(gtk4::Align::Start);
+    container.append(&label);
+
+    let hint = gtk4::Label::new(Some("y = confirm  \u{00b7}  Esc = cancel"));
+    hint.add_css_class("amend-hint");
+    hint.set_halign(gtk4::Align::Center);
+    container.append(&hint);
+
+    overlay_parent.add_overlay(&container);
+    container.set_can_focus(true);
+    container.grab_focus();
+
+    let state_for_key = Rc::clone(state_rc);
+    let container_weak = container.downgrade();
+    let overlay_weak = overlay_parent.downgrade();
+
+    let key_controller = gtk4::EventControllerKey::new();
+    key_controller.connect_key_pressed(move |_ctrl, keyval, _code, _modifier| {
+        let key_name = keyval.name().unwrap_or_default();
+        match key_name.as_str() {
+            "y" => {
+                if let (Some(c), Some(o)) = (container_weak.upgrade(), overlay_weak.upgrade()) {
+                    o.remove_overlay(&c);
+                }
+                delete_current_gloss(&state_for_key);
+                glib::Propagation::Stop
+            }
+            "Escape" | "n" => {
+                if let (Some(c), Some(o)) = (container_weak.upgrade(), overlay_weak.upgrade()) {
+                    o.remove_overlay(&c);
+                }
+                glib::Propagation::Stop
+            }
+            _ => glib::Propagation::Stop,
+        }
+    });
+    container.add_controller(key_controller);
+}
+
+fn delete_current_gloss(state_rc: &Rc<RefCell<AppState>>) {
+    let mut s = state_rc.borrow_mut();
+    let idx = s.gloss_index;
+    if let Some(gloss) = s.gloss_list.get(idx) {
+        let gloss_id = gloss.gloss_id;
+        if let Ok(conn) = crate::db::queries::open_db_rw() {
+            let _ = crate::db::queries::delete_gloss(&conn, gloss_id);
+        }
+        crate::logging::log(&format!("GLOSS: deleted gloss {}", gloss_id));
+        s.gloss_list.remove(idx);
+
+        if s.gloss_list.is_empty() {
+            s.gloss_overlay.hide();
+            s.input_mode = crate::app::InputMode::Reader;
+            return;
+        }
+
+        s.gloss_index = idx.min(s.gloss_list.len() - 1);
+        let new_idx = s.gloss_index;
+        let gloss = &s.gloss_list[new_idx];
+        let ctx = s.gloss_context.as_ref().unwrap();
+        let h = s.scrolled_window.height();
+        let pairs = ctx.source_line_pairs();
+        s.gloss_overlay.show_gloss_with_color(
+            &ctx.source_text, &gloss.gloss_text, h,
+            Some(&s.theme.root_color), &pairs,
+        );
+        s.gloss_overlay.set_position(new_idx, s.gloss_list.len());
     }
 }
 
@@ -1155,83 +1313,6 @@ fn activate_chunk(s: &mut AppState, idx: usize) {
     }
 }
 
-fn regenerate_gloss(state_rc: &Rc<RefCell<AppState>>) {
-    let (ctx, model, tokio_handle, old_gloss_id) = {
-        let state = state_rc.borrow();
-        let ctx = match &state.gloss_context {
-            Some(c) => c.clone(),
-            None => return,
-        };
-        let old_id = state.gloss_saved.as_ref().map(|g| g.gloss_id);
-        (ctx, state.config.claude_model.clone(), state.tokio_handle.clone(), old_id)
-    };
-
-    if let Some(gid) = old_gloss_id {
-        if let Ok(conn) = crate::db::queries::open_db_rw() {
-            let _ = crate::db::queries::delete_gloss(&conn, gid);
-        }
-    }
-
-    {
-        let mut s = state_rc.borrow_mut();
-        s.gloss_saved = None;
-        s.gloss_overlay.show_loading();
-    }
-
-    let user_msg = crate::gloss::build_user_message(&ctx, None, None);
-    let state_for_result = Rc::clone(state_rc);
-
-    glib::spawn_future_local(async move {
-        let result = tokio_handle
-            .spawn(async move {
-                crate::gloss::call_claude(&user_msg, &model).await
-            })
-            .await;
-
-        match result {
-            Ok(Ok(gloss_text)) => {
-                if let Ok(conn) = crate::db::queries::open_db_rw() {
-                    let _ = crate::db::queries::save_gloss(
-                        &conn,
-                        &ctx.hash,
-                        &ctx.work_abbrev,
-                        &ctx.start_citation,
-                        &ctx.end_citation,
-                        ctx.act,
-                        ctx.scene,
-                        &ctx.speaker,
-                        &ctx.source_text,
-                        &gloss_text,
-                    );
-                }
-
-                let saved = crate::db::queries::open_db()
-                    .ok()
-                    .and_then(|conn| {
-                        crate::db::queries::find_existing_gloss(
-                            &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
-                        ).ok().flatten()
-                    });
-
-                let mut s = state_for_result.borrow_mut();
-                let h = s.scrolled_window.height();
-                let pairs = ctx.source_line_pairs();
-                s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &gloss_text, h, Some(&s.theme.root_color), &pairs);
-                s.gloss_saved = saved;
-                crate::logging::log("GLOSS: regenerated");
-            }
-            Ok(Err(e)) => {
-                let s = state_for_result.borrow();
-                s.gloss_overlay.show(&format!("Error: {}", e), "");
-                crate::logging::log(&format!("GLOSS: regenerate error: {}", e));
-            }
-            Err(e) => {
-                crate::logging::log(&format!("GLOSS: tokio join error: {}", e));
-            }
-        }
-    });
-}
-
 fn show_amend_dialog(state_rc: &Rc<RefCell<AppState>>) {
     let overlay_parent = {
         let s = state_rc.borrow();
@@ -1302,7 +1383,7 @@ fn show_amend_dialog(state_rc: &Rc<RefCell<AppState>>) {
                 o.remove_overlay(&c);
             }
             if !prompt.trim().is_empty() {
-                amend_gloss(&state_for_key, &prompt);
+                add_gloss(&state_for_key, &prompt);
             }
             return glib::Propagation::Stop;
         }
@@ -1313,26 +1394,27 @@ fn show_amend_dialog(state_rc: &Rc<RefCell<AppState>>) {
     text_view.grab_focus();
 }
 
-fn amend_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
-    let (ctx, model, tokio_handle, existing) = {
+fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
+    let (ctx, model, tokio_handle, existing_text) = {
         let state = state_rc.borrow();
         let ctx = match &state.gloss_context {
             Some(c) => c.clone(),
             None => return,
         };
-        let existing = match &state.gloss_saved {
-            Some(g) => g.clone(),
-            None => return,
-        };
-        (ctx, state.config.claude_model.clone(), state.tokio_handle.clone(), existing)
+        let existing_text = state.gloss_list
+            .get(state.gloss_index)
+            .map(|g| g.gloss_text.clone())
+            .unwrap_or_default();
+        (ctx, state.config.claude_model.clone(), state.tokio_handle.clone(), existing_text)
     };
 
     state_rc.borrow().gloss_overlay.show_loading();
 
     let prompt_owned = prompt.to_string();
-    let user_msg = crate::gloss::build_user_message(&ctx, Some(&prompt_owned), Some(&existing.gloss_text));
+    let user_msg = crate::gloss::build_user_message(
+        &ctx, Some(&prompt_owned), Some(&existing_text),
+    );
     let state_for_result = Rc::clone(state_rc);
-    let gloss_id = existing.gloss_id;
 
     glib::spawn_future_local(async move {
         let result = tokio_handle
@@ -1344,28 +1426,39 @@ fn amend_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
         match result {
             Ok(Ok(gloss_text)) => {
                 if let Ok(conn) = crate::db::queries::open_db_rw() {
-                    let _ = crate::db::queries::update_gloss(&conn, gloss_id, &gloss_text);
+                    let _ = crate::db::queries::save_gloss(
+                        &conn, &ctx.hash, &ctx.work_abbrev,
+                        &ctx.start_citation, &ctx.end_citation,
+                        ctx.act, ctx.scene, &ctx.speaker,
+                        &ctx.source_text, &gloss_text,
+                    );
                 }
 
-                let saved = crate::db::queries::open_db()
+                let all = crate::db::queries::open_db()
                     .ok()
                     .and_then(|conn| {
-                        crate::db::queries::find_existing_gloss(
+                        crate::db::queries::find_all_glosses(
                             &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
-                        ).ok().flatten()
-                    });
+                        ).ok()
+                    })
+                    .unwrap_or_default();
 
                 let mut s = state_for_result.borrow_mut();
                 let h = s.scrolled_window.height();
                 let pairs = ctx.source_line_pairs();
-                s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &gloss_text, h, Some(&s.theme.root_color), &pairs);
-                s.gloss_saved = saved;
-                crate::logging::log("GLOSS: amended");
+                s.gloss_overlay.show_gloss_with_color(
+                    &ctx.source_text, &gloss_text, h,
+                    Some(&s.theme.root_color), &pairs,
+                );
+                s.gloss_overlay.set_position(0, all.len());
+                s.gloss_list = all;
+                s.gloss_index = 0;
+                crate::logging::log("GLOSS: added new gloss");
             }
             Ok(Err(e)) => {
                 let s = state_for_result.borrow();
                 s.gloss_overlay.show(&format!("Error: {}", e), "");
-                crate::logging::log(&format!("GLOSS: amend error: {}", e));
+                crate::logging::log(&format!("GLOSS: add error: {}", e));
             }
             Err(e) => {
                 crate::logging::log(&format!("GLOSS: tokio join error: {}", e));
