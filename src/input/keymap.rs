@@ -1054,83 +1054,14 @@ fn dispatch_action(
         OpenBookmarkPicker => { crate::input::actions::pickers::open_bookmark_picker(state, tokio_handle); true }
 
         // Pickers / overlays
-        OpenLibraryPicker => {
-            let s = state.borrow();
-            if !s.picker.is_visible()
-                && !s.bookmark_picker.is_visible()
-                && !s.media_picker.is_visible()
-                && !s.settings_overlay.is_visible()
-            {
-                drop(s);
-                let mut sm = state.borrow_mut();
-                sm.concordance_state = None;
-                sm.concordance_bar.hide();
-                drop(sm);
-                state.borrow().gloss_overlay.hide();
-                state.borrow_mut().picker.show_prepare();
-                state.borrow().picker.show_finish();
-                state.borrow_mut().input_mode = crate::app::InputMode::LibraryPicker;
-            }
-            true
-        }
+        OpenLibraryPicker => { crate::input::actions::pickers::open_library_picker_from_reader(state); true }
         OpenMediaPicker => { crate::input::actions::pickers::open_media_picker(state, tokio_handle); true }
         OpenConcordancePicker => { crate::input::actions::concordance::open_picker(state, tokio_handle); true }
-        OpenConcordanceWordPicker => {
-            let words: Vec<(String, usize)> = {
-                let s = state.borrow();
-                let mut seen = std::collections::BTreeSet::new();
-                for m in &s.vocab_matches {
-                    seen.insert(m.word.clone());
-                }
-                seen.into_iter().map(|w| (w, 0)).collect()
-            };
-            state.borrow_mut().concordance_word_picker.set_words(words);
-            state.borrow().concordance_word_picker.show();
-            state.borrow_mut().input_mode = crate::app::InputMode::ConcordanceWordPicker;
-            true
-        }
-        OpenConcordanceListPicker => {
-            let s = state.borrow();
-            if let Some(conc) = &s.concordance_state {
-                s.concordance_list_picker.show(&conc.occurrences, conc.current_index);
-            }
-            drop(s);
-            state.borrow_mut().input_mode = crate::app::InputMode::ConcordanceListPicker;
-            true
-        }
-        OpenSettingsOverlay => {
-            let s = state.borrow();
-            if !s.settings_overlay.is_visible() && !s.picker.is_visible() {
-                s.gloss_overlay.hide();
-                let ls = s.config.line_spacing;
-                let cw = s.config.column_width;
-                let tm = s.config.text_margins;
-                let nm = s.config.navigation_mode;
-                let ts = s.config.transition_style;
-                let cl = s.config.show_cursor_line;
-                drop(s);
-                state.borrow_mut().settings_overlay.show(ls, cw, tm, nm, ts, cl);
-                state.borrow_mut().input_mode = crate::app::InputMode::Settings;
-            }
-            true
-        }
+        OpenConcordanceWordPicker => { crate::input::actions::pickers::open_concordance_word_picker(state); true }
+        OpenConcordanceListPicker => { crate::input::actions::pickers::open_concordance_list_picker(state); true }
+        OpenSettingsOverlay => { crate::input::actions::settings::open_settings(state); true }
         OpenKeybindsOverlay => {
-            let s = state.borrow();
-            if s.keybinds_overlay.is_visible() || s.gamepad_overlay.is_visible() {
-                s.keybinds_overlay.hide();
-                s.gamepad_overlay.hide();
-                drop(s);
-                state.borrow_mut().input_mode = crate::app::InputMode::Reader;
-            } else {
-                s.picker.hide();
-                s.media_picker.hide();
-                s.settings_overlay.hide();
-                s.search_bar.hide();
-                s.gloss_overlay.hide();
-                s.keybinds_overlay.show();
-                drop(s);
-                state.borrow_mut().input_mode = crate::app::InputMode::KeybindsOverlay;
-            }
+            crate::input::actions::pickers::open_keybinds_overlay(state);
             KeyState::start_chord(key_state, ChordState::PendingCtrlSlash);
             true
         }
@@ -1188,42 +1119,8 @@ fn dispatch_action(
             handle_vocab_popup_key(state, false);
             true
         }
-        JumpToNextVocab => {
-            let has_concordance = state.borrow().concordance_state.is_some();
-            if has_concordance {
-                let current_abbrev = state.borrow().current_work.as_ref().map(|w| w.abbrev.clone());
-                let advanced = {
-                    let mut s = state.borrow_mut();
-                    if let (Some(conc), Some(ref abbrev)) = (s.concordance_state.as_mut(), &current_abbrev) {
-                        conc.advance_within_work(abbrev)
-                    } else { false }
-                };
-                if advanced {
-                    navigation::concordance_jump_to_current(state, tokio_handle);
-                }
-            } else {
-                navigation::jump_to_next_vocab(&mut state.borrow_mut());
-            }
-            true
-        }
-        JumpToPrevVocab => {
-            let has_concordance = state.borrow().concordance_state.is_some();
-            if has_concordance {
-                let current_abbrev = state.borrow().current_work.as_ref().map(|w| w.abbrev.clone());
-                let retreated = {
-                    let mut s = state.borrow_mut();
-                    if let (Some(conc), Some(ref abbrev)) = (s.concordance_state.as_mut(), &current_abbrev) {
-                        conc.retreat_within_work(abbrev)
-                    } else { false }
-                };
-                if retreated {
-                    navigation::concordance_jump_to_current(state, tokio_handle);
-                }
-            } else {
-                navigation::jump_to_prev_vocab(&mut state.borrow_mut());
-            }
-            true
-        }
+        JumpToNextVocab => { crate::input::actions::concordance::jump_to_next_vocab(state, tokio_handle); true }
+        JumpToPrevVocab => { crate::input::actions::concordance::jump_to_prev_vocab(state, tokio_handle); true }
         ToggleVocabHighlight => {
             let mut s = state.borrow_mut();
             s.vocab_highlight_visible = !s.vocab_highlight_visible;

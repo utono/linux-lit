@@ -133,6 +133,24 @@ pub(crate) fn revert_to_snapshot(state: &Rc<RefCell<crate::app::AppState>>) {
     s.input_mode = crate::app::InputMode::Reader;
 }
 
+/// Open the settings overlay, reading current config values and passing them
+/// to the overlay's show() method. Called from the OpenSettingsOverlay action.
+pub(crate) fn open_settings(state: &Rc<RefCell<crate::app::AppState>>) {
+    let s = state.borrow();
+    if !s.settings_overlay.is_visible() && !s.picker.is_visible() {
+        s.gloss_overlay.hide();
+        let ls = s.config.line_spacing;
+        let cw = s.config.column_width;
+        let tm = s.config.text_margins;
+        let nm = s.config.navigation_mode;
+        let ts = s.config.transition_style;
+        let cl = s.config.show_cursor_line;
+        drop(s);
+        state.borrow_mut().settings_overlay.show(ls, cw, tm, nm, ts, cl);
+        state.borrow_mut().input_mode = crate::app::InputMode::Settings;
+    }
+}
+
 /// Reset AppState to default settings. Called from `r` in settings overlay.
 pub(crate) fn reset_to_defaults(state: &Rc<RefCell<crate::app::AppState>>) {
     let mut s = state.borrow_mut();

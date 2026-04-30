@@ -320,6 +320,76 @@ pub(crate) fn set_media_default(
     }
 }
 
+/// Open the library picker from reader mode: hide other overlays, tear down
+/// concordance state, and switch to LibraryPicker input mode.
+pub(crate) fn open_library_picker_from_reader(state: &Rc<RefCell<AppState>>) {
+    let s = state.borrow();
+    if !s.picker.is_visible()
+        && !s.bookmark_picker.is_visible()
+        && !s.media_picker.is_visible()
+        && !s.settings_overlay.is_visible()
+    {
+        drop(s);
+        let mut sm = state.borrow_mut();
+        sm.concordance_state = None;
+        sm.concordance_bar.hide();
+        drop(sm);
+        state.borrow().gloss_overlay.hide();
+        state.borrow_mut().picker.show_prepare();
+        state.borrow().picker.show_finish();
+        state.borrow_mut().input_mode = crate::app::InputMode::LibraryPicker;
+    }
+}
+
+/// Open the keybinds overlay, toggling visibility. If already visible (or
+/// gamepad overlay is visible), hide both and return to Reader mode.
+/// Otherwise, hide other overlays and show the keybinds overlay.
+/// Note: the chord start (KeyState::start_chord) must be called separately
+/// by the dispatch arm since it touches key_state.
+pub(crate) fn open_keybinds_overlay(state: &Rc<RefCell<AppState>>) {
+    let s = state.borrow();
+    if s.keybinds_overlay.is_visible() || s.gamepad_overlay.is_visible() {
+        s.keybinds_overlay.hide();
+        s.gamepad_overlay.hide();
+        drop(s);
+        state.borrow_mut().input_mode = crate::app::InputMode::Reader;
+    } else {
+        s.picker.hide();
+        s.media_picker.hide();
+        s.settings_overlay.hide();
+        s.search_bar.hide();
+        s.gloss_overlay.hide();
+        s.keybinds_overlay.show();
+        drop(s);
+        state.borrow_mut().input_mode = crate::app::InputMode::KeybindsOverlay;
+    }
+}
+
+/// Open the concordance word picker with the current work's vocab words.
+pub(crate) fn open_concordance_word_picker(state: &Rc<RefCell<AppState>>) {
+    let words: Vec<(String, usize)> = {
+        let s = state.borrow();
+        let mut seen = std::collections::BTreeSet::new();
+        for m in &s.vocab_matches {
+            seen.insert(m.word.clone());
+        }
+        seen.into_iter().map(|w| (w, 0)).collect()
+    };
+    state.borrow_mut().concordance_word_picker.set_words(words);
+    state.borrow().concordance_word_picker.show();
+    state.borrow_mut().input_mode = crate::app::InputMode::ConcordanceWordPicker;
+}
+
+/// Open the concordance occurrence list picker for the current concordance state.
+pub(crate) fn open_concordance_list_picker(state: &Rc<RefCell<AppState>>) {
+    let s = state.borrow();
+    if let Some(conc) = &s.concordance_state {
+        s.concordance_list_picker.show(&conc.occurrences, conc.current_index);
+    }
+    drop(s);
+    state.borrow_mut().input_mode = crate::app::InputMode::ConcordanceListPicker;
+}
+
 /// Delete the selected bookmark from DB and update AppState's is_bookmarked
 /// vec + gutter renderer. Called from the bookmark picker's Delete/d key.
 pub(crate) fn delete_bookmark(

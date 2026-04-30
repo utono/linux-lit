@@ -90,6 +90,52 @@ pub(crate) fn handle_word_selection(
     });
 }
 
+/// Jump to the next vocab match, or advance the concordance within the
+/// current work if concordance mode is active.
+pub(crate) fn jump_to_next_vocab(
+    state: &Rc<RefCell<AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+) {
+    let has_concordance = state.borrow().concordance_state.is_some();
+    if has_concordance {
+        let current_abbrev = state.borrow().current_work.as_ref().map(|w| w.abbrev.clone());
+        let advanced = {
+            let mut s = state.borrow_mut();
+            if let (Some(conc), Some(ref abbrev)) = (s.concordance_state.as_mut(), &current_abbrev) {
+                conc.advance_within_work(abbrev)
+            } else { false }
+        };
+        if advanced {
+            navigation::concordance_jump_to_current(state, tokio_handle);
+        }
+    } else {
+        navigation::jump_to_next_vocab(&mut state.borrow_mut());
+    }
+}
+
+/// Jump to the previous vocab match, or retreat the concordance within the
+/// current work if concordance mode is active.
+pub(crate) fn jump_to_prev_vocab(
+    state: &Rc<RefCell<AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+) {
+    let has_concordance = state.borrow().concordance_state.is_some();
+    if has_concordance {
+        let current_abbrev = state.borrow().current_work.as_ref().map(|w| w.abbrev.clone());
+        let retreated = {
+            let mut s = state.borrow_mut();
+            if let (Some(conc), Some(ref abbrev)) = (s.concordance_state.as_mut(), &current_abbrev) {
+                conc.retreat_within_work(abbrev)
+            } else { false }
+        };
+        if retreated {
+            navigation::concordance_jump_to_current(state, tokio_handle);
+        }
+    } else {
+        navigation::jump_to_prev_vocab(&mut state.borrow_mut());
+    }
+}
+
 /// Open the concordance picker, populating it with the current work's vocab
 /// words. Called from `Ctrl+\`.
 pub(crate) fn open_picker(
