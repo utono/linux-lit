@@ -104,22 +104,6 @@ pub fn handle_key(
         }
     }
 
-    // Other vocab popup keys (when popup is visible)
-    if state.borrow().vocab_popup.is_visible() {
-        match key_name {
-            "g" => {
-                crate::app::vocab_popup_toggle_view(&mut state.borrow_mut());
-                return true;
-            }
-            "Tab" => {
-                crate::input::search::toggle_playback(&mut state.borrow_mut());
-                return true;
-            }
-            // Let h, j, k, Escape, and other keys fall through to normal handling
-            _ => {}
-        }
-    }
-
     // Shift+Tab or Ctrl+g: toggle gloss overlay for last-viewed gloss
     if key_name == "ISO_Left_Tab" || (is_ctrl && key_name == "g") {
         let has_gloss = !state.borrow().gloss_list.is_empty();
@@ -961,7 +945,11 @@ fn dispatch_action(
 
         // Multi-key chord entry
         PendingG => {
-            KeyState::start_chord(key_state, ChordState::PendingG);
+            if state.borrow().vocab_popup.is_visible() {
+                crate::app::vocab_popup_toggle_view(&mut state.borrow_mut());
+            } else {
+                KeyState::start_chord(key_state, ChordState::PendingG);
+            }
             true
         }
         PendingZ => {
