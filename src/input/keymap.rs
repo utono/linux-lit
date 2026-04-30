@@ -45,69 +45,6 @@ pub fn handle_key(
     tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
     crate::logging::log(&format!("KEY: name={} ctrl={} shift={} alt={}", key_name, is_ctrl, is_shift, is_alt));
-    let picker_visible = state.borrow().picker.is_visible();
-
-    // Ctrl+n/Ctrl+p navigate picker list when visible
-    if picker_visible && is_ctrl {
-        match key_name {
-            "n" => {
-                state.borrow().picker.move_selection(1);
-                return true;
-            }
-            "p" => {
-                state.borrow().picker.move_selection(-1);
-                return true;
-            }
-            _ => {}
-        }
-    }
-
-    // Ctrl+Shift+p: open concordance word picker (current work's vocab words only)
-    if is_ctrl && is_shift && key_name == "P" {
-        let words: Vec<(String, usize)> = {
-            let s = state.borrow();
-            let mut seen = std::collections::BTreeSet::new();
-            for m in &s.vocab_matches {
-                seen.insert(m.word.clone());
-            }
-            seen.into_iter().map(|w| (w, 0)).collect()
-        };
-        state.borrow_mut().concordance_word_picker.set_words(words);
-        state.borrow().concordance_word_picker.show();
-        state.borrow_mut().input_mode = crate::app::InputMode::ConcordanceWordPicker;
-        return true;
-    }
-
-    // Ctrl+Alt+p: open concordance occurrence list
-    if is_ctrl && is_alt && key_name == "p" {
-        let s = state.borrow();
-        if let Some(conc) = &s.concordance_state {
-            s.concordance_list_picker
-                .show(&conc.occurrences, conc.current_index);
-        }
-        drop(s);
-        state.borrow_mut().input_mode = crate::app::InputMode::ConcordanceListPicker;
-        return true;
-    }
-
-    // Ctrl+p: open picker when hidden (also clears concordance mode) — Reader mode only
-    if is_ctrl && key_name == "p" && !picker_visible
-        && state.borrow().input_mode == crate::app::InputMode::Reader
-        && !state.borrow().bookmark_picker.is_visible()
-        && !state.borrow().media_picker.is_visible()
-        && !state.borrow().settings_overlay.is_visible()
-    {
-        {
-            let mut s = state.borrow_mut();
-            s.concordance_state = None;
-            s.concordance_bar.hide();
-        }
-        state.borrow().gloss_overlay.hide();
-        state.borrow_mut().picker.show_prepare();
-        state.borrow().picker.show_finish();
-        state.borrow_mut().input_mode = crate::app::InputMode::LibraryPicker;
-        return true;
-    }
 
     // Ctrl+Alt+L: quit from any mode
     if is_ctrl && is_alt && key_name == "l" {
@@ -260,6 +197,14 @@ fn handle_library_picker_key(
     tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
     match key_name {
+        "n" if is_ctrl => {
+            state.borrow().picker.move_selection(1);
+            true
+        }
+        "p" if is_ctrl => {
+            state.borrow().picker.move_selection(-1);
+            true
+        }
         "Escape" => {
             let level = state.borrow().picker.level().clone();
             match level {
@@ -322,8 +267,7 @@ fn handle_library_picker_key(
             true
         }
         _ => {
-            // Ctrl+n/p already handled at top of handle_key; let GTK route
-            // remaining keys to the search entry.
+            // Let GTK route remaining keys to the search entry.
             if is_ctrl {
                 // Ctrl combos not handled above — don't let GTK insert text
                 false
