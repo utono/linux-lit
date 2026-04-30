@@ -1,9 +1,12 @@
 pub mod actions;
 pub mod gamepad;
+pub mod highlight;
 pub mod keymap;
 pub mod keymap_config;
 pub mod navigation;
+pub mod picker_keys;
+pub mod scroll;
 pub mod search;
 pub mod timestamps;
-pub mod picker_keys;
+pub mod viewport;
 pub mod visual;
