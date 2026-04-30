@@ -750,6 +750,49 @@ pub fn find_all_glosses(
     rows.collect()
 }
 
+#[derive(Debug, Clone)]
+pub struct GlossedPassage {
+    pub passage_id: i64,
+    pub work_abbrev: String,
+    pub start_citation: String,
+    pub end_citation: String,
+    pub act: i64,
+    pub scene: i64,
+    pub speaker: String,
+    pub source_text: String,
+}
+
+pub fn find_glossed_passages(
+    conn: &Connection,
+    work_abbrev: &str,
+) -> Result<Vec<GlossedPassage>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT p.id, p.work_abbrev, p.start_citation, p.end_citation, \
+                p.act, p.scene, p.character, p.source_text \
+         FROM passages p \
+         JOIN glosses g ON g.passage_id = p.id \
+         WHERE p.work_abbrev = ?1 \
+           AND g.gloss_type = 'teacher-generic' \
+         ORDER BY p.act, p.scene, p.start_citation",
+    )?;
+    let rows = stmt.query_map(
+        rusqlite::params![work_abbrev],
+        |row| {
+            Ok(GlossedPassage {
+                passage_id: row.get(0)?,
+                work_abbrev: row.get(1)?,
+                start_citation: row.get(2)?,
+                end_citation: row.get(3)?,
+                act: row.get(4)?,
+                scene: row.get(5)?,
+                speaker: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+                source_text: row.get(7)?,
+            })
+        },
+    )?;
+    rows.collect()
+}
+
 pub fn save_gloss(
     conn: &Connection,
     hash: &str,

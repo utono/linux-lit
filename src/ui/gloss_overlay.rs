@@ -191,7 +191,7 @@ impl GlossOverlay {
         footer_box.set_margin_bottom(12);
         footer_box.add_css_class("gloss-hint");
 
-        let hint = Label::new(Some("Esc close · a add · d delete · c copy id · Ctrl+n/p navigate"));
+        let hint = Label::new(Some("Esc close · a add · d delete · c copy id · Ctrl+n/p gloss · Alt+n/p passage"));
         hint.set_halign(Align::Start);
         hint.set_hexpand(true);
         footer_box.append(&hint);

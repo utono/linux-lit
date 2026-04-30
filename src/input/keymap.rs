@@ -110,7 +110,7 @@ pub fn handle_key(
             | crate::app::InputMode::ConcordanceListPicker => handle_picker_key(state, key_name, is_ctrl, tokio_handle, mode),
             crate::app::InputMode::Settings => handle_settings_key(state, key_name, is_ctrl),
             crate::app::InputMode::Search => handle_search_key(state, key_name),
-            crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl),
+            crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_alt),
             crate::app::InputMode::GlossPrompt => handle_gloss_prompt_key(state, key_name, is_ctrl),
             crate::app::InputMode::GamepadOverlay => handle_gamepad_key(state, key_name),
             crate::app::InputMode::KeybindsOverlay => handle_keybinds_key(state, key_state, key_name),
@@ -538,6 +538,7 @@ fn handle_gloss_key(
     key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
     is_ctrl: bool,
+    is_alt: bool,
 ) -> bool {
     if key_state.borrow().pending_g {
         key_state.borrow_mut().pending_g = false;
@@ -545,6 +546,19 @@ fn handle_gloss_key(
             state.borrow().gloss_overlay.scroll_gloss_to_top();
         }
         return true;
+    }
+    if is_alt {
+        match key_name {
+            "n" => {
+                navigate_gloss_passage(state, 1);
+                return true;
+            }
+            "p" => {
+                navigate_gloss_passage(state, -1);
+                return true;
+            }
+            _ => {}
+        }
     }
     if is_ctrl {
         match key_name {
@@ -598,6 +612,79 @@ fn handle_gloss_key(
         }
         _ => true,
     }
+}
+
+fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) {
+    let mut s = state.borrow_mut();
+
+    let work_abbrev = match &s.gloss_context {
+        Some(ctx) => ctx.work_abbrev.clone(),
+        None => return,
+    };
+
+    if s.gloss_passages.is_empty() {
+        if let Ok(conn) = crate::db::queries::open_db() {
+            s.gloss_passages = crate::db::queries::find_glossed_passages(&conn, &work_abbrev)
+                .unwrap_or_default();
+        }
+        if s.gloss_passages.is_empty() {
+            return;
+        }
+        if let Some(ctx) = &s.gloss_context {
+            s.gloss_passage_index = s.gloss_passages.iter()
+                .position(|p| p.start_citation == ctx.start_citation && p.end_citation == ctx.end_citation)
+                .unwrap_or(0);
+        }
+    }
+
+    let len = s.gloss_passages.len();
+    let new_idx = ((s.gloss_passage_index as i32 + delta).rem_euclid(len as i32)) as usize;
+    if new_idx == s.gloss_passage_index && len > 1 {
+        return;
+    }
+    s.gloss_passage_index = new_idx;
+
+    let passage = s.gloss_passages[new_idx].clone();
+
+    let all_glosses = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| {
+            crate::db::queries::find_all_glosses(
+                &conn, &passage.work_abbrev, &passage.start_citation, &passage.end_citation,
+            ).ok()
+        })
+        .unwrap_or_default();
+
+    if all_glosses.is_empty() {
+        return;
+    }
+
+    let source_lines: Vec<(String, i64)> = Vec::new();
+
+    let work_title = s.current_work.as_ref().map(|w| w.title.clone()).unwrap_or_default();
+    let ctx = crate::gloss::GlossContext {
+        work_abbrev: passage.work_abbrev,
+        work_title,
+        start_citation: passage.start_citation,
+        end_citation: passage.end_citation,
+        act: passage.act,
+        scene: passage.scene,
+        speaker: passage.speaker,
+        source_text: passage.source_text,
+        source_line_numbers: Vec::new(),
+        hash: String::new(),
+    };
+
+    let h = s.scrolled_window.height();
+    let gloss_text = &all_glosses[0].gloss_text;
+    s.gloss_overlay.show_gloss_with_color(
+        &ctx.source_text, gloss_text, h,
+        Some(&s.theme.root_color), &source_lines,
+    );
+    s.gloss_overlay.set_position(0, all_glosses.len());
+    s.gloss_list = all_glosses;
+    s.gloss_index = 0;
+    s.gloss_context = Some(ctx);
 }
 
 fn navigate_gloss(state: &Rc<RefCell<AppState>>, delta: i32) {

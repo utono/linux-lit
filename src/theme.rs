@@ -512,6 +512,6 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
         header_border = blend_colors(&theme.dim_fg, &theme.text_bg, 0.5),
         font = font_family,
         size = font_size,
-        label_size = font_size,
+        label_size = 13,
     )
 }
