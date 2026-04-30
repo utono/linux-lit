@@ -4,6 +4,7 @@
 
 pub mod bookmarks;
 pub mod concordance;
+pub mod gloss;
 pub mod pickers;
 pub mod settings;
 
