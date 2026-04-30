@@ -2150,7 +2150,8 @@ pub fn apply_dialogue_formatting(state: &mut AppState) {
     // Remove old formatting tags if they exist
     let tag_table = state.buffer.tag_table();
     for name in &["dialogue-indent", "speaker-gap", "stage-direction-gap",
-                   "speaker-name", "stage-direction-style", "act-scene-header"] {
+                   "speaker-name", "stage-direction-style", "act-scene-header",
+                   "blank-line"] {
         if let Some(old) = tag_table.lookup(name) {
             tag_table.remove(&old);
         }
@@ -2160,7 +2161,6 @@ pub fn apply_dialogue_formatting(state: &mut AppState) {
     // so speaker names sit at the same left edge as dialogue. Dialogue lines
     // get an additional indent via the per-tag margin below.
     let base_margin = state.text_view.left_margin();
-    let speaker_gap = state.config.line_spacing.max(1) as i32;
 
     let indent_tag = gtk4::TextTag::builder()
         .name("dialogue-indent")
@@ -2169,12 +2169,12 @@ pub fn apply_dialogue_formatting(state: &mut AppState) {
 
     let speaker_gap_tag = gtk4::TextTag::builder()
         .name("speaker-gap")
-        .pixels_above_lines(speaker_gap * 5)
+        .pixels_above_lines(8)
         .build();
 
     let stage_gap_tag = gtk4::TextTag::builder()
         .name("stage-direction-gap")
-        .pixels_above_lines(10)
+        .pixels_above_lines(8)
         .build();
 
     let speaker_name_tag = gtk4::TextTag::builder()
@@ -2192,7 +2192,12 @@ pub fn apply_dialogue_formatting(state: &mut AppState) {
     let act_scene_tag = gtk4::TextTag::builder()
         .name("act-scene-header")
         .weight(700)
-        .pixels_above_lines(20)
+        .pixels_above_lines(8)
+        .build();
+
+    let blank_line_tag = gtk4::TextTag::builder()
+        .name("blank-line")
+        .scale(0.25)
         .build();
 
     tag_table.add(&indent_tag);
@@ -2201,6 +2206,7 @@ pub fn apply_dialogue_formatting(state: &mut AppState) {
     tag_table.add(&speaker_name_tag);
     tag_table.add(&stage_italic_tag);
     tag_table.add(&act_scene_tag);
+    tag_table.add(&blank_line_tag);
 
     // Apply tags per line
     for i in 0..line_count {
@@ -2221,7 +2227,7 @@ pub fn apply_dialogue_formatting(state: &mut AppState) {
         let text = text.trim_end_matches('\n');
 
         if line_types::is_blank(text) {
-            continue;
+            state.buffer.apply_tag(&blank_line_tag, &line_start, &line_end);
         } else if line_types::is_speaker(text) {
             state.buffer.apply_tag(&speaker_gap_tag, &line_start, &line_end);
             state.buffer.apply_tag(&speaker_name_tag, &line_start, &line_end);
