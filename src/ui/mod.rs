@@ -3,7 +3,7 @@ pub mod concordance_bar;
 pub mod concordance_list_picker;
 pub mod concordance_picker;
 pub mod concordance_word_picker;
-pub mod correction_overlay;
+pub mod gloss_overlay;
 pub mod vocab_popup;
 pub mod gamepad_overlay;
 pub mod keybinds_overlay;

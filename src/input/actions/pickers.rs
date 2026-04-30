@@ -18,7 +18,7 @@ pub(crate) fn load_selected_work(
             let s = state.borrow();
             let _ = s.cmd_tx.try_send(crate::mpv::commands::MpvCommand::Pause);
             s.picker.hide();
-            s.correction_overlay.show_loading_message("Loading...");
+            s.gloss_overlay.show_loading_message("Loading...");
         }
         state.borrow_mut().input_mode = crate::app::InputMode::Reader;
         let state_clone = Rc::clone(state);
@@ -87,7 +87,7 @@ pub(crate) fn load_selected_work(
                     };
                     {
                         let mut s = state_clone.borrow_mut();
-                        s.correction_overlay.hide();
+                        s.gloss_overlay.hide();
                         crate::app::clear_display(&mut s);
                         crate::app::display_work_at_with_prepared(&mut s, work, None, prepared);
                         crate::logging::log(&format!(
@@ -105,12 +105,12 @@ pub(crate) fn load_selected_work(
                 Ok(Err(e)) => {
                     crate::logging::log(&format!("PICKER: load_work error: {}", e));
                     let s = state_clone.borrow();
-                    s.correction_overlay.hide();
+                    s.gloss_overlay.hide();
                 }
                 Err(e) => {
                     crate::logging::log(&format!("PICKER: task join error: {}", e));
                     let s = state_clone.borrow();
-                    s.correction_overlay.hide();
+                    s.gloss_overlay.hide();
                 }
             }
         });
@@ -143,7 +143,7 @@ pub(crate) fn open_bookmark_picker(
                 .unwrap_or_default();
             {
                 let mut s = state_clone.borrow_mut();
-                s.correction_overlay.hide();
+                s.gloss_overlay.hide();
                 s.bookmark_picker.set_items(items);
             }
             state_clone.borrow().bookmark_picker.show();
@@ -178,7 +178,7 @@ pub(crate) fn open_media_picker(
                 .unwrap_or_default();
             {
                 let mut s = state_clone.borrow_mut();
-                s.correction_overlay.hide();
+                s.gloss_overlay.hide();
                 s.media_picker.set_items(items);
             }
             state_clone.borrow().media_picker.show();

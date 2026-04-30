@@ -138,7 +138,7 @@ pub struct AppState {
     pub action_popup_widget: crate::ui::action_popup::ActionPopup,
     pub keybinds_overlay: crate::ui::keybinds_overlay::KeybindsOverlay,
     pub gamepad_overlay: crate::ui::gamepad_overlay::GamepadOverlay,
-    pub correction_overlay: crate::ui::correction_overlay::CorrectionOverlay,
+    pub gloss_overlay: crate::ui::gloss_overlay::GlossOverlay,
     pub gloss_original_text: Option<String>,
     pub gloss_saved: Option<crate::db::queries::SavedGloss>,
     pub gloss_context: Option<crate::gloss::GlossContext>,
@@ -702,13 +702,13 @@ pub fn build_window(
     gamepad_overlay.overlay.set_vexpand(true);
 
     // Correction overlay wraps the gamepad overlay
-    let correction_overlay = crate::ui::correction_overlay::CorrectionOverlay::new(config.column_width, config.text_margins);
-    correction_overlay.attach(&gamepad_overlay.overlay);
-    correction_overlay.overlay.set_vexpand(true);
+    let gloss_overlay = crate::ui::gloss_overlay::GlossOverlay::new(config.column_width, config.text_margins);
+    gloss_overlay.attach(&gamepad_overlay.overlay);
+    gloss_overlay.overlay.set_vexpand(true);
 
-    // Concordance picker wraps the correction overlay
+    // Concordance picker wraps the gloss overlay
     let concordance_picker = crate::ui::concordance_picker::ConcordancePicker::new();
-    concordance_picker.attach(&correction_overlay.overlay);
+    concordance_picker.attach(&gloss_overlay.overlay);
     concordance_picker.overlay.set_vexpand(true);
 
     // Concordance word picker wraps the concordance picker
@@ -883,7 +883,7 @@ pub fn build_window(
         action_popup_widget,
         keybinds_overlay,
         gamepad_overlay,
-        correction_overlay,
+        gloss_overlay,
         gloss_original_text: None,
         gloss_saved: None,
         gloss_context: None,

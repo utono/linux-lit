@@ -406,6 +406,20 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
            color: {cursor_fg}; border-left: 3px solid {cursor_bg}; }} \
          .action-popup .settings-footer {{ color: {dim}; }} \
          .action-separator {{ color: {dim}; opacity: 0.3; margin: 4px 12px; }} \
+         .amend-dialog {{ background-color: {bg}; color: {fg}; \
+           padding: 0; border-radius: 12px; border: 1px solid {dim}; \
+           box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22), \
+                       0 2px 6px rgba(0, 0, 0, 0.08); }} \
+         .amend-title {{ font-size: 14px; font-weight: 700; \
+           letter-spacing: 2px; color: {fg}; opacity: 0.75; \
+           padding: 14px 22px 10px; \
+           border-bottom: 1px solid {header_border}; }} \
+         .amend-text {{ font-family: {font}; font-size: {size}pt; \
+           color: {fg}; background-color: {bg}; }} \
+         .amend-hint {{ font-size: 12px; letter-spacing: 1.2px; \
+           color: {fg}; opacity: 0.65; \
+           padding: 8px 22px 12px; \
+           border-top: 1px solid {header_border}; }} \
          .keybinds-overlay {{ background-color: rgba(26, 26, 26, 0.95); color: white; \
            padding: 20px; border-radius: 10px; }} \
          .kb-row {{ }} \
@@ -441,15 +455,15 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .debug-icon {{ font-size: 18px; color: {bg}; opacity: 0.85; }} \
          .page-line-label {{ font-family: {font}; font-size: {label_size}pt; color: {dim}; }} \
          .word-status {{ font-size: 16px; color: {fg}; opacity: 0.85; }} \
-         .correction-scrim {{ background-color: rgba(0, 0, 0, 0.3); }} \
-         .correction-overlay {{ background-color: {bg}; color: {fg}; }} \
-         .correction-title {{ font-size: {size}pt; font-weight: bold; \
+         .gloss-scrim {{ background-color: rgba(0, 0, 0, 0.3); }} \
+         .gloss-overlay {{ background-color: {bg}; color: {fg}; }} \
+         .gloss-title {{ font-size: {size}pt; font-weight: bold; \
            margin-bottom: 12px; padding-bottom: 12px; \
            border-bottom: 1px solid {dim}; }} \
-         .correction-header {{ font-size: 11px; font-weight: bold; \
+         .gloss-header {{ font-size: 11px; font-weight: bold; \
            color: {dim}; letter-spacing: 2px; margin-top: 8px; margin-bottom: 4px; }} \
-         .correction-text {{ font-family: {font}; font-size: {size}pt; }} \
-         .correction-hint {{ font-size: 11px; \
+         .gloss-text {{ font-family: {font}; font-size: {size}pt; }} \
+         .gloss-hint {{ font-size: 11px; \
            color: {dim}; margin-top: 12px; padding-top: 8px; \
            border-top: 1px solid {dim}; }} \
          .definition-panel {{ background-color: {bg}; color: {fg}; \

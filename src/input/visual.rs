@@ -126,7 +126,7 @@ pub struct ActionPopupState {
 }
 
 /// Built-in action names, in display order.
-pub const BUILTIN_ACTIONS: &[&str] = &["Copy", "Copy with metadata", "Gloss with Claude"];
+pub const BUILTIN_ACTIONS: &[&str] = &["Gloss with Claude", "Copy", "Copy with metadata"];
 
 /// Determine which built-in actions are available for the current work.
 pub fn available_builtin_actions(_state: &AppState) -> Vec<&'static str> {
@@ -170,12 +170,12 @@ pub fn execute_action(
 
     if index < builtin_count {
         match index {
-            0 => action_copy(&mut state_rc.borrow_mut(), false),
-            1 => action_copy(&mut state_rc.borrow_mut(), true),
-            2 => {
+            0 => {
                 action_gloss_with_claude(state_rc);
                 return;
             }
+            1 => action_copy(&mut state_rc.borrow_mut(), false),
+            2 => action_copy(&mut state_rc.borrow_mut(), true),
             _ => {}
         }
     } else {
@@ -428,7 +428,8 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
     if let Some(ref saved) = existing {
         let mut s = state_rc.borrow_mut();
         s.gloss_original_text = Some(ctx.source_text.clone());
-        s.correction_overlay.show_gloss_with_color(&ctx.source_text, &saved.gloss_text, s.scrolled_window.height(), Some(&s.theme.root_color));
+        let pairs = ctx.source_line_pairs();
+        s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &saved.gloss_text, s.scrolled_window.height(), Some(&s.theme.root_color), &pairs);
         s.gloss_saved = Some(saved.clone());
         s.gloss_context = Some(ctx);
         s.input_mode = crate::app::InputMode::GlossOverlay;
@@ -439,7 +440,7 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
     {
         let mut s = state_rc.borrow_mut();
         s.gloss_original_text = Some(ctx.source_text.clone());
-        s.correction_overlay.show_loading();
+        s.gloss_overlay.show_loading();
         s.input_mode = crate::app::InputMode::GlossOverlay;
     }
 
@@ -480,14 +481,15 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
 
                 let mut s = state_for_result.borrow_mut();
                 let h = s.scrolled_window.height();
-                s.correction_overlay.show_gloss_with_color(&ctx.source_text, &gloss_text, h, Some(&s.theme.root_color));
+                let pairs = ctx.source_line_pairs();
+                s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &gloss_text, h, Some(&s.theme.root_color), &pairs);
                 s.gloss_saved = saved;
                 s.gloss_context = Some(ctx);
                 crate::logging::log("GLOSS: generated and saved new gloss");
             }
             Ok(Err(e)) => {
                 let s = state_for_result.borrow();
-                s.correction_overlay.show(&format!("Error: {}", e), "");
+                s.gloss_overlay.show(&format!("Error: {}", e), "");
                 crate::logging::log(&format!("GLOSS: API error: {}", e));
             }
             Err(e) => {

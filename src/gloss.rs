@@ -37,7 +37,18 @@ pub struct GlossContext {
     pub scene: i64,
     pub speaker: String,
     pub source_text: String,
+    pub source_line_numbers: Vec<i64>,
     pub hash: String,
+}
+
+impl GlossContext {
+    pub fn source_line_pairs(&self) -> Vec<(String, i64)> {
+        self.source_text
+            .lines()
+            .zip(self.source_line_numbers.iter())
+            .map(|(text, &num)| (text.to_string(), num))
+            .collect()
+    }
 }
 
 fn normalize_abbrev(abbrev: &str) -> &str {
@@ -69,6 +80,7 @@ pub fn build_context(work: &Work, lines: &[Line]) -> Option<GlossContext> {
     };
 
     let source_text = lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n");
+    let source_line_numbers: Vec<i64> = lines.iter().map(|l| l.line_in_div).collect();
 
     let hash_input = format!("{}:{}:{}:teacher-generic", base_abbrev, start_citation, end_citation);
     let hash = format!("{:x}", md5::compute(hash_input.as_bytes()));
@@ -82,6 +94,7 @@ pub fn build_context(work: &Work, lines: &[Line]) -> Option<GlossContext> {
         scene: first.div2,
         speaker,
         source_text,
+        source_line_numbers,
         hash,
     })
 }

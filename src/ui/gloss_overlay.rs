@@ -8,7 +8,12 @@ struct BarRange {
     end_line: i32,
 }
 
-pub struct CorrectionOverlay {
+struct LineNumber {
+    buffer_line: i32,
+    number: i64,
+}
+
+pub struct GlossOverlay {
     pub overlay: Overlay,
     scrim: gtk4::Box,
     container: gtk4::Box,
@@ -24,11 +29,12 @@ pub struct CorrectionOverlay {
     bar_ranges: Rc<RefCell<Vec<BarRange>>>,
     bar_color: Rc<RefCell<(f64, f64, f64)>>,
     bar_x: Rc<RefCell<i32>>,
+    line_numbers: Rc<RefCell<Vec<LineNumber>>>,
     text_margins: i32,
     column_width: i32,
 }
 
-impl CorrectionOverlay {
+impl GlossOverlay {
     pub fn new(column_width: u32, text_margins: u32) -> Self {
         let overlay = Overlay::new();
 
@@ -36,17 +42,17 @@ impl CorrectionOverlay {
         container.set_halign(Align::Center);
         container.set_valign(Align::Center);
         container.set_width_request(column_width as i32);
-        container.add_css_class("correction-overlay");
+        container.add_css_class("gloss-overlay");
 
         let title = Label::new(Some("Gloss"));
-        title.add_css_class("correction-title");
+        title.add_css_class("gloss-title");
         title.set_margin_start(text_margins as i32);
         title.set_margin_end(text_margins as i32);
         title.set_margin_top(24);
         container.append(&title);
 
         let orig_header = Label::new(Some("ORIGINAL"));
-        orig_header.add_css_class("correction-header");
+        orig_header.add_css_class("gloss-header");
         orig_header.set_halign(Align::Start);
         container.append(&orig_header);
 
@@ -57,11 +63,11 @@ impl CorrectionOverlay {
         original_label.set_hexpand(false);
         original_label.set_selectable(false);
         original_label.set_max_width_chars(1);
-        original_label.add_css_class("correction-text");
+        original_label.add_css_class("gloss-text");
         container.append(&original_label);
 
         let corr_header = Label::new(Some("GLOSS"));
-        corr_header.add_css_class("correction-header");
+        corr_header.add_css_class("gloss-header");
         corr_header.set_halign(Align::Start);
         container.append(&corr_header);
 
@@ -72,7 +78,7 @@ impl CorrectionOverlay {
         corrected_label.set_hexpand(false);
         corrected_label.set_selectable(false);
         corrected_label.set_max_width_chars(1);
-        corrected_label.add_css_class("correction-text");
+        corrected_label.add_css_class("gloss-text");
         container.append(&corrected_label);
 
         let gloss_scrolled = gtk4::ScrolledWindow::new();
@@ -91,7 +97,7 @@ impl CorrectionOverlay {
         gloss_view.set_right_margin(right_margin);
         gloss_view.set_top_margin(24);
         gloss_view.set_bottom_margin(12);
-        gloss_view.add_css_class("correction-text");
+        gloss_view.add_css_class("gloss-text");
 
         let bar_drawing = gtk4::DrawingArea::new();
         bar_drawing.set_can_target(false);
@@ -99,35 +105,69 @@ impl CorrectionOverlay {
         let bar_ranges: Rc<RefCell<Vec<BarRange>>> = Rc::new(RefCell::new(Vec::new()));
         let bar_color: Rc<RefCell<(f64, f64, f64)>> = Rc::new(RefCell::new((0.53, 0.62, 0.71)));
         let bar_x: Rc<RefCell<i32>> = Rc::new(RefCell::new((column_width as i32) / 4));
+        let line_numbers: Rc<RefCell<Vec<LineNumber>>> = Rc::new(RefCell::new(Vec::new()));
 
         let ranges_clone = bar_ranges.clone();
         let color_clone = bar_color.clone();
         let bar_x_clone = bar_x.clone();
+        let line_numbers_clone = line_numbers.clone();
         let view_clone = gloss_view.clone();
-        bar_drawing.set_draw_func(move |_area, cr, _w, _h| {
+        let right_margin_val = right_margin;
+        bar_drawing.set_draw_func(move |_area, cr, w, _h| {
             let ranges = ranges_clone.borrow();
-            if ranges.is_empty() {
-                return;
-            }
             let (r, g, b) = *color_clone.borrow();
             let x = *bar_x_clone.borrow() as f64;
-            cr.set_source_rgb(r, g, b);
-            cr.set_line_width(2.0);
 
-            let buffer = view_clone.buffer();
-            for range in ranges.iter() {
-                let start_iter = buffer.iter_at_line(range.start_line);
-                let end_iter = buffer.iter_at_line(range.end_line);
-                if let (Some(si), Some(ei)) = (start_iter, end_iter) {
-                    let start_loc = view_clone.iter_location(&si);
-                    let (y_end, h_end) = view_clone.line_yrange(&ei);
-                    let (_, by_start) = view_clone.buffer_to_window_coords(
-                        gtk4::TextWindowType::Widget, 0, start_loc.y());
-                    let (_, by_end) = view_clone.buffer_to_window_coords(
-                        gtk4::TextWindowType::Widget, 0, y_end + h_end);
-                    cr.move_to(x, by_start as f64);
-                    cr.line_to(x, by_end as f64);
-                    let _ = cr.stroke();
+            // Draw bars
+            if !ranges.is_empty() {
+                cr.set_source_rgb(r, g, b);
+                cr.set_line_width(2.0);
+
+                let buffer = view_clone.buffer();
+                for range in ranges.iter() {
+                    let start_iter = buffer.iter_at_line(range.start_line);
+                    let end_iter = buffer.iter_at_line(range.end_line);
+                    if let (Some(si), Some(ei)) = (start_iter, end_iter) {
+                        let start_loc = view_clone.iter_location(&si);
+                        let (y_end, h_end) = view_clone.line_yrange(&ei);
+                        let (_, by_start) = view_clone.buffer_to_window_coords(
+                            gtk4::TextWindowType::Widget, 0, start_loc.y());
+                        let (_, by_end) = view_clone.buffer_to_window_coords(
+                            gtk4::TextWindowType::Widget, 0, y_end + h_end);
+                        cr.move_to(x, by_start as f64);
+                        cr.line_to(x, by_end as f64);
+                        let _ = cr.stroke();
+                    }
+                }
+            }
+
+            // Draw line numbers (every 5th)
+            let nums = line_numbers_clone.borrow();
+            if !nums.is_empty() {
+                cr.set_source_rgb(r, g, b);
+                let font_size = {
+                    let pango_ctx = view_clone.pango_context();
+                    let font_desc = pango_ctx.font_description().unwrap_or_default();
+                    (font_desc.size() as f64 / pango::SCALE as f64) * 0.7
+                };
+                cr.select_font_face("serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
+                cr.set_font_size(font_size);
+
+                let buffer = view_clone.buffer();
+                let num_x = (w - right_margin_val + 8) as f64;
+
+                for ln in nums.iter() {
+                    if ln.number % 5 != 0 {
+                        continue;
+                    }
+                    if let Some(iter) = buffer.iter_at_line(ln.buffer_line) {
+                        let loc = view_clone.iter_location(&iter);
+                        let (_, by) = view_clone.buffer_to_window_coords(
+                            gtk4::TextWindowType::Widget, 0, loc.y());
+                        let text = ln.number.to_string();
+                        let _ = cr.move_to(num_x, by as f64 + font_size);
+                        let _ = cr.show_text(&text);
+                    }
                 }
             }
         });
@@ -143,7 +183,7 @@ impl CorrectionOverlay {
         container.append(&gloss_scrolled);
 
         let hint = Label::new(Some("Esc = close  ·  a = amend  ·  r = regenerate"));
-        hint.add_css_class("correction-hint");
+        hint.add_css_class("gloss-hint");
         hint.set_margin_start(text_margins as i32);
         hint.set_margin_end(text_margins as i32);
         hint.set_margin_bottom(8);
@@ -154,10 +194,10 @@ impl CorrectionOverlay {
         let scrim = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
         scrim.set_hexpand(true);
         scrim.set_vexpand(true);
-        scrim.add_css_class("correction-scrim");
+        scrim.add_css_class("gloss-scrim");
         scrim.set_visible(false);
 
-        CorrectionOverlay {
+        GlossOverlay {
             overlay,
             scrim,
             container,
@@ -173,6 +213,7 @@ impl CorrectionOverlay {
             bar_ranges,
             bar_color,
             bar_x,
+            line_numbers,
             text_margins: text_margins as i32,
             column_width: column_width as i32,
         }
@@ -206,10 +247,10 @@ impl CorrectionOverlay {
     }
 
     pub fn show_gloss(&self, _original: &str, gloss: &str, card_height: i32) {
-        self.show_gloss_with_color(_original, gloss, card_height, None);
+        self.show_gloss_with_color(_original, gloss, card_height, None, &[]);
     }
 
-    pub fn show_gloss_with_color(&self, _original: &str, gloss: &str, card_height: i32, root_color: Option<&str>) {
+    pub fn show_gloss_with_color(&self, _original: &str, gloss: &str, card_height: i32, root_color: Option<&str>, source_line_numbers: &[(String, i64)]) {
         self.container.set_height_request(card_height);
         self.title.set_visible(false);
         self.orig_header.set_visible(false);
@@ -226,8 +267,9 @@ impl CorrectionOverlay {
         let bar_left = self.column_width / 6;
         *self.bar_x.borrow_mut() = bar_left;
 
-        let ranges = populate_gloss_buffer(&self.gloss_view, gloss, self.text_margins, bar_left);
+        let (ranges, nums) = populate_gloss_buffer(&self.gloss_view, gloss, self.text_margins, bar_left, source_line_numbers);
         *self.bar_ranges.borrow_mut() = ranges;
+        *self.line_numbers.borrow_mut() = nums;
         self.bar_drawing.queue_draw();
 
         self.gloss_scrolled.set_visible(true);
@@ -319,7 +361,7 @@ fn try_extract<'a>(s: &'a str, tag: &str) -> Option<(&'a str, &'a str)> {
     }
 }
 
-fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32, bar_left: i32) -> Vec<BarRange> {
+fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32, bar_left: i32, source_line_numbers: &[(String, i64)]) -> (Vec<BarRange>, Vec<LineNumber>) {
     let buffer = view.buffer();
     buffer.set_text("");
 
@@ -370,7 +412,14 @@ fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32,
     let mut first = true;
     let mut first_speaker = true;
     let mut bar_ranges: Vec<BarRange> = Vec::new();
+    let mut line_nums: Vec<LineNumber> = Vec::new();
     let mut current_block_start: Option<i32> = None;
+
+    // Build lookup: trimmed verse text → line_in_div
+    let line_lookup: std::collections::HashMap<&str, i64> = source_line_numbers
+        .iter()
+        .map(|(text, num)| (text.trim(), *num))
+        .collect();
 
     for el in &elements {
         if !first {
@@ -401,6 +450,10 @@ fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32,
                 buffer.insert(&mut end, text);
                 let start = buffer.iter_at_offset(offset);
                 buffer.apply_tag(&verse_tag, &start, &buffer.end_iter());
+
+                if let Some(&num) = line_lookup.get(text.trim()) {
+                    line_nums.push(LineNumber { buffer_line: line, number: num });
+                }
             }
             GlossElement::Gloss(text) => {
                 if let Some(start_line) = current_block_start.take() {
@@ -420,7 +473,7 @@ fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32,
         bar_ranges.push(BarRange { start_line, end_line });
     }
 
-    bar_ranges
+    (bar_ranges, line_nums)
 }
 
 fn parse_hex_color(hex: &str) -> Option<(f64, f64, f64)> {

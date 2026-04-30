@@ -82,7 +82,7 @@ pub fn handle_key(
             s.concordance_state = None;
             s.concordance_bar.hide();
         }
-        state.borrow().correction_overlay.hide();
+        state.borrow().gloss_overlay.hide();
         state.borrow_mut().picker.show_prepare();
         state.borrow().picker.show_finish();
         state.borrow_mut().input_mode = crate::app::InputMode::LibraryPicker;
@@ -162,15 +162,16 @@ pub fn handle_key(
         }
     }
 
-    // Shift+Tab: toggle gloss overlay for last-viewed gloss
-    if key_name == "ISO_Left_Tab" {
+    // Shift+Tab or Ctrl+g: toggle gloss overlay for last-viewed gloss
+    if key_name == "ISO_Left_Tab" || (is_ctrl && key_name == "g") {
         let has_gloss = state.borrow().gloss_saved.is_some();
         if has_gloss {
             let s = state.borrow();
             let ctx = s.gloss_context.as_ref().unwrap();
             let saved = s.gloss_saved.as_ref().unwrap();
             let h = s.scrolled_window.height();
-            s.correction_overlay.show_gloss_with_color(&ctx.source_text, &saved.gloss_text, h, Some(&s.theme.root_color));
+            let pairs = ctx.source_line_pairs();
+            s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &saved.gloss_text, h, Some(&s.theme.root_color), &pairs);
             drop(s);
             state.borrow_mut().input_mode = crate::app::InputMode::GlossOverlay;
             return true;
@@ -542,17 +543,17 @@ fn handle_gloss_key(
             true
         }
         "j" => {
-            state.borrow().correction_overlay.scroll_gloss(1);
+            state.borrow().gloss_overlay.scroll_gloss(1);
             true
         }
         "k" => {
-            state.borrow().correction_overlay.scroll_gloss(-1);
+            state.borrow().gloss_overlay.scroll_gloss(-1);
             true
         }
         "Escape" | "n" => {
             {
                 let mut s = state.borrow_mut();
-                s.correction_overlay.hide();
+                s.gloss_overlay.hide();
                 s.input_mode = crate::app::InputMode::Reader;
             }
             true
@@ -752,7 +753,7 @@ fn dispatch_action(
                 sm.concordance_state = None;
                 sm.concordance_bar.hide();
                 drop(sm);
-                state.borrow().correction_overlay.hide();
+                state.borrow().gloss_overlay.hide();
                 state.borrow_mut().picker.show_prepare();
                 state.borrow().picker.show_finish();
                 state.borrow_mut().input_mode = crate::app::InputMode::LibraryPicker;
@@ -787,7 +788,7 @@ fn dispatch_action(
         OpenSettingsOverlay => {
             let s = state.borrow();
             if !s.settings_overlay.is_visible() && !s.picker.is_visible() {
-                s.correction_overlay.hide();
+                s.gloss_overlay.hide();
                 let ls = s.config.line_spacing;
                 let cw = s.config.column_width;
                 let tm = s.config.text_margins;
@@ -812,7 +813,7 @@ fn dispatch_action(
                 s.media_picker.hide();
                 s.settings_overlay.hide();
                 s.search_bar.hide();
-                s.correction_overlay.hide();
+                s.gloss_overlay.hide();
                 s.keybinds_overlay.show();
                 drop(s);
                 state.borrow_mut().input_mode = crate::app::InputMode::KeybindsOverlay;
@@ -1174,7 +1175,7 @@ fn regenerate_gloss(state_rc: &Rc<RefCell<AppState>>) {
     {
         let mut s = state_rc.borrow_mut();
         s.gloss_saved = None;
-        s.correction_overlay.show_loading();
+        s.gloss_overlay.show_loading();
     }
 
     let user_msg = crate::gloss::build_user_message(&ctx, None, None);
@@ -1214,13 +1215,14 @@ fn regenerate_gloss(state_rc: &Rc<RefCell<AppState>>) {
 
                 let mut s = state_for_result.borrow_mut();
                 let h = s.scrolled_window.height();
-                s.correction_overlay.show_gloss_with_color(&ctx.source_text, &gloss_text, h, Some(&s.theme.root_color));
+                let pairs = ctx.source_line_pairs();
+                s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &gloss_text, h, Some(&s.theme.root_color), &pairs);
                 s.gloss_saved = saved;
                 crate::logging::log("GLOSS: regenerated");
             }
             Ok(Err(e)) => {
                 let s = state_for_result.borrow();
-                s.correction_overlay.show(&format!("Error: {}", e), "");
+                s.gloss_overlay.show(&format!("Error: {}", e), "");
                 crate::logging::log(&format!("GLOSS: regenerate error: {}", e));
             }
             Err(e) => {
@@ -1231,74 +1233,74 @@ fn regenerate_gloss(state_rc: &Rc<RefCell<AppState>>) {
 }
 
 fn show_amend_dialog(state_rc: &Rc<RefCell<AppState>>) {
-    let window = {
+    let overlay_parent = {
         let s = state_rc.borrow();
-        s.text_view.root().and_then(|r| r.downcast::<gtk4::Window>().ok())
+        s.action_popup_widget.container.parent()
     };
-    let parent_window = match window {
-        Some(w) => w,
+    let overlay_parent = match overlay_parent {
+        Some(p) => p.downcast::<gtk4::Overlay>().ok(),
+        None => None,
+    };
+    let overlay_parent = match overlay_parent {
+        Some(o) => o,
         None => return,
     };
 
-    let dialog = gtk4::Window::builder()
-        .title("Enhancement prompt")
-        .transient_for(&parent_window)
-        .modal(true)
-        .default_width(450)
-        .default_height(160)
-        .build();
+    let container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    container.set_halign(gtk4::Align::Center);
+    container.set_valign(gtk4::Align::Center);
+    container.set_width_request(600);
+    container.add_css_class("amend-dialog");
 
-    let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
-    vbox.set_margin_top(12);
-    vbox.set_margin_bottom(12);
-    vbox.set_margin_start(12);
-    vbox.set_margin_end(12);
-
-    let label = gtk4::Label::new(Some("Enhancement prompt:"));
-    label.set_halign(gtk4::Align::Start);
-    vbox.append(&label);
+    let title = gtk4::Label::new(Some("ENHANCEMENT PROMPT"));
+    title.add_css_class("amend-title");
+    title.set_halign(gtk4::Align::Start);
+    container.append(&title);
 
     let scrolled = gtk4::ScrolledWindow::new();
-    scrolled.set_vexpand(true);
-    scrolled.set_min_content_height(80);
+    scrolled.set_min_content_height(120);
+    scrolled.set_margin_start(22);
+    scrolled.set_margin_end(22);
+    scrolled.set_margin_top(8);
+    scrolled.set_margin_bottom(8);
 
     let text_view = gtk4::TextView::new();
     text_view.set_wrap_mode(gtk4::WrapMode::Word);
-    text_view.set_top_margin(6);
-    text_view.set_bottom_margin(6);
-    text_view.set_left_margin(6);
-    text_view.set_right_margin(6);
+    text_view.set_top_margin(8);
+    text_view.set_bottom_margin(8);
+    text_view.set_left_margin(4);
+    text_view.set_right_margin(4);
+    text_view.add_css_class("amend-text");
     scrolled.set_child(Some(&text_view));
-    vbox.append(&scrolled);
+    container.append(&scrolled);
 
-    let hint = gtk4::Label::new(Some("Ctrl+Enter to submit  \u{00b7}  Esc to cancel"));
-    hint.add_css_class("dim-label");
-    hint.set_halign(gtk4::Align::Start);
-    vbox.append(&hint);
+    let hint = gtk4::Label::new(Some("Ctrl+Enter submit  \u{00b7}  Esc cancel"));
+    hint.add_css_class("amend-hint");
+    hint.set_halign(gtk4::Align::Center);
+    container.append(&hint);
 
-    dialog.set_child(Some(&vbox));
+    overlay_parent.add_overlay(&container);
 
     let state_for_key = Rc::clone(state_rc);
-    let dialog_weak = dialog.downgrade();
+    let container_weak = container.downgrade();
+    let overlay_weak = overlay_parent.downgrade();
     let tv_clone = text_view.clone();
 
     let key_controller = gtk4::EventControllerKey::new();
     key_controller.connect_key_pressed(move |_ctrl, keyval, _code, modifier| {
         let key_name = keyval.name().unwrap_or_default();
         if key_name == "Escape" {
-            if let Some(d) = dialog_weak.upgrade() {
-                d.close();
+            if let (Some(c), Some(o)) = (container_weak.upgrade(), overlay_weak.upgrade()) {
+                o.remove_overlay(&c);
             }
             return glib::Propagation::Stop;
         }
         if key_name == "Return" && modifier.contains(gtk4::gdk::ModifierType::CONTROL_MASK) {
-            let d = match dialog_weak.upgrade() {
-                Some(d) => d,
-                None => return glib::Propagation::Stop,
-            };
             let buf = tv_clone.buffer();
             let prompt = buf.text(&buf.start_iter(), &buf.end_iter(), false).to_string();
-            d.close();
+            if let (Some(c), Some(o)) = (container_weak.upgrade(), overlay_weak.upgrade()) {
+                o.remove_overlay(&c);
+            }
             if !prompt.trim().is_empty() {
                 amend_gloss(&state_for_key, &prompt);
             }
@@ -1306,9 +1308,9 @@ fn show_amend_dialog(state_rc: &Rc<RefCell<AppState>>) {
         }
         glib::Propagation::Proceed
     });
-    dialog.add_controller(key_controller);
+    text_view.add_controller(key_controller);
 
-    dialog.present();
+    text_view.grab_focus();
 }
 
 fn amend_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
@@ -1325,7 +1327,7 @@ fn amend_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
         (ctx, state.config.claude_model.clone(), state.tokio_handle.clone(), existing)
     };
 
-    state_rc.borrow().correction_overlay.show_loading();
+    state_rc.borrow().gloss_overlay.show_loading();
 
     let prompt_owned = prompt.to_string();
     let user_msg = crate::gloss::build_user_message(&ctx, Some(&prompt_owned), Some(&existing.gloss_text));
@@ -1355,13 +1357,14 @@ fn amend_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
 
                 let mut s = state_for_result.borrow_mut();
                 let h = s.scrolled_window.height();
-                s.correction_overlay.show_gloss_with_color(&ctx.source_text, &gloss_text, h, Some(&s.theme.root_color));
+                let pairs = ctx.source_line_pairs();
+                s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &gloss_text, h, Some(&s.theme.root_color), &pairs);
                 s.gloss_saved = saved;
                 crate::logging::log("GLOSS: amended");
             }
             Ok(Err(e)) => {
                 let s = state_for_result.borrow();
-                s.correction_overlay.show(&format!("Error: {}", e), "");
+                s.gloss_overlay.show(&format!("Error: {}", e), "");
                 crate::logging::log(&format!("GLOSS: amend error: {}", e));
             }
             Err(e) => {
