@@ -177,7 +177,6 @@ pub struct AppState {
     pub sync_enabled: bool,
     pub sync_icon: gtk4::Label,
     pub debug_icon: gtk4::Label,
-    pub page_line_label: gtk4::Label,
     pub word_status_label: gtk4::Label,
     pub word_cycle_line: Option<usize>,
     pub word_cycle_index: usize,
@@ -245,44 +244,6 @@ impl AppState {
     pub fn line_mapping_id_for_buffer(&self, buffer_line: usize) -> Option<i64> {
         let work_idx = self.work_line_for_buffer(buffer_line)?;
         self.current_work.as_ref()?.lines.get(work_idx).map(|l| l.id)
-    }
-
-    /// Text to display in the page-label overlay for the given buffer line.
-    /// Plays → act/scene/line citation (e.g. "I.i.15"); other works → line_mapping.id.
-    /// If `buffer_line` is a spacer that doesn't map to a work line, scans
-    /// forward until it finds one.
-    pub fn page_label_text_for_buffer(&self, buffer_line: usize) -> Option<String> {
-        let work = self.current_work.as_ref()?;
-        let total = self.effective_line_count();
-        let mut idx = buffer_line;
-        while idx < total {
-            let Some(work_idx) = self.work_line_for_buffer(idx) else {
-                idx += 1;
-                continue;
-            };
-            let Some(line) = work.lines.get(work_idx) else {
-                idx += 1;
-                continue;
-            };
-            if work.work_type == "play" {
-                if let Some(formatted) = crate::ui::page_label::format_play_citation(
-                    line.div1,
-                    line.div2,
-                    line.line_in_div,
-                    line.speaker.as_deref(),
-                ) {
-                    return Some(formatted);
-                }
-                if !line.citation.is_empty() {
-                    return Some(line.citation.clone());
-                }
-                idx += 1;
-                continue;
-            }
-            let page = crate::input::navigation::viewport_page_for_line(self, idx);
-            return Some(crate::ui::page_label::format_prose_label(page, line.id));
-        }
-        None
     }
 
     /// Check if a buffer line is within the currently highlighted sentence group.
@@ -353,8 +314,6 @@ pub const VERSE_LEFT_OFFSET: i32 = 200;
 pub const PROSE_LEFT_OFFSET: i32 = 120;
 
 /// Fixed height for the top spacer above the first text line.
-/// Mirrors the bottom zone (text_view.bottom_margin + page_label height + page_label.margin_bottom)
-/// so the card has visually symmetric top/bottom breathing room at any font size.
 pub const TOP_SPACER_HEIGHT: i32 = 40;
 pub fn verse_left_offset(window_width: i32, column_width: u32) -> i32 {
     let card_w = (column_width as i32).min(window_width.max(1));
@@ -369,8 +328,8 @@ pub fn is_tiled_layout(window_width: i32, column_width: u32) -> bool {
     (window_width - card_w) < 2 * VERSE_LEFT_OFFSET
 }
 
-/// Apply tiled-vs-monocle visual state: verse left offset, root-color
-/// wallpaper masking via the `tiled` CSS class, and page-label padding.
+/// Apply tiled-vs-monocle visual state: verse left offset and root-color
+/// wallpaper masking via the `tiled` CSS class.
 /// Called from both the resize tick and load_work so the initial render
 /// picks up the right state before the first resize notification.
 pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width: i32) {
@@ -422,22 +381,7 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
         }
     }
 
-    // Top spacer: fixed breathing room that mirrors the bottom zone
-    // (text_view.bottom_margin + page_line_label height + page_line_label.margin_bottom).
-    // Using a fixed value keeps top/bottom symmetric across font sizes.
     state.top_spacer.set_height_request(TOP_SPACER_HEIGHT);
-
-    // Label placement:
-    //   Tile mode — align the label's left edge with the speaker labels in
-    //   the text column (i.e. the text_view's left_margin we just set).
-    //   Monocle — center the label within the card.
-    if tiled {
-        state.page_line_label.set_halign(gtk4::Align::Start);
-        state.page_line_label.set_margin_start(logical_left);
-    } else {
-        state.page_line_label.set_halign(gtk4::Align::Center);
-        state.page_line_label.set_margin_start(0);
-    }
 }
 
 pub fn apply_card_sizing(content_hbox: &gtk4::Box, window_width: i32, column_width: u32) {
@@ -625,8 +569,7 @@ pub fn build_window(
     scrolled_overlay.set_hexpand(true);
 
     // Bottom clip bar — covers partially-visible lines at the bottom of a page.
-    // Height is set dynamically by snap_scroll_to_line. The clip sits above
-    // the page_line_label so trimmed text is hidden beneath it.
+    // Height is set dynamically by snap_scroll_to_line.
     let bottom_clip = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
     bottom_clip.set_valign(gtk4::Align::End);
     bottom_clip.set_hexpand(true);
@@ -641,8 +584,7 @@ pub fn build_window(
     top_spacer.add_css_class("card-top");
 
     // Vertical card assembly: top spacer + scrolled area. No bottom spacer —
-    // the scrolled area's card-bottom CSS provides the rounded bottom and the
-    // page_line_label is positioned as an overlay inside scrolled_overlay.
+    // the scrolled area's card-bottom CSS provides the rounded bottom.
     let card_vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     card_vbox.set_vexpand(true);
     card_vbox.append(&top_spacer);
@@ -773,18 +715,6 @@ pub fn build_window(
     word_status_label.set_visible(false);
     concordance_list_picker.overlay.add_overlay(&word_status_label);
 
-    // Page line number indicator — overlay on scrolled_overlay, pinned to the
-    // bottom edge of the card. margin_bottom provides breathing room below
-    // the last visible text line; margin_top keeps it clear of the clip bar.
-    let page_line_label = gtk4::Label::new(None);
-    page_line_label.set_halign(gtk4::Align::Center);
-    page_line_label.set_valign(gtk4::Align::End);
-    page_line_label.set_hexpand(false);
-    page_line_label.set_margin_bottom(10);
-    page_line_label.add_css_class("page-line-label");
-    page_line_label.set_visible(false);
-    scrolled_overlay.add_overlay(&page_line_label);
-    gloss_overlay.set_page_line_label(&page_line_label);
 
     // Concordance status bar
     let concordance_bar = crate::ui::concordance_bar::ConcordanceBar::new();
@@ -924,7 +854,6 @@ pub fn build_window(
         sync_enabled: true,
         sync_icon,
         debug_icon,
-        page_line_label,
         word_status_label,
         word_cycle_line: None,
         word_cycle_index: 0,
@@ -1442,17 +1371,14 @@ pub fn clear_display(state: &mut AppState) {
     state.cursor_fade_anim = None;
 
     // Remove snapshot overlays left by page turn animations.
-    // Preserve card_vbox (the overlay's main child) and page_line_label
-    // (a persistent overlay that display_work re-populates).
     {
         let overlay = &state.page_turn_overlay;
         let card: &gtk4::Widget = state.card_vbox.upcast_ref();
-        let label: &gtk4::Widget = state.page_line_label.upcast_ref();
         let mut to_remove = Vec::new();
         let mut child = overlay.first_child();
         while let Some(c) = child {
             let next = c.next_sibling();
-            if &c != card && &c != label {
+            if &c != card {
                 to_remove.push(c);
             }
             child = next;
@@ -2753,8 +2679,7 @@ fn map_line_before_insert(buf_line: usize, translation_lines: &[bool]) -> usize 
 
 /// Reapply font size using a TextTag spanning the entire buffer.
 
-/// Keep top spacer at fixed TOP_SPACER_HEIGHT so the card's top breathing
-/// room mirrors the bottom (text_view.bottom_margin + page_label zone).
+/// Keep top spacer at fixed TOP_SPACER_HEIGHT.
 fn update_spacer_heights(state: &AppState) {
     state.top_spacer.set_height_request(TOP_SPACER_HEIGHT);
 }

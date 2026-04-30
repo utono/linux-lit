@@ -944,13 +944,7 @@ pub fn jump_to_line(state: &mut AppState, buffer_line: usize) {
             set_page_instant(state, top);
         }
     }
-    // Page label uses the target line, not page_top, because page_top may
-    // be a blank spacer. Override the label after after_page_change runs.
     after_page_change(state, PageChangeReason::JumpToBookmark);
-    if let Some(text) = state.page_label_text_for_buffer(buffer_line) {
-        state.page_line_label.set_text(&text);
-        state.page_line_label.set_visible(true);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1233,13 +1227,6 @@ pub(crate) fn after_page_change(state: &mut AppState, reason: PageChangeReason) 
     // page-turn, the next is_line_fully_visible call falls back to recompute
     // — slightly slower but always correct.
     state.last_visible_range.set(None);
-
-    if reason.should_update_label() {
-        if let Some(text) = state.page_label_text_for_buffer(state.page_top_line) {
-            state.page_line_label.set_text(&text);
-            state.page_line_label.set_visible(true);
-        }
-    }
 
     // Highlight always repaints — consumer order matters: highlight first so
     // downstream consumers (vocab popup positioning) see the new cursor.
@@ -1951,12 +1938,6 @@ pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
         state.last_visible_range.set(Some(range));
     } else {
         state.last_visible_range.set(None);
-    }
-
-    // Update page line indicator (citation for plays, line_mapping.id otherwise)
-    if let Some(text) = state.page_label_text_for_buffer(line) {
-        state.page_line_label.set_text(&text);
-        state.page_line_label.set_visible(true);
     }
 
     // Schedule the clip height update for the next frame, after GTK has

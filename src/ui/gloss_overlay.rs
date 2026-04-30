@@ -31,7 +31,6 @@ pub struct GlossOverlay {
     bar_color: Rc<RefCell<(f64, f64, f64)>>,
     bar_x: Rc<RefCell<i32>>,
     line_numbers: Rc<RefCell<Vec<LineNumber>>>,
-    page_line_label: Rc<RefCell<Option<gtk4::Label>>>,
     text_margins: i32,
     column_width: i32,
 }
@@ -229,14 +228,9 @@ impl GlossOverlay {
             bar_color,
             bar_x,
             line_numbers,
-            page_line_label: Rc::new(RefCell::new(None)),
             text_margins: text_margins as i32,
             column_width: column_width as i32,
         }
-    }
-
-    pub fn set_page_line_label(&self, label: &gtk4::Label) {
-        *self.page_line_label.borrow_mut() = Some(label.clone());
     }
 
     pub fn attach(&self, child: &impl IsA<gtk4::Widget>) {
@@ -295,10 +289,6 @@ impl GlossOverlay {
         *self.line_numbers.borrow_mut() = nums;
         self.bar_drawing.queue_draw();
 
-        if let Some(ref label) = *self.page_line_label.borrow() {
-            label.set_visible(false);
-        }
-
         self.gloss_scrolled.set_visible(true);
         self.gloss_scrolled.vadjustment().set_value(0.0);
         self.hint.set_visible(true);
@@ -311,9 +301,6 @@ impl GlossOverlay {
     }
 
     pub fn show_loading_message(&self, message: &str) {
-        if let Some(ref label) = *self.page_line_label.borrow() {
-            label.set_visible(false);
-        }
         self.title.set_text(message);
         self.title.set_visible(true);
         self.title.set_vexpand(true);
@@ -353,9 +340,6 @@ impl GlossOverlay {
     pub fn hide(&self) {
         self.container.set_visible(false);
         self.scrim.set_visible(false);
-        if let Some(ref label) = *self.page_line_label.borrow() {
-            label.set_visible(true);
-        }
     }
 
     pub fn set_position(&self, index: usize, total: usize) {
