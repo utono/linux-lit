@@ -8,11 +8,30 @@ use libadwaita::prelude::AnimationExt;
 use crate::app::AppState;
 use crate::input::navigation;
 
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum ChordState {
+    #[default]
+    None,
+    PendingG,
+    PendingZ,
+    PendingCtrlSlash,
+}
+
 #[derive(Default)]
 pub struct KeyState {
-    pub pending_g: bool,
-    pub pending_z: bool,
-    pub pending_ctrl_slash: bool,
+    pub chord: ChordState,
+}
+
+impl KeyState {
+    pub fn start_chord(key_state: &Rc<RefCell<KeyState>>, chord: ChordState) {
+        key_state.borrow_mut().chord = chord;
+        let ks = Rc::clone(key_state);
+        glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
+            if ks.borrow().chord == chord {
+                ks.borrow_mut().chord = ChordState::None;
+            }
+        });
+    }
 }
 
 /// Handle a key press. Returns true if consumed.
@@ -123,8 +142,8 @@ pub fn handle_key(
     // --- Reader mode (no overlay) ---
 
     // gg sequence check
-    if key_state.borrow().pending_g {
-        key_state.borrow_mut().pending_g = false;
+    if key_state.borrow().chord == ChordState::PendingG {
+        key_state.borrow_mut().chord = ChordState::None;
         if key_name == "g" {
             if state.borrow().visual_selection.is_some() {
                 crate::input::visual::extend_to_start(&mut state.borrow_mut());
@@ -140,8 +159,8 @@ pub fn handle_key(
     }
 
     // zt sequence check
-    if key_state.borrow().pending_z {
-        key_state.borrow_mut().pending_z = false;
+    if key_state.borrow().chord == ChordState::PendingZ {
+        key_state.borrow_mut().chord = ChordState::None;
         if key_name == "t" {
             navigation::scroll_cursor_top(&mut state.borrow_mut());
             return true;
@@ -540,8 +559,8 @@ fn handle_gloss_key(
     is_ctrl: bool,
     is_alt: bool,
 ) -> bool {
-    if key_state.borrow().pending_g {
-        key_state.borrow_mut().pending_g = false;
+    if key_state.borrow().chord == ChordState::PendingG {
+        key_state.borrow_mut().chord = ChordState::None;
         if key_name == "g" {
             state.borrow().gloss_overlay.scroll_gloss_to_top();
         }
@@ -587,7 +606,7 @@ fn handle_gloss_key(
             true
         }
         "g" => {
-            key_state.borrow_mut().pending_g = true;
+            KeyState::start_chord(key_state, ChordState::PendingG);
             true
         }
         "G" => {
@@ -885,9 +904,9 @@ fn handle_keybinds_key(
             state.borrow_mut().input_mode = crate::app::InputMode::Reader;
             true
         }
-        "g" if key_state.borrow().pending_ctrl_slash => {
+        "g" if key_state.borrow().chord == ChordState::PendingCtrlSlash => {
             // C-/ g chord: swap to gamepad overlay
-            key_state.borrow_mut().pending_ctrl_slash = false;
+            key_state.borrow_mut().chord = ChordState::None;
             let s = state.borrow();
             s.keybinds_overlay.hide();
             s.gamepad_overlay.show();
@@ -975,11 +994,7 @@ fn handle_visual_key(
         }
         "g" => {
             // In visual mode, 'g' starts gg sequence to extend to start
-            key_state.borrow_mut().pending_g = true;
-            let ks = Rc::clone(key_state);
-            glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
-                ks.borrow_mut().pending_g = false;
-            });
+            KeyState::start_chord(key_state, ChordState::PendingG);
             true
         }
         "Escape" | "V" => {
@@ -1116,11 +1131,7 @@ fn dispatch_action(
                 drop(s);
                 state.borrow_mut().input_mode = crate::app::InputMode::KeybindsOverlay;
             }
-            key_state.borrow_mut().pending_ctrl_slash = true;
-            let ks = Rc::clone(key_state);
-            glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
-                ks.borrow_mut().pending_ctrl_slash = false;
-            });
+            KeyState::start_chord(key_state, ChordState::PendingCtrlSlash);
             true
         }
         OpenSearch => {
@@ -1326,19 +1337,11 @@ fn dispatch_action(
 
         // Multi-key chord entry
         PendingG => {
-            key_state.borrow_mut().pending_g = true;
-            let ks = Rc::clone(key_state);
-            glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
-                ks.borrow_mut().pending_g = false;
-            });
+            KeyState::start_chord(key_state, ChordState::PendingG);
             true
         }
         PendingZ => {
-            key_state.borrow_mut().pending_z = true;
-            let ks = Rc::clone(key_state);
-            glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
-                ks.borrow_mut().pending_z = false;
-            });
+            KeyState::start_chord(key_state, ChordState::PendingZ);
             true
         }
 
