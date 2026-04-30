@@ -1204,12 +1204,6 @@ impl PageChangeReason {
     pub(crate) fn should_show_vocab(self) -> bool {
         !matches!(self, Self::MpvSync | Self::Resnap | Self::WorkLoad)
     }
-
-    /// Whether to refresh the page label. True for everything except WorkLoad
-    /// (display_work handles label setup itself).
-    pub(crate) fn should_update_label(self) -> bool {
-        !matches!(self, Self::WorkLoad)
-    }
 }
 
 /// Single rendezvous called at the tail of every page-mutating function.
@@ -3602,20 +3596,11 @@ mod after_page_change_tests {
     }
 
     #[test]
-    fn reason_always_updates_label_except_workload() {
-        assert!(PageChangeReason::Forward.should_update_label());
-        assert!(PageChangeReason::MpvSync.should_update_label());
-        assert!(PageChangeReason::Resnap.should_update_label());
-        assert!(!PageChangeReason::WorkLoad.should_update_label());
-    }
-
-    #[test]
     fn reason_skips_seek_for_cursor_only_navigation() {
         assert!(!PageChangeReason::Cursor.should_seek(),
             "cursor-only navigation must not drag audio");
         assert!(PageChangeReason::Cursor.should_show_vocab(),
             "cursor navigation still shows vocab");
-        assert!(PageChangeReason::Cursor.should_update_label());
     }
 }
 
