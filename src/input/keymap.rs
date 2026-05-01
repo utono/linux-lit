@@ -108,7 +108,8 @@ pub fn handle_key(
     // so it drops before dispatch_action borrows state itself.
     let action = state.borrow().keymap.lookup(key_name, is_ctrl, is_shift, is_alt);
     if let Some(action) = action {
-        return dispatch_action(state, action, key_state, tokio_handle);
+        dispatch_action(state, action, key_state, tokio_handle);
+        return true;
     }
 
     false
@@ -671,61 +672,58 @@ fn handle_visual_key(
     }
 }
 
-/// Execute an Action by calling its corresponding verb. Returns true if the
-/// action was dispatched (currently always true for known actions; false
-/// branch reserved for future "action exists but precondition failed" cases).
+/// Execute an Action by calling its corresponding verb. The key is always
+/// consumed when a mapped action is dispatched.
 fn dispatch_action(
     state: &Rc<RefCell<AppState>>,
     action: crate::input::actions::Action,
     key_state: &Rc<RefCell<KeyState>>,
     tokio_handle: &tokio::runtime::Handle,
-) -> bool {
+) {
     crate::logging::log(&format!("ACTION: {}", action.name()));
     use crate::input::actions::Action::*;
     match action {
         // Page navigation
-        PageForward => { navigation::page_forward(&mut state.borrow_mut()); true }
-        PageBackward => { navigation::page_backward(&mut state.borrow_mut()); true }
-        PageBackwardBottom => { navigation::page_backward_bottom(&mut state.borrow_mut()); true }
-        JumpToStart => { navigation::jump_to_start(&mut state.borrow_mut()); true }
-        JumpToEnd => { navigation::jump_to_end(&mut state.borrow_mut()); true }
+        PageForward => navigation::page_forward(&mut state.borrow_mut()),
+        PageBackward => navigation::page_backward(&mut state.borrow_mut()),
+        PageBackwardBottom => navigation::page_backward_bottom(&mut state.borrow_mut()),
+        JumpToStart => navigation::jump_to_start(&mut state.borrow_mut()),
+        JumpToEnd => navigation::jump_to_end(&mut state.borrow_mut()),
 
         // Cursor / dialogue
-        CursorNextDialogue => { navigation::cursor_next_dialogue(&mut state.borrow_mut()); true }
-        CursorPrevLine => { navigation::cursor_prev_line(&mut state.borrow_mut()); true }
-        CursorToPageBottom => { navigation::cursor_to_page_bottom(&mut state.borrow_mut()); true }
-        JumpToNextDialogue => { navigation::jump_to_next_dialogue(&mut state.borrow_mut()); true }
-        JumpToPrevDialogue => { navigation::jump_to_prev_dialogue(&mut state.borrow_mut()); true }
-        JumpToNextChapter => { navigation::jump_to_next_chapter(&mut state.borrow_mut()); true }
-        JumpToPrevChapter => { navigation::jump_to_prev_chapter(&mut state.borrow_mut()); true }
-        JumpToNextScene => { navigation::jump_to_next_section(&mut state.borrow_mut()); true }
-        JumpToPrevScene => { navigation::jump_to_prev_section(&mut state.borrow_mut()); true }
+        CursorNextDialogue => navigation::cursor_next_dialogue(&mut state.borrow_mut()),
+        CursorPrevLine => navigation::cursor_prev_line(&mut state.borrow_mut()),
+        CursorToPageBottom => navigation::cursor_to_page_bottom(&mut state.borrow_mut()),
+        JumpToNextDialogue => navigation::jump_to_next_dialogue(&mut state.borrow_mut()),
+        JumpToPrevDialogue => navigation::jump_to_prev_dialogue(&mut state.borrow_mut()),
+        JumpToNextChapter => navigation::jump_to_next_chapter(&mut state.borrow_mut()),
+        JumpToPrevChapter => navigation::jump_to_prev_chapter(&mut state.borrow_mut()),
+        JumpToNextScene => navigation::jump_to_next_section(&mut state.borrow_mut()),
+        JumpToPrevScene => navigation::jump_to_prev_section(&mut state.borrow_mut()),
 
         // Bookmarks
-        ToggleBookmark => { crate::input::actions::bookmarks::toggle_bookmark(state, tokio_handle); true }
-        NextBookmark => { navigation::next_bookmark(&mut state.borrow_mut()); true }
-        PrevBookmark => { navigation::prev_bookmark(&mut state.borrow_mut()); true }
-        JumpToRecentBookmark => { crate::input::actions::bookmarks::jump_to_recent_bookmark(state, tokio_handle); true }
-        OpenBookmarkPicker => { crate::input::actions::pickers::open_bookmark_picker(state, tokio_handle); true }
+        ToggleBookmark => crate::input::actions::bookmarks::toggle_bookmark(state, tokio_handle),
+        NextBookmark => navigation::next_bookmark(&mut state.borrow_mut()),
+        PrevBookmark => navigation::prev_bookmark(&mut state.borrow_mut()),
+        JumpToRecentBookmark => crate::input::actions::bookmarks::jump_to_recent_bookmark(state, tokio_handle),
+        OpenBookmarkPicker => crate::input::actions::pickers::open_bookmark_picker(state, tokio_handle),
 
         // Pickers / overlays
-        OpenLibraryPicker => { crate::input::actions::pickers::open_library_picker_from_reader(state); true }
-        OpenMediaPicker => { crate::input::actions::pickers::open_media_picker(state, tokio_handle); true }
-        OpenConcordancePicker => { crate::input::actions::concordance::open_picker(state, tokio_handle); true }
-        OpenConcordanceWordPicker => { crate::input::actions::pickers::open_concordance_word_picker(state); true }
-        OpenConcordanceListPicker => { crate::input::actions::pickers::open_concordance_list_picker(state); true }
-        OpenSettingsOverlay => { crate::input::actions::settings::open_settings(state); true }
+        OpenLibraryPicker => crate::input::actions::pickers::open_library_picker_from_reader(state),
+        OpenMediaPicker => crate::input::actions::pickers::open_media_picker(state, tokio_handle),
+        OpenConcordancePicker => crate::input::actions::concordance::open_picker(state, tokio_handle),
+        OpenConcordanceWordPicker => crate::input::actions::pickers::open_concordance_word_picker(state),
+        OpenConcordanceListPicker => crate::input::actions::pickers::open_concordance_list_picker(state),
+        OpenSettingsOverlay => crate::input::actions::settings::open_settings(state),
         OpenKeybindsOverlay => {
             crate::input::actions::pickers::open_keybinds_overlay(state);
             KeyState::start_chord(key_state, ChordState::PendingCtrlSlash);
-            true
         }
         OpenSearch => {
             let mut s = state.borrow_mut();
             crate::input::search::clear_search(&mut s);
             s.search_bar.show();
             s.input_mode = crate::app::InputMode::Search;
-            true
         }
 
         // MPV / media
@@ -734,23 +732,21 @@ fn dispatch_action(
             s.sync_enabled = !s.sync_enabled;
             s.sync_icon.set_visible(!s.sync_enabled);
             crate::logging::log(&format!("SYNC: {}", if s.sync_enabled { "enabled" } else { "disabled" }));
-            true
         }
-        TogglePlayback => { crate::input::search::toggle_playback(&mut state.borrow_mut()); true }
-        SeekShortBackward => { do_mpv_seek(state, -3.5); true }
-        SeekShortForward => { do_mpv_seek(state, 3.5); true }
-        SeekLongBackward => { do_mpv_seek(state, -60.0); true }
-        SeekLongForward => { do_mpv_seek(state, 60.0); true }
-        SeekBackward30 => { do_mpv_seek(state, -30.0); true }
-        VolumeUp => { let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(5.0)); true }
-        VolumeDown => { let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(-5.0)); true }
+        TogglePlayback => crate::input::search::toggle_playback(&mut state.borrow_mut()),
+        SeekShortBackward => do_mpv_seek(state, -3.5),
+        SeekShortForward => do_mpv_seek(state, 3.5),
+        SeekLongBackward => do_mpv_seek(state, -60.0),
+        SeekLongForward => do_mpv_seek(state, 60.0),
+        SeekBackward30 => do_mpv_seek(state, -30.0),
+        VolumeUp => { let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(5.0)); }
+        VolumeDown => { let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(-5.0)); }
         TogglePlaybackSpeed => {
             let mut s = state.borrow_mut();
             let new_speed = if s.playback_speed == 1.0 { 1.3 } else { 1.0 };
             s.playback_speed = new_speed;
             let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SetSpeed(new_speed));
             crate::logging::log(&format!("SPEED: toggled to {}x", new_speed));
-            true
         }
 
         // Vocab / glossing
@@ -762,20 +758,17 @@ fn dispatch_action(
             } else {
                 crate::app::close_vocab_popup(&mut s);
             }
-            true
         }
         VocabPopupNext => {
             // Same inline logic as the original "backslash" / "numbersign"
             // arms; the auto-hide timer handling is preserved.
             handle_vocab_popup_key(state, true);
-            true
         }
         VocabPopupPrev => {
             handle_vocab_popup_key(state, false);
-            true
         }
-        JumpToNextVocab => { crate::input::actions::concordance::jump_to_next_vocab(state, tokio_handle); true }
-        JumpToPrevVocab => { crate::input::actions::concordance::jump_to_prev_vocab(state, tokio_handle); true }
+        JumpToNextVocab => crate::input::actions::concordance::jump_to_next_vocab(state, tokio_handle),
+        JumpToPrevVocab => crate::input::actions::concordance::jump_to_prev_vocab(state, tokio_handle),
         ToggleVocabHighlight => {
             let mut s = state.borrow_mut();
             s.vocab_highlight_visible = !s.vocab_highlight_visible;
@@ -787,14 +780,13 @@ fn dispatch_action(
             s.config.vocab_highlight_visible = s.vocab_highlight_visible;
             crate::config::save(&s.config);
             crate::logging::log(&format!("VOCAB: highlighting {}", if s.vocab_highlight_visible { "on" } else { "off" }));
-            true
         }
-        ToggleGlossOverlay => { crate::input::actions::gloss::toggle_overlay(state); true }
+        ToggleGlossOverlay => crate::input::actions::gloss::toggle_overlay(state),
 
         // Visual / selection
-        EnterVisualMode => { crate::input::visual::enter_visual_mode(&mut state.borrow_mut()); true }
-        WordCycleCopy => { navigation::word_cycle_copy(&mut state.borrow_mut()); true }
-        WordCollectCopy => { navigation::word_collect_copy(&mut state.borrow_mut()); true }
+        EnterVisualMode => crate::input::visual::enter_visual_mode(&mut state.borrow_mut()),
+        WordCycleCopy => navigation::word_cycle_copy(&mut state.borrow_mut()),
+        WordCollectCopy => navigation::word_collect_copy(&mut state.borrow_mut()),
 
         // Translations
         ToggleTranslations => {
@@ -802,22 +794,20 @@ fn dispatch_action(
             let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
             drop(s);
             crate::app::toggle_translations(&mut state.borrow_mut());
-            true
         }
 
         // Settings (in reader)
-        AdjustFontSizeUp => { crate::app::adjust_font_size(&mut state.borrow_mut(), 1); crate::app::show_font_info(&state.borrow()); true }
-        AdjustFontSizeDown => { crate::app::adjust_font_size(&mut state.borrow_mut(), -1); crate::app::show_font_info(&state.borrow()); true }
-        ResetFontSize => { crate::app::reset_font_size(&mut state.borrow_mut()); true }
-        CycleFontForward => { crate::app::cycle_font(&mut state.borrow_mut(), true); true }
-        CycleFontBackward => { crate::app::cycle_font(&mut state.borrow_mut(), false); true }
-        ToggleSignColumn => { crate::app::toggle_sign_column(&mut state.borrow_mut()); true }
+        AdjustFontSizeUp => { crate::app::adjust_font_size(&mut state.borrow_mut(), 1); crate::app::show_font_info(&state.borrow()); }
+        AdjustFontSizeDown => { crate::app::adjust_font_size(&mut state.borrow_mut(), -1); crate::app::show_font_info(&state.borrow()); }
+        ResetFontSize => crate::app::reset_font_size(&mut state.borrow_mut()),
+        CycleFontForward => crate::app::cycle_font(&mut state.borrow_mut(), true),
+        CycleFontBackward => crate::app::cycle_font(&mut state.borrow_mut(), false),
+        ToggleSignColumn => crate::app::toggle_sign_column(&mut state.borrow_mut()),
         ToggleCursorLine => {
             let mut s = state.borrow_mut();
             s.config.show_cursor_line = !s.config.show_cursor_line;
             crate::input::navigation::update_highlight_only(&mut s);
             crate::config::save(&s.config);
-            true
         }
         ToggleDim => {
             let mut s = state.borrow_mut();
@@ -830,27 +820,25 @@ fn dispatch_action(
             s.config.dim_enabled = s.dim_enabled;
             crate::config::save(&s.config);
             crate::logging::log(&format!("DIM: {}", if s.dim_enabled { "on" } else { "off" }));
-            true
         }
-        ShowFontInfo => { crate::app::show_font_info(&state.borrow()); true }
+        ShowFontInfo => crate::app::show_font_info(&state.borrow()),
 
         // Timestamps
-        SetStartTime => { crate::input::timestamps::set_start_time(&mut state.borrow_mut()); true }
-        SetEndTime => crate::input::timestamps::set_end_time(&mut state.borrow_mut()),
-        SetChapter => crate::input::timestamps::set_chapter(&mut state.borrow_mut()),
-        DeleteTimestamp => crate::input::timestamps::delete_timestamp(&mut state.borrow_mut()),
-        NudgeStartBackward => crate::input::timestamps::nudge_start_backward(&mut state.borrow_mut()),
-        NudgeStartForward => crate::input::timestamps::nudge_start_forward(&mut state.borrow_mut()),
-        UndoTimestamp => crate::input::timestamps::undo_timestamp(&mut state.borrow_mut()),
-        PlayCurrentLine => { crate::input::timestamps::play_current_line(&mut state.borrow_mut()); true }
+        SetStartTime => { crate::input::timestamps::set_start_time(&mut state.borrow_mut()); }
+        SetEndTime => { crate::input::timestamps::set_end_time(&mut state.borrow_mut()); }
+        SetChapter => { crate::input::timestamps::set_chapter(&mut state.borrow_mut()); }
+        DeleteTimestamp => { crate::input::timestamps::delete_timestamp(&mut state.borrow_mut()); }
+        NudgeStartBackward => { crate::input::timestamps::nudge_start_backward(&mut state.borrow_mut()); }
+        NudgeStartForward => { crate::input::timestamps::nudge_start_forward(&mut state.borrow_mut()); }
+        UndoTimestamp => { crate::input::timestamps::undo_timestamp(&mut state.borrow_mut()); }
+        PlayCurrentLine => { crate::input::timestamps::play_current_line(&mut state.borrow_mut()); }
 
         // App
-        EscapeReaderMode => { crate::input::actions::escape::escape_reader_mode(state); true }
+        EscapeReaderMode => crate::input::actions::escape::escape_reader_mode(state),
         SaveAndQuit => {
             crate::app::save_position(&mut state.borrow_mut());
             let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::Quit);
             state.borrow().window.close();
-            true
         }
         ToggleDebugLogging => {
             let enabled = !crate::logging::debug_mode();
@@ -862,7 +850,6 @@ fn dispatch_action(
             glib::timeout_add_local_once(std::time::Duration::from_secs(2), move || {
                 icon.set_visible(false);
             });
-            true
         }
         CopyLineMappingId => {
             let s = state.borrow();
@@ -873,7 +860,7 @@ fn dispatch_action(
                 (Some(l), Some(m)) => format!("{} {}", l, m),
                 (Some(l), None) => format!("{}", l),
                 (None, Some(m)) => format!("- {}", m),
-                (None, None) => return true,
+                (None, None) => return,
             };
             if let Ok(mut child) = std::process::Command::new("wl-copy")
                 .stdin(std::process::Stdio::piped())
@@ -886,7 +873,6 @@ fn dispatch_action(
                 let _ = child.wait();
             }
             crate::logging::log(&format!("CLIPBOARD: copied {}", clip));
-            true
         }
 
         // Multi-key chord entry
@@ -896,28 +882,20 @@ fn dispatch_action(
             } else {
                 KeyState::start_chord(key_state, ChordState::PendingG);
             }
-            true
         }
         PendingZ => {
             KeyState::start_chord(key_state, ChordState::PendingZ);
-            true
         }
 
         // Search (in reader, when matches present)
         SearchNextMatch => {
             if !state.borrow().search_matches.is_empty() {
                 crate::input::search::next_match(&mut state.borrow_mut());
-                true
-            } else {
-                false
             }
         }
         SearchPrevMatch => {
             if !state.borrow().search_matches.is_empty() {
                 crate::input::search::prev_match(&mut state.borrow_mut());
-                true
-            } else {
-                false
             }
         }
     }
