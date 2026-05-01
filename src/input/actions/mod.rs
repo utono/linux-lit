@@ -4,6 +4,7 @@
 
 pub mod bookmarks;
 pub mod concordance;
+pub mod escape;
 pub mod gloss;
 pub mod pickers;
 pub mod settings;
@@ -115,6 +116,7 @@ pub enum Action {
     SaveAndQuit,
     ToggleDebugLogging,
     CopyLineMappingId,
+    EscapeReaderMode,
 
     // Multi-key chords (entry — completion handled by KeyState)
     PendingG,
@@ -204,6 +206,7 @@ impl Action {
             Action::SaveAndQuit
             | Action::ToggleDebugLogging
             | Action::CopyLineMappingId
+            | Action::EscapeReaderMode
             | Action::PendingG
             | Action::PendingZ
             | Action::SearchNextMatch
@@ -284,6 +287,7 @@ impl Action {
             Action::SaveAndQuit => "SaveAndQuit",
             Action::ToggleDebugLogging => "ToggleDebugLogging",
             Action::CopyLineMappingId => "CopyLineMappingId",
+            Action::EscapeReaderMode => "EscapeReaderMode",
             Action::PendingG => "PendingG",
             Action::PendingZ => "PendingZ",
             Action::SearchNextMatch => "SearchNextMatch",

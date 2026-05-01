@@ -304,6 +304,7 @@ fn timestamp_bindings() -> Vec<(KeyCombo, Action)> {
 
 fn app_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
+        (KeyCombo::plain("Escape"), Action::EscapeReaderMode),
         (KeyCombo::ctrl("d"), Action::ToggleDebugLogging),
         (KeyCombo::ctrl("p"), Action::OpenLibraryPicker),
         (KeyCombo::ctrl_shift("M"), Action::OpenMediaPicker),

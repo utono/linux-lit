@@ -123,44 +123,7 @@ pub fn handle_key(
         return false;
     }
 
-    // Escape: special multi-state handler (concordance, AB loop, search clear).
-    // Stays inline — multi-state preconditions don't fit the static Action model.
-    if key_name == "Escape" {
-        // Clear concordance mode on Escape
-        {
-            let has_conc = state.borrow().concordance_state.is_some();
-            if has_conc {
-                let mut s = state.borrow_mut();
-                s.concordance_state = None;
-                s.concordance_bar.hide();
-                return true;
-            }
-        }
-        let mut s = state.borrow_mut();
-        if s.ab_repeat.loop_active {
-            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::ClearAbLoop);
-            s.ab_repeat.clear();
-            s.ab_repeat.chunk_index = None;
-            s.ab_a_line.set(None);
-            s.ab_b_line.set(None);
-            s.suppress_sync_until = None;
-            if let Some(ref renderer) = s.gutter_renderer {
-                renderer.queue_draw();
-            }
-            crate::app::remove_ab_dim(&s);
-            crate::logging::log("CHUNK: AB loop cleared");
-            drop(s);
-            crate::input::navigation::update_highlight_and_center(&mut state.borrow_mut());
-            return true;
-        } else if !s.search_matches.is_empty() {
-            crate::input::search::clear_search(&mut s);
-            return true;
-        } else {
-            return false;
-        }
-    }
-
-    // Keymap-driven dispatch for everything else. Scope the borrow tightly
+    // Keymap-driven dispatch. Scope the borrow tightly
     // so it drops before dispatch_action borrows state itself.
     let action = state.borrow().keymap.lookup(key_name, is_ctrl, is_shift, is_alt);
     if let Some(action) = action {
@@ -900,6 +863,7 @@ fn dispatch_action(
         PlayCurrentLine => { crate::input::timestamps::play_current_line(&mut state.borrow_mut()); true }
 
         // App
+        EscapeReaderMode => { crate::input::actions::escape::escape_reader_mode(state); true }
         SaveAndQuit => {
             crate::app::save_position(&mut state.borrow_mut());
             let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::Quit);
