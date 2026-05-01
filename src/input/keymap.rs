@@ -785,8 +785,8 @@ fn dispatch_action(
 
         // Visual / selection
         EnterVisualMode => crate::input::visual::enter_visual_mode(&mut state.borrow_mut()),
-        WordCycleCopy => navigation::word_cycle_copy(&mut state.borrow_mut()),
-        WordCollectCopy => navigation::word_collect_copy(&mut state.borrow_mut()),
+        WordCycleCopy => crate::input::actions::word_copy::word_cycle_copy(&mut state.borrow_mut()),
+        WordCollectCopy => crate::input::actions::word_copy::word_collect_copy(&mut state.borrow_mut()),
 
         // Translations
         ToggleTranslations => {

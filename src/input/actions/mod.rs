@@ -8,6 +8,7 @@ pub mod escape;
 pub mod gloss;
 pub mod pickers;
 pub mod settings;
+pub mod word_copy;
 
 // Action enum identifying every reader-mode behavior. F2 maps KeyCombo →
 // Action via Keymap; dispatch_action in keymap.rs translates Action into
