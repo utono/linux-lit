@@ -290,7 +290,7 @@ fn handle_picker_key(
                                 conc.current_index = idx;
                             }
                         }
-                        navigation::concordance_jump_to_current(state, tokio_handle);
+                        crate::input::actions::concordance::concordance_jump_to_current(state, tokio_handle);
                     }
                     true
                 }

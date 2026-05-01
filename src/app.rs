@@ -1321,7 +1321,7 @@ pub fn build_window(
                                 );
                                 s.concordance_state = Some(conc_state);
                             }
-                            crate::input::navigation::concordance_jump_to_current(
+                            crate::input::actions::concordance::concordance_jump_to_current(
                                 &sc, &handle2,
                             );
                             let sc2 = Rc::clone(&sc);
