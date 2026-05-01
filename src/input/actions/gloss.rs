@@ -343,6 +343,25 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
     });
 }
 
+pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
+    let has_gloss = !state.borrow().gloss_list.is_empty();
+    if has_gloss {
+        let s = state.borrow();
+        let idx = s.gloss_index;
+        let gloss = &s.gloss_list[idx];
+        let ctx = s.gloss_context.as_ref().unwrap();
+        let h = s.scrolled_window.height();
+        let pairs = ctx.source_line_pairs();
+        s.gloss_overlay.show_gloss_with_color(
+            &ctx.source_text, &gloss.gloss_text, h,
+            Some(&s.theme.root_color), &pairs,
+        );
+        s.gloss_overlay.set_position(idx, s.gloss_list.len());
+        drop(s);
+        state.borrow_mut().input_mode = crate::app::InputMode::GlossOverlay;
+    }
+}
+
 pub(crate) fn close_gloss_prompt(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
     if let (Some(cw), Some(ow)) = (s.gloss_prompt_container.take(), s.gloss_prompt_overlay.take()) {

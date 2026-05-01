@@ -104,25 +104,6 @@ pub fn handle_key(
         }
     }
 
-    // Shift+Tab or Ctrl+g: toggle gloss overlay for last-viewed gloss
-    if key_name == "ISO_Left_Tab" || (is_ctrl && key_name == "g") {
-        let has_gloss = !state.borrow().gloss_list.is_empty();
-        if has_gloss {
-            let s = state.borrow();
-            let idx = s.gloss_index;
-            let gloss = &s.gloss_list[idx];
-            let ctx = s.gloss_context.as_ref().unwrap();
-            let h = s.scrolled_window.height();
-            let pairs = ctx.source_line_pairs();
-            s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &gloss.gloss_text, h, Some(&s.theme.root_color), &pairs);
-            s.gloss_overlay.set_position(idx, s.gloss_list.len());
-            drop(s);
-            state.borrow_mut().input_mode = crate::app::InputMode::GlossOverlay;
-            return true;
-        }
-        return false;
-    }
-
     // Keymap-driven dispatch. Scope the borrow tightly
     // so it drops before dispatch_action borrows state itself.
     let action = state.borrow().keymap.lookup(key_name, is_ctrl, is_shift, is_alt);
@@ -808,6 +789,7 @@ fn dispatch_action(
             crate::logging::log(&format!("VOCAB: highlighting {}", if s.vocab_highlight_visible { "on" } else { "off" }));
             true
         }
+        ToggleGlossOverlay => { crate::input::actions::gloss::toggle_overlay(state); true }
 
         // Visual / selection
         EnterVisualMode => { crate::input::visual::enter_visual_mode(&mut state.borrow_mut()); true }
