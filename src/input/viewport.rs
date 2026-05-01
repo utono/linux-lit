@@ -574,6 +574,27 @@ pub(crate) fn chapter_page_top(buffer: &sourceview5::Buffer, target_line: usize)
 // Page boundary computation
 // ---------------------------------------------------------------------------
 
+/// Raw last visible line without trims. Used by playback sync to decide
+/// when the cursor has moved past what's actually rendered on screen.
+/// Trims are for page-boundary placement; sync needs the physical boundary.
+pub(crate) fn last_raw_visible_line(state: &AppState, top: usize) -> usize {
+    if let Some(cached) = state.last_visible_range.get() {
+        if cached.count > 0 {
+            return cached.last_fit;
+        }
+    }
+    let widget_height = state.text_view.height();
+    if widget_height <= 0 {
+        return top;
+    }
+    let line_count = state.effective_line_count();
+    let descender_guard = descender_guard_px(&state.text_view, top);
+    let bottom_margin = state.text_view.bottom_margin();
+    let usable_height = widget_height - descender_guard - bottom_margin;
+    let range = visible_range(&state.text_view, &state.buffer, top, line_count, usable_height);
+    range.last_fit
+}
+
 /// Find the last buffer line that fits within the viewport starting from
 /// `top`, matching the bottom clip calculation exactly. A line is included
 /// only if its full height fits in the remaining usable space (widget height
