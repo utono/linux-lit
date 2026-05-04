@@ -1011,6 +1011,11 @@ pub fn build_window(
                 // Drop it; snap_scroll_to_line below sets the label and the
                 // build_page_tops walk gets amortized into the snap path.
                 crate::input::navigation::invalidate_page_tops(&s);
+                // Ensure the vadjustment's upper bound is large enough for
+                // any line to be scrolled to the viewport top. Without this,
+                // pages near the end of the document can't be reached because
+                // GTK clamps set_value to upper - page_size.
+                crate::input::scroll::ensure_scroll_range(&s);
                 let top = s.page_top_line;
                 crate::input::navigation::snap_scroll_to_line(&mut s, top);
                 // Reveal LAST: apply_tiled_mode, snap_scroll, and the label

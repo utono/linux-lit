@@ -1,6 +1,7 @@
 use gtk4::prelude::*;
 
 use crate::app::AppState;
+use super::scroll::BASE_BOTTOM_MARGIN;
 
 // ---------------------------------------------------------------------------
 // VisibleRange — canonical "what's on screen" measurement
@@ -570,6 +571,31 @@ pub(crate) fn chapter_page_top(buffer: &sourceview5::Buffer, target_line: usize)
     page_turn_top(buffer, target_line)
 }
 
+/// Earliest line whose y-coordinate is reachable by `vadjustment.set_value`
+/// (i.e., y <= upper - page_size). When `proposed_top` is already reachable,
+/// returns it unchanged. Otherwise walks backward to find the last line that
+/// the scroll can actually position at the viewport top. Used by page_forward
+/// and scroll_after_jump_forward to avoid setting a page_top that GTK clamps.
+pub(crate) fn clamp_page_top_to_scroll_ceiling(state: &AppState, proposed_top: usize) -> usize {
+    let adj = state.scrolled_window.vadjustment();
+    let max_value = (adj.upper() - adj.page_size()).max(0.0);
+    if let Some(iter) = state.buffer.iter_at_line(proposed_top as i32) {
+        let (y, _) = state.text_view.line_yrange(&iter);
+        if (y as f64) <= max_value {
+            return proposed_top;
+        }
+    }
+    for l in (0..proposed_top).rev() {
+        if let Some(it) = state.buffer.iter_at_line(l as i32) {
+            let (ly, _) = state.text_view.line_yrange(&it);
+            if (ly as f64) <= max_value {
+                return l;
+            }
+        }
+    }
+    0
+}
+
 // ---------------------------------------------------------------------------
 // Page boundary computation
 // ---------------------------------------------------------------------------
@@ -589,8 +615,7 @@ pub(crate) fn last_raw_visible_line(state: &AppState, top: usize) -> usize {
     }
     let line_count = state.effective_line_count();
     let descender_guard = descender_guard_px(&state.text_view, top);
-    let bottom_margin = state.text_view.bottom_margin();
-    let usable_height = widget_height - descender_guard - bottom_margin;
+    let usable_height = widget_height - descender_guard - BASE_BOTTOM_MARGIN;
     let range = visible_range(&state.text_view, &state.buffer, top, line_count, usable_height);
     range.last_fit
 }
@@ -608,8 +633,7 @@ pub(crate) fn last_fully_visible_line(state: &AppState, top: usize) -> usize {
     }
     let line_count = state.effective_line_count();
     let descender_guard = descender_guard_px(&state.text_view, top);
-    let bottom_margin = state.text_view.bottom_margin();
-    let usable_height = widget_height - descender_guard - bottom_margin;
+    let usable_height = widget_height - descender_guard - BASE_BOTTOM_MARGIN;
     let range = visible_range(&state.text_view, &state.buffer, top, line_count, usable_height);
     let is_prose = state.is_prose();
     // Trim because this function feeds page-boundary placement decisions
@@ -804,8 +828,7 @@ pub(crate) fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
         return true;
     }
     let descender_guard = descender_guard_px(&state.text_view, state.page_top_line);
-    let bottom_margin = state.text_view.bottom_margin();
-    let usable_height = widget_height - descender_guard - bottom_margin;
+    let usable_height = widget_height - descender_guard - BASE_BOTTOM_MARGIN;
     let line_count = state.effective_line_count();
     let range = visible_range(
         &state.text_view,
@@ -838,8 +861,7 @@ pub(crate) fn lines_per_page(state: &AppState) -> usize {
     }
 
     let descender_guard = descender_guard_px(&state.text_view, start);
-    let bottom_margin = state.text_view.bottom_margin();
-    let usable_height = widget_height - descender_guard - bottom_margin;
+    let usable_height = widget_height - descender_guard - BASE_BOTTOM_MARGIN;
     let range = visible_range(
         &state.text_view,
         &state.buffer,

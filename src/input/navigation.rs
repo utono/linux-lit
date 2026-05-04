@@ -36,6 +36,7 @@ use super::viewport::{
     is_dialogue_line, is_blank_buffer_line,
     next_dialogue_line, prev_dialogue_line, buffer_line_text,
     is_line_fully_visible, lines_per_page,
+    clamp_page_top_to_scroll_ceiling,
 };
 use super::scroll::{
     set_page, set_page_instant, scroll_to_cursor, center_cursor,
@@ -259,9 +260,18 @@ pub fn page_forward(state: &mut AppState) {
         return; // already at end
     }
 
-    state.current_line = next_dialogue;
-    set_page(state, new_top, PageDirection::Forward);
-    after_page_change(state, PageChangeReason::Forward);
+    let effective_top = clamp_page_top_to_scroll_ceiling(state, new_top);
+    if effective_top > state.page_top_line {
+        state.current_line = next_dialogue;
+        set_page(state, effective_top, PageDirection::Forward);
+        after_page_change(state, PageChangeReason::Forward);
+        return;
+    }
+
+    // The next page boundary exceeds the scroll ceiling — delegate to
+    // jump_to_end which computes the correct last-page anchor with
+    // enough room to show all remaining content cleanly.
+    jump_to_end(state);
 }
 
 /// Page backward (Shift+,). Pop the previous page_top from the history

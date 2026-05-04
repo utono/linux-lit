@@ -347,20 +347,36 @@ pub(crate) fn set_page_instant(state: &mut AppState, new_top: usize) {
 /// Scroll so `line` is at the top of the viewport, then size the bottom clip
 /// overlay to hide any partially-visible line at the bottom of the page.
 pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
-    // Position the target line at the very top of the viewport using
-    // vadjustment for pixel-perfect positioning (scroll_to_iter is imprecise).
-    // GTK's set_value clamps to [0, upper - page_size], so when the requested
-    // y exceeds the document's max scroll (e.g., jump_to_end on the last
-    // page), the actual scroll position is less than y. Detect that case
-    // explicitly: if clamped, the caller's logical page_top is too far —
-    // there's no recovery here in snap_scroll_to_line, but the bottom_clip
-    // overlay's height-based clamp at least keeps the bottom-edge tidy.
+    let mut effective_top = line;
+
     if let Some(iter) = state.buffer.iter_at_line(line as i32) {
         let (y, _h) = state.text_view.line_yrange(&iter);
         let adj = state.scrolled_window.vadjustment();
         let max_value = (adj.upper() - adj.page_size()).max(0.0);
         let target = (y as f64).min(max_value);
         adj.set_value(target);
+
+        // When the scroll was clamped, `line` can't appear at the viewport
+        // top — earlier lines bleed in clipped. Walk backward to find the
+        // line whose y <= the clamped scroll position and re-scroll to that
+        // line's exact y so the page starts on a clean line boundary.
+        if (y as f64) > max_value && line > 0 {
+            for l in (0..line).rev() {
+                if let Some(it) = state.buffer.iter_at_line(l as i32) {
+                    let (ly, _) = state.text_view.line_yrange(&it);
+                    if (ly as f64) <= max_value {
+                        log_fmt!(
+                            "SNAP_CLAMP: requested line {} (y={}) exceeds max_scroll={:.0}, corrected page_top to {} (y={})",
+                            line, y, max_value, l, ly
+                        );
+                        adj.set_value(ly as f64);
+                        effective_top = l;
+                        state.page_top_line = l;
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     // F4: populate the cache synchronously so MPV sync handlers reading
@@ -369,31 +385,42 @@ pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
     // the cache as a backstop for layout-not-yet-flushed cases.
     let widget_height = state.text_view.height();
     if widget_height > 0 {
-        let descender_guard = descender_guard_px(&state.text_view, line);
-        let bottom_margin = state.text_view.bottom_margin();
-        let usable_height = widget_height - descender_guard - bottom_margin;
+        let descender_guard = descender_guard_px(&state.text_view, effective_top);
+        let usable_height = widget_height - descender_guard - BASE_BOTTOM_MARGIN;
         let line_count = state.effective_line_count();
-        // Cache the RAW range — every line genuinely rendered on screen.
-        // Consumers split into two camps: is_line_fully_visible needs raw
-        // ("is line N drawn?"); last_fully_visible_line needs trimmed
-        // ("where should the next page start?") and applies trim itself.
-        let range = visible_range(&state.text_view, &state.buffer, line, line_count, usable_height);
+        let range = visible_range(&state.text_view, &state.buffer, effective_top, line_count, usable_height);
         state.last_visible_range.set(Some(range));
     } else {
         state.last_visible_range.set(None);
     }
 
-    // Schedule the clip height update for the next frame, after GTK has
-    // completed the scroll and updated line layout positions. Fires twice
-    // (idle + 100ms timeout) — the timeout backstop catches post-font-change
-    // cases where the first idle pass sees pre-layout line heights.
     schedule_bottom_clip_update(
         state.text_view.clone(),
         state.bottom_clip.clone(),
         state.scrolled_window.clone(),
-        line,
+        effective_top,
         state.effective_line_count(),
     );
+}
+
+/// Ensure the vadjustment's upper bound is large enough that any buffer line
+/// can be scrolled to the viewport top. GTK computes upper from content height
+/// + margins; near the end of the document that may not be enough. We extend
+/// upper (via bottom_margin) so the last line is always reachable.
+///
+/// The minimum bottom_margin needed is `page_size` — this guarantees that even
+/// the very last buffer line can appear at the viewport top with whitespace
+/// below. We only increase, never decrease, to avoid fighting GTK's layout.
+pub(crate) const BASE_BOTTOM_MARGIN: i32 = 40;
+pub(crate) fn ensure_scroll_range(state: &AppState) {
+    let page_size = state.scrolled_window.vadjustment().page_size();
+    if page_size <= 0.0 {
+        return;
+    }
+    let needed = (page_size as i32).max(BASE_BOTTOM_MARGIN);
+    if state.text_view.bottom_margin() < needed {
+        state.text_view.set_bottom_margin(needed);
+    }
 }
 
 /// Public entry point for `update_bottom_clip`, used by `highlight::update_highlight_and_show`
@@ -437,17 +464,13 @@ fn update_bottom_clip(
     // skip the descender_guard reservation — there's no next page below,
     // so no risk of half-clipping a "partial line" descender. Just fit
     // content into widget_height and let bottom_clip cover any whitespace.
-    let bottom_margin = text_view.bottom_margin();
     let descender_guard = descender_guard_px(text_view, page_top);
     let usable_height = {
-        // Probe: does fitting from page_top with widget_height usable
-        // include line_count - 1? If yes, this is the last page, drop
-        // the descender_guard (and bottom_margin) reservation.
         let probe = visible_range(text_view, &buf_sv, page_top, line_count, widget_height);
         if probe.last_fit + 1 >= line_count {
             widget_height
         } else {
-            widget_height - descender_guard - bottom_margin
+            widget_height - descender_guard - BASE_BOTTOM_MARGIN
         }
     };
 
