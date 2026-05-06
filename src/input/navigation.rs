@@ -163,8 +163,7 @@ pub fn jump_to_start(state: &mut AppState) {
     };
 
     state.current_line = target;
-    let top = target.saturating_sub(1);
-    set_page_instant(state, top);
+    set_page_instant(state, 0);
     after_page_change(state, PageChangeReason::JumpToLine);
 }
 

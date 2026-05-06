@@ -520,9 +520,9 @@ pub(crate) fn last_dialogue_in_page(buffer: &sourceview5::Buffer, from: usize, c
 
 /// Given a dialogue line that will be the top of a page, back up over any
 /// non-dialogue preamble immediately preceding it: blanks, speakers, stage
-/// directions. Stops at (and includes) the first act/scene marker or
-/// separator — those are section boundaries and should be the page top,
-/// not backed past into the previous section's content.
+/// directions, and the full header block (act/scene markers, separators,
+/// and blanks between them). The page top lands on the earliest header line
+/// so the reader sees "ACT 1 / Scene 1" instead of a bare separator.
 pub(crate) fn back_up_for_speaker(buffer: &sourceview5::Buffer, line: usize) -> usize {
     use crate::db::line_types;
     let mut top = line;
@@ -531,6 +531,20 @@ pub(crate) fn back_up_for_speaker(buffer: &sourceview5::Buffer, line: usize) -> 
         let trimmed = prev.trim();
         if line_types::is_act_scene_marker(trimmed) || line_types::is_separator(trimmed) {
             top -= 1;
+            // Continue backing up through the full header block:
+            // consecutive markers, separators, and blanks between them.
+            while top > 0 {
+                let above = buffer_line_text(buffer, top - 1);
+                let above_trimmed = above.trim();
+                if line_types::is_act_scene_marker(above_trimmed)
+                    || line_types::is_separator(above_trimmed)
+                    || above_trimmed.is_empty()
+                {
+                    top -= 1;
+                } else {
+                    break;
+                }
+            }
             break;
         }
         if trimmed.is_empty()

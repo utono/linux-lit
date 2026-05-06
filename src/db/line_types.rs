@@ -40,6 +40,12 @@ pub fn is_stage_direction(text: &str) -> bool {
     stage_direction_re().is_match(text.trim())
 }
 
+fn is_standalone_keyword(upper: &str, keyword: &str) -> bool {
+    upper == keyword
+        || upper.starts_with(&format!("{},", keyword))
+        || upper.starts_with(&format!("{}.", keyword))
+}
+
 pub fn is_act_scene_marker(text: &str) -> bool {
     let trimmed = text.trim();
     let stripped = trimmed.strip_prefix("## ").unwrap_or(trimmed);
@@ -47,9 +53,9 @@ pub fn is_act_scene_marker(text: &str) -> bool {
     upper.starts_with("ACT ")
         || upper.starts_with("SCENE ")
         || upper.starts_with("CHAPTER ")
-        || upper.starts_with("PROLOGUE")
-        || upper.starts_with("EPILOGUE")
-        || upper.starts_with("INDUCTION")
+        || is_standalone_keyword(&upper, "PROLOGUE")
+        || is_standalone_keyword(&upper, "EPILOGUE")
+        || is_standalone_keyword(&upper, "INDUCTION")
 }
 
 pub fn is_separator(text: &str) -> bool {
@@ -129,6 +135,12 @@ mod tests {
         assert!(is_act_scene_marker("EPILOGUE"));
         assert!(is_act_scene_marker("Epilogue"));
         assert!(!is_act_scene_marker("Action"));
+        // Dialogue containing marker keywords must not match
+        assert!(!is_act_scene_marker(
+            "Epilogue or to hear a Bergomask dance between"
+        ));
+        assert!(!is_act_scene_marker("Prologue to the story begins here"));
+        assert!(!is_act_scene_marker("Induction of the current was strong"));
         // New: ## headers from cleaned format
         assert!(is_act_scene_marker("## Act 1, Scene 1"));
         assert!(is_act_scene_marker("## Prologue"));

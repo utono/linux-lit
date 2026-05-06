@@ -1771,7 +1771,7 @@ pub fn display_work_at_with_prepared(
         ));
         if let Some(target) = first_dialogue {
             state.current_line = target;
-            state.page_top_line = target.saturating_sub(1);
+            state.page_top_line = 0;
         }
     } else if target_line_id.is_none() {
         // Saved position path: anchor page_top one line above cursor so
