@@ -14,6 +14,7 @@ use crate::config::Config;
 use crate::db::models::{Work, WorkSummary};
 use crate::ui::library_picker::LibraryPicker;
 use crate::ui::bookmark_picker::BookmarkPicker;
+use crate::ui::gloss_picker::GlossPicker;
 use crate::ui::media_picker::MediaPicker;
 use crate::ui::search_bar::SearchBar;
 
@@ -42,6 +43,7 @@ pub enum InputMode {
     Search,
     GlossOverlay,
     GlossPrompt,
+    GlossPicker,
     GamepadOverlay,
     KeybindsOverlay,
     ConcordancePicker,
@@ -149,6 +151,7 @@ pub struct AppState {
     pub gloss_prompt_container: Option<glib::WeakRef<gtk4::Box>>,
     pub gloss_prompt_overlay: Option<glib::WeakRef<gtk4::Overlay>>,
     pub gloss_prompt_textview: Option<glib::WeakRef<gtk4::TextView>>,
+    pub gloss_picker: GlossPicker,
     pub vocab_words: std::collections::HashSet<String>,
     pub vocab_matches: Vec<VocabMatch>,
     pub vocab_match_idx: Option<usize>,
@@ -655,9 +658,14 @@ pub fn build_window(
     gloss_overlay.attach(&gamepad_overlay.overlay);
     gloss_overlay.overlay.set_vexpand(true);
 
-    // Concordance picker wraps the gloss overlay
+    // Gloss picker wraps the gloss overlay
+    let gloss_picker = GlossPicker::new();
+    gloss_picker.attach(&gloss_overlay.overlay);
+    gloss_picker.overlay.set_vexpand(true);
+
+    // Concordance picker wraps the gloss picker
     let concordance_picker = crate::ui::concordance_picker::ConcordancePicker::new();
-    concordance_picker.attach(&gloss_overlay.overlay);
+    concordance_picker.attach(&gloss_picker.overlay);
     concordance_picker.overlay.set_vexpand(true);
 
     // Concordance word picker wraps the concordance picker
@@ -831,6 +839,7 @@ pub fn build_window(
         gloss_prompt_container: None,
         gloss_prompt_overlay: None,
         gloss_prompt_textview: None,
+        gloss_picker,
         vocab_words: std::collections::HashSet::new(),
         vocab_matches: Vec::new(),
         vocab_match_idx: None,
@@ -1063,6 +1072,19 @@ pub fn build_window(
             state_for_bookmark_filter
                 .borrow()
                 .bookmark_picker
+                .populate_list(&text);
+        });
+    }
+
+    // Connect gloss picker search entry filter
+    let state_for_gloss_filter = Rc::clone(&state);
+    {
+        let s = state.borrow();
+        s.gloss_picker.search_entry().connect_changed(move |entry| {
+            let text = entry.text();
+            state_for_gloss_filter
+                .borrow()
+                .gloss_picker
                 .populate_list(&text);
         });
     }
