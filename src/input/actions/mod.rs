@@ -84,6 +84,7 @@ pub enum Action {
     JumpToPrevVocab,
     ToggleVocabHighlight,
     ToggleGlossOverlay,
+    OpenGlossPicker,
 
     // Visual / selection
     EnterVisualMode,
@@ -173,6 +174,7 @@ impl Action {
             | Action::JumpToPrevVocab
             | Action::ToggleVocabHighlight
             | Action::ToggleGlossOverlay
+            | Action::OpenGlossPicker
             | Action::OpenConcordancePicker
             | Action::OpenConcordanceWordPicker
             | Action::OpenConcordanceListPicker => Category::Vocab,
@@ -267,6 +269,7 @@ impl Action {
             Action::JumpToPrevVocab => "JumpToPrevVocab",
             Action::ToggleVocabHighlight => "ToggleVocabHighlight",
             Action::ToggleGlossOverlay => "ToggleGlossOverlay",
+            Action::OpenGlossPicker => "OpenGlossPicker",
             Action::EnterVisualMode => "EnterVisualMode",
             Action::WordCycleCopy => "WordCycleCopy",
             Action::WordCollectCopy => "WordCollectCopy",
