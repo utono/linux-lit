@@ -390,6 +390,41 @@ pub(crate) fn open_concordance_list_picker(state: &Rc<RefCell<AppState>>) {
     state.borrow_mut().input_mode = crate::app::InputMode::ConcordanceListPicker;
 }
 
+/// Open the gloss picker, querying glossed passages for the current work.
+/// Spawns an async task to query the DB.
+pub(crate) fn open_gloss_picker(
+    state: &Rc<RefCell<AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+) {
+    let abbrev = state
+        .borrow()
+        .current_work
+        .as_ref()
+        .map(|w| w.abbrev.clone());
+    if let Some(abbrev) = abbrev {
+        let state_clone = Rc::clone(state);
+        let handle = tokio_handle.clone();
+        glib::spawn_future_local(async move {
+            let items = handle
+                .spawn_blocking(move || {
+                    let conn =
+                        crate::db::queries::open_db().expect("Failed to open lit.db");
+                    crate::db::queries::find_glossed_passages(&conn, &abbrev)
+                        .unwrap_or_default()
+                })
+                .await
+                .unwrap_or_default();
+            {
+                let mut s = state_clone.borrow_mut();
+                s.gloss_overlay.hide();
+                s.gloss_picker.set_items(items);
+            }
+            state_clone.borrow().gloss_picker.show();
+            state_clone.borrow_mut().input_mode = crate::app::InputMode::GlossPicker;
+        });
+    }
+}
+
 /// Delete the selected bookmark from DB and update AppState's is_bookmarked
 /// vec + gutter renderer. Called from the bookmark picker's Delete/d key.
 pub(crate) fn delete_bookmark(

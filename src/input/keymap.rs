@@ -63,7 +63,8 @@ pub fn handle_key(
             | crate::app::InputMode::MediaPicker
             | crate::app::InputMode::ConcordancePicker
             | crate::app::InputMode::ConcordanceWordPicker
-            | crate::app::InputMode::ConcordanceListPicker => handle_picker_key(state, key_name, is_ctrl, tokio_handle, mode),
+            | crate::app::InputMode::ConcordanceListPicker
+            | crate::app::InputMode::GlossPicker => handle_picker_key(state, key_name, is_ctrl, tokio_handle, mode),
             crate::app::InputMode::Settings => handle_settings_key(state, key_name, is_ctrl),
             crate::app::InputMode::Search => handle_search_key(state, key_name),
             crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_alt),
@@ -226,6 +227,7 @@ fn handle_picker_key(
                 InputMode::ConcordancePicker => { s.concordance_picker.hide(); s.input_mode = InputMode::Reader; }
                 InputMode::ConcordanceWordPicker => { s.concordance_word_picker.hide(); s.input_mode = InputMode::Reader; }
                 InputMode::ConcordanceListPicker => { s.concordance_list_picker.hide(); s.input_mode = InputMode::Reader; }
+                InputMode::GlossPicker => { s.gloss_picker.hide(); s.input_mode = InputMode::Reader; }
                 _ => {}
             }
             true
@@ -294,6 +296,63 @@ fn handle_picker_key(
                     }
                     true
                 }
+                InputMode::GlossPicker => {
+                    let selected = state.borrow().gloss_picker.selected_index();
+                    if let Some(idx) = selected {
+                        let passage = state.borrow().gloss_picker.items[idx].clone();
+                        {
+                            let s = state.borrow();
+                            s.gloss_picker.hide();
+                        }
+
+                        let all_glosses = crate::db::queries::open_db()
+                            .ok()
+                            .and_then(|conn| {
+                                crate::db::queries::find_all_glosses(
+                                    &conn, &passage.work_abbrev,
+                                    &passage.start_citation, &passage.end_citation,
+                                ).ok()
+                            })
+                            .unwrap_or_default();
+
+                        if all_glosses.is_empty() {
+                            state.borrow_mut().input_mode = InputMode::Reader;
+                            return true;
+                        }
+
+                        let mut s = state.borrow_mut();
+                        let work_title = s.current_work.as_ref()
+                            .map(|w| w.title.clone()).unwrap_or_default();
+                        let ctx = crate::gloss::GlossContext {
+                            work_abbrev: passage.work_abbrev,
+                            work_title,
+                            start_citation: passage.start_citation,
+                            end_citation: passage.end_citation,
+                            act: passage.act,
+                            scene: passage.scene,
+                            speaker: passage.speaker,
+                            source_text: passage.source_text,
+                            source_line_numbers: Vec::new(),
+                            hash: String::new(),
+                        };
+
+                        let h = s.scrolled_window.height();
+                        let source_lines: Vec<(String, i64)> = Vec::new();
+                        s.gloss_overlay.show_gloss_with_color(
+                            &ctx.source_text, &all_glosses[0].gloss_text, h,
+                            Some(&s.theme.root_color), &source_lines,
+                        );
+                        s.gloss_overlay.set_position(0, all_glosses.len());
+
+                        s.gloss_passages = s.gloss_picker.items.clone();
+                        s.gloss_passage_index = idx;
+                        s.gloss_list = all_glosses;
+                        s.gloss_index = 0;
+                        s.gloss_context = Some(ctx);
+                        s.input_mode = InputMode::GlossOverlay;
+                    }
+                    true
+                }
                 _ => true,
             }
         }
@@ -304,6 +363,7 @@ fn handle_picker_key(
                 InputMode::ConcordancePicker => state.borrow().concordance_picker.move_selection(1),
                 InputMode::ConcordanceWordPicker => state.borrow().concordance_word_picker.move_selection(1),
                 InputMode::ConcordanceListPicker => state.borrow().concordance_list_picker.move_selection(1),
+                InputMode::GlossPicker => state.borrow().gloss_picker.move_selection(1),
                 _ => {}
             }
             true
@@ -315,6 +375,7 @@ fn handle_picker_key(
                 InputMode::ConcordancePicker => state.borrow().concordance_picker.move_selection(-1),
                 InputMode::ConcordanceWordPicker => state.borrow().concordance_word_picker.move_selection(-1),
                 InputMode::ConcordanceListPicker => state.borrow().concordance_list_picker.move_selection(-1),
+                InputMode::GlossPicker => state.borrow().gloss_picker.move_selection(-1),
                 _ => {}
             }
             true
@@ -782,6 +843,7 @@ fn dispatch_action(
             crate::logging::log(&format!("VOCAB: highlighting {}", if s.vocab_highlight_visible { "on" } else { "off" }));
         }
         ToggleGlossOverlay => crate::input::actions::gloss::toggle_overlay(state),
+        OpenGlossPicker => crate::input::actions::pickers::open_gloss_picker(state, tokio_handle),
 
         // Visual / selection
         EnterVisualMode => crate::input::visual::enter_visual_mode(&mut state.borrow_mut()),
