@@ -4,6 +4,7 @@ pub mod concordance_list_picker;
 pub mod concordance_picker;
 pub mod concordance_word_picker;
 pub mod gloss_overlay;
+pub mod gloss_picker;
 pub mod vocab_popup;
 pub mod gamepad_overlay;
 pub mod keybinds_overlay;
