@@ -10,7 +10,7 @@ pub struct GlossPicker {
     picker_box: GtkBox,
     search_entry: Entry,
     list_box: ListBox,
-    items: Vec<GlossedPassage>,
+    pub(crate) items: Vec<GlossedPassage>,
 }
 
 impl GlossPicker {
