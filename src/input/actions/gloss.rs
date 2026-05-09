@@ -344,6 +344,12 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
 }
 
 pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
+    if state.borrow().input_mode == crate::app::InputMode::GlossOverlay {
+        let mut s = state.borrow_mut();
+        s.gloss_overlay.hide();
+        s.input_mode = crate::app::InputMode::Reader;
+        return;
+    }
     let has_gloss = !state.borrow().gloss_list.is_empty();
     if has_gloss {
         let s = state.borrow();
