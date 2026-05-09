@@ -609,8 +609,6 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
         let current_scene_start = (0..=state.current_line).rev().find(|&bl| is_marker_at(bl));
         let marker = match current_scene_start {
             Some(start) if start < state.current_line => {
-                // Cursor sits past the current scene's first dialogue line —
-                // first 2-press should rewind to the start of *this* scene.
                 let cur_first = next_dialogue_line(
                     &state.buffer,
                     &state.translation_lines,
@@ -627,7 +625,9 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
             None => (0..state.current_line).rev().find(|&bl| is_marker_at(bl)),
         };
         let cursor = marker.and_then(|m| {
-            next_dialogue_line(&state.buffer, &state.translation_lines, m, line_count)
+            let cap = ((m + 1)..line_count).find(|&bl| is_marker_at(bl))
+                .unwrap_or(line_count);
+            next_dialogue_line(&state.buffer, &state.translation_lines, m, cap)
                 .or(Some(m))
         });
         (marker, cursor)
