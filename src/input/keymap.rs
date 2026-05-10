@@ -349,6 +349,7 @@ fn handle_picker_key(
                         s.gloss_list = all_glosses;
                         s.gloss_index = 0;
                         s.gloss_context = Some(ctx);
+                        s.gloss_opened_from_picker = true;
                         s.input_mode = InputMode::GlossOverlay;
                     }
                     true
@@ -556,10 +557,31 @@ fn handle_gloss_key(
             true
         }
         "Escape" | "n" => {
-            {
+            let should_scroll = {
                 let mut s = state.borrow_mut();
                 s.gloss_overlay.hide();
                 s.input_mode = crate::app::InputMode::Reader;
+                let from_picker = s.gloss_opened_from_picker;
+                s.gloss_opened_from_picker = false;
+                from_picker
+            };
+            if should_scroll {
+                let mut s = state.borrow_mut();
+                let buffer_line = s.gloss_context.as_ref().and_then(|ctx| {
+                    let citation = &ctx.start_citation;
+                    let work = s.current_work.as_ref()?;
+                    let work_idx = work.lines.iter().position(|l| l.citation == *citation)?;
+                    if let Some(ref lm) = s.line_map {
+                        Some(lm.work_to_buffer[work_idx])
+                    } else {
+                        Some(work_idx)
+                    }
+                });
+                if let Some(bl) = buffer_line {
+                    s.current_line = bl;
+                    navigation::scroll_cursor_top(&mut s);
+                    navigation::update_highlight_only(&mut s);
+                }
             }
             true
         }
