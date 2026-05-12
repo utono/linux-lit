@@ -567,22 +567,11 @@ pub(crate) fn page_turn_top(buffer: &sourceview5::Buffer, target_line: usize) ->
     back_up_for_speaker(buffer, target_line)
 }
 
-/// Find the page-top for a chapter jump: walk backward from `target_line` to
-/// the nearest act/scene marker so the viewport starts on the scene title.
-/// Falls back to `page_turn_top` if no marker is found within `MAX_LOOKBACK`.
+/// Find the page-top for a chapter jump: back up over the speaker name and
+/// any immediately-adjacent scene headers so the chapter's first dialogue
+/// line sits near the viewport top with its speaker visible above it.
 pub(crate) fn chapter_page_top(buffer: &sourceview5::Buffer, target_line: usize) -> usize {
-    use crate::db::line_types;
-    const MAX_LOOKBACK: usize = 50;
-    let lookback_floor = target_line.saturating_sub(MAX_LOOKBACK);
-    let mut i = target_line;
-    while i > lookback_floor {
-        let text = buffer_line_text(buffer, i - 1);
-        if line_types::is_act_scene_marker(text.trim()) {
-            return i - 1;
-        }
-        i -= 1;
-    }
-    page_turn_top(buffer, target_line)
+    back_up_for_speaker(buffer, target_line)
 }
 
 /// Earliest line whose y-coordinate is reachable by `vadjustment.set_value`
