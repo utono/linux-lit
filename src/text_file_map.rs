@@ -159,9 +159,10 @@ pub fn build_line_map(file_lines: &[String], work_lines: &[Line], is_prose: bool
                         }
                     }
                     // Check whether any of the next few non-empty file lines
-                    // matches the next DB row. Speaker names and stage directions
-                    // in the file have no DB counterpart, so we look ahead up to
-                    // 3 non-empty file lines to find a confirming match.
+                    // matches the next DB row. Speaker names, stage directions,
+                    // act/scene markers, and separators in the file have no DB
+                    // counterpart, so skip them and only count dialogue-like
+                    // lines toward the lookahead limit.
                     if let Some(nd) = next_db_norm {
                         let mut confirmed = false;
                         let mut seen = 0;
@@ -172,6 +173,13 @@ pub fn build_line_map(file_lines: &[String], work_lines: &[Line], is_prose: bool
                             if &norm_file[bi2] == nd {
                                 confirmed = true;
                                 break;
+                            }
+                            let raw = &file_lines[bi2];
+                            if line_types::is_speaker(raw)
+                                || line_types::is_act_scene_marker(raw)
+                                || line_types::is_separator(raw)
+                            {
+                                continue;
                             }
                             seen += 1;
                             if seen >= 3 {
@@ -630,6 +638,42 @@ mod tests {
 
         // "Something else entirely" at buf 2 does not match "different content" — no match.
         assert_eq!(map.buffer_to_work[2], None);
+    }
+
+    #[test]
+    fn test_confirmation_skips_structural_lines_at_act_boundary() {
+        let file_lines: Vec<String> = vec![
+            "Why, this it is: my heart accords thereto.".to_string(),
+            "[Aside.]".to_string(),
+            "And yet a thousand times it answers no.".to_string(),
+            "[They exit.]".to_string(),
+            "".to_string(),
+            "ACT 2".to_string(),
+            "=====".to_string(),
+            "".to_string(),
+            "Scene 1".to_string(),
+            "=======".to_string(),
+            "".to_string(),
+            "[Enter Valentine and Speed, carrying a glove.]".to_string(),
+            "".to_string(),
+            "SPEED".to_string(),
+            "Sir, your glove.".to_string(),
+        ];
+
+        let work_lines = vec![
+            make_line(1, "Why, this it is: my heart accords thereto.", "why this it is my heart accords thereto", true),
+            make_line(2, "[Aside.]", "aside", true),
+            make_line(3, "And yet a thousand times it answers no.", "and yet a thousand times it answers no", true),
+            make_line(4, "[They exit.]", "they exit", false),
+            make_line(5, "[Enter Valentine and Speed, carrying a glove.]", "enter valentine and speed carrying a glove", false),
+            make_line(6, "Sir, your glove.", "sir your glove", true),
+        ];
+
+        let map = build_line_map(&file_lines, &work_lines, false);
+
+        assert_eq!(map.buffer_to_work[0], Some(0));
+        assert_eq!(map.buffer_to_work[2], Some(2));
+        assert_eq!(map.buffer_to_work[14], Some(5));
     }
 
     #[test]

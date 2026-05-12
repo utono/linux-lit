@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::db::models::Work;
 use crate::text_file_map::LineMap;
 
-pub const SNAPSHOT_VERSION: u32 = 2;
+pub const SNAPSHOT_VERSION: u32 = 3;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct WorkSnapshot {
