@@ -161,6 +161,18 @@ fn main() {
                         } else {
                             line_idx
                         };
+                        // Guard against aberrant timestamps: if the sync target
+                        // is far from the current position, skip it.
+                        if let Some(cur_wi) = s.work_line_for_buffer(s.current_line) {
+                            let dist = (line_idx as isize - cur_wi as isize).unsigned_abs();
+                            if dist > 50 {
+                                crate::logging::log(&format!(
+                                    "CURSOR_SYNC: ABERRANT line_idx={} cur_work={} dist={} — skipped",
+                                    line_idx, cur_wi, dist,
+                                ));
+                                continue;
+                            }
+                        }
                         // After a pending_advance, ignore CursorSync that would
                         // pull the cursor back to the source timestamped line.
                         if s.pending_advance_ignore_bl == Some(buffer_line) {

@@ -315,7 +315,7 @@ impl AppState {
 /// (tiled layouts), the offset is dropped so the text stays symmetric inside
 /// the card and isn't pushed off-center.
 pub const VERSE_LEFT_OFFSET: i32 = 200;
-pub const PROSE_LEFT_OFFSET: i32 = 120;
+pub const PROSE_LEFT_OFFSET: i32 = 200;
 
 /// Fixed height for the top spacer above the first text line.
 pub const TOP_SPACER_HEIGHT: i32 = 40;
@@ -384,6 +384,11 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
             apply_dialogue_formatting(state);
         }
     }
+
+    let logical_right = state.config.text_margins as i32
+        + crate::config::EXTRA_RIGHT_MARGIN
+        + left_bump;
+    state.text_view.set_right_margin(logical_right);
 
     state.top_spacer.set_height_request(TOP_SPACER_HEIGHT);
 }
@@ -1755,15 +1760,7 @@ pub fn display_work_at_with_prepared(
         }
     }
 
-    // Set font size based on work type: 18pt for plays/poetry, 20pt for prose
-    let is_prose = state.current_work.as_ref()
-        .map(|w| crate::db::line_types::is_prose_work(&w.work_type))
-        .unwrap_or(true);
-    state.config.font_size = if is_prose {
-        crate::config::default_font_size()
-    } else {
-        18
-    };
+    state.config.font_size = 18;
 
     // Apply font tag to new buffer content
     let t6 = std::time::Instant::now();
