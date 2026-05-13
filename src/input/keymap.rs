@@ -903,6 +903,7 @@ fn dispatch_action(
             crate::logging::log(&format!("DIM: {}", if s.dim_enabled { "on" } else { "off" }));
         }
         ShowFontInfo => crate::app::show_font_info(&state.borrow()),
+        ShowCurrentChapter => navigation::show_current_chapter(&mut state.borrow_mut()),
 
         // Timestamps
         SetStartTime => { crate::input::timestamps::set_start_time(&mut state.borrow_mut()); }

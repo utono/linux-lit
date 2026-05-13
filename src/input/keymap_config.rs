@@ -229,6 +229,7 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::shift("2"), Action::JumpToPrevScene),
         (KeyCombo::plain("3"), Action::JumpToNextScene),
         (KeyCombo::shift("3"), Action::JumpToNextScene),
+        (KeyCombo::plain("c"), Action::ShowCurrentChapter),
         // Bookmarks
         (KeyCombo::plain("m"), Action::ToggleBookmark),
         (KeyCombo::plain("semicolon"), Action::NextBookmark),

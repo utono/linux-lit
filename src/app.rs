@@ -182,6 +182,7 @@ pub struct AppState {
     pub sync_icon: gtk4::Label,
     pub debug_icon: gtk4::Label,
     pub word_status_label: gtk4::Label,
+    pub chapter_toast: gtk4::Label,
     pub word_cycle_line: Option<usize>,
     pub word_cycle_index: usize,
     pub word_status_timer: Rc<Cell<u64>>,
@@ -729,6 +730,13 @@ pub fn build_window(
     word_status_label.set_visible(false);
     concordance_list_picker.overlay.add_overlay(&word_status_label);
 
+    let chapter_toast = gtk4::Label::new(None);
+    chapter_toast.set_valign(gtk4::Align::End);
+    chapter_toast.set_halign(gtk4::Align::Center);
+    chapter_toast.set_margin_bottom(32);
+    chapter_toast.add_css_class("chapter-toast");
+    chapter_toast.set_visible(false);
+    concordance_list_picker.overlay.add_overlay(&chapter_toast);
 
     // Concordance status bar
     let concordance_bar = crate::ui::concordance_bar::ConcordanceBar::new();
@@ -871,6 +879,7 @@ pub fn build_window(
         sync_icon,
         debug_icon,
         word_status_label,
+        chapter_toast,
         word_cycle_line: None,
         word_cycle_index: 0,
         word_status_timer: Rc::new(Cell::new(0)),

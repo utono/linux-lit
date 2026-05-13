@@ -104,6 +104,7 @@ pub enum Action {
     TogglePreviousWork,
     ToggleDim,
     ShowFontInfo,
+    ShowCurrentChapter,
 
     // Timestamps
     SetStartTime,
@@ -188,6 +189,7 @@ impl Action {
             | Action::ToggleSignColumn
             | Action::ToggleDim
             | Action::ShowFontInfo
+            | Action::ShowCurrentChapter
             | Action::ToggleTranslations
             | Action::OpenSettingsOverlay => Category::Display,
 
@@ -283,6 +285,7 @@ impl Action {
             Action::TogglePreviousWork => "TogglePreviousWork",
             Action::ToggleDim => "ToggleDim",
             Action::ShowFontInfo => "ShowFontInfo",
+            Action::ShowCurrentChapter => "ShowCurrentChapter",
             Action::SetStartTime => "SetStartTime",
             Action::SetEndTime => "SetEndTime",
             Action::SetChapter => "SetChapter",

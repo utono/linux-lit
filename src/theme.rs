@@ -454,6 +454,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .sync-off-icon {{ font-size: 20px; color: {dim}; opacity: 0.7; }} \
          .debug-icon {{ font-size: 18px; color: {bg}; opacity: 0.85; }} \
          .word-status {{ font-size: 16px; color: {fg}; opacity: 0.85; }} \
+         .chapter-toast {{ font-size: 13px; color: {dim}; opacity: 0.85; }} \
          .gloss-scrim {{ background-color: rgba(0, 0, 0, 0.3); }} \
          .gloss-overlay {{ background-color: {bg}; color: {fg}; }} \
          .gloss-title {{ font-size: {size}pt; font-weight: bold; \

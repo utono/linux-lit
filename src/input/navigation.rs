@@ -704,6 +704,73 @@ pub fn jump_to_prev_section(state: &mut AppState) {
     }
 }
 
+/// Show the chapter containing the current line as a transient toast.
+pub fn show_current_chapter(state: &mut AppState) {
+    let work = match &state.current_work {
+        Some(w) => w,
+        None => return,
+    };
+
+    let chapter_lines: Vec<usize> = if let Some(ref lm) = state.line_map {
+        lm.chapter_breaks.clone()
+    } else {
+        work.lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.is_chapter)
+            .map(|(i, _)| i)
+            .collect()
+    };
+
+    if chapter_lines.is_empty() {
+        return;
+    }
+
+    let current_bl = state.current_line;
+    let (chapter_num, title) = match chapter_lines.iter().rposition(|&bl| bl <= current_bl) {
+        Some(idx) => {
+            let bl = chapter_lines[idx];
+            let title = if let Some(ref lm) = state.line_map {
+                lm.buffer_to_work.get(bl)
+                    .and_then(|o| o.as_ref())
+                    .map(|wi| work.lines[*wi].text.as_str())
+                    .unwrap_or("")
+            } else {
+                work.lines.get(bl).map(|l| l.text.as_str()).unwrap_or("")
+            };
+            (idx + 1, title.trim().to_string())
+        }
+        None => {
+            // Before the first chapter marker — show as "before Chapter 1"
+            let bl = chapter_lines[0];
+            let title = if let Some(ref lm) = state.line_map {
+                lm.buffer_to_work.get(bl)
+                    .and_then(|o| o.as_ref())
+                    .map(|wi| work.lines[*wi].text.as_str())
+                    .unwrap_or("")
+            } else {
+                work.lines.get(bl).map(|l| l.text.as_str()).unwrap_or("")
+            };
+            (0, title.trim().to_string())
+        }
+    };
+
+    let total = chapter_lines.len();
+    let text = if chapter_num == 0 {
+        format!("Before chapter 1 of {} — {}", total, title)
+    } else {
+        format!("Chapter {} of {} — {}", chapter_num, total, title)
+    };
+
+    state.chapter_toast.set_text(&text);
+    state.chapter_toast.set_visible(true);
+
+    let toast = state.chapter_toast.clone();
+    glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+        toast.set_visible(false);
+    });
+}
+
 /// Jump to the next bookmarked line (wraps around).
 pub fn next_bookmark(state: &mut AppState) {
     let is_bm = state.is_bookmarked.borrow();
