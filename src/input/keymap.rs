@@ -887,11 +887,8 @@ fn dispatch_action(
         CycleFontForward => crate::app::cycle_font(&mut state.borrow_mut(), true),
         CycleFontBackward => crate::app::cycle_font(&mut state.borrow_mut(), false),
         ToggleSignColumn => crate::app::toggle_sign_column(&mut state.borrow_mut()),
-        ToggleCursorLine => {
-            let mut s = state.borrow_mut();
-            s.config.show_cursor_line = !s.config.show_cursor_line;
-            crate::input::navigation::update_highlight_only(&mut s);
-            crate::config::save(&s.config);
+        TogglePreviousWork => {
+            crate::input::actions::pickers::toggle_previous_work(state, tokio_handle);
         }
         ToggleDim => {
             let mut s = state.borrow_mut();

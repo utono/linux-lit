@@ -117,6 +117,106 @@ pub(crate) fn load_selected_work(
     }
 }
 
+pub(crate) fn toggle_previous_work(
+    state: &Rc<RefCell<AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+) {
+    let abbrev = state.borrow().config.previous_work.clone();
+    let abbrev = match abbrev {
+        Some(a) => a,
+        None => {
+            crate::logging::log("TOGGLE_PREV: no previous work");
+            return;
+        }
+    };
+    if state.borrow().current_work.as_ref().map(|w| w.abbrev.as_str()) == Some(&abbrev) {
+        crate::logging::log("TOGGLE_PREV: already viewing that work");
+        return;
+    }
+    crate::logging::log(&format!("TOGGLE_PREV: switching to '{}'", abbrev));
+    {
+        let s = state.borrow();
+        let _ = s.cmd_tx.try_send(crate::mpv::commands::MpvCommand::Pause);
+    }
+    let state_clone = Rc::clone(state);
+    let handle = tokio_handle.clone();
+    let handle_for_write = handle.clone();
+    glib::spawn_future_local(async move {
+        let abbrev_for_log = abbrev.clone();
+        let result = handle
+            .spawn_blocking(move || {
+                let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
+                let work = crate::db::queries::load_work(&conn, &abbrev)?;
+                let t_read = std::time::Instant::now();
+                let (prepared, was_miss) = if let Some(snap) = crate::snapshot::read(&work) {
+                    let bytes = std::fs::metadata(crate::snapshot::cache_path(&work.abbrev))
+                        .map(|m| m.len())
+                        .unwrap_or(0);
+                    crate::logging::log(&format!(
+                        "SNAPSHOT: cache hit {} ({}ms, {} bytes)",
+                        work.abbrev,
+                        t_read.elapsed().as_millis(),
+                        bytes
+                    ));
+                    let work_type = work.work_type.clone();
+                    let prep = crate::app::PreparedText {
+                        abbrev: snap.abbrev,
+                        work_type: work_type.clone(),
+                        file_lines_count: snap.filtered_contents.lines().count(),
+                        cleaned_lines_count: snap.filtered_contents.lines().count(),
+                        work_lines_count: work.lines.len(),
+                        filtered_contents: snap.filtered_contents,
+                        line_map: snap.line_map,
+                        path: snap.text_file_path,
+                        is_prose: crate::db::line_types::is_prose_work(&work_type),
+                    };
+                    (Some(prep), false)
+                } else {
+                    if !crate::snapshot::cache_path(&work.abbrev).exists() {
+                        crate::logging::log(&format!(
+                            "SNAPSHOT: cache miss {} (file_missing)",
+                            work.abbrev
+                        ));
+                    }
+                    (crate::app::prepare_text_for_display(&work), true)
+                };
+                Ok::<_, rusqlite::Error>((work, prepared, was_miss))
+            })
+            .await;
+        crate::logging::log(&format!(
+            "TOGGLE_PREV: load_work '{}' done",
+            abbrev_for_log
+        ));
+        match result {
+            Ok(Ok((work, prepared, was_cache_miss))) => {
+                let write_inputs = if was_cache_miss {
+                    prepared.as_ref().map(|p| {
+                        (work.clone(), p.filtered_contents.clone(), p.line_map.clone())
+                    })
+                } else {
+                    None
+                };
+                {
+                    let mut s = state_clone.borrow_mut();
+                    crate::app::clear_display(&mut s);
+                    crate::app::display_work_at_with_prepared(&mut s, work, None, prepared);
+                }
+                if let Some((w, filtered, line_map)) = write_inputs {
+                    handle_for_write.spawn_blocking(move || {
+                        let _ = crate::snapshot::write(&w, &filtered, &line_map);
+                    });
+                }
+            }
+            Ok(Err(e)) => {
+                crate::logging::log(&format!("TOGGLE_PREV: load error: {}", e));
+            }
+            Err(e) => {
+                crate::logging::log(&format!("TOGGLE_PREV: task join error: {}", e));
+            }
+        }
+    });
+}
+
 /// Open the bookmark picker, querying bookmarks for the current work.
 /// Spawns an async task to query the DB.
 pub(crate) fn open_bookmark_picker(

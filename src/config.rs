@@ -45,6 +45,8 @@ pub struct Config {
     pub transition_style: TransitionStyle,
     #[serde(default)]
     pub last_work: Option<String>,
+    #[serde(default = "default_previous_work")]
+    pub previous_work: Option<String>,
     #[serde(default)]
     pub work_positions: HashMap<String, usize>,
     #[serde(default)]
@@ -97,6 +99,10 @@ fn default_claude_model() -> String {
     "claude-opus-4-7".to_string()
 }
 
+fn default_previous_work() -> Option<String> {
+    Some("Dominion".to_string())
+}
+
 fn default_vocab_highlight_visible() -> bool {
     true
 }
@@ -120,6 +126,7 @@ impl Default for Config {
             navigation_mode: NavigationMode::default(),
             transition_style: TransitionStyle::default(),
             last_work: None,
+            previous_work: default_previous_work(),
             work_positions: HashMap::new(),
             visual_mode_commands: Vec::new(),
             claude_model: default_claude_model(),
@@ -154,6 +161,12 @@ pub fn load() -> Config {
     config.show_cursor_line = true;
     if config.claude_model.contains("-20") {
         config.claude_model = default_claude_model();
+    }
+    if config.previous_work == config.last_work {
+        config.previous_work = match config.last_work.as_deref() {
+            Some("Dominion") => Some("TGV".to_string()),
+            _ => Some("Dominion".to_string()),
+        };
     }
     config
 }

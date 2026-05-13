@@ -101,7 +101,7 @@ pub enum Action {
     CycleFontForward,
     CycleFontBackward,
     ToggleSignColumn,
-    ToggleCursorLine,
+    TogglePreviousWork,
     ToggleDim,
     ShowFontInfo,
 
@@ -186,7 +186,6 @@ impl Action {
             | Action::CycleFontForward
             | Action::CycleFontBackward
             | Action::ToggleSignColumn
-            | Action::ToggleCursorLine
             | Action::ToggleDim
             | Action::ShowFontInfo
             | Action::ToggleTranslations
@@ -219,7 +218,8 @@ impl Action {
             | Action::OpenLibraryPicker
             | Action::OpenMediaPicker
             | Action::OpenKeybindsOverlay
-            | Action::OpenSearch => Category::App,
+            | Action::OpenSearch
+            | Action::TogglePreviousWork => Category::App,
         }
     }
 
@@ -280,7 +280,7 @@ impl Action {
             Action::CycleFontForward => "CycleFontForward",
             Action::CycleFontBackward => "CycleFontBackward",
             Action::ToggleSignColumn => "ToggleSignColumn",
-            Action::ToggleCursorLine => "ToggleCursorLine",
+            Action::TogglePreviousWork => "TogglePreviousWork",
             Action::ToggleDim => "ToggleDim",
             Action::ShowFontInfo => "ShowFontInfo",
             Action::SetStartTime => "SetStartTime",

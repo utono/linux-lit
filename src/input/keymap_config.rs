@@ -277,7 +277,7 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("f"), Action::CycleFontForward),
         (KeyCombo::plain("F"), Action::CycleFontBackward),
         (KeyCombo::plain("l"), Action::ToggleSignColumn),
-        (KeyCombo::plain("minus"), Action::ToggleCursorLine),
+        (KeyCombo::plain("minus"), Action::TogglePreviousWork),
         (KeyCombo::alt("d"), Action::ToggleDim),
         (KeyCombo::alt("f"), Action::ShowFontInfo),
         (KeyCombo::plain("i"), Action::ToggleTranslations),

@@ -501,7 +501,7 @@ pub(crate) fn next_dialogue_from(buffer: &sourceview5::Buffer, from: usize, line
             return i;
         }
     }
-    from
+    line_count
 }
 
 /// Find the last dialogue line in the range [from, from+count).

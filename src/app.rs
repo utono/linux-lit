@@ -1476,8 +1476,11 @@ pub fn display_work_at_with_prepared(
         .window
         .set_title(Some(&format!("{} — linux-lit", work.title)));
 
-    // Save MRU to config
+    // Save MRU to config; track previous work for toggle
     let saved_line = state.config.work_positions.get(&work.abbrev).copied().unwrap_or(0);
+    if state.config.last_work.as_deref() != Some(&work.abbrev) {
+        state.config.previous_work = state.config.last_work.take();
+    }
     state.config.last_work = Some(work.abbrev.clone());
     crate::config::save(&state.config);
 
@@ -1795,11 +1798,17 @@ pub fn display_work_at_with_prepared(
             state.page_top_line = 0;
         }
     } else if target_line_id.is_none() {
-        // Saved position path: anchor page_top one line above cursor so
-        // the line preceding the cursor (often a speaker label) is
-        // visible. snap_scroll_to_line in update_highlight_and_show will
-        // adjust as needed if this falls in the middle of a page.
-        state.page_top_line = state.current_line.saturating_sub(1);
+        // Saved position path: anchor page_top so the cursor is visible.
+        // If the cursor is near the end of the buffer, back up by ~1 page
+        // so the viewport fills instead of showing only the trailing lines.
+        let line_count = state.effective_line_count();
+        let lpp = crate::input::viewport::lines_per_page(state);
+        let page_top = if state.current_line + lpp >= line_count {
+            state.current_line.saturating_sub(lpp)
+        } else {
+            state.current_line.saturating_sub(1)
+        };
+        state.page_top_line = page_top;
         crate::logging::log(&format!(
             "DISPLAY_WORK: resumed saved position current_line={} page_top={}",
             state.current_line, state.page_top_line
