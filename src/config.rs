@@ -55,7 +55,7 @@ pub struct Config {
     pub vocab_highlight_visible: bool,
     #[serde(default = "default_dim_enabled")]
     pub dim_enabled: bool,
-    #[serde(default)]
+    #[serde(default = "default_show_cursor_line")]
     pub show_cursor_line: bool,
 }
 
@@ -105,6 +105,10 @@ fn default_dim_enabled() -> bool {
     false
 }
 
+fn default_show_cursor_line() -> bool {
+    true
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -121,7 +125,7 @@ impl Default for Config {
             claude_model: default_claude_model(),
             vocab_highlight_visible: default_vocab_highlight_visible(),
             dim_enabled: default_dim_enabled(),
-            show_cursor_line: false,
+            show_cursor_line: true,
         }
     }
 }
@@ -147,6 +151,7 @@ pub fn load() -> Config {
     };
     // Always start at the default font size regardless of saved value
     config.font_size = default_font_size();
+    config.show_cursor_line = true;
     if config.claude_model.contains("-20") {
         config.claude_model = default_claude_model();
     }

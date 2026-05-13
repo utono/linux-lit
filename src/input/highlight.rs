@@ -234,7 +234,10 @@ pub(crate) fn update_highlight(state: &mut AppState) {
                     line_end.forward_to_line_end();
                 }
                 buffer.apply_tag(cl_tag, &line_start, &line_end);
+                log_fmt!("CURSOR_LINE: applied tag to line {} bg={}", state.current_line, state.theme.cursor_line_bg);
             }
+        } else {
+            log_fmt!("CURSOR_LINE: show_cursor_line is OFF");
         }
         // When visual selection is active, apply highlight even when dim is off
         crate::input::visual::clear_selection_highlight(state);
