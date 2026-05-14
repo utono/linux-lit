@@ -420,6 +420,34 @@ pub(crate) fn set_media_default(
     }
 }
 
+/// Open the recent works picker: same as library picker but filtered to the
+/// last 10 viewed works from config.recent_works. The alternate work
+/// (previous_work, toggled via minus key) is always included.
+pub(crate) fn open_recent_picker(state: &Rc<RefCell<AppState>>) {
+    let s = state.borrow();
+    if !s.picker.is_visible()
+        && !s.bookmark_picker.is_visible()
+        && !s.media_picker.is_visible()
+        && !s.settings_overlay.is_visible()
+    {
+        let mut recent = s.config.recent_works.clone();
+        if let Some(ref prev) = s.config.previous_work {
+            if !recent.contains(prev) {
+                recent.push(prev.clone());
+            }
+        }
+        drop(s);
+        let mut sm = state.borrow_mut();
+        sm.concordance_state = None;
+        sm.concordance_bar.hide();
+        drop(sm);
+        state.borrow().gloss_overlay.hide();
+        state.borrow_mut().picker.show_prepare_recent(&recent);
+        state.borrow().picker.show_finish();
+        state.borrow_mut().input_mode = crate::app::InputMode::LibraryPicker;
+    }
+}
+
 /// Open the library picker from reader mode: hide other overlays, tear down
 /// concordance state, and switch to LibraryPicker input mode.
 pub(crate) fn open_library_picker_from_reader(state: &Rc<RefCell<AppState>>) {

@@ -1491,6 +1491,7 @@ pub fn display_work_at_with_prepared(
         state.config.previous_work = state.config.last_work.take();
     }
     state.config.last_work = Some(work.abbrev.clone());
+    state.config.push_recent_work(&work.abbrev);
     crate::config::save(&state.config);
 
     // Send timestamp data to MPV client (filtered by active media_id)

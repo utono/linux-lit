@@ -48,6 +48,8 @@ pub struct Config {
     #[serde(default = "default_previous_work")]
     pub previous_work: Option<String>,
     #[serde(default)]
+    pub recent_works: Vec<String>,
+    #[serde(default)]
     pub work_positions: HashMap<String, usize>,
     #[serde(default)]
     pub visual_mode_commands: Vec<VisualModeCommand>,
@@ -127,6 +129,7 @@ impl Default for Config {
             transition_style: TransitionStyle::default(),
             last_work: None,
             previous_work: default_previous_work(),
+            recent_works: Vec::new(),
             work_positions: HashMap::new(),
             visual_mode_commands: Vec::new(),
             claude_model: default_claude_model(),
@@ -134,6 +137,16 @@ impl Default for Config {
             dim_enabled: default_dim_enabled(),
             show_cursor_line: true,
         }
+    }
+}
+
+const MAX_RECENT_WORKS: usize = 10;
+
+impl Config {
+    pub fn push_recent_work(&mut self, abbrev: &str) {
+        self.recent_works.retain(|a| a != abbrev);
+        self.recent_works.insert(0, abbrev.to_string());
+        self.recent_works.truncate(MAX_RECENT_WORKS);
     }
 }
 

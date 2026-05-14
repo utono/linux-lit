@@ -56,6 +56,7 @@ pub enum Action {
 
     // Pickers / overlays
     OpenLibraryPicker,
+    OpenRecentPicker,
     OpenMediaPicker,
     OpenConcordancePicker,
     OpenConcordanceWordPicker,
@@ -218,6 +219,7 @@ impl Action {
             | Action::SearchNextMatch
             | Action::SearchPrevMatch
             | Action::OpenLibraryPicker
+            | Action::OpenRecentPicker
             | Action::OpenMediaPicker
             | Action::OpenKeybindsOverlay
             | Action::OpenSearch
@@ -247,6 +249,7 @@ impl Action {
             Action::JumpToRecentBookmark => "JumpToRecentBookmark",
             Action::OpenBookmarkPicker => "OpenBookmarkPicker",
             Action::OpenLibraryPicker => "OpenLibraryPicker",
+            Action::OpenRecentPicker => "OpenRecentPicker",
             Action::OpenMediaPicker => "OpenMediaPicker",
             Action::OpenConcordancePicker => "OpenConcordancePicker",
             Action::OpenConcordanceWordPicker => "OpenConcordanceWordPicker",

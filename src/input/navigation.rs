@@ -726,41 +726,49 @@ pub fn show_current_chapter(state: &mut AppState) {
         return;
     }
 
-    let current_bl = state.current_line;
-    let (chapter_num, title) = match chapter_lines.iter().rposition(|&bl| bl <= current_bl) {
-        Some(idx) => {
-            let bl = chapter_lines[idx];
-            let title = if let Some(ref lm) = state.line_map {
-                lm.buffer_to_work.get(bl)
-                    .and_then(|o| o.as_ref())
-                    .map(|wi| work.lines[*wi].text.as_str())
-                    .unwrap_or("")
-            } else {
-                work.lines.get(bl).map(|l| l.text.as_str()).unwrap_or("")
-            };
-            (idx + 1, title.trim().to_string())
-        }
-        None => {
-            // Before the first chapter marker — show as "before Chapter 1"
-            let bl = chapter_lines[0];
-            let title = if let Some(ref lm) = state.line_map {
-                lm.buffer_to_work.get(bl)
-                    .and_then(|o| o.as_ref())
-                    .map(|wi| work.lines[*wi].text.as_str())
-                    .unwrap_or("")
-            } else {
-                work.lines.get(bl).map(|l| l.text.as_str()).unwrap_or("")
-            };
-            (0, title.trim().to_string())
+    let work_line_text = |bl: usize| -> &str {
+        if let Some(ref lm) = state.line_map {
+            lm.buffer_to_work.get(bl)
+                .and_then(|o| o.as_ref())
+                .map(|wi| work.lines[*wi].text.as_str())
+                .unwrap_or("")
+        } else {
+            work.lines.get(bl).map(|l| l.text.as_str()).unwrap_or("")
         }
     };
 
-    let total = chapter_lines.len();
-    let text = if chapter_num == 0 {
-        format!("Before chapter 1 of {} — {}", total, title)
-    } else {
-        format!("Chapter {} of {} — {}", chapter_num, total, title)
+    let current_bl = state.current_line;
+    let has_implicit_first = chapter_lines[0] > 0;
+    let total = chapter_lines.len() + if has_implicit_first { 1 } else { 0 };
+
+    let (chapter_num, title) = match chapter_lines.iter().rposition(|&bl| bl <= current_bl) {
+        Some(idx) => {
+            let num = idx + 1 + if has_implicit_first { 1 } else { 0 };
+            (num, work_line_text(chapter_lines[idx]).trim().to_string())
+        }
+        None => {
+            // Before the first marker — this is the implicit Chapter 1.
+            // Scan backward from the cursor for a line containing
+            // "chapter" or "part " to find its heading; fall back to work title.
+            let title = (0..=current_bl)
+                .rev()
+                .map(|bl| work_line_text(bl).trim())
+                .find(|t| {
+                    let lower = t.to_lowercase();
+                    lower.contains("chapter") || lower.contains("part ")
+                })
+                .unwrap_or("")
+                .to_string();
+            let title = if title.is_empty() {
+                work.title.clone()
+            } else {
+                title
+            };
+            (1, title)
+        }
     };
+
+    let text = format!("Chapter {} of {} — {}", chapter_num, total, title);
 
     state.chapter_toast.set_text(&text);
     state.chapter_toast.set_visible(true);

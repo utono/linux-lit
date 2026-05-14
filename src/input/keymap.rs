@@ -793,6 +793,7 @@ fn dispatch_action(
 
         // Pickers / overlays
         OpenLibraryPicker => crate::input::actions::pickers::open_library_picker_from_reader(state),
+        OpenRecentPicker => crate::input::actions::pickers::open_recent_picker(state),
         OpenMediaPicker => crate::input::actions::pickers::open_media_picker(state, tokio_handle),
         OpenConcordancePicker => crate::input::actions::concordance::open_picker(state, tokio_handle),
         OpenConcordanceWordPicker => crate::input::actions::pickers::open_concordance_word_picker(state),

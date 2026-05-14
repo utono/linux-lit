@@ -8,6 +8,12 @@ use crate::db::models::WorkSummary;
 
 // ─── Data Structures ────────────────────────────────────────────────────────
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PickerMode {
+    Library,
+    Recent,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum PickerLevel {
     Authors,
@@ -66,6 +72,44 @@ pub fn group_works(works: &[WorkSummary]) -> Vec<AuthorGroup> {
         .collect()
 }
 
+/// Filter all_groups to only include works in `recent_abbrevs`, ordered by
+/// most-recent author access. Within each author group, works are ordered by
+/// their position in the recent list.
+fn group_works_recent(all_groups: &[AuthorGroup], recent_abbrevs: &[String]) -> Vec<AuthorGroup> {
+    let recency: std::collections::HashMap<&str, usize> = recent_abbrevs
+        .iter()
+        .enumerate()
+        .map(|(i, a)| (a.as_str(), i))
+        .collect();
+
+    let mut result: Vec<AuthorGroup> = Vec::new();
+    for group in all_groups {
+        let mut matching: Vec<(usize, WorkSummary)> = group
+            .works
+            .iter()
+            .filter_map(|w| recency.get(w.abbrev.as_str()).map(|&idx| (idx, w.clone())))
+            .collect();
+        if matching.is_empty() {
+            continue;
+        }
+        matching.sort_by_key(|(idx, _)| *idx);
+        result.push(AuthorGroup {
+            author: group.author.clone(),
+            works: matching.into_iter().map(|(_, w)| w).collect(),
+        });
+    }
+
+    result.sort_by_key(|g| {
+        g.works
+            .iter()
+            .filter_map(|w| recency.get(w.abbrev.as_str()).copied())
+            .min()
+            .unwrap_or(usize::MAX)
+    });
+
+    result
+}
+
 // ─── Struct ──────────────────────────────────────────────────────────────────
 
 pub struct LibraryPicker {
@@ -77,8 +121,10 @@ pub struct LibraryPicker {
     list_box: ListBox,
     footer_label: Label,
     scrim: GtkBox,
+    all_groups: Vec<AuthorGroup>,
     groups: Vec<AuthorGroup>,
     level: PickerLevel,
+    mode: PickerMode,
 }
 
 // ─── impl LibraryPicker ──────────────────────────────────────────────────────
@@ -163,22 +209,36 @@ impl LibraryPicker {
             list_box,
             footer_label,
             scrim,
+            all_groups: Vec::new(),
             groups: Vec::new(),
             level: PickerLevel::Authors,
+            mode: PickerMode::Library,
         }
     }
 
     pub fn set_works(&mut self, works: Vec<WorkSummary>) {
-        self.groups = group_works(&works);
+        self.all_groups = group_works(&works);
+        self.groups = self.all_groups.clone();
+        self.mode = PickerMode::Library;
         self.level = PickerLevel::Authors;
         self.update_header();
         self.update_footer();
         self.populate_list("");
     }
 
-    /// Prepare picker for showing — mutates level only.
+    /// Prepare picker for showing — mutates level and mode.
     /// Call `show_finish()` after dropping the mutable borrow.
     pub fn show_prepare(&mut self) {
+        self.mode = PickerMode::Library;
+        self.groups = self.all_groups.clone();
+        self.level = PickerLevel::Authors;
+    }
+
+    /// Prepare picker for showing in recent mode — filters to recent works only.
+    /// Call `show_finish()` after dropping the mutable borrow.
+    pub fn show_prepare_recent(&mut self, recent_abbrevs: &[String]) {
+        self.mode = PickerMode::Recent;
+        self.groups = group_works_recent(&self.all_groups, recent_abbrevs);
         self.level = PickerLevel::Authors;
     }
 
@@ -277,7 +337,7 @@ impl LibraryPicker {
     }
 
     fn update_header(&self) {
-        let (title, crumb) = header_text(&self.level, &self.groups);
+        let (title, crumb) = header_text(&self.level, &self.groups, self.mode);
         self.header_title.set_text(&title);
         self.header_crumb.set_text(&crumb);
     }
@@ -481,10 +541,14 @@ fn subsequence_chars(filter: &str, target: &str) -> bool {
 /// Title format: "LIBRARY — AUTHORS" or "LIBRARY — <AUTHOR NAME>".
 /// Crumb format: "<n> AUTHORS" or "<n> WORKS".
 /// Both strings are uppercase because GTK 4 CSS does not support text-transform.
-pub(crate) fn header_text(level: &PickerLevel, groups: &[AuthorGroup]) -> (String, String) {
+pub(crate) fn header_text(level: &PickerLevel, groups: &[AuthorGroup], mode: PickerMode) -> (String, String) {
+    let label = match mode {
+        PickerMode::Library => "LIBRARY",
+        PickerMode::Recent => "RECENT",
+    };
     match level {
         PickerLevel::Authors => (
-            "LIBRARY — AUTHORS".to_string(),
+            format!("{} — AUTHORS", label),
             format!("{} AUTHORS", groups.len()),
         ),
         PickerLevel::Works(author) => {
@@ -494,7 +558,7 @@ pub(crate) fn header_text(level: &PickerLevel, groups: &[AuthorGroup]) -> (Strin
                 .map(|g| g.works.len())
                 .unwrap_or(0);
             (
-                format!("LIBRARY — {}", author.to_uppercase()),
+                format!("{} — {}", label, author.to_uppercase()),
                 format!("{} WORKS", count),
             )
         }
@@ -660,7 +724,7 @@ mod tests {
             AuthorGroup { author: "Shakespeare".into(), works: vec![] },
             AuthorGroup { author: "Austen".into(), works: vec![] },
         ];
-        let (title, crumb) = header_text(&PickerLevel::Authors, &groups);
+        let (title, crumb) = header_text(&PickerLevel::Authors, &groups, PickerMode::Library);
         assert_eq!(title, "LIBRARY — AUTHORS");
         assert_eq!(crumb, "2 AUTHORS");
     }
@@ -677,7 +741,7 @@ mod tests {
             },
         ];
         let level = PickerLevel::Works("Shakespeare".into());
-        let (title, crumb) = header_text(&level, &groups);
+        let (title, crumb) = header_text(&level, &groups, PickerMode::Library);
         assert_eq!(title, "LIBRARY — SHAKESPEARE");
         assert_eq!(crumb, "2 WORKS");
     }
@@ -686,7 +750,7 @@ mod tests {
     fn test_header_text_for_works_level_unknown_author() {
         let groups: Vec<AuthorGroup> = vec![];
         let level = PickerLevel::Works("Nobody".into());
-        let (title, crumb) = header_text(&level, &groups);
+        let (title, crumb) = header_text(&level, &groups, PickerMode::Library);
         assert_eq!(title, "LIBRARY — NOBODY");
         assert_eq!(crumb, "0 WORKS");
     }
@@ -730,5 +794,63 @@ mod tests {
         let (w, h) = responsive_size(800, 600);
         assert_eq!(w, 480);
         assert_eq!(h, 420);
+    }
+
+    // ── Recent picker tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_header_text_recent_mode() {
+        let groups = vec![
+            AuthorGroup { author: "Shakespeare".into(), works: vec![] },
+        ];
+        let (title, crumb) = header_text(&PickerLevel::Authors, &groups, PickerMode::Recent);
+        assert_eq!(title, "RECENT — AUTHORS");
+        assert_eq!(crumb, "1 AUTHORS");
+    }
+
+    #[test]
+    fn test_group_works_recent_filters_to_recent_only() {
+        let all_groups = vec![
+            AuthorGroup {
+                author: "Shakespeare".into(),
+                works: vec![
+                    make_work("Ham", "Hamlet", "Shakespeare"),
+                    make_work("Mac", "Macbeth", "Shakespeare"),
+                    make_work("Lear", "King Lear", "Shakespeare"),
+                ],
+            },
+            AuthorGroup {
+                author: "Dickens, Charles".into(),
+                works: vec![
+                    make_work("OT", "Oliver Twist", "Dickens, Charles"),
+                    make_work("BH", "Bleak House", "Dickens, Charles"),
+                ],
+            },
+        ];
+        let recent = vec!["OT".to_string(), "Ham".to_string()];
+        let result = group_works_recent(&all_groups, &recent);
+
+        assert_eq!(result.len(), 2);
+        // Dickens first (OT is most recent at index 0)
+        assert_eq!(result[0].author, "Dickens, Charles");
+        assert_eq!(result[0].works.len(), 1);
+        assert_eq!(result[0].works[0].abbrev, "OT");
+        // Shakespeare second (Ham is at index 1)
+        assert_eq!(result[1].author, "Shakespeare");
+        assert_eq!(result[1].works.len(), 1);
+        assert_eq!(result[1].works[0].abbrev, "Ham");
+    }
+
+    #[test]
+    fn test_group_works_recent_empty_list() {
+        let all_groups = vec![
+            AuthorGroup {
+                author: "Shakespeare".into(),
+                works: vec![make_work("Ham", "Hamlet", "Shakespeare")],
+            },
+        ];
+        let recent: Vec<String> = vec![];
+        let result = group_works_recent(&all_groups, &recent);
+        assert!(result.is_empty());
     }
 }
