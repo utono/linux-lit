@@ -255,11 +255,20 @@ pub fn page_forward(state: &mut AppState) {
     }
 
     let NextPage { new_top, next_dialogue } = next_page_top(state, state.page_top_line);
+    log_fmt!("PAGE_FWD: page_top={} new_top={} next_dialogue={} line_count={}",
+             state.page_top_line, new_top, next_dialogue, line_count);
     if next_dialogue >= line_count {
+        log_fmt!("PAGE_FWD: at end, returning");
         return; // already at end
     }
 
-    let effective_top = clamp_page_top_to_scroll_ceiling(state, new_top);
+    let candidate_top = if new_top <= state.page_top_line {
+        next_dialogue
+    } else {
+        new_top
+    };
+    let effective_top = clamp_page_top_to_scroll_ceiling(state, candidate_top);
+    log_fmt!("PAGE_FWD: candidate_top={} effective_top={} (from new_top={})", candidate_top, effective_top, new_top);
     if effective_top > state.page_top_line {
         state.current_line = next_dialogue;
         set_page(state, effective_top, PageDirection::Forward);
@@ -267,9 +276,7 @@ pub fn page_forward(state: &mut AppState) {
         return;
     }
 
-    // The next page boundary exceeds the scroll ceiling — delegate to
-    // jump_to_end which computes the correct last-page anchor with
-    // enough room to show all remaining content cleanly.
+    log_fmt!("PAGE_FWD: ceiling hit, jumping to end");
     jump_to_end(state);
 }
 

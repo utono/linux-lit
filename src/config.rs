@@ -81,9 +81,9 @@ pub fn default_font_size() -> u32 {
 }
 
 pub const DEFAULT_LINE_SPACING: u32 = 5;
-pub const DEFAULT_COLUMN_WIDTH: u32 = 1200;
+pub const DEFAULT_COLUMN_WIDTH: u32 = 1050;
 pub const DEFAULT_TEXT_MARGINS: u32 = 40;
-pub const EXTRA_RIGHT_MARGIN: i32 = 28;
+pub const EXTRA_RIGHT_MARGIN: i32 = 48;
 
 fn default_line_spacing() -> u32 {
     DEFAULT_LINE_SPACING
@@ -171,6 +171,8 @@ pub fn load() -> Config {
     };
     // Always start at the default font size regardless of saved value
     config.font_size = default_font_size();
+    config.column_width = default_column_width();
+    config.text_margins = default_text_margins();
     config.show_cursor_line = true;
     if config.claude_model.contains("-20") {
         config.claude_model = default_claude_model();

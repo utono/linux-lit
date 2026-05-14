@@ -315,8 +315,8 @@ impl AppState {
 /// the classic indented-verse look. When the card nearly fills the window
 /// (tiled layouts), the offset is dropped so the text stays symmetric inside
 /// the card and isn't pushed off-center.
-pub const VERSE_LEFT_OFFSET: i32 = 200;
-pub const PROSE_LEFT_OFFSET: i32 = 200;
+pub const VERSE_LEFT_OFFSET: i32 = 120;
+pub const PROSE_LEFT_OFFSET: i32 = 120;
 
 /// Fixed height for the top spacer above the first text line.
 pub const TOP_SPACER_HEIGHT: i32 = 40;
@@ -387,8 +387,7 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
     }
 
     let logical_right = state.config.text_margins as i32
-        + crate::config::EXTRA_RIGHT_MARGIN
-        + left_bump;
+        + crate::config::EXTRA_RIGHT_MARGIN;
     state.text_view.set_right_margin(logical_right);
 
     state.top_spacer.set_height_request(TOP_SPACER_HEIGHT);
