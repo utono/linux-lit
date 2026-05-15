@@ -338,26 +338,27 @@ fn draw_keyboard(cr: &gtk4::cairo::Context, layout: &AllKeys, tooltip_idx: Optio
             let _ = cr.show_text(def.shift_action);
         }
 
-        // Alt (M-) action label — always rendered when present so the user
-        // doesn't need to hover. Stacks above the shift/bare action lines.
-        if let Some(alt_action) = def.modifiers.iter().find_map(|(combo, act)| {
-            if combo.starts_with("M-") && !combo.contains("C-") { Some(*act) } else { None }
-        }) {
-            cr.set_source_rgb(0.706, 0.388, 0.478); // love-pink (matches tooltip)
+        // Modifier action labels — rendered on the key face so the user
+        // doesn't need to hover. Stack upward from the bare/shift labels.
+        if !def.modifiers.is_empty() {
             cr.set_font_size(11.0);
             cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
-            // Stack above the existing labels:
-            //   bare only       → alt sits at h-22
-            //   bare + shift    → alt sits at h-36
-            //   shift only      → alt sits at h-22
-            //   no other labels → alt sits at h-8
-            let y_pos = match (!def.action.is_empty(), !def.shift_action.is_empty()) {
-                (true, true) => rect.y + rect.h - 36.0,
-                (true, false) | (false, true) => rect.y + rect.h - 22.0,
-                (false, false) => rect.y + rect.h - 8.0,
+            let base_slot = match (!def.action.is_empty(), !def.shift_action.is_empty()) {
+                (true, true) => 2,
+                (true, false) | (false, true) => 1,
+                (false, false) => 0,
             };
-            let _ = cr.move_to(rect.x + 7.0, y_pos);
-            let _ = cr.show_text(&format!("M-{}", alt_action));
+            for (mi, (combo, act)) in def.modifiers.iter().enumerate() {
+                let slot = base_slot + mi;
+                let y_pos = rect.y + rect.h - 8.0 - slot as f64 * 14.0;
+                if combo.starts_with("M-") && !combo.contains("C-") {
+                    cr.set_source_rgb(0.706, 0.388, 0.478);
+                } else {
+                    cr.set_source_rgb(0.557, 0.420, 0.208);
+                }
+                let _ = cr.move_to(rect.x + 7.0, y_pos);
+                let _ = cr.show_text(&format!("{}: {}", combo, act));
+            }
         }
     }
 
@@ -405,8 +406,16 @@ fn draw_keyboard(cr: &gtk4::cairo::Context, layout: &AllKeys, tooltip_idx: Optio
         lx += 20.0 + extents.width() + 24.0;
     }
 
+    // Ctrl+ indicator
+    cr.set_source_rgb(0.557, 0.420, 0.208);
+    cr.set_font_size(13.0);
+    let _ = cr.move_to(lx, legend_y + 13.0);
+    let _ = cr.show_text("\u{2022} Ctrl+");
+    let extents = cr.text_extents("\u{2022} Ctrl+").unwrap();
+    lx += extents.width() + 16.0;
+
     // Alt+ indicator
-    cr.set_source_rgb(0.565, 0.478, 0.663);
+    cr.set_source_rgb(0.706, 0.388, 0.478);
     cr.set_font_size(13.0);
     let _ = cr.move_to(lx, legend_y + 13.0);
     let _ = cr.show_text("\u{2022} Alt+");
