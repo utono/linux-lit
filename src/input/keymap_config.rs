@@ -212,9 +212,9 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("j"), Action::CursorNextDialogue),
         (KeyCombo::plain("k"), Action::CursorPrevLine),
         (KeyCombo::plain("Q"), Action::CursorToPageBottom),
-        (KeyCombo::plain("Up"), Action::JumpToPrevDialogue),
+        (KeyCombo::plain("Up"), Action::CursorPrevLine),
         (KeyCombo::shift("Up"), Action::PageBackwardBottom),
-        (KeyCombo::plain("Down"), Action::JumpToNextDialogue),
+        (KeyCombo::plain("Down"), Action::CursorNextDialogue),
         (KeyCombo::plain("comma"), Action::JumpToPrevDialogue),
         (KeyCombo::shift("comma"), Action::PageBackwardBottom),
         (KeyCombo::plain("q"), Action::JumpToNextDialogue),
@@ -246,7 +246,7 @@ fn media_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("e"), Action::SeekShortForward),
         (KeyCombo::plain("O"), Action::SeekLongBackward),
         (KeyCombo::plain("E"), Action::SeekLongForward),
-        (KeyCombo::plain("Left"), Action::SeekBackward30),
+        (KeyCombo::plain("Left"), Action::SeekShortBackward),
         (KeyCombo::ctrl("Up"), Action::VolumeUp),
         (KeyCombo::ctrl("Down"), Action::VolumeDown),
         (KeyCombo::plain("plus"), Action::TogglePlaybackSpeed),
@@ -267,6 +267,7 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl_shift("P"), Action::OpenConcordanceWordPicker),
         (KeyCombo::ctrl_alt("p"), Action::OpenConcordanceListPicker),
         (KeyCombo::alt("g"), Action::OpenGlossPicker),
+        (KeyCombo::plain("H"), Action::ToggleSynopsis),
     ]
 }
 
@@ -313,7 +314,7 @@ fn app_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("Escape"), Action::EscapeReaderMode),
         (KeyCombo::ctrl("d"), Action::ToggleDebugLogging),
         (KeyCombo::ctrl("p"), Action::OpenLibraryPicker),
-        (KeyCombo::ctrl("r"), Action::OpenRecentPicker),
+        (KeyCombo::ctrl("minus"), Action::OpenRecentPicker),
         (KeyCombo::ctrl_shift("M"), Action::OpenMediaPicker),
         (KeyCombo::ctrl("slash"), Action::OpenKeybindsOverlay),
         (KeyCombo::plain("slash"), Action::OpenSearch),

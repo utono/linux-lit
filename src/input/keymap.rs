@@ -981,6 +981,7 @@ fn dispatch_action(
                 crate::input::search::prev_match(&mut state.borrow_mut());
             }
         }
+        ToggleSynopsis => {} // TODO: implement in Task 4
     }
 }
 

@@ -58,7 +58,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key("f", "F", "font \u{2192}", "F: \u{2190}", &[("C-f", "pg fwd"), ("M-f", "font info")]),
     key("g", "G", "", "", &[("C-g", "gloss tog"), ("A-g", "gloss pick")]),
     ub("c", "C"),
-    key("r", "R", "next vocab", "R: prev vocab", &[("C-r", "recent")]),
+    key("r", "R", "next vocab", "R: prev vocab", &[]),
     key("l", "L", "toggle signs", "", &[("C-M-l", "save+quit")]),
     key("/", "?", "search", "", &[("C-/", "keybinds")]),
     ub("@", "^"),
@@ -73,11 +73,11 @@ const HOME_ROW: &[KeyDef] = &[
     key("u", "U", "start time", "", &[("C-u", "pg back")]),
     key("i", "I", "translations", "", &[("M-i", "set end time")]),
     key("d", "D", "", "", &[("C-d", "pg fwd"), ("M-d", "dim tog")]),
-    bare("h", "H", "auto vocab"),
+    key("h", "H", "auto vocab", "H: synopsis", &[]),
     ub("t", "T"),
     key("n", "N", "next match", "N: prev match", &[]),
     bare("s", "S", "sync tog"),
-    ub("-", "_"),
+    key("-", "_", "", "", &[("C--", "recent")]),
 ];
 const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 
@@ -107,10 +107,10 @@ const SEQ_GG: KeyDef = bare("gg", "", "go to start");
 const SEQ_G: KeyDef = key("G", "", "", "go to end", &[]);
 const SEQ_G_SEMI: KeyDef = bare("g;", "", "latest bkmk");
 
-const ARROW_UP: KeyDef = key("\u{2191}", "", "", "", &[("C-\u{2191}", "vol +")]);
-const ARROW_DOWN: KeyDef = key("\u{2193}", "", "", "", &[("C-\u{2193}", "vol \u{2212}")]);
-const ARROW_LEFT: KeyDef = bare("\u{2190}", "", "seek \u{2212}30");
-const ARROW_RIGHT: KeyDef = bare("\u{2192}", "", "seek +30");
+const ARROW_UP: KeyDef = key("\u{2191}", "", "cursor \u{2191}", "", &[("C-\u{2191}", "vol +")]);
+const ARROW_DOWN: KeyDef = key("\u{2193}", "", "cursor \u{2193}", "", &[("C-\u{2193}", "vol \u{2212}")]);
+const ARROW_LEFT: KeyDef = bare("\u{2190}", "", "seek \u{2212}3.5");
+const ARROW_RIGHT: KeyDef = bare("\u{2192}", "", "start time");
 
 // ── Layout constants ─────────────────────────────────────────────────
 
@@ -268,13 +268,24 @@ fn key_colors(def: &KeyDef) -> ((f64, f64, f64), (f64, f64, f64), (f64, f64, f64
 
 // ── Drawing ──────────────────────────────────────────────────────────
 
-fn draw_keyboard(cr: &gtk4::cairo::Context, layout: &AllKeys, tooltip_idx: Option<usize>) {
-    // Background
-    let total_w = KB_W + 2.0 * PAD;
-    let total_h = KB_H + 2.0 * PAD;
+fn draw_keyboard(cr: &gtk4::cairo::Context, layout: &AllKeys, tooltip_idx: Option<usize>, widget_w: f64, widget_h: f64) {
+    // Full-screen background
     cr.set_source_rgba(0.341, 0.322, 0.475, 0.95);
-    rounded_rect(cr, 0.0, 0.0, total_w, total_h, 10.0);
+    cr.rectangle(0.0, 0.0, widget_w, widget_h);
     let _ = cr.fill();
+
+    // Scale and center the keyboard within the full window
+    let base_w = KB_W + 2.0 * PAD;
+    let base_h = KB_H + 2.0 * PAD;
+    let scale_x = widget_w / base_w;
+    let scale_y = widget_h / base_h;
+    let scale = scale_x.min(scale_y) * 0.92;
+    let scaled_w = base_w * scale;
+    let scaled_h = base_h * scale;
+    let x_offset = (widget_w - scaled_w) / 2.0;
+    let y_offset = (widget_h - scaled_h) / 2.0;
+    cr.translate(x_offset, y_offset);
+    cr.scale(scale, scale);
 
     cr.translate(PAD, PAD);
 
@@ -357,7 +368,7 @@ fn draw_keyboard(cr: &gtk4::cairo::Context, layout: &AllKeys, tooltip_idx: Optio
                     cr.set_source_rgb(0.557, 0.420, 0.208);
                 }
                 let _ = cr.move_to(rect.x + 7.0, y_pos);
-                let _ = cr.show_text(&format!("{}: {}", combo, act));
+                let _ = cr.show_text(act);
             }
         }
     }
@@ -431,8 +442,8 @@ fn draw_keyboard(cr: &gtk4::cairo::Context, layout: &AllKeys, tooltip_idx: Optio
 }
 
 fn draw_tooltip(cr: &gtk4::cairo::Context, rect: &KeyRect, def: &KeyDef) {
-    let lines: Vec<String> = def.modifiers.iter().map(|(combo, action)| {
-        format!("{} \u{2192} {}", combo, action)
+    let lines: Vec<(&str, &str)> = def.modifiers.iter().map(|&(combo, action)| {
+        (combo, action)
     }).collect();
 
     cr.set_font_size(13.0);
@@ -440,8 +451,8 @@ fn draw_tooltip(cr: &gtk4::cairo::Context, rect: &KeyRect, def: &KeyDef) {
 
     // Measure tooltip size
     let mut max_w: f64 = 0.0;
-    for line in &lines {
-        let ext = cr.text_extents(line).unwrap();
+    for &(_, act) in &lines {
+        let ext = cr.text_extents(act).unwrap();
         if ext.width() > max_w { max_w = ext.width(); }
     }
     let tt_w = max_w + 20.0;
@@ -461,15 +472,14 @@ fn draw_tooltip(cr: &gtk4::cairo::Context, rect: &KeyRect, def: &KeyDef) {
     let _ = cr.stroke();
 
     // Text
-    for (i, line) in lines.iter().enumerate() {
-        // Color based on modifier type
-        if line.starts_with("M-") {
-            cr.set_source_rgb(0.565, 0.478, 0.663); // iris
+    for (i, &(combo, act)) in lines.iter().enumerate() {
+        if combo.starts_with("M-") && !combo.contains("C-") {
+            cr.set_source_rgb(0.706, 0.388, 0.478);
         } else {
-            cr.set_source_rgb(0.706, 0.388, 0.478); // love
+            cr.set_source_rgb(0.557, 0.420, 0.208);
         }
         let _ = cr.move_to(tt_x + 10.0, tt_y + 18.0 + i as f64 * 18.0);
-        let _ = cr.show_text(line);
+        let _ = cr.show_text(act);
     }
 }
 
@@ -506,13 +516,6 @@ pub struct KeybindsOverlay {
     drawing_area: DrawingArea,
 }
 
-/// Compute the scale factor: fill 92% of available width
-fn compute_scale(widget_w: i32) -> f64 {
-    let base_w = KB_W + 2.0 * PAD;
-    let target = widget_w as f64 * 0.92;
-    (target / base_w).max(0.5)
-}
-
 impl KeybindsOverlay {
     pub fn new() -> Self {
         let overlay = Overlay::new();
@@ -521,7 +524,7 @@ impl KeybindsOverlay {
             .hexpand(true)
             .vexpand(true)
             .halign(gtk4::Align::Fill)
-            .valign(gtk4::Align::Center)
+            .valign(gtk4::Align::Fill)
             .visible(false)
             .build();
         drawing_area.add_css_class("keybinds-overlay-canvas");
@@ -529,25 +532,12 @@ impl KeybindsOverlay {
         let layout = Rc::new(build_layout());
         let hover_idx: Rc<RefCell<Option<usize>>> = Rc::new(RefCell::new(None));
 
-        // Draw function — scales to fill available width
+        // Draw function — fills entire widget, centers keyboard
         let layout_draw = layout.clone();
         let hover_draw = hover_idx.clone();
-        drawing_area.set_draw_func(move |area, cr, w, _h| {
-            let scale = compute_scale(w);
-            let base_w = KB_W + 2.0 * PAD;
-            let base_h = KB_H + 2.0 * PAD;
-
-            // Center horizontally
-            let scaled_w = base_w * scale;
-            let x_offset = (w as f64 - scaled_w) / 2.0;
-            cr.translate(x_offset, 0.0);
-            cr.scale(scale, scale);
-
-            // Set content height so GTK allocates enough vertical space
-            area.set_content_height((base_h * scale) as i32);
-
+        drawing_area.set_draw_func(move |_area, cr, w, h| {
             let idx = *hover_draw.borrow();
-            draw_keyboard(cr, &layout_draw, idx);
+            draw_keyboard(cr, &layout_draw, idx, w as f64, h as f64);
         });
 
         // Mouse motion for tooltips — un-scale coordinates
@@ -556,15 +546,21 @@ impl KeybindsOverlay {
         let layout_motion = layout.clone();
         let da_motion = drawing_area.clone();
         motion.connect_motion(move |_controller, x, y| {
-            let w = da_motion.width();
-            let scale = compute_scale(w);
+            let w = da_motion.width() as f64;
+            let h = da_motion.height() as f64;
             let base_w = KB_W + 2.0 * PAD;
+            let base_h = KB_H + 2.0 * PAD;
+            let scale_x = w / base_w;
+            let scale_y = h / base_h;
+            let scale = scale_x.min(scale_y) * 0.92;
             let scaled_w = base_w * scale;
-            let x_offset = (w as f64 - scaled_w) / 2.0;
+            let scaled_h = base_h * scale;
+            let x_offset = (w - scaled_w) / 2.0;
+            let y_offset = (h - scaled_h) / 2.0;
 
             // Convert mouse coords to layout space
             let lx = (x - x_offset) / scale;
-            let ly = y / scale;
+            let ly = (y - y_offset) / scale;
 
             let new_idx = hit_test(&layout_motion, lx, ly);
             let old_idx = *hover_motion.borrow();
