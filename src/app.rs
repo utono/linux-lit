@@ -3068,11 +3068,19 @@ pub fn is_first_line_of_scene(state: &AppState) -> bool {
         Some(w) => w,
         None => return false,
     };
-    let cur_idx = state.work_line_for_buffer(state.current_line);
+    let cur_idx = match state.work_line_for_buffer(state.current_line) {
+        Some(i) => i,
+        None => return false,
+    };
+    let cur = &work.lines[cur_idx];
+    // line_in_div == 1 means this is the first content line of a scene,
+    // which is where scene-jump (2/3 keys) lands the cursor.
+    if cur.line_in_div == 1 {
+        return true;
+    }
     let prev_idx = state.work_line_for_buffer(state.current_line - 1);
-    match (cur_idx, prev_idx) {
-        (Some(ci), Some(pi)) => {
-            let cur = &work.lines[ci];
+    match prev_idx {
+        Some(pi) => {
             let prev = &work.lines[pi];
             cur.div1 != prev.div1 || cur.div2 != prev.div2
         }
