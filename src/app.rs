@@ -3047,6 +3047,73 @@ pub fn remove_vocab_highlighting(state: &AppState) {
     state.buffer.remove_tag(&state.vocab_tag, &start, &end);
 }
 
+/// Get the (div1, div2) of the scene at the current line.
+pub fn current_scene_divs(state: &AppState) -> (i64, i64) {
+    if let Some(ref work) = state.current_work {
+        if let Some(work_idx) = state.work_line_for_buffer(state.current_line) {
+            if let Some(line) = work.lines.get(work_idx) {
+                return (line.div1, line.div2);
+            }
+        }
+    }
+    (0, 0)
+}
+
+/// Check if the current line is the first line of a new scene.
+pub fn is_first_line_of_scene(state: &AppState) -> bool {
+    if state.current_line == 0 {
+        return true;
+    }
+    let work = match state.current_work.as_ref() {
+        Some(w) => w,
+        None => return false,
+    };
+    let cur_idx = state.work_line_for_buffer(state.current_line);
+    let prev_idx = state.work_line_for_buffer(state.current_line - 1);
+    match (cur_idx, prev_idx) {
+        (Some(ci), Some(pi)) => {
+            let cur = &work.lines[ci];
+            let prev = &work.lines[pi];
+            cur.div1 != prev.div1 || cur.div2 != prev.div2
+        }
+        _ => false,
+    }
+}
+
+/// Show the synopsis for the current scene in the sidebar popup.
+pub fn show_synopsis(state: &mut AppState) {
+    let (div1, div2) = current_scene_divs(state);
+    if let Some(synopsis) = state.synopsis_cache.get(&(div1, div2)) {
+        let scene_label = format!("Act {}, Scene {}", div1, div2);
+        state.vocab_popup.update_synopsis(&scene_label, synopsis);
+        state.vocab_popup.show();
+        update_vocab_popup_margin(state);
+        state.sidebar_mode = SidebarMode::Synopsis;
+        state.synopsis_visible = true;
+    }
+}
+
+/// Toggle between synopsis and vocab sidebar modes.
+pub fn toggle_synopsis(state: &mut AppState) {
+    if state.synopsis_cache.is_empty() {
+        return;
+    }
+    if state.sidebar_mode == SidebarMode::Synopsis && state.synopsis_visible {
+        state.sidebar_mode = SidebarMode::Vocab;
+        state.synopsis_visible = false;
+        if state.vocab_popup_auto {
+            open_vocab_popup(state);
+        } else {
+            close_vocab_popup(state);
+        }
+    } else {
+        let (div1, div2) = current_scene_divs(state);
+        if state.synopsis_cache.contains_key(&(div1, div2)) {
+            show_synopsis(state);
+        }
+    }
+}
+
 /// Load vocab data for all words on the current line into state, show popup with first word.
 pub fn open_vocab_popup(state: &mut AppState) {
     use crate::ui::vocab_popup::{VocabWordData, VocabView};

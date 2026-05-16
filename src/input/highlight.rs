@@ -131,7 +131,20 @@ pub fn update_highlight_and_center(state: &mut AppState) {
 }
 
 /// If vocab auto-popup is enabled, show/update the popup when the paragraph changes.
+/// Also auto-shows synopsis when cursor enters a new scene (if synopses are available).
 pub(crate) fn auto_show_vocab_popup(state: &mut AppState) {
+    // Auto-show synopsis on scene boundary
+    if !state.synopsis_cache.is_empty() && crate::app::is_first_line_of_scene(state) {
+        crate::app::show_synopsis(state);
+        state.vocab_popup_line = Some(state.current_line);
+        return;
+    }
+
+    // If synopsis is currently showing, leave it alone (user toggled it on)
+    if state.sidebar_mode == crate::app::SidebarMode::Synopsis && state.synopsis_visible {
+        return;
+    }
+
     if !state.vocab_popup_auto {
         return;
     }
