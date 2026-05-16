@@ -52,6 +52,7 @@ pub struct Timestamp {
     pub media_id: i64,
     pub sentence_start: Option<f64>,
     pub is_manual: bool,
+    pub is_chapter: bool,
 }
 
 #[derive(Debug, Clone)]

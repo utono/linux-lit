@@ -79,7 +79,7 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
     // 3. Load timestamps
     let mut ts_stmt = conn.prepare(
         "SELECT lt.line_mapping_id, lt.start_time, lt.end_time, lt.media_id, \
-         lt.sentence_start_time, lt.source \
+         lt.sentence_start_time, lt.source, lt.is_chapter \
          FROM line_timestamps lt \
          JOIN line_mapping lm ON lt.line_mapping_id = lm.id \
          WHERE lm.work_abbrev = ?1",
@@ -94,6 +94,7 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
                 media_id: row.get::<_, Option<i64>>(3)?.unwrap_or(0),
                 sentence_start: row.get::<_, Option<f64>>(4)?,
                 is_manual: source == "manual",
+                is_chapter: row.get::<_, Option<i64>>(6)?.unwrap_or(0) != 0,
             })
         })?
         .collect::<Result<_, _>>()?;
@@ -125,16 +126,13 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
         }
     }
 
-    // 5b. Build chapter lookup: line_id -> bool (filtered by active media_id)
+    // 5b. Build chapter lookup from already-loaded timestamps (no extra DB query)
     let mut chapter_map: HashMap<i64, bool> = HashMap::new();
     if let Some(mid) = media_id {
-        let mut ch_stmt = conn.prepare(
-            "SELECT line_mapping_id FROM line_timestamps \
-             WHERE media_id = ?1 AND is_chapter = 1",
-        )?;
-        let rows = ch_stmt.query_map([mid], |row| row.get::<_, i64>(0))?;
-        for row in rows {
-            chapter_map.insert(row?, true);
+        for ts in &timestamps {
+            if ts.media_id == mid && ts.is_chapter {
+                chapter_map.insert(ts.line_id, true);
+            }
         }
     }
 

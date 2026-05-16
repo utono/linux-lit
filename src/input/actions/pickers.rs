@@ -297,6 +297,8 @@ pub(crate) fn confirm_media_selection(
     let selected_path = state.borrow().media_picker.selected_media_path();
     let selected_id = state.borrow().media_picker.selected_media_id();
     if let (Some(path), Some(media_id)) = (selected_path, selected_id) {
+        // Quit the old MPV instance before launching a new one
+        let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::Quit);
         let state_clone = Rc::clone(state);
         let handle = tokio_handle.clone();
         glib::spawn_future_local(async move {
@@ -322,8 +324,31 @@ pub(crate) fn confirm_media_selection(
             if !socket_path.is_empty() {
                 let mut s = state_clone.borrow_mut();
                 s.media_id = Some(media_id);
-                // Re-send timestamps filtered by new media_id
-                if let Some(ref work) = s.current_work {
+                // Rebuild per-line timestamps for the new media_id
+                if let Some(ref mut work) = s.current_work {
+                    // Build timestamp + chapter lookups from work.timestamps
+                    let mut ts_map: std::collections::HashMap<i64, crate::db::models::TimeRange> =
+                        std::collections::HashMap::new();
+                    let mut chapter_set: std::collections::HashSet<i64> =
+                        std::collections::HashSet::new();
+                    for ts in &work.timestamps {
+                        if ts.media_id == media_id {
+                            ts_map.entry(ts.line_id).or_insert(crate::db::models::TimeRange {
+                                start: ts.start,
+                                end: ts.end,
+                                sentence_start: ts.sentence_start,
+                                is_manual: ts.is_manual,
+                            });
+                            if ts.is_chapter {
+                                chapter_set.insert(ts.line_id);
+                            }
+                        }
+                    }
+                    for line in &mut work.lines {
+                        line.timestamp = ts_map.get(&line.id).copied();
+                        line.is_chapter = chapter_set.contains(&line.id);
+                    }
+                    // Re-send timestamps to MPV
                     let mut ts_data: Vec<(i64, f64, f64)> = work
                         .timestamps
                         .iter()
@@ -345,6 +370,60 @@ pub(crate) fn confirm_media_selection(
                             line_id_to_index: id_to_idx,
                         },
                     );
+                }
+                // Rebuild gutter sign vecs for new media
+                let new_has_ts: Vec<bool> = if let Some(ref lm) = s.line_map {
+                    lm.buffer_to_work
+                        .iter()
+                        .map(|opt_idx| {
+                            opt_idx
+                                .and_then(|idx| s.current_work.as_ref()?.lines.get(idx)?.timestamp.as_ref())
+                                .is_some()
+                        })
+                        .collect()
+                } else {
+                    s.current_work
+                        .as_ref()
+                        .map(|w| w.lines.iter().map(|l| l.timestamp.is_some()).collect())
+                        .unwrap_or_default()
+                };
+                *s.has_timestamp.borrow_mut() = new_has_ts;
+                let new_is_manual: Vec<bool> = if let Some(ref lm) = s.line_map {
+                    lm.buffer_to_work
+                        .iter()
+                        .map(|opt_idx| {
+                            opt_idx
+                                .and_then(|idx| {
+                                    Some(s.current_work.as_ref()?.lines.get(idx)?.timestamp.as_ref()?.is_manual)
+                                })
+                                .unwrap_or(false)
+                        })
+                        .collect()
+                } else {
+                    s.current_work
+                        .as_ref()
+                        .map(|w| w.lines.iter().map(|l| l.timestamp.as_ref().map_or(false, |t| t.is_manual)).collect())
+                        .unwrap_or_default()
+                };
+                *s.is_manual.borrow_mut() = new_is_manual;
+                let new_is_ch: Vec<bool> = if let Some(ref lm) = s.line_map {
+                    lm.buffer_to_work
+                        .iter()
+                        .map(|opt_idx| {
+                            opt_idx
+                                .and_then(|idx| Some(s.current_work.as_ref()?.lines.get(idx)?.is_chapter))
+                                .unwrap_or(false)
+                        })
+                        .collect()
+                } else {
+                    s.current_work
+                        .as_ref()
+                        .map(|w| w.lines.iter().map(|l| l.is_chapter).collect())
+                        .unwrap_or_default()
+                };
+                *s.is_chapter_line.borrow_mut() = new_is_ch;
+                if let Some(ref renderer) = s.gutter_renderer {
+                    renderer.queue_draw();
                 }
                 let _ = s
                     .cmd_tx
