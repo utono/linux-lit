@@ -3101,11 +3101,47 @@ pub fn show_synopsis(state: &mut AppState) {
     }
 }
 
+/// Show synopsis with a timed fade-out after 5 seconds. Used by auto-show
+/// on scene boundary (2/3 keys) so the synopsis appears briefly for
+/// orientation without persisting.
+pub fn show_synopsis_timed(state: &mut AppState) {
+    show_synopsis(state);
+    if !state.synopsis_visible {
+        return;
+    }
+    let gen = state.vocab_popup_fade_gen.get() + 1;
+    state.vocab_popup_fade_gen.set(gen);
+    let fade_gen = state.vocab_popup_fade_gen.clone();
+    let widget = state.vocab_popup.widget().clone();
+    glib::timeout_add_local_once(std::time::Duration::from_secs(5), move || {
+        if fade_gen.get() != gen {
+            return;
+        }
+        if !widget.is_visible() {
+            return;
+        }
+        let w = widget.clone();
+        let target = libadwaita::CallbackAnimationTarget::new(move |value| {
+            w.set_opacity(value as f64);
+            if value <= 0.0 {
+                w.set_visible(false);
+                w.set_opacity(1.0);
+            }
+        });
+        use libadwaita::prelude::AnimationExt;
+        let anim = libadwaita::TimedAnimation::new(&widget, 1.0, 0.0, 500, target);
+        anim.set_easing(libadwaita::Easing::EaseOutQuad);
+        anim.play();
+    });
+}
+
 /// Toggle between synopsis and vocab sidebar modes.
 pub fn toggle_synopsis(state: &mut AppState) {
     if state.synopsis_cache.is_empty() {
         return;
     }
+    // Cancel any pending auto-fade timer
+    state.vocab_popup_fade_gen.set(state.vocab_popup_fade_gen.get() + 1);
     if state.sidebar_mode == SidebarMode::Synopsis && state.synopsis_visible {
         state.sidebar_mode = SidebarMode::Vocab;
         state.synopsis_visible = false;
