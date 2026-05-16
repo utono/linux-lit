@@ -197,4 +197,34 @@ impl VocabPopup {
 
         self.footer_label.set_visible(false);
     }
+
+    /// Render a scene synopsis in the popup.
+    pub fn update_synopsis(&self, scene_label: &str, synopsis: &str) {
+        while let Some(child) = self.content_box.first_child() {
+            self.content_box.remove(&child);
+        }
+
+        self.header_label.set_text("SYNOPSIS");
+        self.header_label.set_visible(true);
+        self.counter_label.set_visible(false);
+
+        let scene_label_widget = Label::builder()
+            .halign(gtk4::Align::Start)
+            .margin_bottom(12)
+            .build();
+        scene_label_widget.add_css_class("definition-word");
+        scene_label_widget.set_text(scene_label);
+        self.content_box.append(&scene_label_widget);
+
+        let synopsis_label = Label::builder()
+            .halign(gtk4::Align::Start)
+            .wrap(true)
+            .wrap_mode(gtk4::pango::WrapMode::Word)
+            .build();
+        synopsis_label.add_css_class("definition-text");
+        synopsis_label.set_text(synopsis);
+        self.content_box.append(&synopsis_label);
+
+        self.footer_label.set_visible(false);
+    }
 }

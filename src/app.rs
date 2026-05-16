@@ -53,6 +53,12 @@ pub enum InputMode {
     Visual,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum SidebarMode {
+    Vocab,
+    Synopsis,
+}
+
 #[allow(dead_code)]
 pub struct AppState {
     pub text_view: View,
@@ -169,6 +175,9 @@ pub struct AppState {
     /// on each backslash/numbersign press; when the timer fires it only hides
     /// if the generation hasn't changed.
     pub vocab_popup_fade_gen: Rc<Cell<u64>>,
+    pub sidebar_mode: SidebarMode,
+    pub synopsis_cache: HashMap<(i64, i64), String>,
+    pub synopsis_visible: bool,
     pub concordance_picker: crate::ui::concordance_picker::ConcordancePicker,
     pub concordance_state: Option<crate::concordance::ConcordanceState>,
     pub concordance_word_picker: crate::ui::concordance_word_picker::ConcordanceWordPicker,
@@ -867,6 +876,9 @@ pub fn build_window(
         vocab_popup_auto: false,
         vocab_popup_line: None,
         vocab_popup_fade_gen: Rc::new(Cell::new(0)),
+        sidebar_mode: SidebarMode::Vocab,
+        synopsis_cache: HashMap::new(),
+        synopsis_visible: false,
         concordance_picker,
         concordance_state: None,
         concordance_word_picker,
@@ -1436,6 +1448,16 @@ pub fn clear_display(state: &mut AppState) {
     state.buffer.set_text("");
 }
 
+/// Strip variant suffixes (-Amb, -BBC, -Ep-N) to get base work abbreviation
+/// for shared data like synopses.
+pub fn base_work_abbrev(abbrev: &str) -> &str {
+    if let Some(pos) = abbrev.find('-') {
+        &abbrev[..pos]
+    } else {
+        abbrev
+    }
+}
+
 pub fn display_work(state: &mut AppState, work: Work) {
     display_work_at_with_prepared(state, work, None, None);
 }
@@ -1631,6 +1653,20 @@ pub fn display_work_at_with_prepared(
             ));
         }
     }
+    // Load scene synopses for this work
+    if let Some(ref work) = state.current_work {
+        if let Ok(conn) = crate::db::queries::open_db() {
+            let base_abbrev = base_work_abbrev(&work.abbrev);
+            state.synopsis_cache = crate::db::queries::load_synopses(&conn, base_abbrev);
+            crate::logging::log(&format!(
+                "SYNOPSIS: loaded {} scene synopses for {}",
+                state.synopsis_cache.len(),
+                base_abbrev,
+            ));
+        }
+    }
+    state.sidebar_mode = SidebarMode::Vocab;
+    state.synopsis_visible = false;
     let t0 = std::time::Instant::now();
     if let Some(prep) = prepared {
         // Heavy work was done off-thread; just apply the result.
