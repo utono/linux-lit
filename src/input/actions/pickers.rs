@@ -487,6 +487,7 @@ pub(crate) fn open_keybinds_overlay(state: &Rc<RefCell<AppState>>) {
         s.settings_overlay.hide();
         s.search_bar.hide();
         s.gloss_overlay.hide();
+        s.vocab_popup.hide();
         s.keybinds_overlay.show();
         drop(s);
         state.borrow_mut().input_mode = crate::app::InputMode::KeybindsOverlay;
