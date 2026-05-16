@@ -207,6 +207,9 @@ pub struct AppState {
     /// Set when loading_work clears so the resize tick can run a deferred
     /// layout refresh (apply_tiled_mode + snap) with correct line metrics.
     pub needs_layout_refresh: Rc<Cell<bool>>,
+    /// Deferred synopsis show: set in display_work when the cursor lands on a
+    /// scene boundary, cleared by the resize tick once layout is valid.
+    pub pending_synopsis: Rc<Cell<bool>>,
     pub timestamp_undo: Option<crate::input::timestamps::TimestampUndoState>,
     /// Cached last visible range from the most recent snap_scroll_to_line or
     /// update_bottom_clip. None during cold start, after work load, or after
@@ -903,6 +906,7 @@ pub fn build_window(
         // expose an empty vbox. Cleared by update_highlight_and_show.
         loading_work: Rc::new(Cell::new(last_work.is_some())),
         needs_layout_refresh: Rc::new(Cell::new(false)),
+        pending_synopsis: Rc::new(Cell::new(false)),
         timestamp_undo: None,
         last_visible_range: std::cell::Cell::new(None),
         page_tops: std::cell::RefCell::new(None),
@@ -1061,6 +1065,10 @@ pub fn build_window(
                 if do_reveal {
                     crate::log_fmt!("STARTUP: revealing vbox (sw_h={})", s.scrolled_window.height());
                     vbox_for_tick.set_opacity(1.0);
+                    if s.pending_synopsis.get() {
+                        s.pending_synopsis.set(false);
+                        show_synopsis_timed(&mut s);
+                    }
                 }
             }
             glib::ControlFlow::Continue
@@ -1854,6 +1862,16 @@ pub fn display_work_at_with_prepared(
             state.current_line.saturating_sub(1)
         };
         state.page_top_line = page_top;
+
+        // If cursor is on a scene boundary, scroll back to show the
+        // scene/act heading lines above the first dialogue line.
+        if !state.synopsis_cache.is_empty() && is_first_line_of_scene(state) {
+            let top = scene_heading_start(state, state.current_line);
+            if top < state.page_top_line {
+                state.page_top_line = top;
+            }
+        }
+
         crate::logging::log(&format!(
             "DISPLAY_WORK: resumed saved position current_line={} page_top={}",
             state.current_line, state.page_top_line
@@ -1888,10 +1906,18 @@ pub fn display_work_at_with_prepared(
     // Setting it here would compute a degenerate page=1 because the
     // scrolled_window is still hidden and text_view.height() is 0.
 
+    // Defer synopsis auto-show until the resize tick has valid layout.
+    // Must be set before update_highlight_and_show so the page_top guard
+    // in highlight.rs respects the scene-heading page_top=0.
+    if !state.synopsis_cache.is_empty() && is_first_line_of_scene(state) {
+        state.pending_synopsis.set(true);
+    }
+
     // Apply highlight, snap scroll, show the scrolled window.
     let t7 = std::time::Instant::now();
     crate::input::navigation::update_highlight_and_show(state);
     crate::logging::log(&format!("TIMING: update_highlight {:.0}ms", t7.elapsed().as_millis()));
+
     crate::logging::log(&format!("TIMING: display_work total {:.0}ms", t0.elapsed().as_millis()));
 }
 
@@ -3088,9 +3114,28 @@ pub fn is_first_line_of_scene(state: &AppState) -> bool {
     }
 }
 
+/// Walk backwards from `buf_line` past unmapped buffer lines (headers,
+/// separators, blanks, stage directions) to find where the scene heading
+/// block begins. Returns the buffer line to use as page_top.
+fn scene_heading_start(state: &AppState, buf_line: usize) -> usize {
+    let mut top = buf_line;
+    while top > 0 {
+        let prev = top - 1;
+        if state.work_line_for_buffer(prev).is_some() {
+            break;
+        }
+        top = prev;
+    }
+    top
+}
+
 /// Show the synopsis for the current scene in the sidebar popup.
 pub fn show_synopsis(state: &mut AppState) {
     let (div1, div2) = current_scene_divs(state);
+    crate::logging::log(&format!(
+        "SYNOPSIS: show current_line={} divs=({},{}) cache_hit={}",
+        state.current_line, div1, div2, state.synopsis_cache.contains_key(&(div1, div2))
+    ));
     if let Some(synopsis) = state.synopsis_cache.get(&(div1, div2)) {
         let scene_label = format!("Act {}, Scene {}", div1, div2);
         state.vocab_popup.update_synopsis(&scene_label, synopsis);

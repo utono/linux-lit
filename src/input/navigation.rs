@@ -649,6 +649,9 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
             }
         }
         after_page_change(state, PageChangeReason::Scene);
+        if !state.synopsis_cache.is_empty() {
+            crate::app::show_synopsis_timed(state);
+        }
     }
 }
 
@@ -681,6 +684,9 @@ pub fn jump_to_next_scene(state: &mut AppState) {
             }
         }
         after_page_change(state, PageChangeReason::Scene);
+        if !state.synopsis_cache.is_empty() {
+            crate::app::show_synopsis_timed(state);
+        }
     }
 }
 
