@@ -231,6 +231,25 @@ pub fn load_translations(
     Ok(map)
 }
 
+pub fn load_synopses(conn: &Connection, work_abbrev: &str) -> HashMap<(i64, i64), String> {
+    let mut map = HashMap::new();
+    let mut stmt = match conn.prepare(
+        "SELECT div1, div2, synopsis FROM scene_synopses WHERE work_abbrev = ?1"
+    ) {
+        Ok(s) => s,
+        Err(_) => return map,
+    };
+    let rows = stmt.query_map([work_abbrev], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?))
+    });
+    if let Ok(rows) = rows {
+        for row in rows.flatten() {
+            map.insert((row.0, row.1), row.2);
+        }
+    }
+    map
+}
+
 /// Load all vocab words + variants for matching against buffer text.
 /// Returns a HashSet of lowercase words (base words + variants).
 pub fn load_vocab_words(
