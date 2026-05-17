@@ -157,9 +157,7 @@ pub(crate) fn open_picker(
 
     if let Some(words) = cached {
         let mut s = state.borrow_mut();
-        s.concordance_picker.set_words(
-            words.iter().map(|w| (w.clone(), 0usize)).collect()
-        );
+        s.concordance_picker.set_words(words);
         s.concordance_picker.show();
         s.input_mode = crate::app::InputMode::ConcordancePicker;
         drop(s);
@@ -180,9 +178,7 @@ pub(crate) fn open_picker(
             {
                 let mut s = state_clone.borrow_mut();
                 s.concordance_word_cache = Some((author.clone(), words.clone()));
-                s.concordance_picker.set_words(
-                    words.iter().map(|w| (w.clone(), 0usize)).collect()
-                );
+                s.concordance_picker.set_words(words);
                 s.concordance_picker.show();
                 s.input_mode = crate::app::InputMode::ConcordancePicker;
             }

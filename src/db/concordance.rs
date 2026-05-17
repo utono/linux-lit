@@ -51,11 +51,12 @@ pub fn find_word_occurrences(
 }
 
 /// Load all content words (minus stopwords) from the author's works.
-/// Returns a deduplicated, alphabetically sorted list.
+/// Returns deduplicated words with occurrence counts, sorted alphabetically.
 pub fn load_concordance_words(
     conn: &Connection,
     author: &str,
-) -> Result<Vec<String>, rusqlite::Error> {
+) -> Result<Vec<(String, usize)>, rusqlite::Error> {
+    use std::collections::HashMap;
     use std::collections::HashSet;
     use crate::db::stopwords::STOPWORDS;
 
@@ -69,19 +70,19 @@ pub fn load_concordance_words(
     )?;
     let rows = stmt.query_map([author], |row| row.get::<_, String>(0))?;
 
-    let mut words: HashSet<String> = HashSet::new();
+    let mut counts: HashMap<String, usize> = HashMap::new();
     for row in rows {
         let line = row?;
         for token in line.split(|c: char| !c.is_alphanumeric() && c != '\'' && c != '\u{2019}') {
             let lower = token.to_lowercase();
-            if lower.len() >= 2 && !stopwords.contains(lower.as_str()) {
-                words.insert(lower);
+            if lower.len() >= 2 && lower.starts_with(|c: char| c.is_alphabetic()) && !stopwords.contains(lower.as_str()) {
+                *counts.entry(lower).or_insert(0) += 1;
             }
         }
     }
 
-    let mut result: Vec<String> = words.into_iter().collect();
-    result.sort();
+    let mut result: Vec<(String, usize)> = counts.into_iter().collect();
+    result.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(result)
 }
 
@@ -99,22 +100,40 @@ mod tests {
     fn concordance_words_excludes_stopwords() {
         let conn = test_conn();
         let words = load_concordance_words(&conn, "Shakespeare").unwrap();
-        // Stopwords should not appear
-        assert!(!words.contains(&"the".to_string()));
-        assert!(!words.contains(&"and".to_string()));
-        assert!(!words.contains(&"is".to_string()));
-        // Content words should appear
-        assert!(words.contains(&"time".to_string()));
-        assert!(words.contains(&"love".to_string()));
+        let word_strs: Vec<&str> = words.iter().map(|(w, _)| w.as_str()).collect();
+        assert!(!word_strs.contains(&"the"));
+        assert!(!word_strs.contains(&"and"));
+        assert!(!word_strs.contains(&"is"));
+        assert!(word_strs.contains(&"time"));
+        assert!(word_strs.contains(&"love"));
     }
 
     #[test]
     fn concordance_words_sorted_alphabetically() {
         let conn = test_conn();
         let words = load_concordance_words(&conn, "Shakespeare").unwrap();
-        let mut sorted = words.clone();
+        let names: Vec<&str> = words.iter().map(|(w, _)| w.as_str()).collect();
+        let mut sorted = names.clone();
         sorted.sort();
-        assert_eq!(words, sorted);
+        assert_eq!(names, sorted);
+    }
+
+    #[test]
+    fn concordance_words_have_counts() {
+        let conn = test_conn();
+        let words = load_concordance_words(&conn, "Shakespeare").unwrap();
+        let time_entry = words.iter().find(|(w, _)| w == "time");
+        assert!(time_entry.is_some());
+        assert!(time_entry.unwrap().1 > 0);
+    }
+
+    #[test]
+    fn concordance_words_excludes_numeric_only() {
+        let conn = test_conn();
+        let words = load_concordance_words(&conn, "Shakespeare").unwrap();
+        let word_strs: Vec<&str> = words.iter().map(|(w, _)| w.as_str()).collect();
+        assert!(!word_strs.contains(&"2d"));
+        assert!(!word_strs.contains(&"6d"));
     }
 
     #[test]

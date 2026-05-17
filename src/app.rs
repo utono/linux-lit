@@ -180,7 +180,7 @@ pub struct AppState {
     pub synopsis_visible: bool,
     pub concordance_picker: crate::ui::concordance_picker::ConcordancePicker,
     pub concordance_state: Option<crate::concordance::ConcordanceState>,
-    pub concordance_word_cache: Option<(String, Vec<String>)>,
+    pub concordance_word_cache: Option<(String, Vec<(String, usize)>)>,
     pub concordance_word_picker: crate::ui::concordance_word_picker::ConcordanceWordPicker,
     pub concordance_list_picker: crate::ui::concordance_list_picker::ConcordanceListPicker,
     pub concordance_bar: crate::ui::concordance_bar::ConcordanceBar,
