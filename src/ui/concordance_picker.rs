@@ -91,14 +91,24 @@ impl ConcordancePicker {
     }
 
     pub fn populate_list(&self, filter: &str) {
+        const MAX_VISIBLE: usize = 200;
+
         while let Some(child) = self.list_box.first_child() {
             self.list_box.remove(&child);
         }
 
+        if filter.is_empty() {
+            if let Some(first) = self.list_box.row_at_index(0) {
+                self.list_box.select_row(Some(&first));
+            }
+            return;
+        }
+
         let filter_lower = filter.to_lowercase();
+        let mut shown = 0;
 
         for (word, count) in &self.words {
-            if !filter.is_empty() && !word.contains(&filter_lower) {
+            if !word.contains(&filter_lower) {
                 continue;
             }
 
@@ -126,6 +136,11 @@ impl ConcordancePicker {
             let row = ListBoxRow::builder().child(&row_box).build();
             row.set_widget_name(word);
             self.list_box.append(&row);
+
+            shown += 1;
+            if shown >= MAX_VISIBLE {
+                break;
+            }
         }
 
         if let Some(first) = self.list_box.row_at_index(0) {
