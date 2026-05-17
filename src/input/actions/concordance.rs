@@ -4,10 +4,9 @@ use std::rc::Rc;
 use gtk4::prelude::{AdjustmentExt, EditableExt};
 
 use crate::app::AppState;
-use crate::input::highlight::update_highlight;
+use crate::input::highlight::update_highlight_and_center;
 use crate::input::navigation;
 use crate::input::navigation::SEEK_PREROLL;
-use crate::input::scroll::center_cursor;
 
 /// Handle concordance word selection: query all hits across the author's works,
 /// store them in ConcordanceState, and jump to the first hit in the current work.
@@ -378,19 +377,16 @@ fn concordance_position_cursor(state: &mut AppState, line_mapping_id: i64) {
     let adj_before = state.scrolled_window.vadjustment().value();
 
     state.current_line = buf_idx;
-    update_highlight(state);
-    center_cursor(state);
+    update_highlight_and_center(state);
 
     let adj_after = state.scrolled_window.vadjustment().value();
     crate::logging::log(&format!(
         "CONC_POS: line_mapping_id={} buf_idx={} seek_work_idx={} old_line={} new_line={} \
-         old_page_top={} new_page_top={} vadj_before={:.0} vadj_after={:.0} \
-         loading_work={}",
+         old_page_top={} new_page_top={} vadj_before={:.0} vadj_after={:.0}",
         line_mapping_id, buf_idx, seek_work_idx,
         old_line, state.current_line,
         old_page_top, state.page_top_line,
         adj_before, adj_after,
-        state.loading_work.get(),
     ));
 
     concordance_seek(state, seek_work_idx);
