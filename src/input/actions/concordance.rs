@@ -106,12 +106,13 @@ pub(crate) fn jump_to_next_vocab(
 ) {
     let has_concordance = state.borrow().concordance_state.is_some();
     if has_concordance {
-        let current_abbrev = state.borrow().current_work.as_ref().map(|w| w.abbrev.clone());
         let advanced = {
             let mut s = state.borrow_mut();
-            if let (Some(conc), Some(ref abbrev)) = (s.concordance_state.as_mut(), &current_abbrev) {
-                conc.advance_within_work(abbrev)
-            } else { false }
+            if let Some(conc) = s.concordance_state.as_mut() {
+                conc.advance()
+            } else {
+                false
+            }
         };
         if advanced {
             concordance_jump_to_current(state, tokio_handle);
@@ -129,12 +130,13 @@ pub(crate) fn jump_to_prev_vocab(
 ) {
     let has_concordance = state.borrow().concordance_state.is_some();
     if has_concordance {
-        let current_abbrev = state.borrow().current_work.as_ref().map(|w| w.abbrev.clone());
         let retreated = {
             let mut s = state.borrow_mut();
-            if let (Some(conc), Some(ref abbrev)) = (s.concordance_state.as_mut(), &current_abbrev) {
-                conc.retreat_within_work(abbrev)
-            } else { false }
+            if let Some(conc) = s.concordance_state.as_mut() {
+                conc.retreat()
+            } else {
+                false
+            }
         };
         if retreated {
             concordance_jump_to_current(state, tokio_handle);
