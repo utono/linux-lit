@@ -47,3 +47,71 @@ pub fn find_word_occurrences(
     })?;
     rows.collect()
 }
+
+/// Load all content words (minus stopwords) from the author's works.
+/// Returns a deduplicated, alphabetically sorted list.
+pub fn load_concordance_words(
+    conn: &Connection,
+    author: &str,
+) -> Result<Vec<String>, rusqlite::Error> {
+    use std::collections::HashSet;
+    use crate::db::stopwords::STOPWORDS;
+
+    let stopwords: HashSet<&str> = STOPWORDS.iter().copied().collect();
+
+    let mut stmt = conn.prepare(
+        "SELECT lm.normalized_text
+         FROM line_mapping lm
+         JOIN works w ON w.abbrev = lm.work_abbrev
+         WHERE w.author = ?1",
+    )?;
+    let rows = stmt.query_map([author], |row| row.get::<_, String>(0))?;
+
+    let mut words: HashSet<String> = HashSet::new();
+    for row in rows {
+        let line = row?;
+        for token in line.split(|c: char| !c.is_alphanumeric() && c != '\'' && c != '\u{2019}') {
+            let lower = token.to_lowercase();
+            if lower.len() >= 2 && !stopwords.contains(lower.as_str()) {
+                words.insert(lower);
+            }
+        }
+    }
+
+    let mut result: Vec<String> = words.into_iter().collect();
+    result.sort();
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_conn() -> Connection {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let db_path = format!("{}/utono/litdb/data/lit.db", home);
+        Connection::open(&db_path).expect("Failed to open lit.db for tests")
+    }
+
+    #[test]
+    fn concordance_words_excludes_stopwords() {
+        let conn = test_conn();
+        let words = load_concordance_words(&conn, "Shakespeare").unwrap();
+        // Stopwords should not appear
+        assert!(!words.contains(&"the".to_string()));
+        assert!(!words.contains(&"and".to_string()));
+        assert!(!words.contains(&"is".to_string()));
+        // Content words should appear
+        assert!(words.contains(&"time".to_string()));
+        assert!(words.contains(&"love".to_string()));
+    }
+
+    #[test]
+    fn concordance_words_sorted_alphabetically() {
+        let conn = test_conn();
+        let words = load_concordance_words(&conn, "Shakespeare").unwrap();
+        let mut sorted = words.clone();
+        sorted.sort();
+        assert_eq!(words, sorted);
+    }
+}
