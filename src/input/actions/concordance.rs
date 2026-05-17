@@ -63,8 +63,6 @@ pub(crate) fn handle_word_selection(
             return;
         }
 
-        // Position index at the last hit at-or-before the cursor in the current
-        // work so the first Ctrl+r advances forward from here.
         let current_line_id = {
             let s = state_clone.borrow();
             s.current_work.as_ref().and_then(|w| {
@@ -76,16 +74,25 @@ pub(crate) fn handle_word_selection(
                 work_idx.and_then(|wi| w.lines.get(wi).map(|l| l.id))
             })
         };
+
+        // Check if cursor line is itself a hit
+        let cursor_on_hit = current_line_id.map(|cur_id| {
+            all_hits.iter().any(|h| h.work_abbrev == current_abbrev && h.line_mapping_id == cur_id)
+        }).unwrap_or(false);
+
         let start_index = if let Some(cur_id) = current_line_id {
-            // Find last hit in current work at-or-before cursor
-            let mut best = None;
-            for (i, h) in all_hits.iter().enumerate() {
-                if h.work_abbrev == current_abbrev && h.line_mapping_id <= cur_id {
-                    best = Some(i);
-                }
+            if cursor_on_hit {
+                // Cursor is on a hit — park index there, don't jump
+                all_hits.iter()
+                    .position(|h| h.work_abbrev == current_abbrev && h.line_mapping_id == cur_id)
+                    .unwrap_or(0)
+            } else {
+                // Cursor is not on a hit — find next hit forward in current work
+                all_hits.iter()
+                    .position(|h| h.work_abbrev == current_abbrev && h.line_mapping_id > cur_id)
+                    .or_else(|| all_hits.iter().position(|h| h.work_abbrev == current_abbrev))
+                    .unwrap_or(0)
             }
-            best.or_else(|| all_hits.iter().position(|h| h.work_abbrev == current_abbrev))
-                .unwrap_or(0)
         } else {
             all_hits.iter()
                 .position(|h| h.work_abbrev == current_abbrev)
@@ -102,6 +109,10 @@ pub(crate) fn handle_word_selection(
             let mut s = state_clone.borrow_mut();
             s.concordance_bar.update(&conc_state.status_label(), &conc_state.status_work());
             s.concordance_state = Some(conc_state);
+        }
+
+        if !cursor_on_hit {
+            concordance_jump_to_current(&state_clone, &handle);
         }
     });
 }
