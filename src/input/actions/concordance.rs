@@ -135,37 +135,57 @@ pub(crate) fn concordance_prev(
     }
 }
 
-/// Open the concordance picker, populating it with the current work's vocab
-/// words. Called from `Ctrl+\`.
+/// Open the concordance picker, populating it with all content words
+/// from the current author's works (minus stopwords). Called from `Ctrl+\`.
 pub(crate) fn open_picker(
     state: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
 ) {
-    let abbrev = state
+    let author = state
         .borrow()
         .current_work
         .as_ref()
-        .map(|w| w.abbrev.clone());
-    if let Some(abbrev) = abbrev {
+        .map(|w| w.author.clone());
+    let author = match author {
+        Some(a) => a,
+        None => return,
+    };
+
+    let cached = state.borrow().concordance_word_cache.as_ref()
+        .filter(|(a, _)| a == &author)
+        .map(|(_, words)| words.clone());
+
+    if let Some(words) = cached {
+        let mut s = state.borrow_mut();
+        s.concordance_picker.set_words(
+            words.iter().map(|w| (w.clone(), 0usize)).collect()
+        );
+        s.concordance_picker.show();
+        s.input_mode = crate::app::InputMode::ConcordancePicker;
+        drop(s);
+        state.borrow().concordance_picker.search_entry().set_text("");
+    } else {
         let state_clone = Rc::clone(state);
         let handle = tokio_handle.clone();
+        let author_clone = author.clone();
         glib::spawn_future_local(async move {
             let words = handle
                 .spawn_blocking(move || {
                     let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
-                    crate::db::queries::load_vocab_word_list(&conn, &abbrev)
+                    crate::db::concordance::load_concordance_words(&conn, &author_clone)
                         .unwrap_or_default()
                 })
                 .await
                 .unwrap_or_default();
             {
                 let mut s = state_clone.borrow_mut();
-                s.concordance_picker.set_words(words);
+                s.concordance_word_cache = Some((author.clone(), words.clone()));
+                s.concordance_picker.set_words(
+                    words.iter().map(|w| (w.clone(), 0usize)).collect()
+                );
                 s.concordance_picker.show();
                 s.input_mode = crate::app::InputMode::ConcordancePicker;
             }
-            // set_text triggers connect_changed which borrows state, so the
-            // mutable borrow must be dropped first.
             state_clone.borrow().concordance_picker.search_entry().set_text("");
         });
     }
