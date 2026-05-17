@@ -772,11 +772,10 @@ pub fn build_window(
 
     window.set_child(Some(&vbox));
 
-    // Concordance spawns load the work specified by env var.
-    // Normal startup resumes the most recently used work from config.
+    // LINUX_LIT_WORK env var overrides the saved work from config.
     let last_work = if let Ok(work_abbrev) = std::env::var("LINUX_LIT_WORK") {
         crate::logging::log(&format!(
-            "STARTUP: concordance spawn work='{}'", work_abbrev
+            "STARTUP: env override work='{}'", work_abbrev
         ));
         Some(work_abbrev)
     } else {
@@ -1334,84 +1333,6 @@ pub fn build_window(
                 handle.spawn_blocking(move || {
                     let _ = crate::snapshot::write(&w, &filtered, &line_map);
                 });
-            }
-            // Set up concordance state if this is a concordance spawn
-            if let Ok(conc_word) = std::env::var("LINUX_LIT_CONC_WORD") {
-                let s = state_clone.borrow();
-                let work_abbrev = s.current_work.as_ref().map(|w| w.abbrev.clone());
-                let work_author = s.current_work.as_ref().map(|w| w.author.clone()).unwrap_or_default();
-                drop(s);
-                if let Some(abbrev) = work_abbrev {
-                    let sc = Rc::clone(&state_clone);
-                    let handle2 = handle.clone();
-                    let word = conc_word.clone();
-                    glib::spawn_future_local(async move {
-                        let word_q = word.clone();
-                        let abbrev_q = abbrev.clone();
-                        let author_q = work_author.clone();
-                        let hits = handle2
-                            .spawn_blocking(move || {
-                                let conn = crate::db::queries::open_db()
-                                    .expect("Failed to open lit.db");
-                                crate::db::concordance::find_word_occurrences(&conn, &word_q, &author_q)
-                                    .unwrap_or_default()
-                            })
-                            .await
-                            .unwrap_or_default();
-                        // Filter to only this work's hits
-                        let conc_hits: Vec<crate::concordance::ConcordanceHit> = hits
-                            .into_iter()
-                            .filter(|h| h.work_abbrev == abbrev_q)
-                            .map(|h| crate::concordance::ConcordanceHit {
-                                work_abbrev: h.work_abbrev,
-                                work_title: h.title,
-                                author: h.author,
-                                line_mapping_id: h.line_mapping_id,
-                                div1: h.div1,
-                                div2: h.div2,
-                                line_in_div: h.line_in_div,
-                                canonical_text: h.canonical_text,
-                                has_audio: h.has_audio,
-                            })
-                            .collect();
-                        if !conc_hits.is_empty() {
-                            let conc_state = crate::concordance::ConcordanceState::new(
-                                word.clone(),
-                                conc_hits,
-                            );
-                            {
-                                let mut s = sc.borrow_mut();
-                                s.concordance_bar.update(
-                                    &conc_state.status_label(),
-                                    &conc_state.status_work(),
-                                );
-                                s.concordance_state = Some(conc_state);
-                            }
-                            crate::input::actions::concordance::concordance_jump_to_current(
-                                &sc, &handle2,
-                            );
-                            let sc2 = Rc::clone(&sc);
-                            glib::timeout_add_local_once(
-                                std::time::Duration::from_millis(200),
-                                move || {
-                                    let s = sc2.borrow();
-                                    let adj = s.scrolled_window.vadjustment();
-                                    let max_scroll = adj.upper() - adj.page_size();
-                                    if max_scroll > 0.0 {
-                                        let line_y = if let Some(iter) = s.buffer.iter_at_line(s.current_line as i32) {
-                                            let (y, _) = s.text_view.line_yrange(&iter);
-                                            y as f64
-                                        } else {
-                                            0.0
-                                        };
-                                        let centered = (line_y - adj.page_size() * 0.5).max(0.0).min(max_scroll);
-                                        adj.set_value(centered);
-                                    }
-                                },
-                            );
-                        }
-                    });
-                }
             }
         });
     } else {

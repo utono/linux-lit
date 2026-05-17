@@ -57,16 +57,8 @@ fn main() {
 
     adw::init().expect("Failed to initialize libadwaita");
 
-    // Concordance spawn instances use a unique app_id so they don't
-    // interfere with the primary instance's GTK Application singleton.
-    let is_concordance_spawn = std::env::var("LINUX_LIT_WORK").is_ok();
-    let effective_app_id: String = if is_concordance_spawn {
-        format!("{}.conc.{}", app_id, std::process::id())
-    } else {
-        app_id.to_string()
-    };
     let application = gtk4::Application::builder()
-        .application_id(&effective_app_id)
+        .application_id(app_id)
         .build();
 
     application.connect_activate(|gtk_app| {
