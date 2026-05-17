@@ -31,7 +31,9 @@ impl MediaPicker {
         picker_box.add_css_class("library-picker");
 
         let title_label = Label::builder()
-            .halign(gtk4::Align::Start)
+            .halign(gtk4::Align::Center)
+            .margin_top(8)
+            .margin_bottom(4)
             .build();
         title_label.add_css_class("picker-title");
 
