@@ -258,12 +258,15 @@ pub(crate) fn open_media_picker(
     state: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
 ) {
-    let abbrev = state
-        .borrow()
-        .current_work
-        .as_ref()
-        .map(|w| w.abbrev.clone());
-    if let Some(abbrev) = abbrev {
+    let (abbrev, work_title) = {
+        let s = state.borrow();
+        match s.current_work.as_ref() {
+            Some(w) => (w.abbrev.clone(), w.title.clone()),
+            None => return,
+        }
+    };
+    {
+        state.borrow().media_picker.set_title(&abbrev, &work_title);
         let state_clone = Rc::clone(state);
         let handle = tokio_handle.clone();
         let handle_for_confirm = tokio_handle.clone();

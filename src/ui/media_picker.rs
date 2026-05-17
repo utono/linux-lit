@@ -10,6 +10,7 @@ use crate::db::models::MediaItem;
 pub struct MediaPicker {
     pub overlay: Overlay,
     picker_box: GtkBox,
+    title_label: Label,
     search_entry: Entry,
     list_box: ListBox,
     items: Vec<MediaItem>,
@@ -29,6 +30,11 @@ impl MediaPicker {
             .build();
         picker_box.add_css_class("library-picker");
 
+        let title_label = Label::builder()
+            .halign(gtk4::Align::Start)
+            .build();
+        title_label.add_css_class("picker-title");
+
         let search_entry = Entry::builder()
             .placeholder_text("Filter media...")
             .build();
@@ -42,16 +48,22 @@ impl MediaPicker {
             .vexpand(true)
             .build();
 
+        picker_box.append(&title_label);
         picker_box.append(&search_entry);
         picker_box.append(&scrolled);
 
         MediaPicker {
             overlay,
             picker_box,
+            title_label,
             search_entry,
             list_box,
             items: Vec::new(),
         }
+    }
+
+    pub fn set_title(&self, abbrev: &str, title: &str) {
+        self.title_label.set_text(&format!("{} — {}", abbrev, title));
     }
 
     pub fn set_items(&mut self, items: Vec<MediaItem>) {
