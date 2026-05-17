@@ -16,14 +16,19 @@ pub(crate) fn handle_word_selection(
     tokio_handle: &tokio::runtime::Handle,
     word: String,
 ) {
+    let author = {
+        let s = state.borrow();
+        s.current_work.as_ref().map(|w| w.author.clone()).unwrap_or_default()
+    };
     let state_clone = Rc::clone(state);
     let handle = tokio_handle.clone();
     let word_clone = word.clone();
+    let author_clone = author.clone();
     glib::spawn_future_local(async move {
         let hits = handle
             .spawn_blocking(move || {
                 let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
-                crate::db::concordance::find_word_occurrences(&conn, &word_clone)
+                crate::db::concordance::find_word_occurrences(&conn, &word_clone, &author_clone)
                     .unwrap_or_default()
             })
             .await

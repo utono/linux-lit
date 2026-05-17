@@ -1337,6 +1337,7 @@ pub fn build_window(
             if let Ok(conc_word) = std::env::var("LINUX_LIT_CONC_WORD") {
                 let s = state_clone.borrow();
                 let work_abbrev = s.current_work.as_ref().map(|w| w.abbrev.clone());
+                let work_author = s.current_work.as_ref().map(|w| w.author.clone()).unwrap_or_default();
                 drop(s);
                 if let Some(abbrev) = work_abbrev {
                     let sc = Rc::clone(&state_clone);
@@ -1345,11 +1346,12 @@ pub fn build_window(
                     glib::spawn_future_local(async move {
                         let word_q = word.clone();
                         let abbrev_q = abbrev.clone();
+                        let author_q = work_author.clone();
                         let hits = handle2
                             .spawn_blocking(move || {
                                 let conn = crate::db::queries::open_db()
                                     .expect("Failed to open lit.db");
-                                crate::db::concordance::find_word_occurrences(&conn, &word_q)
+                                crate::db::concordance::find_word_occurrences(&conn, &word_q, &author_q)
                                     .unwrap_or_default()
                             })
                             .await

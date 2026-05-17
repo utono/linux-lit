@@ -14,11 +14,12 @@ pub struct ConcordanceRow {
     pub has_audio: bool,
 }
 
-/// Find all lines containing `word` across all works with line_mapping entries.
-/// Results ordered by author, work, position.
+/// Find all lines containing `word` within a single author's works.
+/// Results ordered by work, position.
 pub fn find_word_occurrences(
     conn: &Connection,
     word: &str,
+    author: &str,
 ) -> Result<Vec<ConcordanceRow>, rusqlite::Error> {
     let pattern = format!("%{}%", word.to_lowercase());
     let mut stmt = conn.prepare(
@@ -29,10 +30,11 @@ pub fn find_word_occurrences(
                 ) AS has_audio
          FROM line_mapping lm
          JOIN works w ON w.abbrev = lm.work_abbrev
-         WHERE lm.normalized_text LIKE ?1
-         ORDER BY w.author, lm.work_abbrev, lm.div1, COALESCE(lm.div2, 0), lm.line_in_div",
+         WHERE w.author = ?1
+           AND lm.normalized_text LIKE ?2
+         ORDER BY lm.work_abbrev, lm.div1, COALESCE(lm.div2, 0), lm.line_in_div",
     )?;
-    let rows = stmt.query_map([&pattern], |row| {
+    let rows = stmt.query_map(rusqlite::params![author, &pattern], |row| {
         Ok(ConcordanceRow {
             line_mapping_id: row.get(0)?,
             work_abbrev: row.get(1)?,
@@ -113,5 +115,15 @@ mod tests {
         let mut sorted = words.clone();
         sorted.sort();
         assert_eq!(words, sorted);
+    }
+
+    #[test]
+    fn find_occurrences_filters_by_author() {
+        let conn = test_conn();
+        let hits = find_word_occurrences(&conn, "love", "Shakespeare").unwrap();
+        assert!(!hits.is_empty());
+        for hit in &hits {
+            assert_eq!(hit.author, "Shakespeare");
+        }
     }
 }
