@@ -331,10 +331,17 @@ pub(crate) fn open_media_picker(
                     crate::logging::log(&format!(
                         "MEDIA_PICKER: set media_id={}", media_id
                     ));
-                    if s.concordance_resume_playback {
-                        s.concordance_resume_playback = false;
-                        crate::input::actions::concordance::concordance_seek_current(&mut s);
-                    }
+                }
+                if state_clone.borrow().concordance_resume_playback {
+                    let sc = Rc::clone(&state_clone);
+                    glib::timeout_add_local_once(
+                        std::time::Duration::from_millis(500),
+                        move || {
+                            let mut s = sc.borrow_mut();
+                            s.concordance_resume_playback = false;
+                            crate::input::actions::concordance::concordance_seek_current(&mut s);
+                        },
+                    );
                 }
                 return;
             }
@@ -514,9 +521,20 @@ pub(crate) fn confirm_media_selection(
                     "MEDIA: switched to media_id={}",
                     media_id
                 ));
-                if s.concordance_resume_playback {
+                let should_resume = s.concordance_resume_playback;
+                if should_resume {
                     s.concordance_resume_playback = false;
-                    crate::input::actions::concordance::concordance_seek_current(&mut s);
+                }
+                drop(s);
+                if should_resume {
+                    let sc = Rc::clone(&state_clone);
+                    glib::timeout_add_local_once(
+                        std::time::Duration::from_millis(500),
+                        move || {
+                            let mut s = sc.borrow_mut();
+                            crate::input::actions::concordance::concordance_seek_current(&mut s);
+                        },
+                    );
                 }
             }
         });
