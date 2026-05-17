@@ -63,7 +63,8 @@ pub(crate) fn handle_word_selection(
             return;
         }
 
-        // Find the first hit in the current work at or after the cursor
+        // Position index at the last hit at-or-before the cursor in the current
+        // work so the first Ctrl+r advances forward from here.
         let current_line_id = {
             let s = state_clone.borrow();
             s.current_work.as_ref().and_then(|w| {
@@ -76,9 +77,14 @@ pub(crate) fn handle_word_selection(
             })
         };
         let start_index = if let Some(cur_id) = current_line_id {
-            all_hits.iter()
-                .position(|h| h.work_abbrev == current_abbrev && h.line_mapping_id >= cur_id)
-                .or_else(|| all_hits.iter().position(|h| h.work_abbrev == current_abbrev))
+            // Find last hit in current work at-or-before cursor
+            let mut best = None;
+            for (i, h) in all_hits.iter().enumerate() {
+                if h.work_abbrev == current_abbrev && h.line_mapping_id <= cur_id {
+                    best = Some(i);
+                }
+            }
+            best.or_else(|| all_hits.iter().position(|h| h.work_abbrev == current_abbrev))
                 .unwrap_or(0)
         } else {
             all_hits.iter()
@@ -97,7 +103,6 @@ pub(crate) fn handle_word_selection(
             s.concordance_bar.update(&conc_state.status_label(), &conc_state.status_work());
             s.concordance_state = Some(conc_state);
         }
-        concordance_jump_to_current(&state_clone, &handle);
     });
 }
 
