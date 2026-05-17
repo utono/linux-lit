@@ -333,15 +333,9 @@ pub(crate) fn open_media_picker(
                     ));
                 }
                 if state_clone.borrow().concordance_resume_playback {
-                    let sc = Rc::clone(&state_clone);
-                    glib::timeout_add_local_once(
-                        std::time::Duration::from_millis(500),
-                        move || {
-                            let mut s = sc.borrow_mut();
-                            s.concordance_resume_playback = false;
-                            crate::input::actions::concordance::concordance_seek_current(&mut s);
-                        },
-                    );
+                    let mut s = state_clone.borrow_mut();
+                    s.concordance_resume_playback = false;
+                    crate::input::actions::concordance::concordance_seek_current(&mut s);
                 }
                 return;
             }
@@ -525,17 +519,10 @@ pub(crate) fn confirm_media_selection(
                 if should_resume {
                     s.concordance_resume_playback = false;
                 }
-                drop(s);
                 if should_resume {
-                    let sc = Rc::clone(&state_clone);
-                    glib::timeout_add_local_once(
-                        std::time::Duration::from_millis(500),
-                        move || {
-                            let mut s = sc.borrow_mut();
-                            crate::input::actions::concordance::concordance_seek_current(&mut s);
-                        },
-                    );
+                    crate::input::actions::concordance::concordance_seek_current(&mut s);
                 }
+                drop(s);
             }
         });
     }

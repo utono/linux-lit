@@ -89,7 +89,8 @@ async fn handle_command(
         }
         MpvCommand::ResumeAndSeek(time) => {
             if let Some(w) = writer.as_mut() {
-                let cmd = format!(r#"{{"command":["set_property","time-pos",{}]}}"#, time);
+                crate::logging::log(&format!("MPV: ResumeAndSeek time={:.1}", time));
+                let cmd = format!(r#"{{"command":["seek",{},"absolute"]}}"#, time);
                 let _ = send_command(w, &cmd).await;
                 let _ = send_command(w, r#"{"command":["set_property","pause",false]}"#).await;
             }
@@ -102,7 +103,8 @@ async fn handle_command(
         }
         MpvCommand::Seek(time) => {
             if let Some(w) = writer.as_mut() {
-                let cmd = format!(r#"{{"command":["set_property","time-pos",{}]}}"#, time);
+                crate::logging::log(&format!("MPV: Seek time={:.1}", time));
+                let cmd = format!(r#"{{"command":["seek",{},"absolute"]}}"#, time);
                 let _ = send_command(w, &cmd).await;
             }
         }

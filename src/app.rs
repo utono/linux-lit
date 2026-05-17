@@ -192,6 +192,8 @@ pub struct AppState {
     pub mpv_connected: bool,
     pub mpv_playing: bool,
     pub concordance_resume_playback: bool,
+    /// Pending seek after loadfile: (seek_time, should_resume_playback)
+    pub pending_loadfile_seek: Option<(f64, bool)>,
     pub skip_mpv_discovery: bool,
     pub sync_icon: gtk4::Label,
     pub debug_icon: gtk4::Label,
@@ -898,6 +900,7 @@ pub fn build_window(
         mpv_connected: false,
         mpv_playing: false,
         concordance_resume_playback: false,
+        pending_loadfile_seek: None,
         skip_mpv_discovery: false,
         sync_icon,
         debug_icon,

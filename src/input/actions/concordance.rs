@@ -411,8 +411,8 @@ fn concordance_resolve_indices(state: &AppState, line_mapping_id: i64) -> Option
     Some((buf_idx, seek_work_idx))
 }
 
-/// Seek to the current concordance hit's line and resume playback.
-/// Called after media picker confirms a selection during a cross-work jump.
+/// Schedule a seek to the current concordance hit after loadfile completes.
+/// The actual seek fires when MPV reports its first time-pos event.
 pub(crate) fn concordance_seek_current(state: &mut AppState) {
     let line_id = state.concordance_state.as_ref()
         .and_then(|c| c.current_hit().map(|h| h.line_mapping_id));
@@ -421,11 +421,9 @@ pub(crate) fn concordance_seek_current(state: &mut AppState) {
             if let Some(work) = &state.current_work {
                 if let Some(ts) = work.lines.get(seek_work_idx).and_then(|l| l.timestamp.as_ref()) {
                     let seek_time = (ts.start - SEEK_PREROLL).max(0.0);
-                    state.suppress_sync_until =
-                        Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
-                    let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::ResumeAndSeek(seek_time));
+                    state.pending_loadfile_seek = Some((seek_time, true));
                     crate::logging::log(&format!(
-                        "CONC_SEEK_CURRENT: line_id={} seek_time={:.1} — resuming playback",
+                        "CONC_SEEK_CURRENT: line_id={} seek_time={:.1} — pending until file loaded",
                         id, seek_time
                     ));
                 }
