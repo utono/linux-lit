@@ -99,39 +99,49 @@ pub(crate) fn jump_to_prev_vocab(
     navigation::jump_to_prev_vocab(&mut state.borrow_mut());
 }
 
-/// Ctrl+n: advance to next concordance hit (cross-work). No-op if no state.
+/// r: advance to next concordance hit if active, else plain vocab jump.
 pub(crate) fn concordance_next(
     state: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
 ) {
-    let advanced = {
-        let mut s = state.borrow_mut();
-        if let Some(conc) = s.concordance_state.as_mut() {
-            conc.advance()
-        } else {
-            false
+    let has_concordance = state.borrow().concordance_state.is_some();
+    if has_concordance {
+        let advanced = {
+            let mut s = state.borrow_mut();
+            if let Some(conc) = s.concordance_state.as_mut() {
+                conc.advance()
+            } else {
+                false
+            }
+        };
+        if advanced {
+            concordance_jump_to_current(state, tokio_handle);
         }
-    };
-    if advanced {
-        concordance_jump_to_current(state, tokio_handle);
+    } else {
+        navigation::jump_to_next_vocab(&mut state.borrow_mut());
     }
 }
 
-/// Ctrl+p: retreat to previous concordance hit (cross-work). No-op if no state.
+/// R: retreat to previous concordance hit if active, else plain vocab jump.
 pub(crate) fn concordance_prev(
     state: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
 ) {
-    let retreated = {
-        let mut s = state.borrow_mut();
-        if let Some(conc) = s.concordance_state.as_mut() {
-            conc.retreat()
-        } else {
-            false
+    let has_concordance = state.borrow().concordance_state.is_some();
+    if has_concordance {
+        let retreated = {
+            let mut s = state.borrow_mut();
+            if let Some(conc) = s.concordance_state.as_mut() {
+                conc.retreat()
+            } else {
+                false
+            }
+        };
+        if retreated {
+            concordance_jump_to_current(state, tokio_handle);
         }
-    };
-    if retreated {
-        concordance_jump_to_current(state, tokio_handle);
+    } else {
+        navigation::jump_to_prev_vocab(&mut state.borrow_mut());
     }
 }
 
