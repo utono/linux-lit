@@ -340,6 +340,7 @@ pub fn concordance_jump_to_current(
                     let ts_count = work.timestamps.len();
                     {
                         let mut s = state_clone.borrow_mut();
+                        s.skip_mpv_discovery = true;
                         crate::app::clear_display(&mut s);
                         crate::app::display_work_at_with_prepared(
                             &mut s,
@@ -348,15 +349,20 @@ pub fn concordance_jump_to_current(
                             prepared,
                         );
                     }
-                    let s = state_clone.borrow();
-                    let media_id = s.media_id;
-                    concordance_update_bar(&s);
-                    crate::logging::log(&format!(
-                        "CONC_JUMP: CROSS-WORK loaded '{}' lines={} timestamps={} \
-                         media_id={:?} current_line={} page_top={}",
-                        work_title, lines_count, ts_count,
-                        media_id, s.current_line, s.page_top_line,
-                    ));
+                    {
+                        let s = state_clone.borrow();
+                        concordance_update_bar(&s);
+                        crate::logging::log(&format!(
+                            "CONC_JUMP: CROSS-WORK loaded '{}' lines={} timestamps={} \
+                             current_line={} page_top={} — opening media picker",
+                            work_title, lines_count, ts_count,
+                            s.current_line, s.page_top_line,
+                        ));
+                    }
+                    let handle_for_picker = state_clone.borrow().tokio_handle.clone();
+                    crate::input::actions::pickers::open_media_picker(
+                        &state_clone, &handle_for_picker,
+                    );
                 }
                 Ok(Err(e)) => {
                     crate::logging::log(&format!("CONC_JUMP: load_work error: {}", e));

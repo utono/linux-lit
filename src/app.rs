@@ -190,6 +190,7 @@ pub struct AppState {
     pub current_paragraph_start: Option<usize>,
     pub sync_enabled: bool,
     pub mpv_connected: bool,
+    pub skip_mpv_discovery: bool,
     pub sync_icon: gtk4::Label,
     pub debug_icon: gtk4::Label,
     pub word_status_label: gtk4::Label,
@@ -893,6 +894,7 @@ pub fn build_window(
         current_paragraph_start: None,
         sync_enabled: true,
         mpv_connected: false,
+        skip_mpv_discovery: false,
         sync_icon,
         debug_icon,
         word_status_label,
@@ -1474,7 +1476,10 @@ pub fn display_work_at_with_prepared(
     }
 
     // Find or launch MPV socket — reuse existing connection via loadfile when possible
-    if !work.media_paths.is_empty() {
+    // Skip when caller will open the media picker instead (e.g. concordance cross-work jump).
+    if state.skip_mpv_discovery {
+        state.skip_mpv_discovery = false;
+    } else if !work.media_paths.is_empty() {
         let media_paths = work.media_paths.clone();
         let path_to_mid: std::collections::HashMap<String, i64> = work
             .media_paths
