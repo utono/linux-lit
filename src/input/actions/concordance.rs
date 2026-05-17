@@ -63,10 +63,28 @@ pub(crate) fn handle_word_selection(
             return;
         }
 
-        let start_index = all_hits
-            .iter()
-            .position(|h| h.work_abbrev == current_abbrev)
-            .unwrap_or(0);
+        // Find the first hit in the current work at or after the cursor
+        let current_line_id = {
+            let s = state_clone.borrow();
+            s.current_work.as_ref().and_then(|w| {
+                let work_idx = if let Some(ref lm) = s.line_map {
+                    lm.buffer_to_work.get(s.current_line).copied().flatten()
+                } else {
+                    Some(s.current_line)
+                };
+                work_idx.and_then(|wi| w.lines.get(wi).map(|l| l.id))
+            })
+        };
+        let start_index = if let Some(cur_id) = current_line_id {
+            all_hits.iter()
+                .position(|h| h.work_abbrev == current_abbrev && h.line_mapping_id >= cur_id)
+                .or_else(|| all_hits.iter().position(|h| h.work_abbrev == current_abbrev))
+                .unwrap_or(0)
+        } else {
+            all_hits.iter()
+                .position(|h| h.work_abbrev == current_abbrev)
+                .unwrap_or(0)
+        };
 
         let mut conc_state = crate::concordance::ConcordanceState::new(
             word.clone(),
