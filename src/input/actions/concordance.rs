@@ -148,15 +148,34 @@ pub(crate) fn concordance_next(
     state: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
 ) {
-    let advanced = {
-        let mut s = state.borrow_mut();
-        if let Some(conc) = s.concordance_state.as_mut() {
-            conc.advance()
-        } else {
-            false
+    let (old_index, old_work, total) = {
+        let s = state.borrow();
+        match &s.concordance_state {
+            Some(c) => (
+                c.current_index,
+                c.current_hit().map(|h| h.work_abbrev.clone()).unwrap_or_default(),
+                c.occurrences.len(),
+            ),
+            None => return,
         }
     };
+    let advanced = {
+        let mut s = state.borrow_mut();
+        s.concordance_state.as_mut().unwrap().advance()
+    };
     if advanced {
+        let (new_index, new_work, new_line_id) = {
+            let s = state.borrow();
+            let c = s.concordance_state.as_ref().unwrap();
+            let h = c.current_hit().unwrap();
+            (c.current_index, h.work_abbrev.clone(), h.line_mapping_id)
+        };
+        let cross_work = old_work != new_work;
+        crate::logging::log(&format!(
+            "CONC_NEXT: [{}/{}]->[{}/{}] work='{}'->'{}' line_id={} cross_work={}",
+            old_index + 1, total, new_index + 1, total,
+            old_work, new_work, new_line_id, cross_work,
+        ));
         concordance_jump_to_current(state, tokio_handle);
     }
 }
@@ -166,15 +185,34 @@ pub(crate) fn concordance_prev(
     state: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
 ) {
-    let retreated = {
-        let mut s = state.borrow_mut();
-        if let Some(conc) = s.concordance_state.as_mut() {
-            conc.retreat()
-        } else {
-            false
+    let (old_index, old_work, total) = {
+        let s = state.borrow();
+        match &s.concordance_state {
+            Some(c) => (
+                c.current_index,
+                c.current_hit().map(|h| h.work_abbrev.clone()).unwrap_or_default(),
+                c.occurrences.len(),
+            ),
+            None => return,
         }
     };
+    let retreated = {
+        let mut s = state.borrow_mut();
+        s.concordance_state.as_mut().unwrap().retreat()
+    };
     if retreated {
+        let (new_index, new_work, new_line_id) = {
+            let s = state.borrow();
+            let c = s.concordance_state.as_ref().unwrap();
+            let h = c.current_hit().unwrap();
+            (c.current_index, h.work_abbrev.clone(), h.line_mapping_id)
+        };
+        let cross_work = old_work != new_work;
+        crate::logging::log(&format!(
+            "CONC_PREV: [{}/{}]->[{}/{}] work='{}'->'{}' line_id={} cross_work={}",
+            old_index + 1, total, new_index + 1, total,
+            old_work, new_work, new_line_id, cross_work,
+        ));
         concordance_jump_to_current(state, tokio_handle);
     }
 }
@@ -267,7 +305,8 @@ pub fn concordance_jump_to_current(
 
     if current_abbrev.as_deref() != Some(&target_abbrev) {
         crate::logging::log(&format!(
-            "CONC_JUMP: loading '{}' in-place for line_id={}", target_abbrev, target_line_id
+            "CONC_JUMP: CROSS-WORK from '{}' to '{}' line_id={} — saving position, quitting MPV",
+            current_abbrev.as_deref().unwrap_or("?"), target_abbrev, target_line_id
         ));
 
         crate::app::save_position(&mut state.borrow_mut());
@@ -279,8 +318,12 @@ pub fn concordance_jump_to_current(
 
         let state_clone = Rc::clone(state);
         let abbrev_for_load = target_abbrev.clone();
+        let target_abbrev_log = target_abbrev.clone();
         let handle = state.borrow().tokio_handle.clone();
         glib::spawn_future_local(async move {
+            crate::logging::log(&format!(
+                "CONC_JUMP: loading work '{}' from database...", target_abbrev_log
+            ));
             let result = handle
                 .spawn_blocking(move || {
                     let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
@@ -291,6 +334,9 @@ pub fn concordance_jump_to_current(
                 .await;
             match result {
                 Ok(Ok((work, prepared))) => {
+                    let work_title = work.title.clone();
+                    let lines_count = work.lines.len();
+                    let ts_count = work.timestamps.len();
                     {
                         let mut s = state_clone.borrow_mut();
                         crate::app::clear_display(&mut s);
@@ -302,7 +348,14 @@ pub fn concordance_jump_to_current(
                         );
                     }
                     let s = state_clone.borrow();
+                    let media_id = s.media_id;
                     concordance_update_bar(&s);
+                    crate::logging::log(&format!(
+                        "CONC_JUMP: CROSS-WORK loaded '{}' lines={} timestamps={} \
+                         media_id={:?} current_line={} page_top={}",
+                        work_title, lines_count, ts_count,
+                        media_id, s.current_line, s.page_top_line,
+                    ));
                 }
                 Ok(Err(e)) => {
                     crate::logging::log(&format!("CONC_JUMP: load_work error: {}", e));
