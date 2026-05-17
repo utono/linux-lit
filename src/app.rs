@@ -189,6 +189,7 @@ pub struct AppState {
     /// Tracks the start line of the current paragraph to detect transitions.
     pub current_paragraph_start: Option<usize>,
     pub sync_enabled: bool,
+    pub mpv_connected: bool,
     pub sync_icon: gtk4::Label,
     pub debug_icon: gtk4::Label,
     pub word_status_label: gtk4::Label,
@@ -891,6 +892,7 @@ pub fn build_window(
         current_sentence_group: None,
         current_paragraph_start: None,
         sync_enabled: true,
+        mpv_connected: false,
         sync_icon,
         debug_icon,
         word_status_label,
@@ -1471,10 +1473,9 @@ pub fn display_work_at_with_prepared(
             });
     }
 
-    // Find or launch MPV socket
+    // Find or launch MPV socket — reuse existing connection via loadfile when possible
     if !work.media_paths.is_empty() {
         let media_paths = work.media_paths.clone();
-        // Build path→media_id lookup for matching discovered socket to correct timestamps
         let path_to_mid: std::collections::HashMap<String, i64> = work
             .media_paths
             .iter()
@@ -1486,61 +1487,77 @@ pub fn display_work_at_with_prepared(
         let default_media_id = state.media_id;
         let cmd_tx = state.cmd_tx.clone();
         let handle = state.tokio_handle.clone();
+        let already_connected = state.mpv_connected;
+        let primary_media = media_paths[0].clone();
         glib::spawn_future_local(async move {
-            let (socket_path, matched_media_path) = handle
-                .spawn_blocking(move || {
-                    if let Some((sock, matched)) =
-                        crate::mpv::discovery::find_socket_for_work(&media_paths)
-                    {
-                        return (sock.to_string_lossy().to_string(), Some(matched));
-                    }
-                    let launched = crate::mpv::discovery::launch_mpv(&media_paths[0]);
-                    for _ in 0..60 {
-                        std::thread::sleep(std::time::Duration::from_millis(50));
-                        if std::path::Path::new(&launched).exists() {
-                            return (launched, Some(media_paths[0].clone()));
+            if already_connected {
+                // Reuse existing MPV — load the new file in-place
+                crate::logging::log(&format!(
+                    "MPV: reusing connection, loadfile '{}'", primary_media
+                ));
+                let _ = cmd_tx
+                    .send(crate::mpv::MpvCommand::LoadFile(primary_media.clone()))
+                    .await;
+                let _ = cmd_tx
+                    .send(crate::mpv::MpvCommand::Pause)
+                    .await;
+            } else {
+                // No connection — discover or launch
+                let media_paths_for_discover = media_paths.clone();
+                let (socket_path, matched_media_path) = handle
+                    .spawn_blocking(move || {
+                        if let Some((sock, matched)) =
+                            crate::mpv::discovery::find_socket_for_work(&media_paths_for_discover)
+                        {
+                            return (sock.to_string_lossy().to_string(), Some(matched));
                         }
-                    }
-                    (launched, Some(media_paths[0].clone()))
-                })
-                .await
-                .unwrap_or_default();
+                        let launched = crate::mpv::discovery::launch_mpv(&media_paths_for_discover[0]);
+                        for _ in 0..60 {
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                            if std::path::Path::new(&launched).exists() {
+                                return (launched, Some(media_paths_for_discover[0].clone()));
+                            }
+                        }
+                        (launched, Some(media_paths_for_discover[0].clone()))
+                    })
+                    .await
+                    .unwrap_or_default();
 
-            // If the discovered socket matches a different media file, re-send timestamps
-            if let Some(ref matched_path) = matched_media_path {
-                let matched_mid = path_to_mid.get(matched_path).copied();
-                if matched_mid.is_some() && matched_mid != default_media_id {
-                    let mid = matched_mid.unwrap();
-                    crate::logging::log(&format!(
-                        "MPV discovery: switching active media_id from {:?} to {} for {}",
-                        default_media_id, mid, matched_path
-                    ));
-                    let mut ts_data: Vec<(i64, f64, f64)> = timestamps
-                        .iter()
-                        .filter(|t| t.media_id == mid)
-                        .map(|t| (t.line_id, t.start, t.end))
-                        .collect();
-                    ts_data.sort_by(|a, b| {
-                        a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)
-                    });
-                    let mut id_to_idx: std::collections::HashMap<i64, usize> =
-                        std::collections::HashMap::new();
-                    for (i, line) in lines.iter().enumerate() {
-                        id_to_idx.insert(line.id, i);
+                if let Some(ref matched_path) = matched_media_path {
+                    let matched_mid = path_to_mid.get(matched_path).copied();
+                    if matched_mid.is_some() && matched_mid != default_media_id {
+                        let mid = matched_mid.unwrap();
+                        crate::logging::log(&format!(
+                            "MPV discovery: switching active media_id from {:?} to {} for {}",
+                            default_media_id, mid, matched_path
+                        ));
+                        let mut ts_data: Vec<(i64, f64, f64)> = timestamps
+                            .iter()
+                            .filter(|t| t.media_id == mid)
+                            .map(|t| (t.line_id, t.start, t.end))
+                            .collect();
+                        ts_data.sort_by(|a, b| {
+                            a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)
+                        });
+                        let mut id_to_idx: std::collections::HashMap<i64, usize> =
+                            std::collections::HashMap::new();
+                        for (i, line) in lines.iter().enumerate() {
+                            id_to_idx.insert(line.id, i);
+                        }
+                        let _ = cmd_tx
+                            .send(crate::mpv::MpvCommand::SetTimestamps {
+                                timestamps: ts_data,
+                                line_id_to_index: id_to_idx,
+                            })
+                            .await;
                     }
+                }
+
+                if !socket_path.is_empty() {
                     let _ = cmd_tx
-                        .send(crate::mpv::MpvCommand::SetTimestamps {
-                            timestamps: ts_data,
-                            line_id_to_index: id_to_idx,
-                        })
+                        .send(crate::mpv::MpvCommand::Connect(socket_path))
                         .await;
                 }
-            }
-
-            if !socket_path.is_empty() {
-                let _ = cmd_tx
-                    .send(crate::mpv::MpvCommand::Connect(socket_path))
-                    .await;
             }
         });
     }

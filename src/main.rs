@@ -243,6 +243,7 @@ fn main() {
                         }
                     }
                     MpvEvent::ConnectionStatus(connected) => {
+                        state_for_events.borrow_mut().mpv_connected = connected;
                         crate::logging::log(&format!("MPV connection: {}", connected));
                     }
                     MpvEvent::PlaybackState(playing) => {

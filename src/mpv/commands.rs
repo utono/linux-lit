@@ -18,6 +18,7 @@ pub enum MpvCommand {
     },
     SetAbLoop { a: f64, b: f64 },
     ClearAbLoop,
+    LoadFile(String),
     Quit,
 }
 
