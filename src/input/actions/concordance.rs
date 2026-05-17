@@ -143,7 +143,7 @@ pub(crate) fn jump_to_prev_vocab(
     navigation::jump_to_prev_vocab(&mut state.borrow_mut());
 }
 
-/// Ctrl+r: advance to next concordance hit (cross-work). No-op if no state.
+/// r: advance to next concordance hit if active, else plain vocab jump.
 pub(crate) fn concordance_next(
     state: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
@@ -156,7 +156,10 @@ pub(crate) fn concordance_next(
                 c.current_hit().map(|h| h.work_abbrev.clone()).unwrap_or_default(),
                 c.occurrences.len(),
             ),
-            None => return,
+            None => {
+                navigation::jump_to_next_vocab(&mut state.borrow_mut());
+                return;
+            }
         }
     };
     let advanced = {
@@ -180,7 +183,7 @@ pub(crate) fn concordance_next(
     }
 }
 
-/// Ctrl+R: retreat to previous concordance hit (cross-work). No-op if no state.
+/// R: retreat to previous concordance hit if active, else plain vocab jump.
 pub(crate) fn concordance_prev(
     state: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
@@ -193,7 +196,10 @@ pub(crate) fn concordance_prev(
                 c.current_hit().map(|h| h.work_abbrev.clone()).unwrap_or_default(),
                 c.occurrences.len(),
             ),
-            None => return,
+            None => {
+                navigation::jump_to_prev_vocab(&mut state.borrow_mut());
+                return;
+            }
         }
     };
     let retreated = {
