@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gtk4::prelude::EditableExt;
+use gtk4::prelude::{AdjustmentExt, EditableExt};
 
 use crate::app::AppState;
 use crate::input::highlight::update_highlight;
@@ -112,7 +112,18 @@ pub(crate) fn handle_word_selection(
         }
 
         if !cursor_on_hit {
+            crate::logging::log(&format!(
+                "CONC_SELECT: cursor not on hit, jumping to index={} line_id={}",
+                start_index,
+                state_clone.borrow().concordance_state.as_ref()
+                    .and_then(|c| c.current_hit().map(|h| h.line_mapping_id))
+                    .unwrap_or(-1),
+            ));
             concordance_jump_to_current(&state_clone, &handle);
+        } else {
+            crate::logging::log(&format!(
+                "CONC_SELECT: cursor on hit, staying at index={}", start_index
+            ));
         }
     });
 }
@@ -361,13 +372,27 @@ fn concordance_position_cursor(state: &mut AppState, line_mapping_id: i64) {
             return;
         }
     };
-    crate::logging::log(&format!(
-        "CONC_POS: same-work buf_idx={} seek_work_idx={} line_mapping_id={}",
-        buf_idx, seek_work_idx, line_mapping_id
-    ));
+
+    let old_line = state.current_line;
+    let old_page_top = state.page_top_line;
+    let adj_before = state.scrolled_window.vadjustment().value();
+
     state.current_line = buf_idx;
     update_highlight(state);
     center_cursor(state);
+
+    let adj_after = state.scrolled_window.vadjustment().value();
+    crate::logging::log(&format!(
+        "CONC_POS: line_mapping_id={} buf_idx={} seek_work_idx={} old_line={} new_line={} \
+         old_page_top={} new_page_top={} vadj_before={:.0} vadj_after={:.0} \
+         loading_work={}",
+        line_mapping_id, buf_idx, seek_work_idx,
+        old_line, state.current_line,
+        old_page_top, state.page_top_line,
+        adj_before, adj_after,
+        state.loading_work.get(),
+    ));
+
     concordance_seek(state, seek_work_idx);
 }
 
