@@ -297,31 +297,44 @@ pub(crate) fn confirm_media_selection(
     let selected_path = state.borrow().media_picker.selected_media_path();
     let selected_id = state.borrow().media_picker.selected_media_id();
     if let (Some(path), Some(media_id)) = (selected_path, selected_id) {
-        // Quit the old MPV instance before launching a new one
-        let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::Quit);
+        let already_connected = state.borrow().mpv_connected;
         let state_clone = Rc::clone(state);
         let handle = tokio_handle.clone();
+        if already_connected {
+            let _ = state.borrow().cmd_tx.try_send(
+                crate::mpv::MpvCommand::LoadFile(path.clone()),
+            );
+            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
+            crate::logging::log(&format!("MEDIA_PICKER: loadfile '{}' into existing MPV", path));
+        } else {
+            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::Quit);
+        }
         glib::spawn_future_local(async move {
-            let socket_path = handle
-                .spawn_blocking(move || {
-                    if let Some((sock, _)) =
-                        crate::mpv::discovery::find_socket_for_work(&[path.clone()])
-                    {
-                        return sock.to_string_lossy().to_string();
-                    }
-                    let launched = crate::mpv::discovery::launch_mpv(&path);
-                    for _ in 0..60 {
-                        std::thread::sleep(std::time::Duration::from_millis(50));
-                        if std::path::Path::new(&launched).exists() {
-                            return launched;
+            let need_connect = if already_connected {
+                String::new()
+            } else {
+                let path_for_discover = path.clone();
+                handle
+                    .spawn_blocking(move || {
+                        if let Some((sock, _)) =
+                            crate::mpv::discovery::find_socket_for_work(&[path_for_discover.clone()])
+                        {
+                            return sock.to_string_lossy().to_string();
                         }
-                    }
-                    launched
-                })
-                .await
-                .unwrap_or_default();
+                        let launched = crate::mpv::discovery::launch_mpv(&path_for_discover);
+                        for _ in 0..60 {
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                            if std::path::Path::new(&launched).exists() {
+                                return launched;
+                            }
+                        }
+                        launched
+                    })
+                    .await
+                    .unwrap_or_default()
+            };
 
-            if !socket_path.is_empty() {
+            {
                 let mut s = state_clone.borrow_mut();
                 s.media_id = Some(media_id);
                 // Rebuild per-line timestamps for the new media_id
@@ -425,9 +438,11 @@ pub(crate) fn confirm_media_selection(
                 if let Some(ref renderer) = s.gutter_renderer {
                     renderer.queue_draw();
                 }
-                let _ = s
-                    .cmd_tx
-                    .try_send(crate::mpv::MpvCommand::Connect(socket_path));
+                if !need_connect.is_empty() {
+                    let _ = s
+                        .cmd_tx
+                        .try_send(crate::mpv::MpvCommand::Connect(need_connect));
+                }
                 s.media_picker.hide();
                 s.input_mode = crate::app::InputMode::Reader;
                 crate::logging::log(&format!(
