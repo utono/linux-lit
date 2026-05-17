@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gtk4::prelude::{AdjustmentExt, EditableExt, WidgetExt};
+use gtk4::prelude::{EditableExt, WidgetExt};
 
 use crate::app::AppState;
 use crate::input::highlight::update_highlight_and_center;
@@ -457,21 +457,28 @@ fn concordance_position_cursor(state: &mut AppState, line_mapping_id: i64) {
         }
     };
 
-    let old_line = state.current_line;
-    let old_page_top = state.page_top_line;
-    let adj_before = state.scrolled_window.vadjustment().value();
+    let conc_word = state.concordance_state.as_ref()
+        .map(|c| c.word.clone())
+        .unwrap_or_default();
+    let line_text = state.current_work.as_ref()
+        .and_then(|w| w.lines.iter().find(|l| l.id == line_mapping_id))
+        .map(|l| l.text.clone())
+        .unwrap_or_default();
+    let contains_word = line_text.to_lowercase().contains(&conc_word.to_lowercase());
+    let seek_time = state.current_work.as_ref()
+        .and_then(|w| w.lines.get(seek_work_idx))
+        .and_then(|l| l.timestamp.as_ref())
+        .map(|ts| (ts.start - SEEK_PREROLL).max(0.0));
 
     state.current_line = buf_idx;
     update_highlight_and_center(state);
 
-    let adj_after = state.scrolled_window.vadjustment().value();
     crate::logging::log(&format!(
-        "CONC_POS: line_mapping_id={} buf_idx={} seek_work_idx={} old_line={} new_line={} \
-         old_page_top={} new_page_top={} vadj_before={:.0} vadj_after={:.0}",
-        line_mapping_id, buf_idx, seek_work_idx,
-        old_line, state.current_line,
-        old_page_top, state.page_top_line,
-        adj_before, adj_after,
+        "CONC_POS: word='{}' line_id={} buf_idx={} contains_word={} \
+         seek_time={} text='{}'",
+        conc_word, line_mapping_id, buf_idx, contains_word,
+        seek_time.map(|t| format!("{:.1}", t)).unwrap_or_else(|| "NONE".to_string()),
+        if line_text.len() > 80 { &line_text[..80] } else { &line_text },
     ));
 
     concordance_seek(state, seek_work_idx);
