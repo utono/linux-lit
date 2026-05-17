@@ -417,14 +417,15 @@ pub(crate) fn concordance_seek_current(state: &mut AppState) {
     let line_id = state.concordance_state.as_ref()
         .and_then(|c| c.current_hit().map(|h| h.line_mapping_id));
     if let Some(id) = line_id {
-        if let Some((_, seek_work_idx)) = concordance_resolve_indices(state, id) {
-            if let Some(work) = &state.current_work {
-                if let Some(ts) = work.lines.get(seek_work_idx).and_then(|l| l.timestamp.as_ref()) {
+        if let Some(work) = &state.current_work {
+            if let Some(line) = work.lines.iter().find(|l| l.id == id) {
+                if let Some(ts) = line.timestamp.as_ref() {
                     let seek_time = (ts.start - SEEK_PREROLL).max(0.0);
                     state.pending_loadfile_seek = Some((seek_time, true));
                     crate::logging::log(&format!(
-                        "CONC_SEEK_CURRENT: line_id={} seek_time={:.1} — pending until file loaded",
-                        id, seek_time
+                        "CONC_SEEK_CURRENT: line_id={} seek_time={:.1} text='{}' — pending until file loaded",
+                        id, seek_time,
+                        if line.text.len() > 60 { &line.text[..60] } else { &line.text },
                     ));
                 }
             }
@@ -432,14 +433,16 @@ pub(crate) fn concordance_seek_current(state: &mut AppState) {
     }
 }
 
-/// Seek MPV to the sentence start for a concordance hit.
-fn concordance_seek(state: &mut AppState, seek_work_idx: usize) {
+/// Seek MPV to the hit line's own start time (not sentence start).
+fn concordance_seek(state: &mut AppState, line_mapping_id: i64) {
     if let Some(work) = &state.current_work {
-        if let Some(ts) = work.lines.get(seek_work_idx).and_then(|l| l.timestamp.as_ref()) {
-            state.suppress_sync_until =
-                Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
-            let seek_time = (ts.start - SEEK_PREROLL).max(0.0);
-            let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::Seek(seek_time));
+        if let Some(line) = work.lines.iter().find(|l| l.id == line_mapping_id) {
+            if let Some(ts) = line.timestamp.as_ref() {
+                state.suppress_sync_until =
+                    Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
+                let seek_time = (ts.start - SEEK_PREROLL).max(0.0);
+                let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::Seek(seek_time));
+            }
         }
     }
 }
@@ -447,7 +450,7 @@ fn concordance_seek(state: &mut AppState, seek_work_idx: usize) {
 /// Position cursor on the line with the given line_mapping_id (same-work case).
 /// The buffer layout is valid, so we scroll immediately.
 fn concordance_position_cursor(state: &mut AppState, line_mapping_id: i64) {
-    let (buf_idx, seek_work_idx) = match concordance_resolve_indices(state, line_mapping_id) {
+    let (buf_idx, _seek_work_idx) = match concordance_resolve_indices(state, line_mapping_id) {
         Some(v) => v,
         None => {
             crate::logging::log(&format!(
@@ -465,23 +468,24 @@ fn concordance_position_cursor(state: &mut AppState, line_mapping_id: i64) {
         .map(|l| l.text.clone())
         .unwrap_or_default();
     let contains_word = line_text.to_lowercase().contains(&conc_word.to_lowercase());
-    let seek_time = state.current_work.as_ref()
-        .and_then(|w| w.lines.get(seek_work_idx))
-        .and_then(|l| l.timestamp.as_ref())
-        .map(|ts| (ts.start - SEEK_PREROLL).max(0.0));
 
     state.current_line = buf_idx;
     update_highlight_and_center(state);
+
+    let hit_seek_time = state.current_work.as_ref()
+        .and_then(|w| w.lines.iter().find(|l| l.id == line_mapping_id))
+        .and_then(|l| l.timestamp.as_ref())
+        .map(|ts| (ts.start - SEEK_PREROLL).max(0.0));
 
     crate::logging::log(&format!(
         "CONC_POS: word='{}' line_id={} buf_idx={} contains_word={} \
          seek_time={} text='{}'",
         conc_word, line_mapping_id, buf_idx, contains_word,
-        seek_time.map(|t| format!("{:.1}", t)).unwrap_or_else(|| "NONE".to_string()),
+        hit_seek_time.map(|t| format!("{:.1}", t)).unwrap_or_else(|| "NONE".to_string()),
         if line_text.len() > 80 { &line_text[..80] } else { &line_text },
     ));
 
-    concordance_seek(state, seek_work_idx);
+    concordance_seek(state, line_mapping_id);
 }
 
 /// Find the first work-line index sharing the same sentence_start_time as `work_idx`.
