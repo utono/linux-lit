@@ -247,6 +247,7 @@ fn main() {
                         crate::logging::log(&format!("MPV connection: {}", connected));
                     }
                     MpvEvent::PlaybackState(playing) => {
+                        state_for_events.borrow_mut().mpv_playing = playing;
                         crate::logging::log(&format!(
                             "MPV playback: {}",
                             if playing { "playing" } else { "paused" }

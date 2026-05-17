@@ -315,7 +315,11 @@ pub fn concordance_jump_to_current(
             current_abbrev.as_deref().unwrap_or("?"), target_abbrev, target_line_id
         ));
 
-        crate::app::save_position(&mut state.borrow_mut());
+        {
+            let mut s = state.borrow_mut();
+            s.concordance_resume_playback = s.mpv_playing;
+            crate::app::save_position(&mut s);
+        }
 
         let state_clone = Rc::clone(state);
         let abbrev_for_load = target_abbrev.clone();
@@ -405,6 +409,29 @@ fn concordance_resolve_indices(state: &AppState, line_mapping_id: i64) -> Option
     };
 
     Some((buf_idx, seek_work_idx))
+}
+
+/// Seek to the current concordance hit's line and resume playback.
+/// Called after media picker confirms a selection during a cross-work jump.
+pub(crate) fn concordance_seek_current(state: &mut AppState) {
+    let line_id = state.concordance_state.as_ref()
+        .and_then(|c| c.current_hit().map(|h| h.line_mapping_id));
+    if let Some(id) = line_id {
+        if let Some((_, seek_work_idx)) = concordance_resolve_indices(state, id) {
+            if let Some(work) = &state.current_work {
+                if let Some(ts) = work.lines.get(seek_work_idx).and_then(|l| l.timestamp.as_ref()) {
+                    let seek_time = (ts.start - SEEK_PREROLL).max(0.0);
+                    state.suppress_sync_until =
+                        Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
+                    let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::ResumeAndSeek(seek_time));
+                    crate::logging::log(&format!(
+                        "CONC_SEEK_CURRENT: line_id={} seek_time={:.1} — resuming playback",
+                        id, seek_time
+                    ));
+                }
+            }
+        }
+    }
 }
 
 /// Seek MPV to the sentence start for a concordance hit.

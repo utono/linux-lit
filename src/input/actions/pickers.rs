@@ -331,6 +331,10 @@ pub(crate) fn open_media_picker(
                     crate::logging::log(&format!(
                         "MEDIA_PICKER: set media_id={}", media_id
                     ));
+                    if s.concordance_resume_playback {
+                        s.concordance_resume_playback = false;
+                        crate::input::actions::concordance::concordance_seek_current(&mut s);
+                    }
                 }
                 return;
             }
@@ -510,6 +514,10 @@ pub(crate) fn confirm_media_selection(
                     "MEDIA: switched to media_id={}",
                     media_id
                 ));
+                if s.concordance_resume_playback {
+                    s.concordance_resume_playback = false;
+                    crate::input::actions::concordance::concordance_seek_current(&mut s);
+                }
             }
         });
     }
