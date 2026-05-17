@@ -9,8 +9,8 @@ use crate::input::navigation;
 use crate::input::navigation::SEEK_PREROLL;
 use crate::input::scroll::center_cursor;
 
-/// Handle concordance word selection: partition hits by work, set up same-work
-/// concordance state, and spawn new instances for other works.
+/// Handle concordance word selection: query all hits across the author's works,
+/// store them in ConcordanceState, and jump to the first hit in the current work.
 pub(crate) fn handle_word_selection(
     state: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
@@ -44,57 +44,42 @@ pub(crate) fn handle_word_selection(
             .map(|w| w.abbrev.clone())
             .unwrap_or_default();
 
-        // Partition hits by work
-        let mut current_work_hits = Vec::new();
-        let mut other_works: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
+        let all_hits: Vec<crate::concordance::ConcordanceHit> = hits
+            .into_iter()
+            .map(|h| crate::concordance::ConcordanceHit {
+                work_abbrev: h.work_abbrev,
+                work_title: h.title,
+                author: h.author,
+                line_mapping_id: h.line_mapping_id,
+                div1: h.div1,
+                div2: h.div2,
+                line_in_div: h.line_in_div,
+                canonical_text: h.canonical_text,
+                has_audio: h.has_audio,
+            })
+            .collect();
 
-        for h in hits {
-            if h.work_abbrev == current_abbrev {
-                current_work_hits.push(crate::concordance::ConcordanceHit {
-                    work_abbrev: h.work_abbrev,
-                    work_title: h.title,
-                    author: h.author,
-                    line_mapping_id: h.line_mapping_id,
-                    div1: h.div1,
-                    div2: h.div2,
-                    line_in_div: h.line_in_div,
-                    canonical_text: h.canonical_text,
-                    has_audio: h.has_audio,
-                });
-            } else {
-                // Keep only the first hit per other work
-                other_works.entry(h.work_abbrev.clone()).or_insert(h.line_mapping_id);
-            }
+        if all_hits.is_empty() {
+            return;
         }
 
-        // Spawn a new instance for each other work
-        if !other_works.is_empty() {
-            let exe = std::env::current_exe()
-                .unwrap_or_else(|_| std::path::PathBuf::from("target/debug/linux-lit"));
-            for (abbrev, line_id) in &other_works {
-                crate::logging::log(&format!(
-                    "CONC_SPAWN: work='{}' line_id={}", abbrev, line_id
-                ));
-                let _ = std::process::Command::new(&exe)
-                    .env("LINUX_LIT_WORK", abbrev)
-                    .env("LINUX_LIT_LINE_ID", line_id.to_string())
-                    .env("LINUX_LIT_CONC_WORD", &word)
-                    .spawn();
-            }
-        }
+        let start_index = all_hits
+            .iter()
+            .position(|h| h.work_abbrev == current_abbrev)
+            .unwrap_or(0);
 
-        // Set up concordance state for current work's hits (if any)
-        if !current_work_hits.is_empty() {
-            let conc_state = crate::concordance::ConcordanceState::new(
-                word.clone(),
-                current_work_hits,
-            );
+        let mut conc_state = crate::concordance::ConcordanceState::new(
+            word.clone(),
+            all_hits,
+        );
+        conc_state.current_index = start_index;
+
+        {
             let mut s = state_clone.borrow_mut();
             s.concordance_bar.update(&conc_state.status_label(), &conc_state.status_work());
             s.concordance_state = Some(conc_state);
-            drop(s);
-            concordance_jump_to_current(&state_clone, &handle);
         }
+        concordance_jump_to_current(&state_clone, &handle);
     });
 }
 
@@ -191,7 +176,7 @@ pub(crate) fn open_picker(
 // ---------------------------------------------------------------------------
 
 /// Jump to the current concordance occurrence.
-/// Loads the work if different from current, positions cursor on the line.
+/// Loads the work in-place if different from current, positions cursor on the line.
 pub fn concordance_jump_to_current(
     state: &Rc<RefCell<AppState>>,
     _handle: &tokio::runtime::Handle,
@@ -221,35 +206,57 @@ pub fn concordance_jump_to_current(
     ));
 
     if current_abbrev.as_deref() != Some(&target_abbrev) {
-        // Cross-work jump: spawn a new instance of linux-lit with the target work/line.
-        // This avoids GTK lazy layout issues when loading large buffers in-process.
         crate::logging::log(&format!(
-            "CONC_JUMP: spawning new instance for '{}' line_id={}", target_abbrev, target_line_id
+            "CONC_JUMP: loading '{}' in-place for line_id={}", target_abbrev, target_line_id
         ));
 
-        // Pause current MPV
+        crate::app::save_position(&mut state.borrow_mut());
+
         {
             let s = state.borrow();
-            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
+            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Quit);
         }
 
-        let exe = std::env::current_exe()
-            .unwrap_or_else(|_| std::path::PathBuf::from("target/debug/linux-lit"));
-        let _ = std::process::Command::new(exe)
-            .env("LINUX_LIT_WORK", &target_abbrev)
-            .env("LINUX_LIT_LINE_ID", target_line_id.to_string())
-            .spawn();
+        let state_clone = Rc::clone(state);
+        let abbrev_for_load = target_abbrev.clone();
+        let handle = state.borrow().tokio_handle.clone();
+        glib::spawn_future_local(async move {
+            let result = handle
+                .spawn_blocking(move || {
+                    let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
+                    let work = crate::db::queries::load_work(&conn, &abbrev_for_load)?;
+                    let prepared = crate::app::prepare_text_for_display(&work);
+                    Ok::<_, rusqlite::Error>((work, prepared))
+                })
+                .await;
+            match result {
+                Ok(Ok((work, prepared))) => {
+                    {
+                        let mut s = state_clone.borrow_mut();
+                        crate::app::clear_display(&mut s);
+                        crate::app::display_work_at_with_prepared(
+                            &mut s,
+                            work,
+                            Some(target_line_id),
+                            prepared,
+                        );
+                    }
+                    let s = state_clone.borrow();
+                    concordance_update_bar(&s);
+                }
+                Ok(Err(e)) => {
+                    crate::logging::log(&format!("CONC_JUMP: load_work error: {}", e));
+                }
+                Err(e) => {
+                    crate::logging::log(&format!("CONC_JUMP: spawn_blocking error: {}", e));
+                }
+            }
+        });
     } else {
-        // Same work, just move cursor
         crate::logging::log("CONC_JUMP: same work, positioning cursor");
         let mut s = state.borrow_mut();
         concordance_position_cursor(&mut s, target_line_id);
         concordance_update_bar(&s);
-        crate::logging::log(&format!(
-            "CONC_JUMP: positioned current_line={} page_top={}",
-            s.current_line, s.page_top_line
-        ));
-        drop(s);
     }
 }
 
