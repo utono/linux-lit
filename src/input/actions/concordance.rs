@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gtk4::prelude::{AdjustmentExt, EditableExt};
+use gtk4::prelude::{AdjustmentExt, EditableExt, WidgetExt};
 
 use crate::app::AppState;
 use crate::input::highlight::update_highlight_and_center;
@@ -143,7 +143,7 @@ pub(crate) fn jump_to_prev_vocab(
     navigation::jump_to_prev_vocab(&mut state.borrow_mut());
 }
 
-/// r: advance to next concordance hit if active, else plain vocab jump.
+/// r: advance to next concordance hit. Shows toast if no concordance active.
 pub(crate) fn concordance_next(
     state: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
@@ -157,7 +157,7 @@ pub(crate) fn concordance_next(
                 c.occurrences.len(),
             ),
             None => {
-                navigation::jump_to_next_vocab(&mut state.borrow_mut());
+                show_no_concordance_toast(state);
                 return;
             }
         }
@@ -183,7 +183,7 @@ pub(crate) fn concordance_next(
     }
 }
 
-/// R: retreat to previous concordance hit if active, else plain vocab jump.
+/// R: retreat to previous concordance hit. Shows toast if no concordance active.
 pub(crate) fn concordance_prev(
     state: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
@@ -197,7 +197,7 @@ pub(crate) fn concordance_prev(
                 c.occurrences.len(),
             ),
             None => {
-                navigation::jump_to_prev_vocab(&mut state.borrow_mut());
+                show_no_concordance_toast(state);
                 return;
             }
         }
@@ -478,4 +478,14 @@ fn concordance_update_bar(state: &AppState) {
             .concordance_bar
             .update(&conc.status_label(), &conc.status_work());
     }
+}
+
+fn show_no_concordance_toast(state: &Rc<RefCell<AppState>>) {
+    let s = state.borrow();
+    s.chapter_toast.set_text("No concordance active — press Ctrl+\\ to pick a word");
+    s.chapter_toast.set_visible(true);
+    let toast = s.chapter_toast.clone();
+    glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+        toast.set_visible(false);
+    });
 }
