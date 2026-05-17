@@ -266,7 +266,9 @@ pub(crate) fn open_media_picker(
     if let Some(abbrev) = abbrev {
         let state_clone = Rc::clone(state);
         let handle = tokio_handle.clone();
+        let handle_for_confirm = tokio_handle.clone();
         glib::spawn_future_local(async move {
+            let abbrev_log = abbrev.clone();
             let items = handle
                 .spawn_blocking(move || {
                     let conn =
@@ -276,6 +278,59 @@ pub(crate) fn open_media_picker(
                 })
                 .await
                 .unwrap_or_default();
+            crate::logging::log(&format!(
+                "MEDIA_PICKER: work='{}' found {} media files", abbrev_log, items.len()
+            ));
+            if items.len() == 1 {
+                let item = &items[0];
+                crate::logging::log(&format!(
+                    "MEDIA_PICKER: auto-selecting single media: id={} path='{}'",
+                    item.media_id, item.path
+                ));
+                let path = item.path.clone();
+                let media_id = item.media_id;
+                let already_connected = state_clone.borrow().mpv_connected;
+                if already_connected {
+                    let s = state_clone.borrow();
+                    let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::LoadFile(path.clone()));
+                    let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
+                    crate::logging::log(&format!(
+                        "MEDIA_PICKER: loadfile '{}' into existing MPV", path
+                    ));
+                } else {
+                    let path_for_discover = path.clone();
+                    let socket_path = handle_for_confirm
+                        .spawn_blocking(move || {
+                            if let Some((sock, _)) =
+                                crate::mpv::discovery::find_socket_for_work(&[path_for_discover.clone()])
+                            {
+                                return sock.to_string_lossy().to_string();
+                            }
+                            let launched = crate::mpv::discovery::launch_mpv(&path_for_discover);
+                            for _ in 0..60 {
+                                std::thread::sleep(std::time::Duration::from_millis(50));
+                                if std::path::Path::new(&launched).exists() {
+                                    return launched;
+                                }
+                            }
+                            launched
+                        })
+                        .await
+                        .unwrap_or_default();
+                    if !socket_path.is_empty() {
+                        let s = state_clone.borrow();
+                        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Connect(socket_path));
+                    }
+                }
+                {
+                    let mut s = state_clone.borrow_mut();
+                    s.media_id = Some(media_id);
+                    crate::logging::log(&format!(
+                        "MEDIA_PICKER: set media_id={}", media_id
+                    ));
+                }
+                return;
+            }
             {
                 let mut s = state_clone.borrow_mut();
                 s.gloss_overlay.hide();
@@ -296,6 +351,9 @@ pub(crate) fn confirm_media_selection(
 ) {
     let selected_path = state.borrow().media_picker.selected_media_path();
     let selected_id = state.borrow().media_picker.selected_media_id();
+    crate::logging::log(&format!(
+        "MEDIA_CONFIRM: path={:?} media_id={:?}", selected_path, selected_id
+    ));
     if let (Some(path), Some(media_id)) = (selected_path, selected_id) {
         let already_connected = state.borrow().mpv_connected;
         let state_clone = Rc::clone(state);
