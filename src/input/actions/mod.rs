@@ -83,6 +83,8 @@ pub enum Action {
     VocabPopupPrev,
     JumpToNextVocab,
     JumpToPrevVocab,
+    ConcordanceNext,
+    ConcordancePrev,
     ToggleVocabHighlight,
     ToggleGlossOverlay,
     OpenGlossPicker,
@@ -182,7 +184,9 @@ impl Action {
             | Action::OpenGlossPicker
             | Action::OpenConcordancePicker
             | Action::OpenConcordanceWordPicker
-            | Action::OpenConcordanceListPicker => Category::Vocab,
+            | Action::OpenConcordanceListPicker
+            | Action::ConcordanceNext
+            | Action::ConcordancePrev => Category::Vocab,
 
             // Display
             Action::AdjustFontSizeUp
@@ -279,6 +283,8 @@ impl Action {
             Action::ToggleVocabHighlight => "ToggleVocabHighlight",
             Action::ToggleGlossOverlay => "ToggleGlossOverlay",
             Action::OpenGlossPicker => "OpenGlossPicker",
+            Action::ConcordanceNext => "ConcordanceNext",
+            Action::ConcordancePrev => "ConcordancePrev",
             Action::EnterVisualMode => "EnterVisualMode",
             Action::WordCycleCopy => "WordCycleCopy",
             Action::WordCollectCopy => "WordCollectCopy",

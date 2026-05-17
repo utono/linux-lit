@@ -266,6 +266,8 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl("backslash"), Action::OpenConcordancePicker),
         (KeyCombo::ctrl_shift("P"), Action::OpenConcordanceWordPicker),
         (KeyCombo::ctrl_alt("p"), Action::OpenConcordanceListPicker),
+        (KeyCombo::ctrl("n"), Action::ConcordanceNext),
+        (KeyCombo::ctrl("p"), Action::ConcordancePrev),
         (KeyCombo::alt("g"), Action::OpenGlossPicker),
         (KeyCombo::plain("H"), Action::ToggleSynopsis),
     ]

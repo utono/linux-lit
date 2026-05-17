@@ -853,6 +853,8 @@ fn dispatch_action(
         }
         JumpToNextVocab => crate::input::actions::concordance::jump_to_next_vocab(state, tokio_handle),
         JumpToPrevVocab => crate::input::actions::concordance::jump_to_prev_vocab(state, tokio_handle),
+        ConcordanceNext => crate::input::actions::concordance::concordance_next(state, tokio_handle),
+        ConcordancePrev => crate::input::actions::concordance::concordance_prev(state, tokio_handle),
         ToggleVocabHighlight => {
             let mut s = state.borrow_mut();
             s.vocab_highlight_visible = !s.vocab_highlight_visible;
