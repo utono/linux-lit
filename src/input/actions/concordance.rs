@@ -311,16 +311,11 @@ pub fn concordance_jump_to_current(
 
     if current_abbrev.as_deref() != Some(&target_abbrev) {
         crate::logging::log(&format!(
-            "CONC_JUMP: CROSS-WORK from '{}' to '{}' line_id={} — saving position, quitting MPV",
+            "CONC_JUMP: CROSS-WORK from '{}' to '{}' line_id={} — saving position",
             current_abbrev.as_deref().unwrap_or("?"), target_abbrev, target_line_id
         ));
 
         crate::app::save_position(&mut state.borrow_mut());
-
-        {
-            let s = state.borrow();
-            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Quit);
-        }
 
         let state_clone = Rc::clone(state);
         let abbrev_for_load = target_abbrev.clone();
