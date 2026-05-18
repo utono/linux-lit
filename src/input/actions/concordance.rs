@@ -525,11 +525,15 @@ fn concordance_position_cursor(state: &mut AppState, line_mapping_id: i64) {
         .and_then(|l| l.timestamp.as_ref())
         .map(|ts| (ts.start - SEEK_PREROLL).max(0.0));
 
+    let lpp = crate::input::viewport::lines_per_page(state);
+    let cursor_offset = state.current_line.saturating_sub(state.page_top_line);
     crate::logging::log(&format!(
         "CONC_POS: word='{}' line_id={} buf_idx={} contains_word={} \
-         seek_time={} text='{}'",
+         seek_time={} page_top={} cursor={} lpp={} offset_from_top={} \
+         text='{}'",
         conc_word, line_mapping_id, buf_idx, contains_word,
         hit_seek_time.map(|t| format!("{:.1}", t)).unwrap_or_else(|| "NONE".to_string()),
+        state.page_top_line, state.current_line, lpp, cursor_offset,
         if line_text.len() > 80 { &line_text[..80] } else { &line_text },
     ));
 
