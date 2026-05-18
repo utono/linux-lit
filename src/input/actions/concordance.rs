@@ -400,20 +400,52 @@ pub fn concordance_jump_to_current(
                         );
                         update_highlight_and_center(&mut s);
                     }
+                    // Try to auto-select Arkangel media for Shakespeare
+                    let auto_media = {
+                        let s = state_clone.borrow();
+                        s.current_work.as_ref().and_then(|w| {
+                            w.media_paths.iter().zip(w.media_ids.iter())
+                                .find(|(p, _)| p.contains("/aax-Arkangel/"))
+                                .map(|(p, id)| (p.clone(), *id))
+                        })
+                    };
+
                     {
                         let s = state_clone.borrow();
                         concordance_update_bar(&s);
                         crate::logging::log(&format!(
                             "CONC_JUMP: CROSS-WORK loaded '{}' lines={} timestamps={} \
-                             current_line={} page_top={} — opening media picker",
+                             current_line={} page_top={} auto_media={:?}",
                             work_title, lines_count, ts_count,
                             s.current_line, s.page_top_line,
+                            auto_media.as_ref().map(|(_, id)| id),
                         ));
                     }
-                    let handle_for_picker = state_clone.borrow().tokio_handle.clone();
-                    crate::input::actions::pickers::open_media_picker(
-                        &state_clone, &handle_for_picker,
-                    );
+
+                    if let Some((path, media_id)) = auto_media {
+                        let already_connected = state_clone.borrow().mpv_connected;
+                        if already_connected {
+                            let s = state_clone.borrow();
+                            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::LoadFile(path.clone()));
+                            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
+                            crate::logging::log(&format!(
+                                "CONC_JUMP: auto-selected Arkangel media_id={} path='{}'", media_id, path
+                            ));
+                        }
+                        {
+                            let mut s = state_clone.borrow_mut();
+                            s.media_id = Some(media_id);
+                            if s.concordance_resume_playback {
+                                s.concordance_resume_playback = false;
+                                concordance_seek_current(&mut s);
+                            }
+                        }
+                    } else {
+                        let handle_for_picker = state_clone.borrow().tokio_handle.clone();
+                        crate::input::actions::pickers::open_media_picker(
+                            &state_clone, &handle_for_picker,
+                        );
+                    }
                 }
                 Ok(Err(e)) => {
                     crate::logging::log(&format!("CONC_JUMP: load_work error: {}", e));
