@@ -48,6 +48,38 @@ impl ConcordanceState {
         true
     }
 
+    /// Advance to the next occurrence in the same work. Wraps within same-work hits.
+    pub fn advance_in_work(&mut self, work_abbrev: &str) -> bool {
+        if self.occurrences.is_empty() {
+            return false;
+        }
+        let len = self.occurrences.len();
+        for i in 1..=len {
+            let idx = (self.current_index + i) % len;
+            if self.occurrences[idx].work_abbrev == work_abbrev {
+                self.current_index = idx;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Retreat to the previous occurrence in the same work. Wraps within same-work hits.
+    pub fn retreat_in_work(&mut self, work_abbrev: &str) -> bool {
+        if self.occurrences.is_empty() {
+            return false;
+        }
+        let len = self.occurrences.len();
+        for i in 1..=len {
+            let idx = (self.current_index + len - i) % len;
+            if self.occurrences[idx].work_abbrev == work_abbrev {
+                self.current_index = idx;
+                return true;
+            }
+        }
+        false
+    }
+
     /// Current hit, if any.
     pub fn current_hit(&self) -> Option<&ConcordanceHit> {
         self.occurrences.get(self.current_index)

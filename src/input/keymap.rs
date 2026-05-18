@@ -972,14 +972,18 @@ fn dispatch_action(
             KeyState::start_chord(key_state, ChordState::PendingZ);
         }
 
-        // Search (in reader, when matches present)
+        // Search / concordance-in-work (n/p)
         SearchNextMatch => {
-            if !state.borrow().search_matches.is_empty() {
+            if state.borrow().concordance_state.is_some() {
+                crate::input::actions::concordance::concordance_next_in_work(state, tokio_handle);
+            } else if !state.borrow().search_matches.is_empty() {
                 crate::input::search::next_match(&mut state.borrow_mut());
             }
         }
         SearchPrevMatch => {
-            if !state.borrow().search_matches.is_empty() {
+            if state.borrow().concordance_state.is_some() {
+                crate::input::actions::concordance::concordance_prev_in_work(state, tokio_handle);
+            } else if !state.borrow().search_matches.is_empty() {
                 crate::input::search::prev_match(&mut state.borrow_mut());
             }
         }

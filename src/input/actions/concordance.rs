@@ -223,6 +223,52 @@ pub(crate) fn concordance_prev(
     }
 }
 
+/// n: next concordance hit in current work only. No-op if no hits in this work.
+pub(crate) fn concordance_next_in_work(
+    state: &Rc<RefCell<AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+) {
+    let current_abbrev = state.borrow().current_work.as_ref().map(|w| w.abbrev.clone());
+    let abbrev = match current_abbrev {
+        Some(a) => a,
+        None => return,
+    };
+    let advanced = {
+        let mut s = state.borrow_mut();
+        if let Some(conc) = s.concordance_state.as_mut() {
+            conc.advance_in_work(&abbrev)
+        } else {
+            false
+        }
+    };
+    if advanced {
+        concordance_jump_to_current(state, tokio_handle);
+    }
+}
+
+/// p: prev concordance hit in current work only. No-op if no hits in this work.
+pub(crate) fn concordance_prev_in_work(
+    state: &Rc<RefCell<AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+) {
+    let current_abbrev = state.borrow().current_work.as_ref().map(|w| w.abbrev.clone());
+    let abbrev = match current_abbrev {
+        Some(a) => a,
+        None => return,
+    };
+    let retreated = {
+        let mut s = state.borrow_mut();
+        if let Some(conc) = s.concordance_state.as_mut() {
+            conc.retreat_in_work(&abbrev)
+        } else {
+            false
+        }
+    };
+    if retreated {
+        concordance_jump_to_current(state, tokio_handle);
+    }
+}
+
 /// Open the concordance picker, populating it with all content words
 /// from the current author's works (minus stopwords). Called from `Ctrl+\`.
 pub(crate) fn open_picker(
