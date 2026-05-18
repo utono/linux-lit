@@ -398,6 +398,7 @@ pub fn concordance_jump_to_current(
                             Some(target_line_id),
                             prepared,
                         );
+                        update_highlight_and_center(&mut s);
                     }
                     {
                         let s = state_clone.borrow();
