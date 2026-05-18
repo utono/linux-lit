@@ -2927,6 +2927,7 @@ fn reapply_font(state: &AppState) {
     state.translation_text_tag.set_font_desc(Some(&trans_desc));
     let highest = state.buffer.tag_table().size() - 1;
     state.translation_text_tag.set_priority(highest);
+    state.authorship_tag.set_priority(highest.saturating_sub(1).max(1));
     crate::logging::log(&format!("FONT: reapply_font size={}pt via TextTag", state.config.font_size));
     update_spacer_heights(state);
 }
