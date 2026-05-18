@@ -437,6 +437,28 @@ pub(crate) fn is_blank_buffer_line(buffer: &sourceview5::Buffer, line: usize) ->
     text.trim().is_empty()
 }
 
+/// Check if a buffer line is inside a multi-line stage direction `[...]` block.
+/// Scans backward (up to 10 lines) looking for an unclosed `[` opener.
+pub(crate) fn is_inside_stage_direction(buffer: &sourceview5::Buffer, line: usize) -> bool {
+    let text = buffer_line_text(buffer, line);
+    let trimmed = text.trim();
+    if crate::db::line_types::is_stage_direction(trimmed) {
+        return true;
+    }
+    let start = line.saturating_sub(10);
+    for i in (start..line).rev() {
+        let prev = buffer_line_text(buffer, i);
+        let prev_trimmed = prev.trim();
+        if prev_trimmed.ends_with(']') {
+            return false;
+        }
+        if prev_trimmed.starts_with('[') && !prev_trimmed.ends_with(']') {
+            return true;
+        }
+    }
+    false
+}
+
 /// Check if a buffer line is a dialogue line (not blank, speaker, stage direction, or marker).
 pub(crate) fn is_dialogue_line(buffer: &sourceview5::Buffer, line: usize) -> bool {
     use crate::db::line_types;
@@ -447,6 +469,7 @@ pub(crate) fn is_dialogue_line(buffer: &sourceview5::Buffer, line: usize) -> boo
         && !line_types::is_stage_direction(trimmed)
         && !line_types::is_act_scene_marker(trimmed)
         && !line_types::is_separator(trimmed)
+        && !is_inside_stage_direction(buffer, line)
 }
 
 /// Find the next dialogue line after `current`. Skips translation lines.
@@ -494,10 +517,8 @@ pub(crate) fn prev_dialogue_line(
 
 /// Find the next dialogue line at or after `from`.
 pub(crate) fn next_dialogue_from(buffer: &sourceview5::Buffer, from: usize, line_count: usize) -> usize {
-    use crate::db::line_types;
     for i in from..line_count {
-        let text = buffer_line_text(buffer, i);
-        if !line_types::is_blank(&text) && line_types::is_dialogue(&text, false) {
+        if is_dialogue_line(buffer, i) {
             return i;
         }
     }
@@ -506,12 +527,10 @@ pub(crate) fn next_dialogue_from(buffer: &sourceview5::Buffer, from: usize, line
 
 /// Find the last dialogue line in the range [from, from+count).
 pub(crate) fn last_dialogue_in_page(buffer: &sourceview5::Buffer, from: usize, count: usize, line_count: usize) -> usize {
-    use crate::db::line_types;
     let end = (from + count).min(line_count);
     let mut last = from;
     for i in from..end {
-        let text = buffer_line_text(buffer, i);
-        if !line_types::is_blank(&text) && line_types::is_dialogue(&text, false) {
+        if is_dialogue_line(buffer, i) {
             last = i;
         }
     }
@@ -550,6 +569,7 @@ pub(crate) fn back_up_for_speaker(buffer: &sourceview5::Buffer, line: usize) -> 
         if trimmed.is_empty()
             || line_types::is_speaker(trimmed)
             || line_types::is_stage_direction(trimmed)
+            || is_inside_stage_direction(buffer, top - 1)
         {
             top -= 1;
         } else {

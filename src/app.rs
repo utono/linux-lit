@@ -68,6 +68,7 @@ pub struct AppState {
     pub current_line: usize,
     pub prev_highlight_line: std::cell::Cell<Option<usize>>,
     pub page_top_line: usize,
+    pub page_back_stack: Vec<usize>,
     pub dim_tag: gtk4::TextTag,
     pub cursor_line_tag: gtk4::TextTag,
     pub cursor_fade_tag: gtk4::TextTag,
@@ -810,6 +811,7 @@ pub fn build_window(
         current_line: 0,
         prev_highlight_line: std::cell::Cell::new(None),
         page_top_line: 0,
+        page_back_stack: Vec::new(),
         dim_tag,
         cursor_line_tag,
         cursor_fade_tag,
@@ -1593,6 +1595,7 @@ pub fn display_work_at_with_prepared(
 
     state.current_line = saved_line;
     state.page_top_line = 0;
+    state.page_back_stack.clear();
     state.last_visible_range.set(None);
     *state.page_tops.borrow_mut() = None;
     state.visual_selection = None;
@@ -3050,9 +3053,31 @@ pub fn remove_vocab_highlighting(state: &AppState) {
 }
 
 /// Get the (div1, div2) of the scene at the current line.
+/// When current_line is on an unmapped buffer line (scene header, separator,
+/// stage direction), walks forward then backward to find the nearest mapped line.
 pub fn current_scene_divs(state: &AppState) -> (i64, i64) {
-    if let Some(ref work) = state.current_work {
-        if let Some(work_idx) = state.work_line_for_buffer(state.current_line) {
+    let work = match state.current_work.as_ref() {
+        Some(w) => w,
+        None => return (0, 0),
+    };
+    let line_count = state.effective_line_count();
+    // Try current line first
+    if let Some(work_idx) = state.work_line_for_buffer(state.current_line) {
+        if let Some(line) = work.lines.get(work_idx) {
+            return (line.div1, line.div2);
+        }
+    }
+    // Walk forward to find the nearest mapped line (the first dialogue of the scene)
+    for bl in (state.current_line + 1)..line_count {
+        if let Some(work_idx) = state.work_line_for_buffer(bl) {
+            if let Some(line) = work.lines.get(work_idx) {
+                return (line.div1, line.div2);
+            }
+        }
+    }
+    // Walk backward as fallback
+    for bl in (0..state.current_line).rev() {
+        if let Some(work_idx) = state.work_line_for_buffer(bl) {
             if let Some(line) = work.lines.get(work_idx) {
                 return (line.div1, line.div2);
             }
@@ -3113,7 +3138,13 @@ pub fn show_synopsis(state: &mut AppState) {
         state.current_line, div1, div2, state.synopsis_cache.contains_key(&(div1, div2))
     ));
     if let Some(synopsis) = state.synopsis_cache.get(&(div1, div2)) {
-        let scene_label = format!("Act {}, Scene {}", div1, div2);
+        let scene_label = if div1 == 0 && div2 == 0 {
+            "Prologue".to_string()
+        } else if div2 == 0 {
+            format!("Act {}, Chorus", div1)
+        } else {
+            format!("Act {}, Scene {}", div1, div2)
+        };
         state.vocab_popup.update_synopsis(&scene_label, synopsis);
         state.vocab_popup.show();
         update_vocab_popup_margin(state);

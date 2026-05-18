@@ -74,7 +74,7 @@ const HOME_ROW: &[KeyDef] = &[
     key("i", "I", "translations", "", &[("M-i", "set end time")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
     key("h", "H", "auto vocab", "H: synopsis", &[]),
-    ub("t", "T"),
+    key("t", "T", "", "", &[("M-t", "title tog")]),
     key("n", "N", "next match", "N: prev match", &[]),
     bare("s", "S", "sync tog"),
     key("-", "_", "", "", &[("C--", "recent")]),

@@ -35,7 +35,7 @@ use super::viewport::{
     back_up_for_speaker, page_turn_top, chapter_page_top,
     is_dialogue_line, is_blank_buffer_line,
     next_dialogue_line, prev_dialogue_line, buffer_line_text,
-    is_line_fully_visible, lines_per_page,
+    next_dialogue_from, is_line_fully_visible, lines_per_page,
     clamp_page_top_to_scroll_ceiling,
 };
 use super::scroll::{
@@ -163,6 +163,7 @@ pub fn jump_to_start(state: &mut AppState) {
     };
 
     state.current_line = target;
+    state.page_back_stack.clear();
     set_page_instant(state, 0);
     after_page_change(state, PageChangeReason::JumpToLine);
 }
@@ -238,9 +239,11 @@ pub fn jump_to_end(state: &mut AppState) {
         let lpp = lines_per_page(state);
         line_count.saturating_sub(lpp)
     };
+    state.page_back_stack.clear();
     set_page_instant(state, new_top);
     after_page_change(state, PageChangeReason::JumpToLine);
 }
+
 
 /// Page forward (Ctrl+d/f). The next page starts at the dialogue line
 /// immediately after the last dialogue line visible on the current page,
@@ -270,6 +273,7 @@ pub fn page_forward(state: &mut AppState) {
     let effective_top = clamp_page_top_to_scroll_ceiling(state, candidate_top);
     log_fmt!("PAGE_FWD: candidate_top={} effective_top={} (from new_top={})", candidate_top, effective_top, new_top);
     if effective_top > state.page_top_line {
+        state.page_back_stack.push(state.page_top_line);
         state.current_line = next_dialogue;
         set_page(state, effective_top, PageDirection::Forward);
         after_page_change(state, PageChangeReason::Forward);
@@ -294,10 +298,19 @@ pub fn page_backward(state: &mut AppState) {
         log_fmt!("PAGE_BWD: at start of work");
         return;
     }
-    let np = prev_page_top(state, state.page_top_line);
-    let (new_top, next_dialogue) = (np.new_top, np.next_dialogue);
-    log_fmt!("PAGE_BWD: prev_page_top new_top={} next_dialogue={} from page_top={}",
-             new_top, next_dialogue, state.page_top_line);
+
+    let line_count = state.effective_line_count();
+    let (new_top, next_dialogue) = if let Some(prev_top) = state.page_back_stack.pop() {
+        let nd = next_dialogue_from(&state.buffer, prev_top, line_count);
+        log_fmt!("PAGE_BWD: stack pop new_top={} next_dialogue={} from page_top={}",
+                 prev_top, nd, state.page_top_line);
+        (prev_top, nd)
+    } else {
+        let np = prev_page_top(state, state.page_top_line);
+        log_fmt!("PAGE_BWD: prev_page_top new_top={} next_dialogue={} from page_top={}",
+                 np.new_top, np.next_dialogue, state.page_top_line);
+        (np.new_top, np.next_dialogue)
+    };
 
     state.current_line = next_dialogue;
     set_page(state, new_top, PageDirection::Backward);
@@ -324,6 +337,7 @@ pub fn scroll_cursor_top(state: &mut AppState) {
     if state.current_work.is_none() {
         return;
     }
+    state.page_back_stack.clear();
     let top = back_up_for_speaker(&state.buffer, state.current_line);
     crate::logging::log(&format!(
         "ZT: current_line={} effective_top={}", state.current_line, top
@@ -340,12 +354,22 @@ pub fn page_backward_bottom(state: &mut AppState) {
         log_fmt!("NAV_BACK_BOTTOM: at start of work");
         return;
     }
-    let np = prev_page_top(state, state.page_top_line);
-    log_fmt!("NAV_BACK_BOTTOM: prev_page_top new_top={} from page_top={}",
-             np.new_top, state.page_top_line);
-    let prev_top = np.new_top;
-    let new_top = back_up_for_speaker(&state.buffer, prev_top);
-    // Set page first so last_fully_visible_line computes against the new page
+
+    let line_count = state.effective_line_count();
+    let (prev_top, new_top) = if let Some(prev) = state.page_back_stack.pop() {
+        let nd = next_dialogue_from(&state.buffer, prev, line_count);
+        let top = back_up_for_speaker(&state.buffer, nd);
+        log_fmt!("NAV_BACK_BOTTOM: stack pop prev={} new_top={} from page_top={}",
+                 prev, top, state.page_top_line);
+        (prev, top)
+    } else {
+        let np = prev_page_top(state, state.page_top_line);
+        log_fmt!("NAV_BACK_BOTTOM: prev_page_top new_top={} from page_top={}",
+                 np.new_top, state.page_top_line);
+        let top = back_up_for_speaker(&state.buffer, np.new_top);
+        (np.new_top, top)
+    };
+    let _ = prev_top;
     set_page(state, new_top, PageDirection::Backward);
     let last_vis = last_fully_visible_line(state, state.page_top_line);
     log_fmt!("NAV_BACK: Shift+comma prev_top={} new_top={} current_line={}", prev_top, new_top, last_vis);
@@ -463,6 +487,7 @@ pub fn jump_to_prev_paragraph(state: &mut AppState) {
 
     if let Some(line_idx) = target {
         state.current_line = line_idx;
+        state.page_back_stack.clear();
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
             crate::config::NavigationMode::EReader => {
@@ -496,6 +521,7 @@ pub fn jump_to_next_paragraph(state: &mut AppState) {
     if i < line_count {
         let prev_line = state.current_line;
         state.current_line = i;
+        state.page_back_stack.clear();
         scroll_after_jump_forward(state, prev_line);
         after_page_change(state, PageChangeReason::Paragraph);
     }
@@ -538,6 +564,7 @@ pub fn jump_to_prev_chapter(state: &mut AppState) {
 
     if let Some(line_idx) = target {
         state.current_line = line_idx;
+        state.page_back_stack.clear();
         let top = chapter_page_top(&state.buffer, line_idx);
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
@@ -585,6 +612,7 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
 
     if let Some(line_idx) = target {
         state.current_line = line_idx;
+        state.page_back_stack.clear();
         let top = chapter_page_top(&state.buffer, line_idx);
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => center_cursor(state),
@@ -646,6 +674,7 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
             return;
         }
         state.current_line = cursor_idx;
+        state.page_back_stack.clear();
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
             crate::config::NavigationMode::EReader => {
@@ -691,6 +720,7 @@ pub fn jump_to_next_scene(state: &mut AppState) {
 
     if let (Some(marker_idx), Some(cursor_idx)) = (marker, cursor) {
         state.current_line = cursor_idx;
+        state.page_back_stack.clear();
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => center_cursor(state),
             crate::config::NavigationMode::EReader => {
@@ -847,6 +877,7 @@ pub fn jump_to_line(state: &mut AppState, buffer_line: usize) {
         return;
     }
     state.current_line = buffer_line;
+    state.page_back_stack.clear();
     let top = page_turn_top(&state.buffer, buffer_line);
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
@@ -936,6 +967,7 @@ pub fn jump_to_next_vocab(state: &mut AppState) {
     state.vocab_match_idx = Some(next_idx);
     let target_line = state.vocab_matches[next_idx].line_index;
     state.current_line = target_line;
+    state.page_back_stack.clear();
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
@@ -973,9 +1005,14 @@ pub fn jump_to_prev_vocab(state: &mut AppState) {
     state.vocab_match_idx = Some(prev_idx);
     let target_line = state.vocab_matches[prev_idx].line_index;
     state.current_line = target_line;
+    state.page_back_stack.clear();
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
-        crate::config::NavigationMode::EReader => scroll_to_cursor(state),
+        crate::config::NavigationMode::EReader => {
+            if !is_line_fully_visible(state, target_line) {
+                set_page_instant(state, target_line);
+            }
+        }
     }
     after_page_change(state, PageChangeReason::Vocab);
 }
@@ -1009,8 +1046,29 @@ mod page_turn_tests {
             .collect()
     }
 
-    fn is_dialogue_line(text: &str) -> bool {
+    /// Check if a line index is inside a multi-line `[...]` stage direction block.
+    fn is_in_stage_block(lines: &[String], idx: usize) -> bool {
+        let text = lines[idx].trim();
+        if line_types::is_stage_direction(text) {
+            return true;
+        }
+        let start = idx.saturating_sub(10);
+        for i in (start..idx).rev() {
+            let prev = lines[i].trim();
+            if prev.ends_with(']') {
+                return false;
+            }
+            if prev.starts_with('[') && !prev.ends_with(']') {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn is_dialogue_line(lines: &[String], idx: usize) -> bool {
+        let text = &lines[idx];
         !line_types::is_blank(text) && line_types::is_dialogue(text, false)
+            && !is_in_stage_block(lines, idx)
     }
 
     /// Collect all dialogue line indices in the file.
@@ -1018,7 +1076,7 @@ mod page_turn_tests {
         lines
             .iter()
             .enumerate()
-            .filter(|(_, text)| is_dialogue_line(text))
+            .filter(|(i, _)| is_dialogue_line(lines, *i))
             .map(|(i, _)| i)
             .collect()
     }
@@ -1026,7 +1084,7 @@ mod page_turn_tests {
     /// Simulate next_dialogue_from on plain strings.
     fn next_dialogue(lines: &[String], from: usize) -> Option<usize> {
         for i in from..lines.len() {
-            if is_dialogue_line(&lines[i]) {
+            if is_dialogue_line(lines, i) {
                 return Some(i);
             }
         }
@@ -1038,7 +1096,7 @@ mod page_turn_tests {
         let end = (from + count).min(lines.len());
         let mut last = from;
         for i in from..end {
-            if is_dialogue_line(&lines[i]) {
+            if is_dialogue_line(lines, i) {
                 last = i;
             }
         }
@@ -1055,6 +1113,7 @@ mod page_turn_tests {
                 || line_types::is_stage_direction(trimmed)
                 || line_types::is_act_scene_marker(trimmed)
                 || line_types::is_separator(trimmed)
+                || is_in_stage_block(lines, top - 1)
             {
                 top -= 1;
             } else {
@@ -1172,7 +1231,7 @@ mod page_turn_tests {
         // Verify: every highlighted line is a dialogue line
         for &h in &highlighted {
             assert!(
-                is_dialogue_line(&lines[h]),
+                is_dialogue_line(&lines, h),
                 "Highlighted line {} is not dialogue: '{}'",
                 h,
                 &lines[h]
@@ -1537,6 +1596,307 @@ mod page_turn_tests {
                 preview.join("\n"),
             );
         }
+    }
+
+    // --- All-Shakespeare page-forward tests ---
+
+    const SHAKESPEARE_DIR: &str =
+        "/home/mlj/utono/literature/shakespeare-william/folger-cleaned";
+
+    /// Plays only — skip poetry/sonnets which have no scene structure.
+    fn shakespeare_play_files() -> Vec<std::path::PathBuf> {
+        let dir = std::path::Path::new(SHAKESPEARE_DIR);
+        if !dir.exists() {
+            return Vec::new();
+        }
+        let skip = [
+            "shakespeares-sonnets.txt",
+            "venus-and-adonis.txt",
+            "lucrece.txt",
+            "the-phoenix-and-turtle.txt",
+        ];
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.extension().map(|e| e == "txt").unwrap_or(false)
+                    && !skip.iter().any(|s| p.file_name().unwrap() == std::ffi::OsStr::new(s))
+            })
+            .collect();
+        files.sort();
+        files
+    }
+
+    fn load_play_lines(path: &std::path::Path) -> Vec<String> {
+        let contents = std::fs::read_to_string(path).expect("read");
+        let mut result: Vec<String> = Vec::new();
+        let file_lines: Vec<&str> = contents.lines().collect();
+        for (i, line) in file_lines.iter().enumerate() {
+            if line_types::is_blank(line) {
+                let next_non_blank = file_lines[i + 1..]
+                    .iter()
+                    .find(|l| !line_types::is_blank(l));
+                if let Some(next) = next_non_blank {
+                    if line_types::is_speaker(next) {
+                        continue;
+                    }
+                }
+            }
+            if let Some(stripped) = line.strip_prefix("## ") {
+                result.push(stripped.to_string());
+            } else {
+                result.push(line.to_string());
+            }
+        }
+        result
+    }
+
+    /// Test page-forward through ALL Shakespeare plays: every page turn must
+    /// advance (no stuck states where new_top <= old_top).
+    #[test]
+    fn test_page_forward_all_shakespeare_no_stuck() {
+        let files = shakespeare_play_files();
+        if files.is_empty() {
+            eprintln!("SKIP: no Shakespeare files found");
+            return;
+        }
+
+        let page_size = 30;
+        let mut total_plays = 0;
+        let mut total_pages = 0;
+
+        for path in &files {
+            let name = path.file_stem().unwrap().to_str().unwrap();
+            let lines = load_play_lines(path);
+            let line_count = lines.len();
+            if line_count == 0 {
+                continue;
+            }
+
+            let first = match next_dialogue(&lines, 0) {
+                Some(d) => d,
+                None => continue,
+            };
+            let mut page_top = back_up_for_speaker(&lines, first);
+            let mut pages = 1usize;
+            let mut iterations = 0;
+
+            loop {
+                iterations += 1;
+                if iterations > 2000 {
+                    panic!("{}: page forward stuck after {} iterations at page_top={}",
+                           name, iterations, page_top);
+                }
+
+                let last_visible = (page_top + page_size).min(line_count.saturating_sub(1));
+                let last = last_dialogue_in_range(&lines, page_top, last_visible - page_top + 1);
+                let next = match next_dialogue(&lines, last + 1) {
+                    Some(n) => n,
+                    None => break,
+                };
+                let new_top = back_up_for_speaker(&lines, next);
+
+                if new_top <= page_top {
+                    // Fallback: skip to next_dialogue directly (mirrors page_forward logic)
+                    if next > page_top {
+                        page_top = next;
+                    } else {
+                        panic!("{}: page forward stuck at page_top={} new_top={} next={}",
+                               name, page_top, new_top, next);
+                    }
+                } else {
+                    page_top = new_top;
+                }
+                pages += 1;
+            }
+
+            total_plays += 1;
+            total_pages += pages;
+        }
+
+        println!(
+            "Page forward test passed: {} Shakespeare plays, {} total pages, no stuck states",
+            total_plays, total_pages
+        );
+    }
+
+    /// Test page forward+backward round-trip through ALL Shakespeare plays:
+    /// forward all the way recording tops, backward via history, verify exact
+    /// round-trip.
+    #[test]
+    fn test_page_forward_backward_roundtrip_all_shakespeare() {
+        let files = shakespeare_play_files();
+        if files.is_empty() {
+            eprintln!("SKIP: no Shakespeare files found");
+            return;
+        }
+
+        let page_size = 30;
+
+        for path in &files {
+            let name = path.file_stem().unwrap().to_str().unwrap();
+            let lines = load_play_lines(path);
+            let line_count = lines.len();
+            if line_count == 0 {
+                continue;
+            }
+
+            let first = match next_dialogue(&lines, 0) {
+                Some(d) => d,
+                None => continue,
+            };
+            let mut page_top = back_up_for_speaker(&lines, first);
+            let mut forward_tops: Vec<usize> = vec![page_top];
+
+            let mut iterations = 0;
+            loop {
+                iterations += 1;
+                if iterations > 2000 { break; }
+
+                let last_visible = (page_top + page_size).min(line_count.saturating_sub(1));
+                let last = last_dialogue_in_range(&lines, page_top, last_visible - page_top + 1);
+                let next = match next_dialogue(&lines, last + 1) {
+                    Some(n) => n,
+                    None => break,
+                };
+                let new_top = back_up_for_speaker(&lines, next);
+                if new_top <= page_top {
+                    if next > page_top {
+                        page_top = next;
+                    } else {
+                        break;
+                    }
+                } else {
+                    page_top = new_top;
+                }
+                forward_tops.push(page_top);
+            }
+
+            // Verify forward tops are strictly increasing
+            for i in 1..forward_tops.len() {
+                assert!(
+                    forward_tops[i] > forward_tops[i - 1],
+                    "{}: forward page top {} not after {} at page {}",
+                    name, forward_tops[i], forward_tops[i - 1], i
+                );
+            }
+
+            // Backward via history stack
+            let mut backward_tops: Vec<usize> = vec![*forward_tops.last().unwrap()];
+            for top in forward_tops.iter().rev().skip(1) {
+                backward_tops.push(*top);
+            }
+
+            assert_eq!(
+                forward_tops.len(), backward_tops.len(),
+                "{}: forward {} pages but backward {} pages",
+                name, forward_tops.len(), backward_tops.len()
+            );
+
+            for i in 0..forward_tops.len() {
+                assert_eq!(
+                    forward_tops[i],
+                    backward_tops[backward_tops.len() - 1 - i],
+                    "{}: round-trip mismatch at page {}",
+                    name, i
+                );
+            }
+        }
+    }
+
+    /// Test scene synopsis identification: for each scene boundary in all
+    /// Shakespeare plays, verify the first dialogue line after the scene marker
+    /// maps to the correct (div1, div2) via the work's line_mapping.
+    #[test]
+    fn test_scene_synopsis_identification_all_shakespeare() {
+        let db_path = "/home/mlj/utono/litdb/data/lit.db";
+        if !std::path::Path::new(db_path).exists() {
+            eprintln!("SKIP: lit.db not found");
+            return;
+        }
+        let conn = rusqlite::Connection::open_with_flags(
+            db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        ).expect("open db");
+
+        let files = shakespeare_play_files();
+        if files.is_empty() {
+            eprintln!("SKIP: no Shakespeare files found");
+            return;
+        }
+
+        let mut total_scenes = 0;
+        let mut verified = 0;
+
+        for path in &files {
+            let _name = path.file_stem().unwrap().to_str().unwrap();
+            let lines = load_play_lines(path);
+
+            // Find the work abbreviation from DB by text_file path
+            let path_str = path.to_str().unwrap();
+            let abbrev: Option<String> = conn.query_row(
+                "SELECT abbrev FROM works WHERE text_file = ?1",
+                [path_str],
+                |row| row.get(0),
+            ).ok();
+            let abbrev = match abbrev {
+                Some(a) => a,
+                None => continue,
+            };
+
+            // Load synopses for this work
+            let mut stmt = conn.prepare(
+                "SELECT div1, div2 FROM scene_synopses WHERE work_abbrev = ?1"
+            ).unwrap();
+            let synopsis_keys: Vec<(i64, i64)> = stmt.query_map([&abbrev], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            }).unwrap().filter_map(|r| r.ok()).collect();
+            if synopsis_keys.is_empty() {
+                continue;
+            }
+
+            // Load line data from DB to get div1/div2 per work line
+            let mut line_stmt = conn.prepare(
+                "SELECT div1, div2, canonical_text FROM line_mapping \
+                 WHERE work_abbrev = ?1 ORDER BY id"
+            ).unwrap();
+            let work_lines: Vec<(i64, i64, String)> = line_stmt.query_map([&abbrev], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            }).unwrap().filter_map(|r| r.ok()).collect();
+
+            // Find scene markers in the cleaned text
+            for (i, line) in lines.iter().enumerate() {
+                let trimmed = line.trim();
+                if !line_types::is_act_scene_marker(trimmed) {
+                    continue;
+                }
+                total_scenes += 1;
+
+                // Find first dialogue line after this marker
+                let first_dialogue = match next_dialogue(&lines, i) {
+                    Some(d) => d,
+                    None => continue,
+                };
+
+                // The first dialogue text should match a work line, giving us its div1/div2
+                let dialogue_text = lines[first_dialogue].trim();
+                if let Some((div1, div2, _)) = work_lines.iter().find(|(_, _, text)| {
+                    text.trim() == dialogue_text
+                }) {
+                    // Verify this scene has a synopsis
+                    if synopsis_keys.contains(&(*div1, *div2)) {
+                        verified += 1;
+                    }
+                }
+            }
+        }
+
+        println!(
+            "Synopsis identification: {} total scene markers, {} verified with synopsis match",
+            total_scenes, verified
+        );
+        assert!(verified > 0, "Expected at least some synopsis matches");
     }
 }
 

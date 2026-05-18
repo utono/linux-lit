@@ -37,7 +37,19 @@ pub fn is_speaker(text: &str) -> bool {
 }
 
 pub fn is_stage_direction(text: &str) -> bool {
-    stage_direction_re().is_match(text.trim())
+    let trimmed = text.trim();
+    if stage_direction_re().is_match(trimmed) {
+        return true;
+    }
+    // Multi-line stage direction: opening line starts with [ but has no closing ]
+    if trimmed.starts_with('[') && !trimmed.ends_with(']') {
+        return true;
+    }
+    // Multi-line stage direction: closing line ends with ] but doesn't start with [
+    if trimmed.ends_with(']') && !trimmed.starts_with('[') {
+        return true;
+    }
+    false
 }
 
 fn is_standalone_keyword(upper: &str, keyword: &str) -> bool {
@@ -121,7 +133,10 @@ mod tests {
         assert!(is_stage_direction("[Exit]"));
         assert!(is_stage_direction("[Exeunt all but HAMLET]"));
         assert!(!is_stage_direction("Not a direction"));
-        assert!(!is_stage_direction("[partial"));
+        // Multi-line: opening line starts with [ without closing ]
+        assert!(is_stage_direction("[Enter the King of England, Humphrey Duke of"));
+        // Multi-line: closing line ends with ] without opening [
+        assert!(is_stage_direction("and Exeter, with other Attendants.]"));
     }
 
     #[test]

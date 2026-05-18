@@ -120,7 +120,7 @@ fn default_show_cursor_line() -> bool {
 }
 
 fn default_title_bar_visible() -> bool {
-    true
+    false
 }
 
 impl Default for Config {
@@ -181,6 +181,7 @@ pub fn load() -> Config {
     config.column_width = default_column_width();
     config.text_margins = default_text_margins();
     config.show_cursor_line = true;
+    config.title_bar_visible = false;
     if config.claude_model.contains("-20") {
         config.claude_model = default_claude_model();
     }
