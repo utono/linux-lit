@@ -1651,6 +1651,9 @@ pub fn display_work_at_with_prepared(
     // Build buffer text (with or without sign column)
     state.line_map = None;
     state.dialogue_formatting_active = false;
+    state.authorship_line_ids.clear();
+    state.authorship_sets.clear();
+    state.active_attribution_set_id = None;
     // Left margin + tiled-mode visuals. apply_tiled_mode handles the verse
     // offset for wide windows, the page-label padding, and the root-color
     // masking CSS class for narrow/tiled windows.
@@ -1722,6 +1725,25 @@ pub fn display_work_at_with_prepared(
     let t1 = std::time::Instant::now();
     apply_dialogue_formatting(state);
     crate::logging::log(&format!("TIMING: apply_dialogue_formatting {:.0}ms", t1.elapsed().as_millis()));
+
+    let t_auth = std::time::Instant::now();
+    if let Some(ref work) = state.current_work {
+        if let Ok(conn) = crate::db::queries::open_db() {
+            state.authorship_sets = crate::db::authorship::load_attribution_sets(&conn, &work.abbrev)
+                .unwrap_or_default();
+            if let Some(first) = state.authorship_sets.first() {
+                state.active_attribution_set_id = Some(first.id);
+                state.authorship_line_ids = crate::db::authorship::load_secondary_line_ids(
+                    &conn, first.id, &work.abbrev,
+                ).unwrap_or_default();
+            } else {
+                state.active_attribution_set_id = None;
+                state.authorship_line_ids.clear();
+            }
+        }
+    }
+    apply_authorship_formatting(state);
+    crate::logging::log(&format!("TIMING: apply_authorship_formatting {:.0}ms", t_auth.elapsed().as_millis()));
 
     // Load vocab words and apply highlighting
     let t2 = std::time::Instant::now();
@@ -2305,6 +2327,60 @@ pub fn apply_dialogue_formatting(state: &mut AppState) {
         "FORMATTING: applied dialogue formatting ({} lines)",
         line_count
     ));
+}
+
+pub fn apply_authorship_formatting(state: &mut AppState) {
+    let tag_table = state.buffer.tag_table();
+    if let Some(old) = tag_table.lookup("authorship-italic") {
+        let (start, end) = state.buffer.bounds();
+        state.buffer.remove_tag(&old, &start, &end);
+    }
+
+    if !state.authorship_enabled || state.authorship_line_ids.is_empty() {
+        return;
+    }
+
+    let line_count = state.buffer.line_count() as usize;
+    let work = match state.current_work.as_ref() {
+        Some(w) => w,
+        None => return,
+    };
+
+    for buf_line in 0..line_count {
+        let work_idx = if let Some(ref lm) = state.line_map {
+            match lm.buffer_to_work.get(buf_line).and_then(|o| *o) {
+                Some(wi) => wi,
+                None => continue,
+            }
+        } else {
+            buf_line
+        };
+
+        let line = match work.lines.get(work_idx) {
+            Some(l) => l,
+            None => continue,
+        };
+
+        if state.authorship_line_ids.contains(&line.id) {
+            let line_start = match state.buffer.iter_at_line(buf_line as i32) {
+                Some(it) => it,
+                None => continue,
+            };
+            let line_end = if buf_line + 1 < line_count {
+                match state.buffer.iter_at_line((buf_line + 1) as i32) {
+                    Some(it) => it,
+                    None => {
+                        let (_, e) = state.buffer.bounds();
+                        e
+                    }
+                }
+            } else {
+                let (_, e) = state.buffer.bounds();
+                e
+            };
+            state.buffer.apply_tag(&state.authorship_tag, &line_start, &line_end);
+        }
+    }
 }
 
 /// Toggle sign column visibility.
