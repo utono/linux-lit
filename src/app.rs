@@ -662,6 +662,11 @@ pub fn build_window(
 
     // Library picker overlay
     let mut picker = LibraryPicker::new();
+    if let Ok(conn) = crate::db::queries::open_db() {
+        if let Ok(coauthored) = crate::db::authorship::load_coauthored_works(&conn) {
+            picker.set_coauthored_works(coauthored);
+        }
+    }
     picker.set_works(works);
     picker.attach(&content_hbox);
     picker.overlay.set_vexpand(true);

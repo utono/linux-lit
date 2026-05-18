@@ -125,6 +125,7 @@ pub struct LibraryPicker {
     groups: Vec<AuthorGroup>,
     level: PickerLevel,
     mode: PickerMode,
+    coauthored_works: std::collections::HashMap<String, String>,
 }
 
 // ─── impl LibraryPicker ──────────────────────────────────────────────────────
@@ -213,7 +214,12 @@ impl LibraryPicker {
             groups: Vec::new(),
             level: PickerLevel::Authors,
             mode: PickerMode::Library,
+            coauthored_works: std::collections::HashMap::new(),
         }
+    }
+
+    pub fn set_coauthored_works(&mut self, map: std::collections::HashMap<String, String>) {
+        self.coauthored_works = map;
     }
 
     pub fn set_works(&mut self, works: Vec<WorkSummary>) {
@@ -461,6 +467,20 @@ impl LibraryPicker {
         abbrev_label.add_css_class("picker-item-detail");
 
         hbox.append(&title_label);
+
+        if let Some(collaborator) = self.coauthored_works.get(&work.abbrev) {
+            let mut cap = collaborator.clone();
+            if let Some(first) = cap.get_mut(0..1) {
+                first.make_ascii_uppercase();
+            }
+            let coauthor_label = Label::builder()
+                .label(&format!("+{}", cap))
+                .halign(gtk4::Align::End)
+                .build();
+            coauthor_label.add_css_class("picker-item-detail");
+            hbox.append(&coauthor_label);
+        }
+
         hbox.append(&abbrev_label);
 
         let row = ListBoxRow::builder().child(&hbox).build();

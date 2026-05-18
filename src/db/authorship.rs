@@ -1,5 +1,5 @@
 use rusqlite::Connection;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
 pub struct AttributionSet {
@@ -30,6 +30,21 @@ pub fn load_attribution_sets(
         })
     })?;
     rows.collect()
+}
+
+pub fn load_coauthored_works(conn: &Connection) -> Result<HashMap<String, String>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT work_abbrev, secondary_author FROM attribution_sets ORDER BY work_abbrev",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut map = HashMap::new();
+    for r in rows {
+        let (abbrev, author) = r?;
+        map.entry(abbrev).or_insert(author);
+    }
+    Ok(map)
 }
 
 pub fn load_secondary_line_ids(
