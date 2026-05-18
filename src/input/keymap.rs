@@ -905,6 +905,13 @@ fn dispatch_action(
             crate::config::save(&s.config);
             crate::logging::log(&format!("DIM: {}", if s.dim_enabled { "on" } else { "off" }));
         }
+        ToggleTitleBar => {
+            let mut s = state.borrow_mut();
+            let visible = s.title_bar.is_visible();
+            s.title_bar.set_visible(!visible);
+            s.config.title_bar_visible = !visible;
+            crate::config::save(&s.config);
+        }
         ShowFontInfo => crate::app::show_font_info(&state.borrow()),
         ShowCurrentChapter => navigation::show_current_chapter(&mut state.borrow_mut()),
 

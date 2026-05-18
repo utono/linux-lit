@@ -487,8 +487,10 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .concordance-picker .settings-footer {{ color: {dim}; }} \
          .concordance-bar {{ background-color: {root}; padding: 4px 12px; }} \
          .concordance-bar-word {{ color: {vocab}; font-size: 12px; }} \
-         .concordance-bar-position {{ color: {dim}; font-size: 12px; }} \
+         .concordance-bar-position {{ color: {dim}; font-size: 14px; }} \
          .concordance-bar-hint {{ color: {dim}; font-size: 12px; opacity: 0.6; }} \
+         .title-bar {{ background-color: {root}; padding: 4px 12px; }} \
+         .title-bar-label {{ color: {dim}; font-size: 14px; }} \
          .picker-box {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
            padding: 16px; border-radius: 8px; }} \
          .picker-entry {{ margin-bottom: 8px; }} \

@@ -184,6 +184,8 @@ pub struct AppState {
     pub concordance_word_picker: crate::ui::concordance_word_picker::ConcordanceWordPicker,
     pub concordance_list_picker: crate::ui::concordance_list_picker::ConcordanceListPicker,
     pub concordance_bar: crate::ui::concordance_bar::ConcordanceBar,
+    pub title_bar: gtk4::Box,
+    pub title_bar_label: gtk4::Label,
     /// Index of the current sentence group (for prose with text_file).
     pub current_sentence_group: Option<usize>,
     /// Tracks the start line of the current paragraph to detect transitions.
@@ -757,12 +759,24 @@ pub fn build_window(
     // Concordance status bar
     let concordance_bar = crate::ui::concordance_bar::ConcordanceBar::new();
 
+    // Work title bar (persistent footer showing author + title)
+    let title_bar = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    title_bar.set_hexpand(true);
+    title_bar.add_css_class("title-bar");
+    let title_bar_label = gtk4::Label::new(None);
+    title_bar_label.set_halign(gtk4::Align::Center);
+    title_bar_label.set_hexpand(true);
+    title_bar_label.add_css_class("title-bar-label");
+    title_bar.append(&title_bar_label);
+    title_bar.set_visible(config.title_bar_visible);
+
     // Search bar at bottom
     let search_bar = SearchBar::new();
 
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     vbox.append(&concordance_list_picker.overlay);
     vbox.append(&concordance_bar.container);
+    vbox.append(&title_bar);
     vbox.append(&search_bar.container);
 
     // Suppress startup flicker: hide content until the deferred layout
@@ -892,6 +906,8 @@ pub fn build_window(
         concordance_word_picker,
         concordance_list_picker,
         concordance_bar,
+        title_bar,
+        title_bar_label,
         current_sentence_group: None,
         current_paragraph_start: None,
         sync_enabled: true,
@@ -1446,6 +1462,10 @@ pub fn display_work_at_with_prepared(
     state
         .window
         .set_title(Some(&format!("{} — linux-lit", work.title)));
+    state.title_bar_label.set_text(&format!("{}, {}", work.author, work.title));
+    if state.concordance_state.is_none() {
+        state.title_bar.set_visible(state.config.title_bar_visible);
+    }
 
     // Save MRU to config; track previous work for toggle
     let saved_line = state.config.work_positions.get(&work.abbrev).copied().unwrap_or(0);

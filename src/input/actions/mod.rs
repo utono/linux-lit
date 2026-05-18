@@ -109,6 +109,7 @@ pub enum Action {
     ToggleSignColumn,
     TogglePreviousWork,
     ToggleDim,
+    ToggleTitleBar,
     ShowFontInfo,
     ShowCurrentChapter,
 
@@ -196,6 +197,7 @@ impl Action {
             | Action::CycleFontBackward
             | Action::ToggleSignColumn
             | Action::ToggleDim
+            | Action::ToggleTitleBar
             | Action::ShowFontInfo
             | Action::ShowCurrentChapter
             | Action::ToggleTranslations
@@ -298,6 +300,7 @@ impl Action {
             Action::ToggleSignColumn => "ToggleSignColumn",
             Action::TogglePreviousWork => "TogglePreviousWork",
             Action::ToggleDim => "ToggleDim",
+            Action::ToggleTitleBar => "ToggleTitleBar",
             Action::ShowFontInfo => "ShowFontInfo",
             Action::ShowCurrentChapter => "ShowCurrentChapter",
             Action::SetStartTime => "SetStartTime",

@@ -107,6 +107,7 @@ pub(crate) fn handle_word_selection(
         {
             let mut s = state_clone.borrow_mut();
             s.concordance_bar.update(&conc_state.status_label(), &conc_state.status_work());
+            s.title_bar.set_visible(false);
             s.concordance_state = Some(conc_state);
         }
 

@@ -283,6 +283,7 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("l"), Action::ToggleSignColumn),
         (KeyCombo::plain("minus"), Action::TogglePreviousWork),
         (KeyCombo::alt("d"), Action::ToggleDim),
+        (KeyCombo::alt("t"), Action::ToggleTitleBar),
         (KeyCombo::alt("f"), Action::ShowFontInfo),
         (KeyCombo::plain("i"), Action::ToggleTranslations),
         (KeyCombo::ctrl("comma"), Action::OpenSettingsOverlay),

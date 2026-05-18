@@ -61,6 +61,8 @@ pub struct Config {
     pub dim_enabled: bool,
     #[serde(default = "default_show_cursor_line")]
     pub show_cursor_line: bool,
+    #[serde(default = "default_title_bar_visible")]
+    pub title_bar_visible: bool,
 }
 
 fn default_font_family() -> String {
@@ -117,6 +119,10 @@ fn default_show_cursor_line() -> bool {
     true
 }
 
+fn default_title_bar_visible() -> bool {
+    true
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -136,6 +142,7 @@ impl Default for Config {
             vocab_highlight_visible: default_vocab_highlight_visible(),
             dim_enabled: default_dim_enabled(),
             show_cursor_line: true,
+            title_bar_visible: default_title_bar_visible(),
         }
     }
 }
