@@ -36,14 +36,28 @@ cargo clippy
 
 ## Key Files
 
-- `src/main.rs` — entry point, Tokio runtime, channel bridge
-- `src/app.rs` — GTK4 window, AppState, display_work
+- `src/main.rs` — entry point, Tokio runtime, channel bridge, MPV event loop (TimePos, PlaybackState, ConnectionStatus)
+- `src/app.rs` — GTK4 window, AppState, display_work, clear_display, prepare_text_for_display
 - `src/config.rs` — ~/.config/linux-lit/config.json persistence
-- `src/input/keymap.rs` — key event routing, gg state machine
+- `src/input/keymap.rs` — key event routing, gg state machine, dispatch_action
+- `src/input/keymap_config.rs` — compiled-in default keybinds, keymap.json loader
 - `src/input/navigation.rs` — cursor movement, page turns, scroll logic
+- `src/input/actions/mod.rs` — Action enum with all reader-mode actions
+- `src/input/actions/concordance.rs` — concordance picker, cross-work navigation, r/R handlers
+- `src/input/actions/pickers.rs` — library/media/bookmark picker open/confirm handlers
+- `src/input/highlight.rs` — update_highlight, update_highlight_and_center
+- `src/input/scroll.rs` — set_page, set_page_instant, center_cursor
+- `src/concordance.rs` — ConcordanceState, ConcordanceHit, advance/retreat
 - `src/db/queries.rs` — SQLite queries (list_works, load_work)
+- `src/db/concordance.rs` — find_word_occurrences, load_concordance_words
+- `src/db/stopwords.rs` — English stopword list for concordance filtering
 - `src/db/line_types.rs` — dialogue classification
+- `src/mpv/client.rs` — MPV IPC command handler (Seek, LoadFile, ResumeAndSeek, Connect, Quit)
+- `src/mpv/commands.rs` — MpvCommand and MpvEvent enums
+- `src/mpv/discovery.rs` — derive_socket_path, find_socket_for_work, launch_mpv
 - `src/ui/library_picker.rs` — Ctrl+p work picker with fuzzy filter
+- `src/ui/concordance_picker.rs` — Ctrl+\ concordance word picker
+- `src/ui/media_picker.rs` — Ctrl+Shift+M media file picker
 - `src/logging.rs` — file-based debug logging
 
 ## Keyboard Layout
@@ -53,6 +67,39 @@ The user's keyboard layout is Real Programmers Dvorak, defined in `~/utono/rpd`.
 ## Searching for Keybinds
 
 When searching for a keybind in linux-lit, **always check source** — primarily `src/input/keymap.rs` and the handlers in `src/input/` it dispatches to. **Do not use the `keybinds-search` skill or query `~/utono/keybinds/keybinds.db`** for this project; that database is not the source of truth for linux-lit binds and may be stale or incomplete. The Rust source is authoritative.
+
+## Concordance System
+
+Cross-work concordance navigation for searching word occurrences across an author's works.
+
+- **Ctrl+\\** — opens concordance picker with stopword-filtered word list for the current author
+- **r / R** — next/prev concordance hit (cross-work, loads new work in-place). Falls back to "no concordance active" toast if no word selected. Seeks MPV to the hit line's own start time (not sentence start).
+- **Ctrl+r / Ctrl+Shift+R** — next/prev vocab word jump (always, ignores concordance state)
+- Word list is cached per author in `AppState.concordance_word_cache`
+- Cross-work jumps open the media picker so the user chooses the audio file
+- Single-media works auto-select without showing the picker
+- `concordance_state` persists until a new word is selected
+
+Key files: `src/input/actions/concordance.rs`, `src/concordance.rs`, `src/db/concordance.rs`, `src/ui/concordance_picker.rs`
+
+### Keybind override: keymap.json takes precedence
+
+Compiled-in defaults in `keymap_config.rs` are overridden by `~/.config/linux-lit/keymap.json` (stowed from `~/tty-dotfiles/linux-lit/`). When changing keybinds, **always update both files** or the JSON will silently override your compiled changes.
+
+## MPV Integration
+
+- MPV is reused across work switches via `loadfile replace` (no new process)
+- `AppState.mpv_connected` tracks whether an IPC connection is active
+- `AppState.mpv_playing` tracks playback state
+- `AppState.pending_loadfile_seek` stores a deferred seek that fires on the first `TimePos` event after `loadfile` (event-driven, not timer-based)
+- Socket paths are derived from media file paths: `/tmp/mpvsocket-{author}-{basename}`
+- `display_work` skips MPV discovery when `skip_mpv_discovery` is set (used by concordance cross-work jumps that open the media picker instead)
+
+Key files: `src/mpv/client.rs`, `src/mpv/commands.rs`, `src/mpv/discovery.rs`
+
+### Scrolling after jumps
+
+Use `update_highlight_and_center` (not `center_cursor` alone) when jumping the cursor to a distant line. `center_cursor` only sets the GTK vadjustment but doesn't update `page_top_line`, so the e-reader pagination state gets out of sync. `update_highlight_and_center` calls `set_page_instant` which updates both.
 
 ## External Data
 
