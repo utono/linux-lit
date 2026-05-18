@@ -50,6 +50,7 @@ pub enum InputMode {
     ConcordanceWordPicker,
     ConcordanceListPicker,
     ConcordanceWorksPicker,
+    AuthorshipPicker,
     ActionPopup,
     Visual,
 }
@@ -132,6 +133,7 @@ pub struct AppState {
     pub authorship_enabled: bool,
     pub authorship_sets: Vec<crate::db::authorship::AttributionSet>,
     pub active_attribution_set_id: Option<i64>,
+    pub authorship_picker: crate::ui::authorship_picker::AuthorshipPicker,
     pub translations: HashMap<i64, String>,
     pub translations_visible: bool,
     /// Tracks which buffer lines are inserted translation lines.
@@ -719,17 +721,22 @@ pub fn build_window(
     concordance_list_picker.attach(&concordance_word_picker.overlay);
     concordance_list_picker.overlay.set_vexpand(true);
 
+    // Authorship picker wraps the concordance list picker
+    let authorship_picker = crate::ui::authorship_picker::AuthorshipPicker::new();
+    authorship_picker.attach(&concordance_list_picker.overlay);
+    authorship_picker.overlay.set_vexpand(true);
+
     // Concordance works picker (Alt+R: jump to a specific work)
     let concordance_works_picker = crate::ui::concordance_works_picker::ConcordanceWorksPicker::new();
-    concordance_list_picker.overlay.add_overlay(&concordance_works_picker.scrim);
-    concordance_list_picker.overlay.add_overlay(&concordance_works_picker.container);
+    authorship_picker.overlay.add_overlay(&concordance_works_picker.scrim);
+    authorship_picker.overlay.add_overlay(&concordance_works_picker.container);
 
     // Action popup overlay for visual mode
     let action_popup_widget = crate::ui::action_popup::ActionPopup::new();
-    concordance_list_picker.overlay.add_overlay(&action_popup_widget.container);
+    authorship_picker.overlay.add_overlay(&action_popup_widget.container);
 
     // Add vocab popup to full-width overlay so it appears to the right of the text card
-    vocab_popup.attach_to(&concordance_list_picker.overlay);
+    vocab_popup.attach_to(&authorship_picker.overlay);
 
     // Sync-off indicator (lower-left corner of window, hidden by default)
     let sync_icon = gtk4::Label::new(Some("⇄\u{0338}"));
@@ -739,7 +746,7 @@ pub fn build_window(
     sync_icon.set_margin_bottom(12);
     sync_icon.add_css_class("sync-off-icon");
     sync_icon.set_visible(false);
-    concordance_list_picker.overlay.add_overlay(&sync_icon);
+    authorship_picker.overlay.add_overlay(&sync_icon);
 
     // Debug-mode indicator (lower-left corner, next to sync icon, hidden by default)
     let debug_icon = gtk4::Label::new(Some("⚙"));
@@ -749,7 +756,7 @@ pub fn build_window(
     debug_icon.set_margin_bottom(12);
     debug_icon.add_css_class("debug-icon");
     debug_icon.set_visible(false);
-    concordance_list_picker.overlay.add_overlay(&debug_icon);
+    authorship_picker.overlay.add_overlay(&debug_icon);
     // Flash the gear on launch if debug mode is already on.
     if crate::logging::debug_mode() {
         debug_icon.set_visible(true);
@@ -767,7 +774,7 @@ pub fn build_window(
     word_status_label.set_margin_bottom(40);
     word_status_label.add_css_class("word-status");
     word_status_label.set_visible(false);
-    concordance_list_picker.overlay.add_overlay(&word_status_label);
+    authorship_picker.overlay.add_overlay(&word_status_label);
 
     let chapter_toast = gtk4::Label::new(None);
     chapter_toast.set_valign(gtk4::Align::End);
@@ -775,7 +782,7 @@ pub fn build_window(
     chapter_toast.set_margin_bottom(32);
     chapter_toast.add_css_class("chapter-toast");
     chapter_toast.set_visible(false);
-    concordance_list_picker.overlay.add_overlay(&chapter_toast);
+    authorship_picker.overlay.add_overlay(&chapter_toast);
 
     // Concordance status bar
     let concordance_bar = crate::ui::concordance_bar::ConcordanceBar::new();
@@ -808,7 +815,7 @@ pub fn build_window(
     let search_bar = SearchBar::new();
 
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-    vbox.append(&concordance_list_picker.overlay);
+    vbox.append(&authorship_picker.overlay);
     vbox.append(&search_bar.container);
 
     concordance_bar.container.set_valign(gtk4::Align::End);
@@ -984,6 +991,7 @@ pub fn build_window(
         authorship_enabled: true,
         authorship_sets: Vec::new(),
         active_attribution_set_id: None,
+        authorship_picker,
         input_mode: InputMode::Reader,
     }));
 

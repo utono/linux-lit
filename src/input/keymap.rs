@@ -65,6 +65,7 @@ pub fn handle_key(
             | crate::app::InputMode::ConcordanceWordPicker
             | crate::app::InputMode::ConcordanceListPicker
             | crate::app::InputMode::ConcordanceWorksPicker
+            | crate::app::InputMode::AuthorshipPicker
             | crate::app::InputMode::GlossPicker => handle_picker_key(state, key_name, is_ctrl, tokio_handle, mode),
             crate::app::InputMode::Settings => handle_settings_key(state, key_name, is_ctrl),
             crate::app::InputMode::Search => handle_search_key(state, key_name),
@@ -230,6 +231,7 @@ fn handle_picker_key(
                 InputMode::ConcordanceListPicker => { s.concordance_list_picker.hide(); s.input_mode = InputMode::Reader; }
                 InputMode::ConcordanceWorksPicker => { s.concordance_works_picker.hide(); s.input_mode = InputMode::Reader; }
                 InputMode::GlossPicker => { s.gloss_picker.hide(); s.input_mode = InputMode::Reader; }
+                InputMode::AuthorshipPicker => { s.authorship_picker.hide(); s.input_mode = InputMode::Reader; }
                 _ => {}
             }
             true
@@ -375,6 +377,10 @@ fn handle_picker_key(
                     }
                     true
                 }
+                InputMode::AuthorshipPicker => {
+                    crate::input::actions::authorship::confirm_attribution_selection(state);
+                    true
+                }
                 _ => true,
             }
         }
@@ -387,6 +393,7 @@ fn handle_picker_key(
                 InputMode::ConcordanceListPicker => state.borrow().concordance_list_picker.move_selection(1),
                 InputMode::ConcordanceWorksPicker => state.borrow().concordance_works_picker.move_selection(1),
                 InputMode::GlossPicker => state.borrow().gloss_picker.move_selection(1),
+                InputMode::AuthorshipPicker => state.borrow().authorship_picker.move_selection(1),
                 _ => {}
             }
             true
@@ -400,6 +407,7 @@ fn handle_picker_key(
                 InputMode::ConcordanceListPicker => state.borrow().concordance_list_picker.move_selection(-1),
                 InputMode::ConcordanceWorksPicker => state.borrow().concordance_works_picker.move_selection(-1),
                 InputMode::GlossPicker => state.borrow().gloss_picker.move_selection(-1),
+                InputMode::AuthorshipPicker => state.borrow().authorship_picker.move_selection(-1),
                 _ => {}
             }
             true
@@ -1026,9 +1034,51 @@ fn dispatch_action(
         }
         ToggleSynopsis => crate::app::toggle_synopsis(&mut state.borrow_mut()),
 
-        // Authorship display (Task 5)
-        ToggleAuthorship => {}
-        PickAttributionSet => {}
+        // Authorship display
+        ToggleAuthorship => {
+            let mut s = state.borrow_mut();
+            if s.authorship_sets.is_empty() {
+                s.chapter_toast.set_text("No authorship data for this work");
+                s.chapter_toast.set_visible(true);
+                let toast = s.chapter_toast.clone();
+                glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+                    toast.set_visible(false);
+                });
+                return;
+            }
+            s.authorship_enabled = !s.authorship_enabled;
+            crate::app::apply_authorship_formatting(&mut s);
+            let label = if s.authorship_enabled { "Authorship: on" } else { "Authorship: off" };
+            s.chapter_toast.set_text(label);
+            s.chapter_toast.set_visible(true);
+            let toast = s.chapter_toast.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+                toast.set_visible(false);
+            });
+        }
+        PickAttributionSet => {
+            let s = state.borrow();
+            if s.authorship_sets.is_empty() {
+                s.chapter_toast.set_text("No authorship data for this work");
+                s.chapter_toast.set_visible(true);
+                let toast = s.chapter_toast.clone();
+                glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+                    toast.set_visible(false);
+                });
+                return;
+            }
+            if s.authorship_sets.len() == 1 {
+                s.chapter_toast.set_text("Only one attribution set available");
+                s.chapter_toast.set_visible(true);
+                let toast = s.chapter_toast.clone();
+                glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+                    toast.set_visible(false);
+                });
+                return;
+            }
+            drop(s);
+            crate::input::actions::authorship::open_attribution_picker(state);
+        }
     }
 }
 

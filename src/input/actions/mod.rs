@@ -2,6 +2,7 @@
 //! feature area. Phase 2 (F2) adds the Action enum here and re-exports the
 //! verbs as the dispatch target.
 
+pub mod authorship;
 pub mod bookmarks;
 pub mod concordance;
 pub mod escape;
