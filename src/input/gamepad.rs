@@ -147,6 +147,9 @@ fn dispatch(state: &Rc<RefCell<AppState>>, action: GamepadAction) {
             let mut s = state.borrow_mut();
             s.sync_enabled = !s.sync_enabled;
             s.sync_icon.set_visible(!s.sync_enabled);
+            if s.sync_enabled_before_concordance.is_some() {
+                s.sync_enabled_before_concordance = Some(s.sync_enabled);
+            }
             crate::logging::log(&format!(
                 "SYNC: {}",
                 if s.sync_enabled { "enabled" } else { "disabled" }

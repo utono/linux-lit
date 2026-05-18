@@ -621,6 +621,7 @@ pub(crate) fn open_recent_picker(state: &Rc<RefCell<AppState>>) {
         let mut sm = state.borrow_mut();
         sm.concordance_state = None;
         sm.concordance_bar.hide();
+        crate::input::actions::concordance::restore_sync_after_concordance(&mut sm);
         drop(sm);
         state.borrow().gloss_overlay.hide();
         state.borrow_mut().picker.show_prepare_recent(&recent);
@@ -642,6 +643,7 @@ pub(crate) fn open_library_picker_from_reader(state: &Rc<RefCell<AppState>>) {
         let mut sm = state.borrow_mut();
         sm.concordance_state = None;
         sm.concordance_bar.hide();
+        crate::input::actions::concordance::restore_sync_after_concordance(&mut sm);
         drop(sm);
         state.borrow().gloss_overlay.hide();
         state.borrow_mut().picker.show_prepare();
@@ -700,8 +702,28 @@ pub(crate) fn open_concordance_list_picker(state: &Rc<RefCell<AppState>>) {
     state.borrow_mut().input_mode = crate::app::InputMode::ConcordanceListPicker;
 }
 
-/// Open the gloss picker, querying glossed passages for the current work.
-/// Spawns an async task to query the DB.
+pub(crate) fn open_concordance_works_picker(state: &Rc<RefCell<AppState>>) {
+    let s = state.borrow();
+    let conc = match &s.concordance_state {
+        Some(c) => c,
+        None => return,
+    };
+    let mut works: Vec<(String, String, usize)> = Vec::new();
+    for hit in &conc.occurrences {
+        if let Some(entry) = works.iter_mut().find(|(a, _, _)| a == &hit.work_abbrev) {
+            entry.2 += 1;
+        } else {
+            works.push((hit.work_abbrev.clone(), hit.work_title.clone(), 1));
+        }
+    }
+    if works.is_empty() {
+        return;
+    }
+    s.concordance_works_picker.show(&works);
+    drop(s);
+    state.borrow_mut().input_mode = crate::app::InputMode::ConcordanceWorksPicker;
+}
+
 pub(crate) fn open_gloss_picker(
     state: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,

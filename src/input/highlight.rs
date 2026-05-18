@@ -248,6 +248,7 @@ pub(crate) fn update_highlight(state: &mut AppState) {
         crate::input::visual::clear_selection_highlight(state);
         crate::input::visual::apply_selection_highlight(state);
         state.prev_highlight_line.set(Some(state.current_line));
+        crate::app::update_title_bar_scene(state);
         return;
     }
 
@@ -285,4 +286,6 @@ pub(crate) fn update_highlight(state: &mut AppState) {
     crate::input::visual::clear_selection_highlight(state);
     crate::input::visual::apply_selection_highlight(state);
     state.prev_highlight_line.set(Some(state.current_line));
+
+    crate::app::update_title_bar_scene(state);
 }

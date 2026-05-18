@@ -109,6 +109,12 @@ pub(crate) fn handle_word_selection(
             s.concordance_bar.update(&conc_state.status_label(), &conc_state.status_work());
             s.title_bar.set_visible(false);
             s.concordance_state = Some(conc_state);
+            if s.sync_enabled_before_concordance.is_none() {
+                s.sync_enabled_before_concordance = Some(s.sync_enabled);
+                s.sync_enabled = false;
+                s.sync_icon.set_visible(true);
+                crate::logging::log("CONC_SYNC: disabled playback sync for concordance mode");
+            }
         }
 
         if !cursor_on_hit {
@@ -606,6 +612,19 @@ fn concordance_update_bar(state: &AppState) {
         state
             .concordance_bar
             .update(&conc.status_label(), &conc.status_work());
+    }
+}
+
+/// Restore playback sync to its pre-concordance state.
+/// Call when clearing concordance_state.
+pub(crate) fn restore_sync_after_concordance(state: &mut AppState) {
+    if let Some(was_enabled) = state.sync_enabled_before_concordance.take() {
+        state.sync_enabled = was_enabled;
+        state.sync_icon.set_visible(!was_enabled);
+        crate::logging::log(&format!(
+            "CONC_SYNC: restored playback sync to {}",
+            if was_enabled { "enabled" } else { "disabled" }
+        ));
     }
 }
 

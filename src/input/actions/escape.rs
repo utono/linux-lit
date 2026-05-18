@@ -13,6 +13,7 @@ pub(crate) fn escape_reader_mode(state: &Rc<RefCell<AppState>>) {
             let mut s = state.borrow_mut();
             s.concordance_state = None;
             s.concordance_bar.hide();
+            crate::input::actions::concordance::restore_sync_after_concordance(&mut s);
             if s.config.title_bar_visible {
                 s.title_bar.set_visible(true);
             }

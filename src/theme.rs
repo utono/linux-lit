@@ -486,11 +486,12 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .concordance-picker .settings-title {{ border-bottom: 1px solid {dim}; }} \
          .concordance-picker .settings-footer {{ color: {dim}; }} \
          .concordance-bar {{ background-color: {root}; padding: 4px 12px; }} \
-         .concordance-bar-word {{ color: {vocab}; font-size: 12px; }} \
+         .concordance-bar-word {{ color: {dim}; font-size: 12px; }} \
          .concordance-bar-position {{ color: {dim}; font-size: 14px; }} \
          .concordance-bar-hint {{ color: {dim}; font-size: 12px; opacity: 0.6; }} \
          .title-bar {{ background-color: {root}; padding: 4px 12px; }} \
          .title-bar-label {{ color: {dim}; font-size: 14px; }} \
+         .title-bar-hint {{ color: {dim}; font-size: 12px; opacity: 0.6; }} \
          .picker-box {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
            padding: 16px; border-radius: 8px; }} \
          .picker-entry {{ margin-bottom: 8px; }} \
@@ -505,7 +506,6 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
         dim = theme.dim_fg,
         cursor_bg = theme.cursor_bg,
         cursor_fg = theme.cursor_fg,
-        vocab = theme.vocab_fg,
         vocab_popup_fg = blend_colors(&theme.text_bg, &theme.root_color, 0.60),
         vocab_popup_dim = blend_colors(&theme.text_bg, &theme.root_color, 0.45),
         vocab_popup_border = blend_colors(&theme.text_bg, &theme.root_color, 0.25),
