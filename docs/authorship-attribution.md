@@ -105,6 +105,59 @@ Examples: `H8.0.0.1` (Prologue line 1), `TNK.3.6.100` (Act 3 Scene 6 line 100), 
 
 **Shakespeare scenes:** Acts 3-5 and Epilogue (3.0 through 6.0)
 
+### Set 5: Titus Andronicus (Tit) — Vickers (2002)
+
+**Source:** Brian Vickers, *Shakespeare, Co-Author* (2002); confirmed by New Oxford Shakespeare (2016).
+
+**Collaborator:** George Peele
+
+**Peele scenes:**
+- Act 1 (1.1) — the entire first act
+- Act 2 Scene 1 (2.1)
+- Act 2 Scene 2 (2.2)
+- Act 4 Scene 1 (4.1)
+
+**Shakespeare scenes:** 2.3, 2.4, 3.1, 3.2, 4.2, 4.3, 4.4, 5.1, 5.2, 5.3
+
+### Set 6: Macbeth (Mac) — Taylor (2016)
+
+**Source:** Gary Taylor & Rory Loughnane, New Oxford Shakespeare (2016); John Jowett, "Middleton and Macbeth" (2013).
+
+**Collaborator:** Thomas Middleton (posthumous adaptation)
+
+**Middleton scenes:**
+- Act 3 Scene 5 (3.5) — the Hecate scene, entirely Middleton
+
+**Note:** Middleton also inserted Hecate speeches into Act 4 Scene 1 (lines ~39-43, ~125-132) and added songs from his play *The Witch*. These are line-level interpolations within a Shakespeare scene and cannot be cleanly attributed at scene granularity. Only the wholly Middleton scene (3.5) is attributed.
+
+**Shakespeare scenes:** all others
+
+### Set 7: 1 Henry VI (1H6) — NOS (2016)
+
+**Source:** Gary Taylor & Rory Loughnane, New Oxford Shakespeare (2016); Craig & Kinney (2009).
+
+**Collaborator:** Thomas Nashe
+
+**Nashe scenes:**
+- Act 1: all scenes (1.1 through 1.6)
+
+**Shakespeare scenes:** 2.4, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7
+
+**Note:** The remaining scenes (2.1-2.3, 2.5, 3.1-3.4, 4.1, 5.1-5.5) are attributed to anonymous collaborators by the NOS — possibly Marlowe, Peele, or other hands. Only the Nashe attribution has strong consensus and is included here.
+
+### Set 8: Measure for Measure (MM) — Taylor (2016)
+
+**Source:** Gary Taylor & Rory Loughnane, New Oxford Shakespeare (2016); John Jowett, "Middleton and Measure for Measure" (2007).
+
+**Collaborator:** Thomas Middleton (posthumous adaptation)
+
+**Middleton scenes:**
+- Act 1 Scene 2 (1.2) — substantial rewriting
+
+**Note:** Middleton also contributed the song "Take, O take those lips away" at the opening of 4.1 and scattered interpolations throughout the play. These are line-level insertions within Shakespeare scenes. Only 1.2 (the most substantially rewritten scene) is attributed at scene granularity. This is the most controversial of the NOS co-authorship claims.
+
+**Shakespeare scenes:** all others
+
 ## How Attribution Displays in linux-lit
 
 - On work load, linux-lit queries `attribution_sets` for the work's `work_abbrev`
@@ -151,18 +204,18 @@ WHERE work_abbrev = 'H8'
 INSERT INTO attribution_sets
   (work_abbrev, name, display_name, primary_author, secondary_author, description, source_citation)
 VALUES
-  ('Mac', 'taylor-2016', 'Taylor (2016)', 'shakespeare', 'middleton',
-   'Middleton interpolations in Macbeth',
+  ('E3', 'nos-2016', 'NOS (2016)', 'shakespeare', 'unknown',
+   'Shakespeare attributed Acts 1-2 (Countess scenes)',
    'Gary Taylor, New Oxford Shakespeare (2016)');
 
 -- 2. Get the set ID
-SELECT id FROM attribution_sets WHERE work_abbrev = 'Mac' AND name = 'taylor-2016';
+SELECT id FROM attribution_sets WHERE work_abbrev = 'E3' AND name = 'nos-2016';
 
--- 3. Insert line attributions for Middleton scenes/interpolations
+-- 3. Insert line attributions for non-Shakespeare scenes
 INSERT INTO line_authorship (attribution_set_id, citation, author)
-SELECT <set_id>, 'Mac.' || div1 || '.' || div2 || '.' || line_in_div, 'middleton'
+SELECT <set_id>, 'E3.' || div1 || '.' || div2 || '.' || line_in_div, 'unknown'
 FROM line_mapping
-WHERE work_abbrev = 'Mac'
+WHERE work_abbrev = 'E3'
   AND (div1, div2) IN (...);
 ```
 
@@ -230,12 +283,19 @@ The current data was rebuilt from scratch using scene-level attributions (May 20
 - **Spedding (1850):** James Spedding, "Who Wrote Shakespeare's Henry VIII?" *The Gentleman's Magazine*, August 1850.
 - **Hoy (1962):** Cyrus Hoy, "The Shares of Fletcher and his Collaborators in the Beaumont and Fletcher Canon (VII)," *Studies in Bibliography* 15 (1962): 71-90.
 - **Riverside-Smith (1974):** Hallet Smith, ed., *The Riverside Shakespeare* (Boston: Houghton Mifflin, 1974).
-- **Taylor & Loughnane (2016):** Gary Taylor & Rory Loughnane, "The Canon and Chronology of Shakespeare's Works," in *The New Oxford Shakespeare: Authorship Companion* (Oxford University Press, 2016).
+- **Vickers (2002):** Brian Vickers, *Shakespeare, Co-Author: A Historical Study of Five Collaborative Plays* (Oxford University Press, 2002).
 - **Jowett (2004):** John Jowett, ed., *The Life of Timon of Athens*, Oxford Shakespeare (Oxford University Press, 2004).
+- **Jowett (2007):** John Jowett, "Middleton and Measure for Measure," in *Thomas Middleton and Early Modern Textual Culture* (Oxford University Press, 2007).
+- **Craig & Kinney (2009):** Hugh Craig & Arthur F. Kinney, *Shakespeare, Computers, and the Mystery of Authorship* (Cambridge University Press, 2009).
+- **Jowett (2013):** John Jowett, "Middleton and Macbeth," in *Thomas Middleton in Context* (Cambridge University Press, 2013).
+- **Taylor & Loughnane (2016):** Gary Taylor & Rory Loughnane, "The Canon and Chronology of Shakespeare's Works," in *The New Oxford Shakespeare: Authorship Companion* (Oxford University Press, 2016).
 - **Traditional Pericles consensus:** The division of Pericles into Wilkins (Acts I-II) and Shakespeare (Acts III-V) is the standard editorial position since Delius (1868), supported by stylometric work including Craig & Kinney (2009).
 
 ## Known Limitations
 
 - **H8 Act 3 Scene 2** is traditionally considered a mixed scene (Shakespeare/Fletcher transition mid-scene). The current attribution assigns the entire scene to Shakespeare. A sub-scene split would require identifying the transition line.
 - **TNK Act 3 Scene 1** is sometimes considered partially Fletcher. The current attribution assigns it entirely to Shakespeare.
+- **Mac Act 4 Scene 1** contains Middleton interpolations (Hecate speeches, ~10 lines) within a Shakespeare scene. Only scene 3.5 is attributed at scene granularity.
+- **MM** attribution is the most controversial of the NOS claims. Only 1.2 is attributed; other Middleton contributions are scattered line-level insertions.
+- **1H6** scenes not attributed to Nashe or Shakespeare may have additional anonymous collaborators (possibly Marlowe or Peele). Only the Nashe attribution (Act 1) has strong consensus.
 - Only one attribution set per work exists. The picker supports multiple sets if scholars disagree on attribution boundaries.
