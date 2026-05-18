@@ -257,21 +257,6 @@ fn main() {
                         let mut s = state_for_events.borrow_mut();
                         s.current_time_pos = pos;
 
-                        // Handle pending seek after loadfile
-                        if let Some((seek_time, resume)) = s.pending_loadfile_seek.take() {
-                            s.suppress_sync_until =
-                                Some(std::time::Instant::now() + std::time::Duration::from_millis(1000));
-                            if resume {
-                                let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::ResumeAndSeek(seek_time));
-                            } else {
-                                let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Seek(seek_time));
-                            }
-                            crate::logging::log(&format!(
-                                "PENDING_SEEK: file loaded, seeking to {:.1} resume={}",
-                                seek_time, resume
-                            ));
-                        }
-
                         // Advance to untimestamped next line when current line's audio ends
                         if s.sync_enabled && !s.loading_work.get() {
                             if let Some((end_time, next_bl, _source_wi)) = s.pending_advance {

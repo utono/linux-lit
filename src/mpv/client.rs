@@ -14,6 +14,7 @@ pub async fn run(
     let mut writer: Option<tokio::net::unix::OwnedWriteHalf> = None;
     let mut timestamps: Vec<(i64, f64, f64)> = Vec::new();
     let mut line_id_to_index: HashMap<i64, usize> = HashMap::new();
+    let mut pending_seek_after_load: Option<f64> = None;
 
     loop {
         if let Some(ref mut r) = reader {
@@ -24,9 +25,22 @@ pub async fn run(
                         Ok(0) | Err(_) => {
                             reader = None;
                             writer = None;
+                            pending_seek_after_load = None;
                             let _ = evt_tx.send(MpvEvent::ConnectionStatus(false)).await;
                         }
                         Ok(_) => {
+                            if is_file_loaded_event(&line_buf) {
+                                if let Some(seek_time) = pending_seek_after_load.take() {
+                                    if let Some(w) = writer.as_mut() {
+                                        crate::logging::log(&format!(
+                                            "MPV: file-loaded, seeking to {:.1} and resuming", seek_time
+                                        ));
+                                        let cmd = format!(r#"{{"command":["seek",{},"absolute"]}}"#, seek_time);
+                                        let _ = send_command(w, &cmd).await;
+                                        let _ = send_command(w, r#"{"command":["set_property","pause",false]}"#).await;
+                                    }
+                                }
+                            }
                             if let Some(pos) = parse_time_pos(&line_buf) {
                                 let _ = evt_tx.send(MpvEvent::TimePos(pos)).await;
                                 if let Some(idx) = find_line_for_time(pos, &timestamps, &line_id_to_index) {
@@ -40,13 +54,13 @@ pub async fn run(
                     }
                 }
                 Some(cmd) = cmd_rx.recv() => {
-                    handle_command(cmd, &mut reader, &mut writer, &evt_tx, &mut timestamps, &mut line_id_to_index).await;
+                    handle_command(cmd, &mut reader, &mut writer, &evt_tx, &mut timestamps, &mut line_id_to_index, &mut pending_seek_after_load).await;
                 }
             }
         } else {
             match cmd_rx.recv().await {
                 Some(cmd) => {
-                    handle_command(cmd, &mut reader, &mut writer, &evt_tx, &mut timestamps, &mut line_id_to_index).await;
+                    handle_command(cmd, &mut reader, &mut writer, &evt_tx, &mut timestamps, &mut line_id_to_index, &mut pending_seek_after_load).await;
                 }
                 None => break,
             }
@@ -61,6 +75,7 @@ async fn handle_command(
     evt_tx: &mpsc::Sender<MpvEvent>,
     timestamps: &mut Vec<(i64, f64, f64)>,
     line_id_to_index: &mut HashMap<i64, usize>,
+    pending_seek_after_load: &mut Option<f64>,
 ) {
     match cmd {
         MpvCommand::Connect(path) => {
@@ -154,6 +169,17 @@ async fn handle_command(
                 crate::logging::log(&format!("MPV: loadfile replace '{}'", path));
             }
         }
+        MpvCommand::LoadFileAndSeek(path, seek_time) => {
+            if let Some(w) = writer.as_mut() {
+                let escaped = path.replace('\\', "\\\\").replace('"', "\\\"");
+                let cmd = format!(r#"{{"command":["loadfile","{}","replace"]}}"#, escaped);
+                let _ = send_command(w, &cmd).await;
+                *pending_seek_after_load = Some(seek_time);
+                crate::logging::log(&format!(
+                    "MPV: loadfile replace '{}' (seek {:.1} pending file-loaded)", path, seek_time
+                ));
+            }
+        }
         MpvCommand::Quit => {
             if let Some(w) = writer.as_mut() {
                 let _ = send_command(w, r#"{"command":["quit"]}"#).await;
@@ -212,6 +238,14 @@ fn parse_pause_state(line: &str) -> Option<bool> {
     } else {
         None
     }
+}
+
+fn is_file_loaded_event(line: &str) -> bool {
+    let v: serde_json::Value = match serde_json::from_str(line.trim()) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    v.get("event").and_then(|e| e.as_str()) == Some("file-loaded")
 }
 
 fn find_line_for_time(

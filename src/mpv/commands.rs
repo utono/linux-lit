@@ -19,6 +19,8 @@ pub enum MpvCommand {
     SetAbLoop { a: f64, b: f64 },
     ClearAbLoop,
     LoadFile(String),
+    /// Load file and seek+resume after MPV reports it's ready.
+    LoadFileAndSeek(String, f64),
     Quit,
 }
 

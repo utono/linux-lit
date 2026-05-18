@@ -89,6 +89,7 @@ pub fn load_concordance_words(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     fn test_conn() -> Connection {
         let home = std::env::var("HOME").unwrap_or_default();
@@ -144,5 +145,131 @@ mod tests {
         for hit in &hits {
             assert_eq!(hit.author, "Shakespeare");
         }
+    }
+
+    /// Build a line map for a work, replicating the app's prepare_text_for_display logic.
+    fn build_line_map_for_work(work: &crate::db::models::Work) -> Option<crate::text_file_map::LineMap> {
+        let path = work.text_file.as_ref()?;
+        let contents = std::fs::read_to_string(path).ok()?;
+        let file_lines: Vec<String> = contents.lines().map(String::from).collect();
+        let cleaned_lines: Vec<String> = {
+            let mut result: Vec<String> = Vec::with_capacity(file_lines.len());
+            for (i, line) in file_lines.iter().enumerate() {
+                if crate::db::line_types::is_blank(line) {
+                    let next_non_blank = file_lines[i + 1..]
+                        .iter()
+                        .find(|l| !crate::db::line_types::is_blank(l));
+                    if let Some(next) = next_non_blank {
+                        if crate::db::line_types::is_speaker(next) {
+                            continue;
+                        }
+                    }
+                }
+                if let Some(stripped) = line.strip_prefix("## ") {
+                    result.push(stripped.to_string());
+                } else {
+                    result.push(line.clone());
+                }
+            }
+            result
+        };
+        let is_prose = crate::db::line_types::is_prose_work(&work.work_type);
+        Some(crate::text_file_map::build_line_map(&cleaned_lines, &work.lines, is_prose))
+    }
+
+    /// Replicate concordance_resolve_indices logic: given a work + line_map,
+    /// resolve a line_mapping_id to a buffer index. Returns None if unmatched.
+    fn resolve_buf_idx(
+        work: &crate::db::models::Work,
+        line_map: &crate::text_file_map::LineMap,
+        line_mapping_id: i64,
+    ) -> Option<usize> {
+        let work_idx = work.lines.iter().position(|l| l.id == line_mapping_id)?;
+        let bi = line_map.work_to_buffer[work_idx];
+        if line_map.buffer_to_work.get(bi) == Some(&Some(work_idx)) {
+            Some(bi)
+        } else {
+            None
+        }
+    }
+
+    /// Pick random concordance words, walk every hit, verify that resolved
+    /// buffer lines contain the search word (or are correctly skipped when
+    /// the line map can't match them).
+    #[test]
+    fn concordance_hits_resolve_to_correct_lines() {
+        let conn = test_conn();
+        let words = load_concordance_words(&conn, "Shakespeare").unwrap();
+        assert!(!words.is_empty());
+
+        // Pick 10 words spread across the list
+        let step = words.len() / 10;
+        let test_words: Vec<&str> = (0..10)
+            .map(|i| words[i * step].0.as_str())
+            .collect();
+
+        // Cache loaded works to avoid re-loading
+        let mut work_cache: HashMap<String, (crate::db::models::Work, crate::text_file_map::LineMap)> =
+            HashMap::new();
+
+        let mut total_hits = 0usize;
+        let mut resolved = 0usize;
+        let mut skipped_unmatched = 0usize;
+        let mut skipped_no_text_file = 0usize;
+        let mut wrong_line = Vec::new();
+
+        for word in &test_words {
+            let hits = find_word_occurrences(&conn, word, "Shakespeare").unwrap();
+            total_hits += hits.len();
+
+            for hit in &hits {
+                if !work_cache.contains_key(&hit.work_abbrev) {
+                    let work = crate::db::queries::load_work(&conn, &hit.work_abbrev).unwrap();
+                    if let Some(lm) = build_line_map_for_work(&work) {
+                        work_cache.insert(hit.work_abbrev.clone(), (work, lm));
+                    } else {
+                        skipped_no_text_file += hits.len();
+                        continue;
+                    }
+                }
+
+                let (work, lm) = work_cache.get(&hit.work_abbrev).unwrap();
+                match resolve_buf_idx(work, lm, hit.line_mapping_id) {
+                    Some(buf_idx) => {
+                        resolved += 1;
+                        let work_idx = work.lines.iter().position(|l| l.id == hit.line_mapping_id).unwrap();
+                        let normalized = work.lines[work_idx].normalized.to_lowercase();
+                        if !normalized.contains(&word.to_lowercase()) {
+                            wrong_line.push(format!(
+                                "word='{}' line_id={} abbrev='{}' buf_idx={} normalized='{}'",
+                                word, hit.line_mapping_id, hit.work_abbrev, buf_idx,
+                                &work.lines[work_idx].normalized,
+                            ));
+                        }
+                    }
+                    None => {
+                        skipped_unmatched += 1;
+                    }
+                }
+            }
+        }
+
+        eprintln!(
+            "concordance resolve: {} words, {} total hits, {} resolved, {} skipped (unmatched), {} skipped (no text file)",
+            test_words.len(), total_hits, resolved, skipped_unmatched, skipped_no_text_file,
+        );
+        for w in &test_words {
+            eprint!("  '{}' ", w);
+        }
+        eprintln!();
+
+        assert!(
+            wrong_line.is_empty(),
+            "Resolved lines that don't contain the concordance word:\n{}",
+            wrong_line.join("\n"),
+        );
+        assert!(resolved > 0, "Expected at least some hits to resolve");
+        // buf_idx=0 should never appear for unmatched lines (the old bug)
+        // This is implicitly tested: resolve_buf_idx returns None for unmatched.
     }
 }

@@ -293,10 +293,21 @@ pub(crate) fn open_media_picker(
                 let path = item.path.clone();
                 let media_id = item.media_id;
                 let already_connected = state_clone.borrow().mpv_connected;
+                let should_resume = state_clone.borrow().concordance_resume_playback;
+                let seek_time = if should_resume {
+                    let s = state_clone.borrow();
+                    crate::input::actions::concordance::concordance_current_seek_time(&s)
+                } else {
+                    None
+                };
                 if already_connected {
                     let s = state_clone.borrow();
-                    let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::LoadFile(path.clone()));
-                    let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
+                    if let Some(t) = seek_time {
+                        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::LoadFileAndSeek(path.clone(), t));
+                    } else {
+                        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::LoadFile(path.clone()));
+                        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
+                    }
                     crate::logging::log(&format!(
                         "MEDIA_PICKER: loadfile '{}' into existing MPV", path
                     ));
@@ -328,14 +339,10 @@ pub(crate) fn open_media_picker(
                 {
                     let mut s = state_clone.borrow_mut();
                     s.media_id = Some(media_id);
+                    s.concordance_resume_playback = false;
                     crate::logging::log(&format!(
                         "MEDIA_PICKER: set media_id={}", media_id
                     ));
-                }
-                if state_clone.borrow().concordance_resume_playback {
-                    let mut s = state_clone.borrow_mut();
-                    s.concordance_resume_playback = false;
-                    crate::input::actions::concordance::concordance_seek_current(&mut s);
                 }
                 return;
             }
@@ -364,13 +371,25 @@ pub(crate) fn confirm_media_selection(
     ));
     if let (Some(path), Some(media_id)) = (selected_path, selected_id) {
         let already_connected = state.borrow().mpv_connected;
+        let should_resume = state.borrow().concordance_resume_playback;
+        let seek_time = if should_resume {
+            crate::input::actions::concordance::concordance_current_seek_time(&state.borrow())
+        } else {
+            None
+        };
         let state_clone = Rc::clone(state);
         let handle = tokio_handle.clone();
         if already_connected {
-            let _ = state.borrow().cmd_tx.try_send(
-                crate::mpv::MpvCommand::LoadFile(path.clone()),
-            );
-            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
+            if let Some(t) = seek_time {
+                let _ = state.borrow().cmd_tx.try_send(
+                    crate::mpv::MpvCommand::LoadFileAndSeek(path.clone(), t),
+                );
+            } else {
+                let _ = state.borrow().cmd_tx.try_send(
+                    crate::mpv::MpvCommand::LoadFile(path.clone()),
+                );
+                let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
+            }
             crate::logging::log(&format!("MEDIA_PICKER: loadfile '{}' into existing MPV", path));
         } else {
             let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::Quit);
@@ -515,13 +534,7 @@ pub(crate) fn confirm_media_selection(
                     "MEDIA: switched to media_id={}",
                     media_id
                 ));
-                let should_resume = s.concordance_resume_playback;
-                if should_resume {
-                    s.concordance_resume_playback = false;
-                }
-                if should_resume {
-                    crate::input::actions::concordance::concordance_seek_current(&mut s);
-                }
+                s.concordance_resume_playback = false;
                 drop(s);
             }
         });

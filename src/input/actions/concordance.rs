@@ -424,10 +424,20 @@ pub fn concordance_jump_to_current(
 
                     if let Some((path, media_id)) = auto_media {
                         let already_connected = state_clone.borrow().mpv_connected;
+                        let should_resume = state_clone.borrow().concordance_resume_playback;
+                        let seek_time = if should_resume {
+                            concordance_current_seek_time(&state_clone.borrow())
+                        } else {
+                            None
+                        };
                         if already_connected {
                             let s = state_clone.borrow();
-                            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::LoadFile(path.clone()));
-                            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
+                            if let Some(t) = seek_time {
+                                let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::LoadFileAndSeek(path.clone(), t));
+                            } else {
+                                let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::LoadFile(path.clone()));
+                                let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
+                            }
                             crate::logging::log(&format!(
                                 "CONC_JUMP: auto-selected Arkangel media_id={} path='{}'", media_id, path
                             ));
@@ -435,10 +445,7 @@ pub fn concordance_jump_to_current(
                         {
                             let mut s = state_clone.borrow_mut();
                             s.media_id = Some(media_id);
-                            if s.concordance_resume_playback {
-                                s.concordance_resume_playback = false;
-                                concordance_seek_current(&mut s);
-                            }
+                            s.concordance_resume_playback = false;
                         }
                     } else {
                         let handle_for_picker = state_clone.borrow().tokio_handle.clone();
@@ -469,7 +476,11 @@ fn concordance_resolve_indices(state: &AppState, line_mapping_id: i64) -> Option
     let work_idx = work.lines.iter().position(|l| l.id == line_mapping_id)?;
 
     let buf_idx = if let Some(ref lm) = state.line_map {
-        lm.work_to_buffer[work_idx]
+        let bi = lm.work_to_buffer[work_idx];
+        if lm.buffer_to_work.get(bi) != Some(&Some(work_idx)) {
+            return None;
+        }
+        bi
     } else {
         work_idx
     };
@@ -490,27 +501,17 @@ fn concordance_resolve_indices(state: &AppState, line_mapping_id: i64) -> Option
     Some((buf_idx, seek_work_idx))
 }
 
-/// Schedule a seek to the current concordance hit after loadfile completes.
-/// The actual seek fires when MPV reports its first time-pos event.
-pub(crate) fn concordance_seek_current(state: &mut AppState) {
+/// Compute the seek time for the current concordance hit without side effects.
+pub(crate) fn concordance_current_seek_time(state: &AppState) -> Option<f64> {
     let line_id = state.concordance_state.as_ref()
-        .and_then(|c| c.current_hit().map(|h| h.line_mapping_id));
-    if let Some(id) = line_id {
-        if let Some(work) = &state.current_work {
-            if let Some(line) = work.lines.iter().find(|l| l.id == id) {
-                if let Some(ts) = line.timestamp.as_ref() {
-                    let seek_time = (ts.start - SEEK_PREROLL).max(0.0);
-                    state.pending_loadfile_seek = Some((seek_time, true));
-                    crate::logging::log(&format!(
-                        "CONC_SEEK_CURRENT: line_id={} seek_time={:.1} text='{}' — pending until file loaded",
-                        id, seek_time,
-                        if line.text.len() > 60 { &line.text[..60] } else { &line.text },
-                    ));
-                }
-            }
-        }
-    }
+        .and_then(|c| c.current_hit().map(|h| h.line_mapping_id))?;
+    let work = state.current_work.as_ref()?;
+    let line = work.lines.iter().find(|l| l.id == line_id)?;
+    let ts = line.timestamp.as_ref()?;
+    Some((ts.start - SEEK_PREROLL).max(0.0))
 }
+
+
 
 /// Seek MPV to the hit line's own start time (not sentence start).
 /// Brief sync suppression to let the seek command reach MPV before
@@ -520,7 +521,7 @@ fn concordance_seek(state: &mut AppState, line_mapping_id: i64) {
         if let Some(line) = work.lines.iter().find(|l| l.id == line_mapping_id) {
             if let Some(ts) = line.timestamp.as_ref() {
                 state.suppress_sync_until =
-                    Some(std::time::Instant::now() + std::time::Duration::from_millis(200));
+                    Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
                 let seek_time = (ts.start - SEEK_PREROLL).max(0.0);
                 let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::Seek(seek_time));
             }
