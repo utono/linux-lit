@@ -268,6 +268,7 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl("backslash"), Action::OpenConcordancePicker),
         (KeyCombo::ctrl_shift("P"), Action::OpenConcordanceWordPicker),
         (KeyCombo::ctrl_alt("p"), Action::OpenConcordanceListPicker),
+        (KeyCombo::alt("r"), Action::OpenConcordanceWorksPicker),
         (KeyCombo::alt("g"), Action::OpenGlossPicker),
         (KeyCombo::plain("H"), Action::ToggleSynopsis),
     ]
@@ -284,6 +285,8 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("minus"), Action::TogglePreviousWork),
         (KeyCombo::alt("d"), Action::ToggleDim),
         (KeyCombo::alt("t"), Action::ToggleTitleBar),
+        (KeyCombo::ctrl("a"), Action::ToggleAuthorship),
+        (KeyCombo::ctrl_shift("A"), Action::PickAttributionSet),
         (KeyCombo::alt("f"), Action::ShowFontInfo),
         (KeyCombo::plain("i"), Action::ToggleTranslations),
         (KeyCombo::ctrl("comma"), Action::OpenSettingsOverlay),
@@ -349,6 +352,8 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::ctrl("f")), Some(&Action::PageForward));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("M")), Some(&Action::OpenMediaPicker));
         assert_eq!(m.get(&KeyCombo::ctrl_alt("l")), Some(&Action::SaveAndQuit));
+        assert_eq!(m.get(&KeyCombo::ctrl("a")), Some(&Action::ToggleAuthorship));
+        assert_eq!(m.get(&KeyCombo::ctrl_shift("A")), Some(&Action::PickAttributionSet));
     }
 
     #[test]

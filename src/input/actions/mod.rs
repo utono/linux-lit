@@ -61,6 +61,7 @@ pub enum Action {
     OpenConcordancePicker,
     OpenConcordanceWordPicker,
     OpenConcordanceListPicker,
+    OpenConcordanceWorksPicker,
     OpenSettingsOverlay,
     OpenKeybindsOverlay,
     OpenSearch,
@@ -110,6 +111,8 @@ pub enum Action {
     TogglePreviousWork,
     ToggleDim,
     ToggleTitleBar,
+    ToggleAuthorship,
+    PickAttributionSet,
     ShowFontInfo,
     ShowCurrentChapter,
 
@@ -186,6 +189,7 @@ impl Action {
             | Action::OpenConcordancePicker
             | Action::OpenConcordanceWordPicker
             | Action::OpenConcordanceListPicker
+            | Action::OpenConcordanceWorksPicker
             | Action::ConcordanceNext
             | Action::ConcordancePrev => Category::Vocab,
 
@@ -198,6 +202,8 @@ impl Action {
             | Action::ToggleSignColumn
             | Action::ToggleDim
             | Action::ToggleTitleBar
+            | Action::ToggleAuthorship
+            | Action::PickAttributionSet
             | Action::ShowFontInfo
             | Action::ShowCurrentChapter
             | Action::ToggleTranslations
@@ -264,6 +270,7 @@ impl Action {
             Action::OpenConcordancePicker => "OpenConcordancePicker",
             Action::OpenConcordanceWordPicker => "OpenConcordanceWordPicker",
             Action::OpenConcordanceListPicker => "OpenConcordanceListPicker",
+            Action::OpenConcordanceWorksPicker => "OpenConcordanceWorksPicker",
             Action::OpenSettingsOverlay => "OpenSettingsOverlay",
             Action::OpenKeybindsOverlay => "OpenKeybindsOverlay",
             Action::OpenSearch => "OpenSearch",
@@ -301,6 +308,8 @@ impl Action {
             Action::TogglePreviousWork => "TogglePreviousWork",
             Action::ToggleDim => "ToggleDim",
             Action::ToggleTitleBar => "ToggleTitleBar",
+            Action::ToggleAuthorship => "ToggleAuthorship",
+            Action::PickAttributionSet => "PickAttributionSet",
             Action::ShowFontInfo => "ShowFontInfo",
             Action::ShowCurrentChapter => "ShowCurrentChapter",
             Action::SetStartTime => "SetStartTime",

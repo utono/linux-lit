@@ -64,6 +64,7 @@ pub fn handle_key(
             | crate::app::InputMode::ConcordancePicker
             | crate::app::InputMode::ConcordanceWordPicker
             | crate::app::InputMode::ConcordanceListPicker
+            | crate::app::InputMode::ConcordanceWorksPicker
             | crate::app::InputMode::GlossPicker => handle_picker_key(state, key_name, is_ctrl, tokio_handle, mode),
             crate::app::InputMode::Settings => handle_settings_key(state, key_name, is_ctrl),
             crate::app::InputMode::Search => handle_search_key(state, key_name),
@@ -227,6 +228,7 @@ fn handle_picker_key(
                 InputMode::ConcordancePicker => { s.concordance_picker.hide(); s.input_mode = InputMode::Reader; }
                 InputMode::ConcordanceWordPicker => { s.concordance_word_picker.hide(); s.input_mode = InputMode::Reader; }
                 InputMode::ConcordanceListPicker => { s.concordance_list_picker.hide(); s.input_mode = InputMode::Reader; }
+                InputMode::ConcordanceWorksPicker => { s.concordance_works_picker.hide(); s.input_mode = InputMode::Reader; }
                 InputMode::GlossPicker => { s.gloss_picker.hide(); s.input_mode = InputMode::Reader; }
                 _ => {}
             }
@@ -293,6 +295,25 @@ fn handle_picker_key(
                             }
                         }
                         crate::input::actions::concordance::concordance_jump_to_current(state, tokio_handle);
+                    }
+                    true
+                }
+                InputMode::ConcordanceWorksPicker => {
+                    let selected = state.borrow().concordance_works_picker.selected_abbrev();
+                    state.borrow().concordance_works_picker.hide();
+                    state.borrow_mut().input_mode = InputMode::Reader;
+                    if let Some(abbrev) = selected {
+                        let first_idx = state.borrow().concordance_state.as_ref()
+                            .and_then(|c| c.occurrences.iter().position(|h| h.work_abbrev == abbrev));
+                        if let Some(idx) = first_idx {
+                            {
+                                let mut s = state.borrow_mut();
+                                if let Some(conc) = &mut s.concordance_state {
+                                    conc.current_index = idx;
+                                }
+                            }
+                            crate::input::actions::concordance::concordance_jump_to_current(state, tokio_handle);
+                        }
                     }
                     true
                 }
@@ -364,6 +385,7 @@ fn handle_picker_key(
                 InputMode::ConcordancePicker => state.borrow().concordance_picker.move_selection(1),
                 InputMode::ConcordanceWordPicker => state.borrow().concordance_word_picker.move_selection(1),
                 InputMode::ConcordanceListPicker => state.borrow().concordance_list_picker.move_selection(1),
+                InputMode::ConcordanceWorksPicker => state.borrow().concordance_works_picker.move_selection(1),
                 InputMode::GlossPicker => state.borrow().gloss_picker.move_selection(1),
                 _ => {}
             }
@@ -376,6 +398,7 @@ fn handle_picker_key(
                 InputMode::ConcordancePicker => state.borrow().concordance_picker.move_selection(-1),
                 InputMode::ConcordanceWordPicker => state.borrow().concordance_word_picker.move_selection(-1),
                 InputMode::ConcordanceListPicker => state.borrow().concordance_list_picker.move_selection(-1),
+                InputMode::ConcordanceWorksPicker => state.borrow().concordance_works_picker.move_selection(-1),
                 InputMode::GlossPicker => state.borrow().gloss_picker.move_selection(-1),
                 _ => {}
             }
@@ -798,6 +821,7 @@ fn dispatch_action(
         OpenConcordancePicker => crate::input::actions::concordance::open_picker(state, tokio_handle),
         OpenConcordanceWordPicker => crate::input::actions::pickers::open_concordance_word_picker(state),
         OpenConcordanceListPicker => crate::input::actions::pickers::open_concordance_list_picker(state),
+        OpenConcordanceWorksPicker => crate::input::actions::pickers::open_concordance_works_picker(state),
         OpenSettingsOverlay => crate::input::actions::settings::open_settings(state),
         OpenKeybindsOverlay => {
             crate::input::actions::pickers::open_keybinds_overlay(state);
@@ -815,6 +839,9 @@ fn dispatch_action(
             let mut s = state.borrow_mut();
             s.sync_enabled = !s.sync_enabled;
             s.sync_icon.set_visible(!s.sync_enabled);
+            if s.sync_enabled_before_concordance.is_some() {
+                s.sync_enabled_before_concordance = Some(s.sync_enabled);
+            }
             crate::logging::log(&format!("SYNC: {}", if s.sync_enabled { "enabled" } else { "disabled" }));
         }
         TogglePlayback => crate::input::search::toggle_playback(&mut state.borrow_mut()),
@@ -910,6 +937,9 @@ fn dispatch_action(
             let visible = s.title_bar.is_visible();
             s.title_bar.set_visible(!visible);
             s.config.title_bar_visible = !visible;
+            if !visible {
+                crate::app::update_title_bar_scene(&s);
+            }
             crate::config::save(&s.config);
         }
         ShowFontInfo => crate::app::show_font_info(&state.borrow()),
@@ -995,6 +1025,10 @@ fn dispatch_action(
             }
         }
         ToggleSynopsis => crate::app::toggle_synopsis(&mut state.borrow_mut()),
+
+        // Authorship display (Task 5)
+        ToggleAuthorship => {}
+        PickAttributionSet => {}
     }
 }
 
