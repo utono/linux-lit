@@ -49,6 +49,7 @@ pub enum InputMode {
     ConcordancePicker,
     ConcordanceWordPicker,
     ConcordanceListPicker,
+    ConcordanceWorksPicker,
     ActionPopup,
     Visual,
 }
@@ -126,6 +127,11 @@ pub struct AppState {
     pub media_picker: MediaPicker,
     pub bookmark_picker: BookmarkPicker,
     pub dialogue_formatting_active: bool,
+    pub authorship_tag: gtk4::TextTag,
+    pub authorship_line_ids: std::collections::HashSet<i64>,
+    pub authorship_enabled: bool,
+    pub authorship_sets: Vec<crate::db::authorship::AttributionSet>,
+    pub active_attribution_set_id: Option<i64>,
     pub translations: HashMap<i64, String>,
     pub translations_visible: bool,
     /// Tracks which buffer lines are inserted translation lines.
@@ -184,9 +190,11 @@ pub struct AppState {
     pub concordance_word_cache: Option<(String, Vec<(String, usize)>)>,
     pub concordance_word_picker: crate::ui::concordance_word_picker::ConcordanceWordPicker,
     pub concordance_list_picker: crate::ui::concordance_list_picker::ConcordanceListPicker,
+    pub concordance_works_picker: crate::ui::concordance_works_picker::ConcordanceWorksPicker,
     pub concordance_bar: crate::ui::concordance_bar::ConcordanceBar,
     pub title_bar: gtk4::Box,
     pub title_bar_label: gtk4::Label,
+    pub title_bar_scene_label: gtk4::Label,
     /// Index of the current sentence group (for prose with text_file).
     pub current_sentence_group: Option<usize>,
     /// Tracks the start line of the current paragraph to detect transitions.
@@ -195,6 +203,7 @@ pub struct AppState {
     pub mpv_connected: bool,
     pub mpv_playing: bool,
     pub concordance_resume_playback: bool,
+    pub sync_enabled_before_concordance: Option<bool>,
     pub skip_mpv_discovery: bool,
     pub sync_icon: gtk4::Label,
     pub debug_icon: gtk4::Label,
@@ -541,6 +550,12 @@ pub fn build_window(
         .build();
     buffer.tag_table().add(&word_bold_tag);
 
+    let authorship_tag = gtk4::TextTag::builder()
+        .name("authorship-italic")
+        .style(pango::Style::Italic)
+        .build();
+    buffer.tag_table().add(&authorship_tag);
+
     let text_view = View::builder()
         .buffer(&buffer)
         .editable(false)
@@ -704,6 +719,11 @@ pub fn build_window(
     concordance_list_picker.attach(&concordance_word_picker.overlay);
     concordance_list_picker.overlay.set_vexpand(true);
 
+    // Concordance works picker (Alt+R: jump to a specific work)
+    let concordance_works_picker = crate::ui::concordance_works_picker::ConcordanceWorksPicker::new();
+    concordance_list_picker.overlay.add_overlay(&concordance_works_picker.scrim);
+    concordance_list_picker.overlay.add_overlay(&concordance_works_picker.container);
+
     // Action popup overlay for visual mode
     let action_popup_widget = crate::ui::action_popup::ActionPopup::new();
     concordance_list_picker.overlay.add_overlay(&action_popup_widget.container);
@@ -760,15 +780,28 @@ pub fn build_window(
     // Concordance status bar
     let concordance_bar = crate::ui::concordance_bar::ConcordanceBar::new();
 
-    // Work title bar (persistent footer showing author + title)
+    // Work title bar (persistent footer showing author + title, scene info)
     let title_bar = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
     title_bar.set_hexpand(true);
     title_bar.add_css_class("title-bar");
+
+    let title_bar_left_spacer = gtk4::Label::new(None);
+    title_bar_left_spacer.set_halign(gtk4::Align::Start);
+    title_bar_left_spacer.set_hexpand(true);
+
     let title_bar_label = gtk4::Label::new(None);
     title_bar_label.set_halign(gtk4::Align::Center);
     title_bar_label.set_hexpand(true);
     title_bar_label.add_css_class("title-bar-label");
+
+    let title_bar_scene_label = gtk4::Label::new(None);
+    title_bar_scene_label.set_halign(gtk4::Align::End);
+    title_bar_scene_label.set_hexpand(true);
+    title_bar_scene_label.add_css_class("title-bar-hint");
+
+    title_bar.append(&title_bar_left_spacer);
     title_bar.append(&title_bar_label);
+    title_bar.append(&title_bar_scene_label);
     title_bar.set_visible(config.title_bar_visible);
 
     // Search bar at bottom
@@ -776,9 +809,14 @@ pub fn build_window(
 
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     vbox.append(&concordance_list_picker.overlay);
-    vbox.append(&concordance_bar.container);
-    vbox.append(&title_bar);
     vbox.append(&search_bar.container);
+
+    concordance_bar.container.set_valign(gtk4::Align::End);
+    title_bar.set_valign(gtk4::Align::End);
+    let outer_overlay = gtk4::Overlay::new();
+    outer_overlay.set_child(Some(&vbox));
+    outer_overlay.add_overlay(&concordance_bar.container);
+    outer_overlay.add_overlay(&title_bar);
 
     // Suppress startup flicker: hide content until the deferred layout
     // refresh fires (after dwl has tiled the window AND display_work
@@ -789,7 +827,7 @@ pub fn build_window(
     // chrome (including dwl's tile decoration) appears immediately.
     vbox.set_opacity(0.0);
 
-    window.set_child(Some(&vbox));
+    window.set_child(Some(&outer_overlay));
 
     // LINUX_LIT_WORK env var overrides the saved work from config.
     let last_work = if let Ok(work_abbrev) = std::env::var("LINUX_LIT_WORK") {
@@ -907,15 +945,18 @@ pub fn build_window(
         concordance_word_cache: None,
         concordance_word_picker,
         concordance_list_picker,
+        concordance_works_picker,
         concordance_bar,
         title_bar,
         title_bar_label,
+        title_bar_scene_label,
         current_sentence_group: None,
         current_paragraph_start: None,
         sync_enabled: true,
         mpv_connected: false,
         mpv_playing: false,
         concordance_resume_playback: false,
+        sync_enabled_before_concordance: None,
         skip_mpv_discovery: false,
         sync_icon,
         debug_icon,
@@ -938,6 +979,11 @@ pub fn build_window(
         last_visible_range: std::cell::Cell::new(None),
         page_tops: std::cell::RefCell::new(None),
         keymap: crate::input::keymap_config::Keymap::load(),
+        authorship_tag,
+        authorship_line_ids: std::collections::HashSet::new(),
+        authorship_enabled: true,
+        authorship_sets: Vec::new(),
+        active_attribution_set_id: None,
         input_mode: InputMode::Reader,
     }));
 
@@ -1465,6 +1511,7 @@ pub fn display_work_at_with_prepared(
         .window
         .set_title(Some(&format!("{} — linux-lit", work.title)));
     state.title_bar_label.set_text(&format!("{}, {}", work.author, work.title));
+    state.title_bar_scene_label.set_text("");
     if state.concordance_state.is_none() {
         state.title_bar.set_visible(state.config.title_bar_visible);
     }
@@ -3445,4 +3492,23 @@ fn format_etymology(e: &crate::db::queries::VocabEtymology, vocab_fg: &str) -> S
         ));
     }
     parts.join("")
+}
+
+pub fn update_title_bar_scene(state: &AppState) {
+    if !state.title_bar.is_visible() {
+        return;
+    }
+    if !state.synopsis_cache.is_empty() {
+        let (div1, div2) = current_scene_divs(state);
+        let label = if div1 == 0 && div2 == 0 {
+            "Prologue".to_string()
+        } else if div2 == 0 {
+            format!("Act {}, Chorus", div1)
+        } else {
+            format!("Act {}, Scene {}", div1, div2)
+        };
+        state.title_bar_scene_label.set_text(&label);
+    } else {
+        state.title_bar_scene_label.set_text("");
+    }
 }
