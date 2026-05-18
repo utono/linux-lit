@@ -641,6 +641,10 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
     };
 
     if let (Some(marker_idx), Some(cursor_idx)) = (marker, cursor) {
+        let first_dialogue = first_dialogue_line(state);
+        if cursor_idx < first_dialogue {
+            return;
+        }
         state.current_line = cursor_idx;
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
@@ -652,6 +656,16 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
         if !state.synopsis_cache.is_empty() {
             crate::app::show_synopsis_timed(state);
         }
+    }
+}
+
+fn first_dialogue_line(state: &AppState) -> usize {
+    if let Some(ref lm) = state.line_map {
+        lm.dialogue_buffer_lines.first().copied().unwrap_or(0)
+    } else {
+        state.current_work.as_ref()
+            .and_then(|w| w.lines.iter().position(|l| l.is_dialogue))
+            .unwrap_or(0)
     }
 }
 
