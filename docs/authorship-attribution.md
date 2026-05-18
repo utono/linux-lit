@@ -2,6 +2,56 @@
 
 linux-lit displays collaborator-attributed lines in italics for Shakespeare's co-authored works. This document describes the data model, scholarly sources, and how to add or modify attributions.
 
+## Shakespeare's Co-Authored Works
+
+Shakespeare collaborated with other playwrights throughout his career. Early modern drama was frequently collaborative — perhaps a third of all plays from the period involved multiple authors. Identifying Shakespeare's collaborators has been a scholarly project since the eighteenth century, accelerated in recent decades by computational stylometry (statistical analysis of vocabulary, function words, metrical patterns, and other linguistic features).
+
+The landmark publication in this area is the New Oxford Shakespeare (NOS, 2016), edited by Gary Taylor, John Jowett, Terri Bourus, and Gabriel Egan. Its *Authorship Companion* volume, with the chapter "The Canon and Chronology of Shakespeare's Works" by Taylor and Rory Loughnane, provides the most comprehensive modern assessment of Shakespeare's collaborative works. The NOS identifies co-authorship in roughly a third of the plays in the canon.
+
+### Plays with strong co-authorship consensus
+
+These plays are widely accepted as collaborative by mainstream Shakespeare scholarship. The evidence comes from converging lines of inquiry: linguistic stylometry, verse tests (metrical habits, feminine endings, rhyme patterns), bibliographic analysis, and historical documentation.
+
+**Titus Andronicus** (c. 1593) — with **George Peele**. Peele wrote Act 1 and parts of Acts 2 and 4 (specifically 2.1, 2.2, and 4.1). The case rests on Peele's distinctive stylistic markers: classicizing rhetoric, alliterative patterns, and vocabulary clusters shared with his solo plays. Brian Vickers established the modern consensus in *Shakespeare, Co-Author* (2002), building on earlier work by MacDonald P. Jackson. The NOS (2016) confirmed Peele's participation. Shakespeare wrote the more dramatically intense middle and final acts, including the mutilation scene (2.3-2.4) and the revenge plot (Acts 3 and 5).
+
+**1 Henry VI** (c. 1591) — with **Thomas Nashe** and possibly others. The play has long been suspected of multiple authorship. The NOS attributes Act 1 to Nashe, based on vocabulary analysis (Craig & Kinney 2009) and Nashe's characteristic prose rhythms. Shakespeare is credited with the Talbot scenes (2.4, 4.2-4.7) and possibly other passages. The remaining scenes — the Temple Garden, the Joan of Arc sequences, much of Acts 2-3 and 5 — may involve one or more additional collaborators whose identity remains disputed. Christopher Marlowe has been proposed (by Craig & Kinney and by Santiago Segarra et al. 2016), but this attribution is contested. The play may represent Shakespeare's earliest work for the stage, joining an existing collaborative project.
+
+**Henry VIII / All Is True** (1613) — with **John Fletcher**. The most extensively studied of all Shakespeare collaborations. James Spedding proposed the division in 1850 on the basis of metrical tests, and his scene-by-scene attribution has been substantially confirmed by every subsequent study, including Cyrus Hoy's comprehensive analysis of Fletcher's linguistic preferences (1962) and modern computational work. Fletcher wrote roughly half the play, including the Prologue, Epilogue, and scenes centered on ceremony and spectacle (1.3-1.4, 2.1-2.2, 3.1, 4.1-4.2). Shakespeare wrote the dramatic core: Buckingham's arrest (1.1-1.2), the trial of Queen Katherine (2.3-2.4), and Wolsey's fall (3.2). Act 3 Scene 2 is the most contested — Spedding placed the transition mid-scene at Wolsey's "Farewell, a long farewell to all my greatness," with Shakespeare writing the fall and Fletcher the aftermath.
+
+**The Two Noble Kinsmen** (1613-14) — with **John Fletcher**. Published in 1634 with both names on the title page — rare documentary evidence of collaboration. The division follows the play's tonal shifts: Shakespeare wrote the framing narrative (Prologue, Act 1, parts of Act 3, the final scenes) while Fletcher wrote the romantic subplot, the Jailer's Daughter scenes, and the comic episodes (Act 2, parts of Acts 3-4, 5.2). Hallet Smith's division for the Riverside Shakespeare (1974) represents the orthodox consensus, confirmed by subsequent stylometric work.
+
+**Timon of Athens** (c. 1606) — with **Thomas Middleton**. The play survives only in the First Folio and shows signs of incomplete revision. John Jowett's Oxford edition (2004) established Middleton's contribution, later confirmed by Taylor and Loughnane (NOS 2016). Middleton wrote the satirical banquet scene (1.2), most of Act 3 (the creditor scenes), and parts of Act 4 (4.1-4.2). Shakespeare wrote the opening scene with the artist and poet (1.1), the Senate scenes (2.1-2.2), and the great misanthropic soliloquies of the wilderness acts (4.3, Act 5). The collaboration may have been sequential rather than simultaneous — Middleton possibly completing or revising a play Shakespeare left unfinished.
+
+**Pericles** (c. 1607-08) — with **George Wilkins**. Not included in the First Folio, possibly because the editors recognized it as partly non-Shakespearean. The traditional division — Wilkins wrote Acts 1-2, Shakespeare wrote Acts 3-5 — has been the standard editorial position since Delius (1868) and is supported by stylometric analysis (Craig & Kinney 2009). The first two acts are dramatically weaker, with wooden verse and episodic plotting. Shakespeare's Acts 3-5 contain the storm scene, the Marina sequences, and the great recognition scene (5.1), widely considered among his finest late writing. Wilkins published a prose version, *The Painful Adventures of Pericles Prince of Tyre* (1608), which appears to draw on his own contributions to the play.
+
+### Plays with posthumous adaptation
+
+These plays were revised by another playwright after Shakespeare's death (1616), before publication in the First Folio (1623) or later.
+
+**Macbeth** (c. 1606, adapted c. 1616) — adapted by **Thomas Middleton**. The Folio text of Macbeth is unusually short and shows signs of theatrical revision. Middleton added the Hecate scene (3.5) and Hecate's speeches in 4.1, incorporating two songs ("Come away, come away" and "Black spirits") from his own play *The Witch* (c. 1615). John Jowett's analysis (2013) and the NOS (2016) both identify Middleton's hand. The adaptation is small in scope — perhaps 50 lines — but the Hecate material has a noticeably different style and dramatic function from the surrounding Shakespeare text. Some scholars (notably Brooke 1990) dispute any non-Shakespearean presence.
+
+**Measure for Measure** (c. 1604, adapted c. 1621) — adapted by **Thomas Middleton**. The NOS (2016) identifies Middleton as having substantially revised Act 1 Scene 2 and contributed scattered interpolations elsewhere, including the song at the opening of 4.1 ("Take, O take those lips away"). The evidence includes Middleton's distinctive oaths and colloquialisms, and the scene's structural anomalies. This is the most controversial of the NOS co-authorship attributions — John Jowett (2007) makes the case, but many scholars remain skeptical, and the Arden and Cambridge editions do not accept Middleton's involvement.
+
+### Plays with debated or partial co-authorship claims
+
+These plays have been proposed as collaborative but lack the broad consensus of the cases above.
+
+**Edward III** (c. 1593) — **collaborator unknown**. The play was attributed to Shakespeare on external grounds and included in the NOS (2016). Shakespeare is generally credited with the Countess of Salisbury scenes (Acts 1-2), based on stylistic parallels with the Sonnets and other early plays. The remaining acts involve military campaigns in France and are stylistically distinct, but the collaborator has not been convincingly identified. Edward III is not currently in the lit.db `works` table.
+
+**The Spanish Tragedy additions** (c. 1602) — possibly **Shakespeare**. Ben Jonson was paid for additions to Thomas Kyd's play, but some scholars have attributed the 1602 additions to Shakespeare instead. The evidence is inconclusive. Not in lit.db.
+
+**Sir Thomas More** (c. 1600-04) — **Hand D** is widely accepted as Shakespeare's autograph. The play was a collaboration among Anthony Munday, Henry Chettle, Thomas Heywood, Thomas Dekker, and Shakespeare, who contributed a scene of approximately 147 lines. The manuscript survives (British Library MS Harley 7368). Not in lit.db as a complete work.
+
+**Cardenio / Double Falsehood** (1612-13) — with **John Fletcher**. A lost play. Lewis Theobald's *Double Falsehood* (1727) claims to be based on Shakespeare and Fletcher's manuscript. Brean Hammond's Arden edition (2010) accepts the attribution; the NOS includes it cautiously. Not in lit.db.
+
+### Plays sometimes proposed but generally rejected
+
+**2 Henry VI** and **3 Henry VI** — Earlier scholars (Malone, Fleay) proposed collaborative authorship, but modern stylometric analysis consistently attributes both plays entirely to Shakespeare. The NOS agrees.
+
+**The Taming of the Shrew** — Occasionally proposed as collaborative (with an unknown hand for the Induction or the subplot), but the evidence is weak. The NOS attributes it solely to Shakespeare.
+
+**All's Well That Ends Well** — Middleton's involvement has been suggested based on some lexical evidence, but the case has not achieved consensus. The NOS does not identify a collaborator.
+
 ## Data Model
 
 Two tables in `~/utono/litdb/data/lit.db`:
@@ -281,15 +331,18 @@ The current data was rebuilt from scratch using scene-level attributions (May 20
 ## Scholarly References
 
 - **Spedding (1850):** James Spedding, "Who Wrote Shakespeare's Henry VIII?" *The Gentleman's Magazine*, August 1850.
+- **Delius (1868):** Nikolaus Delius, "Über Shakespeare's Pericles, Prince of Tyre," *Jahrbuch der deutschen Shakespeare-Gesellschaft* 3 (1868).
 - **Hoy (1962):** Cyrus Hoy, "The Shares of Fletcher and his Collaborators in the Beaumont and Fletcher Canon (VII)," *Studies in Bibliography* 15 (1962): 71-90.
 - **Riverside-Smith (1974):** Hallet Smith, ed., *The Riverside Shakespeare* (Boston: Houghton Mifflin, 1974).
+- **Brooke (1990):** Nicholas Brooke, ed., *Macbeth*, Oxford Shakespeare (Oxford University Press, 1990).
 - **Vickers (2002):** Brian Vickers, *Shakespeare, Co-Author: A Historical Study of Five Collaborative Plays* (Oxford University Press, 2002).
 - **Jowett (2004):** John Jowett, ed., *The Life of Timon of Athens*, Oxford Shakespeare (Oxford University Press, 2004).
 - **Jowett (2007):** John Jowett, "Middleton and Measure for Measure," in *Thomas Middleton and Early Modern Textual Culture* (Oxford University Press, 2007).
 - **Craig & Kinney (2009):** Hugh Craig & Arthur F. Kinney, *Shakespeare, Computers, and the Mystery of Authorship* (Cambridge University Press, 2009).
+- **Hammond (2010):** Brean Hammond, ed., *Double Falsehood*, Arden Shakespeare (Methuen Drama, 2010).
 - **Jowett (2013):** John Jowett, "Middleton and Macbeth," in *Thomas Middleton in Context* (Cambridge University Press, 2013).
+- **Segarra et al. (2016):** Santiago Segarra et al., "Attributing the Authorship of the Henry VI Plays by Word Adjacency," *Shakespeare Quarterly* 67.2 (2016): 232-56.
 - **Taylor & Loughnane (2016):** Gary Taylor & Rory Loughnane, "The Canon and Chronology of Shakespeare's Works," in *The New Oxford Shakespeare: Authorship Companion* (Oxford University Press, 2016).
-- **Traditional Pericles consensus:** The division of Pericles into Wilkins (Acts I-II) and Shakespeare (Acts III-V) is the standard editorial position since Delius (1868), supported by stylometric work including Craig & Kinney (2009).
 
 ## Known Limitations
 
