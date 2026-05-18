@@ -480,12 +480,13 @@ pub(crate) fn concordance_seek_current(state: &mut AppState) {
 }
 
 /// Seek MPV to the hit line's own start time (not sentence start).
+/// No sync suppression — cursor is already on the hit line, so CursorSync
+/// will naturally advance from here and page-turn only when the cursor
+/// reaches the last dialogue line on the page.
 fn concordance_seek(state: &mut AppState, line_mapping_id: i64) {
     if let Some(work) = &state.current_work {
         if let Some(line) = work.lines.iter().find(|l| l.id == line_mapping_id) {
             if let Some(ts) = line.timestamp.as_ref() {
-                state.suppress_sync_until =
-                    Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
                 let seek_time = (ts.start - SEEK_PREROLL).max(0.0);
                 let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::Seek(seek_time));
             }
