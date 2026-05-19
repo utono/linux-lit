@@ -17,7 +17,7 @@ const fn btn(label: &'static str, action: &'static str) -> ButtonDef {
 const FACE_X: ButtonDef = btn("X", "prev dlg");
 const FACE_A: ButtonDef = btn("A", "set chpt");
 const FACE_B: ButtonDef = btn("B", "next dlg");
-const FACE_Y: ButtonDef = btn("Y", "start time");
+const FACE_Y: ButtonDef = btn("Y", "set start");
 
 const DPAD_UP: ButtonDef = btn("", "nudge \u{2212}");
 const DPAD_DOWN: ButtonDef = btn("", "nudge +");
@@ -116,10 +116,10 @@ fn layout() -> Vec<Btn> {
     }
 
     // Menu buttons — shifted left of center to avoid face button labels
-    let mcx = BODY_W * 0.50;
+    let mcx = BODY_W * 0.46;
     let mcy = BODY_H * 0.56;
     let mgx = 40.0;
-    let mgy = 22.0;
+    let mgy = 32.0;
     for &(def, dx, dy) in &[
         (&BTN_MINUS as &ButtonDef, -mgx, -mgy),
         (&BTN_PLUS, mgx, -mgy),
