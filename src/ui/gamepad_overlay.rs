@@ -1,15 +1,4 @@
 //! Cairo-drawn 8BitDo Micro gamepad layout showing linux-lit button bindings.
-//!
-//! Matches the physical layout in the official manual:
-//! - Horizontal rectangular body.
-//! - D-pad (plus shape) on the left.
-//! - Face buttons Y/A/B/X in a Switch-style diamond on the right
-//!   (Y = top, A = right, B = bottom, X = left).
-//! - Four small buttons between the D-pad and the face diamond:
-//!   minus / plus / star / home.
-//! - L and R shoulders above the body, with L2/R2 triggers behind them.
-//! - Power-status LED at the top center.
-//! - Mode switch and pair button on the bottom edge (drawn but unbound).
 
 use gtk4::prelude::*;
 use gtk4::{DrawingArea, Overlay};
@@ -25,216 +14,128 @@ const fn btn(label: &'static str, action: &'static str) -> ButtonDef {
     ButtonDef { label, action }
 }
 
-// Face buttons. Physical positions match the Switch layout in the manual.
-// evdev labels (Xbox convention) do not match physical labels:
-//   BTN_NORTH → physical X (top)
-//   BTN_EAST  → physical A (right)
-//   BTN_SOUTH → physical B (bottom)
-//   BTN_WEST  → physical Y (left)
-// But the 8BitDo Micro manual shows Y/A/B/X positions as a Nintendo
-// Switch pad, which is what this overlay renders.
-const FACE_X: ButtonDef = btn("X", "prev dlg");      // top (BTN_NORTH)
-const FACE_A: ButtonDef = btn("A", "set chapter");   // right (BTN_SOUTH physical = bottom but see below)
-const FACE_B: ButtonDef = btn("B", "next dlg");      // bottom (BTN_EAST physical = right)
-const FACE_Y: ButtonDef = btn("Y", "play/pause");    // left (BTN_WEST)
+const FACE_X: ButtonDef = btn("X", "prev dlg");
+const FACE_A: ButtonDef = btn("A", "set chpt");
+const FACE_B: ButtonDef = btn("B", "next dlg");
+const FACE_Y: ButtonDef = btn("Y", "start time");
 
-// D-pad
-// Arrow glyphs (U+2190..2193) don't render in the sans-serif font used
-// here, so we leave the D-pad arms blank — the plus shape already conveys
-// direction, and action labels sit just outside each arm.
-const DPAD_UP: ButtonDef = btn("", "toggle speed");
-const DPAD_DOWN: ButtonDef = btn("", "translations");
-const DPAD_LEFT: ButtonDef = btn("", "seek \u{2212}3.5");
-const DPAD_RIGHT: ButtonDef = btn("", "start ts");
+const DPAD_UP: ButtonDef = btn("", "nudge \u{2212}");
+const DPAD_DOWN: ButtonDef = btn("", "nudge +");
+const DPAD_LEFT: ButtonDef = btn("", "+3.5s");
+const DPAD_RIGHT: ButtonDef = btn("", "\u{2212}3.5s");
 
-// Shoulders / triggers.
-const BTN_L: ButtonDef = btn("L", "");
-const BTN_R: ButtonDef = btn("R", "");
+const BTN_L: ButtonDef = btn("L", "play/pause");
+const BTN_R: ButtonDef = btn("R", "del ts");
 const BTN_L2: ButtonDef = btn("L2", "");
-const BTN_R2: ButtonDef = btn("R2", "");
+const BTN_R2: ButtonDef = btn("R2", "vocab next");
 
-// Menu buttons (small, between d-pad and face diamond)
-const BTN_MINUS: ButtonDef = btn("-", "sync tog");      // Select
-const BTN_PLUS: ButtonDef = btn("+", "prev chapter");   // Start
-const BTN_STAR: ButtonDef = btn("*", "");               // no evdev event
-const BTN_HOME: ButtonDef = btn("H", "next chapter");
+const BTN_MINUS: ButtonDef = btn("\u{2212}", "pg back");
+const BTN_PLUS: ButtonDef = btn("+", "pg fwd");
+const BTN_STAR: ButtonDef = btn("\u{2217}", "");
+const BTN_HOME: ButtonDef = btn("H", "play line");
 
-// ── Layout constants ────────────────────────────────────────────────
+// ── Layout ──────────────────────────────────────────────────────────
 
-const BODY_W: f64 = 820.0;
-const BODY_H: f64 = 270.0;
-const BODY_CORNER: f64 = 20.0;
+const BODY_W: f64 = 800.0;
+const BODY_H: f64 = 380.0;
+const BODY_R: f64 = 30.0;
 
-const SHOULDER_W: f64 = 110.0;
-const SHOULDER_H: f64 = 34.0;
-const SHOULDER_GAP: f64 = 6.0;
+const SHOULDER_W: f64 = 130.0;
+const SHOULDER_H: f64 = 28.0;
 
-const DPAD_ARM: f64 = 44.0;       // length of each arm of the plus
-const DPAD_THICK: f64 = 54.0;     // width of the crossbar of the plus
+const DPAD_ARM: f64 = 30.0;
+const DPAD_THICK: f64 = 30.0;
 
-const FACE_R: f64 = 36.0;         // face button radius
-const FACE_OFFSET: f64 = 52.0;    // distance from diamond center to face button center
+const FACE_R: f64 = 22.0;
+const FACE_SPREAD: f64 = 36.0;
 
-const MENU_R: f64 = 14.0;         // radius of small round menu buttons
+const MENU_R: f64 = 13.0;
 
-const CORNER_R: f64 = 4.0;
-const PAD: f64 = 24.0;
+const PAD: f64 = 30.0;
+const ACTION_FONT: f64 = 15.0;
+const GLYPH_FONT: f64 = 21.0;
+const GLYPH_FONT_SM: f64 = 15.0;
 
-const KB_W: f64 = BODY_W;
-const KB_H: f64 = BODY_H + SHOULDER_H * 2.0 + SHOULDER_GAP + 48.0; // + legend
+const LEGEND_H: f64 = 44.0;
+const TOTAL_W: f64 = BODY_W + 2.0 * PAD;
+const TOTAL_H: f64 = BODY_H + LEGEND_H + 2.0 * PAD;
 
-// ── Button geometry ──────────────────────────────────────────────────
-
-#[derive(Clone, Copy)]
-enum ButtonShape {
-    Rect,
-    RectShoulder,
-    Circle,
-    DpadArm(DpadDir),
-}
+// ── Geometry ────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy)]
-enum DpadDir {
-    Up,
-    Down,
-    Left,
-    Right,
-}
+enum Shape { Shoulder, Circle, DpadArm(Dir) }
 
-struct ButtonRect {
-    x: f64, // top-left for Rect shapes, center for Circle
-    y: f64,
-    w: f64,
-    h: f64,
-    shape: ButtonShape,
+#[derive(Clone, Copy)]
+enum Dir { Up, Down, Left, Right }
+
+struct Btn {
+    x: f64, y: f64, w: f64, h: f64,
+    shape: Shape,
     def: &'static ButtonDef,
 }
 
-fn build_layout() -> Vec<ButtonRect> {
-    let mut v: Vec<ButtonRect> = Vec::new();
+fn layout() -> Vec<Btn> {
+    let mut v = Vec::new();
 
-    let body_y = SHOULDER_H * 2.0 + SHOULDER_GAP;
+    // Shoulders inside body — top-left and top-right
+    let sy_top = 20.0;
+    let sy_bot = sy_top + SHOULDER_H + 4.0;
+    let sx_l = 28.0;
+    let sx_r = BODY_W - SHOULDER_W - 28.0;
+    v.push(Btn { x: sx_l, y: sy_top, w: SHOULDER_W, h: SHOULDER_H, shape: Shape::Shoulder, def: &BTN_L2 });
+    v.push(Btn { x: sx_l, y: sy_bot, w: SHOULDER_W, h: SHOULDER_H, shape: Shape::Shoulder, def: &BTN_L });
+    v.push(Btn { x: sx_r, y: sy_top, w: SHOULDER_W, h: SHOULDER_H, shape: Shape::Shoulder, def: &BTN_R2 });
+    v.push(Btn { x: sx_r, y: sy_bot, w: SHOULDER_W, h: SHOULDER_H, shape: Shape::Shoulder, def: &BTN_R });
 
-    // Shoulders + triggers. Row 0 (top) = L2 / R2, row 1 (bottom) = L / R.
-    // In the manual L2 sits behind/above L (printed as overlapping tabs), so
-    // we stack them vertically here.
-    v.push(ButtonRect {
-        x: 46.0, y: 0.0,
-        w: SHOULDER_W, h: SHOULDER_H,
-        shape: ButtonShape::RectShoulder, def: &BTN_L2,
-    });
-    v.push(ButtonRect {
-        x: 46.0, y: SHOULDER_H + SHOULDER_GAP,
-        w: SHOULDER_W, h: SHOULDER_H,
-        shape: ButtonShape::RectShoulder, def: &BTN_L,
-    });
-    v.push(ButtonRect {
-        x: BODY_W - SHOULDER_W - 46.0, y: 0.0,
-        w: SHOULDER_W, h: SHOULDER_H,
-        shape: ButtonShape::RectShoulder, def: &BTN_R2,
-    });
-    v.push(ButtonRect {
-        x: BODY_W - SHOULDER_W - 46.0, y: SHOULDER_H + SHOULDER_GAP,
-        w: SHOULDER_W, h: SHOULDER_H,
-        shape: ButtonShape::RectShoulder, def: &BTN_R,
-    });
+    // D-pad — left side, vertically centered in lower 2/3 of body
+    // Arms are positioned flush against the center square (no overlap needed —
+    // the cross is drawn as a single filled shape in draw()).
+    let dpad_cx = 120.0;
+    let dpad_cy = BODY_H * 0.56;
+    for &(dir, dx, dy) in &[
+        (Dir::Up, 0.0, -(DPAD_THICK / 2.0 + DPAD_ARM)),
+        (Dir::Down, 0.0, DPAD_THICK / 2.0),
+        (Dir::Left, -(DPAD_THICK / 2.0 + DPAD_ARM), 0.0),
+        (Dir::Right, DPAD_THICK / 2.0, 0.0),
+    ] {
+        let def = match dir { Dir::Up => &DPAD_UP, Dir::Down => &DPAD_DOWN, Dir::Left => &DPAD_LEFT, Dir::Right => &DPAD_RIGHT };
+        let (w, h) = match dir { Dir::Up | Dir::Down => (DPAD_THICK, DPAD_ARM), Dir::Left | Dir::Right => (DPAD_ARM, DPAD_THICK) };
+        v.push(Btn { x: dpad_cx - DPAD_THICK / 2.0 + dx, y: dpad_cy - DPAD_THICK / 2.0 + dy, w, h, shape: Shape::DpadArm(dir), def });
+    }
 
-    // D-pad plus on the left of the body.
-    let dpad_cx = 140.0;
-    let dpad_cy = body_y + BODY_H / 2.0;
-    // Up arm
-    v.push(ButtonRect {
-        x: dpad_cx - DPAD_THICK / 2.0,
-        y: dpad_cy - DPAD_THICK / 2.0 - DPAD_ARM,
-        w: DPAD_THICK, h: DPAD_ARM,
-        shape: ButtonShape::DpadArm(DpadDir::Up), def: &DPAD_UP,
-    });
-    // Down arm
-    v.push(ButtonRect {
-        x: dpad_cx - DPAD_THICK / 2.0,
-        y: dpad_cy + DPAD_THICK / 2.0,
-        w: DPAD_THICK, h: DPAD_ARM,
-        shape: ButtonShape::DpadArm(DpadDir::Down), def: &DPAD_DOWN,
-    });
-    // Left arm
-    v.push(ButtonRect {
-        x: dpad_cx - DPAD_THICK / 2.0 - DPAD_ARM,
-        y: dpad_cy - DPAD_THICK / 2.0,
-        w: DPAD_ARM, h: DPAD_THICK,
-        shape: ButtonShape::DpadArm(DpadDir::Left), def: &DPAD_LEFT,
-    });
-    // Right arm
-    v.push(ButtonRect {
-        x: dpad_cx + DPAD_THICK / 2.0,
-        y: dpad_cy - DPAD_THICK / 2.0,
-        w: DPAD_ARM, h: DPAD_THICK,
-        shape: ButtonShape::DpadArm(DpadDir::Right), def: &DPAD_RIGHT,
-    });
+    // Face buttons — right side, inset enough for "set chpt" label
+    let face_cx = BODY_W - 160.0;
+    let face_cy = BODY_H * 0.56;
+    for &(def, dx, dy) in &[
+        (&FACE_X as &ButtonDef, 0.0, -FACE_SPREAD),
+        (&FACE_A, FACE_SPREAD, 0.0),
+        (&FACE_B, 0.0, FACE_SPREAD),
+        (&FACE_Y, -FACE_SPREAD, 0.0),
+    ] {
+        v.push(Btn { x: face_cx + dx, y: face_cy + dy, w: FACE_R * 2.0, h: FACE_R * 2.0, shape: Shape::Circle, def });
+    }
 
-    // Face buttons in Switch-style diamond on the right of the body.
-    let face_cx = BODY_W - 140.0;
-    let face_cy = body_y + BODY_H / 2.0;
-    // Y top (BTN_WEST in evdev, but physically drawn at top per manual).
-    // Wait — the manual shows Y at top-LEFT of the diamond. Re-read carefully.
-    // Switch Pro Controller diamond: X top, Y left, A right, B bottom.
-    // The 8BitDo Micro manual diagram shows: Y top, X right, A bottom, B left.
-    // Our evtest labels came out: BTN_NORTH=X, BTN_EAST=B, BTN_SOUTH=A, BTN_WEST=Y.
-    // To be consistent with the evdev feedback (which is what the code binds),
-    // draw: X top, B right, A bottom, Y left.
-    v.push(ButtonRect {
-        x: face_cx, y: face_cy - FACE_OFFSET,
-        w: FACE_R * 2.0, h: FACE_R * 2.0,
-        shape: ButtonShape::Circle, def: &FACE_X,
-    });
-    v.push(ButtonRect {
-        x: face_cx + FACE_OFFSET, y: face_cy,
-        w: FACE_R * 2.0, h: FACE_R * 2.0,
-        shape: ButtonShape::Circle, def: &FACE_A,
-    });
-    v.push(ButtonRect {
-        x: face_cx, y: face_cy + FACE_OFFSET,
-        w: FACE_R * 2.0, h: FACE_R * 2.0,
-        shape: ButtonShape::Circle, def: &FACE_B,
-    });
-    v.push(ButtonRect {
-        x: face_cx - FACE_OFFSET, y: face_cy,
-        w: FACE_R * 2.0, h: FACE_R * 2.0,
-        shape: ButtonShape::Circle, def: &FACE_Y,
-    });
-
-    // Menu buttons in the center. Top row: minus, plus. Bottom row: star, home.
-    let menu_cx = BODY_W / 2.0;
-    let menu_row_top = body_y + BODY_H / 2.0 - 28.0;
-    let menu_row_bot = body_y + BODY_H / 2.0 + 28.0;
-    let menu_dx = 34.0;
-    v.push(ButtonRect {
-        x: menu_cx - menu_dx, y: menu_row_top,
-        w: MENU_R * 2.0, h: MENU_R * 2.0,
-        shape: ButtonShape::Circle, def: &BTN_MINUS,
-    });
-    v.push(ButtonRect {
-        x: menu_cx + menu_dx, y: menu_row_top,
-        w: MENU_R * 2.0, h: MENU_R * 2.0,
-        shape: ButtonShape::Circle, def: &BTN_PLUS,
-    });
-    v.push(ButtonRect {
-        x: menu_cx - menu_dx, y: menu_row_bot,
-        w: MENU_R * 2.0, h: MENU_R * 2.0,
-        shape: ButtonShape::Circle, def: &BTN_STAR,
-    });
-    v.push(ButtonRect {
-        x: menu_cx + menu_dx, y: menu_row_bot,
-        w: MENU_R * 2.0, h: MENU_R * 2.0,
-        shape: ButtonShape::Circle, def: &BTN_HOME,
-    });
+    // Menu buttons — shifted left of center to avoid face button labels
+    let mcx = BODY_W * 0.50;
+    let mcy = BODY_H * 0.56;
+    let mgx = 40.0;
+    let mgy = 22.0;
+    for &(def, dx, dy) in &[
+        (&BTN_MINUS as &ButtonDef, -mgx, -mgy),
+        (&BTN_PLUS, mgx, -mgy),
+        (&BTN_STAR, -mgx, mgy),
+        (&BTN_HOME, mgx, mgy),
+    ] {
+        v.push(Btn { x: mcx + dx, y: mcy + dy, w: MENU_R * 2.0, h: MENU_R * 2.0, shape: Shape::Circle, def });
+    }
 
     v
 }
 
-// ── Colors ───────────────────────────────────────────────────────────
+// ── Colors ──────────────────────────────────────────────────────────
 
-const BG: (f64, f64, f64, f64) = (0.341, 0.322, 0.475, 0.95);      // backdrop
-const BODY_FILL: (f64, f64, f64) = (0.88, 0.86, 0.86);             // pad chassis
+const BG: (f64, f64, f64, f64) = (0.341, 0.322, 0.475, 0.95);
+const BODY_FILL: (f64, f64, f64) = (0.88, 0.86, 0.86);
 const BODY_STROKE: (f64, f64, f64) = (0.35, 0.33, 0.38);
 const PART_BOUND: (f64, f64, f64) = (0.949, 0.914, 0.882);
 const PART_BOUND_BORDER: (f64, f64, f64) = (0.475, 0.459, 0.576);
@@ -242,251 +143,205 @@ const PART_UNBOUND: (f64, f64, f64) = (0.78, 0.76, 0.78);
 const PART_UNBOUND_BORDER: (f64, f64, f64) = (0.60, 0.58, 0.62);
 const LABEL_BOUND: (f64, f64, f64) = (0.341, 0.322, 0.475);
 const LABEL_UNBOUND: (f64, f64, f64) = (0.45, 0.44, 0.50);
-const ACTION_COLOR: (f64, f64, f64) = (0.157, 0.412, 0.514);
+const ACTION_COL: (f64, f64, f64) = (0.157, 0.412, 0.514);
 
-fn part_colors(bound: bool) -> ((f64, f64, f64), (f64, f64, f64), (f64, f64, f64)) {
-    if bound {
-        (PART_BOUND, PART_BOUND_BORDER, LABEL_BOUND)
-    } else {
-        (PART_UNBOUND, PART_UNBOUND_BORDER, LABEL_UNBOUND)
-    }
+fn colors(bound: bool) -> ((f64, f64, f64), (f64, f64, f64), (f64, f64, f64)) {
+    if bound { (PART_BOUND, PART_BOUND_BORDER, LABEL_BOUND) }
+    else { (PART_UNBOUND, PART_UNBOUND_BORDER, LABEL_UNBOUND) }
 }
 
-// ── Drawing ──────────────────────────────────────────────────────────
+// ── Drawing ─────────────────────────────────────────────────────────
 
-fn draw_gamepad(cr: &gtk4::cairo::Context, layout: &[ButtonRect]) {
-    let total_w = KB_W + 2.0 * PAD;
-    let total_h = KB_H + 2.0 * PAD;
+fn draw(cr: &gtk4::cairo::Context, btns: &[Btn], ww: f64, wh: f64) {
+    let pi2 = 2.0 * std::f64::consts::PI;
 
-    // Backdrop
+    // Full-screen backdrop
     cr.set_source_rgba(BG.0, BG.1, BG.2, BG.3);
-    rounded_rect(cr, 0.0, 0.0, total_w, total_h, 14.0);
+    cr.rectangle(0.0, 0.0, ww, wh);
     let _ = cr.fill();
 
+    // Scale and center
+    let sx = ww / TOTAL_W;
+    let sy = wh / TOTAL_H;
+    let s = sx.min(sy) * 0.98;
+    cr.translate((ww - TOTAL_W * s) / 2.0, (wh - TOTAL_H * s) / 2.0);
+    cr.scale(s, s);
     cr.translate(PAD, PAD);
 
-    // Pad chassis
-    let body_y = SHOULDER_H * 2.0 + SHOULDER_GAP;
+    // Body chassis
     cr.set_source_rgb(BODY_FILL.0, BODY_FILL.1, BODY_FILL.2);
-    rounded_rect(cr, 0.0, body_y, BODY_W, BODY_H, BODY_CORNER);
+    rrect(cr, 0.0, 0.0, BODY_W, BODY_H, BODY_R);
     let _ = cr.fill();
     cr.set_source_rgb(BODY_STROKE.0, BODY_STROKE.1, BODY_STROKE.2);
-    rounded_rect(cr, 0.5, body_y + 0.5, BODY_W - 1.0, BODY_H - 1.0, BODY_CORNER);
+    rrect(cr, 0.5, 0.5, BODY_W - 1.0, BODY_H - 1.0, BODY_R);
     cr.set_line_width(1.0);
     let _ = cr.stroke();
 
-    // Power LED (top center of body)
-    let led_x = BODY_W / 2.0;
-    let led_y = body_y + 16.0;
+    // Power LED (top center)
     cr.set_source_rgb(0.55, 0.58, 0.62);
-    cr.arc(led_x, led_y, 4.0, 0.0, 2.0 * std::f64::consts::PI);
+    cr.arc(BODY_W / 2.0, 14.0, 3.5, 0.0, pi2);
     let _ = cr.fill();
 
-    // Mode switch (bottom-left edge)
+    // Mode switch (bottom-left)
     cr.set_source_rgb(0.60, 0.58, 0.62);
-    rounded_rect(
-        cr, 40.0, body_y + BODY_H - 14.0, 70.0, 10.0, 2.0,
-    );
+    rrect(cr, 36.0, BODY_H - 14.0, 50.0, 8.0, 2.0);
     let _ = cr.fill();
 
     // Pair button (bottom center)
     cr.set_source_rgb(0.60, 0.58, 0.62);
-    cr.arc(BODY_W / 2.0, body_y + BODY_H - 12.0, 5.0, 0.0, 2.0 * std::f64::consts::PI);
+    cr.arc(BODY_W / 2.0, BODY_H - 10.0, 4.0, 0.0, pi2);
     let _ = cr.fill();
 
-    // All interactive parts.
-    for part in layout {
-        let bound = !part.def.action.is_empty();
-        let (fill, border, label_col) = part_colors(bound);
+    // D-pad — draw as a single filled cross shape
+    let dpad_cx = 120.0;
+    let dpad_cy = BODY_H * 0.56;
+    let half_t = DPAD_THICK / 2.0;
+    let arm_len = DPAD_ARM;
+    let (cfill, cborder, _) = colors(true);
+    cr.set_source_rgb(cfill.0, cfill.1, cfill.2);
+    cr.new_path();
+    // Start at top-left of the up arm, go clockwise
+    cr.move_to(dpad_cx - half_t, dpad_cy - half_t - arm_len);
+    cr.line_to(dpad_cx + half_t, dpad_cy - half_t - arm_len);
+    cr.line_to(dpad_cx + half_t, dpad_cy - half_t);
+    cr.line_to(dpad_cx + half_t + arm_len, dpad_cy - half_t);
+    cr.line_to(dpad_cx + half_t + arm_len, dpad_cy + half_t);
+    cr.line_to(dpad_cx + half_t, dpad_cy + half_t);
+    cr.line_to(dpad_cx + half_t, dpad_cy + half_t + arm_len);
+    cr.line_to(dpad_cx - half_t, dpad_cy + half_t + arm_len);
+    cr.line_to(dpad_cx - half_t, dpad_cy + half_t);
+    cr.line_to(dpad_cx - half_t - arm_len, dpad_cy + half_t);
+    cr.line_to(dpad_cx - half_t - arm_len, dpad_cy - half_t);
+    cr.line_to(dpad_cx - half_t, dpad_cy - half_t);
+    cr.close_path();
+    let _ = cr.fill_preserve();
+    cr.set_source_rgb(cborder.0, cborder.1, cborder.2);
+    cr.set_line_width(1.0);
+    let _ = cr.stroke();
 
-        match part.shape {
-            ButtonShape::Rect => {
+    // Buttons
+    for b in btns {
+        let bound = !b.def.action.is_empty();
+        let (fill, border, lcol) = colors(bound);
+
+        match b.shape {
+            Shape::Shoulder => {
                 cr.set_source_rgb(fill.0, fill.1, fill.2);
-                rounded_rect(cr, part.x, part.y, part.w, part.h, CORNER_R);
+                rrect(cr, b.x, b.y, b.w, b.h, 8.0);
                 let _ = cr.fill();
                 cr.set_source_rgb(border.0, border.1, border.2);
-                rounded_rect(cr, part.x + 0.5, part.y + 0.5, part.w - 1.0, part.h - 1.0, CORNER_R);
+                rrect(cr, b.x + 0.5, b.y + 0.5, b.w - 1.0, b.h - 1.0, 8.0);
                 cr.set_line_width(1.0);
                 let _ = cr.stroke();
             }
-            ButtonShape::RectShoulder => {
-                // Shoulders use a wider corner radius to suggest the curved
-                // top edge of the physical pad.
+            Shape::Circle => {
+                let r = b.w / 2.0;
                 cr.set_source_rgb(fill.0, fill.1, fill.2);
-                rounded_rect(cr, part.x, part.y, part.w, part.h, 10.0);
+                cr.arc(b.x, b.y, r, 0.0, pi2);
                 let _ = cr.fill();
                 cr.set_source_rgb(border.0, border.1, border.2);
-                rounded_rect(cr, part.x + 0.5, part.y + 0.5, part.w - 1.0, part.h - 1.0, 10.0);
+                cr.arc(b.x, b.y, r - 0.5, 0.0, pi2);
                 cr.set_line_width(1.0);
                 let _ = cr.stroke();
             }
-            ButtonShape::Circle => {
-                let cx = part.x;
-                let cy = part.y;
-                let r = part.w / 2.0;
-                cr.set_source_rgb(fill.0, fill.1, fill.2);
-                cr.arc(cx, cy, r, 0.0, 2.0 * std::f64::consts::PI);
-                let _ = cr.fill();
-                cr.set_source_rgb(border.0, border.1, border.2);
-                cr.arc(cx, cy, r - 0.5, 0.0, 2.0 * std::f64::consts::PI);
-                cr.set_line_width(1.0);
-                let _ = cr.stroke();
-            }
-            ButtonShape::DpadArm(_dir) => {
-                // Draw each arm as a plain rounded rect; when combined
-                // visually with the other three arms they form a plus.
-                cr.set_source_rgb(fill.0, fill.1, fill.2);
-                rounded_rect(cr, part.x, part.y, part.w, part.h, 4.0);
-                let _ = cr.fill();
-                cr.set_source_rgb(border.0, border.1, border.2);
-                rounded_rect(cr, part.x + 0.5, part.y + 0.5, part.w - 1.0, part.h - 1.0, 4.0);
-                cr.set_line_width(1.0);
-                let _ = cr.stroke();
+            Shape::DpadArm(_) => {
+                // Cross shape already drawn; individual arms are just for arrows + labels
             }
         }
 
-        // Glyph on the button face.
-        let (is_circle, cx, cy, r) = match part.shape {
-            ButtonShape::Circle => (true, part.x, part.y, part.w / 2.0),
-            _ => (false, 0.0, 0.0, 0.0),
-        };
-        cr.set_source_rgb(label_col.0, label_col.1, label_col.2);
-        let glyph_size = if matches!(part.shape, ButtonShape::Circle) && part.w < 40.0 {
-            16.0
-        } else {
-            20.0
-        };
-        cr.set_font_size(glyph_size);
-        cr.select_font_face(
-            "sans-serif",
-            gtk4::cairo::FontSlant::Normal,
-            gtk4::cairo::FontWeight::Bold,
-        );
-        let ext = cr.text_extents(part.def.label).unwrap();
-        let (lx, ly) = if is_circle {
-            (cx - ext.width() / 2.0 - ext.x_bearing(),
-             cy - (ext.y_bearing() + ext.height() / 2.0))
-        } else {
-            match part.shape {
-                ButtonShape::DpadArm(DpadDir::Up) => (
-                    part.x + part.w / 2.0 - ext.width() / 2.0,
-                    part.y + part.h - 8.0,
-                ),
-                ButtonShape::DpadArm(DpadDir::Down) => (
-                    part.x + part.w / 2.0 - ext.width() / 2.0,
-                    part.y + 20.0,
-                ),
-                ButtonShape::DpadArm(DpadDir::Left) => (
-                    part.x + part.w - ext.width() - 8.0,
-                    part.y + part.h / 2.0 + 6.0,
-                ),
-                ButtonShape::DpadArm(DpadDir::Right) => (
-                    part.x + 8.0,
-                    part.y + part.h / 2.0 + 6.0,
+        // Glyph — text for circles/shoulders only (d-pad uses the cross shape)
+        if matches!(b.shape, Shape::DpadArm(_)) {
+            // no glyph — the cross shape is enough
+        } else if !b.def.label.is_empty() {
+            cr.set_source_rgb(lcol.0, lcol.1, lcol.2);
+            let fs = if matches!(b.shape, Shape::Circle) && b.w < 40.0 { GLYPH_FONT_SM } else { GLYPH_FONT };
+            cr.set_font_size(fs);
+            cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Bold);
+            let e = cr.text_extents(b.def.label).unwrap();
+            let (gx, gy) = match b.shape {
+                Shape::Circle => (
+                    b.x - e.width() / 2.0 - e.x_bearing(),
+                    b.y - (e.y_bearing() + e.height() / 2.0),
                 ),
                 _ => (
-                    part.x + part.w / 2.0 - ext.width() / 2.0,
-                    part.y + part.h / 2.0 + 6.0,
+                    b.x + b.w / 2.0 - e.width() / 2.0 - e.x_bearing(),
+                    b.y + b.h / 2.0 - (e.y_bearing() + e.height() / 2.0),
                 ),
-            }
-        };
-        let _ = cr.move_to(lx, ly);
-        let _ = cr.show_text(part.def.label);
-
-        // Action label — placed outside the button so nothing overlaps.
-        if bound {
-            cr.set_source_rgb(ACTION_COLOR.0, ACTION_COLOR.1, ACTION_COLOR.2);
-            cr.set_font_size(11.0);
-            cr.select_font_face(
-                "sans-serif",
-                gtk4::cairo::FontSlant::Normal,
-                gtk4::cairo::FontWeight::Normal,
-            );
-            let a_ext = cr.text_extents(part.def.action).unwrap();
-            let (ax, ay) = action_label_pos(part, a_ext.width());
-            let _ = cr.move_to(ax, ay);
-            let _ = cr.show_text(part.def.action);
+            };
+            let _ = cr.move_to(gx, gy);
+            let _ = cr.show_text(b.def.label);
         }
-        let _ = (r,); // silence unused when we don't need it
+
+        // Action label
+        if bound {
+            cr.set_source_rgb(ACTION_COL.0, ACTION_COL.1, ACTION_COL.2);
+            cr.set_font_size(ACTION_FONT);
+            cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
+            let ae = cr.text_extents(b.def.action).unwrap();
+            let (ax, ay) = action_pos(b, ae.width());
+            let _ = cr.move_to(ax, ay);
+            let _ = cr.show_text(b.def.action);
+        }
     }
 
-    // Legend bar.
-    let legend_y = body_y + BODY_H + 22.0;
-    let legend_items: &[(bool, &str)] = &[(true, "bound"), (false, "unbound")];
-    let mut lx = 0.0;
-    for &(bound, label) in legend_items {
-        let (sw, _, _) = part_colors(bound);
-        cr.set_source_rgb(sw.0, sw.1, sw.2);
-        rounded_rect(cr, lx, legend_y, 16.0, 16.0, 3.0);
-        let _ = cr.fill();
-
-        cr.set_source_rgb(0.93, 0.93, 0.96);
-        cr.set_font_size(13.0);
-        cr.select_font_face(
-            "sans-serif",
-            gtk4::cairo::FontSlant::Normal,
-            gtk4::cairo::FontWeight::Normal,
-        );
-        let _ = cr.move_to(lx + 22.0, legend_y + 13.0);
-        let _ = cr.show_text(label);
-        let extents = cr.text_extents(label).unwrap();
-        lx += 22.0 + extents.width() + 22.0;
-    }
-
-    // Title on the right of the legend.
-    cr.set_source_rgb(0.75, 0.74, 0.83);
+    // Legend
+    let ly = BODY_H + 16.0;
     cr.set_font_size(13.0);
-    let title = "8BitDo Micro gamepad";
-    let ext = cr.text_extents(title).unwrap();
-    let _ = cr.move_to(KB_W - ext.width(), legend_y + 13.0);
-    let _ = cr.show_text(title);
+    cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
+    let mut lx = 0.0;
+    for &(bound, label) in &[(true, "bound"), (false, "unbound")] {
+        let (sw, _, _) = colors(bound);
+        cr.set_source_rgb(sw.0, sw.1, sw.2);
+        rrect(cr, lx, ly, 14.0, 14.0, 3.0);
+        let _ = cr.fill();
+        cr.set_source_rgb(0.93, 0.93, 0.96);
+        let _ = cr.move_to(lx + 20.0, ly + 12.0);
+        let _ = cr.show_text(label);
+        lx += 20.0 + cr.text_extents(label).unwrap().width() + 20.0;
+    }
+    cr.set_source_rgb(0.75, 0.74, 0.83);
+    let t = "8BitDo Micro";
+    let te = cr.text_extents(t).unwrap();
+    let _ = cr.move_to(BODY_W - te.width(), ly + 12.0);
+    let _ = cr.show_text(t);
+    let h = "Esc to close \u{00b7} n/p cycle overlays";
+    let he = cr.text_extents(h).unwrap();
+    let _ = cr.move_to(BODY_W - he.width(), ly + 30.0);
+    let _ = cr.show_text(h);
 }
 
-fn action_label_pos(part: &ButtonRect, label_w: f64) -> (f64, f64) {
-    match part.shape {
-        ButtonShape::Circle => {
-            let r = part.w / 2.0;
-            // Face-button diamond: push the label outward so the four
-            // circles' labels don't overlap. Detect face buttons by radius
-            // (menu buttons are smaller).
+fn action_pos(b: &Btn, lw: f64) -> (f64, f64) {
+    match b.shape {
+        Shape::Circle => {
+            let r = b.w / 2.0;
             if r >= FACE_R - 0.1 {
-                // Diamond positions: X=top, A=right, B=bottom, Y=left.
-                match part.def.label {
-                    "X" => (part.x - label_w / 2.0, part.y - r - 8.0),
-                    "B" => (part.x - label_w / 2.0, part.y + r + 18.0),
-                    "Y" => (part.x - r - label_w - 8.0, part.y + 4.0),
-                    "A" => (part.x + r + 8.0, part.y + 4.0),
-                    _ => (part.x - label_w / 2.0, part.y + r + 14.0),
+                match b.def.label {
+                    "X" => (b.x - lw / 2.0, b.y - r - 8.0),
+                    "B" => (b.x - lw / 2.0, b.y + r + 18.0),
+                    "Y" => (b.x - r - lw - 10.0, b.y + 5.0),
+                    "A" => (b.x + r + 10.0, b.y + 5.0),
+                    _ => (b.x - lw / 2.0, b.y + r + 16.0),
                 }
             } else {
-                // Menu buttons: label below.
-                (part.x - label_w / 2.0, part.y + r + 14.0)
+                (b.x - lw / 2.0, b.y + r + 16.0)
             }
         }
-        ButtonShape::DpadArm(DpadDir::Up) => (
-            part.x + part.w / 2.0 - label_w / 2.0,
-            part.y - 6.0,
-        ),
-        ButtonShape::DpadArm(DpadDir::Down) => (
-            part.x + part.w / 2.0 - label_w / 2.0,
-            part.y + part.h + 14.0,
-        ),
-        ButtonShape::DpadArm(DpadDir::Left) => (
-            part.x - label_w - 6.0,
-            part.y + part.h / 2.0 + 4.0,
-        ),
-        ButtonShape::DpadArm(DpadDir::Right) => (
-            part.x + part.w + 6.0,
-            part.y + part.h / 2.0 + 4.0,
-        ),
-        ButtonShape::Rect | ButtonShape::RectShoulder => (
-            part.x + part.w / 2.0 - label_w / 2.0,
-            part.y + part.h + 14.0,
-        ),
+        Shape::DpadArm(Dir::Up) => (b.x + b.w / 2.0 - lw / 2.0, b.y - 8.0),
+        Shape::DpadArm(Dir::Down) => (b.x + b.w / 2.0 - lw / 2.0, b.y + b.h + DPAD_THICK / 2.0 + 16.0),
+        Shape::DpadArm(Dir::Left) => (b.x - lw - 8.0, b.y + b.h / 2.0 + DPAD_THICK / 4.0 + 5.0),
+        Shape::DpadArm(Dir::Right) => (b.x + b.w + DPAD_THICK / 2.0 + 8.0, b.y + b.h / 2.0 + DPAD_THICK / 4.0 + 5.0),
+        Shape::Shoulder => {
+            // Left shoulders: label to the right; right shoulders: label to the left
+            if b.x < BODY_W / 2.0 {
+                (b.x + b.w + 10.0, b.y + b.h / 2.0 + 5.0)
+            } else {
+                (b.x - lw - 10.0, b.y + b.h / 2.0 + 5.0)
+            }
+        }
     }
 }
 
-fn rounded_rect(cr: &gtk4::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
+fn rrect(cr: &gtk4::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
     let pi = std::f64::consts::PI;
     cr.new_sub_path();
     cr.arc(x + w - r, y + r, r, -pi / 2.0, 0.0);
@@ -496,48 +351,25 @@ fn rounded_rect(cr: &gtk4::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f6
     cr.close_path();
 }
 
-// ── Public API ───────────────────────────────────────────────────────
+// ── Public API ──────────────────────────────────────────────────────
 
 pub struct GamepadOverlay {
     pub overlay: Overlay,
     drawing_area: DrawingArea,
 }
 
-fn compute_scale(widget_w: i32) -> f64 {
-    let base_w = KB_W + 2.0 * PAD;
-    let target = widget_w as f64 * 0.92;
-    (target / base_w).max(0.5)
-}
-
 impl GamepadOverlay {
     pub fn new() -> Self {
         let overlay = Overlay::new();
-
         let drawing_area = DrawingArea::builder()
-            .hexpand(true)
-            .vexpand(true)
-            .halign(gtk4::Align::Fill)
-            .valign(gtk4::Align::Center)
-            .visible(false)
-            .build();
+            .hexpand(true).vexpand(true)
+            .halign(gtk4::Align::Fill).valign(gtk4::Align::Fill)
+            .visible(false).build();
         drawing_area.add_css_class("gamepad-overlay-canvas");
-
-        drawing_area.set_draw_func(move |area, cr, w, _h| {
-            let scale = compute_scale(w);
-            let base_w = KB_W + 2.0 * PAD;
-            let base_h = KB_H + 2.0 * PAD;
-
-            let scaled_w = base_w * scale;
-            let x_offset = (w as f64 - scaled_w) / 2.0;
-            cr.translate(x_offset, 0.0);
-            cr.scale(scale, scale);
-
-            area.set_content_height((base_h * scale) as i32);
-
-            let layout = build_layout();
-            draw_gamepad(cr, &layout);
+        drawing_area.set_draw_func(move |_a, cr, w, h| {
+            let l = layout();
+            draw(cr, &l, w as f64, h as f64);
         });
-
         GamepadOverlay { overlay, drawing_area }
     }
 

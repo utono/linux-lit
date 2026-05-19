@@ -14,7 +14,6 @@ pub enum ChordState {
     None,
     PendingG,
     PendingZ,
-    PendingCtrlSlash,
 }
 
 #[derive(Default)]
@@ -72,7 +71,7 @@ pub fn handle_key(
             crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_alt),
             crate::app::InputMode::GlossPrompt => handle_gloss_prompt_key(state, key_name, is_ctrl),
             crate::app::InputMode::GamepadOverlay => handle_gamepad_key(state, key_name),
-            crate::app::InputMode::KeybindsOverlay => handle_keybinds_key(state, key_state, key_name),
+            crate::app::InputMode::KeybindsOverlay => handle_keybinds_key(state, key_name),
             crate::app::InputMode::ActionPopup => handle_action_popup_key(state, key_name, is_ctrl, tokio_handle),
             crate::app::InputMode::Visual => handle_visual_key(state, key_state, key_name),
             crate::app::InputMode::Reader => unreachable!(),
@@ -659,13 +658,20 @@ fn handle_gamepad_key(
             state.borrow_mut().input_mode = crate::app::InputMode::Reader;
             true
         }
-        _ => true, // consume all other keys when gamepad overlay visible
+        "n" | "p" => {
+            let s = state.borrow();
+            s.gamepad_overlay.hide();
+            s.keybinds_overlay.show();
+            drop(s);
+            state.borrow_mut().input_mode = crate::app::InputMode::KeybindsOverlay;
+            true
+        }
+        _ => true,
     }
 }
 
 fn handle_keybinds_key(
     state: &Rc<RefCell<AppState>>,
-    key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
 ) -> bool {
     match key_name {
@@ -674,9 +680,7 @@ fn handle_keybinds_key(
             state.borrow_mut().input_mode = crate::app::InputMode::Reader;
             true
         }
-        "g" if key_state.borrow().chord == ChordState::PendingCtrlSlash => {
-            // C-/ g chord: swap to gamepad overlay
-            key_state.borrow_mut().chord = ChordState::None;
+        "n" | "p" => {
             let s = state.borrow();
             s.keybinds_overlay.hide();
             s.gamepad_overlay.show();
@@ -833,7 +837,6 @@ fn dispatch_action(
         OpenSettingsOverlay => crate::input::actions::settings::open_settings(state),
         OpenKeybindsOverlay => {
             crate::input::actions::pickers::open_keybinds_overlay(state);
-            KeyState::start_chord(key_state, ChordState::PendingCtrlSlash);
         }
         OpenSearch => {
             let mut s = state.borrow_mut();

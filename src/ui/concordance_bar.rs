@@ -18,6 +18,7 @@ impl ConcordanceBar {
         let word_label = Label::new(None);
         word_label.set_halign(Align::Start);
         word_label.set_hexpand(true);
+        word_label.set_margin_start(24);
         word_label.add_css_class("concordance-bar-word");
 
         let position_label = Label::new(None);

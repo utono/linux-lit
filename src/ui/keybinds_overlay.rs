@@ -435,7 +435,7 @@ fn draw_keyboard(cr: &gtk4::cairo::Context, layout: &AllKeys, tooltip_idx: Optio
     cr.set_source_rgb(0.475, 0.459, 0.576);
     cr.set_font_size(13.0);
     cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
-    let hint = "Esc to close \u{00b7} C-/ to toggle";
+    let hint = "Esc to close \u{00b7} n/p cycle overlays";
     let extents = cr.text_extents(hint).unwrap();
     let _ = cr.move_to(KB_W - extents.width(), legend_y + 13.0);
     let _ = cr.show_text(hint);
