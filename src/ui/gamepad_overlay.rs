@@ -21,16 +21,16 @@ const FACE_Y: ButtonDef = btn("Y", "set start");
 
 const DPAD_UP: ButtonDef = btn("", "nudge \u{2212}");
 const DPAD_DOWN: ButtonDef = btn("", "nudge +");
-const DPAD_LEFT: ButtonDef = btn("", "+3.5s");
-const DPAD_RIGHT: ButtonDef = btn("", "\u{2212}3.5s");
+const DPAD_LEFT: ButtonDef = btn("", "pg back");
+const DPAD_RIGHT: ButtonDef = btn("", "pg fwd");
 
 const BTN_L: ButtonDef = btn("L", "play/pause");
 const BTN_R: ButtonDef = btn("R", "del ts");
 const BTN_L2: ButtonDef = btn("L2", "");
 const BTN_R2: ButtonDef = btn("R2", "vocab next");
 
-const BTN_MINUS: ButtonDef = btn("\u{2212}", "pg back");
-const BTN_PLUS: ButtonDef = btn("+", "pg fwd");
+const BTN_MINUS: ButtonDef = btn("\u{2212}", "prev chpt");
+const BTN_PLUS: ButtonDef = btn("+", "next chpt");
 const BTN_STAR: ButtonDef = btn("\u{2217}", "");
 const BTN_HOME: ButtonDef = btn("H", "play line");
 
