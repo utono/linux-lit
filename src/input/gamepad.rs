@@ -8,7 +8,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use evdev::{AbsoluteAxisType, Device, InputEventKind, Key};
-use gtk4::prelude::WidgetExt;
 use tokio::sync::mpsc;
 
 use crate::app::AppState;
@@ -16,7 +15,7 @@ use crate::input::navigation;
 
 #[derive(Debug, Clone, Copy)]
 pub enum GamepadAction {
-    ToggleSync,
+    PlayCurrentLine,
     NextDialogue,
     PrevDialogue,
     TogglePlayback,
@@ -133,7 +132,7 @@ fn key_to_action(key: Key) -> Option<GamepadAction> {
         Key::BTN_EAST => GamepadAction::NextDialogue,
         Key::BTN_NORTH => GamepadAction::PrevDialogue,
         Key::BTN_WEST => GamepadAction::TogglePlayback,
-        Key::BTN_SELECT => GamepadAction::ToggleSync,
+        Key::BTN_SELECT => GamepadAction::PlayCurrentLine,
         Key::BTN_START => GamepadAction::PrevChapter,
         Key::BTN_MODE => GamepadAction::NextChapter,
         _ => return None,
@@ -143,17 +142,8 @@ fn key_to_action(key: Key) -> Option<GamepadAction> {
 fn dispatch(state: &Rc<RefCell<AppState>>, action: GamepadAction) {
     crate::logging::log(&format!("GAMEPAD: action={:?}", action));
     match action {
-        GamepadAction::ToggleSync => {
-            let mut s = state.borrow_mut();
-            s.sync_enabled = !s.sync_enabled;
-            s.sync_icon.set_visible(!s.sync_enabled);
-            if s.sync_enabled_before_concordance.is_some() {
-                s.sync_enabled_before_concordance = Some(s.sync_enabled);
-            }
-            crate::logging::log(&format!(
-                "SYNC: {}",
-                if s.sync_enabled { "enabled" } else { "disabled" }
-            ));
+        GamepadAction::PlayCurrentLine => {
+            crate::input::timestamps::play_current_line(&mut state.borrow_mut());
         }
         GamepadAction::NextDialogue => {
             navigation::jump_to_next_dialogue(&mut state.borrow_mut());

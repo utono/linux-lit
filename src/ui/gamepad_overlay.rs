@@ -27,12 +27,12 @@ const DPAD_RIGHT: ButtonDef = btn("", "pg fwd");
 const BTN_L: ButtonDef = btn("L", "play/pause");
 const BTN_R: ButtonDef = btn("R", "del ts");
 const BTN_L2: ButtonDef = btn("L2", "");
-const BTN_R2: ButtonDef = btn("R2", "vocab next");
+const BTN_R2: ButtonDef = btn("R2", "play/pause");
 
-const BTN_MINUS: ButtonDef = btn("\u{2212}", "prev chpt");
-const BTN_PLUS: ButtonDef = btn("+", "next chpt");
+const BTN_MINUS: ButtonDef = btn("\u{2212}", "play line");
+const BTN_PLUS: ButtonDef = btn("+", "prev chpt");
 const BTN_STAR: ButtonDef = btn("\u{2217}", "");
-const BTN_HOME: ButtonDef = btn("H", "play line");
+const BTN_HOME: ButtonDef = btn("H", "next chpt");
 
 // ── Layout ──────────────────────────────────────────────────────────
 
@@ -90,7 +90,7 @@ fn layout() -> Vec<Btn> {
     // D-pad — left side, vertically centered in lower 2/3 of body
     // Arms are positioned flush against the center square (no overlap needed —
     // the cross is drawn as a single filled shape in draw()).
-    let dpad_cx = 120.0;
+    let dpad_cx = 160.0;
     let dpad_cy = BODY_H * 0.56;
     for &(dir, dx, dy) in &[
         (Dir::Up, 0.0, -(DPAD_THICK / 2.0 + DPAD_ARM)),
@@ -116,7 +116,7 @@ fn layout() -> Vec<Btn> {
     }
 
     // Menu buttons — shifted left of center to avoid face button labels
-    let mcx = BODY_W * 0.46;
+    let mcx = BODY_W * 0.50;
     let mcy = BODY_H * 0.56;
     let mgx = 40.0;
     let mgy = 32.0;
@@ -193,7 +193,7 @@ fn draw(cr: &gtk4::cairo::Context, btns: &[Btn], ww: f64, wh: f64) {
     let _ = cr.fill();
 
     // D-pad — draw as a single filled cross shape
-    let dpad_cx = 120.0;
+    let dpad_cx = 160.0;
     let dpad_cy = BODY_H * 0.56;
     let half_t = DPAD_THICK / 2.0;
     let arm_len = DPAD_ARM;
@@ -326,10 +326,10 @@ fn action_pos(b: &Btn, lw: f64) -> (f64, f64) {
                 (b.x - lw / 2.0, b.y + r + 16.0)
             }
         }
-        Shape::DpadArm(Dir::Up) => (b.x + b.w / 2.0 - lw / 2.0, b.y - 8.0),
-        Shape::DpadArm(Dir::Down) => (b.x + b.w / 2.0 - lw / 2.0, b.y + b.h + DPAD_THICK / 2.0 + 16.0),
-        Shape::DpadArm(Dir::Left) => (b.x - lw - 8.0, b.y + b.h / 2.0 + DPAD_THICK / 4.0 + 5.0),
-        Shape::DpadArm(Dir::Right) => (b.x + b.w + DPAD_THICK / 2.0 + 8.0, b.y + b.h / 2.0 + DPAD_THICK / 4.0 + 5.0),
+        Shape::DpadArm(Dir::Up) => (b.x + b.w / 2.0 - lw / 2.0, b.y - 10.0),
+        Shape::DpadArm(Dir::Down) => (b.x + b.w / 2.0 - lw / 2.0, b.y + b.h + DPAD_THICK / 2.0 + 18.0),
+        Shape::DpadArm(Dir::Left) => (b.x - lw - 10.0, b.y + b.h / 2.0 + DPAD_THICK / 4.0 + 5.0),
+        Shape::DpadArm(Dir::Right) => (b.x + b.w + DPAD_THICK / 2.0 + 10.0, b.y + b.h / 2.0 + DPAD_THICK / 4.0 + 5.0),
         Shape::Shoulder => {
             // Left shoulders: label to the right; right shoulders: label to the left
             if b.x < BODY_W / 2.0 {
