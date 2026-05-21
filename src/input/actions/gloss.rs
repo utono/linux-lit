@@ -181,34 +181,21 @@ pub(crate) fn show_delete_confirmation(state_rc: &Rc<RefCell<AppState>>) {
     container.append(&hint);
 
     overlay_parent.add_overlay(&container);
-    container.set_can_focus(true);
-    container.grab_focus();
 
-    let state_for_key = Rc::clone(state_rc);
-    let container_weak = container.downgrade();
-    let overlay_weak = overlay_parent.downgrade();
+    let mut s = state_rc.borrow_mut();
+    s.delete_confirm_container = Some(container.downgrade());
+    s.delete_confirm_overlay = Some(overlay_parent.downgrade());
+    s.input_mode = crate::app::InputMode::DeleteConfirm;
+}
 
-    let key_controller = gtk4::EventControllerKey::new();
-    key_controller.connect_key_pressed(move |_ctrl, keyval, _code, _modifier| {
-        let key_name = keyval.name().unwrap_or_default();
-        match key_name.as_str() {
-            "y" => {
-                if let (Some(c), Some(o)) = (container_weak.upgrade(), overlay_weak.upgrade()) {
-                    o.remove_overlay(&c);
-                }
-                delete_current_gloss(&state_for_key);
-                glib::Propagation::Stop
-            }
-            "Escape" | "n" => {
-                if let (Some(c), Some(o)) = (container_weak.upgrade(), overlay_weak.upgrade()) {
-                    o.remove_overlay(&c);
-                }
-                glib::Propagation::Stop
-            }
-            _ => glib::Propagation::Stop,
+pub(crate) fn close_delete_confirmation(state: &Rc<RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    if let (Some(cw), Some(ow)) = (s.delete_confirm_container.take(), s.delete_confirm_overlay.take()) {
+        if let (Some(c), Some(o)) = (cw.upgrade(), ow.upgrade()) {
+            o.remove_overlay(&c);
         }
-    });
-    container.add_controller(key_controller);
+    }
+    s.input_mode = crate::app::InputMode::GlossOverlay;
 }
 
 pub(crate) fn show_amend_dialog(state_rc: &Rc<RefCell<AppState>>) {

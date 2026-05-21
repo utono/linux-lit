@@ -24,6 +24,7 @@ pub struct GlossOverlay {
     corrected_label: Label,
     hint: Label,
     position_label: Label,
+    gloss_scroll_overlay: Overlay,
     gloss_scrolled: gtk4::ScrolledWindow,
     gloss_view: gtk4::TextView,
     bar_drawing: gtk4::DrawingArea,
@@ -82,16 +83,17 @@ impl GlossOverlay {
         corrected_label.add_css_class("gloss-text");
         container.append(&corrected_label);
 
+        let gloss_scroll_overlay = Overlay::new();
+
         let gloss_scrolled = gtk4::ScrolledWindow::new();
         gloss_scrolled.set_vexpand(true);
         gloss_scrolled.set_hscrollbar_policy(gtk4::PolicyType::Never);
         gloss_scrolled.set_vscrollbar_policy(gtk4::PolicyType::External);
 
-        let gloss_inner_overlay = Overlay::new();
-
         let gloss_view = gtk4::TextView::new();
         gloss_view.set_editable(false);
         gloss_view.set_cursor_visible(false);
+        gloss_view.set_focusable(false);
         gloss_view.set_wrap_mode(gtk4::WrapMode::Word);
         let right_margin = column_width as i32 / 6;
         gloss_view.set_left_margin(text_margins as i32);
@@ -173,15 +175,16 @@ impl GlossOverlay {
             }
         });
 
-        gloss_inner_overlay.set_child(Some(&gloss_view));
-        gloss_inner_overlay.add_overlay(&bar_drawing);
-        gloss_inner_overlay.set_measure_overlay(&bar_drawing, false);
-        gloss_inner_overlay.set_clip_overlay(&bar_drawing, true);
+        gloss_scrolled.set_child(Some(&gloss_view));
 
-        gloss_scrolled.set_child(Some(&gloss_inner_overlay));
-        gloss_scrolled.set_visible(false);
+        gloss_scroll_overlay.set_child(Some(&gloss_scrolled));
+        gloss_scroll_overlay.add_overlay(&bar_drawing);
+        gloss_scroll_overlay.set_measure_overlay(&bar_drawing, false);
+        gloss_scroll_overlay.set_clip_overlay(&bar_drawing, true);
 
-        container.append(&gloss_scrolled);
+        gloss_scroll_overlay.set_visible(false);
+
+        container.append(&gloss_scroll_overlay);
 
         let footer_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
         footer_box.set_margin_start(text_margins as i32);
@@ -221,6 +224,7 @@ impl GlossOverlay {
             corrected_label,
             hint,
             position_label,
+            gloss_scroll_overlay,
             gloss_scrolled,
             gloss_view,
             bar_drawing,
@@ -254,7 +258,7 @@ impl GlossOverlay {
         self.original_label.set_visible(true);
         self.corr_header.set_visible(true);
         self.corrected_label.set_visible(true);
-        self.gloss_scrolled.set_visible(false);
+        self.gloss_scroll_overlay.set_visible(false);
         self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
@@ -289,7 +293,7 @@ impl GlossOverlay {
         *self.line_numbers.borrow_mut() = nums;
         self.bar_drawing.queue_draw();
 
-        self.gloss_scrolled.set_visible(true);
+        self.gloss_scroll_overlay.set_visible(true);
         self.gloss_scrolled.vadjustment().set_value(0.0);
         self.hint.set_visible(true);
         self.scrim.set_visible(false);
@@ -310,7 +314,7 @@ impl GlossOverlay {
         self.original_label.set_visible(false);
         self.corr_header.set_visible(false);
         self.corrected_label.set_visible(false);
-        self.gloss_scrolled.set_visible(false);
+        self.gloss_scroll_overlay.set_visible(false);
         self.position_label.set_visible(false);
         self.hint.set_visible(false);
         self.scrim.set_visible(false);

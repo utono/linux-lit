@@ -69,6 +69,7 @@ pub fn handle_key(
             crate::app::InputMode::Settings => handle_settings_key(state, key_name, is_ctrl),
             crate::app::InputMode::Search => handle_search_key(state, key_name),
             crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_alt),
+            crate::app::InputMode::DeleteConfirm => handle_delete_confirm_key(state, key_name),
             crate::app::InputMode::GlossPrompt => handle_gloss_prompt_key(state, key_name, is_ctrl),
             crate::app::InputMode::GamepadOverlay => handle_gamepad_key(state, key_name),
             crate::app::InputMode::KeybindsOverlay => handle_keybinds_key(state, key_name),
@@ -613,6 +614,24 @@ fn handle_gloss_key(
                     navigation::update_highlight_only(&mut s);
                 }
             }
+            true
+        }
+        _ => true,
+    }
+}
+
+fn handle_delete_confirm_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+) -> bool {
+    match key_name {
+        "y" => {
+            crate::input::actions::gloss::close_delete_confirmation(state);
+            crate::input::actions::gloss::delete_current_gloss(state);
+            true
+        }
+        "Escape" | "n" => {
+            crate::input::actions::gloss::close_delete_confirmation(state);
             true
         }
         _ => true,

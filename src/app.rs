@@ -53,6 +53,7 @@ pub enum InputMode {
     AuthorshipPicker,
     ActionPopup,
     Visual,
+    DeleteConfirm,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -167,6 +168,8 @@ pub struct AppState {
     pub gloss_prompt_container: Option<glib::WeakRef<gtk4::Box>>,
     pub gloss_prompt_overlay: Option<glib::WeakRef<gtk4::Overlay>>,
     pub gloss_prompt_textview: Option<glib::WeakRef<gtk4::TextView>>,
+    pub delete_confirm_container: Option<glib::WeakRef<gtk4::Box>>,
+    pub delete_confirm_overlay: Option<glib::WeakRef<gtk4::Overlay>>,
     pub gloss_picker: GlossPicker,
     pub vocab_words: std::collections::HashSet<String>,
     pub vocab_matches: Vec<VocabMatch>,
@@ -935,6 +938,8 @@ pub fn build_window(
         gloss_prompt_container: None,
         gloss_prompt_overlay: None,
         gloss_prompt_textview: None,
+        delete_confirm_container: None,
+        delete_confirm_overlay: None,
         gloss_picker,
         vocab_words: std::collections::HashSet::new(),
         vocab_matches: Vec::new(),
