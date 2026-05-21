@@ -15,9 +15,9 @@ const fn btn(label: &'static str, action: &'static str) -> ButtonDef {
 }
 
 const FACE_X: ButtonDef = btn("X", "prev dlg");
-const FACE_A: ButtonDef = btn("A", "set chpt");
+const FACE_A: ButtonDef = btn("A", "set start");
 const FACE_B: ButtonDef = btn("B", "next dlg");
-const FACE_Y: ButtonDef = btn("Y", "set start");
+const FACE_Y: ButtonDef = btn("Y", "set chpt");
 
 const DPAD_UP: ButtonDef = btn("", "nudge \u{2212}");
 const DPAD_DOWN: ButtonDef = btn("", "nudge +");
@@ -77,15 +77,22 @@ struct Btn {
 fn layout() -> Vec<Btn> {
     let mut v = Vec::new();
 
-    // Shoulders inside body — top-left and top-right
-    let sy_top = 20.0;
-    let sy_bot = sy_top + SHOULDER_H + 4.0;
-    let sx_l = 28.0;
-    let sx_r = BODY_W - SHOULDER_W - 28.0;
-    v.push(Btn { x: sx_l, y: sy_top, w: SHOULDER_W, h: SHOULDER_H, shape: Shape::Shoulder, def: &BTN_L2 });
-    v.push(Btn { x: sx_l, y: sy_bot, w: SHOULDER_W, h: SHOULDER_H, shape: Shape::Shoulder, def: &BTN_L });
-    v.push(Btn { x: sx_r, y: sy_top, w: SHOULDER_W, h: SHOULDER_H, shape: Shape::Shoulder, def: &BTN_R2 });
-    v.push(Btn { x: sx_r, y: sy_bot, w: SHOULDER_W, h: SHOULDER_H, shape: Shape::Shoulder, def: &BTN_R });
+    // Shoulders — single row: L, L2 (adjacent) ... R2, R (adjacent)
+    let sy = 20.0;
+    let sx_start = 28.0;
+    let small_w = SHOULDER_W / 3.0;
+    let pair_gap = 4.0;
+    let left_group_w = SHOULDER_W + pair_gap + small_w;
+    let right_group_w = small_w + pair_gap + SHOULDER_W;
+    let center_gap = BODY_W - 2.0 * sx_start - left_group_w - right_group_w;
+    let mut sx = sx_start;
+    v.push(Btn { x: sx, y: sy, w: SHOULDER_W, h: SHOULDER_H, shape: Shape::Shoulder, def: &BTN_L });
+    sx += SHOULDER_W + pair_gap;
+    v.push(Btn { x: sx, y: sy, w: small_w, h: SHOULDER_H, shape: Shape::Shoulder, def: &BTN_L2 });
+    sx += small_w + center_gap;
+    v.push(Btn { x: sx, y: sy, w: small_w, h: SHOULDER_H, shape: Shape::Shoulder, def: &BTN_R2 });
+    sx += small_w + pair_gap;
+    v.push(Btn { x: sx, y: sy, w: SHOULDER_W, h: SHOULDER_H, shape: Shape::Shoulder, def: &BTN_R });
 
     // D-pad — left side, vertically centered in lower 2/3 of body
     // Arms are positioned flush against the center square (no overlap needed —
@@ -249,8 +256,28 @@ fn draw(cr: &gtk4::cairo::Context, btns: &[Btn], ww: f64, wh: f64) {
             }
         }
 
-        // Glyph — text for circles/shoulders only (d-pad uses the cross shape)
-        if matches!(b.shape, Shape::DpadArm(_)) {
+        // Glyph / label for shoulders: show action inside when bound, else glyph
+        if matches!(b.shape, Shape::Shoulder) {
+            if bound {
+                cr.set_source_rgb(ACTION_COL.0, ACTION_COL.1, ACTION_COL.2);
+                cr.set_font_size(ACTION_FONT);
+                cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
+                let e = cr.text_extents(b.def.action).unwrap();
+                let gx = b.x + b.w / 2.0 - e.width() / 2.0 - e.x_bearing();
+                let gy = b.y + b.h / 2.0 - (e.y_bearing() + e.height() / 2.0);
+                let _ = cr.move_to(gx, gy);
+                let _ = cr.show_text(b.def.action);
+            } else if !b.def.label.is_empty() {
+                cr.set_source_rgb(lcol.0, lcol.1, lcol.2);
+                cr.set_font_size(GLYPH_FONT);
+                cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Bold);
+                let e = cr.text_extents(b.def.label).unwrap();
+                let gx = b.x + b.w / 2.0 - e.width() / 2.0 - e.x_bearing();
+                let gy = b.y + b.h / 2.0 - (e.y_bearing() + e.height() / 2.0);
+                let _ = cr.move_to(gx, gy);
+                let _ = cr.show_text(b.def.label);
+            }
+        } else if matches!(b.shape, Shape::DpadArm(_)) {
             // no glyph — the cross shape is enough
         } else if !b.def.label.is_empty() {
             cr.set_source_rgb(lcol.0, lcol.1, lcol.2);
@@ -258,22 +285,16 @@ fn draw(cr: &gtk4::cairo::Context, btns: &[Btn], ww: f64, wh: f64) {
             cr.set_font_size(fs);
             cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Bold);
             let e = cr.text_extents(b.def.label).unwrap();
-            let (gx, gy) = match b.shape {
-                Shape::Circle => (
-                    b.x - e.width() / 2.0 - e.x_bearing(),
-                    b.y - (e.y_bearing() + e.height() / 2.0),
-                ),
-                _ => (
-                    b.x + b.w / 2.0 - e.width() / 2.0 - e.x_bearing(),
-                    b.y + b.h / 2.0 - (e.y_bearing() + e.height() / 2.0),
-                ),
-            };
+            let (gx, gy) = (
+                b.x - e.width() / 2.0 - e.x_bearing(),
+                b.y - (e.y_bearing() + e.height() / 2.0),
+            );
             let _ = cr.move_to(gx, gy);
             let _ = cr.show_text(b.def.label);
         }
 
-        // Action label
-        if bound {
+        // Action label (skip shoulders — handled above)
+        if bound && !matches!(b.shape, Shape::Shoulder) {
             cr.set_source_rgb(ACTION_COL.0, ACTION_COL.1, ACTION_COL.2);
             cr.set_font_size(ACTION_FONT);
             cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
@@ -331,12 +352,7 @@ fn action_pos(b: &Btn, lw: f64) -> (f64, f64) {
         Shape::DpadArm(Dir::Left) => (b.x - lw - 10.0, b.y + b.h / 2.0 + DPAD_THICK / 4.0 + 5.0),
         Shape::DpadArm(Dir::Right) => (b.x + b.w + DPAD_THICK / 2.0 + 10.0, b.y + b.h / 2.0 + DPAD_THICK / 4.0 + 5.0),
         Shape::Shoulder => {
-            // Left shoulders: label to the right; right shoulders: label to the left
-            if b.x < BODY_W / 2.0 {
-                (b.x + b.w + 10.0, b.y + b.h / 2.0 + 5.0)
-            } else {
-                (b.x - lw - 10.0, b.y + b.h / 2.0 + 5.0)
-            }
+            (b.x + b.w / 2.0 - lw / 2.0, b.y + b.h / 2.0 + 5.0)
         }
     }
 }

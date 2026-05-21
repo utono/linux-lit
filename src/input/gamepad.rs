@@ -131,7 +131,7 @@ fn key_to_action(key: Key) -> Option<GamepadAction> {
         Key::BTN_SOUTH => GamepadAction::ToggleChapter,
         Key::BTN_EAST => GamepadAction::NextDialogue,
         Key::BTN_NORTH => GamepadAction::PrevDialogue,
-        Key::BTN_WEST => GamepadAction::TogglePlayback,
+        Key::BTN_WEST => GamepadAction::SetStartTime,
         Key::BTN_SELECT => GamepadAction::PlayCurrentLine,
         Key::BTN_START => GamepadAction::PrevChapter,
         Key::BTN_MODE => GamepadAction::NextChapter,
