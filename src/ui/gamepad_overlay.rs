@@ -24,10 +24,15 @@ const DPAD_DOWN: ButtonDef = btn("", "nudge +");
 const DPAD_LEFT: ButtonDef = btn("", "pg back");
 const DPAD_RIGHT: ButtonDef = btn("", "pg fwd");
 
-const BTN_L: ButtonDef = btn("L", "play/pause");
-const BTN_R: ButtonDef = btn("R", "del ts");
+const BTN_L: ButtonDef = btn("L", "");
+const BTN_R: ButtonDef = btn("R", "");
 const BTN_L2: ButtonDef = btn("L2", "");
-const BTN_R2: ButtonDef = btn("R2", "play/pause");
+const BTN_R2: ButtonDef = btn("R2", "");
+
+const BTN_L_ACT: ButtonDef = btn("", "play/pause");
+const BTN_L2_ACT: ButtonDef = btn("L2", "");
+const BTN_R2_ACT: ButtonDef = btn("", "play/pause");
+const BTN_R_ACT: ButtonDef = btn("", "del ts");
 
 const BTN_MINUS: ButtonDef = btn("\u{2212}", "play line");
 const BTN_PLUS: ButtonDef = btn("+", "prev chpt");
@@ -77,7 +82,7 @@ struct Btn {
 fn layout() -> Vec<Btn> {
     let mut v = Vec::new();
 
-    // Shoulders — single row: L, L2 (adjacent) ... R2, R (adjacent)
+    // Shoulders — row 1: button names (L, L2, R2, R)
     let sy = 20.0;
     let sx_start = 28.0;
     let small_w = SHOULDER_W / 3.0;
@@ -86,13 +91,22 @@ fn layout() -> Vec<Btn> {
     let right_group_w = small_w + pair_gap + SHOULDER_W;
     let center_gap = BODY_W - 2.0 * sx_start - left_group_w - right_group_w;
     let mut sx = sx_start;
-    v.push(Btn { x: sx, y: sy, w: SHOULDER_W, h: SHOULDER_H, shape: Shape::Shoulder, def: &BTN_L });
-    sx += SHOULDER_W + pair_gap;
-    v.push(Btn { x: sx, y: sy, w: small_w, h: SHOULDER_H, shape: Shape::Shoulder, def: &BTN_L2 });
-    sx += small_w + center_gap;
-    v.push(Btn { x: sx, y: sy, w: small_w, h: SHOULDER_H, shape: Shape::Shoulder, def: &BTN_R2 });
-    sx += small_w + pair_gap;
-    v.push(Btn { x: sx, y: sy, w: SHOULDER_W, h: SHOULDER_H, shape: Shape::Shoulder, def: &BTN_R });
+    let positions = [
+        (sx, SHOULDER_W),
+        ({ sx += SHOULDER_W + pair_gap; sx }, small_w),
+        ({ sx += small_w + center_gap; sx }, small_w),
+        ({ sx += small_w + pair_gap; sx }, SHOULDER_W),
+    ];
+    let name_defs: [&ButtonDef; 4] = [&BTN_L, &BTN_L2, &BTN_R2, &BTN_R];
+    let act_defs: [&ButtonDef; 4] = [&BTN_L_ACT, &BTN_L2_ACT, &BTN_R2_ACT, &BTN_R_ACT];
+    for (i, &(px, pw)) in positions.iter().enumerate() {
+        v.push(Btn { x: px, y: sy, w: pw, h: SHOULDER_H, shape: Shape::Shoulder, def: name_defs[i] });
+    }
+    // Row 2: action labels
+    let sy2 = sy + SHOULDER_H + 4.0;
+    for (i, &(px, pw)) in positions.iter().enumerate() {
+        v.push(Btn { x: px, y: sy2, w: pw, h: SHOULDER_H, shape: Shape::Shoulder, def: act_defs[i] });
+    }
 
     // D-pad — left side, vertically centered in lower 2/3 of body
     // Arms are positioned flush against the center square (no overlap needed —
@@ -348,9 +362,9 @@ fn action_pos(b: &Btn, lw: f64) -> (f64, f64) {
             }
         }
         Shape::DpadArm(Dir::Up) => (b.x + b.w / 2.0 - lw / 2.0, b.y - 10.0),
-        Shape::DpadArm(Dir::Down) => (b.x + b.w / 2.0 - lw / 2.0, b.y + b.h + DPAD_THICK / 2.0 + 18.0),
-        Shape::DpadArm(Dir::Left) => (b.x - lw - 10.0, b.y + b.h / 2.0 + DPAD_THICK / 4.0 + 5.0),
-        Shape::DpadArm(Dir::Right) => (b.x + b.w + DPAD_THICK / 2.0 + 10.0, b.y + b.h / 2.0 + DPAD_THICK / 4.0 + 5.0),
+        Shape::DpadArm(Dir::Down) => (b.x + b.w / 2.0 - lw / 2.0, b.y + b.h + 12.0 + ACTION_FONT),
+        Shape::DpadArm(Dir::Left) => (b.x - lw - 10.0, b.y + b.h / 2.0 + 5.0),
+        Shape::DpadArm(Dir::Right) => (b.x + b.w + 14.0, b.y + b.h / 2.0 + 5.0),
         Shape::Shoulder => {
             (b.x + b.w / 2.0 - lw / 2.0, b.y + b.h / 2.0 + 5.0)
         }
