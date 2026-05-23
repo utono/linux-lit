@@ -74,6 +74,11 @@ pub fn is_separator(text: &str) -> bool {
     text.trim().starts_with('=')
 }
 
+pub fn is_stanza_number(text: &str) -> bool {
+    let trimmed = text.trim();
+    !trimmed.is_empty() && trimmed.chars().all(|c| c.is_ascii_digit())
+}
+
 pub fn is_dialogue(text: &str, is_prose: bool) -> bool {
     if is_blank(text) {
         return false;

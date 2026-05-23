@@ -147,7 +147,7 @@ pub(crate) fn trim_trailing_speakers(
 ///
 /// Mirrors foliate-js's per-element visibility rule (paginator.js:104-106) —
 /// block atomicity instead of per-line visibility.
-pub(crate) fn block_start_for_line_pure<B, S, D, L>(
+pub(crate) fn block_start_for_line_pure<B, S, D, L, N>(
     page_top: usize,
     last_fit: usize,
     is_prose: bool,
@@ -155,12 +155,14 @@ pub(crate) fn block_start_for_line_pure<B, S, D, L>(
     is_speaker: &S,
     is_stage: &D,
     is_dialogue: &L,
+    is_stanza_number: &N,
 ) -> usize
 where
     B: Fn(usize) -> bool,
     S: Fn(usize) -> bool,
     D: Fn(usize) -> bool,
     L: Fn(usize) -> bool,
+    N: Fn(usize) -> bool,
 {
     // Stage takes precedence: a stage-direction line inside a non-prose
     // work is a stage block, never a verse line.
@@ -186,10 +188,24 @@ where
             }
             start -= 1;
         }
+        // Include stanza number + blank above the verse block:
+        // pattern is [stanza_number] [blank] [verse_line_1 ...]
+        if start > page_top + 1
+            && is_blank(start - 1)
+            && is_stanza_number(start - 2)
+        {
+            start -= 2;
+        }
         if start == last_fit {
             return last_fit;
         }
         return start;
+    }
+
+    // Standalone stanza number: if last_fit is a stanza number itself,
+    // include the blank + verse lines below it as part of the block check.
+    if !is_prose && is_stanza_number(last_fit) {
+        return last_fit;
     }
 
     last_fit
@@ -201,7 +217,7 @@ where
 /// (`block_start <= page_top` — overflow fallback policy from F9 spec).
 ///
 /// `line_height` closure provides per-line heights for `total_height` accounting.
-pub(crate) fn trim_block_atoms_pure<B, S, D, L, H>(
+pub(crate) fn trim_block_atoms_pure<B, S, D, L, H, N>(
     range: VisibleRange,
     page_top: usize,
     is_prose: bool,
@@ -210,6 +226,7 @@ pub(crate) fn trim_block_atoms_pure<B, S, D, L, H>(
     is_stage: &D,
     is_dialogue: &L,
     line_height: &H,
+    is_stanza_number: &N,
 ) -> VisibleRange
 where
     B: Fn(usize) -> bool,
@@ -217,25 +234,32 @@ where
     D: Fn(usize) -> bool,
     L: Fn(usize) -> bool,
     H: Fn(usize) -> i32,
+    N: Fn(usize) -> bool,
 {
     if range.count == 0 || range.last_fit == page_top {
         return range;
     }
     let block_start = block_start_for_line_pure(
         page_top, range.last_fit, is_prose,
-        is_blank, is_speaker, is_stage, is_dialogue,
+        is_blank, is_speaker, is_stage, is_dialogue, is_stanza_number,
     );
-    if block_start == range.last_fit {
+    // Standalone stanza number at bottom of page: trim it (the stanza body
+    // follows below). block_start == last_fit for a single-line stanza number,
+    // so we handle it before the "not in a block" early return.
+    let is_trailing_stanza_num = !is_prose && is_stanza_number(range.last_fit);
+    if block_start == range.last_fit && !is_trailing_stanza_num {
         return range; // not in a block
     }
-    if block_start <= page_top {
+    if block_start <= page_top && !is_trailing_stanza_num {
         return range; // overflow: block extends to (or past) page_top
     }
     // Only trim if the block actually continues past last_fit (i.e., we're
     // splitting it mid-block). If the next line is OUTSIDE the same block
     // (a blank, speaker, stage transition, or end of buffer), the block
     // ends at last_fit and there's nothing to atomicize — leave as-is.
-    let continues = if is_stage(range.last_fit) {
+    let continues = if is_trailing_stanza_num {
+        true
+    } else if is_stage(range.last_fit) {
         // Stage block: continues iff next line is also stage.
         is_stage(range.last_fit + 1)
     } else if !is_prose && is_dialogue(range.last_fit) {
@@ -249,12 +273,14 @@ where
     if !continues {
         return range; // block ends here; nothing to atomicize
     }
-    // Drop lines [block_start, range.last_fit] from the range.
+    // For a trailing stanza number, block_start is the stanza number itself.
+    let effective_start = if is_trailing_stanza_num { range.last_fit } else { block_start };
+    // Drop lines [effective_start, range.last_fit] from the range.
     let mut new_total_height = range.total_height;
-    for i in block_start..=range.last_fit {
+    for i in effective_start..=range.last_fit {
         new_total_height -= line_height(i);
     }
-    let new_last_fit = block_start - 1;
+    let new_last_fit = effective_start - 1;
     let new_count = new_last_fit - page_top + 1;
     // Overflow guard: if trimming would leave half or fewer lines visible,
     // the block is too tall to fit on one page (e.g., a verse stanza longer
@@ -294,8 +320,9 @@ pub(crate) fn block_start_for_line(
     let is_speaker = |i: usize| line_types::is_speaker(&line_text(i));
     let is_stage = |i: usize| line_types::is_stage_direction(&line_text(i));
     let is_dialogue = |i: usize| line_types::is_dialogue(&line_text(i), is_prose);
+    let is_stanza_number = |i: usize| line_types::is_stanza_number(&line_text(i));
     block_start_for_line_pure(page_top, last_fit, is_prose,
-        &is_blank, &is_speaker, &is_stage, &is_dialogue)
+        &is_blank, &is_speaker, &is_stage, &is_dialogue, &is_stanza_number)
 }
 
 /// GTK-bound wrapper for `trim_block_atoms_pure`. Reads line text and heights
@@ -321,13 +348,14 @@ pub(crate) fn trim_block_atoms(
     let is_speaker = |i: usize| line_types::is_speaker(&line_text(i));
     let is_stage = |i: usize| line_types::is_stage_direction(&line_text(i));
     let is_dialogue = |i: usize| line_types::is_dialogue(&line_text(i), is_prose);
+    let is_stanza_number = |i: usize| line_types::is_stanza_number(&line_text(i));
     let line_height = |i: usize| -> i32 {
         let Some(iter) = buffer.iter_at_line(i as i32) else { return 0 };
         let (_y, h) = text_view.line_yrange(&iter);
         h
     };
     trim_block_atoms_pure(range, page_top, is_prose,
-        &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height)
+        &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height, &is_stanza_number)
 }
 
 /// Scan (page_top, last_fit] for a line that starts a new chapter or scene
@@ -345,9 +373,27 @@ fn clamp_at_section_break(
     if range.count <= 1 {
         return range;
     }
-    // Scan for the first section break strictly after page_top.
+    // Skip the header block at the top of the page: consecutive markers,
+    // separators, blanks, and stage directions starting from page_top.
+    // These are part of the current page's opening and should not trigger
+    // a clamp that would leave the page nearly empty.
+    let mut scan_start = page_top + 1;
+    while scan_start <= range.last_fit {
+        let text = buffer_line_text(buffer, scan_start);
+        let trimmed = text.trim();
+        if line_types::is_act_scene_marker(trimmed)
+            || line_types::is_separator(trimmed)
+            || trimmed.is_empty()
+            || line_types::is_stage_direction(trimmed)
+        {
+            scan_start += 1;
+        } else {
+            break;
+        }
+    }
+    // Scan for the first section break after the header block.
     let mut break_line = None;
-    for i in (page_top + 1)..=range.last_fit {
+    for i in scan_start..=range.last_fit {
         let text = buffer_line_text(buffer, i);
         let trimmed = text.trim();
         if line_types::is_act_scene_marker(trimmed) || line_types::is_separator(trimmed) {
@@ -363,10 +409,6 @@ fn clamp_at_section_break(
     if clamped_last < page_top {
         return range;
     }
-    // No minimum-content guard here: even a page with just 3 lines before
-    // a scene break is correct — it's the end of the previous scene. The
-    // `clamped_last < page_top` check above already prevents truly empty
-    // pages (break at page_top + 1 with page_top being blank).
     // Recompute total_height by walking line heights up to clamped_last.
     let mut total = 0i32;
     for i in page_top..=clamped_last {
@@ -550,8 +592,6 @@ pub(crate) fn back_up_for_speaker(buffer: &sourceview5::Buffer, line: usize) -> 
         let trimmed = prev.trim();
         if line_types::is_act_scene_marker(trimmed) || line_types::is_separator(trimmed) {
             top -= 1;
-            // Continue backing up through the full header block:
-            // consecutive markers, separators, and blanks between them.
             while top > 0 {
                 let above = buffer_line_text(buffer, top - 1);
                 let above_trimmed = above.trim();
@@ -566,9 +606,25 @@ pub(crate) fn back_up_for_speaker(buffer: &sourceview5::Buffer, line: usize) -> 
             }
             break;
         }
+        // Only back up over a stage direction if it's part of an entrance
+        // block (preceded by blank/speaker/stage/header), not a post-dialogue
+        // action like "[Countess exits.]" or "[Sings.]".
+        let is_entrance_stage_dir = line_types::is_stage_direction(trimmed) && {
+            if top >= 2 {
+                let above = buffer_line_text(buffer, top - 2);
+                let above_t = above.trim();
+                above_t.is_empty()
+                    || line_types::is_speaker(above_t)
+                    || line_types::is_stage_direction(above_t)
+                    || line_types::is_act_scene_marker(above_t)
+                    || line_types::is_separator(above_t)
+            } else {
+                true
+            }
+        };
         if trimmed.is_empty()
             || line_types::is_speaker(trimmed)
-            || line_types::is_stage_direction(trimmed)
+            || is_entrance_stage_dir
             || is_inside_stage_direction(buffer, top - 1)
         {
             top -= 1;
@@ -1152,13 +1208,15 @@ mod block_atom_tests {
         (is_blank, is_speaker, is_stage, is_dialogue)
     }
 
+    fn no_stanza_numbers(_i: usize) -> bool { false }
+
     #[test]
     fn block_start_in_3line_stage_direction_returns_first_dir_line() {
         // Lines: 0=speaker, 1=dir, 2=dir, 3=dir
         let kinds = ['s', 'd', 'd', 'd'];
         let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
         // last_fit=3 (mid-block), page_top=0, is_prose=false
-        let start = block_start_for_line_pure(0, 3, false, &is_blank, &is_speaker, &is_stage, &is_dialogue);
+        let start = block_start_for_line_pure(0, 3, false, &is_blank, &is_speaker, &is_stage, &is_dialogue, &no_stanza_numbers);
         assert_eq!(start, 1, "should back up to first stage-direction line");
     }
 
@@ -1168,7 +1226,7 @@ mod block_atom_tests {
         let kinds = ['s', 'd', 'd'];
         let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
         // last_fit=1 (at block start), page_top=0
-        let start = block_start_for_line_pure(0, 1, false, &is_blank, &is_speaker, &is_stage, &is_dialogue);
+        let start = block_start_for_line_pure(0, 1, false, &is_blank, &is_speaker, &is_stage, &is_dialogue, &no_stanza_numbers);
         assert_eq!(start, 1, "no backup when last_fit is already block start");
     }
 
@@ -1178,7 +1236,7 @@ mod block_atom_tests {
         let kinds = ['s', 'l', 'l', 'l', 'b'];
         let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
         // last_fit=3 (mid-stanza), is_prose=false
-        let start = block_start_for_line_pure(0, 3, false, &is_blank, &is_speaker, &is_stage, &is_dialogue);
+        let start = block_start_for_line_pure(0, 3, false, &is_blank, &is_speaker, &is_stage, &is_dialogue, &no_stanza_numbers);
         assert_eq!(start, 1, "verse stanza in non-prose work backs up to stanza start");
     }
 
@@ -1187,7 +1245,7 @@ mod block_atom_tests {
         // Same lines, but is_prose=true — rule does not apply.
         let kinds = ['s', 'l', 'l', 'l', 'b'];
         let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
-        let start = block_start_for_line_pure(0, 3, true, &is_blank, &is_speaker, &is_stage, &is_dialogue);
+        let start = block_start_for_line_pure(0, 3, true, &is_blank, &is_speaker, &is_stage, &is_dialogue, &no_stanza_numbers);
         assert_eq!(start, 3, "verse stanza rule skipped for prose works");
     }
 
@@ -1197,7 +1255,7 @@ mod block_atom_tests {
         let kinds = ['s', 'd', 'l'];
         let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
         // last_fit=1 (single dir line)
-        let start = block_start_for_line_pure(0, 1, false, &is_blank, &is_speaker, &is_stage, &is_dialogue);
+        let start = block_start_for_line_pure(0, 1, false, &is_blank, &is_speaker, &is_stage, &is_dialogue, &no_stanza_numbers);
         assert_eq!(start, 1, "single-line stage direction is not multi-line — no backup");
     }
 
@@ -1207,7 +1265,7 @@ mod block_atom_tests {
         let kinds = ['b', 's', 'l', 'l'];
         let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
         // last_fit=3, page_top=0
-        let start = block_start_for_line_pure(0, 3, false, &is_blank, &is_speaker, &is_stage, &is_dialogue);
+        let start = block_start_for_line_pure(0, 3, false, &is_blank, &is_speaker, &is_stage, &is_dialogue, &no_stanza_numbers);
         assert_eq!(start, 2, "stanza backup stops at speaker line (returns first dialogue line)");
     }
 
@@ -1216,7 +1274,7 @@ mod block_atom_tests {
         // Lines: 0=l, 1=blank, 2=l, 3=l (stanza bounded above by blank)
         let kinds = ['l', 'b', 'l', 'l'];
         let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
-        let start = block_start_for_line_pure(0, 3, false, &is_blank, &is_speaker, &is_stage, &is_dialogue);
+        let start = block_start_for_line_pure(0, 3, false, &is_blank, &is_speaker, &is_stage, &is_dialogue, &no_stanza_numbers);
         assert_eq!(start, 2, "stanza backup stops at blank line (returns first dialogue line after blank)");
     }
 
@@ -1225,7 +1283,7 @@ mod block_atom_tests {
         // Lines: 0=stage, 1=l, 2=l (stanza after a stage direction)
         let kinds = ['d', 'l', 'l'];
         let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
-        let start = block_start_for_line_pure(0, 2, false, &is_blank, &is_speaker, &is_stage, &is_dialogue);
+        let start = block_start_for_line_pure(0, 2, false, &is_blank, &is_speaker, &is_stage, &is_dialogue, &no_stanza_numbers);
         assert_eq!(start, 1, "stanza backup stops at stage direction (returns first dialogue line after stage)");
     }
 
@@ -1240,7 +1298,7 @@ mod block_atom_tests {
         let line_height = |_i: usize| 20;
         let trimmed = trim_block_atoms_pure(
             range, 0, false,
-            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height,
+            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height, &no_stanza_numbers,
         );
         // Block starts at 3 and continues past last_fit (line 5 is also stage);
         // new last_fit = 2; new count = 3 (lines 0,1,2).
@@ -1259,7 +1317,7 @@ mod block_atom_tests {
         let line_height = |_i: usize| 20;
         let trimmed = trim_block_atoms_pure(
             range, 0, false,
-            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height,
+            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height, &no_stanza_numbers,
         );
         assert_eq!(trimmed.last_fit, 4, "block ends at last_fit; no trim");
         assert_eq!(trimmed.count, 5);
@@ -1279,7 +1337,7 @@ mod block_atom_tests {
         let line_height = |_i: usize| 20;
         let trimmed = trim_block_atoms_pure(
             range, 0, false,
-            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height,
+            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height, &no_stanza_numbers,
         );
         assert_eq!(trimmed.last_fit, 4, "stanza ends at last_fit; no trim");
         assert_eq!(trimmed.count, 5);
@@ -1295,7 +1353,7 @@ mod block_atom_tests {
         let line_height = |_i: usize| 20;
         let trimmed = trim_block_atoms_pure(
             range, 0, false,
-            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height,
+            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height, &no_stanza_numbers,
         );
         assert_eq!(trimmed.last_fit, 3);
         assert_eq!(trimmed.count, 4);
@@ -1315,7 +1373,7 @@ mod block_atom_tests {
         let line_height = |_i: usize| 20;
         let trimmed = trim_block_atoms_pure(
             range, 0, false,
-            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height,
+            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height, &no_stanza_numbers,
         );
         assert_eq!(trimmed.last_fit, 9, "block too tall: keep original last_fit");
         assert_eq!(trimmed.count, 10);
@@ -1330,7 +1388,7 @@ mod block_atom_tests {
         let line_height = |_i: usize| 20;
         let trimmed = trim_block_atoms_pure(
             range, 0, false,
-            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height,
+            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height, &no_stanza_numbers,
         );
         assert_eq!(trimmed.count, 0);
     }
@@ -1344,9 +1402,470 @@ mod block_atom_tests {
         let line_height = |_i: usize| 20;
         let trimmed = trim_block_atoms_pure(
             range, 5, false,
-            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height,
+            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height, &no_stanza_numbers,
         );
         assert_eq!(trimmed.last_fit, 5);
         assert_eq!(trimmed.count, 1);
+    }
+
+    #[test]
+    fn block_start_includes_stanza_number_above_verse() {
+        // Buffer: 0=blank, 1=stanza_num, 2=blank, 3=l, 4=l, 5=l
+        let kinds = ['b', 'n', 'b', 'l', 'l', 'l'];
+        let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
+        let is_sn = |i: usize| kinds.get(i).map_or(false, |c| *c == 'n');
+        let start = block_start_for_line_pure(0, 5, false, &is_blank, &is_speaker, &is_stage, &is_dialogue, &is_sn);
+        assert_eq!(start, 1, "block should extend back to include stanza number");
+    }
+
+    #[test]
+    fn trim_block_atoms_trailing_stanza_number_is_trimmed() {
+        // Buffer: 0=l, 1=l, 2=l, 3=l, 4=l, 5=l, 6=l, 7=blank, 8=stanza_num
+        // last_fit=8 (stanza number at bottom of page after trim_trailing_speakers
+        // stripped trailing blank). The stanza number should be trimmed.
+        let kinds = ['l', 'l', 'l', 'l', 'l', 'l', 'l', 'b', 'n'];
+        let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
+        let is_sn = |i: usize| kinds.get(i).map_or(false, |c| *c == 'n');
+        let range = VisibleRange { last_fit: 8, total_height: 180, count: 9 };
+        let line_height = |_i: usize| 20;
+        let trimmed = trim_block_atoms_pure(
+            range, 0, false,
+            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height, &is_sn,
+        );
+        assert_eq!(trimmed.last_fit, 7, "stanza number should be trimmed from bottom");
+        assert_eq!(trimmed.count, 8);
+    }
+
+    #[test]
+    fn trim_block_atoms_mid_stanza_with_number_backs_up_to_before_number() {
+        // Realistic page: 20 lines of prior content, then stanza_num + blank + verse.
+        // Buffer: 0..19=l, 20=blank, 21=stanza_num, 22=blank, 23=l, 24=l, 25=l, 26=l
+        // last_fit=24 (mid-stanza), stanza continues at 25+.
+        // Block should include stanza_num (21) + blank (22) + verse (23,24).
+        // new_last_fit = 20 (blank before stanza number).
+        let mut kinds = vec!['l'; 20];
+        kinds.extend_from_slice(&['b', 'n', 'b', 'l', 'l', 'l', 'l']);
+        let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
+        let is_sn = |i: usize| kinds.get(i).map_or(false, |c| *c == 'n');
+        let range = VisibleRange { last_fit: 24, total_height: 500, count: 25 };
+        let line_height = |_i: usize| 20;
+        let trimmed = trim_block_atoms_pure(
+            range, 0, false,
+            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height, &is_sn,
+        );
+        assert_eq!(trimmed.last_fit, 20, "should back up past stanza number");
+        assert_eq!(trimmed.count, 21);
+    }
+}
+
+#[cfg(test)]
+mod headless_pagination_tests {
+    use crate::db::line_types;
+    use super::{VisibleRange, trim_block_atoms_pure};
+
+    fn clean_text_file(path: &str) -> Vec<String> {
+        let contents = std::fs::read_to_string(path).expect("failed to read text file");
+        let file_lines: Vec<String> = contents.lines().map(String::from).collect();
+        let mut result: Vec<String> = Vec::with_capacity(file_lines.len());
+        for (i, line) in file_lines.iter().enumerate() {
+            if line_types::is_blank(line) {
+                let next_non_blank = file_lines[i + 1..]
+                    .iter()
+                    .find(|l| !line_types::is_blank(l));
+                if let Some(next) = next_non_blank {
+                    if line_types::is_speaker(next) {
+                        continue;
+                    }
+                }
+            }
+            if let Some(stripped) = line.strip_prefix("## ") {
+                result.push(stripped.to_string());
+            } else {
+                result.push(line.clone());
+            }
+        }
+        result
+    }
+
+    fn clamp_at_section_break_pure(
+        lines: &[String], page_top: usize, last_fit: usize,
+    ) -> usize {
+        let mut scan_start = page_top + 1;
+        while scan_start <= last_fit {
+            let trimmed = lines[scan_start].trim();
+            if line_types::is_act_scene_marker(trimmed)
+                || line_types::is_separator(trimmed)
+                || trimmed.is_empty()
+                || line_types::is_stage_direction(trimmed)
+            {
+                scan_start += 1;
+            } else {
+                break;
+            }
+        }
+        for i in scan_start..=last_fit {
+            let trimmed = lines[i].trim();
+            if line_types::is_act_scene_marker(trimmed) || line_types::is_separator(trimmed) {
+                let clamped = i.saturating_sub(1);
+                if clamped >= page_top {
+                    return clamped;
+                }
+            }
+        }
+        last_fit
+    }
+
+    fn trim_trailing_pure(lines: &[String], page_top: usize, mut last_fit: usize) -> usize {
+        while last_fit > page_top {
+            let text = &lines[last_fit];
+            let trimmed = text.trim();
+            if line_types::is_speaker(trimmed)
+                || line_types::is_blank(trimmed)
+                || line_types::is_stage_direction(trimmed)
+            {
+                last_fit -= 1;
+            } else {
+                break;
+            }
+        }
+        last_fit
+    }
+
+    fn trim_block_atoms_text(
+        lines: &[String], page_top: usize, last_fit: usize,
+        is_prose: bool, _line_count: usize,
+    ) -> usize {
+        let is_blank = |i: usize| lines.get(i).map_or(true, |l| line_types::is_blank(l));
+        let is_speaker = |i: usize| lines.get(i).map_or(false, |l| line_types::is_speaker(l));
+        let is_stage = |i: usize| lines.get(i).map_or(false, |l| line_types::is_stage_direction(l));
+        let is_dialogue = |i: usize| lines.get(i).map_or(false, |l| line_types::is_dialogue(l, is_prose));
+        let is_sn = |i: usize| lines.get(i).map_or(false, |l| line_types::is_stanza_number(l));
+        let line_height = |_i: usize| 20i32;
+        let count = last_fit - page_top + 1;
+        let range = VisibleRange {
+            last_fit,
+            total_height: count as i32 * 20,
+            count,
+        };
+        let trimmed = trim_block_atoms_pure(
+            range, page_top, is_prose,
+            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height, &is_sn,
+        );
+        trimmed.last_fit
+    }
+
+    fn trim_visible_range_pure(
+        lines: &[String], page_top: usize, raw_last_fit: usize,
+        is_prose: bool,
+    ) -> usize {
+        let r = clamp_at_section_break_pure(lines, page_top, raw_last_fit);
+        let r = trim_trailing_pure(lines, page_top, r);
+        let r = trim_block_atoms_text(lines, page_top, r, is_prose, lines.len());
+        trim_trailing_pure(lines, page_top, r)
+    }
+
+    fn next_dialogue_from_text(lines: &[String], from: usize, _is_prose: bool) -> usize {
+        for i in from..lines.len() {
+            let text = &lines[i];
+            let trimmed = text.trim();
+            if !trimmed.is_empty()
+                && !line_types::is_speaker(trimmed)
+                && !line_types::is_stage_direction(trimmed)
+                && !line_types::is_act_scene_marker(trimmed)
+                && !line_types::is_separator(trimmed)
+            {
+                return i;
+            }
+        }
+        lines.len()
+    }
+
+    fn last_dialogue_in_range(lines: &[String], from: usize, to: usize, _is_prose: bool) -> usize {
+        let mut last = from;
+        for i in from..=to {
+            let text = &lines[i];
+            let trimmed = text.trim();
+            if !trimmed.is_empty()
+                && !line_types::is_speaker(trimmed)
+                && !line_types::is_stage_direction(trimmed)
+                && !line_types::is_act_scene_marker(trimmed)
+                && !line_types::is_separator(trimmed)
+            {
+                last = i;
+            }
+        }
+        last
+    }
+
+    fn back_up_for_speaker_text(lines: &[String], line: usize) -> usize {
+        let mut top = line;
+        while top > 0 {
+            let trimmed = lines[top - 1].trim();
+            if line_types::is_act_scene_marker(trimmed) || line_types::is_separator(trimmed) {
+                top -= 1;
+                while top > 0 {
+                    let above = lines[top - 1].trim();
+                    if line_types::is_act_scene_marker(above)
+                        || line_types::is_separator(above)
+                        || above.is_empty()
+                    {
+                        top -= 1;
+                    } else {
+                        break;
+                    }
+                }
+                break;
+            }
+            let is_entrance_stage_dir = line_types::is_stage_direction(trimmed) && {
+                if top >= 2 {
+                    let above_t = lines[top - 2].trim();
+                    above_t.is_empty()
+                        || line_types::is_speaker(above_t)
+                        || line_types::is_stage_direction(above_t)
+                        || line_types::is_act_scene_marker(above_t)
+                        || line_types::is_separator(above_t)
+                } else {
+                    true
+                }
+            };
+            if trimmed.is_empty()
+                || line_types::is_speaker(trimmed)
+                || is_entrance_stage_dir
+            {
+                top -= 1;
+            } else {
+                break;
+            }
+        }
+        top
+    }
+
+    struct PageResult {
+        page_top: usize,
+    }
+
+    fn page_forward(
+        lines: &[String], page_top: usize, lines_per_page: usize, is_prose: bool,
+    ) -> Option<PageResult> {
+        let line_count = lines.len();
+        let raw_last_fit = (page_top + lines_per_page - 1).min(line_count - 1);
+        let last_visible = trim_visible_range_pure(lines, page_top, raw_last_fit, is_prose);
+        let last_dialogue = last_dialogue_in_range(lines, page_top, last_visible, is_prose);
+        let next_dialogue = next_dialogue_from_text(lines, last_dialogue + 1, is_prose);
+        if next_dialogue >= line_count {
+            return None;
+        }
+        let new_top = back_up_for_speaker_text(lines, next_dialogue);
+        Some(PageResult {
+            page_top: new_top,
+        })
+    }
+
+    fn validate_page_top(lines: &[String], page_top: usize, page_num: usize, is_prose: bool) -> Vec<String> {
+        let mut errors = Vec::new();
+        let text = &lines[page_top];
+        let trimmed = text.trim();
+
+        if line_types::is_stage_direction(trimmed) && page_top > 0 {
+            let has_context = (page_top.saturating_sub(2)..page_top).any(|i| {
+                let t = lines[i].trim();
+                line_types::is_speaker(t) || line_types::is_stage_direction(t)
+            });
+            if !has_context {
+                errors.push(format!(
+                    "page {}: top line {} is dangling stage direction '{}' without speaker context",
+                    page_num, page_top, trimmed
+                ));
+            }
+        }
+
+        // Orphaned verse line: only in stanza-numbered regions.
+        // A dialogue line at page_top whose preceding line is also dialogue
+        // means we're mid-stanza — the page should start at the stanza boundary.
+        // Only check if a stanza number exists ABOVE page_top (we're inside
+        // a numbered section, not in a prose introduction before it).
+        if !is_prose && page_top > 0
+            && line_types::is_dialogue(trimmed, false)
+            && !line_types::is_stanza_number(trimmed)
+        {
+            let in_stanza_region = (0..page_top).rev()
+                .take(200)
+                .any(|i| line_types::is_stanza_number(&lines[i]));
+            if in_stanza_region {
+                let prev = lines[page_top - 1].trim();
+                if line_types::is_dialogue(prev, false)
+                    && !line_types::is_stanza_number(prev)
+                {
+                    let trunc = |s: &str| -> String {
+                        s.chars().take(50).collect()
+                    };
+                    errors.push(format!(
+                        "page {}: top line {} is orphaned mid-stanza verse '{}' (prev: '{}')",
+                        page_num, page_top, trunc(trimmed), trunc(prev)
+                    ));
+                }
+            }
+        }
+
+        errors
+    }
+
+    fn validate_page_bottom(lines: &[String], last_visible: usize, page_num: usize) -> Vec<String> {
+        let mut errors = Vec::new();
+        let text = &lines[last_visible];
+        let trimmed = text.trim();
+
+        if line_types::is_speaker(trimmed) {
+            errors.push(format!(
+                "page {}: bottom line {} is dangling speaker '{}'",
+                page_num, last_visible, trimmed
+            ));
+        }
+
+        errors
+    }
+
+    struct PaginationResult {
+        pages: usize,
+        errors: Vec<String>,
+    }
+
+    fn run_pagination_test(path: &str, is_prose: bool, lines_per_page: usize) -> PaginationResult {
+        let lines = clean_text_file(path);
+        assert!(!lines.is_empty(), "text file is empty: {}", path);
+
+        let mut page_tops: Vec<usize> = Vec::new();
+        let mut all_errors: Vec<String> = Vec::new();
+
+        let mut page_top = 0usize;
+        let mut page_num = 1usize;
+        loop {
+            page_tops.push(page_top);
+
+            let raw_last_fit = (page_top + lines_per_page - 1).min(lines.len() - 1);
+            let last_visible = trim_visible_range_pure(&lines, page_top, raw_last_fit, is_prose);
+
+            all_errors.extend(validate_page_top(&lines, page_top, page_num, is_prose));
+            all_errors.extend(validate_page_bottom(&lines, last_visible, page_num));
+
+            match page_forward(&lines, page_top, lines_per_page, is_prose) {
+                Some(result) => {
+                    assert!(
+                        result.page_top > page_top,
+                        "{}: page {} did not advance: page_top stayed at {}",
+                        path, page_num, page_top
+                    );
+                    page_top = result.page_top;
+                    page_num += 1;
+                }
+                None => break,
+            }
+        }
+
+        let fwd_page_count = page_num;
+
+        for (i, &pt) in page_tops.iter().enumerate().rev() {
+            let raw_last_fit = (pt + lines_per_page - 1).min(lines.len() - 1);
+            let last_visible = trim_visible_range_pure(&lines, pt, raw_last_fit, is_prose);
+            all_errors.extend(validate_page_top(&lines, pt, i + 1, is_prose));
+            all_errors.extend(validate_page_bottom(&lines, last_visible, i + 1));
+        }
+
+        PaginationResult { pages: fwd_page_count, errors: all_errors }
+    }
+
+    fn discover_works(author_path_fragment: &str) -> Vec<(String, String, String)> {
+        let db_path = std::path::Path::new(
+            &std::env::var("HOME").unwrap_or_else(|_| "/home/mlj".to_string())
+        ).join("utono/litdb/data/lit.db");
+        if !db_path.exists() {
+            return Vec::new();
+        }
+        let conn = rusqlite::Connection::open(&db_path).expect("failed to open lit.db");
+        let mut stmt = conn.prepare(
+            "SELECT abbrev, work_type, text_file FROM works \
+             WHERE text_file LIKE ?1 AND text_file IS NOT NULL AND text_file != '' \
+             ORDER BY title"
+        ).expect("failed to prepare query");
+        let pattern = format!("%{}%", author_path_fragment);
+        let rows = stmt.query_map([&pattern], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        }).expect("query failed");
+        rows.filter_map(|r| r.ok())
+            .filter(|(_, _, path)| std::path::Path::new(path).exists())
+            .collect()
+    }
+
+    fn run_author_pagination(author_path_fragment: &str, lines_per_page: usize) {
+        let works = discover_works(author_path_fragment);
+        if works.is_empty() {
+            eprintln!("SKIP: no works found for '{}'", author_path_fragment);
+            return;
+        }
+
+        let mut total_pages = 0usize;
+        let mut total_errors = 0usize;
+        let mut failure_summary: Vec<String> = Vec::new();
+
+        for (abbrev, work_type, path) in &works {
+            let is_prose = line_types::is_prose_work(work_type);
+            let result = run_pagination_test(path, is_prose, lines_per_page);
+            total_pages += result.pages;
+            if !result.errors.is_empty() {
+                total_errors += result.errors.len();
+                failure_summary.push(format!(
+                    "{} ({}, {} pages, {} errors):\n    {}",
+                    abbrev, work_type, result.pages, result.errors.len(),
+                    result.errors.join("\n    ")
+                ));
+            }
+        }
+
+        eprintln!(
+            "pagination test: {} works, {} total pages, {} errors (lpp={})",
+            works.len(), total_pages, total_errors, lines_per_page
+        );
+
+        if !failure_summary.is_empty() {
+            panic!(
+                "pagination failures ({}/{} works, {} errors, lpp={}):\n\n{}",
+                failure_summary.len(), works.len(), total_errors, lines_per_page,
+                failure_summary.join("\n\n")
+            );
+        }
+    }
+
+    #[test]
+    fn shakespeare_pagination_35lpp() {
+        run_author_pagination("shakespeare-william", 35);
+    }
+
+    #[test]
+    fn shakespeare_pagination_25lpp() {
+        run_author_pagination("shakespeare-william", 25);
+    }
+
+    #[test]
+    fn shakespeare_pagination_45lpp() {
+        run_author_pagination("shakespeare-william", 45);
+    }
+
+    #[test]
+    fn chaucer_pagination_35lpp() {
+        run_author_pagination("chaucer-geoffrey", 35);
+    }
+
+    #[test]
+    fn chaucer_pagination_25lpp() {
+        run_author_pagination("chaucer-geoffrey", 25);
+    }
+
+    #[test]
+    fn chaucer_pagination_45lpp() {
+        run_author_pagination("chaucer-geoffrey", 45);
     }
 }

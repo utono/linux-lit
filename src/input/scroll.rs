@@ -5,7 +5,7 @@ use libadwaita::prelude::AnimationExt;
 use crate::app::AppState;
 use crate::log_fmt;
 use super::viewport::{
-    visible_range, trim_trailing_speakers, descender_guard_px, lines_per_page,
+    visible_range, trim_visible_range, descender_guard_px, lines_per_page,
 };
 
 // ---------------------------------------------------------------------------
@@ -310,6 +310,7 @@ pub fn refresh_bottom_clip(state: &AppState) {
         state.scrolled_window.clone(),
         state.page_top_line,
         state.effective_line_count(),
+        state.is_prose(),
     );
 }
 
@@ -325,15 +326,16 @@ fn schedule_bottom_clip_update(
     scrolled_window: gtk4::ScrolledWindow,
     page_top: usize,
     line_count: usize,
+    is_prose: bool,
 ) {
     let tv1 = text_view.clone();
     let bc1 = bottom_clip.clone();
     let sw1 = scrolled_window.clone();
     glib::idle_add_local_once(move || {
-        update_bottom_clip(&tv1, &bc1, &sw1, page_top, line_count);
+        update_bottom_clip(&tv1, &bc1, &sw1, page_top, line_count, is_prose);
     });
     glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
-        update_bottom_clip(&text_view, &bottom_clip, &scrolled_window, page_top, line_count);
+        update_bottom_clip(&text_view, &bottom_clip, &scrolled_window, page_top, line_count, is_prose);
     });
 }
 
@@ -400,6 +402,7 @@ pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
         state.scrolled_window.clone(),
         effective_top,
         state.effective_line_count(),
+        state.is_prose(),
     );
 }
 
@@ -431,8 +434,9 @@ pub(crate) fn update_bottom_clip_public(
     scrolled_window: &gtk4::ScrolledWindow,
     page_top: usize,
     line_count: usize,
+    is_prose: bool,
 ) {
-    update_bottom_clip(text_view, bottom_clip, scrolled_window, page_top, line_count);
+    update_bottom_clip(text_view, bottom_clip, scrolled_window, page_top, line_count, is_prose);
 }
 
 /// Set the bottom clip to hide everything below the last fully-visible line.
@@ -444,6 +448,7 @@ fn update_bottom_clip(
     scrolled_window: &gtk4::ScrolledWindow,
     page_top: usize,
     line_count: usize,
+    is_prose: bool,
 ) {
     let widget_height = text_view.height();
     if widget_height <= 0 {
@@ -481,11 +486,7 @@ fn update_bottom_clip(
         return;
     }
 
-    // F9: block-atom trim is computed by snap_scroll_to_line via
-    // trim_visible_range; update_bottom_clip is a layout-flush backstop and
-    // intentionally skips block trim — the bottom-clip widget will resync on
-    // the next snap if the trim shifted last_fit.
-    let trimmed = trim_trailing_speakers(range, page_top, text_view, &buf_sv);
+    let trimmed = trim_visible_range(range, page_top, text_view, &buf_sv, is_prose);
 
     let clip = (widget_height - trimmed.total_height).max(0);
     let scroll_val = scrolled_window.vadjustment().value();

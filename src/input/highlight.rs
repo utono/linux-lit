@@ -5,7 +5,7 @@ use libadwaita::prelude::AnimationExt;
 use crate::app::AppState;
 use crate::log_fmt;
 use super::viewport::{
-    is_line_fully_visible, last_raw_visible_line,
+    is_line_fully_visible, last_fully_visible_line,
     lines_per_page, page_turn_top,
 };
 use super::scroll::{
@@ -58,7 +58,7 @@ pub fn update_highlight_and_advance_page(state: &mut AppState) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
         crate::config::NavigationMode::EReader => {
-            let last_vis = last_raw_visible_line(state, state.page_top_line);
+            let last_vis = last_fully_visible_line(state, state.page_top_line);
             log_fmt!(
                 "SYNC_ADVANCE: current={} last_vis={} page_top={}",
                 state.current_line, last_vis, state.page_top_line
@@ -89,6 +89,7 @@ pub fn update_highlight_and_show(state: &mut AppState) {
 
     let scroll_to = state.page_top_line;
     let line_count = state.effective_line_count();
+    let is_prose = state.is_prose();
 
     // Snap scroll position synchronously. line_yrange may return 0 if GTK
     // hasn't validated the layout yet, so we defer to an idle callback.
@@ -111,7 +112,7 @@ pub fn update_highlight_and_show(state: &mut AppState) {
         // Defer clip calculation to the next idle tick so line_yrange
         // returns accurate heights after the widget is visible and laid out.
         glib::idle_add_local_once(move || {
-            super::scroll::update_bottom_clip_public(&text_view, &bottom_clip, &scrolled_window, scroll_to, line_count);
+            super::scroll::update_bottom_clip_public(&text_view, &bottom_clip, &scrolled_window, scroll_to, line_count, is_prose);
             loading_flag.set(false);
             // Signal the resize tick to refresh layout once line metrics
             // are valid (may take one or more frames after the scrolled
