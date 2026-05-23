@@ -564,12 +564,16 @@ pub fn jump_to_prev_chapter(state: &mut AppState) {
 
     if let Some(line_idx) = target {
         state.current_line = line_idx;
-        state.page_back_stack.clear();
-        let top = chapter_page_top(&state.buffer, line_idx);
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
             crate::config::NavigationMode::EReader => {
-                set_page_instant(state, top);
+                if is_line_fully_visible(state, line_idx) {
+                    update_highlight_and_center(state);
+                } else {
+                    state.page_back_stack.clear();
+                    let top = chapter_page_top(&state.buffer, line_idx);
+                    set_page_instant(state, top);
+                }
             }
         }
         after_page_change(state, PageChangeReason::Chapter);
@@ -612,12 +616,16 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
 
     if let Some(line_idx) = target {
         state.current_line = line_idx;
-        state.page_back_stack.clear();
-        let top = chapter_page_top(&state.buffer, line_idx);
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => center_cursor(state),
             crate::config::NavigationMode::EReader => {
-                set_page_instant(state, top);
+                if is_line_fully_visible(state, line_idx) {
+                    update_highlight_and_center(state);
+                } else {
+                    state.page_back_stack.clear();
+                    let top = chapter_page_top(&state.buffer, line_idx);
+                    set_page_instant(state, top);
+                }
             }
         }
         after_page_change(state, PageChangeReason::Chapter);
@@ -674,11 +682,15 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
             return;
         }
         state.current_line = cursor_idx;
-        state.page_back_stack.clear();
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
             crate::config::NavigationMode::EReader => {
-                set_page_instant(state, marker_idx);
+                if is_line_fully_visible(state, cursor_idx) {
+                    update_highlight_and_center(state);
+                } else {
+                    state.page_back_stack.clear();
+                    set_page_instant(state, marker_idx);
+                }
             }
         }
         after_page_change(state, PageChangeReason::Scene);
@@ -720,11 +732,15 @@ pub fn jump_to_next_scene(state: &mut AppState) {
 
     if let (Some(marker_idx), Some(cursor_idx)) = (marker, cursor) {
         state.current_line = cursor_idx;
-        state.page_back_stack.clear();
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => center_cursor(state),
             crate::config::NavigationMode::EReader => {
-                set_page_instant(state, marker_idx);
+                if is_line_fully_visible(state, cursor_idx) {
+                    update_highlight_and_center(state);
+                } else {
+                    state.page_back_stack.clear();
+                    set_page_instant(state, marker_idx);
+                }
             }
         }
         after_page_change(state, PageChangeReason::Scene);

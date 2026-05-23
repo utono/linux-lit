@@ -179,6 +179,9 @@ where
     }
 
     // Verse stanza: only in non-prose works, only on dialogue lines.
+    // Only atomize if the block is bounded by a speaker or stanza number
+    // (plays, numbered verse). Plain blank-delimited verse paragraphs
+    // (continuous epics like the Odyssey) are allowed to split.
     if !is_prose && is_dialogue(last_fit) {
         let mut start = last_fit;
         while start > page_top {
@@ -188,13 +191,16 @@ where
             }
             start -= 1;
         }
-        // Include stanza number + blank above the verse block:
-        // pattern is [stanza_number] [blank] [verse_line_1 ...]
-        if start > page_top + 1
+        // Check what bounds the block above: speaker or stanza number
+        // means this is a structured block worth keeping atomic.
+        let bounded_by_speaker = start > 0 && is_speaker(start - 1);
+        let has_number_above = start > page_top + 1
             && is_blank(start - 1)
-            && is_stanza_number(start - 2)
-        {
+            && is_stanza_number(start - 2);
+        if has_number_above {
             start -= 2;
+        } else if !bounded_by_speaker {
+            return last_fit;
         }
         if start == last_fit {
             return last_fit;
@@ -647,7 +653,26 @@ pub(crate) fn page_turn_top(buffer: &sourceview5::Buffer, target_line: usize) ->
 /// any immediately-adjacent scene headers so the chapter's first dialogue
 /// line sits near the viewport top with its speaker visible above it.
 pub(crate) fn chapter_page_top(buffer: &sourceview5::Buffer, target_line: usize) -> usize {
-    back_up_for_speaker(buffer, target_line)
+    use crate::db::line_types;
+    let mut top = back_up_for_speaker(buffer, target_line);
+    // Continue backing up over stanza numbers, blanks, and separators
+    // to reach the chapter/section header (BOOK I, ACT 1, etc.)
+    while top > 0 {
+        let prev = buffer_line_text(buffer, top - 1);
+        let trimmed = prev.trim();
+        if line_types::is_stanza_number(trimmed)
+            || trimmed.is_empty()
+            || line_types::is_separator(trimmed)
+        {
+            top -= 1;
+        } else if line_types::is_act_scene_marker(trimmed) {
+            top -= 1;
+            break;
+        } else {
+            break;
+        }
+    }
+    top
 }
 
 /// Earliest line whose y-coordinate is reachable by `vadjustment.set_value`
