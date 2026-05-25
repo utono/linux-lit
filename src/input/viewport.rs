@@ -288,12 +288,9 @@ where
     }
     let new_last_fit = effective_start - 1;
     let new_count = new_last_fit - page_top + 1;
-    // Overflow guard: if trimming would leave half or fewer lines visible,
-    // the block is too tall to fit on one page (e.g., a verse stanza longer
-    // than the viewport sitting just below a speaker). Keep the per-line
-    // split — better to show a useful page that splits mid-block than a
-    // useless 1-line page that just shows the speaker. This is the F9
-    // best-effort policy from the spec ("atomic if it fits, split if not").
+    // Overflow guard: if trimming would leave the page less than half full
+    // by line count, the block is too tall to fit on one page. Keep the
+    // per-line split rather than showing a useless stub page.
     if new_count * 2 <= range.count {
         return range;
     }
@@ -423,6 +420,11 @@ fn clamp_at_section_break(
             total += h;
         }
     }
+    // If clamping would leave the page less than half full, skip the clamp.
+    // A half-empty page is worse UX than a scene break appearing mid-page.
+    if total * 2 < range.total_height {
+        return range;
+    }
     VisibleRange {
         last_fit: clamped_last,
         total_height: total,
@@ -454,13 +456,22 @@ pub(crate) fn trim_visible_range(
     buffer: &sourceview5::Buffer,
     is_prose: bool,
 ) -> VisibleRange {
-    // Pre-pass: clamp at the first section break (act/scene marker or
-    // separator) strictly inside the range so chapters/scenes always start
-    // at the top of the next page.
     let r = clamp_at_section_break(range, page_top, text_view, buffer);
     let r = trim_trailing_speakers(r, page_top, text_view, buffer);
+    let r2 = r;
     let r = trim_block_atoms(r, page_top, text_view, buffer, is_prose);
-    trim_trailing_speakers(r, page_top, text_view, buffer)
+    let r = trim_trailing_speakers(r, page_top, text_view, buffer);
+    // Viewport fill guard: if block-atom trim + speaker trim left the page
+    // less than 2/3 full, the removed block was too large relative to the
+    // viewport. Revert to the pre-block-atom state (r2) which still has
+    // section-break clamping and initial speaker trim applied.
+    if r.last_fit != r2.last_fit {
+        let widget_height = text_view.height();
+        if widget_height > 0 && r.total_height * 3 < widget_height * 2 {
+            return r2;
+        }
+    }
+    r
 }
 
 // ---------------------------------------------------------------------------
@@ -1314,22 +1325,21 @@ mod block_atom_tests {
 
     #[test]
     fn trim_block_atoms_block_fully_fits_reduces_count() {
-        // Block at lines 3-5; visible range stops at 4 (mid-block — line 5
-        // would render off-screen). Trim backs up to before block start.
-        let range = VisibleRange { last_fit: 4, total_height: 100, count: 5 };
-        // Lines 0=speaker, 1=l, 2=l, 3=d, 4=d, 5=d (stage block extends past last_fit)
-        let kinds = ['s', 'l', 'l', 'd', 'd', 'd'];
+        // Page with 15 lines; stage block at lines 13-15 split mid-block at
+        // line 14. Trim removes 2 lines (~60px from ~450px = 13% removed).
+        let range = VisibleRange { last_fit: 14, total_height: 450, count: 15 };
+        // Lines 0-12 = dialogue, 13-15 = stage direction block
+        let mut kinds = vec!['l'; 13];
+        kinds.extend_from_slice(&['d', 'd', 'd']);
         let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
-        let line_height = |_i: usize| 20;
+        let line_height = |_i: usize| 30;
         let trimmed = trim_block_atoms_pure(
             range, 0, false,
             &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height, &no_stanza_numbers,
         );
-        // Block starts at 3 and continues past last_fit (line 5 is also stage);
-        // new last_fit = 2; new count = 3 (lines 0,1,2).
-        assert_eq!(trimmed.last_fit, 2);
-        assert_eq!(trimmed.count, 3);
-        assert_eq!(trimmed.total_height, 60); // dropped lines 3 and 4 at 20px each
+        assert_eq!(trimmed.last_fit, 12);
+        assert_eq!(trimmed.count, 13);
+        assert_eq!(trimmed.total_height, 390); // dropped lines 13 and 14 at 30px each
     }
 
     #[test]
@@ -1459,6 +1469,25 @@ mod block_atom_tests {
         );
         assert_eq!(trimmed.last_fit, 7, "stanza number should be trimmed from bottom");
         assert_eq!(trimmed.count, 8);
+    }
+
+    #[test]
+    fn trim_block_atoms_small_block_is_trimmed() {
+        // Block at lines 4-5 (2 dialogue lines after speaker at 3); visible
+        // range stops at 5 (mid-block — line 6+ off-screen). Removing 2 of 6
+        // lines is within the line-count guard (new_count=4, 4*2=8 > 6), so
+        // the pure function trims. The viewport-relative guard in
+        // trim_visible_range handles underfill at the GTK layer.
+        let kinds = ['s', 'l', 'b', 's', 'l', 'l', 'l', 'l'];
+        let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
+        let line_height = |i: usize| if i <= 2 { 10 } else { 40 };
+        let range = VisibleRange { last_fit: 5, total_height: 150, count: 6 };
+        let trimmed = trim_block_atoms_pure(
+            range, 0, false,
+            &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height, &no_stanza_numbers,
+        );
+        assert_eq!(trimmed.last_fit, 3, "block trimmed to before block start");
+        assert_eq!(trimmed.total_height, 70); // kept lines 0-3: 10+10+10+40
     }
 
     #[test]

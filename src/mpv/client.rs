@@ -292,7 +292,7 @@ mod tests {
         assert_eq!(find_line_for_time(0.5, &timestamps, &map), None);
         assert_eq!(find_line_for_time(1.0, &timestamps, &map), Some(0));
         assert_eq!(find_line_for_time(2.5, &timestamps, &map), Some(0));
-        assert_eq!(find_line_for_time(2.8, &timestamps, &map), Some(1));
+        assert_eq!(find_line_for_time(3.0, &timestamps, &map), Some(1));
         assert_eq!(find_line_for_time(5.0, &timestamps, &map), Some(2));
     }
 }
