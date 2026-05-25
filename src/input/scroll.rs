@@ -488,7 +488,21 @@ fn update_bottom_clip(
 
     let trimmed = trim_visible_range(range, page_top, text_view, &buf_sv, is_prose);
 
-    let clip = (widget_height - trimmed.total_height).max(0);
+    // Viewport fill guard for display: if trimming left the page less than
+    // ~85% full, the dangling-speaker/block trims created too much empty
+    // space. Fall back to the raw visible range which only clips the partial
+    // bottom line. A dangling speaker at the bottom looks better than 15%+
+    // empty space.
+    let display_range = if widget_height > 0
+        && trimmed.last_fit < range.last_fit
+        && trimmed.total_height * 20 < widget_height * 17
+    {
+        range
+    } else {
+        trimmed
+    };
+
+    let clip = (widget_height - display_range.total_height).max(0);
     let scroll_val = scrolled_window.vadjustment().value();
     let expected_y = if let Some(iter) = buf_sv.iter_at_line(page_top as i32) {
         let (y, _h) = text_view.line_yrange(&iter);
@@ -506,13 +520,13 @@ fn update_bottom_clip(
     if cur == clip {
         crate::logging::log(&format!(
             "BOTTOM_CLIP: widget_h={} total_h={} clip={} page_top={} scroll_val={:.1} expected_y={:.1} offset={:.1} (unchanged, skipped)",
-            widget_height, trimmed.total_height, clip, page_top, scroll_val, expected_y, scroll_offset
+            widget_height, display_range.total_height, clip, page_top, scroll_val, expected_y, scroll_offset
         ));
         return;
     }
     crate::logging::log(&format!(
         "BOTTOM_CLIP: widget_h={} total_h={} clip={} page_top={} scroll_val={:.1} expected_y={:.1} offset={:.1}",
-        widget_height, trimmed.total_height, clip, page_top, scroll_val, expected_y, scroll_offset
+        widget_height, display_range.total_height, clip, page_top, scroll_val, expected_y, scroll_offset
     ));
     bottom_clip.set_height_request(clip);
 }
