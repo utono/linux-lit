@@ -121,6 +121,47 @@ pub(crate) fn toggle_previous_work(
     state: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
 ) {
+    // Concordance-aware: toggle between origin work and current concordance hit
+    {
+        let s = state.borrow();
+        if let (Some(ref conc), Some(ref origin)) = (&s.concordance_state, &s.concordance_origin) {
+            let current_abbrev = s.current_work.as_ref().map(|w| w.abbrev.as_str());
+            let on_origin = current_abbrev == Some(&origin.work_abbrev);
+            let (target_abbrev, target_line_id) = if on_origin {
+                if let Some(hit) = conc.current_hit() {
+                    (hit.work_abbrev.clone(), Some(hit.line_mapping_id))
+                } else {
+                    crate::logging::log("CONC_TOGGLE: no current hit");
+                    return;
+                }
+            } else {
+                (origin.work_abbrev.clone(), Some(origin.line_mapping_id))
+            };
+            if current_abbrev == Some(&target_abbrev) {
+                // Same work — just jump to the target line
+                if let Some(target_lm) = target_line_id {
+                    crate::logging::log(&format!(
+                        "CONC_TOGGLE: same-work jump to lm{}",
+                        target_lm,
+                    ));
+                    drop(s);
+                    jump_to_line_mapping_id(state, target_lm);
+                } else {
+                    crate::logging::log("CONC_TOGGLE: same work, no target line");
+                }
+                return;
+            }
+            crate::logging::log(&format!(
+                "CONC_TOGGLE: {} -> {} (lm {:?})",
+                current_abbrev.unwrap_or("?"), target_abbrev, target_line_id,
+            ));
+            drop(s);
+            load_work_at(state, tokio_handle, target_abbrev, target_line_id);
+            return;
+        }
+    }
+
+    // Standard previous-work toggle
     let abbrev = state.borrow().config.previous_work.clone();
     let abbrev = match abbrev {
         Some(a) => a,
@@ -134,6 +175,31 @@ pub(crate) fn toggle_previous_work(
         return;
     }
     crate::logging::log(&format!("TOGGLE_PREV: switching to '{}'", abbrev));
+    load_work_at(state, tokio_handle, abbrev, None);
+}
+
+fn jump_to_line_mapping_id(state: &Rc<RefCell<AppState>>, line_mapping_id: i64) {
+    let mut s = state.borrow_mut();
+    let buf_idx = s.current_work.as_ref().and_then(|w| {
+        let work_idx = w.lines.iter().position(|l| l.id == line_mapping_id)?;
+        if let Some(ref lm) = s.line_map {
+            Some(lm.work_to_buffer[work_idx])
+        } else {
+            Some(work_idx)
+        }
+    });
+    if let Some(idx) = buf_idx {
+        s.current_line = idx;
+        crate::input::highlight::update_highlight_and_center(&mut s);
+    }
+}
+
+fn load_work_at(
+    state: &Rc<RefCell<AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+    abbrev: String,
+    target_line_id: Option<i64>,
+) {
     {
         let s = state.borrow();
         let _ = s.cmd_tx.try_send(crate::mpv::commands::MpvCommand::Pause);
@@ -199,7 +265,7 @@ pub(crate) fn toggle_previous_work(
                 {
                     let mut s = state_clone.borrow_mut();
                     crate::app::clear_display(&mut s);
-                    crate::app::display_work_at_with_prepared(&mut s, work, None, prepared);
+                    crate::app::display_work_at_with_prepared(&mut s, work, target_line_id, prepared);
                 }
                 if let Some((w, filtered, line_map)) = write_inputs {
                     handle_for_write.spawn_blocking(move || {

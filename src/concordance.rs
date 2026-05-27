@@ -13,6 +13,13 @@ pub struct ConcordanceHit {
     pub has_audio: bool,
 }
 
+/// Remembers the work and line the user was on when entering concordance mode.
+#[derive(Debug, Clone)]
+pub struct ConcordanceOrigin {
+    pub work_abbrev: String,
+    pub line_mapping_id: i64,
+}
+
 /// Cross-work concordance navigation state.
 pub struct ConcordanceState {
     pub word: String,

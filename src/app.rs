@@ -192,6 +192,7 @@ pub struct AppState {
     pub synopsis_visible: bool,
     pub concordance_picker: crate::ui::concordance_picker::ConcordancePicker,
     pub concordance_state: Option<crate::concordance::ConcordanceState>,
+    pub concordance_origin: Option<crate::concordance::ConcordanceOrigin>,
     pub concordance_word_cache: Option<(String, Vec<(String, usize)>)>,
     pub concordance_word_picker: crate::ui::concordance_word_picker::ConcordanceWordPicker,
     pub concordance_list_picker: crate::ui::concordance_list_picker::ConcordanceListPicker,
@@ -214,6 +215,7 @@ pub struct AppState {
     pub debug_icon: gtk4::Label,
     pub word_status_label: gtk4::Label,
     pub chapter_toast: gtk4::Label,
+    pub speed_toast: gtk4::Label,
     pub word_cycle_line: Option<usize>,
     pub word_cycle_index: usize,
     pub word_status_timer: Rc<Cell<u64>>,
@@ -792,6 +794,15 @@ pub fn build_window(
     chapter_toast.set_visible(false);
     authorship_picker.overlay.add_overlay(&chapter_toast);
 
+    let speed_toast = gtk4::Label::new(None);
+    speed_toast.set_valign(gtk4::Align::End);
+    speed_toast.set_halign(gtk4::Align::Start);
+    speed_toast.set_margin_bottom(32);
+    speed_toast.set_margin_start(24);
+    speed_toast.add_css_class("chapter-toast");
+    speed_toast.set_visible(false);
+    authorship_picker.overlay.add_overlay(&speed_toast);
+
     // Concordance status bar
     let concordance_bar = crate::ui::concordance_bar::ConcordanceBar::new();
 
@@ -959,6 +970,7 @@ pub fn build_window(
         synopsis_visible: false,
         concordance_picker,
         concordance_state: None,
+        concordance_origin: None,
         concordance_word_cache: None,
         concordance_word_picker,
         concordance_list_picker,
@@ -979,6 +991,7 @@ pub fn build_window(
         debug_icon,
         word_status_label,
         chapter_toast,
+        speed_toast,
         word_cycle_line: None,
         word_cycle_index: 0,
         word_status_timer: Rc::new(Cell::new(0)),

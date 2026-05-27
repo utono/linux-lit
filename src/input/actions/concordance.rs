@@ -106,6 +106,20 @@ pub(crate) fn handle_word_selection(
 
         {
             let mut s = state_clone.borrow_mut();
+            if s.concordance_origin.is_none() {
+                let lm_id = s.line_mapping_id_for_buffer(s.current_line);
+                let abbrev = s.current_work.as_ref().map(|w| w.abbrev.clone());
+                if let (Some(lm_id), Some(abbrev)) = (lm_id, abbrev) {
+                    crate::logging::log(&format!(
+                        "CONC_ORIGIN: saved {}@lm{}",
+                        abbrev, lm_id,
+                    ));
+                    s.concordance_origin = Some(crate::concordance::ConcordanceOrigin {
+                        work_abbrev: abbrev,
+                        line_mapping_id: lm_id,
+                    });
+                }
+            }
             s.concordance_bar.update(&conc_state.status_label(), &conc_state.status_work());
             s.title_bar.set_visible(false);
             s.concordance_state = Some(conc_state);

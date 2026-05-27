@@ -26,7 +26,7 @@ impl ConcordanceBar {
         position_label.set_hexpand(true);
         position_label.add_css_class("concordance-bar-position");
 
-        let hint_label = Label::new(Some("r/R: next/prev | Esc: exit"));
+        let hint_label = Label::new(Some("r/R: next/prev | -: origin | Esc: exit"));
         hint_label.set_halign(Align::End);
         hint_label.set_hexpand(true);
         hint_label.add_css_class("concordance-bar-hint");

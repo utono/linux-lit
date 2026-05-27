@@ -888,6 +888,13 @@ fn dispatch_action(
             s.playback_speed = new_speed;
             let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SetSpeed(new_speed));
             crate::logging::log(&format!("SPEED: toggled to {}x", new_speed));
+            let label = format!("Speed: {:.1}x", new_speed);
+            s.speed_toast.set_text(&label);
+            s.speed_toast.set_visible(true);
+            let toast = s.speed_toast.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+                toast.set_visible(false);
+            });
         }
 
         // Vocab / glossing

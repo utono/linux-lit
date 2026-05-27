@@ -126,18 +126,9 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
         darken_color(&text_bg, 0.6)
     });
 
-    // Derive highlight from rootcolor so it matches dwl border tint
-    let cursor_line_bg = {
-        let (r, g, b) = hex_to_rgb(&root_color);
-        let alpha = if is_light { 0.13 } else { 0.15 };
-        format!(
-            "rgba({}, {}, {}, {:.2})",
-            (r * 255.0).round() as u8,
-            (g * 255.0).round() as u8,
-            (b * 255.0).round() as u8,
-            alpha
-        )
-    };
+    let lit = val.get("linux-lit").unwrap_or(&Value::Null);
+    let cursor_line_bg = str_field(&lit, "cursor_line_bg")
+        .unwrap_or_else(|| "rgba(86, 148, 100, 0.25)".to_string());
 
     // Dim foreground: 40% fg blended toward bg (matching lit's playback sync)
     let dim_fg = blend_colors(&text_fg, &text_bg, 0.40);
