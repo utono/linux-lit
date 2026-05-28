@@ -211,7 +211,6 @@ pub struct AppState {
     pub concordance_resume_playback: bool,
     pub sync_enabled_before_concordance: Option<bool>,
     pub skip_mpv_discovery: bool,
-    pub sync_icon: gtk4::Label,
     pub debug_icon: gtk4::Label,
     pub word_status_label: gtk4::Label,
     pub chapter_toast: gtk4::Label,
@@ -748,16 +747,6 @@ pub fn build_window(
     // Add vocab popup to full-width overlay so it appears to the right of the text card
     vocab_popup.attach_to(&authorship_picker.overlay);
 
-    // Sync-off indicator (lower-left corner of window, hidden by default)
-    let sync_icon = gtk4::Label::new(Some("⇄\u{0338}"));
-    sync_icon.set_valign(gtk4::Align::End);
-    sync_icon.set_halign(gtk4::Align::Start);
-    sync_icon.set_margin_start(12);
-    sync_icon.set_margin_bottom(12);
-    sync_icon.add_css_class("sync-off-icon");
-    sync_icon.set_visible(false);
-    authorship_picker.overlay.add_overlay(&sync_icon);
-
     // Debug-mode indicator (lower-left corner, next to sync icon, hidden by default)
     let debug_icon = gtk4::Label::new(Some("⚙"));
     debug_icon.set_valign(gtk4::Align::End);
@@ -987,7 +976,6 @@ pub fn build_window(
         concordance_resume_playback: false,
         sync_enabled_before_concordance: None,
         skip_mpv_discovery: false,
-        sync_icon,
         debug_icon,
         word_status_label,
         chapter_toast,

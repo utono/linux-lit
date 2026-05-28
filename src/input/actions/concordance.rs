@@ -126,7 +126,6 @@ pub(crate) fn handle_word_selection(
             if s.sync_enabled_before_concordance.is_none() {
                 s.sync_enabled_before_concordance = Some(s.sync_enabled);
                 s.sync_enabled = false;
-                s.sync_icon.set_visible(true);
                 crate::logging::log("CONC_SYNC: disabled playback sync for concordance mode");
             }
         }
@@ -634,7 +633,6 @@ fn concordance_update_bar(state: &AppState) {
 pub(crate) fn restore_sync_after_concordance(state: &mut AppState) {
     if let Some(was_enabled) = state.sync_enabled_before_concordance.take() {
         state.sync_enabled = was_enabled;
-        state.sync_icon.set_visible(!was_enabled);
         crate::logging::log(&format!(
             "CONC_SYNC: restored playback sync to {}",
             if was_enabled { "enabled" } else { "disabled" }

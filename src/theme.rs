@@ -442,7 +442,6 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .kb-legend-shift {{ background-color: #1a2a3a; border-color: #3a4a6a; }} \
          .kb-legend-both {{ background-color: #1a3a2a; border-color: #3a6a4a; }} \
          .kb-legend-unbound {{ background-color: #2a2a2a; border-color: #444444; }} \
-         .sync-off-icon {{ font-size: 20px; color: {dim}; opacity: 0.7; }} \
          .debug-icon {{ font-size: 18px; color: {bg}; opacity: 0.85; }} \
          .word-status {{ font-size: 16px; color: {fg}; opacity: 0.85; }} \
          .chapter-toast {{ font-size: 13px; color: {dim}; opacity: 0.85; }} \

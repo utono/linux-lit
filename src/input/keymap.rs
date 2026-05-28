@@ -868,11 +868,17 @@ fn dispatch_action(
         TogglePlaybackSync => {
             let mut s = state.borrow_mut();
             s.sync_enabled = !s.sync_enabled;
-            s.sync_icon.set_visible(!s.sync_enabled);
             if s.sync_enabled_before_concordance.is_some() {
                 s.sync_enabled_before_concordance = Some(s.sync_enabled);
             }
+            let label = if s.sync_enabled { "Sync: on" } else { "Sync: off" };
             crate::logging::log(&format!("SYNC: {}", if s.sync_enabled { "enabled" } else { "disabled" }));
+            s.speed_toast.set_text(label);
+            s.speed_toast.set_visible(true);
+            let toast = s.speed_toast.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+                toast.set_visible(false);
+            });
         }
         TogglePlayback => crate::input::search::toggle_playback(&mut state.borrow_mut()),
         SeekShortBackward => do_mpv_seek(state, -3.5),
