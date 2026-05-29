@@ -1016,6 +1016,9 @@ fn dispatch_action(
                 icon.set_visible(false);
             });
         }
+        ToggleNavTest => {
+            crate::input::nav_test::toggle(state);
+        }
         CopyLineMappingId => {
             let s = state.borrow();
             let lm_id = s.line_mapping_id_for_buffer(s.current_line);

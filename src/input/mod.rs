@@ -3,6 +3,7 @@ pub mod gamepad;
 pub mod highlight;
 pub mod keymap;
 pub mod keymap_config;
+pub mod nav_test;
 pub mod navigation;
 pub mod picker_keys;
 pub mod scroll;

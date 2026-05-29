@@ -653,14 +653,17 @@ pub fn scroll_paragraph_to_top(state: &mut AppState, para_start: usize) {
             adj.set_value(val);
         }
         crate::config::NavigationMode::EReader => {
-            // Only page-turn if the paragraph start is off-screen
-            if !super::viewport::is_line_on_screen(state, para_start) {
+            // Only page-turn if the paragraph start is off-screen AND ahead
+            // of the current page. Never scroll backward to a paragraph that
+            // started on a previous page — that would undo a user page turn.
+            if para_start >= state.page_top_line
+                && !super::viewport::is_line_on_screen(state, para_start)
+            {
                 crate::logging::log(&format!(
                     "PARA_SCROLL: para_start={} page_top={}",
                     para_start, state.page_top_line
                 ));
-                let dir = if para_start >= state.page_top_line { PageDirection::Forward } else { PageDirection::Backward };
-                set_page(state, para_start, dir);
+                set_page(state, para_start, PageDirection::Forward);
             }
         }
     }

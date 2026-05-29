@@ -130,6 +130,7 @@ pub enum Action {
     // App
     SaveAndQuit,
     ToggleDebugLogging,
+    ToggleNavTest,
     CopyLineMappingId,
     EscapeReaderMode,
 
@@ -229,6 +230,7 @@ impl Action {
             // App
             Action::SaveAndQuit
             | Action::ToggleDebugLogging
+            | Action::ToggleNavTest
             | Action::CopyLineMappingId
             | Action::EscapeReaderMode
             | Action::PendingG
@@ -323,6 +325,7 @@ impl Action {
             Action::PlayCurrentLine => "PlayCurrentLine",
             Action::SaveAndQuit => "SaveAndQuit",
             Action::ToggleDebugLogging => "ToggleDebugLogging",
+            Action::ToggleNavTest => "ToggleNavTest",
             Action::CopyLineMappingId => "CopyLineMappingId",
             Action::EscapeReaderMode => "EscapeReaderMode",
             Action::PendingG => "PendingG",

@@ -207,28 +207,96 @@ the clamped page is trivially small. `next_page_top` then computes a
 producing `new_top <= page_top` (no progress). `page_forward` handles this
 with the fallback `candidate_top = next_dialogue`.
 
-## Headless tests
+## Testing
 
-`src/input/navigation.rs` has headless tests that verify page turning
-across all Shakespeare plays without GTK:
+Two layers: headless tests verify the page-turn algorithm across many works
+cheaply (no display server needed); the in-app test harness verifies
+integration with real GTK pixel layout on the current work.
 
-- `test_page_forward_all_shakespeare_no_stuck` — pages forward through all
-  38 plays, panics if any stuck state (no progress after 2000 iterations)
+### Headless tests
+
+`src/input/navigation.rs` has headless tests that simulate page turning
+using text-only line counts (no GTK). They approximate
+`last_fully_visible_line` with a fixed `page_size = 30` lines and simulate
+`clamp_at_section_break`, `back_up_for_speaker`, and the page_back_stack.
+
+Algorithm tests (all Shakespeare plays, ~38 works):
+
+- `test_page_forward_all_shakespeare_no_stuck` — every page turn advances
+  (no stuck states)
 - `test_page_forward_backward_roundtrip_all_shakespeare` — forward tops
-  must be strictly increasing; backward via history must round-trip exactly
-- `test_page_forward_no_gaps_or_repeats` — Troilus-specific: every
-  highlighted line is dialogue, strictly increasing, gaps bounded by
-  page_size
-- `test_x_page_forward_covers_every_line_errors` — Comedy of Errors: every
-  non-blank line appears in at least one visited viewport
+  strictly increasing; backward via history round-trips exactly
+- `test_x_y_roundtrip_with_clamping_all_shakespeare` — same as above but
+  with section-break clamping simulation
+- `test_x_page_forward_no_mid_page_scene_breaks_all_shakespeare` — no
+  scene marker or separator in the interior of any page (after the opening
+  header block)
+- `test_y_after_scene_jump_returns_to_origin_all_shakespeare` — y after a
+  scene jump (3) returns to the exact jump origin
 - `test_scene_synopsis_identification_all_shakespeare` — scene markers
   resolve to correct synopsis keys via the database
 
-Run with:
+Single-work tests:
+
+- `test_page_forward_no_gaps_or_repeats` — Troilus: every highlighted line
+  is dialogue, strictly increasing, gaps bounded by page_size
+- `test_x_page_forward_covers_every_line_errors` — Comedy of Errors: every
+  non-blank line appears in at least one visited viewport
+- `test_j_cursor_next_dialogue_covers_every_line_errors` — same coverage
+  via j/q cursor navigation
+- `test_y_after_chapter_jump_returns_to_origin` — Troilus: y after [/{
+  returns to jump origin
+- `test_x_x_x_scene_jump_y_y_sequence` — Troilus: x x x 3 y returns to
+  pre-jump page; second y has empty stack
+- `test_chained_scene_jumps_only_last_origin_survives` — Troilus: 3 3 y
+  returns to page between the two jumps
+- `test_page_forward_prose_bleak_house` — prose forward: every page turn
+  advances to next non-blank line
+- `test_page_backward_prose_bleak_house` — prose backward via history:
+  exact round-trip
+
+Run all page-turn tests:
 
 ```bash
-cargo test -- all_shakespeare page_turn
+cargo test -- page_turn
 ```
+
+Run only the all-Shakespeare tests:
+
+```bash
+cargo test -- all_shakespeare
+```
+
+### In-app test harness (Ctrl+Shift+T)
+
+Toggles a deterministic test mode that exercises x, y, 2, 3, [, { on the
+currently loaded work with real GTK layout. Runs on a 300ms timer, calling
+the same navigation functions that key dispatch uses.
+
+Script (26 steps, repeating): 5x forward, 5x backward, 3x forward, next
+scene + return, prev scene + return, 5x forward, next chapter + return,
+prev chapter + return. Runs up to 500 steps or until end of work.
+
+Six invariants checked after every step:
+
+- **Forward progress on x** — page_top_line strictly increases
+- **y round-trips x** — page_top_line returns to pre-x value
+- **y after structural jump returns** — page_top_line returns to pre-jump
+  value
+- **No scene break mid-page** — no marker/separator in the interior of the
+  visible range
+- **Viewport fill** — visible content fills at least 50% of viewport height
+  (real pixel measurement)
+- **current_line is dialogue** — cursor on a dialogue line (plays)
+
+Toast shows "NAV TEST: running…" while active, "NAV TEST: done (N steps,
+M fail)" on completion. All steps and failures logged with `NAV_TEST:`
+prefix to the debug log.
+
+What the in-app harness tests that headless cannot: real GTK pixel heights,
+actual line wrapping, real section-break clamping with pixel measurements,
+viewport fill percentage, set_page/set_page_instant scroll plumbing,
+page_turn_lock interaction with animation timing.
 
 ## Playback sync
 
@@ -254,7 +322,9 @@ Playback sync advances the cursor to match MPV audio position. The pipeline:
    whether the cursor crossed into a new paragraph (contiguous non-blank
    lines). If so, calls `scroll_paragraph_to_top()` which in e-reader mode
    page-turns so the paragraph start is at the viewport top (only if
-   off-screen). Skipped when a scene scroll already happened
+   off-screen and `para_start >= page_top_line` — never scrolls backward to
+   a paragraph that started on a previous page). Skipped when a scene scroll
+   already happened
 6. **`update_highlight_and_advance_page`** — applies highlight tags, then
    checks if `current_line > last_fully_visible_line`. If so, computes
    `page_turn_top(current_line)` and calls `set_page` with forward direction.
@@ -264,18 +334,18 @@ Playback sync advances the cursor to match MPV audio position. The pipeline:
 
 ### Pending advance (pending_advance)
 
-Scheduled when the current timestamped line ends and either: (a) the next
-dialogue line has no timestamp, or (b) the next dialogue line is in a
-different scene (plays only):
+Scheduled when the current timestamped line ends and the next dialogue line
+has no timestamp. Scene boundaries are NOT handled here — CursorSync's
+scene-transition detection (step 4 above) picks up scene changes naturally
+when `find_line_for_time` lands on a line in the new scene.
 
 - `pending_advance = Some((end_time, next_buffer_line, source_work_index))`
-- `pending_scene_advance = true` when the advance crosses a scene boundary
 - On each `TimePos` event, if `pos >= end_time`: advance cursor directly,
   set `pending_advance_ignore_bl` to prevent CursorSync from pulling back
-- For scene-boundary advances: also updates `current_sync_scene`, computes
-  header-block top via `back_up_for_speaker`, and snaps viewport with
-  `set_page_instant` before the normal highlight update. MPV is not seeked —
-  the page jumps ahead visually while audio continues naturally
+
+When a manually-set timestamp has no valid end time (`end <= start`), the
+fallback `end_time` is: the next timestamped line's `start - 0.2s` (clamped
+to at least `start`), or `start + 5.0s` if no next timestamp exists.
 
 ### Suppression
 

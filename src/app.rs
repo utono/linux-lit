@@ -207,8 +207,11 @@ pub struct AppState {
     pub current_paragraph_start: Option<usize>,
     /// Tracks (div1, div2) of the last synced dialogue line to detect scene transitions.
     pub current_sync_scene: Option<(i64, i64)>,
-    /// True when pending_advance targets the first line of a new scene.
-    pub pending_scene_advance: bool,
+    pub nav_test_active: bool,
+    pub nav_test_step: usize,
+    pub nav_test_failures: usize,
+    pub nav_test_prev_top: usize,
+    pub nav_test_expect_return: Option<usize>,
     pub sync_enabled: bool,
     pub mpv_connected: bool,
     pub mpv_playing: bool,
@@ -975,7 +978,11 @@ pub fn build_window(
         current_sentence_group: None,
         current_paragraph_start: None,
         current_sync_scene: None,
-        pending_scene_advance: false,
+        nav_test_active: false,
+        nav_test_step: 0,
+        nav_test_failures: 0,
+        nav_test_prev_top: 0,
+        nav_test_expect_return: None,
         sync_enabled: true,
         mpv_connected: false,
         mpv_playing: false,
@@ -1920,10 +1927,29 @@ pub fn display_work_at_with_prepared(
             state.page_top_line = 0;
         }
     } else if target_line_id.is_none() {
+        // Snap saved cursor to nearest dialogue line if it landed on
+        // non-dialogue (speaker, stage direction, blank, marker).
+        let line_count = state.effective_line_count();
+        if state.current_line < line_count
+            && !crate::input::viewport::is_dialogue_line(&state.buffer, state.current_line)
+        {
+            let forward = crate::input::viewport::next_dialogue_line(
+                &state.buffer, &state.translation_lines,
+                state.current_line, line_count,
+            );
+            let backward = if state.current_line > 0 {
+                (0..state.current_line).rev().find(|&i| {
+                    crate::input::viewport::is_dialogue_line(&state.buffer, i)
+                })
+            } else {
+                None
+            };
+            state.current_line = forward.or(backward).unwrap_or(state.current_line);
+        }
+
         // Saved position path: anchor page_top so the cursor is visible.
         // If the cursor is near the end of the buffer, back up by ~1 page
         // so the viewport fills instead of showing only the trailing lines.
-        let line_count = state.effective_line_count();
         let lpp = crate::input::viewport::lines_per_page(state);
         let page_top = if state.current_line + lpp >= line_count {
             state.current_line.saturating_sub(lpp)

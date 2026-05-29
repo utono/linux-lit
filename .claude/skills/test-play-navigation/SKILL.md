@@ -6,70 +6,65 @@ argument-hint: <work-abbrev>
 
 # Test Play/Poetry Navigation
 
-Run headless page-turn tests for plays and poetry to verify the page-forward and page-backward invariants.
-
-## What It Tests
-
-- **Page forward**: highlighted line is strictly increasing, always dialogue, no large gaps
-- **Page backward**: uses `page_history` stack to return to exact previous page — strictly decreasing
-- **Speaker backup**: page top backs up to show speaker name when dialogue starts a page
-- **Line classification**: all lines correctly classified as dialogue/speaker/stage-direction/blank
-- **History round-trip**: forward then backward returns to the same page
+Run headless page-turn tests for plays and poetry to verify page-forward
+and page-backward invariants.
 
 ## How to Run
 
-Run the existing headless tests:
+All page-turn tests (plays + prose + all-Shakespeare):
 
 ```bash
-cd ~/utono/linux-lit && cargo test page_turn_tests -- --nocapture
+cargo test -- page_turn
 ```
 
-These tests load the actual cleaned text file for Troilus and Cressida from `~/utono/literature/shakespeare-william/folger-cleaned/troilus-and-cressida.txt` and simulate page-turning through all dialogue lines.
-
-## Adding Tests for Other Works
-
-The tests are in `src/input/navigation.rs` under `#[cfg(test)] mod page_turn_tests`. To test another play or poem:
-
-1. The work must have a cleaned text file (plays in `folger-cleaned/`, poems similarly)
-2. Add a new test function that loads the file and runs the same forward/backward checks
-3. For poetry (sonnets, Venus and Adonis), use `is_dialogue(text, false)` — same as plays since poems don't have speaker lines
-
-## Available Play/Poetry Text Files
-
-All in `~/utono/literature/shakespeare-william/folger-cleaned/`:
-
-- `troilus-and-cressida.txt` (currently tested)
-- `hamlet.txt`, `king-lear.txt`, `othello.txt`, `macbeth.txt`, etc. (38 plays)
-- `shakespeares-sonnets.txt`, `venus-and-adonis.txt`, `lucrece.txt`, `the-phoenix-and-turtle.txt` (4 poems)
-
-Also: `~/utono/literature/milton-john/paradise-lost-with-arguments.txt` (epic poetry)
-
-## Interactive Testing
-
-For visual verification (line wrapping, bottom clip, actual GTK rendering), the user must run the app:
+Only all-Shakespeare tests:
 
 ```bash
-cargo run
+cargo test -- all_shakespeare
 ```
 
-Then use Shift+Q (page forward) and < (page backward) to step through pages. Check:
+## What It Tests
 
-- Highlighted line at page top is the next unread dialogue line
-- Speaker name visible above the highlighted line when applicable
-- No repeated lines between page transitions
-- Bottom clip doesn't cut off text mid-line
+Tests in `src/input/navigation.rs` under `mod page_turn_tests`:
+
+All-Shakespeare (38 plays):
+
+- `test_page_forward_all_shakespeare_no_stuck` — every page turn advances
+- `test_page_forward_backward_roundtrip_all_shakespeare` — forward tops strictly increasing; backward via stack round-trips exactly
+- `test_x_y_roundtrip_with_clamping_all_shakespeare` — same with section-break clamping simulation
+- `test_x_page_forward_no_mid_page_scene_breaks_all_shakespeare` — no scene marker in the interior of any page
+- `test_y_after_scene_jump_returns_to_origin_all_shakespeare` — y after scene jump returns to exact origin
+- `test_scene_synopsis_identification_all_shakespeare` — scene markers resolve to correct synopsis keys
+
+Single-work (Troilus, Comedy of Errors):
+
+- `test_page_forward_no_gaps_or_repeats` — Troilus: highlighted lines strictly increasing, all dialogue
+- `test_x_page_forward_covers_every_line_errors` — Comedy of Errors: every non-blank line appears in at least one viewport
+- `test_j_cursor_next_dialogue_covers_every_line_errors` — same coverage via j/q cursor navigation
+- `test_y_after_chapter_jump_returns_to_origin` — y after [/{ returns to origin
+- `test_x_x_x_scene_jump_y_y_sequence` — x x x 3 y returns to pre-jump page; second y has empty stack
+- `test_chained_scene_jumps_only_last_origin_survives` — 3 3 y returns to page between the two jumps
+
+## Data Source
+
+Tests load cleaned text files from `~/utono/literature/shakespeare-william/folger-cleaned/`. No media files, no MPV, no audio — purely text-based algorithm testing. Page size approximated at 30 lines (no GTK pixel heights).
+
+## In-App GTK Test Harness
+
+For real pixel-height testing with actual GTK layout, use Ctrl+Shift+T in the running app. See `docs/troubleshooting/page-turning-mechanics.md` for details.
 
 ## Key Architecture
 
-- `page_forward` pushes `page_top_line` onto `state.page_history` before advancing
-- `page_backward` pops from `state.page_history` for exact reverse navigation
-- `page_history` is cleared on work load (`display_work_at`)
-- `last_fully_visible_line` accounts for line wrapping and bottom clip via height summing
+- `page_forward` pushes `page_top_line` onto `page_back_stack` before advancing
+- `page_backward` pops from `page_back_stack`; falls back to `prev_page_top()` when empty
+- Structural jumps (2, 3, [, {, gg, G, bookmarks, vocab, zt) clear the stack then push current `page_top_line` as a single return entry
+- `clamp_at_section_break` always fires — scene headers never appear mid-page
+- `page_forward`/`page_backward`/`page_backward_bottom` guard against `page_turn_lock` to prevent stack corruption during crossfade animations
 
 ## When to Use
 
 - After changing `page_forward`, `page_backward`, or related functions in `navigation.rs`
-- After changing `last_fully_visible_line`, `last_dialogue_in_page`, `next_dialogue_from`, or `back_up_for_speaker`
-- After changing `page_history` usage or `AppState` page navigation fields
+- After changing `last_fully_visible_line`, `clamp_at_section_break`, `back_up_for_speaker`, or `trim_visible_range`
+- After changing `page_back_stack` usage
 - After changing line classification in `line_types.rs`
-- After changing the cleaned text file format or extraction script
+- Before committing pagination changes

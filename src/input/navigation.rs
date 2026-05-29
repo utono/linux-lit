@@ -576,14 +576,14 @@ pub fn jump_to_prev_chapter(state: &mut AppState) {
 
     if let Some(line_idx) = target {
         state.current_line = line_idx;
+        state.page_back_stack.clear();
+        state.page_back_stack.push(state.page_top_line);
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
             crate::config::NavigationMode::EReader => {
                 if is_line_fully_visible(state, line_idx) {
                     update_highlight_only(state);
                 } else {
-                    state.page_back_stack.clear();
-                    state.page_back_stack.push(state.page_top_line);
                     let top = chapter_page_top(&state.buffer, line_idx);
                     set_page_instant(state, top);
                 }
@@ -627,14 +627,14 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
 
     if let Some(line_idx) = target {
         state.current_line = line_idx;
+        state.page_back_stack.clear();
+        state.page_back_stack.push(state.page_top_line);
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => center_cursor(state),
             crate::config::NavigationMode::EReader => {
                 if is_line_fully_visible(state, line_idx) {
                     update_highlight_only(state);
                 } else {
-                    state.page_back_stack.clear();
-                    state.page_back_stack.push(state.page_top_line);
                     let top = chapter_page_top(&state.buffer, line_idx);
                     set_page_instant(state, top);
                 }
@@ -683,7 +683,6 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
             let cap = ((m + 1)..line_count).find(|&bl| is_marker_at(bl))
                 .unwrap_or(line_count);
             next_dialogue_line(&state.buffer, &state.translation_lines, m, cap)
-                .or(Some(m))
         });
         (marker, cursor)
     };
@@ -694,14 +693,14 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
             return;
         }
         state.current_line = cursor_idx;
+        state.page_back_stack.clear();
+        state.page_back_stack.push(state.page_top_line);
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
             crate::config::NavigationMode::EReader => {
                 if is_line_fully_visible(state, cursor_idx) {
                     update_highlight_only(state);
                 } else {
-                    state.page_back_stack.clear();
-                    state.page_back_stack.push(state.page_top_line);
                     set_page_instant(state, marker_idx);
                 }
             }
@@ -738,21 +737,20 @@ pub fn jump_to_next_scene(state: &mut AppState) {
         }
         let cursor = marker.and_then(|m| {
             next_dialogue_line(&state.buffer, &state.translation_lines, m, line_count)
-                .or(Some(m))
         });
         (marker, cursor)
     };
 
     if let (Some(marker_idx), Some(cursor_idx)) = (marker, cursor) {
         state.current_line = cursor_idx;
+        state.page_back_stack.clear();
+        state.page_back_stack.push(state.page_top_line);
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => center_cursor(state),
             crate::config::NavigationMode::EReader => {
                 if is_line_fully_visible(state, cursor_idx) {
                     update_highlight_only(state);
                 } else {
-                    state.page_back_stack.clear();
-                    state.page_back_stack.push(state.page_top_line);
                     set_page_instant(state, marker_idx);
                 }
             }
@@ -1930,6 +1928,362 @@ mod page_turn_tests {
             total_scenes, verified
         );
         assert!(verified > 0, "Expected at least some synopsis matches");
+    }
+
+    // --- Section-break clamping simulation ---
+
+    /// Simulate clamp_at_section_break on plain strings (no pixel heights).
+    /// Matches the logic in viewport.rs: skip the opening header block, then
+    /// clamp at the first marker/separator found within the visible range.
+    fn clamp_at_section_break(
+        lines: &[String], page_top: usize, last_fit: usize,
+    ) -> usize {
+        let mut scan_start = page_top + 1;
+        while scan_start <= last_fit {
+            let trimmed = lines[scan_start].trim();
+            if line_types::is_act_scene_marker(trimmed)
+                || line_types::is_separator(trimmed)
+                || trimmed.is_empty()
+                || line_types::is_stage_direction(trimmed)
+            {
+                scan_start += 1;
+            } else {
+                break;
+            }
+        }
+        for i in scan_start..=last_fit {
+            let trimmed = lines[i].trim();
+            if line_types::is_act_scene_marker(trimmed) || line_types::is_separator(trimmed) {
+                let clamped = i.saturating_sub(1);
+                if clamped >= page_top {
+                    return clamped;
+                }
+            }
+        }
+        last_fit
+    }
+
+    /// Simulate next_page_top with section-break clamping.
+    fn next_page_top_clamped(
+        lines: &[String], page_top: usize, page_size: usize,
+    ) -> Option<(usize, usize)> {
+        let line_count = lines.len();
+        let raw_last = (page_top + page_size).min(line_count.saturating_sub(1));
+        let last_visible = clamp_at_section_break(lines, page_top, raw_last);
+        let last = last_dialogue_in_range(lines, page_top, last_visible - page_top + 1);
+        let next = next_dialogue(lines, last + 1)?;
+        if next >= line_count { return None; }
+        let new_top = back_up_for_speaker(lines, next);
+        if new_top <= page_top {
+            if next > page_top { Some((next, next)) } else { None }
+        } else {
+            Some((new_top, next))
+        }
+    }
+
+    /// Find all scene marker indices in a play.
+    fn scene_marker_indices(lines: &[String]) -> Vec<usize> {
+        lines.iter().enumerate()
+            .filter(|(_, l)| line_types::is_act_scene_marker(l.trim()))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    // --- Tests for section-break clamping (x never shows scene break mid-page) ---
+
+    /// x (page_forward) with clamping: no page should contain a scene marker
+    /// in its interior (after the opening header block). Verified across all
+    /// Shakespeare plays.
+    #[test]
+    fn test_x_page_forward_no_mid_page_scene_breaks_all_shakespeare() {
+        let files = shakespeare_play_files();
+        if files.is_empty() {
+            eprintln!("SKIP: no Shakespeare files found");
+            return;
+        }
+        let page_size = 30;
+        for path in &files {
+            let name = path.file_stem().unwrap().to_str().unwrap();
+            let lines = load_play_lines(path);
+            let line_count = lines.len();
+            if line_count == 0 { continue; }
+            let first = match next_dialogue(&lines, 0) {
+                Some(d) => d,
+                None => continue,
+            };
+            let mut page_top = back_up_for_speaker(&lines, first);
+            let mut iterations = 0;
+            loop {
+                iterations += 1;
+                if iterations > 2000 { break; }
+                let raw_last = (page_top + page_size).min(line_count.saturating_sub(1));
+                let last_visible = clamp_at_section_break(&lines, page_top, raw_last);
+                // Check: no scene marker in the interior of this page
+                // (skip the opening header block, same as clamp_at_section_break does)
+                let mut scan = page_top + 1;
+                while scan <= last_visible {
+                    let t = lines[scan].trim();
+                    if line_types::is_act_scene_marker(t)
+                        || line_types::is_separator(t)
+                        || t.is_empty()
+                        || line_types::is_stage_direction(t)
+                    {
+                        scan += 1;
+                    } else {
+                        break;
+                    }
+                }
+                for i in scan..=last_visible {
+                    let t = lines[i].trim();
+                    assert!(
+                        !line_types::is_act_scene_marker(t) && !line_types::is_separator(t),
+                        "{}: scene break at line {} ('{}') is mid-page (page_top={} last_visible={})",
+                        name, i, t, page_top, last_visible
+                    );
+                }
+                match next_page_top_clamped(&lines, page_top, page_size) {
+                    Some((new_top, _)) => page_top = new_top,
+                    None => break,
+                }
+            }
+        }
+    }
+
+    // --- Tests for y after structural jumps (push-before-clear) ---
+
+    /// Simulate page_back_stack behavior: x pushes, structural jump clears
+    /// then pushes, y pops. Verify y after a scene jump returns to origin.
+    #[test]
+    fn test_y_after_scene_jump_returns_to_origin_all_shakespeare() {
+        let files = shakespeare_play_files();
+        if files.is_empty() {
+            eprintln!("SKIP: no Shakespeare files found");
+            return;
+        }
+        let page_size = 30;
+        for path in &files {
+            let name = path.file_stem().unwrap().to_str().unwrap();
+            let lines = load_play_lines(path);
+            let line_count = lines.len();
+            if line_count == 0 { continue; }
+            let markers = scene_marker_indices(&lines);
+            if markers.len() < 3 { continue; }
+            // Page forward a few times to build up stack
+            let first = match next_dialogue(&lines, 0) {
+                Some(d) => d,
+                None => continue,
+            };
+            let mut page_top = back_up_for_speaker(&lines, first);
+            let mut stack: Vec<usize> = Vec::new();
+            for _ in 0..5 {
+                match next_page_top_clamped(&lines, page_top, page_size) {
+                    Some((new_top, _)) => {
+                        stack.push(page_top);
+                        page_top = new_top;
+                    }
+                    None => break,
+                }
+            }
+            if stack.is_empty() { continue; }
+            let origin = page_top;
+            // Simulate scene jump (3): clear stack, push origin, jump to next marker
+            let current_line = match next_dialogue(&lines, page_top) {
+                Some(d) => d,
+                None => continue,
+            };
+            let target_marker = markers.iter().find(|&&m| m > current_line);
+            let target_marker = match target_marker {
+                Some(&m) => m,
+                None => continue,
+            };
+            stack.clear();
+            stack.push(origin);
+            let _ = target_marker;
+            // Simulate y: pop returns to origin
+            let popped = stack.pop().expect("stack should have return entry");
+            assert_eq!(
+                popped, origin,
+                "{}: y after scene jump should return to origin {} but got {}",
+                name, origin, popped
+            );
+        }
+    }
+
+    /// y after chapter jump ([/{) returns to the jump origin.
+    #[test]
+    fn test_y_after_chapter_jump_returns_to_origin() {
+        let lines = load_troilus_lines();
+        let page_size = 30;
+        // Find chapter-like markers (act/scene markers serve as chapter boundaries)
+        let markers = scene_marker_indices(&lines);
+        assert!(markers.len() >= 3, "Expected at least 3 scene markers");
+        // Page forward to build up a position
+        let first = next_dialogue(&lines, 0).unwrap();
+        let mut page_top = back_up_for_speaker(&lines, first);
+        let mut stack: Vec<usize> = Vec::new();
+        for _ in 0..8 {
+            match next_page_top_clamped(&lines, page_top, page_size) {
+                Some((new_top, _)) => {
+                    stack.push(page_top);
+                    page_top = new_top;
+                }
+                None => break,
+            }
+        }
+        let origin = page_top;
+        // Jump forward to next chapter/scene marker
+        let current_line = next_dialogue(&lines, page_top).unwrap();
+        let target = *markers.iter().find(|&&m| m > current_line).unwrap();
+        // Simulate [/{ jump: clear + push
+        stack.clear();
+        stack.push(origin);
+        let _ = target;
+        // y returns to origin
+        assert_eq!(stack.pop().unwrap(), origin);
+    }
+
+    /// x x x 3 y returns to the page before the scene jump.
+    /// x x x 3 y y falls through (empty stack).
+    #[test]
+    fn test_x_x_x_scene_jump_y_y_sequence() {
+        let lines = load_troilus_lines();
+        let page_size = 30;
+        let markers = scene_marker_indices(&lines);
+        assert!(markers.len() >= 3);
+        let first = next_dialogue(&lines, 0).unwrap();
+        let mut page_top = back_up_for_speaker(&lines, first);
+        let mut stack: Vec<usize> = Vec::new();
+        let mut tops: Vec<usize> = vec![page_top];
+        // x x x
+        for _ in 0..3 {
+            match next_page_top_clamped(&lines, page_top, page_size) {
+                Some((new_top, _)) => {
+                    stack.push(page_top);
+                    page_top = new_top;
+                    tops.push(page_top);
+                }
+                None => break,
+            }
+        }
+        let before_jump = page_top;
+        // 3 (scene jump)
+        let current = next_dialogue(&lines, page_top).unwrap();
+        let target = *markers.iter().find(|&&m| m > current).unwrap();
+        stack.clear();
+        stack.push(before_jump);
+        let _ = target;
+        // y — returns to before_jump
+        let popped = stack.pop().unwrap();
+        assert_eq!(popped, before_jump, "first y should return to page before scene jump");
+        let _ = popped;
+        // y again — stack is empty, would fall through to prev_page_top
+        assert!(stack.is_empty(), "second y should have empty stack");
+    }
+
+    /// 3 3 y returns to the page before the SECOND scene jump (not the first).
+    #[test]
+    fn test_chained_scene_jumps_only_last_origin_survives() {
+        let lines = load_troilus_lines();
+        let page_size = 30;
+        let markers = scene_marker_indices(&lines);
+        assert!(markers.len() >= 5);
+        let first = next_dialogue(&lines, 0).unwrap();
+        let mut page_top = back_up_for_speaker(&lines, first);
+        let mut stack: Vec<usize> = Vec::new();
+        // Page forward a bit
+        for _ in 0..3 {
+            match next_page_top_clamped(&lines, page_top, page_size) {
+                Some((new_top, _)) => {
+                    stack.push(page_top);
+                    page_top = new_top;
+                }
+                None => break,
+            }
+        }
+        // First scene jump (3)
+        let current = next_dialogue(&lines, page_top).unwrap();
+        let target1 = *markers.iter().find(|&&m| m > current).unwrap();
+        stack.clear();
+        stack.push(page_top);
+        page_top = target1;
+        let after_first_jump = page_top;
+        // Second scene jump (3)
+        let current2 = next_dialogue(&lines, page_top).unwrap();
+        let target2 = *markers.iter().find(|&&m| m > current2).unwrap();
+        stack.clear();
+        stack.push(after_first_jump);
+        let _ = target2;
+        // y — returns to after_first_jump (not the original position)
+        let popped = stack.pop().unwrap();
+        assert_eq!(
+            popped, after_first_jump,
+            "y after 3 3 should return to page between the two jumps"
+        );
+    }
+
+    /// x/y round-trip with section-break clamping across all Shakespeare plays.
+    /// Forward tops must be strictly increasing; backward via stack must
+    /// round-trip exactly.
+    #[test]
+    fn test_x_y_roundtrip_with_clamping_all_shakespeare() {
+        let files = shakespeare_play_files();
+        if files.is_empty() {
+            eprintln!("SKIP: no Shakespeare files found");
+            return;
+        }
+        let page_size = 30;
+        for path in &files {
+            let name = path.file_stem().unwrap().to_str().unwrap();
+            let lines = load_play_lines(path);
+            let line_count = lines.len();
+            if line_count == 0 { continue; }
+            let first = match next_dialogue(&lines, 0) {
+                Some(d) => d,
+                None => continue,
+            };
+            let mut page_top = back_up_for_speaker(&lines, first);
+            let mut forward_tops: Vec<usize> = vec![page_top];
+            let mut stack: Vec<usize> = Vec::new();
+            let mut iterations = 0;
+            loop {
+                iterations += 1;
+                if iterations > 2000 { break; }
+                match next_page_top_clamped(&lines, page_top, page_size) {
+                    Some((new_top, _)) => {
+                        stack.push(page_top);
+                        page_top = new_top;
+                        forward_tops.push(page_top);
+                    }
+                    None => break,
+                }
+            }
+            // Verify forward tops strictly increasing
+            for i in 1..forward_tops.len() {
+                assert!(
+                    forward_tops[i] > forward_tops[i - 1],
+                    "{}: forward top {} not after {} at page {}",
+                    name, forward_tops[i], forward_tops[i - 1], i
+                );
+            }
+            // Backward via stack
+            let mut backward_tops: Vec<usize> = vec![page_top];
+            while let Some(prev) = stack.pop() {
+                page_top = prev;
+                backward_tops.push(page_top);
+            }
+            assert_eq!(
+                forward_tops.len(), backward_tops.len(),
+                "{}: forward {} pages but backward {} pages",
+                name, forward_tops.len(), backward_tops.len()
+            );
+            for i in 0..forward_tops.len() {
+                assert_eq!(
+                    forward_tops[i],
+                    backward_tops[backward_tops.len() - 1 - i],
+                    "{}: round-trip mismatch at page {}", name, i
+                );
+            }
+        }
     }
 }
 

@@ -6,7 +6,9 @@ argument-hint: <author-path> | <work-abbrev>
 
 # Test Pagination
 
-Run headless pagination tests that simulate x/y page turns through all works by an author or a single work. Tests forward pass (x presses from start to end) and backward pass (y presses back) at multiple page sizes.
+Run headless pagination tests that simulate x/y page turns through all
+works by an author or a single work. Tests forward pass (x presses from
+start to end) and backward pass (y presses back) at multiple page sizes.
 
 ## How to Run
 
@@ -22,18 +24,31 @@ Single page size:
 cargo test shakespeare_pagination_35lpp -- --nocapture
 ```
 
+All page-turn tests (navigation.rs suite — different from the viewport.rs
+pagination suite above):
+
+```bash
+cargo test -- page_turn
+```
+
 ## What It Validates
 
-- **No dangling stage directions**: page top never starts with a stage direction like "[Countess exits.]" without preceding speaker context
+The viewport.rs `headless_pagination_tests` module:
+
+- **No dangling stage directions**: page top never starts with an exit stage direction without preceding speaker context
 - **No dangling speakers**: page bottom never ends with a speaker name without dialogue
 - **Page advancement**: every x press strictly advances page_top (no infinite loops)
 - **Round-trip**: backward pass using forward page_tops produces the same validation results
 - **Section breaks**: act/scene markers push content to next page without creating blank pages
 - **Stanza atomicity**: verse stanzas (with optional stanza numbers) are never split across pages
 
+The navigation.rs `page_turn_tests` module (run via `cargo test -- page_turn`):
+
+- Forward progress, y round-trip, structural jump return, no mid-page scene breaks, cursor on dialogue, coverage (see `/test-play-navigation` for full list)
+
 ## Adding an Author
 
-In `src/input/viewport.rs`, `headless_pagination_tests` module — add a test:
+In `src/input/viewport.rs`, `headless_pagination_tests` module:
 
 ```rust
 #[test]
@@ -41,8 +56,6 @@ fn chaucer_pagination_35lpp() {
     run_author_pagination("chaucer-geoffrey", 35);
 }
 ```
-
-The `author_path_fragment` matches against the `text_file` column in `works` table (e.g., `"shakespeare-william"` matches all paths containing that string).
 
 ## Adding a Single Work
 
@@ -58,12 +71,17 @@ fn hamlet_pagination() {
 
 Second argument `is_prose`: `false` for plays/poetry, `true` for novels.
 
+## In-App GTK Test Harness
+
+For real pixel-height testing with actual GTK layout, use Ctrl+Shift+T in
+the running app. See `docs/troubleshooting/page-turning-mechanics.md`.
+
 ## Key Files
 
-- `src/input/viewport.rs` — `headless_pagination_tests` module (tests + pure pagination simulation)
-- `src/input/viewport.rs` — `trim_visible_range`, `trim_block_atoms_pure`, `block_start_for_line_pure`, `clamp_at_section_break` (production code being tested)
-- `src/input/viewport.rs` — `back_up_for_speaker` (entrance vs exit stage direction heuristic)
-- `src/db/line_types.rs` — line classifiers (blank, speaker, stage direction, stanza number)
+- `src/input/viewport.rs` — `headless_pagination_tests` module (viewport pagination suite)
+- `src/input/navigation.rs` — `page_turn_tests` module (navigation page-turn suite)
+- `src/input/viewport.rs` — `trim_visible_range`, `trim_block_atoms_pure`, `clamp_at_section_break`, `back_up_for_speaker`
+- `src/db/line_types.rs` — line classifiers
 
 ## When to Use
 
