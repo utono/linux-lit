@@ -31,9 +31,17 @@ impl Step {
 }
 
 fn build_script() -> Vec<Step> {
-    // sync-only: walk cursor line-by-line through the work, testing
-    // page turns triggered by playback sync
-    vec![Step::SyncAdvance; 40]
+    // jumps-only: test key-press navigation
+    let mut s = Vec::new();
+    s.extend_from_slice(&[Step::PageForward; 5]);
+    s.extend_from_slice(&[Step::PageBackward; 5]);
+    s.extend_from_slice(&[Step::PageForward; 3]);
+    s.push(Step::NextScene); s.push(Step::PageBackward);
+    s.push(Step::PrevScene); s.push(Step::PageBackward);
+    s.extend_from_slice(&[Step::PageForward; 5]);
+    s.push(Step::NextChapter); s.push(Step::PageBackward);
+    s.push(Step::PrevChapter); s.push(Step::PageBackward);
+    s
 }
 
 const MAX_STEPS: usize = 500;

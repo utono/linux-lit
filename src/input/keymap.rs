@@ -868,6 +868,9 @@ fn dispatch_action(
         TogglePlaybackSync => {
             let mut s = state.borrow_mut();
             s.sync_enabled = !s.sync_enabled;
+            if s.sync_enabled {
+                s.suppress_sync_until = None;
+            }
             if s.sync_enabled_before_concordance.is_some() {
                 s.sync_enabled_before_concordance = Some(s.sync_enabled);
             }

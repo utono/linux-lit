@@ -2566,7 +2566,7 @@ fn setup_gutter(state: &mut AppState) {
         state.ab_a_line.clone(),
         state.ab_b_line.clone(),
         left_margin,
-        &state.theme.root_color,
+        &state.theme.dim_fg,
     );
     // Reduce left margin so the gutter absorbs the space instead of pushing text
     state.text_view.set_left_margin(left_margin - gutter_width);

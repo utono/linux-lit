@@ -91,6 +91,27 @@ pub fn set_start_time(state: &mut AppState) -> bool {
 
     capture_undo_snapshot(state, line_id, media_id);
 
+    // Compute end time from next dialogue line's start (if within 10s)
+    let end_time = {
+        let work = match &state.current_work {
+            Some(w) => w,
+            None => return false,
+        };
+        let line_count = work.lines.len();
+        let mut next_end = 0.0f64;
+        for i in (line_idx + 1)..line_count {
+            if work.lines[i].is_dialogue {
+                if let Some(ref ts) = work.lines[i].timestamp {
+                    if ts.start > time_pos && ts.start - time_pos <= 10.0 {
+                        next_end = (ts.start - 0.2).max(time_pos);
+                    }
+                }
+                break;
+            }
+        }
+        next_end
+    };
+
     {
         let work = match &mut state.current_work {
             Some(w) => w,
@@ -98,7 +119,6 @@ pub fn set_start_time(state: &mut AppState) -> bool {
         };
         let line = &mut work.lines[line_idx];
 
-        // DB write
         let conn = match crate::db::queries::open_db_rw() {
             Ok(c) => c,
             Err(e) => {
@@ -113,11 +133,25 @@ pub fn set_start_time(state: &mut AppState) -> bool {
 
         // Update in-memory
         match &mut line.timestamp {
-            Some(ts) => ts.start = time_pos,
-            None => line.timestamp = Some(TimeRange { start: time_pos, end: 0.0, sentence_start: None, is_manual: true }),
+            Some(ts) => {
+                ts.start = time_pos;
+                if end_time > 0.0 {
+                    ts.end = end_time;
+                }
+            }
+            None => line.timestamp = Some(TimeRange {
+                start: time_pos,
+                end: end_time,
+                sentence_start: None,
+                is_manual: true,
+            }),
+        }
+
+        if end_time > 0.0 {
+            let _ = crate::db::queries::update_end_time(&conn, line.id, media_id, end_time);
         }
     }
-    crate::logging::log(&format!("TS: set start_time={:.2} line={}", time_pos, line_idx));
+    crate::logging::log(&format!("TS: set start={:.2} end={:.2} line={}", time_pos, end_time, line_idx));
 
     resync_mpv_timestamps(state);
 
