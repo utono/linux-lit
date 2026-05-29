@@ -205,7 +205,7 @@ fn main() {
                                         let old_scene = s.current_sync_scene;
                                         s.current_sync_scene = Some(scene);
                                         if old_scene.is_some() && old_scene != Some(scene) {
-                                            let top = crate::input::viewport::back_up_for_speaker(
+                                            let top = crate::input::viewport::scene_header_top(
                                                 &s.buffer, buffer_line,
                                             );
                                             if top != s.page_top_line {

@@ -166,6 +166,15 @@ Key suppression sources and durations:
 
 Make the minimal fix addressing the root cause. The fix should ensure the next page starts with the correct line — the dialogue line immediately following the last dialogue line of the previous page, backed up to include its speaker name and blank separator via `page_turn_top`.
 
-Rebuild with `cargo build`. The user will run `cargo run` to test.
+Rebuild with `cargo build`.
 
-Remove any temporary logging added in Step 3 after the fix is confirmed.
+### Tell the user how to reproduce
+
+After rebuilding, give the user concrete reproduction steps:
+
+1. **Which work to open** — name the play/book from the screenshot
+2. **Where to navigate** — identify the specific line of dialogue that was on screen before the failure, using the log's buffer_line and the database text. Tell the user to navigate to that line (e.g. "press q until you reach 'I am come to survey the Tower this day'")
+3. **What to do** — start playback with Tab, or press q/comma to advance, depending on whether the bug was sync-triggered or navigation-triggered
+4. **What to watch for** — describe the expected correct behavior (e.g. "when sync crosses into Scene 3, the page should snap so 'Scene 3' and its separator are at the top")
+
+The user runs `cargo run` to test. Remove any temporary logging added in Step 3 after the fix is confirmed.

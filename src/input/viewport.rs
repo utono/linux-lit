@@ -685,6 +685,40 @@ pub(crate) fn is_first_dialogue_of_scene(
     false
 }
 
+/// Walk backward from any line within a scene to find the top of the scene
+/// header block (scene marker, separator, blanks above it). Unlike
+/// `back_up_for_speaker`, this crosses dialogue lines to reach the header.
+pub(crate) fn scene_header_top(buffer: &sourceview5::Buffer, line: usize) -> usize {
+    use crate::db::line_types;
+    let mut marker = line;
+    let mut i = line;
+    while i > 0 {
+        i -= 1;
+        let text = buffer_line_text(buffer, i);
+        let t = text.trim();
+        if line_types::is_act_scene_marker(t) || line_types::is_separator(t) {
+            marker = i;
+            continue;
+        }
+        if marker != line {
+            break;
+        }
+    }
+    if marker == line {
+        return back_up_for_speaker(buffer, line);
+    }
+    while marker > 0 {
+        let text = buffer_line_text(buffer, marker - 1);
+        let t = text.trim();
+        if line_types::is_act_scene_marker(t) || line_types::is_separator(t) || t.is_empty() {
+            marker -= 1;
+        } else {
+            break;
+        }
+    }
+    marker
+}
+
 /// Find the page-top for a chapter jump: back up over the speaker name and
 /// any immediately-adjacent scene headers so the chapter's first dialogue
 /// line sits near the viewport top with its speaker visible above it.
