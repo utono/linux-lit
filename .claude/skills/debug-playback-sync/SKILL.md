@@ -32,9 +32,9 @@ Read the screenshot argument with the Read tool. Identify:
 
 Then determine the **expected next page top**: the line of dialogue immediately after the last dialogue line visible on this page. For prose, every non-blank line is dialogue. For plays, dialogue excludes speaker names, stage directions, and act/scene headers.
 
-## Step 2: Enable Debug Mode and Read the Log
+## Step 2: Read the Log
 
-Tell the user to press **Ctrl+d** to enable debug logging before reproducing the issue. The log file will be empty unless debug mode is on.
+Critical sync and page-turn log lines (`CURSOR_SYNC:`, `SYNC_ADVANCE:`, `SYNC_PAGE_TURN:`, `PAGE_TURN:`) are always written regardless of debug mode. For additional detail (e.g. `CURSOR_LINE:`, `SEEK:`), tell the user to press **Ctrl+d** to enable debug logging before reproducing.
 
 ```bash
 cat ~/utono/linux-lit/linux-lit-dev.log
@@ -158,6 +158,8 @@ Key suppression sources and durations:
 
 ### Previously Fixed
 
+- **Premature page turn from trimmed last_vis (fixed 2026-05):** `update_highlight_and_advance_page` used `last_fully_visible_line` (trims trailing speakers/blanks for pagination). Sync saw `last_vis` as ~10 lines before the actual bottom. Fix: switched to `last_raw_visible_line`.
+- **Stage direction cursor landing (fixed 2026-05):** `SetTimestamps` included all lines regardless of `is_dialogue`. Stage directions with timestamps caused `CursorSync` to highlight them. Fix: filter `ts_data` to dialogue-only at all three build sites.
 - **Paragraph-change path skipped advance check (fixed 2026-04):** Before the fix, the CursorSync handler had an if/else split — paragraph changes called `update_highlight_only` + `scroll_paragraph_to_top`, while same-paragraph called `update_highlight_and_advance_page`. If `para_start` was on-screen, neither path would page-turn. Fix: `update_highlight_and_advance_page` now runs unconditionally after both paths.
 
 ## Step 7: Fix and Verify

@@ -182,7 +182,7 @@ fn main() {
                         s.pending_advance_ignore_bl = None;
 
                         if s.current_line != buffer_line {
-                            crate::logging::log(&format!(
+                            crate::logging::log_always(&format!(
                                 "CURSOR_SYNC: line_idx={} buffer_line={} current={} page_top={} translations_visible={} buf_lines={}",
                                 line_idx,
                                 buffer_line,

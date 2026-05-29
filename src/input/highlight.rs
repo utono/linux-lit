@@ -5,7 +5,7 @@ use libadwaita::prelude::AnimationExt;
 use crate::app::AppState;
 use crate::log_fmt;
 use super::viewport::{
-    is_line_fully_visible, last_fully_visible_line,
+    is_line_fully_visible, last_raw_visible_line,
     lines_per_page, page_turn_top,
 };
 use super::scroll::{
@@ -58,11 +58,11 @@ pub fn update_highlight_and_advance_page(state: &mut AppState) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
         crate::config::NavigationMode::EReader => {
-            let last_vis = last_fully_visible_line(state, state.page_top_line);
-            log_fmt!(
+            let last_vis = last_raw_visible_line(state, state.page_top_line);
+            crate::logging::log_always(&format!(
                 "SYNC_ADVANCE: current={} last_vis={} page_top={}",
                 state.current_line, last_vis, state.page_top_line
-            );
+            ));
             if state.current_line > last_vis {
                 let new_top = page_turn_top(&state.buffer, state.current_line);
                 crate::logging::log_always(&format!(

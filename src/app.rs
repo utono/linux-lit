@@ -1561,10 +1561,19 @@ pub fn display_work_at_with_prepared(
     // Send timestamp data to MPV client (filtered by active media_id)
     {
         let active_media_id = state.media_id;
+        let dialogue_ids: std::collections::HashSet<i64> = work
+            .lines
+            .iter()
+            .filter(|l| l.is_dialogue)
+            .map(|l| l.id)
+            .collect();
         let mut ts_data: Vec<(i64, f64, f64)> = work
             .timestamps
             .iter()
-            .filter(|t| active_media_id.map_or(true, |mid| t.media_id == mid))
+            .filter(|t| {
+                active_media_id.map_or(true, |mid| t.media_id == mid)
+                    && dialogue_ids.contains(&t.line_id)
+            })
             .map(|t| (t.line_id, t.start, t.end))
             .collect();
         ts_data.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -1642,9 +1651,14 @@ pub fn display_work_at_with_prepared(
                             "MPV discovery: switching active media_id from {:?} to {} for {}",
                             default_media_id, mid, matched_path
                         ));
+                        let dialogue_ids: std::collections::HashSet<i64> = lines
+                            .iter()
+                            .filter(|l| l.is_dialogue)
+                            .map(|l| l.id)
+                            .collect();
                         let mut ts_data: Vec<(i64, f64, f64)> = timestamps
                             .iter()
-                            .filter(|t| t.media_id == mid)
+                            .filter(|t| t.media_id == mid && dialogue_ids.contains(&t.line_id))
                             .map(|t| (t.line_id, t.start, t.end))
                             .collect();
                         ts_data.sort_by(|a, b| {

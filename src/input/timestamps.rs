@@ -31,8 +31,10 @@ fn resync_mpv_timestamps(state: &AppState) {
     let mut id_to_idx: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
     for (i, line) in work.lines.iter().enumerate() {
         id_to_idx.insert(line.id, i);
-        if let Some(ts) = &line.timestamp {
-            ts_data.push((line.id, ts.start, ts.end));
+        if line.is_dialogue {
+            if let Some(ts) = &line.timestamp {
+                ts_data.push((line.id, ts.start, ts.end));
+            }
         }
     }
     ts_data.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));

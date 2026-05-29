@@ -148,10 +148,10 @@ pub(crate) fn set_page(state: &mut AppState, new_top: usize, direction: PageDire
         );
         return;
     }
-    log_fmt!(
+    crate::logging::log_always(&format!(
         "PAGE_TURN: new_top={} old_top={} current_line={} transition={:?}",
         new_top, state.page_top_line, state.current_line, state.config.transition_style
-    );
+    ));
 
     match state.config.transition_style {
         crate::config::TransitionStyle::Instant => {
