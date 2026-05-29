@@ -195,12 +195,7 @@ fn main() {
 
                             // Detect scene transition (plays only): when
                             // playback crosses into a new scene, snap the
-                            // viewport so the header block is at the top —
-                            // but only if the header is off-screen. When
-                            // playback naturally advances one line past a
-                            // scene boundary, the header is usually already
-                            // visible or irrelevant; snapping would produce
-                            // an unwanted page turn.
+                            // viewport so the scene header is at the top.
                             let mut scene_scrolled = false;
                             if let Some(ref work) = s.current_work {
                                 if !crate::db::line_types::is_prose_work(&work.work_type) {
@@ -213,7 +208,7 @@ fn main() {
                                             let top = crate::input::viewport::back_up_for_speaker(
                                                 &s.buffer, buffer_line,
                                             );
-                                            if top < s.page_top_line {
+                                            if top != s.page_top_line {
                                                 crate::logging::log_always(&format!(
                                                     "SYNC_SCENE_SCROLL: {:?}->{:?} top={} current={} page_top={}",
                                                     old_scene, scene, top, buffer_line, s.page_top_line

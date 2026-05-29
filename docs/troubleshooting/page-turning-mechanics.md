@@ -46,7 +46,11 @@ Every function that changes `page_top_line` must interact with the stack:
   they jumped. A second `y` has an empty stack and falls through to
   `prev_page_top()`
 - **Line-by-line navigation (comma, q, j, k)** — no stack interaction; incidental
-  page turns from `scroll_after_jump_forward/backward` don't touch the stack
+  page turns from `scroll_after_jump_forward/backward` don't touch the stack.
+  In plays, when the cursor lands on the first dialogue line of a new scene,
+  `scroll_after_jump_forward/backward` snaps the page top to the scene header
+  via `back_up_for_speaker` (scene-snap takes priority over the normal
+  off-screen check)
 - **MPV sync (scroll_paragraph_to_top, highlight auto-advance)** — no stack
   interaction; system-driven, not user navigation
 
@@ -323,8 +327,8 @@ Playback sync advances the cursor to match MPV audio position. The pipeline:
 4. **Scene transition** (plays only) — compares the new line's `(div1, div2)`
    against `current_sync_scene`. On scene change, computes the header-block
    top via `back_up_for_speaker` and snaps the viewport with
-   `set_page_instant`. Always repositions, even if the header is already
-   visible. Skips paragraph scroll when a scene scroll fired
+   `set_page_instant` (unless the page top is already correct). Skips
+   paragraph scroll when a scene scroll fired
 5. **Paragraph transition** — calls `current_paragraph_range()` to detect
    whether the cursor crossed into a new paragraph (contiguous non-blank
    lines). If so, calls `scroll_paragraph_to_top()` which in e-reader mode
@@ -333,9 +337,11 @@ Playback sync advances the cursor to match MPV audio position. The pipeline:
    a paragraph that started on a previous page). Skipped when a scene scroll
    already happened
 6. **`update_highlight_and_advance_page`** — applies highlight tags, then
-   checks if `current_line > last_fully_visible_line`. If so, computes
-   `page_turn_top(current_line)` and calls `set_page` with forward direction.
-   This is how playback sync triggers page turns
+   checks if `current_line > last_raw_visible_line` (the untrimmed last
+   visible line — not `last_fully_visible_line`, which trims trailing
+   speakers/blanks for pagination and would cause premature turns). If so,
+   computes `page_turn_top(current_line)` and calls `set_page` with forward
+   direction. This is how playback sync triggers page turns
 7. **`after_page_change(MpvSync)`** — runs post-page-turn housekeeping. Does
    not seek MPV (sync-driven, not user-initiated)
 
@@ -359,6 +365,30 @@ to at least `start`), or `start + 5.0s` if no next timestamp exists.
 Manual navigation (comma, q, j, k) sets `suppress_sync_until` to a future
 `Instant`, preventing CursorSync from overriding the user's position for a
 brief window.
+
+### SetTimestamps dialogue filter
+
+`SetTimestamps` — the timestamp data sent to the MPV client for
+`find_line_for_time` — is filtered to include only `is_dialogue` lines.
+This prevents `CursorSync` from landing on stage directions, speaker names,
+or other non-dialogue lines. The filter is applied at all three build sites:
+
+- `app.rs` `display_work_at_with_prepared` — primary load path
+- `app.rs` MPV discovery callback — when switching active `media_id`
+- `timestamps.rs` `resync_mpv_timestamps` — after manual timestamp edits
+
+### Always-on logging
+
+These log prefixes are written regardless of debug mode (`Ctrl+d`):
+
+- `CURSOR_SYNC:` — every sync event that changes `current_line`
+- `SYNC_ADVANCE:` — the page-turn decision point
+- `SYNC_PAGE_TURN:` — confirms a sync-driven page turn
+- `SYNC_SCENE_SCROLL:` — scene transition snap
+- `PAGE_TURN:` — every `set_page` call (sync and navigation)
+
+Additional detail (`CURSOR_LINE:`, `SEEK:`, `CURSOR_SYNC: SUPPRESSED`)
+requires debug mode.
 
 Key files: `src/mpv/client.rs` (TimePos parsing, `find_line_for_time`),
 `src/main.rs` (CursorSync + TimePos handlers),
@@ -403,9 +433,25 @@ and formats a label like "Act 1, Scene 2" (or "Act 1, Chorus" when
 `div2==0`). Scene synopses are loaded from the `scene_synopses` table and
 cached in `state.synopsis_cache` keyed by `(div1, div2)`.
 
+### Scene-snap on navigation
+
+When a dialogue navigation key (comma, q, j, k) or playback sync lands the
+cursor on the first dialogue line of a new scene, the viewport snaps so the
+scene header is at the top. Detection uses `is_first_dialogue_of_scene` in
+`viewport.rs`, which walks backward from the cursor — if it hits a scene
+marker or separator before any dialogue line, the cursor is the scene's
+first dialogue. `back_up_for_speaker` then finds the full header block top.
+
+This applies to plays only (`!is_prose`). For sync, the scene snap fires via
+the `(div1, div2)` comparison in the CursorSync handler. For navigation, it
+fires in `scroll_after_jump_forward` and `scroll_after_jump_backward` in
+`scroll.rs`.
+
 Key files: `src/db/models.rs` (Line struct with div1/div2/line_in_div),
 `src/db/queries.rs` (load_work, scene synopses),
-`src/input/viewport.rs` (`back_up_for_speaker`, `clamp_at_section_break`),
+`src/input/viewport.rs` (`back_up_for_speaker`, `clamp_at_section_break`,
+`is_first_dialogue_of_scene`),
+`src/input/scroll.rs` (`scroll_after_jump_forward`, `scroll_after_jump_backward`),
 `src/db/line_types.rs` (`is_act_scene_marker`, `is_separator`)
 
 ## Dialogue detection

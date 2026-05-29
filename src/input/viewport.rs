@@ -654,6 +654,37 @@ pub(crate) fn page_turn_top(buffer: &sourceview5::Buffer, target_line: usize) ->
     back_up_for_speaker(buffer, target_line)
 }
 
+/// Returns true when `line` is the first dialogue line of a scene — i.e.
+/// walking backward hits a scene marker or separator before any dialogue.
+pub(crate) fn is_first_dialogue_of_scene(
+    buffer: &sourceview5::Buffer,
+    translation_lines: &[bool],
+    line: usize,
+) -> bool {
+    use crate::db::line_types;
+    if line == 0 {
+        return false;
+    }
+    let mut i = line;
+    while i > 0 {
+        i -= 1;
+        let text = buffer_line_text(buffer, i);
+        let t = text.trim();
+        if line_types::is_act_scene_marker(t) || line_types::is_separator(t) {
+            return true;
+        }
+        if t.is_empty()
+            || line_types::is_speaker(t)
+            || line_types::is_stage_direction(t)
+            || translation_lines.get(i).copied().unwrap_or(false)
+        {
+            continue;
+        }
+        return false;
+    }
+    false
+}
+
 /// Find the page-top for a chapter jump: back up over the speaker name and
 /// any immediately-adjacent scene headers so the chapter's first dialogue
 /// line sits near the viewport top with its speaker visible above it.

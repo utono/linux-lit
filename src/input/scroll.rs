@@ -548,7 +548,17 @@ pub(crate) fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize)
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
-            if !super::viewport::is_line_fully_visible(state, state.current_line) {
+            if !state.is_prose()
+                && super::viewport::is_first_dialogue_of_scene(
+                    &state.buffer, &state.translation_lines, state.current_line,
+                )
+            {
+                let new_top = super::viewport::back_up_for_speaker(&state.buffer, state.current_line);
+                if new_top != state.page_top_line {
+                    log_fmt!("NAV_SCENE_FWD: current={} old_top={} new_top={}", state.current_line, state.page_top_line, new_top);
+                    set_page_instant(state, new_top);
+                }
+            } else if !super::viewport::is_line_fully_visible(state, state.current_line) {
                 let new_top = super::viewport::page_turn_top(&state.buffer, state.current_line);
                 log_fmt!("NAV_PAGE_FWD: current={} old_top={} new_top={}", state.current_line, state.page_top_line, new_top);
                 set_page_instant(state, new_top);
@@ -563,7 +573,17 @@ pub(crate) fn scroll_after_jump_backward(state: &mut AppState) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
-            if state.current_line < state.page_top_line {
+            if !state.is_prose()
+                && super::viewport::is_first_dialogue_of_scene(
+                    &state.buffer, &state.translation_lines, state.current_line,
+                )
+            {
+                let new_top = super::viewport::back_up_for_speaker(&state.buffer, state.current_line);
+                if new_top != state.page_top_line {
+                    log_fmt!("NAV_SCENE_BACK: current={} old_top={} new_top={}", state.current_line, state.page_top_line, new_top);
+                    set_page_instant(state, new_top);
+                }
+            } else if state.current_line < state.page_top_line {
                 let new_top = super::viewport::page_turn_top(&state.buffer, state.current_line);
                 log_fmt!("NAV_PAGE_BACK: page_turn_top new_top={} current={} old_top={}",
                          new_top, state.current_line, state.page_top_line);
