@@ -214,9 +214,9 @@ fn main() {
                                                 &s.buffer, buffer_line,
                                             );
                                             if top < s.page_top_line {
-                                                crate::logging::log(&format!(
-                                                    "CURSOR_SYNC: SCENE_CHANGE {:?}->{:?} top={} current={}",
-                                                    old_scene, scene, top, buffer_line
+                                                crate::logging::log_always(&format!(
+                                                    "SYNC_SCENE_SCROLL: {:?}->{:?} top={} current={} page_top={}",
+                                                    old_scene, scene, top, buffer_line, s.page_top_line
                                                 ));
                                                 crate::input::scroll::set_page_instant(&mut s, top);
                                                 scene_scrolled = true;
@@ -236,9 +236,9 @@ fn main() {
                                 && old_para_start != Some(para.start);
 
                             if paragraph_changed && !scene_scrolled {
-                                crate::logging::log(&format!(
-                                    "CURSOR_SYNC: PARA_CHANGE para_start={} on_screen={}",
-                                    para.start, crate::input::navigation::is_line_on_screen(&s, para.start)
+                                crate::logging::log_always(&format!(
+                                    "SYNC_PARA_SCROLL: para_start={} page_top={} on_screen={}",
+                                    para.start, s.page_top_line, crate::input::navigation::is_line_on_screen(&s, para.start)
                                 ));
                                 crate::input::navigation::scroll_paragraph_to_top(
                                     &mut s, para.start,

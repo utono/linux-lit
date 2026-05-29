@@ -64,12 +64,11 @@ pub fn update_highlight_and_advance_page(state: &mut AppState) {
                 state.current_line, last_vis, state.page_top_line
             );
             if state.current_line > last_vis {
-                let next = crate::input::viewport::next_page_top(state, state.page_top_line);
-                let new_top = if next.new_top > state.page_top_line {
-                    next.new_top
-                } else {
-                    page_turn_top(&state.buffer, state.current_line)
-                };
+                let new_top = page_turn_top(&state.buffer, state.current_line);
+                crate::logging::log_always(&format!(
+                    "SYNC_PAGE_TURN: current={} last_vis={} old_top={} new_top={}",
+                    state.current_line, last_vis, state.page_top_line, new_top,
+                ));
                 set_page(state, new_top, PageDirection::Forward);
             }
         }

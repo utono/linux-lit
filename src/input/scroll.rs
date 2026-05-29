@@ -659,8 +659,8 @@ pub fn scroll_paragraph_to_top(state: &mut AppState, para_start: usize) {
             if para_start >= state.page_top_line
                 && !super::viewport::is_line_on_screen(state, para_start)
             {
-                crate::logging::log(&format!(
-                    "PARA_SCROLL: para_start={} page_top={}",
+                crate::logging::log_always(&format!(
+                    "SYNC_PARA_TURN: para_start={} page_top={}",
                     para_start, state.page_top_line
                 ));
                 set_page(state, para_start, PageDirection::Forward);

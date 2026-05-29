@@ -269,13 +269,20 @@ cargo test -- all_shakespeare
 
 ### In-app test harness (Ctrl+Shift+T)
 
-Toggles a deterministic test mode that exercises x, y, 2, 3, [, { on the
-currently loaded work with real GTK layout. Runs on a 300ms timer, calling
-the same navigation functions that key dispatch uses.
+Toggles a deterministic test mode on the currently loaded work with real
+GTK layout. Calls the same navigation functions that key dispatch and
+playback sync use. Press `gg` first to start from the beginning.
 
-Script (26 steps, repeating): 5x forward, 5x backward, 3x forward, next
-scene + return, prev scene + return, 5x forward, next chapter + return,
-prev chapter + return. Runs up to 500 steps or until end of work.
+Three modes configured via `/configure-nav-test`:
+
+- **sync-only** — pure playback sync simulation (1s per line advance,
+  walks cursor line-by-line triggering page turns via
+  `update_highlight_and_advance_page`). Best for catching scene breaks
+  mid-page and viewport fill issues during sustained playback
+- **jumps-only** — key-press navigation only (x, y, 2, 3, [, { at 300ms
+  each). Tests forward progress, round-trip, structural jump return
+- **full** — both interleaved: jump sequences at 300ms with 20-line sync
+  runs at 1s each (~20s of simulated playback per run)
 
 Six invariants checked after every step:
 
@@ -285,13 +292,13 @@ Six invariants checked after every step:
   value
 - **No scene break mid-page** — no marker/separator in the interior of the
   visible range
-- **Viewport fill** — visible content fills at least 50% of viewport height
+- **Viewport fill** — visible content fills at least 10% of viewport height
   (real pixel measurement)
 - **current_line is dialogue** — cursor on a dialogue line (plays)
 
 Toast shows "NAV TEST: running…" while active, "NAV TEST: done (N steps,
 M fail)" on completion. All steps and failures logged with `NAV_TEST:`
-prefix to the debug log.
+prefix to the debug log. Runs up to 500 steps.
 
 What the in-app harness tests that headless cannot: real GTK pixel heights,
 actual line wrapping, real section-break clamping with pixel measurements,

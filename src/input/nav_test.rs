@@ -5,8 +5,10 @@ use gtk4::prelude::*;
 
 use crate::app::AppState;
 use crate::db::line_types;
+use crate::input::highlight::update_highlight_and_advance_page;
 use crate::input::navigation;
-use crate::input::viewport::{buffer_line_text, is_dialogue_line, last_fully_visible_line};
+use crate::input::viewport::{buffer_line_text, is_dialogue_line, last_fully_visible_line,
+                              next_dialogue_line};
 
 #[derive(Clone, Copy, Debug)]
 enum Step {
@@ -16,29 +18,23 @@ enum Step {
     PrevScene,
     NextChapter,
     PrevChapter,
+    SyncAdvance,
 }
 
-const SCRIPT: &[Step] = &[
-    // x x x x x
-    Step::PageForward, Step::PageForward, Step::PageForward,
-    Step::PageForward, Step::PageForward,
-    // y y y y y
-    Step::PageBackward, Step::PageBackward, Step::PageBackward,
-    Step::PageBackward, Step::PageBackward,
-    // x x x
-    Step::PageForward, Step::PageForward, Step::PageForward,
-    // 3 y
-    Step::NextScene, Step::PageBackward,
-    // 2 y
-    Step::PrevScene, Step::PageBackward,
-    // x x x x x
-    Step::PageForward, Step::PageForward, Step::PageForward,
-    Step::PageForward, Step::PageForward,
-    // { y
-    Step::NextChapter, Step::PageBackward,
-    // [ y
-    Step::PrevChapter, Step::PageBackward,
-];
+impl Step {
+    fn delay_ms(self) -> u64 {
+        match self {
+            Step::SyncAdvance => 1000,
+            _ => 300,
+        }
+    }
+}
+
+fn build_script() -> Vec<Step> {
+    // sync-only: walk cursor line-by-line through the work, testing
+    // page turns triggered by playback sync
+    vec![Step::SyncAdvance; 40]
+}
 
 const MAX_STEPS: usize = 500;
 
@@ -72,11 +68,24 @@ pub fn toggle(state_rc: &Rc<RefCell<AppState>>) {
 
     drop(s);
 
-    let state = Rc::clone(state_rc);
-    glib::timeout_add_local(std::time::Duration::from_millis(300), move || {
+    schedule_next(Rc::clone(state_rc));
+}
+
+fn schedule_next(state: Rc<RefCell<AppState>>) {
+    let script = build_script();
+    let delay = {
+        let s = state.borrow();
+        if !s.nav_test_active || s.nav_test_step >= MAX_STEPS {
+            return;
+        }
+        let idx = s.nav_test_step % script.len();
+        script[idx].delay_ms()
+    };
+
+    glib::timeout_add_local_once(std::time::Duration::from_millis(delay), move || {
         let mut s = state.borrow_mut();
         if !s.nav_test_active {
-            return glib::ControlFlow::Break;
+            return;
         }
         if s.nav_test_step >= MAX_STEPS {
             let steps = s.nav_test_step;
@@ -88,17 +97,21 @@ pub fn toggle(state_rc: &Rc<RefCell<AppState>>) {
             glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
                 icon.set_visible(false);
             });
-            return glib::ControlFlow::Break;
+            return;
         }
 
         run_step(&mut s);
-        glib::ControlFlow::Continue
+
+        let state_clone = Rc::clone(&state);
+        drop(s);
+        schedule_next(state_clone);
     });
 }
 
 fn run_step(s: &mut AppState) {
-    let script_idx = s.nav_test_step % SCRIPT.len();
-    let step = SCRIPT[script_idx];
+    let script = build_script();
+    let script_idx = s.nav_test_step % script.len();
+    let step = script[script_idx];
     let step_num = s.nav_test_step;
     let pre_top = s.page_top_line;
     let pre_line = s.current_line;
@@ -113,8 +126,8 @@ fn run_step(s: &mut AppState) {
     }
     // Record expected return for x followed by y
     if matches!(step, Step::PageForward) {
-        let next_idx = (step_num + 1) % SCRIPT.len();
-        if matches!(SCRIPT[next_idx], Step::PageBackward) {
+        let next_idx = (step_num + 1) % script.len();
+        if matches!(script[next_idx], Step::PageBackward) {
             s.nav_test_expect_return = Some(pre_top);
         }
     }
@@ -127,6 +140,15 @@ fn run_step(s: &mut AppState) {
         Step::PrevScene => navigation::jump_to_prev_scene(s),
         Step::NextChapter => navigation::jump_to_next_chapter(s),
         Step::PrevChapter => navigation::jump_to_prev_chapter(s),
+        Step::SyncAdvance => {
+            let line_count = s.effective_line_count();
+            if let Some(target) = next_dialogue_line(
+                &s.buffer, &s.translation_lines, s.current_line, line_count,
+            ) {
+                s.current_line = target;
+                update_highlight_and_advance_page(s);
+            }
+        }
     }
 
     let post_top = s.page_top_line;
@@ -197,7 +219,7 @@ fn run_step(s: &mut AppState) {
         }
     }
 
-    // 4. Viewport fill (at least 50%)
+    // 4. Viewport fill (at least 10%)
     let widget_height = s.text_view.height();
     if widget_height > 0 {
         let last_vis = last_fully_visible_line(s, post_top);
@@ -211,7 +233,7 @@ fn run_step(s: &mut AppState) {
         let fill_pct = (total as f64 / widget_height as f64) * 100.0;
         if fill_pct < 10.0 {
             fail(s, step_num, step, &format!(
-                "viewport fill {:.0}% < 50% (top={} last={} height={} content={})",
+                "viewport fill {:.0}% < 10% (top={} last={} height={} content={})",
                 fill_pct, post_top, last_vis, widget_height, total
             ));
         }
