@@ -529,9 +529,7 @@ pub fn jump_to_next_paragraph(state: &mut AppState) {
 
 /// Previous chapter line (`[` key).
 pub fn jump_to_prev_chapter(state: &mut AppState) {
-    if state.translations_visible {
-        crate::app::toggle_translations(state);
-    }
+    crate::app::hide_translations_for_navigation(state);
     let target = {
         let work = match &state.current_work {
             Some(w) => w,
@@ -568,7 +566,7 @@ pub fn jump_to_prev_chapter(state: &mut AppState) {
             crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
             crate::config::NavigationMode::EReader => {
                 if is_line_fully_visible(state, line_idx) {
-                    update_highlight_and_center(state);
+                    update_highlight_only(state);
                 } else {
                     state.page_back_stack.clear();
                     let top = chapter_page_top(&state.buffer, line_idx);
@@ -582,9 +580,7 @@ pub fn jump_to_prev_chapter(state: &mut AppState) {
 
 /// Next chapter line.
 pub fn jump_to_next_chapter(state: &mut AppState) {
-    if state.translations_visible {
-        crate::app::toggle_translations(state);
-    }
+    crate::app::hide_translations_for_navigation(state);
     let line_count = state.effective_line_count();
     let target = {
         let work = match &state.current_work {
@@ -620,7 +616,7 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
             crate::config::NavigationMode::Scroll => center_cursor(state),
             crate::config::NavigationMode::EReader => {
                 if is_line_fully_visible(state, line_idx) {
-                    update_highlight_and_center(state);
+                    update_highlight_only(state);
                 } else {
                     state.page_back_stack.clear();
                     let top = chapter_page_top(&state.buffer, line_idx);
@@ -686,7 +682,7 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
             crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
             crate::config::NavigationMode::EReader => {
                 if is_line_fully_visible(state, cursor_idx) {
-                    update_highlight_and_center(state);
+                    update_highlight_only(state);
                 } else {
                     state.page_back_stack.clear();
                     set_page_instant(state, marker_idx);
@@ -736,7 +732,7 @@ pub fn jump_to_next_scene(state: &mut AppState) {
             crate::config::NavigationMode::Scroll => center_cursor(state),
             crate::config::NavigationMode::EReader => {
                 if is_line_fully_visible(state, cursor_idx) {
-                    update_highlight_and_center(state);
+                    update_highlight_only(state);
                 } else {
                     state.page_back_stack.clear();
                     set_page_instant(state, marker_idx);

@@ -457,7 +457,7 @@ fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32,
 
     let elements = parse_gloss_tags(gloss);
     let mut first = true;
-    let mut first_speaker = true;
+    let mut only_speakers_so_far = true;
     let mut bar_ranges: Vec<BarRange> = Vec::new();
     let mut line_nums: Vec<LineNumber> = Vec::new();
     let mut current_block_start: Option<i32> = None;
@@ -485,11 +485,11 @@ fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32,
                 let mut end = buffer.end_iter();
                 buffer.insert(&mut end, name);
                 let start = buffer.iter_at_offset(offset);
-                let tag = if first_speaker { &speaker_first_tag } else { &speaker_tag };
-                first_speaker = false;
+                let tag = if only_speakers_so_far { &speaker_first_tag } else { &speaker_tag };
                 buffer.apply_tag(tag, &start, &buffer.end_iter());
             }
             GlossElement::Verse(text) => {
+                only_speakers_so_far = false;
                 if current_block_start.is_none() {
                     current_block_start = Some(line);
                 }
@@ -503,6 +503,7 @@ fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32,
                 }
             }
             GlossElement::Gloss(text) => {
+                only_speakers_so_far = false;
                 if let Some(start_line) = current_block_start.take() {
                     let end_line = line - 1;
                     bar_ranges.push(BarRange { start_line, end_line });

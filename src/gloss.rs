@@ -8,14 +8,19 @@ The reader has asked a specific question. Answer it thoroughly, drawing on the p
 Use your knowledge of the text, its historical context, performance tradition, and literary criticism.
 
 Output format — use these XML tags exactly:
+- <speaker>NAME</speaker> for each speaker attribution when quoting verse (ALL CAPS, no period)
+- <verse>one line of quoted text</verse> for each quoted line (one tag per line, verbatim, preserving exact words and spelling)
 - <gloss>paragraph of answer</gloss> for each paragraph of your response
 
 Rules:
 - Focus on answering the reader's question directly
 - Support your answer with evidence from the passage and the wider work
+- When quoting verse from the text, use <speaker> and <verse> tags — never embed verse lines inside <gloss> tags
+- Quote verbatim — exact words, exact spelling, exact line breaks from the source
+- Never use / to join verse lines
+- Each <verse> tag contains exactly one line of the original
 - Each <gloss> tag contains one flowing prose paragraph (3-6 sentences)
-- No markdown, no bullets, no numbered lists, no headers
-- Do not quote the passage back unless directly relevant to the answer";
+- No markdown, no bullets, no numbered lists, no headers";
 
 const TEACHER_GENERIC_PROMPT: &str = "\
 You are a performance-focused teacher helping a reader understand a passage from a literary text.

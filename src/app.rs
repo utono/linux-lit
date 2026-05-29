@@ -2601,17 +2601,30 @@ fn show_translations(state: &mut AppState) {
         }
     };
 
+    state.card_vbox.set_opacity(0.0);
+
     // Capture the cursor's on-screen y-position BEFORE mutating the buffer.
     // The cursor is the user's visual anchor — keep it at the same screen
     // position after inserts so the viewport does not appear to scroll.
     let pre_adj_value = state.scrolled_window.vadjustment().value();
+    let pre_adj_upper = state.scrolled_window.vadjustment().upper();
+    let pre_adj_page = state.scrolled_window.vadjustment().page_size();
     let cursor_screen_y = state
         .buffer
         .iter_at_line(state.current_line as i32)
         .map(|iter| {
-            let (y, _h) = state.text_view.line_yrange(&iter);
+            let (y, h) = state.text_view.line_yrange(&iter);
+            crate::logging::log(&format!(
+                "TRANSLATIONS_SHOW: pre-insert cursor yrange y={} h={} adj_val={} screen_y={}",
+                y, h, pre_adj_value as i64, (y as f64 - pre_adj_value) as i64,
+            ));
             y as f64 - pre_adj_value
         });
+    crate::logging::log(&format!(
+        "TRANSLATIONS_SHOW: pre-insert adj val={} upper={} page={} current_line={} page_top={}",
+        pre_adj_value as i64, pre_adj_upper as i64, pre_adj_page as i64,
+        state.current_line, state.page_top_line,
+    ));
 
     // Build a list of (buffer_line, translation_text) pairs
     let mut inserts: Vec<(usize, String)> = Vec::new();
@@ -2714,38 +2727,62 @@ fn show_translations(state: &mut AppState) {
     state.current_line = map_line_after_insert(state.current_line, &inserts);
     state.page_top_line = map_line_after_insert(state.page_top_line, &inserts);
 
+    let cursor_on_translation = state.current_line < state.translation_lines.len()
+        && state.translation_lines[state.current_line];
+    crate::logging::log(&format!(
+        "TRANSLATIONS_SHOW: line remap current {}→{} page_top {}→{} (inserts={}) cursor_on_translation={}",
+        old_current, state.current_line, old_top, state.page_top_line, inserts.len(),
+        cursor_on_translation,
+    ));
+
     state.translations_visible = true;
 
     reapply_font(state);
     crate::input::navigation::invalidate_page_tops(state);
-    // Repaint the cursor highlight but do NOT page-turn. Restore scroll so
-    // the cursor stays at the same on-screen y-position the user was looking
-    // at before the toggle (anchor on the highlight, not on page_top).
+
+    let mid_adj = state.scrolled_window.vadjustment();
+    crate::logging::log(&format!(
+        "TRANSLATIONS_SHOW: post-reapply_font adj val={} upper={} page={}",
+        mid_adj.value() as i64, mid_adj.upper() as i64, mid_adj.page_size() as i64,
+    ));
+
+    // Repaint the cursor highlight but do NOT page-turn.
     crate::input::navigation::update_highlight_only(state);
 
-    let cur_y = state
-        .buffer
-        .iter_at_line(state.current_line as i32)
-        .map(|iter| state.text_view.line_yrange(&iter).0 as f64);
-    let adj = state.scrolled_window.vadjustment();
-    let adj_upper = adj.upper();
-    let adj_page = adj.page_size();
-    let new_adj = match (cur_y, cursor_screen_y) {
-        (Some(y), Some(sy)) => Some((y - sy).max(0.0).min((adj_upper - adj_page).max(0.0))),
-        _ => None,
-    };
-    crate::logging::log(&format!(
-        "TRANSLATIONS: anchor cur_y={:?} cursor_screen_y={:?} upper={} page={} new_adj={:?}",
-        cur_y, cursor_screen_y, adj_upper as i64, adj_page as i64, new_adj
-    ));
-    if let Some(val) = new_adj {
-        adj.set_value(val);
-    }
+    // Defer viewport anchor to an idle callback — GTK hasn't re-laid the
+    // buffer yet so line_yrange and adjustment.upper are stale right now.
+    let cursor_line = state.current_line;
+    let screen_y = cursor_screen_y;
+    let tv = state.text_view.clone();
+    let sw = state.scrolled_window.clone();
+    let vbox = state.card_vbox.clone();
+    gtk4::glib::idle_add_local_once(move || {
+        let adj = sw.vadjustment();
+        let cur_y = tv.buffer().iter_at_line(cursor_line as i32).map(|iter| {
+            let (y, h) = tv.line_yrange(&iter);
+            crate::logging::log(&format!(
+                "TRANSLATIONS_SHOW: idle anchor cursor yrange y={} h={} line={}",
+                y, h, cursor_line,
+            ));
+            y as f64
+        });
+        let adj_upper = adj.upper();
+        let adj_page = adj.page_size();
+        let new_adj = match (cur_y, screen_y) {
+            (Some(y), Some(sy)) => Some((y - sy).max(0.0).min((adj_upper - adj_page).max(0.0))),
+            _ => None,
+        };
+        crate::logging::log(&format!(
+            "TRANSLATIONS_SHOW: idle anchor cur_y={:?} screen_y={:?} upper={} page={} new_adj={:?}",
+            cur_y.map(|v| v as i64), screen_y.map(|v| v as i64),
+            adj_upper as i64, adj_page as i64, new_adj.map(|v| v as i64),
+        ));
+        if let Some(val) = new_adj {
+            adj.set_value(val);
+        }
+        vbox.set_opacity(1.0);
+    });
 
-    // Translation toggle changes line heights via reapply_font; refresh the
-    // bottom clip against the new metrics so the last visible line isn't
-    // clipped or surrounded by excess gap. resnap_page would clobber the
-    // anchored adj.set_value above, so use the lighter refresh helper.
     crate::input::navigation::refresh_bottom_clip(state);
 
     let new_buf_lines = state.buffer.line_count() as usize;
@@ -2757,7 +2794,7 @@ fn show_translations(state: &mut AppState) {
     let line_map_stale = lm_len_after != new_buf_lines;
     let post_adj_value = state.scrolled_window.vadjustment().value();
     crate::logging::log(&format!(
-        "TRANSLATIONS: shown inserted={} buf_lines {}->{} current {}->{} page_top {}->{} line_map_len={} stale={} adj {}->{}",
+        "TRANSLATIONS_SHOW: FINAL inserted={} buf_lines {}->{} current {}->{} page_top {}->{} line_map_len={} stale={} adj {}->{} effective_line_count={}",
         inserts.len(),
         new_buf_lines.saturating_sub(inserts.len()),
         new_buf_lines,
@@ -2769,6 +2806,7 @@ fn show_translations(state: &mut AppState) {
         line_map_stale,
         pre_adj_value as i64,
         post_adj_value as i64,
+        state.effective_line_count(),
     ));
 
     rebuild_line_number_gutter(state);
@@ -2787,7 +2825,18 @@ fn map_line_after_insert(orig_line: usize, inserts: &[(usize, String)]) -> usize
     orig_line + offset
 }
 
+/// Strip translation lines from the buffer without repositioning the viewport.
+/// Caller is responsible for scrolling/page-setting after this returns.
+pub fn hide_translations_for_navigation(state: &mut AppState) {
+    if !state.translations_visible {
+        return;
+    }
+    strip_translation_lines(state);
+}
+
 fn hide_translations(state: &mut AppState) {
+    state.card_vbox.set_opacity(0.0);
+
     // Capture the cursor's on-screen y-position BEFORE removing lines so we
     // can restore it afterwards — the cursor is the user's visual anchor.
     let pre_adj_value = state.scrolled_window.vadjustment().value();
@@ -2795,12 +2844,62 @@ fn hide_translations(state: &mut AppState) {
         .buffer
         .iter_at_line(state.current_line as i32)
         .map(|iter| {
-            let (y, _h) = state.text_view.line_yrange(&iter);
+            let (y, h) = state.text_view.line_yrange(&iter);
+            crate::logging::log(&format!(
+                "TRANSLATIONS_HIDE: pre-remove cursor yrange y={} h={} adj_val={} screen_y={}",
+                y, h, pre_adj_value as i64, (y as f64 - pre_adj_value) as i64,
+            ));
             y as f64 - pre_adj_value
         });
 
-    // Remove translation lines from buffer bottom-to-top
+    strip_translation_lines(state);
+
+    // Repaint highlight but do NOT page-turn.
+    crate::input::navigation::update_highlight_only(state);
+
+    // Defer viewport anchor to an idle callback — GTK hasn't re-laid the
+    // buffer yet so line_yrange and adjustment.upper are stale right now.
+    let cursor_line = state.current_line;
+    let screen_y = cursor_screen_y;
+    let tv = state.text_view.clone();
+    let sw = state.scrolled_window.clone();
+    let vbox = state.card_vbox.clone();
+    gtk4::glib::idle_add_local_once(move || {
+        let adj = sw.vadjustment();
+        let cur_y = tv.buffer().iter_at_line(cursor_line as i32).map(|iter| {
+            let (y, h) = tv.line_yrange(&iter);
+            crate::logging::log(&format!(
+                "TRANSLATIONS_HIDE: idle anchor cursor yrange y={} h={} line={}",
+                y, h, cursor_line,
+            ));
+            y as f64
+        });
+        let adj_upper = adj.upper();
+        let adj_page = adj.page_size();
+        let new_adj = match (cur_y, screen_y) {
+            (Some(y), Some(sy)) => Some((y - sy).max(0.0).min((adj_upper - adj_page).max(0.0))),
+            _ => None,
+        };
+        crate::logging::log(&format!(
+            "TRANSLATIONS_HIDE: idle anchor cur_y={:?} screen_y={:?} upper={} page={} new_adj={:?}",
+            cur_y.map(|v| v as i64), screen_y.map(|v| v as i64),
+            adj_upper as i64, adj_page as i64, new_adj.map(|v| v as i64),
+        ));
+        if let Some(val) = new_adj {
+            adj.set_value(val);
+        }
+        vbox.set_opacity(1.0);
+    });
+
+    crate::input::navigation::refresh_bottom_clip(state);
+    rebuild_line_number_gutter(state);
+}
+
+fn strip_translation_lines(state: &mut AppState) {
     let line_count = state.buffer.line_count() as usize;
+    let pre_hide_buf_lines = line_count;
+
+    // Remove translation lines from buffer bottom-to-top
     for i in (0..line_count).rev() {
         if i < state.translation_lines.len() && state.translation_lines[i] {
             let line_start = if i > 0 {
@@ -2834,58 +2933,20 @@ fn hide_translations(state: &mut AppState) {
     // Reverse-map current_line and page_top_line
     let old_current = state.current_line;
     let old_top = state.page_top_line;
-    let pre_hide_buf_lines = line_count;
     state.current_line = map_line_before_insert(old_current, &state.translation_lines);
     state.page_top_line = map_line_before_insert(old_top, &state.translation_lines);
+
+    crate::logging::log(&format!(
+        "TRANSLATIONS_HIDE: line remap current {}→{} page_top {}→{} buf_lines {}→{}",
+        old_current, state.current_line, old_top, state.page_top_line,
+        pre_hide_buf_lines, state.buffer.line_count(),
+    ));
 
     state.translation_lines.clear();
     state.translations_visible = false;
 
     reapply_font(state);
     crate::input::navigation::invalidate_page_tops(state);
-    // Repaint highlight but do NOT page-turn. Restore scroll so the cursor
-    // sits at the same on-screen y-position the user had before the toggle.
-    crate::input::navigation::update_highlight_only(state);
-
-    let cur_y = state
-        .buffer
-        .iter_at_line(state.current_line as i32)
-        .map(|iter| state.text_view.line_yrange(&iter).0 as f64);
-    let adj = state.scrolled_window.vadjustment();
-    let adj_upper = adj.upper();
-    let adj_page = adj.page_size();
-    let new_adj = match (cur_y, cursor_screen_y) {
-        (Some(y), Some(sy)) => Some((y - sy).max(0.0).min((adj_upper - adj_page).max(0.0))),
-        _ => None,
-    };
-    crate::logging::log(&format!(
-        "TRANSLATIONS: anchor cur_y={:?} cursor_screen_y={:?} upper={} page={} new_adj={:?}",
-        cur_y, cursor_screen_y, adj_upper as i64, adj_page as i64, new_adj
-    ));
-    if let Some(val) = new_adj {
-        adj.set_value(val);
-    }
-
-    // Translation toggle changes line heights via reapply_font; refresh the
-    // bottom clip against the new metrics so the last visible line isn't
-    // clipped or surrounded by excess gap. resnap_page would clobber the
-    // anchored adj.set_value above, so use the lighter refresh helper.
-    crate::input::navigation::refresh_bottom_clip(state);
-
-    let new_buf_lines = state.buffer.line_count() as usize;
-    let post_adj_value = state.scrolled_window.vadjustment().value();
-    crate::logging::log(&format!(
-        "TRANSLATIONS: hidden buf_lines {}->{} current {}->{} page_top {}->{} adj {}->{}",
-        pre_hide_buf_lines,
-        new_buf_lines,
-        old_current,
-        state.current_line,
-        old_top,
-        state.page_top_line,
-        pre_adj_value as i64,
-        post_adj_value as i64,
-    ));
-
     rebuild_line_number_gutter(state);
 }
 
