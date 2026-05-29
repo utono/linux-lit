@@ -40,8 +40,11 @@ Every function that changes `page_top_line` must interact with the stack:
 - **page_forward (`x`)** — pushes old `page_top_line` before turning
 - **page_backward (`y`)** — pops; falls back to `prev_page_top()` when empty
 - **page_backward_bottom (Shift+comma)** — pops (same as `page_backward`)
-- **Jump functions (gg, G, `[`, `{`, 2, 3, bookmarks, vocab)** — clear the stack
-- **zt (scroll_cursor_top)** — clears the stack
+- **Structural jumps (gg, G, `[`, `{`, 2, 3, bookmarks, vocab, zt)** — clear
+  the stack then push current `page_top_line` as a single return entry. This
+  means `y` after a structural jump returns to the page the user was on when
+  they jumped. A second `y` has an empty stack and falls through to
+  `prev_page_top()`
 - **Line-by-line navigation (comma, q, j, k)** — no stack interaction; incidental
   page turns from `scroll_after_jump_forward/backward` don't touch the stack
 - **MPV sync (scroll_paragraph_to_top, highlight auto-advance)** — no stack
@@ -106,6 +109,29 @@ crate::log_fmt!("SECTION_CLAMP: page_top={} break_line={} clamped_last={} orig_l
 
 Remove after diagnosing — these fire on every page turn and duplicate work.
 
+## Page-turn animation lock
+
+`set_page` in `scroll.rs` acquires `page_turn_lock` for the duration of the
+crossfade/slide animation (700ms for crossfade). While the lock is held,
+subsequent `set_page` calls return early without updating `page_top_line`.
+
+`page_forward`, `page_backward`, and `page_backward_bottom` all check
+`page_turn_lock.is_locked()` at the top and return early if held. This
+prevents stack/cursor mutations from running when the page turn would be
+silently dropped by `set_page`.
+
+Without this guard, pressing `y` during a crossfade would pop an entry from
+`page_back_stack` and update `current_line`, but `set_page` would discard the
+turn — the stack entry is consumed and lost, causing the next `y` to skip a
+page.
+
+The same applies to `page_forward`: pressing `x` during a crossfade would
+push a stale `page_top_line` onto the stack and update `current_line` without
+the page actually turning.
+
+Rule: any function that modifies `page_back_stack` or `current_line` before
+calling `set_page` must guard against `page_turn_lock` first.
+
 ## Debugging page-backward wrong destination
 
 ### Symptom
@@ -169,7 +195,11 @@ creating a stuck loop.
 `clamp_at_section_break` in `trim_visible_range` scans the visible range
 for act/scene markers or separators. When found, it clamps `last_fit` to
 the line before the break so the new section starts at the top of the next
-page.
+page. The clamp always fires — there is no minimum-fill threshold.
+
+The clamp skips its own page's opening header block (consecutive markers,
+separators, blanks, and stage directions starting from `page_top + 1`) so a
+page that starts at a scene header doesn't clamp on itself.
 
 Edge case: when the section break is very close to `page_top` (1-2 lines),
 the clamped page is trivially small. `next_page_top` then computes a
@@ -199,3 +229,149 @@ Run with:
 ```bash
 cargo test -- all_shakespeare page_turn
 ```
+
+## Playback sync
+
+Playback sync advances the cursor to match MPV audio position. The pipeline:
+
+1. **MPV emits `time-pos`** — the IPC listener in `mpv/client.rs` parses the
+   JSON property-change event and extracts the current playback position (seconds)
+2. **`find_line_for_time`** — binary search (`partition_point`) over sorted
+   `(line_id, start, end)` timestamps to find which line contains
+   `time_pos + SYNC_PREROLL` (currently 0.0s). Emits `MpvEvent::CursorSync(work_line_index)`
+3. **CursorSync handler** (`main.rs`) — translates work-line index to
+   buffer-line index via `line_map` (if present), then:
+   - Skips if `sync_enabled` is false, work is loading, search is active,
+     chunk mode is active, or `suppress_sync_until` hasn't elapsed
+   - Guards against aberrant timestamps (>50 lines from current position)
+   - Guards against `pending_advance_ignore_bl` pulling cursor backward
+4. **Scene transition** (plays only) — compares the new line's `(div1, div2)`
+   against `current_sync_scene`. On scene change, computes the header-block
+   top via `back_up_for_speaker` and snaps the viewport with
+   `set_page_instant`. Always repositions, even if the header is already
+   visible. Skips paragraph scroll when a scene scroll fired
+5. **Paragraph transition** — calls `current_paragraph_range()` to detect
+   whether the cursor crossed into a new paragraph (contiguous non-blank
+   lines). If so, calls `scroll_paragraph_to_top()` which in e-reader mode
+   page-turns so the paragraph start is at the viewport top (only if
+   off-screen). Skipped when a scene scroll already happened
+6. **`update_highlight_and_advance_page`** — applies highlight tags, then
+   checks if `current_line > last_fully_visible_line`. If so, computes
+   `page_turn_top(current_line)` and calls `set_page` with forward direction.
+   This is how playback sync triggers page turns
+7. **`after_page_change(MpvSync)`** — runs post-page-turn housekeeping. Does
+   not seek MPV (sync-driven, not user-initiated)
+
+### Pending advance (pending_advance)
+
+Scheduled when the current timestamped line ends and either: (a) the next
+dialogue line has no timestamp, or (b) the next dialogue line is in a
+different scene (plays only):
+
+- `pending_advance = Some((end_time, next_buffer_line, source_work_index))`
+- `pending_scene_advance = true` when the advance crosses a scene boundary
+- On each `TimePos` event, if `pos >= end_time`: advance cursor directly,
+  set `pending_advance_ignore_bl` to prevent CursorSync from pulling back
+- For scene-boundary advances: also updates `current_sync_scene`, computes
+  header-block top via `back_up_for_speaker`, and snaps viewport with
+  `set_page_instant` before the normal highlight update. MPV is not seeked —
+  the page jumps ahead visually while audio continues naturally
+
+### Suppression
+
+Manual navigation (comma, q, j, k) sets `suppress_sync_until` to a future
+`Instant`, preventing CursorSync from overriding the user's position for a
+brief window.
+
+Key files: `src/mpv/client.rs` (TimePos parsing, `find_line_for_time`),
+`src/main.rs` (CursorSync + TimePos handlers),
+`src/input/highlight.rs` (`update_highlight_and_advance_page`)
+
+## Scenes
+
+Scenes are encoded in the database via `div1` (act) and `div2` (scene)
+fields on each line. `line_in_div` gives the line's position within its
+scene. These are loaded in `db/queries.rs` and stored on each `Line` struct.
+
+### Scene markers in the text buffer
+
+Act/scene markers are lines like `ACT 1`, `SCENE 2`, `## Act 3, Scene 1`,
+`PROLOGUE`, `EPILOGUE`, or `INDUCTION`. Detected by
+`line_types::is_act_scene_marker()` which strips optional `## ` markdown
+prefix, uppercases, and checks for keyword prefixes. Standalone keywords
+(PROLOGUE, EPILOGUE, INDUCTION) must not be followed by lowercase
+continuation text.
+
+Separators (`=====`) often accompany scene markers to form a header block.
+
+### Scene headers and page boundaries
+
+`back_up_for_speaker` is the key function that positions page tops. When a
+dialogue line would be the first on a new page, it backs up over:
+
+- Blank lines, speaker names, entrance stage directions
+- Scene markers and separators (the full header block)
+
+This ensures scene headers like "ACT 1 / SCENE 2 / ======" appear at the
+top of the page rather than being split across pages.
+
+`clamp_at_section_break` in `trim_visible_range` scans for markers/separators
+within the visible range and clamps `last_fit` to end the page before the
+break, so new scenes start fresh.
+
+### Title bar scene display
+
+`update_title_bar_scene()` in `app.rs` reads the current line's `div1`/`div2`
+and formats a label like "Act 1, Scene 2" (or "Act 1, Chorus" when
+`div2==0`). Scene synopses are loaded from the `scene_synopses` table and
+cached in `state.synopsis_cache` keyed by `(div1, div2)`.
+
+Key files: `src/db/models.rs` (Line struct with div1/div2/line_in_div),
+`src/db/queries.rs` (load_work, scene synopses),
+`src/input/viewport.rs` (`back_up_for_speaker`, `clamp_at_section_break`),
+`src/db/line_types.rs` (`is_act_scene_marker`, `is_separator`)
+
+## Dialogue detection
+
+Dialogue classification determines which lines the cursor can land on during
+navigation and playback sync. Computed at load time in `db/queries.rs` and
+stored as `line.is_dialogue: bool`.
+
+### Play mode (is_prose = false)
+
+A line is dialogue if it is NOT any of:
+
+- Blank (empty or whitespace-only)
+- Separator (starts with `=`)
+- Act/scene marker (ACT, SCENE, CHAPTER, PROLOGUE, EPILOGUE, INDUCTION)
+- Speaker name (all-caps, 2+ characters, optional trailing `.`; may include
+  bracketed stage direction like `LUCIANA, [to Adriana]`)
+- Stage direction (wrapped in `[...]`, or multi-line opener/closer)
+
+### Prose mode (is_prose = true)
+
+A line is dialogue if it is not blank, not a separator, and not an
+act/scene marker. Speaker names and stage directions are treated as content.
+
+### Multi-line stage directions
+
+Folger-cleaned texts have multi-line stage directions spanning 2-10 lines.
+`is_stage_direction` detects single-line (`[...\]`), openers (`[...` without
+closing `]`), and closers (`...]` without opening `[`). Continuation lines
+in between are caught by `is_inside_stage_direction` in `viewport.rs`, which
+scans backward up to 10 lines for an unclosed `[` opener.
+
+### Runtime usage
+
+- **Playback sync** — `pending_advance` finds the next dialogue buffer line
+  to advance to when the current timestamp ends
+- **Page navigation** — `next_dialogue_from`, `last_dialogue_in_page`,
+  `next_dialogue_line`, `prev_dialogue_line` all skip non-dialogue lines
+- **Dialogue nav keys** (comma, q, j, k) — move between dialogue lines only
+- **Buffer-level check** — `viewport.rs::is_dialogue_line` re-checks the
+  buffer text (not the precomputed bool) for viewport math, which also
+  catches multi-line stage direction interiors via `is_inside_stage_direction`
+
+Key files: `src/db/line_types.rs` (all classification functions),
+`src/input/viewport.rs` (`is_dialogue_line`, `is_inside_stage_direction`),
+`src/db/queries.rs` (assignment at load time)

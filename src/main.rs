@@ -185,6 +185,32 @@ fn main() {
                             ));
                             s.current_line = buffer_line;
 
+                            // Detect scene transition (plays only): when
+                            // playback crosses into a new scene, snap the
+                            // viewport so the header block is at the top.
+                            let mut scene_scrolled = false;
+                            if let Some(ref work) = s.current_work {
+                                if !crate::db::line_types::is_prose_work(&work.work_type) {
+                                    let wi = s.work_line_for_buffer(buffer_line).unwrap_or(line_idx);
+                                    if let Some(line) = work.lines.get(wi) {
+                                        let scene = (line.div1, line.div2);
+                                        let old_scene = s.current_sync_scene;
+                                        s.current_sync_scene = Some(scene);
+                                        if old_scene.is_some() && old_scene != Some(scene) {
+                                            let top = crate::input::viewport::back_up_for_speaker(
+                                                &s.buffer, buffer_line,
+                                            );
+                                            crate::logging::log(&format!(
+                                                "CURSOR_SYNC: SCENE_CHANGE {:?}->{:?} top={} current={}",
+                                                old_scene, scene, top, buffer_line
+                                            ));
+                                            crate::input::scroll::set_page_instant(&mut s, top);
+                                            scene_scrolled = true;
+                                        }
+                                    }
+                                }
+                            }
+
                             // Detect paragraph transition before scrolling:
                             // when playback crosses into a new paragraph, scroll
                             // so its first line lands at the cursor position.
@@ -194,7 +220,7 @@ fn main() {
                             let paragraph_changed = old_para_start.is_some()
                                 && old_para_start != Some(para.start);
 
-                            if paragraph_changed {
+                            if paragraph_changed && !scene_scrolled {
                                 crate::logging::log(&format!(
                                     "CURSOR_SYNC: PARA_CHANGE para_start={} on_screen={}",
                                     para.start, crate::input::navigation::is_line_on_screen(&s, para.start)
@@ -219,9 +245,12 @@ fn main() {
                                 crate::app::refresh_vocab_popup(&mut s);
                             }
                         }
-                        // Check if the next dialogue line lacks a timestamp;
-                        // if so, schedule an advance when the current line's audio ends.
+                        // Schedule a pending_advance when the current line's
+                        // audio ends if: (a) the next dialogue line is
+                        // untimestamped, or (b) it's in a different scene
+                        // (plays only) so we jump ahead without seeking.
                         s.pending_advance = None;
+                        s.pending_scene_advance = false;
                         if let Some(ref work) = s.current_work {
                             if let Some(end_time) = work.lines.get(line_idx).and_then(|l| l.timestamp.as_ref()).map(|ts| ts.end) {
                                 // Find next dialogue buffer line
@@ -232,11 +261,17 @@ fn main() {
                                     ((buffer_line + 1)..lc).find(|&i| work.lines[i].is_dialogue)
                                 };
                                 if let Some(next_bl) = next_dialogue {
-                                    // Check if the next dialogue line is untimestamped
                                     let next_wi = s.work_line_for_buffer(next_bl);
                                     let next_has_ts = next_wi.and_then(|wi| work.lines[wi].timestamp.as_ref()).is_some();
-                                    if !next_has_ts {
+                                    let is_scene_boundary = !crate::db::line_types::is_prose_work(&work.work_type)
+                                        && next_wi.map_or(false, |wi| {
+                                            let cur = &work.lines[line_idx];
+                                            let nxt = &work.lines[wi];
+                                            (cur.div1, cur.div2) != (nxt.div1, nxt.div2)
+                                        });
+                                    if !next_has_ts || is_scene_boundary {
                                         s.pending_advance = Some((end_time, next_bl, line_idx));
+                                        s.pending_scene_advance = is_scene_boundary;
                                     }
                                 }
                             }
@@ -257,16 +292,33 @@ fn main() {
                         let mut s = state_for_events.borrow_mut();
                         s.current_time_pos = pos;
 
-                        // Advance to untimestamped next line when current line's audio ends
+                        // Advance to next line when current line's audio ends
                         if s.sync_enabled && !s.loading_work.get() {
                             if let Some((end_time, next_bl, _source_wi)) = s.pending_advance {
                                 if pos >= end_time {
-                                    // Record the current buffer line so CursorSync won't
-                                    // pull the cursor back to the source timestamped line.
                                     s.pending_advance_ignore_bl = Some(s.current_line);
+                                    let is_scene = s.pending_scene_advance;
                                     s.pending_advance = None;
+                                    s.pending_scene_advance = false;
                                     if s.current_line != next_bl {
                                         s.current_line = next_bl;
+                                        if is_scene {
+                                            // Scene boundary: update scene tracker and
+                                            // snap viewport to the header block.
+                                            if let Some(ref work) = s.current_work {
+                                                let wi = s.work_line_for_buffer(next_bl).unwrap_or(0);
+                                                if let Some(line) = work.lines.get(wi) {
+                                                    s.current_sync_scene = Some((line.div1, line.div2));
+                                                }
+                                            }
+                                            let top = crate::input::viewport::back_up_for_speaker(
+                                                &s.buffer, next_bl,
+                                            );
+                                            crate::logging::log(&format!(
+                                                "SCENE_ADVANCE: next_bl={} top={}", next_bl, top
+                                            ));
+                                            crate::input::scroll::set_page_instant(&mut s, top);
+                                        }
                                         crate::input::navigation::update_highlight_and_advance_page(
                                             &mut s,
                                         );

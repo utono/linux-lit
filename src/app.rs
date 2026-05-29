@@ -205,6 +205,10 @@ pub struct AppState {
     pub current_sentence_group: Option<usize>,
     /// Tracks the start line of the current paragraph to detect transitions.
     pub current_paragraph_start: Option<usize>,
+    /// Tracks (div1, div2) of the last synced dialogue line to detect scene transitions.
+    pub current_sync_scene: Option<(i64, i64)>,
+    /// True when pending_advance targets the first line of a new scene.
+    pub pending_scene_advance: bool,
     pub sync_enabled: bool,
     pub mpv_connected: bool,
     pub mpv_playing: bool,
@@ -970,6 +974,8 @@ pub fn build_window(
         title_bar_scene_label,
         current_sentence_group: None,
         current_paragraph_start: None,
+        current_sync_scene: None,
+        pending_scene_advance: false,
         sync_enabled: true,
         mpv_connected: false,
         mpv_playing: false,
@@ -1525,6 +1531,7 @@ pub fn display_work_at_with_prepared(
     crate::input::search::clear_search(state);
     state.search_bar.hide();
     state.current_time_pos = 0.0;
+    state.current_sync_scene = None;
     state.media_id = work.media_id;
     state
         .window

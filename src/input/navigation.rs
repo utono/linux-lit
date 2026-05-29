@@ -164,6 +164,7 @@ pub fn jump_to_start(state: &mut AppState) {
 
     state.current_line = target;
     state.page_back_stack.clear();
+    state.page_back_stack.push(state.page_top_line);
     set_page_instant(state, 0);
     after_page_change(state, PageChangeReason::JumpToLine);
 }
@@ -240,6 +241,7 @@ pub fn jump_to_end(state: &mut AppState) {
         line_count.saturating_sub(lpp)
     };
     state.page_back_stack.clear();
+    state.page_back_stack.push(state.page_top_line);
     set_page_instant(state, new_top);
     after_page_change(state, PageChangeReason::JumpToLine);
 }
@@ -250,6 +252,9 @@ pub fn jump_to_end(state: &mut AppState) {
 /// backed up by one if preceded by a speaker name.
 pub fn page_forward(state: &mut AppState) {
     if state.current_work.is_none() {
+        return;
+    }
+    if state.page_turn_lock.is_locked() {
         return;
     }
     let line_count = state.effective_line_count();
@@ -291,6 +296,9 @@ pub fn page_forward(state: &mut AppState) {
 /// viewport-height of lines up from the current page_top.
 pub fn page_backward(state: &mut AppState) {
     if state.current_work.is_none() {
+        return;
+    }
+    if state.page_turn_lock.is_locked() {
         return;
     }
 
@@ -338,6 +346,7 @@ pub fn scroll_cursor_top(state: &mut AppState) {
         return;
     }
     state.page_back_stack.clear();
+    state.page_back_stack.push(state.page_top_line);
     let top = back_up_for_speaker(&state.buffer, state.current_line);
     crate::logging::log(&format!(
         "ZT: current_line={} effective_top={}", state.current_line, top
@@ -348,6 +357,9 @@ pub fn scroll_cursor_top(state: &mut AppState) {
 /// Go to previous page and place cursor on its last visible line (shift+comma).
 pub fn page_backward_bottom(state: &mut AppState) {
     if state.current_work.is_none() {
+        return;
+    }
+    if state.page_turn_lock.is_locked() {
         return;
     }
     if state.page_top_line == 0 {
@@ -488,6 +500,7 @@ pub fn jump_to_prev_paragraph(state: &mut AppState) {
     if let Some(line_idx) = target {
         state.current_line = line_idx;
         state.page_back_stack.clear();
+        state.page_back_stack.push(state.page_top_line);
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
             crate::config::NavigationMode::EReader => {
@@ -522,6 +535,7 @@ pub fn jump_to_next_paragraph(state: &mut AppState) {
         let prev_line = state.current_line;
         state.current_line = i;
         state.page_back_stack.clear();
+        state.page_back_stack.push(state.page_top_line);
         scroll_after_jump_forward(state, prev_line);
         after_page_change(state, PageChangeReason::Paragraph);
     }
@@ -569,6 +583,7 @@ pub fn jump_to_prev_chapter(state: &mut AppState) {
                     update_highlight_only(state);
                 } else {
                     state.page_back_stack.clear();
+                    state.page_back_stack.push(state.page_top_line);
                     let top = chapter_page_top(&state.buffer, line_idx);
                     set_page_instant(state, top);
                 }
@@ -619,6 +634,7 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
                     update_highlight_only(state);
                 } else {
                     state.page_back_stack.clear();
+                    state.page_back_stack.push(state.page_top_line);
                     let top = chapter_page_top(&state.buffer, line_idx);
                     set_page_instant(state, top);
                 }
@@ -685,6 +701,7 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
                     update_highlight_only(state);
                 } else {
                     state.page_back_stack.clear();
+                    state.page_back_stack.push(state.page_top_line);
                     set_page_instant(state, marker_idx);
                 }
             }
@@ -735,6 +752,7 @@ pub fn jump_to_next_scene(state: &mut AppState) {
                     update_highlight_only(state);
                 } else {
                     state.page_back_stack.clear();
+                    state.page_back_stack.push(state.page_top_line);
                     set_page_instant(state, marker_idx);
                 }
             }
@@ -890,6 +908,7 @@ pub fn jump_to_line(state: &mut AppState, buffer_line: usize) {
     }
     state.current_line = buffer_line;
     state.page_back_stack.clear();
+    state.page_back_stack.push(state.page_top_line);
     let top = page_turn_top(&state.buffer, buffer_line);
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
@@ -980,6 +999,7 @@ pub fn jump_to_next_vocab(state: &mut AppState) {
     let target_line = state.vocab_matches[next_idx].line_index;
     state.current_line = target_line;
     state.page_back_stack.clear();
+    state.page_back_stack.push(state.page_top_line);
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
@@ -1018,6 +1038,7 @@ pub fn jump_to_prev_vocab(state: &mut AppState) {
     let target_line = state.vocab_matches[prev_idx].line_index;
     state.current_line = target_line;
     state.page_back_stack.clear();
+    state.page_back_stack.push(state.page_top_line);
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {

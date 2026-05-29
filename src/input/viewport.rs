@@ -412,18 +412,12 @@ fn clamp_at_section_break(
     if clamped_last < page_top {
         return range;
     }
-    // Recompute total_height by walking line heights up to clamped_last.
     let mut total = 0i32;
     for i in page_top..=clamped_last {
         if let Some(iter) = buffer.iter_at_line(i as i32) {
             let (_y, h) = text_view.line_yrange(&iter);
             total += h;
         }
-    }
-    // If clamping would leave the page less than half full, skip the clamp.
-    // A half-empty page is worse UX than a scene break appearing mid-page.
-    if total * 2 < range.total_height {
-        return range;
     }
     VisibleRange {
         last_fit: clamped_last,

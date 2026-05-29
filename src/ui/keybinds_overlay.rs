@@ -73,7 +73,7 @@ const HOME_ROW: &[KeyDef] = &[
     key("u", "U", "start time", "", &[("C-u", "pg back")]),
     key("i", "I", "translations", "", &[("M-i", "set end time")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
-    key("h", "H", "auto vocab", "H: synopsis", &[]),
+    key("h", "H", "synopsis", "H: auto vocab", &[]),
     key("t", "T", "", "", &[("M-t", "title tog")]),
     key("n", "N", "next match", "N: prev match", &[]),
     bare("s", "S", "sync tog"),
@@ -91,7 +91,7 @@ const BOTTOM_ROW: &[KeyDef] = &[
     key("m", "M", "bookmark", "", &[("C-m", "bookmarks"), ("C-S-m", "media picker")]),
     key("w", "W", "copy word", "W: collect", &[]),
     key("v", "V", "", "V: visual mode", &[]),
-    ub("z", "Z"),
+    bare("z", "Z", "zt…"),
 ];
 
 const SHIFT_KEY: KeyDef = ub("Shift", "");
@@ -106,6 +106,7 @@ const SPACEBAR_ROW_CTRL_R: KeyDef = ub("Ctrl", "");
 const SEQ_GG: KeyDef = bare("gg", "", "go to start");
 const SEQ_G: KeyDef = key("G", "", "", "go to end", &[]);
 const SEQ_G_SEMI: KeyDef = bare("g;", "", "latest bkmk");
+const SEQ_ZT: KeyDef = bare("zt", "", "scroll top");
 
 const ARROW_UP: KeyDef = key("\u{2191}", "", "cursor \u{2191}", "", &[("C-\u{2191}", "vol +")]);
 const ARROW_DOWN: KeyDef = key("\u{2193}", "", "cursor \u{2193}", "", &[("C-\u{2193}", "vol \u{2212}")]);
@@ -234,6 +235,7 @@ fn build_layout() -> AllKeys {
     add(0.0, y5, KEY_W * 1.4, KEY_H, &SEQ_GG, &mut defs, &mut rects);
     add(KEY_W * 1.4 + GAP, y5, KEY_W, KEY_H, &SEQ_G, &mut defs, &mut rects);
     add(KEY_W * 1.4 + GAP + KEY_W + GAP, y5, KEY_W, KEY_H, &SEQ_G_SEMI, &mut defs, &mut rects);
+    add(KEY_W * 1.4 + GAP + 2.0 * (KEY_W + GAP), y5, KEY_W, KEY_H, &SEQ_ZT, &mut defs, &mut rects);
 
     // Arrow keys — inverted T on far right
     // Bottom row of arrows: left, down, right
