@@ -148,19 +148,14 @@ pub(crate) fn after_page_change(state: &mut AppState, reason: PageChangeReason) 
 /// Going up: smooth scroll to keep cursor visible.
 /// Jump to the first line.
 pub fn jump_to_start(state: &mut AppState) {
-    let work = match &state.current_work {
-        Some(w) => w,
-        None => return,
-    };
+    if state.current_work.is_none() {
+        return;
+    }
 
-    let target = if let Some(ref lm) = state.line_map {
-        lm.dialogue_buffer_lines.first().copied().unwrap_or(0)
-    } else {
-        work.lines
-            .iter()
-            .position(|l| l.is_dialogue)
-            .unwrap_or(0)
-    };
+    let line_count = state.effective_line_count();
+    let target = (0..line_count)
+        .find(|&i| is_dialogue_line(&state.buffer, i))
+        .unwrap_or(0);
 
     state.current_line = target;
     state.page_back_stack.clear();
