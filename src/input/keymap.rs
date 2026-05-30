@@ -625,7 +625,7 @@ fn handle_gloss_key(
 fn handle_synopsis_overlay_key(
     state: &Rc<RefCell<AppState>>,
     key_name: &str,
-    is_ctrl: bool,
+    _is_ctrl: bool,
 ) -> bool {
     match key_name {
         "Escape" => {
@@ -634,7 +634,7 @@ fn handle_synopsis_overlay_key(
             s.input_mode = crate::app::InputMode::Reader;
             true
         }
-        "h" if is_ctrl => {
+        "h" => {
             let mut s = state.borrow_mut();
             s.gloss_overlay.hide();
             s.input_mode = crate::app::InputMode::Reader;
