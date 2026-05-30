@@ -22,6 +22,41 @@ Rules:
 - Each <gloss> tag contains one flowing prose paragraph (3-6 sentences)
 - No markdown, no bullets, no numbered lists, no headers";
 
+pub const INNER_MONOLOGUE_PROMPT: &str = "\
+You are a director helping actors discover the inner monologue beneath \
+a passage from a dramatic text.
+
+Given a scene and a highlighted passage within it, explore what each \
+character present is thinking, hearing, and feeling — the subtext \
+beneath the spoken words.
+
+For each character in the highlighted passage:
+- What do they actually hear when the other character speaks? \
+(e.g., Claudio hears \"Speak, count, 'tis your cue\" but what he \
+really hears is \"speak now or your silence will offend\")
+- What inner monologue drives their response? What are they telling \
+themselves before they open their mouth?
+- What words or phrases could an actor use as inner cues — short, \
+actable thoughts that sit beneath each line?
+- How does the surrounding scene (lines before AND after the passage) \
+illuminate what the character is really saying?
+
+Draw on the full scene provided for evidence. Reference specific lines \
+that echo, foreshadow, or reframe the passage's meaning.
+
+Output format — use these XML tags exactly:
+- <speaker>NAME</speaker> for each character's analysis section (ALL CAPS)
+- <verse>one line of quoted text</verse> for quoted lines (verbatim)
+- <gloss>paragraph of analysis</gloss> for each analysis paragraph
+
+Rules:
+- Quote verbatim — exact words, exact spelling, exact line breaks
+- Never use / to join verse lines
+- Each <verse> tag contains exactly one line of the original
+- Each <gloss> tag contains one flowing prose paragraph (3-6 sentences)
+- ALWAYS place a <speaker> tag before EVERY group of <verse> lines
+- No markdown, no bullets, no numbered lists, no headers";
+
 const TEACHER_GENERIC_PROMPT: &str = "\
 You are a performance-focused teacher helping a reader understand a passage from a literary text.
 
@@ -60,6 +95,7 @@ pub struct GlossContext {
     pub source_text: String,
     pub source_line_numbers: Vec<i64>,
     pub hash: String,
+    pub gloss_type: String,
 }
 
 impl GlossContext {
@@ -117,6 +153,52 @@ pub fn build_context(work: &Work, lines: &[Line]) -> Option<GlossContext> {
         source_text,
         source_line_numbers,
         hash,
+        gloss_type: "teacher-generic".to_string(),
+    })
+}
+
+pub fn build_context_for_type(work: &Work, lines: &[Line], gloss_type: &str) -> Option<GlossContext> {
+    if lines.is_empty() {
+        return None;
+    }
+    let base_abbrev = normalize_abbrev(&work.abbrev);
+    let first = lines.first().unwrap();
+    let last = lines.last().unwrap();
+    let start_citation = format!("{}.{}.{}.{}", base_abbrev, first.div1, first.div2, first.line_in_div);
+    let end_citation = format!("{}.{}.{}.{}", base_abbrev, last.div1, last.div2, last.line_in_div);
+
+    let mut speakers: Vec<&str> = Vec::new();
+    for line in lines {
+        if let Some(ref s) = line.speaker {
+            if speakers.last() != Some(&s.as_str()) {
+                speakers.push(s);
+            }
+        }
+    }
+    let speaker = if speakers.is_empty() {
+        "UNKNOWN".to_string()
+    } else {
+        speakers.join(", ")
+    };
+
+    let source_text = lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n");
+    let source_line_numbers: Vec<i64> = lines.iter().map(|l| l.line_in_div).collect();
+
+    let hash_input = format!("{}:{}:{}:{}", base_abbrev, start_citation, end_citation, gloss_type);
+    let hash = format!("{:x}", md5::compute(hash_input.as_bytes()));
+
+    Some(GlossContext {
+        work_abbrev: base_abbrev.to_string(),
+        work_title: work.title.clone(),
+        start_citation,
+        end_citation,
+        act: first.div1,
+        scene: first.div2,
+        speaker,
+        source_text,
+        source_line_numbers,
+        hash,
+        gloss_type: gloss_type.to_string(),
     })
 }
 
@@ -139,6 +221,32 @@ pub fn build_user_message(
     }
 
     msg
+}
+
+pub fn build_inner_monologue_message(
+    ctx: &GlossContext,
+    scene_lines: &[Line],
+) -> String {
+    let mut scene_text = String::new();
+    let mut last_speaker: Option<&str> = None;
+    for line in scene_lines {
+        if let Some(ref s) = line.speaker {
+            if last_speaker != Some(s.as_str()) {
+                scene_text.push_str(&format!("\n{}\n", s));
+                last_speaker = Some(s);
+            }
+        }
+        scene_text.push_str(&format!("  {}\n", line.text));
+    }
+
+    format!(
+        "Play: {}\nAct: {}, Scene: {}\nSpeaker: {}\n\n\
+         --- FULL SCENE ---\n{}\n\
+         --- HIGHLIGHTED PASSAGE ---\n{}",
+        ctx.work_title, ctx.act, ctx.scene, ctx.speaker,
+        scene_text.trim(),
+        ctx.source_text,
+    )
 }
 
 pub async fn call_claude(

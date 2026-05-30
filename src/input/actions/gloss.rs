@@ -15,7 +15,7 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
 
     if s.gloss_passages.is_empty() {
         if let Ok(conn) = crate::db::queries::open_db() {
-            s.gloss_passages = crate::db::queries::find_glossed_passages(&conn, &work_abbrev)
+            s.gloss_passages = crate::db::queries::find_glossed_passages(&conn, &work_abbrev, "teacher-generic")
                 .unwrap_or_default();
         }
         if s.gloss_passages.is_empty() {
@@ -42,6 +42,7 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
         .and_then(|conn| {
             crate::db::queries::find_all_glosses(
                 &conn, &passage.work_abbrev, &passage.start_citation, &passage.end_citation,
+                "teacher-generic",
             ).ok()
         })
         .unwrap_or_default();
@@ -64,6 +65,7 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
         source_text: passage.source_text,
         source_line_numbers: Vec::new(),
         hash: String::new(),
+        gloss_type: "teacher-generic".to_string(),
     };
 
     let h = s.scrolled_window.height();
@@ -294,6 +296,7 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
                         &ctx.start_citation, &ctx.end_citation,
                         ctx.act, ctx.scene, &ctx.speaker,
                         &ctx.source_text, &full_gloss,
+                        "teacher-generic",
                     );
                 }
 
@@ -302,6 +305,7 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
                     .and_then(|conn| {
                         crate::db::queries::find_all_glosses(
                             &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
+                            "teacher-generic",
                         ).ok()
                     })
                     .unwrap_or_default();

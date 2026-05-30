@@ -359,6 +359,7 @@ fn handle_picker_key(
                             source_text: passage.source_text,
                             source_line_numbers: Vec::new(),
                             hash: String::new(),
+                            gloss_type: "teacher-generic".to_string(),
                         };
 
                         let h = s.scrolled_window.height();
