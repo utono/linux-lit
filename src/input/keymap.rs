@@ -69,6 +69,7 @@ pub fn handle_key(
             crate::app::InputMode::Settings => handle_settings_key(state, key_name, is_ctrl),
             crate::app::InputMode::Search => handle_search_key(state, key_name),
             crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_alt),
+            crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_name, is_ctrl),
             crate::app::InputMode::DeleteConfirm => handle_delete_confirm_key(state, key_name),
             crate::app::InputMode::GlossPrompt => handle_gloss_prompt_key(state, key_name, is_ctrl),
             crate::app::InputMode::GamepadOverlay => handle_gamepad_key(state, key_name),
@@ -334,6 +335,7 @@ fn handle_picker_key(
                                 crate::db::queries::find_all_glosses(
                                     &conn, &passage.work_abbrev,
                                     &passage.start_citation, &passage.end_citation,
+                                    "teacher-generic",
                                 ).ok()
                             })
                             .unwrap_or_default();
@@ -614,6 +616,36 @@ fn handle_gloss_key(
                     navigation::update_highlight_only(&mut s);
                 }
             }
+            true
+        }
+        _ => true,
+    }
+}
+
+fn handle_synopsis_overlay_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+    is_ctrl: bool,
+) -> bool {
+    match key_name {
+        "Escape" => {
+            let mut s = state.borrow_mut();
+            s.gloss_overlay.hide();
+            s.input_mode = crate::app::InputMode::Reader;
+            true
+        }
+        "h" if is_ctrl => {
+            let mut s = state.borrow_mut();
+            s.gloss_overlay.hide();
+            s.input_mode = crate::app::InputMode::Reader;
+            true
+        }
+        "j" => {
+            state.borrow().gloss_overlay.scroll_gloss(1);
+            true
+        }
+        "k" => {
+            state.borrow().gloss_overlay.scroll_gloss(-1);
             true
         }
         _ => true,
@@ -1074,6 +1106,7 @@ fn dispatch_action(
             }
         }
         ToggleSynopsis => crate::app::toggle_synopsis(&mut state.borrow_mut()),
+        ShowSynopsisOverlay => crate::app::show_synopsis_overlay(state),
 
         // Authorship display
         ToggleAuthorship => {

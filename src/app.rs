@@ -42,6 +42,7 @@ pub enum InputMode {
     Settings,
     Search,
     GlossOverlay,
+    SynopsisOverlay,
     GlossPrompt,
     GlossPicker,
     GamepadOverlay,
@@ -1170,10 +1171,6 @@ pub fn build_window(
                 if do_reveal {
                     crate::log_fmt!("STARTUP: revealing vbox (sw_h={})", s.scrolled_window.height());
                     vbox_for_tick.set_opacity(1.0);
-                    if s.pending_synopsis.get() {
-                        s.pending_synopsis.set(false);
-                        show_synopsis_timed(&mut s);
-                    }
                     let top = s.page_top_line;
                     crate::input::navigation::snap_scroll_to_line(&mut s, top);
                 }
@@ -2021,13 +2018,6 @@ pub fn display_work_at_with_prepared(
     // Page label is set later by the resize tick once layout is valid.
     // Setting it here would compute a degenerate page=1 because the
     // scrolled_window is still hidden and text_view.height() is 0.
-
-    // Defer synopsis auto-show until the resize tick has valid layout.
-    // Must be set before update_highlight_and_show so the page_top guard
-    // in highlight.rs respects the scene-heading page_top=0.
-    if !state.synopsis_cache.is_empty() && is_first_line_of_scene(state) {
-        state.pending_synopsis.set(true);
-    }
 
     // Apply highlight, snap scroll, show the scrolled window.
     let t7 = std::time::Instant::now();
@@ -3406,40 +3396,6 @@ pub fn show_synopsis(state: &mut AppState) {
     }
 }
 
-/// Show synopsis with a timed fade-out after 5 seconds. Used by auto-show
-/// on scene boundary (2/3 keys) so the synopsis appears briefly for
-/// orientation without persisting.
-pub fn show_synopsis_timed(state: &mut AppState) {
-    show_synopsis(state);
-    if !state.synopsis_visible {
-        return;
-    }
-    let gen = state.vocab_popup_fade_gen.get() + 1;
-    state.vocab_popup_fade_gen.set(gen);
-    let fade_gen = state.vocab_popup_fade_gen.clone();
-    let widget = state.vocab_popup.widget().clone();
-    glib::timeout_add_local_once(std::time::Duration::from_secs(5), move || {
-        if fade_gen.get() != gen {
-            return;
-        }
-        if !widget.is_visible() {
-            return;
-        }
-        let w = widget.clone();
-        let target = libadwaita::CallbackAnimationTarget::new(move |value| {
-            w.set_opacity(value as f64);
-            if value <= 0.0 {
-                w.set_visible(false);
-                w.set_opacity(1.0);
-            }
-        });
-        use libadwaita::prelude::AnimationExt;
-        let anim = libadwaita::TimedAnimation::new(&widget, 1.0, 0.0, 500, target);
-        anim.set_easing(libadwaita::Easing::EaseOutQuad);
-        anim.play();
-    });
-}
-
 /// Toggle between synopsis and vocab sidebar modes.
 pub fn toggle_synopsis(state: &mut AppState) {
     if state.synopsis_cache.is_empty() {
@@ -3461,6 +3417,54 @@ pub fn toggle_synopsis(state: &mut AppState) {
             show_synopsis(state);
         }
     }
+}
+
+pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+    let s = state.borrow();
+    if s.gloss_overlay.is_visible() {
+        drop(s);
+        let mut s = state.borrow_mut();
+        s.gloss_overlay.hide();
+        s.input_mode = InputMode::Reader;
+        return;
+    }
+
+    if s.synopsis_cache.is_empty() {
+        s.chapter_toast.set_text("No synopsis for this section");
+        s.chapter_toast.set_visible(true);
+        let toast = s.chapter_toast.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+            toast.set_visible(false);
+        });
+        return;
+    }
+
+    let (div1, div2) = current_scene_divs(&s);
+    let synopsis = match s.synopsis_cache.get(&(div1, div2)) {
+        Some(text) => text.clone(),
+        None => {
+            s.chapter_toast.set_text("No synopsis for this section");
+            s.chapter_toast.set_visible(true);
+            let toast = s.chapter_toast.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+                toast.set_visible(false);
+            });
+            return;
+        }
+    };
+
+    let scene_label = if div1 == 0 && div2 == 0 {
+        "Prologue".to_string()
+    } else if div2 == 0 {
+        format!("Act {}, Chorus", div1)
+    } else {
+        format!("Act {}, Scene {}", div1, div2)
+    };
+
+    let card_height = s.scrolled_window.height();
+    s.gloss_overlay.show_synopsis(&scene_label, &synopsis, card_height);
+    drop(s);
+    state.borrow_mut().input_mode = InputMode::SynopsisOverlay;
 }
 
 /// Load vocab data for all words on the current line into state, show popup with first word.

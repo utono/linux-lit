@@ -274,6 +274,9 @@ impl GlossOverlay {
         self.title.set_vexpand(false);
         self.title.set_valign(Align::Start);
         self.title.set_halign(Align::Start);
+        self.title.set_margin_start(self.text_margins);
+        self.gloss_view.set_left_margin(self.text_margins);
+        self.hint.set_text("Esc close · a add · d delete · c copy id · Ctrl+n/p gloss · Alt+n/p passage");
         self.orig_header.set_visible(false);
         self.original_label.set_visible(false);
         self.corr_header.set_visible(false);
@@ -295,6 +298,37 @@ impl GlossOverlay {
 
         self.gloss_scroll_overlay.set_visible(true);
         self.gloss_scrolled.vadjustment().set_value(0.0);
+        self.hint.set_visible(true);
+        self.scrim.set_visible(false);
+        self.container.set_visible(true);
+    }
+
+    pub fn show_synopsis(&self, title: &str, synopsis: &str, card_height: i32) {
+        self.container.set_height_request(card_height);
+        let left = self.column_width / 6;
+        self.title.set_text(title);
+        self.title.set_visible(true);
+        self.title.set_vexpand(false);
+        self.title.set_valign(Align::Start);
+        self.title.set_halign(Align::Start);
+        self.title.set_margin_start(left);
+        self.orig_header.set_visible(false);
+        self.original_label.set_visible(false);
+        self.corr_header.set_visible(false);
+        self.corrected_label.set_visible(false);
+        self.position_label.set_visible(false);
+
+        *self.bar_ranges.borrow_mut() = Vec::new();
+        *self.line_numbers.borrow_mut() = Vec::new();
+
+        self.gloss_view.set_left_margin(left);
+        let buffer = self.gloss_view.buffer();
+        buffer.set_text(synopsis);
+        self.bar_drawing.queue_draw();
+
+        self.gloss_scroll_overlay.set_visible(true);
+        self.gloss_scrolled.vadjustment().set_value(0.0);
+        self.hint.set_text("Esc close · j/k scroll");
         self.hint.set_visible(true);
         self.scrim.set_visible(false);
         self.container.set_visible(true);

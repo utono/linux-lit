@@ -255,7 +255,7 @@ fn media_bindings() -> Vec<(KeyCombo, Action)> {
 
 fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
-        (KeyCombo::plain("h"), Action::ToggleSynopsis),
+        (KeyCombo::plain("h"), Action::ShowSynopsisOverlay),
         (KeyCombo::plain("backslash"), Action::VocabPopupNext),
         (KeyCombo::plain("numbersign"), Action::VocabPopupPrev),
         (KeyCombo::plain("r"), Action::ConcordanceNext),
@@ -289,6 +289,7 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl_shift("A"), Action::PickAttributionSet),
         (KeyCombo::alt("f"), Action::ShowFontInfo),
         (KeyCombo::plain("i"), Action::ToggleTranslations),
+        (KeyCombo::ctrl("h"), Action::ToggleSynopsis),
         (KeyCombo::ctrl("comma"), Action::OpenSettingsOverlay),
     ]
 }

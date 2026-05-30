@@ -101,6 +101,7 @@ pub enum Action {
 
     // Synopsis
     ToggleSynopsis,
+    ShowSynopsisOverlay,
 
     // Settings (in reader)
     AdjustFontSizeUp,
@@ -210,6 +211,7 @@ impl Action {
             | Action::ShowCurrentChapter
             | Action::ToggleTranslations
             | Action::ToggleSynopsis
+            | Action::ShowSynopsisOverlay
             | Action::OpenSettingsOverlay => Category::Display,
 
             // Selection
@@ -302,6 +304,7 @@ impl Action {
             Action::WordCollectCopy => "WordCollectCopy",
             Action::ToggleTranslations => "ToggleTranslations",
             Action::ToggleSynopsis => "ToggleSynopsis",
+            Action::ShowSynopsisOverlay => "ShowSynopsisOverlay",
             Action::AdjustFontSizeUp => "AdjustFontSizeUp",
             Action::AdjustFontSizeDown => "AdjustFontSizeDown",
             Action::ResetFontSize => "ResetFontSize",
