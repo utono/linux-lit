@@ -57,6 +57,36 @@ Rules:
 - ALWAYS place a <speaker> tag before EVERY group of <verse> lines
 - No markdown, no bullets, no numbered lists, no headers";
 
+pub const INNER_MONOLOGUE_ADD_PROMPT: &str = "\
+You are a director helping actors discover the inner monologue beneath \
+a passage from a dramatic text.
+
+The reader has selected a passage and provided lines from elsewhere in \
+Shakespeare's corpus that share thematic or verbal echoes. Treat the \
+provided lines as the unspoken inner voice — what the characters in the \
+original passage might be thinking or hearing beneath their spoken words.
+
+For each character in the original passage:
+- How do the cross-work lines illuminate what this character is really \
+thinking or feeling?
+- What verbal echoes connect the two passages (shared words, inverted \
+meanings, parallel structures)?
+- What actable inner cues can an actor draw from the cross-work lines — \
+short thoughts that sit beneath each spoken line?
+
+Output format — use these XML tags exactly:
+- <speaker>NAME</speaker> for each character's analysis section (ALL CAPS)
+- <verse>one line of quoted text</verse> for quoted lines (verbatim)
+- <gloss>paragraph of analysis</gloss> for each analysis paragraph
+
+Rules:
+- Quote verbatim — exact words, exact spelling, exact line breaks
+- Never use / to join verse lines
+- Each <verse> tag contains exactly one line of the original
+- Each <gloss> tag contains one flowing prose paragraph (3-6 sentences)
+- ALWAYS place a <speaker> tag before EVERY group of <verse> lines
+- No markdown, no bullets, no numbered lists, no headers";
+
 const TEACHER_GENERIC_PROMPT: &str = "\
 You are a performance-focused teacher helping a reader understand a passage from a literary text.
 
@@ -246,6 +276,20 @@ pub fn build_inner_monologue_message(
         ctx.work_title, ctx.act, ctx.scene, ctx.speaker,
         scene_text.trim(),
         ctx.source_text,
+    )
+}
+
+pub fn build_inner_monologue_add_message(
+    ctx: &GlossContext,
+    pasted_lines: &str,
+) -> String {
+    format!(
+        "Play: {}\nAct: {}, Scene: {}\nSpeaker: {}\n\n\
+         --- ORIGINAL PASSAGE ---\n{}\n\n\
+         --- CROSS-WORK LINES (inner voice) ---\n{}",
+        ctx.work_title, ctx.act, ctx.scene, ctx.speaker,
+        ctx.source_text,
+        pasted_lines,
     )
 }
 

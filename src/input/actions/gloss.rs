@@ -201,6 +201,13 @@ pub(crate) fn close_delete_confirmation(state: &Rc<RefCell<AppState>>) {
 }
 
 pub(crate) fn show_amend_dialog(state_rc: &Rc<RefCell<AppState>>) {
+    let is_inner_monologue = {
+        let s = state_rc.borrow();
+        s.gloss_context.as_ref()
+            .map(|ctx| ctx.gloss_type == "inner-monologue")
+            .unwrap_or(false)
+    };
+
     let overlay_parent = {
         let s = state_rc.borrow();
         s.action_popup_widget.container.parent()
@@ -220,7 +227,12 @@ pub(crate) fn show_amend_dialog(state_rc: &Rc<RefCell<AppState>>) {
     container.set_width_request(600);
     container.add_css_class("amend-dialog");
 
-    let title = gtk4::Label::new(Some("GLOSS PROMPT"));
+    let title_text = if is_inner_monologue {
+        "INNER MONOLOGUE PASSAGE"
+    } else {
+        "GLOSS PROMPT"
+    };
+    let title = gtk4::Label::new(Some(title_text));
     title.add_css_class("amend-title");
     title.set_halign(gtk4::Align::Start);
     container.append(&title);
@@ -242,7 +254,12 @@ pub(crate) fn show_amend_dialog(state_rc: &Rc<RefCell<AppState>>) {
     scrolled.set_child(Some(&text_view));
     container.append(&scrolled);
 
-    let hint = gtk4::Label::new(Some("Ctrl+Enter submit  \u{00b7}  Esc cancel"));
+    let hint_text = if is_inner_monologue {
+        "Paste lines from another work  \u{00b7}  Ctrl+Enter submit  \u{00b7}  Esc cancel"
+    } else {
+        "Ctrl+Enter submit  \u{00b7}  Esc cancel"
+    };
+    let hint = gtk4::Label::new(Some(hint_text));
     hint.add_css_class("amend-hint");
     hint.set_halign(gtk4::Align::Center);
     container.append(&hint);
@@ -273,30 +290,43 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
     state_rc.borrow().gloss_overlay.show_loading();
 
     let prompt_owned = prompt.to_string();
-    let user_msg = crate::gloss::build_user_message(
-        &ctx, Some(&prompt_owned), None,
-    );
+    let is_inner_monologue = ctx.gloss_type == "inner-monologue";
+
+    let (system_prompt, user_msg, gloss_type_str) = if is_inner_monologue {
+        let msg = crate::gloss::build_inner_monologue_add_message(&ctx, &prompt_owned);
+        (crate::gloss::INNER_MONOLOGUE_ADD_PROMPT, msg, "inner-monologue")
+    } else {
+        let msg = crate::gloss::build_user_message(&ctx, Some(&prompt_owned), None);
+        (crate::gloss::USER_QUESTION_PROMPT, msg, "teacher-generic")
+    };
+
     let state_for_result = Rc::clone(state_rc);
+    let gloss_type_owned = gloss_type_str.to_string();
 
     glib::spawn_future_local(async move {
+        let system_prompt = system_prompt.to_string();
         let result = tokio_handle
             .spawn(async move {
                 crate::gloss::call_claude_with_prompt(
-                    crate::gloss::USER_QUESTION_PROMPT, &user_msg, &model,
+                    &system_prompt, &user_msg, &model,
                 ).await
             })
             .await;
 
         match result {
             Ok(Ok(gloss_text)) => {
-                let full_gloss = format!("<gloss>Q: {}</gloss>\n\n{}", prompt_owned, gloss_text);
+                let full_gloss = if is_inner_monologue {
+                    format!("<gloss>Inner voice from:</gloss>\n\n{}\n\n{}", prompt_owned, gloss_text)
+                } else {
+                    format!("<gloss>Q: {}</gloss>\n\n{}", prompt_owned, gloss_text)
+                };
                 if let Ok(conn) = crate::db::queries::open_db_rw() {
                     let _ = crate::db::queries::save_gloss(
                         &conn, &ctx.hash, &ctx.work_abbrev,
                         &ctx.start_citation, &ctx.end_citation,
                         ctx.act, ctx.scene, &ctx.speaker,
                         &ctx.source_text, &full_gloss,
-                        "teacher-generic",
+                        &gloss_type_owned,
                     );
                 }
 
@@ -305,7 +335,7 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
                     .and_then(|conn| {
                         crate::db::queries::find_all_glosses(
                             &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
-                            "teacher-generic",
+                            &gloss_type_owned,
                         ).ok()
                     })
                     .unwrap_or_default();
@@ -320,7 +350,7 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
                 s.gloss_overlay.set_position(0, all.len());
                 s.gloss_list = all;
                 s.gloss_index = 0;
-                crate::logging::log("GLOSS: added new gloss");
+                crate::logging::log(&format!("GLOSS: added new {} gloss", gloss_type_owned));
             }
             Ok(Err(e)) => {
                 let s = state_for_result.borrow();
