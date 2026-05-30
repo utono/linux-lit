@@ -498,7 +498,7 @@ pub(crate) fn is_inside_stage_direction(buffer: &sourceview5::Buffer, line: usiz
     if crate::db::line_types::is_stage_direction(trimmed) {
         return true;
     }
-    let start = line.saturating_sub(10);
+    let start = line.saturating_sub(20);
     for i in (start..line).rev() {
         let prev = buffer_line_text(buffer, i);
         let prev_trimmed = prev.trim();

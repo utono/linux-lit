@@ -184,7 +184,7 @@ and Exeter, with other Attendants.]
 
 Continuation lines ("Gloucester, Bedford...") are detected by
 `is_inside_stage_direction` in `viewport.rs`, which scans backward up to
-10 lines looking for an unclosed `[` opener. This function is used by
+20 lines looking for an unclosed `[` opener. This function is used by
 `is_dialogue_line`, `next_dialogue_from`, `last_dialogue_in_page`, and
 `back_up_for_speaker` to ensure multi-line stage directions are never
 treated as dialogue.
@@ -478,11 +478,13 @@ act/scene marker. Speaker names and stage directions are treated as content.
 
 ### Multi-line stage directions
 
-Folger-cleaned texts have multi-line stage directions spanning 2-10 lines.
-`is_stage_direction` detects single-line (`[...\]`), openers (`[...` without
-closing `]`), and closers (`...]` without opening `[`). Continuation lines
-in between are caught by `is_inside_stage_direction` in `viewport.rs`, which
-scans backward up to 10 lines for an unclosed `[` opener.
+Folger-cleaned texts have multi-line stage directions spanning 2-19 lines
+(the largest is in Henry VIII with 17 continuation lines between opener and
+closer). `is_stage_direction` detects single-line (`[...\]`), openers
+(`[...` without closing `]`), and closers (`...]` without opening `[`).
+Continuation lines in between are caught by `is_inside_stage_direction` in
+`viewport.rs` and `is_inside_stage_direction_text` in `text_file_map.rs`,
+which scan backward up to 20 lines for an unclosed `[` opener.
 
 ### Runtime usage
 

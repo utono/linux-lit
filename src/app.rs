@@ -1174,6 +1174,8 @@ pub fn build_window(
                         s.pending_synopsis.set(false);
                         show_synopsis_timed(&mut s);
                     }
+                    let top = s.page_top_line;
+                    crate::input::navigation::snap_scroll_to_line(&mut s, top);
                 }
             }
             glib::ControlFlow::Continue

@@ -88,6 +88,24 @@ pub fn normalize(s: &str) -> String {
     result
 }
 
+fn is_inside_stage_direction_text(lines: &[String], line: usize) -> bool {
+    let trimmed = lines[line].trim();
+    if line_types::is_stage_direction(trimmed) {
+        return true;
+    }
+    let start = line.saturating_sub(20);
+    for i in (start..line).rev() {
+        let prev = lines[i].trim();
+        if prev.ends_with(']') {
+            return false;
+        }
+        if prev.starts_with('[') && !prev.ends_with(']') {
+            return true;
+        }
+    }
+    false
+}
+
 /// Remove all `[...]` bracketed text from a string.
 fn strip_brackets(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
@@ -214,7 +232,9 @@ pub fn build_line_map(file_lines: &[String], work_lines: &[Line], is_prose: bool
                 }
             }
             None => {
-                if line_types::is_dialogue(&file_lines[buf_idx], is_prose) {
+                if line_types::is_dialogue(&file_lines[buf_idx], is_prose)
+                    && !is_inside_stage_direction_text(file_lines, buf_idx)
+                {
                     dialogue_buffer_lines.push(buf_idx);
                 }
             }

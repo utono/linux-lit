@@ -1078,7 +1078,7 @@ mod page_turn_tests {
         if line_types::is_stage_direction(text) {
             return true;
         }
-        let start = idx.saturating_sub(10);
+        let start = idx.saturating_sub(20);
         for i in (start..idx).rev() {
             let prev = lines[i].trim();
             if prev.ends_with(']') {
