@@ -713,6 +713,7 @@ pub fn find_existing_gloss(
     work_abbrev: &str,
     start_citation: &str,
     end_citation: &str,
+    gloss_type: &str,
 ) -> Result<Option<SavedGloss>, rusqlite::Error> {
     conn.query_row(
         "SELECT g.id, g.gloss_text, g.timestamp, p.id \
@@ -721,10 +722,10 @@ pub fn find_existing_gloss(
          WHERE p.work_abbrev = ?1 \
            AND p.start_citation = ?2 \
            AND p.end_citation = ?3 \
-           AND g.gloss_type = 'teacher-generic' \
+           AND g.gloss_type = ?4 \
          ORDER BY g.timestamp DESC \
          LIMIT 1",
-        rusqlite::params![work_abbrev, start_citation, end_citation],
+        rusqlite::params![work_abbrev, start_citation, end_citation, gloss_type],
         |row| {
             Ok(SavedGloss {
                 gloss_id: row.get(0)?,
@@ -742,6 +743,7 @@ pub fn find_all_glosses(
     work_abbrev: &str,
     start_citation: &str,
     end_citation: &str,
+    gloss_type: &str,
 ) -> Result<Vec<SavedGloss>, rusqlite::Error> {
     let mut stmt = conn.prepare(
         "SELECT g.id, g.gloss_text, g.timestamp, p.id \
@@ -750,11 +752,11 @@ pub fn find_all_glosses(
          WHERE p.work_abbrev = ?1 \
            AND p.start_citation = ?2 \
            AND p.end_citation = ?3 \
-           AND g.gloss_type = 'teacher-generic' \
+           AND g.gloss_type = ?4 \
          ORDER BY g.timestamp DESC",
     )?;
     let rows = stmt.query_map(
-        rusqlite::params![work_abbrev, start_citation, end_citation],
+        rusqlite::params![work_abbrev, start_citation, end_citation, gloss_type],
         |row| {
             Ok(SavedGloss {
                 gloss_id: row.get(0)?,
@@ -782,6 +784,7 @@ pub struct GlossedPassage {
 pub fn find_glossed_passages(
     conn: &Connection,
     work_abbrev: &str,
+    gloss_type: &str,
 ) -> Result<Vec<GlossedPassage>, rusqlite::Error> {
     let mut stmt = conn.prepare(
         "SELECT DISTINCT p.id, p.work_abbrev, p.start_citation, p.end_citation, \
@@ -789,11 +792,11 @@ pub fn find_glossed_passages(
          FROM passages p \
          JOIN glosses g ON g.passage_id = p.id \
          WHERE p.work_abbrev = ?1 \
-           AND g.gloss_type = 'teacher-generic' \
+           AND g.gloss_type = ?2 \
          ORDER BY p.act, p.scene, p.start_citation",
     )?;
     let rows = stmt.query_map(
-        rusqlite::params![work_abbrev],
+        rusqlite::params![work_abbrev, gloss_type],
         |row| {
             Ok(GlossedPassage {
                 passage_id: row.get(0)?,
@@ -821,6 +824,7 @@ pub fn save_gloss(
     character: &str,
     source_text: &str,
     gloss_text: &str,
+    gloss_type: &str,
 ) -> Result<(), rusqlite::Error> {
     conn.execute(
         "INSERT OR IGNORE INTO passages \
@@ -836,8 +840,8 @@ pub fn save_gloss(
     )?;
 
     conn.execute(
-        "INSERT INTO glosses (passage_id, gloss_type, gloss_text) VALUES (?1, 'teacher-generic', ?2)",
-        rusqlite::params![passage_id, gloss_text],
+        "INSERT INTO glosses (passage_id, gloss_type, gloss_text) VALUES (?1, ?2, ?3)",
+        rusqlite::params![passage_id, gloss_type, gloss_text],
     )?;
 
     Ok(())

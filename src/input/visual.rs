@@ -126,7 +126,7 @@ pub struct ActionPopupState {
 }
 
 /// Built-in action names, in display order.
-pub const BUILTIN_ACTIONS: &[&str] = &["Gloss with Claude", "Copy", "Copy with metadata"];
+pub const BUILTIN_ACTIONS: &[&str] = &["Gloss with Claude", "Inner Monologue", "Copy", "Copy with metadata"];
 
 /// Determine which built-in actions are available for the current work.
 pub fn available_builtin_actions(_state: &AppState) -> Vec<&'static str> {
@@ -174,8 +174,12 @@ pub fn execute_action(
                 action_gloss_with_claude(state_rc);
                 return;
             }
-            1 => action_copy(&mut state_rc.borrow_mut(), false),
-            2 => action_copy(&mut state_rc.borrow_mut(), true),
+            1 => {
+                action_inner_monologue(state_rc);
+                return;
+            }
+            2 => action_copy(&mut state_rc.borrow_mut(), false),
+            3 => action_copy(&mut state_rc.borrow_mut(), true),
             _ => {}
         }
     } else {
@@ -416,6 +420,7 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
         let all_glosses: Vec<crate::db::queries::SavedGloss> = match crate::db::queries::open_db() {
             Ok(conn) => crate::db::queries::find_all_glosses(
                 &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
+                "teacher-generic",
             ).unwrap_or_default(),
             Err(_) => Vec::new(),
         };
@@ -471,6 +476,7 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
                         &ctx.speaker,
                         &ctx.source_text,
                         &gloss_text,
+                        "teacher-generic",
                     );
                 }
 
@@ -479,6 +485,7 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
                     .and_then(|conn| {
                         crate::db::queries::find_all_glosses(
                             &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
+                            "teacher-generic",
                         ).ok()
                     })
                     .unwrap_or_default();
@@ -500,6 +507,132 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
             }
             Err(e) => {
                 crate::logging::log(&format!("GLOSS: tokio join error: {}", e));
+            }
+        }
+    });
+}
+
+fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+    let (ctx, scene_lines, model, tokio_handle, all_glosses) = {
+        let state = state_rc.borrow();
+        let (start, end) = match &state.visual_selection {
+            Some(s) => s.range(),
+            None => return,
+        };
+        let work = match &state.current_work {
+            Some(w) => w,
+            None => return,
+        };
+
+        let selected_lines: Vec<crate::db::models::Line> = (start..=end)
+            .filter_map(|buf_line| {
+                state.work_line_for_buffer(buf_line)
+                    .and_then(|wi| work.lines.get(wi).cloned())
+            })
+            .collect();
+
+        let ctx = match crate::gloss::build_context_for_type(work, &selected_lines, "inner-monologue") {
+            Some(c) => c,
+            None => return,
+        };
+
+        let scene_lines: Vec<crate::db::models::Line> = work.lines.iter()
+            .filter(|l| l.div1 == ctx.act && l.div2 == ctx.scene)
+            .cloned()
+            .collect();
+
+        let all_glosses: Vec<crate::db::queries::SavedGloss> = match crate::db::queries::open_db() {
+            Ok(conn) => crate::db::queries::find_all_glosses(
+                &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
+                "inner-monologue",
+            ).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+
+        (ctx, scene_lines, state.config.claude_model.clone(), state.tokio_handle.clone(), all_glosses)
+    };
+
+    exit_visual_mode(&mut state_rc.borrow_mut());
+
+    if !all_glosses.is_empty() {
+        let mut s = state_rc.borrow_mut();
+        s.gloss_original_text = Some(ctx.source_text.clone());
+        let pairs = ctx.source_line_pairs();
+        let gloss_text = &all_glosses[0].gloss_text;
+        s.gloss_overlay.show_gloss_with_color(&ctx.source_text, gloss_text, s.scrolled_window.height(), Some(&s.theme.root_color), &pairs);
+        s.gloss_overlay.set_position(0, all_glosses.len());
+        s.gloss_list = all_glosses;
+        s.gloss_index = 0;
+        s.gloss_context = Some(ctx);
+        s.input_mode = crate::app::InputMode::GlossOverlay;
+        crate::logging::log("GLOSS: showing cached inner monologue");
+        return;
+    }
+
+    {
+        let mut s = state_rc.borrow_mut();
+        s.gloss_original_text = Some(ctx.source_text.clone());
+        s.gloss_overlay.show_loading();
+        s.input_mode = crate::app::InputMode::GlossOverlay;
+    }
+
+    let user_msg = crate::gloss::build_inner_monologue_message(&ctx, &scene_lines);
+    let state_for_result = std::rc::Rc::clone(state_rc);
+
+    glib::spawn_future_local(async move {
+        let result = tokio_handle
+            .spawn(async move {
+                crate::gloss::call_claude_with_prompt(
+                    crate::gloss::INNER_MONOLOGUE_PROMPT, &user_msg, &model,
+                ).await
+            })
+            .await;
+
+        match result {
+            Ok(Ok(gloss_text)) => {
+                if let Ok(conn) = crate::db::queries::open_db_rw() {
+                    let _ = crate::db::queries::save_gloss(
+                        &conn,
+                        &ctx.hash,
+                        &ctx.work_abbrev,
+                        &ctx.start_citation,
+                        &ctx.end_citation,
+                        ctx.act,
+                        ctx.scene,
+                        &ctx.speaker,
+                        &ctx.source_text,
+                        &gloss_text,
+                        "inner-monologue",
+                    );
+                }
+
+                let all = crate::db::queries::open_db()
+                    .ok()
+                    .and_then(|conn| {
+                        crate::db::queries::find_all_glosses(
+                            &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
+                            "inner-monologue",
+                        ).ok()
+                    })
+                    .unwrap_or_default();
+
+                let mut s = state_for_result.borrow_mut();
+                let h = s.scrolled_window.height();
+                let pairs = ctx.source_line_pairs();
+                s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &gloss_text, h, Some(&s.theme.root_color), &pairs);
+                s.gloss_overlay.set_position(0, all.len());
+                s.gloss_list = all;
+                s.gloss_index = 0;
+                s.gloss_context = Some(ctx);
+                crate::logging::log("GLOSS: generated and saved inner monologue");
+            }
+            Ok(Err(e)) => {
+                let s = state_for_result.borrow();
+                s.gloss_overlay.show(&format!("Error: {}", e), "");
+                crate::logging::log(&format!("GLOSS: inner monologue API error: {}", e));
+            }
+            Err(e) => {
+                crate::logging::log(&format!("GLOSS: inner monologue tokio join error: {}", e));
             }
         }
     });
