@@ -763,7 +763,7 @@ fn handle_echoes_overlay_key(
     if key_state.borrow().chord == ChordState::PendingG {
         key_state.borrow_mut().chord = ChordState::None;
         if key_name == "g" {
-            state.borrow().gloss_overlay.scroll_gloss_to_top();
+            crate::input::actions::echoes::select_first_echo(state);
         }
         return true;
     }
@@ -806,7 +806,7 @@ fn handle_echoes_overlay_key(
             true
         }
         "G" => {
-            state.borrow().gloss_overlay.scroll_gloss_to_bottom();
+            crate::input::actions::echoes::select_last_echo(state);
             true
         }
         "j" => {
