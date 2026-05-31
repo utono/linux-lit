@@ -90,6 +90,36 @@ fn cursor_turn(state: &AppState) -> Option<(Vec<Line>, String, String)> {
     Some((turn, speaker, addressee))
 }
 
+/// Clip a Visual selection's work-line index range to valid bounds and return
+/// the cloned lines. `start_wi`/`end_wi` are work-line indices (start <= end).
+fn selection_turn_lines(work_lines: &[Line], start_wi: usize, end_wi: usize) -> Vec<Line> {
+    if start_wi >= work_lines.len() {
+        return Vec::new();
+    }
+    let end = end_wi.min(work_lines.len().saturating_sub(1));
+    work_lines[start_wi..=end].to_vec()
+}
+
+/// Build an `EchoTurnKey` for an ad-hoc (possibly multi-turn, possibly
+/// multi-speaker) selection. The speaker label is the first selected line's
+/// speaker, falling back to "?" when absent. `turn_text` joins the selected
+/// line texts with spaces, matching the cursor-turn key format.
+fn selection_key(work_abbrev: &str, turn: &[Line]) -> crate::db::queries::EchoTurnKey {
+    let first = turn.first().expect("selection_key called with empty turn");
+    let last = turn.last().unwrap();
+    let speaker = first.speaker.clone().unwrap_or_else(|| "?".to_string());
+    let turn_text = turn.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join(" ");
+    crate::db::queries::EchoTurnKey {
+        work_abbrev: work_abbrev.to_string(),
+        div1: first.div1,
+        div2: first.div2,
+        start_line: first.line_in_div,
+        end_line: last.line_in_div,
+        speaker,
+        turn_text,
+    }
+}
+
 pub(crate) fn show_echoes_for_cursor_line(
     state_rc: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
@@ -785,5 +815,74 @@ fn switch_mpv_to_current_line(state_rc: &Rc<RefCell<AppState>>, line_id: i64, wa
     } else {
         let handle = state_rc.borrow().tokio_handle.clone();
         crate::input::actions::pickers::open_media_picker(state_rc, &handle);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::models::Line;
+
+    fn line(id: i64, speaker: Option<&str>, div1: i64, div2: i64, line_in_div: i64, text: &str) -> Line {
+        Line {
+            id,
+            citation: String::new(),
+            text: text.to_string(),
+            normalized: String::new(),
+            speaker: speaker.map(|s| s.to_string()),
+            is_dialogue: true,
+            timestamp: None,
+            div1,
+            div2,
+            line_in_div,
+            is_chapter: false,
+            is_spoken: None,
+        }
+    }
+
+    fn sample_work_lines() -> Vec<Line> {
+        vec![
+            line(10, Some("HAMLET"), 1, 2, 1, "To be, or not to be"),
+            line(11, Some("HAMLET"), 1, 2, 2, "that is the question"),
+            line(12, Some("OPHELIA"), 1, 2, 3, "Good my lord"),
+            line(13, Some("OPHELIA"), 1, 2, 4, "How does your honour"),
+            line(14, Some("HAMLET"), 1, 2, 5, "I humbly thank you"),
+        ]
+    }
+
+    #[test]
+    fn selection_turn_lines_clips_and_collects_range() {
+        let work = sample_work_lines();
+        let got = selection_turn_lines(&work, 1, 3);
+        let ids: Vec<i64> = got.iter().map(|l| l.id).collect();
+        assert_eq!(ids, vec![11, 12, 13]);
+    }
+
+    #[test]
+    fn selection_turn_lines_clamps_end_past_bounds() {
+        let work = sample_work_lines();
+        let got = selection_turn_lines(&work, 3, 999);
+        let ids: Vec<i64> = got.iter().map(|l| l.id).collect();
+        assert_eq!(ids, vec![13, 14]);
+    }
+
+    #[test]
+    fn selection_turn_lines_empty_when_start_past_end_of_work() {
+        let work = sample_work_lines();
+        assert!(selection_turn_lines(&work, 99, 100).is_empty());
+    }
+
+    #[test]
+    fn selection_key_uses_first_and_last_line_div_and_line_in_div() {
+        let work = sample_work_lines();
+        let turn = selection_turn_lines(&work, 1, 3);
+        let key = selection_key("HAM", &turn);
+        assert_eq!(key.work_abbrev, "HAM");
+        assert_eq!(key.div1, 1);
+        assert_eq!(key.div2, 2);
+        assert_eq!(key.start_line, 2);
+        assert_eq!(key.end_line, 4);
+        assert_eq!(key.speaker, "HAMLET");
+        assert_eq!(key.turn_text, "that is the question Good my lord How does your honour");
     }
 }
