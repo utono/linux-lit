@@ -1182,6 +1182,15 @@ pub fn toggle_echo_curated(conn: &Connection, link_id: i64) -> Result<bool, rusq
     )
 }
 
+/// Set a link's rank and curated flag.
+pub fn set_echo_link_rank(conn: &Connection, link_id: i64, rank: i64, curated: bool) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "UPDATE echo_links SET rank = ?2, curated = ?3 WHERE id = ?1",
+        rusqlite::params![link_id, rank, curated as i64],
+    )?;
+    Ok(())
+}
+
 /// Delete all non-curated links for a turn (used by refresh).
 pub fn delete_noncurated_echo_links(conn: &Connection, turn_id: i64) -> Result<(), rusqlite::Error> {
     conn.execute(
@@ -1241,6 +1250,27 @@ mod tests {
         // Wrong media or missing line -> None.
         assert_eq!(line_start_time(&conn, 42, 99), None);
         assert_eq!(line_start_time(&conn, 1, 7), None);
+    }
+
+    #[test]
+    fn set_echo_link_rank_updates_rank_and_curated() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE echo_links (
+                id INTEGER PRIMARY KEY, turn_id INTEGER, echo_work_abbrev TEXT,
+                echo_div1 INTEGER, echo_div2 INTEGER, echo_start_line INTEGER,
+                echo_text TEXT, similarity REAL, curated INTEGER, rank INTEGER
+             );
+             INSERT INTO echo_links (id, turn_id, echo_work_abbrev, echo_div1, echo_div2,
+                echo_start_line, echo_text, similarity, curated, rank)
+                VALUES (1, 7, 'Ham', 1, 1, 1, 'x', 0.0, 0, 5);",
+        ).unwrap();
+        set_echo_link_rank(&conn, 1, 2, true).unwrap();
+        let (rank, curated): (i64, i64) = conn.query_row(
+            "SELECT rank, curated FROM echo_links WHERE id = 1", [],
+            |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!(rank, 2);
+        assert_eq!(curated, 1);
     }
 
     #[test]
