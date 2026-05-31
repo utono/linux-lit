@@ -402,11 +402,35 @@ impl GlossOverlay {
             None => return,
         };
         let buffer = self.gloss_view.buffer();
-        if let Some(iter) = buffer.iter_at_line(line) {
-            let mark = buffer.create_mark(None, &iter, false);
-            self.gloss_view.scroll_to_mark(&mark, 0.1, false, 0.0, 0.3);
-            buffer.delete_mark(&mark);
-        }
+        let iter = match buffer.iter_at_line(line) {
+            Some(it) => it,
+            None => return,
+        };
+        // Scroll the ScrolledWindow's adjustment (the actual scroller) rather
+        // than the TextView's own — the view is sized to its full content, so
+        // gloss_view.scroll_to_mark is a no-op here. Bring the selected echo's
+        // quote line into view only when it's outside the visible band.
+        let (line_y, line_h) = self.gloss_view.line_yrange(&iter);
+        let top_margin = self.gloss_view.top_margin();
+        let line_top = (line_y + top_margin) as f64;
+        let line_bottom = line_top + line_h as f64;
+
+        let adj = self.gloss_scrolled.vadjustment();
+        let view_top = adj.value();
+        let view_bottom = view_top + adj.page_size();
+        let pad = 24.0;
+
+        let new_val = if line_top < view_top + pad {
+            // Above the fold — bring it near the top.
+            (line_top - pad).clamp(adj.lower(), adj.upper() - adj.page_size())
+        } else if line_bottom > view_bottom - pad {
+            // Below the fold — bring it near the bottom.
+            (line_bottom + pad - adj.page_size()).clamp(adj.lower(), adj.upper() - adj.page_size())
+        } else {
+            return; // Already visible — don't scroll.
+        };
+        adj.set_value(new_val);
+        self.bar_drawing.queue_draw();
     }
 
     pub fn show_synopsis(&self, title: &str, synopsis: &str, card_height: i32) {

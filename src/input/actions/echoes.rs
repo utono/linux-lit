@@ -616,9 +616,17 @@ pub(crate) fn move_echo_selection(state_rc: &Rc<RefCell<AppState>>, delta: i32) 
     sync_session(&mut s);
 }
 
-/// Move the accent-bar selection to the first echo (`gg`).
+/// Move the accent-bar selection to the first echo (`gg`) and scroll the
+/// viewport to the very top so the source turn's first line is visible.
 pub(crate) fn select_first_echo(state_rc: &Rc<RefCell<AppState>>) {
-    select_echo_index(state_rc, 0);
+    let mut s = state_rc.borrow_mut();
+    if s.echo_overlay_links.is_empty() {
+        return;
+    }
+    s.echo_overlay_index = 0;
+    render_echoes(&mut s);
+    s.gloss_overlay.scroll_gloss_to_top();
+    sync_session(&mut s);
 }
 
 /// Move the accent-bar selection to the last echo (`G`).
@@ -637,9 +645,6 @@ fn select_echo_index(state_rc: &Rc<RefCell<AppState>>, idx: usize) {
         return;
     }
     let new_idx = idx.min(len - 1);
-    if new_idx == s.echo_overlay_index {
-        return;
-    }
     s.echo_overlay_index = new_idx;
     render_echoes(&mut s);
     s.gloss_overlay.scroll_echo_into_view(new_idx);
