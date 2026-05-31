@@ -33,6 +33,8 @@ pub struct GlossOverlay {
     bar_x: Rc<RefCell<i32>>,
     line_numbers: Rc<RefCell<Vec<LineNumber>>>,
     echo_lines: Rc<RefCell<Vec<i32>>>,
+    echo_header_view: gtk4::TextView,
+    echo_rule: gtk4::Separator,
     text_margins: i32,
     column_width: i32,
 }
@@ -237,6 +239,26 @@ impl GlossOverlay {
 
         gloss_scroll_overlay.set_visible(false);
 
+        // Echoes-only: a fixed source-turn header + a fixed rule, above the
+        // scrolling echo list. Hidden in all non-echo overlay modes.
+        let echo_header_view = gtk4::TextView::new();
+        echo_header_view.set_editable(false);
+        echo_header_view.set_cursor_visible(false);
+        echo_header_view.set_focusable(false);
+        echo_header_view.set_wrap_mode(gtk4::WrapMode::Word);
+        echo_header_view.set_left_margin(text_margins as i32);
+        echo_header_view.set_right_margin(right_margin);
+        echo_header_view.set_top_margin(24);
+        echo_header_view.add_css_class("gloss-text");
+        echo_header_view.set_visible(false);
+        container.append(&echo_header_view);
+
+        let echo_rule = gtk4::Separator::new(gtk4::Orientation::Horizontal);
+        echo_rule.set_margin_start(text_margins as i32);
+        echo_rule.set_margin_end(right_margin);
+        echo_rule.set_visible(false);
+        container.append(&echo_rule);
+
         container.append(&gloss_scroll_overlay);
 
         let footer_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
@@ -286,6 +308,8 @@ impl GlossOverlay {
             bar_x,
             line_numbers,
             echo_lines,
+            echo_header_view,
+            echo_rule,
             text_margins: text_margins as i32,
             column_width: column_width as i32,
         }
