@@ -1218,6 +1218,31 @@ pub fn line_id_for_location(
     .ok()
 }
 
+/// Search every line whose canonical text contains `query` (case-insensitive),
+/// across all works. Returns (work_abbrev, div1, div2, line_in_div, text), capped.
+pub fn search_lines(conn: &Connection, query: &str, limit: i64)
+    -> Result<Vec<(String, i64, i64, i64, String)>, rusqlite::Error>
+{
+    let pattern = format!("%{}%", query);
+    let mut stmt = conn.prepare(
+        "SELECT work_abbrev, div1, div2, line_in_div, canonical_text \
+         FROM line_mapping \
+         WHERE canonical_text LIKE ?1 COLLATE NOCASE \
+         ORDER BY work_abbrev, div1, div2, line_in_div \
+         LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![pattern, limit], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+            row.get::<_, Option<i64>>(2)?.unwrap_or(0),
+            row.get::<_, i64>(3)?,
+            row.get::<_, String>(4)?,
+        ))
+    })?;
+    rows.collect()
+}
+
 /// Look up a single line's start time for a given media file. Returns None when
 /// no timestamp row exists for that (line, media) pair.
 pub fn line_start_time(conn: &Connection, line_id: i64, media_id: i64) -> Option<f64> {
@@ -1234,6 +1259,27 @@ pub fn line_start_time(conn: &Connection, line_id: i64, media_id: i64) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_lines_matches_substring_case_insensitive_with_limit() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE line_mapping (
+                id INTEGER PRIMARY KEY, work_abbrev TEXT, canonical_text TEXT,
+                div1 INTEGER, div2 INTEGER, line_in_div INTEGER
+             );
+             INSERT INTO line_mapping (id, work_abbrev, canonical_text, div1, div2, line_in_div) VALUES
+                (1, 'Ham', 'To be, or not to be', 3, 1, 56),
+                (2, 'Mac', 'Tomorrow and tomorrow', 5, 5, 19),
+                (3, 'Lr',  'Nothing will come of nothing', 1, 1, 92);",
+        ).unwrap();
+        let hits = search_lines(&conn, "TOMORROW", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0], ("Mac".to_string(), 5, 5, 19, "Tomorrow and tomorrow".to_string()));
+        let all = search_lines(&conn, "o", 2).unwrap();
+        assert_eq!(all.len(), 2);
+        assert!(search_lines(&conn, "zzzz", 10).unwrap().is_empty());
+    }
 
     #[test]
     fn line_start_time_reads_stored_value() {
