@@ -536,13 +536,14 @@ fn build_source_header(turn: &[Line], speaker: &str) -> String {
 /// Render the echoes document (source header + echo list) into the gloss
 /// overlay, highlighting the selected echo. Curated echoes get a ★ marker.
 fn render_echoes(s: &mut AppState) {
-    let mut doc = s.echo_overlay_source.clone();
+    let source_doc = s.echo_overlay_source.clone();
+    let mut echo_doc = String::new();
     for link in &s.echo_overlay_links {
         let title = s.echo_overlay_titles.get(&link.echo_work_abbrev)
             .cloned()
             .unwrap_or_else(|| link.echo_work_abbrev.clone());
         let star = if link.curated { "★ " } else { "" };
-        doc.push_str(&format!(
+        echo_doc.push_str(&format!(
             "<gloss>[{}\"{}\" — {} {}.{}]</gloss>\n",
             star, link.echo_text, title, link.echo_div1, link.echo_div2
         ));
@@ -551,7 +552,7 @@ fn render_echoes(s: &mut AppState) {
     let h = s.scrolled_window.height();
     let root = s.theme.root_color.clone();
     let dim = s.theme.dim_fg.clone();
-    s.gloss_overlay.show_echoes(&doc, h, Some(&root), Some(&dim), s.echo_overlay_index);
+    s.gloss_overlay.show_echoes(&source_doc, &echo_doc, h, Some(&root), Some(&dim), s.echo_overlay_index);
 }
 
 /// Persist the search candidates as echo links for the turn, then read them
