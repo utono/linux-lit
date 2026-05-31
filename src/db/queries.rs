@@ -1209,9 +1209,39 @@ pub fn line_id_for_location(
     .ok()
 }
 
+/// Look up a single line's start time for a given media file. Returns None when
+/// no timestamp row exists for that (line, media) pair.
+pub fn line_start_time(conn: &Connection, line_id: i64, media_id: i64) -> Option<f64> {
+    conn.query_row(
+        "SELECT start_time FROM line_timestamps \
+         WHERE line_mapping_id = ?1 AND media_id = ?2",
+        rusqlite::params![line_id, media_id],
+        |row| row.get::<_, Option<f64>>(0),
+    )
+    .ok()
+    .flatten()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn line_start_time_reads_stored_value() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE line_timestamps (
+                line_mapping_id INTEGER, media_id INTEGER, start_time REAL
+             );
+             INSERT INTO line_timestamps (line_mapping_id, media_id, start_time)
+                VALUES (42, 7, 123.5);",
+        )
+        .unwrap();
+        assert_eq!(line_start_time(&conn, 42, 7), Some(123.5));
+        // Wrong media or missing line -> None.
+        assert_eq!(line_start_time(&conn, 42, 99), None);
+        assert_eq!(line_start_time(&conn, 1, 7), None);
+    }
 
     #[test]
     fn test_open_db() {
