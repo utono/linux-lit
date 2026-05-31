@@ -875,7 +875,11 @@ pub fn build_window(
     let search_bar = SearchBar::new();
 
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-    vbox.append(&authorship_picker.overlay);
+    // echo_line_picker is the outermost picker overlay (it wraps
+    // authorship_picker.overlay), so append IT to vbox — appending the now-nested
+    // authorship_picker.overlay would orphan the picker subtree and collapse the
+    // reader layout (scrolled_window height stuck at 0).
+    vbox.append(&echo_line_picker.overlay);
     vbox.append(&search_bar.container);
 
     concordance_bar.container.set_valign(gtk4::Align::End);
