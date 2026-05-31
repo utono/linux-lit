@@ -297,6 +297,8 @@ impl GlossOverlay {
         self.corr_header.set_visible(true);
         self.corrected_label.set_visible(true);
         self.gloss_scroll_overlay.set_visible(false);
+        self.echo_header_view.set_visible(false);
+        self.echo_rule.set_visible(false);
         self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
@@ -320,6 +322,8 @@ impl GlossOverlay {
         self.original_label.set_visible(false);
         self.corr_header.set_visible(false);
         self.corrected_label.set_visible(false);
+        self.echo_header_view.set_visible(false);
+        self.echo_rule.set_visible(false);
 
         if let Some(color) = root_color {
             if let Some((r, g, b)) = parse_hex_color(color) {
@@ -460,6 +464,8 @@ impl GlossOverlay {
         self.corr_header.set_visible(false);
         self.corrected_label.set_visible(false);
         self.position_label.set_visible(false);
+        self.echo_header_view.set_visible(false);
+        self.echo_rule.set_visible(false);
 
         *self.bar_ranges.borrow_mut() = Vec::new();
         *self.line_numbers.borrow_mut() = Vec::new();
@@ -493,6 +499,8 @@ impl GlossOverlay {
         self.corr_header.set_visible(false);
         self.corrected_label.set_visible(false);
         self.gloss_scroll_overlay.set_visible(false);
+        self.echo_header_view.set_visible(false);
+        self.echo_rule.set_visible(false);
         self.position_label.set_visible(false);
         self.hint.set_visible(false);
         self.scrim.set_visible(false);
