@@ -874,14 +874,16 @@ pub(crate) fn refresh_add_echo_search(state_rc: &Rc<RefCell<AppState>>) {
 /// the top of the rankings (or promote an existing matching echo), then return
 /// to the echoes overlay.
 pub(crate) fn confirm_add_echo(state_rc: &Rc<RefCell<AppState>>) {
-    let hit = match state_rc.borrow().echo_line_picker.selected_hit() {
+    let hit = state_rc.borrow().echo_line_picker.selected_hit();
+    let hit = match hit {
         Some(h) => h,
         None => {
             cancel_add_echo(state_rc);
             return;
         }
     };
-    let turn_id = match state_rc.borrow().echo_add_turn_id {
+    let turn_id = state_rc.borrow().echo_add_turn_id;
+    let turn_id = match turn_id {
         Some(id) => id,
         None => {
             cancel_add_echo(state_rc);
