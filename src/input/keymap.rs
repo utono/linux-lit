@@ -783,11 +783,11 @@ fn handle_echoes_overlay_key(
     }
     match key_name {
         "n" => {
-            crate::input::actions::echoes::move_echo_selection(state, 1);
+            crate::input::actions::echoes::move_echo_selection(state, 1, tokio_handle);
             true
         }
         "p" => {
-            crate::input::actions::echoes::move_echo_selection(state, -1);
+            crate::input::actions::echoes::move_echo_selection(state, -1, tokio_handle);
             true
         }
         "Return" => {

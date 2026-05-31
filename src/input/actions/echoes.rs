@@ -600,20 +600,29 @@ fn sync_session(s: &mut AppState) {
     }
 }
 
-pub(crate) fn move_echo_selection(state_rc: &Rc<RefCell<AppState>>, delta: i32) {
-    let mut s = state_rc.borrow_mut();
-    let len = s.echo_overlay_links.len();
-    if len == 0 {
-        return;
+pub(crate) fn move_echo_selection(
+    state_rc: &Rc<RefCell<AppState>>,
+    delta: i32,
+    tokio_handle: &tokio::runtime::Handle,
+) {
+    {
+        let mut s = state_rc.borrow_mut();
+        let len = s.echo_overlay_links.len();
+        if len == 0 {
+            return;
+        }
+        let new_idx = ((s.echo_overlay_index as i32 + delta).rem_euclid(len as i32)) as usize;
+        if new_idx == s.echo_overlay_index {
+            return;
+        }
+        s.echo_overlay_index = new_idx;
+        render_echoes(&mut s);
+        s.gloss_overlay.scroll_echo_into_view(new_idx);
+        sync_session(&mut s);
     }
-    let new_idx = ((s.echo_overlay_index as i32 + delta).rem_euclid(len as i32)) as usize;
-    if new_idx == s.echo_overlay_index {
-        return;
-    }
-    s.echo_overlay_index = new_idx;
-    render_echoes(&mut s);
-    s.gloss_overlay.scroll_echo_into_view(new_idx);
-    sync_session(&mut s);
+    // n/p audition the echo they move to. The borrow above is dropped first so
+    // play_selected_echo can borrow state itself.
+    play_selected_echo(state_rc, tokio_handle);
 }
 
 /// Move the accent-bar selection to the first echo (`gg`) and scroll the
