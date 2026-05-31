@@ -343,14 +343,24 @@ impl GlossOverlay {
         self.container.set_visible(true);
     }
 
-    /// Render the echoes document (source turn + echo list), highlighting the
-    /// selected echo. Used by the "show echoes" (`I`) feature.
-    pub fn show_echoes(&self, doc: &str, card_height: i32, root_color: Option<&str>, dim_color: Option<&str>, selected: usize) {
+    /// Render the echoes overlay: a fixed source-turn header + rule, above the
+    /// scrolling echo list. `source_doc` is the <speaker>/<verse> turn; `echo_doc`
+    /// is only the <gloss> lines.
+    pub fn show_echoes(
+        &self,
+        source_doc: &str,
+        echo_doc: &str,
+        card_height: i32,
+        root_color: Option<&str>,
+        dim_color: Option<&str>,
+        selected: usize,
+    ) {
         self.container.set_height_request(card_height);
         self.title.set_visible(false);
         let left = self.column_width / 8;
         self.title.set_margin_start(left);
         self.gloss_view.set_left_margin(left);
+        self.echo_header_view.set_left_margin(left);
         self.hint.set_text("Esc close · a play echo · Tab play turn · n/p select · Enter open work · c copy · s curate · R refresh");
         self.orig_header.set_visible(false);
         self.original_label.set_visible(false);
@@ -366,20 +376,28 @@ impl GlossOverlay {
         let bar_left = self.column_width / 8;
         *self.bar_x.borrow_mut() = bar_left;
 
+        // Fixed header: render the source turn into the non-scrolling view.
+        // Reuse populate_gloss_buffer_ex (it builds the speaker/verse tags and
+        // returns empty bar data for a source-only doc).
+        let _ = populate_gloss_buffer_ex(
+            &self.echo_header_view, source_doc, self.text_margins, bar_left, &[], None, dim_color);
+        self.echo_header_view.set_visible(true);
+        self.echo_rule.set_visible(true);
+
+        // Scrolling list: only the echoes. echo_lines/bar_ranges are now indexed
+        // from the first echo (no source lines to offset past).
         let (ranges, nums, echo_lines) = populate_gloss_buffer_ex(
-            &self.gloss_view, doc, self.text_margins, bar_left, &[], Some(selected), dim_color);
+            &self.gloss_view, echo_doc, self.text_margins, bar_left, &[], Some(selected), dim_color);
         *self.bar_ranges.borrow_mut() = ranges;
         *self.line_numbers.borrow_mut() = nums;
         *self.echo_lines.borrow_mut() = echo_lines;
-        // Repaint the bar overlay AFTER GTK has laid out the just-rebuilt
-        // buffer. Drawing synchronously here reads stale per-line geometry
-        // (iter_location/line_yrange return pre-layout y), which placed the
-        // accent bar and rule off-screen or with negative height. Defer to
-        // idle so layout settles first.
+        // Repaint the bar overlay after GTK lays out the rebuilt buffer (drawing
+        // synchronously reads stale per-line geometry).
         let bar = self.bar_drawing.clone();
         glib::idle_add_local_once(move || bar.queue_draw());
 
         self.gloss_scroll_overlay.set_visible(true);
+        self.gloss_scrolled.vadjustment().set_value(0.0);
         self.hint.set_visible(true);
         self.scrim.set_visible(false);
         self.container.set_visible(true);
