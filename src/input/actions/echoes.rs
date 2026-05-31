@@ -515,10 +515,19 @@ fn first_sentence(passage: &str) -> String {
         .join(" ")
 }
 
-/// Build the `<speaker>`/`<verse>` header for the source turn.
+/// Build the `<speaker>`/`<verse>` header for the source turn. Emits a
+/// `<speaker>` tag at the start and again whenever the speaker changes, so a
+/// multi-speaker selection attributes each run to its own speaker. Lines
+/// without their own speaker fall back to `speaker` and do not start a new run.
 fn build_source_header(turn: &[Line], speaker: &str) -> String {
-    let mut doc = format!("<speaker>{}</speaker>\n", speaker.to_uppercase());
+    let mut doc = String::new();
+    let mut current: Option<String> = None;
     for line in turn {
+        let label = line.speaker.as_deref().unwrap_or(speaker).to_uppercase();
+        if current.as_deref() != Some(label.as_str()) {
+            doc.push_str(&format!("<speaker>{}</speaker>\n", label));
+            current = Some(label);
+        }
         doc.push_str(&format!("<verse>{}</verse>\n", line.text));
     }
     doc
@@ -1061,5 +1070,62 @@ mod tests {
         assert_eq!(key.end_line, 4);
         assert_eq!(key.speaker, "HAMLET");
         assert_eq!(key.turn_text, "that is the question Good my lord How does your honour");
+    }
+
+    #[test]
+    fn source_header_single_speaker_emits_one_tag() {
+        // Regression guard: a single-speaker turn must render exactly one
+        // <speaker> tag above all verse lines, unchanged from prior behavior.
+        let turn = vec![
+            line(10, Some("HAMLET"), 1, 2, 1, "To be, or not to be"),
+            line(11, Some("HAMLET"), 1, 2, 2, "that is the question"),
+        ];
+        let doc = build_source_header(&turn, "Hamlet");
+        assert_eq!(
+            doc,
+            "<speaker>HAMLET</speaker>\n\
+             <verse>To be, or not to be</verse>\n\
+             <verse>that is the question</verse>\n"
+        );
+    }
+
+    #[test]
+    fn source_header_multi_speaker_emits_tag_per_run() {
+        // A selection spanning multiple speakers must emit a <speaker> tag at
+        // each change of speaker, not a single label over everything.
+        let turn = vec![
+            line(11, Some("HAMLET"), 1, 2, 2, "that is the question"),
+            line(12, Some("OPHELIA"), 1, 2, 3, "Good my lord"),
+            line(13, Some("OPHELIA"), 1, 2, 4, "How does your honour"),
+            line(14, Some("HAMLET"), 1, 2, 5, "I humbly thank you"),
+        ];
+        let doc = build_source_header(&turn, "Hamlet");
+        assert_eq!(
+            doc,
+            "<speaker>HAMLET</speaker>\n\
+             <verse>that is the question</verse>\n\
+             <speaker>OPHELIA</speaker>\n\
+             <verse>Good my lord</verse>\n\
+             <verse>How does your honour</verse>\n\
+             <speaker>HAMLET</speaker>\n\
+             <verse>I humbly thank you</verse>\n"
+        );
+    }
+
+    #[test]
+    fn source_header_lines_without_speaker_use_fallback_label() {
+        // Lines whose own speaker is None fall back to the passed label and do
+        // not introduce a spurious extra <speaker> tag mid-run.
+        let turn = vec![
+            line(10, None, 1, 2, 1, "A stage direction perhaps"),
+            line(11, None, 1, 2, 2, "still no speaker"),
+        ];
+        let doc = build_source_header(&turn, "Hamlet");
+        assert_eq!(
+            doc,
+            "<speaker>HAMLET</speaker>\n\
+             <verse>A stage direction perhaps</verse>\n\
+             <verse>still no speaker</verse>\n"
+        );
     }
 }
