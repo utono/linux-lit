@@ -47,7 +47,7 @@ sqlite3 ~/utono/litdb/data/lit.db "SELECT passage_type, COUNT(*) FROM passage_em
 ```
 
 Expect ~29.5k `turn` rows and ~28.8k `exchange` rows. Each embedding blob
-is 4096 bytes (1024 little-endian f32 values for `voyage-3-large`).
+is 4096 bytes (1024 little-endian f32 values for `voyage-4-large`).
 
 ## When to Rebuild
 

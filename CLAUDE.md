@@ -62,7 +62,13 @@ cargo clippy
 
 ## Keyboard Layout
 
-The user's keyboard layout is Real Programmers Dvorak, defined in `~/utono/rpd`. Keys like `[` and `{` are on separate physical keys (not shift-related). Check the layout when adding keybinds.
+The user's keyboard layout is Real Programmers Dvorak (RPD), defined in
+`~/utono/rpd`. **Always check `~/utono/rpd` when adding or changing keybinds** —
+on RPD, characters like `[`, `{`, `(`, and `4` may sit on separate physical
+keys (not shift-related), and the GTK key name a physical key emits is not
+always obvious from the character. Consult the layout there to map a character
+to its physical key and the GTK key name to use in `keymap_config.rs` /
+`keymap.json` (e.g. `(` → `parenleft`, `'` → `apostrophe`).
 
 ## Searching for Keybinds
 

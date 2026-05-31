@@ -16,7 +16,7 @@ from collections import defaultdict
 import voyageai
 
 DB_PATH = os.path.expanduser("~/utono/litdb/data/lit.db")
-MODEL = "voyage-3-large"
+MODEL = "voyage-4-large"
 BATCH_SIZE = 20
 MIN_WORDS = 4
 

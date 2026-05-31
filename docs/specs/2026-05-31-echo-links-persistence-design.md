@@ -158,3 +158,72 @@ New `AppState` fields:
 - **Curated echo no longer in corpus:** a curated link's `echo_text` is stored
   verbatim, so it displays even if the underlying passage is gone. Acceptable —
   it is a saved reference.
+
+---
+
+## Updates Since Initial Design
+
+The persistence feature shipped as designed, then gained jump navigation and
+turn looping. Changes from the design above:
+
+### Trigger key
+
+The echoes overlay opens on **`i`** (lowercase), not `I`. The binds settled as:
+- **`i`** → `ShowEchoes` (open the echoes overlay for the cursor turn)
+- **`I`** → `ReopenEchoes` (return to the turn's work and reopen the overlay)
+- **`alt+i`** → `ToggleTranslations`
+- (`SetEndTime`, formerly `alt+i`, moved to `alt+u`.)
+
+### Schema details
+
+- `echo_turns` UNIQUE is `(work_abbrev, div1, div2, start_line, end_line)`
+  (div1/div2 included — line ranges repeat across scenes).
+- `echo_links` gained an **`echo_start_line INTEGER`** column (added via a
+  guarded `ALTER TABLE … ADD COLUMN` migration in `ensure_echo_tables`). It
+  stores the echo's `line_in_div`, needed to resolve the echoed line for jump
+  navigation. `StoredEchoLink` carries `echo_start_line`; `insert_echo_links`
+  takes a 7-tuple `(work, div1, div2, start_line, text, similarity, rank)`.
+
+### Keys in the Echoes Overlay (final)
+
+- **Ctrl+n / Ctrl+p** — move selection
+- **Enter** — open the selected echo's work, cursor on the echoed line
+  (was: copy). MPV switches to that work's Arkangel media and seeks to the
+  line, preserving play/pause state.
+- **c** — copy selected echo to clipboard (moved off Enter)
+- **Tab** — toggle play/pause; first play sets an AB-loop over the turn's
+  audio range so the turn loops while the overlay is open
+- **s** — toggle curated (★)
+- **R** — refresh (re-search, overwrite non-curated, keep curated)
+- **j / k / g / G** — scroll
+- **Esc** — close, clear any turn AB-loop, **keep the echo session** (so `I`
+  can return)
+
+### Jump navigation + sticky `EchoSession`
+
+A separate change (see `2026-05-31-echo-jump-navigation-design.md`) turned this
+into hub-and-spoke navigation:
+
+- **Enter** jumps from an echo into its work at the echoed line (reusing the
+  concordance cross-work load: `save_position`, `skip_mpv_discovery`,
+  `display_work_at_with_prepared`), and switches MPV to that work's media.
+- **`I`** (ReopenEchoes) returns to the turn's origin work + line and reopens
+  the overlay restored from a sticky `EchoSession`.
+- `AppState.echo_session: Option<EchoSession>` retains the turn key, links,
+  selected index, titles, source doc, and origin work + line id. Set on `i`,
+  mutated by `s`/`R`/selection, kept across work-switches and Esc, replaced
+  only by the next `i`.
+
+### MPV play/pause preservation
+
+A new `MpvCommand::LoadFileSeekPaused(path, seek)` loads + seeks but stays
+paused (vs. `LoadFileAndSeek` which resumes). The client's
+`pending_seek_after_load` now carries `(seek_time, resume)`. On jump/return,
+the prior `mpv_playing` state is captured and the matching command is used.
+
+### Turn looping (Tab)
+
+`toggle_echo_playback` (Tab) sets an AB-loop over the turn's first-line-start →
+last-line-end timestamps (with preroll), seeks to the loop start, and plays;
+subsequent Tabs pause. Esc clears the loop via `MpvCommand::ClearAbLoop`. Only
+loops when on the turn's work; otherwise a plain play/pause toggle.

@@ -1,0 +1,777 @@
+//! "Show echoes" feature: press `I` on a line to see cross-work passages
+//! that echo the meaning of the cursor line's speaker turn, rendered in the
+//! gloss overlay card. Read-only reference — no gloss is created.
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use gtk4::prelude::*;
+
+use crate::app::AppState;
+use crate::db::models::Line;
+use crate::db::queries::{EchoTurnKey, StoredEchoLink};
+
+/// A sticky echo session, retained so `alt+i` can return to the turn's work
+/// and reopen the overlay after the user jumps into an echo's work. Replaced
+/// only when the user presses `I` on a new line.
+#[derive(Clone)]
+pub struct EchoSession {
+    pub turn_key: EchoTurnKey,
+    pub turn_id: Option<i64>,
+    pub links: Vec<StoredEchoLink>,
+    pub selected: usize,
+    pub titles: std::collections::HashMap<String, String>,
+    pub source_doc: String,
+    pub origin_work: String,
+    pub origin_line_id: i64,
+}
+
+/// Gather the speaker turn containing the cursor line: the contiguous block
+/// of lines by the same speaker. Returns the turn's lines and the inferred
+/// addressee (next different speaker in the scene).
+fn cursor_turn(state: &AppState) -> Option<(Vec<Line>, String, String)> {
+    let work = state.current_work.as_ref()?;
+    let work_idx = state.work_line_for_buffer(state.current_line)?;
+    let cursor = work.lines.get(work_idx)?;
+    let speaker = cursor.speaker.clone()?;
+
+    let (div1, div2) = (cursor.div1, cursor.div2);
+
+    // Expand backward and forward over the same speaker within the scene.
+    let mut start = work_idx;
+    while start > 0 {
+        let prev = &work.lines[start - 1];
+        if prev.div1 == div1 && prev.div2 == div2 && prev.speaker.as_deref() == Some(speaker.as_str()) {
+            start -= 1;
+        } else {
+            break;
+        }
+    }
+    let mut end = work_idx;
+    while end + 1 < work.lines.len() {
+        let next = &work.lines[end + 1];
+        if next.div1 == div1 && next.div2 == div2 && next.speaker.as_deref() == Some(speaker.as_str()) {
+            end += 1;
+        } else {
+            break;
+        }
+    }
+
+    let turn: Vec<Line> = work.lines[start..=end].to_vec();
+
+    // Addressee: next different speaker after the turn within the scene,
+    // else the previous different speaker.
+    let mut addressee = String::from("?");
+    for line in work.lines[end + 1..].iter() {
+        if line.div1 != div1 || line.div2 != div2 {
+            break;
+        }
+        if let Some(s) = &line.speaker {
+            if s != &speaker {
+                addressee = s.clone();
+                break;
+            }
+        }
+    }
+    if addressee == "?" {
+        for line in work.lines[..start].iter().rev() {
+            if line.div1 != div1 || line.div2 != div2 {
+                break;
+            }
+            if let Some(s) = &line.speaker {
+                if s != &speaker {
+                    addressee = s.clone();
+                    break;
+                }
+            }
+        }
+    }
+
+    Some((turn, speaker, addressee))
+}
+
+pub(crate) fn show_echoes_for_cursor_line(
+    state_rc: &Rc<RefCell<AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+) {
+    let (turn, speaker, addressee, source_work) = {
+        let s = state_rc.borrow();
+        let (turn, speaker, addressee) = match cursor_turn(&s) {
+            Some(t) => t,
+            None => {
+                crate::logging::log("ECHOES: cursor line has no speaker turn");
+                return;
+            }
+        };
+        let work = match s.current_work.as_ref() {
+            Some(w) => w.abbrev.clone(),
+            None => return,
+        };
+        (turn, speaker, addressee, work)
+    };
+
+    let turn_text = turn.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join(" ");
+
+    // Build the turn cache key from the first/last line of the turn.
+    let key = {
+        let first = turn.first().unwrap();
+        let last = turn.last().unwrap();
+        crate::db::queries::EchoTurnKey {
+            work_abbrev: source_work.clone(),
+            div1: first.div1,
+            div2: first.div2,
+            start_line: first.line_in_div,
+            end_line: last.line_in_div,
+            speaker: speaker.clone(),
+            turn_text: turn_text.clone(),
+        }
+    };
+
+    // Cache hit: load stored links and render immediately, no API call.
+    let cached = crate::db::queries::open_db().ok().and_then(|conn| {
+        let turn_id = crate::db::queries::find_echo_turn(&conn, &key).ok().flatten()?;
+        let links = crate::db::queries::load_echo_links(&conn, turn_id).ok()?;
+        if links.is_empty() { None } else { Some((turn_id, links)) }
+    });
+
+    let origin_line_id = turn.first().map(|l| l.id).unwrap_or(0);
+
+    if let Some((turn_id, links)) = cached {
+        let titles = crate::db::queries::open_db()
+            .ok()
+            .and_then(|conn| crate::db::queries::load_work_titles(&conn).ok())
+            .unwrap_or_default();
+        let source_doc = build_source_header(&turn, &speaker);
+        let mut s = state_rc.borrow_mut();
+        s.echo_overlay_source = source_doc.clone();
+        s.echo_overlay_links = links.clone();
+        s.echo_overlay_index = 0;
+        s.echo_overlay_titles = titles.clone();
+        s.echo_overlay_turn_id = Some(turn_id);
+        s.echo_overlay_turn_key = Some(key.clone());
+        s.echo_session = Some(EchoSession {
+            turn_key: key,
+            turn_id: Some(turn_id),
+            links,
+            selected: 0,
+            titles,
+            source_doc,
+            origin_work: source_work.clone(),
+            origin_line_id,
+        });
+        s.input_mode = crate::app::InputMode::EchoesOverlay;
+        render_echoes(&mut s);
+        crate::logging::log("ECHOES: showing cached echoes");
+        return;
+    }
+
+    let query = format!("{} to {}: {}", speaker, addressee, turn_text);
+    let key_for_async = key.clone();
+
+    {
+        let mut s = state_rc.borrow_mut();
+        s.echo_overlay_turn_key = Some(key);
+        s.gloss_overlay.show_loading_message("Searching for echoes...");
+        s.input_mode = crate::app::InputMode::EchoesOverlay;
+    }
+
+    let state_for_result = Rc::clone(state_rc);
+    let echo_handle = tokio_handle.clone();
+
+    glib::spawn_future_local(async move {
+        let embed_result = echo_handle
+            .spawn(async move { crate::voyage::embed_query(&query).await })
+            .await;
+
+        let raw = match embed_result {
+            Ok(Ok(embedding)) => crate::db::queries::open_db()
+                .ok()
+                .and_then(|conn| {
+                    // Over-fetch; dedup by displayed first line removes some.
+                    crate::db::queries::find_similar_passages(&conn, &embedding, &source_work, 60).ok()
+                })
+                .unwrap_or_default(),
+            Ok(Err(e)) => {
+                crate::logging::log(&format!("ECHOES: embed error: {}", e));
+                Vec::new()
+            }
+            Err(e) => {
+                crate::logging::log(&format!("ECHOES: embed join error: {}", e));
+                Vec::new()
+            }
+        };
+
+        // Dedup by the displayed first line (keep highest-similarity instance),
+        // cap at 15.
+        let mut seen = std::collections::HashSet::new();
+        let mut candidates = Vec::new();
+        for cand in raw {
+            let key = first_sentence(&cand.passage_text).to_lowercase();
+            if key.is_empty() || !seen.insert(key) {
+                continue;
+            }
+            candidates.push(cand);
+            if candidates.len() >= 15 {
+                break;
+            }
+        }
+
+        if candidates.is_empty() {
+            let s = state_for_result.borrow();
+            s.gloss_overlay.show("No echoes found for this line.", "");
+            crate::logging::log("ECHOES: no candidates");
+            return;
+        }
+
+        let titles = crate::db::queries::open_db()
+            .ok()
+            .and_then(|conn| crate::db::queries::load_work_titles(&conn).ok())
+            .unwrap_or_default();
+
+        // Order by work title, then act.scene — group echoes from the same work.
+        candidates.sort_by(|a, b| {
+            let ta = titles.get(&a.work_abbrev).map(|s| s.as_str()).unwrap_or(a.work_abbrev.as_str());
+            let tb = titles.get(&b.work_abbrev).map(|s| s.as_str()).unwrap_or(b.work_abbrev.as_str());
+            ta.cmp(tb)
+                .then(a.div1.cmp(&b.div1))
+                .then(a.div2.cmp(&b.div2))
+        });
+
+        // Persist: save the turn and its echo links, then read them back as
+        // StoredEchoLinks (so the cache-hit and cache-miss render paths match).
+        let (turn_id, links) = persist_and_load(&key_for_async, &candidates);
+
+        let mut s = state_for_result.borrow_mut();
+        let source_doc = build_source_header(&turn, &speaker);
+        s.echo_overlay_links = links.clone();
+        s.echo_overlay_index = 0;
+        s.echo_overlay_titles = titles.clone();
+        s.echo_overlay_source = source_doc.clone();
+        s.echo_overlay_turn_id = turn_id;
+        s.echo_session = Some(EchoSession {
+            turn_key: key_for_async.clone(),
+            turn_id,
+            links,
+            selected: 0,
+            titles,
+            source_doc,
+            origin_work: source_work.clone(),
+            origin_line_id,
+        });
+        render_echoes(&mut s);
+        crate::logging::log("ECHOES: searched and cached echoes");
+    });
+}
+
+/// Extract the first complete sentence from a passage, PRESERVING the
+/// original verse line breaks. Accumulate lines until one ends a sentence
+/// (. ? !), truncating that final line at the punctuation.
+fn first_sentence_verse(passage: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    for line in passage.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        // Does this line contain a sentence end?
+        let mut cut = None;
+        for (i, ch) in line.char_indices() {
+            if matches!(ch, '.' | '?' | '!') {
+                cut = Some(i + ch.len_utf8());
+                break;
+            }
+        }
+        if let Some(c) = cut {
+            out.push(line[..c].trim().to_string());
+            break;
+        } else {
+            out.push(line.to_string());
+        }
+    }
+    out.join("\n")
+}
+
+/// Single-line form of the first sentence (line breaks collapsed to spaces),
+/// for dedup keys and clipboard copy.
+fn first_sentence(passage: &str) -> String {
+    first_sentence_verse(passage)
+        .lines()
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Build the `<speaker>`/`<verse>` header for the source turn.
+fn build_source_header(turn: &[Line], speaker: &str) -> String {
+    let mut doc = format!("<speaker>{}</speaker>\n", speaker.to_uppercase());
+    for line in turn {
+        doc.push_str(&format!("<verse>{}</verse>\n", line.text));
+    }
+    doc
+}
+
+/// Render the echoes document (source header + echo list) into the gloss
+/// overlay, highlighting the selected echo. Curated echoes get a ★ marker.
+fn render_echoes(s: &mut AppState) {
+    let mut doc = s.echo_overlay_source.clone();
+    for link in &s.echo_overlay_links {
+        let title = s.echo_overlay_titles.get(&link.echo_work_abbrev)
+            .cloned()
+            .unwrap_or_else(|| link.echo_work_abbrev.clone());
+        let star = if link.curated { "★ " } else { "" };
+        doc.push_str(&format!(
+            "<gloss>[{}\"{}\" — {} {}.{}]</gloss>\n",
+            star, link.echo_text, title, link.echo_div1, link.echo_div2
+        ));
+    }
+
+    let h = s.scrolled_window.height();
+    let root = s.theme.root_color.clone();
+    s.gloss_overlay.show_echoes(&doc, h, Some(&root), s.echo_overlay_index);
+}
+
+/// Persist the search candidates as echo links for the turn, then read them
+/// back (so display order is the stored, curated-first order).
+fn persist_and_load(
+    key: &crate::db::queries::EchoTurnKey,
+    candidates: &[crate::db::queries::EchoCandidate],
+) -> (Option<i64>, Vec<crate::db::queries::StoredEchoLink>) {
+    let conn = match crate::db::queries::open_db_rw() {
+        Ok(c) => c,
+        Err(_) => return (None, Vec::new()),
+    };
+    let turn_id = match crate::db::queries::save_echo_turn(&conn, key) {
+        Ok(id) => id,
+        Err(_) => return (None, Vec::new()),
+    };
+    let rows: Vec<(String, i64, i64, i64, String, f32, i64)> = candidates
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            (
+                c.work_abbrev.clone(),
+                c.div1,
+                c.div2,
+                c.start_line,
+                first_sentence_verse(&c.passage_text),
+                c.similarity,
+                i as i64,
+            )
+        })
+        .collect();
+    let _ = crate::db::queries::insert_echo_links(&conn, turn_id, &rows);
+    let links = crate::db::queries::load_echo_links(&conn, turn_id).unwrap_or_default();
+    (Some(turn_id), links)
+}
+
+/// Copy the active overlay state into the sticky session so a later alt+i
+/// restores the current links/selection.
+fn sync_session(s: &mut AppState) {
+    if let Some(sess) = s.echo_session.as_mut() {
+        sess.links = s.echo_overlay_links.clone();
+        sess.selected = s.echo_overlay_index;
+        sess.titles = s.echo_overlay_titles.clone();
+        sess.source_doc = s.echo_overlay_source.clone();
+        sess.turn_id = s.echo_overlay_turn_id;
+    }
+}
+
+pub(crate) fn move_echo_selection(state_rc: &Rc<RefCell<AppState>>, delta: i32) {
+    let mut s = state_rc.borrow_mut();
+    let len = s.echo_overlay_links.len();
+    if len == 0 {
+        return;
+    }
+    let new_idx = ((s.echo_overlay_index as i32 + delta).rem_euclid(len as i32)) as usize;
+    if new_idx == s.echo_overlay_index {
+        return;
+    }
+    s.echo_overlay_index = new_idx;
+    render_echoes(&mut s);
+    s.gloss_overlay.scroll_echo_into_view(new_idx);
+    sync_session(&mut s);
+}
+
+pub(crate) fn copy_selected_echo(state_rc: &Rc<RefCell<AppState>>) {
+    let s = state_rc.borrow();
+    if let Some(link) = s.echo_overlay_links.get(s.echo_overlay_index) {
+        let title = s.echo_overlay_titles.get(&link.echo_work_abbrev)
+            .cloned()
+            .unwrap_or_else(|| link.echo_work_abbrev.clone());
+        let sentence = link.echo_text.lines().map(|l| l.trim()).collect::<Vec<_>>().join(" ");
+        let text = format!("\"{}\" — {} {}.{}", sentence, title, link.echo_div1, link.echo_div2);
+        let _ = std::process::Command::new("wl-copy").arg(&text).spawn();
+        crate::logging::log(&format!("ECHOES: copied \"{}\"", text));
+    }
+}
+
+const TURN_PREROLL: f64 = 0.5;
+
+/// Tab in the echo overlay: toggle play/pause. On first play (when no loop is
+/// active), set an AB-loop over the turn's audio range and seek to its start
+/// so the turn loops while the overlay is open.
+pub(crate) fn toggle_echo_playback(state_rc: &Rc<RefCell<AppState>>) {
+    let mut s = state_rc.borrow_mut();
+
+    // Resolve the turn's start/end timestamps from the session's turn key,
+    // if we're on the turn's work.
+    let loop_range = s.echo_session.as_ref().and_then(|sess| {
+        let key = &sess.turn_key;
+        let on_turn_work = s.current_work.as_ref()
+            .map(|w| w.abbrev == key.work_abbrev)
+            .unwrap_or(false);
+        if !on_turn_work {
+            return None;
+        }
+        let work = s.current_work.as_ref()?;
+        let first = work.lines.iter().find(|l| {
+            l.div1 == key.div1 && l.div2 == key.div2 && l.line_in_div == key.start_line
+        })?;
+        let last = work.lines.iter().find(|l| {
+            l.div1 == key.div1 && l.div2 == key.div2 && l.line_in_div == key.end_line
+        })?;
+        let a = first.timestamp.as_ref()?.start;
+        let b = last.timestamp.as_ref()?.end;
+        Some((a, b))
+    });
+
+    if s.mpv_playing {
+        // Currently playing — just pause.
+        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
+        crate::logging::log("ECHOES: paused turn playback");
+        return;
+    }
+
+    // Not playing — start the turn loop if we have a range.
+    if let Some((a, b)) = loop_range {
+        let loop_a = (a - TURN_PREROLL).max(0.0);
+        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SetAbLoop { a: loop_a, b });
+        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Seek(loop_a));
+        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
+        s.ab_repeat.a_time = Some(a);
+        s.ab_repeat.b_time = Some(b);
+        s.ab_repeat.loop_active = true;
+        s.suppress_sync_until =
+            Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
+        crate::logging::log(&format!("ECHOES: looping turn [{:.1}, {:.1}]", loop_a, b));
+    } else {
+        // No turn range (e.g. on an echo's work) — plain toggle.
+        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
+        crate::logging::log("ECHOES: toggled playback (no turn loop)");
+    }
+}
+
+/// Toggle the curated flag on the selected echo, persist, and re-render
+/// (curated echoes re-sort to the top).
+pub(crate) fn toggle_curated(state_rc: &Rc<RefCell<AppState>>) {
+    let (turn_id, link_id) = {
+        let s = state_rc.borrow();
+        let link = match s.echo_overlay_links.get(s.echo_overlay_index) {
+            Some(l) => l,
+            None => return,
+        };
+        (s.echo_overlay_turn_id, link.link_id)
+    };
+    let turn_id = match turn_id {
+        Some(id) => id,
+        None => return,
+    };
+
+    if let Ok(conn) = crate::db::queries::open_db_rw() {
+        let _ = crate::db::queries::toggle_echo_curated(&conn, link_id);
+    }
+
+    // Reload from DB to pick up the new curated-first ordering.
+    let links = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| crate::db::queries::load_echo_links(&conn, turn_id).ok())
+        .unwrap_or_default();
+
+    let mut s = state_rc.borrow_mut();
+    // Keep selection on the same link after re-sort.
+    let new_idx = links.iter().position(|l| l.link_id == link_id).unwrap_or(0);
+    s.echo_overlay_links = links;
+    s.echo_overlay_index = new_idx;
+    render_echoes(&mut s);
+    s.gloss_overlay.scroll_echo_into_view(new_idx);
+    sync_session(&mut s);
+    crate::logging::log("ECHOES: toggled curated");
+}
+
+/// Re-run the search for the current turn, overwriting non-curated links;
+/// curated links are always kept.
+pub(crate) fn refresh_echoes(
+    state_rc: &Rc<RefCell<AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+) {
+    let (key, turn_id) = {
+        let s = state_rc.borrow();
+        match (&s.echo_overlay_turn_key, s.echo_overlay_turn_id) {
+            (Some(k), Some(id)) => (k.clone(), id),
+            _ => return,
+        }
+    };
+
+    state_rc.borrow().gloss_overlay.show_loading_message("Refreshing echoes...");
+
+    let query = format!("{} to {}: {}", key.speaker, "?", key.turn_text);
+    let source_work = key.work_abbrev.clone();
+    let state_for_result = Rc::clone(state_rc);
+    let echo_handle = tokio_handle.clone();
+
+    glib::spawn_future_local(async move {
+        let embed_result = echo_handle
+            .spawn(async move { crate::voyage::embed_query(&query).await })
+            .await;
+
+        let raw = match embed_result {
+            Ok(Ok(embedding)) => crate::db::queries::open_db()
+                .ok()
+                .and_then(|conn| {
+                    crate::db::queries::find_similar_passages(&conn, &embedding, &source_work, 60).ok()
+                })
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+
+        let mut seen = std::collections::HashSet::new();
+        let mut candidates = Vec::new();
+        for cand in raw {
+            let k = first_sentence(&cand.passage_text).to_lowercase();
+            if k.is_empty() || !seen.insert(k) {
+                continue;
+            }
+            candidates.push(cand);
+            if candidates.len() >= 15 {
+                break;
+            }
+        }
+
+        // Delete non-curated, re-insert fresh; curated links untouched.
+        if let Ok(conn) = crate::db::queries::open_db_rw() {
+            let _ = crate::db::queries::delete_noncurated_echo_links(&conn, turn_id);
+            let rows: Vec<(String, i64, i64, i64, String, f32, i64)> = candidates
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (
+                    c.work_abbrev.clone(), c.div1, c.div2, c.start_line,
+                    first_sentence_verse(&c.passage_text), c.similarity, i as i64,
+                ))
+                .collect();
+            let _ = crate::db::queries::insert_echo_links(&conn, turn_id, &rows);
+        }
+
+        let links = crate::db::queries::open_db()
+            .ok()
+            .and_then(|conn| crate::db::queries::load_echo_links(&conn, turn_id).ok())
+            .unwrap_or_default();
+
+        let mut s = state_for_result.borrow_mut();
+        s.echo_overlay_links = links;
+        s.echo_overlay_index = 0;
+        render_echoes(&mut s);
+        sync_session(&mut s);
+        crate::logging::log("ECHOES: refreshed echoes");
+    });
+}
+
+/// Enter: jump to the selected echo's work, cursor on the echoed line. The
+/// echo session is kept so alt+i can return.
+pub(crate) fn jump_to_selected_echo(
+    state_rc: &Rc<RefCell<AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+) {
+    let (work, div1, div2, line_in_div) = {
+        let s = state_rc.borrow();
+        match s.echo_overlay_links.get(s.echo_overlay_index) {
+            Some(l) => (l.echo_work_abbrev.clone(), l.echo_div1, l.echo_div2, l.echo_start_line),
+            None => return,
+        }
+    };
+
+    // Make sure the session reflects the current selection before we leave.
+    sync_session(&mut state_rc.borrow_mut());
+
+    let line_id = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| crate::db::queries::line_id_for_location(&conn, &work, div1, div2, line_in_div));
+    let line_id = match line_id {
+        Some(id) => id,
+        None => {
+            state_rc.borrow().gloss_overlay.show("Could not locate the echoed line.", "");
+            crate::logging::log("ECHOES: could not resolve echo line");
+            return;
+        }
+    };
+
+    let was_playing = state_rc.borrow().mpv_playing;
+    {
+        let mut s = state_rc.borrow_mut();
+        s.gloss_overlay.hide();
+        s.echo_overlay_links.clear();
+        s.input_mode = crate::app::InputMode::Reader;
+    }
+
+    load_work_at_line(state_rc, tokio_handle, &work, line_id, was_playing);
+    crate::logging::log(&format!("ECHOES: jumped to echo in {} line_id={}", work, line_id));
+}
+
+/// alt+i: return to the turn's work and line, then reopen the echoes overlay
+/// from the sticky session.
+pub(crate) fn reopen_echoes(
+    state_rc: &Rc<RefCell<AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+) {
+    let session = match state_rc.borrow().echo_session.clone() {
+        Some(s) => s,
+        None => return,
+    };
+
+    let current_work = state_rc.borrow().current_work.as_ref().map(|w| w.abbrev.clone());
+    let was_playing = state_rc.borrow().mpv_playing;
+    let restore = Rc::clone(state_rc);
+    let sess_for_restore = session.clone();
+    let reopen = move |state_rc: &Rc<RefCell<AppState>>| {
+        let mut s = state_rc.borrow_mut();
+        s.echo_overlay_source = sess_for_restore.source_doc.clone();
+        s.echo_overlay_links = sess_for_restore.links.clone();
+        s.echo_overlay_index = sess_for_restore.selected.min(sess_for_restore.links.len().saturating_sub(1));
+        s.echo_overlay_titles = sess_for_restore.titles.clone();
+        s.echo_overlay_turn_id = sess_for_restore.turn_id;
+        s.echo_overlay_turn_key = Some(sess_for_restore.turn_key.clone());
+        s.input_mode = crate::app::InputMode::EchoesOverlay;
+        let idx = s.echo_overlay_index;
+        render_echoes(&mut s);
+        s.gloss_overlay.scroll_echo_into_view(idx);
+    };
+
+    if current_work.as_deref() == Some(session.origin_work.as_str()) {
+        // Already on the origin work — just reopen the overlay.
+        reopen(&restore);
+        crate::logging::log("ECHOES: reopened overlay (same work)");
+        return;
+    }
+
+    // Cross-work: load the origin work at the turn line, then reopen.
+    load_work_at_line_then(
+        state_rc,
+        tokio_handle,
+        &session.origin_work,
+        session.origin_line_id,
+        was_playing,
+        Some(Box::new(move || reopen(&restore))),
+    );
+    crate::logging::log("ECHOES: returning to turn work and reopening overlay");
+}
+
+/// Load `work_abbrev` and place the cursor on `line_id` (line_mapping.id).
+fn load_work_at_line(
+    state_rc: &Rc<RefCell<AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+    work_abbrev: &str,
+    line_id: i64,
+    was_playing: bool,
+) {
+    load_work_at_line_then(state_rc, tokio_handle, work_abbrev, line_id, was_playing, None);
+}
+
+type AfterLoad = Box<dyn FnOnce()>;
+
+/// Load `work_abbrev` at `line_id`, switch MPV to its media (resuming playback
+/// if `was_playing`), then optionally run `after`. Mirrors the concordance
+/// cross-work load path.
+fn load_work_at_line_then(
+    state_rc: &Rc<RefCell<AppState>>,
+    _tokio_handle: &tokio::runtime::Handle,
+    work_abbrev: &str,
+    line_id: i64,
+    was_playing: bool,
+    after: Option<AfterLoad>,
+) {
+    {
+        let mut s = state_rc.borrow_mut();
+        crate::app::save_position(&mut s);
+    }
+    let state_clone = Rc::clone(state_rc);
+    let abbrev = work_abbrev.to_string();
+    let handle = state_rc.borrow().tokio_handle.clone();
+
+    glib::spawn_future_local(async move {
+        let result = handle
+            .spawn_blocking(move || {
+                let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
+                let work = crate::db::queries::load_work(&conn, &abbrev)?;
+                let prepared = crate::app::prepare_text_for_display(&work);
+                Ok::<_, rusqlite::Error>((work, prepared))
+            })
+            .await;
+        if let Ok(Ok((work, prepared))) = result {
+            {
+                let mut s = state_clone.borrow_mut();
+                s.skip_mpv_discovery = true;
+                crate::app::clear_display(&mut s);
+                crate::app::display_work_at_with_prepared(&mut s, work, Some(line_id), prepared);
+                crate::input::highlight::update_highlight_and_center(&mut s);
+            }
+
+            // Switch MPV to the target work's media (auto-select Arkangel) and
+            // seek to the target line, preserving the prior play/pause state.
+            switch_mpv_to_current_line(&state_clone, line_id, was_playing);
+
+            if let Some(cb) = after {
+                cb();
+            }
+        } else {
+            crate::logging::log("ECHOES: failed to load work for jump");
+        }
+    });
+}
+
+/// Auto-select the Arkangel media for the loaded work and load it into MPV,
+/// seeking to `line_id`'s timestamp. Resumes playback if `was_playing`, else
+/// stays paused. Falls back to the media picker if no Arkangel media is found.
+fn switch_mpv_to_current_line(state_rc: &Rc<RefCell<AppState>>, line_id: i64, was_playing: bool) {
+    let auto_media = {
+        let s = state_rc.borrow();
+        s.current_work.as_ref().and_then(|w| {
+            w.media_paths.iter().zip(w.media_ids.iter())
+                .find(|(p, _)| p.contains("/aax-Arkangel/"))
+                .map(|(p, id)| (p.clone(), *id))
+        })
+    };
+
+    let seek_time = {
+        let s = state_rc.borrow();
+        s.current_work.as_ref()
+            .and_then(|w| w.lines.iter().find(|l| l.id == line_id))
+            .and_then(|l| l.timestamp.as_ref())
+            .map(|ts| (ts.start - crate::input::navigation::SEEK_PREROLL).max(0.0))
+    };
+
+    if let Some((path, media_id)) = auto_media {
+        let already_connected = state_rc.borrow().mpv_connected;
+        if already_connected {
+            let s = state_rc.borrow();
+            match (seek_time, was_playing) {
+                (Some(t), true) => {
+                    let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::LoadFileAndSeek(path.clone(), t));
+                }
+                (Some(t), false) => {
+                    let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::LoadFileSeekPaused(path.clone(), t));
+                }
+                (None, _) => {
+                    let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::LoadFile(path.clone()));
+                    let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
+                }
+            }
+            crate::logging::log(&format!(
+                "ECHOES: switched MPV to Arkangel media_id={} seek={:?} playing={}",
+                media_id, seek_time, was_playing
+            ));
+        }
+        state_rc.borrow_mut().media_id = Some(media_id);
+    } else {
+        let handle = state_rc.borrow().tokio_handle.clone();
+        crate::input::actions::pickers::open_media_picker(state_rc, &handle);
+    }
+}

@@ -32,6 +32,7 @@ pub struct GlossOverlay {
     bar_color: Rc<RefCell<(f64, f64, f64)>>,
     bar_x: Rc<RefCell<i32>>,
     line_numbers: Rc<RefCell<Vec<LineNumber>>>,
+    echo_lines: Rc<RefCell<Vec<i32>>>,
     text_margins: i32,
     column_width: i32,
 }
@@ -109,6 +110,7 @@ impl GlossOverlay {
         let bar_color: Rc<RefCell<(f64, f64, f64)>> = Rc::new(RefCell::new((0.53, 0.62, 0.71)));
         let bar_x: Rc<RefCell<i32>> = Rc::new(RefCell::new((column_width as i32) / 8));
         let line_numbers: Rc<RefCell<Vec<LineNumber>>> = Rc::new(RefCell::new(Vec::new()));
+        let echo_lines: Rc<RefCell<Vec<i32>>> = Rc::new(RefCell::new(Vec::new()));
 
         let ranges_clone = bar_ranges.clone();
         let color_clone = bar_color.clone();
@@ -232,6 +234,7 @@ impl GlossOverlay {
             bar_color,
             bar_x,
             line_numbers,
+            echo_lines,
             text_margins: text_margins as i32,
             column_width: column_width as i32,
         }
@@ -302,6 +305,56 @@ impl GlossOverlay {
         self.hint.set_visible(true);
         self.scrim.set_visible(false);
         self.container.set_visible(true);
+    }
+
+    /// Render the echoes document (source turn + echo list), highlighting the
+    /// selected echo. Used by the "show echoes" (`I`) feature.
+    pub fn show_echoes(&self, doc: &str, card_height: i32, root_color: Option<&str>, selected: usize) {
+        self.container.set_height_request(card_height);
+        self.title.set_visible(false);
+        let left = self.column_width / 8;
+        self.title.set_margin_start(left);
+        self.gloss_view.set_left_margin(left);
+        self.hint.set_text("Esc close · Tab loop turn · Ctrl+n/p select · Enter open work · c copy · s curate · R refresh");
+        self.orig_header.set_visible(false);
+        self.original_label.set_visible(false);
+        self.corr_header.set_visible(false);
+        self.corrected_label.set_visible(false);
+
+        if let Some(color) = root_color {
+            if let Some((r, g, b)) = parse_hex_color(color) {
+                *self.bar_color.borrow_mut() = (r, g, b);
+            }
+        }
+
+        let bar_left = self.column_width / 8;
+        *self.bar_x.borrow_mut() = bar_left;
+
+        let (ranges, nums, echo_lines) = populate_gloss_buffer_ex(
+            &self.gloss_view, doc, self.text_margins, bar_left, &[], Some(selected));
+        *self.bar_ranges.borrow_mut() = ranges;
+        *self.line_numbers.borrow_mut() = nums;
+        *self.echo_lines.borrow_mut() = echo_lines;
+        self.bar_drawing.queue_draw();
+
+        self.gloss_scroll_overlay.set_visible(true);
+        self.hint.set_visible(true);
+        self.scrim.set_visible(false);
+        self.container.set_visible(true);
+    }
+
+    /// Scroll the card so the Nth echo's quote line is visible.
+    pub fn scroll_echo_into_view(&self, echo_index: usize) {
+        let line = match self.echo_lines.borrow().get(echo_index).copied() {
+            Some(l) => l,
+            None => return,
+        };
+        let buffer = self.gloss_view.buffer();
+        if let Some(iter) = buffer.iter_at_line(line) {
+            let mark = buffer.create_mark(None, &iter, false);
+            self.gloss_view.scroll_to_mark(&mark, 0.1, false, 0.0, 0.3);
+            buffer.delete_mark(&mark);
+        }
     }
 
     pub fn show_synopsis(&self, title: &str, synopsis: &str, card_height: i32) {
@@ -444,11 +497,18 @@ fn try_extract<'a>(s: &'a str, tag: &str) -> Option<(&'a str, &'a str)> {
 }
 
 fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32, bar_left: i32, source_line_numbers: &[(String, i64)]) -> (Vec<BarRange>, Vec<LineNumber>) {
+    let (ranges, nums, _) = populate_gloss_buffer_ex(view, gloss, _text_margins, bar_left, source_line_numbers, None);
+    (ranges, nums)
+}
+
+/// Extended populate that supports highlighting a selected echo (the Nth
+/// `<gloss>` echo element). Returns the buffer line of each echo's quote.
+fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i32, bar_left: i32, source_line_numbers: &[(String, i64)], selected_echo: Option<usize>) -> (Vec<BarRange>, Vec<LineNumber>, Vec<i32>) {
     let buffer = view.buffer();
     buffer.set_text("");
 
     let tag_table = buffer.tag_table();
-    for name in &["gloss-speaker", "gloss-speaker-first", "gloss-verse", "gloss-para", "gloss-bracket"] {
+    for name in &["gloss-speaker", "gloss-speaker-first", "gloss-verse", "gloss-para", "gloss-bracket", "gloss-quote", "gloss-quote-cont", "gloss-citation", "gloss-echo-selected"] {
         if let Some(old) = tag_table.lookup(name) {
             tag_table.remove(&old);
         }
@@ -499,11 +559,24 @@ fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32,
         .style(pango::Style::Italic)
         .build();
 
+    // Continuation line of a multi-line verse echo: no top spacing.
+    let quote_cont_tag = gtk4::TextTag::builder()
+        .name("gloss-quote-cont")
+        .left_margin(quote_speaker)
+        .style(pango::Style::Italic)
+        .build();
+
     // Citation line: indented further, smaller and dimmer.
     let citation_tag = gtk4::TextTag::builder()
         .name("gloss-citation")
         .left_margin(quote_verse)
         .scale(0.85)
+        .build();
+
+    // Selected-echo highlight: subtle background on the selected quote text only.
+    let selected_tag = gtk4::TextTag::builder()
+        .name("gloss-echo-selected")
+        .background("rgba(100, 140, 200, 0.25)")
         .build();
 
     tag_table.add(&speaker_tag);
@@ -512,14 +585,17 @@ fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32,
     tag_table.add(&para_tag);
     tag_table.add(&bracket_tag);
     tag_table.add(&quote_tag);
+    tag_table.add(&quote_cont_tag);
     tag_table.add(&citation_tag);
+    tag_table.add(&selected_tag);
 
     let elements = parse_gloss_tags(gloss);
     let mut first = true;
     let mut only_speakers_so_far = true;
-    let mut bar_ranges: Vec<BarRange> = Vec::new();
+    let bar_ranges: Vec<BarRange> = Vec::new();
     let mut line_nums: Vec<LineNumber> = Vec::new();
-    let mut current_block_start: Option<i32> = None;
+    let mut echo_lines: Vec<i32> = Vec::new();
+    let mut echo_idx: usize = 0;
 
     // Build lookup: trimmed verse text → line_in_div
     let line_lookup: std::collections::HashMap<&str, i64> = source_line_numbers
@@ -538,9 +614,6 @@ fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32,
         let offset = buffer.end_iter().offset();
         match el {
             GlossElement::Speaker(name) => {
-                if current_block_start.is_none() {
-                    current_block_start = Some(line);
-                }
                 let mut end = buffer.end_iter();
                 buffer.insert(&mut end, name);
                 let start = buffer.iter_at_offset(offset);
@@ -549,9 +622,6 @@ fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32,
             }
             GlossElement::Verse(text) => {
                 only_speakers_so_far = false;
-                if current_block_start.is_none() {
-                    current_block_start = Some(line);
-                }
                 let mut end = buffer.end_iter();
                 buffer.insert(&mut end, text);
                 let start = buffer.iter_at_offset(offset);
@@ -565,17 +635,39 @@ fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32,
             }
             GlossElement::Gloss(text) => {
                 only_speakers_so_far = false;
-                if let Some(start_line) = current_block_start.take() {
-                    let end_line = line - 1;
-                    bar_ranges.push(BarRange { start_line, end_line });
-                }
 
                 if let Some((quote, citation)) = split_echo(text) {
                     // Echo: quote on one line, citation indented below it.
+                    let quote_line = buffer.end_iter().line();
+                    echo_lines.push(quote_line);
+                    let is_selected = selected_echo == Some(echo_idx);
+                    echo_idx += 1;
+
                     let mut end = buffer.end_iter();
                     buffer.insert(&mut end, &quote);
                     let qstart = buffer.iter_at_offset(offset);
-                    buffer.apply_tag(&quote_tag, &qstart, &buffer.end_iter());
+                    let quote_end_offset = buffer.end_iter().offset();
+                    let quote_end_iter = buffer.iter_at_offset(quote_end_offset);
+
+                    // Apply quote_tag (with top spacing) to the first visual
+                    // line, quote_cont_tag (no spacing) to continuation lines.
+                    let first_line_end = {
+                        let mut it = qstart.clone();
+                        if !it.ends_line() {
+                            it.forward_to_line_end();
+                        }
+                        if it.offset() > quote_end_offset { quote_end_iter.clone() } else { it }
+                    };
+                    buffer.apply_tag(&quote_tag, &qstart, &first_line_end);
+                    if first_line_end.offset() < quote_end_offset {
+                        buffer.apply_tag(&quote_cont_tag, &first_line_end, &quote_end_iter);
+                    }
+
+                    if is_selected {
+                        let hi_start = buffer.iter_at_offset(offset);
+                        let hi_end = buffer.iter_at_offset(quote_end_offset);
+                        buffer.apply_tag(&selected_tag, &hi_start, &hi_end);
+                    }
 
                     let mut end = buffer.end_iter();
                     buffer.insert(&mut end, "\n");
@@ -594,12 +686,7 @@ fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32,
         }
     }
 
-    if let Some(start_line) = current_block_start {
-        let end_line = buffer.end_iter().line();
-        bar_ranges.push(BarRange { start_line, end_line });
-    }
-
-    (bar_ranges, line_nums)
+    (bar_ranges, line_nums, echo_lines)
 }
 
 fn apply_bracket_styling(buffer: &gtk4::TextBuffer, base_offset: i32, bracket_tag: &gtk4::TextTag) {

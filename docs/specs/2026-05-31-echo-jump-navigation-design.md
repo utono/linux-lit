@@ -1,4 +1,4 @@
-# Echo Jump Navigation: Enter Opens Echo's Work, alt+- Returns
+# Echo Jump Navigation: Enter Opens Echo's Work, alt+i Returns
 
 **Date:** 2026-05-31
 
@@ -12,12 +12,12 @@ to, nor jump back-and-forth between the turn's work and each echo's work.
 
 - **Enter** on a selected echo opens that echo's work and places the cursor on
   the echoed line.
-- **alt+-** (alt+minus) jumps back to the original turn's work and line, then
+- **alt+i** jumps back to the original turn's work and line, then
   reopens the echoes overlay with the same links — so the reader can pick
   another echo and jump again. Hub-and-spoke navigation between the turn's work
   and each echo's work.
 - The echo session (turn + links + origin) is held in `AppState` and survives
-  work-switches, Esc, and repeated alt+- round-trips. It is replaced only when
+  work-switches, Esc, and repeated alt+i round-trips. It is replaced only when
   the reader presses `I` on a new line.
 
 ## Schema / Data Changes
@@ -53,9 +53,9 @@ On Enter with a selected echo:
 
 Copy moves off Enter to **`c`** in the overlay (copy still available).
 
-## alt+- Behavior (new `Action::ReopenEchoes`)
+## alt+i Behavior (new `Action::ReopenEchoes`)
 
-`alt+minus` in Reader mode:
+`alt+i` in Reader mode:
 
 1. If `AppState.echo_session` is `None`: no-op (optional toast "no echo
    session").
@@ -72,7 +72,7 @@ If already on the origin work, skip the reload and just reopen the overlay.
 - **Set / replaced** when the reader presses `I` (a fresh search or cache hit).
 - **Mutated in place** by `s` (curate) and `R` (refresh) — the session's `links`
   and `selected` update.
-- **Read** by Enter (to record origin before jumping) and alt+- (to restore).
+- **Read** by Enter (to record origin before jumping) and alt+i (to restore).
 - **Kept** on Esc and across work-switches. Only the next `I` replaces it.
 
 ## State
@@ -95,7 +95,7 @@ pub struct EchoSession {
 the key handlers already read/write. Add `echo_session: Option<EchoSession>` as
 a sticky snapshot used only for restore. The session is written whenever the
 active overlay is (re)built or mutated (`I`, `s`, `R`), capturing the origin on
-the first build. alt+- restores the loose fields from the session, then renders.
+the first build. alt+i restores the loose fields from the session, then renders.
 This avoids rewriting every handler to read through `EchoSession`.
 
 ## Keys in the Echoes Overlay (updated)
@@ -106,7 +106,7 @@ This avoids rewriting every handler to read through `EchoSession`.
 - **s** — toggle curated
 - **R** — refresh
 - **j / k / g / G** — scroll
-- **Esc** — close overlay, keep session (alt+- still works)
+- **Esc** — close overlay, keep session (alt+i still works)
 
 ## Reuse
 
@@ -123,7 +123,7 @@ This avoids rewriting every handler to read through `EchoSession`.
   column + migration; `StoredEchoLink.echo_start_line`; `line_id_for_location`.
 - `src/input/actions/echoes.rs`: introduce `EchoSession`; rework
   `show_echoes_for_cursor_line` to populate the session and record origin;
-  `jump_to_selected_echo` (Enter); `reopen_echoes` (alt+-); update
+  `jump_to_selected_echo` (Enter); `reopen_echoes` (alt+i); update
   `toggle_curated`, `refresh_echoes`, `copy_selected_echo`, `move_echo_selection`
   to read/write the session.
 - `src/app.rs`: add `echo_session: Option<EchoSession>` (init `None`); keep the
@@ -131,12 +131,19 @@ This avoids rewriting every handler to read through `EchoSession`.
 - `src/input/keymap.rs`: in `handle_echoes_overlay_key`, Enter → jump,
   add `c` → copy; reader-mode dispatch for `ReopenEchoes`.
 - `src/input/actions/mod.rs`: `Action::ReopenEchoes` (+ category + name).
-- `src/input/keymap_config.rs`: `(KeyCombo::alt("minus"), Action::ReopenEchoes)`.
+- `src/input/keymap_config.rs`: bind `(KeyCombo::alt("i"), Action::ReopenEchoes)`
+  (replacing the old `alt+i` = SetEndTime), and move SetEndTime to
+  `(KeyCombo::alt("u"), Action::SetEndTime)`.
+- `~/tty-dotfiles/linux-lit/.config/linux-lit/keymap.json`: change the
+  `{"key":"i","alt":true}` entry from SetEndTime to ReopenEchoes, and add
+  `{"key":"u","alt":true,"action":"SetEndTime"}`.
 
 ## Migration Note
 
-`alt+minus` is currently unbound (`minus` = TogglePreviousWork, `ctrl+minus` =
-OpenRecentPicker). No conflict.
+`alt+i` was bound to SetEndTime. This spec reassigns `alt+i` → ReopenEchoes and
+moves SetEndTime to `alt+u` (which is free; plain `u` = SetStartTime,
+`ctrl+u` = PageForward). Both the compiled defaults and the user's keymap.json
+are updated.
 
 ## Out of Scope
 
@@ -153,5 +160,5 @@ OpenRecentPicker). No conflict.
   time; it is stable. If the origin work was edited between sessions, the id may
   point to shifted content — acceptable, same risk as bookmarks.
 - **Session + curate/refresh consistency:** `s` and `R` must update the
-  session's `links`/`selected` in place so a later alt+- restores the current
+  session's `links`/`selected` in place so a later alt+i restores the current
   state, not a stale copy.

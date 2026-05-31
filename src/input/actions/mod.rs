@@ -5,6 +5,7 @@
 pub mod authorship;
 pub mod bookmarks;
 pub mod concordance;
+pub mod echoes;
 pub mod escape;
 pub mod gloss;
 pub mod pickers;
@@ -90,6 +91,8 @@ pub enum Action {
     ToggleVocabHighlight,
     ToggleGlossOverlay,
     OpenGlossPicker,
+    ShowEchoes,
+    ReopenEchoes,
 
     // Visual / selection
     EnterVisualMode,
@@ -189,6 +192,8 @@ impl Action {
             | Action::ToggleVocabHighlight
             | Action::ToggleGlossOverlay
             | Action::OpenGlossPicker
+            | Action::ShowEchoes
+            | Action::ReopenEchoes
             | Action::OpenConcordancePicker
             | Action::OpenConcordanceWordPicker
             | Action::OpenConcordanceListPicker
@@ -297,6 +302,8 @@ impl Action {
             Action::ToggleVocabHighlight => "ToggleVocabHighlight",
             Action::ToggleGlossOverlay => "ToggleGlossOverlay",
             Action::OpenGlossPicker => "OpenGlossPicker",
+            Action::ShowEchoes => "ShowEchoes",
+            Action::ReopenEchoes => "ReopenEchoes",
             Action::ConcordanceNext => "ConcordanceNext",
             Action::ConcordancePrev => "ConcordancePrev",
             Action::EnterVisualMode => "EnterVisualMode",

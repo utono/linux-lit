@@ -4,7 +4,7 @@
 //! dimensions must match what `scripts/build_embeddings.py` used to
 //! populate the `passage_embeddings` table.
 
-const MODEL: &str = "voyage-3-large";
+const MODEL: &str = "voyage-4-large";
 
 #[derive(Debug)]
 pub enum VoyageError {

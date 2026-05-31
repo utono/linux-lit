@@ -73,6 +73,7 @@ pub fn handle_key(
             crate::app::InputMode::DeleteConfirm => handle_delete_confirm_key(state, key_name),
             crate::app::InputMode::GlossPrompt => handle_gloss_prompt_key(state, key_name, is_ctrl),
             crate::app::InputMode::EchoPicker => handle_echo_picker_key(state, key_name, tokio_handle),
+            crate::app::InputMode::EchoesOverlay => handle_echoes_overlay_key(state, key_state, key_name, is_ctrl, tokio_handle),
             crate::app::InputMode::GamepadOverlay => handle_gamepad_key(state, key_name),
             crate::app::InputMode::KeybindsOverlay => handle_keybinds_key(state, key_name),
             crate::app::InputMode::ActionPopup => handle_action_popup_key(state, key_name, is_ctrl, tokio_handle),
@@ -752,20 +753,115 @@ fn handle_echo_picker_key(
     }
 }
 
+fn handle_echoes_overlay_key(
+    state: &Rc<RefCell<AppState>>,
+    key_state: &Rc<RefCell<KeyState>>,
+    key_name: &str,
+    is_ctrl: bool,
+    tokio_handle: &tokio::runtime::Handle,
+) -> bool {
+    if key_state.borrow().chord == ChordState::PendingG {
+        key_state.borrow_mut().chord = ChordState::None;
+        if key_name == "g" {
+            state.borrow().gloss_overlay.scroll_gloss_to_top();
+        }
+        return true;
+    }
+    if is_ctrl {
+        match key_name {
+            "n" => {
+                crate::input::actions::echoes::move_echo_selection(state, 1);
+                return true;
+            }
+            "p" => {
+                crate::input::actions::echoes::move_echo_selection(state, -1);
+                return true;
+            }
+            _ => {}
+        }
+    }
+    match key_name {
+        "Return" => {
+            crate::input::actions::echoes::jump_to_selected_echo(state, tokio_handle);
+            true
+        }
+        "c" => {
+            crate::input::actions::echoes::copy_selected_echo(state);
+            true
+        }
+        "Tab" => {
+            crate::input::actions::echoes::toggle_echo_playback(state);
+            true
+        }
+        "s" => {
+            crate::input::actions::echoes::toggle_curated(state);
+            true
+        }
+        "R" => {
+            crate::input::actions::echoes::refresh_echoes(state, tokio_handle);
+            true
+        }
+        "g" => {
+            KeyState::start_chord(key_state, ChordState::PendingG);
+            true
+        }
+        "G" => {
+            state.borrow().gloss_overlay.scroll_gloss_to_bottom();
+            true
+        }
+        "j" => {
+            state.borrow().gloss_overlay.scroll_gloss(1);
+            true
+        }
+        "k" => {
+            state.borrow().gloss_overlay.scroll_gloss(-1);
+            true
+        }
+        "Escape" => {
+            let mut s = state.borrow_mut();
+            s.gloss_overlay.hide();
+            s.echo_overlay_links.clear();
+            s.echo_overlay_turn_id = None;
+            s.echo_overlay_turn_key = None;
+            // Clear any turn AB-loop so normal reading isn't stuck looping.
+            if s.ab_repeat.loop_active {
+                let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::ClearAbLoop);
+                s.ab_repeat.loop_active = false;
+                s.ab_repeat.a_time = None;
+                s.ab_repeat.b_time = None;
+            }
+            s.input_mode = crate::app::InputMode::Reader;
+            true
+        }
+        _ => true,
+    }
+}
+
 fn handle_gamepad_key(
     state: &Rc<RefCell<AppState>>,
     key_name: &str,
 ) -> bool {
+    // The gamepad overlay is the 6th screen in the keybinds cycle.
     match key_name {
         "Escape" => {
             state.borrow().gamepad_overlay.hide();
             state.borrow_mut().input_mode = crate::app::InputMode::Reader;
             true
         }
-        "n" | "p" => {
+        "n" => {
+            // Past the gamepad → wrap to the first keyboard row.
             let s = state.borrow();
             s.gamepad_overlay.hide();
             s.keybinds_overlay.show();
+            drop(s);
+            state.borrow_mut().input_mode = crate::app::InputMode::KeybindsOverlay;
+            true
+        }
+        "p" => {
+            // Back from the gamepad → the last keyboard row.
+            let s = state.borrow();
+            s.gamepad_overlay.hide();
+            s.keybinds_overlay.show_last_row();
             drop(s);
             state.borrow_mut().input_mode = crate::app::InputMode::KeybindsOverlay;
             true
@@ -784,24 +880,36 @@ fn handle_keybinds_key(
             state.borrow_mut().input_mode = crate::app::InputMode::Reader;
             true
         }
-        "n" | "p" => {
-            let s = state.borrow();
-            s.keybinds_overlay.hide();
-            s.gamepad_overlay.show();
-            drop(s);
-            state.borrow_mut().input_mode = crate::app::InputMode::GamepadOverlay;
+        "n" => {
+            // Advance a row; past the last row → gamepad screen.
+            let advanced = state.borrow().keybinds_overlay.next_row();
+            if !advanced {
+                let s = state.borrow();
+                s.keybinds_overlay.hide();
+                s.gamepad_overlay.show();
+                drop(s);
+                state.borrow_mut().input_mode = crate::app::InputMode::GamepadOverlay;
+            }
             true
         }
-        "exclam" => {
-            state.borrow_mut().keybinds_overlay.adjust_scale(-1);
+        "p" => {
+            // Previous row; before the first row → gamepad screen.
+            let moved = state.borrow().keybinds_overlay.prev_row();
+            if !moved {
+                let s = state.borrow();
+                s.keybinds_overlay.hide();
+                s.gamepad_overlay.show();
+                drop(s);
+                state.borrow_mut().input_mode = crate::app::InputMode::GamepadOverlay;
+            }
             true
         }
-        "bar" => {
-            state.borrow_mut().keybinds_overlay.adjust_scale(1);
+        "j" | "Right" => {
+            state.borrow().keybinds_overlay.move_selection(1);
             true
         }
-        "0" => {
-            state.borrow_mut().keybinds_overlay.reset_scale();
+        "k" | "Left" => {
+            state.borrow().keybinds_overlay.move_selection(-1);
             true
         }
         _ => true, // consume all other keys when keybinds visible
@@ -1027,6 +1135,8 @@ fn dispatch_action(
         }
         ToggleGlossOverlay => crate::input::actions::gloss::toggle_overlay(state),
         OpenGlossPicker => crate::input::actions::pickers::open_gloss_picker(state, tokio_handle),
+        ShowEchoes => crate::input::actions::echoes::show_echoes_for_cursor_line(state, tokio_handle),
+        ReopenEchoes => crate::input::actions::echoes::reopen_echoes(state, tokio_handle),
 
         // Visual / selection
         EnterVisualMode => crate::input::visual::enter_visual_mode(&mut state.borrow_mut()),

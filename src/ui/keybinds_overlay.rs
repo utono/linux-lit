@@ -1,6 +1,5 @@
 use gtk4::prelude::*;
 use gtk4::{DrawingArea, Overlay};
-use std::cell::RefCell;
 use std::rc::Rc;
 
 /// Definition of a single key on the keyboard overlay.
@@ -37,8 +36,8 @@ const NUMBER_ROW: &[KeyDef] = &[
     bare("+", "1", "toggle speed"),
     key("[", "2", "prev ch", "2: prev scene", &[]),
     key("{", "3", "next ch", "3: next scene", &[]),
-    ub("(", "4"),
-    ub("&", "5"),
+    key("(", "4", "prev bkmk", "4: prev bkmk", &[]),
+    bare("&", "5", "next bkmk"),
     ub("=", "6"),
     ub(")", "7"),
     ub("}", "8"),
@@ -50,7 +49,7 @@ const NUMBER_ROW: &[KeyDef] = &[
 const BACKSPACE: KeyDef = bare("\u{232b}", "", "delete ts");
 
 const UPPER_ROW: &[KeyDef] = &[
-    key(";", ":", "next bkmk", "prev bkmk", &[]),
+    key(";", ":", "reopen echoes", "prev bkmk", &[]),
     key(",", "<", "prev dlg", "", &[("C-,", "settings")]),
     bare(".", ">", "set chapter"),
     key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("C-p", "picker")]),
@@ -70,8 +69,8 @@ const HOME_ROW: &[KeyDef] = &[
     bare("a", "A", "play from ts"),
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
     key("e", "E", "seek +3.5", "E: +60", &[]),
-    key("u", "U", "start time", "", &[("C-u", "pg back")]),
-    key("i", "I", "translations", "", &[("M-i", "set end time")]),
+    key("u", "U", "start time", "", &[("C-u", "pg fwd"), ("M-u", "set end time")]),
+    key("i", "I", "echoes", "I: reopen echoes", &[("M-i", "translations")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
     key("h", "H", "synopsis", "H: auto vocab", &[]),
     key("t", "T", "", "", &[("M-t", "title tog")]),
@@ -82,7 +81,7 @@ const HOME_ROW: &[KeyDef] = &[
 const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 
 const BOTTOM_ROW: &[KeyDef] = &[
-    ub("'", "\""),
+    bare("'", "\"", "reopen echoes"),
     bare("q", "Q", "next dlg"),
     bare("j", "J", "cursor \u{2193}"),
     bare("k", "K", "cursor \u{2191}"),
@@ -95,404 +94,258 @@ const BOTTOM_ROW: &[KeyDef] = &[
 ];
 
 const SHIFT_KEY: KeyDef = ub("Shift", "");
-const SPACEBAR_ROW_CTRL: KeyDef = ub("Ctrl", "");
-const SPACEBAR_ROW_FN: KeyDef = ub("Fn", "");
-const SPACEBAR_ROW_WIN: KeyDef = ub("Win", "");
-const SPACEBAR_ROW_ALT_L: KeyDef = ub("Alt", "");
-const SPACEBAR_ROW_SPACE: KeyDef = key("Space", "", "page ↓", "page ↑", &[]);
-const SPACEBAR_ROW_ALT_R: KeyDef = ub("Alt", "");
-const SPACEBAR_ROW_CTRL_R: KeyDef = ub("Ctrl", "");
 
-const SEQ_GG: KeyDef = bare("gg", "", "go to start");
-const SEQ_G: KeyDef = key("G", "", "", "go to end", &[]);
-const SEQ_G_SEMI: KeyDef = bare("g;", "", "latest bkmk");
-const SEQ_ZT: KeyDef = bare("zt", "", "scroll top");
+/// Row 5: modifiers, sequences, and arrows gathered into one screen.
+const MOD_SEQ_ROW: &[KeyDef] = &[
+    key("Space", "", "page \u{2193}", "page \u{2191}", &[]),
+    bare("gg", "", "go to start"),
+    key("G", "", "", "go to end", &[]),
+    bare("g;", "", "latest bookmark"),
+    bare("zt", "", "scroll cursor top"),
+    key("\u{2191}", "", "cursor up", "", &[("C-\u{2191}", "volume +")]),
+    key("\u{2193}", "", "cursor down", "", &[("C-\u{2193}", "volume \u{2212}")]),
+    bare("\u{2190}", "", "seek \u{2212}3.5"),
+    bare("\u{2192}", "", "set start time"),
+];
 
-const ARROW_UP: KeyDef = key("\u{2191}", "", "cursor \u{2191}", "", &[("C-\u{2191}", "vol +")]);
-const ARROW_DOWN: KeyDef = key("\u{2193}", "", "cursor \u{2193}", "", &[("C-\u{2193}", "vol \u{2212}")]);
-const ARROW_LEFT: KeyDef = bare("\u{2190}", "", "seek \u{2212}3.5");
-const ARROW_RIGHT: KeyDef = bare("\u{2192}", "", "start time");
+// ── Per-row screens ──────────────────────────────────────────────────
 
-// ── Layout constants ─────────────────────────────────────────────────
+/// Title shown for each keyboard-row screen, plus the gamepad screen.
+const ROW_TITLES: &[&str] = &[
+    "NUMBER / SYMBOL ROW",
+    "UPPER ROW",
+    "HOME ROW",
+    "BOTTOM ROW",
+    "MODIFIERS & SEQUENCES",
+];
 
-const KEY_W: f64 = 68.0;
-const KEY_H: f64 = 66.0;
-const GAP: f64 = 4.0;
-const TAB_W: f64 = 102.0;
-const ESC_W: f64 = 120.0;
-const BKSP_W: f64 = 94.0;
-const ARROW_W: f64 = 54.0;
-const ARROW_H: f64 = 50.0;
-const CORNER_R: f64 = 5.0;
-const PAD: f64 = 20.0; // outer padding
+/// Number of keyboard-row screens (the gamepad is a 6th screen handled by the
+/// gamepad overlay, reached by cycling past the last row).
+pub const ROW_COUNT: usize = 5;
 
-// Row x-offsets (left edge of first alpha key, simulating physical stagger)
-// Number row: starts at 0
-// Upper row: Tab key then keys
-// Home row: Esc key then keys
-// Bottom row: shifted right past Esc+a
-
-/// Total width of the keyboard area (number row = 13 keys + bksp + gaps)
-const KB_W: f64 = 13.0 * KEY_W + BKSP_W + 13.0 * GAP;
-/// Total rows: 4 main + spacebar row + gap + seq/arrow rows
-const KB_H: f64 = 4.0 * KEY_H + 3.0 * GAP  // main rows
-    + GAP + KEY_H                              // spacebar row
-    + 12.0                                     // gap before seq row
-    + KEY_H                                    // seq row
-    + GAP + ARROW_H                            // arrow bottom row
-    + 30.0;                                    // legend
-
-// ── Computed key rectangles ──────────────────────────────────────────
-
-struct KeyRect {
-    x: f64,
-    y: f64,
-    w: f64,
-    h: f64,
-}
-
-struct AllKeys {
-    defs: Vec<&'static KeyDef>,
-    rects: Vec<KeyRect>,
-}
-
-fn build_layout() -> AllKeys {
-    let mut defs: Vec<&'static KeyDef> = Vec::new();
-    let mut rects: Vec<KeyRect> = Vec::new();
-
-    // Helper: add a key
-    let add = |x: f64, y: f64, w: f64, h: f64, def: &'static KeyDef,
-                   defs: &mut Vec<&'static KeyDef>, rects: &mut Vec<KeyRect>| {
-        defs.push(def);
-        rects.push(KeyRect { x, y, w, h });
-    };
-
-    // Row 0: Number row
-    let y0 = 0.0;
-    let mut x = 0.0;
-    for def in NUMBER_ROW {
-        add(x, y0, KEY_W, KEY_H, def, &mut defs, &mut rects);
-        x += KEY_W + GAP;
-    }
-    add(x, y0, BKSP_W, KEY_H, &BACKSPACE, &mut defs, &mut rects);
-
-    // Row 1: Upper row (Tab + 13 keys)
-    let y1 = y0 + KEY_H + GAP;
-    x = 0.0;
-    add(x, y1, TAB_W, KEY_H, &TAB_KEY, &mut defs, &mut rects);
-    x += TAB_W + GAP;
-    for def in UPPER_ROW {
-        add(x, y1, KEY_W, KEY_H, def, &mut defs, &mut rects);
-        x += KEY_W + GAP;
-    }
-
-    // Row 2: Home row (Esc + 11 keys)
-    let y2 = y1 + KEY_H + GAP;
-    x = 0.0;
-    add(x, y2, ESC_W, KEY_H, &ESC_KEY, &mut defs, &mut rects);
-    x += ESC_W + GAP;
-    for def in HOME_ROW {
-        add(x, y2, KEY_W, KEY_H, def, &mut defs, &mut rects);
-        x += KEY_W + GAP;
-    }
-
-    // Row 3: Bottom row (Shift + alpha keys)
-    let y3 = y2 + KEY_H + GAP;
-    // 'a' starts at ESC_W + GAP = 124. Shift fills from 0 to just before '
-    let bottom_alpha_offset = ESC_W + GAP + KEY_W * 0.45;
-    let shift_w = bottom_alpha_offset - GAP;
-    add(0.0, y3, shift_w, KEY_H, &SHIFT_KEY, &mut defs, &mut rects);
-    x = bottom_alpha_offset;
-    for def in BOTTOM_ROW {
-        add(x, y3, KEY_W, KEY_H, def, &mut defs, &mut rects);
-        x += KEY_W + GAP;
-    }
-
-    // Row 4: Spacebar row
-    // Ctrl + Fn below Shift (equal width, splitting Shift's width)
-    // Then Win, Alt, Space, Alt, Ctrl
-    let y4 = y3 + KEY_H + GAP;
-    let half_shift = (shift_w - GAP) / 2.0;
-    add(0.0, y4, half_shift, KEY_H, &SPACEBAR_ROW_CTRL, &mut defs, &mut rects);
-    add(half_shift + GAP, y4, half_shift, KEY_H, &SPACEBAR_ROW_FN, &mut defs, &mut rects);
-
-    // Win and Alt between Shift area and spacebar
-    let win_x = bottom_alpha_offset;
-    add(win_x, y4, KEY_W, KEY_H, &SPACEBAR_ROW_WIN, &mut defs, &mut rects);
-    add(win_x + KEY_W + GAP, y4, KEY_W, KEY_H, &SPACEBAR_ROW_ALT_L, &mut defs, &mut rects);
-
-    // Spacebar: left edge under 'j' (bottom row index 2), right edge under 'm' (bottom row index 6)
-    let j_x = bottom_alpha_offset + 2.0 * (KEY_W + GAP);                // left edge of 'j'
-    let m_right = bottom_alpha_offset + 6.0 * (KEY_W + GAP) + KEY_W;    // right edge of 'm'
-    add(j_x, y4, m_right - j_x, KEY_H, &SPACEBAR_ROW_SPACE, &mut defs, &mut rects);
-
-    // Alt and Ctrl after spacebar
-    add(m_right + GAP, y4, KEY_W, KEY_H, &SPACEBAR_ROW_ALT_R, &mut defs, &mut rects);
-    add(m_right + GAP + KEY_W + GAP, y4, KEY_W, KEY_H, &SPACEBAR_ROW_CTRL_R, &mut defs, &mut rects);
-
-    // Row 5: Sequences (gg, G, g;) + up arrow
-    let y5 = y4 + KEY_H + 12.0;
-    add(0.0, y5, KEY_W * 1.4, KEY_H, &SEQ_GG, &mut defs, &mut rects);
-    add(KEY_W * 1.4 + GAP, y5, KEY_W, KEY_H, &SEQ_G, &mut defs, &mut rects);
-    add(KEY_W * 1.4 + GAP + KEY_W + GAP, y5, KEY_W, KEY_H, &SEQ_G_SEMI, &mut defs, &mut rects);
-    add(KEY_W * 1.4 + GAP + 2.0 * (KEY_W + GAP), y5, KEY_W, KEY_H, &SEQ_ZT, &mut defs, &mut rects);
-
-    // Arrow keys — inverted T on far right
-    // Bottom row of arrows: left, down, right
-    let arrow_y_bottom = y5 + KEY_H + GAP;
-    let arrow_right_edge = KB_W;
-    let arrow_left_x = arrow_right_edge - 3.0 * ARROW_W - 2.0 * GAP;
-    add(arrow_left_x, arrow_y_bottom, ARROW_W, ARROW_H, &ARROW_LEFT, &mut defs, &mut rects);
-    add(arrow_left_x + ARROW_W + GAP, arrow_y_bottom, ARROW_W, ARROW_H, &ARROW_DOWN, &mut defs, &mut rects);
-    add(arrow_left_x + 2.0 * (ARROW_W + GAP), arrow_y_bottom, ARROW_W, ARROW_H, &ARROW_RIGHT, &mut defs, &mut rects);
-
-    // Up arrow: centered above down arrow
-    let up_x = arrow_left_x + ARROW_W + GAP;
-    add(up_x, y5, ARROW_W, ARROW_H, &ARROW_UP, &mut defs, &mut rects);
-
-    AllKeys { defs, rects }
-}
-
-// ── Colors ───────────────────────────────────────────────────────────
-
-fn key_colors(def: &KeyDef) -> ((f64, f64, f64), (f64, f64, f64), (f64, f64, f64)) {
-    // Returns (bg, border, char_color)
-    let has_bare = !def.action.is_empty();
-    let has_shift = !def.shift_action.is_empty();
-    let has_mod = !def.modifiers.is_empty();
-    let bound = has_bare || has_shift || has_mod;
-    if bound {
-        ((0.949, 0.914, 0.882), (0.875, 0.855, 0.851), (0.341, 0.322, 0.475))
-    } else {
-        ((1.0, 0.98, 0.953), (0.949, 0.914, 0.882), (0.596, 0.576, 0.647))
+/// The keys shown on row screen `idx` (0..ROW_COUNT). The row-leader key
+/// (Backspace/Tab/Esc/Shift) is appended so every key in the physical row is
+/// represented.
+fn row_keys(idx: usize) -> Vec<&'static KeyDef> {
+    match idx {
+        0 => NUMBER_ROW.iter().chain(std::iter::once(&BACKSPACE)).collect(),
+        1 => std::iter::once(&TAB_KEY).chain(UPPER_ROW.iter()).collect(),
+        2 => std::iter::once(&ESC_KEY).chain(HOME_ROW.iter()).collect(),
+        3 => std::iter::once(&SHIFT_KEY).chain(BOTTOM_ROW.iter()).collect(),
+        _ => MOD_SEQ_ROW.iter().collect(),
     }
 }
 
-// ── Drawing ──────────────────────────────────────────────────────────
+/// Index of the first bound key in a row (so the highlight starts on something
+/// useful), else 0.
+fn first_bound(keys: &[&KeyDef]) -> usize {
+    keys.iter()
+        .position(|d| !d.action.is_empty() || !d.shift_action.is_empty() || !d.modifiers.is_empty())
+        .unwrap_or(0)
+}
 
-fn draw_keyboard(cr: &gtk4::cairo::Context, layout: &AllKeys, tooltip_idx: Option<usize>, widget_w: f64, widget_h: f64) {
-    // Full-screen background
+
+// ── Drawing (per-row screen) ─────────────────────────────────────────
+
+/// Draw one row-screen: a keycap strip across the top (one key highlighted)
+/// and a detail panel below listing the highlighted key's full bindings.
+fn draw_row_screen(
+    cr: &gtk4::cairo::Context,
+    row_idx: usize,
+    selected: usize,
+    widget_w: f64,
+    widget_h: f64,
+) {
+    // Full-screen scrim
     cr.set_source_rgba(0.341, 0.322, 0.475, 0.95);
     cr.rectangle(0.0, 0.0, widget_w, widget_h);
     let _ = cr.fill();
 
-    // Scale and center the keyboard within the full window
-    let base_w = KB_W + 2.0 * PAD;
-    let base_h = KB_H + 2.0 * PAD;
-    let scale_x = widget_w / base_w;
-    let scale_y = widget_h / base_h;
-    let scale = scale_x.min(scale_y) * 0.92;
-    let scaled_w = base_w * scale;
-    let scaled_h = base_h * scale;
-    let x_offset = (widget_w - scaled_w) / 2.0;
-    let y_offset = (widget_h - scaled_h) / 2.0;
-    cr.translate(x_offset, y_offset);
-    cr.scale(scale, scale);
+    let keys = row_keys(row_idx);
+    let sel = selected.min(keys.len().saturating_sub(1));
 
-    cr.translate(PAD, PAD);
+    // ── Header ──
+    cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Bold);
+    cr.set_font_size(20.0);
+    cr.set_source_rgb(0.96, 0.94, 0.90);
+    let title = ROW_TITLES.get(row_idx).copied().unwrap_or("");
+    let header = format!("Row {} of {}  —  {}", row_idx + 1, ROW_COUNT + 1, title);
+    let he = cr.text_extents(&header).unwrap();
+    let _ = cr.move_to((widget_w - he.width()) / 2.0, 48.0);
+    let _ = cr.show_text(&header);
 
-    for (i, rect) in layout.rects.iter().enumerate() {
-        let def = layout.defs[i];
-        let (bg, border, char_col) = key_colors(def);
+    // ── Keycap strip ──
+    // Fit `n` caps across the available width.
+    let margin = 40.0;
+    let avail_w = widget_w - 2.0 * margin;
+    let n = keys.len().max(1) as f64;
+    let cap_gap = 8.0;
+    let cap_w = ((avail_w - (n - 1.0) * cap_gap) / n).min(110.0).max(36.0);
+    let cap_h = 60.0;
+    let strip_w = n * cap_w + (n - 1.0) * cap_gap;
+    let strip_x = (widget_w - strip_w) / 2.0;
+    let strip_y = 78.0;
 
-        // Key background
-        cr.set_source_rgb(bg.0, bg.1, bg.2);
-        rounded_rect(cr, rect.x, rect.y, rect.w, rect.h, CORNER_R);
+    for (i, def) in keys.iter().enumerate() {
+        let x = strip_x + i as f64 * (cap_w + cap_gap);
+        let bound = !def.action.is_empty() || !def.shift_action.is_empty() || !def.modifiers.is_empty();
+        let is_sel = i == sel;
+
+        // Selected glow
+        if is_sel {
+            cr.set_source_rgba(0.227, 0.353, 0.616, 0.30);
+            rounded_rect(cr, x - 3.0, strip_y - 3.0, cap_w + 6.0, cap_h + 6.0, 9.0);
+            let _ = cr.fill();
+        }
+
+        // Cap background
+        if is_sel {
+            cr.set_source_rgb(0.875, 0.910, 0.957);
+        } else if bound {
+            cr.set_source_rgb(0.949, 0.914, 0.882);
+        } else {
+            cr.set_source_rgb(1.0, 0.98, 0.953);
+        }
+        rounded_rect(cr, x, strip_y, cap_w, cap_h, 7.0);
         let _ = cr.fill();
 
-        // Key border
-        cr.set_source_rgb(border.0, border.1, border.2);
-        rounded_rect(cr, rect.x + 0.5, rect.y + 0.5, rect.w - 1.0, rect.h - 1.0, CORNER_R);
-        cr.set_line_width(1.0);
+        // Cap border
+        if is_sel {
+            cr.set_source_rgb(0.227, 0.353, 0.616);
+            cr.set_line_width(2.0);
+        } else {
+            cr.set_source_rgb(0.72, 0.66, 0.66);
+            cr.set_line_width(1.0);
+        }
+        rounded_rect(cr, x + 0.5, strip_y + 0.5, cap_w - 1.0, cap_h - 1.0, 7.0);
         let _ = cr.stroke();
 
-        // Unshifted character (bold, left side)
-        cr.set_source_rgb(char_col.0, char_col.1, char_col.2);
-        cr.set_font_size(22.0);
+        // Unshifted glyph (centered-ish)
         cr.select_font_face("monospace", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Bold);
-        let _ = cr.move_to(rect.x + 7.0, rect.y + 24.0);
+        cr.set_font_size(if def.unshifted.chars().count() > 1 { 18.0 } else { 22.0 });
+        if is_sel {
+            cr.set_source_rgb(0.149, 0.251, 0.478);
+        } else if bound {
+            cr.set_source_rgb(0.341, 0.322, 0.475);
+        } else {
+            cr.set_source_rgb(0.596, 0.576, 0.647);
+        }
+        let ge = cr.text_extents(def.unshifted).unwrap();
+        let _ = cr.move_to(x + (cap_w - ge.width()) / 2.0 - ge.x_bearing(), strip_y + 28.0);
         let _ = cr.show_text(def.unshifted);
 
-        // Shifted character (small, top-right)
+        // Shifted glyph (small, top-right)
         if !def.shifted.is_empty() {
-            let shifted_col = if !def.shift_action.is_empty() || (!def.action.is_empty() && !def.modifiers.is_empty()) {
-                (0.565, 0.478, 0.663) // iris
-            } else {
-                (0.596, 0.576, 0.647) // muted/text_unbound
-            };
-            cr.set_source_rgb(shifted_col.0, shifted_col.1, shifted_col.2);
-            cr.set_font_size(14.0);
             cr.select_font_face("monospace", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
-            let extents = cr.text_extents(def.shifted).unwrap();
-            let _ = cr.move_to(rect.x + rect.w - extents.width() - 7.0, rect.y + 17.0);
+            cr.set_font_size(12.0);
+            cr.set_source_rgb(0.565, 0.478, 0.663);
+            let se = cr.text_extents(def.shifted).unwrap();
+            let _ = cr.move_to(x + cap_w - se.width() - 6.0, strip_y + 16.0);
             let _ = cr.show_text(def.shifted);
         }
 
-        // Action label (bare key)
+        // Tiny bare-action hint under the glyph (truncated; full text is in panel)
         if !def.action.is_empty() {
+            cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
+            cr.set_font_size(10.0);
             cr.set_source_rgb(0.157, 0.412, 0.514);
-            cr.set_font_size(12.0);
-            cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
-            let _ = cr.move_to(rect.x + 7.0, rect.y + rect.h - 8.0);
-            let _ = cr.show_text(def.action);
-        }
-
-        // Shift action label
-        if !def.shift_action.is_empty() {
-            cr.set_source_rgb(0.565, 0.478, 0.663);
-            cr.set_font_size(11.0);
-            cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
-            let y_pos = if !def.action.is_empty() {
-                rect.y + rect.h - 22.0
-            } else {
-                rect.y + rect.h - 8.0
-            };
-            let _ = cr.move_to(rect.x + 7.0, y_pos);
-            let _ = cr.show_text(def.shift_action);
-        }
-
-        // Modifier action labels — rendered on the key face so the user
-        // doesn't need to hover. Stack upward from the bare/shift labels.
-        if !def.modifiers.is_empty() {
-            cr.set_font_size(11.0);
-            cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
-            let base_slot = match (!def.action.is_empty(), !def.shift_action.is_empty()) {
-                (true, true) => 2,
-                (true, false) | (false, true) => 1,
-                (false, false) => 0,
-            };
-            for (mi, (combo, act)) in def.modifiers.iter().enumerate() {
-                let slot = base_slot + mi;
-                let y_pos = rect.y + rect.h - 8.0 - slot as f64 * 14.0;
-                if combo.starts_with("M-") && !combo.contains("C-") {
-                    cr.set_source_rgb(0.706, 0.388, 0.478); // Alt: rose
-                } else if combo.contains("S-") {
-                    cr.set_source_rgb(0.204, 0.506, 0.341); // Ctrl+Shift: green
-                } else {
-                    cr.set_source_rgb(0.557, 0.420, 0.208); // Ctrl: gold
-                }
-                let _ = cr.move_to(rect.x + 7.0, y_pos);
-                let _ = cr.show_text(act);
-            }
+            let hint = truncate_to_width(cr, def.action, cap_w - 10.0);
+            let _ = cr.move_to(x + 5.0, strip_y + cap_h - 8.0);
+            let _ = cr.show_text(&hint);
         }
     }
 
-    // Draw tooltip if hovering a key with modifiers
-    if let Some(idx) = tooltip_idx {
-        if idx < layout.defs.len() {
-            let def = layout.defs[idx];
-            if !def.modifiers.is_empty() {
-                let rect = &layout.rects[idx];
-                draw_tooltip(cr, rect, def);
-            }
-        }
+    // ── Detail panel ──
+    let panel_x = margin;
+    let panel_y = strip_y + cap_h + 28.0;
+    let panel_w = widget_w - 2.0 * margin;
+    let def = keys[sel];
+
+    let mut rows: Vec<(&str, String, (f64, f64, f64))> = Vec::new();
+    if !def.action.is_empty() {
+        rows.push((def.unshifted, def.action.to_string(), (0.157, 0.412, 0.514))); // pine
+    }
+    if !def.shift_action.is_empty() {
+        rows.push(("Shift", def.shift_action.to_string(), (0.565, 0.478, 0.663))); // iris
+    }
+    for &(combo, act) in def.modifiers {
+        let (label, col) = if combo.starts_with("M-") && !combo.contains("C-") {
+            ("Alt", (0.706, 0.388, 0.478)) // rose
+        } else if combo.contains("S-") {
+            ("Ctrl+Shift", (0.204, 0.506, 0.341)) // green
+        } else {
+            ("Ctrl", (0.557, 0.420, 0.208)) // gold
+        };
+        rows.push((label, act.to_string(), col));
+    }
+    if rows.is_empty() {
+        rows.push(("", "(unbound)".to_string(), (0.596, 0.576, 0.647)));
     }
 
-    // Legend
-    let legend_y = KB_H - 20.0;
-    let legend_items: &[((f64, f64, f64), &str)] = &[
-        ((0.949, 0.914, 0.882), "bare key"),
-        ((0.949, 0.914, 0.882), "shift only"),
-        ((0.949, 0.914, 0.882), "both / modifier"),
-        ((1.0, 0.98, 0.953), "unbound"),
-    ];
-    let legend_colors: &[(f64, f64, f64)] = &[
-        (0.157, 0.412, 0.514),  // pine
-        (0.565, 0.478, 0.663),  // iris
-        (0.475, 0.459, 0.576),  // subtle
-        (0.596, 0.576, 0.647),  // muted
-    ];
+    let line_h = 30.0;
+    let panel_h = 56.0 + rows.len() as f64 * line_h;
 
-    let mut lx = 0.0;
-    for (i, &(bg, label)) in legend_items.iter().enumerate() {
-        // Swatch
-        cr.set_source_rgb(bg.0, bg.1, bg.2);
-        rounded_rect(cr, lx, legend_y, 16.0, 16.0, 3.0);
-        let _ = cr.fill();
-
-        // Label
-        let tc = legend_colors[i];
-        cr.set_source_rgb(tc.0, tc.1, tc.2);
-        cr.set_font_size(13.0);
-        cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
-        let _ = cr.move_to(lx + 20.0, legend_y + 13.0);
-        let _ = cr.show_text(label);
-        let extents = cr.text_extents(label).unwrap();
-        lx += 20.0 + extents.width() + 24.0;
-    }
-
-    // Ctrl+ indicator
-    cr.set_source_rgb(0.557, 0.420, 0.208);
-    cr.set_font_size(13.0);
-    let _ = cr.move_to(lx, legend_y + 13.0);
-    let _ = cr.show_text("\u{2022} Ctrl+");
-    let extents = cr.text_extents("\u{2022} Ctrl+").unwrap();
-    lx += extents.width() + 16.0;
-
-    // Ctrl+Shift+ indicator
-    cr.set_source_rgb(0.204, 0.506, 0.341);
-    cr.set_font_size(13.0);
-    let _ = cr.move_to(lx, legend_y + 13.0);
-    let _ = cr.show_text("\u{2022} Ctrl+Shift+");
-    let extents = cr.text_extents("\u{2022} Ctrl+Shift+").unwrap();
-    lx += extents.width() + 16.0;
-
-    // Alt+ indicator
-    cr.set_source_rgb(0.706, 0.388, 0.478);
-    cr.set_font_size(13.0);
-    let _ = cr.move_to(lx, legend_y + 13.0);
-    let _ = cr.show_text("\u{2022} Alt+");
-
-    // Close hint (right side)
-    cr.set_source_rgb(0.475, 0.459, 0.576);
-    cr.set_font_size(13.0);
-    cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
-    let hint = "Esc to close \u{00b7} n/p cycle overlays";
-    let extents = cr.text_extents(hint).unwrap();
-    let _ = cr.move_to(KB_W - extents.width(), legend_y + 13.0);
-    let _ = cr.show_text(hint);
-}
-
-fn draw_tooltip(cr: &gtk4::cairo::Context, rect: &KeyRect, def: &KeyDef) {
-    let lines: Vec<(&str, &str)> = def.modifiers.iter().map(|&(combo, action)| {
-        (combo, action)
-    }).collect();
-
-    cr.set_font_size(13.0);
-    cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
-
-    // Measure tooltip size
-    let mut max_w: f64 = 0.0;
-    for &(_, act) in &lines {
-        let ext = cr.text_extents(act).unwrap();
-        if ext.width() > max_w { max_w = ext.width(); }
-    }
-    let tt_w = max_w + 20.0;
-    let tt_h = lines.len() as f64 * 18.0 + 12.0;
-    let tt_x = rect.x + rect.w / 2.0 - tt_w / 2.0;
-    let tt_y = rect.y - tt_h - 6.0;
-
-    // Background
-    cr.set_source_rgba(0.341, 0.322, 0.475, 0.95);
-    rounded_rect(cr, tt_x, tt_y, tt_w, tt_h, 4.0);
+    // Panel background
+    cr.set_source_rgb(0.965, 0.949, 0.925);
+    rounded_rect(cr, panel_x, panel_y, panel_w, panel_h, 10.0);
     let _ = cr.fill();
-
-    // Border
-    cr.set_source_rgb(0.475, 0.459, 0.576);
-    rounded_rect(cr, tt_x + 0.5, tt_y + 0.5, tt_w - 1.0, tt_h - 1.0, 4.0);
+    cr.set_source_rgb(0.886, 0.847, 0.784);
+    rounded_rect(cr, panel_x + 0.5, panel_y + 0.5, panel_w - 1.0, panel_h - 1.0, 10.0);
     cr.set_line_width(1.0);
     let _ = cr.stroke();
 
-    // Text
-    for (i, &(combo, act)) in lines.iter().enumerate() {
-        if combo.starts_with("M-") && !combo.contains("C-") {
-            cr.set_source_rgb(0.706, 0.388, 0.478);
-        } else {
-            cr.set_source_rgb(0.557, 0.420, 0.208);
-        }
-        let _ = cr.move_to(tt_x + 10.0, tt_y + 18.0 + i as f64 * 18.0);
+    // Panel title: the key glyph
+    cr.select_font_face("monospace", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Bold);
+    cr.set_font_size(24.0);
+    cr.set_source_rgb(0.149, 0.251, 0.478);
+    let _ = cr.move_to(panel_x + 22.0, panel_y + 36.0);
+    let mut ttl = def.unshifted.to_string();
+    if !def.shifted.is_empty() {
+        ttl.push_str(&format!("   ({} = shift)", def.shifted));
+    }
+    let _ = cr.show_text(&ttl);
+
+    // Binding rows
+    for (i, (label, act, col)) in rows.iter().enumerate() {
+        let ry = panel_y + 60.0 + i as f64 * line_h;
+        cr.select_font_face("monospace", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
+        cr.set_font_size(15.0);
+        cr.set_source_rgb(0.4, 0.38, 0.45);
+        let _ = cr.move_to(panel_x + 24.0, ry);
+        let _ = cr.show_text(label);
+        cr.set_source_rgb(col.0, col.1, col.2);
+        cr.set_font_size(16.0);
+        let _ = cr.move_to(panel_x + 180.0, ry);
         let _ = cr.show_text(act);
     }
+
+    // ── Footer hint ──
+    cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
+    cr.set_font_size(14.0);
+    cr.set_source_rgb(0.78, 0.76, 0.82);
+    let foot = "Esc close  \u{00b7}  n/p cycle rows  \u{00b7}  j/k or \u{2190}/\u{2192} move highlight";
+    let fe = cr.text_extents(foot).unwrap();
+    let _ = cr.move_to((widget_w - fe.width()) / 2.0, widget_h - 28.0);
+    let _ = cr.show_text(foot);
+}
+
+/// Truncate `text` so it fits within `max_w` px, appending "…" if cut.
+fn truncate_to_width(cr: &gtk4::cairo::Context, text: &str, max_w: f64) -> String {
+    if cr.text_extents(text).map(|e| e.width()).unwrap_or(0.0) <= max_w {
+        return text.to_string();
+    }
+    let mut s = String::new();
+    for ch in text.chars() {
+        let mut trial = s.clone();
+        trial.push(ch);
+        trial.push('\u{2026}');
+        if cr.text_extents(&trial).map(|e| e.width()).unwrap_or(0.0) > max_w {
+            s.push('\u{2026}');
+            return s;
+        }
+        s.push(ch);
+    }
+    s
 }
 
 fn rounded_rect(cr: &gtk4::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
@@ -505,27 +358,14 @@ fn rounded_rect(cr: &gtk4::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f6
     cr.close_path();
 }
 
-// ── Hit testing ──────────────────────────────────────────────────────
-
-fn hit_test(layout: &AllKeys, mx: f64, my: f64) -> Option<usize> {
-    // Adjust for padding
-    let x = mx - PAD;
-    let y = my - PAD;
-    for (i, rect) in layout.rects.iter().enumerate() {
-        if x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h {
-            if !layout.defs[i].modifiers.is_empty() {
-                return Some(i);
-            }
-        }
-    }
-    None
-}
 
 // ── Public API ───────────────────────────────────────────────────────
 
 pub struct KeybindsOverlay {
     pub overlay: Overlay,
     drawing_area: DrawingArea,
+    row_index: Rc<std::cell::Cell<usize>>,
+    selected: Rc<std::cell::Cell<usize>>,
 }
 
 impl KeybindsOverlay {
@@ -541,61 +381,24 @@ impl KeybindsOverlay {
             .build();
         drawing_area.add_css_class("keybinds-overlay-canvas");
 
-        let layout = Rc::new(build_layout());
-        let hover_idx: Rc<RefCell<Option<usize>>> = Rc::new(RefCell::new(None));
+        let row_index = Rc::new(std::cell::Cell::new(0usize));
+        let selected = Rc::new(std::cell::Cell::new(first_bound(&row_keys(0))));
 
-        // Draw function — fills entire widget, centers keyboard
-        let layout_draw = layout.clone();
-        let hover_draw = hover_idx.clone();
+        let row_draw = row_index.clone();
+        let sel_draw = selected.clone();
         drawing_area.set_draw_func(move |_area, cr, w, h| {
-            let idx = *hover_draw.borrow();
-            draw_keyboard(cr, &layout_draw, idx, w as f64, h as f64);
+            draw_row_screen(cr, row_draw.get(), sel_draw.get(), w as f64, h as f64);
         });
 
-        // Mouse motion for tooltips — un-scale coordinates
-        let motion = gtk4::EventControllerMotion::new();
-        let hover_motion = hover_idx.clone();
-        let layout_motion = layout.clone();
-        let da_motion = drawing_area.clone();
-        motion.connect_motion(move |_controller, x, y| {
-            let w = da_motion.width() as f64;
-            let h = da_motion.height() as f64;
-            let base_w = KB_W + 2.0 * PAD;
-            let base_h = KB_H + 2.0 * PAD;
-            let scale_x = w / base_w;
-            let scale_y = h / base_h;
-            let scale = scale_x.min(scale_y) * 0.92;
-            let scaled_w = base_w * scale;
-            let scaled_h = base_h * scale;
-            let x_offset = (w - scaled_w) / 2.0;
-            let y_offset = (h - scaled_h) / 2.0;
-
-            // Convert mouse coords to layout space
-            let lx = (x - x_offset) / scale;
-            let ly = (y - y_offset) / scale;
-
-            let new_idx = hit_test(&layout_motion, lx, ly);
-            let old_idx = *hover_motion.borrow();
-            if new_idx != old_idx {
-                *hover_motion.borrow_mut() = new_idx;
-                da_motion.queue_draw();
-            }
-        });
-
-        let hover_leave = hover_idx;
-        let da_leave = drawing_area.clone();
-        motion.connect_leave(move |_controller| {
-            *hover_leave.borrow_mut() = None;
-            da_leave.queue_draw();
-        });
-
-        drawing_area.add_controller(motion);
-
-        KeybindsOverlay { overlay, drawing_area }
+        KeybindsOverlay { overlay, drawing_area, row_index, selected }
     }
 
     pub fn show(&self) {
+        // Always open at the first row.
+        self.row_index.set(0);
+        self.selected.set(first_bound(&row_keys(0)));
         self.drawing_area.set_visible(true);
+        self.drawing_area.queue_draw();
     }
 
     pub fn hide(&self) {
@@ -606,12 +409,54 @@ impl KeybindsOverlay {
         self.drawing_area.is_visible()
     }
 
-    pub fn adjust_scale(&mut self, _delta: i32) {
-        // Fixed size — no-op
+    /// Cycle to the next row. Returns false when cycling past the last keyboard
+    /// row (caller switches to the gamepad screen).
+    pub fn next_row(&self) -> bool {
+        let cur = self.row_index.get();
+        if cur + 1 >= ROW_COUNT {
+            return false; // caller should advance to the gamepad screen
+        }
+        let next = cur + 1;
+        self.row_index.set(next);
+        self.selected.set(first_bound(&row_keys(next)));
+        self.drawing_area.queue_draw();
+        true
     }
 
-    pub fn reset_scale(&mut self) {
-        // Fixed size — no-op
+    /// Cycle to the previous row. Returns false when at the first row (caller
+    /// wraps to the gamepad screen).
+    pub fn prev_row(&self) -> bool {
+        let cur = self.row_index.get();
+        if cur == 0 {
+            return false; // caller should wrap to the gamepad screen
+        }
+        let prev = cur - 1;
+        self.row_index.set(prev);
+        self.selected.set(first_bound(&row_keys(prev)));
+        self.drawing_area.queue_draw();
+        true
+    }
+
+    /// Jump directly to the last keyboard row (used when entering from the
+    /// gamepad screen via `p`).
+    pub fn show_last_row(&self) {
+        let last = ROW_COUNT - 1;
+        self.row_index.set(last);
+        self.selected.set(first_bound(&row_keys(last)));
+        self.drawing_area.set_visible(true);
+        self.drawing_area.queue_draw();
+    }
+
+    /// Move the key highlight within the current row (wraps).
+    pub fn move_selection(&self, delta: i32) {
+        let len = row_keys(self.row_index.get()).len();
+        if len == 0 {
+            return;
+        }
+        let cur = self.selected.get() as i32;
+        let next = (cur + delta).rem_euclid(len as i32) as usize;
+        self.selected.set(next);
+        self.drawing_area.queue_draw();
     }
 
     pub fn attach(&self, base: &impl IsA<gtk4::Widget>) {

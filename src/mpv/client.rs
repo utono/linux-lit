@@ -14,7 +14,8 @@ pub async fn run(
     let mut writer: Option<tokio::net::unix::OwnedWriteHalf> = None;
     let mut timestamps: Vec<(i64, f64, f64)> = Vec::new();
     let mut line_id_to_index: HashMap<i64, usize> = HashMap::new();
-    let mut pending_seek_after_load: Option<f64> = None;
+    // (seek_time, resume_after_seek)
+    let mut pending_seek_after_load: Option<(f64, bool)> = None;
 
     loop {
         if let Some(ref mut r) = reader {
@@ -30,14 +31,15 @@ pub async fn run(
                         }
                         Ok(_) => {
                             if is_file_loaded_event(&line_buf) {
-                                if let Some(seek_time) = pending_seek_after_load.take() {
+                                if let Some((seek_time, resume)) = pending_seek_after_load.take() {
                                     if let Some(w) = writer.as_mut() {
                                         crate::logging::log(&format!(
-                                            "MPV: file-loaded, seeking to {:.1} and resuming", seek_time
+                                            "MPV: file-loaded, seeking to {:.1} resume={}", seek_time, resume
                                         ));
                                         let cmd = format!(r#"{{"command":["seek",{},"absolute"]}}"#, seek_time);
                                         let _ = send_command(w, &cmd).await;
-                                        let _ = send_command(w, r#"{"command":["set_property","pause",false]}"#).await;
+                                        let pause_val = if resume { "false" } else { "true" };
+                                        let _ = send_command(w, &format!(r#"{{"command":["set_property","pause",{}]}}"#, pause_val)).await;
                                     }
                                 }
                             }
@@ -75,7 +77,7 @@ async fn handle_command(
     evt_tx: &mpsc::Sender<MpvEvent>,
     timestamps: &mut Vec<(i64, f64, f64)>,
     line_id_to_index: &mut HashMap<i64, usize>,
-    pending_seek_after_load: &mut Option<f64>,
+    pending_seek_after_load: &mut Option<(f64, bool)>,
 ) {
     match cmd {
         MpvCommand::Connect(path) => {
@@ -174,9 +176,20 @@ async fn handle_command(
                 let escaped = path.replace('\\', "\\\\").replace('"', "\\\"");
                 let cmd = format!(r#"{{"command":["loadfile","{}","replace"]}}"#, escaped);
                 let _ = send_command(w, &cmd).await;
-                *pending_seek_after_load = Some(seek_time);
+                *pending_seek_after_load = Some((seek_time, true));
                 crate::logging::log(&format!(
-                    "MPV: loadfile replace '{}' (seek {:.1} pending file-loaded)", path, seek_time
+                    "MPV: loadfile replace '{}' (seek {:.1} resume pending file-loaded)", path, seek_time
+                ));
+            }
+        }
+        MpvCommand::LoadFileSeekPaused(path, seek_time) => {
+            if let Some(w) = writer.as_mut() {
+                let escaped = path.replace('\\', "\\\\").replace('"', "\\\"");
+                let cmd = format!(r#"{{"command":["loadfile","{}","replace"]}}"#, escaped);
+                let _ = send_command(w, &cmd).await;
+                *pending_seek_after_load = Some((seek_time, false));
+                crate::logging::log(&format!(
+                    "MPV: loadfile replace '{}' (seek {:.1} paused pending file-loaded)", path, seek_time
                 ));
             }
         }

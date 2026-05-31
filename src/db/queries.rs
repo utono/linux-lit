@@ -914,6 +914,7 @@ pub struct EchoCandidate {
     pub work_abbrev: String,
     pub div1: i64,
     pub div2: i64,
+    pub start_line: i64,
     pub speaker: String,
     pub passage_type: String,
     pub passage_text: String,
@@ -957,33 +958,35 @@ pub fn find_similar_passages(
     let base_exclude = exclude_work.strip_suffix("-Amb").unwrap_or(exclude_work);
 
     let mut stmt = conn.prepare(
-        "SELECT work_abbrev, div1, div2, speaker, passage_type, passage_text, embedding \
+        "SELECT work_abbrev, div1, div2, start_line, speaker, passage_type, passage_text, embedding \
          FROM passage_embeddings \
          WHERE work_abbrev != ?1",
     )?;
 
     let rows = stmt.query_map([base_exclude], |row| {
-        let blob: Vec<u8> = row.get(6)?;
+        let blob: Vec<u8> = row.get(7)?;
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, i64>(1)?,
             row.get::<_, i64>(2)?,
-            row.get::<_, String>(3)?,
+            row.get::<_, i64>(3)?,
             row.get::<_, String>(4)?,
             row.get::<_, String>(5)?,
+            row.get::<_, String>(6)?,
             blob,
         ))
     })?;
 
     let mut candidates: Vec<EchoCandidate> = Vec::new();
     for row in rows {
-        let (work_abbrev, div1, div2, speaker, passage_type, passage_text, blob) = row?;
+        let (work_abbrev, div1, div2, start_line, speaker, passage_type, passage_text, blob) = row?;
         let emb = decode_embedding(&blob);
         let sim = cosine_similarity(query_embedding, &emb);
         candidates.push(EchoCandidate {
             work_abbrev,
             div1,
             div2,
+            start_line,
             speaker,
             passage_type,
             passage_text,
@@ -994,6 +997,181 @@ pub fn find_similar_passages(
     candidates.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
     candidates.truncate(top_n);
     Ok(candidates)
+}
+
+// ─── Echo links persistence ─────────────────────────────────────────────────
+
+/// Identifies a turn (the cache key for its echoes).
+#[derive(Debug, Clone)]
+pub struct EchoTurnKey {
+    pub work_abbrev: String,
+    pub div1: i64,
+    pub div2: i64,
+    pub start_line: i64,
+    pub end_line: i64,
+    pub speaker: String,
+    pub turn_text: String,
+}
+
+/// A stored echo link (cached search result, possibly curated).
+#[derive(Debug, Clone)]
+pub struct StoredEchoLink {
+    pub link_id: i64,
+    pub echo_work_abbrev: String,
+    pub echo_div1: i64,
+    pub echo_div2: i64,
+    pub echo_start_line: i64,
+    pub echo_text: String,
+    pub similarity: f32,
+    pub curated: bool,
+    pub rank: i64,
+}
+
+/// Create the echo_turns and echo_links tables if absent.
+pub fn ensure_echo_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS echo_turns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            work_abbrev TEXT NOT NULL,
+            div1 INTEGER,
+            div2 INTEGER,
+            start_line INTEGER NOT NULL,
+            end_line INTEGER NOT NULL,
+            speaker TEXT,
+            turn_text TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            UNIQUE(work_abbrev, div1, div2, start_line, end_line)
+        );
+        CREATE TABLE IF NOT EXISTS echo_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            turn_id INTEGER NOT NULL REFERENCES echo_turns(id) ON DELETE CASCADE,
+            echo_work_abbrev TEXT NOT NULL,
+            echo_div1 INTEGER,
+            echo_div2 INTEGER,
+            echo_start_line INTEGER,
+            echo_text TEXT NOT NULL,
+            similarity REAL,
+            curated INTEGER NOT NULL DEFAULT 0,
+            rank INTEGER NOT NULL,
+            UNIQUE(turn_id, echo_work_abbrev, echo_div1, echo_div2, echo_text)
+        );
+        CREATE INDEX IF NOT EXISTS idx_echo_links_turn ON echo_links(turn_id);"
+    )?;
+    // Migration: add echo_start_line to pre-existing echo_links tables.
+    // Ignore the "duplicate column" error if it already exists.
+    let _ = conn.execute("ALTER TABLE echo_links ADD COLUMN echo_start_line INTEGER", []);
+    Ok(())
+}
+
+/// Find a cached turn row id by its key.
+pub fn find_echo_turn(conn: &Connection, key: &EchoTurnKey) -> Result<Option<i64>, rusqlite::Error> {
+    conn.query_row(
+        "SELECT id FROM echo_turns \
+         WHERE work_abbrev = ?1 AND div1 = ?2 AND div2 = ?3 \
+           AND start_line = ?4 AND end_line = ?5",
+        rusqlite::params![key.work_abbrev, key.div1, key.div2, key.start_line, key.end_line],
+        |row| row.get::<_, i64>(0),
+    )
+    .optional()
+}
+
+/// Insert (or fetch existing) the turn row, returning its id.
+pub fn save_echo_turn(conn: &Connection, key: &EchoTurnKey) -> Result<i64, rusqlite::Error> {
+    if let Some(id) = find_echo_turn(conn, key)? {
+        return Ok(id);
+    }
+    conn.execute(
+        "INSERT INTO echo_turns (work_abbrev, div1, div2, start_line, end_line, speaker, turn_text) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        rusqlite::params![
+            key.work_abbrev, key.div1, key.div2, key.start_line, key.end_line,
+            key.speaker, key.turn_text
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Load all echo links for a turn, curated first then by rank.
+pub fn load_echo_links(conn: &Connection, turn_id: i64) -> Result<Vec<StoredEchoLink>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT id, echo_work_abbrev, echo_div1, echo_div2, \
+                COALESCE(echo_start_line, 0), echo_text, \
+                COALESCE(similarity, 0.0), curated, rank \
+         FROM echo_links WHERE turn_id = ?1 \
+         ORDER BY curated DESC, rank ASC",
+    )?;
+    let rows = stmt.query_map([turn_id], |row| {
+        Ok(StoredEchoLink {
+            link_id: row.get(0)?,
+            echo_work_abbrev: row.get(1)?,
+            echo_div1: row.get(2)?,
+            echo_div2: row.get(3)?,
+            echo_start_line: row.get(4)?,
+            echo_text: row.get(5)?,
+            similarity: row.get::<_, f64>(6)? as f32,
+            curated: row.get::<_, i64>(7)? != 0,
+            rank: row.get(8)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// Insert echo links for a turn. Ignores duplicates (UNIQUE constraint).
+/// Tuple: (work, div1, div2, start_line, text, similarity, rank).
+pub fn insert_echo_links(
+    conn: &Connection,
+    turn_id: i64,
+    links: &[(String, i64, i64, i64, String, f32, i64)],
+) -> Result<(), rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "INSERT OR IGNORE INTO echo_links \
+         (turn_id, echo_work_abbrev, echo_div1, echo_div2, echo_start_line, echo_text, similarity, curated, rank) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8)",
+    )?;
+    for (work, d1, d2, sl, text, sim, rank) in links {
+        stmt.execute(rusqlite::params![turn_id, work, d1, d2, sl, text, *sim as f64, rank])?;
+    }
+    Ok(())
+}
+
+/// Toggle the curated flag on a link, returning the new state.
+pub fn toggle_echo_curated(conn: &Connection, link_id: i64) -> Result<bool, rusqlite::Error> {
+    conn.execute(
+        "UPDATE echo_links SET curated = 1 - curated WHERE id = ?1",
+        [link_id],
+    )?;
+    conn.query_row(
+        "SELECT curated FROM echo_links WHERE id = ?1",
+        [link_id],
+        |row| row.get::<_, i64>(0).map(|v| v != 0),
+    )
+}
+
+/// Delete all non-curated links for a turn (used by refresh).
+pub fn delete_noncurated_echo_links(conn: &Connection, turn_id: i64) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "DELETE FROM echo_links WHERE turn_id = ?1 AND curated = 0",
+        [turn_id],
+    )?;
+    Ok(())
+}
+
+/// Resolve a line's line_mapping.id from its location within a work.
+pub fn line_id_for_location(
+    conn: &Connection,
+    work_abbrev: &str,
+    div1: i64,
+    div2: i64,
+    line_in_div: i64,
+) -> Option<i64> {
+    conn.query_row(
+        "SELECT id FROM line_mapping \
+         WHERE work_abbrev = ?1 AND div1 = ?2 AND div2 = ?3 AND line_in_div = ?4 \
+         LIMIT 1",
+        rusqlite::params![work_abbrev, div1, div2, line_in_div],
+        |row| row.get::<_, i64>(0),
+    )
+    .ok()
 }
 
 #[cfg(test)]

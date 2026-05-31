@@ -232,8 +232,11 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("c"), Action::ShowCurrentChapter),
         // Bookmarks
         (KeyCombo::plain("m"), Action::ToggleBookmark),
-        (KeyCombo::plain("semicolon"), Action::NextBookmark),
+        (KeyCombo::plain("semicolon"), Action::ReopenEchoes),
         (KeyCombo::shift("colon"), Action::PrevBookmark),
+        (KeyCombo::plain("parenleft"), Action::PrevBookmark),
+        (KeyCombo::plain("ampersand"), Action::NextBookmark),
+        (KeyCombo::plain("4"), Action::PrevBookmark),
         (KeyCombo::ctrl("m"), Action::OpenBookmarkPicker),
     ]
 }
@@ -265,6 +268,9 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::alt("backslash"), Action::ToggleVocabHighlight),
         (KeyCombo::plain("ISO_Left_Tab"), Action::ToggleGlossOverlay),
         (KeyCombo::ctrl("g"), Action::ToggleGlossOverlay),
+        (KeyCombo::plain("i"), Action::ShowEchoes),
+        (KeyCombo::plain("I"), Action::ReopenEchoes),
+        (KeyCombo::plain("apostrophe"), Action::ReopenEchoes),
         (KeyCombo::ctrl("backslash"), Action::OpenConcordancePicker),
         (KeyCombo::ctrl_shift("P"), Action::OpenConcordanceWordPicker),
         (KeyCombo::ctrl_alt("p"), Action::OpenConcordanceListPicker),
@@ -288,7 +294,7 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl("a"), Action::ToggleAuthorship),
         (KeyCombo::ctrl_shift("A"), Action::PickAttributionSet),
         (KeyCombo::alt("f"), Action::ShowFontInfo),
-        (KeyCombo::plain("i"), Action::ToggleTranslations),
+        (KeyCombo::alt("i"), Action::ToggleTranslations),
         (KeyCombo::ctrl("h"), Action::ToggleSynopsis),
         (KeyCombo::ctrl("comma"), Action::OpenSettingsOverlay),
     ]
@@ -306,7 +312,7 @@ fn timestamp_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
         (KeyCombo::plain("u"), Action::SetStartTime),
         (KeyCombo::plain("Right"), Action::SetStartTime),
-        (KeyCombo::alt("i"), Action::SetEndTime),
+        (KeyCombo::alt("u"), Action::SetEndTime),
         (KeyCombo::plain("period"), Action::SetChapter),
         (KeyCombo::plain("BackSpace"), Action::DeleteTimestamp),
         (KeyCombo::plain("p"), Action::NudgeStartBackward),

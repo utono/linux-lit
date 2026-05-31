@@ -46,6 +46,7 @@ pub enum InputMode {
     GlossPrompt,
     GlossPicker,
     EchoPicker,
+    EchoesOverlay,
     GamepadOverlay,
     KeybindsOverlay,
     ConcordancePicker,
@@ -183,6 +184,13 @@ pub struct AppState {
     pub echo_picker: crate::ui::echo_picker::EchoPicker,
     pub pending_echo_context: Option<crate::gloss::GlossContext>,
     pub pending_echo_scene_lines: Vec<crate::db::models::Line>,
+    pub echo_overlay_links: Vec<crate::db::queries::StoredEchoLink>,
+    pub echo_overlay_index: usize,
+    pub echo_overlay_titles: std::collections::HashMap<String, String>,
+    pub echo_overlay_source: String,
+    pub echo_overlay_turn_id: Option<i64>,
+    pub echo_overlay_turn_key: Option<crate::db::queries::EchoTurnKey>,
+    pub echo_session: Option<crate::input::actions::echoes::EchoSession>,
     pub vocab_words: std::collections::HashSet<String>,
     pub vocab_matches: Vec<VocabMatch>,
     pub vocab_match_idx: Option<usize>,
@@ -433,6 +441,17 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
             }
             setup_gutter(state);
         }
+    } else if state.sign_column_visible.get() {
+        // Sign column is shown by default — create the gutter on the first
+        // layout pass after a work loads. Margin is at logical_left here, so
+        // setup_gutter() computes its width correctly.
+        if state.text_view.left_margin() != logical_left {
+            state.text_view.set_left_margin(logical_left);
+            if state.dialogue_formatting_active {
+                apply_dialogue_formatting(state);
+            }
+        }
+        setup_gutter(state);
     } else if state.text_view.left_margin() != logical_left {
         state.text_view.set_left_margin(logical_left);
         if state.dialogue_formatting_active {
@@ -919,7 +938,7 @@ pub fn build_window(
         search_current_tag,
         current_time_pos: 0.0,
         media_id: None,
-        sign_column_visible: Rc::new(Cell::new(false)),
+        sign_column_visible: Rc::new(Cell::new(true)),
         has_timestamp: Rc::new(RefCell::new(Vec::new())),
         is_manual: Rc::new(RefCell::new(Vec::new())),
         is_chapter_line: Rc::new(RefCell::new(Vec::new())),
@@ -969,6 +988,13 @@ pub fn build_window(
         echo_picker,
         pending_echo_context: None,
         pending_echo_scene_lines: Vec::new(),
+        echo_overlay_links: Vec::new(),
+        echo_overlay_index: 0,
+        echo_overlay_titles: std::collections::HashMap::new(),
+        echo_overlay_source: String::new(),
+        echo_overlay_turn_id: None,
+        echo_overlay_turn_key: None,
+        echo_session: None,
         vocab_words: std::collections::HashSet::new(),
         vocab_matches: Vec::new(),
         vocab_match_idx: None,
@@ -1540,6 +1566,7 @@ pub fn display_work_at_with_prepared(
     BOOKMARKS_INIT.call_once(|| {
         if let Ok(conn) = crate::db::queries::open_db_rw() {
             let _ = crate::db::queries::ensure_bookmarks_table(&conn);
+            let _ = crate::db::queries::ensure_echo_tables(&conn);
         }
     });
 

@@ -21,6 +21,8 @@ pub enum MpvCommand {
     LoadFile(String),
     /// Load file and seek+resume after MPV reports it's ready.
     LoadFileAndSeek(String, f64),
+    /// Load file and seek but stay paused after MPV reports it's ready.
+    LoadFileSeekPaused(String, f64),
     Quit,
 }
 

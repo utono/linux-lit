@@ -117,3 +117,165 @@ This biases Claude toward the user's selection while allowing override for bad m
 - **Citation accuracy:** The embedding search returns actual passages from lit.db with verified citations — this eliminates the hallucinated-citation problem entirely.
 - **Storage:** ~200-250MB added to lit.db. Acceptable for a desktop app. Could move to sidecar file if needed.
 - **API cost:** One-time pre-computation ~$0.02. Runtime ~$0.0001 per lookup. Negligible.
+
+---
+
+## Updates Since Initial Design
+
+The feature shipped with the following changes from the original design above.
+
+### Embedding model
+
+The pre-computation and runtime both use **`voyage-4-large`** (1024-dim),
+Voyage's best general-purpose retrieval model (released Jan 2026). The model
+name appears as a `MODEL` constant in both `scripts/build_embeddings.py` and
+`src/voyage.rs` — the two MUST match, since cosine similarity across different
+models is meaningless. (The corpus was initially built with `voyage-3-large`
+and later re-embedded with `voyage-4-large`.)
+
+### Corpus exclusion (`-Amb` and `-BBC`)
+
+The pre-computation excludes ALL hyphenated alternate editions, not just
+`-Amb`. The Shakespeare-works query is now
+`abbrev NOT LIKE '%-%'` (the canonical works have no hyphen in their abbrev;
+the `-Amb` Ambrose and `-BBC` radio editions are duplicates that polluted the
+echo results). Final corpus: ~29k turns + ~28.3k exchanges = ~57.4k embeddings.
+
+### Resumable pre-computation
+
+`scripts/build_embeddings.py` is resumable: on restart it loads already-embedded
+passage keys from `passage_embeddings` and skips them, so a rate-limited or
+interrupted run continues without re-spending API calls. To force a full rebuild,
+drop the table first. Documented in the `rebuild-echo-embeddings` skill.
+
+### Echoes overlay (`i` on a line) — a second consumer of the search
+
+Beyond the inner-monologue gloss flow, a standalone read-only feature was added:
+pressing **`i`** on a line embeds the cursor line's **speaker turn** and shows
+the most similar cross-work passages in the gloss overlay card (NOT a picker),
+formatted like inner-monologue echoes (source turn header, then each echo as an
+italic quote with citation indented below). See
+`docs/specs/2026-05-31-echo-links-persistence-design.md` and
+`docs/specs/2026-05-31-echo-jump-navigation-design.md` for the full feature.
+
+Display refinements in this overlay:
+- **Dedup** by displayed first sentence (over-fetch 60, keep highest-similarity
+  unique, cap 15).
+- **Sort by work title**, then act.scene — echoes group by work.
+- **First complete sentence** is shown, preserving verse line breaks (not just
+  the first line, not collapsed to prose).
+- Each echo renders as `["sentence" — Work act.scene]`, split into an italic
+  quote line and an indented citation line.
+
+### `EchoCandidate.start_line`
+
+`find_similar_passages` now projects `start_line` from `passage_embeddings`
+into `EchoCandidate` (used downstream to resolve the echoed line for jump
+navigation).
+
+### Maintenance skill
+
+`rebuild-echo-embeddings` skill documents how to re-run the offline
+pre-computation (prerequisites, resume behaviour, verification, model-sync
+warning).
+
+---
+
+## Proposed: Sentiment/Affect Re-Rank Axis (2026-05-31)
+
+**Status:** design only — not yet implemented. Optional second ranking axis
+layered on top of the existing semantic cosine ranking.
+
+### Motivation
+
+The current ranking is single-axis: pure Voyage cosine similarity (see
+`find_similar_passages` in `src/db/queries.rs`, the `sort_by` on
+`similarity`). This captures *meaning* similarity but not *affective posture* —
+two speeches that aren't lexically or semantically close but both trace the same
+emotional moment (e.g. despair resolving into resolve) will not be ranked
+together.
+
+This mirrors the Vectorian Age paper's (Liebl & Burghardt, 2020,
+`aclanthology.org/2020.latechclfl-1.7.pdf`) core finding: no single similarity
+axis wins, and the gain comes from **interpolating multiple axes with a tunable
+weight** (their `EMI` parameter mixing `fastText` and `wn2vec`). A
+sentiment/affect axis is the same idea — swap the second embedding for an
+*affective* vector.
+
+### Data model
+
+Add a small affect vector alongside the existing 1024-dim embedding:
+
+```sql
+ALTER TABLE passage_embeddings ADD COLUMN sentiment BLOB;  -- float32 vector
+```
+
+Recommended representation: a **VAD vector** (Valence, Arousal, Dominance — 3
+floats) or an **NRC 8-emotion vector** (anger, fear, joy, sadness, etc.).
+Either is tiny next to the 1024-dim semantic blob — negligible storage on the
+~57k rows. The blob is little-endian f32, decoded with the existing
+`decode_embedding` helper.
+
+### Offline computation (`scripts/build_embeddings.py`)
+
+Compute the affect vector in the same per-passage loop that already enriches and
+embeds. Two sources:
+
+- **Lexicon (default):** NRC-VAD / NRC-EmoLex lookup over `passage_text`,
+  averaged across tokens. Free, deterministic, no extra API call. Per-word
+  scores are weak but acceptable averaged over a multi-word turn.
+- **Model-scored (optional, higher quality, higher cost):** ask an LLM for a VAD
+  score per passage. For a one-time ~57k-row build the lexicon is the pragmatic
+  default; the model path can be a flag.
+
+The script's resumable logic (skip already-embedded keys) extends naturally:
+treat a NULL `sentiment` column as "needs affect scoring."
+
+### Runtime combination
+
+The combination point is the ranking in `find_similar_passages`
+(`src/db/queries.rs`). Today:
+
+```rust
+let sim = cosine_similarity(query_embedding, &emb);
+// ... candidates.sort_by(|a, b| b.similarity.partial_cmp(...))
+```
+
+Proposed — a weighted blend, following the Vectorian's interpolation shape:
+
+```rust
+let score = (1.0 - w) * sim + w * affect_sim;
+```
+
+where `affect_sim` is cosine (or negative L2) between the query's affect vector
+and the candidate's, and `w` is the affect weight in `[0, 1]`.
+
+### Re-rank, not replace
+
+The paper's hardest-won lesson: a low-dimensional, low-discriminative axis
+*degrades* recall if over-weighted — their harmonic-mean optimizer literally
+turned embeddings off when they hurt hard queries. Affect is even
+lower-dimensional than their embeddings (every anguished soliloquy clusters
+together), so:
+
+- Let Voyage cosine fetch a **wide candidate set** first (the code already
+  over-fetches 60 in `src/input/actions/echoes.rs`).
+- Use affect only to **re-rank within that set**, never as the primary fetch.
+- Default `w` **low** (~0.15–0.25). A bad affect signal must never dominate the
+  semantic ranking already trusted by the shipped feature.
+
+### Tunable weight
+
+The Vectorian's contribution was that the optimal blend is query-dependent.
+Optuna isn't feasible in a desktop reader, but `w` should be exposed via config
+the way other tuning knobs already are — a `set-echo-affect-weight` skill
+writing to `~/.config/linux-lit/config.json`, paralleling `set-sync-preroll`.
+This allows A/B-by-feel against real glosses rather than a one-shot guess.
+
+### Risk
+
+VAD scored from a modern lexicon over Early Modern English is noisy — the same
+historical-language problem flagged for embeddings above. Gate behind the
+tunable weight defaulting low, so a poor affect signal can never override the
+semantic ranking. Ship disabled (`w = 0`) and raise only if the re-rank
+measurably improves echo quality.
