@@ -666,23 +666,20 @@ pub(crate) fn copy_selected_echo(state_rc: &Rc<RefCell<AppState>>) {
 
 const TURN_PREROLL: f64 = 0.5;
 
-/// Tab in the echo overlay: toggle play/pause. On first play (when no loop is
-/// active), set an AB-loop over the turn's audio range and seek to its start
-/// so the turn loops while the overlay is open.
-pub(crate) fn toggle_echo_playback(state_rc: &Rc<RefCell<AppState>>) {
+/// `Tab` in the echoes overlay: reload the source-turn media, re-arm the source
+/// AB-loop, and play from the source turn's first line. The displayed work is
+/// the source work, so its Arkangel media is used.
+pub(crate) fn play_source_turn(state_rc: &Rc<RefCell<AppState>>) {
     let mut s = state_rc.borrow_mut();
 
-    // Resolve the turn's start/end timestamps from the session's turn key,
-    // if we're on the turn's work.
-    let loop_range = s.echo_session.as_ref().and_then(|sess| {
+    // Resolve the turn's (a, b) timestamps from the session key against the
+    // currently displayed (source) work.
+    let range = s.echo_session.as_ref().and_then(|sess| {
         let key = &sess.turn_key;
-        let on_turn_work = s.current_work.as_ref()
-            .map(|w| w.abbrev == key.work_abbrev)
-            .unwrap_or(false);
-        if !on_turn_work {
+        let work = s.current_work.as_ref()?;
+        if work.abbrev != key.work_abbrev {
             return None;
         }
-        let work = s.current_work.as_ref()?;
         let first = work.lines.iter().find(|l| {
             l.div1 == key.div1 && l.div2 == key.div2 && l.line_in_div == key.start_line
         })?;
@@ -694,30 +691,38 @@ pub(crate) fn toggle_echo_playback(state_rc: &Rc<RefCell<AppState>>) {
         Some((a, b))
     });
 
-    if s.mpv_playing {
-        // Currently playing — just pause.
-        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
-        crate::logging::log("ECHOES: paused turn playback");
-        return;
-    }
+    let (a, b) = match range {
+        Some(r) => r,
+        None => {
+            // No resolvable turn range — just toggle whatever is loaded.
+            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
+            crate::logging::log("ECHOES: toggled playback (no turn range)");
+            return;
+        }
+    };
 
-    // Not playing — start the turn loop if we have a range.
-    if let Some((a, b)) = loop_range {
-        let loop_a = (a - TURN_PREROLL).max(0.0);
-        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SetAbLoop { a: loop_a, b });
-        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Seek(loop_a));
-        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
-        s.ab_repeat.a_time = Some(a);
-        s.ab_repeat.b_time = Some(b);
-        s.ab_repeat.loop_active = true;
-        s.suppress_sync_until =
-            Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
-        crate::logging::log(&format!("ECHOES: looping turn [{:.1}, {:.1}]", loop_a, b));
-    } else {
-        // No turn range (e.g. on an echo's work) — plain toggle.
-        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
-        crate::logging::log("ECHOES: toggled playback (no turn loop)");
+    // The source work's Arkangel media (fall back to first media path).
+    let source_media = s.current_work.as_ref().and_then(|w| {
+        w.media_paths.iter()
+            .find(|p| p.contains("/aax-Arkangel/"))
+            .or_else(|| w.media_paths.first())
+            .cloned()
+    });
+
+    let loop_a = (a - TURN_PREROLL).max(0.0);
+    // Reload the source media (a may have swapped MPV to an echo file), then set
+    // the loop. LoadFileAndSeek resumes playback on file-loaded.
+    if let Some(path) = source_media {
+        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::LoadFileAndSeek(path, loop_a));
     }
+    let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SetAbLoop { a: loop_a, b });
+    s.ab_repeat.a_time = Some(a);
+    s.ab_repeat.b_time = Some(b);
+    s.ab_repeat.loop_active = true;
+    s.echo_playing_link = None;
+    s.suppress_sync_until =
+        Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
+    crate::logging::log(&format!("ECHOES: re-armed source turn loop [{:.1}, {:.1}]", loop_a, b));
 }
 
 /// Toggle the curated flag on the selected echo, persist, and re-render
