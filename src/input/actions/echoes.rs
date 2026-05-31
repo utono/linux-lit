@@ -90,6 +90,36 @@ fn cursor_turn(state: &AppState) -> Option<(Vec<Line>, String, String)> {
     Some((turn, speaker, addressee))
 }
 
+/// Clip a Visual selection's work-line index range to valid bounds and return
+/// the cloned lines. `start_wi`/`end_wi` are work-line indices (start <= end).
+fn selection_turn_lines(work_lines: &[Line], start_wi: usize, end_wi: usize) -> Vec<Line> {
+    if start_wi >= work_lines.len() {
+        return Vec::new();
+    }
+    let end = end_wi.min(work_lines.len().saturating_sub(1));
+    work_lines[start_wi..=end].to_vec()
+}
+
+/// Build an `EchoTurnKey` for an ad-hoc (possibly multi-turn, possibly
+/// multi-speaker) selection. The speaker label is the first selected line's
+/// speaker, falling back to "?" when absent. `turn_text` joins the selected
+/// line texts with spaces, matching the cursor-turn key format.
+fn selection_key(work_abbrev: &str, turn: &[Line]) -> crate::db::queries::EchoTurnKey {
+    let first = turn.first().expect("selection_key called with empty turn");
+    let last = turn.last().unwrap();
+    let speaker = first.speaker.clone().unwrap_or_else(|| "?".to_string());
+    let turn_text = turn.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join(" ");
+    crate::db::queries::EchoTurnKey {
+        work_abbrev: work_abbrev.to_string(),
+        div1: first.div1,
+        div2: first.div2,
+        start_line: first.line_in_div,
+        end_line: last.line_in_div,
+        speaker,
+        turn_text,
+    }
+}
+
 pub(crate) fn show_echoes_for_cursor_line(
     state_rc: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
@@ -267,6 +297,183 @@ pub(crate) fn show_echoes_for_cursor_line(
         });
         render_echoes(&mut s);
         crate::logging::log("ECHOES: searched and cached echoes");
+    });
+}
+
+/// Visual-mode `i`: show echoes for the selected range (one or more speaker
+/// turns). Mirrors `show_echoes_for_cursor_line` but builds its turn from the
+/// Visual selection. Exits Visual mode, then lands in the EchoesOverlay state.
+pub(crate) fn show_echoes_for_selection(
+    state_rc: &Rc<RefCell<AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+) {
+    let (turn, speaker, source_work) = {
+        let s = state_rc.borrow();
+        let (start, end) = match &s.visual_selection {
+            Some(sel) => sel.range(),
+            None => {
+                crate::logging::log("ECHOES: no visual selection");
+                return;
+            }
+        };
+        let work = match s.current_work.as_ref() {
+            Some(w) => w,
+            None => return,
+        };
+        let start_wi = match s.work_line_for_buffer(start) {
+            Some(i) => i,
+            None => {
+                crate::logging::log("ECHOES: selection start has no work line");
+                return;
+            }
+        };
+        let end_wi = s.work_line_for_buffer(end).unwrap_or(start_wi);
+        let (lo, hi) = (start_wi.min(end_wi), start_wi.max(end_wi));
+        let turn = selection_turn_lines(&work.lines, lo, hi);
+        if turn.is_empty() {
+            crate::logging::log("ECHOES: empty selection turn");
+            return;
+        }
+        let speaker = turn.first().and_then(|l| l.speaker.clone()).unwrap_or_else(|| "?".to_string());
+        (turn, speaker, work.abbrev.clone())
+    };
+
+    crate::input::visual::exit_visual_mode(&mut state_rc.borrow_mut());
+
+    let turn_text = turn.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join(" ");
+    let key = selection_key(&source_work, &turn);
+    let origin_line_id = turn.first().map(|l| l.id).unwrap_or(0);
+
+    let cached = crate::db::queries::open_db().ok().and_then(|conn| {
+        let turn_id = crate::db::queries::find_echo_turn(&conn, &key).ok().flatten()?;
+        let links = crate::db::queries::load_echo_links(&conn, turn_id).ok()?;
+        if links.is_empty() { None } else { Some((turn_id, links)) }
+    });
+
+    if let Some((turn_id, links)) = cached {
+        let titles = crate::db::queries::open_db()
+            .ok()
+            .and_then(|conn| crate::db::queries::load_work_titles(&conn).ok())
+            .unwrap_or_default();
+        let source_doc = build_source_header(&turn, &speaker);
+        let mut s = state_rc.borrow_mut();
+        s.echo_overlay_source = source_doc.clone();
+        s.echo_overlay_links = links.clone();
+        s.echo_overlay_index = 0;
+        s.echo_overlay_titles = titles.clone();
+        s.echo_overlay_turn_id = Some(turn_id);
+        s.echo_overlay_turn_key = Some(key.clone());
+        s.echo_session = Some(EchoSession {
+            turn_key: key,
+            turn_id: Some(turn_id),
+            links,
+            selected: 0,
+            titles,
+            source_doc,
+            origin_work: source_work.clone(),
+            origin_line_id,
+        });
+        s.input_mode = crate::app::InputMode::EchoesOverlay;
+        render_echoes(&mut s);
+        crate::logging::log("ECHOES: showing cached echoes (selection)");
+        return;
+    }
+
+    let query = format!("{}: {}", speaker, turn_text);
+    let key_for_async = key.clone();
+
+    let affect_weight;
+    {
+        let mut s = state_rc.borrow_mut();
+        affect_weight = s.config.echo_affect_weight;
+        s.echo_overlay_turn_key = Some(key);
+        s.gloss_overlay.show_loading_message("Searching for echoes...");
+        s.input_mode = crate::app::InputMode::EchoesOverlay;
+    }
+
+    let query_text = turn_text.clone();
+    let state_for_result = Rc::clone(state_rc);
+    let echo_handle = tokio_handle.clone();
+
+    glib::spawn_future_local(async move {
+        let embed_result = echo_handle
+            .spawn(async move { crate::voyage::embed_query(&query).await })
+            .await;
+
+        let raw = match embed_result {
+            Ok(Ok(embedding)) => crate::db::queries::open_db()
+                .ok()
+                .and_then(|conn| {
+                    crate::db::queries::find_similar_passages(
+                        &conn, &embedding, &query_text, &source_work, 60, affect_weight,
+                    )
+                    .ok()
+                })
+                .unwrap_or_default(),
+            Ok(Err(e)) => {
+                crate::logging::log(&format!("ECHOES: embed error: {}", e));
+                Vec::new()
+            }
+            Err(e) => {
+                crate::logging::log(&format!("ECHOES: embed join error: {}", e));
+                Vec::new()
+            }
+        };
+
+        let mut seen = std::collections::HashSet::new();
+        let mut candidates = Vec::new();
+        for cand in raw {
+            let dedup_key = first_sentence(&cand.passage_text).to_lowercase();
+            if dedup_key.is_empty() || !seen.insert(dedup_key) {
+                continue;
+            }
+            candidates.push(cand);
+            if candidates.len() >= 15 {
+                break;
+            }
+        }
+
+        if candidates.is_empty() {
+            let s = state_for_result.borrow();
+            s.gloss_overlay.show("No echoes found for this selection.", "");
+            crate::logging::log("ECHOES: no candidates (selection)");
+            return;
+        }
+
+        let titles = crate::db::queries::open_db()
+            .ok()
+            .and_then(|conn| crate::db::queries::load_work_titles(&conn).ok())
+            .unwrap_or_default();
+
+        candidates.sort_by(|a, b| {
+            let ta = titles.get(&a.work_abbrev).map(|s| s.as_str()).unwrap_or(a.work_abbrev.as_str());
+            let tb = titles.get(&b.work_abbrev).map(|s| s.as_str()).unwrap_or(b.work_abbrev.as_str());
+            ta.cmp(tb)
+                .then(a.div1.cmp(&b.div1))
+                .then(a.div2.cmp(&b.div2))
+        });
+
+        let (turn_id, links) = persist_and_load(&key_for_async, &candidates);
+
+        let mut s = state_for_result.borrow_mut();
+        let source_doc = build_source_header(&turn, &speaker);
+        s.echo_overlay_links = links.clone();
+        s.echo_overlay_index = 0;
+        s.echo_overlay_titles = titles.clone();
+        s.echo_overlay_source = source_doc.clone();
+        s.echo_overlay_turn_id = turn_id;
+        s.echo_session = Some(EchoSession {
+            turn_key: key_for_async.clone(),
+            turn_id,
+            links,
+            selected: 0,
+            titles,
+            source_doc,
+            origin_work: source_work.clone(),
+            origin_line_id,
+        });
+        render_echoes(&mut s);
+        crate::logging::log("ECHOES: searched and cached echoes (selection)");
     });
 }
 
@@ -785,5 +992,74 @@ fn switch_mpv_to_current_line(state_rc: &Rc<RefCell<AppState>>, line_id: i64, wa
     } else {
         let handle = state_rc.borrow().tokio_handle.clone();
         crate::input::actions::pickers::open_media_picker(state_rc, &handle);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::models::Line;
+
+    fn line(id: i64, speaker: Option<&str>, div1: i64, div2: i64, line_in_div: i64, text: &str) -> Line {
+        Line {
+            id,
+            citation: String::new(),
+            text: text.to_string(),
+            normalized: String::new(),
+            speaker: speaker.map(|s| s.to_string()),
+            is_dialogue: true,
+            timestamp: None,
+            div1,
+            div2,
+            line_in_div,
+            is_chapter: false,
+            is_spoken: None,
+        }
+    }
+
+    fn sample_work_lines() -> Vec<Line> {
+        vec![
+            line(10, Some("HAMLET"), 1, 2, 1, "To be, or not to be"),
+            line(11, Some("HAMLET"), 1, 2, 2, "that is the question"),
+            line(12, Some("OPHELIA"), 1, 2, 3, "Good my lord"),
+            line(13, Some("OPHELIA"), 1, 2, 4, "How does your honour"),
+            line(14, Some("HAMLET"), 1, 2, 5, "I humbly thank you"),
+        ]
+    }
+
+    #[test]
+    fn selection_turn_lines_clips_and_collects_range() {
+        let work = sample_work_lines();
+        let got = selection_turn_lines(&work, 1, 3);
+        let ids: Vec<i64> = got.iter().map(|l| l.id).collect();
+        assert_eq!(ids, vec![11, 12, 13]);
+    }
+
+    #[test]
+    fn selection_turn_lines_clamps_end_past_bounds() {
+        let work = sample_work_lines();
+        let got = selection_turn_lines(&work, 3, 999);
+        let ids: Vec<i64> = got.iter().map(|l| l.id).collect();
+        assert_eq!(ids, vec![13, 14]);
+    }
+
+    #[test]
+    fn selection_turn_lines_empty_when_start_past_end_of_work() {
+        let work = sample_work_lines();
+        assert!(selection_turn_lines(&work, 99, 100).is_empty());
+    }
+
+    #[test]
+    fn selection_key_uses_first_and_last_line_div_and_line_in_div() {
+        let work = sample_work_lines();
+        let turn = selection_turn_lines(&work, 1, 3);
+        let key = selection_key("HAM", &turn);
+        assert_eq!(key.work_abbrev, "HAM");
+        assert_eq!(key.div1, 1);
+        assert_eq!(key.div2, 2);
+        assert_eq!(key.start_line, 2);
+        assert_eq!(key.end_line, 4);
+        assert_eq!(key.speaker, "HAMLET");
+        assert_eq!(key.turn_text, "that is the question Good my lord How does your honour");
     }
 }
