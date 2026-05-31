@@ -387,7 +387,13 @@ impl GlossOverlay {
         *self.bar_ranges.borrow_mut() = ranges;
         *self.line_numbers.borrow_mut() = nums;
         *self.echo_lines.borrow_mut() = echo_lines;
-        self.bar_drawing.queue_draw();
+        // Repaint the bar overlay AFTER GTK has laid out the just-rebuilt
+        // buffer. Drawing synchronously here reads stale per-line geometry
+        // (iter_location/line_yrange return pre-layout y), which placed the
+        // accent bar and rule off-screen or with negative height. Defer to
+        // idle so layout settles first.
+        let bar = self.bar_drawing.clone();
+        glib::idle_add_local_once(move || bar.queue_draw());
 
         self.gloss_scroll_overlay.set_visible(true);
         self.hint.set_visible(true);
