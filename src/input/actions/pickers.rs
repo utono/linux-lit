@@ -807,7 +807,7 @@ pub(crate) fn open_gloss_picker(
                 .spawn_blocking(move || {
                     let conn =
                         crate::db::queries::open_db().expect("Failed to open lit.db");
-                    crate::db::queries::find_glossed_passages(&conn, &abbrev, "teacher-generic")
+                    crate::db::queries::find_glossed_passages(&conn, &abbrev, &["teacher-generic", "inner-monologue"])
                         .unwrap_or_default()
                 })
                 .await

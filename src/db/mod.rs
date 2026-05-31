@@ -1,3 +1,4 @@
+pub mod affect;
 pub mod authorship;
 pub mod chunks;
 pub mod concordance;

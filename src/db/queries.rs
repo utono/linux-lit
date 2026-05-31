@@ -946,25 +946,46 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     dot / (na.sqrt() * nb.sqrt())
 }
 
-/// Find the top-N passages most semantically similar to the query embedding,
-/// excluding the source work. Scans all stored embeddings and ranks by cosine
-/// similarity.
+/// Find the top-N passages most similar to the query, excluding the source
+/// work. Ranks by a blend of semantic cosine and an optional affect (NRC-VAD)
+/// axis: `score = (1 - w) * semantic + w * affect`, where `w` is
+/// `affect_weight` in [0, 1].
+///
+/// `query_text` is the raw highlighted passage text (NOT the enriched
+/// "SPEAKER to ADDRESSEE: ..." string) — its VAD is computed locally so the
+/// speaker labels don't skew the affect score, matching the document side.
+///
+/// At `affect_weight == 0.0` (the default), the affect axis is skipped
+/// entirely and the ranking is byte-for-byte the pure semantic ranking. The
+/// affect axis is also skipped if the lexicon is unavailable or a candidate
+/// has no stored `sentiment` blob.
 pub fn find_similar_passages(
     conn: &Connection,
     query_embedding: &[f32],
+    query_text: &str,
     exclude_work: &str,
     top_n: usize,
+    affect_weight: f32,
 ) -> Result<Vec<EchoCandidate>, rusqlite::Error> {
     let base_exclude = exclude_work.strip_suffix("-Amb").unwrap_or(exclude_work);
 
+    // Only engage the affect axis when it's both requested and possible.
+    let affect_on = affect_weight > 0.0 && crate::db::affect::lexicon_available();
+    let query_vad = if affect_on {
+        crate::db::affect::compute_vad(query_text)
+    } else {
+        None
+    };
+
     let mut stmt = conn.prepare(
-        "SELECT work_abbrev, div1, div2, start_line, speaker, passage_type, passage_text, embedding \
+        "SELECT work_abbrev, div1, div2, start_line, speaker, passage_type, passage_text, embedding, sentiment \
          FROM passage_embeddings \
          WHERE work_abbrev != ?1",
     )?;
 
     let rows = stmt.query_map([base_exclude], |row| {
         let blob: Vec<u8> = row.get(7)?;
+        let sentiment: Option<Vec<u8>> = row.get(8)?;
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, i64>(1)?,
@@ -974,14 +995,28 @@ pub fn find_similar_passages(
             row.get::<_, String>(5)?,
             row.get::<_, String>(6)?,
             blob,
+            sentiment,
         ))
     })?;
 
     let mut candidates: Vec<EchoCandidate> = Vec::new();
     for row in rows {
-        let (work_abbrev, div1, div2, start_line, speaker, passage_type, passage_text, blob) = row?;
+        let (work_abbrev, div1, div2, start_line, speaker, passage_type, passage_text, blob, sentiment) =
+            row?;
         let emb = decode_embedding(&blob);
         let sim = cosine_similarity(query_embedding, &emb);
+
+        // Blend in the affect cosine when active and both sides have a vector.
+        // If anything is missing for this candidate, fall back to pure semantic
+        // similarity for it rather than penalizing it.
+        let score = match (query_vad, sentiment.as_deref().and_then(crate::db::affect::decode_sentiment)) {
+            (Some(qv), Some(cv)) => {
+                let affect = crate::db::affect::affect_cosine(&qv, &cv);
+                (1.0 - affect_weight) * sim + affect_weight * affect
+            }
+            _ => sim,
+        };
+
         candidates.push(EchoCandidate {
             work_abbrev,
             div1,
@@ -990,7 +1025,7 @@ pub fn find_similar_passages(
             speaker,
             passage_type,
             passage_text,
-            similarity: sim,
+            similarity: score,
         });
     }
 

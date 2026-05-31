@@ -181,10 +181,36 @@ warning).
 
 ---
 
-## Proposed: Sentiment/Affect Re-Rank Axis (2026-05-31)
+## Sentiment/Affect Re-Rank Axis (2026-05-31)
 
-**Status:** design only — not yet implemented. Optional second ranking axis
-layered on top of the existing semantic cosine ranking.
+**Status:** implemented, shipped disabled (`echo_affect_weight` defaults to
+`0.0`). Optional second ranking axis layered on top of the existing semantic
+cosine ranking. Activate via the `set-echo-affect-weight` skill.
+
+### As-built notes
+
+- **Lexicon:** NRC-VAD (3-D V/A/D), vendored to `scripts/data/NRC-VAD-Lexicon.txt`
+  (gitignored — redistribution-restricted academic license). Both the offline
+  build (`scripts/build_embeddings.py`) and the runtime (`src/db/affect.rs`)
+  read this same file; the Rust side resolves it via `CARGO_MANIFEST_DIR`.
+- **Storage:** `passage_embeddings.sentiment BLOB` — 3 little-endian f32. The
+  build script migrates the column in (idempotent `ALTER TABLE`) and backfills
+  all existing rows locally (no Voyage cost).
+- **Parity:** `src/db/affect.rs::compute_vad` mirrors the Python `compute_vad`
+  exactly (tokenizer `[a-z']+`, lowercase, mean over in-lexicon words, neutral
+  `[0.5,0.5,0.5]` fallback). A unit test (`vad_matches_python_reference`)
+  asserts the exact Python value to prevent drift.
+- **Query side:** affect is computed from the RAW highlighted text, not the
+  enriched `"SPEAKER to ADDRESSEE: ..."` query string, so speaker labels don't
+  skew it — matching the document side (which scores `passage_text`).
+- **Blend:** `find_similar_passages` takes `affect_weight: f32`; score is
+  `(1-w)*semantic + w*affect_cosine`. At `w=0`, or when the lexicon is missing,
+  or when a candidate has no `sentiment` blob, it falls back to pure semantic
+  similarity for that candidate. Weight is clamped to `[0,1]` at config load.
+- **Config:** `Config.echo_affect_weight` (default `0.0`), in
+  `~/.config/linux-lit/config{,-dev}.json`.
+
+The remainder of this section is the original design rationale.
 
 ### Motivation
 

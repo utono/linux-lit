@@ -27,8 +27,10 @@ fn build_script() -> Vec<Step> {
 
 ### jumps-only
 
-Test only key-press navigation (x, y, 2, 3, [, {). No sync simulation.
-Fast (300ms interval for all steps).
+Test only key-press navigation (x, y, 2, 3, [, {) and search jumps. No
+sync simulation. Fast (300ms interval for all steps). Includes a
+`SearchJump` step that simulates a search landing 50 lines ahead, followed
+by `PageBackward` to verify the pre-search page is restored.
 
 ```rust
 fn build_script() -> Vec<Step> {
@@ -39,6 +41,7 @@ fn build_script() -> Vec<Step> {
     s.push(Step::NextScene); s.push(Step::PageBackward);
     s.push(Step::PrevScene); s.push(Step::PageBackward);
     s.extend_from_slice(&[Step::PageForward; 5]);
+    s.push(Step::SearchJump); s.push(Step::PageBackward);
     s.push(Step::NextChapter); s.push(Step::PageBackward);
     s.push(Step::PrevChapter); s.push(Step::PageBackward);
     s
@@ -75,7 +78,7 @@ fn build_script() -> Vec<Step> {
 All 6 invariants run after every step regardless of mode:
 
 - Forward progress on x (PageForward only)
-- y round-trips x / structural jump return (PageBackward only)
+- y round-trips x / structural jump / search jump return (PageBackward only)
 - No scene break mid-page (always)
 - Viewport fill > 10% (always)
 - current_line is dialogue (always, plays only)

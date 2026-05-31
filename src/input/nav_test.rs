@@ -19,6 +19,7 @@ enum Step {
     NextChapter,
     PrevChapter,
     SyncAdvance,
+    SearchJump,
 }
 
 impl Step {
@@ -39,6 +40,7 @@ fn build_script() -> Vec<Step> {
     s.push(Step::NextScene); s.push(Step::PageBackward);
     s.push(Step::PrevScene); s.push(Step::PageBackward);
     s.extend_from_slice(&[Step::PageForward; 5]);
+    s.push(Step::SearchJump); s.push(Step::PageBackward);
     s.push(Step::NextChapter); s.push(Step::PageBackward);
     s.push(Step::PrevChapter); s.push(Step::PageBackward);
     s
@@ -125,9 +127,10 @@ fn run_step(s: &mut AppState) {
     let pre_line = s.current_line;
     s.nav_test_prev_top = pre_top;
 
-    // Record expected return for structural jumps
+    // Record expected return for structural jumps and search jumps
     match step {
-        Step::NextScene | Step::PrevScene | Step::NextChapter | Step::PrevChapter => {
+        Step::NextScene | Step::PrevScene | Step::NextChapter | Step::PrevChapter
+        | Step::SearchJump => {
             s.nav_test_expect_return = Some(pre_top);
         }
         _ => {}
@@ -148,6 +151,16 @@ fn run_step(s: &mut AppState) {
         Step::PrevScene => navigation::jump_to_prev_scene(s),
         Step::NextChapter => navigation::jump_to_next_chapter(s),
         Step::PrevChapter => navigation::jump_to_prev_chapter(s),
+        Step::SearchJump => {
+            let line_count = s.effective_line_count();
+            let target = (s.current_line + 50).min(line_count.saturating_sub(1));
+            s.current_line = target;
+            let top = s.page_top_line;
+            if s.page_back_stack.last() != Some(&top) {
+                s.page_back_stack.push(top);
+            }
+            crate::input::highlight::update_highlight_and_center(s);
+        }
         Step::SyncAdvance => {
             let line_count = s.effective_line_count();
             if let Some(target) = next_dialogue_line(

@@ -168,13 +168,17 @@ pub(crate) fn show_echoes_for_cursor_line(
     let query = format!("{} to {}: {}", speaker, addressee, turn_text);
     let key_for_async = key.clone();
 
+    let affect_weight;
     {
         let mut s = state_rc.borrow_mut();
+        affect_weight = s.config.echo_affect_weight;
         s.echo_overlay_turn_key = Some(key);
         s.gloss_overlay.show_loading_message("Searching for echoes...");
         s.input_mode = crate::app::InputMode::EchoesOverlay;
     }
 
+    // Raw spoken text (not the enriched query) for the affect axis.
+    let query_text = turn_text.clone();
     let state_for_result = Rc::clone(state_rc);
     let echo_handle = tokio_handle.clone();
 
@@ -188,7 +192,10 @@ pub(crate) fn show_echoes_for_cursor_line(
                 .ok()
                 .and_then(|conn| {
                     // Over-fetch; dedup by displayed first line removes some.
-                    crate::db::queries::find_similar_passages(&conn, &embedding, &source_work, 60).ok()
+                    crate::db::queries::find_similar_passages(
+                        &conn, &embedding, &query_text, &source_work, 60, affect_weight,
+                    )
+                    .ok()
                 })
                 .unwrap_or_default(),
             Ok(Err(e)) => {
@@ -512,9 +519,11 @@ pub(crate) fn refresh_echoes(
         }
     };
 
+    let affect_weight = state_rc.borrow().config.echo_affect_weight;
     state_rc.borrow().gloss_overlay.show_loading_message("Refreshing echoes...");
 
     let query = format!("{} to {}: {}", key.speaker, "?", key.turn_text);
+    let query_text = key.turn_text.clone();
     let source_work = key.work_abbrev.clone();
     let state_for_result = Rc::clone(state_rc);
     let echo_handle = tokio_handle.clone();
@@ -528,7 +537,10 @@ pub(crate) fn refresh_echoes(
             Ok(Ok(embedding)) => crate::db::queries::open_db()
                 .ok()
                 .and_then(|conn| {
-                    crate::db::queries::find_similar_passages(&conn, &embedding, &source_work, 60).ok()
+                    crate::db::queries::find_similar_passages(
+                        &conn, &embedding, &query_text, &source_work, 60, affect_weight,
+                    )
+                    .ok()
                 })
                 .unwrap_or_default(),
             _ => Vec::new(),

@@ -583,6 +583,9 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
 
     // Build the enriched query: "{SPEAKER} to {ADDRESSEE}: {text}".
     let query_text = build_echo_query(&ctx, &scene_lines);
+    // Raw selected text (not the enriched query) for the affect axis.
+    let affect_text = ctx.source_text.clone();
+    let affect_weight = state_rc.borrow().config.echo_affect_weight;
     let source_work = ctx.work_abbrev.clone();
     let state_for_echo = std::rc::Rc::clone(state_rc);
     let echo_handle = tokio_handle.clone();
@@ -596,7 +599,10 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
             Ok(Ok(embedding)) => crate::db::queries::open_db()
                 .ok()
                 .and_then(|conn| {
-                    crate::db::queries::find_similar_passages(&conn, &embedding, &source_work, 10).ok()
+                    crate::db::queries::find_similar_passages(
+                        &conn, &embedding, &affect_text, &source_work, 10, affect_weight,
+                    )
+                    .ok()
                 })
                 .unwrap_or_default(),
             Ok(Err(e)) => {

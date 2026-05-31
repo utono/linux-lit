@@ -51,6 +51,12 @@ Every function that changes `page_top_line` must interact with the stack:
   `scroll_after_jump_forward/backward` snaps the page top to the scene header
   via `back_up_for_speaker` (scene-snap takes priority over the normal
   off-screen check)
+- **Search jumps (`/`, `n`, `N`)** — push current `page_top_line` (with dedup)
+  before `update_highlight_and_center`. This means `y` after dismissing a
+  search with Escape returns to the pre-search page. The dedup avoids
+  polluting the stack when `execute_search` fires on every keystroke during
+  live-search (only pushes if the top of stack differs from current
+  `page_top_line`)
 - **MPV sync (scroll_paragraph_to_top, highlight auto-advance)** — no stack
   interaction; system-driven, not user navigation
 
@@ -283,8 +289,9 @@ Three modes configured via `/configure-nav-test`:
   walks cursor line-by-line triggering page turns via
   `update_highlight_and_advance_page`). Best for catching scene breaks
   mid-page and viewport fill issues during sustained playback
-- **jumps-only** — key-press navigation only (x, y, 2, 3, [, { at 300ms
-  each). Tests forward progress, round-trip, structural jump return
+- **jumps-only** — key-press navigation only (x, y, 2, 3, [, {, search
+  jump at 300ms each). Tests forward progress, round-trip, structural jump
+  return, and search-then-page-back return
 - **full** — both interleaved: jump sequences at 300ms with 20-line sync
   runs at 1s each (~20s of simulated playback per run)
 
@@ -293,7 +300,7 @@ Six invariants checked after every step:
 - **Forward progress on x** — page_top_line strictly increases
 - **y round-trips x** — page_top_line returns to pre-x value
 - **y after structural jump returns** — page_top_line returns to pre-jump
-  value
+  value (also covers search jumps)
 - **No scene break mid-page** — no marker/separator in the interior of the
   visible range
 - **Viewport fill** — visible content fills at least 10% of viewport height

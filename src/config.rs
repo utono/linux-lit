@@ -63,6 +63,12 @@ pub struct Config {
     pub show_cursor_line: bool,
     #[serde(default = "default_title_bar_visible")]
     pub title_bar_visible: bool,
+    /// Weight of the sentiment/affect (NRC-VAD) axis in echo re-ranking, in
+    /// [0, 1]. Final score = (1 - w) * semantic_cosine + w * affect_cosine.
+    /// 0.0 = pure semantic ranking (default; the affect axis is inert).
+    /// See docs/specs/2026-05-30-semantic-echo-search-design.md.
+    #[serde(default = "default_echo_affect_weight")]
+    pub echo_affect_weight: f32,
 }
 
 fn default_font_family() -> String {
@@ -123,6 +129,10 @@ fn default_title_bar_visible() -> bool {
     false
 }
 
+fn default_echo_affect_weight() -> f32 {
+    0.0
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -143,6 +153,7 @@ impl Default for Config {
             dim_enabled: default_dim_enabled(),
             show_cursor_line: true,
             title_bar_visible: default_title_bar_visible(),
+            echo_affect_weight: default_echo_affect_weight(),
         }
     }
 }
@@ -191,6 +202,8 @@ pub fn load() -> Config {
             _ => Some("Dominion".to_string()),
         };
     }
+    // Clamp the affect weight so a malformed config can never distort ranking.
+    config.echo_affect_weight = config.echo_affect_weight.clamp(0.0, 1.0);
     config
 }
 

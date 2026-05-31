@@ -3,3 +3,7 @@ linux-lit-release.log
 linux-lit-stderr.log
 target/
 .superpowers/
+
+# NRC-VAD lexicon — redistribution-restricted academic license; fetch locally,
+# do not commit. See scripts/build_embeddings.py header for the download URL.
+scripts/data/NRC-VAD-Lexicon.txt
