@@ -513,7 +513,7 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
 }
 
 fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
-    let (ctx, scene_lines, model, tokio_handle, all_glosses) = {
+    let (ctx, scene_lines, tokio_handle, all_glosses) = {
         let state = state_rc.borrow();
         let (start, end) = match &state.visual_selection {
             Some(s) => s.range(),
@@ -549,7 +549,7 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
             Err(_) => Vec::new(),
         };
 
-        (ctx, scene_lines, state.config.claude_model.clone(), state.tokio_handle.clone(), all_glosses)
+        (ctx, scene_lines, state.tokio_handle.clone(), all_glosses)
     };
 
     exit_visual_mode(&mut state_rc.borrow_mut());
@@ -569,18 +569,126 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
         return;
     }
 
+    // Stash context for the deferred gloss call, then run the semantic
+    // echo search and show the picker. The picker selection (or skip)
+    // resumes via run_pending_inner_monologue.
     {
         let mut s = state_rc.borrow_mut();
         s.gloss_original_text = Some(ctx.source_text.clone());
         s.gloss_overlay.show_loading();
         s.input_mode = crate::app::InputMode::GlossOverlay;
+        s.pending_echo_context = Some(ctx.clone());
+        s.pending_echo_scene_lines = scene_lines.clone();
     }
 
-    let user_msg = crate::gloss::build_inner_monologue_message(&ctx, &scene_lines);
-    let state_for_result = std::rc::Rc::clone(state_rc);
+    // Build the enriched query: "{SPEAKER} to {ADDRESSEE}: {text}".
+    let query_text = build_echo_query(&ctx, &scene_lines);
+    let source_work = ctx.work_abbrev.clone();
+    let state_for_echo = std::rc::Rc::clone(state_rc);
+    let echo_handle = tokio_handle.clone();
 
     glib::spawn_future_local(async move {
-        let result = tokio_handle
+        let embed_result = echo_handle
+            .spawn(async move { crate::voyage::embed_query(&query_text).await })
+            .await;
+
+        let candidates = match embed_result {
+            Ok(Ok(embedding)) => crate::db::queries::open_db()
+                .ok()
+                .and_then(|conn| {
+                    crate::db::queries::find_similar_passages(&conn, &embedding, &source_work, 10).ok()
+                })
+                .unwrap_or_default(),
+            Ok(Err(e)) => {
+                crate::logging::log(&format!("ECHO: embed error: {}", e));
+                Vec::new()
+            }
+            Err(e) => {
+                crate::logging::log(&format!("ECHO: embed join error: {}", e));
+                Vec::new()
+            }
+        };
+
+        if candidates.is_empty() {
+            // No candidates — fall through to Claude finding its own echo.
+            crate::logging::log("ECHO: no candidates, skipping picker");
+            run_pending_inner_monologue_blocking(&state_for_echo, &echo_handle, None);
+            return;
+        }
+
+        let titles = crate::db::queries::open_db()
+            .ok()
+            .and_then(|conn| crate::db::queries::load_work_titles(&conn).ok())
+            .unwrap_or_default();
+
+        let mut s = state_for_echo.borrow_mut();
+        s.gloss_overlay.hide();
+        s.echo_picker.set_titles(titles);
+        s.echo_picker.set_items(candidates);
+        s.echo_picker.show();
+        s.input_mode = crate::app::InputMode::EchoPicker;
+        crate::logging::log("ECHO: showing picker");
+    });
+}
+
+/// Build the enriched query string for semantic echo search, matching the
+/// "{SPEAKER} to {ADDRESSEE}: {text}" format used during pre-computation.
+fn build_echo_query(ctx: &crate::gloss::GlossContext, scene_lines: &[crate::db::models::Line]) -> String {
+    // Addressee: first speaker in the scene different from ctx.speaker.
+    let primary_speaker = ctx.speaker.split(',').next().unwrap_or("").trim();
+    let addressee = scene_lines
+        .iter()
+        .filter_map(|l| l.speaker.as_deref())
+        .find(|sp| *sp != primary_speaker)
+        .unwrap_or("?");
+    format!("{} to {}: {}", primary_speaker, addressee, ctx.source_text)
+}
+
+/// Resume the inner-monologue gloss call after the echo picker. If an echo
+/// was selected it is injected into the prompt as a suggested cross-work echo.
+pub fn run_pending_inner_monologue(
+    state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+    selected: Option<crate::db::queries::EchoCandidate>,
+) {
+    run_pending_inner_monologue_blocking(state_rc, tokio_handle, selected);
+}
+
+fn run_pending_inner_monologue_blocking(
+    state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+    selected: Option<crate::db::queries::EchoCandidate>,
+) {
+    let (ctx, scene_lines, model, titles) = {
+        let mut s = state_rc.borrow_mut();
+        let ctx = match s.pending_echo_context.take() {
+            Some(c) => c,
+            None => return,
+        };
+        let scene_lines = std::mem::take(&mut s.pending_echo_scene_lines);
+        s.gloss_overlay.show_loading();
+        s.input_mode = crate::app::InputMode::GlossOverlay;
+        let titles = crate::db::queries::open_db()
+            .ok()
+            .and_then(|conn| crate::db::queries::load_work_titles(&conn).ok())
+            .unwrap_or_default();
+        (ctx, scene_lines, s.config.claude_model.clone(), titles)
+    };
+
+    let mut user_msg = crate::gloss::build_inner_monologue_message(&ctx, &scene_lines);
+    if let Some(ref echo) = selected {
+        let title = titles.get(&echo.work_abbrev).cloned().unwrap_or_else(|| echo.work_abbrev.clone());
+        user_msg.push_str(&format!(
+            "\n\n--- SUGGESTED ECHO (from semantic search) ---\nSpeaker: {}\nWork: {} {}.{}\nText: {}",
+            echo.speaker, title, echo.div1, echo.div2, echo.passage_text.lines().next().unwrap_or("")
+        ));
+    }
+
+    let state_for_result = std::rc::Rc::clone(state_rc);
+    let handle = tokio_handle.clone();
+
+    glib::spawn_future_local(async move {
+        let result = handle
             .spawn(async move {
                 crate::gloss::call_claude_with_prompt(
                     crate::gloss::INNER_MONOLOGUE_PROMPT, &user_msg, &model,

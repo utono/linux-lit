@@ -9,6 +9,7 @@ mod logging;
 mod mode;
 mod claude;
 mod gloss;
+mod voyage;
 mod mpv;
 mod snapshot;
 mod text_file_map;

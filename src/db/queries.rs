@@ -706,6 +706,7 @@ pub struct SavedGloss {
     pub passage_id: i64,
     pub gloss_text: String,
     pub timestamp: String,
+    pub gloss_type: String,
 }
 
 pub fn find_existing_gloss(
@@ -715,6 +716,7 @@ pub fn find_existing_gloss(
     end_citation: &str,
     gloss_type: &str,
 ) -> Result<Option<SavedGloss>, rusqlite::Error> {
+    let gt = gloss_type.to_string();
     conn.query_row(
         "SELECT g.id, g.gloss_text, g.timestamp, p.id \
          FROM glosses g \
@@ -732,6 +734,7 @@ pub fn find_existing_gloss(
                 gloss_text: row.get(1)?,
                 timestamp: row.get(2)?,
                 passage_id: row.get(3)?,
+                gloss_type: gt.clone(),
             })
         },
     )
@@ -743,26 +746,43 @@ pub fn find_all_glosses(
     work_abbrev: &str,
     start_citation: &str,
     end_citation: &str,
-    gloss_type: &str,
+    gloss_types: &[&str],
 ) -> Result<Vec<SavedGloss>, rusqlite::Error> {
-    let mut stmt = conn.prepare(
-        "SELECT g.id, g.gloss_text, g.timestamp, p.id \
+    if gloss_types.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (0..gloss_types.len())
+        .map(|i| format!("?{}", i + 4))
+        .collect();
+    let sql = format!(
+        "SELECT g.id, g.gloss_text, g.timestamp, p.id, g.gloss_type \
          FROM glosses g \
          JOIN passages p ON g.passage_id = p.id \
          WHERE p.work_abbrev = ?1 \
            AND p.start_citation = ?2 \
            AND p.end_citation = ?3 \
-           AND g.gloss_type = ?4 \
+           AND g.gloss_type IN ({}) \
          ORDER BY g.timestamp DESC",
-    )?;
+        placeholders.join(", ")
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    params.push(Box::new(work_abbrev.to_string()));
+    params.push(Box::new(start_citation.to_string()));
+    params.push(Box::new(end_citation.to_string()));
+    for gt in gloss_types {
+        params.push(Box::new(gt.to_string()));
+    }
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
     let rows = stmt.query_map(
-        rusqlite::params![work_abbrev, start_citation, end_citation, gloss_type],
+        param_refs.as_slice(),
         |row| {
             Ok(SavedGloss {
                 gloss_id: row.get(0)?,
                 gloss_text: row.get(1)?,
                 timestamp: row.get(2)?,
                 passage_id: row.get(3)?,
+                gloss_type: row.get(4)?,
             })
         },
     )?;
@@ -784,19 +804,33 @@ pub struct GlossedPassage {
 pub fn find_glossed_passages(
     conn: &Connection,
     work_abbrev: &str,
-    gloss_type: &str,
+    gloss_types: &[&str],
 ) -> Result<Vec<GlossedPassage>, rusqlite::Error> {
-    let mut stmt = conn.prepare(
+    if gloss_types.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (0..gloss_types.len())
+        .map(|i| format!("?{}", i + 2))
+        .collect();
+    let sql = format!(
         "SELECT DISTINCT p.id, p.work_abbrev, p.start_citation, p.end_citation, \
                 p.act, p.scene, p.character, p.source_text \
          FROM passages p \
          JOIN glosses g ON g.passage_id = p.id \
          WHERE p.work_abbrev = ?1 \
-           AND g.gloss_type = ?2 \
+           AND g.gloss_type IN ({}) \
          ORDER BY p.act, p.scene, p.start_citation",
-    )?;
+        placeholders.join(", ")
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    params.push(Box::new(work_abbrev.to_string()));
+    for gt in gloss_types {
+        params.push(Box::new(gt.to_string()));
+    }
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
     let rows = stmt.query_map(
-        rusqlite::params![work_abbrev, gloss_type],
+        param_refs.as_slice(),
         |row| {
             Ok(GlossedPassage {
                 passage_id: row.get(0)?,
@@ -858,6 +892,108 @@ pub fn update_gloss(conn: &Connection, gloss_id: i64, gloss_text: &str) -> Resul
 pub fn delete_gloss(conn: &Connection, gloss_id: i64) -> Result<(), rusqlite::Error> {
     conn.execute("DELETE FROM glosses WHERE id = ?1", [gloss_id])?;
     Ok(())
+}
+
+/// Load a map of work abbreviation → title for all works.
+pub fn load_work_titles(conn: &Connection) -> Result<HashMap<String, String>, rusqlite::Error> {
+    let mut stmt = conn.prepare("SELECT abbrev, title FROM works")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut map = HashMap::new();
+    for row in rows {
+        let (abbrev, title) = row?;
+        map.insert(abbrev, title);
+    }
+    Ok(map)
+}
+
+/// A candidate cross-work echo found by semantic search.
+#[derive(Debug, Clone)]
+pub struct EchoCandidate {
+    pub work_abbrev: String,
+    pub div1: i64,
+    pub div2: i64,
+    pub speaker: String,
+    pub passage_type: String,
+    pub passage_text: String,
+    pub similarity: f32,
+}
+
+/// Decode a stored embedding blob (little-endian f32 values) into a vector.
+fn decode_embedding(blob: &[u8]) -> Vec<f32> {
+    blob.chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect()
+}
+
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() {
+        return -1.0;
+    }
+    let mut dot = 0.0f32;
+    let mut na = 0.0f32;
+    let mut nb = 0.0f32;
+    for i in 0..a.len() {
+        dot += a[i] * b[i];
+        na += a[i] * a[i];
+        nb += b[i] * b[i];
+    }
+    if na == 0.0 || nb == 0.0 {
+        return -1.0;
+    }
+    dot / (na.sqrt() * nb.sqrt())
+}
+
+/// Find the top-N passages most semantically similar to the query embedding,
+/// excluding the source work. Scans all stored embeddings and ranks by cosine
+/// similarity.
+pub fn find_similar_passages(
+    conn: &Connection,
+    query_embedding: &[f32],
+    exclude_work: &str,
+    top_n: usize,
+) -> Result<Vec<EchoCandidate>, rusqlite::Error> {
+    let base_exclude = exclude_work.strip_suffix("-Amb").unwrap_or(exclude_work);
+
+    let mut stmt = conn.prepare(
+        "SELECT work_abbrev, div1, div2, speaker, passage_type, passage_text, embedding \
+         FROM passage_embeddings \
+         WHERE work_abbrev != ?1",
+    )?;
+
+    let rows = stmt.query_map([base_exclude], |row| {
+        let blob: Vec<u8> = row.get(6)?;
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+            row.get::<_, String>(5)?,
+            blob,
+        ))
+    })?;
+
+    let mut candidates: Vec<EchoCandidate> = Vec::new();
+    for row in rows {
+        let (work_abbrev, div1, div2, speaker, passage_type, passage_text, blob) = row?;
+        let emb = decode_embedding(&blob);
+        let sim = cosine_similarity(query_embedding, &emb);
+        candidates.push(EchoCandidate {
+            work_abbrev,
+            div1,
+            div2,
+            speaker,
+            passage_type,
+            passage_text,
+            similarity: sim,
+        });
+    }
+
+    candidates.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
+    candidates.truncate(top_n);
+    Ok(candidates)
 }
 
 #[cfg(test)]

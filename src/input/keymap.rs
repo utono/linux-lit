@@ -72,6 +72,7 @@ pub fn handle_key(
             crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_name, is_ctrl),
             crate::app::InputMode::DeleteConfirm => handle_delete_confirm_key(state, key_name),
             crate::app::InputMode::GlossPrompt => handle_gloss_prompt_key(state, key_name, is_ctrl),
+            crate::app::InputMode::EchoPicker => handle_echo_picker_key(state, key_name, tokio_handle),
             crate::app::InputMode::GamepadOverlay => handle_gamepad_key(state, key_name),
             crate::app::InputMode::KeybindsOverlay => handle_keybinds_key(state, key_name),
             crate::app::InputMode::ActionPopup => handle_action_popup_key(state, key_name, is_ctrl, tokio_handle),
@@ -710,6 +711,40 @@ fn handle_gloss_prompt_key(
         return true;
     }
     false
+}
+
+fn handle_echo_picker_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+    tokio_handle: &tokio::runtime::Handle,
+) -> bool {
+    match key_name {
+        "j" | "Down" => {
+            state.borrow().echo_picker.move_selection(1);
+            true
+        }
+        "k" | "Up" => {
+            state.borrow().echo_picker.move_selection(-1);
+            true
+        }
+        "Return" => {
+            let selected = {
+                let s = state.borrow();
+                s.echo_picker.selected_index()
+                    .and_then(|idx| s.echo_picker.items.get(idx).cloned())
+            };
+            state.borrow().echo_picker.hide();
+            crate::input::visual::run_pending_inner_monologue(state, tokio_handle, selected);
+            true
+        }
+        "Escape" | "n" => {
+            // Skip the picker; let Claude find its own echo.
+            state.borrow().echo_picker.hide();
+            crate::input::visual::run_pending_inner_monologue(state, tokio_handle, None);
+            true
+        }
+        _ => true,
+    }
 }
 
 fn handle_gamepad_key(

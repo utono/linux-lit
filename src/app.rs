@@ -45,6 +45,7 @@ pub enum InputMode {
     SynopsisOverlay,
     GlossPrompt,
     GlossPicker,
+    EchoPicker,
     GamepadOverlay,
     KeybindsOverlay,
     ConcordancePicker,
@@ -179,6 +180,9 @@ pub struct AppState {
     pub delete_confirm_container: Option<glib::WeakRef<gtk4::Box>>,
     pub delete_confirm_overlay: Option<glib::WeakRef<gtk4::Overlay>>,
     pub gloss_picker: GlossPicker,
+    pub echo_picker: crate::ui::echo_picker::EchoPicker,
+    pub pending_echo_context: Option<crate::gloss::GlossContext>,
+    pub pending_echo_scene_lines: Vec<crate::db::models::Line>,
     pub vocab_words: std::collections::HashSet<String>,
     pub vocab_matches: Vec<VocabMatch>,
     pub vocab_match_idx: Option<usize>,
@@ -730,9 +734,14 @@ pub fn build_window(
     gloss_picker.attach(&gloss_overlay.overlay);
     gloss_picker.overlay.set_vexpand(true);
 
-    // Concordance picker wraps the gloss picker
+    // Echo picker wraps the gloss picker
+    let echo_picker = crate::ui::echo_picker::EchoPicker::new();
+    echo_picker.attach(&gloss_picker.overlay);
+    echo_picker.overlay.set_vexpand(true);
+
+    // Concordance picker wraps the echo picker
     let concordance_picker = crate::ui::concordance_picker::ConcordancePicker::new();
-    concordance_picker.attach(&gloss_picker.overlay);
+    concordance_picker.attach(&echo_picker.overlay);
     concordance_picker.overlay.set_vexpand(true);
 
     // Concordance word picker wraps the concordance picker
@@ -957,6 +966,9 @@ pub fn build_window(
         delete_confirm_container: None,
         delete_confirm_overlay: None,
         gloss_picker,
+        echo_picker,
+        pending_echo_context: None,
+        pending_echo_scene_lines: Vec::new(),
         vocab_words: std::collections::HashSet::new(),
         vocab_matches: Vec::new(),
         vocab_match_idx: None,
