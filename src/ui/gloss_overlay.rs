@@ -508,7 +508,7 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
     buffer.set_text("");
 
     let tag_table = buffer.tag_table();
-    for name in &["gloss-speaker", "gloss-speaker-first", "gloss-verse", "gloss-para", "gloss-bracket", "gloss-quote", "gloss-quote-cont", "gloss-citation", "gloss-echo-selected"] {
+    for name in &["gloss-speaker", "gloss-speaker-first", "gloss-speaker-source", "gloss-verse", "gloss-para", "gloss-bracket", "gloss-quote", "gloss-quote-cont", "gloss-citation", "gloss-echo-selected"] {
         if let Some(old) = tag_table.lookup(name) {
             tag_table.remove(&old);
         }
@@ -543,6 +543,18 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
         .weight(400)
         .scale(0.75)
         .left_margin(quote_speaker)
+        .build();
+
+    // Speaker label inside the quoted source turn (before the echo list). The
+    // turn may span several speakers; keep them tightly spaced to match the
+    // reader's 8px speaker rhythm rather than the 36px echo-section gap.
+    let speaker_source_tag = gtk4::TextTag::builder()
+        .name("gloss-speaker-source")
+        .variant(pango::Variant::SmallCaps)
+        .weight(400)
+        .scale(0.75)
+        .left_margin(quote_speaker)
+        .pixels_above_lines(8)
         .build();
 
     let bracket_tag = gtk4::TextTag::builder()
@@ -581,6 +593,7 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
 
     tag_table.add(&speaker_tag);
     tag_table.add(&speaker_first_tag);
+    tag_table.add(&speaker_source_tag);
     tag_table.add(&verse_tag);
     tag_table.add(&para_tag);
     tag_table.add(&bracket_tag);
@@ -592,6 +605,9 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
     let elements = parse_gloss_tags(gloss);
     let mut first = true;
     let mut only_speakers_so_far = true;
+    // Whether we have reached the echo list (`<gloss>` elements). Speaker
+    // labels before this belong to the quoted source turn and stay tight.
+    let mut in_echoes = false;
     let bar_ranges: Vec<BarRange> = Vec::new();
     let mut line_nums: Vec<LineNumber> = Vec::new();
     let mut echo_lines: Vec<i32> = Vec::new();
@@ -617,7 +633,14 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
                 let mut end = buffer.end_iter();
                 buffer.insert(&mut end, name);
                 let start = buffer.iter_at_offset(offset);
-                let tag = if only_speakers_so_far { &speaker_first_tag } else { &speaker_tag };
+                let tag = if only_speakers_so_far {
+                    &speaker_first_tag
+                } else if in_echoes {
+                    &speaker_tag
+                } else {
+                    // Subsequent speaker within the quoted source turn: tight.
+                    &speaker_source_tag
+                };
                 buffer.apply_tag(tag, &start, &buffer.end_iter());
             }
             GlossElement::Verse(text) => {
@@ -635,6 +658,7 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
             }
             GlossElement::Gloss(text) => {
                 only_speakers_so_far = false;
+                in_echoes = true;
 
                 if let Some((quote, citation)) = split_echo(text) {
                     // Echo: quote on one line, citation indented below it.
