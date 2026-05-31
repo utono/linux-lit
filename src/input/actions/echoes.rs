@@ -626,8 +626,8 @@ pub(crate) fn move_echo_selection(
     play_selected_echo(state_rc, tokio_handle);
 }
 
-/// Move the accent-bar selection to the first echo (`gg`) and scroll the
-/// viewport to the very top so the source turn's first line is visible.
+/// Move the accent-bar selection to the first echo (`gg`) and scroll the echo
+/// list to its top. The source turn is a fixed header, so it stays visible.
 pub(crate) fn select_first_echo(state_rc: &Rc<RefCell<AppState>>) {
     let mut s = state_rc.borrow_mut();
     if s.echo_overlay_links.is_empty() {
