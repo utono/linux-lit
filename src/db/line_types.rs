@@ -6,12 +6,12 @@ const PROSE_TYPES: &[&str] = &["novel", "essay_collection", "prose_book", "prose
 
 fn speaker_simple_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"^[A-Z][A-Z\s.\-']+\.?$").unwrap())
+    RE.get_or_init(|| Regex::new(r"^[A-Z][A-Z\s.\-'\u{2018}\u{2019}/]+\.?$").unwrap())
 }
 
 fn speaker_with_direction_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"^[A-Z][A-Z\s\-']*,?\s*\[.*\]\.?$").unwrap())
+    RE.get_or_init(|| Regex::new(r"^[A-Z][A-Z\s\-'\u{2018}\u{2019}]*,?\s*\[.*\]\.?$").unwrap())
 }
 
 fn stage_direction_re() -> &'static Regex {
@@ -121,10 +121,21 @@ mod tests {
         assert!(is_speaker("FIRST GENTLEMAN"));
         assert!(is_speaker("FIRST GENTLEMAN."));
         assert!(is_speaker("KING HENRY"));
+        // Folger texts use a typographic apostrophe (U+2019) in possessive
+        // speaker names like SHEPHERD'S SON.
+        assert!(is_speaker("SHEPHERD\u{2019}S SON"));
+        assert!(is_speaker("SHEPHERD'S SON"));
+        // Folger texts join two characters speaking in unison with a slash,
+        // e.g. CORNELIUS/VOLTEMAND, TITINIUS/MESSALA.
+        assert!(is_speaker("CORNELIUS/VOLTEMAND"));
+        assert!(is_speaker("TITINIUS/MESSALA"));
         assert!(!is_speaker("A"));
         assert!(!is_speaker("A."));
         assert!(!is_speaker("hamlet"));
         assert!(!is_speaker("Hamlet"));
+        // Dialogue lines that happen to be uppercase must not be treated as
+        // speaker labels (e.g. Titus's cry in Titus Andronicus).
+        assert!(!is_speaker("O, O, O!"));
     }
 
     #[test]
