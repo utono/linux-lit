@@ -880,6 +880,81 @@ pub(crate) fn jump_to_selected_echo(
     crate::logging::log(&format!("ECHOES: jumped to echo in {} line_id={}", work, line_id));
 }
 
+/// `a` in the echoes overlay: play the selected echo's media in the existing
+/// MPV instance without opening its work. Re-pressing `a` on the same echo
+/// toggles pause/resume. The source-turn loop range is preserved so `Tab` can
+/// restore it; the reader display is untouched.
+pub(crate) fn play_selected_echo(
+    state_rc: &Rc<RefCell<AppState>>,
+    _tokio_handle: &tokio::runtime::Handle,
+) {
+    let link = {
+        let s = state_rc.borrow();
+        match s.echo_overlay_links.get(s.echo_overlay_index) {
+            Some(l) => l.clone(),
+            None => return,
+        }
+    };
+
+    // Pause/resume toggle when re-pressing `a` on the echo already playing.
+    if state_rc.borrow().echo_playing_link == Some(link.link_id) {
+        let _ = state_rc.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
+        crate::logging::log("ECHOES: toggled echo playback");
+        return;
+    }
+
+    // Resolve the echo line, its Arkangel media, and its start time.
+    let conn = match crate::db::queries::open_db() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let line_id = match crate::db::queries::line_id_for_location(
+        &conn, &link.echo_work_abbrev, link.echo_div1, link.echo_div2, link.echo_start_line,
+    ) {
+        Some(id) => id,
+        None => {
+            state_rc.borrow().gloss_overlay.show("Could not locate the echoed line.", "");
+            crate::logging::log("ECHOES: could not resolve echo line for playback");
+            return;
+        }
+    };
+    let media = match crate::db::queries::list_media_for_work(&conn, &link.echo_work_abbrev) {
+        Ok(items) if !items.is_empty() => {
+            // Prefer Arkangel; fall back to the highest-priority media (first).
+            items.iter().find(|m| m.path.contains("/aax-Arkangel/"))
+                .cloned()
+                .unwrap_or_else(|| items[0].clone())
+        }
+        _ => {
+            state_rc.borrow().gloss_overlay.show("No media for this echo's work.", "");
+            crate::logging::log("ECHOES: no media for echo work");
+            return;
+        }
+    };
+    let start = match crate::db::queries::line_start_time(&conn, line_id, media.media_id) {
+        Some(t) => t,
+        None => {
+            state_rc.borrow().gloss_overlay.show("No timestamp for the echoed line.", "");
+            crate::logging::log("ECHOES: no timestamp for echo line");
+            return;
+        }
+    };
+    let seek = (start - crate::input::navigation::SEEK_PREROLL).max(0.0);
+
+    let mut s = state_rc.borrow_mut();
+    // Don't loop the source turn while auditioning the echo; keep the remembered
+    // (a_time, b_time) so `Tab` can re-arm it.
+    let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::ClearAbLoop);
+    let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::LoadFileAndSeek(media.path.clone(), seek));
+    s.ab_repeat.loop_active = false;
+    s.echo_playing_link = Some(link.link_id);
+    s.suppress_sync_until =
+        Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
+    crate::logging::log(&format!(
+        "ECHOES: playing echo {} line_id={} @{:.1}", link.echo_work_abbrev, line_id, seek
+    ));
+}
+
 /// alt+i: return to the turn's work and line, then reopen the echoes overlay
 /// from the sticky session.
 pub(crate) fn reopen_echoes(
