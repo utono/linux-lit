@@ -785,7 +785,11 @@ fn handle_echoes_overlay_key(
             true
         }
         "Tab" => {
-            crate::input::actions::echoes::toggle_echo_playback(state);
+            crate::input::actions::echoes::play_source_turn(state);
+            true
+        }
+        "a" => {
+            crate::input::actions::echoes::play_selected_echo(state, tokio_handle);
             true
         }
         "s" => {
@@ -818,6 +822,7 @@ fn handle_echoes_overlay_key(
             s.echo_overlay_links.clear();
             s.echo_overlay_turn_id = None;
             s.echo_overlay_turn_key = None;
+            s.echo_playing_link = None;
             // Clear any turn AB-loop so normal reading isn't stuck looping.
             if s.ab_repeat.loop_active {
                 let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::ClearAbLoop);
