@@ -184,13 +184,30 @@ impl GlossOverlay {
             let echos = echo_lines_clone.borrow();
             if let Some(&first_echo_line) = echos.first() {
                 let buffer = view_clone.buffer();
-                if let Some(iter) = buffer.iter_at_line(first_echo_line) {
-                    let loc = view_clone.iter_location(&iter);
-                    let (_, by) = view_clone.buffer_to_window_coords(
-                        gtk4::TextWindowType::Widget, 0, loc.y());
-                    // Sit the rule high in the gap above the first echo so a
-                    // little more space falls below the rule than above it.
-                    let rule_y = by as f64 - 17.0;
+                if let Some(echo_iter) = buffer.iter_at_line(first_echo_line) {
+                    // Center the rule in the gap between the bottom of the last
+                    // source-turn line and the top of the first echo line, so
+                    // there is equal space above and below it.
+                    let echo_top = {
+                        let loc = view_clone.iter_location(&echo_iter);
+                        let (_, by) = view_clone.buffer_to_window_coords(
+                            gtk4::TextWindowType::Widget, 0, loc.y());
+                        by as f64
+                    };
+                    let prev_bottom = if first_echo_line > 0 {
+                        buffer.iter_at_line(first_echo_line - 1).map(|prev_iter| {
+                            let (py, ph) = view_clone.line_yrange(&prev_iter);
+                            let (_, pby) = view_clone.buffer_to_window_coords(
+                                gtk4::TextWindowType::Widget, 0, py + ph);
+                            pby as f64
+                        })
+                    } else {
+                        None
+                    };
+                    let rule_y = match prev_bottom {
+                        Some(pb) => (pb + echo_top) / 2.0,
+                        None => echo_top - 12.0,
+                    };
                     cr.set_source_rgba(r, g, b, 0.4);
                     cr.set_line_width(1.0);
                     cr.move_to(rule_left as f64, rule_y);
