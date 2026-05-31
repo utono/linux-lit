@@ -757,7 +757,7 @@ fn handle_echoes_overlay_key(
     state: &Rc<RefCell<AppState>>,
     key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
-    is_ctrl: bool,
+    _is_ctrl: bool,
     tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
     if key_state.borrow().chord == ChordState::PendingG {
@@ -767,20 +767,15 @@ fn handle_echoes_overlay_key(
         }
         return true;
     }
-    if is_ctrl {
-        match key_name {
-            "n" => {
-                crate::input::actions::echoes::move_echo_selection(state, 1);
-                return true;
-            }
-            "p" => {
-                crate::input::actions::echoes::move_echo_selection(state, -1);
-                return true;
-            }
-            _ => {}
-        }
-    }
     match key_name {
+        "n" => {
+            crate::input::actions::echoes::move_echo_selection(state, 1);
+            true
+        }
+        "p" => {
+            crate::input::actions::echoes::move_echo_selection(state, -1);
+            true
+        }
         "Return" => {
             crate::input::actions::echoes::jump_to_selected_echo(state, tokio_handle);
             true

@@ -367,7 +367,7 @@ impl GlossOverlay {
         let left = self.column_width / 8;
         self.title.set_margin_start(left);
         self.gloss_view.set_left_margin(left);
-        self.hint.set_text("Esc close · Tab loop turn · Ctrl+n/p select · Enter open work · c copy · s curate · R refresh");
+        self.hint.set_text("Esc close · Tab loop turn · n/p select · Enter open work · c copy · s curate · R refresh");
         self.orig_header.set_visible(false);
         self.original_label.set_visible(false);
         self.corr_header.set_visible(false);
