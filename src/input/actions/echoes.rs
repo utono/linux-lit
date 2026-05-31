@@ -732,7 +732,6 @@ pub(crate) fn play_source_turn(state_rc: &Rc<RefCell<AppState>>) {
     s.ab_repeat.a_time = Some(a);
     s.ab_repeat.b_time = Some(b);
     s.ab_repeat.loop_active = true;
-    s.echo_playing_link = None;
     s.suppress_sync_until =
         Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
     crate::logging::log(&format!("ECHOES: re-armed source turn loop [{:.1}, {:.1}]", loop_a, b));
@@ -899,9 +898,10 @@ pub(crate) fn jump_to_selected_echo(
 }
 
 /// `a` in the echoes overlay: play the selected echo's media in the existing
-/// MPV instance without opening its work. Re-pressing `a` on the same echo
-/// toggles pause/resume. The source-turn loop range is preserved so `Tab` can
-/// restore it; the reader display is untouched.
+/// MPV instance without opening its work. Always (re)starts playback from the
+/// echo's start time, whether currently playing or paused. The source-turn
+/// loop range is preserved so `Tab` can restore it; the reader display is
+/// untouched.
 pub(crate) fn play_selected_echo(
     state_rc: &Rc<RefCell<AppState>>,
     _tokio_handle: &tokio::runtime::Handle,
@@ -913,13 +913,6 @@ pub(crate) fn play_selected_echo(
             None => return,
         }
     };
-
-    // Pause/resume toggle when re-pressing `a` on the echo already playing.
-    if state_rc.borrow().echo_playing_link == Some(link.link_id) {
-        let _ = state_rc.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
-        crate::logging::log("ECHOES: toggled echo playback");
-        return;
-    }
 
     // Resolve the echo line, its Arkangel media, and its start time.
     let conn = match crate::db::queries::open_db() {
@@ -965,7 +958,6 @@ pub(crate) fn play_selected_echo(
     let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::ClearAbLoop);
     let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::LoadFileAndSeek(media.path.clone(), seek));
     s.ab_repeat.loop_active = false;
-    s.echo_playing_link = Some(link.link_id);
     s.suppress_sync_until =
         Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
     crate::logging::log(&format!(
