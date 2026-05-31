@@ -22,8 +22,10 @@ MIN_WORDS = 4
 
 
 def get_shakespeare_abbrevs(conn):
+    # Exclude alternate editions (suffixed with a hyphen, e.g. -Amb, -BBC):
+    # they duplicate canonical texts and pollute the echo search.
     rows = conn.execute(
-        "SELECT abbrev FROM works WHERE author = 'Shakespeare' AND abbrev NOT LIKE '%-Amb'"
+        "SELECT abbrev FROM works WHERE author = 'Shakespeare' AND abbrev NOT LIKE '%-%'"
     ).fetchall()
     return [r[0] for r in rows]
 

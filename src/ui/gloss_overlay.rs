@@ -491,11 +491,28 @@ fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32,
         .scale(0.9)
         .build();
 
+    // Echo quote line: same indent as the paragraph, italic.
+    let quote_tag = gtk4::TextTag::builder()
+        .name("gloss-quote")
+        .left_margin(quote_speaker)
+        .pixels_above_lines(24)
+        .style(pango::Style::Italic)
+        .build();
+
+    // Citation line: indented further, smaller and dimmer.
+    let citation_tag = gtk4::TextTag::builder()
+        .name("gloss-citation")
+        .left_margin(quote_verse)
+        .scale(0.85)
+        .build();
+
     tag_table.add(&speaker_tag);
     tag_table.add(&speaker_first_tag);
     tag_table.add(&verse_tag);
     tag_table.add(&para_tag);
     tag_table.add(&bracket_tag);
+    tag_table.add(&quote_tag);
+    tag_table.add(&citation_tag);
 
     let elements = parse_gloss_tags(gloss);
     let mut first = true;
@@ -552,10 +569,27 @@ fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32,
                     let end_line = line - 1;
                     bar_ranges.push(BarRange { start_line, end_line });
                 }
-                let mut end = buffer.end_iter();
-                buffer.insert(&mut end, text);
-                let start = buffer.iter_at_offset(offset);
-                buffer.apply_tag(&para_tag, &start, &buffer.end_iter());
+
+                if let Some((quote, citation)) = split_echo(text) {
+                    // Echo: quote on one line, citation indented below it.
+                    let mut end = buffer.end_iter();
+                    buffer.insert(&mut end, &quote);
+                    let qstart = buffer.iter_at_offset(offset);
+                    buffer.apply_tag(&quote_tag, &qstart, &buffer.end_iter());
+
+                    let mut end = buffer.end_iter();
+                    buffer.insert(&mut end, "\n");
+                    let cit_offset = buffer.end_iter().offset();
+                    let mut end = buffer.end_iter();
+                    buffer.insert(&mut end, &citation);
+                    let cstart = buffer.iter_at_offset(cit_offset);
+                    buffer.apply_tag(&citation_tag, &cstart, &buffer.end_iter());
+                } else {
+                    let mut end = buffer.end_iter();
+                    buffer.insert(&mut end, text);
+                    let start = buffer.iter_at_offset(offset);
+                    buffer.apply_tag(&para_tag, &start, &buffer.end_iter());
+                }
             }
         }
     }
@@ -602,6 +636,34 @@ fn strip_brackets(text: &str) -> String {
         }
     }
     result
+}
+
+/// Split an echo bracket `["quote" — Source]` into (quote, citation).
+/// Returns None if the text is not in echo-bracket form. Any trailing
+/// suffix outside the brackets (e.g. "(unverified)") is kept on the
+/// citation line.
+fn split_echo(text: &str) -> Option<(String, String)> {
+    let trimmed = text.trim();
+    let open = trimmed.find('[')?;
+    let close = trimmed.rfind(']')?;
+    if close <= open {
+        return None;
+    }
+    let inner = &trimmed[open + 1..close];
+    let suffix = trimmed[close + 1..].trim();
+
+    // Split the bracket interior at the last em-dash separator.
+    let sep = inner.rfind(" — ").or_else(|| inner.rfind(" - "))?;
+    let quote = inner[..sep].trim().to_string();
+    let mut citation = inner[sep..].trim().to_string();
+    if !suffix.is_empty() {
+        citation.push(' ');
+        citation.push_str(suffix);
+    }
+    if quote.is_empty() || citation.is_empty() {
+        return None;
+    }
+    Some((quote, citation))
 }
 
 fn parse_hex_color(hex: &str) -> Option<(f64, f64, f64)> {

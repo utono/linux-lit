@@ -57,15 +57,10 @@ character performs the SAME transitive verb, under the SAME \
 convention, serving the SAME cognitive function. The echo must match \
 the dramatic action, not the surface vocabulary.
 
-5. Write one sentence of ACTABLE SUBTEXT — the actor's inner thought \
-as they speak the line, phrased as an intention ('I must...', 'If I \
-can just...', 'Don't let him see...').
-
 Output format — use these XML tags exactly, in this order for each line:
 - <speaker>NAME</speaker> before each new speaker (ALL CAPS)
 - <verse>one line of quoted text</verse> (verbatim, one per line)
 - <gloss>[\"echo line\" — Source Work act.scene]</gloss>
-- <gloss>One sentence of actable subtext.</gloss>
 
 Example — Paris CLAIMS Juliet (courtly love / antecedent: the greeting \
 is a claim on her body dressed as courtesy — the echo strips the veil \
@@ -74,8 +69,6 @@ off the transaction):
 <verse>Happily met, my lady and my wife.</verse>
 <gloss>[\"Are you meditating on virginity?\" — All's Well That Ends \
 Well 1.1]</gloss>
-<gloss>Name her wife before she can refuse — the greeting is a claim \
-on her body dressed as courtesy.</gloss>
 
 Example — Juliet DEFLECTS Paris (courtly love / concealment: she spins \
 a key word from the line back at him to buy time — the echo does the \
@@ -84,15 +77,18 @@ same thing with the same word):
 <verse>That may be, sir, when I may be a wife.</verse>
 <gloss>[\"What may she not? She may, ay, marry, may she—\" — Richard \
 III 1.3]</gloss>
-<gloss>Spin the word back at him — let 'may' do the work of refusal \
-while my face gives nothing away.</gloss>
 
 Rules:
 - Quote verbatim — exact words, exact spelling, exact line breaks
 - Never use / to join verse lines
 - Each <verse> tag contains exactly one line of the original
-- Two <gloss> tags per verse line: first the bracketed echo, then the \
-actable sentence
+- ONE <gloss> tag per verse line: the bracketed echo only. Do NOT add \
+any actable-subtext sentence or any prose after the echo.
+- The bracketed echo contains EXACTLY ONE quoted line and ONE source \
+citation — never list alternatives, never show your deliberation, \
+never write words like 'not usable', 'replace', 'wait', or 'use'. \
+Do your thinking silently; output only the single chosen echo: \
+[\"line\" — Source Work act.scene]
 - The echo must come from a DIFFERENT work in Shakespeare's corpus — \
 cite the source
 - Match on TRANSITIVE VERB + CONVENTION + COGNITIVE FUNCTION, never \
@@ -123,20 +119,20 @@ For each line in the original passage:
 1. ACTION the line: name the transitive verb ('I ___ you').
 2. Select from the provided lines the phrase where a character \
 performs the same action. Cite the source work.
-3. Write one sentence of actable subtext — the actor's inner thought.
 
 Output format — use these XML tags exactly, in this order for each line:
 - <speaker>NAME</speaker> before each new speaker (ALL CAPS)
 - <verse>one line of quoted text</verse> (verbatim, one per line)
 - <gloss>[\"echo from the provided lines\" — Source Work act.scene]</gloss>
-- <gloss>One sentence of actable subtext.</gloss>
 
 Rules:
 - Quote verbatim — exact words, exact spelling, exact line breaks
 - Never use / to join verse lines
 - Each <verse> tag contains exactly one line of the original
-- Two <gloss> tags per verse line: first the bracketed echo, then the \
-actable sentence
+- ONE <gloss> tag per verse line: the bracketed echo only. Do NOT add \
+any actable-subtext sentence or any prose after the echo.
+- The bracketed echo contains EXACTLY ONE quoted line and ONE source \
+citation — never list alternatives or show your deliberation
 - Draw the echoes FROM THE PROVIDED LINES, not your own knowledge
 - ALWAYS place a <speaker> tag before EVERY group of <verse> lines
 - No markdown, no bullets, no numbered lists, no headers";
@@ -155,20 +151,20 @@ For each line in the original passage:
 1. ACTION the line: name the transitive verb ('I ___ you').
 2. Select from the provided lines the phrase where a character \
 performs the same action. Cite the source work.
-3. Write one sentence of actable subtext — the actor's inner thought.
 
 Output format — use these XML tags exactly, in this order for each line:
 - <speaker>NAME</speaker> before each new speaker (ALL CAPS)
 - <verse>one line of quoted text</verse> (verbatim, one per line)
 - <gloss>[\"echo from the provided lines\" — Source Work act.scene]</gloss>
-- <gloss>One sentence of actable subtext.</gloss>
 
 Rules:
 - Quote verbatim — exact words, exact spelling, exact line breaks
 - Never use / to join verse lines
 - Each <verse> tag contains exactly one line of the original
-- Two <gloss> tags per verse line: first the bracketed echo, then the \
-actable sentence
+- ONE <gloss> tag per verse line: the bracketed echo only. Do NOT add \
+any actable-subtext sentence or any prose after the echo.
+- The bracketed echo contains EXACTLY ONE quoted line and ONE source \
+citation — never list alternatives or show your deliberation
 - Draw the echoes FROM THE PROVIDED LINES, not your own knowledge
 - ALWAYS place a <speaker> tag before EVERY group of <verse> lines
 - No markdown, no bullets, no numbered lists, no headers";

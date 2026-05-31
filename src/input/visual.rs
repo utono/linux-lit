@@ -654,6 +654,18 @@ pub fn run_pending_inner_monologue(
     run_pending_inner_monologue_blocking(state_rc, tokio_handle, selected);
 }
 
+/// Cancel a pending inner-monologue gloss: dismiss the echo picker and the
+/// gloss overlay, drop the stashed context, and return to the reader.
+pub fn cancel_pending_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+    let mut s = state_rc.borrow_mut();
+    s.echo_picker.hide();
+    s.gloss_overlay.hide();
+    s.pending_echo_context = None;
+    s.pending_echo_scene_lines = Vec::new();
+    s.input_mode = crate::app::InputMode::Reader;
+    crate::logging::log("ECHO: cancelled gloss from picker");
+}
+
 fn run_pending_inner_monologue_blocking(
     state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,

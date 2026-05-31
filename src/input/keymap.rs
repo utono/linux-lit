@@ -737,10 +737,15 @@ fn handle_echo_picker_key(
             crate::input::visual::run_pending_inner_monologue(state, tokio_handle, selected);
             true
         }
-        "Escape" | "n" => {
-            // Skip the picker; let Claude find its own echo.
+        "n" => {
+            // Skip the suggested echo; let Claude find its own.
             state.borrow().echo_picker.hide();
             crate::input::visual::run_pending_inner_monologue(state, tokio_handle, None);
+            true
+        }
+        "Escape" => {
+            // Cancel glossing entirely.
+            crate::input::visual::cancel_pending_inner_monologue(state);
             true
         }
         _ => true,
