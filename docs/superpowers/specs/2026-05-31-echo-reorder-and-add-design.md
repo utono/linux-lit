@@ -140,7 +140,22 @@ Add `A add` to the echoes footer hint in `show_echoes`.
 - Manual (`cargo run`): in the echoes overlay, `Up`/`Down` move the selected echo and mark it curated (★), order persists across close/reopen; `A` opens the line picker, typing filters Shakespeare lines, selecting one adds it as the first (curated) echo; adding an already-present line promotes it to top without duplicating.
 - `cargo build` + `cargo clippy` clean; tests show only the 2 known pre-existing `block_atom_tests` failures.
 
-## Open items for the plan
+## Picker wiring (resolved)
 
-- Picker navigation keys: reuse `Ctrl+n`/`Ctrl+p` (consistent with other pickers) vs `Up`/`Down`. The plan should match the dominant picker convention in `handle_picker_key`.
-- Whether to fold `EchoLinePicker` into the existing `handle_picker_key` dispatch (it handles several pickers uniformly) or give it its own handler — implementer's call, guided by how much its live-search-on-keystroke differs from the others.
+The `EchoLinePicker` joins the existing shared `handle_picker_key`
+(`src/input/keymap.rs:216`), which already serves the Bookmark/Media/Concordance
+(+Word/List/Works)/Authorship/Gloss pickers:
+
+- **Nav keys: `Ctrl+n` / `Ctrl+p`** (the convention `handle_picker_key` provides
+  via `resolve_picker_key` → `PickerAction::MoveDown`/`MoveUp` → `move_selection(±1)`).
+- Add `InputMode::EchoLinePicker` to the `|`-joined dispatch list (the match arm
+  at `keymap.rs:61-68`) and add an `EchoLinePicker` branch to each `mode` match
+  inside `handle_picker_key` (move down/up, confirm, hide) — do NOT write a
+  separate handler.
+- **Live search:** wire `search_lines` re-query on the picker `Entry`'s
+  `connect_changed` (mirroring `concordance_word_picker`'s `filter_changed`), NOT
+  in the key handler. Typed characters reach the entry normally; the key handler
+  only claims Ctrl+n/p, Return, Escape.
+- `Return` (`PickerAction::Confirm`) runs the add flow; `Escape`
+  (`PickerAction::Hide`) returns to the echoes overlay (`InputMode::EchoesOverlay`,
+  not Reader).
