@@ -1304,6 +1304,15 @@ pub fn build_window(
         });
     }
 
+    // Connect echo line picker search entry for live add-echo search
+    let state_for_echo_line = Rc::clone(&state);
+    {
+        let s = state.borrow();
+        s.echo_line_picker.entry().connect_changed(move |_| {
+            crate::input::actions::echoes::refresh_add_echo_search(&state_for_echo_line);
+        });
+    }
+
     // Key event controller — capture phase so we intercept before Entry consumes keys
     let tokio_handle_for_mru = tokio_handle.clone();
     let state_for_keys = Rc::clone(&state);

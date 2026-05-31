@@ -236,6 +236,7 @@ fn handle_picker_key(
                 InputMode::ConcordanceWorksPicker => { s.concordance_works_picker.hide(); s.input_mode = InputMode::Reader; }
                 InputMode::GlossPicker => { s.gloss_picker.hide(); s.input_mode = InputMode::Reader; }
                 InputMode::AuthorshipPicker => { s.authorship_picker.hide(); s.input_mode = InputMode::Reader; }
+                InputMode::EchoLinePicker => { drop(s); crate::input::actions::echoes::cancel_add_echo(state); }
                 _ => {}
             }
             true
@@ -387,6 +388,10 @@ fn handle_picker_key(
                     crate::input::actions::authorship::confirm_attribution_selection(state);
                     true
                 }
+                InputMode::EchoLinePicker => {
+                    crate::input::actions::echoes::confirm_add_echo(state);
+                    true
+                }
                 _ => true,
             }
         }
@@ -400,6 +405,7 @@ fn handle_picker_key(
                 InputMode::ConcordanceWorksPicker => state.borrow().concordance_works_picker.move_selection(1),
                 InputMode::GlossPicker => state.borrow().gloss_picker.move_selection(1),
                 InputMode::AuthorshipPicker => state.borrow().authorship_picker.move_selection(1),
+                InputMode::EchoLinePicker => state.borrow().echo_line_picker.move_selection(1),
                 _ => {}
             }
             true
@@ -414,6 +420,7 @@ fn handle_picker_key(
                 InputMode::ConcordanceWorksPicker => state.borrow().concordance_works_picker.move_selection(-1),
                 InputMode::GlossPicker => state.borrow().gloss_picker.move_selection(-1),
                 InputMode::AuthorshipPicker => state.borrow().authorship_picker.move_selection(-1),
+                InputMode::EchoLinePicker => state.borrow().echo_line_picker.move_selection(-1),
                 _ => {}
             }
             true
@@ -813,6 +820,18 @@ fn handle_echoes_overlay_key(
         }
         "R" => {
             crate::input::actions::echoes::refresh_echoes(state, tokio_handle);
+            true
+        }
+        "Up" => {
+            crate::input::actions::echoes::reorder_selected_echo(state, -1);
+            true
+        }
+        "Down" => {
+            crate::input::actions::echoes::reorder_selected_echo(state, 1);
+            true
+        }
+        "A" => {
+            crate::input::actions::echoes::open_add_echo_picker(state);
             true
         }
         "g" => {
