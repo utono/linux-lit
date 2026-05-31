@@ -713,9 +713,13 @@ pub(crate) fn play_source_turn(state_rc: &Rc<RefCell<AppState>>) {
     // Reload the source media (a may have swapped MPV to an echo file), then set
     // the loop. LoadFileAndSeek resumes playback on file-loaded.
     if let Some(path) = source_media {
-        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::LoadFileAndSeek(path, loop_a));
+        // Load + (on file-loaded) seek and set the ab-loop together, so the
+        // loadfile-replace doesn't clear an ab-loop set too early.
+        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::LoadFileSeekAndLoop(path, loop_a, b));
+    } else {
+        // No reload needed — media already loaded; set the loop directly.
+        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SetAbLoop { a: loop_a, b });
     }
-    let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SetAbLoop { a: loop_a, b });
     s.ab_repeat.a_time = Some(a);
     s.ab_repeat.b_time = Some(b);
     s.ab_repeat.loop_active = true;

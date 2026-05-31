@@ -6,6 +6,10 @@ use tokio::sync::mpsc;
 
 use super::commands::{MpvCommand, MpvEvent};
 
+/// Deferred action applied on the next `file-loaded` event:
+/// (seek_time, resume_after_seek, optional ab_loop (a, b)).
+type PendingSeek = Option<(f64, bool, Option<(f64, f64)>)>;
+
 pub async fn run(
     mut cmd_rx: mpsc::Receiver<MpvCommand>,
     evt_tx: mpsc::Sender<MpvEvent>,
@@ -14,8 +18,8 @@ pub async fn run(
     let mut writer: Option<tokio::net::unix::OwnedWriteHalf> = None;
     let mut timestamps: Vec<(i64, f64, f64)> = Vec::new();
     let mut line_id_to_index: HashMap<i64, usize> = HashMap::new();
-    // (seek_time, resume_after_seek)
-    let mut pending_seek_after_load: Option<(f64, bool)> = None;
+    // (seek_time, resume_after_seek, optional ab_loop (a, b))
+    let mut pending_seek_after_load: PendingSeek = None;
 
     loop {
         if let Some(ref mut r) = reader {
@@ -31,11 +35,15 @@ pub async fn run(
                         }
                         Ok(_) => {
                             if is_file_loaded_event(&line_buf) {
-                                if let Some((seek_time, resume)) = pending_seek_after_load.take() {
+                                if let Some((seek_time, resume, ab_loop)) = pending_seek_after_load.take() {
                                     if let Some(w) = writer.as_mut() {
                                         crate::logging::log(&format!(
-                                            "MPV: file-loaded, seeking to {:.1} resume={}", seek_time, resume
+                                            "MPV: file-loaded, seeking to {:.1} resume={} loop={:?}", seek_time, resume, ab_loop
                                         ));
+                                        if let Some((la, lb)) = ab_loop {
+                                            let _ = send_command(w, &format!(r#"{{"command":["set_property","ab-loop-a",{}]}}"#, la)).await;
+                                            let _ = send_command(w, &format!(r#"{{"command":["set_property","ab-loop-b",{}]}}"#, lb)).await;
+                                        }
                                         let cmd = format!(r#"{{"command":["seek",{},"absolute"]}}"#, seek_time);
                                         let _ = send_command(w, &cmd).await;
                                         let pause_val = if resume { "false" } else { "true" };
@@ -77,7 +85,7 @@ async fn handle_command(
     evt_tx: &mpsc::Sender<MpvEvent>,
     timestamps: &mut Vec<(i64, f64, f64)>,
     line_id_to_index: &mut HashMap<i64, usize>,
-    pending_seek_after_load: &mut Option<(f64, bool)>,
+    pending_seek_after_load: &mut PendingSeek,
 ) {
     match cmd {
         MpvCommand::Connect(path) => {
@@ -176,7 +184,7 @@ async fn handle_command(
                 let escaped = path.replace('\\', "\\\\").replace('"', "\\\"");
                 let cmd = format!(r#"{{"command":["loadfile","{}","replace"]}}"#, escaped);
                 let _ = send_command(w, &cmd).await;
-                *pending_seek_after_load = Some((seek_time, true));
+                *pending_seek_after_load = Some((seek_time, true, None));
                 crate::logging::log(&format!(
                     "MPV: loadfile replace '{}' (seek {:.1} resume pending file-loaded)", path, seek_time
                 ));
@@ -187,9 +195,21 @@ async fn handle_command(
                 let escaped = path.replace('\\', "\\\\").replace('"', "\\\"");
                 let cmd = format!(r#"{{"command":["loadfile","{}","replace"]}}"#, escaped);
                 let _ = send_command(w, &cmd).await;
-                *pending_seek_after_load = Some((seek_time, false));
+                *pending_seek_after_load = Some((seek_time, false, None));
                 crate::logging::log(&format!(
                     "MPV: loadfile replace '{}' (seek {:.1} paused pending file-loaded)", path, seek_time
+                ));
+            }
+        }
+        MpvCommand::LoadFileSeekAndLoop(path, seek_time, loop_b) => {
+            if let Some(w) = writer.as_mut() {
+                let escaped = path.replace('\\', "\\\\").replace('"', "\\\"");
+                let cmd = format!(r#"{{"command":["loadfile","{}","replace"]}}"#, escaped);
+                let _ = send_command(w, &cmd).await;
+                *pending_seek_after_load = Some((seek_time, true, Some((seek_time, loop_b))));
+                crate::logging::log(&format!(
+                    "MPV: loadfile replace '{}' (seek {:.1} + ab-loop [{:.1},{:.1}] pending file-loaded)",
+                    path, seek_time, seek_time, loop_b
                 ));
             }
         }
