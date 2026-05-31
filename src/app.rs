@@ -51,6 +51,7 @@ pub enum InputMode {
     KeybindsOverlay,
     ConcordancePicker,
     ConcordanceWordPicker,
+    EchoLinePicker,
     ConcordanceListPicker,
     ConcordanceWorksPicker,
     AuthorshipPicker,
@@ -215,6 +216,9 @@ pub struct AppState {
     pub concordance_origin: Option<crate::concordance::ConcordanceOrigin>,
     pub concordance_word_cache: Option<(String, Vec<(String, usize)>)>,
     pub concordance_word_picker: crate::ui::concordance_word_picker::ConcordanceWordPicker,
+    pub echo_line_picker: crate::ui::echo_line_picker::EchoLinePicker,
+    /// turn_id the add-echo picker will attach the chosen line to.
+    pub echo_add_turn_id: Option<i64>,
     pub concordance_list_picker: crate::ui::concordance_list_picker::ConcordanceListPicker,
     pub concordance_works_picker: crate::ui::concordance_works_picker::ConcordanceWorksPicker,
     pub concordance_bar: crate::ui::concordance_bar::ConcordanceBar,
@@ -778,6 +782,11 @@ pub fn build_window(
     authorship_picker.attach(&concordance_list_picker.overlay);
     authorship_picker.overlay.set_vexpand(true);
 
+    // Echo line picker (add-echo: choose a line to attach an echo to)
+    let echo_line_picker = crate::ui::echo_line_picker::EchoLinePicker::new();
+    echo_line_picker.attach(&authorship_picker.overlay);
+    echo_line_picker.overlay.set_vexpand(true);
+
     // Concordance works picker (Alt+R: jump to a specific work)
     let concordance_works_picker = crate::ui::concordance_works_picker::ConcordanceWorksPicker::new();
     authorship_picker.overlay.add_overlay(&concordance_works_picker.scrim);
@@ -1016,6 +1025,8 @@ pub fn build_window(
         concordance_origin: None,
         concordance_word_cache: None,
         concordance_word_picker,
+        echo_line_picker,
+        echo_add_turn_id: None,
         concordance_list_picker,
         concordance_works_picker,
         concordance_bar,
@@ -1290,6 +1301,15 @@ pub fn build_window(
         let s = state.borrow();
         s.concordance_word_picker.entry().connect_changed(move |_| {
             state_for_conc_word_filter.borrow().concordance_word_picker.filter_changed();
+        });
+    }
+
+    // Connect echo line picker search entry for live add-echo search
+    let state_for_echo_line = Rc::clone(&state);
+    {
+        let s = state.borrow();
+        s.echo_line_picker.entry().connect_changed(move |_| {
+            crate::input::actions::echoes::refresh_add_echo_search(&state_for_echo_line);
         });
     }
 

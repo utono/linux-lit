@@ -365,7 +365,7 @@ impl GlossOverlay {
         self.title.set_margin_start(left);
         self.gloss_view.set_left_margin(left);
         self.echo_header_view.set_left_margin(left);
-        self.hint.set_text("Esc close · a play echo · Tab play turn · n/p select · Enter open work · c copy · s curate · R refresh");
+        self.hint.set_text("Esc close · a play · A add · ↑/↓ reorder · n/p select · Tab play turn · Enter open · c copy · s curate · R refresh");
         self.orig_header.set_visible(false);
         self.original_label.set_visible(false);
         self.corr_header.set_visible(false);

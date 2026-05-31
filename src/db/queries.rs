@@ -1182,6 +1182,39 @@ pub fn toggle_echo_curated(conn: &Connection, link_id: i64) -> Result<bool, rusq
     )
 }
 
+/// Insert a manual curated echo link at the top of the curated group (rank 0),
+/// shifting existing curated ranks down. Returns the new link's id.
+pub fn add_curated_echo_link(
+    conn: &Connection,
+    turn_id: i64,
+    work: &str,
+    div1: i64,
+    div2: i64,
+    line_in_div: i64,
+    text: &str,
+) -> Result<i64, rusqlite::Error> {
+    conn.execute(
+        "UPDATE echo_links SET rank = rank + 1 WHERE turn_id = ?1 AND curated = 1",
+        [turn_id],
+    )?;
+    conn.execute(
+        "INSERT INTO echo_links \
+         (turn_id, echo_work_abbrev, echo_div1, echo_div2, echo_start_line, echo_text, similarity, curated, rank) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0.0, 1, 0)",
+        rusqlite::params![turn_id, work, div1, div2, line_in_div, text],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Set a link's rank and curated flag.
+pub fn set_echo_link_rank(conn: &Connection, link_id: i64, rank: i64, curated: bool) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "UPDATE echo_links SET rank = ?2, curated = ?3 WHERE id = ?1",
+        rusqlite::params![link_id, rank, curated as i64],
+    )?;
+    Ok(())
+}
+
 /// Delete all non-curated links for a turn (used by refresh).
 pub fn delete_noncurated_echo_links(conn: &Connection, turn_id: i64) -> Result<(), rusqlite::Error> {
     conn.execute(
@@ -1209,6 +1242,31 @@ pub fn line_id_for_location(
     .ok()
 }
 
+/// Search every line whose canonical text contains `query` (case-insensitive),
+/// across all works. Returns (work_abbrev, div1, div2, line_in_div, text), capped.
+pub fn search_lines(conn: &Connection, query: &str, limit: i64)
+    -> Result<Vec<(String, i64, i64, i64, String)>, rusqlite::Error>
+{
+    let pattern = format!("%{}%", query);
+    let mut stmt = conn.prepare(
+        "SELECT work_abbrev, div1, div2, line_in_div, canonical_text \
+         FROM line_mapping \
+         WHERE canonical_text LIKE ?1 COLLATE NOCASE \
+         ORDER BY work_abbrev, div1, div2, line_in_div \
+         LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![pattern, limit], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+            row.get::<_, Option<i64>>(2)?.unwrap_or(0),
+            row.get::<_, i64>(3)?,
+            row.get::<_, String>(4)?,
+        ))
+    })?;
+    rows.collect()
+}
+
 /// Look up a single line's start time for a given media file. Returns None when
 /// no timestamp row exists for that (line, media) pair.
 pub fn line_start_time(conn: &Connection, line_id: i64, media_id: i64) -> Option<f64> {
@@ -1227,6 +1285,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn search_lines_matches_substring_case_insensitive_with_limit() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE line_mapping (
+                id INTEGER PRIMARY KEY, work_abbrev TEXT, canonical_text TEXT,
+                div1 INTEGER, div2 INTEGER, line_in_div INTEGER
+             );
+             INSERT INTO line_mapping (id, work_abbrev, canonical_text, div1, div2, line_in_div) VALUES
+                (1, 'Ham', 'To be, or not to be', 3, 1, 56),
+                (2, 'Mac', 'Tomorrow and tomorrow', 5, 5, 19),
+                (3, 'Lr',  'Nothing will come of nothing', 1, 1, 92);",
+        ).unwrap();
+        let hits = search_lines(&conn, "TOMORROW", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0], ("Mac".to_string(), 5, 5, 19, "Tomorrow and tomorrow".to_string()));
+        let all = search_lines(&conn, "o", 2).unwrap();
+        assert_eq!(all.len(), 2);
+        assert!(search_lines(&conn, "zzzz", 10).unwrap().is_empty());
+    }
+
+    #[test]
     fn line_start_time_reads_stored_value() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch(
@@ -1241,6 +1320,56 @@ mod tests {
         // Wrong media or missing line -> None.
         assert_eq!(line_start_time(&conn, 42, 99), None);
         assert_eq!(line_start_time(&conn, 1, 7), None);
+    }
+
+    #[test]
+    fn set_echo_link_rank_updates_rank_and_curated() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE echo_links (
+                id INTEGER PRIMARY KEY, turn_id INTEGER, echo_work_abbrev TEXT,
+                echo_div1 INTEGER, echo_div2 INTEGER, echo_start_line INTEGER,
+                echo_text TEXT, similarity REAL, curated INTEGER, rank INTEGER
+             );
+             INSERT INTO echo_links (id, turn_id, echo_work_abbrev, echo_div1, echo_div2,
+                echo_start_line, echo_text, similarity, curated, rank)
+                VALUES (1, 7, 'Ham', 1, 1, 1, 'x', 0.0, 0, 5);",
+        ).unwrap();
+        set_echo_link_rank(&conn, 1, 2, true).unwrap();
+        let (rank, curated): (i64, i64) = conn.query_row(
+            "SELECT rank, curated FROM echo_links WHERE id = 1", [],
+            |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!(rank, 2);
+        assert_eq!(curated, 1);
+    }
+
+    #[test]
+    fn add_curated_echo_link_inserts_at_top_shifting_curated() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE echo_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, turn_id INTEGER, echo_work_abbrev TEXT,
+                echo_div1 INTEGER, echo_div2 INTEGER, echo_start_line INTEGER,
+                echo_text TEXT, similarity REAL, curated INTEGER, rank INTEGER
+             );
+             INSERT INTO echo_links (turn_id, echo_work_abbrev, echo_div1, echo_div2,
+                echo_start_line, echo_text, similarity, curated, rank) VALUES
+                (7, 'Mac', 5, 5, 19, 'old curated', 0.0, 1, 0),
+                (7, 'Lr', 1, 1, 92, 'noncurated', 0.0, 0, 0);",
+        ).unwrap();
+        let new_id = add_curated_echo_link(&conn, 7, "Ham", 3, 1, 56, "To be").unwrap();
+        let (curated, rank): (i64, i64) = conn.query_row(
+            "SELECT curated, rank FROM echo_links WHERE id = ?1", [new_id],
+            |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!((curated, rank), (1, 0));
+        let old_rank: i64 = conn.query_row(
+            "SELECT rank FROM echo_links WHERE echo_text = 'old curated'", [],
+            |r| r.get(0)).unwrap();
+        assert_eq!(old_rank, 1);
+        let nc: (i64, i64) = conn.query_row(
+            "SELECT curated, rank FROM echo_links WHERE echo_text = 'noncurated'", [],
+            |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!(nc, (0, 0));
     }
 
     #[test]

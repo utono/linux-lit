@@ -775,6 +775,187 @@ pub(crate) fn toggle_curated(state_rc: &Rc<RefCell<AppState>>) {
     crate::logging::log("ECHOES: toggled curated");
 }
 
+/// Reorder the selected echo within the curated group (delta -1 = up, +1 = down),
+/// marking it curated. Curated items always sort above non-curated; this moves
+/// the selection among them and persists sequential ranks. Mirrors toggle_curated's
+/// reload-and-keep-selection pattern.
+pub(crate) fn reorder_selected_echo(state_rc: &Rc<RefCell<AppState>>, delta: i32) {
+    let (turn_id, sel_link_id, links) = {
+        let s = state_rc.borrow();
+        let link = match s.echo_overlay_links.get(s.echo_overlay_index) {
+            Some(l) => l.clone(),
+            None => return,
+        };
+        match s.echo_overlay_turn_id {
+            Some(id) => (id, link.link_id, s.echo_overlay_links.clone()),
+            None => return,
+        }
+    };
+
+    // Curated prefix in current display order (links are loaded curated DESC, rank ASC).
+    let mut curated: Vec<i64> = links.iter().filter(|l| l.curated).map(|l| l.link_id).collect();
+    let sel_is_curated = links.iter().any(|l| l.link_id == sel_link_id && l.curated);
+
+    // Index of the selected link within the curated order (curate-on-move if not).
+    let from = if sel_is_curated {
+        curated.iter().position(|&id| id == sel_link_id).unwrap_or(0)
+    } else {
+        // Not yet curated: append to the curated tail, then move from there.
+        curated.push(sel_link_id);
+        curated.len() - 1
+    };
+    let to = from as i32 + delta;
+    if to < 0 || to >= curated.len() as i32 {
+        // At an edge of the curated group. If we just curated it, still persist;
+        // otherwise no-op.
+        if sel_is_curated {
+            return;
+        }
+    }
+    let to = to.clamp(0, curated.len() as i32 - 1) as usize;
+    curated.swap(from, to);
+
+    // Persist sequential ranks for the curated order; all curated=true.
+    if let Ok(conn) = crate::db::queries::open_db_rw() {
+        for (rank, link_id) in curated.iter().enumerate() {
+            let _ = crate::db::queries::set_echo_link_rank(&conn, *link_id, rank as i64, true);
+        }
+    }
+
+    // Reload, keep selection on the moved link.
+    let links = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| crate::db::queries::load_echo_links(&conn, turn_id).ok())
+        .unwrap_or_default();
+    let mut s = state_rc.borrow_mut();
+    let new_idx = links.iter().position(|l| l.link_id == sel_link_id).unwrap_or(0);
+    s.echo_overlay_links = links;
+    s.echo_overlay_index = new_idx;
+    render_echoes(&mut s);
+    s.gloss_overlay.scroll_echo_into_view(new_idx);
+    sync_session(&mut s);
+    crate::logging::log("ECHOES: reordered echo");
+}
+
+/// `A` in the echoes overlay: open the line-search picker to add an echo to the
+/// current turn. Stashes the turn_id for the deferred add.
+pub(crate) fn open_add_echo_picker(state_rc: &Rc<RefCell<AppState>>) {
+    let turn_id = state_rc.borrow().echo_overlay_turn_id;
+    if turn_id.is_none() {
+        return;
+    }
+    // Set up picker state under a mutable borrow that ENDS before show().
+    {
+        let mut s = state_rc.borrow_mut();
+        s.echo_add_turn_id = turn_id;
+        let titles = s.echo_overlay_titles.clone();
+        s.echo_line_picker.set_results(Vec::new(), &titles);
+        s.input_mode = crate::app::InputMode::EchoLinePicker;
+    }
+    // show() calls set_text(""), which synchronously fires the entry's
+    // connect_changed -> refresh_add_echo_search (which borrows state). Hold only
+    // a short immutable borrow across show(); refresh_add_echo_search is
+    // re-entrancy-safe (try_borrow/try_borrow_mut) so the spurious initial fire
+    // bails instead of panicking.
+    state_rc.borrow().echo_line_picker.show();
+    crate::logging::log("ECHOES: opened add-echo line picker");
+}
+
+/// Re-run the line search for the picker's current entry text (called on each
+/// keystroke). Empty query clears the list.
+pub(crate) fn refresh_add_echo_search(state_rc: &Rc<RefCell<AppState>>) {
+    // This handler is fired synchronously by the entry's connect_changed, which
+    // open_add_echo_picker triggers via set_text("") while holding an immutable
+    // borrow. Use try_borrow/try_borrow_mut so that re-entrant call bails instead
+    // of panicking; on normal keystrokes no outer borrow is held and both succeed.
+    let query = match state_rc.try_borrow() {
+        Ok(s) => s.echo_line_picker.entry().text().to_string(),
+        Err(_) => return,
+    };
+    let results = if query.trim().is_empty() {
+        Vec::new()
+    } else {
+        crate::db::queries::open_db()
+            .ok()
+            .and_then(|conn| crate::db::queries::search_lines(&conn, query.trim(), 200).ok())
+            .unwrap_or_default()
+    };
+    if let Ok(mut s) = state_rc.try_borrow_mut() {
+        let titles = s.echo_overlay_titles.clone();
+        s.echo_line_picker.set_results(results, &titles);
+    }
+}
+
+/// Confirm the selected line in the add-echo picker: add it as a curated echo at
+/// the top of the rankings (or promote an existing matching echo), then return
+/// to the echoes overlay.
+pub(crate) fn confirm_add_echo(state_rc: &Rc<RefCell<AppState>>) {
+    let hit = state_rc.borrow().echo_line_picker.selected_hit();
+    let hit = match hit {
+        Some(h) => h,
+        None => {
+            cancel_add_echo(state_rc);
+            return;
+        }
+    };
+    let turn_id = state_rc.borrow().echo_add_turn_id;
+    let turn_id = match turn_id {
+        Some(id) => id,
+        None => {
+            cancel_add_echo(state_rc);
+            return;
+        }
+    };
+    let (work, div1, div2, line_in_div, text) = hit;
+
+    let existing_id = state_rc.borrow().echo_overlay_links.iter()
+        .find(|l| l.echo_work_abbrev == work && l.echo_div1 == div1
+                  && l.echo_div2 == div2 && l.echo_start_line == line_in_div)
+        .map(|l| l.link_id);
+
+    let new_link_id = if let Ok(conn) = crate::db::queries::open_db_rw() {
+        if let Some(id) = existing_id {
+            // Promote: shift other curated +1, set this to curated rank 0.
+            let _ = conn.execute(
+                "UPDATE echo_links SET rank = rank + 1 WHERE turn_id = ?1 AND curated = 1",
+                [turn_id],
+            );
+            let _ = crate::db::queries::set_echo_link_rank(&conn, id, 0, true);
+            Some(id)
+        } else {
+            crate::db::queries::add_curated_echo_link(&conn, turn_id, &work, div1, div2, line_in_div, &text).ok()
+        }
+    } else {
+        None
+    };
+
+    let links = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| crate::db::queries::load_echo_links(&conn, turn_id).ok())
+        .unwrap_or_default();
+    let mut s = state_rc.borrow_mut();
+    s.echo_line_picker.hide();
+    s.echo_add_turn_id = None;
+    let new_idx = new_link_id
+        .and_then(|id| links.iter().position(|l| l.link_id == id))
+        .unwrap_or(0);
+    s.echo_overlay_links = links;
+    s.echo_overlay_index = new_idx;
+    s.input_mode = crate::app::InputMode::EchoesOverlay;
+    render_echoes(&mut s);
+    s.gloss_overlay.scroll_echo_into_view(new_idx);
+    sync_session(&mut s);
+    crate::logging::log("ECHOES: added echo from line picker");
+}
+
+/// Cancel the add-echo picker, returning to the echoes overlay.
+pub(crate) fn cancel_add_echo(state_rc: &Rc<RefCell<AppState>>) {
+    let mut s = state_rc.borrow_mut();
+    s.echo_line_picker.hide();
+    s.echo_add_turn_id = None;
+    s.input_mode = crate::app::InputMode::EchoesOverlay;
+}
+
 /// Re-run the search for the current turn, overwriting non-curated links;
 /// curated links are always kept.
 pub(crate) fn refresh_echoes(

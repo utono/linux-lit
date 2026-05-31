@@ -8,6 +8,7 @@ pub mod concordance_word_picker;
 pub mod gloss_overlay;
 pub mod gloss_picker;
 pub mod echo_picker;
+pub mod echo_line_picker;
 pub mod vocab_popup;
 pub mod gamepad_overlay;
 pub mod keybinds_overlay;
