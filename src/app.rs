@@ -782,10 +782,12 @@ pub fn build_window(
     authorship_picker.attach(&concordance_list_picker.overlay);
     authorship_picker.overlay.set_vexpand(true);
 
-    // Echo line picker (add-echo: choose a line to attach an echo to)
+    // Echo line picker (add-echo: choose a line to attach an echo to).
+    // Added as an overlay panel onto the outer overlay (like concordance_works
+    // below), NOT wrapped into the reader's size-bearing chain — wrapping it
+    // orphaned the reader content and collapsed the layout (sw_h stuck at 0).
     let echo_line_picker = crate::ui::echo_line_picker::EchoLinePicker::new();
-    echo_line_picker.attach(&authorship_picker.overlay);
-    echo_line_picker.overlay.set_vexpand(true);
+    authorship_picker.overlay.add_overlay(&echo_line_picker.picker_box);
 
     // Concordance works picker (Alt+R: jump to a specific work)
     let concordance_works_picker = crate::ui::concordance_works_picker::ConcordanceWorksPicker::new();
@@ -875,11 +877,7 @@ pub fn build_window(
     let search_bar = SearchBar::new();
 
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-    // echo_line_picker is the outermost picker overlay (it wraps
-    // authorship_picker.overlay), so append IT to vbox — appending the now-nested
-    // authorship_picker.overlay would orphan the picker subtree and collapse the
-    // reader layout (scrolled_window height stuck at 0).
-    vbox.append(&echo_line_picker.overlay);
+    vbox.append(&authorship_picker.overlay);
     vbox.append(&search_bar.container);
 
     concordance_bar.container.set_valign(gtk4::Align::End);

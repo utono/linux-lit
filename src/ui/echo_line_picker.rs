@@ -1,5 +1,5 @@
 use gtk4::prelude::*;
-use gtk4::{Align, Box as GtkBox, Entry, Label, ListBox, ListBoxRow, Orientation, Overlay, ScrolledWindow};
+use gtk4::{Align, Box as GtkBox, Entry, Label, ListBox, ListBoxRow, Orientation, ScrolledWindow};
 use std::collections::HashMap;
 
 /// A single search hit: (work_abbrev, div1, div2, line_in_div, text).
@@ -7,8 +7,10 @@ pub type LineHit = (String, i64, i64, i64, String);
 
 /// Picker for adding an echo: fuzzy-search Shakespeare lines, pick one.
 pub struct EchoLinePicker {
-    pub overlay: Overlay,
-    picker_box: GtkBox,
+    /// The picker panel, added directly as an overlay onto the app's outer
+    /// overlay (like concordance_works_picker.container) — NOT wrapped into the
+    /// reader's size-bearing widget chain.
+    pub picker_box: GtkBox,
     search_entry: Entry,
     list_box: ListBox,
     results: Vec<LineHit>,
@@ -16,8 +18,6 @@ pub struct EchoLinePicker {
 
 impl EchoLinePicker {
     pub fn new() -> Self {
-        let overlay = Overlay::new();
-
         let picker_box = GtkBox::new(Orientation::Vertical, 0);
         picker_box.set_halign(Align::Center);
         picker_box.set_valign(Align::Start);
@@ -40,13 +40,8 @@ impl EchoLinePicker {
         scrolled.set_child(Some(&list_box));
         picker_box.append(&scrolled);
 
-        Self { overlay, picker_box, search_entry, list_box, results: Vec::new() }
-    }
-
-    pub fn attach(&self, base: &impl IsA<gtk4::Widget>) {
-        self.overlay.set_child(Some(base));
-        self.overlay.add_overlay(&self.picker_box);
-        self.picker_box.set_visible(false);
+        picker_box.set_visible(false);
+        Self { picker_box, search_entry, list_box, results: Vec::new() }
     }
 
     pub fn show(&self) {
