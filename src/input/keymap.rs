@@ -62,6 +62,7 @@ pub fn handle_key(
             | crate::app::InputMode::MediaPicker
             | crate::app::InputMode::ConcordancePicker
             | crate::app::InputMode::ConcordanceWordPicker
+            | crate::app::InputMode::EchoLinePicker
             | crate::app::InputMode::ConcordanceListPicker
             | crate::app::InputMode::ConcordanceWorksPicker
             | crate::app::InputMode::AuthorshipPicker
