@@ -350,7 +350,7 @@ impl GlossOverlay {
 
     /// Render the echoes document (source turn + echo list), highlighting the
     /// selected echo. Used by the "show echoes" (`I`) feature.
-    pub fn show_echoes(&self, doc: &str, card_height: i32, root_color: Option<&str>, selected: usize) {
+    pub fn show_echoes(&self, doc: &str, card_height: i32, root_color: Option<&str>, dim_color: Option<&str>, selected: usize) {
         self.container.set_height_request(card_height);
         self.title.set_visible(false);
         let left = self.column_width / 8;
@@ -372,7 +372,7 @@ impl GlossOverlay {
         *self.bar_x.borrow_mut() = bar_left;
 
         let (ranges, nums, echo_lines) = populate_gloss_buffer_ex(
-            &self.gloss_view, doc, self.text_margins, bar_left, &[], Some(selected));
+            &self.gloss_view, doc, self.text_margins, bar_left, &[], Some(selected), dim_color);
         *self.bar_ranges.borrow_mut() = ranges;
         *self.line_numbers.borrow_mut() = nums;
         *self.echo_lines.borrow_mut() = echo_lines;
@@ -539,13 +539,13 @@ fn try_extract<'a>(s: &'a str, tag: &str) -> Option<(&'a str, &'a str)> {
 }
 
 fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32, bar_left: i32, source_line_numbers: &[(String, i64)]) -> (Vec<BarRange>, Vec<LineNumber>) {
-    let (ranges, nums, _) = populate_gloss_buffer_ex(view, gloss, _text_margins, bar_left, source_line_numbers, None);
+    let (ranges, nums, _) = populate_gloss_buffer_ex(view, gloss, _text_margins, bar_left, source_line_numbers, None, None);
     (ranges, nums)
 }
 
 /// Extended populate that supports highlighting a selected echo (the Nth
 /// `<gloss>` echo element). Returns the buffer line of each echo's quote.
-fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i32, bar_left: i32, source_line_numbers: &[(String, i64)], selected_echo: Option<usize>) -> (Vec<BarRange>, Vec<LineNumber>, Vec<i32>) {
+fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i32, bar_left: i32, source_line_numbers: &[(String, i64)], selected_echo: Option<usize>, dim_color: Option<&str>) -> (Vec<BarRange>, Vec<LineNumber>, Vec<i32>) {
     let buffer = view.buffer();
     buffer.set_text("");
 
@@ -620,12 +620,17 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
         .style(pango::Style::Italic)
         .build();
 
-    // Citation line: indented further, smaller and dimmer.
-    let citation_tag = gtk4::TextTag::builder()
+    // Citation line: indented further, smaller and dimmer. Use the theme's
+    // dim foreground when provided so the source citations recede behind the
+    // echo quotes.
+    let citation_builder = gtk4::TextTag::builder()
         .name("gloss-citation")
         .left_margin(quote_verse)
-        .scale(0.85)
-        .build();
+        .scale(0.85);
+    let citation_tag = match dim_color {
+        Some(c) => citation_builder.foreground(c).build(),
+        None => citation_builder.build(),
+    };
 
     // Selected-echo highlight: subtle background on the selected quote text only.
     let selected_tag = gtk4::TextTag::builder()
@@ -650,7 +655,7 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
     // Whether we have reached the echo list (`<gloss>` elements). Speaker
     // labels before this belong to the quoted source turn and stay tight.
     let mut in_echoes = false;
-    let bar_ranges: Vec<BarRange> = Vec::new();
+    let mut bar_ranges: Vec<BarRange> = Vec::new();
     let mut line_nums: Vec<LineNumber> = Vec::new();
     let mut echo_lines: Vec<i32> = Vec::new();
     let mut echo_idx: usize = 0;
@@ -742,6 +747,15 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
                     buffer.insert(&mut end, &citation);
                     let cstart = buffer.iter_at_offset(cit_offset);
                     buffer.apply_tag(&citation_tag, &cstart, &buffer.end_iter());
+
+                    // Accent bar beside the selected echo: span the quote's
+                    // first line through the citation line.
+                    if is_selected {
+                        bar_ranges.push(BarRange {
+                            start_line: quote_line,
+                            end_line: buffer.end_iter().line(),
+                        });
+                    }
                 } else {
                     let mut end = buffer.end_iter();
                     buffer.insert(&mut end, text);

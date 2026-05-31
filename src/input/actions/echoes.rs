@@ -550,7 +550,8 @@ fn render_echoes(s: &mut AppState) {
 
     let h = s.scrolled_window.height();
     let root = s.theme.root_color.clone();
-    s.gloss_overlay.show_echoes(&doc, h, Some(&root), s.echo_overlay_index);
+    let dim = s.theme.dim_fg.clone();
+    s.gloss_overlay.show_echoes(&doc, h, Some(&root), Some(&dim), s.echo_overlay_index);
 }
 
 /// Persist the search candidates as echo links for the turn, then read them
