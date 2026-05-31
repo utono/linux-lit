@@ -844,19 +844,34 @@ pub(crate) fn open_add_echo_picker(state_rc: &Rc<RefCell<AppState>>) {
     if turn_id.is_none() {
         return;
     }
-    let mut s = state_rc.borrow_mut();
-    s.echo_add_turn_id = turn_id;
-    let titles = s.echo_overlay_titles.clone();
-    s.echo_line_picker.set_results(Vec::new(), &titles);
-    s.echo_line_picker.show();
-    s.input_mode = crate::app::InputMode::EchoLinePicker;
+    // Set up picker state under a mutable borrow that ENDS before show().
+    {
+        let mut s = state_rc.borrow_mut();
+        s.echo_add_turn_id = turn_id;
+        let titles = s.echo_overlay_titles.clone();
+        s.echo_line_picker.set_results(Vec::new(), &titles);
+        s.input_mode = crate::app::InputMode::EchoLinePicker;
+    }
+    // show() calls set_text(""), which synchronously fires the entry's
+    // connect_changed -> refresh_add_echo_search (which borrows state). Hold only
+    // a short immutable borrow across show(); refresh_add_echo_search is
+    // re-entrancy-safe (try_borrow/try_borrow_mut) so the spurious initial fire
+    // bails instead of panicking.
+    state_rc.borrow().echo_line_picker.show();
     crate::logging::log("ECHOES: opened add-echo line picker");
 }
 
 /// Re-run the line search for the picker's current entry text (called on each
 /// keystroke). Empty query clears the list.
 pub(crate) fn refresh_add_echo_search(state_rc: &Rc<RefCell<AppState>>) {
-    let query = state_rc.borrow().echo_line_picker.entry().text().to_string();
+    // This handler is fired synchronously by the entry's connect_changed, which
+    // open_add_echo_picker triggers via set_text("") while holding an immutable
+    // borrow. Use try_borrow/try_borrow_mut so that re-entrant call bails instead
+    // of panicking; on normal keystrokes no outer borrow is held and both succeed.
+    let query = match state_rc.try_borrow() {
+        Ok(s) => s.echo_line_picker.entry().text().to_string(),
+        Err(_) => return,
+    };
     let results = if query.trim().is_empty() {
         Vec::new()
     } else {
@@ -865,9 +880,10 @@ pub(crate) fn refresh_add_echo_search(state_rc: &Rc<RefCell<AppState>>) {
             .and_then(|conn| crate::db::queries::search_lines(&conn, query.trim(), 200).ok())
             .unwrap_or_default()
     };
-    let mut s = state_rc.borrow_mut();
-    let titles = s.echo_overlay_titles.clone();
-    s.echo_line_picker.set_results(results, &titles);
+    if let Ok(mut s) = state_rc.try_borrow_mut() {
+        let titles = s.echo_overlay_titles.clone();
+        s.echo_line_picker.set_results(results, &titles);
+    }
 }
 
 /// Confirm the selected line in the add-echo picker: add it as a curated echo at
