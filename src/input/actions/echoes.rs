@@ -837,6 +837,107 @@ pub(crate) fn reorder_selected_echo(state_rc: &Rc<RefCell<AppState>>, delta: i32
     crate::logging::log("ECHOES: reordered echo");
 }
 
+/// `A` in the echoes overlay: open the line-search picker to add an echo to the
+/// current turn. Stashes the turn_id for the deferred add.
+pub(crate) fn open_add_echo_picker(state_rc: &Rc<RefCell<AppState>>) {
+    let turn_id = state_rc.borrow().echo_overlay_turn_id;
+    if turn_id.is_none() {
+        return;
+    }
+    let mut s = state_rc.borrow_mut();
+    s.echo_add_turn_id = turn_id;
+    let titles = s.echo_overlay_titles.clone();
+    s.echo_line_picker.set_results(Vec::new(), &titles);
+    s.echo_line_picker.show();
+    s.input_mode = crate::app::InputMode::EchoLinePicker;
+    crate::logging::log("ECHOES: opened add-echo line picker");
+}
+
+/// Re-run the line search for the picker's current entry text (called on each
+/// keystroke). Empty query clears the list.
+pub(crate) fn refresh_add_echo_search(state_rc: &Rc<RefCell<AppState>>) {
+    let query = state_rc.borrow().echo_line_picker.entry().text().to_string();
+    let results = if query.trim().is_empty() {
+        Vec::new()
+    } else {
+        crate::db::queries::open_db()
+            .ok()
+            .and_then(|conn| crate::db::queries::search_lines(&conn, query.trim(), 200).ok())
+            .unwrap_or_default()
+    };
+    let mut s = state_rc.borrow_mut();
+    let titles = s.echo_overlay_titles.clone();
+    s.echo_line_picker.set_results(results, &titles);
+}
+
+/// Confirm the selected line in the add-echo picker: add it as a curated echo at
+/// the top of the rankings (or promote an existing matching echo), then return
+/// to the echoes overlay.
+pub(crate) fn confirm_add_echo(state_rc: &Rc<RefCell<AppState>>) {
+    let hit = match state_rc.borrow().echo_line_picker.selected_hit() {
+        Some(h) => h,
+        None => {
+            cancel_add_echo(state_rc);
+            return;
+        }
+    };
+    let turn_id = match state_rc.borrow().echo_add_turn_id {
+        Some(id) => id,
+        None => {
+            cancel_add_echo(state_rc);
+            return;
+        }
+    };
+    let (work, div1, div2, line_in_div, text) = hit;
+
+    let existing_id = state_rc.borrow().echo_overlay_links.iter()
+        .find(|l| l.echo_work_abbrev == work && l.echo_div1 == div1
+                  && l.echo_div2 == div2 && l.echo_start_line == line_in_div)
+        .map(|l| l.link_id);
+
+    let new_link_id = if let Ok(conn) = crate::db::queries::open_db_rw() {
+        if let Some(id) = existing_id {
+            // Promote: shift other curated +1, set this to curated rank 0.
+            let _ = conn.execute(
+                "UPDATE echo_links SET rank = rank + 1 WHERE turn_id = ?1 AND curated = 1",
+                [turn_id],
+            );
+            let _ = crate::db::queries::set_echo_link_rank(&conn, id, 0, true);
+            Some(id)
+        } else {
+            crate::db::queries::add_curated_echo_link(&conn, turn_id, &work, div1, div2, line_in_div, &text).ok()
+        }
+    } else {
+        None
+    };
+
+    let links = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| crate::db::queries::load_echo_links(&conn, turn_id).ok())
+        .unwrap_or_default();
+    let mut s = state_rc.borrow_mut();
+    s.echo_line_picker.hide();
+    s.echo_add_turn_id = None;
+    let new_idx = new_link_id
+        .and_then(|id| links.iter().position(|l| l.link_id == id))
+        .unwrap_or(0);
+    s.echo_overlay_links = links;
+    s.echo_overlay_index = new_idx;
+    s.input_mode = crate::app::InputMode::EchoesOverlay;
+    render_echoes(&mut s);
+    s.gloss_overlay.scroll_echo_into_view(new_idx);
+    sync_session(&mut s);
+    crate::logging::log("ECHOES: added echo from line picker");
+}
+
+/// Cancel the add-echo picker, returning to the echoes overlay.
+pub(crate) fn cancel_add_echo(state_rc: &Rc<RefCell<AppState>>) {
+    let mut s = state_rc.borrow_mut();
+    s.echo_line_picker.hide();
+    s.echo_add_turn_id = None;
+    s.input_mode = crate::app::InputMode::EchoesOverlay;
+}
+
 /// Re-run the search for the current turn, overwriting non-curated links;
 /// curated links are always kept.
 pub(crate) fn refresh_echoes(
