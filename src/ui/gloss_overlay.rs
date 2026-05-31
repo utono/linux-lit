@@ -116,8 +116,10 @@ impl GlossOverlay {
         let color_clone = bar_color.clone();
         let bar_x_clone = bar_x.clone();
         let line_numbers_clone = line_numbers.clone();
+        let echo_lines_clone = echo_lines.clone();
         let view_clone = gloss_view.clone();
         let right_margin_val = right_margin;
+        let rule_left = text_margins as i32;
         bar_drawing.set_draw_func(move |_area, cr, w, _h| {
             let ranges = ranges_clone.borrow();
             let (r, g, b) = *color_clone.borrow();
@@ -173,6 +175,26 @@ impl GlossOverlay {
                         let _ = cr.move_to(num_x, by as f64 + font_size);
                         let _ = cr.show_text(&text);
                     }
+                }
+            }
+
+            // Horizontal rule separating the quoted source turn from the echo
+            // list. Drawn at the top of the first echo line; only present in
+            // the echoes view (echo_lines is empty for plain gloss/synopsis).
+            let echos = echo_lines_clone.borrow();
+            if let Some(&first_echo_line) = echos.first() {
+                let buffer = view_clone.buffer();
+                if let Some(iter) = buffer.iter_at_line(first_echo_line) {
+                    let loc = view_clone.iter_location(&iter);
+                    let (_, by) = view_clone.buffer_to_window_coords(
+                        gtk4::TextWindowType::Widget, 0, loc.y());
+                    // Sit the rule midway in the gap above the first echo.
+                    let rule_y = by as f64 - 12.0;
+                    cr.set_source_rgba(r, g, b, 0.4);
+                    cr.set_line_width(1.0);
+                    cr.move_to(rule_left as f64, rule_y);
+                    cr.line_to((w - right_margin_val) as f64, rule_y);
+                    let _ = cr.stroke();
                 }
             }
         });
@@ -298,6 +320,7 @@ impl GlossOverlay {
         let (ranges, nums) = populate_gloss_buffer(&self.gloss_view, gloss, self.text_margins, bar_left, source_line_numbers);
         *self.bar_ranges.borrow_mut() = ranges;
         *self.line_numbers.borrow_mut() = nums;
+        *self.echo_lines.borrow_mut() = Vec::new();
         self.bar_drawing.queue_draw();
 
         self.gloss_scroll_overlay.set_visible(true);
@@ -374,6 +397,7 @@ impl GlossOverlay {
 
         *self.bar_ranges.borrow_mut() = Vec::new();
         *self.line_numbers.borrow_mut() = Vec::new();
+        *self.echo_lines.borrow_mut() = Vec::new();
 
         self.gloss_view.set_left_margin(left);
         let buffer = self.gloss_view.buffer();
