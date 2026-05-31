@@ -550,7 +550,7 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
     buffer.set_text("");
 
     let tag_table = buffer.tag_table();
-    for name in &["gloss-speaker", "gloss-speaker-first", "gloss-speaker-source", "gloss-verse", "gloss-para", "gloss-bracket", "gloss-quote", "gloss-quote-cont", "gloss-citation", "gloss-echo-selected"] {
+    for name in &["gloss-speaker", "gloss-speaker-first", "gloss-speaker-source", "gloss-verse", "gloss-para", "gloss-bracket", "gloss-quote", "gloss-quote-cont", "gloss-citation"] {
         if let Some(old) = tag_table.lookup(name) {
             tag_table.remove(&old);
         }
@@ -632,12 +632,6 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
         None => citation_builder.build(),
     };
 
-    // Selected-echo highlight: subtle background on the selected quote text only.
-    let selected_tag = gtk4::TextTag::builder()
-        .name("gloss-echo-selected")
-        .background("rgba(100, 140, 200, 0.25)")
-        .build();
-
     tag_table.add(&speaker_tag);
     tag_table.add(&speaker_first_tag);
     tag_table.add(&speaker_source_tag);
@@ -647,7 +641,6 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
     tag_table.add(&quote_tag);
     tag_table.add(&quote_cont_tag);
     tag_table.add(&citation_tag);
-    tag_table.add(&selected_tag);
 
     let elements = parse_gloss_tags(gloss);
     let mut first = true;
@@ -734,11 +727,8 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
                         buffer.apply_tag(&quote_cont_tag, &first_line_end, &quote_end_iter);
                     }
 
-                    if is_selected {
-                        let hi_start = buffer.iter_at_offset(offset);
-                        let hi_end = buffer.iter_at_offset(quote_end_offset);
-                        buffer.apply_tag(&selected_tag, &hi_start, &hi_end);
-                    }
+                    // The left accent bar (bar_ranges, below) marks the
+                    // selected echo; no background highlight needed.
 
                     let mut end = buffer.end_iter();
                     buffer.insert(&mut end, "\n");
@@ -751,9 +741,14 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
                     // Accent bar beside the selected echo: span the quote's
                     // first line through the citation line.
                     if is_selected {
+                        let er = buffer.end_iter().line();
+                        crate::logging::log(&format!(
+                            "ECHO_BAR: selected echo quote_line={} end_line={} echo_idx={}",
+                            quote_line, er, echo_idx - 1
+                        ));
                         bar_ranges.push(BarRange {
                             start_line: quote_line,
-                            end_line: buffer.end_iter().line(),
+                            end_line: er,
                         });
                     }
                 } else {
