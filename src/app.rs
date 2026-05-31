@@ -235,6 +235,9 @@ pub struct AppState {
     pub sync_enabled: bool,
     pub mpv_connected: bool,
     pub mpv_playing: bool,
+    /// link_id of the echo currently playing via `a` in the echoes overlay,
+    /// for the pause/resume toggle. None when no echo is being auditioned.
+    pub echo_playing_link: Option<i64>,
     pub concordance_resume_playback: bool,
     pub sync_enabled_before_concordance: Option<bool>,
     pub skip_mpv_discovery: bool,
@@ -1033,6 +1036,7 @@ pub fn build_window(
         sync_enabled: true,
         mpv_connected: false,
         mpv_playing: false,
+        echo_playing_link: None,
         concordance_resume_playback: false,
         sync_enabled_before_concordance: None,
         skip_mpv_discovery: false,
