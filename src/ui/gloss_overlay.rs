@@ -219,6 +219,17 @@ impl GlossOverlay {
 
         gloss_scrolled.set_child(Some(&gloss_view));
 
+        // The bar overlay (accent bar, source/echo rule, line numbers) maps
+        // buffer lines to window y at paint time, so it must repaint whenever
+        // the view scrolls — otherwise the rule and bar stick at a stale
+        // scroll offset while the text moves beneath them.
+        {
+            let bar_for_scroll = bar_drawing.clone();
+            gloss_scrolled.vadjustment().connect_value_changed(move |_| {
+                bar_for_scroll.queue_draw();
+            });
+        }
+
         gloss_scroll_overlay.set_child(Some(&gloss_scrolled));
         gloss_scroll_overlay.add_overlay(&bar_drawing);
         gloss_scroll_overlay.set_measure_overlay(&bar_drawing, false);
@@ -741,14 +752,9 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
                     // Accent bar beside the selected echo: span the quote's
                     // first line through the citation line.
                     if is_selected {
-                        let er = buffer.end_iter().line();
-                        crate::logging::log(&format!(
-                            "ECHO_BAR: selected echo quote_line={} end_line={} echo_idx={}",
-                            quote_line, er, echo_idx - 1
-                        ));
                         bar_ranges.push(BarRange {
                             start_line: quote_line,
-                            end_line: er,
+                            end_line: buffer.end_iter().line(),
                         });
                     }
                 } else {
