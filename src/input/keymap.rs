@@ -757,7 +757,7 @@ fn handle_echoes_overlay_key(
     state: &Rc<RefCell<AppState>>,
     key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
-    _is_ctrl: bool,
+    is_ctrl: bool,
     tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
     if key_state.borrow().chord == ChordState::PendingG {
@@ -767,13 +767,27 @@ fn handle_echoes_overlay_key(
         }
         return true;
     }
+    // Ctrl+Up/Ctrl+Down adjust volume, mirroring the reader's VolumeUp/Down.
+    if is_ctrl {
+        match key_name {
+            "Up" => {
+                let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(5.0));
+                return true;
+            }
+            "Down" => {
+                let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(-5.0));
+                return true;
+            }
+            _ => {}
+        }
+    }
     match key_name {
         "n" => {
-            crate::input::actions::echoes::move_echo_selection(state, 1);
+            crate::input::actions::echoes::move_echo_selection(state, 1, tokio_handle);
             true
         }
         "p" => {
-            crate::input::actions::echoes::move_echo_selection(state, -1);
+            crate::input::actions::echoes::move_echo_selection(state, -1, tokio_handle);
             true
         }
         "Return" => {
@@ -785,7 +799,11 @@ fn handle_echoes_overlay_key(
             true
         }
         "Tab" => {
-            crate::input::actions::echoes::toggle_echo_playback(state);
+            crate::input::actions::echoes::play_source_turn(state);
+            true
+        }
+        "a" => {
+            crate::input::actions::echoes::play_selected_echo(state, tokio_handle);
             true
         }
         "s" => {

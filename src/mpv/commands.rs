@@ -23,6 +23,10 @@ pub enum MpvCommand {
     LoadFileAndSeek(String, f64),
     /// Load file and seek but stay paused after MPV reports it's ready.
     LoadFileSeekPaused(String, f64),
+    /// Load file, then after MPV reports it ready: seek+resume AND set an
+    /// AB-loop (a, b). Used when reloading media that needs a loop, since
+    /// loadfile-replace clears ab-loop props set before the file loads.
+    LoadFileSeekAndLoop(String, f64, f64),
     Quit,
 }
 

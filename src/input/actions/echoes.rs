@@ -536,13 +536,14 @@ fn build_source_header(turn: &[Line], speaker: &str) -> String {
 /// Render the echoes document (source header + echo list) into the gloss
 /// overlay, highlighting the selected echo. Curated echoes get a ★ marker.
 fn render_echoes(s: &mut AppState) {
-    let mut doc = s.echo_overlay_source.clone();
+    let source_doc = s.echo_overlay_source.clone();
+    let mut echo_doc = String::new();
     for link in &s.echo_overlay_links {
         let title = s.echo_overlay_titles.get(&link.echo_work_abbrev)
             .cloned()
             .unwrap_or_else(|| link.echo_work_abbrev.clone());
         let star = if link.curated { "★ " } else { "" };
-        doc.push_str(&format!(
+        echo_doc.push_str(&format!(
             "<gloss>[{}\"{}\" — {} {}.{}]</gloss>\n",
             star, link.echo_text, title, link.echo_div1, link.echo_div2
         ));
@@ -551,7 +552,7 @@ fn render_echoes(s: &mut AppState) {
     let h = s.scrolled_window.height();
     let root = s.theme.root_color.clone();
     let dim = s.theme.dim_fg.clone();
-    s.gloss_overlay.show_echoes(&doc, h, Some(&root), Some(&dim), s.echo_overlay_index);
+    s.gloss_overlay.show_echoes(&source_doc, &echo_doc, h, Some(&root), Some(&dim), s.echo_overlay_index);
 }
 
 /// Persist the search candidates as echo links for the turn, then read them
@@ -600,24 +601,33 @@ fn sync_session(s: &mut AppState) {
     }
 }
 
-pub(crate) fn move_echo_selection(state_rc: &Rc<RefCell<AppState>>, delta: i32) {
-    let mut s = state_rc.borrow_mut();
-    let len = s.echo_overlay_links.len();
-    if len == 0 {
-        return;
+pub(crate) fn move_echo_selection(
+    state_rc: &Rc<RefCell<AppState>>,
+    delta: i32,
+    tokio_handle: &tokio::runtime::Handle,
+) {
+    {
+        let mut s = state_rc.borrow_mut();
+        let len = s.echo_overlay_links.len();
+        if len == 0 {
+            return;
+        }
+        let new_idx = ((s.echo_overlay_index as i32 + delta).rem_euclid(len as i32)) as usize;
+        if new_idx == s.echo_overlay_index {
+            return;
+        }
+        s.echo_overlay_index = new_idx;
+        render_echoes(&mut s);
+        s.gloss_overlay.scroll_echo_into_view(new_idx);
+        sync_session(&mut s);
     }
-    let new_idx = ((s.echo_overlay_index as i32 + delta).rem_euclid(len as i32)) as usize;
-    if new_idx == s.echo_overlay_index {
-        return;
-    }
-    s.echo_overlay_index = new_idx;
-    render_echoes(&mut s);
-    s.gloss_overlay.scroll_echo_into_view(new_idx);
-    sync_session(&mut s);
+    // n/p audition the echo they move to. The borrow above is dropped first so
+    // play_selected_echo can borrow state itself.
+    play_selected_echo(state_rc, tokio_handle);
 }
 
-/// Move the accent-bar selection to the first echo (`gg`) and scroll the
-/// viewport to the very top so the source turn's first line is visible.
+/// Move the accent-bar selection to the first echo (`gg`) and scroll the echo
+/// list to its top. The source turn is a fixed header, so it stays visible.
 pub(crate) fn select_first_echo(state_rc: &Rc<RefCell<AppState>>) {
     let mut s = state_rc.borrow_mut();
     if s.echo_overlay_links.is_empty() {
@@ -666,23 +676,20 @@ pub(crate) fn copy_selected_echo(state_rc: &Rc<RefCell<AppState>>) {
 
 const TURN_PREROLL: f64 = 0.5;
 
-/// Tab in the echo overlay: toggle play/pause. On first play (when no loop is
-/// active), set an AB-loop over the turn's audio range and seek to its start
-/// so the turn loops while the overlay is open.
-pub(crate) fn toggle_echo_playback(state_rc: &Rc<RefCell<AppState>>) {
+/// `Tab` in the echoes overlay: reload the source-turn media, re-arm the source
+/// AB-loop, and play from the source turn's first line. The displayed work is
+/// the source work, so its Arkangel media is used.
+pub(crate) fn play_source_turn(state_rc: &Rc<RefCell<AppState>>) {
     let mut s = state_rc.borrow_mut();
 
-    // Resolve the turn's start/end timestamps from the session's turn key,
-    // if we're on the turn's work.
-    let loop_range = s.echo_session.as_ref().and_then(|sess| {
+    // Resolve the turn's (a, b) timestamps from the session key against the
+    // currently displayed (source) work.
+    let range = s.echo_session.as_ref().and_then(|sess| {
         let key = &sess.turn_key;
-        let on_turn_work = s.current_work.as_ref()
-            .map(|w| w.abbrev == key.work_abbrev)
-            .unwrap_or(false);
-        if !on_turn_work {
+        let work = s.current_work.as_ref()?;
+        if work.abbrev != key.work_abbrev {
             return None;
         }
-        let work = s.current_work.as_ref()?;
         let first = work.lines.iter().find(|l| {
             l.div1 == key.div1 && l.div2 == key.div2 && l.line_in_div == key.start_line
         })?;
@@ -694,30 +701,41 @@ pub(crate) fn toggle_echo_playback(state_rc: &Rc<RefCell<AppState>>) {
         Some((a, b))
     });
 
-    if s.mpv_playing {
-        // Currently playing — just pause.
-        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
-        crate::logging::log("ECHOES: paused turn playback");
-        return;
-    }
+    let (a, b) = match range {
+        Some(r) => r,
+        None => {
+            // No resolvable turn range — just toggle whatever is loaded.
+            let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
+            crate::logging::log("ECHOES: toggled playback (no turn range)");
+            return;
+        }
+    };
 
-    // Not playing — start the turn loop if we have a range.
-    if let Some((a, b)) = loop_range {
-        let loop_a = (a - TURN_PREROLL).max(0.0);
-        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SetAbLoop { a: loop_a, b });
-        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Seek(loop_a));
-        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
-        s.ab_repeat.a_time = Some(a);
-        s.ab_repeat.b_time = Some(b);
-        s.ab_repeat.loop_active = true;
-        s.suppress_sync_until =
-            Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
-        crate::logging::log(&format!("ECHOES: looping turn [{:.1}, {:.1}]", loop_a, b));
+    // The source work's Arkangel media (fall back to first media path).
+    let source_media = s.current_work.as_ref().and_then(|w| {
+        w.media_paths.iter()
+            .find(|p| p.contains("/aax-Arkangel/"))
+            .or_else(|| w.media_paths.first())
+            .cloned()
+    });
+
+    let loop_a = (a - TURN_PREROLL).max(0.0);
+    // Reload the source media (a may have swapped MPV to an echo file), then set
+    // the loop. LoadFileAndSeek resumes playback on file-loaded.
+    if let Some(path) = source_media {
+        // Load + (on file-loaded) seek and set the ab-loop together, so the
+        // loadfile-replace doesn't clear an ab-loop set too early.
+        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::LoadFileSeekAndLoop(path, loop_a, b));
     } else {
-        // No turn range (e.g. on an echo's work) — plain toggle.
-        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
-        crate::logging::log("ECHOES: toggled playback (no turn loop)");
+        // No reload needed — media already loaded; set the loop directly.
+        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SetAbLoop { a: loop_a, b });
     }
+    s.ab_repeat.a_time = Some(a);
+    s.ab_repeat.b_time = Some(b);
+    s.ab_repeat.loop_active = true;
+    s.suppress_sync_until =
+        Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
+    crate::logging::log(&format!("ECHOES: re-armed source turn loop [{:.1}, {:.1}]", loop_a, b));
 }
 
 /// Toggle the curated flag on the selected echo, persist, and re-render
@@ -878,6 +896,74 @@ pub(crate) fn jump_to_selected_echo(
 
     load_work_at_line(state_rc, tokio_handle, &work, line_id, was_playing);
     crate::logging::log(&format!("ECHOES: jumped to echo in {} line_id={}", work, line_id));
+}
+
+/// `a` in the echoes overlay: play the selected echo's media in the existing
+/// MPV instance without opening its work. Always (re)starts playback from the
+/// echo's start time, whether currently playing or paused. The source-turn
+/// loop range is preserved so `Tab` can restore it; the reader display is
+/// untouched.
+pub(crate) fn play_selected_echo(
+    state_rc: &Rc<RefCell<AppState>>,
+    _tokio_handle: &tokio::runtime::Handle,
+) {
+    let link = {
+        let s = state_rc.borrow();
+        match s.echo_overlay_links.get(s.echo_overlay_index) {
+            Some(l) => l.clone(),
+            None => return,
+        }
+    };
+
+    // Resolve the echo line, its Arkangel media, and its start time.
+    let conn = match crate::db::queries::open_db() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let line_id = match crate::db::queries::line_id_for_location(
+        &conn, &link.echo_work_abbrev, link.echo_div1, link.echo_div2, link.echo_start_line,
+    ) {
+        Some(id) => id,
+        None => {
+            state_rc.borrow().gloss_overlay.show("Could not locate the echoed line.", "");
+            crate::logging::log("ECHOES: could not resolve echo line for playback");
+            return;
+        }
+    };
+    let media = match crate::db::queries::list_media_for_work(&conn, &link.echo_work_abbrev) {
+        Ok(items) if !items.is_empty() => {
+            // Prefer Arkangel; fall back to the highest-priority media (first).
+            items.iter().find(|m| m.path.contains("/aax-Arkangel/"))
+                .cloned()
+                .unwrap_or_else(|| items[0].clone())
+        }
+        _ => {
+            state_rc.borrow().gloss_overlay.show("No media for this echo's work.", "");
+            crate::logging::log("ECHOES: no media for echo work");
+            return;
+        }
+    };
+    let start = match crate::db::queries::line_start_time(&conn, line_id, media.media_id) {
+        Some(t) => t,
+        None => {
+            state_rc.borrow().gloss_overlay.show("No timestamp for the echoed line.", "");
+            crate::logging::log("ECHOES: no timestamp for echo line");
+            return;
+        }
+    };
+    let seek = (start - crate::input::navigation::SEEK_PREROLL).max(0.0);
+
+    let mut s = state_rc.borrow_mut();
+    // Don't loop the source turn while auditioning the echo; keep the remembered
+    // (a_time, b_time) so `Tab` can re-arm it.
+    let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::ClearAbLoop);
+    let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::LoadFileAndSeek(media.path.clone(), seek));
+    s.ab_repeat.loop_active = false;
+    s.suppress_sync_until =
+        Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
+    crate::logging::log(&format!(
+        "ECHOES: playing echo {} line_id={} @{:.1}", link.echo_work_abbrev, line_id, seek
+    ));
 }
 
 /// alt+i: return to the turn's work and line, then reopen the echoes overlay

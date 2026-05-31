@@ -33,6 +33,8 @@ pub struct GlossOverlay {
     bar_x: Rc<RefCell<i32>>,
     line_numbers: Rc<RefCell<Vec<LineNumber>>>,
     echo_lines: Rc<RefCell<Vec<i32>>>,
+    echo_header_view: gtk4::TextView,
+    echo_rule: gtk4::Separator,
     text_margins: i32,
     column_width: i32,
 }
@@ -116,10 +118,8 @@ impl GlossOverlay {
         let color_clone = bar_color.clone();
         let bar_x_clone = bar_x.clone();
         let line_numbers_clone = line_numbers.clone();
-        let echo_lines_clone = echo_lines.clone();
         let view_clone = gloss_view.clone();
         let right_margin_val = right_margin;
-        let rule_left = text_margins as i32;
         bar_drawing.set_draw_func(move |_area, cr, w, _h| {
             let ranges = ranges_clone.borrow();
             let (r, g, b) = *color_clone.borrow();
@@ -177,44 +177,6 @@ impl GlossOverlay {
                     }
                 }
             }
-
-            // Horizontal rule separating the quoted source turn from the echo
-            // list. Drawn at the top of the first echo line; only present in
-            // the echoes view (echo_lines is empty for plain gloss/synopsis).
-            let echos = echo_lines_clone.borrow();
-            if let Some(&first_echo_line) = echos.first() {
-                let buffer = view_clone.buffer();
-                if let Some(echo_iter) = buffer.iter_at_line(first_echo_line) {
-                    // Center the rule in the gap between the bottom of the last
-                    // source-turn line and the top of the first echo line, so
-                    // there is equal space above and below it.
-                    let echo_top = {
-                        let loc = view_clone.iter_location(&echo_iter);
-                        let (_, by) = view_clone.buffer_to_window_coords(
-                            gtk4::TextWindowType::Widget, 0, loc.y());
-                        by as f64
-                    };
-                    let prev_bottom = if first_echo_line > 0 {
-                        buffer.iter_at_line(first_echo_line - 1).map(|prev_iter| {
-                            let (py, ph) = view_clone.line_yrange(&prev_iter);
-                            let (_, pby) = view_clone.buffer_to_window_coords(
-                                gtk4::TextWindowType::Widget, 0, py + ph);
-                            pby as f64
-                        })
-                    } else {
-                        None
-                    };
-                    let rule_y = match prev_bottom {
-                        Some(pb) => (pb + echo_top) / 2.0,
-                        None => echo_top - 12.0,
-                    };
-                    cr.set_source_rgba(r, g, b, 0.4);
-                    cr.set_line_width(1.0);
-                    cr.move_to(rule_left as f64, rule_y);
-                    cr.line_to((w - right_margin_val) as f64, rule_y);
-                    let _ = cr.stroke();
-                }
-            }
         });
 
         gloss_scrolled.set_child(Some(&gloss_view));
@@ -236,6 +198,26 @@ impl GlossOverlay {
         gloss_scroll_overlay.set_clip_overlay(&bar_drawing, true);
 
         gloss_scroll_overlay.set_visible(false);
+
+        // Echoes-only: a fixed source-turn header + a fixed rule, above the
+        // scrolling echo list. Hidden in all non-echo overlay modes.
+        let echo_header_view = gtk4::TextView::new();
+        echo_header_view.set_editable(false);
+        echo_header_view.set_cursor_visible(false);
+        echo_header_view.set_focusable(false);
+        echo_header_view.set_wrap_mode(gtk4::WrapMode::Word);
+        echo_header_view.set_left_margin(text_margins as i32);
+        echo_header_view.set_right_margin(right_margin);
+        echo_header_view.set_top_margin(24);
+        echo_header_view.add_css_class("gloss-text");
+        echo_header_view.set_visible(false);
+        container.append(&echo_header_view);
+
+        let echo_rule = gtk4::Separator::new(gtk4::Orientation::Horizontal);
+        echo_rule.set_margin_start(text_margins as i32);
+        echo_rule.set_margin_end(right_margin);
+        echo_rule.set_visible(false);
+        container.append(&echo_rule);
 
         container.append(&gloss_scroll_overlay);
 
@@ -286,6 +268,8 @@ impl GlossOverlay {
             bar_x,
             line_numbers,
             echo_lines,
+            echo_header_view,
+            echo_rule,
             text_margins: text_margins as i32,
             column_width: column_width as i32,
         }
@@ -313,6 +297,8 @@ impl GlossOverlay {
         self.corr_header.set_visible(true);
         self.corrected_label.set_visible(true);
         self.gloss_scroll_overlay.set_visible(false);
+        self.echo_header_view.set_visible(false);
+        self.echo_rule.set_visible(false);
         self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
@@ -336,6 +322,8 @@ impl GlossOverlay {
         self.original_label.set_visible(false);
         self.corr_header.set_visible(false);
         self.corrected_label.set_visible(false);
+        self.echo_header_view.set_visible(false);
+        self.echo_rule.set_visible(false);
 
         if let Some(color) = root_color {
             if let Some((r, g, b)) = parse_hex_color(color) {
@@ -359,15 +347,25 @@ impl GlossOverlay {
         self.container.set_visible(true);
     }
 
-    /// Render the echoes document (source turn + echo list), highlighting the
-    /// selected echo. Used by the "show echoes" (`I`) feature.
-    pub fn show_echoes(&self, doc: &str, card_height: i32, root_color: Option<&str>, dim_color: Option<&str>, selected: usize) {
+    /// Render the echoes overlay: a fixed source-turn header + rule, above the
+    /// scrolling echo list. `source_doc` is the <speaker>/<verse> turn; `echo_doc`
+    /// is only the <gloss> lines.
+    pub fn show_echoes(
+        &self,
+        source_doc: &str,
+        echo_doc: &str,
+        card_height: i32,
+        root_color: Option<&str>,
+        dim_color: Option<&str>,
+        selected: usize,
+    ) {
         self.container.set_height_request(card_height);
         self.title.set_visible(false);
         let left = self.column_width / 8;
         self.title.set_margin_start(left);
         self.gloss_view.set_left_margin(left);
-        self.hint.set_text("Esc close · Tab loop turn · n/p select · Enter open work · c copy · s curate · R refresh");
+        self.echo_header_view.set_left_margin(left);
+        self.hint.set_text("Esc close · a play echo · Tab play turn · n/p select · Enter open work · c copy · s curate · R refresh");
         self.orig_header.set_visible(false);
         self.original_label.set_visible(false);
         self.corr_header.set_visible(false);
@@ -382,14 +380,28 @@ impl GlossOverlay {
         let bar_left = self.column_width / 8;
         *self.bar_x.borrow_mut() = bar_left;
 
+        // Fixed header: render the source turn into the non-scrolling view.
+        // Reuse populate_gloss_buffer_ex (it builds the speaker/verse tags and
+        // returns empty bar data for a source-only doc).
+        let _ = populate_gloss_buffer_ex(
+            &self.echo_header_view, source_doc, self.text_margins, bar_left, &[], None, dim_color);
+        self.echo_header_view.set_visible(true);
+        self.echo_rule.set_visible(true);
+
+        // Scrolling list: only the echoes. echo_lines/bar_ranges are now indexed
+        // from the first echo (no source lines to offset past).
         let (ranges, nums, echo_lines) = populate_gloss_buffer_ex(
-            &self.gloss_view, doc, self.text_margins, bar_left, &[], Some(selected), dim_color);
+            &self.gloss_view, echo_doc, self.text_margins, bar_left, &[], Some(selected), dim_color);
         *self.bar_ranges.borrow_mut() = ranges;
         *self.line_numbers.borrow_mut() = nums;
         *self.echo_lines.borrow_mut() = echo_lines;
-        self.bar_drawing.queue_draw();
+        // Repaint the bar overlay after GTK lays out the rebuilt buffer (drawing
+        // synchronously reads stale per-line geometry).
+        let bar = self.bar_drawing.clone();
+        glib::idle_add_local_once(move || bar.queue_draw());
 
         self.gloss_scroll_overlay.set_visible(true);
+        self.gloss_scrolled.vadjustment().set_value(0.0);
         self.hint.set_visible(true);
         self.scrim.set_visible(false);
         self.container.set_visible(true);
@@ -452,6 +464,8 @@ impl GlossOverlay {
         self.corr_header.set_visible(false);
         self.corrected_label.set_visible(false);
         self.position_label.set_visible(false);
+        self.echo_header_view.set_visible(false);
+        self.echo_rule.set_visible(false);
 
         *self.bar_ranges.borrow_mut() = Vec::new();
         *self.line_numbers.borrow_mut() = Vec::new();
@@ -485,6 +499,8 @@ impl GlossOverlay {
         self.corr_header.set_visible(false);
         self.corrected_label.set_visible(false);
         self.gloss_scroll_overlay.set_visible(false);
+        self.echo_header_view.set_visible(false);
+        self.echo_rule.set_visible(false);
         self.position_label.set_visible(false);
         self.hint.set_visible(false);
         self.scrim.set_visible(false);
