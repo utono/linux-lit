@@ -188,8 +188,9 @@ impl GlossOverlay {
                     let loc = view_clone.iter_location(&iter);
                     let (_, by) = view_clone.buffer_to_window_coords(
                         gtk4::TextWindowType::Widget, 0, loc.y());
-                    // Sit the rule midway in the gap above the first echo.
-                    let rule_y = by as f64 - 12.0;
+                    // Sit the rule high in the gap above the first echo so a
+                    // little more space falls below the rule than above it.
+                    let rule_y = by as f64 - 17.0;
                     cr.set_source_rgba(r, g, b, 0.4);
                     cr.set_line_width(1.0);
                     cr.move_to(rule_left as f64, rule_y);
