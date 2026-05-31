@@ -1182,6 +1182,30 @@ pub fn toggle_echo_curated(conn: &Connection, link_id: i64) -> Result<bool, rusq
     )
 }
 
+/// Insert a manual curated echo link at the top of the curated group (rank 0),
+/// shifting existing curated ranks down. Returns the new link's id.
+pub fn add_curated_echo_link(
+    conn: &Connection,
+    turn_id: i64,
+    work: &str,
+    div1: i64,
+    div2: i64,
+    line_in_div: i64,
+    text: &str,
+) -> Result<i64, rusqlite::Error> {
+    conn.execute(
+        "UPDATE echo_links SET rank = rank + 1 WHERE turn_id = ?1 AND curated = 1",
+        [turn_id],
+    )?;
+    conn.execute(
+        "INSERT INTO echo_links \
+         (turn_id, echo_work_abbrev, echo_div1, echo_div2, echo_start_line, echo_text, similarity, curated, rank) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0.0, 1, 0)",
+        rusqlite::params![turn_id, work, div1, div2, line_in_div, text],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
 /// Set a link's rank and curated flag.
 pub fn set_echo_link_rank(conn: &Connection, link_id: i64, rank: i64, curated: bool) -> Result<(), rusqlite::Error> {
     conn.execute(
@@ -1317,6 +1341,35 @@ mod tests {
             |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
         assert_eq!(rank, 2);
         assert_eq!(curated, 1);
+    }
+
+    #[test]
+    fn add_curated_echo_link_inserts_at_top_shifting_curated() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE echo_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, turn_id INTEGER, echo_work_abbrev TEXT,
+                echo_div1 INTEGER, echo_div2 INTEGER, echo_start_line INTEGER,
+                echo_text TEXT, similarity REAL, curated INTEGER, rank INTEGER
+             );
+             INSERT INTO echo_links (turn_id, echo_work_abbrev, echo_div1, echo_div2,
+                echo_start_line, echo_text, similarity, curated, rank) VALUES
+                (7, 'Mac', 5, 5, 19, 'old curated', 0.0, 1, 0),
+                (7, 'Lr', 1, 1, 92, 'noncurated', 0.0, 0, 0);",
+        ).unwrap();
+        let new_id = add_curated_echo_link(&conn, 7, "Ham", 3, 1, 56, "To be").unwrap();
+        let (curated, rank): (i64, i64) = conn.query_row(
+            "SELECT curated, rank FROM echo_links WHERE id = ?1", [new_id],
+            |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!((curated, rank), (1, 0));
+        let old_rank: i64 = conn.query_row(
+            "SELECT rank FROM echo_links WHERE echo_text = 'old curated'", [],
+            |r| r.get(0)).unwrap();
+        assert_eq!(old_rank, 1);
+        let nc: (i64, i64) = conn.query_row(
+            "SELECT curated, rank FROM echo_links WHERE echo_text = 'noncurated'", [],
+            |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!(nc, (0, 0));
     }
 
     #[test]
