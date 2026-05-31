@@ -757,7 +757,7 @@ fn handle_echoes_overlay_key(
     state: &Rc<RefCell<AppState>>,
     key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
-    _is_ctrl: bool,
+    is_ctrl: bool,
     tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
     if key_state.borrow().chord == ChordState::PendingG {
@@ -766,6 +766,20 @@ fn handle_echoes_overlay_key(
             crate::input::actions::echoes::select_first_echo(state);
         }
         return true;
+    }
+    // Ctrl+Up/Ctrl+Down adjust volume, mirroring the reader's VolumeUp/Down.
+    if is_ctrl {
+        match key_name {
+            "Up" => {
+                let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(5.0));
+                return true;
+            }
+            "Down" => {
+                let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(-5.0));
+                return true;
+            }
+            _ => {}
+        }
     }
     match key_name {
         "n" => {
