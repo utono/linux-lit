@@ -77,7 +77,7 @@ pub fn handle_key(
             crate::app::InputMode::GamepadOverlay => handle_gamepad_key(state, key_name),
             crate::app::InputMode::KeybindsOverlay => handle_keybinds_key(state, key_name),
             crate::app::InputMode::ActionPopup => handle_action_popup_key(state, key_name, is_ctrl, tokio_handle),
-            crate::app::InputMode::Visual => handle_visual_key(state, key_state, key_name),
+            crate::app::InputMode::Visual => handle_visual_key(state, key_state, key_name, tokio_handle),
             crate::app::InputMode::Reader => unreachable!(),
         };
     }
@@ -964,6 +964,7 @@ fn handle_visual_key(
     state: &Rc<RefCell<AppState>>,
     key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
+    tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
     match key_name {
         "j" => {
@@ -993,6 +994,10 @@ fn handle_visual_key(
         }
         "Return" => {
             crate::input::visual::open_action_popup(&mut state.borrow_mut());
+            true
+        }
+        "i" => {
+            crate::input::actions::echoes::show_echoes_for_selection(state, tokio_handle);
             true
         }
         _ => {
