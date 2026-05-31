@@ -58,6 +58,12 @@ pub enum InputMode {
 }
 
 #[derive(Clone, Copy, PartialEq)]
+pub enum GlossPromptMode {
+    Add,
+    Edit,
+}
+
+#[derive(Clone, Copy, PartialEq)]
 pub enum SidebarMode {
     Vocab,
     Synopsis,
@@ -169,6 +175,7 @@ pub struct AppState {
     pub gloss_prompt_container: Option<glib::WeakRef<gtk4::Box>>,
     pub gloss_prompt_overlay: Option<glib::WeakRef<gtk4::Overlay>>,
     pub gloss_prompt_textview: Option<glib::WeakRef<gtk4::TextView>>,
+    pub gloss_prompt_mode: GlossPromptMode,
     pub delete_confirm_container: Option<glib::WeakRef<gtk4::Box>>,
     pub delete_confirm_overlay: Option<glib::WeakRef<gtk4::Overlay>>,
     pub gloss_picker: GlossPicker,
@@ -946,6 +953,7 @@ pub fn build_window(
         gloss_prompt_container: None,
         gloss_prompt_overlay: None,
         gloss_prompt_textview: None,
+        gloss_prompt_mode: GlossPromptMode::Add,
         delete_confirm_container: None,
         delete_confirm_overlay: None,
         gloss_picker,

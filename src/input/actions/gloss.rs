@@ -15,7 +15,7 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
 
     if s.gloss_passages.is_empty() {
         if let Ok(conn) = crate::db::queries::open_db() {
-            s.gloss_passages = crate::db::queries::find_glossed_passages(&conn, &work_abbrev, "teacher-generic")
+            s.gloss_passages = crate::db::queries::find_glossed_passages(&conn, &work_abbrev, &["teacher-generic", "inner-monologue"])
                 .unwrap_or_default();
         }
         if s.gloss_passages.is_empty() {
@@ -42,7 +42,7 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
         .and_then(|conn| {
             crate::db::queries::find_all_glosses(
                 &conn, &passage.work_abbrev, &passage.start_citation, &passage.end_citation,
-                "teacher-generic",
+                &["teacher-generic", "inner-monologue"],
             ).ok()
         })
         .unwrap_or_default();
@@ -53,6 +53,7 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
 
     let source_lines: Vec<(String, i64)> = Vec::new();
 
+    let gloss_type = all_glosses[0].gloss_type.clone();
     let work_title = s.current_work.as_ref().map(|w| w.title.clone()).unwrap_or_default();
     let ctx = crate::gloss::GlossContext {
         work_abbrev: passage.work_abbrev,
@@ -65,7 +66,7 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
         source_text: passage.source_text,
         source_line_numbers: Vec::new(),
         hash: String::new(),
-        gloss_type: "teacher-generic".to_string(),
+        gloss_type,
     };
 
     let h = s.scrolled_window.height();
@@ -200,12 +201,13 @@ pub(crate) fn close_delete_confirmation(state: &Rc<RefCell<AppState>>) {
     s.input_mode = crate::app::InputMode::GlossOverlay;
 }
 
-pub(crate) fn show_amend_dialog(state_rc: &Rc<RefCell<AppState>>) {
-    let is_inner_monologue = {
+fn show_prompt_dialog(state_rc: &Rc<RefCell<AppState>>, mode: crate::app::GlossPromptMode) {
+    let (is_inner_monologue, is_edit) = {
         let s = state_rc.borrow();
-        s.gloss_context.as_ref()
+        let im = s.gloss_context.as_ref()
             .map(|ctx| ctx.gloss_type == "inner-monologue")
-            .unwrap_or(false)
+            .unwrap_or(false);
+        (im, mode == crate::app::GlossPromptMode::Edit)
     };
 
     let overlay_parent = {
@@ -227,7 +229,9 @@ pub(crate) fn show_amend_dialog(state_rc: &Rc<RefCell<AppState>>) {
     container.set_width_request(600);
     container.add_css_class("amend-dialog");
 
-    let title_text = if is_inner_monologue {
+    let title_text = if is_edit {
+        "EDIT GLOSS — PASTE SUBTEXT LINES"
+    } else if is_inner_monologue {
         "INNER MONOLOGUE PASSAGE"
     } else {
         "GLOSS PROMPT"
@@ -254,7 +258,9 @@ pub(crate) fn show_amend_dialog(state_rc: &Rc<RefCell<AppState>>) {
     scrolled.set_child(Some(&text_view));
     container.append(&scrolled);
 
-    let hint_text = if is_inner_monologue {
+    let hint_text = if is_edit {
+        "Paste lines for subtext  \u{00b7}  Ctrl+Enter submit  \u{00b7}  Esc cancel"
+    } else if is_inner_monologue {
         "Paste lines from another work  \u{00b7}  Ctrl+Enter submit  \u{00b7}  Esc cancel"
     } else {
         "Ctrl+Enter submit  \u{00b7}  Esc cancel"
@@ -271,10 +277,19 @@ pub(crate) fn show_amend_dialog(state_rc: &Rc<RefCell<AppState>>) {
         s.gloss_prompt_container = Some(container.downgrade());
         s.gloss_prompt_overlay = Some(overlay_parent.downgrade());
         s.gloss_prompt_textview = Some(text_view.downgrade());
+        s.gloss_prompt_mode = mode;
         s.input_mode = crate::app::InputMode::GlossPrompt;
     }
 
     text_view.grab_focus();
+}
+
+pub(crate) fn show_amend_dialog(state_rc: &Rc<RefCell<AppState>>) {
+    show_prompt_dialog(state_rc, crate::app::GlossPromptMode::Add);
+}
+
+pub(crate) fn show_edit_dialog(state_rc: &Rc<RefCell<AppState>>) {
+    show_prompt_dialog(state_rc, crate::app::GlossPromptMode::Edit);
 }
 
 pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
@@ -315,10 +330,15 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
 
         match result {
             Ok(Ok(gloss_text)) => {
-                let full_gloss = if is_inner_monologue {
-                    format!("<gloss>Inner voice from:</gloss>\n\n{}\n\n{}", prompt_owned, gloss_text)
+                let verified_text = if is_inner_monologue {
+                    crate::gloss::verify_echo_citations(&gloss_text, &ctx.work_abbrev)
                 } else {
-                    format!("<gloss>Q: {}</gloss>\n\n{}", prompt_owned, gloss_text)
+                    gloss_text.clone()
+                };
+                let full_gloss = if is_inner_monologue {
+                    format!("<gloss>Inner voice from:</gloss>\n\n{}\n\n{}", prompt_owned, verified_text)
+                } else {
+                    format!("<gloss>Q: {}</gloss>\n\n{}", prompt_owned, verified_text)
                 };
                 if let Ok(conn) = crate::db::queries::open_db_rw() {
                     let _ = crate::db::queries::save_gloss(
@@ -335,7 +355,7 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
                     .and_then(|conn| {
                         crate::db::queries::find_all_glosses(
                             &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
-                            &gloss_type_owned,
+                            &[gloss_type_owned.as_str()],
                         ).ok()
                     })
                     .unwrap_or_default();
@@ -356,6 +376,101 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
                 let s = state_for_result.borrow();
                 s.gloss_overlay.show(&format!("Error: {}", e), "");
                 crate::logging::log(&format!("GLOSS: add error: {}", e));
+            }
+            Err(e) => {
+                crate::logging::log(&format!("GLOSS: tokio join error: {}", e));
+            }
+        }
+    });
+}
+
+pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
+    let (ctx, existing_gloss_text, model, tokio_handle) = {
+        let state = state_rc.borrow();
+        let ctx = match &state.gloss_context {
+            Some(c) => c.clone(),
+            None => return,
+        };
+        let existing = state.gloss_list.get(state.gloss_index)
+            .map(|g| g.gloss_text.clone())
+            .unwrap_or_default();
+        (ctx, existing, state.config.claude_model.clone(), state.tokio_handle.clone())
+    };
+
+    state_rc.borrow().gloss_overlay.show_loading();
+
+    let pasted_owned = pasted_lines.to_string();
+    let is_inner_monologue = ctx.gloss_type == "inner-monologue";
+
+    let (system_prompt, user_msg, gloss_type_str) = if is_inner_monologue {
+        let msg = crate::gloss::build_edit_gloss_message(&ctx, &existing_gloss_text, &pasted_owned);
+        (crate::gloss::INNER_MONOLOGUE_EDIT_PROMPT, msg, "inner-monologue")
+    } else {
+        let msg = crate::gloss::build_edit_gloss_message(&ctx, &existing_gloss_text, &pasted_owned);
+        (crate::gloss::EDIT_GLOSS_PROMPT, msg, "teacher-generic")
+    };
+
+    let state_for_result = Rc::clone(state_rc);
+    let gloss_type_owned = gloss_type_str.to_string();
+
+    glib::spawn_future_local(async move {
+        let system_prompt = system_prompt.to_string();
+        let result = tokio_handle
+            .spawn(async move {
+                crate::gloss::call_claude_with_prompt(
+                    &system_prompt, &user_msg, &model,
+                ).await
+            })
+            .await;
+
+        match result {
+            Ok(Ok(gloss_text)) => {
+                let verified_text = if is_inner_monologue {
+                    crate::gloss::verify_echo_citations(&gloss_text, &ctx.work_abbrev)
+                } else {
+                    gloss_text.clone()
+                };
+                let full_gloss = if is_inner_monologue {
+                    format!("<gloss>Re-glossed with:</gloss>\n\n{}\n\n{}", pasted_owned, verified_text)
+                } else {
+                    format!("<gloss>Edit context:</gloss>\n\n{}\n\n{}", pasted_owned, verified_text)
+                };
+                if let Ok(conn) = crate::db::queries::open_db_rw() {
+                    let _ = crate::db::queries::save_gloss(
+                        &conn, &ctx.hash, &ctx.work_abbrev,
+                        &ctx.start_citation, &ctx.end_citation,
+                        ctx.act, ctx.scene, &ctx.speaker,
+                        &ctx.source_text, &full_gloss,
+                        &gloss_type_owned,
+                    );
+                }
+
+                let all = crate::db::queries::open_db()
+                    .ok()
+                    .and_then(|conn| {
+                        crate::db::queries::find_all_glosses(
+                            &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
+                            &[gloss_type_owned.as_str()],
+                        ).ok()
+                    })
+                    .unwrap_or_default();
+
+                let mut s = state_for_result.borrow_mut();
+                let h = s.scrolled_window.height();
+                let pairs = ctx.source_line_pairs();
+                s.gloss_overlay.show_gloss_with_color(
+                    &ctx.source_text, &full_gloss, h,
+                    Some(&s.theme.root_color), &pairs,
+                );
+                s.gloss_overlay.set_position(0, all.len());
+                s.gloss_list = all;
+                s.gloss_index = 0;
+                crate::logging::log(&format!("GLOSS: edited {} gloss (added new)", gloss_type_owned));
+            }
+            Ok(Err(e)) => {
+                let s = state_for_result.borrow();
+                s.gloss_overlay.show(&format!("Error: {}", e), "");
+                crate::logging::log(&format!("GLOSS: edit error: {}", e));
             }
             Err(e) => {
                 crate::logging::log(&format!("GLOSS: tokio join error: {}", e));

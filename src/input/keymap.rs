@@ -335,7 +335,7 @@ fn handle_picker_key(
                                 crate::db::queries::find_all_glosses(
                                     &conn, &passage.work_abbrev,
                                     &passage.start_citation, &passage.end_citation,
-                                    "teacher-generic",
+                                    &["teacher-generic", "inner-monologue"],
                                 ).ok()
                             })
                             .unwrap_or_default();
@@ -359,7 +359,7 @@ fn handle_picker_key(
                             source_text: passage.source_text,
                             source_line_numbers: Vec::new(),
                             hash: String::new(),
-                            gloss_type: "teacher-generic".to_string(),
+                            gloss_type: all_glosses[0].gloss_type.clone(),
                         };
 
                         let h = s.scrolled_window.height();
@@ -574,6 +574,10 @@ fn handle_gloss_key(
             crate::input::actions::gloss::show_delete_confirmation(state);
             true
         }
+        "e" => {
+            crate::input::actions::gloss::show_edit_dialog(state);
+            true
+        }
         "g" => {
             KeyState::start_chord(key_state, ChordState::PendingG);
             true
@@ -681,19 +685,27 @@ fn handle_gloss_prompt_key(
         return true;
     }
     if is_ctrl && key_name == "Return" {
-        let prompt = {
+        let (prompt, mode) = {
             let s = state.borrow();
-            s.gloss_prompt_textview.as_ref()
+            let text = s.gloss_prompt_textview.as_ref()
                 .and_then(|w| w.upgrade())
                 .map(|tv| {
                     let buf = tv.buffer();
                     buf.text(&buf.start_iter(), &buf.end_iter(), false).to_string()
                 })
-                .unwrap_or_default()
+                .unwrap_or_default();
+            (text, s.gloss_prompt_mode)
         };
         crate::input::actions::gloss::close_gloss_prompt(state);
         if !prompt.trim().is_empty() {
-            crate::input::actions::gloss::add_gloss(state, &prompt);
+            match mode {
+                crate::app::GlossPromptMode::Add => {
+                    crate::input::actions::gloss::add_gloss(state, &prompt);
+                }
+                crate::app::GlossPromptMode::Edit => {
+                    crate::input::actions::gloss::edit_gloss(state, &prompt);
+                }
+            }
         }
         return true;
     }

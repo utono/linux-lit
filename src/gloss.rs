@@ -23,59 +23,166 @@ Rules:
 - No markdown, no bullets, no numbered lists, no headers";
 
 pub const INNER_MONOLOGUE_PROMPT: &str = "\
-You are a director helping actors discover the inner monologue beneath \
-a passage from a dramatic text.
+You are a director using the actioning technique to discover the inner \
+monologue beneath a passage from a dramatic text.
 
-Given a scene and a highlighted passage within it, explore what each \
-character present is thinking, hearing, and feeling — the subtext \
-beneath the spoken words.
+METHOD — for each spoken line in the highlighted passage:
 
-For each character in the highlighted passage:
-- What do they actually hear when the other character speaks? \
-(e.g., Claudio hears \"Speak, count, 'tis your cue\" but what he \
-really hears is \"speak now or your silence will offend\")
-- What inner monologue drives their response? What are they telling \
-themselves before they open their mouth?
-- What words or phrases could an actor use as inner cues — short, \
-actable thoughts that sit beneath each line?
-- How does the surrounding scene (lines before AND after the passage) \
-illuminate what the character is really saying?
+1. ACTION the line: name the transitive verb the character performs on \
+their target — what they DO TO the other person (e.g. claim, deflect, \
+trap, reassure, provoke, dismiss, seduce, warn). The verb must pass \
+the 'I ___ you' test.
 
-Draw on the full scene provided for evidence. Reference specific lines \
-that echo, foreshadow, or reframe the passage's meaning.
+2. Identify the GOVERNING CONVENTION that shapes the action — courtly \
+love (the suitor claims, the lady judges), honor code (challenge, \
+defend, yield), filial duty (obey, resist, negotiate), political \
+maneuvering (flatter, threaten, ally), religious obligation (confess, \
+absolve, submit), or another Elizabethan social code.
 
-Output format — use these XML tags exactly:
-- <speaker>NAME</speaker> for each character's analysis section (ALL CAPS)
-- <verse>one line of quoted text</verse> for quoted lines (verbatim)
-- <gloss>paragraph of analysis</gloss> for each analysis paragraph
+3. Identify the COGNITIVE FUNCTION of the line — what the thought \
+beneath it is doing:
+- ANTECEDENT: the thought that triggers the words (what makes the \
+character open their mouth right now)
+- PIVOT: the line turns mid-stream — the character discovers something \
+or redirects while speaking
+- CONCEALMENT: the character holds back what they almost said, hiding \
+a secret identity, allegiance, or knowledge
+- READING: the character is responding to what they see in the scene \
+partner's face, breath, or posture
+Choose the dominant function for the line.
+
+4. Find a CROSS-WORK ECHO: a line from a DIFFERENT work in \
+Shakespeare's corpus (plays, sonnets, narrative poems) where a \
+character performs the SAME transitive verb, under the SAME \
+convention, serving the SAME cognitive function. The echo must match \
+the dramatic action, not the surface vocabulary.
+
+5. Write one sentence of ACTABLE SUBTEXT — the actor's inner thought \
+as they speak the line, phrased as an intention ('I must...', 'If I \
+can just...', 'Don't let him see...').
+
+Output format — use these XML tags exactly, in this order for each line:
+- <speaker>NAME</speaker> before each new speaker (ALL CAPS)
+- <verse>one line of quoted text</verse> (verbatim, one per line)
+- <gloss>[\"echo line\" — Source Work act.scene]</gloss>
+- <gloss>One sentence of actable subtext.</gloss>
+
+Example — Paris CLAIMS Juliet (courtly love / antecedent: the greeting \
+is a claim on her body dressed as courtesy — the echo strips the veil \
+off the transaction):
+<speaker>PARIS</speaker>
+<verse>Happily met, my lady and my wife.</verse>
+<gloss>[\"Are you meditating on virginity?\" — All's Well That Ends \
+Well 1.1]</gloss>
+<gloss>Name her wife before she can refuse — the greeting is a claim \
+on her body dressed as courtesy.</gloss>
+
+Example — Juliet DEFLECTS Paris (courtly love / concealment: she spins \
+a key word from the line back at him to buy time — the echo does the \
+same thing with the same word):
+<speaker>JULIET</speaker>
+<verse>That may be, sir, when I may be a wife.</verse>
+<gloss>[\"What may she not? She may, ay, marry, may she—\" — Richard \
+III 1.3]</gloss>
+<gloss>Spin the word back at him — let 'may' do the work of refusal \
+while my face gives nothing away.</gloss>
 
 Rules:
 - Quote verbatim — exact words, exact spelling, exact line breaks
 - Never use / to join verse lines
 - Each <verse> tag contains exactly one line of the original
-- Each <gloss> tag contains one flowing prose paragraph (3-6 sentences)
+- Two <gloss> tags per verse line: first the bracketed echo, then the \
+actable sentence
+- The echo must come from a DIFFERENT work in Shakespeare's corpus — \
+cite the source
+- Match on TRANSITIVE VERB + CONVENTION + COGNITIVE FUNCTION, never \
+on surface words
+- The best echoes do one of these: (a) strip the polite surface off \
+what the character is really doing, exposing the raw transaction \
+beneath the courtesy, or (b) share a KEY WORD that the original \
+character is weaponizing, spinning, or hiding behind — find a line \
+where another character does the same thing with the same word
+- For CONCEALMENT lines, find echoes where a character similarly hides \
+a secret (Viola concealing identity, Hal concealing intention, etc.)
+- For READING lines, find echoes where a character responds to what \
+they see in the other (Iago reading Othello, Portia reading Bassanio)
 - ALWAYS place a <speaker> tag before EVERY group of <verse> lines
 - No markdown, no bullets, no numbered lists, no headers";
 
 pub const INNER_MONOLOGUE_ADD_PROMPT: &str = "\
-You are a director helping actors discover the inner monologue beneath \
-a passage from a dramatic text.
+You are a director using the actioning technique to discover the inner \
+monologue beneath a passage from a dramatic text.
 
-The reader has selected a passage and provided lines from elsewhere in \
-Shakespeare's corpus that share thematic or verbal echoes. Treat the \
-provided lines as the unspoken inner voice — what the characters in the \
-original passage might be thinking or hearing beneath their spoken words.
+The reader has provided lines from elsewhere in Shakespeare's corpus. \
+The reader chose these lines because a character in them performs the \
+same transitive verb (claim, deflect, trap, warn, etc.) under the \
+same governing convention (courtly love, honor code, filial duty, \
+etc.) as the character in the original passage.
 
-For each character in the original passage:
-- How do the cross-work lines illuminate what this character is really \
-thinking or feeling?
-- What verbal echoes connect the two passages (shared words, inverted \
-meanings, parallel structures)?
-- What actable inner cues can an actor draw from the cross-work lines — \
-short thoughts that sit beneath each spoken line?
+For each line in the original passage:
+1. ACTION the line: name the transitive verb ('I ___ you').
+2. Select from the provided lines the phrase where a character \
+performs the same action. Cite the source work.
+3. Write one sentence of actable subtext — the actor's inner thought.
 
-Output format — use these XML tags exactly:
-- <speaker>NAME</speaker> for each character's analysis section (ALL CAPS)
+Output format — use these XML tags exactly, in this order for each line:
+- <speaker>NAME</speaker> before each new speaker (ALL CAPS)
+- <verse>one line of quoted text</verse> (verbatim, one per line)
+- <gloss>[\"echo from the provided lines\" — Source Work act.scene]</gloss>
+- <gloss>One sentence of actable subtext.</gloss>
+
+Rules:
+- Quote verbatim — exact words, exact spelling, exact line breaks
+- Never use / to join verse lines
+- Each <verse> tag contains exactly one line of the original
+- Two <gloss> tags per verse line: first the bracketed echo, then the \
+actable sentence
+- Draw the echoes FROM THE PROVIDED LINES, not your own knowledge
+- ALWAYS place a <speaker> tag before EVERY group of <verse> lines
+- No markdown, no bullets, no numbered lists, no headers";
+
+pub const INNER_MONOLOGUE_EDIT_PROMPT: &str = "\
+You are a director using the actioning technique to discover the inner \
+monologue beneath a passage from a dramatic text.
+
+The reader is viewing an existing gloss and has provided new lines \
+from elsewhere in Shakespeare's corpus to replace the current echoes. \
+The reader chose these lines because a character in them performs the \
+same transitive verb under the same governing convention as the \
+character in the original passage. Re-gloss using the provided lines.
+
+For each line in the original passage:
+1. ACTION the line: name the transitive verb ('I ___ you').
+2. Select from the provided lines the phrase where a character \
+performs the same action. Cite the source work.
+3. Write one sentence of actable subtext — the actor's inner thought.
+
+Output format — use these XML tags exactly, in this order for each line:
+- <speaker>NAME</speaker> before each new speaker (ALL CAPS)
+- <verse>one line of quoted text</verse> (verbatim, one per line)
+- <gloss>[\"echo from the provided lines\" — Source Work act.scene]</gloss>
+- <gloss>One sentence of actable subtext.</gloss>
+
+Rules:
+- Quote verbatim — exact words, exact spelling, exact line breaks
+- Never use / to join verse lines
+- Each <verse> tag contains exactly one line of the original
+- Two <gloss> tags per verse line: first the bracketed echo, then the \
+actable sentence
+- Draw the echoes FROM THE PROVIDED LINES, not your own knowledge
+- ALWAYS place a <speaker> tag before EVERY group of <verse> lines
+- No markdown, no bullets, no numbered lists, no headers";
+
+pub const EDIT_GLOSS_PROMPT: &str = "\
+You are a literary scholar revising an existing gloss about a passage \
+from a literary text.
+
+The reader is viewing an existing gloss and has provided additional \
+lines or context to improve it. Rewrite the gloss incorporating the \
+new material the reader has provided.
+
+Use the same output format as the original gloss — use these XML tags:
+- <speaker>NAME</speaker> for each speaker attribution (ALL CAPS)
 - <verse>one line of quoted text</verse> for quoted lines (verbatim)
 - <gloss>paragraph of analysis</gloss> for each analysis paragraph
 
@@ -84,6 +191,7 @@ Rules:
 - Never use / to join verse lines
 - Each <verse> tag contains exactly one line of the original
 - Each <gloss> tag contains one flowing prose paragraph (3-6 sentences)
+- Incorporate the reader's provided lines as evidence or context
 - ALWAYS place a <speaker> tag before EVERY group of <verse> lines
 - No markdown, no bullets, no numbered lists, no headers";
 
@@ -293,6 +401,23 @@ pub fn build_inner_monologue_add_message(
     )
 }
 
+pub fn build_edit_gloss_message(
+    ctx: &GlossContext,
+    existing_gloss: &str,
+    pasted_lines: &str,
+) -> String {
+    format!(
+        "Play: {}\nAct: {}, Scene: {}\nSpeaker: {}\n\n\
+         --- ORIGINAL PASSAGE ---\n{}\n\n\
+         --- EXISTING GLOSS ---\n{}\n\n\
+         --- USER-PROVIDED LINES (use as subtext/context) ---\n{}",
+        ctx.work_title, ctx.act, ctx.scene, ctx.speaker,
+        ctx.source_text,
+        existing_gloss,
+        pasted_lines,
+    )
+}
+
 pub async fn call_claude(
     user_message: &str,
     model: &str,
@@ -306,4 +431,134 @@ pub async fn call_claude_with_prompt(
     model: &str,
 ) -> Result<String, ClaudeError> {
     crate::claude::send_message(system_prompt, user_message, model).await
+}
+
+pub fn verify_echo_citations(gloss_text: &str, source_work: &str) -> String {
+    let conn = match crate::db::queries::open_db() {
+        Ok(c) => c,
+        Err(_) => return gloss_text.to_string(),
+    };
+
+    let mut result = String::new();
+    for line in gloss_text.lines() {
+        if !result.is_empty() {
+            result.push('\n');
+        }
+
+        if !(line.starts_with("<gloss>[\"") || line.starts_with("<gloss>[\\\"")) {
+            result.push_str(line);
+            continue;
+        }
+
+        let quote_text = extract_echo_quote(line);
+        if quote_text.is_empty() {
+            result.push_str(line);
+            continue;
+        }
+
+        if let Some(citation) = lookup_citation(&conn, &quote_text, source_work) {
+            let corrected = replace_citation(line, &citation);
+            result.push_str(&corrected);
+            crate::logging::log(&format!("GLOSS VERIFY: corrected citation to {}", citation));
+        } else {
+            let flagged = flag_unverified(line);
+            result.push_str(&flagged);
+            crate::logging::log(&format!("GLOSS VERIFY: could not verify \"{}\"", quote_text));
+        }
+    }
+    result
+}
+
+fn extract_echo_quote(line: &str) -> String {
+    let inner = line
+        .trim_start_matches("<gloss>")
+        .trim_end_matches("</gloss>");
+    let start = if let Some(pos) = inner.find("[\"") {
+        pos + 2
+    } else if let Some(pos) = inner.find("[\\\"") {
+        pos + 3
+    } else {
+        return String::new();
+    };
+    let rest = &inner[start..];
+    let end = rest.find("\"")
+        .or_else(|| rest.find("\\\""))
+        .unwrap_or(rest.len());
+    let raw = &rest[..end];
+    raw.trim().to_string()
+}
+
+fn lookup_citation(
+    conn: &rusqlite::Connection,
+    quote: &str,
+    source_work: &str,
+) -> Option<String> {
+    let base_source = source_work.strip_suffix("-Amb").unwrap_or(source_work);
+
+    let exact: Option<(String, i64, i64)> = conn
+        .query_row(
+            "SELECT work_abbrev, div1, div2 FROM line_mapping \
+             WHERE canonical_text = ?1 AND work_abbrev != ?2 AND work_abbrev NOT LIKE '%-Amb' \
+             LIMIT 1",
+            rusqlite::params![quote, base_source],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .ok();
+
+    if let Some((abbrev, act, scene)) = exact {
+        let title = abbrev_to_title(conn, &abbrev);
+        return Some(format!("{} {}.{}", title, act, scene));
+    }
+
+    let like_pattern = format!("%{}%", quote);
+    let fuzzy: Option<(String, i64, i64)> = conn
+        .query_row(
+            "SELECT work_abbrev, div1, div2 FROM line_mapping \
+             WHERE canonical_text LIKE ?1 AND work_abbrev != ?2 AND work_abbrev NOT LIKE '%-Amb' \
+             LIMIT 1",
+            rusqlite::params![like_pattern, base_source],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .ok();
+
+    if let Some((abbrev, act, scene)) = fuzzy {
+        let title = abbrev_to_title(conn, &abbrev);
+        return Some(format!("{} {}.{}", title, act, scene));
+    }
+
+    None
+}
+
+fn abbrev_to_title(conn: &rusqlite::Connection, abbrev: &str) -> String {
+    conn.query_row(
+        "SELECT title FROM works WHERE abbrev = ?1",
+        rusqlite::params![abbrev],
+        |row| row.get::<_, String>(0),
+    )
+    .unwrap_or_else(|_| abbrev.to_string())
+}
+
+fn replace_citation(line: &str, correct_citation: &str) -> String {
+    if let Some(dash_pos) = line.rfind(" — ") {
+        if let Some(close_pos) = line[dash_pos..].find("]") {
+            let before = &line[..dash_pos];
+            let after = &line[dash_pos + close_pos..];
+            return format!("{} — {}{}", before, correct_citation, after);
+        }
+    }
+    if let Some(dash_pos) = line.rfind(" - ") {
+        if let Some(close_pos) = line[dash_pos..].find("]") {
+            let before = &line[..dash_pos];
+            let after = &line[dash_pos + close_pos..];
+            return format!("{} — {}{}", before, correct_citation, after);
+        }
+    }
+    line.to_string()
+}
+
+fn flag_unverified(line: &str) -> String {
+    if line.contains("(unverified)") {
+        return line.to_string();
+    }
+    line.replace("</gloss>", " (unverified)</gloss>")
 }

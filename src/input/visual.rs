@@ -420,7 +420,7 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
         let all_glosses: Vec<crate::db::queries::SavedGloss> = match crate::db::queries::open_db() {
             Ok(conn) => crate::db::queries::find_all_glosses(
                 &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
-                "teacher-generic",
+                &["teacher-generic"],
             ).unwrap_or_default(),
             Err(_) => Vec::new(),
         };
@@ -485,7 +485,7 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
                     .and_then(|conn| {
                         crate::db::queries::find_all_glosses(
                             &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
-                            "teacher-generic",
+                            &["teacher-generic"],
                         ).ok()
                     })
                     .unwrap_or_default();
@@ -544,7 +544,7 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
         let all_glosses: Vec<crate::db::queries::SavedGloss> = match crate::db::queries::open_db() {
             Ok(conn) => crate::db::queries::find_all_glosses(
                 &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
-                "inner-monologue",
+                &["inner-monologue"],
             ).unwrap_or_default(),
             Err(_) => Vec::new(),
         };
@@ -590,6 +590,7 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
 
         match result {
             Ok(Ok(gloss_text)) => {
+                let verified_text = crate::gloss::verify_echo_citations(&gloss_text, &ctx.work_abbrev);
                 if let Ok(conn) = crate::db::queries::open_db_rw() {
                     let _ = crate::db::queries::save_gloss(
                         &conn,
@@ -601,7 +602,7 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
                         ctx.scene,
                         &ctx.speaker,
                         &ctx.source_text,
-                        &gloss_text,
+                        &verified_text,
                         "inner-monologue",
                     );
                 }
@@ -611,7 +612,7 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
                     .and_then(|conn| {
                         crate::db::queries::find_all_glosses(
                             &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
-                            "inner-monologue",
+                            &["inner-monologue"],
                         ).ok()
                     })
                     .unwrap_or_default();
@@ -619,7 +620,7 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
                 let mut s = state_for_result.borrow_mut();
                 let h = s.scrolled_window.height();
                 let pairs = ctx.source_line_pairs();
-                s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &gloss_text, h, Some(&s.theme.root_color), &pairs);
+                s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &verified_text, h, Some(&s.theme.root_color), &pairs);
                 s.gloss_overlay.set_position(0, all.len());
                 s.gloss_list = all;
                 s.gloss_index = 0;

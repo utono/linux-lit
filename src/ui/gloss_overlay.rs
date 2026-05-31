@@ -95,7 +95,7 @@ impl GlossOverlay {
         gloss_view.set_cursor_visible(false);
         gloss_view.set_focusable(false);
         gloss_view.set_wrap_mode(gtk4::WrapMode::Word);
-        let right_margin = column_width as i32 / 6;
+        let right_margin = column_width as i32 / 8;
         gloss_view.set_left_margin(text_margins as i32);
         gloss_view.set_right_margin(right_margin);
         gloss_view.set_top_margin(24);
@@ -107,7 +107,7 @@ impl GlossOverlay {
 
         let bar_ranges: Rc<RefCell<Vec<BarRange>>> = Rc::new(RefCell::new(Vec::new()));
         let bar_color: Rc<RefCell<(f64, f64, f64)>> = Rc::new(RefCell::new((0.53, 0.62, 0.71)));
-        let bar_x: Rc<RefCell<i32>> = Rc::new(RefCell::new((column_width as i32) / 4));
+        let bar_x: Rc<RefCell<i32>> = Rc::new(RefCell::new((column_width as i32) / 8));
         let line_numbers: Rc<RefCell<Vec<LineNumber>>> = Rc::new(RefCell::new(Vec::new()));
 
         let ranges_clone = bar_ranges.clone();
@@ -193,7 +193,7 @@ impl GlossOverlay {
         footer_box.set_margin_bottom(12);
         footer_box.add_css_class("gloss-hint");
 
-        let hint = Label::new(Some("Esc close · a add · d delete · c copy id · Ctrl+n/p gloss · Alt+n/p passage"));
+        let hint = Label::new(Some("Esc close · a add · e edit · d delete · c copy id · Ctrl+n/p gloss · Alt+n/p passage"));
         hint.set_halign(Align::Center);
         hint.set_hexpand(true);
         footer_box.append(&hint);
@@ -274,9 +274,10 @@ impl GlossOverlay {
         self.title.set_vexpand(false);
         self.title.set_valign(Align::Start);
         self.title.set_halign(Align::Start);
-        self.title.set_margin_start(self.text_margins);
-        self.gloss_view.set_left_margin(self.text_margins);
-        self.hint.set_text("Esc close · a add · d delete · c copy id · Ctrl+n/p gloss · Alt+n/p passage");
+        let left = self.column_width / 8;
+        self.title.set_margin_start(left);
+        self.gloss_view.set_left_margin(left);
+        self.hint.set_text("Esc close · a add · e edit · d delete · c copy id · Ctrl+n/p gloss · Alt+n/p passage");
         self.orig_header.set_visible(false);
         self.original_label.set_visible(false);
         self.corr_header.set_visible(false);
@@ -288,7 +289,7 @@ impl GlossOverlay {
             }
         }
 
-        let bar_left = self.column_width / 6;
+        let bar_left = self.column_width / 8;
         *self.bar_x.borrow_mut() = bar_left;
 
         let (ranges, nums) = populate_gloss_buffer(&self.gloss_view, gloss, self.text_margins, bar_left, source_line_numbers);
@@ -305,7 +306,7 @@ impl GlossOverlay {
 
     pub fn show_synopsis(&self, title: &str, synopsis: &str, card_height: i32) {
         self.container.set_height_request(card_height);
-        let left = self.column_width / 6;
+        let left = self.column_width / 8;
         self.title.set_text(title);
         self.title.set_visible(true);
         self.title.set_vexpand(false);
@@ -447,7 +448,7 @@ fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32,
     buffer.set_text("");
 
     let tag_table = buffer.tag_table();
-    for name in &["gloss-speaker", "gloss-speaker-first", "gloss-verse", "gloss-para"] {
+    for name in &["gloss-speaker", "gloss-speaker-first", "gloss-verse", "gloss-para", "gloss-bracket"] {
         if let Some(old) = tag_table.lookup(name) {
             tag_table.remove(&old);
         }
@@ -484,10 +485,17 @@ fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32,
         .left_margin(quote_speaker)
         .build();
 
+    let bracket_tag = gtk4::TextTag::builder()
+        .name("gloss-bracket")
+        .style(pango::Style::Italic)
+        .scale(0.9)
+        .build();
+
     tag_table.add(&speaker_tag);
     tag_table.add(&speaker_first_tag);
     tag_table.add(&verse_tag);
     tag_table.add(&para_tag);
+    tag_table.add(&bracket_tag);
 
     let elements = parse_gloss_tags(gloss);
     let mut first = true;
@@ -531,8 +539,10 @@ fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32,
                 buffer.insert(&mut end, text);
                 let start = buffer.iter_at_offset(offset);
                 buffer.apply_tag(&verse_tag, &start, &buffer.end_iter());
+                apply_bracket_styling(&buffer, offset, &bracket_tag);
 
-                if let Some(&num) = line_lookup.get(text.trim()) {
+                let stripped = strip_brackets(text);
+                if let Some(&num) = line_lookup.get(stripped.trim()) {
                     line_nums.push(LineNumber { buffer_line: line, number: num });
                 }
             }
@@ -556,6 +566,42 @@ fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32,
     }
 
     (bar_ranges, line_nums)
+}
+
+fn apply_bracket_styling(buffer: &gtk4::TextBuffer, base_offset: i32, bracket_tag: &gtk4::TextTag) {
+    let text = buffer.text(&buffer.iter_at_offset(base_offset), &buffer.end_iter(), false);
+    let text_str = text.as_str();
+    let mut pos = 0;
+    while pos < text_str.len() {
+        if let Some(open) = text_str[pos..].find('[') {
+            let abs_open = pos + open;
+            if let Some(close) = text_str[abs_open..].find(']') {
+                let abs_close = abs_open + close + 1;
+                let start = buffer.iter_at_offset(base_offset + abs_open as i32);
+                let end = buffer.iter_at_offset(base_offset + abs_close as i32);
+                buffer.apply_tag(bracket_tag, &start, &end);
+                pos = abs_close;
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+}
+
+fn strip_brackets(text: &str) -> String {
+    let mut result = String::new();
+    let mut in_bracket = false;
+    for ch in text.chars() {
+        match ch {
+            '[' => in_bracket = true,
+            ']' => { in_bracket = false; }
+            _ if !in_bracket => result.push(ch),
+            _ => {}
+        }
+    }
+    result
 }
 
 fn parse_hex_color(hex: &str) -> Option<(f64, f64, f64)> {
