@@ -954,8 +954,17 @@ paths.)
 
 - [ ] **Step 2: Dispatch the action**
 
-In `src/input/keymap.rs` `dispatch_action` (the big `match action { ... }`),
-add an arm next to the other navigation/display toggles:
+In `src/input/keymap.rs` `dispatch_action`, a no-op placeholder arm for
+`ToggleColumnLayout` ALREADY EXISTS (added in Task 2 to keep the exhaustive
+match compiling):
+
+```rust
+        ToggleColumnLayout => {
+            // TODO: Task 11 - implement column layout toggle
+        }
+```
+
+REPLACE that placeholder body (do NOT add a second arm) with the real call:
 
 ```rust
         ToggleColumnLayout => crate::input::navigation::toggle_column_layout(&mut state.borrow_mut()),
