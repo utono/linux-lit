@@ -77,6 +77,7 @@ pub fn handle_key(
             crate::app::InputMode::EchoesOverlay => handle_echoes_overlay_key(state, key_state, key_name, is_ctrl, tokio_handle),
             crate::app::InputMode::GamepadOverlay => handle_gamepad_key(state, key_name),
             crate::app::InputMode::KeybindsOverlay => handle_keybinds_key(state, key_name),
+            crate::app::InputMode::EchoKeybindsOverlay => handle_echo_keybinds_key(state, key_name, is_ctrl),
             crate::app::InputMode::ActionPopup => handle_action_popup_key(state, key_name, is_ctrl, tokio_handle),
             crate::app::InputMode::Visual => handle_visual_key(state, key_state, key_name, tokio_handle),
             crate::app::InputMode::Reader => unreachable!(),
@@ -786,6 +787,12 @@ fn handle_echoes_overlay_key(
                 let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(-5.0));
                 return true;
             }
+            "slash" => {
+                let mut s = state.borrow_mut();
+                s.echo_keybinds_overlay.show();
+                s.input_mode = crate::app::InputMode::EchoKeybindsOverlay;
+                return true;
+            }
             _ => {}
         }
     }
@@ -901,6 +908,20 @@ fn handle_gamepad_key(
         }
         _ => true,
     }
+}
+
+fn handle_echo_keybinds_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+    is_ctrl: bool,
+) -> bool {
+    // Esc or Ctrl+/ closes the legend, returning to the echoes overlay.
+    if key_name == "Escape" || (is_ctrl && key_name == "slash") {
+        let mut s = state.borrow_mut();
+        s.echo_keybinds_overlay.hide();
+        s.input_mode = crate::app::InputMode::EchoesOverlay;
+    }
+    true // consume all keys while the legend is up (modal)
 }
 
 fn handle_keybinds_key(
