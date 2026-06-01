@@ -794,6 +794,17 @@ pub(crate) fn last_raw_visible_line(state: &AppState, top: usize) -> usize {
     range.last_fit
 }
 
+/// Result of splitting a page into two columns. Lines `[page_top .. split-1]`
+/// fill the left column; `[split .. page_end]` fill the right column;
+/// `next_page_top` is the first line of the following page (== line_count when
+/// this is the last page).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ColumnSplit {
+    pub(crate) split: usize,
+    pub(crate) page_end: usize,
+    pub(crate) next_page_top: usize,
+}
+
 /// Find the last buffer line that fits within the viewport starting from
 /// `top`, matching the bottom clip calculation exactly. A line is included
 /// only if its full height fits in the remaining usable space (widget height
@@ -1574,7 +1585,7 @@ mod block_atom_tests {
 #[cfg(test)]
 mod headless_pagination_tests {
     use crate::db::line_types;
-    use super::{VisibleRange, trim_block_atoms_pure};
+    use super::{ColumnSplit, VisibleRange, trim_block_atoms_pure};
 
     fn clean_text_file(path: &str) -> Vec<String> {
         let contents = std::fs::read_to_string(path).expect("failed to read text file");
@@ -1980,5 +1991,65 @@ mod headless_pagination_tests {
     #[test]
     fn chaucer_pagination_45lpp() {
         run_author_pagination("chaucer-geoffrey", 45);
+    }
+
+    /// Pure two-column split over a slice of line texts. `col_lines` is how many
+    /// lines fit in ONE column. Reuses `trim_visible_range_pure` so neither column
+    /// ends on a dangling speaker / stage direction / split stanza, matching the
+    /// single-column page-boundary rules.
+    fn column_split_pure(
+        lines: &[String],
+        page_top: usize,
+        col_lines: usize,
+        is_prose: bool,
+    ) -> ColumnSplit {
+        let line_count = lines.len();
+        if line_count == 0 || page_top >= line_count {
+            return ColumnSplit { split: page_top, page_end: page_top, next_page_top: line_count };
+        }
+        let left_raw = (page_top + col_lines - 1).min(line_count - 1);
+        let left_last = trim_visible_range_pure(lines, page_top, left_raw, is_prose);
+        let split = (left_last + 1).min(line_count);
+        if split >= line_count {
+            return ColumnSplit { split, page_end: left_last, next_page_top: line_count };
+        }
+        let right_raw = (split + col_lines - 1).min(line_count - 1);
+        let right_last = trim_visible_range_pure(lines, split, right_raw, is_prose);
+        let next_top = (right_last + 1).min(line_count);
+        ColumnSplit { split, page_end: right_last, next_page_top: next_top }
+    }
+
+    fn col_lines(strs: &[&str]) -> Vec<String> {
+        strs.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn split_falls_after_left_column_capacity() {
+        // 10 dialogue lines, each column holds 3 -> left [0..2], right [3..5],
+        // next page starts at 6.
+        let l = col_lines(&["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]);
+        let split = column_split_pure(&l, 0, 3, true);
+        assert_eq!(split.split, 3, "right column starts at line 3");
+        assert_eq!(split.page_end, 5, "page ends at line 5 (right col last)");
+        assert_eq!(split.next_page_top, 6, "next page starts at line 6");
+    }
+
+    #[test]
+    fn split_clamps_at_end_of_text() {
+        // 4 lines, columns hold 3 -> left [0..2], right [3..3], end of text.
+        let l = col_lines(&["a", "b", "c", "d"]);
+        let split = column_split_pure(&l, 0, 3, true);
+        assert_eq!(split.split, 3);
+        assert_eq!(split.page_end, 3);
+        assert_eq!(split.next_page_top, 4); // == line_count -> at end
+    }
+
+    #[test]
+    fn left_column_does_not_end_on_dangling_speaker() {
+        // Capacity 3 but line 2 is a speaker -> left column trims to [0..1],
+        // the speaker moves to the right column with its dialogue.
+        let l = col_lines(&["First line.", "Second line.", "HAMLET", "To be.", "Or not.", "End."]);
+        let split = column_split_pure(&l, 0, 3, false);
+        assert_eq!(split.split, 2, "speaker pushed to right column");
     }
 }
