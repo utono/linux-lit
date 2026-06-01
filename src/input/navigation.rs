@@ -243,19 +243,24 @@ pub fn jump_to_end(state: &mut AppState) {
 }
 
 /// Toggle between one- and two-column e-reader layout (Alt+[). No-op in scroll
-/// mode (two columns are e-reader-only). Flips config.column_count, persists it,
-/// shows/hides the right column, and recomputes the current page so current_line
-/// stays visible.
+/// mode (two columns are e-reader-only). Flips the current work's effective
+/// column count and stores it as a per-work override (keyed by `work.abbrev`),
+/// persists it, shows/hides the right column, and recomputes the current page
+/// so current_line stays visible.
 pub fn toggle_column_layout(state: &mut AppState) {
     if !matches!(state.config.navigation_mode, crate::config::NavigationMode::EReader) {
         crate::logging::log("COLUMNS: ignored (not e-reader mode)");
         return;
     }
-    if state.current_work.is_none() {
+    let Some(abbrev) = state.current_work.as_ref().map(|w| w.abbrev.clone()) else {
         return;
-    }
-    let new_count = if state.config.column_count >= 2 { 1 } else { 2 };
-    state.config.column_count = new_count;
+    };
+
+    // Flip the work's currently-effective count (override or default) and store
+    // it as a per-work override.
+    let current = state.column_count();
+    let new_count: u8 = if current >= 2 { 1 } else { 2 };
+    state.config.column_overrides.insert(abbrev, new_count);
     crate::config::save(&state.config);
 
     let two = new_count == 2;
@@ -268,7 +273,6 @@ pub fn toggle_column_layout(state: &mut AppState) {
     // stale after a toggle, so invalidate it before recomputing.
     invalidate_page_tops(state);
 
-    // Recompute the page from the current page_top so the cursor stays visible.
     let top = back_up_for_speaker(&state.buffer, state.page_top_line);
     set_page_instant(state, top);
     if !is_line_on_screen(state, state.current_line) {
