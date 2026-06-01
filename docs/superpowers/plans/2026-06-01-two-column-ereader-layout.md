@@ -430,8 +430,13 @@ git commit -m "viewport: add pure column_split kernel + unit tests"
 - [ ] **Step 1: Write the failing test**
 
 A translation line follows its source line. The split must not fall between
-them. In the column-split test mod, add a test. Translation lines in the pure
-model are marked by a parallel `&[bool]`; extend the pure fn to accept it.
+them. NOTE (from Task 4): `column_split_pure` lives inside the
+`#[cfg(test)] mod headless_pagination_tests` (because it calls the test-gated
+`trim_visible_range_pure`), and the Task 4 split tests were added to that same
+mod, not a standalone `column_split_tests` mod. Add this test and
+`column_split_pure_tr` to the SAME `headless_pagination_tests` mod. Translation
+lines in the pure model are marked by a parallel `&[bool]`; the new fn accepts
+it. Run tests with `cargo test --bin linux-lit` (binary crate, no `--lib`).
 
 ```rust
     #[test]
