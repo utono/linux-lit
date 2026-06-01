@@ -264,6 +264,10 @@ pub fn toggle_column_layout(state: &mut AppState) {
         state.right_bottom_clip.set_height_request(0);
     }
 
+    // Page boundaries depend on column_count(); the cached page-tops index is
+    // stale after a toggle, so invalidate it before recomputing.
+    invalidate_page_tops(state);
+
     // Recompute the page from the current page_top so the cursor stays visible.
     let top = back_up_for_speaker(&state.buffer, state.page_top_line);
     set_page_instant(state, top);

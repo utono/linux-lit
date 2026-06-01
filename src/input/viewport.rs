@@ -778,6 +778,9 @@ pub(crate) fn clamp_page_top_to_scroll_ceiling(state: &AppState, proposed_top: u
 /// when the cursor has moved past what's actually rendered on screen.
 /// Trims are for page-boundary placement; sync needs the physical boundary.
 pub(crate) fn last_raw_visible_line(state: &AppState, top: usize) -> usize {
+    if state.column_count() == 2 {
+        return column_split(state, top).page_end;
+    }
     if let Some(cached) = state.last_visible_range.get() {
         if cached.count > 0 {
             return cached.last_fit;
