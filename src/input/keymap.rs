@@ -1280,6 +1280,9 @@ fn dispatch_action(
         CycleFontForward => crate::app::cycle_font(&mut state.borrow_mut(), true),
         CycleFontBackward => crate::app::cycle_font(&mut state.borrow_mut(), false),
         ToggleSignColumn => crate::app::toggle_sign_column(&mut state.borrow_mut()),
+        ToggleColumnLayout => {
+            // TODO: Task 11 - implement column layout toggle
+        }
         TogglePreviousWork => {
             crate::input::actions::pickers::toggle_previous_work(state, tokio_handle);
         }
