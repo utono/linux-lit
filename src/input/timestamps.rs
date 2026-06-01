@@ -557,6 +557,13 @@ pub fn undo_timestamp(state: &mut AppState) -> bool {
         }
     }
 
+    // `u` (set_start_time) also marks the line is_spoken=1, so undoing it must
+    // clear that flag back to 0. Non-fatal on error: the timestamp undo above
+    // already succeeded; just log (mirrors set_start_time's treatment).
+    if let Err(e) = crate::db::queries::upsert_spoken_status(&conn, undo.line_mapping_id, undo.media_id, false) {
+        crate::logging::log(&format!("TS: undo upsert_spoken_status(false) failed: {}", e));
+    }
+
     // Update in-memory state, then extract values for sign column update.
     // Must drop the mutable borrow of current_work before accessing
     // state.line_map, state.has_timestamp, etc.
@@ -569,6 +576,9 @@ pub fn undo_timestamp(state: &mut AppState) -> bool {
             Some(l) => l,
             None => return false,
         };
+
+        // Clear the spoken flag set by `u` (see DB clear above).
+        line.is_spoken = Some(false);
 
         match &undo.previous {
             None => {
