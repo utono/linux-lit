@@ -549,7 +549,15 @@ fn render_echoes(s: &mut AppState) {
         ));
     }
 
-    let h = s.scrolled_window.height();
+    // card_height sizes the overlay to fill the reader card. The reader's
+    // scrolled_window can report height 0 when render runs before layout settles
+    // (e.g. an alt+i reopen right after a cross-work load, or an R refresh). A 0
+    // here collapses the overlay to its header height and lets the reader bleed
+    // through above/below it — so fall back to the window height.
+    let h = {
+        let sw = s.scrolled_window.height();
+        if sw > 0 { sw } else { gtk4::prelude::WidgetExt::height(&s.window).max(1) }
+    };
     let root = s.theme.root_color.clone();
     let dim = s.theme.dim_fg.clone();
     s.gloss_overlay.show_echoes(&source_doc, &echo_doc, h, Some(&root), Some(&dim), s.echo_overlay_index);
