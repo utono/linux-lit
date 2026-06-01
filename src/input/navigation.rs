@@ -241,6 +241,39 @@ pub fn jump_to_end(state: &mut AppState) {
     after_page_change(state, PageChangeReason::JumpToLine);
 }
 
+/// Toggle between one- and two-column e-reader layout (Alt+[). No-op in scroll
+/// mode (two columns are e-reader-only). Flips config.column_count, persists it,
+/// shows/hides the right column, and recomputes the current page so current_line
+/// stays visible.
+pub fn toggle_column_layout(state: &mut AppState) {
+    if !matches!(state.config.navigation_mode, crate::config::NavigationMode::EReader) {
+        crate::logging::log("COLUMNS: ignored (not e-reader mode)");
+        return;
+    }
+    if state.current_work.is_none() {
+        return;
+    }
+    let new_count = if state.config.column_count >= 2 { 1 } else { 2 };
+    state.config.column_count = new_count;
+    crate::config::save(&state.config);
+
+    let two = new_count == 2;
+    state.right_scrolled_overlay.set_visible(two);
+    if !two {
+        state.right_bottom_clip.set_height_request(0);
+    }
+
+    // Recompute the page from the current page_top so the cursor stays visible.
+    let top = back_up_for_speaker(&state.buffer, state.page_top_line);
+    set_page_instant(state, top);
+    if !is_line_on_screen(state, state.current_line) {
+        let new_top = page_turn_top(&state.buffer, state.current_line);
+        set_page_instant(state, new_top);
+    }
+    after_page_change(state, PageChangeReason::JumpToLine);
+    crate::logging::log(&format!("COLUMNS: now {} column(s)", new_count));
+}
+
 
 /// Page forward (Ctrl+d/f). The next page starts at the dialogue line
 /// immediately after the last dialogue line visible on the current page,
