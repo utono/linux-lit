@@ -39,6 +39,8 @@ pub struct Config {
     pub column_width: u32,
     #[serde(default = "default_text_margins")]
     pub text_margins: u32,
+    #[serde(default = "default_column_count")]
+    pub column_count: u8,
     #[serde(default)]
     pub navigation_mode: NavigationMode,
     #[serde(default)]
@@ -105,6 +107,10 @@ fn default_text_margins() -> u32 {
     DEFAULT_TEXT_MARGINS
 }
 
+fn default_column_count() -> u8 {
+    1
+}
+
 fn default_claude_model() -> String {
     "claude-opus-4-7".to_string()
 }
@@ -141,6 +147,7 @@ impl Default for Config {
             line_spacing: default_line_spacing(),
             column_width: default_column_width(),
             text_margins: default_text_margins(),
+            column_count: default_column_count(),
             navigation_mode: NavigationMode::default(),
             transition_style: TransitionStyle::default(),
             last_work: None,
