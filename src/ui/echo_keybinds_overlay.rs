@@ -19,6 +19,8 @@ const BINDS: &[(&str, &str)] = &[
     ("Enter", "open echo's work"),
     ("c", "copy echo"),
     ("s", "toggle curate"),
+    ("d", "delete selected echo"),
+    ("D", "delete all echoes for turn"),
     ("R", "refresh echoes"),
     ("Ctrl+↑ / Ctrl+↓", "volume"),
     ("Ctrl+/ / Esc", "close this legend"),

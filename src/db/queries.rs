@@ -1224,6 +1224,18 @@ pub fn delete_noncurated_echo_links(conn: &Connection, turn_id: i64) -> Result<(
     Ok(())
 }
 
+/// Delete every link (curated and non-curated) for a turn.
+pub fn delete_all_echo_links(conn: &Connection, turn_id: i64) -> Result<(), rusqlite::Error> {
+    conn.execute("DELETE FROM echo_links WHERE turn_id = ?1", [turn_id])?;
+    Ok(())
+}
+
+/// Delete a single echo link by id.
+pub fn delete_echo_link(conn: &Connection, link_id: i64) -> Result<(), rusqlite::Error> {
+    conn.execute("DELETE FROM echo_links WHERE id = ?1", [link_id])?;
+    Ok(())
+}
+
 /// Resolve a line's line_mapping.id from its location within a work.
 pub fn line_id_for_location(
     conn: &Connection,

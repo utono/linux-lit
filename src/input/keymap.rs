@@ -846,6 +846,14 @@ fn handle_echoes_overlay_key(
             crate::input::actions::echoes::toggle_curated(state);
             true
         }
+        "d" => {
+            crate::input::actions::echoes::delete_selected_echo(state);
+            true
+        }
+        "D" => {
+            crate::input::actions::echoes::delete_all_echoes(state);
+            true
+        }
         "R" => {
             crate::input::actions::echoes::refresh_echoes(state, tokio_handle);
             true

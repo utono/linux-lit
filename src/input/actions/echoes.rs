@@ -786,6 +786,62 @@ pub(crate) fn toggle_curated(state_rc: &Rc<RefCell<AppState>>) {
     crate::logging::log("ECHOES: toggled curated");
 }
 
+/// `d`: delete the selected echo link, then reload the list keeping the
+/// selection near where it was.
+pub(crate) fn delete_selected_echo(state_rc: &Rc<RefCell<AppState>>) {
+    let (turn_id, link_id, old_idx) = {
+        let s = state_rc.borrow();
+        let link = match s.echo_overlay_links.get(s.echo_overlay_index) {
+            Some(l) => l,
+            None => return,
+        };
+        match s.echo_overlay_turn_id {
+            Some(id) => (id, link.link_id, s.echo_overlay_index),
+            None => return,
+        }
+    };
+
+    if let Ok(conn) = crate::db::queries::open_db_rw() {
+        let _ = crate::db::queries::delete_echo_link(&conn, link_id);
+    }
+
+    let links = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| crate::db::queries::load_echo_links(&conn, turn_id).ok())
+        .unwrap_or_default();
+
+    let mut s = state_rc.borrow_mut();
+    // Clamp the selection to the (now shorter) list, keeping the cursor roughly
+    // in place rather than jumping to the top.
+    let new_idx = old_idx.min(links.len().saturating_sub(1));
+    s.echo_overlay_links = links;
+    s.echo_overlay_index = new_idx;
+    render_echoes(&mut s);
+    s.gloss_overlay.scroll_echo_into_view(new_idx);
+    sync_session(&mut s);
+    crate::logging::log("ECHOES: deleted selected echo");
+}
+
+/// `D`: delete ALL echo links (curated and non-curated) for the current source
+/// turn, leaving the list empty.
+pub(crate) fn delete_all_echoes(state_rc: &Rc<RefCell<AppState>>) {
+    let turn_id = match state_rc.borrow().echo_overlay_turn_id {
+        Some(id) => id,
+        None => return,
+    };
+
+    if let Ok(conn) = crate::db::queries::open_db_rw() {
+        let _ = crate::db::queries::delete_all_echo_links(&conn, turn_id);
+    }
+
+    let mut s = state_rc.borrow_mut();
+    s.echo_overlay_links = Vec::new();
+    s.echo_overlay_index = 0;
+    render_echoes(&mut s);
+    sync_session(&mut s);
+    crate::logging::log("ECHOES: deleted all echoes for turn");
+}
+
 /// Reorder the selected echo within the curated group (delta -1 = up, +1 = down),
 /// marking it curated. Curated items always sort above non-curated; this moves
 /// the selection among them and persists sequential ranks. Mirrors toggle_curated's
