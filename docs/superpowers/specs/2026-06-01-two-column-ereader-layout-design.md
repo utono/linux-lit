@@ -111,6 +111,32 @@ math required.
   page from the current `page_top_line`, and keep `current_line` visible.
   No-op in scroll mode.
 
+### Translations toggle (`i`)
+
+`i` (`ToggleTranslations`) inserts each translation line into the buffer
+immediately after its source line (tracked in `translation_lines: Vec<bool>`,
+counted by `effective_line_count`). Translation lines are real buffer lines that
+participate in pagination, so two-column flow mostly handles them for free:
+
+- **Pagination counts them already.** `column_split` runs `visible_range` over
+  `effective_line_count`, which includes inserted translation lines. With
+  translations visible, each column simply fits fewer source lines; the split
+  point `S` and page end `E` recompute against the taller content. No separate
+  two-column-with-translations path.
+- **Keep source + translation together at the split.** A source line and its
+  immediately-following translation line are treated as an **atom** when
+  computing the left column's split point: if the translation would not fit
+  below its source in the left column, **both** move to the top of the right
+  column. This mirrors the existing dangling-speaker trim (a speaker is never the
+  last line of a page) and is added to the same trim step `column_split` already
+  runs. The split must not fall between a source line and its translation.
+- **Re-anchor after toggle.** `show_translations` / `hide_translations`
+  re-anchor by cursor screen-y via an idle callback. In two-column mode the
+  toggle must recompute the split (`column_split`) and keep the cursor visible
+  in whichever column it lands. `current_line` / `page_top_line` remapping
+  (`map_line_after_insert` / `map_line_before_insert`) is unchanged — it operates
+  on absolute buffer indices, which the shared-buffer model preserves.
+
 ### Document jumps (`gg` / `G`)
 
 - **`gg` (`jump_to_start`):** unchanged in logic. Cursor goes to the first
@@ -235,6 +261,8 @@ set `cursor_line` to `0` / `line_count-1` and rely on the same page recompute.
 - `jump_to_end` (`G`): the backward viewport-fill walk accumulates two columns'
   worth of content so the final page anchors a full two-column spread.
   `jump_to_start` (`gg`) is unchanged beyond two-column rendering.
+- `column_split` trim step: treat a source line + its immediately-following
+  translation line as an atom, so the left/right split never falls between them.
 - New helpers: `column_split(state)` (steps 1–5) and `which_column(state, line)`.
 - A second `GutterRendererText` for `right_view`.
 - Page-turn animation snapshot targets `columns_hbox` (capture currently targets
@@ -252,6 +280,10 @@ set `cursor_line` to `0` / `line_count-1` and rely on the same page recompute.
 - Toggle test: `Alt+[` flips layout, keeps `current_line` visible, is a no-op in
   scroll mode, and persists across restart.
 - MPV sync: highlight and page turns land in the correct column.
+- Translations toggle: with `i` on, columns fit fewer source lines and the
+  split recomputes; the left/right split never falls between a source line and
+  its translation (the pair moves together to the right column); toggling keeps
+  the cursor visible. Verify on a work that has translations.
 - Document jumps: `gg` puts line 0 at the left column top with the cursor on the
   first dialogue line; `G` anchors the final two-column page with the last
   dialogue line at the bottom of the right column and the left column filled with
