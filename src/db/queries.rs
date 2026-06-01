@@ -555,6 +555,23 @@ pub fn upsert_start_time(
     Ok(())
 }
 
+pub fn upsert_spoken_status(
+    conn: &Connection,
+    line_mapping_id: i64,
+    media_id: i64,
+    is_spoken: bool,
+) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "INSERT INTO line_spoken_status \
+         (line_mapping_id, media_id, is_spoken, confidence) \
+         VALUES (?1, ?2, ?3, 1.0) \
+         ON CONFLICT(line_mapping_id, media_id) \
+         DO UPDATE SET is_spoken = ?3, confidence = 1.0",
+        rusqlite::params![line_mapping_id, media_id, is_spoken as i64],
+    )?;
+    Ok(())
+}
+
 pub fn upsert_chapter(
     conn: &Connection,
     line_mapping_id: i64,
@@ -1370,6 +1387,60 @@ mod tests {
         // Wrong media or missing line -> None.
         assert_eq!(line_start_time(&conn, 42, 99), None);
         assert_eq!(line_start_time(&conn, 1, 7), None);
+    }
+
+    #[test]
+    fn upsert_spoken_status_inserts_then_updates() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE line_spoken_status (
+                id INTEGER PRIMARY KEY,
+                line_mapping_id INTEGER NOT NULL,
+                media_id INTEGER NOT NULL,
+                is_spoken INTEGER NOT NULL DEFAULT 1,
+                confidence REAL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(line_mapping_id, media_id)
+            );",
+        )
+        .unwrap();
+
+        // Insert: row created with is_spoken=1, confidence=1.0
+        upsert_spoken_status(&conn, 42, 7, true).unwrap();
+        let (spoken, conf): (i64, f64) = conn
+            .query_row(
+                "SELECT is_spoken, confidence FROM line_spoken_status \
+                 WHERE line_mapping_id = 42 AND media_id = 7",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(spoken, 1);
+        assert_eq!(conf, 1.0);
+
+        // Pre-existing not-spoken row gets flipped to spoken by upsert.
+        conn.execute(
+            "INSERT INTO line_spoken_status (line_mapping_id, media_id, is_spoken, confidence) \
+             VALUES (99, 7, 0, 0.0)",
+            [],
+        )
+        .unwrap();
+        upsert_spoken_status(&conn, 99, 7, true).unwrap();
+        let spoken2: i64 = conn
+            .query_row(
+                "SELECT is_spoken FROM line_spoken_status \
+                 WHERE line_mapping_id = 99 AND media_id = 7",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(spoken2, 1);
+
+        // No duplicate rows for the same (line, media).
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM line_spoken_status", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
     }
 
     #[test]
