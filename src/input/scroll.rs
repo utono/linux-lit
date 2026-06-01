@@ -404,6 +404,26 @@ pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
         state.effective_line_count(),
         state.is_prose(),
     );
+
+    if state.column_count() == 2 {
+        let cs = super::viewport::column_split(state, effective_top);
+        // Scroll the right view so its top line is `cs.split`.
+        if let Some(iter) = state.buffer.iter_at_line(cs.split as i32) {
+            let (y, _h) = state.right_view.line_yrange(&iter);
+            let radj = state.right_scrolled_window.vadjustment();
+            let rmax = (radj.upper() - radj.page_size()).max(0.0);
+            radj.set_value((y as f64).min(rmax));
+        }
+        // Clip the right column below its page end.
+        schedule_bottom_clip_update(
+            state.right_view.clone(),
+            state.right_bottom_clip.clone(),
+            state.right_scrolled_window.clone(),
+            cs.split,
+            (cs.page_end + 1).min(state.effective_line_count()),
+            state.is_prose(),
+        );
+    }
 }
 
 /// Ensure the vadjustment's upper bound is large enough that any buffer line
