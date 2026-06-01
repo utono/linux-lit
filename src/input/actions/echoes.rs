@@ -711,6 +711,17 @@ pub(crate) fn play_source_turn(state_rc: &Rc<RefCell<AppState>>) {
         }
     };
 
+    // If the source turn is already the active loop (a prior Tab armed it),
+    // a subsequent Tab just toggles play/pause — no reload, no re-seek.
+    if s.ab_repeat.loop_active
+        && s.ab_repeat.a_time == Some(a)
+        && s.ab_repeat.b_time == Some(b)
+    {
+        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
+        crate::logging::log("ECHOES: toggled source turn play/pause");
+        return;
+    }
+
     // The source work's Arkangel media (fall back to first media path).
     let source_media = s.current_work.as_ref().and_then(|w| {
         w.media_paths.iter()
