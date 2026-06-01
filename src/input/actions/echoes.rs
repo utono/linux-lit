@@ -1382,6 +1382,112 @@ fn switch_mpv_to_current_line(state_rc: &Rc<RefCell<AppState>>, line_id: i64, wa
     }
 }
 
+/// Open the echo-turns picker: list every turn in the current work that has
+/// echoes (Ctrl+Shift+G). Empty work -> toast and stay in Reader.
+pub(crate) fn open_echo_turns_picker(state_rc: &Rc<RefCell<AppState>>) {
+    let work_abbrev = match state_rc.borrow().current_work.as_ref() {
+        Some(w) => w.abbrev.clone(),
+        None => return,
+    };
+
+    let (turns, titles) = {
+        let conn = match crate::db::queries::open_db() {
+            Ok(c) => c,
+            Err(e) => {
+                crate::logging::log(&format!("ECHO-TURNS: open_db failed: {e}"));
+                show_no_echo_turns_toast(state_rc);
+                return;
+            }
+        };
+        let turns = crate::db::queries::list_echo_turns_for_work(&conn, &work_abbrev)
+            .unwrap_or_default();
+        let titles = crate::db::queries::load_work_titles(&conn).unwrap_or_default();
+        (turns, titles)
+    };
+
+    if turns.is_empty() {
+        crate::logging::log("ECHO-TURNS: no echo turns in this work");
+        show_no_echo_turns_toast(state_rc);
+        return;
+    }
+
+    let mut s = state_rc.borrow_mut();
+    s.echo_turns_picker.set_titles(titles);
+    s.echo_turns_picker.set_items(turns, work_abbrev);
+    s.echo_turns_picker.show();
+    s.input_mode = crate::app::InputMode::EchoTurnsPicker;
+}
+
+fn show_no_echo_turns_toast(state_rc: &Rc<RefCell<AppState>>) {
+    let s = state_rc.borrow();
+    s.chapter_toast.set_text("No echoes in this work");
+    s.chapter_toast.set_visible(true);
+    let toast = s.chapter_toast.clone();
+    glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+        toast.set_visible(false);
+    });
+}
+
+/// Confirm the echo-turns picker selection: jump the cursor to the turn's
+/// first line, then open its echoes overlay via the normal cursor path
+/// (cache hit, no API call).
+pub(crate) fn confirm_echo_turns_pick(
+    state_rc: &Rc<RefCell<AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+) {
+    let picked = {
+        let s = state_rc.borrow();
+        s.echo_turns_picker
+            .selected_index()
+            .and_then(|idx| s.echo_turns_picker.items.get(idx).cloned())
+    };
+    let picked = match picked {
+        Some(p) => p,
+        None => {
+            let s = state_rc.borrow();
+            s.echo_turns_picker.hide();
+            return;
+        }
+    };
+
+    // Resolve (div1, div2, start_line) -> buffer line index and jump.
+    let jumped = {
+        let mut s = state_rc.borrow_mut();
+        s.echo_turns_picker.hide();
+        s.input_mode = crate::app::InputMode::Reader;
+
+        let work_idx = s.current_work.as_ref().and_then(|w| {
+            w.lines.iter().position(|l| {
+                l.div1 == picked.div1
+                    && l.div2 == picked.div2
+                    && l.line_in_div == picked.start_line
+            })
+        });
+        match work_idx {
+            Some(wi) => {
+                let buf_idx = match s.line_map {
+                    Some(ref lm) => lm.work_to_buffer[wi],
+                    None => wi,
+                };
+                s.current_line = buf_idx;
+                crate::input::highlight::update_highlight_and_center(&mut s);
+                true
+            }
+            None => {
+                crate::logging::log(&format!(
+                    "ECHO-TURNS: turn line {}.{}.{} not found in loaded work",
+                    picked.div1, picked.div2, picked.start_line
+                ));
+                false
+            }
+        }
+    };
+
+    if jumped {
+        show_echoes_for_cursor_line(state_rc, tokio_handle);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
