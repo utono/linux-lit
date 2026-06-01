@@ -111,6 +111,29 @@ math required.
   page from the current `page_top_line`, and keep `current_line` visible.
   No-op in scroll mode.
 
+### Document jumps (`gg` / `G`)
+
+- **`gg` (`jump_to_start`):** unchanged in logic. Cursor goes to the first
+  dialogue line; `set_page_instant(state, 0)` sets page top = line 0. The left
+  column starts at line 0 and the right column continues from the split (the
+  rendering layer reads `column_count` and runs `column_split`). The first
+  dialogue line lands in the left column. No edit to `jump_to_start` itself.
+- **`G` (`jump_to_end`):** the final page holds **two columns**, so its anchor
+  must account for two columns of content. `jump_to_end` currently walks
+  backward from the last line accumulating line heights until they fill **one**
+  `widget_height` (the single-column anchor). In two-column mode the backward
+  walk must accumulate **two columns' worth**: fill the right column upward from
+  the last line, then continue filling the left column above it; the resulting
+  top is the final page's `page_top_line`. The cursor lands on the **last
+  dialogue line**, which sits at the bottom of the **right** column. This is the
+  natural end-of-book page, scaled to two columns.
+
+Implementation note: the backward height-accumulation block in `jump_to_end`
+(viewport-fill walk) becomes column-count-aware — accumulate to
+`column_count × usable_height` worth of column content, splitting the
+accumulated lines at `column_split` so the left column is filled above the right.
+`gg` needs no change beyond two-column rendering.
+
 ### Whole-page turns (`x` / `y`)
 
 `x` = `PageForward` and `y` = `PageBackward` turn a whole **two-column** page at
@@ -209,6 +232,9 @@ set `cursor_line` to `0` / `line_count-1` and rely on the same page recompute.
 - `last_fully_visible_line`: returns the right column's end `E` in two-column
   mode, so `next_page_top` / `prev_page_top` (and thus `x` / `y`) turn a full
   two-column page.
+- `jump_to_end` (`G`): the backward viewport-fill walk accumulates two columns'
+  worth of content so the final page anchors a full two-column spread.
+  `jump_to_start` (`gg`) is unchanged beyond two-column rendering.
 - New helpers: `column_split(state)` (steps 1–5) and `which_column(state, line)`.
 - A second `GutterRendererText` for `right_view`.
 - Page-turn animation snapshot targets `columns_hbox` (capture currently targets
@@ -226,6 +252,10 @@ set `cursor_line` to `0` / `line_count-1` and rely on the same page recompute.
 - Toggle test: `Alt+[` flips layout, keeps `current_line` visible, is a no-op in
   scroll mode, and persists across restart.
 - MPV sync: highlight and page turns land in the correct column.
+- Document jumps: `gg` puts line 0 at the left column top with the cursor on the
+  first dialogue line; `G` anchors the final two-column page with the last
+  dialogue line at the bottom of the right column and the left column filled with
+  preceding content (no GTK scroll clamp, no under-filled left column).
 - Whole-page turns: `x` from a page showing `L..E` lands the next page's left
   column at the next dialogue after `E`; `y` returns to exactly `L` (stack pop)
   or steps back one two-column page (empty stack). Forward then backward returns
