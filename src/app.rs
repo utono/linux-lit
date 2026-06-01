@@ -52,6 +52,7 @@ pub enum InputMode {
     ConcordancePicker,
     ConcordanceWordPicker,
     EchoLinePicker,
+    EchoKeybindsOverlay,
     ConcordanceListPicker,
     ConcordanceWorksPicker,
     AuthorshipPicker,
@@ -217,6 +218,7 @@ pub struct AppState {
     pub concordance_word_cache: Option<(String, Vec<(String, usize)>)>,
     pub concordance_word_picker: crate::ui::concordance_word_picker::ConcordanceWordPicker,
     pub echo_line_picker: crate::ui::echo_line_picker::EchoLinePicker,
+    pub echo_keybinds_overlay: crate::ui::echo_keybinds_overlay::EchoKeybindsOverlay,
     /// turn_id the add-echo picker will attach the chosen line to.
     pub echo_add_turn_id: Option<i64>,
     pub concordance_list_picker: crate::ui::concordance_list_picker::ConcordanceListPicker,
@@ -789,6 +791,11 @@ pub fn build_window(
     let echo_line_picker = crate::ui::echo_line_picker::EchoLinePicker::new();
     authorship_picker.overlay.add_overlay(&echo_line_picker.picker_box);
 
+    // Echo keybinds legend (Ctrl+/ in the echoes overlay). add_overlay panel,
+    // NOT a chain link (chain insertion collapses the reader layout).
+    let echo_keybinds_overlay = crate::ui::echo_keybinds_overlay::EchoKeybindsOverlay::new();
+    echo_keybinds_overlay.attach_to(&authorship_picker.overlay);
+
     // Concordance works picker (Alt+R: jump to a specific work)
     let concordance_works_picker = crate::ui::concordance_works_picker::ConcordanceWorksPicker::new();
     authorship_picker.overlay.add_overlay(&concordance_works_picker.scrim);
@@ -1028,6 +1035,7 @@ pub fn build_window(
         concordance_word_cache: None,
         concordance_word_picker,
         echo_line_picker,
+        echo_keybinds_overlay,
         echo_add_turn_id: None,
         concordance_list_picker,
         concordance_works_picker,
