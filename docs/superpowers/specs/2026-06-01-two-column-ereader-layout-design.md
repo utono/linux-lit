@@ -111,6 +111,34 @@ math required.
   page from the current `page_top_line`, and keep `current_line` visible.
   No-op in scroll mode.
 
+### Navigation jumps (dialogue / scene / chapter)
+
+All content-navigation jumps are column-aware in the same way: the jump
+*target* is computed exactly as today (purely from buffer content and
+line-types — `JumpToNextDialogue` / `JumpToPrevDialogue`, `JumpToNextScene` /
+`JumpToPrevScene`, `JumpToNextChapter` / `JumpToPrevChapter`, plus arrow/`j`/`k`
+line moves). The cursor moves to that target. Only the **page-turn decision**
+changes: "on screen" now means "visible in either column of the current
+two-column page."
+
+- Target **already visible** in the left or right column → move cursor and
+  highlight only; no page turn. The cursor advances within the visible columns.
+- Target **below** the visible page (past `E`) → page-turn forward so the
+  target's page begins (left column starts at/near the target, via the existing
+  `back_up_for_speaker` / `page_turn_top` logic).
+- Target **above** the visible page (above `L`) → page-turn backward,
+  symmetrically.
+
+This reuses `scroll_after_jump_forward` / `scroll_after_jump_backward` and
+`is_line_on_screen` / `is_line_fully_visible` unchanged except for the "span
+both columns" change already listed below. No per-jump-type special-casing.
+
+Default key bindings (subject to user keymap.json overrides) map as: `comma` =
+prev dialogue, `q` = next dialogue, `bracketleft` (`[`) = prev chapter,
+`braceleft` (`{`) = next chapter, `2` = prev scene, `3` = next scene. The
+`Right` arrow is `SetStartTime` (a timestamp bind, not navigation) and is
+unaffected.
+
 ### Visual mode
 
 Visual mode selection flows across the column boundary, mirroring selecting
@@ -170,6 +198,11 @@ set `cursor_line` to `0` / `line_count-1` and rely on the same page recompute.
 - Toggle test: `Alt+[` flips layout, keeps `current_line` visible, is a no-op in
   scroll mode, and persists across restart.
 - MPV sync: highlight and page turns land in the correct column.
+- Navigation jumps: with a two-column page showing lines `L..E`, a
+  next-dialogue/scene/chapter jump whose target lies in `L..E` moves the cursor
+  without a page turn; a target past `E` page-turns forward; a target above `L`
+  page-turns backward. Verify for dialogue, scene, and chapter jumps in both
+  directions.
 - Visual mode: a selection started in the left column and extended with `j`
   past `S-1` flows into the right column as one contiguous run; the highlight
   renders in both columns; `range()` yields `[anchor ..= cursor]`; extending
