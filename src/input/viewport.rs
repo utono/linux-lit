@@ -778,6 +778,9 @@ pub(crate) fn clamp_page_top_to_scroll_ceiling(state: &AppState, proposed_top: u
 /// when the cursor has moved past what's actually rendered on screen.
 /// Trims are for page-boundary placement; sync needs the physical boundary.
 pub(crate) fn last_raw_visible_line(state: &AppState, top: usize) -> usize {
+    if state.column_count() == 2 {
+        return column_split(state, top).page_end;
+    }
     if let Some(cached) = state.last_visible_range.get() {
         if cached.count > 0 {
             return cached.last_fit;
@@ -794,6 +797,17 @@ pub(crate) fn last_raw_visible_line(state: &AppState, top: usize) -> usize {
     range.last_fit
 }
 
+/// Result of splitting a page into two columns. Lines `[page_top .. split-1]`
+/// fill the left column; `[split .. page_end]` fill the right column;
+/// `next_page_top` is the first line of the following page (== line_count when
+/// this is the last page).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ColumnSplit {
+    pub(crate) split: usize,
+    pub(crate) page_end: usize,
+    pub(crate) next_page_top: usize,
+}
+
 /// Find the last buffer line that fits within the viewport starting from
 /// `top`, matching the bottom clip calculation exactly. A line is included
 /// only if its full height fits in the remaining usable space (widget height
@@ -801,6 +815,9 @@ pub(crate) fn last_raw_visible_line(state: &AppState, top: usize) -> usize {
 /// lines as "seen". Trailing speaker names and blanks are trimmed so a
 /// dangling speaker at the bottom doesn't count as "visible" content.
 pub(crate) fn last_fully_visible_line(state: &AppState, top: usize) -> usize {
+    if state.column_count() == 2 {
+        return column_split(state, top).page_end;
+    }
     let widget_height = state.text_view.height();
     if widget_height <= 0 {
         return top;
@@ -815,6 +832,48 @@ pub(crate) fn last_fully_visible_line(state: &AppState, top: usize) -> usize {
     // dangling speaker at the BOTTOM of the new page.
     let trimmed = trim_visible_range(range, top, &state.text_view, &state.buffer, is_prose);
     trimmed.last_fit
+}
+
+/// GTK-bound two-column split: measures pixel heights per column against the
+/// left view (`state.text_view`) and right view (`state.right_view`), which
+/// share one buffer. Returns where the right column starts (`split`), where the
+/// page ends (`page_end`), and the next page top. Single-column callers should
+/// not use this.
+pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
+    let line_count = state.effective_line_count();
+    if line_count == 0 || page_top >= line_count {
+        return ColumnSplit { split: page_top, page_end: page_top, next_page_top: line_count };
+    }
+    let is_prose = state.is_prose();
+
+    // Left column.
+    let left_h = state.text_view.height();
+    let left = if left_h > 0 {
+        let guard = descender_guard_px(&state.text_view, page_top);
+        let usable = left_h - guard - BASE_BOTTOM_MARGIN;
+        let r = visible_range(&state.text_view, &state.buffer, page_top, line_count, usable);
+        trim_visible_range(r, page_top, &state.text_view, &state.buffer, is_prose)
+    } else {
+        // Layout not ready — degenerate single-line range so we don't panic.
+        visible_range(&state.text_view, &state.buffer, page_top, line_count, 1)
+    };
+    let split = (left.last_fit + 1).min(line_count);
+    if split >= line_count || left.count == 0 {
+        return ColumnSplit { split, page_end: left.last_fit, next_page_top: line_count };
+    }
+
+    // Right column (measure against the right view).
+    let right_h = state.right_view.height().max(left_h);
+    let right = if right_h > 0 {
+        let guard = descender_guard_px(&state.right_view, split);
+        let usable = right_h - guard - BASE_BOTTOM_MARGIN;
+        let r = visible_range(&state.right_view, &state.buffer, split, line_count, usable);
+        trim_visible_range(r, split, &state.right_view, &state.buffer, is_prose)
+    } else {
+        visible_range(&state.right_view, &state.buffer, split, line_count, 1)
+    };
+    let next_top = (right.last_fit + 1).min(line_count);
+    ColumnSplit { split, page_end: right.last_fit, next_page_top: next_top }
 }
 
 /// Result of stepping forward one page from `top`: the new page-top
@@ -988,6 +1047,10 @@ pub(crate) fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
     }
     if line < state.page_top_line {
         return false;
+    }
+    if state.column_count() == 2 {
+        let cs = column_split(state, state.page_top_line);
+        return line >= state.page_top_line && line <= cs.page_end;
     }
     // F4: fast path — consult the cache (raw range — every line genuinely
     // rendered on screen, no F9 trim applied because "is line N drawn?" is
@@ -1579,7 +1642,7 @@ mod block_atom_tests {
 #[cfg(test)]
 mod headless_pagination_tests {
     use crate::db::line_types;
-    use super::{VisibleRange, trim_block_atoms_pure};
+    use super::{ColumnSplit, VisibleRange, trim_block_atoms_pure};
 
     fn clean_text_file(path: &str) -> Vec<String> {
         let contents = std::fs::read_to_string(path).expect("failed to read text file");
@@ -1985,5 +2048,101 @@ mod headless_pagination_tests {
     #[test]
     fn chaucer_pagination_45lpp() {
         run_author_pagination("chaucer-geoffrey", 45);
+    }
+
+    /// Pure two-column split over a slice of line texts. `col_lines` is how many
+    /// lines fit in ONE column. Reuses `trim_visible_range_pure` so neither column
+    /// ends on a dangling speaker / stage direction / split stanza, matching the
+    /// single-column page-boundary rules.
+    fn column_split_pure(
+        lines: &[String],
+        page_top: usize,
+        col_lines: usize,
+        is_prose: bool,
+    ) -> ColumnSplit {
+        let line_count = lines.len();
+        if line_count == 0 || page_top >= line_count {
+            return ColumnSplit { split: page_top, page_end: page_top, next_page_top: line_count };
+        }
+        let left_raw = (page_top + col_lines - 1).min(line_count - 1);
+        let left_last = trim_visible_range_pure(lines, page_top, left_raw, is_prose);
+        let split = (left_last + 1).min(line_count);
+        if split >= line_count {
+            return ColumnSplit { split, page_end: left_last, next_page_top: line_count };
+        }
+        let right_raw = (split + col_lines - 1).min(line_count - 1);
+        let right_last = trim_visible_range_pure(lines, split, right_raw, is_prose);
+        let next_top = (right_last + 1).min(line_count);
+        ColumnSplit { split, page_end: right_last, next_page_top: next_top }
+    }
+
+    /// Like `column_split_pure` but, given a parallel `is_translation` slice, never
+    /// lets the left/right split fall between a source line and its immediately-
+    /// following translation line - the pair moves together to the right column.
+    fn column_split_pure_tr(
+        lines: &[String],
+        is_translation: &[bool],
+        page_top: usize,
+        col_lines: usize,
+        is_prose: bool,
+    ) -> ColumnSplit {
+        let mut cs = column_split_pure(lines, page_top, col_lines, is_prose);
+        // If the right column would START on a translation line, that translation's
+        // source is the last line of the left column - back the split up by one so
+        // the source moves with its translation.
+        while cs.split > page_top + 1
+            && is_translation.get(cs.split).copied().unwrap_or(false)
+        {
+            cs.split -= 1;
+        }
+        cs
+    }
+
+    fn col_lines(strs: &[&str]) -> Vec<String> {
+        strs.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn split_falls_after_left_column_capacity() {
+        // 10 dialogue lines, each column holds 3 -> left [0..2], right [3..5],
+        // next page starts at 6.
+        let l = col_lines(&["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]);
+        let split = column_split_pure(&l, 0, 3, true);
+        assert_eq!(split.split, 3, "right column starts at line 3");
+        assert_eq!(split.page_end, 5, "page ends at line 5 (right col last)");
+        assert_eq!(split.next_page_top, 6, "next page starts at line 6");
+    }
+
+    #[test]
+    fn split_clamps_at_end_of_text() {
+        // 4 lines, columns hold 3 -> left [0..2], right [3..3], end of text.
+        let l = col_lines(&["a", "b", "c", "d"]);
+        let split = column_split_pure(&l, 0, 3, true);
+        assert_eq!(split.split, 3);
+        assert_eq!(split.page_end, 3);
+        assert_eq!(split.next_page_top, 4); // == line_count -> at end
+    }
+
+    #[test]
+    fn left_column_does_not_end_on_dangling_speaker() {
+        // Capacity 3 but line 2 is a speaker -> left column trims to [0..1],
+        // the speaker moves to the right column with its dialogue.
+        let l = col_lines(&["First line.", "Second line.", "HAMLET", "To be.", "Or not.", "End."]);
+        let split = column_split_pure(&l, 0, 3, false);
+        assert_eq!(split.split, 2, "speaker pushed to right column");
+    }
+
+    #[test]
+    fn split_keeps_source_and_translation_together() {
+        // line 1 is the translation of line 0; line 3 translation of line 2.
+        // Capacity 3 would put split after line 2 (a source line) leaving its
+        // translation (line 3) orphaned at the right column top - so the split
+        // must back up to keep the pair together: split = 2 -> left [0..1],
+        // right starts at the source line 2 with its translation 3.
+        let l = col_lines(&["src0", "tr0", "src1", "tr1", "src2", "tr2"]);
+        let is_trans = vec![false, true, false, true, false, true];
+        let split = column_split_pure_tr(&l, &is_trans, 0, 3, false);
+        // left column ends on a translation line (1), not splitting pair (2,3)
+        assert_eq!(split.split, 2);
     }
 }

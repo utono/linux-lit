@@ -93,6 +93,12 @@ pub struct AppState {
     pub top_spacer: gtk4::Box,
     pub card_vbox: gtk4::Box,
     pub scrolled_window: ScrolledWindow,
+    pub right_view: View,
+    pub right_scrolled_window: ScrolledWindow,
+    pub right_scrolled_overlay: gtk4::Overlay,
+    pub right_bottom_clip: gtk4::Box,
+    pub columns_hbox: gtk4::Box,
+    pub right_line_number_renderer: Option<sourceview5::GutterRendererText>,
     pub content_hbox: gtk4::Box,
     pub vbox: gtk4::Box,
     pub window: ApplicationWindow,
@@ -306,6 +312,23 @@ impl AppState {
         }
     }
 
+    /// Number of e-reader columns for the CURRENT work: scroll mode → 1; else a
+    /// per-work override (if `Alt+[` set one) wins, otherwise the work-type
+    /// default (2 for a Shakespeare play, else 1). Clamped to 1..=2.
+    pub fn column_count(&self) -> u8 {
+        if !matches!(self.config.navigation_mode, crate::config::NavigationMode::EReader) {
+            return 1;
+        }
+        let Some(work) = self.current_work.as_ref() else {
+            return 1;
+        };
+        let n = self.config.column_overrides
+            .get(&work.abbrev)
+            .copied()
+            .unwrap_or_else(|| default_column_count_for(work));
+        n.clamp(1, 2)
+    }
+
     pub fn work_line_for_buffer(&self, buffer_line: usize) -> Option<usize> {
         if let Some(ref lm) = self.line_map {
             lm.buffer_to_work.get(buffer_line).copied().flatten()
@@ -390,6 +413,23 @@ pub const PROSE_LEFT_OFFSET: i32 = 120;
 
 /// Fixed height for the top spacer above the first text line.
 pub const TOP_SPACER_HEIGHT: i32 = 40;
+
+/// Pure default-column rule: a Shakespeare play gets two columns, everything
+/// else one. Split out from `default_column_count_for` so it is unit-testable
+/// without constructing a `Work`.
+pub(crate) fn default_column_count_for_parts(author: &str, work_type: &str) -> u8 {
+    if author == "Shakespeare" && work_type == "play" {
+        2
+    } else {
+        1
+    }
+}
+
+/// Default column count for a work: 2 for a Shakespeare play, else 1.
+pub(crate) fn default_column_count_for(work: &crate::db::models::Work) -> u8 {
+    default_column_count_for_parts(&work.author, &work.work_type)
+}
+
 pub fn verse_left_offset(window_width: i32, column_width: u32) -> i32 {
     let card_w = (column_width as i32).min(window_width.max(1));
     let slack = window_width - card_w;
@@ -673,6 +713,54 @@ pub fn build_window(
     bottom_clip.add_css_class("card-bottom");
     scrolled_overlay.add_overlay(&bottom_clip);
 
+    // RIGHT column view — shares the same buffer as the left view. Hidden
+    // until column_count == 2 (set in a later task's toggle).
+    let right_view = View::builder()
+        .buffer(&buffer)
+        .editable(false)
+        .cursor_visible(false)
+        .wrap_mode(WrapMode::Word)
+        .build();
+    right_view.set_show_line_numbers(false);
+    right_view.set_highlight_current_line(false);
+    right_view.set_pixels_above_lines(config.line_spacing as i32);
+    right_view.set_pixels_below_lines(config.line_spacing as i32);
+    right_view.set_left_margin(config.text_margins as i32);
+    right_view.set_right_margin(config.text_margins as i32 + crate::config::EXTRA_RIGHT_MARGIN);
+    right_view.set_top_margin(0);
+    right_view.set_bottom_margin(40);
+
+    let right_scrolled = ScrolledWindow::builder()
+        .child(&right_view)
+        .hscrollbar_policy(gtk4::PolicyType::Never)
+        .vscrollbar_policy(gtk4::PolicyType::External)
+        .vexpand(true)
+        .hexpand(true)
+        .valign(gtk4::Align::Fill)
+        .overflow(gtk4::Overflow::Hidden)
+        .build();
+    right_scrolled.add_css_class("card-bottom");
+
+    let right_scrolled_overlay = gtk4::Overlay::new();
+    right_scrolled_overlay.set_child(Some(&right_scrolled));
+    right_scrolled_overlay.set_vexpand(true);
+    right_scrolled_overlay.set_hexpand(true);
+
+    let right_bottom_clip = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    right_bottom_clip.set_valign(gtk4::Align::End);
+    right_bottom_clip.set_hexpand(true);
+    right_bottom_clip.set_height_request(0);
+    right_bottom_clip.add_css_class("card-bottom");
+    right_scrolled_overlay.add_overlay(&right_bottom_clip);
+
+    // Columns row: left | right. Right starts hidden (1-column default).
+    let columns_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    columns_hbox.set_vexpand(true);
+    columns_hbox.set_hexpand(true);
+    columns_hbox.append(&scrolled_overlay);
+    columns_hbox.append(&right_scrolled_overlay);
+    right_scrolled_overlay.set_visible(false);
+
     // Top spacer — one line height, rounded top corners only
     let top_spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
     top_spacer.set_hexpand(true);
@@ -684,7 +772,7 @@ pub fn build_window(
     let card_vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     card_vbox.set_vexpand(true);
     card_vbox.append(&top_spacer);
-    card_vbox.append(&scrolled_overlay);
+    card_vbox.append(&columns_hbox);
 
     // Page turn overlay — wraps the entire card for crossfade snapshots.
     // Snapshot is placed here as a sibling of card_vbox so fading card_vbox
@@ -943,6 +1031,12 @@ pub fn build_window(
         top_spacer,
         card_vbox,
         scrolled_window: scrolled,
+        right_view,
+        right_scrolled_window: right_scrolled,
+        right_scrolled_overlay,
+        right_bottom_clip,
+        columns_hbox,
+        right_line_number_renderer: None,
         content_hbox: content_hbox.clone(),
         vbox: vbox.clone(),
         window: window.clone(),
@@ -1803,6 +1897,17 @@ pub fn display_work_at_with_prepared(
     };
     state.text_view.set_pixels_above_lines(ls);
     state.text_view.set_pixels_below_lines(ls);
+    // Keep the right column's line spacing in sync with the left (both views
+    // share the buffer but have independent pixels_above/below settings).
+    state.right_view.set_pixels_above_lines(ls);
+    state.right_view.set_pixels_below_lines(ls);
+    // Show or hide the right column to match this work's resolved column count
+    // (Shakespeare plays default to two columns; a per-work Alt+[ override wins).
+    let two_col = state.column_count() == 2;
+    state.right_scrolled_overlay.set_visible(two_col);
+    if !two_col {
+        state.right_bottom_clip.set_height_request(0);
+    }
     state.translations_visible = false;
     state.translation_lines = Vec::new();
     // Load translations for this work
@@ -1912,6 +2017,9 @@ pub fn display_work_at_with_prepared(
         let right_margin = state.config.text_margins as i32 + crate::config::EXTRA_RIGHT_MARGIN;
         state.text_view.set_right_margin(right_margin);
     }
+    if let Some(old_renderer) = state.right_line_number_renderer.take() {
+        crate::gutter::remove_line_number_renderer(&state.right_view, &old_renderer);
+    }
 
     // Populate is_bookmarked eagerly so `'` / `"` bookmark navigation works
     // before the sign column has ever been toggled. setup_gutter() will
@@ -1976,6 +2084,15 @@ pub fn display_work_at_with_prepared(
             );
             state.text_view.set_right_margin(48);
             state.line_number_renderer = Some(renderer);
+            let right_renderer = crate::gutter::setup_line_number_gutter(
+                &state.right_view,
+                state.line_numbers.clone(),
+                &state.theme.dim_fg,
+                &state.config.font_family,
+                state.config.font_size,
+            );
+            state.right_view.set_right_margin(48);
+            state.right_line_number_renderer = Some(right_renderer);
         }
     }
 
@@ -3133,6 +3250,9 @@ fn rebuild_line_number_gutter(state: &mut AppState) {
     if let Some(old) = state.line_number_renderer.take() {
         crate::gutter::remove_line_number_renderer(&state.text_view, &old);
     }
+    if let Some(old) = state.right_line_number_renderer.take() {
+        crate::gutter::remove_line_number_renderer(&state.right_view, &old);
+    }
     let is_prose = state.current_work.as_ref()
         .map(|w| crate::db::line_types::is_prose_work(&w.work_type))
         .unwrap_or(true);
@@ -3176,6 +3296,15 @@ fn rebuild_line_number_gutter(state: &mut AppState) {
         );
         state.text_view.set_right_margin(48);
         state.line_number_renderer = Some(renderer);
+        let right_renderer = crate::gutter::setup_line_number_gutter(
+            &state.right_view,
+            state.line_numbers.clone(),
+            &state.theme.dim_fg,
+            &state.config.font_family,
+            state.config.font_size,
+        );
+        state.right_view.set_right_margin(48);
+        state.right_line_number_renderer = Some(right_renderer);
     }
 }
 
@@ -3806,5 +3935,25 @@ pub fn update_title_bar_scene(state: &AppState) {
         state.title_bar_scene_label.set_text(&label);
     } else {
         state.title_bar_scene_label.set_text("");
+    }
+}
+
+#[cfg(test)]
+mod column_default_tests {
+    use super::default_column_count_for_parts;
+
+    #[test]
+    fn shakespeare_play_defaults_to_two() {
+        assert_eq!(default_column_count_for_parts("Shakespeare", "play"), 2);
+    }
+    #[test]
+    fn shakespeare_poem_defaults_to_one() {
+        assert_eq!(default_column_count_for_parts("Shakespeare", "poem"), 1);
+        assert_eq!(default_column_count_for_parts("Shakespeare", "sonnet_sequence"), 1);
+        assert_eq!(default_column_count_for_parts("Shakespeare", "narrative_poem"), 1);
+    }
+    #[test]
+    fn non_shakespeare_play_defaults_to_one() {
+        assert_eq!(default_column_count_for_parts("Marlowe", "play"), 1);
     }
 }

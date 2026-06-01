@@ -52,6 +52,8 @@ pub struct Config {
     #[serde(default)]
     pub work_positions: HashMap<String, usize>,
     #[serde(default)]
+    pub column_overrides: HashMap<String, u8>,
+    #[serde(default)]
     pub visual_mode_commands: Vec<VisualModeCommand>,
     #[serde(default = "default_claude_model")]
     pub claude_model: String,
@@ -147,6 +149,7 @@ impl Default for Config {
             previous_work: default_previous_work(),
             recent_works: Vec::new(),
             work_positions: HashMap::new(),
+            column_overrides: HashMap::new(),
             visual_mode_commands: Vec::new(),
             claude_model: default_claude_model(),
             vocab_highlight_visible: default_vocab_highlight_visible(),

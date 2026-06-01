@@ -97,19 +97,38 @@ to today's behavior.
 Backward turn: pop `page_back_stack` (already stores prior `L` values). No new
 math required.
 
-### Alt+[ toggle
+### Per-work column layout + Alt+[ toggle
 
-- New `Action::ToggleColumnLayout`.
-- New persisted config field `column_count: 1 | 2`.
-- Bound to **`Alt+bracketleft`** — verified free today (plain `bracketleft` =
-  `JumpToPrevChapter`, unaffected by adding the Alt-modified variant).
-- Per the keybind-override rule, the binding is added to **both**
-  `src/input/keymap_config.rs` (compiled default) **and**
-  `~/tty-dotfiles/linux-lit/.config/linux-lit/keymap.json` (stow source),
-  or the JSON silently overrides the compiled default.
-- On toggle: flip `column_count`, show/hide `right_scrolled`, recompute the
-  page from the current `page_top_line`, and keep `current_line` visible.
-  No-op in scroll mode.
+Column count is a **per-work** property, not a single global setting:
+
+- **Default by work type:** a Shakespeare play (`work.author == "Shakespeare"`
+  && `work.work_type == "play"`) defaults to **2 columns**; every other work
+  defaults to **1 column**.
+- **Per-work override:** `Alt+[` records the chosen count for the current work,
+  keyed by `work.abbrev`, in a persisted `HashMap<String, u8>` on `Config`
+  (mirrors the existing `work_positions: HashMap<String, usize>` pattern). An
+  override, once set, wins over the work-type default and survives restart.
+- **Resolution** (`AppState::column_count()`): in scroll mode → 1; in e-reader
+  mode → `config.column_overrides.get(&abbrev)` if present, else the work-type
+  default (2 for a Shakespeare play, else 1), clamped to `1..=2`.
+
+Implementation:
+
+- New `Action::ToggleColumnLayout`, bound to **`Alt+bracketleft`** — verified
+  free (plain `bracketleft` = `JumpToPrevChapter`, unaffected). Added to **both**
+  `src/input/keymap_config.rs` and
+  `~/tty-dotfiles/linux-lit/.config/linux-lit/keymap.json` per the override rule.
+- New persisted `Config` field `column_overrides: HashMap<String, u8>`
+  (`#[serde(default)]`). The earlier single `column_count: u8` field is removed.
+- A helper `default_column_count_for(work) -> u8` returns 2 for a Shakespeare
+  play, else 1.
+- On toggle: compute the work's currently-effective count, flip it (1↔2), store
+  the result in `column_overrides[abbrev]`, persist, show/hide `right_scrolled`,
+  recompute the page from `page_top_line`, keep `current_line` visible,
+  invalidate the page-tops cache. No-op in scroll mode or with no current work.
+- On work load: nothing special to set — `column_count()` resolves the default
+  (or override) live, and the initial display must render the resolved count
+  (right column shown/hidden to match).
 
 ### Translations toggle (`i`)
 
@@ -267,8 +286,9 @@ set `cursor_line` to `0` / `line_count-1` and rely on the same page recompute.
 - A second `GutterRendererText` for `right_view`.
 - Page-turn animation snapshot targets `columns_hbox` (capture currently targets
   `card_vbox`; extends cleanly).
-- New `Action::ToggleColumnLayout`, `config.column_count`, and keymap entries in
-  both files.
+- New `Action::ToggleColumnLayout`, `config.column_overrides: HashMap<String,
+  u8>` (per-work, replacing a single global value), a
+  `default_column_count_for(work)` helper, and keymap entries in both files.
 
 ## Testing
 
@@ -277,8 +297,14 @@ set `cursor_line` to `0` / `line_count-1` and rely on the same page recompute.
 - Add two-column coverage: forward/backward paging produces no gaps, repeats, or
   non-dialogue highlights; the right column starts exactly where the left ends;
   `next page_top = E+1`.
-- Toggle test: `Alt+[` flips layout, keeps `current_line` visible, is a no-op in
-  scroll mode, and persists across restart.
+- Per-work default test: `default_column_count_for` returns 2 for a Shakespeare
+  play (`author == "Shakespeare"`, `work_type == "play"`) and 1 for a Shakespeare
+  poem/sonnet and for non-Shakespeare works. `column_count()` returns the
+  override when one is stored for the abbrev, else the default; returns 1 in
+  scroll mode regardless.
+- Toggle test: `Alt+[` flips the current work's effective count, stores a
+  per-work override keyed by abbrev, keeps `current_line` visible, is a no-op in
+  scroll mode, and the override persists across restart.
 - MPV sync: highlight and page turns land in the correct column.
 - Translations toggle: with `i` on, columns fit fewer source lines and the
   split recomputes; the left/right split never falls between a source line and

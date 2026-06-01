@@ -268,7 +268,7 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::alt("backslash"), Action::ToggleVocabHighlight),
         (KeyCombo::plain("ISO_Left_Tab"), Action::ToggleGlossOverlay),
         (KeyCombo::ctrl("g"), Action::ToggleGlossOverlay),
-        (KeyCombo::plain("i"), Action::ShowEchoes),
+        (KeyCombo::plain("i"), Action::ToggleTranslations),
         (KeyCombo::plain("I"), Action::ReopenEchoes),
         (KeyCombo::plain("apostrophe"), Action::ReopenEchoes),
         (KeyCombo::ctrl("backslash"), Action::OpenConcordancePicker),
@@ -290,11 +290,12 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("l"), Action::ToggleSignColumn),
         (KeyCombo::plain("minus"), Action::TogglePreviousWork),
         (KeyCombo::alt("d"), Action::ToggleDim),
+        (KeyCombo::alt("bracketleft"), Action::ToggleColumnLayout),
         (KeyCombo::alt("t"), Action::ToggleTitleBar),
         (KeyCombo::ctrl("a"), Action::ToggleAuthorship),
         (KeyCombo::ctrl_shift("A"), Action::PickAttributionSet),
         (KeyCombo::alt("f"), Action::ShowFontInfo),
-        (KeyCombo::alt("i"), Action::ToggleTranslations),
+        (KeyCombo::alt("i"), Action::ShowEchoes),
         (KeyCombo::ctrl("h"), Action::ToggleSynopsis),
         (KeyCombo::ctrl("comma"), Action::OpenSettingsOverlay),
     ]
@@ -370,6 +371,19 @@ mod tests {
         let km = Keymap::default();
         assert_eq!(km.lookup("x", false, false, false), Some(Action::PageForward));
         assert_eq!(km.lookup("f", true, false, false), Some(Action::PageForward));
+    }
+
+    #[test]
+    fn alt_bracketleft_is_toggle_column_layout() {
+        let km = Keymap::default();
+        assert_eq!(
+            km.lookup("bracketleft", false, false, true),
+            Some(Action::ToggleColumnLayout),
+        );
+        assert_eq!(
+            km.lookup("bracketleft", false, false, false),
+            Some(Action::JumpToPrevChapter),
+        );
     }
 
     #[test]

@@ -430,8 +430,13 @@ git commit -m "viewport: add pure column_split kernel + unit tests"
 - [ ] **Step 1: Write the failing test**
 
 A translation line follows its source line. The split must not fall between
-them. In the column-split test mod, add a test. Translation lines in the pure
-model are marked by a parallel `&[bool]`; extend the pure fn to accept it.
+them. NOTE (from Task 4): `column_split_pure` lives inside the
+`#[cfg(test)] mod headless_pagination_tests` (because it calls the test-gated
+`trim_visible_range_pure`), and the Task 4 split tests were added to that same
+mod, not a standalone `column_split_tests` mod. Add this test and
+`column_split_pure_tr` to the SAME `headless_pagination_tests` mod. Translation
+lines in the pure model are marked by a parallel `&[bool]`; the new fn accepts
+it. Run tests with `cargo test --bin linux-lit` (binary crate, no `--lib`).
 
 ```rust
     #[test]
@@ -954,8 +959,17 @@ paths.)
 
 - [ ] **Step 2: Dispatch the action**
 
-In `src/input/keymap.rs` `dispatch_action` (the big `match action { ... }`),
-add an arm next to the other navigation/display toggles:
+In `src/input/keymap.rs` `dispatch_action`, a no-op placeholder arm for
+`ToggleColumnLayout` ALREADY EXISTS (added in Task 2 to keep the exhaustive
+match compiling):
+
+```rust
+        ToggleColumnLayout => {
+            // TODO: Task 11 - implement column layout toggle
+        }
+```
+
+REPLACE that placeholder body (do NOT add a second arm) with the real call:
 
 ```rust
         ToggleColumnLayout => crate::input::navigation::toggle_column_layout(&mut state.borrow_mut()),
@@ -1069,10 +1083,16 @@ git commit -m "nav: anchor G (jump_to_end) to a full two-column final page"
 
 - [ ] **Step 1: Run all unit tests**
 
-Run: `cargo test`
-Expected: PASS, including the existing pagination tests (single-column behavior
-unchanged because `column_count()` returns 1 by default) and the new
-`column_split_tests` / `column_layout_action_tests` / the keymap test.
+Run: `cargo test --bin linux-lit` (binary crate — there is no lib target, so
+`--lib` fails)
+Expected: the new `column_split` tests, `column_layout_action_tests`, and the
+keymap test PASS, and single-column behavior is unchanged (`column_count()`
+returns 1 by default). KNOWN PRE-EXISTING FAILURES (verified present on `master`
+before any two-column work — NOT regressions from this feature): two tests in
+`block_atom_tests` — `block_start_stops_at_blank` and
+`block_start_in_verse_stanza_bounded_above_by_stage_direction`. Confirm the
+pass/fail count matches the baseline (these 2 fail, everything else passes); do
+not attempt to fix them as part of this feature.
 
 - [ ] **Step 2: Run clippy clean**
 
@@ -1122,4 +1142,9 @@ git commit -m "two-column layout: test + clippy cleanup"
   source+translation atom rule is covered by the pure-kernel Task 5; if the
   GTK split needs the same protection in practice (translation orphaned at right
   column top), add the same back-up loop to `column_split` using
-  `state.translation_lines` — deferred unless manual testing shows it.
+  `state.translation_lines` — deferred unless manual testing shows it. NOTE
+  (flagged during Task 5): the pure `column_split_pure_tr` only adjusts `split`,
+  not `page_end`/`next_page_top`. If the GTK `column_split` ports this rule, it
+  should RECOMPUTE the right column (`page_end`, `next_page_top`) from the
+  backed-up `split`, since the right column now starts one line earlier and its
+  capacity shifts.

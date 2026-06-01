@@ -114,6 +114,7 @@ pub enum Action {
     CycleFontForward,
     CycleFontBackward,
     ToggleSignColumn,
+    ToggleColumnLayout,
     TogglePreviousWork,
     ToggleDim,
     ToggleTitleBar,
@@ -210,6 +211,7 @@ impl Action {
             | Action::CycleFontForward
             | Action::CycleFontBackward
             | Action::ToggleSignColumn
+            | Action::ToggleColumnLayout
             | Action::ToggleDim
             | Action::ToggleTitleBar
             | Action::ToggleAuthorship
@@ -321,6 +323,7 @@ impl Action {
             Action::CycleFontForward => "CycleFontForward",
             Action::CycleFontBackward => "CycleFontBackward",
             Action::ToggleSignColumn => "ToggleSignColumn",
+            Action::ToggleColumnLayout => "ToggleColumnLayout",
             Action::TogglePreviousWork => "TogglePreviousWork",
             Action::ToggleDim => "ToggleDim",
             Action::ToggleTitleBar => "ToggleTitleBar",
@@ -392,5 +395,14 @@ mod tests {
         assert_eq!(Action::JumpToNextChapter.name(), "JumpToNextChapter");
         assert_eq!(Action::TogglePlayback.name(), "TogglePlayback");
         assert_eq!(Action::SaveAndQuit.name(), "SaveAndQuit");
+    }
+
+    #[test]
+    fn toggle_column_layout_serde_roundtrip() {
+        let json = "\"ToggleColumnLayout\"";
+        let action: Action = serde_json::from_str(json).expect("parse");
+        assert_eq!(action, Action::ToggleColumnLayout);
+        assert_eq!(action.name(), "ToggleColumnLayout");
+        assert_eq!(action.category(), Category::Display);
     }
 }
