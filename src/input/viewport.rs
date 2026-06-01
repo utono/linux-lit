@@ -812,6 +812,9 @@ pub(crate) struct ColumnSplit {
 /// lines as "seen". Trailing speaker names and blanks are trimmed so a
 /// dangling speaker at the bottom doesn't count as "visible" content.
 pub(crate) fn last_fully_visible_line(state: &AppState, top: usize) -> usize {
+    if state.column_count() == 2 {
+        return column_split(state, top).page_end;
+    }
     let widget_height = state.text_view.height();
     if widget_height <= 0 {
         return top;
@@ -1041,6 +1044,10 @@ pub(crate) fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
     }
     if line < state.page_top_line {
         return false;
+    }
+    if state.column_count() == 2 {
+        let cs = column_split(state, state.page_top_line);
+        return line >= state.page_top_line && line <= cs.page_end;
     }
     // F4: fast path — consult the cache (raw range — every line genuinely
     // rendered on screen, no F9 trim applied because "is line N drawn?" is
