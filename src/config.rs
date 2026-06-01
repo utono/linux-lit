@@ -39,8 +39,6 @@ pub struct Config {
     pub column_width: u32,
     #[serde(default = "default_text_margins")]
     pub text_margins: u32,
-    #[serde(default = "default_column_count")]
-    pub column_count: u8,
     #[serde(default)]
     pub navigation_mode: NavigationMode,
     #[serde(default)]
@@ -53,6 +51,8 @@ pub struct Config {
     pub recent_works: Vec<String>,
     #[serde(default)]
     pub work_positions: HashMap<String, usize>,
+    #[serde(default)]
+    pub column_overrides: HashMap<String, u8>,
     #[serde(default)]
     pub visual_mode_commands: Vec<VisualModeCommand>,
     #[serde(default = "default_claude_model")]
@@ -107,10 +107,6 @@ fn default_text_margins() -> u32 {
     DEFAULT_TEXT_MARGINS
 }
 
-fn default_column_count() -> u8 {
-    1
-}
-
 fn default_claude_model() -> String {
     "claude-opus-4-7".to_string()
 }
@@ -147,13 +143,13 @@ impl Default for Config {
             line_spacing: default_line_spacing(),
             column_width: default_column_width(),
             text_margins: default_text_margins(),
-            column_count: default_column_count(),
             navigation_mode: NavigationMode::default(),
             transition_style: TransitionStyle::default(),
             last_work: None,
             previous_work: default_previous_work(),
             recent_works: Vec::new(),
             work_positions: HashMap::new(),
+            column_overrides: HashMap::new(),
             visual_mode_commands: Vec::new(),
             claude_model: default_claude_model(),
             vocab_highlight_visible: default_vocab_highlight_visible(),
