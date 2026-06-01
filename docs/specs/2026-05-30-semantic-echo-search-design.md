@@ -183,9 +183,23 @@ warning).
 
 ## Sentiment/Affect Re-Rank Axis (2026-05-31)
 
-**Status:** implemented, shipped disabled (`echo_affect_weight` defaults to
-`0.0`). Optional second ranking axis layered on top of the existing semantic
-cosine ranking. Activate via the `set-echo-affect-weight` skill.
+**Status:** implemented, evaluated, and shipped **disabled** (`echo_affect_weight`
+defaults to `0.0`). Optional second ranking axis layered on top of the existing
+semantic cosine ranking.
+
+**Evaluation outcome (2026-05-31):** Tested at `w = 0.20` and `0.25` against the
+Shakespeare corpus. The axis functions correctly, but the NRC-VAD affect signal
+is too low-dimensional and uniform to improve echo quality: across the ~56k
+embedded candidates the affect cosine spans only `[0.758, 1.000]` (spread 0.242),
+so a `w·affect` term shifts nearly every candidate by almost the same amount and
+can only break near-ties, never meaningfully reorder. Raising `w` further would
+let that noisy, clustered signal override the semantic ranking the feature relies
+on. **Conclusion: keep it off (`w = 0.0`).** The implementation and the
+`sentiment` column remain in place as inert infrastructure should a stronger
+affect model (e.g. a learned multi-dimensional sentiment embedding) replace
+NRC-VAD later. The `set-echo-affect-weight` skill was removed since the axis is
+not recommended for use; the weight can still be set manually via
+`echo_affect_weight` in `~/.config/linux-lit/config{,-dev}.json`.
 
 ### As-built notes
 
