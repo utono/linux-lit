@@ -87,7 +87,7 @@ pub const FONT_CYCLE: &[&str] = &[
 ];
 
 pub fn default_font_size() -> u32 {
-    20
+    16
 }
 
 pub const DEFAULT_LINE_SPACING: u32 = 5;
@@ -190,8 +190,10 @@ pub fn load() -> Config {
         Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
         Err(_) => Config::default(),
     };
-    // Always start at the default font size regardless of saved value
-    config.font_size = default_font_size();
+    // Honor the saved font size across restarts (in-app !/| adjustments
+    // persist). Clamp to a sane range so a malformed config can't render the
+    // text unreadable or zero-height.
+    config.font_size = config.font_size.clamp(8, 48);
     config.column_width = default_column_width();
     config.text_margins = default_text_margins();
     config.show_cursor_line = true;

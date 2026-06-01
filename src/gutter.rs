@@ -197,11 +197,11 @@ pub const LINE_NUMBER_MARGIN_END: i32 = 48;
 /// `MARGIN_END_TWO_COL` is the padding between the number and the card/column
 /// edge; the gap between the dialogue text and the number is the view's right
 /// margin, set separately (smaller) so the number reads as part of that line.
-pub const LINE_NUMBER_WIDTH_TWO_COL: i32 = 36;
-pub const LINE_NUMBER_MARGIN_END_TWO_COL: i32 = 28;
+pub const LINE_NUMBER_WIDTH_TWO_COL: i32 = 32;
+pub const LINE_NUMBER_MARGIN_END_TWO_COL: i32 = 10;
 /// Gap between the last char of a dialogue line and its line number in
 /// two-column mode (the text view's right margin when the number gutter is on).
-pub const LINE_NUMBER_TEXT_GAP_TWO_COL: i32 = 6;
+pub const LINE_NUMBER_TEXT_GAP_TWO_COL: i32 = 2;
 
 pub fn setup_line_number_gutter(
     view: &View,

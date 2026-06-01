@@ -429,7 +429,7 @@ pub const TWO_COLUMN_LEFT_OFFSET: i32 = 30;
 /// two-column halves it because each column is too narrow to spend 60px on
 /// indentation without wrapping verse lines.
 pub const DIALOGUE_INDENT: i32 = 60;
-pub const TWO_COLUMN_DIALOGUE_INDENT: i32 = 30;
+pub const TWO_COLUMN_DIALOGUE_INDENT: i32 = 20;
 
 /// Fixed height for the top spacer above the first text line.
 pub const TOP_SPACER_HEIGHT: i32 = 40;
@@ -554,16 +554,26 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
         }
     }
 
-    let logical_right = state.config.text_margins as i32
-        + crate::config::EXTRA_RIGHT_MARGIN;
-    state.text_view.set_right_margin(logical_right);
+    // Right margin = gap between the text and its line number. In two-column
+    // mode this must stay the tight line-number gap (set by the gutter setup),
+    // NOT the wide single-column EXTRA_RIGHT_MARGIN — otherwise the left
+    // column loses ~90px of text width and verse lines wrap. The right view's
+    // margin is set in the gutter setup and never touched here, so without
+    // this guard the two columns would also be asymmetric (left narrower).
+    if !two_col {
+        let logical_right = state.config.text_margins as i32
+            + crate::config::EXTRA_RIGHT_MARGIN;
+        state.text_view.set_right_margin(logical_right);
+    } else {
+        state.text_view.set_right_margin(crate::gutter::LINE_NUMBER_TEXT_GAP_TWO_COL);
+    }
 
     state.top_spacer.set_height_request(TOP_SPACER_HEIGHT);
 }
 
 /// Fraction of the window width the two-column card aims to fill (minus the
 /// outer margins). One-column works keep their fixed `column_width`.
-pub const TWO_COLUMN_WIDTH_FRACTION: f32 = 0.94;
+pub const TWO_COLUMN_WIDTH_FRACTION: f32 = 0.80;
 
 /// Target card width before clamping to the window.
 ///
@@ -2225,9 +2235,9 @@ pub fn display_work_at_with_prepared(
         }
     }
 
-    state.config.font_size = 18;
-
-    // Apply font tag to new buffer content
+    // Apply font tag to new buffer content (uses the configured/saved size —
+    // do NOT override it here, or in-app !/| adjustments won't stick and the
+    // saved size won't survive a work load).
     let t6 = std::time::Instant::now();
     reapply_font(state);
     crate::logging::log(&format!("TIMING: reapply_font {:.0}ms", t6.elapsed().as_millis()));
@@ -4132,13 +4142,13 @@ mod card_width_tests {
 
     #[test]
     fn two_columns_fill_fraction_of_wide_window() {
-        // 94% of 1920 = 1804, wider than the 1050 floor.
-        assert_eq!(target_card_width(1920, 1050, 2), 1804);
+        // 80% of 1920 = 1536, wider than the 1050 floor.
+        assert_eq!(target_card_width(1920, 1050, 2), 1536);
     }
 
     #[test]
     fn two_columns_never_below_single_column_floor() {
-        // 94% of 1000 = 940, below the 1050 floor → clamp up to 1050.
-        assert_eq!(target_card_width(1000, 1050, 2), 1050);
+        // 80% of 1300 = 1040, below the 1050 floor → clamp up to 1050.
+        assert_eq!(target_card_width(1300, 1050, 2), 1050);
     }
 }
