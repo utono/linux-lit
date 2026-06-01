@@ -332,7 +332,7 @@ fn app_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl_shift("M"), Action::OpenMediaPicker),
         (KeyCombo::ctrl("slash"), Action::OpenKeybindsOverlay),
         (KeyCombo::plain("slash"), Action::OpenSearch),
-        (KeyCombo::ctrl_alt("l"), Action::SaveAndQuit),
+        (KeyCombo::ctrl_shift("L"), Action::SaveAndQuit),
         (KeyCombo::ctrl("y"), Action::CopyLineMappingId),
         (KeyCombo::plain("n"), Action::SearchNextMatch),
         (KeyCombo::plain("N"), Action::SearchPrevMatch),
@@ -359,7 +359,7 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::plain("k")), Some(&Action::CursorPrevLine));
         assert_eq!(m.get(&KeyCombo::ctrl("f")), Some(&Action::PageForward));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("M")), Some(&Action::OpenMediaPicker));
-        assert_eq!(m.get(&KeyCombo::ctrl_alt("l")), Some(&Action::SaveAndQuit));
+        assert_eq!(m.get(&KeyCombo::ctrl_shift("L")), Some(&Action::SaveAndQuit));
         assert_eq!(m.get(&KeyCombo::ctrl("a")), Some(&Action::ToggleAuthorship));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("A")), Some(&Action::PickAttributionSet));
     }

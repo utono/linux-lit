@@ -45,10 +45,10 @@ pub fn handle_key(
 ) -> bool {
     crate::logging::log(&format!("KEY: name={} ctrl={} shift={} alt={}", key_name, is_ctrl, is_shift, is_alt));
 
-    // Shift+Alt+L: quit from any mode. GTK delivers the shifted letter as the
+    // Shift+Ctrl+L: quit from any mode. GTK delivers the shifted letter as the
     // uppercase name "L" (with shift=true), so match that; also accept "l" for
     // layouts that report the unshifted name.
-    if is_shift && is_alt && (key_name == "L" || key_name == "l") {
+    if is_shift && is_ctrl && (key_name == "L" || key_name == "l") {
         crate::app::save_position(&mut state.borrow_mut());
         let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::Quit);
         state.borrow().window.close();
