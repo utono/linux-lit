@@ -111,6 +111,31 @@ math required.
   page from the current `page_top_line`, and keep `current_line` visible.
   No-op in scroll mode.
 
+### Whole-page turns (`x` / `y`)
+
+`x` = `PageForward` and `y` = `PageBackward` turn a whole **two-column** page at
+a time. Today `next_page_top` derives the next page boundary from
+`last_fully_visible_line(top)`, which measures a single column's worth of lines.
+The only change: in two-column mode the "last visible line of the page" is the
+**right column's end** `E` (from `column_split`), not the single column's
+`last_fit` (`S-1`).
+
+- **`x` (PageForward):** the next page's left column begins at the line after
+  the current page's right column ends — i.e. the next dialogue at/after `E+1`,
+  with the existing `back_up_for_speaker` adjustment. `page_top_line` is pushed
+  to `page_back_stack` as today. `page_forward`, the back-stack, and the
+  end-of-work guard are otherwise unchanged because they consume "last visible
+  line of the page" abstractly.
+- **`y` (PageBackward):** pops `page_back_stack` (already stores prior page-top
+  `L` values) and turns back to that exact page — unchanged. When the stack is
+  empty, the `prev_page_top` fallback must step back by a **two-column** worth of
+  lines, not one column (it shares the same `last_fully_visible_line` ➝ two-
+  column measurement change).
+
+Implementation hook: make `last_fully_visible_line` (or a two-column wrapper it
+delegates to) return `E` when `column_count == 2`. Both `next_page_top` and
+`prev_page_top` flow from there with no further edits.
+
 ### Navigation jumps (dialogue / scene / chapter)
 
 All content-navigation jumps are column-aware in the same way: the jump
@@ -181,6 +206,9 @@ set `cursor_line` to `0` / `line_count-1` and rely on the same page recompute.
 - `set_page` / `snap_scroll_to_line`: scroll N views and compute the split.
 - `update_bottom_clip`: clip both columns (left at `split`, right at page end).
 - `is_line_on_screen` / `is_line_fully_visible`: span both columns.
+- `last_fully_visible_line`: returns the right column's end `E` in two-column
+  mode, so `next_page_top` / `prev_page_top` (and thus `x` / `y`) turn a full
+  two-column page.
 - New helpers: `column_split(state)` (steps 1–5) and `which_column(state, line)`.
 - A second `GutterRendererText` for `right_view`.
 - Page-turn animation snapshot targets `columns_hbox` (capture currently targets
@@ -198,6 +226,10 @@ set `cursor_line` to `0` / `line_count-1` and rely on the same page recompute.
 - Toggle test: `Alt+[` flips layout, keeps `current_line` visible, is a no-op in
   scroll mode, and persists across restart.
 - MPV sync: highlight and page turns land in the correct column.
+- Whole-page turns: `x` from a page showing `L..E` lands the next page's left
+  column at the next dialogue after `E`; `y` returns to exactly `L` (stack pop)
+  or steps back one two-column page (empty stack). Forward then backward returns
+  to the original page.
 - Navigation jumps: with a two-column page showing lines `L..E`, a
   next-dialogue/scene/chapter jump whose target lies in `L..E` moves the cursor
   without a page turn; a target past `E` page-turns forward; a target above `L`
