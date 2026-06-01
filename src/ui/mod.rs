@@ -9,6 +9,7 @@ pub mod gloss_overlay;
 pub mod gloss_picker;
 pub mod echo_picker;
 pub mod echo_line_picker;
+pub mod echo_turns_picker;
 pub mod echo_keybinds_overlay;
 pub mod vocab_popup;
 pub mod gamepad_overlay;
