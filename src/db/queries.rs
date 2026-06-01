@@ -1062,6 +1062,46 @@ pub struct StoredEchoLink {
     pub rank: i64,
 }
 
+/// A turn in a work that has at least one echo link. Used by the
+/// echo-turns picker (Ctrl+Shift+G) to list all annotated turns.
+#[derive(Debug, Clone)]
+pub struct EchoTurnSummary {
+    pub turn_id: i64,
+    pub div1: i64,
+    pub div2: i64,
+    pub start_line: i64, // line_in_div of the turn's first line
+    pub speaker: String,
+    pub turn_text: String,
+}
+
+/// List every turn in `work_abbrev` that has >= 1 echo link, in reading
+/// order (div1, div2, start_line). The JOIN + GROUP BY guarantees only
+/// turns with links appear.
+pub fn list_echo_turns_for_work(
+    conn: &Connection,
+    work_abbrev: &str,
+) -> Result<Vec<EchoTurnSummary>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.div1, t.div2, t.start_line, t.speaker, t.turn_text \
+         FROM echo_turns t \
+         JOIN echo_links l ON l.turn_id = t.id \
+         WHERE t.work_abbrev = ?1 \
+         GROUP BY t.id \
+         ORDER BY t.div1, t.div2, t.start_line",
+    )?;
+    let rows = stmt.query_map([work_abbrev], |row| {
+        Ok(EchoTurnSummary {
+            turn_id: row.get(0)?,
+            div1: row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+            div2: row.get::<_, Option<i64>>(2)?.unwrap_or(0),
+            start_line: row.get(3)?,
+            speaker: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+            turn_text: row.get(5)?,
+        })
+    })?;
+    rows.collect()
+}
+
 /// Create the echo_turns and echo_links tables if absent.
 pub fn ensure_echo_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
@@ -1382,6 +1422,48 @@ mod tests {
             "SELECT curated, rank FROM echo_links WHERE echo_text = 'noncurated'", [],
             |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
         assert_eq!(nc, (0, 0));
+    }
+
+    #[test]
+    fn list_echo_turns_for_work_returns_only_linked_turns_in_reading_order() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE echo_turns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, work_abbrev TEXT NOT NULL,
+                div1 INTEGER, div2 INTEGER, start_line INTEGER NOT NULL,
+                end_line INTEGER NOT NULL, speaker TEXT, turn_text TEXT NOT NULL
+             );
+             CREATE TABLE echo_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, turn_id INTEGER NOT NULL,
+                echo_work_abbrev TEXT, echo_div1 INTEGER, echo_div2 INTEGER,
+                echo_text TEXT, similarity REAL, curated INTEGER, rank INTEGER,
+                echo_start_line INTEGER
+             );
+             -- Two Hamlet turns with links, one without; one turn in another work.
+             INSERT INTO echo_turns (id, work_abbrev, div1, div2, start_line, end_line, speaker, turn_text)
+                VALUES
+                (1, 'Ham', 3, 1, 56, 60, 'HAMLET', 'To be or not to be'),
+                (2, 'Ham', 1, 2, 10, 12, 'HAMLET', 'O that this too too'),
+                (3, 'Ham', 5, 1, 1, 2, 'GHOST', 'no links here'),
+                (4, 'Mac', 1, 1, 1, 2, 'MACBETH', 'is this a dagger');
+             INSERT INTO echo_links (turn_id, echo_work_abbrev, echo_text, curated, rank)
+                VALUES
+                (1, 'Mac', 'echo a', 0, 0),
+                (1, 'Lr', 'echo b', 1, 1),
+                (2, 'Mac', 'echo c', 0, 0),
+                (4, 'Ham', 'echo d', 0, 0);",
+        ).unwrap();
+
+        let rows = list_echo_turns_for_work(&conn, "Ham").unwrap();
+        // Turn 3 (no links) and turn 4 (other work) excluded.
+        let ids: Vec<i64> = rows.iter().map(|r| r.turn_id).collect();
+        // Reading order: (1,2,10) before (3,1,56) -> turn 2 first, then turn 1.
+        assert_eq!(ids, vec![2, 1]);
+        assert_eq!(rows[0].speaker, "HAMLET");
+        assert_eq!(rows[0].div1, 1);
+        assert_eq!(rows[0].div2, 2);
+        assert_eq!(rows[0].start_line, 10);
+        assert_eq!(rows[1].turn_text, "To be or not to be");
     }
 
     #[test]
