@@ -93,6 +93,12 @@ pub struct AppState {
     pub top_spacer: gtk4::Box,
     pub card_vbox: gtk4::Box,
     pub scrolled_window: ScrolledWindow,
+    pub right_view: View,
+    pub right_scrolled_window: ScrolledWindow,
+    pub right_scrolled_overlay: gtk4::Overlay,
+    pub right_bottom_clip: gtk4::Box,
+    pub columns_hbox: gtk4::Box,
+    pub right_line_number_renderer: Option<sourceview5::GutterRendererText>,
     pub content_hbox: gtk4::Box,
     pub vbox: gtk4::Box,
     pub window: ApplicationWindow,
@@ -673,6 +679,54 @@ pub fn build_window(
     bottom_clip.add_css_class("card-bottom");
     scrolled_overlay.add_overlay(&bottom_clip);
 
+    // RIGHT column view — shares the same buffer as the left view. Hidden
+    // until column_count == 2 (set in a later task's toggle).
+    let right_view = View::builder()
+        .buffer(&buffer)
+        .editable(false)
+        .cursor_visible(false)
+        .wrap_mode(WrapMode::Word)
+        .build();
+    right_view.set_show_line_numbers(false);
+    right_view.set_highlight_current_line(false);
+    right_view.set_pixels_above_lines(config.line_spacing as i32);
+    right_view.set_pixels_below_lines(config.line_spacing as i32);
+    right_view.set_left_margin(config.text_margins as i32);
+    right_view.set_right_margin(config.text_margins as i32 + crate::config::EXTRA_RIGHT_MARGIN);
+    right_view.set_top_margin(0);
+    right_view.set_bottom_margin(40);
+
+    let right_scrolled = ScrolledWindow::builder()
+        .child(&right_view)
+        .hscrollbar_policy(gtk4::PolicyType::Never)
+        .vscrollbar_policy(gtk4::PolicyType::External)
+        .vexpand(true)
+        .hexpand(true)
+        .valign(gtk4::Align::Fill)
+        .overflow(gtk4::Overflow::Hidden)
+        .build();
+    right_scrolled.add_css_class("card-bottom");
+
+    let right_scrolled_overlay = gtk4::Overlay::new();
+    right_scrolled_overlay.set_child(Some(&right_scrolled));
+    right_scrolled_overlay.set_vexpand(true);
+    right_scrolled_overlay.set_hexpand(true);
+
+    let right_bottom_clip = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    right_bottom_clip.set_valign(gtk4::Align::End);
+    right_bottom_clip.set_hexpand(true);
+    right_bottom_clip.set_height_request(0);
+    right_bottom_clip.add_css_class("card-bottom");
+    right_scrolled_overlay.add_overlay(&right_bottom_clip);
+
+    // Columns row: left | right. Right starts hidden (1-column default).
+    let columns_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    columns_hbox.set_vexpand(true);
+    columns_hbox.set_hexpand(true);
+    columns_hbox.append(&scrolled_overlay);
+    columns_hbox.append(&right_scrolled_overlay);
+    right_scrolled_overlay.set_visible(false);
+
     // Top spacer — one line height, rounded top corners only
     let top_spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
     top_spacer.set_hexpand(true);
@@ -684,7 +738,7 @@ pub fn build_window(
     let card_vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     card_vbox.set_vexpand(true);
     card_vbox.append(&top_spacer);
-    card_vbox.append(&scrolled_overlay);
+    card_vbox.append(&columns_hbox);
 
     // Page turn overlay — wraps the entire card for crossfade snapshots.
     // Snapshot is placed here as a sibling of card_vbox so fading card_vbox
@@ -943,6 +997,12 @@ pub fn build_window(
         top_spacer,
         card_vbox,
         scrolled_window: scrolled,
+        right_view,
+        right_scrolled_window: right_scrolled,
+        right_scrolled_overlay,
+        right_bottom_clip,
+        columns_hbox,
+        right_line_number_renderer: None,
         content_hbox: content_hbox.clone(),
         vbox: vbox.clone(),
         window: window.clone(),
