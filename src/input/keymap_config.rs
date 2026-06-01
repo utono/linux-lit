@@ -203,8 +203,8 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("x"), Action::PageForward),
         (KeyCombo::plain("y"), Action::PageBackward),
         (KeyCombo::plain("less"), Action::PageBackward),
-        (KeyCombo::plain("space"), Action::PageForward),
-        (KeyCombo::shift("space"), Action::PageBackward),
+        // space / Shift+space were PageForward/PageBackward; space is now a
+        // global play/pause toggle handled directly in handle_key.
         (KeyCombo::ctrl("f"), Action::PageForward),
         (KeyCombo::ctrl("u"), Action::PageForward),
         (KeyCombo::ctrl("b"), Action::PageBackward),

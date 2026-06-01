@@ -55,6 +55,25 @@ pub fn handle_key(
         return true;
     }
 
+    // Spacebar (no modifiers) toggles MPV play/pause from any mode, UNLESS a
+    // text-input widget has focus (an Entry, or an editable TextView), in which
+    // case space must type a literal space. The reader's main TextView is
+    // non-editable, so it does not block this.
+    if key_name == "space" && !is_ctrl && !is_shift && !is_alt {
+        let focus_is_editable = {
+            let s = state.borrow();
+            gtk4::prelude::GtkWindowExt::focus(&s.window).is_some_and(|w| {
+                w.is::<gtk4::Entry>()
+                    || w.downcast_ref::<gtk4::TextView>()
+                        .is_some_and(|tv| tv.is_editable())
+            })
+        };
+        if !focus_is_editable {
+            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
+            return true;
+        }
+    }
+
     // Mode dispatch — delegate to per-mode handler functions
     let mode = state.borrow().input_mode;
     if mode != crate::app::InputMode::Reader {
