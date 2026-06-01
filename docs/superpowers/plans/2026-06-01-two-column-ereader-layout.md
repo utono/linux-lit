@@ -1083,10 +1083,16 @@ git commit -m "nav: anchor G (jump_to_end) to a full two-column final page"
 
 - [ ] **Step 1: Run all unit tests**
 
-Run: `cargo test`
-Expected: PASS, including the existing pagination tests (single-column behavior
-unchanged because `column_count()` returns 1 by default) and the new
-`column_split_tests` / `column_layout_action_tests` / the keymap test.
+Run: `cargo test --bin linux-lit` (binary crate — there is no lib target, so
+`--lib` fails)
+Expected: the new `column_split` tests, `column_layout_action_tests`, and the
+keymap test PASS, and single-column behavior is unchanged (`column_count()`
+returns 1 by default). KNOWN PRE-EXISTING FAILURES (verified present on `master`
+before any two-column work — NOT regressions from this feature): two tests in
+`block_atom_tests` — `block_start_stops_at_blank` and
+`block_start_in_verse_stanza_bounded_above_by_stage_direction`. Confirm the
+pass/fail count matches the baseline (these 2 fail, everything else passes); do
+not attempt to fix them as part of this feature.
 
 - [ ] **Step 2: Run clippy clean**
 
