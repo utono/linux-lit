@@ -828,6 +828,48 @@ pub(crate) fn last_fully_visible_line(state: &AppState, top: usize) -> usize {
     trimmed.last_fit
 }
 
+/// GTK-bound two-column split: measures pixel heights per column against the
+/// left view (`state.text_view`) and right view (`state.right_view`), which
+/// share one buffer. Returns where the right column starts (`split`), where the
+/// page ends (`page_end`), and the next page top. Single-column callers should
+/// not use this.
+pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
+    let line_count = state.effective_line_count();
+    if line_count == 0 || page_top >= line_count {
+        return ColumnSplit { split: page_top, page_end: page_top, next_page_top: line_count };
+    }
+    let is_prose = state.is_prose();
+
+    // Left column.
+    let left_h = state.text_view.height();
+    let left = if left_h > 0 {
+        let guard = descender_guard_px(&state.text_view, page_top);
+        let usable = left_h - guard - BASE_BOTTOM_MARGIN;
+        let r = visible_range(&state.text_view, &state.buffer, page_top, line_count, usable);
+        trim_visible_range(r, page_top, &state.text_view, &state.buffer, is_prose)
+    } else {
+        // Layout not ready — degenerate single-line range so we don't panic.
+        visible_range(&state.text_view, &state.buffer, page_top, line_count, 1)
+    };
+    let split = (left.last_fit + 1).min(line_count);
+    if split >= line_count || left.count == 0 {
+        return ColumnSplit { split, page_end: left.last_fit, next_page_top: line_count };
+    }
+
+    // Right column (measure against the right view).
+    let right_h = state.right_view.height().max(left_h);
+    let right = if right_h > 0 {
+        let guard = descender_guard_px(&state.right_view, split);
+        let usable = right_h - guard - BASE_BOTTOM_MARGIN;
+        let r = visible_range(&state.right_view, &state.buffer, split, line_count, usable);
+        trim_visible_range(r, split, &state.right_view, &state.buffer, is_prose)
+    } else {
+        visible_range(&state.right_view, &state.buffer, split, line_count, 1)
+    };
+    let next_top = (right.last_fit + 1).min(line_count);
+    ColumnSplit { split, page_end: right.last_fit, next_page_top: next_top }
+}
+
 /// Result of stepping forward one page from `top`: the new page-top
 /// (after backing up for a speaker) and the next dialogue line that
 /// would become `state.current_line`. Both equal `line_count` when there

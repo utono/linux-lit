@@ -312,6 +312,15 @@ impl AppState {
         }
     }
 
+    /// Number of e-reader columns: 2 only in e-reader mode with config.column_count == 2;
+    /// always 1 in scroll mode (two columns are e-reader-only).
+    pub fn column_count(&self) -> u8 {
+        match self.config.navigation_mode {
+            crate::config::NavigationMode::EReader => self.config.column_count.clamp(1, 2),
+            crate::config::NavigationMode::Scroll => 1,
+        }
+    }
+
     pub fn work_line_for_buffer(&self, buffer_line: usize) -> Option<usize> {
         if let Some(ref lm) = self.line_map {
             lm.buffer_to_work.get(buffer_line).copied().flatten()
