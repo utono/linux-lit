@@ -268,7 +268,7 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::alt("backslash"), Action::ToggleVocabHighlight),
         (KeyCombo::plain("ISO_Left_Tab"), Action::ToggleGlossOverlay),
         (KeyCombo::ctrl("g"), Action::ToggleGlossOverlay),
-        (KeyCombo::plain("i"), Action::ShowEchoes),
+        (KeyCombo::plain("i"), Action::ToggleTranslations),
         (KeyCombo::plain("I"), Action::ReopenEchoes),
         (KeyCombo::plain("apostrophe"), Action::ReopenEchoes),
         (KeyCombo::ctrl("backslash"), Action::OpenConcordancePicker),
@@ -294,7 +294,7 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl("a"), Action::ToggleAuthorship),
         (KeyCombo::ctrl_shift("A"), Action::PickAttributionSet),
         (KeyCombo::alt("f"), Action::ShowFontInfo),
-        (KeyCombo::alt("i"), Action::ToggleTranslations),
+        (KeyCombo::alt("i"), Action::ShowEchoes),
         (KeyCombo::ctrl("h"), Action::ToggleSynopsis),
         (KeyCombo::ctrl("comma"), Action::OpenSettingsOverlay),
     ]

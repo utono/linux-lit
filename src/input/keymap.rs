@@ -62,11 +62,15 @@ pub fn handle_key(
     if key_name == "space" && !is_ctrl && !is_shift && !is_alt {
         let focus_is_editable = {
             let s = state.borrow();
-            gtk4::prelude::GtkWindowExt::focus(&s.window).is_some_and(|w| {
-                w.is::<gtk4::Entry>()
-                    || w.downcast_ref::<gtk4::TextView>()
-                        .is_some_and(|tv| tv.is_editable())
-            })
+            // The search bar (opened by /) is a text-input field; space must
+            // type a literal space there, never toggle playback. Treat Search
+            // mode as editable explicitly rather than relying on window focus.
+            s.input_mode == crate::app::InputMode::Search
+                || gtk4::prelude::GtkWindowExt::focus(&s.window).is_some_and(|w| {
+                    w.is::<gtk4::Entry>()
+                        || w.downcast_ref::<gtk4::TextView>()
+                            .is_some_and(|tv| tv.is_editable())
+                })
         };
         if !focus_is_editable {
             let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
@@ -546,11 +550,10 @@ fn handle_search_key(
             state.borrow_mut().input_mode = crate::app::InputMode::Reader;
             true
         }
-        "Tab" => {
-            crate::input::search::toggle_playback(&mut state.borrow_mut());
-            true
-        }
-        _ => false, // let GTK route to the Entry
+        // Tab must not toggle playback while typing a search query. Consume it
+        // so it neither triggers playback nor moves focus out of the Entry.
+        "Tab" | "ISO_Left_Tab" => true,
+        _ => false, // let GTK route to the Entry (including Space)
     }
 }
 
