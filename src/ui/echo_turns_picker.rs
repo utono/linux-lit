@@ -1,15 +1,15 @@
 use gtk4::prelude::*;
-use gtk4::{Align, Box as GtkBox, Label, ListBox, ListBoxRow, Orientation, Overlay, ScrolledWindow};
+use gtk4::{Align, Box as GtkBox, Label, ListBox, ListBoxRow, Orientation, ScrolledWindow};
 
 use crate::db::queries::EchoTurnSummary;
 
 /// Picker listing every turn in the current work that has echoes
 /// (Ctrl+Shift+G). Selecting a turn jumps the cursor there and opens the
-/// echoes overlay. Matches the library-picker look-and-feel.
+/// echoes overlay. The `picker_box` is added directly as an overlay onto
+/// the app's outer overlay (like `EchoLinePicker`) — NOT wrapped into the
+/// reader's size-bearing widget chain, which would collapse the layout.
 pub struct EchoTurnsPicker {
-    pub overlay: Overlay,
     picker_box: GtkBox,
-    scrim: GtkBox,
     list_box: ListBox,
     pub items: Vec<EchoTurnSummary>,
     titles: std::collections::HashMap<String, String>,
@@ -18,12 +18,6 @@ pub struct EchoTurnsPicker {
 
 impl EchoTurnsPicker {
     pub fn new() -> Self {
-        let overlay = Overlay::new();
-
-        let scrim = GtkBox::builder().hexpand(true).vexpand(true).build();
-        scrim.add_css_class("library-picker-scrim");
-        scrim.set_visible(false);
-
         let picker_box = GtkBox::builder()
             .orientation(Orientation::Vertical)
             .spacing(0)
@@ -68,22 +62,15 @@ impl EchoTurnsPicker {
         picker_box.append(&scrolled);
         picker_box.append(&footer_label);
 
+        picker_box.set_visible(false);
+
         Self {
-            overlay,
             picker_box,
-            scrim,
             list_box,
             items: Vec::new(),
             titles: std::collections::HashMap::new(),
             work_abbrev: String::new(),
         }
-    }
-
-    pub fn attach(&self, base: &impl IsA<gtk4::Widget>) {
-        self.overlay.set_child(Some(base));
-        self.overlay.add_overlay(&self.scrim);
-        self.overlay.add_overlay(&self.picker_box);
-        self.picker_box.set_visible(false);
     }
 
     pub fn picker_box(&self) -> &GtkBox {
@@ -101,13 +88,11 @@ impl EchoTurnsPicker {
 
     pub fn show(&self) {
         self.populate_list();
-        self.scrim.set_visible(true);
         self.picker_box.set_visible(true);
     }
 
     pub fn hide(&self) {
         self.picker_box.set_visible(false);
-        self.scrim.set_visible(false);
     }
 
     fn populate_list(&self) {

@@ -1066,7 +1066,6 @@ pub struct StoredEchoLink {
 /// echo-turns picker (Ctrl+Shift+G) to list all annotated turns.
 #[derive(Debug, Clone)]
 pub struct EchoTurnSummary {
-    pub turn_id: i64,
     pub div1: i64,
     pub div2: i64,
     pub start_line: i64, // line_in_div of the turn's first line
@@ -1082,7 +1081,7 @@ pub fn list_echo_turns_for_work(
     work_abbrev: &str,
 ) -> Result<Vec<EchoTurnSummary>, rusqlite::Error> {
     let mut stmt = conn.prepare(
-        "SELECT t.id, t.div1, t.div2, t.start_line, t.speaker, t.turn_text \
+        "SELECT t.div1, t.div2, t.start_line, t.speaker, t.turn_text \
          FROM echo_turns t \
          JOIN echo_links l ON l.turn_id = t.id \
          WHERE t.work_abbrev = ?1 \
@@ -1091,12 +1090,11 @@ pub fn list_echo_turns_for_work(
     )?;
     let rows = stmt.query_map([work_abbrev], |row| {
         Ok(EchoTurnSummary {
-            turn_id: row.get(0)?,
-            div1: row.get::<_, Option<i64>>(1)?.unwrap_or(0),
-            div2: row.get::<_, Option<i64>>(2)?.unwrap_or(0),
-            start_line: row.get(3)?,
-            speaker: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
-            turn_text: row.get(5)?,
+            div1: row.get::<_, Option<i64>>(0)?.unwrap_or(0),
+            div2: row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+            start_line: row.get(2)?,
+            speaker: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+            turn_text: row.get(4)?,
         })
     })?;
     rows.collect()
@@ -1455,14 +1453,15 @@ mod tests {
         ).unwrap();
 
         let rows = list_echo_turns_for_work(&conn, "Ham").unwrap();
-        // Turn 3 (no links) and turn 4 (other work) excluded.
-        let ids: Vec<i64> = rows.iter().map(|r| r.turn_id).collect();
+        // Turn 3 (no links) and turn 4 (other work) excluded -> only 2 rows.
+        assert_eq!(rows.len(), 2);
         // Reading order: (1,2,10) before (3,1,56) -> turn 2 first, then turn 1.
-        assert_eq!(ids, vec![2, 1]);
         assert_eq!(rows[0].speaker, "HAMLET");
         assert_eq!(rows[0].div1, 1);
         assert_eq!(rows[0].div2, 2);
         assert_eq!(rows[0].start_line, 10);
+        assert_eq!(rows[1].div1, 3);
+        assert_eq!(rows[1].start_line, 56);
         assert_eq!(rows[1].turn_text, "To be or not to be");
     }
 
