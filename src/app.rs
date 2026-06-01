@@ -1972,6 +1972,9 @@ pub fn display_work_at_with_prepared(
         let right_margin = state.config.text_margins as i32 + crate::config::EXTRA_RIGHT_MARGIN;
         state.text_view.set_right_margin(right_margin);
     }
+    if let Some(old_renderer) = state.right_line_number_renderer.take() {
+        crate::gutter::remove_line_number_renderer(&state.right_view, &old_renderer);
+    }
 
     // Populate is_bookmarked eagerly so `'` / `"` bookmark navigation works
     // before the sign column has ever been toggled. setup_gutter() will
@@ -2036,6 +2039,15 @@ pub fn display_work_at_with_prepared(
             );
             state.text_view.set_right_margin(48);
             state.line_number_renderer = Some(renderer);
+            let right_renderer = crate::gutter::setup_line_number_gutter(
+                &state.right_view,
+                state.line_numbers.clone(),
+                &state.theme.dim_fg,
+                &state.config.font_family,
+                state.config.font_size,
+            );
+            state.right_view.set_right_margin(48);
+            state.right_line_number_renderer = Some(right_renderer);
         }
     }
 
@@ -3193,6 +3205,9 @@ fn rebuild_line_number_gutter(state: &mut AppState) {
     if let Some(old) = state.line_number_renderer.take() {
         crate::gutter::remove_line_number_renderer(&state.text_view, &old);
     }
+    if let Some(old) = state.right_line_number_renderer.take() {
+        crate::gutter::remove_line_number_renderer(&state.right_view, &old);
+    }
     let is_prose = state.current_work.as_ref()
         .map(|w| crate::db::line_types::is_prose_work(&w.work_type))
         .unwrap_or(true);
@@ -3236,6 +3251,15 @@ fn rebuild_line_number_gutter(state: &mut AppState) {
         );
         state.text_view.set_right_margin(48);
         state.line_number_renderer = Some(renderer);
+        let right_renderer = crate::gutter::setup_line_number_gutter(
+            &state.right_view,
+            state.line_numbers.clone(),
+            &state.theme.dim_fg,
+            &state.config.font_family,
+            state.config.font_size,
+        );
+        state.right_view.set_right_margin(48);
+        state.right_line_number_renderer = Some(right_renderer);
     }
 }
 
