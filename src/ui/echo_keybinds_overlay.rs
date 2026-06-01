@@ -21,7 +21,7 @@ const BINDS: &[(&str, &str)] = &[
     ("s", "toggle curate"),
     ("R", "refresh echoes"),
     ("Ctrl+↑ / Ctrl+↓", "volume"),
-    ("Esc", "close overlay"),
+    ("Ctrl+/ / Esc", "close this legend"),
 ];
 
 impl EchoKeybindsOverlay {
@@ -87,9 +87,5 @@ impl EchoKeybindsOverlay {
     pub fn hide(&self) {
         self.scrim.set_visible(false);
         self.container.set_visible(false);
-    }
-
-    pub fn is_visible(&self) -> bool {
-        self.container.is_visible()
     }
 }
