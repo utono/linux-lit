@@ -424,6 +424,13 @@ pub const PROSE_LEFT_OFFSET: i32 = 120;
 /// = (logical_left - 20).
 pub const TWO_COLUMN_LEFT_OFFSET: i32 = 30;
 
+/// Extra left margin applied to dialogue lines (hanging indent beneath the
+/// flush-left speaker name). Single-column uses the full monocle indent;
+/// two-column halves it because each column is too narrow to spend 60px on
+/// indentation without wrapping verse lines.
+pub const DIALOGUE_INDENT: i32 = 60;
+pub const TWO_COLUMN_DIALOGUE_INDENT: i32 = 30;
+
 /// Fixed height for the top spacer above the first text line.
 pub const TOP_SPACER_HEIGHT: i32 = 40;
 
@@ -556,7 +563,7 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
 
 /// Fraction of the window width the two-column card aims to fill (minus the
 /// outer margins). One-column works keep their fixed `column_width`.
-pub const TWO_COLUMN_WIDTH_FRACTION: f32 = 0.85;
+pub const TWO_COLUMN_WIDTH_FRACTION: f32 = 0.94;
 
 /// Target card width before clamping to the window.
 ///
@@ -2610,12 +2617,20 @@ pub fn apply_dialogue_formatting(state: &mut AppState) {
 
     // Text column is already symmetrically inset by state.config.text_margins,
     // so speaker names sit at the same left edge as dialogue. Dialogue lines
-    // get an additional indent via the per-tag margin below.
+    // get an additional indent via the per-tag margin below. In two-column
+    // mode the columns are narrow, so the full +60 monocle indent pushes
+    // verse lines past the column edge and they wrap; use a smaller indent
+    // there so a 63-char verse line still clears the column width.
     let base_margin = state.text_view.left_margin();
+    let dialogue_indent = if state.column_count() == 2 {
+        TWO_COLUMN_DIALOGUE_INDENT
+    } else {
+        DIALOGUE_INDENT
+    };
 
     let indent_tag = gtk4::TextTag::builder()
         .name("dialogue-indent")
-        .left_margin(base_margin + 60)
+        .left_margin(base_margin + dialogue_indent)
         .build();
 
     let speaker_gap_tag = gtk4::TextTag::builder()
@@ -4117,13 +4132,13 @@ mod card_width_tests {
 
     #[test]
     fn two_columns_fill_fraction_of_wide_window() {
-        // 85% of 1920 = 1632, wider than the 1050 floor.
-        assert_eq!(target_card_width(1920, 1050, 2), 1632);
+        // 94% of 1920 = 1804, wider than the 1050 floor.
+        assert_eq!(target_card_width(1920, 1050, 2), 1804);
     }
 
     #[test]
     fn two_columns_never_below_single_column_floor() {
-        // 85% of 1000 = 850, below the 1050 floor → clamp up to 1050.
+        // 94% of 1000 = 940, below the 1050 floor → clamp up to 1050.
         assert_eq!(target_card_width(1000, 1050, 2), 1050);
     }
 }

@@ -537,22 +537,60 @@ pub(crate) fn trim_visible_range(
     buffer: &sourceview5::Buffer,
     is_prose: bool,
 ) -> VisibleRange {
+    trim_visible_range_opts(range, page_top, text_view, buffer, is_prose, false)
+}
+
+/// Like `trim_visible_range`, but `relax_underfill` raises the fill-guard
+/// threshold so a column left even mildly underfilled by block-atom trimming
+/// reverts to the per-line split (i.e. lets the block split across the
+/// boundary). Used by the RIGHT column of a two-column spread: there, pushing a
+/// block off the bottom doesn't move it to a fresh full page — it leaves a
+/// visible gap mid-spread, so splitting the block to fill the column reads
+/// better than the gap. Single-column callers pass `false` and keep block
+/// atomicity (the pushed block fills the next full page, so a moderate
+/// underfill on the current page is fine).
+pub(crate) fn trim_visible_range_opts(
+    range: VisibleRange,
+    page_top: usize,
+    text_view: &sourceview5::View,
+    buffer: &sourceview5::Buffer,
+    is_prose: bool,
+    relax_underfill: bool,
+) -> VisibleRange {
     let r = clamp_at_section_break(range, page_top, text_view, buffer);
     let r = trim_trailing_speakers(r, page_top, text_view, buffer);
     let r2 = r;
     let r = trim_block_atoms(r, page_top, text_view, buffer, is_prose);
     let r = trim_trailing_speakers(r, page_top, text_view, buffer);
-    // Viewport fill guard: if block-atom trim + speaker trim left the page
-    // less than 2/3 full, the removed block was too large relative to the
-    // viewport. Revert to the pre-block-atom state (r2) which still has
-    // section-break clamping and initial speaker trim applied.
-    if r.last_fit != r2.last_fit {
-        let widget_height = text_view.height();
-        if widget_height > 0 && r.total_height * 3 < widget_height * 2 {
-            return r2;
-        }
+    // Viewport fill guard: if block-atom trim + speaker trim left the column
+    // under-full, the removed block was too large relative to the remaining
+    // space. Revert to the pre-block-atom state (r2) — the per-line split —
+    // which still has section-break clamping and the initial speaker trim.
+    //
+    // Single column: revert only when badly underfilled (< 2/3), because
+    // pushing the block to the next full page is the intended page-turn and a
+    // moderate gap is acceptable.
+    //
+    // Right column (relax_underfill): revert at a much higher threshold so the
+    // block splits to fill the column instead of leaving a mid-spread gap.
+    if r.last_fit != r2.last_fit && should_revert_underfill(r.total_height, text_view.height(), relax_underfill) {
+        return r2;
     }
     r
+}
+
+/// Pure fill-guard decision: should a block-atom trim be reverted (i.e. let the
+/// block split) because it left the column under-full? Returns true when the
+/// trimmed result's pixel height falls below the minimum fill fraction of the
+/// viewport. `relax` raises that fraction (right column: 9/10) vs the default
+/// (single column: 2/3). A non-positive `widget_height` (layout not ready)
+/// never reverts.
+pub(crate) fn should_revert_underfill(total_height: i32, widget_height: i32, relax: bool) -> bool {
+    if widget_height <= 0 {
+        return false;
+    }
+    let (num, den) = if relax { (9, 10) } else { (2, 3) };
+    total_height * den < widget_height * num
 }
 
 // ---------------------------------------------------------------------------
@@ -970,7 +1008,10 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
         let guard = descender_guard_px(&state.right_view, split);
         let usable = right_h - guard - BASE_BOTTOM_MARGIN;
         let r = visible_range(&state.right_view, &state.buffer, split, line_count, usable);
-        trim_visible_range(r, split, &state.right_view, &state.buffer, is_prose)
+        // Right column is the bottom of the spread: relax the underfill guard
+        // so a too-tall block splits across the boundary to fill the column
+        // rather than leaving a mid-spread gap.
+        trim_visible_range_opts(r, split, &state.right_view, &state.buffer, is_prose, true)
     } else {
         visible_range(&state.right_view, &state.buffer, split, line_count, 1)
     };
@@ -1249,6 +1290,39 @@ pub(crate) fn descender_guard_px(text_view: &sourceview5::View, _page_top: usize
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod underfill_guard_tests {
+    use super::should_revert_underfill;
+
+    #[test]
+    fn never_reverts_when_layout_not_ready() {
+        assert!(!should_revert_underfill(100, 0, false));
+        assert!(!should_revert_underfill(100, -1, true));
+    }
+
+    #[test]
+    fn single_column_keeps_moderate_underfill() {
+        // 70% full: above the 2/3 single-column threshold → keep the trim
+        // (block moves to the next full page, current page-turn intended).
+        let widget = 1000;
+        assert!(!should_revert_underfill(700, widget, false));
+        // 60% full: below 2/3 → revert to per-line split.
+        assert!(should_revert_underfill(600, widget, false));
+    }
+
+    #[test]
+    fn right_column_reverts_at_moderate_underfill() {
+        // The Image #4 case: right column left ~70% full by an atomic block.
+        // Single column tolerates this; the right column (relax) must revert
+        // so the block splits across the boundary and fills the column.
+        let widget = 1000;
+        assert!(should_revert_underfill(700, widget, true)); // 70% < 90% → split
+        assert!(should_revert_underfill(890, widget, true)); // 89% < 90% → split
+        assert!(!should_revert_underfill(900, widget, true)); // 90% → full, keep
+        assert!(!should_revert_underfill(950, widget, true)); // 95% → keep
+    }
+}
 
 #[cfg(test)]
 mod visible_range_helpers_tests {
