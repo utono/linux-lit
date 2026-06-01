@@ -94,8 +94,8 @@ pub fn handle_key(
             crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_name, is_ctrl),
             crate::app::InputMode::DeleteConfirm => handle_delete_confirm_key(state, key_name),
             crate::app::InputMode::GlossPrompt => handle_gloss_prompt_key(state, key_name, is_ctrl),
-            crate::app::InputMode::EchoPicker
-            | crate::app::InputMode::EchoTurnsPicker => handle_echo_picker_key(state, key_name, tokio_handle),
+            crate::app::InputMode::EchoPicker => handle_echo_picker_key(state, key_name, tokio_handle),
+            crate::app::InputMode::EchoTurnsPicker => handle_echo_turns_picker_key(state, key_name, tokio_handle),
             crate::app::InputMode::EchoesOverlay => handle_echoes_overlay_key(state, key_state, key_name, is_ctrl, tokio_handle),
             crate::app::InputMode::GamepadOverlay => handle_gamepad_key(state, key_name),
             crate::app::InputMode::KeybindsOverlay => handle_keybinds_key(state, key_name),
@@ -784,6 +784,35 @@ fn handle_echo_picker_key(
     }
 }
 
+fn handle_echo_turns_picker_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+    tokio_handle: &tokio::runtime::Handle,
+) -> bool {
+    match key_name {
+        "j" | "Down" => {
+            state.borrow().echo_turns_picker.move_selection(1);
+            true
+        }
+        "k" | "Up" => {
+            state.borrow().echo_turns_picker.move_selection(-1);
+            true
+        }
+        "Return" => {
+            crate::input::actions::echoes::confirm_echo_turns_pick(state, tokio_handle);
+            true
+        }
+        "Escape" => {
+            let s = state.borrow();
+            s.echo_turns_picker.hide();
+            drop(s);
+            state.borrow_mut().input_mode = crate::app::InputMode::Reader;
+            true
+        }
+        _ => true,
+    }
+}
+
 fn handle_echoes_overlay_key(
     state: &Rc<RefCell<AppState>>,
     key_state: &Rc<RefCell<KeyState>>,
@@ -1226,8 +1255,7 @@ fn dispatch_action(
         OpenGlossPicker => crate::input::actions::pickers::open_gloss_picker(state, tokio_handle),
         ShowEchoes => crate::input::actions::echoes::show_echoes_for_cursor_line(state, tokio_handle),
         ReopenEchoes => crate::input::actions::echoes::reopen_echoes(state, tokio_handle),
-        // Temporary stub — Task 5 will implement the real handler.
-        ShowEchoTurns => {},
+        ShowEchoTurns => crate::input::actions::echoes::open_echo_turns_picker(state),
 
         // Visual / selection
         EnterVisualMode => crate::input::visual::enter_visual_mode(&mut state.borrow_mut()),
