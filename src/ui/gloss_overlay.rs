@@ -216,6 +216,8 @@ impl GlossOverlay {
         let echo_rule = gtk4::Separator::new(gtk4::Orientation::Horizontal);
         echo_rule.set_margin_start(text_margins as i32);
         echo_rule.set_margin_end(right_margin);
+        // Breathing room between the source turn's last line and the rule.
+        echo_rule.set_margin_top(16);
         echo_rule.set_visible(false);
         container.append(&echo_rule);
 
