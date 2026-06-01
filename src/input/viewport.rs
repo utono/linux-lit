@@ -1365,21 +1365,26 @@ mod block_atom_tests {
     }
 
     #[test]
-    fn block_start_stops_at_blank() {
-        // Lines: 0=l, 1=blank, 2=l, 3=l (stanza bounded above by blank)
+    fn block_start_blank_bounded_stanza_is_allowed_to_split() {
+        // Lines: 0=l, 1=blank, 2=l, 3=l (stanza bounded above by blank).
+        // A plain blank-delimited verse paragraph (continuous epics like the
+        // Odyssey) is NOT kept atomic — it may split to fill the viewport, so
+        // block_start returns last_fit unchanged.
         let kinds = ['l', 'b', 'l', 'l'];
         let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
         let start = block_start_for_line_pure(0, 3, false, &is_blank, &is_speaker, &is_stage, &is_dialogue, &no_stanza_numbers);
-        assert_eq!(start, 2, "stanza backup stops at blank line (returns first dialogue line after blank)");
+        assert_eq!(start, 3, "blank-bounded verse stanza is allowed to split (returns last_fit)");
     }
 
     #[test]
-    fn block_start_in_verse_stanza_bounded_above_by_stage_direction() {
-        // Lines: 0=stage, 1=l, 2=l (stanza after a stage direction)
+    fn block_start_stage_bounded_stanza_is_allowed_to_split() {
+        // Lines: 0=stage, 1=l, 2=l (stanza after a stage direction).
+        // Not bounded by a speaker or stanza number, so it is not a structured
+        // block worth keeping atomic — it may split (returns last_fit).
         let kinds = ['d', 'l', 'l'];
         let (is_blank, is_speaker, is_stage, is_dialogue) = classifiers(&kinds);
         let start = block_start_for_line_pure(0, 2, false, &is_blank, &is_speaker, &is_stage, &is_dialogue, &no_stanza_numbers);
-        assert_eq!(start, 1, "stanza backup stops at stage direction (returns first dialogue line after stage)");
+        assert_eq!(start, 2, "stage-bounded verse stanza is allowed to split (returns last_fit)");
     }
 
     #[test]
