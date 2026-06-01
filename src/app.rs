@@ -98,7 +98,12 @@ pub struct AppState {
     pub right_scrolled_overlay: gtk4::Overlay,
     pub right_bottom_clip: gtk4::Box,
     pub columns_hbox: gtk4::Box,
+    /// Thin vertical rule between the two columns; visible only in two-column mode.
+    pub column_divider: gtk4::Separator,
     pub right_line_number_renderer: Option<sourceview5::GutterRendererText>,
+    /// Sign-column (timestamp/bookmark glyph) renderer for the right column in
+    /// two-column mode. Mirrors `gutter_renderer` on the left `text_view`.
+    pub right_gutter_renderer: Option<sourceview5::GutterRendererText>,
     pub content_hbox: gtk4::Box,
     pub vbox: gtk4::Box,
     pub window: ApplicationWindow,
@@ -411,6 +416,14 @@ impl AppState {
 pub const VERSE_LEFT_OFFSET: i32 = 120;
 pub const PROSE_LEFT_OFFSET: i32 = 120;
 
+/// Left offset used in two-column mode. Small on purpose: it only needs to
+/// give the sign-column gutter enough room to put padding to the LEFT of the
+/// sign glyphs (the gutter is `logical_left - 20` wide, right-aligned), without
+/// stealing the column width the full verse/monocle offset would and causing
+/// verse lines to wrap. logical_left = text_margins + this; gutter width then
+/// = (logical_left - 20).
+pub const TWO_COLUMN_LEFT_OFFSET: i32 = 30;
+
 /// Fixed height for the top spacer above the first text line.
 pub const TOP_SPACER_HEIGHT: i32 = 40;
 
@@ -428,6 +441,26 @@ pub(crate) fn default_column_count_for_parts(author: &str, work_type: &str) -> u
 /// Default column count for a work: 2 for a Shakespeare play, else 1.
 pub(crate) fn default_column_count_for(work: &crate::db::models::Work) -> u8 {
     default_column_count_for_parts(&work.author, &work.work_type)
+}
+
+/// (renderer width, trailing margin past the number, gap between text and
+/// number) for the right-side line-number gutter. Two-column mode uses a
+/// tighter text↔number gap (more room for the verse line) but keeps real
+/// padding past the number so it doesn't crowd the column/card edge.
+pub(crate) fn line_number_gutter_geometry(column_count: u8) -> (i32, i32, i32) {
+    if column_count >= 2 {
+        (
+            crate::gutter::LINE_NUMBER_WIDTH_TWO_COL,
+            crate::gutter::LINE_NUMBER_MARGIN_END_TWO_COL,
+            crate::gutter::LINE_NUMBER_TEXT_GAP_TWO_COL,
+        )
+    } else {
+        (
+            crate::gutter::LINE_NUMBER_WIDTH,
+            crate::gutter::LINE_NUMBER_MARGIN_END,
+            crate::gutter::LINE_NUMBER_MARGIN_END,
+        )
+    }
 }
 
 pub fn verse_left_offset(window_width: i32, column_width: u32) -> i32 {
@@ -466,8 +499,15 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
     // value, so derive it up-front.
     let work_type = state.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("").to_string();
     let is_verse = !crate::db::line_types::is_prose_work(&work_type);
+    // The full verse/prose left offset is a monocle (single wide column)
+    // aesthetic. In two-column mode each column is narrow, so we use a small
+    // offset instead: enough to give the sign-column gutter padding to the left
+    // of its glyphs, but not so much that verse lines wrap.
+    let two_col = state.column_count() == 2;
     let left_bump = if tiled {
         0
+    } else if two_col {
+        TWO_COLUMN_LEFT_OFFSET
     } else if is_verse {
         VERSE_LEFT_OFFSET
     } else {
@@ -514,20 +554,45 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
     state.top_spacer.set_height_request(TOP_SPACER_HEIGHT);
 }
 
-pub fn apply_card_sizing(content_hbox: &gtk4::Box, window_width: i32, column_width: u32) {
+/// Fraction of the window width the two-column card aims to fill (minus the
+/// outer margins). One-column works keep their fixed `column_width`.
+pub const TWO_COLUMN_WIDTH_FRACTION: f32 = 0.85;
+
+/// Target card width before clamping to the window.
+///
+/// - One column: the configured `column_width` (unchanged).
+/// - Two columns: the larger of `column_width` and 85% of the window, so the
+///   card grows on wide screens instead of squeezing two columns into one
+///   column's worth of space. Never narrower than the single-column floor.
+pub(crate) fn target_card_width(window_width: i32, column_width: u32, column_count: u8) -> i32 {
+    let cw_cfg = column_width as i32;
+    if column_count >= 2 {
+        let proportional = (window_width as f32 * TWO_COLUMN_WIDTH_FRACTION) as i32;
+        proportional.max(cw_cfg)
+    } else {
+        cw_cfg
+    }
+}
+
+pub fn apply_card_sizing(
+    content_hbox: &gtk4::Box,
+    window_width: i32,
+    column_width: u32,
+    column_count: u8,
+) {
     const MAX_OUTER_MARGIN: i32 = 24;
     let ww = window_width.max(0);
-    let cw_cfg = column_width as i32;
+    let target = target_card_width(ww, column_width, column_count);
     // Reserve room for margins first; if that overflows, the card itself shrinks.
-    let card_w = cw_cfg.min(ww.max(1));
+    let card_w = target.min(ww.max(1));
     let slack = ww - card_w;
     let margin = (slack / 2).clamp(0, MAX_OUTER_MARGIN);
     content_hbox.set_width_request(card_w);
     content_hbox.set_margin_start(margin);
     content_hbox.set_margin_end(margin);
     crate::log_fmt!(
-        "CARD_SIZING: ww={} col_cfg={} card_w={} margin={}",
-        ww, cw_cfg, card_w, margin
+        "CARD_SIZING: ww={} col_cfg={} cols={} target={} card_w={} margin={}",
+        ww, column_width as i32, column_count, target, card_w, margin
     );
 }
 
@@ -753,11 +818,17 @@ pub fn build_window(
     right_bottom_clip.add_css_class("card-bottom");
     right_scrolled_overlay.add_overlay(&right_bottom_clip);
 
-    // Columns row: left | right. Right starts hidden (1-column default).
+    // Columns row: left | divider | right. Right starts hidden (1-column
+    // default); the divider is a thin vertical rule shown only in two-column
+    // mode to separate the columns like a book's gutter.
+    let column_divider = gtk4::Separator::new(gtk4::Orientation::Vertical);
+    column_divider.add_css_class("column-divider");
+    column_divider.set_visible(false);
     let columns_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
     columns_hbox.set_vexpand(true);
     columns_hbox.set_hexpand(true);
     columns_hbox.append(&scrolled_overlay);
+    columns_hbox.append(&column_divider);
     columns_hbox.append(&right_scrolled_overlay);
     right_scrolled_overlay.set_visible(false);
 
@@ -1036,7 +1107,9 @@ pub fn build_window(
         right_scrolled_overlay,
         right_bottom_clip,
         columns_hbox,
+        column_divider,
         right_line_number_renderer: None,
+        right_gutter_renderer: None,
         content_hbox: content_hbox.clone(),
         vbox: vbox.clone(),
         window: window.clone(),
@@ -1297,7 +1370,8 @@ pub fn build_window(
                 if s.loading_work.get() {
                     if width_changed {
                         let cw = s.config.column_width;
-                        apply_card_sizing(&content_hbox_tick, ww, cw);
+                        let cc = s.column_count();
+                        apply_card_sizing(&content_hbox_tick, ww, cw, cc);
                     }
                     return glib::ControlFlow::Continue;
                 }
@@ -1311,15 +1385,42 @@ pub fn build_window(
                         crate::log_fmt!("RESIZE_TICK: layout refresh waiting, sw_h={}", sw_h);
                         return glib::ControlFlow::Continue;
                     }
+                    let cw = s.config.column_width;
+                    let cc = s.column_count();
+                    apply_card_sizing(&content_hbox_tick, ww, cw, cc);
+                    apply_tiled_mode(&mut s, &vbox_for_tick, ww);
+                    // In two-column mode the left/right text_view widths must
+                    // have reflowed to their FINAL two-column geometry before
+                    // column_split measures line heights — otherwise it measures
+                    // against a transitional width (observed left=507/right=506
+                    // mid-reflow vs settled left=839/right=756), wraps lines
+                    // wrong, and computes too-short splits (columns that fill
+                    // then "unfill"). The settled state is when the two views'
+                    // widths sum to ~the card width; transitional states sum to
+                    // much less. Wait until they do.
+                    if cc == 2 {
+                        let lw = s.text_view.width();
+                        let rw = s.right_view.width();
+                        let card_w = crate::app::target_card_width(ww, cw, cc);
+                        // Both columns allocated and together spanning most of
+                        // the card (allow for the divider + inter-column gap).
+                        let settled = lw > 0 && rw > 0
+                            && (lw + rw) as f32 >= card_w as f32 * 0.92;
+                        if !settled {
+                            crate::log_fmt!(
+                                "RESIZE_TICK: two-col width not settled (left_w={} right_w={} sum={} card={}), waiting",
+                                lw, rw, lw + rw, card_w
+                            );
+                            return glib::ControlFlow::Continue;
+                        }
+                    }
                     crate::log_fmt!("RESIZE_TICK: deferred layout refresh, sw_h={}", sw_h);
                     s.needs_layout_refresh.set(false);
-                    let cw = s.config.column_width;
-                    apply_card_sizing(&content_hbox_tick, ww, cw);
-                    apply_tiled_mode(&mut s, &vbox_for_tick, ww);
                     do_reveal = vbox_for_tick.opacity() < 1.0;
                 } else if width_changed {
                     let cw = s.config.column_width;
-                    apply_card_sizing(&content_hbox_tick, ww, cw);
+                    let cc = s.column_count();
+                    apply_card_sizing(&content_hbox_tick, ww, cw, cc);
                     apply_tiled_mode(&mut s, &vbox_for_tick, ww);
                 }
                 // Layout just changed (resize or post-load refresh) — page
@@ -1905,6 +2006,7 @@ pub fn display_work_at_with_prepared(
     // (Shakespeare plays default to two columns; a per-work Alt+[ override wins).
     let two_col = state.column_count() == 2;
     state.right_scrolled_overlay.set_visible(two_col);
+    state.column_divider.set_visible(two_col);
     if !two_col {
         state.right_bottom_clip.set_height_request(0);
     }
@@ -2020,6 +2122,9 @@ pub fn display_work_at_with_prepared(
     if let Some(old_renderer) = state.right_line_number_renderer.take() {
         crate::gutter::remove_line_number_renderer(&state.right_view, &old_renderer);
     }
+    if let Some(old_renderer) = state.right_gutter_renderer.take() {
+        crate::gutter::remove_gutter_renderer(&state.right_view, &old_renderer);
+    }
 
     // Populate is_bookmarked eagerly so `'` / `"` bookmark navigation works
     // before the sign column has ever been toggled. setup_gutter() will
@@ -2075,14 +2180,17 @@ pub fn display_work_at_with_prepared(
                     .unwrap_or_default()
             };
             *state.line_numbers.borrow_mut() = new_line_numbers;
+            let (ln_width, ln_margin, ln_gap) = line_number_gutter_geometry(state.column_count());
             let renderer = crate::gutter::setup_line_number_gutter(
                 &state.text_view,
                 state.line_numbers.clone(),
                 &state.theme.dim_fg,
                 &state.config.font_family,
                 state.config.font_size,
+                ln_width,
+                ln_margin,
             );
-            state.text_view.set_right_margin(48);
+            state.text_view.set_right_margin(ln_gap);
             state.line_number_renderer = Some(renderer);
             let right_renderer = crate::gutter::setup_line_number_gutter(
                 &state.right_view,
@@ -2090,8 +2198,10 @@ pub fn display_work_at_with_prepared(
                 &state.theme.dim_fg,
                 &state.config.font_family,
                 state.config.font_size,
+                ln_width,
+                ln_margin,
             );
-            state.right_view.set_right_margin(48);
+            state.right_view.set_right_margin(ln_gap);
             state.right_line_number_renderer = Some(right_renderer);
         }
     }
@@ -2518,6 +2628,9 @@ pub fn apply_dialogue_formatting(state: &mut AppState) {
         .pixels_above_lines(8)
         .build();
 
+    // Speaker names stay flush-left at the text margin, aligned with stage
+    // directions, so dialogue hangs-indents beneath them (standard
+    // modern-edition look). Dialogue gets the +60 indent via dialogue-indent.
     let speaker_name_tag = gtk4::TextTag::builder()
         .name("speaker-name")
         .variant(pango::Variant::SmallCaps)
@@ -2805,6 +2918,34 @@ fn setup_gutter(state: &mut AppState) {
             state.chunk_renderer = Some(renderer);
         }
     }
+
+    // Right-column sign gutter (two-column mode only). The right view shares
+    // the same buffer, so the same per-line flags drive its signs. Mirror the
+    // left column's geometry: give the right view a logical left margin, let a
+    // gutter of `gutter_width` absorb it so the signs sit just left of the
+    // text. The shared dialogue-indent tag was already reduced above by the
+    // same gutter_width, so the right column's dialogue lines line up too.
+    if let Some(old_renderer) = state.right_gutter_renderer.take() {
+        crate::gutter::remove_gutter_renderer(&state.right_view, &old_renderer);
+    }
+    if state.column_count() == 2 {
+        state.right_view.set_left_margin(left_margin);
+        let right_renderer = crate::gutter::setup_timestamp_gutter(
+            &state.right_view,
+            state.sign_column_visible.clone(),
+            state.has_timestamp.clone(),
+            state.is_manual.clone(),
+            state.is_chapter_line.clone(),
+            state.is_bookmarked.clone(),
+            state.ab_a_line.clone(),
+            state.ab_b_line.clone(),
+            left_margin,
+            &state.theme.dim_fg,
+        );
+        state.right_view.set_left_margin(left_margin - gutter_width);
+        state.right_gutter_renderer = Some(right_renderer);
+    }
+
     crate::logging::log("GUTTER: set up on demand");
 }
 
@@ -3287,14 +3428,17 @@ fn rebuild_line_number_gutter(state: &mut AppState) {
             base
         };
         *state.line_numbers.borrow_mut() = nums;
+        let (ln_width, ln_margin, ln_gap) = line_number_gutter_geometry(state.column_count());
         let renderer = crate::gutter::setup_line_number_gutter(
             &state.text_view,
             state.line_numbers.clone(),
             &state.theme.dim_fg,
             &state.config.font_family,
             state.config.font_size,
+            ln_width,
+            ln_margin,
         );
-        state.text_view.set_right_margin(48);
+        state.text_view.set_right_margin(ln_gap);
         state.line_number_renderer = Some(renderer);
         let right_renderer = crate::gutter::setup_line_number_gutter(
             &state.right_view,
@@ -3302,8 +3446,10 @@ fn rebuild_line_number_gutter(state: &mut AppState) {
             &state.theme.dim_fg,
             &state.config.font_family,
             state.config.font_size,
+            ln_width,
+            ln_margin,
         );
-        state.right_view.set_right_margin(48);
+        state.right_view.set_right_margin(ln_gap);
         state.right_line_number_renderer = Some(right_renderer);
     }
 }
@@ -3955,5 +4101,29 @@ mod column_default_tests {
     #[test]
     fn non_shakespeare_play_defaults_to_one() {
         assert_eq!(default_column_count_for_parts("Marlowe", "play"), 1);
+    }
+}
+
+#[cfg(test)]
+mod card_width_tests {
+    use super::target_card_width;
+
+    #[test]
+    fn one_column_keeps_configured_width() {
+        // Single column always uses column_width regardless of window size.
+        assert_eq!(target_card_width(1920, 1050, 1), 1050);
+        assert_eq!(target_card_width(800, 1050, 1), 1050);
+    }
+
+    #[test]
+    fn two_columns_fill_fraction_of_wide_window() {
+        // 85% of 1920 = 1632, wider than the 1050 floor.
+        assert_eq!(target_card_width(1920, 1050, 2), 1632);
+    }
+
+    #[test]
+    fn two_columns_never_below_single_column_floor() {
+        // 85% of 1000 = 850, below the 1050 floor → clamp up to 1050.
+        assert_eq!(target_card_width(1000, 1050, 2), 1050);
     }
 }

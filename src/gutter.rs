@@ -186,20 +186,39 @@ pub fn setup_chunk_gutter(
     renderer
 }
 
+/// Width of the line-number renderer and its trailing margin in the default
+/// (single-column / monocle) layout.
+pub const LINE_NUMBER_WIDTH: i32 = 40;
+pub const LINE_NUMBER_MARGIN_END: i32 = 48;
+
+/// Tighter line-number geometry for two-column mode: the numbers sit closer to
+/// the text so each narrow column keeps more room for the verse line itself
+/// (the widest real Shakespeare dialogue line is ~63 chars and must not wrap).
+/// `MARGIN_END_TWO_COL` is the padding between the number and the card/column
+/// edge; the gap between the dialogue text and the number is the view's right
+/// margin, set separately (smaller) so the number reads as part of that line.
+pub const LINE_NUMBER_WIDTH_TWO_COL: i32 = 36;
+pub const LINE_NUMBER_MARGIN_END_TWO_COL: i32 = 28;
+/// Gap between the last char of a dialogue line and its line number in
+/// two-column mode (the text view's right margin when the number gutter is on).
+pub const LINE_NUMBER_TEXT_GAP_TWO_COL: i32 = 6;
+
 pub fn setup_line_number_gutter(
     view: &View,
     line_numbers: Rc<RefCell<Vec<Option<i64>>>>,
     dim_color: &str,
     font_family: &str,
     font_size_pt: u32,
+    width: i32,
+    margin_end: i32,
 ) -> sourceview5::GutterRendererText {
     let gutter = sourceview5::prelude::ViewExt::gutter(view, gtk4::TextWindowType::Right);
     let renderer = sourceview5::GutterRendererText::new();
     renderer.set_xpad(0);
     renderer.set_xalign(0.0);
     renderer.set_yalign(0.5);
-    renderer.set_size_request(40, -1);
-    renderer.set_margin_end(48);
+    renderer.set_size_request(width, -1);
+    renderer.set_margin_end(margin_end);
     gutter.insert(&renderer, 0);
 
     let color = dim_color.to_string();

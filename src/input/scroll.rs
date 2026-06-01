@@ -304,6 +304,11 @@ pub fn resnap_page(state: &mut AppState) {
 /// has already restored a custom scroll value and a full `resnap_page`
 /// would clobber it.
 pub fn refresh_bottom_clip(state: &AppState) {
+    let left_exact_end = if state.column_count() == 2 {
+        Some(super::viewport::column_split(state, state.page_top_line).split)
+    } else {
+        None
+    };
     schedule_bottom_clip_update(
         state.text_view.clone(),
         state.bottom_clip.clone(),
@@ -311,6 +316,7 @@ pub fn refresh_bottom_clip(state: &AppState) {
         state.page_top_line,
         state.effective_line_count(),
         state.is_prose(),
+        left_exact_end,
     );
 }
 
@@ -327,15 +333,16 @@ fn schedule_bottom_clip_update(
     page_top: usize,
     line_count: usize,
     is_prose: bool,
+    exact_end: Option<usize>,
 ) {
     let tv1 = text_view.clone();
     let bc1 = bottom_clip.clone();
     let sw1 = scrolled_window.clone();
     glib::idle_add_local_once(move || {
-        update_bottom_clip(&tv1, &bc1, &sw1, page_top, line_count, is_prose);
+        update_bottom_clip(&tv1, &bc1, &sw1, page_top, line_count, is_prose, exact_end);
     });
     glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
-        update_bottom_clip(&text_view, &bottom_clip, &scrolled_window, page_top, line_count, is_prose);
+        update_bottom_clip(&text_view, &bottom_clip, &scrolled_window, page_top, line_count, is_prose, exact_end);
     });
 }
 
@@ -396,17 +403,31 @@ pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
         state.last_visible_range.set(None);
     }
 
+    // In two-column mode the left column must stop exactly where the right
+    // column begins (`cs.split`), with no re-trimming — column_split already
+    // chose that boundary to fill the left column. Pass it as exact_end so
+    // update_bottom_clip clips there verbatim instead of running its own trim
+    // (which would underfill the column) or its fill-guard (which would render
+    // past the split and duplicate the right column's top lines).
+    let two_col = state.column_count() == 2;
+    let cs = if two_col {
+        Some(super::viewport::column_split(state, effective_top))
+    } else {
+        None
+    };
+    let line_count = state.effective_line_count();
+    let left_exact_end = cs.map(|c| c.split);
     schedule_bottom_clip_update(
         state.text_view.clone(),
         state.bottom_clip.clone(),
         state.scrolled_window.clone(),
         effective_top,
-        state.effective_line_count(),
+        line_count,
         state.is_prose(),
+        left_exact_end,
     );
 
-    if state.column_count() == 2 {
-        let cs = super::viewport::column_split(state, effective_top);
+    if let Some(cs) = cs {
         // Scroll the right view so its top line is `cs.split`.
         if let Some(iter) = state.buffer.iter_at_line(cs.split as i32) {
             let (y, _h) = state.right_view.line_yrange(&iter);
@@ -414,14 +435,18 @@ pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
             let rmax = (radj.upper() - radj.page_size()).max(0.0);
             radj.set_value((y as f64).min(rmax));
         }
-        // Clip the right column below its page end.
+        // Clip the right column exactly at its page end — column_split already
+        // chose cs.page_end (trimmed), so clip there verbatim rather than
+        // letting update_bottom_clip re-trim with a possibly different result.
+        let right_end = (cs.page_end + 1).min(line_count);
         schedule_bottom_clip_update(
             state.right_view.clone(),
             state.right_bottom_clip.clone(),
             state.right_scrolled_window.clone(),
             cs.split,
-            (cs.page_end + 1).min(state.effective_line_count()),
+            line_count,
             state.is_prose(),
+            Some(right_end),
         );
     }
 }
@@ -456,12 +481,17 @@ pub(crate) fn update_bottom_clip_public(
     line_count: usize,
     is_prose: bool,
 ) {
-    update_bottom_clip(text_view, bottom_clip, scrolled_window, page_top, line_count, is_prose);
+    update_bottom_clip(text_view, bottom_clip, scrolled_window, page_top, line_count, is_prose, None);
 }
 
 /// Set the bottom clip to hide everything below the last fully-visible line.
 /// Uses buffer line_yrange (absolute coords) to sum heights from page_top,
 /// avoiding buffer_to_window_coords which may be stale after scroll_to_iter.
+/// `exact_end`, when `Some(end)`, clips so the last visible line is `end - 1`
+/// with NO trimming applied. Used for the left column of a two-column spread,
+/// where `column_split` already decided the boundary (`cs.split`); re-running
+/// the trim here would undo column_split's generous left-column fill and leave
+/// the column badly underfilled.
 fn update_bottom_clip(
     text_view: &sourceview5::View,
     bottom_clip: &gtk4::Box,
@@ -469,6 +499,7 @@ fn update_bottom_clip(
     page_top: usize,
     line_count: usize,
     is_prose: bool,
+    exact_end: Option<usize>,
 ) {
     let widget_height = text_view.height();
     if widget_height <= 0 {
@@ -499,6 +530,28 @@ fn update_bottom_clip(
         }
     };
 
+    // Two-column column with a pre-decided boundary: clip exactly at
+    // `end - 1` with no trimming and no descender-guard reduction.
+    // column_split already chose this boundary (and verified it fits in
+    // `widget_height - guard - margin`), so re-running visible_range here with
+    // the guard-reduced usable_height would fit fewer lines and underfill.
+    // Sum the real heights of [page_top, end-1] directly.
+    if let Some(end) = exact_end {
+        let last = end.saturating_sub(1).max(page_top);
+        let mut total = 0i32;
+        for i in page_top..=last {
+            if let Some(iter) = buf_sv.iter_at_line(i as i32) {
+                let (_y, h) = text_view.line_yrange(&iter);
+                total += h;
+            }
+        }
+        let clip = (widget_height - total).max(0);
+        if bottom_clip.height_request() != clip {
+            bottom_clip.set_height_request(clip);
+        }
+        return;
+    }
+
     let range = visible_range(text_view, &buf_sv, page_top, line_count, usable_height);
 
     if range.count == 0 || range.total_height == 0 {
@@ -506,20 +559,22 @@ fn update_bottom_clip(
         return;
     }
 
-    let trimmed = trim_visible_range(range, page_top, text_view, &buf_sv, is_prose);
+    let display_range = {
+        let trimmed = trim_visible_range(range, page_top, text_view, &buf_sv, is_prose);
 
-    // Viewport fill guard for display: if trimming left the page less than
-    // ~85% full, the dangling-speaker/block trims created too much empty
-    // space. Fall back to the raw visible range which only clips the partial
-    // bottom line. A dangling speaker at the bottom looks better than 15%+
-    // empty space.
-    let display_range = if widget_height > 0
-        && trimmed.last_fit < range.last_fit
-        && trimmed.total_height * 20 < widget_height * 17
-    {
-        range
-    } else {
-        trimmed
+        // Viewport fill guard for display: if trimming left the page less than
+        // ~85% full, the dangling-speaker/block trims created too much empty
+        // space. Fall back to the raw visible range which only clips the partial
+        // bottom line. A dangling speaker at the bottom looks better than 15%+
+        // empty space.
+        if widget_height > 0
+            && trimmed.last_fit < range.last_fit
+            && trimmed.total_height * 20 < widget_height * 17
+        {
+            range
+        } else {
+            trimmed
+        }
     };
 
     let clip = (widget_height - display_range.total_height).max(0);

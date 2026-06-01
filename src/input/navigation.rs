@@ -265,9 +265,19 @@ pub fn toggle_column_layout(state: &mut AppState) {
 
     let two = new_count == 2;
     state.right_scrolled_overlay.set_visible(two);
+    state.column_divider.set_visible(two);
     if !two {
         state.right_bottom_clip.set_height_request(0);
     }
+
+    // Card width depends on column count (two columns fill more of the window),
+    // so resize the card to match the new layout before recomputing pages.
+    crate::app::apply_card_sizing(
+        &state.content_hbox,
+        state.window.width(),
+        state.config.column_width,
+        new_count,
+    );
 
     // Page boundaries depend on column_count(); the cached page-tops index is
     // stale after a toggle, so invalidate it before recomputing.

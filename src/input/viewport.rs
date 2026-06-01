@@ -136,6 +136,93 @@ pub(crate) fn trim_trailing_speakers(
     trim_trailing_speakers_pure(range, page_top, is_dangling_context, line_height)
 }
 
+/// Minimal trailing trim for the LEFT column of a two-column spread: back up
+/// only off trailing BARE SPEAKER NAMES and trailing BLANKS (a speaker must
+/// lead its dialogue in the right column; blanks are invisible). Unlike
+/// `trim_trailing_speakers`, this does NOT treat a trailing stage direction as
+/// dangling — a stage direction at the bottom of the left column is fine and
+/// trimming it would underfill the column. Maximizes left-column fill.
+pub(crate) fn trim_trailing_speaker_only(
+    range: VisibleRange,
+    page_top: usize,
+    text_view: &sourceview5::View,
+    buffer: &sourceview5::Buffer,
+) -> VisibleRange {
+    use crate::db::line_types;
+    let is_dangling_context = |i: usize| -> bool {
+        let text = {
+            let Some(start) = buffer.iter_at_line(i as i32) else { return false };
+            let mut end = start;
+            if !end.ends_line() { end.forward_to_line_end(); }
+            buffer.text(&start, &end, false).to_string()
+        };
+        line_types::is_speaker(&text) || line_types::is_blank(&text)
+    };
+    let line_height = |i: usize| -> i32 {
+        let Some(iter) = buffer.iter_at_line(i as i32) else { return 0 };
+        let (_y, h) = text_view.line_yrange(&iter);
+        h
+    };
+    trim_trailing_speakers_pure(range, page_top, is_dangling_context, line_height)
+}
+
+/// If `range.last_fit` falls partway through a multi-line stage-direction
+/// `[...]` block (the block's closing `]` is below `last_fit`), back the range
+/// up to the line before the block starts so the whole stage direction stays
+/// together (moves to the top of the right column). No-op when the range ends
+/// on a complete line or a self-closed stage direction. Never crosses
+/// `page_top`.
+pub(crate) fn back_up_off_partial_stage_direction(
+    range: VisibleRange,
+    page_top: usize,
+    text_view: &sourceview5::View,
+    buffer: &sourceview5::Buffer,
+) -> VisibleRange {
+    let last = range.last_fit;
+    if last <= page_top {
+        return range;
+    }
+    // Is last_fit inside a stage-direction block whose `]` is NOT yet seen by
+    // last_fit? Scan from the block's start (an opening `[`) forward: if the
+    // closing `]` is strictly below last_fit, the block is cut by the split.
+    if !is_inside_stage_direction(buffer, last) {
+        return range;
+    }
+    // The line itself closing the bracket means the block is complete here.
+    let last_text = buffer_line_text(buffer, last);
+    if last_text.trim_end().ends_with(']') {
+        return range;
+    }
+    // Find the start of the stage-direction block (the line with the opening
+    // `[`), scanning back from last_fit.
+    let mut block_start = last;
+    while block_start > page_top {
+        let t = buffer_line_text(buffer, block_start);
+        if t.trim_start().starts_with('[') {
+            break;
+        }
+        block_start -= 1;
+    }
+    // Back up to the line before the block. If that would empty the page
+    // (block starts at page_top), leave the range as-is — better an orphan
+    // than a blank column.
+    if block_start <= page_top {
+        return range;
+    }
+    let new_last = block_start - 1;
+    let mut total = 0i32;
+    for i in page_top..=new_last {
+        let Some(iter) = buffer.iter_at_line(i as i32) else { continue };
+        let (_y, h) = text_view.line_yrange(&iter);
+        total += h;
+    }
+    VisibleRange {
+        last_fit: new_last,
+        total_height: total,
+        count: new_last - page_top + 1,
+    }
+}
+
 /// Pure: given closures that classify line kinds, find the start of the
 /// "block" containing `last_fit`. A block is a multi-line stage-direction
 /// run (any work) or a multi-line verse stanza (non-prose works only).
@@ -846,13 +933,28 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
     }
     let is_prose = state.is_prose();
 
-    // Left column.
+    // Left column. Unlike a single-column page, a dialogue/verse block (or a
+    // stage direction) that doesn't fully fit at the bottom is NOT a problem
+    // here — it simply continues at the top of the right column. So fill the
+    // left column maximally and trim only what would look broken at the split:
+    // a section break, and a trailing BARE SPEAKER NAME or trailing blanks (a
+    // speaker must lead its dialogue in the right column). We deliberately do
+    // NOT trim stage directions or run the block-atom trim, both of which
+    // otherwise leave the left column badly underfilled.
     let left_h = state.text_view.height();
     let left = if left_h > 0 {
         let guard = descender_guard_px(&state.text_view, page_top);
         let usable = left_h - guard - BASE_BOTTOM_MARGIN;
         let r = visible_range(&state.text_view, &state.buffer, page_top, line_count, usable);
-        trim_visible_range(r, page_top, &state.text_view, &state.buffer, is_prose)
+        let r = clamp_at_section_break(r, page_top, &state.text_view, &state.buffer);
+        let r = trim_trailing_speaker_only(r, page_top, &state.text_view, &state.buffer);
+        // Keep multi-line stage directions atomic across the split: if the
+        // left column would end partway through a `[...]` block (the next line
+        // continues the same unclosed bracket), back up to before the block so
+        // the whole stage direction moves to the top of the right column
+        // instead of being orphaned ("[They put Bassianus' body in the pit and"
+        // on the left, "exit, carrying off Lavinia.]" on the right).
+        back_up_off_partial_stage_direction(r, page_top, &state.text_view, &state.buffer)
     } else {
         // Layout not ready — degenerate single-line range so we don't panic.
         visible_range(&state.text_view, &state.buffer, page_top, line_count, 1)

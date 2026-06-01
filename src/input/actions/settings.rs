@@ -25,7 +25,8 @@ pub(crate) fn apply_settings_change(
             s.config.line_spacing = val;
         }
         SettingsChange::ColumnWidth(val) => {
-            crate::app::apply_card_sizing(&s.content_hbox, s.window.width(), val);
+            let cc = s.column_count();
+            crate::app::apply_card_sizing(&s.content_hbox, s.window.width(), val, cc);
             s.config.column_width = val;
         }
         SettingsChange::TextMargins(val) => {
@@ -107,7 +108,8 @@ pub(crate) fn revert_to_snapshot(state: &Rc<RefCell<crate::app::AppState>>) {
         s.text_view.set_pixels_above_lines((snap_ls as i32).max(0));
         s.text_view.set_pixels_below_lines((snap_ls as i32).max(0));
     }
-    crate::app::apply_card_sizing(&s.content_hbox, s.window.width(), snap_cw);
+    let cc = s.column_count();
+    crate::app::apply_card_sizing(&s.content_hbox, s.window.width(), snap_cw, cc);
     let work_type = s.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("");
     let is_verse = !crate::db::line_types::is_prose_work(work_type);
     let verse_bump = if is_verse { crate::app::verse_left_offset(s.window.width(), snap_cw) } else { 0 };
@@ -168,7 +170,8 @@ pub(crate) fn reset_to_defaults(state: &Rc<RefCell<crate::app::AppState>>) {
         s.text_view.set_pixels_above_lines((ls as i32).max(0));
         s.text_view.set_pixels_below_lines((ls as i32).max(0));
     }
-    crate::app::apply_card_sizing(&s.content_hbox, s.window.width(), cw);
+    let cc = s.column_count();
+    crate::app::apply_card_sizing(&s.content_hbox, s.window.width(), cw, cc);
     let work_type = s.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("");
     let is_verse = !crate::db::line_types::is_prose_work(work_type);
     let verse_bump = if is_verse { crate::app::verse_left_offset(s.window.width(), cw) } else { 0 };
