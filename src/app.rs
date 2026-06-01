@@ -312,13 +312,21 @@ impl AppState {
         }
     }
 
-    /// Number of e-reader columns: 2 only in e-reader mode with config.column_count == 2;
-    /// always 1 in scroll mode (two columns are e-reader-only).
+    /// Number of e-reader columns for the CURRENT work: scroll mode → 1; else a
+    /// per-work override (if `Alt+[` set one) wins, otherwise the work-type
+    /// default (2 for a Shakespeare play, else 1). Clamped to 1..=2.
     pub fn column_count(&self) -> u8 {
-        match self.config.navigation_mode {
-            crate::config::NavigationMode::EReader => self.config.column_count.clamp(1, 2),
-            crate::config::NavigationMode::Scroll => 1,
+        if !matches!(self.config.navigation_mode, crate::config::NavigationMode::EReader) {
+            return 1;
         }
+        let Some(work) = self.current_work.as_ref() else {
+            return 1;
+        };
+        let n = self.config.column_overrides
+            .get(&work.abbrev)
+            .copied()
+            .unwrap_or_else(|| default_column_count_for(work));
+        n.clamp(1, 2)
     }
 
     pub fn work_line_for_buffer(&self, buffer_line: usize) -> Option<usize> {
@@ -405,6 +413,23 @@ pub const PROSE_LEFT_OFFSET: i32 = 120;
 
 /// Fixed height for the top spacer above the first text line.
 pub const TOP_SPACER_HEIGHT: i32 = 40;
+
+/// Pure default-column rule: a Shakespeare play gets two columns, everything
+/// else one. Split out from `default_column_count_for` so it is unit-testable
+/// without constructing a `Work`.
+pub(crate) fn default_column_count_for_parts(author: &str, work_type: &str) -> u8 {
+    if author == "Shakespeare" && work_type == "play" {
+        2
+    } else {
+        1
+    }
+}
+
+/// Default column count for a work: 2 for a Shakespeare play, else 1.
+pub(crate) fn default_column_count_for(work: &crate::db::models::Work) -> u8 {
+    default_column_count_for_parts(&work.author, &work.work_type)
+}
+
 pub fn verse_left_offset(window_width: i32, column_width: u32) -> i32 {
     let card_w = (column_width as i32).min(window_width.max(1));
     let slack = window_width - card_w;
@@ -3899,5 +3924,25 @@ pub fn update_title_bar_scene(state: &AppState) {
         state.title_bar_scene_label.set_text(&label);
     } else {
         state.title_bar_scene_label.set_text("");
+    }
+}
+
+#[cfg(test)]
+mod column_default_tests {
+    use super::default_column_count_for_parts;
+
+    #[test]
+    fn shakespeare_play_defaults_to_two() {
+        assert_eq!(default_column_count_for_parts("Shakespeare", "play"), 2);
+    }
+    #[test]
+    fn shakespeare_poem_defaults_to_one() {
+        assert_eq!(default_column_count_for_parts("Shakespeare", "poem"), 1);
+        assert_eq!(default_column_count_for_parts("Shakespeare", "sonnet_sequence"), 1);
+        assert_eq!(default_column_count_for_parts("Shakespeare", "narrative_poem"), 1);
+    }
+    #[test]
+    fn non_shakespeare_play_defaults_to_one() {
+        assert_eq!(default_column_count_for_parts("Marlowe", "play"), 1);
     }
 }
