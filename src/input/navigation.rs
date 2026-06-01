@@ -204,22 +204,23 @@ pub fn jump_to_end(state: &mut AppState) {
     // anchor. Sidesteps the GTK scroll-clamp bug seen with the simple
     // `line_count - lpp` heuristic.
     let widget_height = state.text_view.height();
+    let columns = state.column_count() as i32;
     let new_top = if widget_height > 0 && line_count > 0 {
         // For jump_to_end, the last buffer line is the last content. There's
         // no "next page" requiring descender_guard or bottom_margin headroom
-        // — the buffer simply ends. So usable_height = full widget_height.
-        // Walk backward from line_count - 1, accumulating heights; the
-        // smallest top such that total <= widget_height is the new anchor.
-        // This ensures (a) every line from new_top down to line_count - 1
-        // fits in the viewport and (b) y(new_top) is reachable by
-        // vadjustment.set_value (no clamp).
-        let usable_height = widget_height;
+        // — the buffer simply ends. In two-column mode the final page holds
+        // `columns` columns, so accumulate `columns * widget_height` worth of
+        // content backward from the last line. Walk backward from
+        // line_count - 1; the smallest top such that total fits the combined
+        // column capacity is the anchor (the last dialogue line then sits at
+        // the bottom of the rightmost column).
+        let capacity = widget_height * columns;
         let mut total: i32 = 0;
         let mut top = line_count - 1;
         loop {
             let Some(iter) = state.buffer.iter_at_line(top as i32) else { break };
             let (_y, h) = state.text_view.line_yrange(&iter);
-            if total + h > usable_height && top != line_count - 1 {
+            if total + h > capacity && top != line_count - 1 {
                 top += 1;
                 break;
             }
@@ -231,8 +232,8 @@ pub fn jump_to_end(state: &mut AppState) {
         }
         top
     } else {
-        // Layout not ready — fall back to lpp anchor.
-        let lpp = lines_per_page(state);
+        // Layout not ready — fall back to lpp anchor (scaled by column count).
+        let lpp = lines_per_page(state) * (columns as usize);
         line_count.saturating_sub(lpp)
     };
     state.page_back_stack.clear();
