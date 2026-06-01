@@ -132,6 +132,10 @@ pub fn set_start_time(state: &mut AppState) -> bool {
             crate::logging::log(&format!("TS: upsert_start_time failed: {}", e));
             return false;
         }
+        if let Err(e) = crate::db::queries::upsert_spoken_status(&conn, line.id, media_id, true) {
+            // Non-fatal: the timestamp is already written; just log.
+            crate::logging::log(&format!("TS: upsert_spoken_status failed: {}", e));
+        }
 
         // Update in-memory
         match &mut line.timestamp {
@@ -148,6 +152,7 @@ pub fn set_start_time(state: &mut AppState) -> bool {
                 is_manual: true,
             }),
         }
+        line.is_spoken = Some(true);
 
         if end_time > 0.0 {
             let _ = crate::db::queries::update_end_time(&conn, line.id, media_id, end_time);
