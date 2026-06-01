@@ -58,7 +58,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key("g", "G", "", "", &[("C-g", "gloss tog"), ("A-g", "gloss pick")]),
     ub("c", "C"),
     key("r", "R", "next vocab", "R: prev vocab", &[]),
-    key("l", "L", "toggle signs", "", &[("C-M-l", "save+quit")]),
+    key("l", "L", "toggle signs", "", &[("S-M-l", "save+quit")]),
     key("/", "?", "search", "", &[("C-/", "keybinds")]),
     ub("@", "^"),
     key("\\", "#", "vocab ▶", "◀ vocab", &[("C-\\", "conc picker"), ("M-\\", "vocab hi")]),
