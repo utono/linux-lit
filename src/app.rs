@@ -1897,6 +1897,17 @@ pub fn display_work_at_with_prepared(
     };
     state.text_view.set_pixels_above_lines(ls);
     state.text_view.set_pixels_below_lines(ls);
+    // Keep the right column's line spacing in sync with the left (both views
+    // share the buffer but have independent pixels_above/below settings).
+    state.right_view.set_pixels_above_lines(ls);
+    state.right_view.set_pixels_below_lines(ls);
+    // Show or hide the right column to match this work's resolved column count
+    // (Shakespeare plays default to two columns; a per-work Alt+[ override wins).
+    let two_col = state.column_count() == 2;
+    state.right_scrolled_overlay.set_visible(two_col);
+    if !two_col {
+        state.right_bottom_clip.set_height_request(0);
+    }
     state.translations_visible = false;
     state.translation_lines = Vec::new();
     // Load translations for this work
