@@ -111,6 +111,34 @@ math required.
   page from the current `page_top_line`, and keep `current_line` visible.
   No-op in scroll mode.
 
+### Visual mode
+
+Visual mode selection flows across the column boundary, mirroring selecting
+across a page break in a book. The selection model needs **no new mechanism**;
+it inherits two-column behavior from the shared buffer.
+
+- **Selection model:** unchanged. `SelectionState` stays `anchor_line ..
+  cursor_line` over absolute buffer indices. A selection spanning the break
+  (anchor in the left column, cursor in the right) is the contiguous run
+  `[start ..= end]` that `range()` already returns.
+- **`j` / `k`:** unchanged. `move_selection_cursor(±1)` walks buffer indices;
+  the bottom of the left column (`S-1`) → top of the right column (`S`) is
+  just `+1`. No column-jump special case.
+- **Highlight rendering:** the only behavioral change, and it is automatic.
+  `apply_selection_highlight` tags `[start ..= end]` on the one shared buffer;
+  because `left_view` shows `L .. S-1` and `right_view` shows `S .. E`, each
+  tagged line renders in whichever column currently displays it. No per-column
+  tagging code.
+- **`ensure_visible` during selection:** `move_selection_cursor` calls
+  `update_highlight_and_ensure_visible`, which must page-turn correctly when
+  the cursor leaves the visible two-column page (cursor past `E` → next page).
+  This reuses the `is_line_on_screen` / `is_line_fully_visible` "span both
+  columns" change already listed below — no additional work specific to visual
+  mode.
+
+`gg` / `G` extension (`extend_to_start` / `extend_to_end`) is unchanged; they
+set `cursor_line` to `0` / `line_count-1` and rely on the same page recompute.
+
 ## What stays the same
 
 - One buffer; all tags (highlight, dim, cursor, gloss) unchanged.
@@ -142,6 +170,10 @@ math required.
 - Toggle test: `Alt+[` flips layout, keeps `current_line` visible, is a no-op in
   scroll mode, and persists across restart.
 - MPV sync: highlight and page turns land in the correct column.
+- Visual mode: a selection started in the left column and extended with `j`
+  past `S-1` flows into the right column as one contiguous run; the highlight
+  renders in both columns; `range()` yields `[anchor ..= cursor]`; extending
+  past the visible page page-turns and keeps the cursor visible.
 
 ## Open risks
 
