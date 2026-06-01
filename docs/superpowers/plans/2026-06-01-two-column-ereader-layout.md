@@ -1136,4 +1136,9 @@ git commit -m "two-column layout: test + clippy cleanup"
   source+translation atom rule is covered by the pure-kernel Task 5; if the
   GTK split needs the same protection in practice (translation orphaned at right
   column top), add the same back-up loop to `column_split` using
-  `state.translation_lines` — deferred unless manual testing shows it.
+  `state.translation_lines` — deferred unless manual testing shows it. NOTE
+  (flagged during Task 5): the pure `column_split_pure_tr` only adjusts `split`,
+  not `page_end`/`next_page_top`. If the GTK `column_split` ports this rule, it
+  should RECOMPUTE the right column (`page_end`, `next_page_top`) from the
+  backed-up `split`, since the right column now starts one line earlier and its
+  capacity shifts.
