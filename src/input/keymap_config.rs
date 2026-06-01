@@ -327,6 +327,7 @@ fn app_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("Escape"), Action::EscapeReaderMode),
         (KeyCombo::ctrl("d"), Action::ToggleDebugLogging),
         (KeyCombo::ctrl_shift("T"), Action::ToggleNavTest),
+        (KeyCombo::ctrl_shift("G"), Action::ShowEchoTurns),
         (KeyCombo::ctrl("p"), Action::OpenLibraryPicker),
         (KeyCombo::ctrl("minus"), Action::OpenRecentPicker),
         (KeyCombo::ctrl_shift("M"), Action::OpenMediaPicker),
