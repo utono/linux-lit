@@ -2019,6 +2019,28 @@ mod headless_pagination_tests {
         ColumnSplit { split, page_end: right_last, next_page_top: next_top }
     }
 
+    /// Like `column_split_pure` but, given a parallel `is_translation` slice, never
+    /// lets the left/right split fall between a source line and its immediately-
+    /// following translation line - the pair moves together to the right column.
+    fn column_split_pure_tr(
+        lines: &[String],
+        is_translation: &[bool],
+        page_top: usize,
+        col_lines: usize,
+        is_prose: bool,
+    ) -> ColumnSplit {
+        let mut cs = column_split_pure(lines, page_top, col_lines, is_prose);
+        // If the right column would START on a translation line, that translation's
+        // source is the last line of the left column - back the split up by one so
+        // the source moves with its translation.
+        while cs.split > page_top + 1
+            && is_translation.get(cs.split).copied().unwrap_or(false)
+        {
+            cs.split -= 1;
+        }
+        cs
+    }
+
     fn col_lines(strs: &[&str]) -> Vec<String> {
         strs.iter().map(|s| s.to_string()).collect()
     }
@@ -2051,5 +2073,19 @@ mod headless_pagination_tests {
         let l = col_lines(&["First line.", "Second line.", "HAMLET", "To be.", "Or not.", "End."]);
         let split = column_split_pure(&l, 0, 3, false);
         assert_eq!(split.split, 2, "speaker pushed to right column");
+    }
+
+    #[test]
+    fn split_keeps_source_and_translation_together() {
+        // line 1 is the translation of line 0; line 3 translation of line 2.
+        // Capacity 3 would put split after line 2 (a source line) leaving its
+        // translation (line 3) orphaned at the right column top - so the split
+        // must back up to keep the pair together: split = 2 -> left [0..1],
+        // right starts at the source line 2 with its translation 3.
+        let l = col_lines(&["src0", "tr0", "src1", "tr1", "src2", "tr2"]);
+        let is_trans = vec![false, true, false, true, false, true];
+        let split = column_split_pure_tr(&l, &is_trans, 0, 3, false);
+        // left column ends on a translation line (1), not splitting pair (2,3)
+        assert_eq!(split.split, 2);
     }
 }
