@@ -93,6 +93,7 @@ pub enum Action {
     OpenGlossPicker,
     ShowEchoes,
     ReopenEchoes,
+    ShowEchoTurns,
 
     // Visual / selection
     EnterVisualMode,
@@ -194,6 +195,7 @@ impl Action {
             | Action::OpenGlossPicker
             | Action::ShowEchoes
             | Action::ReopenEchoes
+            | Action::ShowEchoTurns
             | Action::OpenConcordancePicker
             | Action::OpenConcordanceWordPicker
             | Action::OpenConcordanceListPicker
@@ -304,6 +306,7 @@ impl Action {
             Action::OpenGlossPicker => "OpenGlossPicker",
             Action::ShowEchoes => "ShowEchoes",
             Action::ReopenEchoes => "ReopenEchoes",
+            Action::ShowEchoTurns => "ShowEchoTurns",
             Action::ConcordanceNext => "ConcordanceNext",
             Action::ConcordancePrev => "ConcordancePrev",
             Action::EnterVisualMode => "EnterVisualMode",

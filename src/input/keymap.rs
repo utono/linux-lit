@@ -94,7 +94,8 @@ pub fn handle_key(
             crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_name, is_ctrl),
             crate::app::InputMode::DeleteConfirm => handle_delete_confirm_key(state, key_name),
             crate::app::InputMode::GlossPrompt => handle_gloss_prompt_key(state, key_name, is_ctrl),
-            crate::app::InputMode::EchoPicker => handle_echo_picker_key(state, key_name, tokio_handle),
+            crate::app::InputMode::EchoPicker
+            | crate::app::InputMode::EchoTurnsPicker => handle_echo_picker_key(state, key_name, tokio_handle),
             crate::app::InputMode::EchoesOverlay => handle_echoes_overlay_key(state, key_state, key_name, is_ctrl, tokio_handle),
             crate::app::InputMode::GamepadOverlay => handle_gamepad_key(state, key_name),
             crate::app::InputMode::KeybindsOverlay => handle_keybinds_key(state, key_name),
@@ -1225,6 +1226,8 @@ fn dispatch_action(
         OpenGlossPicker => crate::input::actions::pickers::open_gloss_picker(state, tokio_handle),
         ShowEchoes => crate::input::actions::echoes::show_echoes_for_cursor_line(state, tokio_handle),
         ReopenEchoes => crate::input::actions::echoes::reopen_echoes(state, tokio_handle),
+        // Temporary stub — Task 5 will implement the real handler.
+        ShowEchoTurns => {},
 
         // Visual / selection
         EnterVisualMode => crate::input::visual::enter_visual_mode(&mut state.borrow_mut()),

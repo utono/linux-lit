@@ -46,6 +46,7 @@ pub enum InputMode {
     GlossPrompt,
     GlossPicker,
     EchoPicker,
+    EchoTurnsPicker,
     EchoesOverlay,
     GamepadOverlay,
     KeybindsOverlay,
@@ -184,6 +185,7 @@ pub struct AppState {
     pub delete_confirm_overlay: Option<glib::WeakRef<gtk4::Overlay>>,
     pub gloss_picker: GlossPicker,
     pub echo_picker: crate::ui::echo_picker::EchoPicker,
+    pub echo_turns_picker: crate::ui::echo_turns_picker::EchoTurnsPicker,
     pub pending_echo_context: Option<crate::gloss::GlossContext>,
     pub pending_echo_scene_lines: Vec<crate::db::models::Line>,
     pub echo_overlay_links: Vec<crate::db::queries::StoredEchoLink>,
@@ -784,6 +786,12 @@ pub fn build_window(
     authorship_picker.attach(&concordance_list_picker.overlay);
     authorship_picker.overlay.set_vexpand(true);
 
+    // Echo turns picker (Ctrl+Shift+G: list all turns in this work that have
+    // echoes). add_overlay panel onto the outer overlay, NOT wrapped into the
+    // reader's size-bearing chain (wrapping collapses the reader layout).
+    let echo_turns_picker = crate::ui::echo_turns_picker::EchoTurnsPicker::new();
+    authorship_picker.overlay.add_overlay(echo_turns_picker.picker_box());
+
     // Echo line picker (add-echo: choose a line to attach an echo to).
     // Added as an overlay panel onto the outer overlay (like concordance_works
     // below), NOT wrapped into the reader's size-bearing chain — wrapping it
@@ -1004,6 +1012,7 @@ pub fn build_window(
         delete_confirm_overlay: None,
         gloss_picker,
         echo_picker,
+        echo_turns_picker,
         pending_echo_context: None,
         pending_echo_scene_lines: Vec::new(),
         echo_overlay_links: Vec::new(),
