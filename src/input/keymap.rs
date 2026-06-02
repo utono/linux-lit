@@ -543,24 +543,50 @@ fn handle_search_key(
             {
                 let mut s = state.borrow_mut();
                 crate::input::search::clear_search(&mut s);
-                // The live-search jump centered the match via
-                // update_highlight_and_center, leaving page_top_line at an
-                // arbitrary mid-page offset. In two-column mode that desyncs the
-                // column split and leaves a clipped partial line. Snap the match
-                // to a clean page top before returning to read.
-                s.page_top_line = s.current_line;
+                // Escape cancels the search: restore the reader position saved
+                // when search opened so the live-search jump does not affect
+                // pagination. resnap_page re-tiles the original page cleanly
+                // (two-column split, bottom clip, etc.).
+                if let Some((line, top)) = s.search_return_pos.take() {
+                    s.current_line = line;
+                    s.page_top_line = top;
+                } else {
+                    s.page_top_line = s.current_line;
+                }
                 crate::input::scroll::resnap_page(&mut s);
+                crate::input::highlight::update_highlight(&mut s);
             }
             state.borrow().search_bar.hide();
             state.borrow_mut().input_mode = crate::app::InputMode::Reader;
             true
         }
         "Return" => {
+            // The page the reader was on when search opened. If the matched
+            // line is already visible on that page, accepting the search must
+            // not re-paginate (no jump); only when the match lies off-page do
+            // we snap it to a new page top.
+            let orig_top = state
+                .borrow()
+                .search_return_pos
+                .map(|(_, top)| top);
             crate::input::search::execute_search(&state);
             {
                 let mut s = state.borrow_mut();
-                s.page_top_line = s.current_line;
+                // Accepting a match commits the jump; drop the saved return pos.
+                s.search_return_pos = None;
+                let match_line = s.current_line;
+                let on_page = orig_top.map_or(false, |top| {
+                    let last = crate::input::viewport::last_fully_visible_line(&s, top);
+                    match_line >= top && match_line <= last
+                });
+                if on_page {
+                    // Match is already on the current page — keep pagination put.
+                    s.page_top_line = orig_top.unwrap();
+                } else {
+                    s.page_top_line = s.current_line;
+                }
                 crate::input::scroll::resnap_page(&mut s);
+                crate::input::highlight::update_highlight(&mut s);
             }
             state.borrow().search_bar.hide();
             state.borrow_mut().input_mode = crate::app::InputMode::Reader;
@@ -1255,6 +1281,9 @@ fn dispatch_action(
         OpenSearch => {
             let mut s = state.borrow_mut();
             crate::input::search::clear_search(&mut s);
+            // Remember where the reader was so Escape can restore it (live
+            // search moves current_line/page_top_line as the user types).
+            s.search_return_pos = Some((s.current_line, s.page_top_line));
             s.search_bar.show();
             s.input_mode = crate::app::InputMode::Search;
         }

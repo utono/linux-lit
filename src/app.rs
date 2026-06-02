@@ -132,6 +132,9 @@ pub struct AppState {
     pub search_bar: SearchBar,
     pub search_matches: Vec<SearchMatch>,
     pub search_match_idx: usize,
+    /// Reader position (current_line, page_top_line) saved when search opens, so
+    /// Escape can cancel the live-search jump and restore the original page.
+    pub search_return_pos: Option<(usize, usize)>,
     pub search_tag: gtk4::TextTag,
     pub search_current_tag: gtk4::TextTag,
     pub current_time_pos: f64,
@@ -1152,12 +1155,17 @@ pub fn build_window(
     title_bar.append(&title_bar_scene_label);
     title_bar.set_visible(config.title_bar_visible);
 
-    // Search bar at bottom
+    // Search bar floats over the TOP of the card — overlay panel, not in the
+    // size-bearing widget chain, so it does not displace content. Width is 3/4
+    // of the card; top margin clears the card's top edge (24px card margin + a
+    // small inset into the top spacer).
     let search_bar = SearchBar::new();
+    search_bar.container.set_width_request(config.column_width as i32 * 3 / 4);
+    search_bar.container.set_margin_top(120);
+    authorship_picker.overlay.add_overlay(&search_bar.container);
 
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     vbox.append(&authorship_picker.overlay);
-    vbox.append(&search_bar.container);
 
     concordance_bar.container.set_valign(gtk4::Align::End);
     title_bar.set_valign(gtk4::Align::End);
@@ -1233,6 +1241,7 @@ pub fn build_window(
         search_bar,
         search_matches: Vec::new(),
         search_match_idx: 0,
+        search_return_pos: None,
         search_tag,
         search_current_tag,
         current_time_pos: 0.0,

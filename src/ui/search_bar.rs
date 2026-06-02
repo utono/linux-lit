@@ -12,13 +12,10 @@ impl SearchBar {
         let container = GtkBox::builder()
             .orientation(Orientation::Horizontal)
             .spacing(8)
-            .halign(gtk4::Align::Fill)
-            .valign(gtk4::Align::End)
+            .halign(gtk4::Align::Center)
+            .valign(gtk4::Align::Start)
             .build();
         container.add_css_class("search-bar");
-
-        let slash_label = Label::builder().label("/").build();
-        slash_label.add_css_class("search-slash");
 
         let entry = Entry::builder()
             .hexpand(true)
@@ -30,7 +27,6 @@ impl SearchBar {
             .build();
         counter.add_css_class("search-counter");
 
-        container.append(&slash_label);
         container.append(&entry);
         container.append(&counter);
         container.set_visible(false);
