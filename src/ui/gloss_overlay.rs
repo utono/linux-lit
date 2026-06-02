@@ -529,12 +529,12 @@ impl GlossOverlay {
         self.gloss_view.set_top_margin(32);
         self.gloss_view.set_pixels_below_lines(6);
         let buffer = self.gloss_view.buffer();
-        buffer.set_text(synopsis);
+        buffer.set_text(&render_synopsis_paragraphs(synopsis));
         self.bar_drawing.queue_draw();
 
         self.gloss_scroll_overlay.set_visible(true);
         self.gloss_scrolled.vadjustment().set_value(0.0);
-        self.hint.set_text("Esc close · j/k scroll · A ask a question · U undo");
+        self.hint.set_text("Esc close · j/k scroll · n/p scene · Ctrl+g glosses · A ask · U undo");
         self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
@@ -607,6 +607,33 @@ enum GlossElement {
     Speaker(String),
     Verse(String),
     Gloss(String),
+}
+
+/// Render a synopsis for display, honoring paragraph markup. Synopses may be
+/// stored either as plain text (one paragraph) or as one or more `<p>...</p>`
+/// tags (one per paragraph, mirroring how glosses use `<gloss>` per paragraph).
+/// `<p>` paragraphs are joined with a blank line so the text view shows visible
+/// paragraph breaks. Plain text with no `<p>` tags is returned trimmed, so
+/// legacy single-paragraph synopses keep working.
+pub fn render_synopsis_paragraphs(synopsis: &str) -> String {
+    let mut paras: Vec<String> = Vec::new();
+    let mut remaining = synopsis;
+    while let Some(pos) = remaining.find("<p>") {
+        let after = &remaining[pos..];
+        if let Some((content, rest)) = try_extract(after, "p") {
+            if !content.is_empty() {
+                paras.push(content.to_string());
+            }
+            remaining = rest;
+        } else {
+            remaining = &remaining[pos + 3..];
+        }
+    }
+    if paras.is_empty() {
+        synopsis.trim().to_string()
+    } else {
+        paras.join("\n\n")
+    }
 }
 
 fn parse_gloss_tags(gloss: &str) -> Vec<GlossElement> {

@@ -233,6 +233,9 @@ pub struct AppState {
     pub sidebar_mode: SidebarMode,
     pub synopsis_cache: HashMap<(i64, i64), String>,
     pub synopsis_visible: bool,
+    /// The (div1, div2) scene currently displayed in the synopsis overlay. n/p
+    /// step this through the work's scenes; the `A` amend targets it too.
+    pub synopsis_overlay_scene: (i64, i64),
     /// The (div1, div2) scene whose synopsis the open `A` amend prompt targets.
     pub synopsis_amend_scene: (i64, i64),
     /// Single-level undo for the `A` amend flow: the scene and its synopsis text
@@ -1309,6 +1312,7 @@ pub fn build_window(
         sidebar_mode: SidebarMode::Vocab,
         synopsis_cache: HashMap::new(),
         synopsis_visible: false,
+        synopsis_overlay_scene: (0, 0),
         synopsis_amend_scene: (0, 0),
         synopsis_undo: None,
         concordance_picker,
@@ -4032,18 +4036,64 @@ pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) 
         }
     };
 
-    let scene_label = if div1 == 0 && div2 == 0 {
+    let card_height = s.scrolled_window.height();
+    s.gloss_overlay.show_synopsis(&scene_label(div1, div2), &synopsis, card_height);
+    drop(s);
+    let mut s = state.borrow_mut();
+    s.synopsis_overlay_scene = (div1, div2);
+    s.input_mode = InputMode::SynopsisOverlay;
+}
+
+/// Human-readable label for a scene, shared by the synopsis overlay and the
+/// gloss overlay. (0,0) = Prologue; (N,0) = Act N, Chorus; else Act N, Scene M.
+pub fn scene_label(div1: i64, div2: i64) -> String {
+    if div1 == 0 && div2 == 0 {
         "Prologue".to_string()
     } else if div2 == 0 {
         format!("Act {}, Chorus", div1)
     } else {
         format!("Act {}, Scene {}", div1, div2)
-    };
+    }
+}
 
+/// Ordered list of the work's scene keys (div1, div2) that have a synopsis, in
+/// reading order. `work.lines` is already sorted by (div1, div2, line_in_div),
+/// so collecting unique pairs in encounter order gives reading order.
+fn ordered_synopsis_scenes(s: &AppState) -> Vec<(i64, i64)> {
+    let work = match s.current_work.as_ref() {
+        Some(w) => w,
+        None => return Vec::new(),
+    };
+    let mut seen = std::collections::HashSet::new();
+    let mut keys = Vec::new();
+    for line in &work.lines {
+        let k = (line.div1, line.div2);
+        if seen.insert(k) && s.synopsis_cache.contains_key(&k) {
+            keys.push(k);
+        }
+    }
+    keys
+}
+
+/// Step the synopsis overlay to the next (+1) or previous (-1) scene that has a
+/// synopsis, wrapping around. No-op if the overlay isn't showing a known scene.
+pub fn cycle_synopsis(state: &std::rc::Rc<std::cell::RefCell<AppState>>, delta: i32) {
+    let mut s = state.borrow_mut();
+    let scenes = ordered_synopsis_scenes(&s);
+    if scenes.is_empty() {
+        return;
+    }
+    let cur = s.synopsis_overlay_scene;
+    let idx = scenes.iter().position(|&k| k == cur).unwrap_or(0);
+    let new_idx = ((idx as i32 + delta).rem_euclid(scenes.len() as i32)) as usize;
+    let (div1, div2) = scenes[new_idx];
+    let synopsis = match s.synopsis_cache.get(&(div1, div2)) {
+        Some(t) => t.clone(),
+        None => return,
+    };
     let card_height = s.scrolled_window.height();
-    s.gloss_overlay.show_synopsis(&scene_label, &synopsis, card_height);
-    drop(s);
-    state.borrow_mut().input_mode = InputMode::SynopsisOverlay;
+    s.gloss_overlay.show_synopsis(&scene_label(div1, div2), &synopsis, card_height);
+    s.synopsis_overlay_scene = (div1, div2);
 }
 
 /// Load vocab data for all words on the current line into state, show popup with first word.

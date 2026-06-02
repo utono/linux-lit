@@ -690,7 +690,7 @@ fn handle_gloss_key(
 fn handle_synopsis_overlay_key(
     state: &Rc<RefCell<AppState>>,
     key_name: &str,
-    _is_ctrl: bool,
+    is_ctrl: bool,
 ) -> bool {
     match key_name {
         "Escape" => {
@@ -719,6 +719,18 @@ fn handle_synopsis_overlay_key(
         }
         "exclam" => {
             state.borrow().gloss_overlay.adjust_font_size(-1);
+            true
+        }
+        "n" => {
+            crate::app::cycle_synopsis(state, 1);
+            true
+        }
+        "p" => {
+            crate::app::cycle_synopsis(state, -1);
+            true
+        }
+        "g" if is_ctrl => {
+            crate::input::actions::synopsis::open_work_glosses(state);
             true
         }
         "j" => {

@@ -11,6 +11,9 @@ use crate::app::AppState;
 
 /// System prompt for the synopsis amend call. The model keeps the existing
 /// synopsis intact and weaves in an explanation answering the reader's question.
+/// Output is paragraph-tagged: each paragraph wrapped in <p>...</p> (the synopsis
+/// card renders one <p> per visible paragraph). The model must split the synopsis
+/// into a few readable paragraphs even if the input was a single block.
 const SYNOPSIS_AMEND_PROMPT: &str = "\
 You are a Shakespeare scholar helping a reader understand a scene. You will be \
 given a play, an act and scene, the current plot synopsis for that scene, and a \
@@ -18,8 +21,14 @@ reader's question about it. Rewrite the synopsis so that it KEEPS all of the \
 existing content and wording as much as possible, but weaves in a clear, \
 concise explanation that answers the reader's question. Do not drop any plot \
 points already present. Do not add a heading, preamble, or commentary about \
-what you changed. Return only the revised synopsis as a single flowing prose \
-paragraph (or the same number of paragraphs as the original).";
+what you changed.\n\n\
+FORMAT: Return the revised synopsis split into 2-4 readable paragraphs, each \
+wrapped in <p>...</p> tags, like:\n\
+<p>First paragraph of the synopsis.</p>\n\
+<p>Second paragraph that continues the action.</p>\n\
+Break paragraphs at natural shifts in the scene (a new entrance, a turn in the \
+action, a change of subject). If the input synopsis already had <p> tags, keep a \
+similar paragraph structure. Output ONLY the <p>-tagged paragraphs, nothing else.";
 
 /// Open the question input dialog over the synopsis overlay. Reuses the gloss
 /// prompt weakref fields (gloss and synopsis prompts are never open together).
@@ -72,8 +81,9 @@ pub(crate) fn show_amend_prompt(state_rc: &Rc<RefCell<AppState>>) {
 
     {
         let mut s = state_rc.borrow_mut();
-        // Remember which scene the answer should amend.
-        s.synopsis_amend_scene = crate::app::current_scene_divs(&s);
+        // Amend the scene currently displayed in the overlay (which n/p may have
+        // moved away from the cursor's scene).
+        s.synopsis_amend_scene = s.synopsis_overlay_scene;
         s.gloss_prompt_container = Some(container.downgrade());
         s.gloss_prompt_overlay = Some(overlay_parent.downgrade());
         s.gloss_prompt_textview = Some(text_view.downgrade());
@@ -218,12 +228,90 @@ pub(crate) fn undo_amend(state_rc: &Rc<RefCell<AppState>>) {
     crate::logging::log(&format!("SYNOPSIS: undid amend ({},{})", div1, div2));
 }
 
-fn scene_label(div1: i64, div2: i64) -> String {
-    if div1 == 0 && div2 == 0 {
-        "Prologue".to_string()
-    } else if div2 == 0 {
-        format!("Act {}, Chorus", div1)
-    } else {
-        format!("Act {}, Scene {}", div1, div2)
+use crate::app::scene_label;
+
+/// Ctrl+g in the synopsis card: open the gloss overlay for the whole work, with
+/// the glosses for the currently-displayed scene shown first. Mirrors the state
+/// setup that `navigate_gloss_passage` relies on, so Ctrl+n/p (within a passage)
+/// and Alt+n/p (across passages) work afterwards.
+pub(crate) fn open_work_glosses(state_rc: &Rc<RefCell<AppState>>) {
+    let (div1, div2) = state_rc.borrow().synopsis_overlay_scene;
+    let work_abbrev = {
+        let s = state_rc.borrow();
+        match s.current_work.as_ref() {
+            Some(w) => crate::app::base_work_abbrev(&w.abbrev).to_string(),
+            None => return,
+        }
+    };
+
+    // Load every glossed passage for the work (reading order), then rotate so the
+    // current scene's passages come first.
+    let mut passages = match crate::db::queries::open_db() {
+        Ok(conn) => crate::db::queries::find_glossed_passages(
+            &conn, &work_abbrev, &["teacher-generic", "inner-monologue"],
+        ).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+    if passages.is_empty() {
+        let s = state_rc.borrow();
+        s.chapter_toast.set_text("No glosses for this work");
+        s.chapter_toast.set_visible(true);
+        let toast = s.chapter_toast.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+            toast.set_visible(false);
+        });
+        return;
     }
+    // Stable partition: current-scene passages first, the rest after, each group
+    // keeping its reading order.
+    let (mut here, rest): (Vec<_>, Vec<_>) = passages
+        .drain(..)
+        .partition(|p| p.act == div1 && p.scene == div2);
+    here.extend(rest);
+    let passages = here;
+
+    let first = passages[0].clone();
+    let all_glosses = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| {
+            crate::db::queries::find_all_glosses(
+                &conn, &first.work_abbrev, &first.start_citation, &first.end_citation,
+                &["teacher-generic", "inner-monologue"],
+            ).ok()
+        })
+        .unwrap_or_default();
+    if all_glosses.is_empty() {
+        return;
+    }
+
+    let mut s = state_rc.borrow_mut();
+    let work_title = s.current_work.as_ref().map(|w| w.title.clone()).unwrap_or_default();
+    let gloss_type = all_glosses[0].gloss_type.clone();
+    let ctx = crate::gloss::GlossContext {
+        work_abbrev: first.work_abbrev.clone(),
+        work_title,
+        start_citation: first.start_citation.clone(),
+        end_citation: first.end_citation.clone(),
+        act: first.act,
+        scene: first.scene,
+        speaker: first.speaker.clone(),
+        source_text: first.source_text.clone(),
+        source_line_numbers: Vec::new(),
+        hash: String::new(),
+        gloss_type,
+    };
+
+    let h = s.scrolled_window.height();
+    let gloss_text = all_glosses[0].gloss_text.clone();
+    s.gloss_overlay.show_gloss_with_color(
+        &ctx.source_text, &gloss_text, h, Some(&s.theme.root_color), &[],
+    );
+    s.gloss_overlay.set_position(0, all_glosses.len());
+    s.gloss_list = all_glosses;
+    s.gloss_index = 0;
+    s.gloss_passages = passages;
+    s.gloss_passage_index = 0;
+    s.gloss_context = Some(ctx);
+    s.input_mode = crate::app::InputMode::GlossOverlay;
+    crate::logging::log(&format!("SYNOPSIS: opened work glosses, scene ({},{}) first", div1, div2));
 }
