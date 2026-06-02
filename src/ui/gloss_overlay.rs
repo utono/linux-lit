@@ -37,7 +37,17 @@ pub struct GlossOverlay {
     echo_rule: gtk4::Separator,
     text_margins: i32,
     column_width: i32,
+    /// The overlay's own font (independent of the main reader). `!`/`|` adjust
+    /// the size while a gloss/synopsis is open without touching the main card.
+    /// Applied as a font TextTag over the gloss buffer on every show, overriding
+    /// the global `.gloss-text` CSS. Defaults to Charter 19pt.
+    font_family: RefCell<String>,
+    font_size: std::cell::Cell<i32>,
 }
+
+/// Default font for the synopsis/gloss/echoes overlay cards.
+const GLOSS_DEFAULT_FONT_FAMILY: &str = "Charter";
+const GLOSS_DEFAULT_FONT_SIZE: i32 = 19;
 
 impl GlossOverlay {
     pub fn new(column_width: u32, text_margins: u32) -> Self {
@@ -274,6 +284,34 @@ impl GlossOverlay {
             echo_rule,
             text_margins: text_margins as i32,
             column_width: column_width as i32,
+            font_family: RefCell::new(GLOSS_DEFAULT_FONT_FAMILY.to_string()),
+            font_size: std::cell::Cell::new(GLOSS_DEFAULT_FONT_SIZE),
+        }
+    }
+
+    /// Adjust the overlay's own font size by `delta` pt (clamped), then re-apply
+    /// it to the currently-shown gloss text. Independent of the main reader font.
+    pub fn adjust_font_size(&self, delta: i32) {
+        let new_size = (self.font_size.get() + delta).clamp(8, 72);
+        self.font_size.set(new_size);
+        self.apply_font();
+    }
+
+    /// Apply the overlay's font (family + size) to the gloss text and header via
+    /// a buffer-wide font TextTag, overriding the global `.gloss-text` CSS. Call
+    /// after each populate so a rebuilt buffer keeps the chosen size.
+    pub fn apply_font(&self) {
+        let font_str = format!("{} {}", self.font_family.borrow(), self.font_size.get());
+        for view in [&self.gloss_view, &self.echo_header_view] {
+            let buffer = view.buffer();
+            let table = buffer.tag_table();
+            if let Some(old) = table.lookup("gloss-font") {
+                table.remove(&old);
+            }
+            let tag = gtk4::TextTag::builder().name("gloss-font").font(&font_str).build();
+            table.add(&tag);
+            let (start, end) = buffer.bounds();
+            buffer.apply_tag(&tag, &start, &end);
         }
     }
 
@@ -304,6 +342,7 @@ impl GlossOverlay {
         self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
+        self.apply_font();
     }
 
     pub fn show_gloss(&self, _original: &str, gloss: &str, card_height: i32) {
@@ -350,6 +389,7 @@ impl GlossOverlay {
         self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
+        self.apply_font();
     }
 
     /// Render the echoes overlay: a fixed source-turn header + rule, above the
@@ -415,6 +455,7 @@ impl GlossOverlay {
         self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
+        self.apply_font();
     }
 
     /// Scroll the card so the Nth echo's quote line is visible.
@@ -497,6 +538,7 @@ impl GlossOverlay {
         self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
+        self.apply_font();
     }
 
     pub fn show_loading(&self) {

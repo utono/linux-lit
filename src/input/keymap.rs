@@ -638,6 +638,14 @@ fn handle_gloss_key(
             state.borrow().gloss_overlay.scroll_gloss_to_bottom();
             true
         }
+        "bar" => {
+            state.borrow().gloss_overlay.adjust_font_size(1);
+            true
+        }
+        "exclam" => {
+            state.borrow().gloss_overlay.adjust_font_size(-1);
+            true
+        }
         "j" => {
             state.borrow().gloss_overlay.scroll_gloss(1);
             true
@@ -703,6 +711,14 @@ fn handle_synopsis_overlay_key(
         }
         "U" => {
             crate::input::actions::synopsis::undo_amend(state);
+            true
+        }
+        "bar" => {
+            state.borrow().gloss_overlay.adjust_font_size(1);
+            true
+        }
+        "exclam" => {
+            state.borrow().gloss_overlay.adjust_font_size(-1);
             true
         }
         "j" => {
