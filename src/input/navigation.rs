@@ -763,32 +763,35 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
             let text = buffer_line_text(&state.buffer, bl);
             line_types::is_act_scene_marker(text.trim())
         };
-        let current_scene_start = (0..=state.current_line).rev().find(|&bl| is_marker_at(bl));
-        let marker = match current_scene_start {
-            Some(start) if start < state.current_line => {
-                let cur_first = next_dialogue_line(
-                    &state.buffer,
-                    &state.translation_lines,
-                    start,
-                    line_count,
-                );
-                if cur_first.map(|d| d < state.current_line).unwrap_or(false) {
-                    Some(start)
-                } else {
-                    (0..start).rev().find(|&bl| is_marker_at(bl))
+        // Walk markers backward from just above the cursor and pick the FIRST
+        // one whose opening dialogue is strictly before `current_line` — that's
+        // the previous scene. This naturally skips an `Act N` header that sits
+        // directly above its first `Scene 1` (no dialogue between them, so its
+        // first dialogue equals the scene's and is NOT before the cursor), and
+        // it never resolves to the current scene's own start (whose first
+        // dialogue is at/after the cursor when we're sitting on it).
+        let mut marker = None;
+        let mut cursor = None;
+        let mut bl = state.current_line;
+        while bl > 0 {
+            bl -= 1;
+            if !is_marker_at(bl) {
+                continue;
+            }
+            let first = next_dialogue_line(
+                &state.buffer,
+                &state.translation_lines,
+                bl,
+                line_count,
+            );
+            if let Some(d) = first {
+                if d < state.current_line {
+                    marker = Some(bl);
+                    cursor = Some(d);
+                    break;
                 }
             }
-            Some(start) => (0..start).rev().find(|&bl| is_marker_at(bl)),
-            None => (0..state.current_line).rev().find(|&bl| is_marker_at(bl)),
-        };
-        // First dialogue at/after the marker. Do NOT cap at the next marker:
-        // when `marker` is an `Act N` line, its first scene's `Scene 1` header
-        // sits just below with no dialogue between them, so capping at that
-        // header found no dialogue and the jump silently failed. The first
-        // dialogue after the act/scene marker IS the scene's opening line.
-        let cursor = marker.and_then(|m| {
-            next_dialogue_line(&state.buffer, &state.translation_lines, m, line_count)
-        });
+        }
         (marker, cursor)
     };
 
