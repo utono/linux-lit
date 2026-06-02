@@ -171,6 +171,10 @@ pub struct AppState {
     pub authorship_picker: crate::ui::authorship_picker::AuthorshipPicker,
     pub translations: HashMap<i64, String>,
     pub translations_visible: bool,
+    /// Sign-column visibility saved when translations are shown, so it can be
+    /// restored when translations are hidden. `None` when not in translation
+    /// mode. Signs are hidden while translations are visible.
+    pub sign_visible_before_translations: Option<bool>,
     /// Tracks which buffer lines are inserted translation lines.
     pub translation_lines: Vec<bool>,
     pub translation_dim_tag: gtk4::TextTag,
@@ -1267,6 +1271,7 @@ pub fn build_window(
         dialogue_formatting_active: false,
         translations: HashMap::new(),
         translations_visible: false,
+        sign_visible_before_translations: None,
         translation_lines: Vec::new(),
         translation_dim_tag,
         translation_text_tag,
@@ -3351,6 +3356,15 @@ fn show_translations(state: &mut AppState) {
 
     state.translations_visible = true;
 
+    // Hide the sign column while translations show — the interleaved
+    // translation lines make per-line signs misleading. Remember the prior
+    // visibility so hide_translations can restore it.
+    if state.sign_visible_before_translations.is_none() {
+        state.sign_visible_before_translations = Some(state.sign_column_visible.get());
+    }
+    state.sign_column_visible.set(false);
+    crate::input::timestamps::redraw_sign_gutters(state);
+
     reapply_font(state);
     crate::input::navigation::invalidate_page_tops(state);
 
@@ -3471,6 +3485,17 @@ fn hide_translations(state: &mut AppState) {
     // Repaint highlight but do NOT page-turn.
     crate::input::navigation::update_highlight_only(state);
 
+    if state.column_count() == 2 {
+        // Two-column e-reader mode: scroll-anchoring leaves the column split
+        // stale, so the left column underfills. Snap to a clean page top and
+        // re-tile both columns instead.
+        state.page_top_line = state.current_line;
+        crate::input::navigation::resnap_page(state);
+        state.card_vbox.set_opacity(1.0);
+        rebuild_line_number_gutter(state);
+        return;
+    }
+
     // Defer viewport anchor to an idle callback — GTK hasn't re-laid the
     // buffer yet so line_yrange and adjustment.upper are stale right now.
     let cursor_line = state.current_line;
@@ -3558,6 +3583,12 @@ fn strip_translation_lines(state: &mut AppState) {
 
     state.translation_lines.clear();
     state.translations_visible = false;
+
+    // Restore the sign column to its pre-translation visibility.
+    if let Some(prev) = state.sign_visible_before_translations.take() {
+        state.sign_column_visible.set(prev);
+        crate::input::timestamps::redraw_sign_gutters(state);
+    }
 
     reapply_font(state);
     crate::input::navigation::invalidate_page_tops(state);

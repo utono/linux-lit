@@ -781,10 +781,13 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
             Some(start) => (0..start).rev().find(|&bl| is_marker_at(bl)),
             None => (0..state.current_line).rev().find(|&bl| is_marker_at(bl)),
         };
+        // First dialogue at/after the marker. Do NOT cap at the next marker:
+        // when `marker` is an `Act N` line, its first scene's `Scene 1` header
+        // sits just below with no dialogue between them, so capping at that
+        // header found no dialogue and the jump silently failed. The first
+        // dialogue after the act/scene marker IS the scene's opening line.
         let cursor = marker.and_then(|m| {
-            let cap = ((m + 1)..line_count).find(|&bl| is_marker_at(bl))
-                .unwrap_or(line_count);
-            next_dialogue_line(&state.buffer, &state.translation_lines, m, cap)
+            next_dialogue_line(&state.buffer, &state.translation_lines, m, line_count)
         });
         (marker, cursor)
     };
@@ -803,12 +806,44 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
                 if is_line_fully_visible(state, cursor_idx) {
                     update_highlight_only(state);
                 } else {
-                    set_page_instant(state, marker_idx);
+                    let top = header_page_top(state, marker_idx);
+                    set_page_instant(state, top);
                 }
             }
         }
         after_page_change(state, PageChangeReason::Scene);
     }
+}
+
+/// Given a scene/act marker line, return the line that should sit at the page
+/// top. When the marker is a `Scene` header that opens an act (an `Act N`
+/// header sits just above it, separated only by `=` rules and blanks), back up
+/// to the `Act N` line so the whole act/scene header block shows at the top.
+fn header_page_top(state: &AppState, marker: usize) -> usize {
+    use crate::db::line_types;
+    let is_act = |bl: usize| {
+        let text = buffer_line_text(&state.buffer, bl);
+        text.trim().to_uppercase().starts_with("ACT ")
+    };
+    // The marker itself is the Act line — nothing to back up to.
+    if marker == 0 || is_act(marker) {
+        return marker;
+    }
+    // Walk upward across separators/blanks. If we reach an Act line, use it;
+    // any real content (dialogue, speaker, stage direction) stops the search.
+    let mut i = marker;
+    while i > 0 {
+        i -= 1;
+        if is_act(i) {
+            return i;
+        }
+        let text = buffer_line_text(&state.buffer, i);
+        if line_types::is_separator(text.trim()) || text.trim().is_empty() {
+            continue;
+        }
+        break;
+    }
+    marker
 }
 
 fn first_dialogue_line(state: &AppState) -> usize {

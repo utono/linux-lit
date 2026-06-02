@@ -185,7 +185,7 @@ pub fn set_start_time(state: &mut AppState) -> bool {
 /// immediately. In two-column mode the edited line may be in the right column,
 /// whose renderer must be redrawn too — redrawing only the left gutter left the
 /// sign missing until a page turn re-queried the right gutter.
-fn redraw_sign_gutters(state: &AppState) {
+pub(crate) fn redraw_sign_gutters(state: &AppState) {
     if let Some(ref renderer) = state.gutter_renderer {
         renderer.queue_draw();
     }
