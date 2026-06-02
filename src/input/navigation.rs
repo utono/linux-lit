@@ -36,7 +36,7 @@ use super::viewport::{
     is_dialogue_line, is_blank_buffer_line,
     next_dialogue_line, prev_dialogue_line, buffer_line_text,
     next_dialogue_from, is_line_fully_visible, lines_per_page,
-    clamp_page_top_to_scroll_ceiling,
+    clamp_page_top_to_scroll_ceiling, column_split,
 };
 use super::scroll::{
     set_page, set_page_instant, scroll_to_cursor, center_cursor,
@@ -297,6 +297,48 @@ pub fn toggle_column_layout(state: &mut AppState) {
 /// Page forward (Ctrl+d/f). The next page starts at the dialogue line
 /// immediately after the last dialogue line visible on the current page,
 /// backed up by one if preceded by a speaker name.
+/// In two-column mode, if the first dialogue line of the RIGHT column is the
+/// opening dialogue of a new scene (the nearest line above it is a scene/act
+/// marker, with no earlier dialogue of that scene on the spread), return the
+/// right column's start line so `x` can turn the page by moving that scene to
+/// the top of the left column. Returns `None` otherwise (normal page turn).
+fn scene_snap_top(state: &AppState, line_count: usize) -> Option<usize> {
+    use crate::db::line_types;
+    if state.column_count() != 2 {
+        return None;
+    }
+    let split = column_split(state, state.page_top_line).split;
+    if split <= state.page_top_line || split >= line_count {
+        return None;
+    }
+    // First dialogue line at/after the right column's start.
+    let rc_first_dlg = next_dialogue_from(&state.buffer, split, line_count);
+    if rc_first_dlg >= line_count {
+        return None;
+    }
+    // Walk back from the right column's first dialogue: if we reach a scene
+    // marker before any other dialogue line, this is the scene's first line.
+    let mut i = rc_first_dlg;
+    while i > split {
+        i -= 1;
+        let text = buffer_line_text(&state.buffer, i);
+        if line_types::is_act_scene_marker(text.trim()) {
+            return Some(split);
+        }
+        if is_dialogue_line(&state.buffer, i) {
+            return None;
+        }
+    }
+    // No marker between split and the first dialogue: also check the marker may
+    // sit exactly at `split` (right column opens on the marker line itself).
+    let split_text = buffer_line_text(&state.buffer, split);
+    if line_types::is_act_scene_marker(split_text.trim()) {
+        Some(split)
+    } else {
+        None
+    }
+}
+
 pub fn page_forward(state: &mut AppState) {
     if state.current_work.is_none() {
         return;
@@ -306,6 +348,19 @@ pub fn page_forward(state: &mut AppState) {
     }
     let line_count = state.effective_line_count();
     if line_count == 0 {
+        return;
+    }
+
+    // Scene-aware turn: if the right column opens a new scene, move that scene
+    // to the top of the left column instead of paging by viewport height.
+    if let Some(snap_top) = scene_snap_top(state, line_count) {
+        let next_dialogue = next_dialogue_from(&state.buffer, snap_top, line_count);
+        log_fmt!("PAGE_FWD: scene-snap page_top={} -> new_top={} next_dialogue={}",
+                 state.page_top_line, snap_top, next_dialogue);
+        state.page_back_stack.push(state.page_top_line);
+        state.current_line = next_dialogue.min(line_count.saturating_sub(1));
+        set_page(state, snap_top, PageDirection::Forward);
+        after_page_change(state, PageChangeReason::Forward);
         return;
     }
 

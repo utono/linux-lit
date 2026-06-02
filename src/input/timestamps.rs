@@ -174,13 +174,24 @@ pub fn set_start_time(state: &mut AppState) -> bool {
             manual[buffer_line] = true;
         }
     }
-    if let Some(ref renderer) = state.gutter_renderer {
-        renderer.queue_draw();
-    }
+    redraw_sign_gutters(state);
 
     crate::input::navigation::cursor_next_dialogue(state);
 
     true
+}
+
+/// Queue a redraw on both column gutter renderers so the sign appears
+/// immediately. In two-column mode the edited line may be in the right column,
+/// whose renderer must be redrawn too — redrawing only the left gutter left the
+/// sign missing until a page turn re-queried the right gutter.
+fn redraw_sign_gutters(state: &AppState) {
+    if let Some(ref renderer) = state.gutter_renderer {
+        renderer.queue_draw();
+    }
+    if let Some(ref renderer) = state.right_gutter_renderer {
+        renderer.queue_draw();
+    }
 }
 
 /// Play the current line from its start time (a).
@@ -300,9 +311,7 @@ pub fn set_chapter(state: &mut AppState) -> bool {
             ch[buffer_line] = is_ch;
         }
     }
-    if let Some(ref renderer) = state.gutter_renderer {
-        renderer.queue_draw();
-    }
+    redraw_sign_gutters(state);
 
     true
 }
@@ -449,9 +458,7 @@ pub fn delete_timestamp(state: &mut AppState) -> bool {
             ch[buffer_line] = false;
         }
     }
-    if let Some(ref renderer) = state.gutter_renderer {
-        renderer.queue_draw();
-    }
+    redraw_sign_gutters(state);
 
     true
 }
@@ -647,9 +654,7 @@ pub fn undo_timestamp(state: &mut AppState) -> bool {
         }
     }
 
-    if let Some(ref renderer) = state.gutter_renderer {
-        renderer.queue_draw();
-    }
+    redraw_sign_gutters(state);
 
     true
 }

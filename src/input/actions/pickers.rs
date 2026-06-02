@@ -589,6 +589,9 @@ pub(crate) fn confirm_media_selection(
                 if let Some(ref renderer) = s.gutter_renderer {
                     renderer.queue_draw();
                 }
+                if let Some(ref renderer) = s.right_gutter_renderer {
+                    renderer.queue_draw();
+                }
                 if !need_connect.is_empty() {
                     let _ = s
                         .cmd_tx

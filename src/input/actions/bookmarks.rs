@@ -44,7 +44,12 @@ pub(crate) fn toggle_bookmark(
                         bm[buffer_line] = added;
                     }
                 }
+                // Redraw both column gutters: a bookmarked line in the right
+                // column would otherwise show its star only after a page turn.
                 if let Some(ref renderer) = s.gutter_renderer {
+                    renderer.queue_draw();
+                }
+                if let Some(ref renderer) = s.right_gutter_renderer {
                     renderer.queue_draw();
                 }
             }
