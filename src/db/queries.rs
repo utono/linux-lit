@@ -248,6 +248,25 @@ pub fn load_synopses(conn: &Connection, work_abbrev: &str) -> HashMap<(i64, i64)
     map
 }
 
+/// Update (or insert) the synopsis text for one scene. Used by the `A` amend
+/// flow in the synopsis overlay; the UNIQUE(work_abbrev, div1, div2) constraint
+/// makes this an upsert. Requires a read-write connection (open_db_rw).
+pub fn save_synopsis(
+    conn: &Connection,
+    work_abbrev: &str,
+    div1: i64,
+    div2: i64,
+    synopsis: &str,
+) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "INSERT INTO scene_synopses (work_abbrev, div1, div2, synopsis) \
+         VALUES (?1, ?2, ?3, ?4) \
+         ON CONFLICT(work_abbrev, div1, div2) DO UPDATE SET synopsis = excluded.synopsis",
+        rusqlite::params![work_abbrev, div1, div2, synopsis],
+    )?;
+    Ok(())
+}
+
 /// Load all vocab words + variants for matching against buffer text.
 /// Returns a HashSet of lowercase words (base words + variants).
 pub fn load_vocab_words(

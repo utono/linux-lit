@@ -10,6 +10,7 @@ pub mod escape;
 pub mod gloss;
 pub mod pickers;
 pub mod settings;
+pub mod synopsis;
 pub mod word_copy;
 
 // Action enum identifying every reader-mode behavior. F2 maps KeyCombo →

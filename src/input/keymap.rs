@@ -96,6 +96,7 @@ pub fn handle_key(
             crate::app::InputMode::Search => handle_search_key(state, key_name),
             crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_alt),
             crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_name, is_ctrl),
+            crate::app::InputMode::SynopsisPrompt => handle_synopsis_prompt_key(state, key_name, is_ctrl),
             crate::app::InputMode::DeleteConfirm => handle_delete_confirm_key(state, key_name),
             crate::app::InputMode::GlossPrompt => handle_gloss_prompt_key(state, key_name, is_ctrl),
             crate::app::InputMode::EchoPicker => handle_echo_picker_key(state, key_name, tokio_handle),
@@ -539,13 +540,28 @@ fn handle_search_key(
 ) -> bool {
     match key_name {
         "Escape" => {
-            crate::input::search::clear_search(&mut state.borrow_mut());
+            {
+                let mut s = state.borrow_mut();
+                crate::input::search::clear_search(&mut s);
+                // The live-search jump centered the match via
+                // update_highlight_and_center, leaving page_top_line at an
+                // arbitrary mid-page offset. In two-column mode that desyncs the
+                // column split and leaves a clipped partial line. Snap the match
+                // to a clean page top before returning to read.
+                s.page_top_line = s.current_line;
+                crate::input::scroll::resnap_page(&mut s);
+            }
             state.borrow().search_bar.hide();
             state.borrow_mut().input_mode = crate::app::InputMode::Reader;
             true
         }
         "Return" => {
             crate::input::search::execute_search(&state);
+            {
+                let mut s = state.borrow_mut();
+                s.page_top_line = s.current_line;
+                crate::input::scroll::resnap_page(&mut s);
+            }
             state.borrow().search_bar.hide();
             state.borrow_mut().input_mode = crate::app::InputMode::Reader;
             true
@@ -681,6 +697,14 @@ fn handle_synopsis_overlay_key(
             s.input_mode = crate::app::InputMode::Reader;
             true
         }
+        "A" => {
+            crate::input::actions::synopsis::show_amend_prompt(state);
+            true
+        }
+        "U" => {
+            crate::input::actions::synopsis::undo_amend(state);
+            true
+        }
         "j" => {
             state.borrow().gloss_overlay.scroll_gloss(1);
             true
@@ -691,6 +715,35 @@ fn handle_synopsis_overlay_key(
         }
         _ => true,
     }
+}
+
+fn handle_synopsis_prompt_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+    is_ctrl: bool,
+) -> bool {
+    if key_name == "Escape" {
+        crate::input::actions::synopsis::close_amend_prompt(state);
+        return true;
+    }
+    if is_ctrl && key_name == "Return" {
+        let question = {
+            let s = state.borrow();
+            s.gloss_prompt_textview.as_ref()
+                .and_then(|w| w.upgrade())
+                .map(|tv| {
+                    let buf = tv.buffer();
+                    buf.text(&buf.start_iter(), &buf.end_iter(), false).to_string()
+                })
+                .unwrap_or_default()
+        };
+        crate::input::actions::synopsis::close_amend_prompt(state);
+        if !question.trim().is_empty() {
+            crate::input::actions::synopsis::amend_synopsis(state, &question);
+        }
+        return true;
+    }
+    false
 }
 
 fn handle_delete_confirm_key(
@@ -1190,6 +1243,16 @@ fn dispatch_action(
             }
             let label = if s.sync_enabled { "Sync: on" } else { "Sync: off" };
             crate::logging::log(&format!("SYNC: {}", if s.sync_enabled { "enabled" } else { "disabled" }));
+            // Sync ON → lower-right; sync OFF → lower-left (the default position).
+            if s.sync_enabled {
+                s.speed_toast.set_halign(gtk4::Align::End);
+                s.speed_toast.set_margin_start(0);
+                s.speed_toast.set_margin_end(24);
+            } else {
+                s.speed_toast.set_halign(gtk4::Align::Start);
+                s.speed_toast.set_margin_end(0);
+                s.speed_toast.set_margin_start(24);
+            }
             s.speed_toast.set_text(label);
             s.speed_toast.set_visible(true);
             let toast = s.speed_toast.clone();
@@ -1212,6 +1275,11 @@ fn dispatch_action(
             let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SetSpeed(new_speed));
             crate::logging::log(&format!("SPEED: toggled to {}x", new_speed));
             let label = format!("Speed: {:.1}x", new_speed);
+            // Speed toast always sits lower-left; reset in case a prior
+            // "Sync: on" moved the shared toast to the lower-right.
+            s.speed_toast.set_halign(gtk4::Align::Start);
+            s.speed_toast.set_margin_end(0);
+            s.speed_toast.set_margin_start(24);
             s.speed_toast.set_text(&label);
             s.speed_toast.set_visible(true);
             let toast = s.speed_toast.clone();

@@ -319,6 +319,9 @@ impl GlossOverlay {
         let left = self.column_width / 8;
         self.title.set_margin_start(left);
         self.gloss_view.set_left_margin(left);
+        self.gloss_view.set_right_margin(left);
+        self.gloss_view.set_top_margin(32);
+        self.gloss_view.set_pixels_below_lines(4);
         self.hint.set_text("Esc close · a add · e edit · d delete · c copy id · Ctrl+n/p gloss · Alt+n/p passage");
         self.orig_header.set_visible(false);
         self.original_label.set_visible(false);
@@ -345,7 +348,7 @@ impl GlossOverlay {
         self.gloss_scroll_overlay.set_visible(true);
         self.gloss_scrolled.vadjustment().set_value(0.0);
         self.hint.set_visible(true);
-        self.scrim.set_visible(false);
+        self.scrim.set_visible(true);
         self.container.set_visible(true);
     }
 
@@ -366,6 +369,11 @@ impl GlossOverlay {
         let left = self.column_width / 8;
         self.title.set_margin_start(left);
         self.gloss_view.set_left_margin(left);
+        // Reset margins/spacing the synopsis and gloss views may have widened,
+        // so the echo list and its accent bar stay aligned at column_width/8.
+        self.gloss_view.set_right_margin(self.column_width / 8);
+        self.gloss_view.set_top_margin(24);
+        self.gloss_view.set_pixels_below_lines(0);
         self.echo_header_view.set_left_margin(left);
         self.hint.set_text("Esc close · a play · A add · s curate · d/D delete · R refresh");
         self.orig_header.set_visible(false);
@@ -405,7 +413,7 @@ impl GlossOverlay {
         self.gloss_scroll_overlay.set_visible(true);
         self.gloss_scrolled.vadjustment().set_value(0.0);
         self.hint.set_visible(true);
-        self.scrim.set_visible(false);
+        self.scrim.set_visible(true);
         self.container.set_visible(true);
     }
 
@@ -454,7 +462,9 @@ impl GlossOverlay {
 
     pub fn show_synopsis(&self, title: &str, synopsis: &str, card_height: i32) {
         self.container.set_height_request(card_height);
-        let left = self.column_width / 8;
+        // Wider side margins keep synopsis prose near the ~65-char readability
+        // optimum instead of the ~80 chars a column_width/8 margin produces.
+        let left = self.column_width / 5;
         self.title.set_text(title);
         self.title.set_visible(true);
         self.title.set_vexpand(false);
@@ -474,15 +484,18 @@ impl GlossOverlay {
         *self.echo_lines.borrow_mut() = Vec::new();
 
         self.gloss_view.set_left_margin(left);
+        self.gloss_view.set_right_margin(left);
+        self.gloss_view.set_top_margin(32);
+        self.gloss_view.set_pixels_below_lines(6);
         let buffer = self.gloss_view.buffer();
         buffer.set_text(synopsis);
         self.bar_drawing.queue_draw();
 
         self.gloss_scroll_overlay.set_visible(true);
         self.gloss_scrolled.vadjustment().set_value(0.0);
-        self.hint.set_text("Esc close · j/k scroll");
+        self.hint.set_text("Esc close · j/k scroll · A ask a question · U undo");
         self.hint.set_visible(true);
-        self.scrim.set_visible(false);
+        self.scrim.set_visible(true);
         self.container.set_visible(true);
     }
 

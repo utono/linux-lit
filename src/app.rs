@@ -43,6 +43,7 @@ pub enum InputMode {
     Search,
     GlossOverlay,
     SynopsisOverlay,
+    SynopsisPrompt,
     GlossPrompt,
     GlossPicker,
     EchoPicker,
@@ -93,6 +94,9 @@ pub struct AppState {
     pub top_spacer: gtk4::Box,
     pub card_vbox: gtk4::Box,
     pub scrolled_window: ScrolledWindow,
+    /// Left-column container. Carries the divider-hug left margin in two-column
+    /// mode so the left column's text shifts toward the center divider.
+    pub scrolled_overlay: gtk4::Overlay,
     pub right_view: View,
     pub right_scrolled_window: ScrolledWindow,
     pub right_scrolled_overlay: gtk4::Overlay,
@@ -143,6 +147,10 @@ pub struct AppState {
     pub gutter_logical_left: Cell<i32>,
     pub chunk_renderer: Option<sourceview5::GutterRendererText>,
     pub line_number_renderer: Option<sourceview5::GutterRendererText>,
+    /// True when the left column's line numbers are in its LEFT gutter (the
+    /// two-column "book foliation" layout) rather than the default right gutter.
+    /// Tells the teardown path which gutter to remove `line_number_renderer` from.
+    pub line_number_renderer_on_left: bool,
     pub line_numbers: Rc<RefCell<Vec<Option<i64>>>>,
     pub ab_repeat: crate::ab_repeat::AbRepeatState,
     pub ab_a_line: Rc<Cell<Option<usize>>>,
@@ -225,6 +233,12 @@ pub struct AppState {
     pub sidebar_mode: SidebarMode,
     pub synopsis_cache: HashMap<(i64, i64), String>,
     pub synopsis_visible: bool,
+    /// The (div1, div2) scene whose synopsis the open `A` amend prompt targets.
+    pub synopsis_amend_scene: (i64, i64),
+    /// Single-level undo for the `A` amend flow: the scene and its synopsis text
+    /// from immediately before the last amendment. `U` in the synopsis overlay
+    /// restores it. Cleared once consumed.
+    pub synopsis_undo: Option<((i64, i64), String)>,
     pub concordance_picker: crate::ui::concordance_picker::ConcordancePicker,
     pub concordance_state: Option<crate::concordance::ConcordanceState>,
     pub concordance_origin: Option<crate::concordance::ConcordanceOrigin>,
@@ -511,10 +525,18 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
     // offset instead: enough to give the sign-column gutter padding to the left
     // of its glyphs, but not so much that verse lines wrap.
     let two_col = state.column_count() == 2;
+    // In two-column mode the left column's verse line numbers sit in its LEFT
+    // gutter (book foliation), outside the sign column, so the left margin must
+    // reserve room for them on top of the normal offset. Prose has no numbers.
+    let left_number_allowance = if two_col && !tiled && is_verse && SHOW_LINE_NUMBERS_TWO_COL {
+        crate::gutter::LINE_NUMBER_WIDTH_TWO_COL + crate::gutter::LINE_NUMBER_LEFT_GAP_TWO_COL
+    } else {
+        0
+    };
     let left_bump = if tiled {
         0
     } else if two_col {
-        TWO_COLUMN_LEFT_OFFSET
+        TWO_COLUMN_LEFT_OFFSET + left_number_allowance
     } else if is_verse {
         VERSE_LEFT_OFFSET
     } else {
@@ -568,12 +590,72 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
         state.text_view.set_right_margin(crate::gutter::LINE_NUMBER_TEXT_GAP_TWO_COL);
     }
 
+    // Book-spine symmetry. In two-column mode each half of the card is wider
+    // than the verse needs, so left-aligned text in both columns drifts toward
+    // the left of the card. To make the layout hug the center divider
+    // symmetrically, size each column's scrolled window to the text width and
+    // align it toward the divider: left column → right-aligned, right column →
+    // left-aligned. Equal leftover then falls on the two outer edges.
+    if two_col && !tiled {
+        // Center the two-column BLOCK in the card rather than letting each
+        // column fill half of it. Each column is fixed to its natural width
+        // (the verse-safe column width); the block [col | divider | col] then
+        // sizes to content and is centered, so the card's slack becomes equal
+        // outer margins on both sides and the divider stays centered.
+        let col_w = MIN_TWO_COLUMN_COLUMN_WIDTH;
+        state.columns_hbox.set_hexpand(false);
+        state.columns_hbox.set_halign(gtk4::Align::Center);
+        state.scrolled_overlay.set_margin_start(0);
+        state.scrolled_overlay.set_hexpand(false);
+        state.scrolled_overlay.set_width_request(col_w);
+        state.right_scrolled_overlay.set_hexpand(false);
+        state.right_scrolled_overlay.set_width_request(col_w);
+        // Each scrolled window fills its fixed-width column overlay; text is
+        // left-aligned inside as usual.
+        state.scrolled_window.set_hexpand(true);
+        state.scrolled_window.set_halign(gtk4::Align::Fill);
+        state.scrolled_window.set_width_request(-1);
+        state.right_scrolled_window.set_hexpand(true);
+        state.right_scrolled_window.set_halign(gtk4::Align::Fill);
+        state.right_scrolled_window.set_width_request(-1);
+    } else {
+        // Restore single-column fill behavior.
+        state.columns_hbox.set_hexpand(true);
+        state.columns_hbox.set_halign(gtk4::Align::Fill);
+        state.scrolled_overlay.set_margin_start(0);
+        state.scrolled_overlay.set_hexpand(true);
+        state.scrolled_overlay.set_width_request(-1);
+        state.right_scrolled_overlay.set_hexpand(true);
+        state.right_scrolled_overlay.set_width_request(-1);
+        state.scrolled_window.set_hexpand(true);
+        state.scrolled_window.set_halign(gtk4::Align::Fill);
+        state.scrolled_window.set_width_request(-1);
+        state.right_scrolled_window.set_hexpand(true);
+        state.right_scrolled_window.set_halign(gtk4::Align::Fill);
+        state.right_scrolled_window.set_width_request(-1);
+    }
+
     state.top_spacer.set_height_request(TOP_SPACER_HEIGHT);
 }
 
 /// Fraction of the window width the two-column card aims to fill (minus the
 /// outer margins). One-column works keep their fixed `column_width`.
-pub const TWO_COLUMN_WIDTH_FRACTION: f32 = 0.80;
+pub const TWO_COLUMN_WIDTH_FRACTION: f32 = 0.68;
+
+/// Whether to show verse line numbers in two-column mode. When false, the
+/// left-column outer-foliation numbers and the right-column numbers are both
+/// skipped, reclaiming ~40px per column for the text. (Experimental: flip to
+/// `true` to restore the book-style foliation.)
+pub const SHOW_LINE_NUMBERS_TWO_COL: bool = false;
+
+/// Verse-safe floor for a single column's width in two-column mode. The longest
+/// Folger verse line (~63 chars in Charter 19) needs roughly this much text
+/// width; below it, verse starts wrapping. With line numbers hidden in
+/// two-column mode there's no number gutter eating into the column, so this can
+/// sit closer to the bare text width. The card is never narrowed below `2 ×`
+/// this (plus the divider), so shrinking `TWO_COLUMN_WIDTH_FRACTION` can never
+/// push a column into wrapping.
+pub const MIN_TWO_COLUMN_COLUMN_WIDTH: i32 = 700;
 
 /// Target card width before clamping to the window.
 ///
@@ -585,7 +667,10 @@ pub(crate) fn target_card_width(window_width: i32, column_width: u32, column_cou
     let cw_cfg = column_width as i32;
     if column_count >= 2 {
         let proportional = (window_width as f32 * TWO_COLUMN_WIDTH_FRACTION) as i32;
-        proportional.max(cw_cfg)
+        // Never narrow a column below the verse-safe floor: two columns plus a
+        // few px for the divider. Also never below the single-column floor.
+        let two_col_floor = 2 * MIN_TWO_COLUMN_COLUMN_WIDTH + 8;
+        proportional.max(cw_cfg).max(two_col_floor)
     } else {
         cw_cfg
     }
@@ -1119,6 +1204,7 @@ pub fn build_window(
         top_spacer,
         card_vbox,
         scrolled_window: scrolled,
+        scrolled_overlay,
         right_view,
         right_scrolled_window: right_scrolled,
         right_scrolled_overlay,
@@ -1157,6 +1243,7 @@ pub fn build_window(
         gutter_logical_left: Cell::new(0),
         chunk_renderer: None,
         line_number_renderer: None,
+        line_number_renderer_on_left: false,
         line_numbers: Rc::new(RefCell::new(Vec::new())),
         ab_repeat: crate::ab_repeat::AbRepeatState::default(),
         ab_a_line: Rc::new(Cell::new(None)),
@@ -1222,6 +1309,8 @@ pub fn build_window(
         sidebar_mode: SidebarMode::Vocab,
         synopsis_cache: HashMap::new(),
         synopsis_visible: false,
+        synopsis_amend_scene: (0, 0),
+        synopsis_undo: None,
         concordance_picker,
         concordance_state: None,
         concordance_origin: None,
@@ -1418,15 +1507,19 @@ pub fn build_window(
                     if cc == 2 {
                         let lw = s.text_view.width();
                         let rw = s.right_view.width();
-                        let card_w = crate::app::target_card_width(ww, cw, cc);
-                        // Both columns allocated and together spanning most of
-                        // the card (allow for the divider + inter-column gap).
-                        let settled = lw > 0 && rw > 0
-                            && (lw + rw) as f32 >= card_w as f32 * 0.92;
+                        // Columns are now fixed-width and centered as a block
+                        // (each column overlay is MIN_TWO_COLUMN_COLUMN_WIDTH),
+                        // so they no longer fill the card. "Settled" is when both
+                        // views have reflowed to ~their final fixed width rather
+                        // than a narrower transitional mid-reflow width. Compare
+                        // each view against the fixed column width with slack for
+                        // the sign gutter / margins inside the column.
+                        let target = (MIN_TWO_COLUMN_COLUMN_WIDTH as f32 * 0.85) as i32;
+                        let settled = lw >= target && rw >= target;
                         if !settled {
                             crate::log_fmt!(
-                                "RESIZE_TICK: two-col width not settled (left_w={} right_w={} sum={} card={}), waiting",
-                                lw, rw, lw + rw, card_w
+                                "RESIZE_TICK: two-col width not settled (left_w={} right_w={} target={}), waiting",
+                                lw, rw, target
                             );
                             return glib::ControlFlow::Continue;
                         }
@@ -2132,10 +2225,15 @@ pub fn display_work_at_with_prepared(
         crate::gutter::remove_gutter_renderer(&state.text_view, &old_renderer);
     }
     if let Some(old_renderer) = state.line_number_renderer.take() {
-        crate::gutter::remove_line_number_renderer(&state.text_view, &old_renderer);
+        if state.line_number_renderer_on_left {
+            crate::gutter::remove_line_number_renderer_left(&state.text_view, &old_renderer);
+        } else {
+            crate::gutter::remove_line_number_renderer(&state.text_view, &old_renderer);
+        }
         let right_margin = state.config.text_margins as i32 + crate::config::EXTRA_RIGHT_MARGIN;
         state.text_view.set_right_margin(right_margin);
     }
+    state.line_number_renderer_on_left = false;
     if let Some(old_renderer) = state.right_line_number_renderer.take() {
         crate::gutter::remove_line_number_renderer(&state.right_view, &old_renderer);
     }
@@ -2181,7 +2279,10 @@ pub fn display_work_at_with_prepared(
         let is_prose = state.current_work.as_ref()
             .map(|w| crate::db::line_types::is_prose_work(&w.work_type))
             .unwrap_or(true);
-        if !is_prose {
+        // Line numbers are skipped entirely in two-column mode unless explicitly
+        // enabled, reclaiming the gutter space for text.
+        let show_numbers = state.column_count() != 2 || SHOW_LINE_NUMBERS_TWO_COL;
+        if !is_prose && show_numbers {
             let new_line_numbers: Vec<Option<i64>> = if let Some(ref lm) = state.line_map {
                 lm.buffer_to_work
                     .iter()
@@ -2198,16 +2299,37 @@ pub fn display_work_at_with_prepared(
             };
             *state.line_numbers.borrow_mut() = new_line_numbers;
             let (ln_width, ln_margin, ln_gap) = line_number_gutter_geometry(state.column_count());
-            let renderer = crate::gutter::setup_line_number_gutter(
-                &state.text_view,
-                state.line_numbers.clone(),
-                &state.theme.dim_fg,
-                &state.config.font_family,
-                state.config.font_size,
-                ln_width,
-                ln_margin,
-            );
-            state.text_view.set_right_margin(ln_gap);
+            let two_col = state.column_count() == 2;
+            // Left column: in two-column mode the numbers sit in the LEFT gutter
+            // (outer, book-style), so the text's right side stays tight against
+            // the divider. In one-column mode they keep the default right gutter.
+            let renderer = if two_col {
+                let r = crate::gutter::setup_line_number_gutter_left(
+                    &state.text_view,
+                    state.line_numbers.clone(),
+                    &state.theme.dim_fg,
+                    &state.config.font_family,
+                    state.config.font_size,
+                    ln_width,
+                    crate::gutter::LINE_NUMBER_LEFT_GAP_TWO_COL,
+                );
+                state.text_view.set_right_margin(ln_gap);
+                state.line_number_renderer_on_left = true;
+                r
+            } else {
+                let r = crate::gutter::setup_line_number_gutter(
+                    &state.text_view,
+                    state.line_numbers.clone(),
+                    &state.theme.dim_fg,
+                    &state.config.font_family,
+                    state.config.font_size,
+                    ln_width,
+                    ln_margin,
+                );
+                state.text_view.set_right_margin(ln_gap);
+                state.line_number_renderer_on_left = false;
+                r
+            };
             state.line_number_renderer = Some(renderer);
             let right_renderer = crate::gutter::setup_line_number_gutter(
                 &state.right_view,
@@ -2414,6 +2536,70 @@ enum SnapshotOrPrep {
 /// safe. Pair with `build_line_map_for_prepared` to get the full
 /// `PreparedText`, or use directly via `display_work_text_only` to show
 /// content immediately while the line_map builds in the background.
+/// Clean raw source `.txt` lines for display: drop blank lines that precede a
+/// speaker name, strip the `## ` markdown act/scene prefix, and fold multi-line
+/// stage directions into a single line so they soft-wrap instead of keeping the
+/// Folger source's mid-sentence hard breaks. Shared by `prepare_text_only` and
+/// `prepare_text_for_display` so both produce identical buffer text.
+fn clean_file_lines(file_lines: &[String]) -> Vec<String> {
+    let mut result: Vec<String> = Vec::with_capacity(file_lines.len());
+    let mut i = 0;
+    while i < file_lines.len() {
+        let line = &file_lines[i];
+        if crate::db::line_types::is_blank(line) {
+            let next_non_blank = file_lines[i + 1..]
+                .iter()
+                .find(|l| !crate::db::line_types::is_blank(l));
+            if let Some(next) = next_non_blank {
+                if crate::db::line_types::is_speaker(next) {
+                    i += 1;
+                    continue;
+                }
+            }
+        }
+
+        // Multi-line stage direction: the Folger source hard-wraps a single
+        // bracketed direction across several lines (opens with `[`, no closing
+        // `]`). Fold those source lines into one buffer line so GTK soft-wraps
+        // the direction naturally instead of preserving the mid-sentence breaks.
+        // Stage directions normalize to empty in the line map, so folding them
+        // doesn't disturb work-line mapping.
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && !trimmed.ends_with(']') {
+            let mut joined = line.clone();
+            let mut j = i + 1;
+            let mut closed = false;
+            while j < file_lines.len() {
+                let cont = file_lines[j].trim();
+                if cont.is_empty() {
+                    break; // malformed (no closing bracket before a blank) — stop
+                }
+                joined.push(' ');
+                joined.push_str(cont);
+                let ends_here = cont.ends_with(']');
+                j += 1;
+                if ends_here {
+                    closed = true;
+                    break;
+                }
+            }
+            if closed {
+                result.push(joined);
+                i = j;
+                continue;
+            }
+        }
+
+        if let Some(stripped) = line.strip_prefix("## ") {
+            result.push(stripped.to_string());
+        } else {
+            result.push(line.clone());
+        }
+        i += 1;
+    }
+    result
+}
+
 pub fn prepare_text_only(work: &Work) -> Option<PreparedTextOnly> {
     let path = work.text_file.as_ref()?;
     let t_read = std::time::Instant::now();
@@ -2422,27 +2608,7 @@ pub fn prepare_text_only(work: &Work) -> Option<PreparedTextOnly> {
     crate::logging::log(&format!("PREP: read+split {}ms", t_read.elapsed().as_millis()));
 
     let t_clean = std::time::Instant::now();
-    let cleaned_lines: Vec<String> = {
-        let mut result: Vec<String> = Vec::with_capacity(file_lines.len());
-        for (i, line) in file_lines.iter().enumerate() {
-            if crate::db::line_types::is_blank(line) {
-                let next_non_blank = file_lines[i + 1..]
-                    .iter()
-                    .find(|l| !crate::db::line_types::is_blank(l));
-                if let Some(next) = next_non_blank {
-                    if crate::db::line_types::is_speaker(next) {
-                        continue;
-                    }
-                }
-            }
-            if let Some(stripped) = line.strip_prefix("## ") {
-                result.push(stripped.to_string());
-            } else {
-                result.push(line.clone());
-            }
-        }
-        result
-    };
+    let cleaned_lines = clean_file_lines(&file_lines);
     crate::logging::log(&format!("PREP: clean {}ms ({} -> {} lines)", t_clean.elapsed().as_millis(), file_lines.len(), cleaned_lines.len()));
 
     let is_prose = crate::db::line_types::is_prose_work(&work.work_type);
@@ -2485,27 +2651,7 @@ pub fn prepare_text_for_display(work: &Work) -> Option<PreparedText> {
     crate::logging::log(&format!("PREP: read+split {}ms", t_read.elapsed().as_millis()));
 
     let t_clean = std::time::Instant::now();
-    let cleaned_lines: Vec<String> = {
-        let mut result: Vec<String> = Vec::with_capacity(file_lines.len());
-        for (i, line) in file_lines.iter().enumerate() {
-            if crate::db::line_types::is_blank(line) {
-                let next_non_blank = file_lines[i + 1..]
-                    .iter()
-                    .find(|l| !crate::db::line_types::is_blank(l));
-                if let Some(next) = next_non_blank {
-                    if crate::db::line_types::is_speaker(next) {
-                        continue;
-                    }
-                }
-            }
-            if let Some(stripped) = line.strip_prefix("## ") {
-                result.push(stripped.to_string());
-            } else {
-                result.push(line.clone());
-            }
-        }
-        result
-    };
+    let cleaned_lines = clean_file_lines(&file_lines);
     crate::logging::log(&format!("PREP: clean {}ms ({} -> {} lines)", t_clean.elapsed().as_millis(), file_lines.len(), cleaned_lines.len()));
 
     let is_prose = crate::db::line_types::is_prose_work(&work.work_type);
@@ -2687,7 +2833,13 @@ pub fn apply_dialogue_formatting(state: &mut AppState) {
     tag_table.add(&act_scene_tag);
     tag_table.add(&blank_line_tag);
 
-    // Apply tags per line
+    // Apply tags per line. `in_stage_direction` tracks a multi-line stage
+    // direction (one that spans several source lines, e.g. "[Enter Lucius,…\n
+    // Guards, and an Attendant…]"). Its middle continuation lines start without
+    // `[` and end without `]`, so `is_stage_direction` can't recognize them in
+    // isolation — without this flag they'd fall through to the dialogue branch
+    // and lose the italic styling, leaving the continuation mis-formatted.
+    let mut in_stage_direction = false;
     for i in 0..line_count {
         let line_start = match state.buffer.iter_at_line(i as i32) {
             Some(iter) => iter,
@@ -2704,9 +2856,20 @@ pub fn apply_dialogue_formatting(state: &mut AppState) {
 
         let text = state.buffer.text(&line_start, &line_end, false);
         let text = text.trim_end_matches('\n');
+        let trimmed = text.trim();
 
         if line_types::is_blank(text) {
+            in_stage_direction = false;
             state.buffer.apply_tag(&blank_line_tag, &line_start, &line_end);
+        } else if in_stage_direction {
+            // Continuation (or closing) line of a multi-line stage direction:
+            // same indent + italic as the opening line, but no extra gap above.
+            state.buffer.apply_tag(&indent_tag, &line_start, &line_end);
+            state.buffer.apply_tag(&stage_italic_tag, &line_start, &line_end);
+            // A line that closes the bracket ends the block.
+            if trimmed.ends_with(']') {
+                in_stage_direction = false;
+            }
         } else if line_types::is_speaker(text) {
             state.buffer.apply_tag(&speaker_gap_tag, &line_start, &line_end);
             state.buffer.apply_tag(&speaker_name_tag, &line_start, &line_end);
@@ -2714,6 +2877,11 @@ pub fn apply_dialogue_formatting(state: &mut AppState) {
             state.buffer.apply_tag(&stage_gap_tag, &line_start, &line_end);
             state.buffer.apply_tag(&indent_tag, &line_start, &line_end);
             state.buffer.apply_tag(&stage_italic_tag, &line_start, &line_end);
+            // Opening line of a multi-line stage direction: `[` with no closing
+            // `]`. Carry the styling forward until the closing bracket.
+            if trimmed.starts_with('[') && !trimmed.ends_with(']') {
+                in_stage_direction = true;
+            }
         } else if line_types::is_act_scene_marker(text) || line_types::is_separator(text) {
             state.buffer.apply_tag(&act_scene_tag, &line_start, &line_end);
         } else {
@@ -2902,7 +3070,22 @@ fn setup_gutter(state: &mut AppState) {
         *state.is_bookmarked.borrow_mut() = new_is_bookmarked;
     }
     let left_margin = state.text_view.left_margin();
-    let gutter_width = (left_margin - 20).max(10);
+    // In two-column verse mode the left column's line numbers occupy the
+    // outermost slice of the left gutter (book foliation). Reserve that slice so
+    // the sign column carves only the remaining margin and doesn't overlap them.
+    // Derived from current geometry (not the persisted flag) so it is correct on
+    // the first layout pass, before the line-number block runs.
+    let two_col_verse = state.column_count() == 2
+        && SHOW_LINE_NUMBERS_TWO_COL
+        && state.current_work.as_ref()
+            .map(|w| !crate::db::line_types::is_prose_work(&w.work_type))
+            .unwrap_or(false);
+    let left_number_allowance = if two_col_verse {
+        crate::gutter::LINE_NUMBER_WIDTH_TWO_COL + crate::gutter::LINE_NUMBER_LEFT_GAP_TWO_COL
+    } else {
+        0
+    };
+    let gutter_width = (left_margin - left_number_allowance - 20).max(10);
     let renderer = crate::gutter::setup_timestamp_gutter(
         &state.text_view,
         state.sign_column_visible.clone(),
@@ -2912,11 +3095,16 @@ fn setup_gutter(state: &mut AppState) {
         state.is_bookmarked.clone(),
         state.ab_a_line.clone(),
         state.ab_b_line.clone(),
-        left_margin,
+        left_margin - left_number_allowance,
         &state.theme.dim_fg,
+        // Sign column sits at position 1 (just left of text) when the left
+        // column also shows outer line numbers at position 0; otherwise 0.
+        if left_number_allowance > 0 { 1 } else { 0 },
     );
-    // Reduce left margin so the gutter absorbs the space instead of pushing text
-    state.text_view.set_left_margin(left_margin - gutter_width);
+    // Reduce left margin so the gutter absorbs the space instead of pushing text.
+    // The number renderer (when present) lives in the gutter window too and adds
+    // its own width, so strip the allowance from the margin to keep text put.
+    state.text_view.set_left_margin(left_margin - gutter_width - left_number_allowance);
     // Also adjust dialogue-indent tag so dialogue lines don't shift right
     if let Some(buffer) = state.text_view.buffer().downcast_ref::<gtk4::TextBuffer>() {
         if let Some(tag) = buffer.tag_table().lookup("dialogue-indent") {
@@ -2954,7 +3142,11 @@ fn setup_gutter(state: &mut AppState) {
         crate::gutter::remove_gutter_renderer(&state.right_view, &old_renderer);
     }
     if state.column_count() == 2 {
-        state.right_view.set_left_margin(left_margin);
+        // The right column keeps the SAME internal geometry as the left (so the
+        // shared dialogue-indent tag stays valid); it is shifted toward the
+        // divider via its container's margins instead (see apply_tiled_mode).
+        let right_left_margin = left_margin - left_number_allowance;
+        state.right_view.set_left_margin(right_left_margin);
         let right_renderer = crate::gutter::setup_timestamp_gutter(
             &state.right_view,
             state.sign_column_visible.clone(),
@@ -2964,10 +3156,11 @@ fn setup_gutter(state: &mut AppState) {
             state.is_bookmarked.clone(),
             state.ab_a_line.clone(),
             state.ab_b_line.clone(),
-            left_margin,
+            right_left_margin,
             &state.theme.dim_fg,
+            0,
         );
-        state.right_view.set_left_margin(left_margin - gutter_width);
+        state.right_view.set_left_margin(right_left_margin - gutter_width);
         state.right_gutter_renderer = Some(right_renderer);
     }
 

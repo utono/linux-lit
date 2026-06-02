@@ -25,6 +25,7 @@ pub fn setup_timestamp_gutter(
     b_line: Rc<Cell<Option<usize>>>,
     left_margin: i32,
     root_color: &str,
+    position: i32,
 ) -> sourceview5::GutterRendererText {
     let gutter = sourceview5::prelude::ViewExt::gutter(view, gtk4::TextWindowType::Left);
     let renderer = sourceview5::GutterRendererText::new();
@@ -35,7 +36,11 @@ pub fn setup_timestamp_gutter(
     renderer.set_xalign(1.0);
     renderer.set_yalign(0.5);
     renderer.set_size_request(gutter_width, -1);
-    gutter.insert(&renderer, 0);
+    // Lower position = further from text (more outward) in the left gutter. The
+    // sign column is normally outermost (0); when the left column also shows
+    // line numbers, the numbers take position 0 and signs take 1 so the order
+    // is [numbers | signs | text].
+    gutter.insert(&renderer, position);
 
     let color = root_color.to_string();
     renderer.connect_query_data(move |renderer, _lines_obj, line| {
@@ -203,6 +208,10 @@ pub const LINE_NUMBER_MARGIN_END_TWO_COL: i32 = 10;
 /// two-column mode (the text view's right margin when the number gutter is on).
 pub const LINE_NUMBER_TEXT_GAP_TWO_COL: i32 = 2;
 
+/// Gap between the left column's outer line numbers and the sign column to
+/// their right, in two-column mode (the left number renderer's margin_end).
+pub const LINE_NUMBER_LEFT_GAP_TWO_COL: i32 = 8;
+
 pub fn setup_line_number_gutter(
     view: &View,
     line_numbers: Rc<RefCell<Vec<Option<i64>>>>,
@@ -248,5 +257,66 @@ pub fn setup_line_number_gutter(
 
 pub fn remove_line_number_renderer(view: &View, renderer: &sourceview5::GutterRendererText) {
     let gutter = sourceview5::prelude::ViewExt::gutter(view, gtk4::TextWindowType::Right);
+    gutter.remove(renderer);
+}
+
+/// Like `setup_line_number_gutter`, but inserts the numbers into the LEFT
+/// gutter, right-aligned and at the outermost position (left of the sign
+/// column). Used for the left column in two-column mode so the line numbers sit
+/// on the card's outer edge — like a book's facing-page foliation — and the
+/// verse text shifts inward toward the divider.
+///
+/// `margin_end` is the gap between the numbers and the next gutter element (the
+/// sign column / text). The caller must enlarge the view's `left_margin` by
+/// `width + margin_end` so the numbers have room without pushing the text right.
+pub fn setup_line_number_gutter_left(
+    view: &View,
+    line_numbers: Rc<RefCell<Vec<Option<i64>>>>,
+    dim_color: &str,
+    font_family: &str,
+    font_size_pt: u32,
+    width: i32,
+    margin_end: i32,
+) -> sourceview5::GutterRendererText {
+    let gutter = sourceview5::prelude::ViewExt::gutter(view, gtk4::TextWindowType::Left);
+    let renderer = sourceview5::GutterRendererText::new();
+    renderer.set_xpad(0);
+    renderer.set_xalign(1.0);
+    renderer.set_yalign(0.5);
+    renderer.set_size_request(width, -1);
+    renderer.set_margin_end(margin_end);
+    // Position 0 = outermost (leftmost). The sign column inserts at 0 later, so
+    // inserting here at 0 keeps numbers outside it as long as we set up numbers
+    // first; if signs already exist they were inserted at 0 and this pushes them
+    // right — re-inserting numbers at 0 still lands them leftmost.
+    gutter.insert(&renderer, 0);
+
+    let color = dim_color.to_string();
+    let face = font_family.to_string();
+    let pango_size = (font_size_pt as f32 * 0.7) as u32 * 1024;
+    renderer.connect_query_data(move |renderer, _lines_obj, line| {
+        let text_renderer = renderer
+            .downcast_ref::<sourceview5::GutterRendererText>()
+            .unwrap();
+        let idx = line as usize;
+        let nums = line_numbers.borrow();
+        let show = idx < nums.len() && nums[idx].is_some_and(|n| n % 5 == 0);
+        if show {
+            let n = nums[idx].unwrap();
+            text_renderer.set_markup(&format!(
+                "<span foreground=\"{}\" face=\"{}\" size=\"{}\">{}</span>",
+                color, face, pango_size, n,
+            ));
+        } else {
+            text_renderer.set_markup("");
+        }
+    });
+
+    renderer
+}
+
+/// Remove a line-number renderer that was inserted into the LEFT gutter.
+pub fn remove_line_number_renderer_left(view: &View, renderer: &sourceview5::GutterRendererText) {
+    let gutter = sourceview5::prelude::ViewExt::gutter(view, gtk4::TextWindowType::Left);
     gutter.remove(renderer);
 }
