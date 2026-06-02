@@ -175,6 +175,10 @@ pub struct AppState {
     /// restored when translations are hidden. `None` when not in translation
     /// mode. Signs are hidden while translations are visible.
     pub sign_visible_before_translations: Option<bool>,
+    /// `(current_line, page_top_line)` captured before `show_translations`
+    /// mutates them, so toggling translations off restores the exact
+    /// pre-toggle page. `None` when not in translation mode.
+    pub pre_translation_page: Option<(usize, usize)>,
     /// Tracks which buffer lines are inserted translation lines.
     pub translation_lines: Vec<bool>,
     pub translation_dim_tag: gtk4::TextTag,
@@ -341,11 +345,22 @@ impl AppState {
         }
     }
 
-    /// Number of e-reader columns for the CURRENT work: scroll mode → 1; else a
-    /// per-work override (if `Alt+[` set one) wins, otherwise the work-type
-    /// default (2 for a Shakespeare play, else 1). Clamped to 1..=2.
+    /// Number of e-reader columns for the CURRENT work: scroll mode → 1;
+    /// translations visible → 1; else a per-work override (if `Alt+[` set one)
+    /// wins, otherwise the work-type default (2 for a Shakespeare play, else 1).
+    /// Clamped to 1..=2.
+    ///
+    /// Translations force a single column: they roughly double the buffer line
+    /// count, but the two-column pagination math (`column_split`/`visible_range`)
+    /// is bounded by `effective_line_count`, which excludes the inserted
+    /// translation lines. Paginating the inflated buffer with that bound yields
+    /// degenerate (one-line) or underfilled spreads. The single-column scroll
+    /// path walks the real buffer and handles translations correctly.
     pub fn column_count(&self) -> u8 {
         if !matches!(self.config.navigation_mode, crate::config::NavigationMode::EReader) {
+            return 1;
+        }
+        if self.translations_visible {
             return 1;
         }
         let Some(work) = self.current_work.as_ref() else {
@@ -646,6 +661,22 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
     }
 
     state.top_spacer.set_height_request(TOP_SPACER_HEIGHT);
+}
+
+/// Reconfigure the column layout to match the current `column_count()`:
+/// re-run `apply_tiled_mode` (margins/widths/gutter) and show or hide the
+/// right column + divider. Use after anything that changes `column_count()`
+/// at runtime — e.g. toggling translations, which forces a single column.
+pub fn apply_column_layout(state: &mut AppState) {
+    let vbox = state.vbox.clone();
+    let ww = state.window.width();
+    apply_tiled_mode(state, &vbox, ww);
+    let two_col = state.column_count() == 2;
+    state.right_scrolled_overlay.set_visible(two_col);
+    state.column_divider.set_visible(two_col);
+    if !two_col {
+        state.right_bottom_clip.set_height_request(0);
+    }
 }
 
 /// Fraction of the window width the two-column card aims to fill (minus the
@@ -1272,6 +1303,7 @@ pub fn build_window(
         translations: HashMap::new(),
         translations_visible: false,
         sign_visible_before_translations: None,
+        pre_translation_page: None,
         translation_lines: Vec::new(),
         translation_dim_tag,
         translation_text_tag,
@@ -1532,12 +1564,22 @@ pub fn build_window(
                         // than a narrower transitional mid-reflow width. Compare
                         // each view against the fixed column width with slack for
                         // the sign gutter / margins inside the column.
-                        let target = (MIN_TWO_COLUMN_COLUMN_WIDTH as f32 * 0.85) as i32;
-                        let settled = lw >= target && rw >= target;
+                        // "Settled" means each view has reflowed to ~the fixed
+                        // column width. Use a BAND, not just a lower bound: a
+                        // transitional width can be too NARROW (mid-reflow after
+                        // a work load, observed ~507) OR too WIDE (the leftover
+                        // single-column width 1408 right after toggling
+                        // translations off, before GTK shrinks it to 700). A
+                        // bare `>= target` accepts the over-wide state and
+                        // column_split then measures wrapping at the wrong width,
+                        // underfilling the columns.
+                        let lo = (MIN_TWO_COLUMN_COLUMN_WIDTH as f32 * 0.85) as i32;
+                        let hi = (MIN_TWO_COLUMN_COLUMN_WIDTH as f32 * 1.20) as i32;
+                        let settled = (lo..=hi).contains(&lw) && (lo..=hi).contains(&rw);
                         if !settled {
                             crate::log_fmt!(
-                                "RESIZE_TICK: two-col width not settled (left_w={} right_w={} target={}), waiting",
-                                lw, rw, target
+                                "RESIZE_TICK: two-col width not settled (left_w={} right_w={} band={}..={}), waiting",
+                                lw, rw, lo, hi
                             );
                             return glib::ControlFlow::Continue;
                         }
@@ -1654,6 +1696,7 @@ pub fn build_window(
             crate::input::actions::echoes::refresh_add_echo_search(&state_for_echo_line);
         });
     }
+
 
     // Key event controller — capture phase so we intercept before Entry consumes keys
     let tokio_handle_for_mru = tokio_handle.clone();
@@ -3343,6 +3386,8 @@ fn show_translations(state: &mut AppState) {
     // Adjust current_line and page_top_line to account for inserted lines
     let old_current = state.current_line;
     let old_top = state.page_top_line;
+    // Save the pre-toggle reader position so hide can restore it exactly.
+    state.pre_translation_page = Some((old_current, old_top));
     state.current_line = map_line_after_insert(state.current_line, &inserts);
     state.page_top_line = map_line_after_insert(state.page_top_line, &inserts);
 
@@ -3364,6 +3409,11 @@ fn show_translations(state: &mut AppState) {
     }
     state.sign_column_visible.set(false);
     crate::input::timestamps::redraw_sign_gutters(state);
+
+    // Translations force a single column (column_count() now returns 1 because
+    // translations_visible is set). Reconfigure the layout to hide the right
+    // column and widen the card before anchoring the viewport below.
+    apply_column_layout(state);
 
     reapply_font(state);
     crate::input::navigation::invalidate_page_tops(state);
@@ -3465,6 +3515,11 @@ pub fn hide_translations_for_navigation(state: &mut AppState) {
 fn hide_translations(state: &mut AppState) {
     state.card_vbox.set_opacity(0.0);
 
+    // Capture the pre-toggle page BEFORE strip_translation_lines clears it.
+    // These are pre-insert line indices, valid again after the strip restores
+    // the original buffer numbering.
+    let saved_pre_toggle = state.pre_translation_page.take();
+
     // Capture the cursor's on-screen y-position BEFORE removing lines so we
     // can restore it afterwards — the cursor is the user's visual anchor.
     let pre_adj_value = state.scrolled_window.vadjustment().value();
@@ -3486,13 +3541,23 @@ fn hide_translations(state: &mut AppState) {
     crate::input::navigation::update_highlight_only(state);
 
     if state.column_count() == 2 {
-        // Two-column e-reader mode: scroll-anchoring leaves the column split
-        // stale, so the left column underfills. Snap to a clean page top and
-        // re-tile both columns instead.
-        state.page_top_line = state.current_line;
-        crate::input::navigation::resnap_page(state);
-        state.card_vbox.set_opacity(1.0);
+        // Two-column work: translations were forcing a single column. Restore
+        // the layout + page-position state, then defer the ENTIRE re-snap to
+        // RESIZE_TICK. Do NOT call set_page_instant here: the left view still
+        // has its single-column (over-wide, ~1408px) width, so column_split
+        // would scroll the right view to a wrong split; the log showed that
+        // pollutes the subsequent settled-width resnap (page_end 4215 vs the
+        // correct 4219). The tick waits for the widths to settle (band check)
+        // and produces the one correct resnap.
+        apply_column_layout(state);
+        let (cur, top) = saved_pre_toggle
+            .unwrap_or((state.current_line, state.page_top_line));
+        state.current_line = cur;
+        state.page_top_line = top;
+        crate::input::navigation::update_highlight_only(state);
         rebuild_line_number_gutter(state);
+        state.needs_layout_refresh.set(true);
+        state.card_vbox.set_opacity(1.0);
         return;
     }
 
@@ -3584,6 +3649,10 @@ fn strip_translation_lines(state: &mut AppState) {
     state.translation_lines.clear();
     state.translations_visible = false;
 
+    // Clear the saved pre-toggle page (covers navigation-driven hide and
+    // single-column paths) so it does not leak into a later toggle.
+    state.pre_translation_page = None;
+
     // Restore the sign column to its pre-translation visibility.
     if let Some(prev) = state.sign_visible_before_translations.take() {
         state.sign_column_visible.set(prev);
@@ -3659,7 +3728,13 @@ fn rebuild_line_number_gutter(state: &mut AppState) {
     let is_prose = state.current_work.as_ref()
         .map(|w| crate::db::line_types::is_prose_work(&w.work_type))
         .unwrap_or(true);
-    if !is_prose {
+    // Line numbers are skipped in two-column mode (unless explicitly enabled),
+    // matching the work-load gutter setup. Without this guard, rebuilding after
+    // a font reapply (e.g. toggling translations off) re-added numbers in
+    // two-column mode, which also ate column width and underfilled the right
+    // column.
+    let show_numbers = state.column_count() != 2 || SHOW_LINE_NUMBERS_TWO_COL;
+    if !is_prose && show_numbers {
         let base: Vec<Option<i64>> = if let Some(ref lm) = state.line_map {
             lm.buffer_to_work
                 .iter()

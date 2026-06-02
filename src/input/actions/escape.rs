@@ -6,6 +6,15 @@ use gtk4::prelude::WidgetExt;
 use crate::app::AppState;
 
 pub(crate) fn escape_reader_mode(state: &Rc<RefCell<AppState>>) {
+    // Translations: Escape toggles them off, same as `i`, restoring the
+    // pre-translation two-column page.
+    {
+        let visible = state.borrow().translations_visible;
+        if visible {
+            crate::app::toggle_translations(&mut state.borrow_mut());
+            return;
+        }
+    }
     // Concordance state takes priority
     {
         let has_conc = state.borrow().concordance_state.is_some();
