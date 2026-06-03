@@ -399,7 +399,11 @@ impl GlossOverlay {
         self.bar_drawing.queue_draw();
 
         self.gloss_scroll_overlay.set_visible(true);
-        self.gloss_scrolled.vadjustment().set_value(0.0);
+        // Reset scroll to top after layout (see show_synopsis for why inline
+        // set_value doesn't stick).
+        let adj = self.gloss_scrolled.vadjustment();
+        adj.set_value(0.0);
+        glib::idle_add_local_once(move || adj.set_value(0.0));
         self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
@@ -467,7 +471,11 @@ impl GlossOverlay {
         glib::idle_add_local_once(move || bar.queue_draw());
 
         self.gloss_scroll_overlay.set_visible(true);
-        self.gloss_scrolled.vadjustment().set_value(0.0);
+        // Reset scroll to top after layout (see show_synopsis for why inline
+        // set_value doesn't stick).
+        let adj = self.gloss_scrolled.vadjustment();
+        adj.set_value(0.0);
+        glib::idle_add_local_once(move || adj.set_value(0.0));
         self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
@@ -550,7 +558,14 @@ impl GlossOverlay {
         self.bar_drawing.queue_draw();
 
         self.gloss_scroll_overlay.set_visible(true);
-        self.gloss_scrolled.vadjustment().set_value(0.0);
+        // Reset scroll to the top AFTER GTK lays out the new text. Calling
+        // set_value(0.0) inline runs before the buffer is laid out, so the
+        // vadjustment range is still stale and the value doesn't stick — the
+        // overlay then opens scrolled partway down, clipping the first lines.
+        // Deferring to idle runs it once layout has established the range.
+        let adj = self.gloss_scrolled.vadjustment();
+        adj.set_value(0.0);
+        glib::idle_add_local_once(move || adj.set_value(0.0));
         self.hint.set_text("Esc close · j/k scroll · n/p scene · Ctrl+g glosses · A ask · U undo");
         self.hint.set_visible(true);
         self.scrim.set_visible(true);
