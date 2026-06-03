@@ -4097,26 +4097,53 @@ pub fn chapter_number_for_line(chapter_breaks: &[usize], buffer_line: usize) -> 
     chapter_breaks.iter().filter(|&&b| b <= buffer_line).count()
 }
 
-/// Returns true when the active work has chapter-break markers — the case for
-/// flat-division prose works (e.g. Bleak House) and never for plays or poems,
-/// whose timestamps are not marked is_chapter. Detection: chapter_breaks is
-/// non-empty.
+/// Returns true when the active work has chapter markers (is_chapter lines) —
+/// the case for flat-division prose works (e.g. Bleak House) and never for
+/// plays or poems. Detection reads work.lines directly so it works whether or
+/// not a line_map exists (prose works load with line_map = None).
 pub fn is_chapter_work(state: &AppState) -> bool {
     state
-        .line_map
+        .current_work
         .as_ref()
-        .map(|lm| !lm.chapter_breaks.is_empty())
+        .map(|w| w.lines.iter().any(|l| l.is_chapter))
         .unwrap_or(false)
+}
+
+/// Chapter number (1-indexed) for the current line in a chapter work, counting
+/// is_chapter work-lines at or before the current line. Returns 0 when before
+/// the first chapter (front matter). Works with or without a line_map.
+pub fn current_chapter_number(state: &AppState) -> usize {
+    let work = match state.current_work.as_ref() {
+        Some(w) => w,
+        None => return 0,
+    };
+    // Map the current buffer line to a work-line index. If the current buffer
+    // line isn't itself mapped (e.g. a blank/heading line), walk forward then
+    // backward to the nearest mapped work line, mirroring current_scene_divs.
+    let line_count = state.effective_line_count();
+    let work_idx = state
+        .work_line_for_buffer(state.current_line)
+        .or_else(|| (state.current_line + 1..line_count).find_map(|bl| state.work_line_for_buffer(bl)))
+        .or_else(|| (0..state.current_line).rev().find_map(|bl| state.work_line_for_buffer(bl)));
+    let work_idx = match work_idx {
+        Some(i) => i,
+        None => return 0,
+    };
+    let flags: Vec<bool> = work.lines.iter().map(|l| l.is_chapter).collect();
+    chapter_number_from_flags(&flags, work_idx)
+}
+
+/// Pure core of current_chapter_number: count is_chapter flags up to and
+/// including work_idx. 0 = before first chapter.
+pub fn chapter_number_from_flags(is_chapter_flags: &[bool], work_idx: usize) -> usize {
+    is_chapter_flags.iter().take(work_idx + 1).filter(|&&c| c).count()
 }
 
 /// The synopsis-cache key for the current line. For chapter works this is
 /// (chapter_number, 0); otherwise the scene's (div1, div2).
 pub fn current_synopsis_key(state: &AppState) -> (i64, i64) {
     if is_chapter_work(state) {
-        if let Some(ref lm) = state.line_map {
-            let n = chapter_number_for_line(&lm.chapter_breaks, state.current_line);
-            return (n as i64, 0);
-        }
+        return (current_chapter_number(state) as i64, 0);
     }
     current_scene_divs(state)
 }
@@ -4308,17 +4335,19 @@ pub fn scene_label(div1: i64, div2: i64) -> String {
 /// so collecting unique pairs in encounter order gives reading order.
 fn ordered_synopsis_scenes(s: &AppState) -> Vec<(i64, i64)> {
     if is_chapter_work(s) {
-        // Chapter keys (1, 0), (2, 0), ... in order, for those present in cache.
-        if let Some(ref lm) = s.line_map {
-            let mut keys = Vec::new();
-            for n in 1..=lm.chapter_breaks.len() {
-                let k = (n as i64, 0);
-                if s.synopsis_cache.contains_key(&k) {
-                    keys.push(k);
-                }
+        let work = match s.current_work.as_ref() {
+            Some(w) => w,
+            None => return Vec::new(),
+        };
+        let chapter_count = work.lines.iter().filter(|l| l.is_chapter).count();
+        let mut keys = Vec::new();
+        for n in 1..=chapter_count {
+            let k = (n as i64, 0);
+            if s.synopsis_cache.contains_key(&k) {
+                keys.push(k);
             }
-            return keys;
         }
+        return keys;
     }
     let work = match s.current_work.as_ref() {
         Some(w) => w,
@@ -4675,5 +4704,24 @@ mod chapter_synopsis_tests {
     #[test]
     fn chapter_number_empty_breaks_is_zero() {
         assert_eq!(chapter_number_for_line(&[], 100), 0);
+    }
+
+    #[test]
+    fn chapter_number_from_flags_counts_inclusive() {
+        // lines: ch markers at idx 0 and 3
+        let flags = vec![true, false, false, true, false];
+        assert_eq!(super::chapter_number_from_flags(&flags, 0), 1); // on first chapter
+        assert_eq!(super::chapter_number_from_flags(&flags, 2), 1); // still chapter 1
+        assert_eq!(super::chapter_number_from_flags(&flags, 3), 2); // second chapter
+        assert_eq!(super::chapter_number_from_flags(&flags, 4), 2);
+    }
+
+    #[test]
+    fn chapter_number_from_flags_front_matter_is_zero() {
+        // first chapter marker at idx 2; idx 0,1 are front matter
+        let flags = vec![false, false, true, false];
+        assert_eq!(super::chapter_number_from_flags(&flags, 0), 0);
+        assert_eq!(super::chapter_number_from_flags(&flags, 1), 0);
+        assert_eq!(super::chapter_number_from_flags(&flags, 2), 1);
     }
 }
