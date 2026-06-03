@@ -66,7 +66,7 @@ pub const SYNC_GAP_THRESHOLD: f64 = 1.5;
 
 /// Seconds before the next line's start_time to jump the highlight when
 /// the preceding gap exceeds SYNC_GAP_THRESHOLD.
-pub const SYNC_GAP_PREROLL: f64 = 1.0;
+pub const SYNC_GAP_PREROLL: f64 = 1.5;
 
 // ---------------------------------------------------------------------------
 // PageChangeReason

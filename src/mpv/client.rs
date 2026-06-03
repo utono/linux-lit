@@ -356,10 +356,10 @@ mod tests {
         let gap = vec![(10, 1.0, 2.0), (20, 6.0, 7.0)];
         let map: HashMap<i64, usize> = [(10, 0), (20, 1)].into();
 
-        // Before the preroll window (B.start - 1.0 = 5.0): still on A.
-        assert_eq!(find_line_for_time(4.9, &gap, &map), Some(0));
+        // Before the preroll window (B.start - 1.5 = 4.5): still on A.
+        assert_eq!(find_line_for_time(4.4, &gap, &map), Some(0));
         // At the preroll boundary: jump to B early.
-        assert_eq!(find_line_for_time(5.0, &gap, &map), Some(1));
+        assert_eq!(find_line_for_time(4.5, &gap, &map), Some(1));
         // After B actually starts: still B (normal rule).
         assert_eq!(find_line_for_time(6.5, &gap, &map), Some(1));
 
