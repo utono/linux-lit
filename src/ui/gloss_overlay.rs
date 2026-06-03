@@ -231,6 +231,14 @@ impl GlossOverlay {
         echo_rule.set_visible(false);
         container.append(&echo_rule);
 
+        // Breathing room between the scrolling text viewport and the footer
+        // hint bar. Without it the viewport's bottom edge sits flush against the
+        // footer's top border, so the last visible text line is bisected by the
+        // rule and reads as clipped (the symptom this margin fixes). The 80px
+        // bottom margin inside `gloss_view` only helps once scrolled fully to
+        // the end; this gap keeps the last line clear at any scroll position.
+        gloss_scroll_overlay.set_margin_bottom(20);
+
         container.append(&gloss_scroll_overlay);
 
         let footer_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
