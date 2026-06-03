@@ -4097,6 +4097,38 @@ pub fn chapter_number_for_line(chapter_breaks: &[usize], buffer_line: usize) -> 
     chapter_breaks.iter().filter(|&&b| b <= buffer_line).count()
 }
 
+/// A work is treated as chapter-based for synopsis lookup when it has chapter
+/// breaks (is_chapter lines) AND no real scene divisions — i.e. flat division.
+/// Concretely: chapter_breaks is non-empty.
+pub fn is_chapter_work(state: &AppState) -> bool {
+    state
+        .line_map
+        .as_ref()
+        .map(|lm| !lm.chapter_breaks.is_empty())
+        .unwrap_or(false)
+}
+
+/// The synopsis-cache key for the current line. For chapter works this is
+/// (chapter_number, 0); otherwise the scene's (div1, div2).
+pub fn current_synopsis_key(state: &AppState) -> (i64, i64) {
+    if is_chapter_work(state) {
+        if let Some(ref lm) = state.line_map {
+            let n = chapter_number_for_line(&lm.chapter_breaks, state.current_line);
+            return (n as i64, 0);
+        }
+    }
+    current_scene_divs(state)
+}
+
+/// Human-readable overlay label for a synopsis key, branching on work type.
+pub fn synopsis_label(state: &AppState, div1: i64, div2: i64) -> String {
+    if is_chapter_work(state) {
+        format!("Chapter {}", div1)
+    } else {
+        scene_label(div1, div2)
+    }
+}
+
 /// Get the (div1, div2) of the scene at the current line.
 /// When current_line is on an unmapped buffer line (scene header, separator,
 /// stage direction), walks forward then backward to find the nearest mapped line.
@@ -4177,19 +4209,13 @@ fn scene_heading_start(state: &AppState, buf_line: usize) -> usize {
 
 /// Show the synopsis for the current scene in the sidebar popup.
 pub fn show_synopsis(state: &mut AppState) {
-    let (div1, div2) = current_scene_divs(state);
+    let (div1, div2) = current_synopsis_key(state);
     crate::logging::log(&format!(
         "SYNOPSIS: show current_line={} divs=({},{}) cache_hit={}",
         state.current_line, div1, div2, state.synopsis_cache.contains_key(&(div1, div2))
     ));
     if let Some(synopsis) = state.synopsis_cache.get(&(div1, div2)) {
-        let scene_label = if div1 == 0 && div2 == 0 {
-            "Prologue".to_string()
-        } else if div2 == 0 {
-            format!("Act {}, Chorus", div1)
-        } else {
-            format!("Act {}, Scene {}", div1, div2)
-        };
+        let scene_label = synopsis_label(state, div1, div2);
         state.vocab_popup.update_synopsis(&scene_label, synopsis);
         state.vocab_popup.show();
         update_vocab_popup_margin(state);
@@ -4214,7 +4240,7 @@ pub fn toggle_synopsis(state: &mut AppState) {
             close_vocab_popup(state);
         }
     } else {
-        let (div1, div2) = current_scene_divs(state);
+        let (div1, div2) = current_synopsis_key(state);
         if state.synopsis_cache.contains_key(&(div1, div2)) {
             show_synopsis(state);
         }
@@ -4241,7 +4267,7 @@ pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) 
         return;
     }
 
-    let (div1, div2) = current_scene_divs(&s);
+    let (div1, div2) = current_synopsis_key(&s);
     let synopsis = match s.synopsis_cache.get(&(div1, div2)) {
         Some(text) => text.clone(),
         None => {
@@ -4256,7 +4282,8 @@ pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) 
     };
 
     let card_height = s.scrolled_window.height();
-    s.gloss_overlay.show_synopsis(&scene_label(div1, div2), &synopsis, card_height);
+    let label = synopsis_label(&s, div1, div2);
+    s.gloss_overlay.show_synopsis(&label, &synopsis, card_height);
     drop(s);
     let mut s = state.borrow_mut();
     s.synopsis_overlay_scene = (div1, div2);
@@ -4557,7 +4584,7 @@ pub fn update_title_bar_scene(state: &AppState) {
         return;
     }
     if !state.synopsis_cache.is_empty() {
-        let (div1, div2) = current_scene_divs(state);
+        let (div1, div2) = current_synopsis_key(state);
         let label = if div1 == 0 && div2 == 0 {
             "Prologue".to_string()
         } else if div2 == 0 {
