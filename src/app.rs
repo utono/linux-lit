@@ -4307,6 +4307,19 @@ pub fn scene_label(div1: i64, div2: i64) -> String {
 /// reading order. `work.lines` is already sorted by (div1, div2, line_in_div),
 /// so collecting unique pairs in encounter order gives reading order.
 fn ordered_synopsis_scenes(s: &AppState) -> Vec<(i64, i64)> {
+    if is_chapter_work(s) {
+        // Chapter keys (1, 0), (2, 0), ... in order, for those present in cache.
+        if let Some(ref lm) = s.line_map {
+            let mut keys = Vec::new();
+            for n in 1..=lm.chapter_breaks.len() {
+                let k = (n as i64, 0);
+                if s.synopsis_cache.contains_key(&k) {
+                    keys.push(k);
+                }
+            }
+            return keys;
+        }
+    }
     let work = match s.current_work.as_ref() {
         Some(w) => w,
         None => return Vec::new(),
@@ -4338,8 +4351,9 @@ pub fn cycle_synopsis(state: &std::rc::Rc<std::cell::RefCell<AppState>>, delta: 
         Some(t) => t.clone(),
         None => return,
     };
+    let label = synopsis_label(&s, div1, div2);
     let card_height = s.scrolled_window.height();
-    s.gloss_overlay.show_synopsis(&scene_label(div1, div2), &synopsis, card_height);
+    s.gloss_overlay.show_synopsis(&label, &synopsis, card_height);
     s.synopsis_overlay_scene = (div1, div2);
 }
 
