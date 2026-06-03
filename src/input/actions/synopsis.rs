@@ -223,12 +223,11 @@ pub(crate) fn undo_amend(state_rc: &Rc<RefCell<AppState>>) {
     s.synopsis_cache.insert((div1, div2), original.clone());
     s.synopsis_undo = None;
     let h = s.scrolled_window.height();
-    let label = scene_label(div1, div2);
+    let label = crate::app::synopsis_label(&s, div1, div2);
     s.gloss_overlay.show_synopsis(&label, &original, h);
     crate::logging::log(&format!("SYNOPSIS: undid amend ({},{})", div1, div2));
 }
 
-use crate::app::scene_label;
 
 /// Ctrl+g in the synopsis card: open the gloss overlay for the whole work, with
 /// the glosses for the currently-displayed scene shown first. Mirrors the state
