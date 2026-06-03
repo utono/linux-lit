@@ -244,6 +244,23 @@ fn hex_to_rgb(hex: &str) -> (f64, f64, f64) {
     (r, g, b)
 }
 
+/// Pick a foreground (near-black or near-white) that contrasts with `bg_hex`,
+/// using WCAG relative luminance. Used for toasts that float over the wallpaper
+/// (the dwl root color), so their text stays legible on light *and* dark
+/// wallpapers. Returns slightly off-pure colors so the text reads as a soft
+/// label rather than harsh pure black/white.
+fn contrast_on(bg_hex: &str) -> &'static str {
+    let (r, g, b) = hex_to_rgb(bg_hex);
+    // sRGB -> linear, then relative luminance.
+    let lin = |c: f64| if c <= 0.03928 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+    let lum = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    if lum > 0.4 {
+        "#1a1a1a" // dark text on a light wallpaper
+    } else {
+        "#f0f0f0" // light text on a dark wallpaper
+    }
+}
+
 /// Parse a hex color string to (r, g, b) as f32 for GDK RGBA.
 pub fn root_color_rgb(hex: &str) -> (f32, f32, f32) {
     let (r, g, b) = hex_to_rgb(hex);
@@ -466,7 +483,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .kb-legend-unbound {{ background-color: #2a2a2a; border-color: #444444; }} \
          .debug-icon {{ font-size: 18px; color: {bg}; opacity: 0.85; }} \
          .word-status {{ font-size: 16px; color: {fg}; opacity: 0.85; }} \
-         .chapter-toast {{ font-size: 13px; color: {dim}; opacity: 0.85; }} \
+         .chapter-toast {{ font-size: 13px; color: {toast_fg}; opacity: 0.95; }} \
          .gloss-scrim {{ background-color: {root}; }} \
          .gloss-overlay {{ background-color: {bg}; color: {fg}; border-radius: 12px; \
            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45); }} \
@@ -517,6 +534,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
         bg = theme.text_bg,
         fg = theme.text_fg,
         dim = theme.dim_fg,
+        toast_fg = contrast_on(&theme.root_color),
         cursor_bg = theme.cursor_bg,
         cursor_fg = theme.cursor_fg,
         vocab_popup_fg = blend_colors(&theme.text_bg, &theme.root_color, 0.60),

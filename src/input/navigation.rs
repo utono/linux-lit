@@ -1025,14 +1025,15 @@ pub fn show_current_chapter(state: &mut AppState) {
 }
 
 /// Jump to the next bookmarked line (wraps around).
+/// Jump to the next bookmarked line after the cursor. Does NOT wrap: if there is
+/// no bookmark past the current line, the cursor stays put.
 pub fn next_bookmark(state: &mut AppState) {
     let is_bm = state.is_bookmarked.borrow();
-    if is_bm.is_empty() || !is_bm.iter().any(|&b| b) {
+    if is_bm.is_empty() {
         return;
     }
     let line_count = is_bm.len();
-    for offset in 1..=line_count {
-        let idx = (state.current_line + offset) % line_count;
+    for idx in (state.current_line + 1)..line_count {
         if is_bm[idx] {
             drop(is_bm);
             jump_to_line(state, idx);
@@ -1041,15 +1042,16 @@ pub fn next_bookmark(state: &mut AppState) {
     }
 }
 
-/// Jump to the previous bookmarked line (wraps around).
+/// Jump to the previous bookmarked line before the cursor. Does NOT wrap: if
+/// there is no bookmark before the current line, the cursor stays put.
 pub fn prev_bookmark(state: &mut AppState) {
     let is_bm = state.is_bookmarked.borrow();
-    if is_bm.is_empty() || !is_bm.iter().any(|&b| b) {
+    if is_bm.is_empty() || state.current_line == 0 {
         return;
     }
     let line_count = is_bm.len();
-    for offset in 1..=line_count {
-        let idx = (state.current_line + line_count - offset) % line_count;
+    let start = state.current_line.min(line_count);
+    for idx in (0..start).rev() {
         if is_bm[idx] {
             drop(is_bm);
             jump_to_line(state, idx);

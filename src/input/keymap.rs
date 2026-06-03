@@ -1057,7 +1057,7 @@ fn handle_gamepad_key(
             state.borrow_mut().input_mode = crate::app::InputMode::Reader;
             true
         }
-        "n" => {
+        "n" | "Up" => {
             // Past the gamepad → wrap to the first keyboard row.
             let s = state.borrow();
             s.gamepad_overlay.hide();
@@ -1066,7 +1066,7 @@ fn handle_gamepad_key(
             state.borrow_mut().input_mode = crate::app::InputMode::KeybindsOverlay;
             true
         }
-        "p" => {
+        "p" | "Down" => {
             // Back from the gamepad → the last keyboard row.
             let s = state.borrow();
             s.gamepad_overlay.hide();
@@ -1103,7 +1103,7 @@ fn handle_keybinds_key(
             state.borrow_mut().input_mode = crate::app::InputMode::Reader;
             true
         }
-        "n" => {
+        "n" | "Up" => {
             // Advance a row; past the last row → gamepad screen.
             let advanced = state.borrow().keybinds_overlay.next_row();
             if !advanced {
@@ -1115,7 +1115,7 @@ fn handle_keybinds_key(
             }
             true
         }
-        "p" => {
+        "p" | "Down" => {
             // Previous row; before the first row → gamepad screen.
             let moved = state.borrow().keybinds_overlay.prev_row();
             if !moved {
@@ -1127,11 +1127,11 @@ fn handle_keybinds_key(
             }
             true
         }
-        "k" | "Right" => {
+        "j" | "Right" => {
             state.borrow().keybinds_overlay.move_selection(1);
             true
         }
-        "j" | "Left" => {
+        "k" | "Left" => {
             state.borrow().keybinds_overlay.move_selection(-1);
             true
         }
@@ -1487,6 +1487,18 @@ fn dispatch_action(
                 let _ = child.wait();
             }
             crate::logging::log(&format!("CLIPBOARD: copied {}", clip));
+            // Confirm with a lower-right toast (same shared toast/position the
+            // "Sync: on" message uses).
+            let s = state.borrow();
+            s.speed_toast.set_halign(gtk4::Align::End);
+            s.speed_toast.set_margin_start(0);
+            s.speed_toast.set_margin_end(24);
+            s.speed_toast.set_text(&format!("Copied {}", clip));
+            s.speed_toast.set_visible(true);
+            let toast = s.speed_toast.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+                toast.set_visible(false);
+            });
         }
 
         // Multi-key chord entry
