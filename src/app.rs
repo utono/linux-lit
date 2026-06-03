@@ -4090,15 +4090,20 @@ pub fn remove_vocab_highlighting(state: &AppState) {
     state.buffer.remove_tag(&state.vocab_tag, &start, &end);
 }
 
-/// Returns true when the active work has chapter markers (is_chapter lines) —
-/// the case for flat-division prose works (e.g. Bleak House) and never for
-/// plays or poems. Detection reads work.lines directly so it works whether or
-/// not a line_map exists (prose works load with line_map = None).
+/// Returns true when the active work has chapter markers (is_chapter lines)
+/// AND is a prose work type (novel/essay_collection/prose_book/prose).
+/// Requiring a prose work type ensures plays with stray is_chapter marks
+/// (e.g. Rom, Tro) are never treated as chapter works.
+/// Detection reads work.lines directly so it works whether or not a line_map
+/// exists (prose works load with line_map = None).
 pub fn is_chapter_work(state: &AppState) -> bool {
     state
         .current_work
         .as_ref()
-        .map(|w| w.lines.iter().any(|l| l.is_chapter))
+        .map(|w| {
+            crate::db::line_types::is_prose_work(&w.work_type)
+                && w.lines.iter().any(|l| l.is_chapter)
+        })
         .unwrap_or(false)
 }
 
