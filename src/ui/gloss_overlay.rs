@@ -399,15 +399,20 @@ impl GlossOverlay {
         self.bar_drawing.queue_draw();
 
         self.gloss_scroll_overlay.set_visible(true);
-        // Reset scroll to top after layout (see show_synopsis for why inline
-        // set_value doesn't stick).
-        let adj = self.gloss_scrolled.vadjustment();
-        adj.set_value(0.0);
-        glib::idle_add_local_once(move || adj.set_value(0.0));
         self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         self.apply_font();
+        // Reset scroll to top after layout settles (see show_synopsis).
+        let adj = self.gloss_scrolled.vadjustment();
+        adj.set_value(adj.lower());
+        glib::idle_add_local_once({
+            let adj = adj.clone();
+            move || {
+                adj.set_value(adj.lower());
+                glib::idle_add_local_once(move || adj.set_value(adj.lower()));
+            }
+        });
     }
 
     /// Render the echoes overlay: a fixed source-turn header + rule, above the
@@ -471,15 +476,20 @@ impl GlossOverlay {
         glib::idle_add_local_once(move || bar.queue_draw());
 
         self.gloss_scroll_overlay.set_visible(true);
-        // Reset scroll to top after layout (see show_synopsis for why inline
-        // set_value doesn't stick).
-        let adj = self.gloss_scrolled.vadjustment();
-        adj.set_value(0.0);
-        glib::idle_add_local_once(move || adj.set_value(0.0));
         self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         self.apply_font();
+        // Reset scroll to top after layout settles (see show_synopsis).
+        let adj = self.gloss_scrolled.vadjustment();
+        adj.set_value(adj.lower());
+        glib::idle_add_local_once({
+            let adj = adj.clone();
+            move || {
+                adj.set_value(adj.lower());
+                glib::idle_add_local_once(move || adj.set_value(adj.lower()));
+            }
+        });
     }
 
     /// Scroll the card so the Nth echo's quote line is visible.
@@ -558,19 +568,26 @@ impl GlossOverlay {
         self.bar_drawing.queue_draw();
 
         self.gloss_scroll_overlay.set_visible(true);
-        // Reset scroll to the top AFTER GTK lays out the new text. Calling
-        // set_value(0.0) inline runs before the buffer is laid out, so the
-        // vadjustment range is still stale and the value doesn't stick — the
-        // overlay then opens scrolled partway down, clipping the first lines.
-        // Deferring to idle runs it once layout has established the range.
-        let adj = self.gloss_scrolled.vadjustment();
-        adj.set_value(0.0);
-        glib::idle_add_local_once(move || adj.set_value(0.0));
         self.hint.set_text("Esc close · j/k scroll · n/p scene · Ctrl+g glosses · A ask · U undo");
         self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         self.apply_font();
+        // Reset scroll to the top AFTER all of the above — set_visible and
+        // apply_font each dirty the layout and recompute the vadjustment range,
+        // so an inline (or too-early) set_value(0.0) doesn't stick and the
+        // overlay opens scrolled down by ~a line, clipping the first line.
+        // Snapping to adj.lower() on idle, queued last, runs once the range has
+        // settled. Two ticks guard against a second layout pass after font apply.
+        let adj = self.gloss_scrolled.vadjustment();
+        adj.set_value(adj.lower());
+        glib::idle_add_local_once({
+            let adj = adj.clone();
+            move || {
+                adj.set_value(adj.lower());
+                glib::idle_add_local_once(move || adj.set_value(adj.lower()));
+            }
+        });
     }
 
     pub fn show_loading(&self) {
