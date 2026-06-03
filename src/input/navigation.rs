@@ -62,7 +62,7 @@ pub const SYNC_PREROLL: f64 = 0.0;
 /// Minimum silent gap (seconds) between a line's end_time and the next
 /// line's start_time required to trigger an early jump to the next line
 /// during MPV playback sync. Gaps at or below this keep normal timing.
-pub const SYNC_GAP_THRESHOLD: f64 = 2.0;
+pub const SYNC_GAP_THRESHOLD: f64 = 1.5;
 
 /// Seconds before the next line's start_time to jump the highlight when
 /// the preceding gap exceeds SYNC_GAP_THRESHOLD.

@@ -352,7 +352,7 @@ mod tests {
     #[test]
     fn test_find_line_for_time_gap_aware() {
         // A: id 10, start 1.0, end 2.0. B: id 20, start 6.0, end 7.0.
-        // Gap = 6.0 - 2.0 = 4.0 > 2.0 threshold -> early jump applies.
+        // Gap = 6.0 - 2.0 = 4.0 > 1.5 threshold -> early jump applies.
         let gap = vec![(10, 1.0, 2.0), (20, 6.0, 7.0)];
         let map: HashMap<i64, usize> = [(10, 0), (20, 1)].into();
 
@@ -363,7 +363,7 @@ mod tests {
         // After B actually starts: still B (normal rule).
         assert_eq!(find_line_for_time(6.5, &gap, &map), Some(1));
 
-        // No-gap case: A ends 2.0, B starts 3.0 -> gap 1.0 <= 2.0, no early jump.
+        // No-gap case: A ends 2.0, B starts 3.0 -> gap 1.0 <= 1.5, no early jump.
         let nogap = vec![(10, 1.0, 2.0), (20, 3.0, 4.0)];
         assert_eq!(find_line_for_time(2.5, &nogap, &map), Some(0));
         assert_eq!(find_line_for_time(3.0, &nogap, &map), Some(1));
