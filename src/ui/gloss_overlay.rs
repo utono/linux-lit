@@ -238,6 +238,11 @@ impl GlossOverlay {
         // bottom margin inside `gloss_view` only helps once scrolled fully to
         // the end; this gap keeps the last line clear at any scroll position.
         gloss_scroll_overlay.set_margin_bottom(20);
+        // Symmetric gap below the title rule. The viewport top otherwise sits
+        // flush under the title, so when the text is scrolled a partial line at
+        // the top edge reads as clipped by the title. (The gloss_view internal
+        // top margin scrolls away with the content, so it can't keep this gap.)
+        gloss_scroll_overlay.set_margin_top(24);
 
         container.append(&gloss_scroll_overlay);
 
