@@ -286,12 +286,37 @@ fn find_line_for_time(
     timestamps: &[(i64, f64, f64)],
     line_id_to_index: &HashMap<i64, usize>,
 ) -> Option<usize> {
-    let effective_time = time_pos + crate::input::navigation::SYNC_PREROLL;
+    use crate::input::navigation::{SYNC_GAP_PREROLL, SYNC_GAP_THRESHOLD, SYNC_PREROLL};
+
+    let effective_time = time_pos + SYNC_PREROLL;
     let idx = timestamps.partition_point(|ts| ts.1 <= effective_time);
     if idx == 0 {
         return None;
     }
-    let (line_id, _, _) = timestamps[idx - 1];
+
+    // Gap-aware early jump: when the current line A (timestamps[idx - 1]) and
+    // the next line B (timestamps[idx]) are separated by a gap longer than
+    // SYNC_GAP_THRESHOLD, advance to B at B.start - SYNC_GAP_PREROLL (a fixed
+    // lead before B is spoken). Anchoring on B.start rather than A.end keeps
+    // the lead correct even when A's end_time overshoots the actual speech
+    // (trailing silence / stage business baked into the timestamp). When A has
+    // no usable end_time the gap can't be measured, so apply the same lead
+    // unconditionally. Promotes by exactly one line, so a line is never skipped.
+    let mut active = idx - 1;
+    if let Some(&(_, b_start, _)) = timestamps.get(idx) {
+        let (_, a_start, a_end) = timestamps[idx - 1];
+        let trigger = b_start - SYNC_GAP_PREROLL;
+        let qualifies = if a_end > a_start {
+            b_start - a_end > SYNC_GAP_THRESHOLD
+        } else {
+            true
+        };
+        if qualifies && time_pos >= trigger {
+            active = idx;
+        }
+    }
+
+    let (line_id, _, _) = timestamps[active];
     line_id_to_index.get(&line_id).copied()
 }
 
@@ -327,5 +352,34 @@ mod tests {
         assert_eq!(find_line_for_time(2.5, &timestamps, &map), Some(0));
         assert_eq!(find_line_for_time(3.0, &timestamps, &map), Some(1));
         assert_eq!(find_line_for_time(5.0, &timestamps, &map), Some(2));
+    }
+
+    #[test]
+    fn test_find_line_for_time_gap_aware() {
+        // A: id 10, start 1.0, end 2.0. B: id 20, start 6.0, end 7.0.
+        // Gap = 6.0 - 2.0 = 4.0 > 1.5 threshold -> early jump anchored to
+        // B.start - 1.5 = 4.5.
+        let gap = vec![(10, 1.0, 2.0), (20, 6.0, 7.0)];
+        let map: HashMap<i64, usize> = [(10, 0), (20, 1)].into();
+
+        // Just before B.start - 1.5 = 4.5: still on A.
+        assert_eq!(find_line_for_time(4.4, &gap, &map), Some(0));
+        // At B.start - 1.5: jump to B early.
+        assert_eq!(find_line_for_time(4.5, &gap, &map), Some(1));
+        // After B starts: still B.
+        assert_eq!(find_line_for_time(6.5, &gap, &map), Some(1));
+
+        // No-gap case: A ends 2.0, B starts 3.0 -> gap 1.0 <= 1.5, no early jump.
+        // B.start - 1.5 = 1.5 would land mid-A, but the gap is below threshold
+        // so the early jump does not apply; B becomes active only at its start.
+        let nogap = vec![(10, 1.0, 2.0), (20, 3.0, 4.0)];
+        assert_eq!(find_line_for_time(2.5, &nogap, &map), Some(0));
+        assert_eq!(find_line_for_time(3.0, &nogap, &map), Some(1));
+
+        // Invalid A.end (end == start): gap unknown -> apply the lead anyway,
+        // B.start - 1.5 = 4.5.
+        let badend = vec![(10, 1.0, 1.0), (20, 6.0, 7.0)];
+        assert_eq!(find_line_for_time(4.4, &badend, &map), Some(0));
+        assert_eq!(find_line_for_time(4.5, &badend, &map), Some(1));
     }
 }
