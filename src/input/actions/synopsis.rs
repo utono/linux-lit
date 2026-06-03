@@ -110,7 +110,7 @@ pub(crate) fn close_amend_prompt(state: &Rc<RefCell<AppState>>) {
 pub(crate) fn amend_synopsis(state_rc: &Rc<RefCell<AppState>>, question: &str) {
     let (div1, div2) = state_rc.borrow().synopsis_amend_scene;
 
-    let (work_title, work_abbrev, original, model, tokio_handle, scene_label) = {
+    let (work_title, work_abbrev, original, model, tokio_handle, label) = {
         let s = state_rc.borrow();
         let work = match s.current_work.as_ref() {
             Some(w) => w,
@@ -121,19 +121,19 @@ pub(crate) fn amend_synopsis(state_rc: &Rc<RefCell<AppState>>, question: &str) {
             Some(t) => t.clone(),
             None => return,
         };
-        let scene_label = crate::app::synopsis_label(&s, div1, div2);
+        let label = crate::app::synopsis_label(&s, div1, div2);
         (
             work.title.clone(),
             abbrev,
             original,
             s.config.claude_model.clone(),
             s.tokio_handle.clone(),
-            scene_label,
+            label,
         )
     };
     let user_msg = format!(
         "Play: {}\n{}\n\nCurrent synopsis:\n{}\n\n---\nReader's question: {}",
-        work_title, scene_label, original, question,
+        work_title, label, original, question,
     );
 
     state_rc.borrow().gloss_overlay.show_loading();
@@ -162,7 +162,7 @@ pub(crate) fn amend_synopsis(state_rc: &Rc<RefCell<AppState>>, question: &str) {
                 s.synopsis_undo = Some(((div1, div2), original.clone()));
                 s.synopsis_cache.insert((div1, div2), revised.clone());
                 let h = s.scrolled_window.height();
-                s.gloss_overlay.show_synopsis(&scene_label, &revised, h);
+                s.gloss_overlay.show_synopsis(&label, &revised, h);
                 s.input_mode = crate::app::InputMode::SynopsisOverlay;
                 crate::logging::log(&format!(
                     "SYNOPSIS: amended {} ({},{})",
@@ -173,7 +173,7 @@ pub(crate) fn amend_synopsis(state_rc: &Rc<RefCell<AppState>>, question: &str) {
                 let mut s = state_for_result.borrow_mut();
                 let h = s.scrolled_window.height();
                 s.gloss_overlay
-                    .show_synopsis(&scene_label, &format!("Error: {}", e), h);
+                    .show_synopsis(&label, &format!("Error: {}", e), h);
                 s.input_mode = crate::app::InputMode::SynopsisOverlay;
                 crate::logging::log(&format!("SYNOPSIS: amend error: {}", e));
             }
