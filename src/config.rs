@@ -33,6 +33,11 @@ pub struct Config {
     pub font_family: String,
     #[serde(default = "default_font_size")]
     pub font_size: u32,
+    /// Font size for the single-column translation view. Independent of
+    /// `font_size` (the two-column reader size) so adjusting one never changes
+    /// the other. The translation view always uses the Charter family.
+    #[serde(default = "default_translation_font_size")]
+    pub translation_font_size: u32,
     #[serde(default = "default_line_spacing")]
     pub line_spacing: u32,
     #[serde(default = "default_column_width")]
@@ -90,6 +95,10 @@ pub fn default_font_size() -> u32 {
     16
 }
 
+pub fn default_translation_font_size() -> u32 {
+    18
+}
+
 pub const DEFAULT_LINE_SPACING: u32 = 5;
 pub const DEFAULT_COLUMN_WIDTH: u32 = 1050;
 pub const DEFAULT_TEXT_MARGINS: u32 = 40;
@@ -140,6 +149,7 @@ impl Default for Config {
         Self {
             font_family: default_font_family(),
             font_size: default_font_size(),
+            translation_font_size: default_translation_font_size(),
             line_spacing: default_line_spacing(),
             column_width: default_column_width(),
             text_margins: default_text_margins(),
@@ -194,6 +204,7 @@ pub fn load() -> Config {
     // persist). Clamp to a sane range so a malformed config can't render the
     // text unreadable or zero-height.
     config.font_size = config.font_size.clamp(8, 48);
+    config.translation_font_size = config.translation_font_size.clamp(8, 48);
     config.column_width = default_column_width();
     config.text_margins = default_text_margins();
     config.show_cursor_line = true;

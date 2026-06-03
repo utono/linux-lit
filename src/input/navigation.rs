@@ -277,6 +277,7 @@ pub fn toggle_column_layout(state: &mut AppState) {
         state.window.width(),
         state.config.column_width,
         new_count,
+        state.translations_visible,
     );
 
     // Page boundaries depend on column_count(); the cached page-tops index is
@@ -544,6 +545,13 @@ pub fn cursor_prev_line(state: &mut AppState) {
     state.pending_advance = None;
     state.pending_advance_ignore_bl = None;
     state.prev_highlight_line.set(None);
+    // Translation view: highlight follows the cursor, scroll only to keep it
+    // within a vim-style scrolloff margin (not a page turn).
+    if state.translations_visible {
+        update_highlight_only(state);
+        super::scroll::scroll_cursor_into_view_scrolloff(state);
+        return;
+    }
     scroll_after_jump_backward(state);
     after_page_change(state, PageChangeReason::Cursor);
 }
@@ -560,6 +568,13 @@ pub fn cursor_next_dialogue(state: &mut AppState) {
         state.current_line = target;
         state.pending_advance = None;
         state.pending_advance_ignore_bl = None;
+        // Translation view: highlight follows the cursor, scroll only to keep
+        // it within a vim-style scrolloff margin (not a page turn).
+        if state.translations_visible {
+            update_highlight_only(state);
+            super::scroll::scroll_cursor_into_view_scrolloff(state);
+            return;
+        }
         scroll_after_jump_forward(state, prev_line);
         after_page_change(state, PageChangeReason::Cursor);
     }

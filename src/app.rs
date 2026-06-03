@@ -560,6 +560,11 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
     };
     let left_bump = if tiled {
         0
+    } else if state.translations_visible {
+        // Translation view: narrow centered card, so no big single-column left
+        // offset — keep the text near the card's left edge (just the base
+        // margin) and let the card centering balance both sides.
+        0
     } else if two_col {
         TWO_COLUMN_LEFT_OFFSET + left_number_allowance
     } else if is_verse {
@@ -607,12 +612,17 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
     // column loses ~90px of text width and verse lines wrap. The right view's
     // margin is set in the gutter setup and never touched here, so without
     // this guard the two columns would also be asymmetric (left narrower).
-    if !two_col {
+    if two_col {
+        state.text_view.set_right_margin(crate::gutter::LINE_NUMBER_TEXT_GAP_TWO_COL);
+    } else if state.translations_visible {
+        // Translation view: tight gap so the line number hugs the line end,
+        // not the wide single-column EXTRA_RIGHT_MARGIN that would strand it
+        // at the far edge of the (now narrowed, centered) card.
+        state.text_view.set_right_margin(crate::gutter::LINE_NUMBER_TEXT_GAP_TWO_COL);
+    } else {
         let logical_right = state.config.text_margins as i32
             + crate::config::EXTRA_RIGHT_MARGIN;
         state.text_view.set_right_margin(logical_right);
-    } else {
-        state.text_view.set_right_margin(crate::gutter::LINE_NUMBER_TEXT_GAP_TWO_COL);
     }
 
     // Book-spine symmetry. In two-column mode each half of the card is wider
@@ -670,6 +680,15 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
 pub fn apply_column_layout(state: &mut AppState) {
     let vbox = state.vbox.clone();
     let ww = state.window.width();
+    // Resize the card to match the current layout: the narrow centered
+    // translation card, the configured single-column width, or the wide
+    // two-column card. apply_tiled_mode only sets margins/gutters, not the
+    // card's width_request, so this must run too or the card keeps its old
+    // (wrong) width.
+    let cw = state.config.column_width;
+    let cc = state.column_count();
+    let tr = state.translations_visible;
+    apply_card_sizing(&state.content_hbox, ww, cw, cc, tr);
     apply_tiled_mode(state, &vbox, ww);
     let two_col = state.column_count() == 2;
     state.right_scrolled_overlay.set_visible(two_col);
@@ -704,7 +723,19 @@ pub const MIN_TWO_COLUMN_COLUMN_WIDTH: i32 = 700;
 /// - Two columns: the larger of `column_width` and 85% of the window, so the
 ///   card grows on wide screens instead of squeezing two columns into one
 ///   column's worth of space. Never narrower than the single-column floor.
-pub(crate) fn target_card_width(window_width: i32, column_width: u32, column_count: u8) -> i32 {
+/// Tighter card width for the single-column translation view: a comfortable
+/// reading measure (the verse-safe column width) plus room for the line-number
+/// gutter, so the block centers in a wide window and the numbers hug the text
+/// ends rather than sitting at the far card edge.
+pub(crate) const TRANSLATION_CARD_WIDTH: i32 =
+    MIN_TWO_COLUMN_COLUMN_WIDTH + crate::gutter::LINE_NUMBER_WIDTH + crate::gutter::LINE_NUMBER_MARGIN_END;
+
+pub(crate) fn target_card_width(
+    window_width: i32,
+    column_width: u32,
+    column_count: u8,
+    translations: bool,
+) -> i32 {
     let cw_cfg = column_width as i32;
     if column_count >= 2 {
         let proportional = (window_width as f32 * TWO_COLUMN_WIDTH_FRACTION) as i32;
@@ -712,6 +743,9 @@ pub(crate) fn target_card_width(window_width: i32, column_width: u32, column_cou
         // few px for the divider. Also never below the single-column floor.
         let two_col_floor = 2 * MIN_TWO_COLUMN_COLUMN_WIDTH + 8;
         proportional.max(cw_cfg).max(two_col_floor)
+    } else if translations {
+        // Single-column translation view: a tight, centered reading block.
+        TRANSLATION_CARD_WIDTH
     } else {
         cw_cfg
     }
@@ -722,10 +756,11 @@ pub fn apply_card_sizing(
     window_width: i32,
     column_width: u32,
     column_count: u8,
+    translations: bool,
 ) {
     const MAX_OUTER_MARGIN: i32 = 24;
     let ww = window_width.max(0);
-    let target = target_card_width(ww, column_width, column_count);
+    let target = target_card_width(ww, column_width, column_count, translations);
     // Reserve room for margins first; if that overflows, the card itself shrinks.
     let card_w = target.min(ww.max(1));
     let slack = ww - card_w;
@@ -1527,7 +1562,8 @@ pub fn build_window(
                     if width_changed {
                         let cw = s.config.column_width;
                         let cc = s.column_count();
-                        apply_card_sizing(&content_hbox_tick, ww, cw, cc);
+                        let tr = s.translations_visible;
+                        apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr);
                     }
                     return glib::ControlFlow::Continue;
                 }
@@ -1543,7 +1579,8 @@ pub fn build_window(
                     }
                     let cw = s.config.column_width;
                     let cc = s.column_count();
-                    apply_card_sizing(&content_hbox_tick, ww, cw, cc);
+                    let tr = s.translations_visible;
+                    apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr);
                     apply_tiled_mode(&mut s, &vbox_for_tick, ww);
                     // In two-column mode the left/right text_view widths must
                     // have reflowed to their FINAL two-column geometry before
@@ -1565,21 +1602,24 @@ pub fn build_window(
                         // each view against the fixed column width with slack for
                         // the sign gutter / margins inside the column.
                         // "Settled" means each view has reflowed to ~the fixed
-                        // column width. Use a BAND, not just a lower bound: a
-                        // transitional width can be too NARROW (mid-reflow after
-                        // a work load, observed ~507) OR too WIDE (the leftover
-                        // single-column width 1408 right after toggling
-                        // translations off, before GTK shrinks it to 700). A
-                        // bare `>= target` accepts the over-wide state and
-                        // column_split then measures wrapping at the wrong width,
+                        // Both columns are the SAME fixed width
+                        // (MIN_TWO_COLUMN_COLUMN_WIDTH) when settled, so require
+                        // the two view widths to be ~equal AND near that target.
+                        // Transitional states fail one or both: mid-reflow after
+                        // a work load is too narrow; right after toggling
+                        // translations off the left view is wider than the right
+                        // (e.g. 788 vs 700) until GTK finishes shrinking it. A
+                        // looser magnitude band let that 788 through and
+                        // column_split measured wrapping at the wrong width,
                         // underfilling the columns.
                         let lo = (MIN_TWO_COLUMN_COLUMN_WIDTH as f32 * 0.85) as i32;
                         let hi = (MIN_TWO_COLUMN_COLUMN_WIDTH as f32 * 1.20) as i32;
-                        let settled = (lo..=hi).contains(&lw) && (lo..=hi).contains(&rw);
-                        if !settled {
+                        let near_target = (lo..=hi).contains(&lw) && (lo..=hi).contains(&rw);
+                        let balanced = (lw - rw).abs() <= 8;
+                        if !(near_target && balanced) {
                             crate::log_fmt!(
-                                "RESIZE_TICK: two-col width not settled (left_w={} right_w={} band={}..={}), waiting",
-                                lw, rw, lo, hi
+                                "RESIZE_TICK: two-col width not settled (left_w={} right_w={} band={}..={} balanced={}), waiting",
+                                lw, rw, lo, hi, balanced
                             );
                             return glib::ControlFlow::Continue;
                         }
@@ -1590,7 +1630,8 @@ pub fn build_window(
                 } else if width_changed {
                     let cw = s.config.column_width;
                     let cc = s.column_count();
-                    apply_card_sizing(&content_hbox_tick, ww, cw, cc);
+                    let tr = s.translations_visible;
+                    apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr);
                     apply_tiled_mode(&mut s, &vbox_for_tick, ww);
                 }
                 // Layout just changed (resize or post-load refresh) — page
@@ -3359,10 +3400,11 @@ fn show_translations(state: &mut AppState) {
     }
     state.translation_lines = tl;
 
-    // Configure the translation tag with current font (italic, 2pt smaller)
-    let trans_size = state.config.font_size.saturating_sub(4);
+    // Configure the translation gloss tag: Charter Italic at 4pt below the
+    // independent translation font size (not the two-column reader size).
+    let trans_size = state.config.translation_font_size.saturating_sub(4);
     let desc = pango::FontDescription::from_string(
-        &format!("{} Italic {}", state.config.font_family, trans_size),
+        &format!("Charter Italic {}", trans_size),
     );
     state.translation_text_tag.set_font_desc(Some(&desc));
 
@@ -3692,7 +3734,15 @@ fn reapply_font(state: &AppState) {
     if let Some(old) = tag_table.lookup("font-size") {
         tag_table.remove(&old);
     }
-    let font_str = format!("{} {}",  state.config.font_family, state.config.font_size);
+    // The single-column translation view uses its own Charter font at an
+    // independent size, so adjusting it never changes the two-column reader
+    // font. Otherwise use the configured reader family/size.
+    let (font_family, font_size): (&str, u32) = if state.translations_visible {
+        ("Charter", state.config.translation_font_size)
+    } else {
+        (state.config.font_family.as_str(), state.config.font_size)
+    };
+    let font_str = format!("{} {}", font_family, font_size);
     let tag = gtk4::TextTag::builder()
         .name("font-size")
         .font(&font_str)
@@ -3704,11 +3754,11 @@ fn reapply_font(state: &AppState) {
     // Also update CSS for consistency
     let css = crate::theme::generate_css(&state.theme, &state.config.font_family, state.config.font_size);
     state.css_provider.load_from_string(&css);
-    // Keep translation tag in sync (italic, 2pt smaller) and ensure it
+    // Keep translation tag in sync (italic, 4pt smaller) and ensure it
     // overrides the freshly re-added font-size tag.
-    let trans_size = state.config.font_size.saturating_sub(4);
+    let trans_size = font_size.saturating_sub(4);
     let trans_desc = pango::FontDescription::from_string(
-        &format!("{} Italic {}", state.config.font_family, trans_size),
+        &format!("{} Italic {}", font_family, trans_size),
     );
     state.translation_text_tag.set_font_desc(Some(&trans_desc));
     let highest = state.buffer.tag_table().size() - 1;
@@ -3792,7 +3842,23 @@ fn rebuild_line_number_gutter(state: &mut AppState) {
 }
 
 /// Adjust font size by delta, clamp to 8..=72, reapply CSS and repaginate.
+/// While the translation view is visible, this adjusts the INDEPENDENT
+/// translation font size (Charter), leaving the two-column reader size
+/// (`config.font_size`) untouched.
 pub fn adjust_font_size(state: &mut AppState, delta: i32) {
+    if state.translations_visible {
+        let new_size = (state.config.translation_font_size as i32 + delta).clamp(8, 72) as u32;
+        if new_size == state.config.translation_font_size {
+            return;
+        }
+        state.config.translation_font_size = new_size;
+        reapply_font(state);
+        rebuild_line_number_gutter(state);
+        crate::input::navigation::resnap_page(state);
+        crate::input::navigation::invalidate_page_tops(state);
+        crate::config::save(&state.config);
+        return;
+    }
     let new_size = (state.config.font_size as i32 + delta).clamp(8, 72) as u32;
     if new_size == state.config.font_size {
         return;
@@ -3845,6 +3911,15 @@ pub fn cycle_font(state: &mut AppState, forward: bool) {
 
 /// Show current font info via desktop notification.
 pub fn show_font_info(state: &AppState) {
+    // In the translation view, report the independent Charter translation size.
+    if state.translations_visible {
+        let body = format!("Charter {}pt (translation)", state.config.translation_font_size);
+        let _ = std::process::Command::new("notify-send")
+            .args(["-t", "1500", "-h", "string:x-canonical-private-synchronous:linux-lit-font",
+                   "Font", &body])
+            .spawn();
+        return;
+    }
     let cycle = crate::config::FONT_CYCLE;
     let idx = cycle.iter().position(|f| *f == state.config.font_family).unwrap_or(0);
     let position = format!("{}/{}", idx + 1, cycle.len());
@@ -4494,19 +4569,19 @@ mod card_width_tests {
     #[test]
     fn one_column_keeps_configured_width() {
         // Single column always uses column_width regardless of window size.
-        assert_eq!(target_card_width(1920, 1050, 1), 1050);
-        assert_eq!(target_card_width(800, 1050, 1), 1050);
+        assert_eq!(target_card_width(1920, 1050, 1, false), 1050);
+        assert_eq!(target_card_width(800, 1050, 1, false), 1050);
     }
 
     #[test]
     fn two_columns_fill_fraction_of_wide_window() {
         // 80% of 1920 = 1536, wider than the 1050 floor.
-        assert_eq!(target_card_width(1920, 1050, 2), 1536);
+        assert_eq!(target_card_width(1920, 1050, 2, false), 1536);
     }
 
     #[test]
     fn two_columns_never_below_single_column_floor() {
         // 80% of 1300 = 1040, below the 1050 floor → clamp up to 1050.
-        assert_eq!(target_card_width(1300, 1050, 2), 1050);
+        assert_eq!(target_card_width(1300, 1050, 2, false), 1050);
     }
 }

@@ -686,6 +686,38 @@ pub(crate) fn center_cursor(state: &mut AppState) {
     adj.set_value(centered);
 }
 
+/// Keep the current line visible with a vim-style `scrolloff` margin: the
+/// cursor never sits within `SCROLLOFF` lines of the top or bottom edge unless
+/// at a document boundary. Scrolls the minimum needed; if the cursor is already
+/// within the comfortable band, does nothing. Used for j/k in the translation
+/// view, where the highlight follows the cursor line.
+pub(crate) fn scroll_cursor_into_view_scrolloff(state: &mut AppState) {
+    const SCROLLOFF: i32 = 3;
+    let adj = state.scrolled_window.vadjustment();
+    let max_scroll = (adj.upper() - adj.page_size()).max(0.0);
+    if max_scroll <= 0.0 {
+        return;
+    }
+    let Some(iter) = state.buffer.iter_at_line(state.current_line as i32) else { return };
+    let (y, h) = state.text_view.line_yrange(&iter);
+    let line_h = (h as f64).max(1.0);
+    let margin = SCROLLOFF as f64 * line_h;
+    let top = adj.value();
+    let bottom = top + adj.page_size();
+    let cursor_top = y as f64;
+    let cursor_bottom = (y + h) as f64;
+    let new_val = if cursor_top - margin < top {
+        // Too close to the top edge — scroll up so the margin is restored.
+        (cursor_top - margin).max(0.0)
+    } else if cursor_bottom + margin > bottom {
+        // Too close to the bottom edge — scroll down.
+        (cursor_bottom + margin - adj.page_size()).min(max_scroll)
+    } else {
+        return; // already within the comfortable band
+    };
+    adj.set_value(new_val.clamp(0.0, max_scroll));
+}
+
 /// Scroll the viewport by a fixed step without moving the cursor or seeking audio.
 /// `delta` is +1 for down, -1 for up.  Scrolls by ~3 line heights per step,
 /// similar to browser-style scrolling.
