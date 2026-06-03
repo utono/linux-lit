@@ -28,6 +28,11 @@ pub struct GlossOverlay {
     gloss_scrolled: gtk4::ScrolledWindow,
     gloss_view: gtk4::TextView,
     bar_drawing: gtk4::DrawingArea,
+    /// Invisible box pinned to the bottom edge of the scrolling viewport,
+    /// painted with the card background. Sized by `update_bottom_clip` to cover
+    /// any partially-visible last line so it doesn't read as clipped by the
+    /// footer rule. Emulates the main reading card's bottom-clip technique.
+    bottom_clip: gtk4::Box,
     bar_ranges: Rc<RefCell<Vec<BarRange>>>,
     bar_color: Rc<RefCell<(f64, f64, f64)>>,
     bar_x: Rc<RefCell<i32>>,
@@ -207,6 +212,19 @@ impl GlossOverlay {
         gloss_scroll_overlay.set_measure_overlay(&bar_drawing, false);
         gloss_scroll_overlay.set_clip_overlay(&bar_drawing, true);
 
+        // Invisible bottom clip: pinned to the bottom of the viewport, painted
+        // with the card background so any partially-visible last line is hidden
+        // rather than bisected by the footer rule. Sized by update_bottom_clip.
+        let bottom_clip = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        bottom_clip.set_valign(Align::End);
+        bottom_clip.set_halign(Align::Fill);
+        bottom_clip.set_can_target(false);
+        bottom_clip.add_css_class("gloss-bottom-clip");
+        bottom_clip.set_height_request(0);
+        gloss_scroll_overlay.add_overlay(&bottom_clip);
+        gloss_scroll_overlay.set_measure_overlay(&bottom_clip, false);
+        gloss_scroll_overlay.set_clip_overlay(&bottom_clip, true);
+
         gloss_scroll_overlay.set_visible(false);
 
         // Echoes-only: a fixed source-turn header + a fixed rule, above the
@@ -288,6 +306,7 @@ impl GlossOverlay {
             gloss_scrolled,
             gloss_view,
             bar_drawing,
+            bottom_clip,
             bar_ranges,
             bar_color,
             bar_x,
@@ -403,16 +422,7 @@ impl GlossOverlay {
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         self.apply_font();
-        // Reset scroll to top after layout settles (see show_synopsis).
-        let adj = self.gloss_scrolled.vadjustment();
-        adj.set_value(adj.lower());
-        glib::idle_add_local_once({
-            let adj = adj.clone();
-            move || {
-                adj.set_value(adj.lower());
-                glib::idle_add_local_once(move || adj.set_value(adj.lower()));
-            }
-        });
+        self.reset_scroll_top();
     }
 
     /// Render the echoes overlay: a fixed source-turn header + rule, above the
@@ -480,16 +490,7 @@ impl GlossOverlay {
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         self.apply_font();
-        // Reset scroll to top after layout settles (see show_synopsis).
-        let adj = self.gloss_scrolled.vadjustment();
-        adj.set_value(adj.lower());
-        glib::idle_add_local_once({
-            let adj = adj.clone();
-            move || {
-                adj.set_value(adj.lower());
-                glib::idle_add_local_once(move || adj.set_value(adj.lower()));
-            }
-        });
+        self.reset_scroll_top();
     }
 
     /// Scroll the card so the Nth echo's quote line is visible.
@@ -573,21 +574,154 @@ impl GlossOverlay {
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         self.apply_font();
-        // Reset scroll to the top AFTER all of the above — set_visible and
-        // apply_font each dirty the layout and recompute the vadjustment range,
-        // so an inline (or too-early) set_value(0.0) doesn't stick and the
-        // overlay opens scrolled down by ~a line, clipping the first line.
-        // Snapping to adj.lower() on idle, queued last, runs once the range has
-        // settled. Two ticks guard against a second layout pass after font apply.
+        self.reset_scroll_top();
+    }
+
+    /// Snap the overlay's scroll position to the very top, reliably.
+    ///
+    /// `set_value(0.0)` inline (or on idle) is timing-dependent: `set_visible`
+    /// and `apply_font` recompute the vadjustment range on a later layout pass,
+    /// and on a slow real display that pass can land after the idle fires —
+    /// leaving the card scrolled partway down with the first lines clipped.
+    /// Instead we react to the layout itself: a one-shot handler on the
+    /// adjustment's `changed` signal (emitted when the range is recomputed)
+    /// snaps to `lower()` and then disconnects, so it fires exactly once per
+    /// open, whenever layout actually settles — independent of timing.
+    fn reset_scroll_top(&self) {
         let adj = self.gloss_scrolled.vadjustment();
         adj.set_value(adj.lower());
-        glib::idle_add_local_once({
-            let adj = adj.clone();
-            move || {
-                adj.set_value(adj.lower());
-                glib::idle_add_local_once(move || adj.set_value(adj.lower()));
+        let handler: Rc<RefCell<Option<glib::SignalHandlerId>>> = Rc::new(RefCell::new(None));
+        // Recompute the bottom clip once layout settles. Cloned widgets are
+        // captured by the closure (the &self struct can't be moved in), then
+        // the same calculation as update_bottom_clip runs against them.
+        let view_for_clip = self.gloss_view.clone();
+        let clip_for_clip = self.bottom_clip.clone();
+        let scrolled_for_clip = self.gloss_scrolled.clone();
+        let id = adj.connect_changed({
+            let handler = handler.clone();
+            move |a| {
+                a.set_value(a.lower());
+                Self::recompute_bottom_clip(&view_for_clip, &clip_for_clip, &scrolled_for_clip);
+                if let Some(hid) = handler.borrow_mut().take() {
+                    a.disconnect(hid);
+                }
             }
         });
+        *handler.borrow_mut() = Some(id);
+        // Also fire on idle in case `changed` already fired before we connected
+        // (range unchanged across show), so the clip is sized on first open.
+        let view_idle = self.gloss_view.clone();
+        let clip_idle = self.bottom_clip.clone();
+        let scrolled_idle = self.gloss_scrolled.clone();
+        glib::idle_add_local_once(move || {
+            Self::recompute_bottom_clip(&view_idle, &clip_idle, &scrolled_idle);
+        });
+    }
+
+    /// Recompute the bottom clip from cloned widgets. Static so it can run from
+    /// signal/idle closures that can't capture `&self`. Mirrors the main card's
+    /// `update_bottom_clip`: from the top line currently at the viewport top,
+    /// sum whole-line heights until the next line would exceed the viewport
+    /// height, then size the clip box to cover the leftover partial line.
+    fn recompute_bottom_clip(
+        view: &gtk4::TextView,
+        clip: &gtk4::Box,
+        scrolled: &gtk4::ScrolledWindow,
+    ) {
+        let adj = scrolled.vadjustment();
+        let viewport_h = adj.page_size();
+        if viewport_h <= 0.0 {
+            if clip.height_request() != 0 {
+                clip.set_height_request(0);
+            }
+            return;
+        }
+        let top_y = adj.value();
+        let buffer = view.buffer();
+        let line_count = buffer.line_count();
+
+        // Find the first line whose top y is at or below the viewport top: that
+        // is the line rendered at the top of the viewport.
+        let mut top_line = 0i32;
+        for l in 0..line_count {
+            let Some(iter) = buffer.iter_at_line(l) else { break };
+            let (y, h) = view.line_yrange(&iter);
+            if (y as f64) + (h as f64) > top_y + 0.5 {
+                top_line = l;
+                break;
+            }
+            top_line = l;
+        }
+
+        // The viewport's first pixel is at top_y. The top line may itself be
+        // partially scrolled off the top; account for that so the sum measures
+        // from the visible top edge, not the line's absolute top.
+        let top_offset = if let Some(iter) = buffer.iter_at_line(top_line) {
+            let (y, _h) = view.line_yrange(&iter);
+            top_y - y as f64
+        } else {
+            0.0
+        };
+
+        // Sum whole-line heights from top_line downward until the next line
+        // would exceed the usable viewport height.
+        let mut sum = 0.0f64;
+        for l in top_line..line_count {
+            let Some(iter) = buffer.iter_at_line(l) else { break };
+            let (_y, h) = view.line_yrange(&iter);
+            if sum + (h as f64) - top_offset > viewport_h + 0.5 {
+                break;
+            }
+            sum += h as f64;
+        }
+        let consumed = (sum - top_offset).max(0.0);
+        let clip_h = (viewport_h - consumed).max(0.0).round() as i32;
+        if clip.height_request() != clip_h {
+            clip.set_height_request(clip_h);
+        }
+    }
+
+    /// `&self` entry point for recomputing the bottom clip after a scroll.
+    fn update_bottom_clip(&self) {
+        Self::recompute_bottom_clip(&self.gloss_view, &self.bottom_clip, &self.gloss_scrolled);
+    }
+
+    /// Return the line-aligned vadjustment value at or below `target_y`,
+    /// clamped to `[lower, upper - page_size]`. Mirrors `snap_scroll_to_line`'s
+    /// clamp: picks the greatest line-top y that is <= target_y, then if that
+    /// can't be reached (beyond the scroll ceiling), walks back to the last
+    /// line whose y fits.
+    /// Height of one wrapped *visual* row of gloss text. The synopsis buffer
+    /// joins paragraphs with newlines, so each buffer *line* is a whole
+    /// paragraph that wraps to many visual rows — `line_yrange` of a buffer
+    /// line therefore measures a whole paragraph, not a row. For scroll
+    /// snapping we want the single-row height, derived from the view's font.
+    fn row_height(&self) -> f64 {
+        let ctx = self.gloss_view.pango_context();
+        let metrics = ctx.metrics(None, None);
+        let ascent = metrics.ascent() as f64 / pango::SCALE as f64;
+        let descent = metrics.descent() as f64 / pango::SCALE as f64;
+        let line = ascent + descent;
+        // Add the view's inter-line spacing if any; default to the font line.
+        (line + self.gloss_view.pixels_below_lines() as f64).max(12.0)
+    }
+
+    /// Snap a scroll value to the nearest visual-row boundary at or below
+    /// `target_y`, so the viewport top aligns to a whole row (no half row
+    /// clipped under the title). Works in row-height units rather than buffer
+    /// lines, because wrapped paragraphs are single buffer lines.
+    fn snap_value_to_line(&self, target_y: f64) -> f64 {
+        let adj = self.gloss_scrolled.vadjustment();
+        let max_value = (adj.upper() - adj.page_size()).max(adj.lower());
+        let row = self.row_height();
+        if row <= 0.0 {
+            return target_y.clamp(adj.lower(), max_value);
+        }
+        // Rows are measured from the first line's top (adj.lower()).
+        let base = adj.lower();
+        let rows_down = ((target_y - base) / row).floor().max(0.0);
+        let snapped = base + rows_down * row;
+        snapped.clamp(adj.lower(), max_value)
     }
 
     pub fn show_loading(&self) {
@@ -615,21 +749,35 @@ impl GlossOverlay {
 
     pub fn scroll_gloss(&self, delta: i32) {
         let adj = self.gloss_scrolled.vadjustment();
-        let step = 60.0 * delta as f64;
-        let new_val = (adj.value() + step).clamp(adj.lower(), adj.upper() - adj.page_size());
-        adj.set_value(new_val);
+        // Step by ~3 visual rows per press, then snap to a row boundary so no
+        // partial row is left clipped at the viewport top. Row height (not
+        // buffer-line height) is used because wrapped paragraphs are single
+        // buffer lines.
+        let row = self.row_height();
+        let raw_target = adj.value() + row * 3.0 * delta as f64;
+        let snapped = self.snap_value_to_line(raw_target);
+        adj.set_value(snapped);
+        self.update_bottom_clip();
         self.bar_drawing.queue_draw();
     }
 
     pub fn scroll_gloss_to_top(&self) {
         let adj = self.gloss_scrolled.vadjustment();
         adj.set_value(adj.lower());
+        self.update_bottom_clip();
         self.bar_drawing.queue_draw();
     }
 
     pub fn scroll_gloss_to_bottom(&self) {
+        // Snap to the last line that fits at the top so the page starts on a
+        // clean line boundary (snap_value_to_line clamps to the scroll ceiling
+        // and walks back to a reachable line), rather than landing on a raw
+        // upper - page_size that may leave a partial line at the top.
         let adj = self.gloss_scrolled.vadjustment();
-        adj.set_value(adj.upper() - adj.page_size());
+        let target = (adj.upper() - adj.page_size()).max(adj.lower());
+        let snapped = self.snap_value_to_line(target);
+        adj.set_value(snapped);
+        self.update_bottom_clip();
         self.bar_drawing.queue_draw();
     }
 

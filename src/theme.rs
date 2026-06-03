@@ -487,6 +487,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .gloss-scrim {{ background-color: {root}; }} \
          .gloss-overlay {{ background-color: {bg}; color: {fg}; border-radius: 12px; \
            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45); }} \
+         .gloss-bottom-clip {{ background-color: {bg}; }} \
          .gloss-title {{ font-size: {size}pt; font-weight: bold; \
            margin-bottom: 12px; padding-bottom: 12px; \
            border-bottom: 1px solid {dim}; }} \

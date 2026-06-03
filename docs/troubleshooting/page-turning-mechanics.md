@@ -507,3 +507,71 @@ which scan backward up to 20 lines for an unclosed `[` opener.
 Key files: `src/db/line_types.rs` (all classification functions),
 `src/input/viewport.rs` (`is_dialogue_line`, `is_inside_stage_direction`),
 `src/db/queries.rs` (assignment at load time)
+
+## Synopsis/gloss overlay anti-clipping
+
+The synopsis, gloss, and echoes overlay cards (`src/ui/gloss_overlay.rs`)
+scroll their own text in a `gtk4::TextView` inside a `gtk4::ScrolledWindow`
+(`gloss_view` in `gloss_scrolled`), separate from the main reading card. They
+reuse the **same line-snapping + bottom-clip technique** the main card uses, so
+a partial (half) line never sits clipped against the title rule (top) or footer
+rule (bottom). A CSS `mask-image` fade was tried first and does **not** work —
+GTK4 (4.22) silently ignores `mask-image` on widgets, so do not use it here.
+
+### Open-at-top (`reset_scroll_top`)
+
+Called by `show_synopsis` / `show_gloss_with_color` / `show_echoes` after the
+buffer text is set. Snapping to the top inline — or on a single idle tick — is
+**timing-dependent and unreliable**: `set_visible` and `apply_font` recompute
+the vadjustment range on a later layout pass, which on a slow real display
+lands after the idle fires, leaving the card scrolled down with the first lines
+clipped. Instead `reset_scroll_top` connects a **one-shot handler on the
+vadjustment `changed` signal** (emitted when the range is recomputed, i.e. when
+layout settles): it snaps to `lower()`, recomputes the bottom clip, then
+disconnects. This reacts to the actual layout event rather than guessing a
+delay. An `idle_add_local_once` backstop covers the case where `changed` fired
+before the handler connected.
+
+### Top edge — line-snapped scrolling (`scroll_gloss`, `snap_value_to_line`)
+
+`scroll_gloss(delta)` no longer steps by a fixed pixel amount (the old fixed
+60px step is what left partial lines). It computes a raw target
+`value + 3 * line_height * delta`, then `snap_value_to_line(target_y)` returns
+the greatest line-top `y` at or below the target — found by walking lines via
+`view.line_yrange(&iter)` — clamped to `[lower, upper - page_size]`. This is the
+overlay's local analogue of `snap_scroll_to_line` in `scroll.rs`: the viewport
+top always aligns to a whole line.
+
+### Bottom edge — invisible clip box (`recompute_bottom_clip`)
+
+`bottom_clip` is a `gtk4::Box` overlaid on `gloss_scroll_overlay` (valign=End,
+halign=Fill, `can_target=false`, `add_css_class("gloss-overlay")` so it paints
+the card background and hides — rather than recolors — whatever is beneath it).
+`recompute_bottom_clip` mirrors `update_bottom_clip` + `visible_range` from the
+main card: from the line currently at the viewport top (accounting for that
+line's partial scroll-off via `top_offset`), it sums whole-line heights via
+`line_yrange` until the next line would exceed the viewport `page_size`, then
+sets the clip height to `viewport_h - consumed` so the leftover partial line at
+the bottom is covered. It is recomputed from `reset_scroll_top`, `scroll_gloss`,
+`scroll_gloss_to_top`, and `scroll_gloss_to_bottom`.
+
+### Margins (cosmetic, separate from clipping)
+
+`gloss_scroll_overlay` carries `set_margin_top(24)` and `set_margin_bottom(20)`
+so there is breathing room below the title rule and above the footer; the
+line-snap and bottom-clip work on top of these. The `gloss_view` also keeps its
+construction-time `set_top_margin`/`set_bottom_margin` (internal padding that
+scrolls with the content).
+
+### Verifying
+
+Real GTK pixel layout is what matters here and headless rendering (the
+`cage` + `grim` flow in the repo CLAUDE.md) lays out fonts/metrics differently —
+it confirms the mechanism runs and roughly looks right but cannot prove
+pixel-exact edge alignment. Confirm on the real display: open a long synopsis
+(`h`), scroll with `j`/`k`, and check both edges show only whole lines.
+
+Key files: `src/ui/gloss_overlay.rs` (`reset_scroll_top`, `scroll_gloss`,
+`snap_value_to_line`, `recompute_bottom_clip`, `update_bottom_clip`),
+`src/input/scroll.rs` (`snap_scroll_to_line`, `update_bottom_clip` — the main
+card originals this emulates), `src/input/viewport.rs` (`visible_range`)
