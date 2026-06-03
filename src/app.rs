@@ -4090,6 +4090,13 @@ pub fn remove_vocab_highlighting(state: &AppState) {
     state.buffer.remove_tag(&state.vocab_tag, &start, &end);
 }
 
+/// Chapter number (1-indexed) for a buffer line, given the sorted buffer-line
+/// indices of chapter headings. Returns 0 when the line precedes the first
+/// chapter (front matter) or when there are no chapters.
+pub fn chapter_number_for_line(chapter_breaks: &[usize], buffer_line: usize) -> usize {
+    chapter_breaks.iter().filter(|&&b| b <= buffer_line).count()
+}
+
 /// Get the (div1, div2) of the scene at the current line.
 /// When current_line is on an unmapped buffer line (scene header, separator,
 /// stage direction), walks forward then backward to find the nearest mapped line.
@@ -4605,5 +4612,32 @@ mod card_width_tests {
     fn two_columns_never_below_single_column_floor() {
         // 80% of 1300 = 1040, below the 1050 floor → clamp up to 1050.
         assert_eq!(target_card_width(1300, 1050, 2, false), 1050);
+    }
+}
+
+#[cfg(test)]
+mod chapter_synopsis_tests {
+    use super::chapter_number_for_line;
+
+    #[test]
+    fn chapter_number_counts_breaks_at_or_before_line() {
+        // chapter_breaks are buffer-line indices of CHAPTER headings
+        let breaks = vec![5usize, 40, 120];
+        // before first break => 0 (no chapter / front matter)
+        assert_eq!(chapter_number_for_line(&breaks, 0), 0);
+        assert_eq!(chapter_number_for_line(&breaks, 4), 0);
+        // on / after first break => chapter 1
+        assert_eq!(chapter_number_for_line(&breaks, 5), 1);
+        assert_eq!(chapter_number_for_line(&breaks, 39), 1);
+        // second chapter
+        assert_eq!(chapter_number_for_line(&breaks, 40), 2);
+        assert_eq!(chapter_number_for_line(&breaks, 119), 2);
+        // last chapter, well past the final break
+        assert_eq!(chapter_number_for_line(&breaks, 5000), 3);
+    }
+
+    #[test]
+    fn chapter_number_empty_breaks_is_zero() {
+        assert_eq!(chapter_number_for_line(&[], 100), 0);
     }
 }
