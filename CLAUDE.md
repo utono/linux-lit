@@ -34,6 +34,73 @@ cargo test
 cargo clippy
 ```
 
+## Headless Verification (agent self-check)
+
+The standing rule is "do not run the app — the user runs `cargo run`." The
+exception below lets an agent verify GUI changes **without touching the user's
+live session**, by running the reader inside a throwaway headless compositor
+(`cage`) on its own Wayland socket and screenshotting it with `grim`.
+
+**Why this and not the live dwl:** on the user's dwl session a new reader window
+opens on a non-visible tag, so `grim` (which captures the *active* output) can't
+see it, and the user's seat is already owned — so `ydotool` and
+`WLR_BACKENDS=headless,libinput` both fail with "seat busy". A nested headless
+`cage` sidesteps all of that.
+
+**Required tools** (already installed): `cage`, `grim`, `wtype`. Documented in
+`~/utono/ccinstall/paclists/`.
+
+### Launch the reader headless
+
+```bash
+cd ~/utono/linux-lit && cargo build
+GSK_RENDERER=cairo WLR_BACKENDS=headless WLR_RENDERER=pixman \
+  XDG_RUNTIME_DIR=/run/user/1000 \
+  cage -- ./target/debug/linux-lit 2>/tmp/cage.log &
+```
+
+- `GSK_RENDERER=cairo` is **mandatory**: the default GTK renderer tries Vulkan,
+  loses its surface on the headless backend, and the reader aborts with a Rust
+  stack overflow. Cairo (software) renders cleanly.
+- `WLR_RENDERER=pixman` keeps wlroots on software rendering too.
+- Cage opens a fresh Wayland socket, normally `wayland-1` (it does **not** honor
+  a `WAYLAND_DISPLAY` you pass in for its own server socket — check
+  `ls /run/user/1000/wayland-*` for the new one).
+
+### Capture and drive
+
+Wait for the socket, then give the window ~3s to map and gain focus before
+sending keys (premature `wtype` is dropped — this caused early false negatives):
+
+```bash
+export WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000
+grim /tmp/shot.png                 # screenshot the reader
+wtype "3"                          # send keystrokes to the focused reader
+```
+
+- `wtype` works (virtual-keyboard protocol, no seat needed) **once the window is
+  focused**; `ydotool`/libinput do not (seat owned by dwl).
+- Then `Read` the PNG to inspect the result.
+
+### Useful key sequences for verification
+
+- `3` / `2` — next / previous chapter (jumps the cursor onto the `CHAPTER N`
+  heading). Front matter (before Chapter 1) has chapter number 0 and no
+  synopsis, so `h` shows nothing there — advance into a chapter first.
+- `h` — open the synopsis overlay for the current chapter; `Ctrl+g` glosses.
+- `j` / `k` — scroll. While an overlay is open these scroll the overlay; with no
+  overlay they scroll the reading buffer. To stress overlay top/bottom clipping,
+  open the overlay then `j` repeatedly to reach the last line.
+- `Escape` — close the overlay.
+
+### Clean up
+
+```bash
+pkill -f "cage -- ./target/debug/linux-lit"; pkill -f target/debug/linux-lit
+```
+
+(`ydotoold` is not needed for this flow; only `cage` + `wtype` + `grim`.)
+
 ## Key Files
 
 - `src/main.rs` — entry point, Tokio runtime, channel bridge, MPV event loop (TimePos, PlaybackState, ConnectionStatus)
