@@ -4585,13 +4585,7 @@ pub fn update_title_bar_scene(state: &AppState) {
     }
     if !state.synopsis_cache.is_empty() {
         let (div1, div2) = current_synopsis_key(state);
-        let label = if div1 == 0 && div2 == 0 {
-            "Prologue".to_string()
-        } else if div2 == 0 {
-            format!("Act {}, Chorus", div1)
-        } else {
-            format!("Act {}, Scene {}", div1, div2)
-        };
+        let label = synopsis_label(state, div1, div2);
         state.title_bar_scene_label.set_text(&label);
     } else {
         state.title_bar_scene_label.set_text("");
