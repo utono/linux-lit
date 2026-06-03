@@ -286,7 +286,9 @@ fn find_line_for_time(
     timestamps: &[(i64, f64, f64)],
     line_id_to_index: &HashMap<i64, usize>,
 ) -> Option<usize> {
-    use crate::input::navigation::{SYNC_GAP_PREROLL, SYNC_GAP_THRESHOLD, SYNC_PREROLL};
+    use crate::input::navigation::{
+        SYNC_GAP_POST_END, SYNC_GAP_PREROLL, SYNC_GAP_THRESHOLD, SYNC_PREROLL,
+    };
 
     let effective_time = time_pos + SYNC_PREROLL;
     let idx = timestamps.partition_point(|ts| ts.1 <= effective_time);
@@ -294,20 +296,24 @@ fn find_line_for_time(
         return None;
     }
 
-    // Gap-aware early jump: if the current line A (timestamps[idx - 1]) and
+    // Gap-aware early jump: when the current line A (timestamps[idx - 1]) and
     // the next line B (timestamps[idx]) are separated by a gap longer than
-    // SYNC_GAP_THRESHOLD, advance to B SYNC_GAP_PREROLL seconds before B's
-    // start. Requires a valid A.end (end > start); otherwise the gap is
-    // unknown and we keep normal timing. Promotes by exactly one line, so a
-    // line is never skipped.
+    // SYNC_GAP_THRESHOLD, advance to B early. With a valid A.end (end > start)
+    // the jump anchors to A.end + SYNC_GAP_POST_END (jump shortly after A
+    // finishes, then rest on B through the silence). Without a usable A.end
+    // the gap is unknown, so fall back to B.start - SYNC_GAP_PREROLL and apply
+    // the early jump unconditionally. Promotes by exactly one line, so a line
+    // is never skipped.
     let mut active = idx - 1;
     if let Some(&(_, b_start, _)) = timestamps.get(idx) {
         let (_, a_start, a_end) = timestamps[idx - 1];
         if a_end > a_start {
             let gap = b_start - a_end;
-            if gap > SYNC_GAP_THRESHOLD && time_pos >= b_start - SYNC_GAP_PREROLL {
+            if gap > SYNC_GAP_THRESHOLD && time_pos >= a_end + SYNC_GAP_POST_END {
                 active = idx;
             }
+        } else if time_pos >= b_start - SYNC_GAP_PREROLL {
+            active = idx;
         }
     }
 
@@ -352,15 +358,17 @@ mod tests {
     #[test]
     fn test_find_line_for_time_gap_aware() {
         // A: id 10, start 1.0, end 2.0. B: id 20, start 6.0, end 7.0.
-        // Gap = 6.0 - 2.0 = 4.0 > 1.5 threshold -> early jump applies.
+        // Gap = 6.0 - 2.0 = 4.0 > 1.5 threshold -> early jump anchored to
+        // A.end + 0.2 = 2.2.
         let gap = vec![(10, 1.0, 2.0), (20, 6.0, 7.0)];
         let map: HashMap<i64, usize> = [(10, 0), (20, 1)].into();
 
-        // Before the preroll window (B.start - 1.5 = 4.5): still on A.
-        assert_eq!(find_line_for_time(4.4, &gap, &map), Some(0));
-        // At the preroll boundary: jump to B early.
+        // Just before A.end + 0.2 = 2.2: still on A.
+        assert_eq!(find_line_for_time(2.1, &gap, &map), Some(0));
+        // At A.end + 0.2: jump to B early.
+        assert_eq!(find_line_for_time(2.2, &gap, &map), Some(1));
+        // Through the silence and after B starts: still B.
         assert_eq!(find_line_for_time(4.5, &gap, &map), Some(1));
-        // After B actually starts: still B (normal rule).
         assert_eq!(find_line_for_time(6.5, &gap, &map), Some(1));
 
         // No-gap case: A ends 2.0, B starts 3.0 -> gap 1.0 <= 1.5, no early jump.
@@ -368,8 +376,10 @@ mod tests {
         assert_eq!(find_line_for_time(2.5, &nogap, &map), Some(0));
         assert_eq!(find_line_for_time(3.0, &nogap, &map), Some(1));
 
-        // Invalid A.end (end == start): gap unknown -> no early jump.
+        // Invalid A.end (end == start): gap unknown -> fall back to
+        // B.start - 1.5 = 4.5.
         let badend = vec![(10, 1.0, 1.0), (20, 6.0, 7.0)];
-        assert_eq!(find_line_for_time(5.0, &badend, &map), Some(0));
+        assert_eq!(find_line_for_time(4.4, &badend, &map), Some(0));
+        assert_eq!(find_line_for_time(4.5, &badend, &map), Some(1));
     }
 }

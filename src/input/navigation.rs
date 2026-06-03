@@ -64,8 +64,12 @@ pub const SYNC_PREROLL: f64 = 0.0;
 /// during MPV playback sync. Gaps at or below this keep normal timing.
 pub const SYNC_GAP_THRESHOLD: f64 = 1.5;
 
-/// Seconds before the next line's start_time to jump the highlight when
-/// the preceding gap exceeds SYNC_GAP_THRESHOLD.
+/// Seconds after the previous line's end_time to jump the highlight to the
+/// next line, when crossing a gap that exceeds SYNC_GAP_THRESHOLD.
+pub const SYNC_GAP_POST_END: f64 = 0.2;
+
+/// Fallback: when the previous line has no valid end_time, jump this many
+/// seconds before the next line's start_time instead.
 pub const SYNC_GAP_PREROLL: f64 = 1.5;
 
 // ---------------------------------------------------------------------------
