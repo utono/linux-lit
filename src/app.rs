@@ -4090,13 +4090,6 @@ pub fn remove_vocab_highlighting(state: &AppState) {
     state.buffer.remove_tag(&state.vocab_tag, &start, &end);
 }
 
-/// Chapter number (1-indexed) for a buffer line, given the sorted buffer-line
-/// indices of chapter headings. Returns 0 when the line precedes the first
-/// chapter (front matter) or when there are no chapters.
-pub fn chapter_number_for_line(chapter_breaks: &[usize], buffer_line: usize) -> usize {
-    chapter_breaks.iter().filter(|&&b| b <= buffer_line).count()
-}
-
 /// Returns true when the active work has chapter markers (is_chapter lines) —
 /// the case for flat-division prose works (e.g. Bleak House) and never for
 /// plays or poems. Detection reads work.lines directly so it works whether or
@@ -4682,30 +4675,6 @@ mod card_width_tests {
 
 #[cfg(test)]
 mod chapter_synopsis_tests {
-    use super::chapter_number_for_line;
-
-    #[test]
-    fn chapter_number_counts_breaks_at_or_before_line() {
-        // chapter_breaks are buffer-line indices of CHAPTER headings
-        let breaks = vec![5usize, 40, 120];
-        // before first break => 0 (no chapter / front matter)
-        assert_eq!(chapter_number_for_line(&breaks, 0), 0);
-        assert_eq!(chapter_number_for_line(&breaks, 4), 0);
-        // on / after first break => chapter 1
-        assert_eq!(chapter_number_for_line(&breaks, 5), 1);
-        assert_eq!(chapter_number_for_line(&breaks, 39), 1);
-        // second chapter
-        assert_eq!(chapter_number_for_line(&breaks, 40), 2);
-        assert_eq!(chapter_number_for_line(&breaks, 119), 2);
-        // last chapter, well past the final break
-        assert_eq!(chapter_number_for_line(&breaks, 5000), 3);
-    }
-
-    #[test]
-    fn chapter_number_empty_breaks_is_zero() {
-        assert_eq!(chapter_number_for_line(&[], 100), 0);
-    }
-
     #[test]
     fn chapter_number_from_flags_counts_inclusive() {
         // lines: ch markers at idx 0 and 3
