@@ -250,6 +250,26 @@ pub fn root_color_rgb(hex: &str) -> (f32, f32, f32) {
     (r as f32, g as f32, b as f32)
 }
 
+/// Parse the RGB channels (0.0–1.0) from an `rgba(r, g, b, a)` CSS string where
+/// r/g/b are 0–255. The alpha is ignored — the caller drives alpha via the fade
+/// animation. Falls back to mid-gray on a malformed string. Used so the
+/// cursor-line FADE matches `cursor_line_bg`'s hue instead of the window root
+/// color.
+pub fn rgba_str_to_rgb(s: &str) -> (f32, f32, f32) {
+    let inner = s.trim().trim_start_matches("rgba").trim_start_matches("rgb")
+        .trim().trim_start_matches('(').trim_end_matches(')');
+    let parts: Vec<f32> = inner
+        .split(',')
+        .take(3)
+        .filter_map(|p| p.trim().parse::<f32>().ok())
+        .collect();
+    if parts.len() == 3 {
+        (parts[0] / 255.0, parts[1] / 255.0, parts[2] / 255.0)
+    } else {
+        (0.5, 0.5, 0.5)
+    }
+}
+
 /// Convert (r, g, b) floats to hex string.
 fn rgb_to_hex(r: f64, g: f64, b: f64) -> String {
     format!(

@@ -208,7 +208,10 @@ pub(crate) fn update_highlight(state: &mut AppState) {
                 // Animate fade-out: alpha from 1.0 → 0.0, 150ms, ease-out-quad
                 let fade_tag_clone = fade_tag.clone();
                 let buf_clone = buffer.clone();
-                let (rc_r, rc_g, rc_b) = crate::theme::root_color_rgb(&state.theme.root_color);
+                // Fade toward the cursor-line highlight hue (cursor_line_bg),
+                // not the window root color — otherwise the fade reads as the
+                // theme's blue regardless of the configured highlight color.
+                let (rc_r, rc_g, rc_b) = crate::theme::rgba_str_to_rgb(&state.theme.cursor_line_bg);
                 let fade_alpha_max = if state.theme.is_light { 0.13_f32 } else { 0.15_f32 };
                 let target = adw::CallbackAnimationTarget::new(move |value| {
                     let alpha = value as f32 * fade_alpha_max;

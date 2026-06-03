@@ -8,6 +8,15 @@ argument-hint: <theme-name> <rgba-value> | <theme-name> darker | <theme-name> li
 
 Sets the `linux-lit.cursor_line_bg` field in `~/utono/themes/.config/themes/themes-unified.json` for a specific theme. This controls the highlight color of the current line in the reader.
 
+`cursor_line_bg` drives BOTH the static current-line highlight AND the
+fade-out animation that plays on the previously-current line when the cursor
+moves. The fade interpolates alpha down to 0 over its hue (see
+`src/input/highlight.rs`, which reads `cursor_line_bg` via
+`theme::rgba_str_to_rgb`). So changing this one field updates the highlight and
+its fade together — there is no separate "fade color" field. (Historically the
+fade wrongly used the window `root_color`, so it read as the theme's blue
+regardless of this setting; that's fixed.)
+
 ## Format
 
 The value is an RGBA CSS string: `rgba(R, G, B, alpha)` where alpha controls intensity.
