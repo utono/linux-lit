@@ -435,7 +435,9 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
         s.gloss_original_text = Some(ctx.source_text.clone());
         let pairs = ctx.source_line_pairs();
         let gloss_text = &all_glosses[0].gloss_text;
-        s.gloss_overlay.show_gloss_with_color(&ctx.source_text, gloss_text, s.scrolled_window.height(), Some(&s.theme.root_color), &pairs);
+        let card_width = s.content_hbox.width();
+        let card_height = s.content_hbox.height();
+        s.gloss_overlay.show_gloss_with_color(&ctx.source_text, gloss_text, card_width, card_height, Some(&s.theme.root_color), &pairs);
         s.gloss_overlay.set_position(0, all_glosses.len());
         s.gloss_list = all_glosses;
         s.gloss_index = 0;
@@ -491,9 +493,10 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
                     .unwrap_or_default();
 
                 let mut s = state_for_result.borrow_mut();
-                let h = s.scrolled_window.height();
+                let cw = s.content_hbox.width();
+                let h = s.content_hbox.height();
                 let pairs = ctx.source_line_pairs();
-                s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &gloss_text, h, Some(&s.theme.root_color), &pairs);
+                s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &gloss_text, cw, h, Some(&s.theme.root_color), &pairs);
                 s.gloss_overlay.set_position(0, all.len());
                 s.gloss_list = all;
                 s.gloss_index = 0;
@@ -559,7 +562,9 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
         s.gloss_original_text = Some(ctx.source_text.clone());
         let pairs = ctx.source_line_pairs();
         let gloss_text = &all_glosses[0].gloss_text;
-        s.gloss_overlay.show_gloss_with_color(&ctx.source_text, gloss_text, s.scrolled_window.height(), Some(&s.theme.root_color), &pairs);
+        let card_width = s.content_hbox.width();
+        let card_height = s.content_hbox.height();
+        s.gloss_overlay.show_gloss_with_color(&ctx.source_text, gloss_text, card_width, card_height, Some(&s.theme.root_color), &pairs);
         s.gloss_overlay.set_position(0, all_glosses.len());
         s.gloss_list = all_glosses;
         s.gloss_index = 0;
@@ -744,9 +749,10 @@ fn run_pending_inner_monologue_blocking(
                     .unwrap_or_default();
 
                 let mut s = state_for_result.borrow_mut();
-                let h = s.scrolled_window.height();
+                let cw = s.content_hbox.width();
+                let h = s.content_hbox.height();
                 let pairs = ctx.source_line_pairs();
-                s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &verified_text, h, Some(&s.theme.root_color), &pairs);
+                s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &verified_text, cw, h, Some(&s.theme.root_color), &pairs);
                 s.gloss_overlay.set_position(0, all.len());
                 s.gloss_list = all;
                 s.gloss_index = 0;

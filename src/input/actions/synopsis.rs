@@ -161,8 +161,9 @@ pub(crate) fn amend_synopsis(state_rc: &Rc<RefCell<AppState>>, question: &str) {
                 // Remember the pre-amend text so `U` can revert this edit.
                 s.synopsis_undo = Some(((div1, div2), original.clone()));
                 s.synopsis_cache.insert((div1, div2), revised.clone());
-                let h = s.scrolled_window.height();
-                s.gloss_overlay.show_synopsis(&label, &revised, h);
+                let cw = s.content_hbox.width();
+                let h = s.content_hbox.height();
+                s.gloss_overlay.show_synopsis(&label, &revised, cw, h);
                 s.input_mode = crate::app::InputMode::SynopsisOverlay;
                 crate::logging::log(&format!(
                     "SYNOPSIS: amended {} ({},{})",
@@ -171,9 +172,10 @@ pub(crate) fn amend_synopsis(state_rc: &Rc<RefCell<AppState>>, question: &str) {
             }
             Ok(Err(e)) => {
                 let mut s = state_for_result.borrow_mut();
-                let h = s.scrolled_window.height();
+                let cw = s.content_hbox.width();
+                let h = s.content_hbox.height();
                 s.gloss_overlay
-                    .show_synopsis(&label, &format!("Error: {}", e), h);
+                    .show_synopsis(&label, &format!("Error: {}", e), cw, h);
                 s.input_mode = crate::app::InputMode::SynopsisOverlay;
                 crate::logging::log(&format!("SYNOPSIS: amend error: {}", e));
             }
@@ -222,9 +224,10 @@ pub(crate) fn undo_amend(state_rc: &Rc<RefCell<AppState>>) {
     let mut s = state_rc.borrow_mut();
     s.synopsis_cache.insert((div1, div2), original.clone());
     s.synopsis_undo = None;
-    let h = s.scrolled_window.height();
+    let cw = s.content_hbox.width();
+    let h = s.content_hbox.height();
     let label = crate::app::synopsis_label(&s, div1, div2);
-    s.gloss_overlay.show_synopsis(&label, &original, h);
+    s.gloss_overlay.show_synopsis(&label, &original, cw, h);
     crate::logging::log(&format!("SYNOPSIS: undid amend ({},{})", div1, div2));
 }
 
@@ -300,10 +303,11 @@ pub(crate) fn open_work_glosses(state_rc: &Rc<RefCell<AppState>>) {
         gloss_type,
     };
 
-    let h = s.scrolled_window.height();
+    let cw = s.content_hbox.width();
+    let h = s.content_hbox.height();
     let gloss_text = all_glosses[0].gloss_text.clone();
     s.gloss_overlay.show_gloss_with_color(
-        &ctx.source_text, &gloss_text, h, Some(&s.theme.root_color), &[],
+        &ctx.source_text, &gloss_text, cw, h, Some(&s.theme.root_color), &[],
     );
     s.gloss_overlay.set_position(0, all_glosses.len());
     s.gloss_list = all_glosses;

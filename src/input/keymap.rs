@@ -394,10 +394,11 @@ fn handle_picker_key(
                             gloss_type: all_glosses[0].gloss_type.clone(),
                         };
 
-                        let h = s.scrolled_window.height();
+                        let cw = s.content_hbox.width();
+                        let h = s.content_hbox.height();
                         let source_lines: Vec<(String, i64)> = Vec::new();
                         s.gloss_overlay.show_gloss_with_color(
-                            &ctx.source_text, &all_glosses[0].gloss_text, h,
+                            &ctx.source_text, &all_glosses[0].gloss_text, cw, h,
                             Some(&s.theme.root_color), &source_lines,
                         );
                         s.gloss_overlay.set_position(0, all_glosses.len());

@@ -549,18 +549,22 @@ fn render_echoes(s: &mut AppState) {
         ));
     }
 
-    // card_height sizes the overlay to fill the reader card. The reader's
-    // scrolled_window can report height 0 when render runs before layout settles
-    // (e.g. an alt+i reopen right after a cross-work load, or an R refresh). A 0
-    // here collapses the overlay to its header height and lets the reader bleed
-    // through above/below it — so fall back to the window height.
+    // card_width/card_height size the overlay to match the reading card's outer
+    // box. content_hbox can report 0 when render runs before layout settles (e.g.
+    // an alt+i reopen right after a cross-work load, or an R refresh). A 0 here
+    // collapses the overlay and lets the reader bleed through — so fall back to
+    // the window dimensions.
+    let cw = {
+        let w = s.content_hbox.width();
+        if w > 0 { w } else { gtk4::prelude::WidgetExt::width(&s.window).max(1) }
+    };
     let h = {
-        let sw = s.scrolled_window.height();
+        let sw = s.content_hbox.height();
         if sw > 0 { sw } else { gtk4::prelude::WidgetExt::height(&s.window).max(1) }
     };
     let root = s.theme.root_color.clone();
     let dim = s.theme.dim_fg.clone();
-    s.gloss_overlay.show_echoes(&source_doc, &echo_doc, h, Some(&root), Some(&dim), s.echo_overlay_index);
+    s.gloss_overlay.show_echoes(&source_doc, &echo_doc, cw, h, Some(&root), Some(&dim), s.echo_overlay_index);
 }
 
 /// Persist the search candidates as echo links for the turn, then read them

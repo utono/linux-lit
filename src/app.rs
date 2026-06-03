@@ -4307,9 +4307,10 @@ pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) 
         }
     };
 
-    let card_height = s.scrolled_window.height();
+    let card_width = s.content_hbox.width();
+    let card_height = s.content_hbox.height();
     let label = synopsis_label(&s, div1, div2);
-    s.gloss_overlay.show_synopsis(&label, &synopsis, card_height);
+    s.gloss_overlay.show_synopsis(&label, &synopsis, card_width, card_height);
     drop(s);
     let mut s = state.borrow_mut();
     s.synopsis_overlay_scene = (div1, div2);
@@ -4379,8 +4380,9 @@ pub fn cycle_synopsis(state: &std::rc::Rc<std::cell::RefCell<AppState>>, delta: 
         None => return,
     };
     let label = synopsis_label(&s, div1, div2);
-    let card_height = s.scrolled_window.height();
-    s.gloss_overlay.show_synopsis(&label, &synopsis, card_height);
+    let card_width = s.content_hbox.width();
+    let card_height = s.content_hbox.height();
+    s.gloss_overlay.show_synopsis(&label, &synopsis, card_width, card_height);
     s.synopsis_overlay_scene = (div1, div2);
 }
 

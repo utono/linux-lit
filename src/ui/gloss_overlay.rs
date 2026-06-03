@@ -345,11 +345,12 @@ impl GlossOverlay {
         self.apply_font();
     }
 
-    pub fn show_gloss(&self, _original: &str, gloss: &str, card_height: i32) {
-        self.show_gloss_with_color(_original, gloss, card_height, None, &[]);
+    pub fn show_gloss(&self, _original: &str, gloss: &str, card_width: i32, card_height: i32) {
+        self.show_gloss_with_color(_original, gloss, card_width, card_height, None, &[]);
     }
 
-    pub fn show_gloss_with_color(&self, _original: &str, gloss: &str, card_height: i32, root_color: Option<&str>, source_line_numbers: &[(String, i64)]) {
+    pub fn show_gloss_with_color(&self, _original: &str, gloss: &str, card_width: i32, card_height: i32, root_color: Option<&str>, source_line_numbers: &[(String, i64)]) {
+        self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         self.title.set_visible(false);
         self.title.set_vexpand(false);
@@ -399,11 +400,13 @@ impl GlossOverlay {
         &self,
         source_doc: &str,
         echo_doc: &str,
+        card_width: i32,
         card_height: i32,
         root_color: Option<&str>,
         dim_color: Option<&str>,
         selected: usize,
     ) {
+        self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         self.title.set_visible(false);
         let left = self.column_width / 8;
@@ -501,7 +504,8 @@ impl GlossOverlay {
         });
     }
 
-    pub fn show_synopsis(&self, title: &str, synopsis: &str, card_height: i32) {
+    pub fn show_synopsis(&self, title: &str, synopsis: &str, card_width: i32, card_height: i32) {
+        self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         // Wider side margins keep synopsis prose near the ~65-char readability
         // optimum instead of the ~80 chars a column_width/8 margin produces.

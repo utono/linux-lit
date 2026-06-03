@@ -69,10 +69,11 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
         gloss_type,
     };
 
-    let h = s.scrolled_window.height();
+    let cw = s.content_hbox.width();
+    let h = s.content_hbox.height();
     let gloss_text = &all_glosses[0].gloss_text;
     s.gloss_overlay.show_gloss_with_color(
-        &ctx.source_text, gloss_text, h,
+        &ctx.source_text, gloss_text, cw, h,
         Some(&s.theme.root_color), &source_lines,
     );
     s.gloss_overlay.set_position(0, all_glosses.len());
@@ -94,10 +95,11 @@ pub(crate) fn navigate_gloss(state: &Rc<RefCell<AppState>>, delta: i32) {
     s.gloss_index = new_idx;
     let gloss = &s.gloss_list[new_idx];
     let ctx = s.gloss_context.as_ref().unwrap();
-    let h = s.scrolled_window.height();
+    let cw = s.content_hbox.width();
+    let h = s.content_hbox.height();
     let pairs = ctx.source_line_pairs();
     s.gloss_overlay.show_gloss_with_color(
-        &ctx.source_text, &gloss.gloss_text, h,
+        &ctx.source_text, &gloss.gloss_text, cw, h,
         Some(&s.theme.root_color), &pairs,
     );
     s.gloss_overlay.set_position(new_idx, s.gloss_list.len());
@@ -135,10 +137,11 @@ pub(crate) fn delete_current_gloss(state_rc: &Rc<RefCell<AppState>>) {
         let new_idx = s.gloss_index;
         let gloss = &s.gloss_list[new_idx];
         let ctx = s.gloss_context.as_ref().unwrap();
-        let h = s.scrolled_window.height();
+        let cw = s.content_hbox.width();
+        let h = s.content_hbox.height();
         let pairs = ctx.source_line_pairs();
         s.gloss_overlay.show_gloss_with_color(
-            &ctx.source_text, &gloss.gloss_text, h,
+            &ctx.source_text, &gloss.gloss_text, cw, h,
             Some(&s.theme.root_color), &pairs,
         );
         s.gloss_overlay.set_position(new_idx, s.gloss_list.len());
@@ -361,10 +364,11 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
                     .unwrap_or_default();
 
                 let mut s = state_for_result.borrow_mut();
-                let h = s.scrolled_window.height();
+                let cw = s.content_hbox.width();
+                let h = s.content_hbox.height();
                 let pairs = ctx.source_line_pairs();
                 s.gloss_overlay.show_gloss_with_color(
-                    &ctx.source_text, &full_gloss, h,
+                    &ctx.source_text, &full_gloss, cw, h,
                     Some(&s.theme.root_color), &pairs,
                 );
                 s.gloss_overlay.set_position(0, all.len());
@@ -456,10 +460,11 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
                     .unwrap_or_default();
 
                 let mut s = state_for_result.borrow_mut();
-                let h = s.scrolled_window.height();
+                let cw = s.content_hbox.width();
+                let h = s.content_hbox.height();
                 let pairs = ctx.source_line_pairs();
                 s.gloss_overlay.show_gloss_with_color(
-                    &ctx.source_text, &full_gloss, h,
+                    &ctx.source_text, &full_gloss, cw, h,
                     Some(&s.theme.root_color), &pairs,
                 );
                 s.gloss_overlay.set_position(0, all.len());
@@ -492,10 +497,11 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         let idx = s.gloss_index;
         let gloss = &s.gloss_list[idx];
         let ctx = s.gloss_context.as_ref().unwrap();
-        let h = s.scrolled_window.height();
+        let cw = s.content_hbox.width();
+        let h = s.content_hbox.height();
         let pairs = ctx.source_line_pairs();
         s.gloss_overlay.show_gloss_with_color(
-            &ctx.source_text, &gloss.gloss_text, h,
+            &ctx.source_text, &gloss.gloss_text, cw, h,
             Some(&s.theme.root_color), &pairs,
         );
         s.gloss_overlay.set_position(idx, s.gloss_list.len());
