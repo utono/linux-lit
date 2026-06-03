@@ -4097,9 +4097,10 @@ pub fn chapter_number_for_line(chapter_breaks: &[usize], buffer_line: usize) -> 
     chapter_breaks.iter().filter(|&&b| b <= buffer_line).count()
 }
 
-/// A work is treated as chapter-based for synopsis lookup when it has chapter
-/// breaks (is_chapter lines) AND no real scene divisions — i.e. flat division.
-/// Concretely: chapter_breaks is non-empty.
+/// Returns true when the active work has chapter-break markers — the case for
+/// flat-division prose works (e.g. Bleak House) and never for plays or poems,
+/// whose timestamps are not marked is_chapter. Detection: chapter_breaks is
+/// non-empty.
 pub fn is_chapter_work(state: &AppState) -> bool {
     state
         .line_map
