@@ -1127,11 +1127,11 @@ fn handle_keybinds_key(
             }
             true
         }
-        "j" | "Right" => {
+        "k" | "Right" => {
             state.borrow().keybinds_overlay.move_selection(1);
             true
         }
-        "k" | "Left" => {
+        "j" | "Left" => {
             state.borrow().keybinds_overlay.move_selection(-1);
             true
         }

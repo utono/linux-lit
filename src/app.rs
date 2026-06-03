@@ -307,6 +307,11 @@ pub struct AppState {
     /// Deferred synopsis show: set in display_work when the cursor lands on a
     /// scene boundary, cleared by the resize tick once layout is valid.
     pub pending_synopsis: Rc<Cell<bool>>,
+    /// First-open page anchor: set in display_work when a work is opened with no
+    /// saved position, so `update_highlight_and_show` keeps `page_top_line == 0`
+    /// (the opening Act/Prologue header at the top of the page) instead of
+    /// scrolling the page down to the first dialogue line. Cleared on read.
+    pub pending_top_anchor: Rc<Cell<bool>>,
     pub timestamp_undo: Option<crate::input::timestamps::TimestampUndoState>,
     /// Cached last visible range from the most recent snap_scroll_to_line or
     /// update_bottom_clip. None during cold start, after work load, or after
@@ -473,18 +478,16 @@ pub const TWO_COLUMN_DIALOGUE_INDENT: i32 = 20;
 /// Fixed height for the top spacer above the first text line.
 pub const TOP_SPACER_HEIGHT: i32 = 40;
 
-/// Pure default-column rule: a Shakespeare play gets two columns, everything
-/// else one. Split out from `default_column_count_for` so it is unit-testable
-/// without constructing a `Work`.
-pub(crate) fn default_column_count_for_parts(author: &str, work_type: &str) -> u8 {
-    if author == "Shakespeare" && work_type == "play" {
-        2
-    } else {
-        1
-    }
+/// Pure default-column rule: every work defaults to two columns. Split out from
+/// `default_column_count_for` so it is unit-testable without constructing a
+/// `Work`. Per-work overrides in `config.column_overrides` still take
+/// precedence, and `column_count()` forces a single column when not in EReader
+/// mode or when translations are visible.
+pub(crate) fn default_column_count_for_parts(_author: &str, _work_type: &str) -> u8 {
+    2
 }
 
-/// Default column count for a work: 2 for a Shakespeare play, else 1.
+/// Default column count for a work: 2 columns for all works by default.
 pub(crate) fn default_column_count_for(work: &crate::db::models::Work) -> u8 {
     default_column_count_for_parts(&work.author, &work.work_type)
 }
@@ -1441,6 +1444,7 @@ pub fn build_window(
         loading_work: Rc::new(Cell::new(last_work.is_some())),
         needs_layout_refresh: Rc::new(Cell::new(false)),
         pending_synopsis: Rc::new(Cell::new(false)),
+        pending_top_anchor: Rc::new(Cell::new(false)),
         timestamp_undo: None,
         last_visible_range: std::cell::Cell::new(None),
         page_tops: std::cell::RefCell::new(None),
@@ -2492,6 +2496,11 @@ pub fn display_work_at_with_prepared(
         if let Some(target) = first_dialogue {
             state.current_line = target;
             state.page_top_line = 0;
+            // First open with no saved position: keep the opening Act/Prologue
+            // header pinned to the top of the page. Without this, the page_top==0
+            // guard in update_highlight_and_show would scroll down to the first
+            // dialogue line and hide the header.
+            state.pending_top_anchor.set(true);
         }
     } else if target_line_id.is_none() {
         // Snap saved cursor to nearest dialogue line if it landed on
@@ -3207,11 +3216,24 @@ fn setup_gutter(state: &mut AppState) {
     // The number renderer (when present) lives in the gutter window too and adds
     // its own width, so strip the allowance from the margin to keep text put.
     state.text_view.set_left_margin(left_margin - gutter_width - left_number_allowance);
-    // Also adjust dialogue-indent tag so dialogue lines don't shift right
+    // Also adjust dialogue-indent tag so dialogue lines don't shift right.
+    // Compute the target absolutely from the captured pre-reduction margin
+    // rather than subtracting from the tag's current value: setup_gutter can
+    // run repeatedly without an intervening apply_dialogue_formatting rebuild,
+    // and a relative `old_margin - gutter_width` would compound on each pass,
+    // eventually driving the tag's left-margin negative (GTK rejects a negative
+    // left-margin and panics). The full (un-reduced) tag margin is
+    // `left_margin + dialogue_indent`; the gutter-reduced target is that minus
+    // gutter_width. Clamp at 0 for safety.
+    let dialogue_indent = if state.column_count() == 2 {
+        TWO_COLUMN_DIALOGUE_INDENT
+    } else {
+        DIALOGUE_INDENT
+    };
     if let Some(buffer) = state.text_view.buffer().downcast_ref::<gtk4::TextBuffer>() {
         if let Some(tag) = buffer.tag_table().lookup("dialogue-indent") {
-            let old_margin = tag.left_margin();
-            tag.set_left_margin(old_margin - gutter_width);
+            let target = (left_margin + dialogue_indent - gutter_width).max(0);
+            tag.set_left_margin(target);
         }
     }
     state.gutter_renderer = Some(renderer);
@@ -4551,14 +4573,14 @@ mod column_default_tests {
         assert_eq!(default_column_count_for_parts("Shakespeare", "play"), 2);
     }
     #[test]
-    fn shakespeare_poem_defaults_to_one() {
-        assert_eq!(default_column_count_for_parts("Shakespeare", "poem"), 1);
-        assert_eq!(default_column_count_for_parts("Shakespeare", "sonnet_sequence"), 1);
-        assert_eq!(default_column_count_for_parts("Shakespeare", "narrative_poem"), 1);
+    fn shakespeare_poem_defaults_to_two() {
+        assert_eq!(default_column_count_for_parts("Shakespeare", "poem"), 2);
+        assert_eq!(default_column_count_for_parts("Shakespeare", "sonnet_sequence"), 2);
+        assert_eq!(default_column_count_for_parts("Shakespeare", "narrative_poem"), 2);
     }
     #[test]
-    fn non_shakespeare_play_defaults_to_one() {
-        assert_eq!(default_column_count_for_parts("Marlowe", "play"), 1);
+    fn non_shakespeare_play_defaults_to_two() {
+        assert_eq!(default_column_count_for_parts("Marlowe", "play"), 2);
     }
 }
 

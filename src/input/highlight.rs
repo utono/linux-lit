@@ -80,7 +80,15 @@ pub fn update_highlight_and_advance_page(state: &mut AppState) {
 /// then show the scrolled window. Called at the end of display_work_at
 /// after the buffer and cursor position are fully set up.
 pub fn update_highlight_and_show(state: &mut AppState) {
-    if state.page_top_line == 0 && state.current_line > 0 && !state.pending_synopsis.get() {
+    // First-open anchor: keep page_top at 0 so the opening Act/Prologue header
+    // stays at the top of the page; do not scroll down to the first dialogue
+    // line. Consume the flag so subsequent navigation behaves normally.
+    let top_anchored = state.pending_top_anchor.replace(false);
+    if state.page_top_line == 0
+        && state.current_line > 0
+        && !state.pending_synopsis.get()
+        && !top_anchored
+    {
         state.page_top_line = state.current_line;
     }
     update_highlight(state);

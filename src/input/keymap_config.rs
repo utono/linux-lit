@@ -233,10 +233,8 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         // Bookmarks
         (KeyCombo::plain("m"), Action::ToggleBookmark),
         (KeyCombo::plain("semicolon"), Action::ReopenEchoes),
-        (KeyCombo::shift("colon"), Action::PrevBookmark),
         (KeyCombo::plain("parenleft"), Action::PrevBookmark),
         (KeyCombo::plain("ampersand"), Action::NextBookmark),
-        (KeyCombo::plain("4"), Action::PrevBookmark),
         (KeyCombo::ctrl("m"), Action::OpenBookmarkPicker),
     ]
 }
