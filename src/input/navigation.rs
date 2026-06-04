@@ -200,12 +200,27 @@ pub fn jump_to_end(state: &mut AppState) {
         }
         target -= 1;
     }
-    state.current_line = target;
 
+    // Anchor on the canonical final spread (the page the user reaches by paging
+    // forward to the end). When the work's tail is a short section that starts
+    // with a section-break marker (e.g. a lone EPILOGUE), `last_page_top` keeps
+    // the last FULL two-column spread, whose right column clamps BEFORE that
+    // marker — so the absolute last dialogue line (`target`) may sit on the
+    // following, intentionally-suppressed spread and NOT be visible here. Land
+    // the page first, then place the cursor on the last dialogue line that is
+    // actually on this spread (mirrors the forward final-spread guard) so the
+    // highlight is never off-page.
     let new_top = last_page_top(state, target);
     state.page_back_stack.clear();
     state.page_back_stack.push(state.page_top_line);
     set_page_instant(state, new_top);
+
+    let cs = column_split(state, new_top);
+    let on_page = prev_dialogue_line(&state.buffer, &state.translation_lines, cs.page_end + 1)
+        .filter(|&d| d >= new_top && d <= cs.page_end)
+        .unwrap_or(target.min(cs.page_end));
+    state.current_line = on_page;
+
     after_page_change(state, PageChangeReason::JumpToLine);
 }
 
@@ -218,25 +233,31 @@ pub(crate) fn last_page_top(state: &AppState, target: usize) -> usize {
     let widget_height = state.text_view.height();
     let columns = state.column_count() as i32;
     if columns == 2 && widget_height > 0 && line_count > 0 {
-        // Two-column: column_split is the only reliable page-fill oracle (the
-        // raw pixel-capacity estimate over-counts because each column is trimmed
-        // and can read a stale widget height). Start from a safe over-estimate
-        // well before `target`, then walk page boundaries forward via
-        // next_page_top until the page that CONTAINS target — its top is the
-        // anchor. This guarantees the cursor (target) is within [top, page_end].
+        // Two-column: land on the CANONICAL last spread — the same page the user
+        // reaches by paging forward to the end, so both columns are filled and
+        // the work's tail sits in the right column. Walk the forward page chain
+        // (next_page_top) from a safe early start until the spread whose forward
+        // boundary reaches the end of the work; that spread's top is the anchor.
         let lpp = lines_per_page(state).max(1) * 2; // ~lines on one spread
-        let mut top = target.saturating_sub(lpp * 2); // safe early start
+        let mut top = target.saturating_sub(lpp * 3); // safe early start
+        // Snap `top` onto a real page boundary first by walking forward until the
+        // spread that contains `top`'s region; then continue to the last spread.
         let mut guard = 0;
         loop {
             let cs = super::viewport::column_split(state, top);
             if cs.page_end <= top {
                 break; // degenerate (layout not ready) — keep `top`
             }
-            if cs.page_end >= target {
-                break; // this spread contains the target
-            }
+            // Stop when this spread is the final one: its forward boundary is at
+            // or past the end, OR the next spread would contain only the tail with
+            // an empty right column (we'd rather keep the full spread here).
             let next = cs.next_page_top;
-            if next <= top || next >= line_count {
+            if next >= line_count || next <= top {
+                break;
+            }
+            if would_empty_right_column(state, next) {
+                // Advancing to `next` would leave its right column empty (the tail
+                // is short). This spread (`top`) is the last full two-column one.
                 break;
             }
             top = next;
@@ -244,22 +265,6 @@ pub(crate) fn last_page_top(state: &AppState, target: usize) -> usize {
             if guard > line_count {
                 break;
             }
-        }
-        // The forward walk lands on the spread that CONTAINS target, but if the
-        // tail is short the target may sit in the LEFT column with an empty right
-        // (a lone EPILOGUE). Back the top up — line by line, bounded — until the
-        // right column is non-empty AND still contains the target, so the tail
-        // fills the right column.
-        let mut guard2 = 0;
-        while top > 0 && guard2 < line_count {
-            let cs = super::viewport::column_split(state, top);
-            let right_nonempty = cs.split < line_count && cs.page_end >= cs.split;
-            let target_in_right = target >= cs.split && target <= cs.page_end;
-            if right_nonempty && target_in_right {
-                break;
-            }
-            top -= 1;
-            guard2 += 1;
         }
         top
     } else if widget_height > 0 && line_count > 0 {
