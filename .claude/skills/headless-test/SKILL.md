@@ -114,10 +114,20 @@ For pinning down a *specific* nav behaviour (e.g. "does `k` page back at the
 left-column top?"), drive keys manually and grep the log rather than
 screenshotting. Lessons from doing this:
 
+- **Pick the work + spread via `config-dev.json`** (the dev config, `LIT_DEV=1`),
+  NOT the live `config.json`. Set `last_work` + `work_positions` to land on a
+  specific spread (e.g. AWW near its EPILOGUE). A headless run rewrites it on
+  exit, so re-set it before each run.
+- **Rebuild, THEN launch — as separate steps.** Launching the cage in/right after
+  a build step can exec the *previous* binary; the symptom is "my new guard is in
+  the source and builds, but the run ignores it." This wasted real time.
+- **The FIRST keypress after launch is often dropped** (no focus yet). Wait ~11s,
+  send a throwaway warm-up key, then the real sequence. A decisive key with **no
+  `ACTION:` line** never landed — add warm-up/settle, don't assume a code bug.
 - **The app resumes near the document END.** Press `g g` first to reset to the
   top, or a forward jump may be a no-op (`x`/`q`/`j` do nothing past the last
-  line) and your test reaches no boundary. If `gg` itself seems not to take,
-  give it ~0.5s to settle before the next key.
+  line) and your test reaches no boundary. If `gg`/`G` seems not to take or lands
+  oddly, `grim` and check rather than trusting it.
 - **`wtype` drops keys when hammered.** Space presses ≥0.18–0.25s apart; at
   0.13s some are silently lost and your counts come out short.
 - **One page-turn per boundary crossing is correct.** Don't read "few

@@ -199,6 +199,22 @@ lessons:
 - **`wtype` drops keys when hammered.** Space presses ≥0.18–0.25 s apart; at
   0.13 s some are silently lost and your counts come out short — which can look
   like "the page didn't turn" when really the keypress never landed.
+- **The FIRST keypress after launch is often dropped** (window not yet focused).
+  Wait ~11 s after launching, then send a throwaway warm-up key (e.g. `j` then
+  `k` to return) before the real sequence. If a single decisive keypress produces
+  **no `ACTION:` line at all** in the log, it never landed — not a code bug; add
+  the warm-up / more settle and retry.
+- **Stale-binary trap: rebuild, THEN launch — never overlap them.** If you launch
+  the cage in the same step that (or right after a step that) rebuilds, the cage
+  may exec the *previous* binary. Symptom: a guard you just added is present in
+  the source and the binary built fine, but the run behaves as if it's missing.
+  Run `cargo build` to completion first, then launch as a separate step. (Several
+  "the fix didn't work" dead-ends this session were just this.)
+- **`G`/`gg` from a resume state may not land where you expect.** Jumping to end
+  with `G` from a resumed position occasionally lands on the opening rather than
+  the tail — don't assume; `grim` and check. To reach a specific spread reliably,
+  set `config-dev.json`'s `work_positions` to a line on/near it instead of
+  navigating there.
 - **One page-turn per boundary crossing is correct.** Don't read "few
   `NAV_PAGE_FWD` for many `j`" as a bug: a two-column spread holds ~40–80 lines,
   so dozens of `j` cross only one boundary. Compare the cursor line to the
