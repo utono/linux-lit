@@ -565,12 +565,21 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
     } else {
         0
     };
-    let left_bump = if tiled {
-        0
-    } else if state.translations_visible {
-        // Translation view: narrow centered card, so no big single-column left
-        // offset — keep the text near the card's left edge (just the base
-        // margin) and let the card centering balance both sides.
+    let left_bump = if state.translations_visible {
+        // Translation view: the card is now sized like the two-column layout
+        // (wide), so inset the text like the gloss/synopsis cards (~card_width/4
+        // from the card edge) instead of hugging the left edge. Use the ACTUAL
+        // on-screen card width (clamped to the window) so the inset degrades to
+        // 0 when the card fills a narrow window — this runs even when `tiled`
+        // (which is computed against column_width, not the wide translation
+        // card) would otherwise be true. Subtract the base text_margins so
+        // logical_left lands at ~card_width/4 overall.
+        let target = target_card_width(
+            window_width, state.config.column_width, state.column_count(), true,
+        );
+        let card_w = target.min(window_width.max(1));
+        (card_w / 4 - state.config.text_margins as i32).max(0)
+    } else if tiled {
         0
     } else if two_col {
         TWO_COLUMN_LEFT_OFFSET + left_number_allowance
@@ -622,10 +631,13 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
     if two_col {
         state.text_view.set_right_margin(crate::gutter::LINE_NUMBER_TEXT_GAP_TWO_COL);
     } else if state.translations_visible {
-        // Translation view: tight gap so the line number hugs the line end,
-        // not the wide single-column EXTRA_RIGHT_MARGIN that would strand it
-        // at the far edge of the (now narrowed, centered) card.
-        state.text_view.set_right_margin(crate::gutter::LINE_NUMBER_TEXT_GAP_TWO_COL);
+        // Translation view: inset the right edge like the gloss/synopsis cards
+        // (~card_width/4) so the reading block is symmetric within the wide card.
+        let target = target_card_width(
+            window_width, state.config.column_width, state.column_count(), true,
+        );
+        let card_w = target.min(window_width.max(1));
+        state.text_view.set_right_margin((card_w / 4).max(crate::gutter::LINE_NUMBER_TEXT_GAP_TWO_COL));
     } else {
         let logical_right = state.config.text_margins as i32
             + crate::config::EXTRA_RIGHT_MARGIN;
@@ -734,9 +746,6 @@ pub const MIN_TWO_COLUMN_COLUMN_WIDTH: i32 = 700;
 /// reading measure (the verse-safe column width) plus room for the line-number
 /// gutter, so the block centers in a wide window and the numbers hug the text
 /// ends rather than sitting at the far card edge.
-pub(crate) const TRANSLATION_CARD_WIDTH: i32 =
-    MIN_TWO_COLUMN_COLUMN_WIDTH + crate::gutter::LINE_NUMBER_WIDTH + crate::gutter::LINE_NUMBER_MARGIN_END;
-
 pub(crate) fn target_card_width(
     window_width: i32,
     column_width: u32,
@@ -744,15 +753,15 @@ pub(crate) fn target_card_width(
     translations: bool,
 ) -> i32 {
     let cw_cfg = column_width as i32;
-    if column_count >= 2 {
+    // Translation mode renders two logical columns (original + translation), so
+    // size its card identically to the two-column layout — same width whether or
+    // not translations are visible.
+    if column_count >= 2 || translations {
         let proportional = (window_width as f32 * TWO_COLUMN_WIDTH_FRACTION) as i32;
         // Never narrow a column below the verse-safe floor: two columns plus a
         // few px for the divider. Also never below the single-column floor.
         let two_col_floor = 2 * MIN_TWO_COLUMN_COLUMN_WIDTH + 8;
         proportional.max(cw_cfg).max(two_col_floor)
-    } else if translations {
-        // Single-column translation view: a tight, centered reading block.
-        TRANSLATION_CARD_WIDTH
     } else {
         cw_cfg
     }
