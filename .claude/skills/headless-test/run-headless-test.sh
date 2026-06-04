@@ -73,12 +73,23 @@ Screenshot / clipping test (this script):
       --label synopsis --setup "h" --no-clip
 
 Navigation fuzz test (separate launcher in this skill):
-  ./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh [--secs N]
-    Runs ~750 seeded-random nav jumps with per-step invariant checks. Isolated
-    (private DB copy + log) so it's safe alongside a live `cargo run`. Triage:
+  FULL SWEEP (~10 min, all 1400 steps — run this for a real check):
+    ./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh \
+      --secs 600 --start-work AWW --start-pos 50
+  Quick run while iterating (~200 steps, start of the prelude only):
+    ./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh --secs 90
+
+    A deterministic coverage prelude (every nav action from every structural
+    anchor) + a seeded-random body, with per-step invariant checks (on-page
+    landing, no empty/underfilled column, jump-to-end reaches the end, no line
+    clipping). Isolated (private DB copy + log) so it's safe alongside a live
+    `cargo run`. --secs is a wall-clock cap, not a step count: short windows end
+    early. Flags: --start-work AWW, --start-pos 50, --seed 0x... (replay).
+    Triage:
       rg "NAV_TEST: FAIL" /tmp/fuzz-nav.log | sed -E 's/.*FAIL step=[0-9]+ ([A-Za-z]+) /\1: /' \
         | sed -E 's/[0-9]+/N/g' | sort | uniq -c | sort -rn
-    Stop early: kill "$(cat /tmp/fuzz_pid.txt)"   (never pkill the binary by name)
+    Stop early: kill "$(cat /tmp/fuzz_pid.txt)"   (never pkill the binary by name;
+    test instances carry a --headless-test marker)
 
 See docs/troubleshooting/headless-testing.md for the full guide.
 USAGE

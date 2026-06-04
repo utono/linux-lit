@@ -86,18 +86,39 @@ Two severities are logged:
 ### How to run it (via the skill)
 
 Use the bundled `run-fuzz.sh` — it builds, makes a private DB copy, launches an
-isolated cage with all the env overrides, runs for ~5.5 min, kills its own cage
-by PID, and prints a failure summary. Always go through `e2e-env.sh`:
+isolated cage with all the env overrides, kills its own cage by PID, and prints a
+failure summary. Always go through `e2e-env.sh`.
+
+**Full sweep** (run this for a real check — the whole 1400-step coverage prelude
++ random body; needs ~10 min, so size the window so it isn't cut short):
 
 ```bash
-./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh
-# shorter run while iterating:
+./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh --secs 600 --start-work AWW --start-pos 50
+```
+
+`--secs` is a wall-clock cap, not a step count: at ~400 ms/step a short window
+ends the run early (e.g. `--secs 90` ≈ 200 steps, only the start of the prelude).
+For the complete sweep use `--secs 600` or more. The hermetic-start flags make
+the run reproducible from the command alone:
+
+- `--start-work AWW` — which work to load (a play with an EPILOGUE exercises the
+  final-spread/clip edge cases). Without it, the dev config's last work is used.
+- `--start-pos 50` — start line; jumping `G` from here is a genuine long jump.
+- `--seed 0x...` — pin the LCG seed to replay a specific run (the seed is printed
+  at run start: `NAV_TEST: seed=0x...`).
+
+**Shorter run while iterating** (won't complete the full prelude, but fast):
+
+```bash
 ./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh --secs 90
 ```
 
 It writes the log to `/tmp/fuzz-nav.log` and the cage PID to `/tmp/fuzz_pid.txt`.
 Stop early with `kill "$(cat /tmp/fuzz_pid.txt)"` — **never** `pkill -f
-target/debug/linux-lit`, which also signals a live `cargo run` session.
+target/debug/linux-lit`, which also signals a live `cargo run` session. (Test
+instances carry a `--headless-test` marker, so
+`pkill -f 'linux-lit --headless-test'` targets only them, never the live
+session.)
 
 Re-triage an existing log at any time. Hard failures first (must be 0), then
 the soft warns:

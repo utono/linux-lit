@@ -178,21 +178,39 @@ final-spread-too-early / orphaned-EPILOGUE bug.)
 ## How to run the fuzz
 
 Use the `headless-test` skill's bundled launcher. It builds, makes a private DB
-copy, sets all the env overrides, launches an isolated cage, runs for ~5.5 min,
-kills its own cage by PID, and prints a failure summary. It's safe to run **even
-while a live `cargo run` session is open** — it touches no shared file. Always
-go through the env wrapper (`e2e-env.sh`, which supplies dbus + AT-SPI):
+copy, sets all the env overrides, launches an isolated cage, kills its own cage
+by PID, and prints a failure summary. It's safe to run **even while a live
+`cargo run` session is open** — it touches no shared file. Always go through the
+env wrapper (`e2e-env.sh`, which supplies dbus + AT-SPI):
 
 ```bash
+# FULL SWEEP — run this for a real check. ~10 min: the entire 1400-step
+# coverage prelude (every nav action from every structural anchor) + random body.
 cd ~/utono/linux-lit
-./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh
-# shorter run while iterating:
+./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh \
+  --secs 600 --start-work AWW --start-pos 50
+```
+
+`--secs` is a **wall-clock cap, not a step count**: at ~400 ms/step a short
+window ends the run early. `--secs 90` ≈ 200 steps (only the start of the
+prelude); the complete 1400-step sweep needs **`--secs 600`** or more. The
+hermetic-start flags make the run reproducible from the command alone:
+
+- `--start-work AWW` — which work to load (a play with an EPILOGUE exercises the
+  final-spread / clip edge cases). Default: the dev config's last work.
+- `--start-pos 50` — start line, so `G` is a genuine long jump.
+- `--seed 0x...` — pin the LCG seed (printed at run start as `NAV_TEST: seed=`)
+  to replay a specific run exactly.
+
+```bash
+# Quick run while iterating (fast, but does NOT complete the prelude):
 ./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh --secs 90
 ```
 
 It writes the run log to `/tmp/fuzz-nav.log` and the cage PID to
 `/tmp/fuzz_pid.txt`, and warns on stderr if the fuzz is still at ≤1 step after
-25 s (the classic DB-lock-contention stall — see below).
+25 s (the classic DB-lock-contention stall — see below). A clean full run ends
+at exactly **1400 steps, 0 FAIL** (a handful of WARNs is fine).
 
 Watch progress / triage at any time:
 
