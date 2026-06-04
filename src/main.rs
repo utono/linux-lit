@@ -23,12 +23,18 @@ use mpv::{MpvCommand, MpvEvent};
 fn main() {
     // Clear and set up log file
     let home = std::env::var("HOME").unwrap_or_default();
-    let log_filename = if mode::is_dev_mode() {
-        "linux-lit-dev.log"
+    // LIT_LOG_PATH lets an isolated run (e.g. the headless nav-fuzz) write to its
+    // own log instead of clobbering a live `cargo run` session's dev log.
+    let log_path = if let Ok(p) = std::env::var("LIT_LOG_PATH") {
+        p
     } else {
-        "linux-lit-release.log"
+        let log_filename = if mode::is_dev_mode() {
+            "linux-lit-dev.log"
+        } else {
+            "linux-lit-release.log"
+        };
+        format!("{}/utono/linux-lit/{}", home, log_filename)
     };
-    let log_path = format!("{}/utono/linux-lit/{}", home, log_filename);
     let _ = std::fs::write(&log_path, "");
     logging::init(&log_path);
     crate::logging::log("STARTUP: main entry");

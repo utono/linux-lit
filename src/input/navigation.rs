@@ -216,16 +216,38 @@ pub fn jump_to_end(state: &mut AppState) {
     // `line_count - lpp` heuristic.
     let widget_height = state.text_view.height();
     let columns = state.column_count() as i32;
-    let new_top = if widget_height > 0 && line_count > 0 {
-        // For jump_to_end, the last buffer line is the last content. There's
-        // no "next page" requiring descender_guard or bottom_margin headroom
-        // — the buffer simply ends. In two-column mode the final page holds
-        // `columns` columns, so accumulate `columns * widget_height` worth of
-        // content backward from the last line. Walk backward from
-        // line_count - 1; the smallest top such that total fits the combined
-        // column capacity is the anchor (the last dialogue line then sits at
-        // the bottom of the rightmost column).
-        let capacity = widget_height * columns;
+    let new_top = if columns == 2 && widget_height > 0 && line_count > 0 {
+        // Two-column: column_split is the only reliable page-fill oracle (the
+        // raw pixel-capacity estimate over-counts because each column is trimmed
+        // and can read a stale widget height). Start from a safe over-estimate
+        // well before `target`, then walk page boundaries forward via
+        // next_page_top until the page that CONTAINS target — its top is the
+        // anchor. This guarantees the cursor (target) is within [top, page_end].
+        let lpp = lines_per_page(state).max(1) * 2; // ~lines on one spread
+        let mut top = target.saturating_sub(lpp * 2); // safe early start
+        let mut guard = 0;
+        loop {
+            let cs = super::viewport::column_split(state, top);
+            if cs.page_end <= top {
+                break; // degenerate (layout not ready) — keep `top`
+            }
+            if cs.page_end >= target {
+                break; // this spread contains the target
+            }
+            let next = cs.next_page_top;
+            if next <= top || next >= line_count {
+                break;
+            }
+            top = next;
+            guard += 1;
+            if guard > line_count {
+                break;
+            }
+        }
+        top
+    } else if widget_height > 0 && line_count > 0 {
+        // Single column: accumulate `widget_height` of content backward.
+        let capacity = widget_height;
         let mut total: i32 = 0;
         let mut top = line_count - 1;
         loop {
@@ -837,8 +859,9 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
             return;
         }
         state.current_line = cursor_idx;
+        // See jump_to_next_scene: clear but don't push, so `y` pages back one
+        // viewport into skipped content rather than teleporting to the origin.
         state.page_back_stack.clear();
-        state.page_back_stack.push(state.page_top_line);
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
             crate::config::NavigationMode::EReader => {
@@ -940,8 +963,11 @@ pub fn jump_to_next_scene(state: &mut AppState) {
 
     if let (Some(marker_idx), Some(cursor_idx)) = (marker, cursor) {
         state.current_line = cursor_idx;
+        // Clear the back-stack but do NOT push the jump origin: a scene jump can
+        // skip many pages (e.g. mid-Scene 3 -> EPILOGUE), and `y` should page
+        // back one viewport into the skipped content, not teleport back to where
+        // `3` was pressed. An empty stack makes page_backward use prev_page_top.
         state.page_back_stack.clear();
-        state.page_back_stack.push(state.page_top_line);
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => center_cursor(state),
             crate::config::NavigationMode::EReader => {
@@ -2252,10 +2278,13 @@ mod page_turn_tests {
 
     // --- Tests for y after structural jumps (push-before-clear) ---
 
-    /// Simulate page_back_stack behavior: x pushes, structural jump clears
-    /// then pushes, y pops. Verify y after a scene jump returns to origin.
+    /// After a scene jump (`3`), the back-stack is CLEARED (no origin push):
+    /// `y` should page back one viewport into the skipped content via
+    /// prev_page_top, NOT teleport to the page where `3` was pressed. A scene
+    /// jump can skip many pages (mid-scene -> EPILOGUE), so origin-return would
+    /// hide everything between. Verify the stack is empty after a scene jump.
     #[test]
-    fn test_y_after_scene_jump_returns_to_origin_all_shakespeare() {
+    fn test_y_after_scene_jump_pages_back_all_shakespeare() {
         let files = shakespeare_play_files();
         if files.is_empty() {
             eprintln!("SKIP: no Shakespeare files found");
@@ -2269,7 +2298,6 @@ mod page_turn_tests {
             if line_count == 0 { continue; }
             let markers = scene_marker_indices(&lines);
             if markers.len() < 3 { continue; }
-            // Page forward a few times to build up stack
             let first = match next_dialogue(&lines, 0) {
                 Some(d) => d,
                 None => continue,
@@ -2286,26 +2314,14 @@ mod page_turn_tests {
                 }
             }
             if stack.is_empty() { continue; }
-            let origin = page_top;
-            // Simulate scene jump (3): clear stack, push origin, jump to next marker
-            let current_line = match next_dialogue(&lines, page_top) {
-                Some(d) => d,
-                None => continue,
-            };
-            let target_marker = markers.iter().find(|&&m| m > current_line);
-            let target_marker = match target_marker {
-                Some(&m) => m,
-                None => continue,
-            };
+            // Simulate scene jump (3): clear stack, DO NOT push (new behavior).
             stack.clear();
-            stack.push(origin);
-            let _ = target_marker;
-            // Simulate y: pop returns to origin
-            let popped = stack.pop().expect("stack should have return entry");
-            assert_eq!(
-                popped, origin,
-                "{}: y after scene jump should return to origin {} but got {}",
-                name, origin, popped
+            // y on an empty stack falls through to prev_page_top (one viewport
+            // back) — model that here as "stack is empty so no teleport".
+            assert!(
+                stack.is_empty(),
+                "{}: scene jump must leave an empty back-stack so y pages back",
+                name
             );
         }
     }

@@ -283,6 +283,9 @@ pub struct AppState {
     pub nav_test_failures: usize,
     pub nav_test_prev_top: usize,
     pub nav_test_expect_return: Option<usize>,
+    /// When true the nav-test harness runs the long random `fuzz` script
+    /// (verifying jump landings) instead of the fixed `jumps-only` script.
+    pub nav_test_fuzz: bool,
     pub sync_enabled: bool,
     pub mpv_connected: bool,
     pub mpv_playing: bool,
@@ -1437,6 +1440,7 @@ pub fn build_window(
         nav_test_failures: 0,
         nav_test_prev_top: 0,
         nav_test_expect_return: None,
+        nav_test_fuzz: false,
         sync_enabled: true,
         mpv_connected: false,
         mpv_playing: false,
@@ -1527,6 +1531,18 @@ pub fn build_window(
                 reveal_snap(&state_for_fallback);
                 vbox_for_fallback.set_opacity(1.0);
             }
+        });
+    }
+
+    // Headless fuzz: when LIT_NAV_FUZZ=1, auto-start the random nav-test harness
+    // a few seconds after launch (once the work has loaded). It runs ~2400
+    // randomized jumps and logs NAV_TEST: FAIL on any off-page landing,
+    // mis-return, mid-page scene break, underfill, or non-dialogue cursor.
+    if std::env::var("LIT_NAV_FUZZ").map(|v| v == "1").unwrap_or(false) {
+        let state_for_fuzz = Rc::clone(&state);
+        glib::timeout_add_local_once(std::time::Duration::from_secs(6), move || {
+            crate::logging::log("NAV_FUZZ: auto-starting fuzz harness");
+            crate::input::nav_test::toggle(&state_for_fuzz);
         });
     }
 
@@ -4096,6 +4112,15 @@ fn build_vocab_matches(state: &mut AppState) {
         if line_idx >= line_count {
             break;
         }
+        // Don't gold-highlight heading words. "epilogue"/"prologue"/"chorus"
+        // are legitimate vocab words, but on an ACT/SCENE/EPILOGUE marker line
+        // they are structural headings (already bolded) and must not also take
+        // the vocab color. Separators carry no words but skip them too.
+        if crate::db::line_types::is_act_scene_marker(line_text)
+            || crate::db::line_types::is_separator(line_text)
+        {
+            continue;
+        }
         let mut char_offset = 0usize;
         let mut in_word = false;
         let mut word_start = 0usize;
@@ -4738,14 +4763,31 @@ mod card_width_tests {
 
     #[test]
     fn two_columns_fill_fraction_of_wide_window() {
-        // 80% of 1920 = 1536, wider than the 1050 floor.
-        assert_eq!(target_card_width(1920, 1050, 2, false), 1536);
+        // TWO_COLUMN_WIDTH_FRACTION (0.68) of 1920 = 1305, below the verse-safe
+        // two-column floor (2*700+8 = 1408), so clamp up to 1408.
+        assert_eq!(target_card_width(1920, 1050, 2, false), 1408);
     }
 
     #[test]
-    fn two_columns_never_below_single_column_floor() {
-        // 80% of 1300 = 1040, below the 1050 floor → clamp up to 1050.
-        assert_eq!(target_card_width(1300, 1050, 2, false), 1050);
+    fn two_columns_use_proportional_when_above_floor() {
+        // On a very wide window the proportional width wins: 0.68 * 2400 = 1632.
+        assert_eq!(target_card_width(2400, 1050, 2, false), 1632);
+    }
+
+    #[test]
+    fn two_columns_never_below_verse_safe_floor() {
+        // Narrow window: proportional (0.68*1300=884) and column_width (1050)
+        // are both below the 1408 two-column floor → clamp up to 1408.
+        assert_eq!(target_card_width(1300, 1050, 2, false), 1408);
+    }
+
+    #[test]
+    fn translations_match_two_column_width() {
+        // Translation mode (column_count forced to 1) sizes like two columns.
+        assert_eq!(
+            target_card_width(2400, 1050, 1, true),
+            target_card_width(2400, 1050, 2, false),
+        );
     }
 }
 

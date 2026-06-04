@@ -48,6 +48,47 @@ current run's captures. **Open every PNG and report what you see inline** in you
 reply (window title, panels, on-screen text, and whether anything clips) — that
 is the verification step. No written review file is required.
 
+## Navigation fuzz mode
+
+A randomized navigation stress test that drives the app's in-process nav-test
+harness (`src/input/nav_test.rs`) and verifies every jump lands correctly. It
+runs ~750 deterministic-random steps (x/y/2/3/gg/G/chapter), and after each
+checks: forward progress on x, y round-trips, **landing on-page** (cursor within
+the visible range after a jump — catches G/3 mis-landings), no scene break
+mid-page, viewport fill ≥10%, and cursor-is-dialogue. Failures are logged as
+`NAV_TEST: FAIL …` with the step and reason.
+
+Run it isolated (its OWN log + runtime dir, never the live `cargo run` session):
+
+```bash
+RT="$(mktemp -d)"; LOG=/tmp/fuzz-nav.log; : > "$LOG"
+cat > /tmp/fuzz-launch.sh <<EOF
+#!/usr/bin/env bash
+XDG_RUNTIME_DIR="$RT" GSK_RENDERER=cairo \\
+  LIT_DEV=1 LIT_HEADLESS_TEST=1 LIT_NAV_FUZZ=1 LIT_LOG_PATH="$LOG" \\
+  cage -- ./target/debug/linux-lit >"$RT/cage.log" 2>&1 &
+sleep 320; kill \$! 2>/dev/null
+EOF
+chmod +x /tmp/fuzz-launch.sh
+./scripts/e2e-env.sh /tmp/fuzz-launch.sh &     # ~5 min run
+# then summarize:
+rg "NAV_TEST: FAIL" /tmp/fuzz-nav.log | sed -E 's/.*FAIL step=[0-9]+ ([A-Za-z]+) /\1: /' \
+  | sed -E 's/[0-9]+/N/g' | sort | uniq -c | sort -rn
+```
+
+Key points:
+- **`LIT_NAV_FUZZ=1`** auto-starts the fuzz ~6s after launch (once the work
+  loads) and selects the long random script; **`LIT_LOG_PATH`** redirects the log
+  so it never collides with a live session's `linux-lit-dev.log` (sharing it
+  kills the cage). The PRNG is seeded (deterministic) so a failure replays.
+- Drive it through **`e2e-env.sh`** (dbus + a11y) — a bare `cage` launch aborts
+  right after `STARTUP: main entry`.
+- Each step waits 400ms so GTK layout settles; faster cadence makes
+  pixel-dependent checks (`column_split`, `jump_to_end`) read stale heights and
+  report layout-instability false positives.
+- The fixed (non-random) `jumps-only` script still runs via `Ctrl+Shift+T`
+  without `LIT_NAV_FUZZ`.
+
 ## Why these settings (do not "simplify" away)
 
 The script bakes in hard-won requirements; changing them silently breaks rendering:

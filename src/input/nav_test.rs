@@ -18,6 +18,8 @@ enum Step {
     PrevScene,
     NextChapter,
     PrevChapter,
+    JumpTop,
+    JumpEnd,
     SyncAdvance,
     SearchJump,
 }
@@ -26,13 +28,30 @@ impl Step {
     fn delay_ms(self) -> u64 {
         match self {
             Step::SyncAdvance => 1000,
-            _ => 300,
+            // Let GTK layout settle between jumps — pixel-dependent functions
+            // (column_split, jump_to_end's height walk) read stale widget heights
+            // if hammered faster, producing layout-instability false positives.
+            _ => 400,
         }
     }
 }
 
+/// Deterministic LCG — `Math.random` would make runs unreproducible. Seeded from
+/// a fixed constant so a failure can be replayed by re-running the same mode.
+struct Lcg(u64);
+impl Lcg {
+    fn next_u32(&mut self) -> u32 {
+        // Numerical Recipes constants.
+        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (self.0 >> 33) as u32
+    }
+    fn below(&mut self, n: u32) -> u32 {
+        if n == 0 { 0 } else { self.next_u32() % n }
+    }
+}
+
+/// `jumps-only`: the original fixed key-press script.
 fn build_script() -> Vec<Step> {
-    // jumps-only: test key-press navigation
     let mut s = Vec::new();
     s.extend_from_slice(&[Step::PageForward; 5]);
     s.extend_from_slice(&[Step::PageBackward; 5]);
@@ -46,7 +65,32 @@ fn build_script() -> Vec<Step> {
     s
 }
 
-const MAX_STEPS: usize = 500;
+/// `fuzz`: a long, deterministic-random mix of every navigation jump, weighted
+/// toward structural jumps and the top/end binds (gg / G) so the harness
+/// stress-tests where the cursor lands after a jump. Each jump is followed by a
+/// landing check in `run_step` (cursor on a dialogue line, within the visible
+/// page, page_top consistent).
+fn build_fuzz_script() -> Vec<Step> {
+    let mut rng = Lcg(0x9E3779B97F4A7C15);
+    // Weighted menu — repeated entries raise a step's frequency.
+    let menu = [
+        Step::PageForward, Step::PageForward, Step::PageForward,
+        Step::PageBackward, Step::PageBackward, Step::PageBackward,
+        Step::NextScene, Step::NextScene,
+        Step::PrevScene, Step::PrevScene,
+        Step::NextChapter,
+        Step::PrevChapter,
+        Step::JumpTop,
+        Step::JumpEnd,
+    ];
+    let mut s = Vec::with_capacity(MAX_STEPS);
+    for _ in 0..MAX_STEPS {
+        s.push(menu[rng.below(menu.len() as u32) as usize]);
+    }
+    s
+}
+
+const MAX_STEPS: usize = 750;
 
 pub fn toggle(state_rc: &Rc<RefCell<AppState>>) {
     let mut s = state_rc.borrow_mut();
@@ -70,7 +114,13 @@ pub fn toggle(state_rc: &Rc<RefCell<AppState>>) {
     s.nav_test_failures = 0;
     s.nav_test_prev_top = s.page_top_line;
     s.nav_test_expect_return = None;
-    crate::log_fmt!("NAV_TEST: started at page_top={} current_line={}", s.page_top_line, s.current_line);
+    // Opt into the long random fuzz script via env (for headless 5-min runs).
+    s.nav_test_fuzz = std::env::var("LIT_NAV_FUZZ").map(|v| v == "1").unwrap_or(false);
+    crate::log_fmt!(
+        "NAV_TEST: started ({}) at page_top={} current_line={}",
+        if s.nav_test_fuzz { "fuzz" } else { "jumps-only" },
+        s.page_top_line, s.current_line,
+    );
 
     let icon = s.debug_icon.clone();
     icon.set_label("NAV TEST: running…");
@@ -81,8 +131,12 @@ pub fn toggle(state_rc: &Rc<RefCell<AppState>>) {
     schedule_next(Rc::clone(state_rc));
 }
 
+fn current_script(s: &AppState) -> Vec<Step> {
+    if s.nav_test_fuzz { build_fuzz_script() } else { build_script() }
+}
+
 fn schedule_next(state: Rc<RefCell<AppState>>) {
-    let script = build_script();
+    let script = current_script(&state.borrow());
     let delay = {
         let s = state.borrow();
         if !s.nav_test_active || s.nav_test_step >= MAX_STEPS {
@@ -119,7 +173,7 @@ fn schedule_next(state: Rc<RefCell<AppState>>) {
 }
 
 fn run_step(s: &mut AppState) {
-    let script = build_script();
+    let script = current_script(s);
     let script_idx = s.nav_test_step % script.len();
     let step = script[script_idx];
     let step_num = s.nav_test_step;
@@ -127,15 +181,17 @@ fn run_step(s: &mut AppState) {
     let pre_line = s.current_line;
     s.nav_test_prev_top = pre_top;
 
-    // Record expected return for structural jumps and search jumps
+    // Record expected return for chapter/search jumps (which DO push the origin
+    // so `y` returns to it). Scene jumps (2/3) deliberately clear the stack
+    // without pushing — `y` pages back one viewport into skipped content — so
+    // they set NO return expectation.
     match step {
-        Step::NextScene | Step::PrevScene | Step::NextChapter | Step::PrevChapter
-        | Step::SearchJump => {
+        Step::NextChapter | Step::PrevChapter | Step::SearchJump => {
             s.nav_test_expect_return = Some(pre_top);
         }
         _ => {}
     }
-    // Record expected return for x followed by y
+    // Record expected return for x immediately followed by y.
     if matches!(step, Step::PageForward) {
         let next_idx = (step_num + 1) % script.len();
         if matches!(script[next_idx], Step::PageBackward) {
@@ -151,6 +207,8 @@ fn run_step(s: &mut AppState) {
         Step::PrevScene => navigation::jump_to_prev_scene(s),
         Step::NextChapter => navigation::jump_to_next_chapter(s),
         Step::PrevChapter => navigation::jump_to_prev_chapter(s),
+        Step::JumpTop => navigation::jump_to_start(s),
+        Step::JumpEnd => navigation::jump_to_end(s),
         Step::SearchJump => {
             let line_count = s.effective_line_count();
             let target = (s.current_line + 50).min(line_count.saturating_sub(1));
@@ -267,6 +325,27 @@ fn run_step(s: &mut AppState) {
             fail(s, step_num, step, &format!(
                 "current_line {} is not dialogue: '{}'",
                 post_line, text.chars().take(60).collect::<String>()
+            ));
+        }
+    }
+
+    // 6. LANDING: after a jump, the cursor must be on the page it landed on —
+    // i.e. within [post_top, last_visible]. This is the core "jumps land on the
+    // right page" invariant: a cursor below/above the visible range means the
+    // page didn't follow the jump (the bug class behind G/3/y mis-landings).
+    // Skip the genuine end-of-document no-op (page and cursor both unchanged).
+    let moved = post_top != pre_top || post_line != pre_line;
+    let is_jump = matches!(
+        step,
+        Step::NextScene | Step::PrevScene | Step::NextChapter | Step::PrevChapter
+            | Step::JumpTop | Step::JumpEnd
+    );
+    if is_jump && moved && line_count > 0 {
+        let last_vis = last_fully_visible_line(s, post_top);
+        if post_line < post_top || post_line > last_vis {
+            fail(s, step_num, step, &format!(
+                "landing off-page: cursor={} not in visible [{}, {}]",
+                post_line, post_top, last_vis
             ));
         }
     }
