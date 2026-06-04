@@ -573,8 +573,24 @@ pub fn page_backward(state: &mut AppState) {
         (np.new_top, np.next_dialogue)
     };
 
-    state.current_line = next_dialogue;
+    // A `y` page turn lands the cursor on the LAST dialogue line of the page it
+    // turns to (bottom of the right column in two-column mode), not the first —
+    // what a reader expects from paging backward. Compute it from the landed
+    // page's geometry; fall back to the page's first dialogue if none is found.
     set_page(state, new_top, PageDirection::Backward);
+    let cursor = if state.column_count() == 2 {
+        let cs = super::viewport::column_split(state, new_top);
+        prev_dialogue_line(&state.buffer, &state.translation_lines, cs.page_end + 1)
+            .filter(|&d| d >= new_top && d <= cs.page_end)
+            .unwrap_or(next_dialogue)
+    } else {
+        let last_vis = last_fully_visible_line(state, new_top);
+        prev_dialogue_line(&state.buffer, &state.translation_lines, last_vis + 1)
+            .filter(|&d| d >= new_top && d <= last_vis)
+            .unwrap_or(next_dialogue)
+    };
+    state.current_line = cursor;
+    log_fmt!("PAGE_BWD: cursor -> last-visible dialogue {} (new_top={})", cursor, new_top);
     after_page_change(state, PageChangeReason::Backward);
 }
 
