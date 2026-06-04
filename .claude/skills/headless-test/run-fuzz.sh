@@ -54,7 +54,14 @@ RT="$(mktemp -d)"
 cleanup() { kill "${CAGE:-0}" 2>/dev/null || true; rm -rf "$RT" 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
-XDG_RUNTIME_DIR="$RT" GSK_RENDERER=cairo \
+# Force wlroots onto its HEADLESS backend and unset the inherited
+# WAYLAND_DISPLAY. Without this, cage sees the live session's wayland-0 in the
+# environment, picks the Wayland backend, and nests as a VISIBLE window on the
+# user's dwl instead of running offscreen (a leaked reader window). The headless
+# backend + pixman software renderer keeps it entirely off-screen.
+env -u WAYLAND_DISPLAY \
+  XDG_RUNTIME_DIR="$RT" GSK_RENDERER=cairo \
+  WLR_BACKENDS=headless WLR_RENDERER=pixman \
   LIT_DEV=1 LIT_HEADLESS_TEST=1 LIT_NAV_FUZZ=1 \
   LIT_LOG_PATH="$LOG" LIT_DB_PATH="$DB_COPY" \
   cage -- "$BIN" >"$RT/cage.log" 2>&1 &

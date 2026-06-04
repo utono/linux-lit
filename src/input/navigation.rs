@@ -256,8 +256,30 @@ pub(crate) fn last_page_top(state: &AppState, target: usize) -> usize {
                 break;
             }
             if would_empty_right_column(state, next) {
-                // Advancing to `next` would leave its right column empty (the tail
-                // is short). This spread (`top`) is the last full two-column one.
+                // Advancing a whole page to `next` would leave its right column
+                // empty (the work's tail — e.g. a lone EPILOGUE — is shorter than
+                // one column). But the natural page boundary can SKIP a better
+                // final spread: one whose top sits a few lines past `top` so the
+                // last dialogue lines fall into the left column and the tail (the
+                // EPILOGUE) fills the RIGHT column, reaching the work's end.
+                //
+                // Pull the top forward to the SMALLEST such spread: the work's end
+                // is the last DIALOGUE line (not `line_count` — trailing blanks /
+                // exit markers needn't be "reached"), so pick the first top whose
+                // spread leaves NO dialogue below its forward boundary and still
+                // has a non-empty right column. Without this the EPILOGUE is
+                // orphaned past `top`'s right column (the 4308-vs-4316 bug).
+                let mut best = top;
+                for t in (top + 1)..=next.min(line_count.saturating_sub(1)) {
+                    let tcs = super::viewport::column_split(state, t);
+                    let dialogue_below = (tcs.next_page_top..line_count)
+                        .any(|i| is_dialogue_line(&state.buffer, i));
+                    if !dialogue_below && !would_empty_right_column(state, t) {
+                        best = t;
+                        break;
+                    }
+                }
+                top = best;
                 break;
             }
             top = next;

@@ -526,29 +526,42 @@ set `current_line` to the next/prev dialogue, then call the scroll-after fns in
   non-dialogue is via `prev_dialogue_line(last_fully_visible_line + 1)`.
 
 `navigation::last_page_top(target)` (shared with `jump_to_end`/`G`) walks the
-forward page chain (`column_split(top).next_page_top`) from a safe early start
-and stops at the **last full two-column spread** — the spread *after* which the
-next turn `would_empty_right_column`. It returns that spread's top, not
-necessarily one that contains `target`.
+forward page chain (`column_split(top).next_page_top`) from a safe early start.
+When the next whole-page turn `would_empty_right_column` (the tail is short), it
+does NOT just keep the current spread — the natural page boundary can *skip* a
+better final spread. It **pulls the top forward** to the smallest top whose
+spread leaves no dialogue below its forward boundary and still has a non-empty
+right column, so the short tail (a lone EPILOGUE) fills the RIGHT column of the
+canonical last spread. Returning the earlier full spread instead orphans the
+EPILOGUE one spread past the end (the 4308-vs-4316 bug: `G` landed showing
+"…welcome is the sweet" in the right column with the EPILOGUE unreachable below;
+`x`/`G` then did nothing because that spread looked final).
 `viewport::would_empty_right_column(top)` is the predicate; both paths and the
 sync page-turn (`update_highlight_and_advance_page`) and sync scene-snap use it.
 
-#### `G` / jump-to-end: cursor must land *on* the final spread
+#### `G` / jump-to-end: land on the CANONICAL final spread (EPILOGUE in the right column)
 
-`jump_to_end` first finds the work's absolute last dialogue line, but it must
-NOT just place the cursor there. When the work's tail is a short section that
-opens with a section-break marker (a lone `EPILOGUE`), the last full spread's
-right column `clamp_at_section_break`s *before* that marker — so the absolute
-last dialogue line sits on the following, intentionally-suppressed spread (it
-would empty the right column) and is **not visible** on the spread
-`last_page_top` returns. Placing the cursor there leaves the highlight ~10 lines
-off-page (the fuzz `JumpEnd landing off-page: cursor=N not in visible [lo,hi]`
-FAIL). The fix: land the page first (`set_page_instant(last_page_top(target))`),
-THEN set the cursor to the last dialogue line actually within that spread
-(`prev_dialogue_line(cs.page_end + 1)` clamped to `[new_top, cs.page_end]`) —
-mirroring the forward final-spread guard in `page_forward`. The EPILOGUE tail
-therefore renders as the right column of the last full spread, with the cursor
-on it.
+Two coupled requirements, both about the short-tail case (a lone `EPILOGUE` that
+opens with a section-break marker):
+
+1. **The page must be the canonical last spread.** `last_page_top` must not stop
+   at the last *full* two-column spread when a later spread fits the tail into
+   its right column (see `last_page_top` above — it pulls the top forward). The
+   wrong spread shows "…welcome is the sweet" in the right column with the
+   EPILOGUE orphaned below; the fuzz catches it via invariant 7
+   (`JUMP-TO-END not at end: next_page_top < line_count — content still below`),
+   and on the real display `x`/`G` do nothing there because the spread looks
+   final.
+2. **The cursor must be on that page.** `jump_to_end` lands the page first
+   (`set_page_instant(last_page_top(target))`), then sets the cursor to the last
+   dialogue line actually within that spread
+   (`prev_dialogue_line(cs.page_end + 1)` clamped to `[new_top, cs.page_end]`) —
+   mirroring the forward final-spread guard in `page_forward`. Without this the
+   highlight lands ~10 lines off-page (fuzz `JumpEnd landing off-page`).
+
+With both, the EPILOGUE renders as the right column of the canonical last spread,
+the cursor sits on it, and `j`/`q` walking into the tail resolve to the same
+spread.
 
 Key files: `src/db/models.rs` (Line struct with div1/div2/line_in_div),
 `src/db/queries.rs` (load_work, scene synopses),

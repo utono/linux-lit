@@ -50,23 +50,33 @@ is the verification step. No written review file is required.
 
 ## Navigation fuzz mode
 
-A randomized navigation stress test that drives the app's in-process nav-test
-harness (`src/input/nav_test.rs`) and verifies every jump lands correctly. It
-runs ~750 deterministic-random steps (x/y/2/3/gg/G/chapter plus the q/j/,/k
-dialogue-walk binds), and after each checks a set of invariants. The random
-script also injects **boundary-stress motifs** (~1 in 4 iterations): repeated
-end/top jumps (`G x x x`, `G y y y`, `gg x x x`), double end/top, and a walk
-down the dialogue into the work's short tail then a reverse — these are what
-surface final-spread / EPILOGUE bugs that uniform random keypresses miss.
+A navigation stress test that drives the app's in-process nav-test harness
+(`src/input/nav_test.rs`) and verifies every jump lands correctly. Each run is
+**1400 steps: a deterministic coverage prelude, then a random body.**
+
+- **Coverage prelude** (`build_coverage_prelude`) — drives **every** nav action
+  (x/y/2/3/gg/G/chapter/`q`/`j`/`,`/`k`) from **every** structural anchor on
+  **every** run: from the work start, the work end, each of the first 24 scene
+  boundaries, and 3 mid-page anchors. This is what makes the fuzz test *all
+  scenarios* instead of sampling them — a random seed alone leaves real bugs
+  (like "G from a distant page lands on the wrong final spread") hidden behind a
+  lucky "0 failures". To cover a newly-added action, add its `Step` to
+  `ALL_STEPS`.
+- **Random body** — a deterministic-random mix weighted toward structural jumps
+  and gg/G, plus **boundary-stress motifs** (`G x x x`, `G y y y`, double
+  end/top, dialogue-walk into the tail then reverse) for combinatorial depth on
+  top of the guaranteed coverage.
 
 Two severities are logged:
 
 - **`NAV_TEST: FAIL …`** — a hard correctness invariant. These must be 0:
   forward progress on x, y never goes backward-then-forward (round-trips),
   **landing on-page** (cursor within the visible range after a jump — catches
-  G/3 mis-landings and the JumpEnd-past-the-EPILOGUE bug), **right column never
-  empty** unless the tail truly can't fill it, **left column never underfilled**
-  before the end, and a real-path cursor-is-dialogue check.
+  G/3 mis-landings), **right column never empty** unless the tail truly can't
+  fill it, **left column never underfilled** before the end, **jump-to-end
+  reaches the work's end** (no dialogue left below the spread — catches the
+  final-spread-too-early / orphaned-EPILOGUE bug), and a real-path
+  cursor-is-dialogue check.
 - **`NAV_TEST: WARN …`** — a harness-approximation note, *not* a product bug.
   The `SearchJump` step is a simulation (it snaps to `next_dialogue_line`), so a
   landing on a non-dialogue line like `[All exit.]`, and the mid-page

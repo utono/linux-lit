@@ -14,13 +14,27 @@ start, stalls, surfaces a stray window, or you need to understand the
    card never clips its first/last line. Driven by
    `.claude/skills/headless-test/run-headless-test.sh`.
 2. **Navigation fuzz** — auto-start the app's in-process nav-test harness
-   (`src/input/nav_test.rs`) in a randomized mode that runs ~750 seeded-random
-   jumps (plus boundary-stress motifs that hammer `G`/`gg`/the work's tail) and
-   checks invariants after each. Hard correctness checks log `NAV_TEST: FAIL`
-   (must be 0: on-page landing, y never goes forward, right column never empty,
-   left column never underfilled); harness-approximation checks (SearchJump
-   non-dialogue, mid-page scene break, return mismatch) log `NAV_TEST: WARN` and
-   are expected to be non-zero. Driven by env vars, not the screenshot script.
+   (`src/input/nav_test.rs`). Each run is a **deterministic coverage prelude**
+   followed by a **random body** (1400 steps total), and checks invariants after
+   every step. Hard correctness checks log `NAV_TEST: FAIL` (must be 0: on-page
+   landing, y never goes forward, right column never empty, left column never
+   underfilled, **jump-to-end actually reaches the work's end**);
+   harness-approximation checks (SearchJump non-dialogue, mid-page scene break,
+   return mismatch) log `NAV_TEST: WARN` and are expected to be non-zero. Driven
+   by env vars, not the screenshot script.
+
+   **Why a coverage prelude (don't rely on the random seed).** A purely random
+   walk only *samples* scenarios — whether a given (position × action) pair runs
+   depends on the seed, so real bugs hide behind a lucky "0 failures." The
+   prelude (`build_coverage_prelude`) instead drives **every** Step variant from
+   **every** structural anchor on **every** run: from the work start (gg), from
+   the work end (G), from each of the first 24 scene boundaries (gg then k×
+   NextScene), and from 3 mid-page anchors (G then a few PrevDialogue). So every
+   run guarantees, e.g., "G from a distant page", "x on the final spread",
+   "j/q into the EPILOGUE tail", "y off the first spread" — the exact scenarios
+   that surfaced the final-spread/EPILOGUE bugs. The random body then adds
+   combinatorial depth on top. If you add a new nav action or invariant, add the
+   Step to `ALL_STEPS` so the prelude exercises it too.
 
 Both run **inside a nested headless compositor** so they never collide with the
 user's dwl session or seat.

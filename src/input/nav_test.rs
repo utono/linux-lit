@@ -67,12 +67,75 @@ fn build_script() -> Vec<Step> {
     s
 }
 
-/// `fuzz`: a long, deterministic-random mix of every navigation jump, weighted
-/// toward structural jumps and the top/end binds (gg / G) so the harness
-/// stress-tests where the cursor lands after a jump. Each jump is followed by a
-/// landing check in `run_step` (cursor on a dialogue line, within the visible
-/// page, page_top consistent).
+/// Every navigation Step the harness can drive. The coverage prelude exercises
+/// each of these from each structural anchor, so no (position × action)
+/// combination is left to the random seed. SyncAdvance is excluded (it has its
+/// own slow cadence and is covered by the random body).
+const ALL_STEPS: [Step; 10] = [
+    Step::PageForward, Step::PageBackward,
+    Step::NextScene, Step::PrevScene,
+    Step::NextChapter, Step::PrevChapter,
+    Step::JumpTop, Step::JumpEnd,
+    Step::NextDialogue, Step::PrevDialogue,
+];
+
+/// Deterministic COVERAGE prelude: drive every Step from every structural
+/// anchor, so a single run guarantees (anchor × action) coverage regardless of
+/// the random seed. Anchors are reached by replayable jumps:
+///   - work start (gg),
+///   - work end (G),
+///   - each act/scene boundary, reached by gg then N× NextScene,
+///   - the mid-point of a page (a few NextDialogue off an anchor).
+/// After landing on each anchor we fire every Step once (the invariants in
+/// `run_step` then check the landing). This is what makes the fuzz test "all
+/// variations / scenarios" instead of sampling them.
+fn build_coverage_prelude() -> Vec<Step> {
+    let mut s = Vec::new();
+
+    // 1. From the START, every action (re-anchor with gg before each).
+    for st in ALL_STEPS { s.push(Step::JumpTop); s.push(st); }
+
+    // 2. From the END, every action (the final-spread / EPILOGUE scenarios).
+    for st in ALL_STEPS { s.push(Step::JumpEnd); s.push(st); }
+
+    // 3. Sweep scene boundaries: gg, then k× NextScene to reach scene k, then
+    //    every action from there. 24 scenes covers the longest Folger plays;
+    //    NextScene past the last scene is a harmless no-op the invariants allow.
+    for k in 1..=24usize {
+        s.push(Step::JumpTop);
+        for _ in 0..k { s.push(Step::NextScene); }
+        for st in ALL_STEPS { s.push(st);
+            // Return to the same scene anchor before the next action so each
+            // action starts from the boundary, not from wherever the prior one
+            // left the cursor.
+            s.push(Step::JumpTop);
+            for _ in 0..k { s.push(Step::NextScene); }
+        }
+    }
+
+    // 4. MID-PAGE anchors: from the end, walk a few dialogue lines back (so the
+    //    cursor sits mid-spread, not on a boundary) then every action — exercises
+    //    page turns triggered from inside a column rather than at its edge.
+    for back in [3usize, 7, 12] {
+        s.push(Step::JumpEnd);
+        for _ in 0..back { s.push(Step::PrevDialogue); }
+        for st in ALL_STEPS {
+            s.push(st);
+            s.push(Step::JumpEnd);
+            for _ in 0..back { s.push(Step::PrevDialogue); }
+        }
+    }
+    s
+}
+
+/// `fuzz`: a deterministic COVERAGE prelude (every action from every structural
+/// anchor) followed by a long, deterministic-random mix of every navigation jump,
+/// weighted toward structural jumps and the top/end binds (gg / G). The prelude
+/// guarantees scenario coverage every run; the random body adds combinatorial
+/// depth. Each jump is followed by a landing check in `run_step` (cursor on a
+/// dialogue line, within the visible page, page_top consistent).
 fn build_fuzz_script() -> Vec<Step> {
+    let mut s = build_coverage_prelude();
     let mut rng = Lcg(0x9E3779B97F4A7C15);
     let setups = [
         Step::PageForward, Step::PageForward,
@@ -104,7 +167,7 @@ fn build_fuzz_script() -> Vec<Step> {
         // Scene-jump to the last scene then x/y around it.
         &[Step::NextScene, Step::NextScene, Step::JumpEnd, Step::PageBackward, Step::PageForward],
     ];
-    let mut s = Vec::with_capacity(MAX_STEPS);
+    // Random body appends to the coverage prelude (do NOT re-init `s`).
     while s.len() < MAX_STEPS {
         // Mostly random "setup moves then y" blocks, but ~1 in 4 iterations inject
         // a boundary-stress motif so the end/start edges get hammered repeatedly.
@@ -125,7 +188,10 @@ fn build_fuzz_script() -> Vec<Step> {
     s
 }
 
-const MAX_STEPS: usize = 750;
+/// Total fuzz steps. Sized so the deterministic coverage prelude (~900 steps:
+/// every action from start, end, 24 scene boundaries, and 3 mid-page anchors)
+/// always runs in full, followed by a long random body for combinatorial depth.
+const MAX_STEPS: usize = 1400;
 
 pub fn toggle(state_rc: &Rc<RefCell<AppState>>) {
     let mut s = state_rc.borrow_mut();
@@ -480,6 +546,31 @@ fn run_step(s: &mut AppState) {
                 "landing off-page: cursor={} not in visible [{}, {}]",
                 post_line, post_top, last_vis
             ));
+        }
+    }
+
+    // 7. JUMP-TO-END REACHES THE END: after `G`/jump_to_end the spread must be
+    // the CANONICAL last one — nothing left unshown below it
+    // (`next_page_top >= line_count`). A spread that ends mid-work (e.g. the last
+    // full two-column page while a short trailing EPILOGUE is still below) passes
+    // the shape checks (full left, non-empty right) but is the WRONG page: paging
+    // forward would still reveal more. This is the 4308-vs-4316 bug — the cursor
+    // was on-page but the page wasn't the end of the work.
+    if matches!(step, Step::JumpEnd) && s.column_count() == 2 && line_count > 0 {
+        let cs = crate::input::viewport::column_split(s, post_top);
+        if cs.next_page_top < line_count {
+            // Only a bug if the remaining lines actually contain dialogue/content
+            // worth showing (not just trailing blanks/exit markers).
+            let mut remaining_content = false;
+            for i in cs.next_page_top..line_count {
+                if is_dialogue_line(&s.buffer, i) { remaining_content = true; break; }
+            }
+            if remaining_content {
+                fail(s, step_num, step, &format!(
+                    "JUMP-TO-END not at end: next_page_top={} < line_count={} (top={} page_end={}) — content still below",
+                    cs.next_page_top, line_count, post_top, cs.page_end
+                ));
+            }
         }
     }
 
