@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# run-fuzz.sh — run linux-lit's randomized navigation fuzz in an isolated
+# headless cage, then print a failure summary. Safe to run alongside a live
+# `cargo run` session: it uses a private DB copy and log, never the shared ones.
+#
+# A "fuzz run" drives the in-process nav-test harness (src/input/nav_test.rs) in
+# its random mode: ~750 seeded-random jumps (x/y/2/3/gg/G/chapter), with an
+# invariant checked after each (on-page landing, y round-trip, no mid-page scene
+# break, viewport fill, cursor-is-dialogue). Each violation logs `NAV_TEST: FAIL`.
+#
+# MUST be launched through the env wrapper (dbus + AT-SPI), e.g.:
+#   ./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh [--secs N]
+#
+# A bare run (no e2e-env.sh) aborts the app right after `STARTUP: main entry`.
+#
+# Options:
+#   --secs N   how long to let the fuzz run before stopping (default 330 ≈ 5.5m).
+#
+# Output:
+#   /tmp/fuzz-nav.log   the run's log (NAV_TEST: lines live here).
+#   /tmp/fuzz_pid.txt   the cage PID (to stop early: kill "$(cat /tmp/fuzz_pid.txt)").
+set -uo pipefail
+
+if [[ ! -f Cargo.toml || ! -x scripts/e2e-env.sh ]]; then
+  echo "error: run from the linux-lit repo root (need Cargo.toml + scripts/e2e-env.sh)" >&2
+  exit 64
+fi
+
+SECS=330
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --secs) SECS="$2"; shift 2 ;;
+    *) echo "error: unknown option '$1'" >&2; exit 64 ;;
+  esac
+done
+
+BIN=target/debug/linux-lit
+LOG=/tmp/fuzz-nav.log
+DB_SRC="$HOME/utono/litdb/data/lit.db"
+DB_COPY=/tmp/fuzz-lit.db
+
+echo "[fuzz] building…" >&2
+cargo build >&2 || { echo "build failed" >&2; exit 1; }
+
+# Private DB copy — sharing lit.db with a live session causes SQLite lock
+# contention that stalls the fuzz right after the first scene jump.
+echo "[fuzz] copying DB → $DB_COPY" >&2
+cp "$DB_SRC" "$DB_COPY" || { echo "DB copy failed" >&2; exit 1; }
+: > "$LOG"
+
+RT="$(mktemp -d)"
+# Kill our own cage by PID on exit/interrupt — never pkill the binary by name,
+# which would also signal a live `cargo run` session.
+cleanup() { kill "${CAGE:-0}" 2>/dev/null || true; rm -rf "$RT" 2>/dev/null || true; }
+trap cleanup EXIT INT TERM
+
+XDG_RUNTIME_DIR="$RT" GSK_RENDERER=cairo \
+  LIT_DEV=1 LIT_HEADLESS_TEST=1 LIT_NAV_FUZZ=1 \
+  LIT_LOG_PATH="$LOG" LIT_DB_PATH="$DB_COPY" \
+  cage -- "$BIN" >"$RT/cage.log" 2>&1 &
+CAGE=$!
+echo "$CAGE" > /tmp/fuzz_pid.txt
+echo "[fuzz] cage pid=$CAGE, running up to ${SECS}s (log: $LOG)" >&2
+
+# Stall guard: the fuzz auto-starts ~6s in. If it never gets past step 1, the DB
+# copy probably wasn't honored (lock contention) — report and bail early.
+warned=0
+for ((i = 0; i < SECS; i++)); do
+  ps -p "$CAGE" >/dev/null 2>&1 || { echo "[fuzz] cage exited at ${i}s" >&2; break; }
+  if (( i == 25 && warned == 0 )); then
+    steps=$(grep -c "NAV_TEST: step" "$LOG" 2>/dev/null || echo 0)
+    if (( steps <= 1 )); then
+      echo "[fuzz] WARNING: only $steps step(s) after 25s — likely a stall " \
+           "(DB lock contention? check LIT_DB_PATH / the copy)." >&2
+    fi
+    warned=1
+  fi
+  sleep 1
+done
+
+kill "$CAGE" 2>/dev/null || true
+sleep 1
+
+steps=$(grep -c "NAV_TEST: step" "$LOG" 2>/dev/null || echo 0)
+fails=$(grep -c "NAV_TEST: FAIL" "$LOG" 2>/dev/null || echo 0)
+echo >&2
+echo "[fuzz] done: $steps steps, $fails failures" >&2
+echo "[fuzz] failure summary by category:" >&2
+grep "NAV_TEST: FAIL" "$LOG" 2>/dev/null \
+  | sed -E 's/.*FAIL step=[0-9]+ ([A-Za-z]+) /\1: /' \
+  | sed -E 's/[0-9]+/N/g' | sort | uniq -c | sort -rn >&2 || true
+echo "[fuzz] full log: $LOG  (e.g. rg 'NAV_TEST: FAIL' $LOG | rg -B2 'step=NNN')" >&2

@@ -128,73 +128,75 @@ off-page landing and the right-column mid-page scene break.)
 
 ## How to run the fuzz
 
-The three env overrides above make a fuzz run safe to launch **even while a live
-`cargo run` session is open** — it touches no shared file. Steps:
+Use the `headless-test` skill's bundled launcher. It builds, makes a private DB
+copy, sets all the env overrides, launches an isolated cage, runs for ~5.5 min,
+kills its own cage by PID, and prints a failure summary. It's safe to run **even
+while a live `cargo run` session is open** — it touches no shared file. Always
+go through the env wrapper (`e2e-env.sh`, which supplies dbus + AT-SPI):
 
-1. **Build** the debug binary the cage will run:
+```bash
+cd ~/utono/linux-lit
+./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh
+# shorter run while iterating:
+./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh --secs 90
+```
 
-   ```bash
-   cd ~/utono/linux-lit && cargo build
-   ```
+It writes the run log to `/tmp/fuzz-nav.log` and the cage PID to
+`/tmp/fuzz_pid.txt`, and warns on stderr if the fuzz is still at ≤1 step after
+25 s (the classic DB-lock-contention stall — see below).
 
-2. **Prepare the isolated launcher.** It copies the DB, sets all the env
-   overrides, runs for ~5.5 min, and kills its own cage by recorded PID:
+Watch progress / triage at any time:
 
-   ```bash
-   : > /tmp/fuzz-nav.log
-   cp ~/utono/litdb/data/lit.db /tmp/fuzz-lit.db
-   cat > /tmp/fuzz-launch.sh <<'EOF'
-   #!/usr/bin/env bash
-   RT="$(mktemp -d)"
-   XDG_RUNTIME_DIR="$RT" GSK_RENDERER=cairo \
-     LIT_DEV=1 LIT_HEADLESS_TEST=1 LIT_NAV_FUZZ=1 \
-     LIT_LOG_PATH=/tmp/fuzz-nav.log LIT_DB_PATH=/tmp/fuzz-lit.db \
-     cage -- ./target/debug/linux-lit >"$RT/cage.log" 2>&1 &
-   CAGE=$!; echo "$CAGE" > /tmp/fuzz_pid.txt
-   for _ in $(seq 1 330); do ps -p "$CAGE" >/dev/null 2>&1 || break; sleep 1; done
-   kill "$CAGE" 2>/dev/null; rm -rf "$RT" 2>/dev/null
-   EOF
-   chmod +x /tmp/fuzz-launch.sh
-   ```
+```bash
+rg -c "NAV_TEST: step" /tmp/fuzz-nav.log     # how many steps have run
+rg "NAV_TEST: FAIL" /tmp/fuzz-nav.log \
+  | sed -E 's/.*FAIL step=[0-9]+ ([A-Za-z]+) /\1: /' \
+  | sed -E 's/[0-9]+/N/g' | sort | uniq -c | sort -rn
+# one failure in context:  rg "NAV_TEST" /tmp/fuzz-nav.log | rg -B2 "FAIL step=124"
+```
 
-3. **Launch it through the env wrapper** (provides dbus + AT-SPI):
+Stop early — kill **only** the recorded PID. Never `pkill -f
+target/debug/linux-lit`; it would also signal a live session:
 
-   ```bash
-   ./scripts/e2e-env.sh /tmp/fuzz-launch.sh &     # ~5.5 min, backgrounded
-   ```
+```bash
+kill "$(cat /tmp/fuzz_pid.txt)"
+```
 
-4. **Watch progress** (the fuzz auto-starts ~6 s after launch):
-
-   ```bash
-   rg -c "NAV_TEST: step" /tmp/fuzz-nav.log    # how many steps have run
-   ```
-
-   If this stays at `1` for more than a few seconds, the run stalled — almost
-   always DB lock contention, meaning `LIT_DB_PATH` wasn't honored (re-check the
-   copy exists and the env var is set).
-
-5. **Triage the failures** by category once it has run a few hundred steps:
-
-   ```bash
-   rg "NAV_TEST: FAIL" /tmp/fuzz-nav.log \
-     | sed -E 's/.*FAIL step=[0-9]+ ([A-Za-z]+) /\1: /' \
-     | sed -E 's/[0-9]+/N/g' | sort | uniq -c | sort -rn
-   ```
-
-   For a specific failure, look at the raw line and the steps around it:
-   `rg "NAV_TEST" /tmp/fuzz-nav.log | rg -B2 "FAIL step=124"`.
-
-6. **Stop early** (optional) — kill **only** the recorded PID:
-
-   ```bash
-   kill "$(cat /tmp/fuzz_pid.txt)"
-   ```
-
-   Never `pkill -f target/debug/linux-lit` — that also matches a live session.
+The launcher is `~/utono/linux-lit/.claude/skills/headless-test/run-fuzz.sh`; if
+the fuzz stays at 1 step it logs `NAV_TEST: step=0` then nothing (CPU idle, no
+panic) — almost always `LIT_DB_PATH` wasn't honored, i.e. it's contending on the
+shared `lit.db` lock. Confirm `/tmp/fuzz-lit.db` exists and is being passed.
 
 The fuzz tuning (seeded LCG, 400 ms cadence so layout settles, `MAX_STEPS`, the
 per-step invariants) lives in `src/input/nav_test.rs`; the page-navigation
 behaviour it checks is documented in `page-turning-mechanics.md`.
+
+## Targeted navigation trace (manual key injection)
+
+To pin down a *specific* nav behaviour ("does `k` page back at the left-column
+top?"), drive keys with `wtype` in an isolated cage and grep the log — don't
+screenshot. Launch the app exactly like the fuzz (private DB + log,
+`LIT_HEADLESS_TEST=1`, through `e2e-env.sh`) but **without** `LIT_NAV_FUZZ`, then
+inject keys after the window maps. Hard-won lessons:
+
+- **The app resumes near the document END.** Press `g g` first to reset to the
+  top, or a forward jump may be a silent no-op (`x`/`q`/`j` do nothing past the
+  last line) and your test never reaches a page boundary. Give `gg` ~0.5 s to
+  settle before the next key.
+- **`wtype` drops keys when hammered.** Space presses ≥0.18–0.25 s apart; at
+  0.13 s some are silently lost and your counts come out short — which can look
+  like "the page didn't turn" when really the keypress never landed.
+- **One page-turn per boundary crossing is correct.** Don't read "few
+  `NAV_PAGE_FWD` for many `j`" as a bug: a two-column spread holds ~40–80 lines,
+  so dozens of `j` cross only one boundary. Compare the cursor line to the
+  spread's `page_end`, not to the keypress count.
+- **Grep the always-on nav logs, not screenshots.** `NAV_PAGE_FWD` /
+  `NAV_PAGE_BACK` / `NAV_SCENE_FWD` / `NAV_SCENE_BACK` print each page turn with
+  `current` / `old_top` / `new_top`; `ACTION:` prints each dispatched key. A
+  temporary one-line probe in `is_line_fully_visible`'s two-column branch
+  (logging `line` / `page_top` / `page_end`) is the fastest way to see *why* a
+  turn did or didn't fire — that's how the `,`/`k` line-by-line-scroll bug and
+  the right-column-bottom forward behaviour were both diagnosed.
 
 ## Process hygiene — do NOT `pkill` by binary name
 

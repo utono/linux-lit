@@ -58,51 +58,87 @@ the visible range after a jump — catches G/3 mis-landings), no scene break
 mid-page, viewport fill ≥10%, and cursor-is-dialogue. Failures are logged as
 `NAV_TEST: FAIL …` with the step and reason.
 
-Run it **fully isolated** — its own log, runtime dir, AND database copy — so it
-never contends with a live `cargo run` session. (Sharing the `lit.db` file
-causes SQLite lock contention that stalls the fuzz right after the first scene
-jump; sharing the log kills the cage.) The launcher tracks the cage PID so you
-can kill exactly that instance — never `pkill -f target/debug/linux-lit`, which
-would also signal the live session:
+### How to run it (via the skill)
+
+Use the bundled `run-fuzz.sh` — it builds, makes a private DB copy, launches an
+isolated cage with all the env overrides, runs for ~5.5 min, kills its own cage
+by PID, and prints a failure summary. Always go through `e2e-env.sh`:
 
 ```bash
-LOG=/tmp/fuzz-nav.log; : > "$LOG"
-cp ~/utono/litdb/data/lit.db /tmp/fuzz-lit.db          # private DB copy
-cat > /tmp/fuzz-launch.sh <<'EOF'
-#!/usr/bin/env bash
-RT="$(mktemp -d)"
-XDG_RUNTIME_DIR="$RT" GSK_RENDERER=cairo \
-  LIT_DEV=1 LIT_HEADLESS_TEST=1 LIT_NAV_FUZZ=1 \
-  LIT_LOG_PATH=/tmp/fuzz-nav.log LIT_DB_PATH=/tmp/fuzz-lit.db \
-  cage -- ./target/debug/linux-lit >"$RT/cage.log" 2>&1 &
-CAGE=$!; echo "$CAGE" > /tmp/fuzz_pid.txt
-for _ in $(seq 1 330); do ps -p "$CAGE" >/dev/null 2>&1 || break; sleep 1; done
-kill "$CAGE" 2>/dev/null; rm -rf "$RT" 2>/dev/null
-EOF
-chmod +x /tmp/fuzz-launch.sh
-./scripts/e2e-env.sh /tmp/fuzz-launch.sh &     # ~5.5 min run
-# then summarize:
-rg "NAV_TEST: FAIL" /tmp/fuzz-nav.log | sed -E 's/.*FAIL step=[0-9]+ ([A-Za-z]+) /\1: /' \
-  | sed -E 's/[0-9]+/N/g' | sort | uniq -c | sort -rn
-# stop early: kill "$(cat /tmp/fuzz_pid.txt)"   (NEVER pkill the binary by name)
+./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh
+# shorter run while iterating:
+./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh --secs 90
 ```
 
-Key points:
-- **`LIT_NAV_FUZZ=1`** auto-starts the fuzz ~6s after launch (once the work
-  loads) and selects the long random script. **`LIT_LOG_PATH`** redirects the log
-  and **`LIT_DB_PATH`** points at a private DB copy — together they keep the run
-  from touching the live session's log or `lit.db` locks. The PRNG is seeded
-  (deterministic) so a failure replays.
+It writes the log to `/tmp/fuzz-nav.log` and the cage PID to `/tmp/fuzz_pid.txt`.
+Stop early with `kill "$(cat /tmp/fuzz_pid.txt)"` — **never** `pkill -f
+target/debug/linux-lit`, which also signals a live `cargo run` session.
+
+Re-triage an existing log at any time:
+
+```bash
+rg "NAV_TEST: FAIL" /tmp/fuzz-nav.log | sed -E 's/.*FAIL step=[0-9]+ ([A-Za-z]+) /\1: /' \
+  | sed -E 's/[0-9]+/N/g' | sort | uniq -c | sort -rn
+# one failure in context: rg "NAV_TEST" /tmp/fuzz-nav.log | rg -B2 "FAIL step=124"
+```
+
+### Why it's isolated (do not "simplify" away)
+
+- **`LIT_DB_PATH`** points the app at a private copy of `lit.db`. Sharing the
+  real file with a live session causes SQLite lock contention that **stalls the
+  fuzz right after the first scene jump** — the process sits idle (blocked on a
+  lock), only `NAV_TEST: step=0` logs, CPU near 0, no panic. `run-fuzz.sh` warns
+  if it sees ≤1 step after 25s. This was the single hardest bug to diagnose;
+  always keep the DB copy.
+- **`LIT_LOG_PATH`** gives the run its own log; sharing the live session's
+  `linux-lit-dev.log` (which is truncated on launch) clobbers it and can kill
+  the cage.
+- **`LIT_NAV_FUZZ=1`** auto-starts the fuzz ~6s after the work loads and selects
+  the long random script. The PRNG is seeded (deterministic) so a failure
+  replays on re-run.
 - Drive it through **`e2e-env.sh`** (dbus + a11y) — a bare `cage` launch aborts
   right after `STARTUP: main entry`.
 - **cage is headless (offscreen)**, but a launch that detaches or fails cleanup
-  can briefly surface a window. Always kill by the recorded PID and confirm
-  `pgrep -f "cage -- ./target/debug/linux-lit"` is empty when done.
+  can briefly surface a window and several can pile up. `run-fuzz.sh` reaps its
+  own cage via a trap; afterwards confirm
+  `pgrep -f "cage -- ./target/debug/linux-lit"` is empty.
 - Each step waits 400ms so GTK layout settles; faster cadence makes
   pixel-dependent checks (`column_split`, `jump_to_end`) read stale heights and
   report layout-instability false positives.
 - The fixed (non-random) `jumps-only` script still runs via `Ctrl+Shift+T`
   without `LIT_NAV_FUZZ`.
+
+## Targeted navigation trace (manual key injection)
+
+For pinning down a *specific* nav behaviour (e.g. "does `k` page back at the
+left-column top?"), drive keys manually and grep the log rather than
+screenshotting. Lessons from doing this:
+
+- **The app resumes near the document END.** Press `g g` first to reset to the
+  top, or a forward jump may be a no-op (`x`/`q`/`j` do nothing past the last
+  line) and your test reaches no boundary. If `gg` itself seems not to take,
+  give it ~0.5s to settle before the next key.
+- **`wtype` drops keys when hammered.** Space presses ≥0.18–0.25s apart; at
+  0.13s some are silently lost and your counts come out short.
+- **One page-turn per boundary crossing is correct.** Don't read "few
+  `NAV_PAGE_FWD` for many `j`" as a bug — a two-column spread can hold ~40–80
+  lines, so dozens of `j` cross only one boundary. Compare the cursor line to the
+  spread's `page_end`, not to the keypress count.
+- **Grep the always-on nav logs**, not screenshots: `NAV_PAGE_FWD` /
+  `NAV_PAGE_BACK` / `NAV_SCENE_FWD` / `NAV_SCENE_BACK` show each page turn with
+  `current` / `old_top` / `new_top`; `ACTION:` shows each dispatched key. A quick
+  `is_line_fully_visible` probe (temporarily log `line`/`page_top`/`page_end` in
+  its two-column branch) is the fastest way to see why a turn did or didn't fire.
+
+Pattern (run through `e2e-env.sh`, private DB + log like the fuzz):
+
+```bash
+sleep 8                                   # let the window map
+export WAYLAND_DISPLAY=... XDG_RUNTIME_DIR=...   # the cage socket
+wtype -k g; sleep 0.2; wtype -k g; sleep 0.5     # reset to top
+for n in $(seq 1 40); do wtype -k j; sleep 0.2; done
+# then: rg "NAV_PAGE_FWD|ACTION: CursorNextDialogue" /tmp/<log>
+```
 
 ## Why these settings (do not "simplify" away)
 
