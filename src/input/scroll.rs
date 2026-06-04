@@ -754,39 +754,31 @@ pub(crate) fn scroll_after_jump_backward(state: &mut AppState) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
-            // Already on the current spread (e.g. cursor moved up within it or
-            // into the visible left column)? Nothing to do.
+            // Already on the current spread (cursor moved up within it)? Nothing
+            // to do — just the highlight moved. (Per-dialogue backward nav does
+            // NOT scene-snap; that is the `2`/`3` jump's job.)
             if super::viewport::is_line_fully_visible(state, state.current_line) {
                 return;
             }
-            if !state.is_prose()
-                && super::viewport::is_first_dialogue_of_scene(
-                    &state.buffer, &state.translation_lines, state.current_line,
-                )
-            {
-                let mut new_top = super::viewport::back_up_for_speaker(&state.buffer, state.current_line);
-                // Don't snap a short tail scene (lone EPILOGUE) to the left column
-                // with an empty right — redirect to the final-spread anchor so the
-                // tail fills the right column. Mirrors the forward rule.
-                if state.column_count() == 2
-                    && super::viewport::would_empty_right_column(state, new_top)
-                {
-                    new_top = super::navigation::last_page_top(state, state.current_line);
-                }
-                if new_top != state.page_top_line {
-                    log_fmt!("NAV_SCENE_BACK: current={} old_top={} new_top={}", state.current_line, state.page_top_line, new_top);
-                    set_page_instant(state, new_top);
-                }
-            } else if state.current_line < state.page_top_line {
+            if state.current_line < state.page_top_line {
                 // The cursor stepped above the current page top (it was on the
-                // left column's top line). Turn to the PREVIOUS full page rather
-                // than nudging the top up by a speaker — page_turn_top only backs
-                // up over the speaker block, which scrolled line-by-line instead
-                // of paging. prev_page_top finds the prior page boundary.
+                // left column's top line). Turn to the PREVIOUS full page and put
+                // the highlight on the BOTTOM of that page's right column — the
+                // previous dialogue line in reading order, which is what a reader
+                // expects from `,`/`k` at the page top.
                 let np = super::viewport::prev_page_top(state, state.page_top_line);
-                log_fmt!("NAV_PAGE_BACK: prev_page_top new_top={} current={} old_top={}",
-                         np.new_top, state.current_line, state.page_top_line);
                 set_page_instant(state, np.new_top);
+                // Land the cursor on the new spread's last visible dialogue line
+                // (bottom-right), backing up off any trailing non-dialogue.
+                let last_vis = super::viewport::last_fully_visible_line(state, np.new_top);
+                let bottom_dlg = super::viewport::prev_dialogue_line(
+                    &state.buffer, &state.translation_lines, last_vis + 1,
+                )
+                .filter(|&d| d >= np.new_top)
+                .unwrap_or(last_vis);
+                log_fmt!("NAV_PAGE_BACK: new_top={} old_top={} cursor {}->{} (bottom-right)",
+                         np.new_top, state.page_top_line, state.current_line, bottom_dlg);
+                state.current_line = bottom_dlg;
             }
         }
     }
