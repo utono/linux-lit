@@ -436,7 +436,11 @@ impl GlossOverlay {
         self.title.set_vexpand(false);
         self.title.set_valign(Align::Start);
         self.title.set_halign(Align::Start);
-        let left = self.column_width / 8;
+        // Wide side margins keep gloss prose near the ~65-char readability
+        // optimum. Anchor to the actual card width (the overlay is full-screen,
+        // ~1660px), NOT the fixed column_width (1050) — otherwise on a wide card
+        // the margin stays tiny and the text runs nearly edge to edge.
+        let left = card_width / 4;
         self.title.set_margin_start(left);
         self.gloss_view.set_left_margin(left);
         self.gloss_view.set_right_margin(left);
@@ -456,12 +460,20 @@ impl GlossOverlay {
             }
         }
 
-        let bar_left = self.column_width / 8;
+        let bar_left = card_width / 4;
         *self.bar_x.borrow_mut() = bar_left;
 
-        let (ranges, nums) = populate_gloss_buffer(&self.gloss_view, gloss, self.text_margins, bar_left, source_line_numbers);
+        // Gloss prose and speaker headings both keep the normal foreground.
+        // The prose is set off from the verse only by a slightly smaller scale
+        // and looser line spacing (no color dimming, no speaker tint).
+        let (ranges, _nums) = populate_gloss_buffer(
+            &self.gloss_view, gloss, self.text_margins, bar_left, source_line_numbers,
+            None, None,
+        );
         *self.bar_ranges.borrow_mut() = ranges;
-        *self.line_numbers.borrow_mut() = nums;
+        // Glosses do not show verse line numbers (those belong only to the main
+        // reading view); clear any the buffer produced.
+        self.line_numbers.borrow_mut().clear();
         *self.echo_lines.borrow_mut() = Vec::new();
         self.bar_drawing.queue_draw();
 
@@ -519,14 +531,14 @@ impl GlossOverlay {
         // Reuse populate_gloss_buffer_ex (it builds the speaker/verse tags and
         // returns empty bar data for a source-only doc).
         let _ = populate_gloss_buffer_ex(
-            &self.echo_header_view, source_doc, self.text_margins, bar_left, &[], None, dim_color);
+            &self.echo_header_view, source_doc, self.text_margins, bar_left, &[], None, dim_color, None);
         self.echo_header_view.set_visible(true);
         self.echo_rule.set_visible(true);
 
         // Scrolling list: only the echoes. echo_lines/bar_ranges are now indexed
         // from the first echo (no source lines to offset past).
         let (ranges, nums, echo_lines) = populate_gloss_buffer_ex(
-            &self.gloss_view, echo_doc, self.text_margins, bar_left, &[], Some(selected), dim_color);
+            &self.gloss_view, echo_doc, self.text_margins, bar_left, &[], Some(selected), dim_color, None);
         *self.bar_ranges.borrow_mut() = ranges;
         *self.line_numbers.borrow_mut() = nums;
         *self.echo_lines.borrow_mut() = echo_lines;
@@ -589,9 +601,11 @@ impl GlossOverlay {
     pub fn show_synopsis(&self, title: &str, synopsis: &str, card_width: i32, card_height: i32) {
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
-        // Wider side margins keep synopsis prose near the ~65-char readability
-        // optimum instead of the ~80 chars a column_width/8 margin produces.
-        let left = self.column_width / 5;
+        // Match the gloss margins: anchor to the actual (full-screen) card
+        // width, not the fixed column_width, so the synopsis prose sits at the
+        // same ~65-char measure as the gloss instead of running nearly edge to
+        // edge.
+        let left = card_width / 4;
         self.title.set_text(title);
         self.title.set_visible(true);
         self.title.set_vexpand(false);
@@ -1037,14 +1051,14 @@ fn try_extract<'a>(s: &'a str, tag: &str) -> Option<(&'a str, &'a str)> {
     }
 }
 
-fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32, bar_left: i32, source_line_numbers: &[(String, i64)]) -> (Vec<BarRange>, Vec<LineNumber>) {
-    let (ranges, nums, _) = populate_gloss_buffer_ex(view, gloss, _text_margins, bar_left, source_line_numbers, None, None);
+fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32, bar_left: i32, source_line_numbers: &[(String, i64)], gloss_dim: Option<&str>, speaker_accent: Option<&str>) -> (Vec<BarRange>, Vec<LineNumber>) {
+    let (ranges, nums, _) = populate_gloss_buffer_ex(view, gloss, _text_margins, bar_left, source_line_numbers, None, gloss_dim, speaker_accent);
     (ranges, nums)
 }
 
 /// Extended populate that supports highlighting a selected echo (the Nth
 /// `<gloss>` echo element). Returns the buffer line of each echo's quote.
-fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i32, bar_left: i32, source_line_numbers: &[(String, i64)], selected_echo: Option<usize>, dim_color: Option<&str>) -> (Vec<BarRange>, Vec<LineNumber>, Vec<i32>) {
+fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i32, bar_left: i32, source_line_numbers: &[(String, i64)], selected_echo: Option<usize>, dim_color: Option<&str>, speaker_accent: Option<&str>) -> (Vec<BarRange>, Vec<LineNumber>, Vec<i32>) {
     let buffer = view.buffer();
     buffer.set_text("");
 
@@ -1058,13 +1072,23 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
     let quote_speaker = bar_left + 60;
     let quote_verse = quote_speaker + 60;
 
-    let speaker_tag = gtk4::TextTag::builder()
+    // Speaker headings: small-caps, tinted with the accent (root) color so they
+    // read as structural labels rather than body text. Falls back to inherited
+    // fg when no accent is supplied.
+    let apply_accent = |b: gtk4::builders::TextTagBuilder| -> gtk4::builders::TextTagBuilder {
+        match speaker_accent {
+            Some(c) => b.foreground(c),
+            None => b,
+        }
+    };
+
+    let speaker_tag = apply_accent(gtk4::TextTag::builder()
         .name("gloss-speaker")
         .variant(pango::Variant::SmallCaps)
         .weight(400)
         .scale(0.75)
         .left_margin(quote_speaker)
-        .pixels_above_lines(36)
+        .pixels_above_lines(36))
         .build();
 
     let verse_tag = gtk4::TextTag::builder()
@@ -1072,30 +1096,38 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
         .left_margin(quote_verse)
         .build();
 
-    let para_tag = gtk4::TextTag::builder()
+    // Prose gloss recedes behind the verse it explains: dimmer color, slightly
+    // smaller, looser line spacing for the dense commentary. The verse stays the
+    // full-ink "hero".
+    let para_builder = gtk4::TextTag::builder()
         .name("gloss-para")
         .left_margin(quote_speaker)
         .pixels_above_lines(24)
-        .build();
+        .pixels_below_lines(6)
+        .scale(0.92);
+    let para_tag = match dim_color {
+        Some(c) => para_builder.foreground(c).build(),
+        None => para_builder.build(),
+    };
 
-    let speaker_first_tag = gtk4::TextTag::builder()
+    let speaker_first_tag = apply_accent(gtk4::TextTag::builder()
         .name("gloss-speaker-first")
         .variant(pango::Variant::SmallCaps)
         .weight(400)
         .scale(0.75)
-        .left_margin(quote_speaker)
+        .left_margin(quote_speaker))
         .build();
 
     // Speaker label inside the quoted source turn (before the echo list). The
     // turn may span several speakers; keep them tightly spaced to match the
     // reader's 8px speaker rhythm rather than the 36px echo-section gap.
-    let speaker_source_tag = gtk4::TextTag::builder()
+    let speaker_source_tag = apply_accent(gtk4::TextTag::builder()
         .name("gloss-speaker-source")
         .variant(pango::Variant::SmallCaps)
         .weight(400)
         .scale(0.75)
         .left_margin(quote_speaker)
-        .pixels_above_lines(8)
+        .pixels_above_lines(8))
         .build();
 
     let bracket_tag = gtk4::TextTag::builder()

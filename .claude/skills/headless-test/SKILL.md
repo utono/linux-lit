@@ -42,9 +42,11 @@ no focus step needed.
 
 ## After running
 
-Artifacts land in `target/ui/<label>_N.png` (+ `_clip.png`, `.clip.json`). The
-`Stop` hook blocks the turn until you open them and write `target/ui/ui-review.md`
-from `ui-review.template.md` — quote the on-screen text and adjudicate each frame.
+Artifacts land in `target/ui/<label>_N.png` (+ `_clip.png`, `.clip.json`).
+`target/ui/` is auto-cleaned at the start of each run, so it only ever holds the
+current run's captures. **Open every PNG and report what you see inline** in your
+reply (window title, panels, on-screen text, and whether anything clips) — that
+is the verification step. No written review file is required.
 
 ## Why these settings (do not "simplify" away)
 

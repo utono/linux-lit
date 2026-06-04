@@ -832,16 +832,40 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
             crate::config::NavigationMode::EReader => {
-                if is_line_fully_visible(state, cursor_idx) {
+                let top = header_page_top(state, marker_idx);
+                // In two-column mode, if the new scene would render in the RIGHT
+                // column (its header isn't this page's left-column top), re-page
+                // so the scene begins the LEFT column — even if the cursor line
+                // is already on screen. Otherwise keep the cheap highlight-only
+                // path when the cursor is fully visible.
+                if scene_starts_in_right_column(state, top) {
+                    set_page_instant(state, top);
+                } else if is_line_fully_visible(state, cursor_idx) {
                     update_highlight_only(state);
                 } else {
-                    let top = header_page_top(state, marker_idx);
                     set_page_instant(state, top);
                 }
             }
         }
         after_page_change(state, PageChangeReason::Scene);
     }
+}
+
+/// In two-column mode, return true when the scene whose page-top is `scene_top`
+/// would currently render in the RIGHT column — i.e. `scene_top` is not already
+/// the left-column top of the current page. Single-column always returns false
+/// (no left/right distinction). Used to force a re-pagination so a scene jumped
+/// to by `2`/`3` starts the left column instead of the right.
+fn scene_starts_in_right_column(state: &AppState, scene_top: usize) -> bool {
+    if state.column_count() != 2 {
+        return false;
+    }
+    if scene_top == state.page_top_line {
+        return false;
+    }
+    let cs = column_split(state, state.page_top_line);
+    // The scene's header sits in the right column of the current page.
+    scene_top >= cs.split && scene_top <= cs.page_end
 }
 
 /// Given a scene/act marker line, return the line that should sit at the page
@@ -911,7 +935,12 @@ pub fn jump_to_next_scene(state: &mut AppState) {
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => center_cursor(state),
             crate::config::NavigationMode::EReader => {
-                if is_line_fully_visible(state, cursor_idx) {
+                // In two-column mode, if the new scene would render in the RIGHT
+                // column, re-page so it begins the LEFT column even when the
+                // cursor line is already on screen (see jump_to_prev_scene).
+                if scene_starts_in_right_column(state, marker_idx) {
+                    set_page_instant(state, marker_idx);
+                } else if is_line_fully_visible(state, cursor_idx) {
                     update_highlight_only(state);
                 } else {
                     set_page_instant(state, marker_idx);

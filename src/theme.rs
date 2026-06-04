@@ -370,6 +370,20 @@ fn choose_vocab_fg(text_fg: &str, cursor_bg: &str, vocab_orig: &str) -> String {
     rgb_to_hex(r2, g2, b2)
 }
 
+/// Background color for the gloss/synopsis overlay card. A pure-white reading
+/// surface is harsh under a long gloss, so on light themes we warm `text_bg`
+/// toward a paper cream. Dark themes already have a soft, non-garish `text_bg`,
+/// so they are left untouched.
+fn gloss_background(theme: &Theme) -> String {
+    if theme.is_light {
+        // Rosé Pine Dawn's base background: a soft warm off-white that takes the
+        // harsh edge off pure white without reading as a saturated cream.
+        "#faf4ed".to_string()
+    } else {
+        theme.text_bg.clone()
+    }
+}
+
 /// Generate GTK CSS for a theme.
 pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String {
     format!(
@@ -485,9 +499,11 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .word-status {{ font-size: 16px; color: {fg}; opacity: 0.85; }} \
          .chapter-toast {{ font-size: 13px; color: {toast_fg}; opacity: 0.95; }} \
          .gloss-scrim {{ background-color: {root}; }} \
-         .gloss-overlay {{ background-color: {bg}; color: {fg}; border-radius: 12px; \
+         .gloss-overlay {{ background-color: {gloss_bg}; color: {fg}; border-radius: 12px; \
            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45); }} \
-         .gloss-bottom-clip {{ background-color: {bg}; }} \
+         .gloss-bottom-clip {{ background-color: {gloss_bg}; }} \
+         textview.gloss-text {{ background-color: {gloss_bg}; }} \
+         textview.gloss-text text {{ background-color: {gloss_bg}; }} \
          .gloss-title {{ font-size: {size}pt; font-weight: bold; \
            margin-bottom: 12px; padding-bottom: 12px; \
            border-bottom: 1px solid {dim}; }} \
@@ -533,6 +549,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
 ",
         root = theme.root_color,
         bg = theme.text_bg,
+        gloss_bg = gloss_background(theme),
         fg = theme.text_fg,
         dim = theme.dim_fg,
         toast_fg = contrast_on(&theme.root_color),

@@ -135,6 +135,10 @@ pub struct AppState {
     /// Reader position (current_line, page_top_line) saved when search opens, so
     /// Escape can cancel the live-search jump and restore the original page.
     pub search_return_pos: Option<(usize, usize)>,
+    /// Reader position (current_line, page_top_line) saved when a gloss overlay
+    /// opens (picker, MRU toggle, or from synopsis), so Escape restores the page
+    /// the user was on instead of jumping to the glossed passage.
+    pub gloss_return_pos: Option<(usize, usize)>,
     pub search_tag: gtk4::TextTag,
     pub search_current_tag: gtk4::TextTag,
     pub current_time_pos: f64,
@@ -1093,6 +1097,8 @@ pub fn build_window(
 
     // Correction overlay wraps the gamepad overlay
     let gloss_overlay = crate::ui::gloss_overlay::GlossOverlay::new(config.column_width, config.text_margins);
+    // Prose-gloss commentary uses the normal foreground (no dimming) — it is
+    // set off from the verse only by a slightly smaller scale and looser spacing.
     gloss_overlay.attach(&gamepad_overlay.overlay);
     gloss_overlay.overlay.set_vexpand(true);
 
@@ -1315,6 +1321,7 @@ pub fn build_window(
         search_matches: Vec::new(),
         search_match_idx: 0,
         search_return_pos: None,
+        gloss_return_pos: None,
         search_tag,
         search_current_tag,
         current_time_pos: 0.0,

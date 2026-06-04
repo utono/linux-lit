@@ -394,6 +394,10 @@ fn handle_picker_key(
                             gloss_type: all_glosses[0].gloss_type.clone(),
                         };
 
+                        // Remember where the reader was so Escape returns here
+                        // (instead of jumping to the glossed passage).
+                        s.gloss_return_pos = Some((s.current_line, s.page_top_line));
+
                         let cw = s.content_hbox.width();
                         let h = s.content_hbox.height();
                         let source_lines: Vec<(String, i64)> = Vec::new();
@@ -682,31 +686,18 @@ fn handle_gloss_key(
             true
         }
         "Escape" | "n" => {
-            let should_scroll = {
-                let mut s = state.borrow_mut();
-                s.gloss_overlay.hide();
-                s.input_mode = crate::app::InputMode::Reader;
-                let from_picker = s.gloss_opened_from_picker;
-                s.gloss_opened_from_picker = false;
-                from_picker
-            };
-            if should_scroll {
-                let mut s = state.borrow_mut();
-                let buffer_line = s.gloss_context.as_ref().and_then(|ctx| {
-                    let citation = &ctx.start_citation;
-                    let work = s.current_work.as_ref()?;
-                    let work_idx = work.lines.iter().position(|l| l.citation == *citation)?;
-                    if let Some(ref lm) = s.line_map {
-                        Some(lm.work_to_buffer[work_idx])
-                    } else {
-                        Some(work_idx)
-                    }
-                });
-                if let Some(bl) = buffer_line {
-                    s.current_line = bl;
-                    navigation::scroll_cursor_top(&mut s);
-                    navigation::update_highlight_only(&mut s);
-                }
+            let mut s = state.borrow_mut();
+            s.gloss_overlay.hide();
+            s.input_mode = crate::app::InputMode::Reader;
+            s.gloss_opened_from_picker = false;
+            // Return to the exact page the user was on before the gloss opened
+            // (saved by every open path) rather than jumping to the glossed
+            // passage. resnap_page re-tiles the original page cleanly.
+            if let Some((line, top)) = s.gloss_return_pos.take() {
+                s.current_line = line;
+                s.page_top_line = top;
+                crate::input::scroll::resnap_page(&mut s);
+                crate::input::highlight::update_highlight(&mut s);
             }
             true
         }

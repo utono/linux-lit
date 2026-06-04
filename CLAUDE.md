@@ -150,14 +150,13 @@ Design notes (so you don't re-derive them):
 
 ## UI review protocol
 
-After any e2e run, screenshots land in `target/ui/`. The `Stop` hook
-(`.claude/hooks/require-ui-review.sh`, wired in `.claude/settings.json`) blocks
-the turn until `target/ui/ui-review.md` exists, is newer than the latest
-screenshot, references each `<name>.png`, and addresses each `*.suspects.txt`
-entry. Write it from `ui-review.template.md` — open every PNG (and any
-`_annotated.png`/`_clip.png` overlay), quote the on-screen text, and adjudicate
-each flagged suspect as a real bug or a false positive. A passing exit code is
-not enough; clipping/layout bugs are caught by eye.
+After any e2e run, screenshots land in `target/ui/` (auto-cleaned at the start
+of each run, so the directory only holds the current run's captures). **Open
+every PNG — and any `_clip.png` overlay — and report what you see inline** in
+your reply: quote the on-screen text and call out any clipping or layout problem
+by eye. A passing exit code is not enough; clipping/layout bugs are caught by
+looking. No written review file is required (there is no longer a `Stop` hook
+gating this).
 
 ## Key Files
 

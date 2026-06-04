@@ -77,6 +77,11 @@ DEV_LOG="$HOME/utono/linux-lit/linux-lit-dev.log"
 UIDIR=target/ui
 mkdir -p "$UIDIR"
 
+# Auto-clean stale artifacts so a run only ever contains THIS turn's captures
+# (no leftover screenshots from prior, unrelated runs to wade back through).
+rm -f "$UIDIR"/*.png "$UIDIR"/*.clip.json "$UIDIR"/*.json \
+      "$UIDIR"/*.suspects.txt 2>/dev/null || true
+
 # --- build -------------------------------------------------------------------
 echo "[headless-test] building…" >&2
 cargo build >&2 || { echo "build failed" >&2; exit 1; }
@@ -178,5 +183,5 @@ else
   done
 fi
 
-echo "[headless-test] artifacts in $UIDIR/ — open the PNGs and write $UIDIR/ui-review.md" >&2
+echo "[headless-test] artifacts in $UIDIR/ — open the PNGs and report what you see inline" >&2
 exit "$FAILED"

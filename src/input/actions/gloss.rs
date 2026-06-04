@@ -489,6 +489,13 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         let mut s = state.borrow_mut();
         s.gloss_overlay.hide();
         s.input_mode = crate::app::InputMode::Reader;
+        // Restore the page the user was on before toggling the gloss open.
+        if let Some((line, top)) = s.gloss_return_pos.take() {
+            s.current_line = line;
+            s.page_top_line = top;
+            crate::input::scroll::resnap_page(&mut s);
+            crate::input::highlight::update_highlight(&mut s);
+        }
         return;
     }
     let has_gloss = !state.borrow().gloss_list.is_empty();
@@ -506,7 +513,10 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         );
         s.gloss_overlay.set_position(idx, s.gloss_list.len());
         drop(s);
-        state.borrow_mut().input_mode = crate::app::InputMode::GlossOverlay;
+        let mut s = state.borrow_mut();
+        // Remember the current page so toggling/Escape returns here.
+        s.gloss_return_pos = Some((s.current_line, s.page_top_line));
+        s.input_mode = crate::app::InputMode::GlossOverlay;
     }
 }
 
