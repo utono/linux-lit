@@ -451,12 +451,13 @@ fn run_step(s: &mut AppState) {
     }
 
     // 2c. PAGE-BACK TILING: a `y` page turn must land on the page that tiles
-    // cleanly INTO the page we came from — its forward boundary
-    // (`column_split(post_top).next_page_top`) should reach `pre_top`. If it
-    // falls short, the back-page overlaps the page we came from (the EPILOGUE
-    // final-spread `y`-overlap bug, where `prev_page_top` of a forward-pulled top
-    // overshot via the lpp approximation). Two-column only; skip the no-op and
-    // the first-spread guard (pre_top==0 stays put).
+    // EXACTLY into the page we came from — its forward boundary
+    // (`column_split(post_top).next_page_top`) should EQUAL `pre_top`.
+    //   * fwd > pre_top  → the back-page's content runs PAST the old top, so the
+    //     lines [pre_top, fwd) are shown on BOTH pages (overlap). This is the
+    //     bug behind the y-from-final-spread spread that barely moved.
+    //   * fwd < pre_top  → a gap (content between the pages shown on neither).
+    // Two-column only; skip the no-op and the first-spread guard (pre_top==0).
     if matches!(step, Step::PageBackward)
         && s.column_count() == 2
         && post_top < pre_top
@@ -464,13 +465,61 @@ fn run_step(s: &mut AppState) {
         && line_count > 0
     {
         let fwd = crate::input::viewport::column_split(s, post_top).next_page_top;
-        // `fwd < pre_top` means content between the back-page's end and the old
-        // top is shown twice (overlap). Allow `fwd >= pre_top` (exact tile, or a
-        // forward-pulled old top that the back-page legitimately covers).
-        if fwd < pre_top {
+        if fwd > pre_top {
             fail(s, step_num, step, &format!(
-                "y OVERLAP: back-page top={} ends at next_page_top={} but came from pre_top={} (gap of {} lines shown twice)",
+                "y OVERLAP: back-page top={} runs to next_page_top={} PAST old top={} ({} lines shown twice)",
+                post_top, fwd, pre_top, fwd - pre_top
+            ));
+        } else if fwd < pre_top {
+            fail(s, step_num, step, &format!(
+                "y GAP: back-page top={} ends at next_page_top={} before old top={} ({} lines skipped)",
                 post_top, fwd, pre_top, pre_top - fwd
+            ));
+        }
+    }
+
+    // 2d. FORWARD TILING: an `x` page turn must land on the page that tiles
+    // EXACTLY off the page we came from — the OLD page's forward boundary
+    // (`column_split(pre_top).next_page_top`) should EQUAL the new top. If they
+    // differ, consecutive pages overlap (the same content shown twice) or gap.
+    // Skip the final-spread no-turn (cursor moves, page doesn't) and the
+    // would-empty redirect to the anchor (a legitimate non-adjacent jump).
+    if matches!(step, Step::PageForward)
+        && s.column_count() == 2
+        && post_top > pre_top
+        && line_count > 0
+    {
+        let expected = crate::input::viewport::column_split(s, pre_top).next_page_top;
+        // The forward path may redirect onto the final-spread anchor when the
+        // natural next page would empty the right column — that's an intentional
+        // non-adjacent landing, not an overlap. Only flag when the landing is
+        // BELOW the natural next boundary (content shown twice).
+        if post_top < expected {
+            fail(s, step_num, step, &format!(
+                "x OVERLAP: from top={} expected next={} but landed at {} ({} lines shown twice)",
+                pre_top, expected, post_top, expected - post_top
+            ));
+        }
+    }
+
+    // 2e. RIGHT-COLUMN BALANCE: on any non-final two-column spread the right
+    // column must hold a reasonable share of the spread. A right column with far
+    // fewer lines than the left (while content remains below) is an unbalanced
+    // spread — the page boundary landed too early. Exempt the genuine final
+    // spread (short tail) and pages whose remaining content legitimately ends.
+    if s.column_count() == 2 && line_count > 0 && !s.loading_work.get() {
+        let cs = crate::input::viewport::column_split(s, post_top);
+        let left_lines = cs.split.saturating_sub(post_top);
+        let right_lines = (cs.page_end + 1).saturating_sub(cs.split);
+        let more_below = cs.next_page_top < line_count
+            && (cs.next_page_top..line_count).any(|i| is_dialogue_line(&s.buffer, i));
+        // Unbalanced: right column is less than a third of the left AND there's
+        // more content that could have filled it. (The final spread, where
+        // `more_below` is false, is exempt.)
+        if more_below && right_lines * 3 < left_lines && left_lines >= 12 {
+            fail(s, step_num, step, &format!(
+                "UNBALANCED SPREAD: top={} left={} lines right={} lines (more content below) split={} page_end={}",
+                post_top, left_lines, right_lines, cs.split, cs.page_end
             ));
         }
     }
