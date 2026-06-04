@@ -174,11 +174,24 @@ behaviour it checks is documented in `page-turning-mechanics.md`.
 ## Targeted navigation trace (manual key injection)
 
 To pin down a *specific* nav behaviour ("does `k` page back at the left-column
-top?"), drive keys with `wtype` in an isolated cage and grep the log — don't
-screenshot. Launch the app exactly like the fuzz (private DB + log,
-`LIT_HEADLESS_TEST=1`, through `e2e-env.sh`) but **without** `LIT_NAV_FUZZ`, then
-inject keys after the window maps. Hard-won lessons:
+top?"), drive keys with `wtype` in an isolated cage and grep the log — and use a
+before/after screenshot to confirm the visible result. Launch the app exactly
+like the fuzz (private DB + log, `LIT_HEADLESS_TEST=1`, through `e2e-env.sh`) but
+**without** `LIT_NAV_FUZZ`, then inject keys after the window maps. Hard-won
+lessons:
 
+- **Pick the work + start position via `config-dev.json`, not the live config.**
+  In dev mode (`LIT_DEV=1`, which every headless launch sets) the app reads
+  `~/.config/linux-lit/config-dev.json` — a *separate* file from the live
+  session's `config.json` (`src/config.rs::config_path`). Set its `last_work`
+  and `work_positions` to land the test on a specific work and spread (e.g.
+  `"last_work": "AWW"`, `"work_positions": { "AWW": 4342 }` to start near All's
+  Well's EPILOGUE). This is how the empty-right-column EPILOGUE bug was
+  reproduced — the default work is whatever `config-dev.json` last held, which is
+  often a different (prose) work than the one you're debugging. Editing it is
+  safe; it never touches the live `config.json`. **Caveat:** a headless run
+  rewrites `config-dev.json` on exit (it persists its own last position), so
+  re-set it before each run if the position drifted.
 - **The app resumes near the document END.** Press `g g` first to reset to the
   top, or a forward jump may be a silent no-op (`x`/`q`/`j` do nothing past the
   last line) and your test never reaches a page boundary. Give `gg` ~0.5 s to
@@ -190,13 +203,27 @@ inject keys after the window maps. Hard-won lessons:
   `NAV_PAGE_FWD` for many `j`" as a bug: a two-column spread holds ~40–80 lines,
   so dozens of `j` cross only one boundary. Compare the cursor line to the
   spread's `page_end`, not to the keypress count.
-- **Grep the always-on nav logs, not screenshots.** `NAV_PAGE_FWD` /
-  `NAV_PAGE_BACK` / `NAV_SCENE_FWD` / `NAV_SCENE_BACK` print each page turn with
+- **Grep the always-on nav logs first, but confirm by screenshot.** `NAV_PAGE_FWD`
+  / `NAV_PAGE_BACK` / `NAV_SCENE_FWD` / `NAV_SCENE_BACK` print each page turn with
   `current` / `old_top` / `new_top`; `ACTION:` prints each dispatched key. A
   temporary one-line probe in `is_line_fully_visible`'s two-column branch
   (logging `line` / `page_top` / `page_end`) is the fastest way to see *why* a
-  turn did or didn't fire — that's how the `,`/`k` line-by-line-scroll bug and
-  the right-column-bottom forward behaviour were both diagnosed.
+  turn did or didn't fire. But a "no turn fired" log can still hide a layout bug
+  (e.g. the EPILOGUE rendering in the *wrong* column) — `grim` a `/tmp/before.png`
+  and `/tmp/after.png` around the key sequence and read them. That's how the
+  empty-right-column EPILOGUE behaviour was distinguished from a clean spread:
+  the log said the turn was suppressed, but the screenshot showed which column
+  the tail actually landed in.
+
+A typical drive sequence (inside the launch script, after the socket is up):
+
+```bash
+export WAYLAND_DISPLAY=... XDG_RUNTIME_DIR=...    # the cage's socket + rt dir
+for n in $(seq 1 5); do wtype -k k; sleep 0.28; done   # cursor up onto left col
+grim /tmp/mid.png
+for n in $(seq 1 10); do wtype -k j; sleep 0.30; done  # forward across boundary
+grim /tmp/after.png
+```
 
 ## Process hygiene — do NOT `pkill` by binary name
 
@@ -209,10 +236,23 @@ stray instance is disruptive.
   PID:** `kill "$(cat /tmp/fuzz_pid.txt)"`.
 - **Never** `pkill -f target/debug/linux-lit` — that pattern also matches the
   user's live `cargo run` session and will signal it.
-- When done, confirm nothing stray remains:
+- **Telling the live session apart from a test instance:** a test app is a child
+  of a `cage` process; the user's `cargo run` session is a child of a `zsh` and
+  has a long `ELAPSED`. But note a test cage and the live session can share the
+  *same* parent zsh (the one Claude Code runs commands under), so don't identify
+  by parent alone — combine signals:
 
   ```bash
-  pgrep -af "cage -- ./target/debug/linux-lit"   # should be empty
+  ps -eo pid,ppid,etime,cmd | rg "[t]arget/debug/linux-lit"   # elapsed + parent
+  ps -o pid,cmd -p <PPID>                                     # is the parent a cage?
+  ```
+
+  A standalone `target/debug/linux-lit` with a multi-minute `ELAPSED` and a
+  non-cage parent is the live session — leave it alone.
+- When done, confirm nothing stray remains (the live session may still show):
+
+  ```bash
+  pgrep -af "cage -- ./target/debug/linux-lit"   # test cages — should be empty
   ```
 
 ## Symptom → cause quick reference

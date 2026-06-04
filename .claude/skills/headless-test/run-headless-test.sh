@@ -47,6 +47,49 @@
 #   ./scripts/e2e-env.sh .claude/skills/headless-test/run-headless-test.sh …
 set -uo pipefail
 
+usage() {
+  cat >&2 <<'USAGE'
+headless-test — drive linux-lit's GUI headlessly (screenshot/clip tests + nav fuzz).
+
+ALWAYS run through the env wrapper (dbus + AT-SPI + software GL):
+  ./scripts/e2e-env.sh .claude/skills/headless-test/run-headless-test.sh [options]
+
+Screenshot / clipping test (this script):
+  --label NAME       output basename under target/ui/ (default: headless)
+  --setup "KEYS"     keys to inject once after launch, before the first capture
+  --step "KEYS"      a checkpoint: inject keys, settle, capture. Repeat per step.
+                     (a _0 baseline is captured before any --step)
+  --no-clip          screenshot + review only; skip the line-clipping assertion
+  --region X,Y,W,H   force the clip region (default: the app-reported viewport)
+  --settle MS        pause after each step before capture (default 500)
+
+  Key tokens (space-separated within a --step): a bare token is one xkb keysym
+  (j, x, g, Escape); `+mod:key` is a chord (+shift:g -> Shift+G). Repeat to repeat.
+
+  Examples:
+    ./scripts/e2e-env.sh .claude/skills/headless-test/run-headless-test.sh \
+      --label clip --step "g g" --step "x x x" --step "+shift:g"
+    ./scripts/e2e-env.sh .claude/skills/headless-test/run-headless-test.sh \
+      --label synopsis --setup "h" --no-clip
+
+Navigation fuzz test (separate launcher in this skill):
+  ./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh [--secs N]
+    Runs ~750 seeded-random nav jumps with per-step invariant checks. Isolated
+    (private DB copy + log) so it's safe alongside a live `cargo run`. Triage:
+      rg "NAV_TEST: FAIL" /tmp/fuzz-nav.log | sed -E 's/.*FAIL step=[0-9]+ ([A-Za-z]+) /\1: /' \
+        | sed -E 's/[0-9]+/N/g' | sort | uniq -c | sort -rn
+    Stop early: kill "$(cat /tmp/fuzz_pid.txt)"   (never pkill the binary by name)
+
+See docs/troubleshooting/headless-testing.md for the full guide.
+USAGE
+}
+
+# No arguments → show usage (including how to run the fuzz) and exit.
+if [[ $# -eq 0 ]]; then
+  usage
+  exit 0
+fi
+
 # --- must run from the repo root (holds Cargo.toml, scripts/, target/) --------
 if [[ ! -f Cargo.toml || ! -x scripts/e2e-env.sh ]]; then
   echo "error: run from the linux-lit repo root (need Cargo.toml + scripts/e2e-env.sh)" >&2
@@ -68,7 +111,8 @@ while [[ $# -gt 0 ]]; do
     --no-clip) NO_CLIP=1; shift ;;
     --region) FORCE_REGION="$2"; shift 2 ;;
     --settle) SETTLE_MS="$2"; shift 2 ;;
-    *) echo "error: unknown option '$1'" >&2; exit 64 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "error: unknown option '$1'" >&2; echo >&2; usage; exit 64 ;;
   esac
 done
 

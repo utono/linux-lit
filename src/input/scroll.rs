@@ -754,12 +754,25 @@ pub(crate) fn scroll_after_jump_backward(state: &mut AppState) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
+            // Already on the current spread (e.g. cursor moved up within it or
+            // into the visible left column)? Nothing to do.
+            if super::viewport::is_line_fully_visible(state, state.current_line) {
+                return;
+            }
             if !state.is_prose()
                 && super::viewport::is_first_dialogue_of_scene(
                     &state.buffer, &state.translation_lines, state.current_line,
                 )
             {
-                let new_top = super::viewport::back_up_for_speaker(&state.buffer, state.current_line);
+                let mut new_top = super::viewport::back_up_for_speaker(&state.buffer, state.current_line);
+                // Don't snap a short tail scene (lone EPILOGUE) to the left column
+                // with an empty right — redirect to the final-spread anchor so the
+                // tail fills the right column. Mirrors the forward rule.
+                if state.column_count() == 2
+                    && super::viewport::would_empty_right_column(state, new_top)
+                {
+                    new_top = super::navigation::last_page_top(state, state.current_line);
+                }
                 if new_top != state.page_top_line {
                     log_fmt!("NAV_SCENE_BACK: current={} old_top={} new_top={}", state.current_line, state.page_top_line, new_top);
                     set_page_instant(state, new_top);
