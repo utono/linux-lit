@@ -211,10 +211,32 @@ fn main() {
                                         let scene = (line.div1, line.div2);
                                         let old_scene = s.current_sync_scene;
                                         s.current_sync_scene = Some(scene);
-                                        if old_scene.is_some() && old_scene != Some(scene) {
-                                            let top = crate::input::viewport::scene_header_top(
+                                        // Skip the scene snap when the new scene
+                                        // is ALREADY visible on the current spread
+                                        // (e.g. in the right column because it's
+                                        // the work's last content): snapping would
+                                        // re-page and empty the right column.
+                                        let already_visible =
+                                            crate::input::viewport::is_line_fully_visible(
+                                                &s, buffer_line,
+                                            );
+                                        if old_scene.is_some()
+                                            && old_scene != Some(scene)
+                                            && !already_visible
+                                        {
+                                            let mut top = crate::input::viewport::scene_header_top(
                                                 &s.buffer, buffer_line,
                                             );
+                                            // If the scene-header spread would leave
+                                            // the right column empty (lone EPILOGUE),
+                                            // redirect to the final-spread anchor so
+                                            // the tail fills both columns. Mirrors
+                                            // the q/j forward-nav rule.
+                                            if s.column_count() == 2
+                                                && crate::input::viewport::would_empty_right_column(&s, top)
+                                            {
+                                                top = crate::input::navigation::last_page_top(&s, buffer_line);
+                                            }
                                             if top != s.page_top_line {
                                                 crate::logging::log_always(&format!(
                                                     "SYNC_SCENE_SCROLL: {:?}->{:?} top={} current={} page_top={}",

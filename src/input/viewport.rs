@@ -1024,6 +1024,22 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
     ColumnSplit { split, page_end: right.last_fit, next_page_top: next_top }
 }
 
+/// True when a two-column spread starting at `top` would have an EMPTY right
+/// column — i.e. all remaining content fits in the left column, so the right
+/// column would render blank. Used to suppress a forward page turn onto the
+/// work's short tail (e.g. a lone EPILOGUE): the tail should stay as the right
+/// column of the prior spread rather than becoming a lonely left column.
+pub(crate) fn would_empty_right_column(state: &AppState, top: usize) -> bool {
+    let line_count = state.effective_line_count();
+    if top >= line_count {
+        return true;
+    }
+    let cs = column_split(state, top);
+    // No right column when the split is at/after the end, or the right range is
+    // empty (page_end falls before split).
+    cs.split >= line_count || cs.page_end < cs.split
+}
+
 /// Result of stepping forward one page from `top`: the new page-top
 /// (after backing up for a speaker) and the next dialogue line that
 /// would become `state.current_line`. Both equal `line_count` when there

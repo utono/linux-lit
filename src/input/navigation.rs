@@ -202,21 +202,22 @@ pub fn jump_to_end(state: &mut AppState) {
     }
     state.current_line = target;
 
-    // Compute new_top such that line `new_top`'s y can actually be reached
-    // by GTK's vadjustment (no clamping). The constraint:
-    //   y(new_top) <= upper - page_size
-    //              = (top_margin + content_height + bottom_margin) - page_size
-    // Equivalently, the sum of line heights from new_top to line_count-1
-    // (i.e., `content_below_new_top`) must be >= page_size - bottom_margin
-    // for line `new_top` to be scrollable to the viewport top.
-    //
-    // Walk backward from line_count-1, accumulating heights, stop as soon
-    // as cumulative >= required. The smallest top satisfying this is the
-    // anchor. Sidesteps the GTK scroll-clamp bug seen with the simple
-    // `line_count - lpp` heuristic.
+    let new_top = last_page_top(state, target);
+    state.page_back_stack.clear();
+    state.page_back_stack.push(state.page_top_line);
+    set_page_instant(state, new_top);
+    after_page_change(state, PageChangeReason::JumpToLine);
+}
+
+/// The page top of the FINAL spread that contains `target`, sized so the work's
+/// tail content fills both columns (two-column) rather than landing `target` as
+/// a lonely left column with an empty right. Used by `jump_to_end` and by the
+/// forward-nav guard that redirects an "empty right column" turn to this anchor.
+pub(crate) fn last_page_top(state: &AppState, target: usize) -> usize {
+    let line_count = state.effective_line_count();
     let widget_height = state.text_view.height();
     let columns = state.column_count() as i32;
-    let new_top = if columns == 2 && widget_height > 0 && line_count > 0 {
+    if columns == 2 && widget_height > 0 && line_count > 0 {
         // Two-column: column_split is the only reliable page-fill oracle (the
         // raw pixel-capacity estimate over-counts because each column is trimmed
         // and can read a stale widget height). Start from a safe over-estimate
@@ -244,6 +245,22 @@ pub fn jump_to_end(state: &mut AppState) {
                 break;
             }
         }
+        // The forward walk lands on the spread that CONTAINS target, but if the
+        // tail is short the target may sit in the LEFT column with an empty right
+        // (a lone EPILOGUE). Back the top up — line by line, bounded — until the
+        // right column is non-empty AND still contains the target, so the tail
+        // fills the right column.
+        let mut guard2 = 0;
+        while top > 0 && guard2 < line_count {
+            let cs = super::viewport::column_split(state, top);
+            let right_nonempty = cs.split < line_count && cs.page_end >= cs.split;
+            let target_in_right = target >= cs.split && target <= cs.page_end;
+            if right_nonempty && target_in_right {
+                break;
+            }
+            top -= 1;
+            guard2 += 1;
+        }
         top
     } else if widget_height > 0 && line_count > 0 {
         // Single column: accumulate `widget_height` of content backward.
@@ -268,11 +285,7 @@ pub fn jump_to_end(state: &mut AppState) {
         // Layout not ready — fall back to lpp anchor (scaled by column count).
         let lpp = lines_per_page(state) * (columns as usize);
         line_count.saturating_sub(lpp)
-    };
-    state.page_back_stack.clear();
-    state.page_back_stack.push(state.page_top_line);
-    set_page_instant(state, new_top);
-    after_page_change(state, PageChangeReason::JumpToLine);
+    }
 }
 
 /// Toggle between one- and two-column e-reader layout (Alt+[). No-op in scroll

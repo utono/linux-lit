@@ -64,7 +64,16 @@ pub fn update_highlight_and_advance_page(state: &mut AppState) {
                 state.current_line, last_vis, state.page_top_line
             ));
             if state.current_line > last_vis {
-                let new_top = page_turn_top(&state.buffer, state.current_line);
+                let mut new_top = page_turn_top(&state.buffer, state.current_line);
+                // Don't turn onto a spread whose right column would be empty (the
+                // work's short tail, e.g. a lone EPILOGUE) — redirect to the
+                // final-spread anchor so the tail fills both columns. Mirrors the
+                // q/j forward-nav rule.
+                if state.column_count() == 2
+                    && crate::input::viewport::would_empty_right_column(state, new_top)
+                {
+                    new_top = super::navigation::last_page_top(state, state.current_line);
+                }
                 crate::logging::log_always(&format!(
                     "SYNC_PAGE_TURN: current={} last_vis={} old_top={} new_top={}",
                     state.current_line, last_vis, state.page_top_line, new_top,

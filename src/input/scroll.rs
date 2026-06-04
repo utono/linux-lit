@@ -709,18 +709,38 @@ pub(crate) fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize)
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
-            if !state.is_prose()
+            // If the cursor's new line is ALREADY on the current spread (e.g. it
+            // moved into the right column), do nothing — the caller updated the
+            // highlight; no re-page needed.
+            if super::viewport::is_line_fully_visible(state, state.current_line) {
+                return;
+            }
+            // Compute where a turn/snap would land.
+            let new_top = if !state.is_prose()
                 && super::viewport::is_first_dialogue_of_scene(
                     &state.buffer, &state.translation_lines, state.current_line,
                 )
             {
-                let new_top = super::viewport::back_up_for_speaker(&state.buffer, state.current_line);
-                if new_top != state.page_top_line {
-                    log_fmt!("NAV_SCENE_FWD: current={} old_top={} new_top={}", state.current_line, state.page_top_line, new_top);
-                    set_page_instant(state, new_top);
-                }
-            } else if !super::viewport::is_line_fully_visible(state, state.current_line) {
-                let new_top = super::viewport::page_turn_top(&state.buffer, state.current_line);
+                super::viewport::back_up_for_speaker(&state.buffer, state.current_line)
+            } else {
+                super::viewport::page_turn_top(&state.buffer, state.current_line)
+            };
+            // If turning to `new_top` would leave the RIGHT column empty (the new
+            // page is the work's short tail, e.g. a lone EPILOGUE), redirect to
+            // the final-spread anchor instead — the one that fills BOTH columns
+            // with the tail content (EPILOGUE in the right column). This keeps the
+            // cursor on a full two-column spread; the right column is never empty.
+            let new_top = if state.column_count() == 2
+                && super::viewport::would_empty_right_column(state, new_top)
+            {
+                let anchor = super::navigation::last_page_top(state, state.current_line);
+                log_fmt!("NAV_FWD_LASTPAGE: current={} page_top={} would-empty new_top={} -> anchor={}",
+                         state.current_line, state.page_top_line, new_top, anchor);
+                anchor
+            } else {
+                new_top
+            };
+            if new_top != state.page_top_line {
                 log_fmt!("NAV_PAGE_FWD: current={} old_top={} new_top={}", state.current_line, state.page_top_line, new_top);
                 set_page_instant(state, new_top);
             }
