@@ -1,6 +1,6 @@
 use gtk4::prelude::*;
 use gtk4::{self, Align, Label, Overlay};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 struct BarRange {
@@ -48,6 +48,11 @@ pub struct GlossOverlay {
     /// the global `.gloss-text` CSS. Defaults to Charter 19pt.
     font_family: RefCell<String>,
     font_size: std::cell::Cell<i32>,
+    /// Char ranges (start, end) of standalone label paragraphs in the current
+    /// synopsis buffer (e.g. "Shakespearean parallels:"), bolded on show and
+    /// re-asserted after every `apply_font` (which else overrides their weight
+    /// with the regular-weight buffer-wide font tag). Empty for glosses/echoes.
+    synopsis_label_ranges: RefCell<Vec<(usize, usize)>>,
 }
 
 /// Default font for the synopsis/gloss/echoes overlay cards.
@@ -318,6 +323,7 @@ impl GlossOverlay {
             column_width: column_width as i32,
             font_family: RefCell::new(GLOSS_DEFAULT_FONT_FAMILY.to_string()),
             font_size: std::cell::Cell::new(GLOSS_DEFAULT_FONT_SIZE),
+            synopsis_label_ranges: RefCell::new(Vec::new()),
         }
     }
 
@@ -344,6 +350,46 @@ impl GlossOverlay {
             table.add(&tag);
             let (start, end) = buffer.bounds();
             buffer.apply_tag(&tag, &start, &end);
+        }
+        // The buffer-wide font tag carries the family's regular weight, so it
+        // overrides any earlier bold tag. Re-assert the synopsis label bold so
+        // it wins (it is added/applied last, hence highest priority).
+        self.apply_synopsis_label_bold();
+    }
+
+    /// Bold the stored synopsis label ranges on the gloss view. Adds the
+    /// `synopsis-label` weight tag if absent and (re-)applies it last so it
+    /// outranks the regular-weight `gloss-font` tag. No-op when no ranges are
+    /// stored (glosses, echoes, loading states).
+    fn apply_synopsis_label_bold(&self) {
+        let ranges = self.synopsis_label_ranges.borrow();
+        if ranges.is_empty() {
+            return;
+        }
+        let buffer = self.gloss_view.buffer();
+        let table = buffer.tag_table();
+        if table.lookup("synopsis-label").is_none() {
+            table.add(
+                &gtk4::TextTag::builder()
+                    .name("synopsis-label")
+                    .weight(700)
+                    .build(),
+            );
+        }
+        if let Some(tag) = table.lookup("synopsis-label") {
+            // Tag conflicts resolve by priority, which defaults to add-order.
+            // The `gloss-font` tag (regular weight) is added after this one on
+            // the first show, so it would win. Force the label to the highest
+            // priority so its bold weight outranks the font tag's weight.
+            let size = table.size();
+            if size > 0 {
+                tag.set_priority(size - 1);
+            }
+            for &(start, end) in ranges.iter() {
+                let s = buffer.iter_at_offset(start as i32);
+                let e = buffer.iter_at_offset(end as i32);
+                buffer.apply_tag(&tag, &s, &e);
+            }
         }
     }
 
@@ -382,6 +428,8 @@ impl GlossOverlay {
     }
 
     pub fn show_gloss_with_color(&self, _original: &str, gloss: &str, card_width: i32, card_height: i32, root_color: Option<&str>, source_line_numbers: &[(String, i64)]) {
+        // No synopsis label bolding in gloss view.
+        self.synopsis_label_ranges.borrow_mut().clear();
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         self.title.set_visible(false);
@@ -438,6 +486,8 @@ impl GlossOverlay {
         dim_color: Option<&str>,
         selected: usize,
     ) {
+        // No synopsis label bolding in echo view.
+        self.synopsis_label_ranges.borrow_mut().clear();
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         self.title.set_visible(false);
@@ -565,7 +615,13 @@ impl GlossOverlay {
         self.gloss_view.set_top_margin(32);
         self.gloss_view.set_pixels_below_lines(6);
         let buffer = self.gloss_view.buffer();
-        buffer.set_text(&render_synopsis_paragraphs(synopsis));
+        let (text, label_ranges) = render_synopsis_with_labels(synopsis);
+        buffer.set_text(&text);
+        // Remember label paragraphs (e.g. "Shakespearean parallels:") so they
+        // can be bolded now and re-bolded after every apply_font (which applies
+        // a regular-weight buffer-wide font tag that would otherwise win).
+        *self.synopsis_label_ranges.borrow_mut() = label_ranges;
+        self.apply_synopsis_label_bold();
         self.bar_drawing.queue_draw();
 
         self.gloss_scroll_overlay.set_visible(true);
@@ -583,46 +639,76 @@ impl GlossOverlay {
     /// and `apply_font` recompute the vadjustment range on a later layout pass,
     /// and on a slow real display that pass can land after the idle fires —
     /// leaving the card scrolled partway down with the first lines clipped.
-    /// Instead we react to the layout itself: a one-shot handler on the
-    /// adjustment's `changed` signal (emitted when the range is recomputed)
-    /// snaps to `lower()` and then disconnects, so it fires exactly once per
-    /// open, whenever layout actually settles — independent of timing.
+    /// Instead we react to the layout itself: a handler on the adjustment's
+    /// `changed` signal (emitted whenever the range is recomputed) re-snaps to
+    /// `lower()` and re-sizes the clip on EVERY layout pass during the open.
+    ///
+    /// Two layout passes are normal for one open (`set_visible` reflow, then a
+    /// later `apply_font` reflow), so the handler must survive past the first
+    /// `changed` — disconnecting after one fire leaves a second pass able to
+    /// displace the scroll with no handler to correct it. We instead disconnect
+    /// on a one-shot timeout after the passes have settled. The handler also
+    /// only re-snaps while the open is still "fresh" (a `pinning` flag): once it
+    /// clears, a stray `changed` from a later resize/font-cycle must NOT yank a
+    /// user who has since scrolled back to the top.
     fn reset_scroll_top(&self) {
         let adj = self.gloss_scrolled.vadjustment();
         adj.set_value(adj.lower());
+
+        let view = self.gloss_view.clone();
+        let clip = self.bottom_clip.clone();
+        let scrolled = self.gloss_scrolled.clone();
+
+        // True while we should keep forcing the scroll to the top across the
+        // open's layout passes; cleared once the layout has settled so we stop
+        // fighting later user scrolls.
+        let pinning = Rc::new(Cell::new(true));
         let handler: Rc<RefCell<Option<glib::SignalHandlerId>>> = Rc::new(RefCell::new(None));
-        // Recompute the bottom clip once layout settles. Cloned widgets are
-        // captured by the closure (the &self struct can't be moved in), then
-        // the same calculation as update_bottom_clip runs against them.
-        let view_for_clip = self.gloss_view.clone();
-        let clip_for_clip = self.bottom_clip.clone();
-        let scrolled_for_clip = self.gloss_scrolled.clone();
+
         let id = adj.connect_changed({
-            let handler = handler.clone();
+            let pinning = pinning.clone();
+            let view = view.clone();
+            let clip = clip.clone();
+            let scrolled = scrolled.clone();
             move |a| {
-                a.set_value(a.lower());
-                Self::recompute_bottom_clip(&view_for_clip, &clip_for_clip, &scrolled_for_clip);
-                if let Some(hid) = handler.borrow_mut().take() {
-                    a.disconnect(hid);
+                if pinning.get() && a.value() != a.lower() {
+                    a.set_value(a.lower());
                 }
+                Self::recompute_bottom_clip(&view, &clip, &scrolled);
             }
         });
         *handler.borrow_mut() = Some(id);
-        // Also fire on idle in case `changed` already fired before we connected
-        // (range unchanged across show), so the clip is sized on first open.
-        let view_idle = self.gloss_view.clone();
-        let clip_idle = self.bottom_clip.clone();
-        let scrolled_idle = self.gloss_scrolled.clone();
+
+        // Stop pinning + disconnect once layout has settled (well after both the
+        // set_visible and apply_font passes). This guarantees the re-snap covers
+        // every pass during the open, then releases so the handler can't leak,
+        // stack across reopens, or fight a later user scroll.
+        let adj_for_stop = adj.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_millis(250), move || {
+            pinning.set(false);
+            if let Some(hid) = handler.borrow_mut().take() {
+                adj_for_stop.disconnect(hid);
+            }
+        });
+
+        // Size the clip on first open even if `changed` never fires (range
+        // unchanged across show).
         glib::idle_add_local_once(move || {
-            Self::recompute_bottom_clip(&view_idle, &clip_idle, &scrolled_idle);
+            Self::recompute_bottom_clip(&view, &clip, &scrolled);
         });
     }
 
     /// Recompute the bottom clip from cloned widgets. Static so it can run from
     /// signal/idle closures that can't capture `&self`. Mirrors the main card's
-    /// `update_bottom_clip`: from the top line currently at the viewport top,
-    /// sum whole-line heights until the next line would exceed the viewport
-    /// height, then size the clip box to cover the leftover partial line.
+    /// `update_bottom_clip`: find the bottom of the last visual row that fits
+    /// entirely within the viewport, then size the clip box to cover from there
+    /// to the viewport bottom — hiding any partial row straddling the edge.
+    ///
+    /// Row geometry comes from `display_rows` (real per-visual-row rects via
+    /// `iter_location`), never a fixed font estimate — the gloss/synopsis
+    /// buffers join paragraphs into single multi-row buffer lines and apply
+    /// per-tag `pixels_above_lines`/`scale`, so rows are not uniform and
+    /// `line_yrange` (logical-line granular) would be wrong here.
     fn recompute_bottom_clip(
         view: &gtk4::TextView,
         clip: &gtk4::Box,
@@ -637,48 +723,69 @@ impl GlossOverlay {
             return;
         }
         let top_y = adj.value();
-        let buffer = view.buffer();
-        let line_count = buffer.line_count();
+        let bottom_y = top_y + viewport_h; // viewport bottom in content space
+        let content_h = adj.upper();
 
-        // Find the first line whose top y is at or below the viewport top: that
-        // is the line rendered at the top of the viewport.
-        let mut top_line = 0i32;
-        for l in 0..line_count {
-            let Some(iter) = buffer.iter_at_line(l) else { break };
-            let (y, h) = view.line_yrange(&iter);
-            if (y as f64) + (h as f64) > top_y + 0.5 {
-                top_line = l;
+        // Find the bottom of the last visual row that fits ENTIRELY above the
+        // viewport bottom. The clip then covers from there to the viewport
+        // bottom, hiding any partial row straddling the bottom edge.
+        let rows = Self::display_rows(view);
+        let mut last_full_bottom = top_y; // worst case: nothing fits
+        let mut any_full = false;
+        for (row_top, row_bottom) in &rows {
+            if *row_bottom <= bottom_y + 0.5 && *row_bottom > top_y {
+                last_full_bottom = *row_bottom;
+                any_full = true;
+            }
+            if *row_top >= bottom_y {
                 break;
             }
-            top_line = l;
         }
 
-        // The viewport's first pixel is at top_y. The top line may itself be
-        // partially scrolled off the top; account for that so the sum measures
-        // from the visible top edge, not the line's absolute top.
-        let top_offset = if let Some(iter) = buffer.iter_at_line(top_line) {
-            let (y, _h) = view.line_yrange(&iter);
-            top_y - y as f64
+        // If the document ends within the viewport, there is no partial row at
+        // the bottom — only slack below the content; cover just that.
+        let effective_bottom = if content_h <= bottom_y + 0.5 {
+            content_h
         } else {
-            0.0
+            last_full_bottom
         };
 
-        // Sum whole-line heights from top_line downward until the next line
-        // would exceed the usable viewport height.
-        let mut sum = 0.0f64;
-        for l in top_line..line_count {
-            let Some(iter) = buffer.iter_at_line(l) else { break };
-            let (_y, h) = view.line_yrange(&iter);
-            if sum + (h as f64) - top_offset > viewport_h + 0.5 {
-                break;
-            }
-            sum += h as f64;
-        }
-        let consumed = (sum - top_offset).max(0.0);
-        let clip_h = (viewport_h - consumed).max(0.0).round() as i32;
+        // Guard against blanking: if no full row fit (a single row taller than
+        // the viewport), leave the clip at 0 so that row stays visible.
+        let clip_h = if !any_full && content_h > bottom_y + 0.5 {
+            0
+        } else {
+            (bottom_y - effective_bottom).max(0.0).round() as i32
+        };
+
         if clip.height_request() != clip_h {
             clip.set_height_request(clip_h);
         }
+    }
+
+    /// Yield `(row_top, row_bottom)` for each visual (wrapped) row from the start
+    /// of the buffer, in `iter_location` coordinate space (buffer-content y,
+    /// which matches the vadjustment value: GTK scrolls the viewport over this
+    /// same content space). Steps display line by display line with
+    /// `forward_display_line` and reads each row's rect via `iter_location`, so
+    /// wrapped paragraphs contribute one entry per real visual row at its true
+    /// height — `line_yrange` would collapse them to one paragraph-tall row.
+    fn display_rows(view: &gtk4::TextView) -> Vec<(f64, f64)> {
+        let mut rows: Vec<(f64, f64)> = Vec::new();
+        let buffer = view.buffer();
+        let mut iter = buffer.start_iter();
+        let end = buffer.end_iter();
+        for _ in 0..8192 {
+            let rect = view.iter_location(&iter);
+            if rect.height() > 0 {
+                let top = rect.y() as f64;
+                rows.push((top, top + rect.height() as f64));
+            }
+            if iter == end || !view.forward_display_line(&mut iter) {
+                break;
+            }
+        }
+        rows
     }
 
     /// `&self` entry point for recomputing the bottom clip after a scroll.
@@ -686,42 +793,52 @@ impl GlossOverlay {
         Self::recompute_bottom_clip(&self.gloss_view, &self.bottom_clip, &self.gloss_scrolled);
     }
 
-    /// Return the line-aligned vadjustment value at or below `target_y`,
-    /// clamped to `[lower, upper - page_size]`. Mirrors `snap_scroll_to_line`'s
-    /// clamp: picks the greatest line-top y that is <= target_y, then if that
-    /// can't be reached (beyond the scroll ceiling), walks back to the last
-    /// line whose y fits.
-    /// Height of one wrapped *visual* row of gloss text. The synopsis buffer
-    /// joins paragraphs with newlines, so each buffer *line* is a whole
-    /// paragraph that wraps to many visual rows — `line_yrange` of a buffer
-    /// line therefore measures a whole paragraph, not a row. For scroll
-    /// snapping we want the single-row height, derived from the view's font.
-    fn row_height(&self) -> f64 {
+    /// Approximate height of one line of gloss text, derived from the view's
+    /// font. Used ONLY as the per-press *step distance* for `scroll_gloss`
+    /// (how far one j/k moves before snapping) — never as a snapping grid, since
+    /// real wrapped rows vary in height (per-tag `pixels_above_lines`/`scale`).
+    /// The font is read from the `font-size` tag when present to dodge the GTK
+    /// CSS-application race that returns the previous font's metrics for one
+    /// frame after a font change (see `viewport::descender_guard_px`).
+    fn row_step(&self) -> f64 {
         let ctx = self.gloss_view.pango_context();
-        let metrics = ctx.metrics(None, None);
+        let font_desc = self
+            .gloss_view
+            .buffer()
+            .tag_table()
+            .lookup("font-size")
+            .and_then(|tag| tag.font_desc());
+        let metrics = ctx.metrics(font_desc.as_ref(), None);
         let ascent = metrics.ascent() as f64 / pango::SCALE as f64;
         let descent = metrics.descent() as f64 / pango::SCALE as f64;
         let line = ascent + descent;
-        // Add the view's inter-line spacing if any; default to the font line.
         (line + self.gloss_view.pixels_below_lines() as f64).max(12.0)
     }
 
-    /// Snap a scroll value to the nearest visual-row boundary at or below
-    /// `target_y`, so the viewport top aligns to a whole row (no half row
-    /// clipped under the title). Works in row-height units rather than buffer
-    /// lines, because wrapped paragraphs are single buffer lines.
+    /// Snap a scroll value to the greatest *real* visual-row top at or below
+    /// `target_y`, clamped to `[lower, upper - page_size]`, so the viewport top
+    /// aligns to a whole wrapped row (no half row clipped under the title rule).
+    ///
+    /// Uses actual layout (`display_rows`) rather than a fixed row height,
+    /// because the gloss/synopsis buffers apply per-tag `pixels_above_lines` and
+    /// `scale`, making rows non-uniform. If the snapped boundary would exceed
+    /// the scroll ceiling, the clamp pulls it back to `max_value`; an
+    /// uncovered partial row there is hidden by the bottom clip.
     fn snap_value_to_line(&self, target_y: f64) -> f64 {
         let adj = self.gloss_scrolled.vadjustment();
-        let max_value = (adj.upper() - adj.page_size()).max(adj.lower());
-        let row = self.row_height();
-        if row <= 0.0 {
-            return target_y.clamp(adj.lower(), max_value);
+        let lower = adj.lower();
+        let max_value = (adj.upper() - adj.page_size()).max(lower);
+        let target = target_y.clamp(lower, max_value);
+        // Greatest real row top <= target.
+        let mut best = lower;
+        for (row_top, _row_bottom) in Self::display_rows(&self.gloss_view) {
+            if row_top <= target + 0.5 {
+                best = best.max(row_top);
+            } else {
+                break;
+            }
         }
-        // Rows are measured from the first line's top (adj.lower()).
-        let base = adj.lower();
-        let rows_down = ((target_y - base) / row).floor().max(0.0);
-        let snapped = base + rows_down * row;
-        snapped.clamp(adj.lower(), max_value)
+        best.clamp(lower, max_value)
     }
 
     pub fn show_loading(&self) {
@@ -729,6 +846,7 @@ impl GlossOverlay {
     }
 
     pub fn show_loading_message(&self, message: &str) {
+        self.synopsis_label_ranges.borrow_mut().clear();
         self.title.set_text(message);
         self.title.set_visible(true);
         self.title.set_vexpand(true);
@@ -749,14 +867,25 @@ impl GlossOverlay {
 
     pub fn scroll_gloss(&self, delta: i32) {
         let adj = self.gloss_scrolled.vadjustment();
-        // Step by ~3 visual rows per press, then snap to a row boundary so no
-        // partial row is left clipped at the viewport top. Row height (not
-        // buffer-line height) is used because wrapped paragraphs are single
-        // buffer lines.
-        let row = self.row_height();
-        let raw_target = adj.value() + row * 3.0 * delta as f64;
-        let snapped = self.snap_value_to_line(raw_target);
-        adj.set_value(snapped);
+        // Step by ~3 line-heights per press, then snap to a real visual-row
+        // boundary so no partial row is left clipped at the viewport top.
+        // `row_step` is only the step distance; the snap aligns to actual rows.
+        let step = self.row_step();
+        let max_value = (adj.upper() - adj.page_size()).max(adj.lower());
+        let raw_target = adj.value() + step * 3.0 * delta as f64;
+        // Row-snapping floors the viewport top to a whole row. On the last page
+        // that floor can land a fraction of a row short of `max_value`, leaving
+        // the final row(s) clipped under the footer and unreachable by further
+        // `j` presses (the snap keeps returning the same sub-max top). When a
+        // downward scroll already targets the bottom, go to `max_value` exactly
+        // so the document end is fully shown; a partial row at the top of this
+        // last page is acceptable (mirrors `scroll_gloss_to_bottom`).
+        let target = if delta > 0 && raw_target >= max_value {
+            max_value
+        } else {
+            self.snap_value_to_line(raw_target)
+        };
+        adj.set_value(target);
         self.update_bottom_clip();
         self.bar_drawing.queue_draw();
     }
@@ -769,14 +898,14 @@ impl GlossOverlay {
     }
 
     pub fn scroll_gloss_to_bottom(&self) {
-        // Snap to the last line that fits at the top so the page starts on a
-        // clean line boundary (snap_value_to_line clamps to the scroll ceiling
-        // and walks back to a reachable line), rather than landing on a raw
-        // upper - page_size that may leave a partial line at the top.
+        // Go to the true bottom: `upper - page_size` guarantees the final row is
+        // reachable and shown. We do NOT row-snap here — snapping floors the top
+        // and would push the last row below the viewport, hiding the end of the
+        // document. Any partial row at the *top* of this last page is acceptable
+        // (the user asked for the end); the bottom edge is exact.
         let adj = self.gloss_scrolled.vadjustment();
-        let target = (adj.upper() - adj.page_size()).max(adj.lower());
-        let snapped = self.snap_value_to_line(target);
-        adj.set_value(snapped);
+        let bottom = (adj.upper() - adj.page_size()).max(adj.lower());
+        adj.set_value(bottom);
         self.update_bottom_clip();
         self.bar_drawing.queue_draw();
     }
@@ -813,6 +942,23 @@ enum GlossElement {
 /// paragraph breaks. Plain text with no `<p>` tags is returned trimmed, so
 /// legacy single-paragraph synopses keep working.
 pub fn render_synopsis_paragraphs(synopsis: &str) -> String {
+    render_synopsis_with_labels(synopsis).0
+}
+
+/// True when a paragraph is a short standalone heading label — e.g.
+/// `Shakespearean parallels:`. Such paragraphs are stored on their own `<p>`
+/// and rendered in bold by `show_synopsis`. The rule is deliberately generic:
+/// a trimmed paragraph that ends in a colon, is short, and contains no
+/// sentence-internal period reads as a label rather than running prose.
+fn is_label_paragraph(p: &str) -> bool {
+    let t = p.trim();
+    t.ends_with(':') && t.chars().count() <= 60 && !t[..t.len() - 1].contains('.')
+}
+
+/// Like [`render_synopsis_paragraphs`], but also returns the character ranges
+/// (start, end) — in GTK `TextBuffer` char offsets into the joined string — of
+/// any standalone label paragraphs, so the caller can bold them.
+pub fn render_synopsis_with_labels(synopsis: &str) -> (String, Vec<(usize, usize)>) {
     let mut paras: Vec<String> = Vec::new();
     let mut remaining = synopsis;
     while let Some(pos) = remaining.find("<p>") {
@@ -827,10 +973,26 @@ pub fn render_synopsis_paragraphs(synopsis: &str) -> String {
         }
     }
     if paras.is_empty() {
-        synopsis.trim().to_string()
-    } else {
-        paras.join("\n\n")
+        return (synopsis.trim().to_string(), Vec::new());
     }
+    // Join with a blank line, tracking each paragraph's char offset so label
+    // paragraphs can be located precisely in the assembled string.
+    let mut out = String::new();
+    let mut labels: Vec<(usize, usize)> = Vec::new();
+    let mut char_off = 0usize;
+    for (i, p) in paras.iter().enumerate() {
+        if i > 0 {
+            out.push_str("\n\n");
+            char_off += 2;
+        }
+        let len = p.chars().count();
+        if is_label_paragraph(p) {
+            labels.push((char_off, char_off + len));
+        }
+        out.push_str(p);
+        char_off += len;
+    }
+    (out, labels)
 }
 
 fn parse_gloss_tags(gloss: &str) -> Vec<GlossElement> {
@@ -1209,4 +1371,38 @@ fn build_diff_markup(original: &str, corrected: &str, is_original: bool) -> Stri
         }
     }
     result
+}
+
+#[cfg(test)]
+mod synopsis_label_tests {
+    use super::*;
+
+    #[test]
+    fn bolds_standalone_label_paragraph() {
+        let syn = "<p>Plot stuff here.</p><p>Shakespearean parallels:</p><p>The Court of Chancery is Elsinore.</p>";
+        let (text, labels) = render_synopsis_with_labels(syn);
+        assert_eq!(
+            text,
+            "Plot stuff here.\n\nShakespearean parallels:\n\nThe Court of Chancery is Elsinore."
+        );
+        assert_eq!(labels.len(), 1, "exactly one label paragraph");
+        let (s, e) = labels[0];
+        let chars: Vec<char> = text.chars().collect();
+        let slice: String = chars[s..e].iter().collect();
+        assert_eq!(slice, "Shakespearean parallels:");
+    }
+
+    #[test]
+    fn does_not_bold_running_prose() {
+        let syn = "<p>The fog descends on London. It is November.</p>";
+        let (_text, labels) = render_synopsis_with_labels(syn);
+        assert!(labels.is_empty());
+    }
+
+    #[test]
+    fn plain_text_synopsis_has_no_labels() {
+        let (text, labels) = render_synopsis_with_labels("Just plain text.");
+        assert_eq!(text, "Just plain text.");
+        assert!(labels.is_empty());
+    }
 }

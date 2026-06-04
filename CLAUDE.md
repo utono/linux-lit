@@ -101,6 +101,64 @@ pkill -f "cage -- ./target/debug/linux-lit"; pkill -f target/debug/linux-lit
 
 (`ydotoold` is not needed for this flow; only `cage` + `wtype` + `grim`.)
 
+For the **automated** equivalent of this manual self-check, see *Automated UI
+tests* below — it wraps the same cage + grim + wtype flow in `cargo test` and
+adds a fail-closed line-clipping assertion.
+
+## Automated UI tests (cargo)
+
+`tests/harness/mod.rs` + `tests/smoke.rs` + `tests/line_clipping.rs` are a
+headless UI test harness: each test runs the app inside its **own isolated
+`cage`** (a temp `XDG_RUNTIME_DIR`, never the live session), screenshots with
+`grim`, drives input with `wtype`, and asserts the main reading card never clips
+its first/last line.
+
+```bash
+# everything (provides the a11y bus + software GL the artifacts want):
+./scripts/e2e-env.sh cargo test -- --ignored --nocapture
+
+# just the clipping invariant:
+./scripts/e2e-env.sh cargo test --test line_clipping -- --ignored --nocapture
+```
+
+Tests are `#[ignore]`d so a bare `cargo test` stays green without cage/grim/wtype.
+Deps (pacman/AUR): `cage`, `grim`, `wtype`, `python-pillow`, `python-numpy`,
+`at-spi2-core`, `dbus` (the AT-SPI bits are only needed by `annotate_ui.py`'s
+best-effort overlay; the clipping detector itself is pure-pixel).
+
+Design notes (so you don't re-derive them):
+
+- **cage, not bare dwl/sway.** linux-lit only lays out + paints once it gets a
+  configured, focused, fullscreen surface. cage gives the single client exactly
+  that; bare dwl/sway on the headless backend leave the window unsized so the
+  reveal hits its 5s "load may be stuck" fallback and renders blank.
+- **`GSK_RENDERER=cairo` is mandatory** (set by the harness): the default
+  Vulkan/ngl renderer loses its surface on the headless backend and the app
+  aborts with a stack overflow.
+- **MPV is skipped in tests.** The harness sets `LIT_HEADLESS_TEST=1`;
+  `launch_mpv` then does not spawn MPV at all — otherwise its window covers the
+  reader in the test compositor and the process leaks across runs.
+- **Region via the app, not AT-SPI.** linux-lit's `sourceview5::View` exposes no
+  AT-SPI Text interface, so the clipping detector can't auto-find the pane. On
+  reveal (under `LIT_HEADLESS_TEST`) the app logs `TEST_VIEWPORT_RECT x y w h`
+  (window == screenshot coords); the harness reads it and passes `--region`.
+- **Keys** are RPD: top `gg` (two presses), page `x`/`y`, end `shift+G`, line
+  `j`/`k`. They land on the window's global capture-phase controller — no
+  Tab-focus step.
+- Scope: the tests cover the **main reading card**. The synopsis/gloss overlay
+  has its own scroll/clip path and would need an `h`-open step + its own region.
+
+## UI review protocol
+
+After any e2e run, screenshots land in `target/ui/`. The `Stop` hook
+(`.claude/hooks/require-ui-review.sh`, wired in `.claude/settings.json`) blocks
+the turn until `target/ui/ui-review.md` exists, is newer than the latest
+screenshot, references each `<name>.png`, and addresses each `*.suspects.txt`
+entry. Write it from `ui-review.template.md` — open every PNG (and any
+`_annotated.png`/`_clip.png` overlay), quote the on-screen text, and adjudicate
+each flagged suspect as a real bug or a false positive. A passing exit code is
+not enough; clipping/layout bugs are caught by eye.
+
 ## Key Files
 
 - `src/main.rs` — entry point, Tokio runtime, channel bridge, MPV event loop (TimePos, PlaybackState, ConnectionStatus)
@@ -121,7 +179,12 @@ pkill -f "cage -- ./target/debug/linux-lit"; pkill -f target/debug/linux-lit
 - `src/db/line_types.rs` — dialogue classification
 - `src/mpv/client.rs` — MPV IPC command handler (Seek, LoadFile, ResumeAndSeek, Connect, Quit)
 - `src/mpv/commands.rs` — MpvCommand and MpvEvent enums
-- `src/mpv/discovery.rs` — derive_socket_path, find_socket_for_work, launch_mpv
+- `src/mpv/discovery.rs` — derive_socket_path, find_socket_for_work, launch_mpv (skips MPV under `LIT_HEADLESS_TEST`)
+- `tests/harness/mod.rs` — headless cage harness: screenshot/input/clipping helpers
+- `tests/line_clipping.rs` — the core no-clip invariant (top/mid/end)
+- `scripts/check_line_clipping.py` — fail-closed pixel line-clipping detector (`--region`)
+- `scripts/e2e-env.sh` — headless WLR/GTK env + dbus + AT-SPI registry wrapper
+- `src/input/scroll.rs::emit_test_viewport_rect` — logs `TEST_VIEWPORT_RECT` for the harness
 - `src/ui/library_picker.rs` — Ctrl+p work picker with fuzzy filter
 - `src/ui/concordance_picker.rs` — Ctrl+\ concordance word picker
 - `src/ui/media_picker.rs` — Ctrl+Shift+M media file picker

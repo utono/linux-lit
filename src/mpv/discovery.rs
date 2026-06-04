@@ -85,8 +85,22 @@ fn probe_socket(path: &Path) -> bool {
 
 /// Launch MPV for a media file. Sets wayland-app-id to "mpv-lit" so dwl
 /// places the window on tag 10 per the rule in dwl config.h.
+///
+/// Under the headless UI test harness (`LIT_HEADLESS_TEST` set) MPV is NOT
+/// launched at all — the UI tests don't exercise audio sync, and a spawned MPV
+/// would otherwise map a window that covers the reader in the test compositor
+/// AND leak as a detached process across test runs. The socket path is returned
+/// as usual; with no MPV listening, connection attempts simply fail (the app
+/// already handles "no MPV" gracefully — see the discovery/connect path).
 pub fn launch_mpv(media_path: &str) -> String {
     let socket_path = derive_socket_path(media_path);
+    if std::env::var_os("LIT_HEADLESS_TEST").is_some() {
+        crate::logging::log(&format!(
+            "MPV: skipped (LIT_HEADLESS_TEST) for {}",
+            media_path
+        ));
+        return socket_path;
+    }
     match std::process::Command::new("mpv")
         .arg(format!("--input-ipc-server={}", socket_path))
         .arg("--pause")

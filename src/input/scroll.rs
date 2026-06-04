@@ -606,6 +606,31 @@ fn update_bottom_clip(
     bottom_clip.set_height_request(clip);
 }
 
+/// Headless UI test harness support: when `LIT_HEADLESS_TEST` is set, log the
+/// reading viewport's rectangle in toplevel-window coordinates (which equal
+/// screenshot pixels under the cage fullscreen output). The harness greps this
+/// line and passes it to `check_line_clipping.py --region`, because linux-lit's
+/// `sourceview5::View` exposes no AT-SPI Text interface for auto-detection.
+///
+/// Format (stable, parsed by tests/harness): `TEST_VIEWPORT_RECT x y w h`.
+pub(crate) fn emit_test_viewport_rect(state: &AppState) {
+    if std::env::var_os("LIT_HEADLESS_TEST").is_none() {
+        return;
+    }
+    // Bounds of the scrolled text viewport in the window's coordinate space.
+    if let Some(r) = state.scrolled_window.compute_bounds(&state.window) {
+        log_fmt!(
+            "TEST_VIEWPORT_RECT {} {} {} {}",
+            r.x().round() as i32,
+            r.y().round() as i32,
+            r.width().round() as i32,
+            r.height().round() as i32
+        );
+    } else {
+        crate::logging::log("TEST_VIEWPORT_RECT unavailable (compute_bounds returned None)");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Scroll helpers
 // ---------------------------------------------------------------------------

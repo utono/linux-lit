@@ -1659,6 +1659,12 @@ pub fn build_window(
                     vbox_for_tick.set_opacity(1.0);
                     let top = s.page_top_line;
                     crate::input::navigation::snap_scroll_to_line(&mut s, top);
+                    // Headless UI test harness: emit the reading viewport's
+                    // rectangle in window (== screenshot) coordinates so the
+                    // line-clipping detector can target it via --region.
+                    // sourceview5::View exposes no AT-SPI Text interface, so this
+                    // log line is how the harness locates the pane.
+                    crate::input::scroll::emit_test_viewport_rect(&s);
                 }
             }
             glib::ControlFlow::Continue
