@@ -365,7 +365,11 @@ fn main() {
         let _ = state;
     });
 
-    application.run();
+    // Run with an EMPTY argv so GTK ignores our own markers (e.g.
+    // `--headless-test`, a process-table tag used by the headless harness to
+    // pgrep test instances without ever matching the live session). The marker
+    // stays in the real process command line for `pgrep -f`; GTK never sees it.
+    application.run_with_args::<&str>(&[]);
 }
 
 #[cfg(test)]

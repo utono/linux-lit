@@ -224,6 +224,15 @@ pub fn load() -> Config {
 }
 
 pub fn save(config: &Config) {
+    // Hermetic test runs: under LIT_HEADLESS_TEST the app must NEVER write config
+    // back. A headless/fuzz run starts from LIT_START_WORK/LIT_START_POS (or the
+    // dev config) and would otherwise rewrite last_work/work_positions on exit —
+    // the documented footgun where the next run inherits the prior run's end
+    // position. Suppressing writeback makes a run fully reproducible from env
+    // alone and stops it mutating state a later run depends on.
+    if std::env::var_os("LIT_HEADLESS_TEST").is_some() {
+        return;
+    }
     let path = config_path();
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);

@@ -123,25 +123,57 @@ live `cargo run` session holds. Unset, the app behaves exactly as normal.
   fixed `jumps-only` script. Without it, the harness only runs on the
   `Ctrl+Shift+T` keybind with the fixed script.
 
+### `LIT_NAV_SEED` — pin the fuzz seed for exact replay
+
+- **Default:** the LCG seeds from a fixed constant (`DEFAULT_NAV_SEED`), so a run
+  is already reproducible. The resolved seed is logged at run start:
+  `NAV_TEST: seed=0x... (override with LIT_NAV_SEED)`.
+- **Why override:** to replay a *specific* failing run, set `LIT_NAV_SEED` to the
+  seed printed by that run (decimal or `0x`-hex). A malformed value falls back to
+  the default.
+
+### `LIT_START_WORK` / `LIT_START_POS` — hermetic start position
+
+- **Why:** a headless run should be reproducible from env alone and must NOT
+  depend on (or mutate) `config-dev.json`. Previously you set
+  `last_work`/`work_positions` before each run, but the run rewrote them on exit,
+  so the next run inherited the prior run's end position — a recurring footgun.
+- **What they do:**
+  - `LIT_START_WORK=AWW` overrides which work loads (alias of the legacy
+    `LINUX_LIT_WORK`).
+  - `LIT_START_POS=50` overrides the start line within that work.
+  - **Writeback is suppressed entirely when `LIT_HEADLESS_TEST=1`**
+    (`config::save` early-returns), so a test run never rewrites config. Combined
+    with the two overrides, the start position is fully hermetic.
+
 ## What "a fuzz run" is
 
-A **fuzz run** feeds the navigation code a long stream of *randomized* jumps and
-checks, after every single one, that a set of invariants still holds — instead of
-hand-scripting "press x, then y, expect page 3." It finds edge cases a human
-would never think to script. linux-lit's fuzz lives in the app itself
-(`src/input/nav_test.rs`): when started in its random mode it generates ~750
-**seeded**-random jumps (`x`, `y`, `2`, `3`, `gg`, `G`, chapter jumps — seeded so
-a failure is reproducible) and after each one asserts:
+A **fuzz run** feeds the navigation code a long stream of jumps and checks, after
+every single one, that a set of invariants still holds — instead of hand-scripting
+"press x, then y, expect page 3." It finds edge cases a human would never think to
+script. linux-lit's fuzz lives in the app itself (`src/input/nav_test.rs`). A run
+is **1400 steps: a deterministic coverage prelude, then a seeded-random body**
+(see [the coverage-prelude note above](#the-two-things-the-skill-does)) covering
+`x`, `y`, `2`, `3`, `gg`, `G`, chapter jumps and the `q`/`j`/`,`/`k` dialogue
+walk. After each step it asserts a set of **hard** invariants (`NAV_TEST: FAIL`,
+must be 0):
 
 - the cursor landed on the page that's actually visible (on-page landing),
-- `y` round-trips `x`,
-- no act/scene marker sits mid-page,
-- the viewport is at least 10% full,
-- the cursor is on a dialogue line.
+- `y` round-trips `x` (and never jumps *forward*),
+- the right column is never empty (unless the tail can't fill it) and the left
+  column is never underfilled before the end,
+- **`G`/jump-to-end reaches the work's end** — no dialogue left below the spread,
+- **no line is clipped** — the first and last visible line of each column fit
+  whole inside the viewport, checked in-app from `line_yrange` geometry on every
+  step (the deterministic, pixel-free equivalent of `check_line_clipping.py`),
+- the cursor is on a dialogue line (real-path steps only).
 
-Each violation is logged as `NAV_TEST: FAIL step=N <Action> <reason>`. A run is
+Approximate checks (mid-page scene break, immediate-return heuristic, the
+SearchJump simulation landing on non-dialogue) log `NAV_TEST: WARN` instead, so
+they don't mask real FAILs; a handful of WARNs per run is expected. A run is
 "clean" when there are no FAIL lines. (The fuzz found, e.g., the `G`-to-end
-off-page landing and the right-column mid-page scene break.)
+off-page landing, the right-column mid-page scene break, and the
+final-spread-too-early / orphaned-EPILOGUE bug.)
 
 ## How to run the fuzz
 
@@ -299,7 +331,54 @@ stray instance is disruptive.
 - **Live session's `linux-lit-dev.log` got clobbered** → a headless run shared
   the log path; set `LIT_LOG_PATH`.
 - **Stray reader window on screen** → a leaked cage instance; kill by recorded
-  PID, confirm `pgrep -f "cage -- ./target/debug/linux-lit"` is empty.
+  PID, confirm `pgrep -f "cage -- ./target/debug/linux-lit"` is empty. Root
+  cause was `run-fuzz.sh` not forcing `WLR_BACKENDS=headless` (cage then nested
+  on the live dwl); now fixed there.
+
+## Design review — improvements (status)
+
+A review of this harness recommended seven improvements (removing fragility from
+the timing/injection path; pushing checks down into the app where they're
+deterministic). Status:
+
+- **1. In-app per-step clip invariant — DONE.** Clipping is checked in-app from
+  `line_yrange` geometry after every step (~1400 checks/run), not just where
+  `grim` points. `check_line_clipping.py` remains as an occasional pixel
+  *oracle* to confirm the in-app geometry agrees with the render.
+- **3. Hermetic start position — DONE.** `LIT_START_WORK`/`LIT_START_POS`
+  overrides + writeback suppressed under `LIT_HEADLESS_TEST` (see the env
+  overrides above). No more `config-dev.json` dance.
+- **4. Seed logging + `LIT_NAV_SEED` — DONE.** Seed printed at run start and
+  overridable for exact replay.
+- **5. Unambiguous test-instance tag + auto-cleanup — DONE.** The app launches
+  with a `--headless-test` process-table marker (GTK runs with empty argv so it
+  ignores it); `run-fuzz.sh` uses `setsid` (own process group) + an EXIT/INT
+  trap that kills the group and `pgrep -f 'linux-lit --headless-test'` — which
+  by construction never matches the live session.
+- **6. Compiler-enforced action coverage — DONE.** The prelude's action list is
+  derived from `Step::EVERY` filtered by an exhaustive `in_coverage` match (no
+  `_` arm), so adding a `Step` variant forces a decision and can't silently drop
+  from coverage.
+- **2. Event-sync driver (replace blind sleeps; internal control channel for
+  layout/clip) — BACKLOG.** The screenshot driver still uses settle sleeps and
+  `wtype`. Plan: have the driver block on log markers (`ACTION:`,
+  `TEST_VIEWPORT_RECT`, a "ready for capture" line) instead of `sleep`, add a
+  self-driving "scripted screenshot" mode, and reserve `wtype` for a small set
+  of keybind-plumbing smoke tests. Not yet needed now that the exhaustive clip
+  checking is in-app (the flaky-injection surface is off the correctness path).
+- **7. CI / Claude Code hook gate — BACKLOG.** A `run-fuzz.sh --secs 90` + grep
+  for `NAV_TEST: FAIL` would gate nav changes (PostToolUse/Stop hook, or CI in a
+  container with cage/wlroots/dbus/at-spi/llvmpipe). Deferred pending a decision
+  on where to gate.
+
+**Watch-outs (awareness, not bugs):**
+
+- `GSK_RENDERER=cairo` validates the *cairo*-rendered layout. Geometry/clipping
+  are renderer-independent (safe), but don't trust these screenshots for
+  font-hinting or subpixel issues — the GL renderer the user sees may differ.
+- `TEST_VIEWPORT_RECT` is logged once on reveal; it goes stale if the pane is
+  ever resized mid-session. If that becomes possible, re-log it on layout change
+  or write it to a sidecar the clip check reads.
 
 ## Key files
 

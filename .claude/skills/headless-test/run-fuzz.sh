@@ -27,9 +27,18 @@ if [[ ! -f Cargo.toml || ! -x scripts/e2e-env.sh ]]; then
 fi
 
 SECS=330
+# Hermetic start overrides (forwarded explicitly into the cage env below, since
+# e2e-env.sh re-execs under dbus-run-session and ambient inheritance isn't
+# guaranteed). Accept as flags OR inherit from the environment if already set.
+START_WORK="${LIT_START_WORK:-}"
+START_POS="${LIT_START_POS:-}"
+NAV_SEED="${LIT_NAV_SEED:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --secs) SECS="$2"; shift 2 ;;
+    --start-work) START_WORK="$2"; shift 2 ;;
+    --start-pos) START_POS="$2"; shift 2 ;;
+    --seed) NAV_SEED="$2"; shift 2 ;;
     *) echo "error: unknown option '$1'" >&2; exit 64 ;;
   esac
 done
@@ -49,9 +58,16 @@ cp "$DB_SRC" "$DB_COPY" || { echo "DB copy failed" >&2; exit 1; }
 : > "$LOG"
 
 RT="$(mktemp -d)"
-# Kill our own cage by PID on exit/interrupt — never pkill the binary by name,
-# which would also signal a live `cargo run` session.
-cleanup() { kill "${CAGE:-0}" 2>/dev/null || true; rm -rf "$RT" 2>/dev/null || true; }
+# Cleanup kills the whole cage process group (setsid below) AND, as a belt-and-
+# braces backstop, any linux-lit carrying our unambiguous `--headless-test`
+# marker — which by construction never matches the live `cargo run` session
+# (it has no such marker). We still never `pkill -f target/debug/linux-lit`.
+cleanup() {
+  [ -n "${CAGE:-}" ] && kill -- "-${CAGE}" 2>/dev/null
+  kill "${CAGE:-0}" 2>/dev/null || true
+  pkill -f 'linux-lit --headless-test' 2>/dev/null || true
+  rm -rf "$RT" 2>/dev/null || true
+}
 trap cleanup EXIT INT TERM
 
 # Force wlroots onto its HEADLESS backend and unset the inherited
@@ -59,15 +75,28 @@ trap cleanup EXIT INT TERM
 # environment, picks the Wayland backend, and nests as a VISIBLE window on the
 # user's dwl instead of running offscreen (a leaked reader window). The headless
 # backend + pixman software renderer keeps it entirely off-screen.
-env -u WAYLAND_DISPLAY \
+#
+# `setsid` puts the cage in its own process group so cleanup can kill the whole
+# tree even if it detached. The `--headless-test` arg is a process-table marker
+# (the app runs GTK with empty argv, so it ignores it) that lets cleanup/pgrep
+# target ONLY test instances, never the live session.
+# Build the hermetic-start env list (only assign vars that are set, so an unset
+# override doesn't force an empty value).
+HERMETIC=()
+[[ -n "$START_WORK" ]] && HERMETIC+=("LIT_START_WORK=$START_WORK")
+[[ -n "$START_POS"  ]] && HERMETIC+=("LIT_START_POS=$START_POS")
+[[ -n "$NAV_SEED"   ]] && HERMETIC+=("LIT_NAV_SEED=$NAV_SEED")
+
+setsid env -u WAYLAND_DISPLAY \
   XDG_RUNTIME_DIR="$RT" GSK_RENDERER=cairo \
   WLR_BACKENDS=headless WLR_RENDERER=pixman \
   LIT_DEV=1 LIT_HEADLESS_TEST=1 LIT_NAV_FUZZ=1 \
   LIT_LOG_PATH="$LOG" LIT_DB_PATH="$DB_COPY" \
-  cage -- "$BIN" >"$RT/cage.log" 2>&1 &
+  "${HERMETIC[@]}" \
+  cage -- "$BIN" --headless-test >"$RT/cage.log" 2>&1 &
 CAGE=$!
 echo "$CAGE" > /tmp/fuzz_pid.txt
-echo "[fuzz] cage pid=$CAGE, running up to ${SECS}s (log: $LOG)" >&2
+echo "[fuzz] cage pid=$CAGE (own pgroup), running up to ${SECS}s (log: $LOG)" >&2
 
 # Stall guard: the fuzz auto-starts ~6s in. If it never gets past step 1, the DB
 # copy probably wasn't honored (lock contention) — report and bail early.

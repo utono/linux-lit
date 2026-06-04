@@ -1276,8 +1276,12 @@ pub fn build_window(
 
     window.set_child(Some(&outer_overlay));
 
-    // LINUX_LIT_WORK env var overrides the saved work from config.
-    let last_work = if let Ok(work_abbrev) = std::env::var("LINUX_LIT_WORK") {
+    // Work override for hermetic test runs: LIT_START_WORK (preferred) or the
+    // legacy LINUX_LIT_WORK both override the saved work from config, so a run is
+    // reproducible from env alone without editing config-dev.json.
+    let last_work = if let Ok(work_abbrev) = std::env::var("LIT_START_WORK")
+        .or_else(|_| std::env::var("LINUX_LIT_WORK"))
+    {
         crate::logging::log(&format!(
             "STARTUP: env override work='{}'", work_abbrev
         ));
@@ -2101,8 +2105,12 @@ pub fn display_work_at_with_prepared(
         state.title_bar.set_visible(state.config.title_bar_visible);
     }
 
-    // Save MRU to config; track previous work for toggle
-    let saved_line = state.config.work_positions.get(&work.abbrev).copied().unwrap_or(0);
+    // Save MRU to config; track previous work for toggle.
+    // LIT_START_POS overrides the saved start line for hermetic test runs.
+    let saved_line = std::env::var("LIT_START_POS")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or_else(|| state.config.work_positions.get(&work.abbrev).copied().unwrap_or(0));
     if state.config.last_work.as_deref() != Some(&work.abbrev) {
         state.config.previous_work = state.config.last_work.take();
     }

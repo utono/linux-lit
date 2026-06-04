@@ -36,7 +36,42 @@ impl Step {
             _ => 400,
         }
     }
+
+    /// Every `Step` variant, in a list whose completeness is COMPILER-ENFORCED:
+    /// the exhaustive `match` below (no `_` arm) fails to compile if a variant is
+    /// added without classifying it. This is what turns "remember to update
+    /// ALL_STEPS" from a human checklist into a guarantee.
+    const EVERY: [Step; 12] = [
+        Step::PageForward, Step::PageBackward,
+        Step::NextScene, Step::PrevScene,
+        Step::NextChapter, Step::PrevChapter,
+        Step::JumpTop, Step::JumpEnd,
+        Step::NextDialogue, Step::PrevDialogue,
+        Step::SyncAdvance, Step::SearchJump,
+    ];
+
+    /// Whether the coverage prelude drives this action from every anchor.
+    /// Exhaustive `match` (no wildcard) — adding a `Step` variant forces a
+    /// decision here, so the prelude can never silently omit a new action.
+    const fn in_coverage(self) -> bool {
+        match self {
+            Step::PageForward | Step::PageBackward
+            | Step::NextScene | Step::PrevScene
+            | Step::NextChapter | Step::PrevChapter
+            | Step::JumpTop | Step::JumpEnd
+            | Step::NextDialogue | Step::PrevDialogue => true,
+            // SyncAdvance has its own slow cadence; SearchJump is a simulation —
+            // both are covered by the random body, not the per-anchor sweep.
+            Step::SyncAdvance | Step::SearchJump => false,
+        }
+    }
 }
+
+// Compile-time guard: `EVERY` must list exactly as many entries as the enum has
+// variants. If a variant is added without extending `EVERY`, this fails to
+// compile. (`variant_count` is stable as of the toolchain this builds against;
+// if unavailable, the exhaustive `match` in `in_coverage` is the backstop.)
+const _: () = assert!(Step::EVERY.len() == 12);
 
 /// Deterministic LCG — `Math.random` would make runs unreproducible. Seeded from
 /// a fixed constant so a failure can be replayed by re-running the same mode.
@@ -67,17 +102,13 @@ fn build_script() -> Vec<Step> {
     s
 }
 
-/// Every navigation Step the harness can drive. The coverage prelude exercises
-/// each of these from each structural anchor, so no (position × action)
-/// combination is left to the random seed. SyncAdvance is excluded (it has its
-/// own slow cadence and is covered by the random body).
-const ALL_STEPS: [Step; 10] = [
-    Step::PageForward, Step::PageBackward,
-    Step::NextScene, Step::PrevScene,
-    Step::NextChapter, Step::PrevChapter,
-    Step::JumpTop, Step::JumpEnd,
-    Step::NextDialogue, Step::PrevDialogue,
-];
+/// The navigation Steps the coverage prelude drives from each structural anchor.
+/// Derived from `Step::EVERY` filtered by the compiler-enforced `in_coverage`
+/// classification — so adding a `Step` variant automatically includes it here
+/// (if classified `true`) or forces an explicit `false`, never silent omission.
+fn all_coverage_steps() -> Vec<Step> {
+    Step::EVERY.into_iter().filter(|st| st.in_coverage()).collect()
+}
 
 /// Deterministic COVERAGE prelude: drive every Step from every structural
 /// anchor, so a single run guarantees (anchor × action) coverage regardless of
@@ -91,12 +122,13 @@ const ALL_STEPS: [Step; 10] = [
 /// variations / scenarios" instead of sampling them.
 fn build_coverage_prelude() -> Vec<Step> {
     let mut s = Vec::new();
+    let actions = all_coverage_steps();
 
     // 1. From the START, every action (re-anchor with gg before each).
-    for st in ALL_STEPS { s.push(Step::JumpTop); s.push(st); }
+    for &st in &actions { s.push(Step::JumpTop); s.push(st); }
 
     // 2. From the END, every action (the final-spread / EPILOGUE scenarios).
-    for st in ALL_STEPS { s.push(Step::JumpEnd); s.push(st); }
+    for &st in &actions { s.push(Step::JumpEnd); s.push(st); }
 
     // 3. Sweep scene boundaries: gg, then k× NextScene to reach scene k, then
     //    every action from there. 24 scenes covers the longest Folger plays;
@@ -104,7 +136,7 @@ fn build_coverage_prelude() -> Vec<Step> {
     for k in 1..=24usize {
         s.push(Step::JumpTop);
         for _ in 0..k { s.push(Step::NextScene); }
-        for st in ALL_STEPS { s.push(st);
+        for &st in &actions { s.push(st);
             // Return to the same scene anchor before the next action so each
             // action starts from the boundary, not from wherever the prior one
             // left the cursor.
@@ -119,7 +151,7 @@ fn build_coverage_prelude() -> Vec<Step> {
     for back in [3usize, 7, 12] {
         s.push(Step::JumpEnd);
         for _ in 0..back { s.push(Step::PrevDialogue); }
-        for st in ALL_STEPS {
+        for &st in &actions {
             s.push(st);
             s.push(Step::JumpEnd);
             for _ in 0..back { s.push(Step::PrevDialogue); }
@@ -134,9 +166,30 @@ fn build_coverage_prelude() -> Vec<Step> {
 /// guarantees scenario coverage every run; the random body adds combinatorial
 /// depth. Each jump is followed by a landing check in `run_step` (cursor on a
 /// dialogue line, within the visible page, page_top consistent).
+/// The default LCG seed. Overridable at runtime via `LIT_NAV_SEED` (decimal or
+/// `0x`-prefixed hex) so a failing run can be replayed exactly. The resolved
+/// seed is logged once at run start (see `toggle`).
+const DEFAULT_NAV_SEED: u64 = 0x9E3779B97F4A7C15;
+
+/// Resolve the fuzz seed: `LIT_NAV_SEED` if set and parseable, else the default.
+fn fuzz_seed() -> u64 {
+    match std::env::var("LIT_NAV_SEED") {
+        Ok(v) => {
+            let v = v.trim();
+            let parsed = if let Some(hex) = v.strip_prefix("0x").or_else(|| v.strip_prefix("0X")) {
+                u64::from_str_radix(hex, 16).ok()
+            } else {
+                v.parse::<u64>().ok()
+            };
+            parsed.unwrap_or(DEFAULT_NAV_SEED)
+        }
+        Err(_) => DEFAULT_NAV_SEED,
+    }
+}
+
 fn build_fuzz_script() -> Vec<Step> {
     let mut s = build_coverage_prelude();
-    let mut rng = Lcg(0x9E3779B97F4A7C15);
+    let mut rng = Lcg(fuzz_seed());
     let setups = [
         Step::PageForward, Step::PageForward,
         Step::NextScene, Step::PrevScene,
@@ -222,6 +275,11 @@ pub fn toggle(state_rc: &Rc<RefCell<AppState>>) {
         if s.nav_test_fuzz { "fuzz" } else { "jumps-only" },
         s.page_top_line, s.current_line,
     );
+    if s.nav_test_fuzz {
+        // Print the resolved seed so a FAIL can be replayed exactly with
+        // `LIT_NAV_SEED=0x...` (set it to this value to reproduce the same run).
+        crate::log_fmt!("NAV_TEST: seed=0x{:016X} (override with LIT_NAV_SEED)", fuzz_seed());
+    }
 
     let icon = s.debug_icon.clone();
     icon.set_label("NAV TEST: running…");
@@ -574,7 +632,89 @@ fn run_step(s: &mut AppState) {
         }
     }
 
+    // 8. LINE CLIPPING (in-app, per-step): the first and last visible lines of
+    // each column must be shown WHOLE — never cut by the top or bottom edge of
+    // the reading pane. This is the deterministic, pixel-free equivalent of
+    // `check_line_clipping.py`: it reads the same `line_yrange` geometry the
+    // renderer uses, so it runs on EVERY step (~1400/run) with no numpy, no
+    // theme/contrast sensitivity, and no dependence on where `grim` points.
+    // (The screenshot detector stays as an occasional oracle to confirm the
+    // in-app geometry agrees with rendered pixels.)
+    if s.column_count() == 2 && line_count > 0 && !s.loading_work.get() {
+        let cs = crate::input::viewport::column_split(s, post_top);
+        // Left column spans [post_top, split-1]; right column [split, page_end].
+        if let Some(msg) = clip_violation(
+            &s.text_view, &s.scrolled_window, &s.buffer,
+            post_top, cs.split.saturating_sub(1).max(post_top),
+        ) {
+            fail(s, step_num, step, &format!("LEFT COLUMN CLIPPED: {}", msg));
+        }
+        if cs.page_end >= cs.split {
+            if let Some(msg) = clip_violation(
+                &s.right_view, &s.right_scrolled_window, &s.buffer,
+                cs.split, cs.page_end,
+            ) {
+                fail(s, step_num, step, &format!("RIGHT COLUMN CLIPPED: {}", msg));
+            }
+        }
+    } else if s.column_count() == 1 && line_count > 0 && !s.loading_work.get() {
+        let last_vis = last_fully_visible_line(s, post_top);
+        if let Some(msg) = clip_violation(
+            &s.text_view, &s.scrolled_window, &s.buffer, post_top, last_vis,
+        ) {
+            fail(s, step_num, step, &format!("LINE CLIPPED: {}", msg));
+        }
+    }
+
     s.nav_test_step += 1;
+}
+
+/// In-app clipping check for one column: do the `top` and `bottom` visible lines
+/// both fit WHOLE inside the view's scroll viewport? Returns `Some(message)` on a
+/// clip, `None` when both are fully shown. Mirrors `check_line_clipping.py`'s
+/// invariant using `line_yrange` (the renderer's own geometry) vs the
+/// vadjustment window. A small tolerance absorbs sub-pixel rounding / the
+/// descender guard the layout intentionally reserves.
+fn clip_violation(
+    view: &sourceview5::View,
+    scrolled: &gtk4::ScrolledWindow,
+    buffer: &sourceview5::Buffer,
+    top: usize,
+    bottom: usize,
+) -> Option<String> {
+    // Tolerance: the descender guard + bottom margin the layout reserves on
+    // purpose (a line sitting within this band is not "clipped"). Keep generous
+    // enough to avoid false positives from Pango sub-pixel jitter.
+    const TOL: f64 = 6.0;
+    let adj = scrolled.vadjustment();
+    let view_top = adj.value();
+    let view_bottom = view_top + adj.page_size();
+    if adj.page_size() <= 0.0 {
+        return None; // layout not ready — don't fail closed mid-transition
+    }
+    // Top visible line: its pixel TOP must not be above the viewport top.
+    if let Some(iter) = buffer.iter_at_line(top as i32) {
+        let (y, _h) = view.line_yrange(&iter);
+        if (y as f64) < view_top - TOL {
+            return Some(format!(
+                "top line {} y={} above viewport_top={:.0} (cut at top)",
+                top, y, view_top
+            ));
+        }
+    }
+    // Bottom visible line: its pixel BOTTOM must not fall below the viewport
+    // bottom.
+    if let Some(iter) = buffer.iter_at_line(bottom as i32) {
+        let (y, h) = view.line_yrange(&iter);
+        let line_bottom = (y + h) as f64;
+        if line_bottom > view_bottom + TOL {
+            return Some(format!(
+                "bottom line {} bottom={:.0} below viewport_bottom={:.0} (cut at bottom)",
+                bottom, line_bottom, view_bottom
+            ));
+        }
+    }
+    None
 }
 
 fn fail(state: &mut AppState, step: usize, action: Step, msg: &str) {
