@@ -36,7 +36,7 @@ use super::viewport::{
     is_dialogue_line, is_blank_buffer_line,
     next_dialogue_line, prev_dialogue_line, buffer_line_text,
     next_dialogue_from, is_line_fully_visible, lines_per_page,
-    clamp_page_top_to_scroll_ceiling, column_split,
+    clamp_page_top_to_scroll_ceiling, column_split, would_empty_right_column,
 };
 use super::scroll::{
     set_page, set_page_instant, scroll_to_cursor, center_cursor,
@@ -363,6 +363,12 @@ fn scene_snap_top(state: &AppState, line_count: usize) -> Option<usize> {
     if rc_first_dlg >= line_count {
         return None;
     }
+    // Never snap a scene to the left column if doing so would empty the right
+    // column (the scene is the work's short tail, e.g. a lone EPILOGUE) — the
+    // tail should stay in the right column of the current spread.
+    if would_empty_right_column(state, split) {
+        return None;
+    }
     // Walk back from the right column's first dialogue: if we reach a scene
     // marker before any other dialogue line, this is the scene's first line.
     let mut i = rc_first_dlg;
@@ -396,6 +402,28 @@ pub fn page_forward(state: &mut AppState) {
     let line_count = state.effective_line_count();
     if line_count == 0 {
         return;
+    }
+
+    // Final-spread guard: when the current spread already shows the work's last
+    // content in its right column, there is no next page — turning would just
+    // empty the right column (a lone EPILOGUE as the left column). Instead move
+    // the highlight to the work's last dialogue line and stay put.
+    if state.column_count() == 2 {
+        let cs = column_split(state, state.page_top_line);
+        if cs.next_page_top >= line_count {
+            let last_dlg = prev_dialogue_line(&state.buffer, &state.translation_lines, cs.page_end + 1)
+                .filter(|&d| d >= state.page_top_line)
+                .unwrap_or(cs.page_end);
+            if last_dlg > state.current_line {
+                log_fmt!("PAGE_FWD: final spread — cursor {}->{} (no turn)",
+                         state.current_line, last_dlg);
+                state.current_line = last_dlg;
+                after_page_change(state, PageChangeReason::Forward);
+            } else {
+                log_fmt!("PAGE_FWD: final spread, cursor already at last ({})", state.current_line);
+            }
+            return;
+        }
     }
 
     // Scene-aware turn: if the right column opens a new scene, move that scene
@@ -434,6 +462,19 @@ pub fn page_forward(state: &mut AppState) {
     } else {
         new_top
     };
+    // If the turn would leave the right column empty (advancing onto the work's
+    // short tail, e.g. a lone EPILOGUE), redirect to the final-spread anchor so
+    // the tail fills the RIGHT column instead of becoming a lonely left column —
+    // matching the q/j forward rule.
+    let candidate_top = if state.column_count() == 2
+        && super::viewport::would_empty_right_column(state, candidate_top)
+    {
+        let anchor = last_page_top(state, next_dialogue);
+        log_fmt!("PAGE_FWD: would-empty candidate={} -> anchor={}", candidate_top, anchor);
+        anchor
+    } else {
+        candidate_top
+    };
     let effective_top = clamp_page_top_to_scroll_ceiling(state, candidate_top);
     log_fmt!("PAGE_FWD: candidate_top={} effective_top={} (from new_top={})", candidate_top, effective_top, new_top);
     if effective_top > state.page_top_line {
@@ -461,8 +502,19 @@ pub fn page_backward(state: &mut AppState) {
         return;
     }
 
+    // First-spread guard: when the current spread already shows the work's first
+    // content in its left column (page top at 0), there is no previous page —
+    // move the highlight to the work's first dialogue line and stay put. Mirrors
+    // the final-spread guard in page_forward.
     if state.page_top_line == 0 {
-        log_fmt!("PAGE_BWD: at start of work");
+        let first = first_dialogue_line(state);
+        if first < state.current_line {
+            log_fmt!("PAGE_BWD: first spread — cursor {}->{} (no turn)", state.current_line, first);
+            state.current_line = first;
+            after_page_change(state, PageChangeReason::Backward);
+        } else {
+            log_fmt!("PAGE_BWD: first spread, cursor already at first ({})", state.current_line);
+        }
         return;
     }
 

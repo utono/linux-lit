@@ -40,17 +40,19 @@ Every function that changes `page_top_line` must interact with the stack:
 - **page_forward (`x`)** — pushes old `page_top_line` before turning
 - **page_backward (`y`)** — pops; falls back to `prev_page_top()` when empty
 - **page_backward_bottom (Shift+comma)** — pops (same as `page_backward`)
-- **Structural jumps (gg, G, `[`, `{`, 2, 3, bookmarks, vocab, zt)** — clear
-  the stack then push current `page_top_line` as a single return entry. This
-  means `y` after a structural jump returns to the page the user was on when
-  they jumped. A second `y` has an empty stack and falls through to
-  `prev_page_top()`
-- **Line-by-line navigation (comma, q, j, k)** — no stack interaction; incidental
-  page turns from `scroll_after_jump_forward/backward` don't touch the stack.
-  In plays, when the cursor lands on the first dialogue line of a new scene,
-  `scroll_after_jump_forward/backward` snaps the page top to the scene header
-  via `back_up_for_speaker` (scene-snap takes priority over the normal
-  off-screen check)
+- **Structural jumps (gg, G, `[`, `{`, bookmarks, vocab, zt)** — clear the stack
+  then push current `page_top_line` as a single return entry. `y` after such a
+  jump returns to the page the user was on when they jumped; a second `y` has an
+  empty stack and falls through to `prev_page_top()`
+- **Scene jumps (2, 3)** — clear the stack but do NOT push. A scene jump can skip
+  many pages, so `y` should page back one viewport into the skipped content via
+  `prev_page_top()`, not teleport to the jump origin (see `jump_to_next_scene` /
+  `jump_to_prev_scene`)
+- **Line-by-line dialogue navigation (comma, q, j, k)** — no stack interaction;
+  incidental page turns from `scroll_after_jump_forward/backward` don't touch the
+  stack. These follow a plain reading-order model (see *Dialogue navigation
+  reading model* below) and do NOT scene-snap — scene snapping is the 2/3 jumps'
+  job
 - **Search jumps (`/`, `n`, `N`)** — push current `page_top_line` (with dedup)
   before `update_highlight_and_center`. This means `y` after dismissing a
   search with Escape returns to the pre-search page. The dedup avoids
@@ -483,22 +485,58 @@ cached in `state.synopsis_cache` keyed by `(div1, div2)`.
 
 ### Scene-snap on navigation
 
-When a dialogue navigation key (comma, q, j, k) or playback sync lands the
-cursor on the first dialogue line of a new scene, the viewport snaps so the
-scene header is at the top. Detection uses `is_first_dialogue_of_scene` in
-`viewport.rs`, which walks backward from the cursor — if it hits a scene
-marker or separator before any dialogue line, the cursor is the scene's
-first dialogue. `back_up_for_speaker` then finds the full header block top.
+When FORWARD dialogue navigation (`q`/`j`) or playback sync lands the cursor on
+the first dialogue line of a new scene that's off-page, the viewport snaps so the
+scene header is at the top of the new spread. Detection uses
+`is_first_dialogue_of_scene` in `viewport.rs`, which walks backward from the
+cursor — if it hits a scene marker or separator before any dialogue line, the
+cursor is the scene's first dialogue; `back_up_for_speaker` then finds the full
+header-block top. This applies to plays only (`!is_prose`).
 
-This applies to plays only (`!is_prose`). For sync, the scene snap fires via
-the `(div1, div2)` comparison in the CursorSync handler. For navigation, it
-fires in `scroll_after_jump_forward` and `scroll_after_jump_backward` in
-`scroll.rs`.
+- **Forward (`q`/`j`):** scene-snap fires in `scroll_after_jump_forward`.
+- **Sync:** scene-snap fires via the `(div1, div2)` comparison in the CursorSync
+  handler (`main.rs`).
+- **Backward (`,`/`k`):** does NOT scene-snap. `scroll_after_jump_backward`
+  follows the plain reading model below — scene snapping a backward step caused
+  cursor oscillation in the final-spread region, and a reader pressing `,`/`k`
+  expects to step to the previous dialogue, not jump a scene header to the top.
+- **Scene jumps (`2`/`3`):** a separate path (`jump_to_next_scene` /
+  `jump_to_prev_scene`), not these handlers — that is where intentional
+  scene-to-page-top snapping lives.
+
+### Dialogue navigation reading model (`,` `q` `k` `j`)
+
+`q`/`j` (next dialogue) and `,`/`k` (previous dialogue) move the cursor one
+dialogue line and turn the page only when the cursor leaves the visible spread.
+In two columns the cursor walks down the left column, down the right column, then
+onto the next spread — backward is the mirror. The handlers in `navigation.rs`
+set `current_line` to the next/prev dialogue, then call the scroll-after fns in
+`scroll.rs`:
+
+- **`scroll_after_jump_forward`** — if the new line is still visible, nothing to
+  do. Otherwise turn forward: `page_turn_top(current_line)` makes the cursor the
+  FIRST dialogue at the new spread's top-left. If that would leave the right
+  column empty (the work's short tail, e.g. a lone EPILOGUE), redirect to
+  `navigation::last_page_top` so the tail fills the RIGHT column (cursor in it)
+  rather than sitting alone in the left.
+- **`scroll_after_jump_backward`** — if still visible, nothing to do. Otherwise
+  the cursor stepped above the page top: turn to `prev_page_top`, then set the
+  cursor to that spread's LAST visible dialogue line (bottom of the right column)
+  — what a reader expects from `,`/`k` at the page top. Backing up off trailing
+  non-dialogue is via `prev_dialogue_line(last_fully_visible_line + 1)`.
+
+`navigation::last_page_top(target)` (shared with `jump_to_end`/`G`) finds the
+final spread that holds `target`, backing up until the right column is non-empty
+AND contains `target` so a short tail fills the right column.
+`viewport::would_empty_right_column(top)` is the predicate; both paths and the
+sync page-turn (`update_highlight_and_advance_page`) and sync scene-snap use it.
 
 Key files: `src/db/models.rs` (Line struct with div1/div2/line_in_div),
 `src/db/queries.rs` (load_work, scene synopses),
 `src/input/viewport.rs` (`back_up_for_speaker`, `clamp_at_section_break`,
-`is_first_dialogue_of_scene`),
+`is_first_dialogue_of_scene`, `would_empty_right_column`, `prev_page_top`,
+`last_fully_visible_line`, `prev_dialogue_line`),
+`src/input/navigation.rs` (`last_page_top`, the four nav handlers),
 `src/input/scroll.rs` (`scroll_after_jump_forward`, `scroll_after_jump_backward`),
 `src/db/line_types.rs` (`is_act_scene_marker`, `is_separator`)
 
