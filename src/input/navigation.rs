@@ -242,54 +242,67 @@ pub(crate) fn last_page_top(state: &AppState, target: usize) -> usize {
         // the work's tail sits in the right column. Walk the forward page chain
         // (next_page_top) from a safe early start until the spread whose forward
         // boundary reaches the end of the work; that spread's top is the anchor.
+        // The canonical final spread is simply the page you reach by paging
+        // FORWARD (via next_page_top) until the forward boundary hits the end of
+        // the work. That top is IDEMPOTENT — recomputing from any start yields the
+        // same page the saved-position startup restores and the same page `x`
+        // walks to. (An earlier version "pulled" the top forward to fit a short
+        // EPILOGUE into the right column; that produced a DIFFERENT, too-early top
+        // than the natural walk, so G disagreed with the startup spread. The
+        // natural last spread already carries the tail in its right column, so no
+        // pull is needed.)
+        //
+        // Start from a safe boundary below `target` and walk forward. Snap onto a
+        // real boundary first, then advance while the next page still begins
+        // before the work's end.
         let lpp = lines_per_page(state).max(1) * 2; // ~lines on one spread
         let mut top = target.saturating_sub(lpp * 3); // safe early start
-        // Snap `top` onto a real page boundary first by walking forward until the
-        // spread that contains `top`'s region; then continue to the last spread.
+        // Snap onto a real forward boundary: walk from a known-good start (0 is
+        // always a boundary; but to stay cheap, walk forward until we pass `top`).
+        {
+            let mut b = 0usize;
+            let mut g = 0;
+            while b < top {
+                let nb = super::viewport::next_page_top(state, b).new_top;
+                if nb <= b { break; }
+                if nb > top { break; }
+                b = nb;
+                g += 1;
+                if g > line_count { break; }
+            }
+            top = b;
+        }
+        // Advance to the natural last spread.
         let mut guard = 0;
         loop {
-            let cs = super::viewport::column_split(state, top);
-            if cs.page_end <= top {
-                break; // degenerate (layout not ready) — keep `top`
-            }
-            // Stop when this spread is the final one: its forward boundary is at
-            // or past the end, OR the next spread would contain only the tail with
-            // an empty right column (we'd rather keep the full spread here).
-            let next = cs.next_page_top;
+            let next = super::viewport::next_page_top(state, top).new_top;
             if next >= line_count || next <= top {
-                break;
-            }
-            if would_empty_right_column(state, next) {
-                // Advancing a whole page to `next` would leave its right column
-                // empty (the work's tail — e.g. a lone EPILOGUE — is shorter than
-                // one column). But the natural page boundary can SKIP a better
-                // final spread: one whose top sits a few lines past `top` so the
-                // last dialogue lines fall into the left column and the tail (the
-                // EPILOGUE) fills the RIGHT column, reaching the work's end.
-                //
-                // Pull the top forward to the SMALLEST such spread: the work's end
-                // is the last DIALOGUE line (not `line_count` — trailing blanks /
-                // exit markers needn't be "reached"), so pick the first top whose
-                // spread leaves NO dialogue below its forward boundary and still
-                // has a non-empty right column. Without this the EPILOGUE is
-                // orphaned past `top`'s right column (the 4308-vs-4316 bug).
-                let mut best = top;
-                for t in (top + 1)..=next.min(line_count.saturating_sub(1)) {
-                    let tcs = super::viewport::column_split(state, t);
-                    let dialogue_below = (tcs.next_page_top..line_count)
-                        .any(|i| is_dialogue_line(&state.buffer, i));
-                    if !dialogue_below && !would_empty_right_column(state, t) {
-                        best = t;
-                        break;
-                    }
-                }
-                top = best;
-                break;
+                break; // `top` is the last spread (its forward boundary is the end)
             }
             top = next;
             guard += 1;
             if guard > line_count {
                 break;
+            }
+        }
+        // Safety guard for the orphaned-tail case: if the natural last spread
+        // still leaves DIALOGUE below its right column (a short trailing section
+        // that column_split clamped off), pull the top forward to the smallest
+        // spread that shows everything down to the last dialogue line. In the
+        // common case (the tail already fills the right column, as the canonical
+        // spread shows) this loop finds `top` immediately and is a no-op.
+        let cs = super::viewport::column_split(state, top);
+        let dialogue_below = (cs.next_page_top..line_count)
+            .any(|i| is_dialogue_line(&state.buffer, i));
+        if dialogue_below {
+            for t in top..=target.min(line_count.saturating_sub(1)) {
+                let tcs = super::viewport::column_split(state, t);
+                let below = (tcs.next_page_top..line_count)
+                    .any(|i| is_dialogue_line(&state.buffer, i));
+                if !below && !would_empty_right_column(state, t) {
+                    top = t;
+                    break;
+                }
             }
         }
         top
