@@ -15,9 +15,12 @@ start, stalls, surfaces a stray window, or you need to understand the
    `.claude/skills/headless-test/run-headless-test.sh`.
 2. **Navigation fuzz** — auto-start the app's in-process nav-test harness
    (`src/input/nav_test.rs`) in a randomized mode that runs ~750 seeded-random
-   jumps and checks an invariant after each (on-page landing, y round-trip, no
-   mid-page scene break, viewport fill, cursor-is-dialogue). Driven by env vars,
-   not the screenshot script.
+   jumps (plus boundary-stress motifs that hammer `G`/`gg`/the work's tail) and
+   checks invariants after each. Hard correctness checks log `NAV_TEST: FAIL`
+   (must be 0: on-page landing, y never goes forward, right column never empty,
+   left column never underfilled); harness-approximation checks (SearchJump
+   non-dialogue, mid-page scene break, return mismatch) log `NAV_TEST: WARN` and
+   are expected to be non-zero. Driven by env vars, not the screenshot script.
 
 Both run **inside a nested headless compositor** so they never collide with the
 user's dwl session or seat.

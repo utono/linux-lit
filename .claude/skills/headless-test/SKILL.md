@@ -52,11 +52,26 @@ is the verification step. No written review file is required.
 
 A randomized navigation stress test that drives the app's in-process nav-test
 harness (`src/input/nav_test.rs`) and verifies every jump lands correctly. It
-runs ~750 deterministic-random steps (x/y/2/3/gg/G/chapter), and after each
-checks: forward progress on x, y round-trips, **landing on-page** (cursor within
-the visible range after a jump — catches G/3 mis-landings), no scene break
-mid-page, viewport fill ≥10%, and cursor-is-dialogue. Failures are logged as
-`NAV_TEST: FAIL …` with the step and reason.
+runs ~750 deterministic-random steps (x/y/2/3/gg/G/chapter plus the q/j/,/k
+dialogue-walk binds), and after each checks a set of invariants. The random
+script also injects **boundary-stress motifs** (~1 in 4 iterations): repeated
+end/top jumps (`G x x x`, `G y y y`, `gg x x x`), double end/top, and a walk
+down the dialogue into the work's short tail then a reverse — these are what
+surface final-spread / EPILOGUE bugs that uniform random keypresses miss.
+
+Two severities are logged:
+
+- **`NAV_TEST: FAIL …`** — a hard correctness invariant. These must be 0:
+  forward progress on x, y never goes backward-then-forward (round-trips),
+  **landing on-page** (cursor within the visible range after a jump — catches
+  G/3 mis-landings and the JumpEnd-past-the-EPILOGUE bug), **right column never
+  empty** unless the tail truly can't fill it, **left column never underfilled**
+  before the end, and a real-path cursor-is-dialogue check.
+- **`NAV_TEST: WARN …`** — a harness-approximation note, *not* a product bug.
+  The `SearchJump` step is a simulation (it snaps to `next_dialogue_line`), so a
+  landing on a non-dialogue line like `[All exit.]`, and the mid-page
+  scene-break / return-mismatch checks, are downgraded to WARN so they don't
+  mask real FAILs. A clean run is **0 FAIL, a handful of WARNs**.
 
 ### How to run it (via the skill)
 
@@ -74,13 +89,24 @@ It writes the log to `/tmp/fuzz-nav.log` and the cage PID to `/tmp/fuzz_pid.txt`
 Stop early with `kill "$(cat /tmp/fuzz_pid.txt)"` — **never** `pkill -f
 target/debug/linux-lit`, which also signals a live `cargo run` session.
 
-Re-triage an existing log at any time:
+Re-triage an existing log at any time. Hard failures first (must be 0), then
+the soft warns:
 
 ```bash
+# hard FAILs — must be 0
 rg "NAV_TEST: FAIL" /tmp/fuzz-nav.log | sed -E 's/.*FAIL step=[0-9]+ ([A-Za-z]+) /\1: /' \
+  | sed -E 's/[0-9]+/N/g' | sort | uniq -c | sort -rn
+# soft WARNs — harness-approximation, expected to be non-zero
+rg "NAV_TEST: WARN" /tmp/fuzz-nav.log | sed -E 's/.*WARN step=[0-9]+ ([A-Za-z]+) /\1: /' \
   | sed -E 's/[0-9]+/N/g' | sort | uniq -c | sort -rn
 # one failure in context: rg "NAV_TEST" /tmp/fuzz-nav.log | rg -B2 "FAIL step=124"
 ```
+
+When a FAIL appears, read the cursor-vs-visible numbers in the message
+(`cursor=N not in visible [lo, hi]`): if the cursor is *past* `hi` near the end
+of the work, it's the final-spread/EPILOGUE class — the page anchored on the
+last full two-column spread but the cursor was placed on a line the spread's
+right column clamped off (see *page-turning-mechanics.md*, "G / jump-to-end").
 
 ### Why it's isolated (do not "simplify" away)
 
