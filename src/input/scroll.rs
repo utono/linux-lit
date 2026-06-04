@@ -577,7 +577,6 @@ fn update_bottom_clip(
         }
     };
 
-    let clip = (widget_height - display_range.total_height).max(0);
     let scroll_val = scrolled_window.vadjustment().value();
     let expected_y = if let Some(iter) = buf_sv.iter_at_line(page_top as i32) {
         let (y, _h) = text_view.line_yrange(&iter);
@@ -585,7 +584,20 @@ fn update_bottom_clip(
     } else {
         -1.0
     };
-    let scroll_offset = scroll_val - expected_y;
+    // When the viewport is scrolled PAST page_top's pixel top (offset > 0) —
+    // which happens during line-by-line navigation in translation mode, where
+    // the scroll tracks the cursor rather than snapping to a page boundary —
+    // the displayed content sits `offset` higher on screen, exposing `offset`
+    // more space (and a partial line) at the bottom. The clip box (valign=End)
+    // must grow by that offset to keep covering the partial bottom line. In
+    // normal page-turn mode the scroll is snapped to page_top so offset == 0
+    // and this is a no-op.
+    let scroll_offset = if expected_y >= 0.0 {
+        (scroll_val - expected_y).max(0.0)
+    } else {
+        0.0
+    };
+    let clip = (widget_height - display_range.total_height + scroll_offset.round() as i32).max(0);
     // Skip the redundant set_height_request when the clip value would be
     // unchanged. Calling set_height_request even with the same value forces
     // GTK to revalidate layout, which can re-shape Pango glyphs by 1-2px
@@ -731,7 +743,7 @@ pub(crate) fn scroll_cursor_into_view_scrolloff(state: &mut AppState) {
     let bottom = top + adj.page_size();
     let cursor_top = y as f64;
     let cursor_bottom = (y + h) as f64;
-    let new_val = if cursor_top - margin < top {
+    let raw_val = if cursor_top - margin < top {
         // Too close to the top edge — scroll up so the margin is restored.
         (cursor_top - margin).max(0.0)
     } else if cursor_bottom + margin > bottom {
@@ -740,7 +752,111 @@ pub(crate) fn scroll_cursor_into_view_scrolloff(state: &mut AppState) {
     } else {
         return; // already within the comfortable band
     };
-    adj.set_value(new_val.clamp(0.0, max_scroll));
+    // Snap the target to a whole-line top so the viewport never lands between
+    // line boundaries — otherwise (notably in the translation view, where this
+    // scrolloff path is used instead of page turns) the top and bottom lines
+    // render half-clipped against the card edges.
+    let new_val = snap_value_to_line_top(state, raw_val.clamp(0.0, max_scroll))
+        .clamp(0.0, max_scroll);
+    adj.set_value(new_val);
+    // Keep page_top_line consistent with the new scroll position.
+    if let Some(top_line) = line_at_value(state, new_val) {
+        state.page_top_line = top_line;
+    }
+    // Cover the partial line straddling the bottom edge. The main card's paged
+    // update_bottom_clip is page_top-relative and assumes a snapped page; the
+    // translation view scrolls continuously, so compute the clip from the ACTUAL
+    // viewport like the gloss overlay does: find the last whole line fully above
+    // the viewport bottom and clip from its bottom down.
+    update_scrolloff_bottom_clip(state, new_val);
+}
+
+/// Scroll-position-aware bottom clip for the continuously-scrolling translation
+/// view. `top_val` is the current vadjustment value. Sets `state.bottom_clip`
+/// to cover from the bottom of the last fully-visible line to the viewport
+/// bottom, so a partial line never shows clipped against the card's lower edge.
+fn update_scrolloff_bottom_clip(state: &AppState, top_val: f64) {
+    scrolloff_bottom_clip_widgets(
+        &state.text_view, &state.scrolled_window, &state.bottom_clip, top_val,
+    );
+}
+
+/// Widget-level core of `update_scrolloff_bottom_clip`, callable from an idle
+/// closure (e.g. the translation toggle reveal) that holds the widgets but not
+/// `AppState`. Computes the clip purely from the current scroll position so the
+/// bottom partial line is covered immediately on toggle, before any j/k.
+pub(crate) fn scrolloff_bottom_clip_widgets(
+    text_view: &sourceview5::View,
+    scrolled_window: &gtk4::ScrolledWindow,
+    bottom_clip: &gtk4::Box,
+    top_val: f64,
+) {
+    let adj = scrolled_window.vadjustment();
+    let viewport_h = adj.page_size();
+    if viewport_h <= 0.0 {
+        if bottom_clip.height_request() != 0 {
+            bottom_clip.set_height_request(0);
+        }
+        return;
+    }
+    let bottom_y = top_val + viewport_h;
+    let content_h = adj.upper();
+
+    // Last line whose bottom is fully at/above the viewport bottom.
+    let mut last_full_bottom = top_val;
+    let mut any_full = false;
+    let (mut iter, _) = text_view.line_at_y(top_val.max(0.0) as i32);
+    loop {
+        let (ly, lh) = text_view.line_yrange(&iter);
+        let row_top = ly as f64;
+        let row_bottom = (ly + lh) as f64;
+        if row_top >= bottom_y {
+            break;
+        }
+        if row_bottom <= bottom_y + 0.5 && row_bottom > top_val {
+            last_full_bottom = row_bottom;
+            any_full = true;
+        }
+        if !iter.forward_line() {
+            break;
+        }
+    }
+
+    // Document ends within the viewport → only slack below the content.
+    let effective_bottom = if content_h <= bottom_y + 0.5 {
+        content_h
+    } else {
+        last_full_bottom
+    };
+    // A single row taller than the viewport: don't blank it.
+    let clip_h = if !any_full && content_h > bottom_y + 0.5 {
+        0
+    } else {
+        (bottom_y - effective_bottom).max(0.0).round() as i32
+    };
+    if bottom_clip.height_request() != clip_h {
+        bottom_clip.set_height_request(clip_h);
+    }
+}
+
+/// The buffer line whose top is at or just above `target_y`, found by GTK's own
+/// y→line mapping (O(1), no per-line walk). Returns the line index.
+fn line_at_value(state: &AppState, target_y: f64) -> Option<usize> {
+    let (iter, _top) = state.text_view.line_at_y(target_y.max(0.0) as i32);
+    Some(iter.line() as usize)
+}
+
+/// Greatest line-top y at or below `target_y` (snaps a raw scroll target down to
+/// a whole-line boundary), using GTK's y→line mapping.
+fn snap_value_to_line_top(state: &AppState, target_y: f64) -> f64 {
+    let Some(line) = line_at_value(state, target_y) else { return target_y };
+    match state.buffer.iter_at_line(line as i32) {
+        Some(iter) => {
+            let (y, _h) = state.text_view.line_yrange(&iter);
+            y as f64
+        }
+        None => target_y,
+    }
 }
 
 /// Scroll the viewport by a fixed step without moving the cursor or seeking audio.

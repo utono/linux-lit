@@ -575,3 +575,113 @@ Key files: `src/ui/gloss_overlay.rs` (`reset_scroll_top`, `scroll_gloss`,
 `snap_value_to_line`, `recompute_bottom_clip`, `update_bottom_clip`),
 `src/input/scroll.rs` (`snap_scroll_to_line`, `update_bottom_clip` — the main
 card originals this emulates), `src/input/viewport.rs` (`visible_range`)
+
+## Translations overlay (`i`)
+
+Unlike the synopsis/gloss overlay, the translation view is **not** a separate
+widget — `show_translations` (`app.rs`) inserts a smaller italic translation
+line directly into the main buffer below each original line, so the reader keeps
+using `state.text_view` / `state.scrolled_window` and all the normal `page_top_line`
+viewport math. `hide_translations` removes the inserted lines and restores the
+two-column layout. `translations_visible` forces `column_count()` to 1.
+
+### Card width and margins
+
+Translation mode renders two logical columns (original + translation), so its
+card is sized like the **two-column** layout, not a narrow single column:
+`target_card_width` (`app.rs`) takes the `column_count >= 2 || translations`
+branch (proportional `window_width * TWO_COLUMN_WIDTH_FRACTION`, floored at the
+two-column width). The text is then inset like the gloss/synopsis cards —
+`apply_tiled_mode` sets `left_bump` and the right margin to ~`card_width/4`
+(clamped to the window, so it degrades to 0 on a narrow display). This
+translation branch runs **before** the `tiled` short-circuit, because `tiled` is
+computed against `column_width` (the single-column config), not the wider
+translation card.
+
+### No verse line numbers
+
+The right-gutter every-5th foliation is suppressed in translation mode:
+`rebuild_line_number_gutter` (`app.rs`) gates `show_numbers` on
+`!state.translations_visible`. The interleaved original/translation rows would
+otherwise make the numbers misleading. The sign column (left gutter `u`/`.`
+markers) is separately suppressed via `sign_column_visible.set(false)` in
+`show_translations`. The gutter teardown at the top of
+`rebuild_line_number_gutter` runs unconditionally, so toggling translations off
+reinstalls the numbers.
+
+### Anti-clipping — two distinct fixes (toggle + navigation)
+
+**Symptom:** with translations on, the top line is half-clipped at the top edge
+and the bottom line is half-clipped at the bottom edge — both on first toggle and
+while navigating with `j`/`k`. Without translations the same card snaps cleanly.
+
+The translation view does **not** page-turn like the normal reader. It scrolls
+**continuously** with a vim-style scrolloff (`cursor_next_dialogue` /
+`cursor_prev_dialogue` take the `translations_visible` branch and call
+`scroll_cursor_into_view_scrolloff`, not `scroll_after_jump_*`). That breaks the
+two assumptions the paged anti-clipping machinery relies on, in two places:
+
+**(a) Toggle-on anchor — snap top to `page_top_line`, clip bottom immediately.**
+Inserting ~3000 translation lines shifts every buffer index; `show_translations`
+remaps `page_top_line` via `map_line_after_insert` (correct — it always lands on
+an original line). The deferred re-anchor idle used to set `adj.set_value` to the
+**cursor's** old screen-y, which leaves the scroll between line tops. It now snaps
+to `page_top_line`'s **exact pixel top** via `line_yrange`, clamped to
+`[0, upper - page_size]`, **and then calls `scrolloff_bottom_clip_widgets`** to
+cover the partial bottom line on the very first reveal — before any j/k. (The
+earlier version relied on the paged `refresh_bottom_clip` here, whose scheduled
+idles are unreliable right after the big insert, so the bottom clipped on open.)
+The anchor must stay in the idle: GTK hasn't re-laid the grown buffer
+synchronously, so `line_yrange`/`upper` are stale until the layout pass. Confirm
+via the `TRANSLATIONS_SHOW: idle snap to page_top` log line showing `clamped == y`.
+
+**(b) Navigation scroll — line-snap the target + scroll-aware bottom clip.**
+`scroll_cursor_into_view_scrolloff` (`scroll.rs`) computed a raw pixel target
+(`cursor_top - margin` / `cursor_bottom + margin - page_size`) and set it directly,
+landing between line boundaries (top clip). It now:
+
+- snaps that target down to a whole-line top via `snap_value_to_line_top` (which
+  uses `TextView::line_at_y` for O(1) y→line mapping), and
+- covers the partial bottom line with `update_scrolloff_bottom_clip` — a
+  **scroll-position-aware** clip modeled on the gloss overlay's
+  `recompute_bottom_clip`: from the current `adj.value()`, walk display rows via
+  `line_at_y` + `forward_line`, find the last row fully above the viewport bottom,
+  and set `bottom_clip` to cover from there down. Its widget-level core
+  (`scrolloff_bottom_clip_widgets`) is shared with the toggle-on idle in (a),
+  which holds the widgets but not `AppState`.
+
+The paged `update_bottom_clip` (`scroll.rs`) is **page_top-relative** and assumes
+the scroll is snapped to `page_top` (offset 0); it is the wrong tool for the
+continuously-scrolling translation view, which is why the navigation path uses its
+own scroll-aware clip instead. (`update_bottom_clip` does now also add the
+`scroll_offset` it had been computing-but-ignoring, which helps any off-boundary
+paged case, but the translation nav path does not rely on it.)
+
+**(c) Stale visibility cache.** `is_line_fully_visible` consults the
+`last_visible_range` cache of line indices. After the buffer is remapped by a
+translation toggle those indices are stale, so the check would mis-report
+off-screen lines as visible. `show_translations` / `hide_translations` now clear
+`state.last_visible_range` alongside `invalidate_page_tops`.
+
+The failure chain to look for if clipping regresses: in translation mode, j/k →
+`cursor_next/prev_dialogue` → `scroll_cursor_into_view_scrolloff`. If that sets a
+non-line-aligned `adj.value` (top clip) or skips `update_scrolloff_bottom_clip`
+(bottom clip), edges clip. Note `update_bottom_clip`'s scheduled idles may not log
+during the toggle in the headless cage — verify on the real display.
+
+### Verifying
+
+Headless `cage` + `grim` confirms the mechanism runs and the gutter is clean,
+but (as with the gloss overlay) cannot prove pixel-exact edges. Confirm on the
+real display: press `i`, then `x`/`y` to page through, and check both edges show
+only whole original+translation pairs and no right-gutter numbers.
+
+Key files: `src/app.rs` (`show_translations`, `hide_translations`,
+`map_line_after_insert`, `rebuild_line_number_gutter`, `target_card_width`,
+`apply_tiled_mode`), `src/input/scroll.rs`
+(`scroll_cursor_into_view_scrolloff`, `snap_value_to_line_top`, `line_at_value`,
+`update_scrolloff_bottom_clip`, `scrolloff_bottom_clip_widgets`,
+`snap_scroll_to_line`, `update_bottom_clip`, `refresh_bottom_clip`),
+`src/input/navigation.rs` (`cursor_next_dialogue` / `cursor_prev_dialogue`
+translation branch), `src/input/viewport.rs` (`is_line_fully_visible`,
+`visible_range`)

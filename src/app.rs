@@ -3003,6 +3003,12 @@ pub fn apply_dialogue_formatting(state: &mut AppState) {
             if trimmed.ends_with(']') {
                 in_stage_direction = false;
             }
+        } else if line_types::is_act_scene_marker(text) || line_types::is_separator(text) {
+            // Check headings BEFORE is_speaker: standalone markers like EPILOGUE,
+            // PROLOGUE, CHORUS, INDUCTION are all-caps and would otherwise match
+            // is_speaker first and render in the smaller small-caps speaker style
+            // instead of the bold ACT/SCENE heading style.
+            state.buffer.apply_tag(&act_scene_tag, &line_start, &line_end);
         } else if line_types::is_speaker(text) {
             state.buffer.apply_tag(&speaker_gap_tag, &line_start, &line_end);
             state.buffer.apply_tag(&speaker_name_tag, &line_start, &line_end);
@@ -3015,8 +3021,6 @@ pub fn apply_dialogue_formatting(state: &mut AppState) {
             if trimmed.starts_with('[') && !trimmed.ends_with(']') {
                 in_stage_direction = true;
             }
-        } else if line_types::is_act_scene_marker(text) || line_types::is_separator(text) {
-            state.buffer.apply_tag(&act_scene_tag, &line_start, &line_end);
         } else {
             // Dialogue line — indent
             state.buffer.apply_tag(&indent_tag, &line_start, &line_end);
@@ -3503,6 +3507,12 @@ fn show_translations(state: &mut AppState) {
 
     reapply_font(state);
     crate::input::navigation::invalidate_page_tops(state);
+    // The buffer's translation lines were just inserted/removed, so every cached
+    // line index is stale. Drop the last-visible-range cache — otherwise
+    // is_line_fully_visible compares the cursor against the old line numbers,
+    // never fires a page turn, and the view scrolls off a line boundary
+    // (clipping top and bottom).
+    state.last_visible_range.set(None);
 
     let mid_adj = state.scrolled_window.vadjustment();
     crate::logging::log(&format!(
@@ -3515,34 +3525,44 @@ fn show_translations(state: &mut AppState) {
 
     // Defer viewport anchor to an idle callback — GTK hasn't re-laid the
     // buffer yet so line_yrange and adjustment.upper are stale right now.
-    let cursor_line = state.current_line;
-    let screen_y = cursor_screen_y;
+    //
+    // In e-reader mode the page top is a fixed line boundary, so anchor the
+    // viewport to page_top_line's EXACT pixel top (a whole-line edge) rather
+    // than to the cursor's screen-y. Anchoring to the cursor after a 3000-line
+    // insert leaves the scroll between line boundaries, which clips the top
+    // line and throws off the bottom-clip computation. Snapping to the line top
+    // is the same thing snap_scroll_to_line does for normal page turns; the
+    // deferred refresh_bottom_clip below then reads this aligned scroll value
+    // and covers the partial bottom line correctly. (See the anti-clipping
+    // note in docs/troubleshooting/page-turning-mechanics.md.)
+    let top_line = state.page_top_line;
+    let _ = cursor_screen_y; // no longer used for anchoring
     let tv = state.text_view.clone();
     let sw = state.scrolled_window.clone();
+    let bc = state.bottom_clip.clone();
     let vbox = state.card_vbox.clone();
     gtk4::glib::idle_add_local_once(move || {
         let adj = sw.vadjustment();
-        let cur_y = tv.buffer().iter_at_line(cursor_line as i32).map(|iter| {
+        let top_y = tv.buffer().iter_at_line(top_line as i32).map(|iter| {
             let (y, h) = tv.line_yrange(&iter);
             crate::logging::log(&format!(
-                "TRANSLATIONS_SHOW: idle anchor cursor yrange y={} h={} line={}",
-                y, h, cursor_line,
+                "TRANSLATIONS_SHOW: idle snap page_top yrange y={} h={} line={}",
+                y, h, top_line,
             ));
             y as f64
         });
-        let adj_upper = adj.upper();
-        let adj_page = adj.page_size();
-        let new_adj = match (cur_y, screen_y) {
-            (Some(y), Some(sy)) => Some((y - sy).max(0.0).min((adj_upper - adj_page).max(0.0))),
-            _ => None,
-        };
-        crate::logging::log(&format!(
-            "TRANSLATIONS_SHOW: idle anchor cur_y={:?} screen_y={:?} upper={} page={} new_adj={:?}",
-            cur_y.map(|v| v as i64), screen_y.map(|v| v as i64),
-            adj_upper as i64, adj_page as i64, new_adj.map(|v| v as i64),
-        ));
-        if let Some(val) = new_adj {
+        if let Some(y) = top_y {
+            let max_val = (adj.upper() - adj.page_size()).max(0.0);
+            let val = y.clamp(0.0, max_val);
+            crate::logging::log(&format!(
+                "TRANSLATIONS_SHOW: idle snap to page_top y={} clamped={} upper={} page={}",
+                y as i64, val as i64, adj.upper() as i64, adj.page_size() as i64,
+            ));
             adj.set_value(val);
+            // Cover the partial line at the bottom edge immediately on reveal —
+            // the paged refresh_bottom_clip is page_top-relative and unreliable
+            // here, so use the same scroll-aware clip the j/k path uses.
+            crate::input::scroll::scrolloff_bottom_clip_widgets(&tv, &sw, &bc, val);
         }
         vbox.set_opacity(1.0);
     });
@@ -3747,6 +3767,12 @@ fn strip_translation_lines(state: &mut AppState) {
 
     reapply_font(state);
     crate::input::navigation::invalidate_page_tops(state);
+    // The buffer's translation lines were just inserted/removed, so every cached
+    // line index is stale. Drop the last-visible-range cache — otherwise
+    // is_line_fully_visible compares the cursor against the old line numbers,
+    // never fires a page turn, and the view scrolls off a line boundary
+    // (clipping top and bottom).
+    state.last_visible_range.set(None);
     rebuild_line_number_gutter(state);
 }
 
@@ -3827,7 +3853,10 @@ fn rebuild_line_number_gutter(state: &mut AppState) {
     // a font reapply (e.g. toggling translations off) re-added numbers in
     // two-column mode, which also ate column width and underfilled the right
     // column.
-    let show_numbers = state.column_count() != 2 || SHOW_LINE_NUMBERS_TWO_COL;
+    // No verse line numbers in the translation overlay — the interleaved
+    // original/translation lines make the right-gutter foliation noise.
+    let show_numbers = (state.column_count() != 2 || SHOW_LINE_NUMBERS_TWO_COL)
+        && !state.translations_visible;
     if !is_prose && show_numbers {
         let base: Vec<Option<i64>> = if let Some(ref lm) = state.line_map {
             lm.buffer_to_work

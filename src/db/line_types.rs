@@ -68,6 +68,7 @@ pub fn is_act_scene_marker(text: &str) -> bool {
         || is_standalone_keyword(&upper, "PROLOGUE")
         || is_standalone_keyword(&upper, "EPILOGUE")
         || is_standalone_keyword(&upper, "INDUCTION")
+        || is_standalone_keyword(&upper, "CHORUS")
 }
 
 pub fn is_separator(text: &str) -> bool {
@@ -165,11 +166,16 @@ mod tests {
         assert!(is_act_scene_marker("Prologue"));
         assert!(is_act_scene_marker("EPILOGUE"));
         assert!(is_act_scene_marker("Epilogue"));
+        // Chorus headings (Pericles' Gower, R&J Act 2) are act/scene markers,
+        // not dialogue — so the cursor never lands on the heading word.
+        assert!(is_act_scene_marker("Chorus"));
+        assert!(is_act_scene_marker("CHORUS"));
         assert!(!is_act_scene_marker("Action"));
         // Dialogue containing marker keywords must not match
         assert!(!is_act_scene_marker(
             "Epilogue or to hear a Bergomask dance between"
         ));
+        assert!(!is_act_scene_marker("Chorus of the spheres did sing"));
         assert!(!is_act_scene_marker("Prologue to the story begins here"));
         assert!(!is_act_scene_marker("Induction of the current was strong"));
         // New: ## headers from cleaned format
