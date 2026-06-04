@@ -1008,6 +1008,11 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
         let guard = descender_guard_px(&state.right_view, split);
         let usable = right_h - guard - BASE_BOTTOM_MARGIN;
         let r = visible_range(&state.right_view, &state.buffer, split, line_count, usable);
+        // Clamp at a section break so a new act/scene starts the NEXT spread
+        // rather than appearing mid-right-column (the left column already does
+        // this; without it here `page_end` runs past a marker and the page shows
+        // a scene break in its interior).
+        let r = clamp_at_section_break(r, split, &state.right_view, &state.buffer);
         // Right column is the bottom of the spread: relax the underfill guard
         // so a too-tall block splits across the boundary to fill the column
         // rather than leaving a mid-spread gap.
@@ -1113,8 +1118,36 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
     let lpp = lines_per_page(state).max(1);
     let approx = current_top.saturating_sub(lpp);
     let next_dialogue = next_dialogue_from(&state.buffer, approx, line_count);
-    let new_top = back_up_for_speaker(&state.buffer, next_dialogue);
+    let mut new_top = back_up_for_speaker(&state.buffer, next_dialogue);
+    // The raw lpp approximation doesn't run clamp_at_section_break, so it can
+    // place a scene/act marker in the INTERIOR of the resulting page. If a
+    // marker sits strictly between new_top and current_top, snap new_top forward
+    // to that marker's header block so the new section starts the page (matching
+    // how forward pagination clamps section breaks).
+    if let Some(marker) = last_section_marker_in(state, new_top + 1, current_top) {
+        let header_top = back_up_for_speaker(&state.buffer, marker);
+        if header_top > new_top && header_top < current_top {
+            new_top = header_top;
+        }
+    }
+    let next_dialogue = next_dialogue_from(&state.buffer, new_top, line_count);
     NextPage { new_top, next_dialogue }
+}
+
+/// Last act/scene marker (or separator) line in `[start, end)`, or None.
+fn last_section_marker_in(state: &AppState, start: usize, end: usize) -> Option<usize> {
+    use crate::db::line_types;
+    let mut found = None;
+    let mut i = start;
+    while i < end {
+        let text = buffer_line_text(&state.buffer, i);
+        let t = text.trim();
+        if line_types::is_act_scene_marker(t) {
+            found = Some(i);
+        }
+        i += 1;
+    }
+    found
 }
 
 /// Build the page_tops index by walking next_page_top from line 0 to the end
