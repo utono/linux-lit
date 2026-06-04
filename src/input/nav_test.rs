@@ -20,6 +20,8 @@ enum Step {
     PrevChapter,
     JumpTop,
     JumpEnd,
+    NextDialogue, // q/j — reading-order forward; can turn the page
+    PrevDialogue, // ,/k — reading-order backward; can turn the page
     SyncAdvance,
     SearchJump,
 }
@@ -72,21 +74,32 @@ fn build_script() -> Vec<Step> {
 /// page, page_top consistent).
 fn build_fuzz_script() -> Vec<Step> {
     let mut rng = Lcg(0x9E3779B97F4A7C15);
-    // Weighted menu — repeated entries raise a step's frequency.
-    let menu = [
-        Step::PageForward, Step::PageForward, Step::PageForward,
-        Step::PageBackward, Step::PageBackward, Step::PageBackward,
-        Step::NextScene, Step::NextScene,
-        Step::PrevScene, Step::PrevScene,
-        Step::NextChapter,
-        Step::PrevChapter,
-        Step::JumpTop,
-        Step::JumpEnd,
+    // "Setup" steps that move the cursor/page somewhere, paired with a `y` to
+    // stress page-backward from many different positions (the y-after-anything
+    // scenario). Heavy on the moves that turn the page via different code paths.
+    let setups = [
+        Step::PageForward, Step::PageForward,
+        Step::NextScene, Step::PrevScene,
+        Step::NextChapter, Step::PrevChapter,
+        Step::JumpEnd, Step::JumpTop,
+        Step::NextDialogue, Step::NextDialogue, Step::NextDialogue,
+        Step::PrevDialogue, Step::PrevDialogue,
+        Step::SearchJump,
     ];
     let mut s = Vec::with_capacity(MAX_STEPS);
-    for _ in 0..MAX_STEPS {
-        s.push(menu[rng.below(menu.len() as u32) as usize]);
+    while s.len() < MAX_STEPS {
+        // Do 1–4 random setup moves, then one or two `y` presses — exercising
+        // `y` from wherever those moves left the reader.
+        let n = 1 + rng.below(4) as usize;
+        for _ in 0..n {
+            s.push(setups[rng.below(setups.len() as u32) as usize]);
+        }
+        s.push(Step::PageBackward);
+        if rng.below(3) == 0 {
+            s.push(Step::PageBackward);
+        }
     }
+    s.truncate(MAX_STEPS);
     s
 }
 
@@ -209,6 +222,8 @@ fn run_step(s: &mut AppState) {
         Step::PrevChapter => navigation::jump_to_prev_chapter(s),
         Step::JumpTop => navigation::jump_to_start(s),
         Step::JumpEnd => navigation::jump_to_end(s),
+        Step::NextDialogue => navigation::jump_to_next_dialogue(s),
+        Step::PrevDialogue => navigation::jump_to_prev_dialogue(s),
         Step::SearchJump => {
             let line_count = s.effective_line_count();
             let target = (s.current_line + 50).min(line_count.saturating_sub(1));
@@ -266,6 +281,16 @@ fn run_step(s: &mut AppState) {
                 ));
             }
         }
+    }
+
+    // 2b. y DIRECTION: page-backward must never move the page FORWARD. The bug
+    // this catches: `y` popping a stale older back-stack entry and jumping ahead
+    // of where the reader was. Skip the at-start no-op (top unchanged at 0).
+    if matches!(step, Step::PageBackward) && post_top > pre_top {
+        fail(s, step_num, step, &format!(
+            "y went FORWARD: top {}->{} (cursor {}->{})",
+            pre_top, post_top, pre_line, post_line
+        ));
     }
 
     // 3. No scene break mid-page

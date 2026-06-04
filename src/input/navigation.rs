@@ -519,6 +519,17 @@ pub fn page_backward(state: &mut AppState) {
     }
 
     let line_count = state.effective_line_count();
+    // Pop the most recent back-stack entry that is actually BEHIND us. A stale
+    // entry at or ahead of the current page top (left over from forward nav that
+    // didn't clear the stack) would make `y` jump FORWARD — never correct.
+    while let Some(&top) = state.page_back_stack.last() {
+        if top < state.page_top_line {
+            break;
+        }
+        log_fmt!("PAGE_BWD: dropping stale stack entry {} (>= page_top {})",
+                 top, state.page_top_line);
+        state.page_back_stack.pop();
+    }
     let (new_top, next_dialogue) = if let Some(prev_top) = state.page_back_stack.pop() {
         let nd = next_dialogue_from(&state.buffer, prev_top, line_count);
         log_fmt!("PAGE_BWD: stack pop new_top={} next_dialogue={} from page_top={}",

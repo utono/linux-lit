@@ -741,6 +741,12 @@ pub(crate) fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize)
                 new_top
             };
             if new_top != state.page_top_line {
+                // A dialogue-nav forward step turned the page. Record the page we
+                // came from so `y` returns to it (a single return entry, like a
+                // structural jump) — otherwise `y` pops a STALE older entry and
+                // jumps somewhere unrelated.
+                state.page_back_stack.clear();
+                state.page_back_stack.push(state.page_top_line);
                 log_fmt!("NAV_PAGE_FWD: current={} old_top={} new_top={}", state.current_line, state.page_top_line, new_top);
                 set_page_instant(state, new_top);
             }
@@ -767,6 +773,10 @@ pub(crate) fn scroll_after_jump_backward(state: &mut AppState) {
                 // previous dialogue line in reading order, which is what a reader
                 // expects from `,`/`k` at the page top.
                 let np = super::viewport::prev_page_top(state, state.page_top_line);
+                // Record the page we came from (single return entry) so a later
+                // `x`/`y` round-trips, and so `y` never pops a stale older entry.
+                state.page_back_stack.clear();
+                state.page_back_stack.push(state.page_top_line);
                 set_page_instant(state, np.new_top);
                 // Land the cursor on the new spread's last visible dialogue line
                 // (bottom-right), backing up off any trailing non-dialogue.
