@@ -5,6 +5,14 @@ use super::line_types;
 use super::models::{Line, MediaItem, TimeRange, Timestamp, Work, WorkSummary};
 
 fn db_path() -> String {
+    // LIT_DB_PATH lets an isolated run (e.g. the headless nav-fuzz) read its own
+    // private copy of the database instead of the shared lit.db, so it doesn't
+    // contend with a live `cargo run` session's SQLite file locks.
+    if let Ok(p) = std::env::var("LIT_DB_PATH") {
+        if !p.is_empty() {
+            return p;
+        }
+    }
     let home = std::env::var("HOME").expect("HOME environment variable not set");
     format!("{}/utono/litdb/data/lit.db", home)
 }

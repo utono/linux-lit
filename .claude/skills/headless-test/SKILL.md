@@ -58,31 +58,46 @@ the visible range after a jump — catches G/3 mis-landings), no scene break
 mid-page, viewport fill ≥10%, and cursor-is-dialogue. Failures are logged as
 `NAV_TEST: FAIL …` with the step and reason.
 
-Run it isolated (its OWN log + runtime dir, never the live `cargo run` session):
+Run it **fully isolated** — its own log, runtime dir, AND database copy — so it
+never contends with a live `cargo run` session. (Sharing the `lit.db` file
+causes SQLite lock contention that stalls the fuzz right after the first scene
+jump; sharing the log kills the cage.) The launcher tracks the cage PID so you
+can kill exactly that instance — never `pkill -f target/debug/linux-lit`, which
+would also signal the live session:
 
 ```bash
-RT="$(mktemp -d)"; LOG=/tmp/fuzz-nav.log; : > "$LOG"
-cat > /tmp/fuzz-launch.sh <<EOF
+LOG=/tmp/fuzz-nav.log; : > "$LOG"
+cp ~/utono/litdb/data/lit.db /tmp/fuzz-lit.db          # private DB copy
+cat > /tmp/fuzz-launch.sh <<'EOF'
 #!/usr/bin/env bash
-XDG_RUNTIME_DIR="$RT" GSK_RENDERER=cairo \\
-  LIT_DEV=1 LIT_HEADLESS_TEST=1 LIT_NAV_FUZZ=1 LIT_LOG_PATH="$LOG" \\
+RT="$(mktemp -d)"
+XDG_RUNTIME_DIR="$RT" GSK_RENDERER=cairo \
+  LIT_DEV=1 LIT_HEADLESS_TEST=1 LIT_NAV_FUZZ=1 \
+  LIT_LOG_PATH=/tmp/fuzz-nav.log LIT_DB_PATH=/tmp/fuzz-lit.db \
   cage -- ./target/debug/linux-lit >"$RT/cage.log" 2>&1 &
-sleep 320; kill \$! 2>/dev/null
+CAGE=$!; echo "$CAGE" > /tmp/fuzz_pid.txt
+for _ in $(seq 1 330); do ps -p "$CAGE" >/dev/null 2>&1 || break; sleep 1; done
+kill "$CAGE" 2>/dev/null; rm -rf "$RT" 2>/dev/null
 EOF
 chmod +x /tmp/fuzz-launch.sh
-./scripts/e2e-env.sh /tmp/fuzz-launch.sh &     # ~5 min run
+./scripts/e2e-env.sh /tmp/fuzz-launch.sh &     # ~5.5 min run
 # then summarize:
 rg "NAV_TEST: FAIL" /tmp/fuzz-nav.log | sed -E 's/.*FAIL step=[0-9]+ ([A-Za-z]+) /\1: /' \
   | sed -E 's/[0-9]+/N/g' | sort | uniq -c | sort -rn
+# stop early: kill "$(cat /tmp/fuzz_pid.txt)"   (NEVER pkill the binary by name)
 ```
 
 Key points:
 - **`LIT_NAV_FUZZ=1`** auto-starts the fuzz ~6s after launch (once the work
-  loads) and selects the long random script; **`LIT_LOG_PATH`** redirects the log
-  so it never collides with a live session's `linux-lit-dev.log` (sharing it
-  kills the cage). The PRNG is seeded (deterministic) so a failure replays.
+  loads) and selects the long random script. **`LIT_LOG_PATH`** redirects the log
+  and **`LIT_DB_PATH`** points at a private DB copy — together they keep the run
+  from touching the live session's log or `lit.db` locks. The PRNG is seeded
+  (deterministic) so a failure replays.
 - Drive it through **`e2e-env.sh`** (dbus + a11y) — a bare `cage` launch aborts
   right after `STARTUP: main entry`.
+- **cage is headless (offscreen)**, but a launch that detaches or fails cleanup
+  can briefly surface a window. Always kill by the recorded PID and confirm
+  `pgrep -f "cage -- ./target/debug/linux-lit"` is empty when done.
 - Each step waits 400ms so GTK layout settles; faster cadence makes
   pixel-dependent checks (`column_split`, `jump_to_end`) read stale heights and
   report layout-instability false positives.
