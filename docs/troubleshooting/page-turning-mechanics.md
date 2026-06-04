@@ -217,6 +217,47 @@ the clamped page is trivially small. `next_page_top` then computes a
 producing `new_top <= page_top` (no progress). `page_forward` handles this
 with the fallback `candidate_top = next_dialogue`.
 
+## Two-column right-column positioning
+
+In two-column mode the right column is a separate `right_view` sharing the
+buffer; `snap_scroll_to_line` (`scroll.rs`) scrolls it so `cs.split` (from
+`column_split`) sits at its top, and `update_bottom_clip`'s `exact_end` path
+clips it at `cs.page_end`. Two failure modes, both worst near the document end:
+
+**Right column duplicates the left / shows the buffer start.** The right
+view's `set_value` to `cs.split` clamped low because the right view's `upper`
+was too small — either layout wasn't settled yet (stale `upper`) or the right
+view had no bottom-margin headroom for a near-the-end split. Fixes:
+`ensure_scroll_range` now extends the **right** view's bottom margin too (it
+used to extend only the left `text_view`), `snap_scroll_to_line` calls
+`ensure_scroll_range` before scrolling the right view, and the right-view scroll
+runs synchronously **and** on an idle + 100ms backstop (`scroll_right_view_to_split`)
+so a stale-`upper` first pass is corrected post-layout. If the right column
+still shows line 0, check the right view's `upper` vs `cs.split`'s y.
+
+**Right column unscrolled on first paint.** The startup resize-tick reveal calls
+`snap_scroll_to_line` (which positions both columns), but the 500ms-grace and
+5s-stuck-fallback reveals only set opacity. If the resize tick never fires (e.g.
+its two-column width-settling guard never passes — common in a headless cage),
+the fallback reveals the window with the right column at line 0. Both fallbacks
+now call `reveal_snap` (`ensure_scroll_range` + `snap_scroll_to_line`) before
+`set_opacity(1.0)`.
+
+**Page-forward stuck on the final spread.** `scene_snap_top` may return a scene
+start (`cs.split`) that sits past the scroll ceiling; `set_page` then clamps it
+back below `page_top_line`, so the view never advances and `x` oscillates
+(`scene-snap page_top=N -> new_top=M` repeating with the same N). `page_forward`
+now clamps the snap target with `clamp_page_top_to_scroll_ceiling` and only
+takes the snap when it yields real forward progress (`clamped > page_top_line`);
+otherwise it falls through to the normal path, which recognizes end-of-document
+(`next_dialogue >= line_count`) and stops cleanly.
+
+Key files: `src/input/scroll.rs` (`snap_scroll_to_line`,
+`scroll_right_view_to_split`, `ensure_scroll_range`), `src/app.rs`
+(`reveal_snap` and the 500ms/5s reveal timeouts, resize-tick `do_reveal`),
+`src/input/navigation.rs` (`page_forward` scene-snap guard, `scene_snap_top`,
+`jump_to_end`), `src/input/viewport.rs` (`column_split`).
+
 ## Testing
 
 Two layers: headless tests verify the page-turn algorithm across many works

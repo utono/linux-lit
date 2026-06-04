@@ -1484,6 +1484,17 @@ pub fn build_window(
     //      the picker shows.
     //   3. Stuck-load fallback: after 5s, reveal regardless. Guards
     //      against a hung work load leaving the window blank forever.
+    // Snap both columns to the current page top before a non-resize-tick reveal
+    // so the right column is scrolled to cs.split (not the buffer start). No-op
+    // when layout isn't ready yet (snap clamps; the deferred re-scroll inside
+    // snap_scroll_to_line corrects post-layout).
+    fn reveal_snap(state: &Rc<RefCell<AppState>>) {
+        if let Ok(mut s) = state.try_borrow_mut() {
+            crate::input::scroll::ensure_scroll_range(&s);
+            let top = s.page_top_line;
+            crate::input::navigation::snap_scroll_to_line(&mut s, top);
+        }
+    }
     {
         let vbox_for_reveal = vbox.clone();
         let state_for_reveal = Rc::clone(&state);
@@ -1495,6 +1506,7 @@ pub fn build_window(
                     .unwrap_or(true);
                 if !loading {
                     crate::logging::log("STARTUP: revealing vbox (500ms grace, no work loading)");
+                    reveal_snap(&state_for_reveal);
                     vbox_for_reveal.set_opacity(1.0);
                 } else {
                     crate::logging::log("STARTUP: 500ms grace skipped — work loading; waiting for deferred refresh");
@@ -1504,9 +1516,15 @@ pub fn build_window(
     }
     {
         let vbox_for_fallback = vbox.clone();
+        let state_for_fallback = Rc::clone(&state);
         glib::timeout_add_local_once(std::time::Duration::from_secs(5), move || {
             if vbox_for_fallback.opacity() < 1.0 {
                 crate::logging::log("STARTUP: revealing vbox (5s fallback — load may be stuck)");
+                // Snap both columns to the current page before showing — the
+                // resize-tick reveal (which normally does this) never fired, so
+                // without it the right column shows the buffer start instead of
+                // cs.split.
+                reveal_snap(&state_for_fallback);
                 vbox_for_fallback.set_opacity(1.0);
             }
         });

@@ -366,14 +366,24 @@ pub fn page_forward(state: &mut AppState) {
     // Scene-aware turn: if the right column opens a new scene, move that scene
     // to the top of the left column instead of paging by viewport height.
     if let Some(snap_top) = scene_snap_top(state, line_count) {
-        let next_dialogue = next_dialogue_from(&state.buffer, snap_top, line_count);
-        log_fmt!("PAGE_FWD: scene-snap page_top={} -> new_top={} next_dialogue={}",
-                 state.page_top_line, snap_top, next_dialogue);
-        state.page_back_stack.push(state.page_top_line);
-        state.current_line = next_dialogue.min(line_count.saturating_sub(1));
-        set_page(state, snap_top, PageDirection::Forward);
-        after_page_change(state, PageChangeReason::Forward);
-        return;
+        // Near the document end the scene start may sit past the scroll ceiling,
+        // so set_page would clamp it back below page_top_line — leaving the view
+        // stuck on the same spread (page_top never advances, x oscillates).
+        // Only take the scene-snap when it yields real forward progress.
+        let clamped = clamp_page_top_to_scroll_ceiling(state, snap_top);
+        if clamped > state.page_top_line {
+            let next_dialogue = next_dialogue_from(&state.buffer, clamped, line_count);
+            log_fmt!("PAGE_FWD: scene-snap page_top={} -> new_top={} next_dialogue={}",
+                     state.page_top_line, clamped, next_dialogue);
+            state.page_back_stack.push(state.page_top_line);
+            state.current_line = next_dialogue.min(line_count.saturating_sub(1));
+            set_page(state, clamped, PageDirection::Forward);
+            after_page_change(state, PageChangeReason::Forward);
+            return;
+        }
+        log_fmt!("PAGE_FWD: scene-snap to {} skipped (clamps to {} <= page_top {})",
+                 snap_top, clamped, state.page_top_line);
+        // Fall through: the normal path / jump_to_end handles the final spread.
     }
 
     let NextPage { new_top, next_dialogue } = next_page_top(state, state.page_top_line);

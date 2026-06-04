@@ -428,13 +428,30 @@ pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
     );
 
     if let Some(cs) = cs {
-        // Scroll the right view so its top line is `cs.split`.
-        if let Some(iter) = state.buffer.iter_at_line(cs.split as i32) {
-            let (y, _h) = state.right_view.line_yrange(&iter);
-            let radj = state.right_scrolled_window.vadjustment();
-            let rmax = (radj.upper() - radj.page_size()).max(0.0);
-            radj.set_value((y as f64).min(rmax));
+        // Make sure the right view has enough bottom headroom that a near-the-end
+        // split line can actually be scrolled to its top (otherwise the scroll
+        // clamps low and the right column duplicates the start of the buffer).
+        ensure_scroll_range(state);
+        // Scroll the right view so its top line is `cs.split`. Do it BOTH
+        // synchronously (so the common case where layout is already settled is
+        // correct on the first paint) AND on an idle + 100ms backstop: right
+        // after a structural jump (gg/G/jump_to_end) or work load, the right
+        // view's `upper` may still be stale, so a synchronous set_value clamps
+        // to the wrong (often 0) value and the right column duplicates the left.
+        // Re-running post-layout lands it on cs.split.
+        let split = cs.split;
+        let rv = state.right_view.clone();
+        let rsw = state.right_scrolled_window.clone();
+        let buf = state.buffer.clone();
+        scroll_right_view_to_split(&rv, &rsw, &buf, split);
+        {
+            let (rv, rsw, buf) = (rv.clone(), rsw.clone(), buf.clone());
+            glib::idle_add_local_once(move || scroll_right_view_to_split(&rv, &rsw, &buf, split));
         }
+        glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
+            scroll_right_view_to_split(&rv, &rsw, &buf, split)
+        });
+
         // Clip the right column exactly at its page end — column_split already
         // chose cs.page_end (trimmed), so clip there verbatim rather than
         // letting update_bottom_clip re-trim with a possibly different result.
@@ -448,6 +465,24 @@ pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
             state.is_prose(),
             Some(right_end),
         );
+    }
+}
+
+/// Scroll the right column's view so buffer line `split` sits at its top.
+/// Clamped to the right view's scroll range; safe to call before or after
+/// layout settles (a stale `upper` just clamps, and the post-layout re-call
+/// corrects it).
+fn scroll_right_view_to_split(
+    right_view: &sourceview5::View,
+    right_scrolled_window: &gtk4::ScrolledWindow,
+    buffer: &sourceview5::Buffer,
+    split: usize,
+) {
+    if let Some(iter) = buffer.iter_at_line(split as i32) {
+        let (y, _h) = right_view.line_yrange(&iter);
+        let radj = right_scrolled_window.vadjustment();
+        let rmax = (radj.upper() - radj.page_size()).max(0.0);
+        radj.set_value((y as f64).min(rmax));
     }
 }
 
@@ -468,6 +503,20 @@ pub(crate) fn ensure_scroll_range(state: &AppState) {
     let needed = (page_size as i32).max(BASE_BOTTOM_MARGIN);
     if state.text_view.bottom_margin() < needed {
         state.text_view.set_bottom_margin(needed);
+    }
+    // Two-column mode: the right view needs the same headroom so a near-the-end
+    // split line (e.g. EPILOGUE on the final spread) can be scrolled to its top.
+    // Without this the right view's `upper` is too small, set_value clamps to a
+    // low value, and the right column shows the start of the buffer (duplicating
+    // the left column) instead of cs.split.
+    if state.column_count() == 2 {
+        let rpage = state.right_scrolled_window.vadjustment().page_size();
+        if rpage > 0.0 {
+            let rneeded = (rpage as i32).max(BASE_BOTTOM_MARGIN);
+            if state.right_view.bottom_margin() < rneeded {
+                state.right_view.set_bottom_margin(rneeded);
+            }
+        }
     }
 }
 
