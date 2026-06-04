@@ -106,35 +106,93 @@ live `cargo run` session holds. Unset, the app behaves exactly as normal.
   fixed `jumps-only` script. Without it, the harness only runs on the
   `Ctrl+Shift+T` keybind with the fixed script.
 
-## Running the fuzz safely (alongside a live session)
+## What "a fuzz run" is
 
-The combination of all three overrides makes the fuzz safe to run while the user
-keeps using their live session:
+A **fuzz run** feeds the navigation code a long stream of *randomized* jumps and
+checks, after every single one, that a set of invariants still holds — instead of
+hand-scripting "press x, then y, expect page 3." It finds edge cases a human
+would never think to script. linux-lit's fuzz lives in the app itself
+(`src/input/nav_test.rs`): when started in its random mode it generates ~750
+**seeded**-random jumps (`x`, `y`, `2`, `3`, `gg`, `G`, chapter jumps — seeded so
+a failure is reproducible) and after each one asserts:
 
-```bash
-LOG=/tmp/fuzz-nav.log; : > "$LOG"
-cp ~/utono/litdb/data/lit.db /tmp/fuzz-lit.db
-cat > /tmp/fuzz-launch.sh <<'EOF'
-#!/usr/bin/env bash
-RT="$(mktemp -d)"
-XDG_RUNTIME_DIR="$RT" GSK_RENDERER=cairo \
-  LIT_DEV=1 LIT_HEADLESS_TEST=1 LIT_NAV_FUZZ=1 \
-  LIT_LOG_PATH=/tmp/fuzz-nav.log LIT_DB_PATH=/tmp/fuzz-lit.db \
-  cage -- ./target/debug/linux-lit >"$RT/cage.log" 2>&1 &
-CAGE=$!; echo "$CAGE" > /tmp/fuzz_pid.txt
-for _ in $(seq 1 330); do ps -p "$CAGE" >/dev/null 2>&1 || break; sleep 1; done
-kill "$CAGE" 2>/dev/null; rm -rf "$RT" 2>/dev/null
-EOF
-chmod +x /tmp/fuzz-launch.sh
-./scripts/e2e-env.sh /tmp/fuzz-launch.sh &     # ~5.5 min
+- the cursor landed on the page that's actually visible (on-page landing),
+- `y` round-trips `x`,
+- no act/scene marker sits mid-page,
+- the viewport is at least 10% full,
+- the cursor is on a dialogue line.
 
-# triage the failures by category:
-rg "NAV_TEST: FAIL" /tmp/fuzz-nav.log \
-  | sed -E 's/.*FAIL step=[0-9]+ ([A-Za-z]+) /\1: /' \
-  | sed -E 's/[0-9]+/N/g' | sort | uniq -c | sort -rn
-```
+Each violation is logged as `NAV_TEST: FAIL step=N <Action> <reason>`. A run is
+"clean" when there are no FAIL lines. (The fuzz found, e.g., the `G`-to-end
+off-page landing and the right-column mid-page scene break.)
 
-The fuzz tuning (seeded LCG, 400ms cadence so layout settles, `MAX_STEPS`, the
+## How to run the fuzz
+
+The three env overrides above make a fuzz run safe to launch **even while a live
+`cargo run` session is open** — it touches no shared file. Steps:
+
+1. **Build** the debug binary the cage will run:
+
+   ```bash
+   cd ~/utono/linux-lit && cargo build
+   ```
+
+2. **Prepare the isolated launcher.** It copies the DB, sets all the env
+   overrides, runs for ~5.5 min, and kills its own cage by recorded PID:
+
+   ```bash
+   : > /tmp/fuzz-nav.log
+   cp ~/utono/litdb/data/lit.db /tmp/fuzz-lit.db
+   cat > /tmp/fuzz-launch.sh <<'EOF'
+   #!/usr/bin/env bash
+   RT="$(mktemp -d)"
+   XDG_RUNTIME_DIR="$RT" GSK_RENDERER=cairo \
+     LIT_DEV=1 LIT_HEADLESS_TEST=1 LIT_NAV_FUZZ=1 \
+     LIT_LOG_PATH=/tmp/fuzz-nav.log LIT_DB_PATH=/tmp/fuzz-lit.db \
+     cage -- ./target/debug/linux-lit >"$RT/cage.log" 2>&1 &
+   CAGE=$!; echo "$CAGE" > /tmp/fuzz_pid.txt
+   for _ in $(seq 1 330); do ps -p "$CAGE" >/dev/null 2>&1 || break; sleep 1; done
+   kill "$CAGE" 2>/dev/null; rm -rf "$RT" 2>/dev/null
+   EOF
+   chmod +x /tmp/fuzz-launch.sh
+   ```
+
+3. **Launch it through the env wrapper** (provides dbus + AT-SPI):
+
+   ```bash
+   ./scripts/e2e-env.sh /tmp/fuzz-launch.sh &     # ~5.5 min, backgrounded
+   ```
+
+4. **Watch progress** (the fuzz auto-starts ~6 s after launch):
+
+   ```bash
+   rg -c "NAV_TEST: step" /tmp/fuzz-nav.log    # how many steps have run
+   ```
+
+   If this stays at `1` for more than a few seconds, the run stalled — almost
+   always DB lock contention, meaning `LIT_DB_PATH` wasn't honored (re-check the
+   copy exists and the env var is set).
+
+5. **Triage the failures** by category once it has run a few hundred steps:
+
+   ```bash
+   rg "NAV_TEST: FAIL" /tmp/fuzz-nav.log \
+     | sed -E 's/.*FAIL step=[0-9]+ ([A-Za-z]+) /\1: /' \
+     | sed -E 's/[0-9]+/N/g' | sort | uniq -c | sort -rn
+   ```
+
+   For a specific failure, look at the raw line and the steps around it:
+   `rg "NAV_TEST" /tmp/fuzz-nav.log | rg -B2 "FAIL step=124"`.
+
+6. **Stop early** (optional) — kill **only** the recorded PID:
+
+   ```bash
+   kill "$(cat /tmp/fuzz_pid.txt)"
+   ```
+
+   Never `pkill -f target/debug/linux-lit` — that also matches a live session.
+
+The fuzz tuning (seeded LCG, 400 ms cadence so layout settles, `MAX_STEPS`, the
 per-step invariants) lives in `src/input/nav_test.rs`; the page-navigation
 behaviour it checks is documented in `page-turning-mechanics.md`.
 

@@ -745,10 +745,15 @@ pub(crate) fn scroll_after_jump_backward(state: &mut AppState) {
                     set_page_instant(state, new_top);
                 }
             } else if state.current_line < state.page_top_line {
-                let new_top = super::viewport::page_turn_top(&state.buffer, state.current_line);
-                log_fmt!("NAV_PAGE_BACK: page_turn_top new_top={} current={} old_top={}",
-                         new_top, state.current_line, state.page_top_line);
-                set_page_instant(state, new_top);
+                // The cursor stepped above the current page top (it was on the
+                // left column's top line). Turn to the PREVIOUS full page rather
+                // than nudging the top up by a speaker — page_turn_top only backs
+                // up over the speaker block, which scrolled line-by-line instead
+                // of paging. prev_page_top finds the prior page boundary.
+                let np = super::viewport::prev_page_top(state, state.page_top_line);
+                log_fmt!("NAV_PAGE_BACK: prev_page_top new_top={} current={} old_top={}",
+                         np.new_top, state.current_line, state.page_top_line);
+                set_page_instant(state, np.new_top);
             }
         }
     }
