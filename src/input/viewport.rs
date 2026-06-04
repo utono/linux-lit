@@ -1114,8 +1114,12 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
     }
 
     // Tier 2: cold-start linear walk from 0 looking for the page whose
-    // next_page_top equals current_top.
+    // next_page_top equals current_top. Also remember the last boundary strictly
+    // BELOW current_top, so a current_top that isn't itself on the forward chain
+    // (e.g. the EPILOGUE final spread, whose top `last_page_top` pulled forward
+    // off the natural boundary) still has a clean tiling predecessor.
     let mut top: usize = 0;
+    let mut last_below: Option<usize> = None;
     while top < current_top {
         let next = next_page_top(state, top).new_top;
         if next == current_top {
@@ -1126,7 +1130,22 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
         if next <= top {
             break; // safety: no progress
         }
+        // `top` is a real forward boundary strictly below current_top — a valid
+        // page to land on if no boundary lands exactly on current_top.
+        if top < current_top {
+            last_below = Some(top);
+        }
         top = next;
+    }
+    // current_top wasn't on the forward chain. Land on the nearest real boundary
+    // below it (the page that tiles into current_top) instead of the lpp
+    // approximation, which overlaps the final spread.
+    if let Some(prev_top) = last_below {
+        if prev_top < current_top {
+            let next_dialogue = next_dialogue_from(&state.buffer, prev_top, line_count);
+            let new_top = back_up_for_speaker(&state.buffer, next_dialogue);
+            return NextPage { new_top, next_dialogue };
+        }
     }
 
     // Tier 3: lpp approximation — current_top is not on any forward-walkable

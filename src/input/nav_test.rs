@@ -450,6 +450,31 @@ fn run_step(s: &mut AppState) {
         ));
     }
 
+    // 2c. PAGE-BACK TILING: a `y` page turn must land on the page that tiles
+    // cleanly INTO the page we came from — its forward boundary
+    // (`column_split(post_top).next_page_top`) should reach `pre_top`. If it
+    // falls short, the back-page overlaps the page we came from (the EPILOGUE
+    // final-spread `y`-overlap bug, where `prev_page_top` of a forward-pulled top
+    // overshot via the lpp approximation). Two-column only; skip the no-op and
+    // the first-spread guard (pre_top==0 stays put).
+    if matches!(step, Step::PageBackward)
+        && s.column_count() == 2
+        && post_top < pre_top
+        && pre_top > 0
+        && line_count > 0
+    {
+        let fwd = crate::input::viewport::column_split(s, post_top).next_page_top;
+        // `fwd < pre_top` means content between the back-page's end and the old
+        // top is shown twice (overlap). Allow `fwd >= pre_top` (exact tile, or a
+        // forward-pulled old top that the back-page legitimately covers).
+        if fwd < pre_top {
+            fail(s, step_num, step, &format!(
+                "y OVERLAP: back-page top={} ends at next_page_top={} but came from pre_top={} (gap of {} lines shown twice)",
+                post_top, fwd, pre_top, pre_top - fwd
+            ));
+        }
+    }
+
     // 3. No scene break mid-page. A marker that STARTS a column is a legitimate
     // boundary, not a mid-page break: the left column starts at post_top, and in
     // two-column mode the right column starts at `split`. The work's final spread

@@ -211,8 +211,12 @@ pub fn jump_to_end(state: &mut AppState) {
     // actually on this spread (mirrors the forward final-spread guard) so the
     // highlight is never off-page.
     let new_top = last_page_top(state, target);
+    // Clear the back-stack WITHOUT seeding it with the came-from page: a `y` from
+    // the final spread must tile back to the page immediately BEFORE `new_top`,
+    // not return to wherever the jump originated. With an empty stack,
+    // `page_backward` uses `prev_page_top(new_top)`, which now lands on the
+    // nearest real boundary below the (forward-pulled) final-spread top.
     state.page_back_stack.clear();
-    state.page_back_stack.push(state.page_top_line);
     set_page_instant(state, new_top);
 
     let cs = column_split(state, new_top);
