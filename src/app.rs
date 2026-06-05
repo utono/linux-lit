@@ -43,7 +43,6 @@ pub enum InputMode {
     Search,
     GlossOverlay,
     SynopsisOverlay,
-    SynopsisPrompt,
     GlossPrompt,
     GlossPicker,
     EchoPicker,

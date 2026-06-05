@@ -7,3 +7,6 @@ target/
 # NRC-VAD lexicon — redistribution-restricted academic license; fetch locally,
 # do not commit. See scripts/build_embeddings.py header for the download URL.
 scripts/data/NRC-VAD-Lexicon.txt
+
+# Claude Code session transcripts & auto-memory (local, not project source)
+.claude/projects/
