@@ -525,10 +525,22 @@ fn run_step(s: &mut AppState) {
         let right_lines = (cs.page_end + 1).saturating_sub(cs.split);
         let more_below = cs.next_page_top < line_count
             && (cs.next_page_top..line_count).any(|i| is_dialogue_line(&s.buffer, i));
+        // A short right column is EXPECTED when it clamped at a section break:
+        // the next ACT/SCENE legitimately starts the following spread (the chosen
+        // "stop at scene break" reading model), so the content "below" is a new
+        // scene, not skipped fill. Exempt that — the right column ends right
+        // before a section marker.
+        let clamped_at_scene = {
+            let after = cs.page_end + 1;
+            after < line_count && {
+                let t = buffer_line_text(&s.buffer, after);
+                let t = t.trim();
+                line_types::is_act_scene_marker(t) || line_types::is_separator(t)
+            }
+        };
         // Unbalanced: right column is less than a third of the left AND there's
-        // more content that could have filled it. (The final spread, where
-        // `more_below` is false, is exempt.)
-        if more_below && right_lines * 3 < left_lines && left_lines >= 12 {
+        // more content that could have filled it AND it didn't clamp at a scene.
+        if more_below && !clamped_at_scene && right_lines * 3 < left_lines && left_lines >= 12 {
             fail(s, step_num, step, &format!(
                 "UNBALANCED SPREAD: top={} left={} lines right={} lines (more content below) split={} page_end={}",
                 post_top, left_lines, right_lines, cs.split, cs.page_end

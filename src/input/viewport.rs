@@ -1008,14 +1008,23 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
         let guard = descender_guard_px(&state.right_view, split);
         let usable = right_h - guard - BASE_BOTTOM_MARGIN;
         let r = visible_range(&state.right_view, &state.buffer, split, line_count, usable);
-        // The right column is the BOTTOM of the spread — fill it. Unlike the left
-        // column, we do NOT clamp the right column at a section break: a short
-        // right column ending at a scene boundary leaves a large blank gap (the
-        // next scene's content was pushed to the following spread). Per the reading
-        // model, the next ACT/SCENE flows on to fill the right column instead (its
-        // heading may appear partway down the column). This also subsumes the old
-        // final-section special case (the EPILOGUE simply fills the right column
-        // like any other trailing content).
+        // Clamp the right column at a section break so a new ACT/SCENE starts the
+        // NEXT spread rather than appearing in this column's interior. This makes
+        // pages tile at scene boundaries: a page that ENDS a scene stops at the
+        // scene's last line, so `y` from the next scene's first page lands here
+        // exactly (no gap, no overlap into the scene the reader just left).
+        // EXCEPTION: if clamping would EMPTY the right column AND the section is
+        // the work's FINAL one (the unclamped range already reaches the end —
+        // e.g. a trailing EPILOGUE), do NOT clamp: that tail is this spread's
+        // right-column content, not a mid-column intrusion. (Without the
+        // exception, `would_empty_right_column` treats the canonical final spread
+        // as empty and G/last_page_top skip it.)
+        let clamped = clamp_at_section_break(r, split, &state.right_view, &state.buffer);
+        let r = if clamped.last_fit < split && r.last_fit + 1 >= line_count {
+            r
+        } else {
+            clamped
+        };
         // Right column is the bottom of the spread: relax the underfill guard
         // so a too-tall block splits across the boundary to fill the column
         // rather than leaving a mid-spread gap.
@@ -1160,25 +1169,12 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
             return NextPage { new_top: probe, next_dialogue };
         }
         if next > current_top || next <= probe {
-            // `probe`'s page overshoots current_top (or no forward progress). Two
-            // candidates: `top` (the last page that does NOT overshoot — no
-            // overlap, but may leave a gap) and `probe` (its page covers the gap
-            // up to current_top, but spills past it — overlap into the page we
-            // came from). When `current_top` is a SCENE-START reached by 2/3
-            // (so the chain skips it, e.g. 368 →410→ 444 jumping over 425), `top`
-            // would skip the rest of the PREVIOUS scene's dialogue (410-421 here).
-            // Showing that dialogue matters more than avoiding a few lines of
-            // overlap into the next scene (which the reader is leaving). So: if
-            // landing on `top` would skip DIALOGUE between its end and
-            // `current_top`, prefer `probe` (which shows it). Otherwise keep `top`
-            // (no overlap).
-            let top_end = fwd_boundary(top);
-            let skips_dialogue = top_end < current_top
-                && (top_end..current_top).any(|i| is_dialogue_line(&state.buffer, i));
-            if skips_dialogue && probe > top {
-                let next_dialogue = next_dialogue_from(&state.buffer, probe, line_count);
-                return NextPage { new_top: probe, next_dialogue };
-            }
+            // `probe`'s page overshoots current_top (or no forward progress) — it
+            // would OVERLAP. Keep the last non-overshooting candidate (`top`).
+            // With the right-column section clamp restored, scene-start tops are
+            // now real boundaries (`column_split(prev).next_page_top == scene_top`),
+            // so the `next == current_top` exact-tile case above handles them and
+            // we rarely reach here with a gap.
             break;
         }
         // `next <= current_top - 1`: `probe`'s page ends before current_top, so
