@@ -1152,23 +1152,33 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
     let fwd_boundary = |b: usize| -> usize {
         if two_col { column_split(state, b).next_page_top } else { next_page_top(state, b).new_top }
     };
-    let dbg = current_top >= 420 && current_top <= 430; // 1H4 scene-3 15-line-gap case
     loop {
         let next = fwd_boundary(probe);
-        if dbg {
-            let txt = |l: usize| buffer_line_text(&state.buffer, l).trim().chars().take(28).collect::<String>();
-            crate::log_fmt!("PPT_DBG: ct={} probe={} '{}' fwd={} '{}'",
-                current_top, probe, txt(probe), next, txt(next));
-        }
         if next == current_top {
             // Exact tile — `probe` is the page directly before current_top.
             let next_dialogue = next_dialogue_from(&state.buffer, probe, line_count);
             return NextPage { new_top: probe, next_dialogue };
         }
         if next > current_top || next <= probe {
-            // `probe`'s page overshoots current_top (or no forward progress).
-            // `probe` is NOT a safe answer (it would overlap); keep the best
-            // non-overshooting candidate found so far (`top`).
+            // `probe`'s page overshoots current_top (or no forward progress). Two
+            // candidates: `top` (the last page that does NOT overshoot — no
+            // overlap, but may leave a gap) and `probe` (its page covers the gap
+            // up to current_top, but spills past it — overlap into the page we
+            // came from). When `current_top` is a SCENE-START reached by 2/3
+            // (so the chain skips it, e.g. 368 →410→ 444 jumping over 425), `top`
+            // would skip the rest of the PREVIOUS scene's dialogue (410-421 here).
+            // Showing that dialogue matters more than avoiding a few lines of
+            // overlap into the next scene (which the reader is leaving). So: if
+            // landing on `top` would skip DIALOGUE between its end and
+            // `current_top`, prefer `probe` (which shows it). Otherwise keep `top`
+            // (no overlap).
+            let top_end = fwd_boundary(top);
+            let skips_dialogue = top_end < current_top
+                && (top_end..current_top).any(|i| is_dialogue_line(&state.buffer, i));
+            if skips_dialogue && probe > top {
+                let next_dialogue = next_dialogue_from(&state.buffer, probe, line_count);
+                return NextPage { new_top: probe, next_dialogue };
+            }
             break;
         }
         // `next <= current_top - 1`: `probe`'s page ends before current_top, so
@@ -1177,16 +1187,7 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
         probe = next;
     }
     // `top` is the latest boundary whose page does not overshoot current_top
-    // (worst case 0). Tiles with the minimal gap, never overlaps.
-    if dbg {
-        let txt = |l: usize| buffer_line_text(&state.buffer, l).trim().chars().take(28).collect::<String>();
-        let end = fwd_boundary(top);
-        crate::log_fmt!("PPT_DBG: RESULT top={} end={} (gap {}..{} to ct={}); fwd_boundary(end)={}",
-            top, end, end, current_top, current_top, fwd_boundary(end));
-        for l in end..current_top.min(end + 18) {
-            crate::log_fmt!("PPT_DBG:   gap {} dlg={} '{}'", l, is_dialogue_line(&state.buffer, l), txt(l));
-        }
-    }
+    // (worst case 0), and showing it skips no dialogue.
     let next_dialogue = next_dialogue_from(&state.buffer, top, line_count);
     NextPage { new_top: top, next_dialogue }
 }
