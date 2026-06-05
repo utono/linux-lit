@@ -243,6 +243,19 @@ reconstruct it by classifying buffer text. See
 principle" and the snapshot version (`snapshot.rs SNAPSHOT_VERSION`) which must be
 bumped when `LineMap`'s serialized shape changes.
 
+**The rule applies to test assertions too, not just pagination.** The nav-fuzz
+UNBALANCED-SPREAD check in `nav_test.rs` exempted scene-clamped spreads by
+classifying buffer text (`is_act_scene_marker`/`is_separator`), so it flagged a
+short right column at any boundary whose new scene opens on a stage direction +
+speaker with no `ACT`/`SCENE` chrome line. **2H6, Cor, and Ham were all the same
+false-positive class** — real `(div1,div2)` boundaries (e.g. 2H6 4.7→4.8) that
+production's `clamp_at_section_break` clamps correctly but the text-classifying
+exemption missed. The fix was to make the test read the authoritative
+`section_starts` bitmap via `s.is_section_start` (the same source production
+clamps on). Lesson: when a per-work nav-fuzz FAIL is an `UNBALANCED`/short-column
+at a scene edge, first ask whether the *assertion* (not production) is
+re-inferring the boundary from text.
+
 ## MPV Integration
 
 - MPV is reused across work switches via `loadfile replace` (no new process)
