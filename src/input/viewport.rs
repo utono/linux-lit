@@ -1161,8 +1161,14 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
     let fwd_boundary = |b: usize| -> usize {
         if two_col { column_split(state, b).next_page_top } else { next_page_top(state, b).new_top }
     };
+    let dbg = current_top >= 420 && current_top <= 430;
     loop {
         let next = fwd_boundary(probe);
+        if dbg {
+            let cs = column_split(state, probe);
+            crate::log_fmt!("PPT_DBG: ct={} probe={} split={} page_end={} next={}",
+                current_top, probe, cs.split, cs.page_end, cs.next_page_top);
+        }
         if next == current_top {
             // Exact tile — `probe` is the page directly before current_top.
             let next_dialogue = next_dialogue_from(&state.buffer, probe, line_count);
