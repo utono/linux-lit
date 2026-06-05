@@ -1152,8 +1152,14 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
     let fwd_boundary = |b: usize| -> usize {
         if two_col { column_split(state, b).next_page_top } else { next_page_top(state, b).new_top }
     };
+    let dbg = current_top >= 420 && current_top <= 430; // 1H4 scene-3 15-line-gap case
     loop {
         let next = fwd_boundary(probe);
+        if dbg {
+            let txt = |l: usize| buffer_line_text(&state.buffer, l).trim().chars().take(28).collect::<String>();
+            crate::log_fmt!("PPT_DBG: ct={} probe={} '{}' fwd={} '{}'",
+                current_top, probe, txt(probe), next, txt(next));
+        }
         if next == current_top {
             // Exact tile — `probe` is the page directly before current_top.
             let next_dialogue = next_dialogue_from(&state.buffer, probe, line_count);
@@ -1172,6 +1178,15 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
     }
     // `top` is the latest boundary whose page does not overshoot current_top
     // (worst case 0). Tiles with the minimal gap, never overlaps.
+    if dbg {
+        let txt = |l: usize| buffer_line_text(&state.buffer, l).trim().chars().take(28).collect::<String>();
+        let end = fwd_boundary(top);
+        crate::log_fmt!("PPT_DBG: RESULT top={} end={} (gap {}..{} to ct={}); fwd_boundary(end)={}",
+            top, end, end, current_top, current_top, fwd_boundary(end));
+        for l in end..current_top.min(end + 18) {
+            crate::log_fmt!("PPT_DBG:   gap {} dlg={} '{}'", l, is_dialogue_line(&state.buffer, l), txt(l));
+        }
+    }
     let next_dialogue = next_dialogue_from(&state.buffer, top, line_count);
     NextPage { new_top: top, next_dialogue }
 }
