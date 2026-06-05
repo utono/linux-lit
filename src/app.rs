@@ -43,7 +43,6 @@ pub enum InputMode {
     Search,
     GlossOverlay,
     SynopsisOverlay,
-    GlossPrompt,
     GlossPicker,
     EchoPicker,
     EchoTurnsPicker,
@@ -210,9 +209,7 @@ pub struct AppState {
     pub gloss_passages: Vec<crate::db::queries::GlossedPassage>,
     pub gloss_passage_index: usize,
     pub gloss_opened_from_picker: bool,
-    pub gloss_prompt_container: Option<glib::WeakRef<gtk4::Box>>,
-    pub gloss_prompt_overlay: Option<glib::WeakRef<gtk4::Overlay>>,
-    pub gloss_prompt_textview: Option<glib::WeakRef<gtk4::TextView>>,
+    /// Which add/edit prompt the stacked gloss input card will submit as.
     pub gloss_prompt_mode: GlossPromptMode,
     pub delete_confirm_container: Option<glib::WeakRef<gtk4::Box>>,
     pub delete_confirm_overlay: Option<glib::WeakRef<gtk4::Overlay>>,
@@ -747,14 +744,18 @@ pub const TWO_COLUMN_WIDTH_FRACTION: f32 = 0.68;
 /// `true` to restore the book-style foliation.)
 pub const SHOW_LINE_NUMBERS_TWO_COL: bool = false;
 
-/// Verse-safe floor for a single column's width in two-column mode. The longest
-/// Folger verse line (~63 chars in Charter 19) needs roughly this much text
-/// width; below it, verse starts wrapping. With line numbers hidden in
-/// two-column mode there's no number gutter eating into the column, so this can
-/// sit closer to the bare text width. The card is never narrowed below `2 ×`
-/// this (plus the divider), so shrinking `TWO_COLUMN_WIDTH_FRACTION` can never
-/// push a column into wrapping.
-pub const MIN_TWO_COLUMN_COLUMN_WIDTH: i32 = 700;
+/// Wrap-safe floor for a single column's width in two-column mode. Sized for the
+/// widest DIALOGUE PROSE line, not just verse: the ~63-char Folger verse worst
+/// case carries only `text_margins` + `TWO_COLUMN_LEFT_OFFSET`, but dialogue
+/// prose also pays `TWO_COLUMN_DIALOGUE_INDENT`, so a wide prose line (e.g. H8
+/// 5.3 Porter "fry of fornication is at door! On my Christian conscience,", 58
+/// chars) overflowed at the old 700px floor. The text budget per column is
+/// `floor − text_margins(40) − TWO_COLUMN_LEFT_OFFSET(30) − right margin`; a
+/// 58-char Charter-19 line needs ~630–660px of that, so the floor must clear
+/// ~760px. With line numbers hidden in two-column mode there's no gutter eating
+/// the column. The card is never narrowed below `2 ×` this (plus the divider),
+/// so shrinking `TWO_COLUMN_WIDTH_FRACTION` can never push a column into wrapping.
+pub const MIN_TWO_COLUMN_COLUMN_WIDTH: i32 = 760;
 
 /// Target card width before clamping to the window.
 ///
@@ -1402,9 +1403,6 @@ pub fn build_window(
         gloss_passages: Vec::new(),
         gloss_passage_index: 0,
         gloss_opened_from_picker: false,
-        gloss_prompt_container: None,
-        gloss_prompt_overlay: None,
-        gloss_prompt_textview: None,
         gloss_prompt_mode: GlossPromptMode::Add,
         delete_confirm_container: None,
         delete_confirm_overlay: None,
