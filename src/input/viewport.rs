@@ -1067,6 +1067,23 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
         // exception, `would_empty_right_column` treats the canonical final spread
         // as empty and G/last_page_top skip it.)
         let clamped = clamp_at_section_break(r, split, &state.right_view, &state.buffer);
+        // CSPLIT_DBG: pin why the AWW right column (split ~776) didn't clamp at 780.
+        if split >= 770 && split <= 782 {
+            use crate::db::line_types as lt;
+            let cls = |l: usize| -> String {
+                let t = buffer_line_text(&state.buffer, l);
+                let t = t.trim();
+                format!("'{}' [mk={} sep={} sd={} sp={} blank={}]",
+                    t.chars().take(22).collect::<String>(),
+                    lt::is_act_scene_marker(t), lt::is_separator(t),
+                    lt::is_stage_direction(t), lt::is_speaker(t), t.is_empty())
+            };
+            crate::log_fmt!("CSPLIT_DBG: page_top={} split={} r.last_fit={} r.count={} clamped.last_fit={} line_count={}",
+                page_top, split, r.last_fit, r.count, clamped.last_fit, line_count);
+            for l in split..(split + 8).min(line_count) {
+                crate::log_fmt!("CSPLIT_DBG:   line {} {}", l, cls(l));
+            }
+        }
         let r = if clamped.last_fit < split && r.last_fit + 1 >= line_count {
             r
         } else {
