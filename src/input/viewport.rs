@@ -1002,6 +1002,53 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
         return ColumnSplit { split, page_end: left.last_fit, next_page_top: line_count };
     }
 
+    // If the RIGHT column would BEGIN with a new section — i.e. skipping leading
+    // blanks/exit stage-directions from `split` lands on an ACT/SCENE marker or
+    // separator — then the previous scene has ENDED within the left column and
+    // the right column would be an entirely new scene. End the page here so the
+    // new scene starts the NEXT spread (the "stop at scene break" model): the
+    // left column shows the scene's tail, the right column is empty, and
+    // page_end runs through the trailing exit/blank lines up to (not into) the
+    // marker. This is what makes `y` from a scene's first page land on this page
+    // EXACTLY (split == scene_marker == that page's next_page_top). (The genuine
+    // final section — EPILOGUE — is exempt: it has nowhere to be pushed, and
+    // last_page_top/G expect it to fill the right column; detected by the section
+    // running to the end of the work.)
+    {
+        use crate::db::line_types;
+        // Skip leading blanks / exit stage-directions from `split`.
+        let mut hi = split;
+        while hi < line_count {
+            let t = buffer_line_text(&state.buffer, hi);
+            let t = t.trim();
+            if t.is_empty() || line_types::is_stage_direction(t) {
+                hi += 1;
+            } else {
+                break;
+            }
+        }
+        let at_break = hi < line_count && {
+            let t = buffer_line_text(&state.buffer, hi);
+            let t = t.trim();
+            line_types::is_act_scene_marker(t) || line_types::is_separator(t)
+        };
+        // Exempt the work's FINAL trailing section (EPILOGUE): it has nowhere to
+        // be pushed, and last_page_top/G expect it in the right column. Detected
+        // by "no further section marker after `hi`" (it is the last section).
+        let is_final_section = at_break && !((hi + 1)..line_count).any(|i| {
+            let t = buffer_line_text(&state.buffer, i);
+            line_types::is_act_scene_marker(t.trim())
+        });
+        if at_break && !is_final_section {
+            // The right column would begin a NEW (non-final) scene → end the page
+            // here. Left column shows the scene's tail (through the exit/blanks at
+            // split..hi-1); the marker at `hi` starts the next spread. `split` is
+            // unchanged so the right column simply renders nothing past page_end.
+            let page_end = hi.saturating_sub(1).max(split.saturating_sub(1));
+            return ColumnSplit { split, page_end, next_page_top: hi };
+        }
+    }
+
     // Right column (measure against the right view).
     let right_h = state.right_view.height().max(left_h);
     let right = if right_h > 0 {
@@ -1161,14 +1208,8 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
     let fwd_boundary = |b: usize| -> usize {
         if two_col { column_split(state, b).next_page_top } else { next_page_top(state, b).new_top }
     };
-    let dbg = current_top >= 420 && current_top <= 430;
     loop {
         let next = fwd_boundary(probe);
-        if dbg {
-            let cs = column_split(state, probe);
-            crate::log_fmt!("PPT_DBG: ct={} probe={} split={} page_end={} next={}",
-                current_top, probe, cs.split, cs.page_end, cs.next_page_top);
-        }
         if next == current_top {
             // Exact tile — `probe` is the page directly before current_top.
             let next_dialogue = next_dialogue_from(&state.buffer, probe, line_count);
