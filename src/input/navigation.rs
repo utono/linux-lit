@@ -1018,6 +1018,18 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
                 }
             }
         }
+        // NEXTCH_DBG: Err/Tro NextChapter lands a degenerate 1-line page with the
+        // cursor (line_idx) off-page below it. Dump target/top/spread to see why.
+        if state.current_work.as_ref()
+            .map(|w| w.abbrev == "Err" || w.abbrev == "Tro").unwrap_or(false)
+            && !is_line_fully_visible(state, line_idx)
+        {
+            let cs = column_split(state, state.page_top_line);
+            let txt = |l: usize| buffer_line_text(&state.buffer, l).trim().chars().take(32).collect::<String>();
+            log_fmt!("NEXTCH_DBG: line_idx={} '{}' page_top={} split={} page_end={} next={} | secstart[idx]={} idx_dialogue={}",
+                line_idx, txt(line_idx), state.page_top_line, cs.split, cs.page_end, cs.next_page_top,
+                state.is_section_start(line_idx), super::viewport::is_dialogue_line(&state.buffer, line_idx));
+        }
         after_page_change(state, PageChangeReason::Chapter);
     }
 }
