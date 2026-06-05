@@ -541,16 +541,31 @@ pub fn page_forward(state: &mut AppState) {
     } else {
         new_top
     };
-    // If the turn would leave the right column empty (advancing onto the work's
-    // short tail, e.g. a lone EPILOGUE), redirect to the final-spread anchor so
-    // the tail fills the RIGHT column instead of becoming a lonely left column —
-    // matching the q/j forward rule.
-    let candidate_top = if state.column_count() == 2
-        && super::viewport::would_empty_right_column(state, candidate_top)
-    {
+    // If the turn lands in the work's FINAL spread region, redirect to the
+    // canonical final spread (`last_page_top`). This covers both (a) the turn
+    // would leave the right column EMPTY (a lone EPILOGUE), and (b) the turn lands
+    // on a too-early final spread whose right column is UNDERFILLED because
+    // `next_page_top` picked a boundary one short of the canonical one (e.g.
+    // candidate 4296 with the EPILOGUE cut off vs the canonical 4308 with the full
+    // EPILOGUE). Mirrors the q/j forward rule in scroll_after_jump_forward.
+    let candidate_top = if state.column_count() == 2 {
         let anchor = last_page_top(state, next_dialogue);
-        log_fmt!("PAGE_FWD: would-empty candidate={} -> anchor={}", candidate_top, anchor);
-        anchor
+        // Redirect when the candidate isn't the canonical final spread but its
+        // page would overlap the final region — its forward boundary reaches at or
+        // past where the anchor's page begins (so the two pages cover the same
+        // tail), OR it would empty the right column. This catches the underfilled
+        // 4296 spread (next_page_top 4337 > anchor 4308) AND the lone-EPILOGUE case.
+        let cand_end = super::viewport::column_split(state, candidate_top).next_page_top;
+        let lands_in_final_region = candidate_top != anchor
+            && (super::viewport::would_empty_right_column(state, candidate_top)
+                || (candidate_top < anchor && cand_end > anchor));
+        if lands_in_final_region {
+            log_fmt!("PAGE_FWD: final-region candidate={} (end {}) -> anchor={}",
+                     candidate_top, cand_end, anchor);
+            anchor
+        } else {
+            candidate_top
+        }
     } else {
         candidate_top
     };

@@ -1499,6 +1499,7 @@ pub fn build_window(
     fn reveal_snap(state: &Rc<RefCell<AppState>>) {
         if let Ok(mut s) = state.try_borrow_mut() {
             crate::input::scroll::ensure_scroll_range(&s);
+            snap_near_end_to_canonical(&mut s);
             let top = s.page_top_line;
             crate::input::navigation::snap_scroll_to_line(&mut s, top);
         }
@@ -1702,6 +1703,7 @@ pub fn build_window(
                 // pages near the end of the document can't be reached because
                 // GTK clamps set_value to upper - page_size.
                 crate::input::scroll::ensure_scroll_range(&s);
+                snap_near_end_to_canonical(&mut s);
                 let top = s.page_top_line;
                 crate::input::navigation::snap_scroll_to_line(&mut s, top);
                 // Reveal LAST: apply_tiled_mode, snap_scroll, and the label
@@ -2048,6 +2050,53 @@ pub fn base_work_abbrev(abbrev: &str) -> &str {
     } else {
         abbrev
     }
+}
+
+/// After layout settles (`text_view.height() > 0`), correct a near-end
+/// `page_top` that `display_work` could only guess (it runs before layout, so it
+/// uses a rough `current_line - lpp` heuristic that lands on a non-canonical,
+/// underfilled final spread). Snap to the CANONICAL final spread — the same page
+/// `G`/forward-paging use — and put the cursor on its last visible dialogue line.
+/// No-op when not near the end, single-column, or layout isn't ready.
+fn snap_near_end_to_canonical(s: &mut AppState) {
+    let line_count = s.effective_line_count();
+    if s.column_count() != 2 || line_count == 0 || s.text_view.height() <= 0 {
+        return;
+    }
+    // Trigger when the current PAGE is in the work's final region — i.e. the
+    // page_top is within one spread of the end. (Checking `current_line` is
+    // wrong: the saved cursor can sit a column or two before the end yet still be
+    // on the final spread, e.g. current_line=4295, page_top=4294 with the canonical
+    // final spread at 4297.)
+    let lpp = crate::input::viewport::lines_per_page(s);
+    if s.page_top_line + lpp * 2 < line_count {
+        return;
+    }
+    // Anchor on the work's last dialogue line (not the saved cursor, which may be
+    // stale) so `last_page_top` computes the true final spread.
+    let mut target = line_count - 1;
+    while target > 0
+        && (s.translation_lines.get(target).copied().unwrap_or(false)
+            || !crate::input::viewport::is_dialogue_line(&s.buffer, target))
+    {
+        target -= 1;
+    }
+    let canonical = crate::input::navigation::last_page_top(s, target);
+    if canonical == s.page_top_line {
+        return;
+    }
+    let cs = crate::input::viewport::column_split(s, canonical);
+    let cursor = crate::input::viewport::prev_dialogue_line(
+        &s.buffer, &s.translation_lines, cs.page_end + 1,
+    )
+    .filter(|&d| d >= canonical && d <= cs.page_end)
+    .unwrap_or(s.current_line.min(cs.page_end));
+    crate::logging::log(&format!(
+        "STARTUP: snap near-end page_top {} -> canonical {} (cursor {})",
+        s.page_top_line, canonical, cursor
+    ));
+    s.page_top_line = canonical;
+    s.current_line = cursor;
 }
 
 pub fn display_work(state: &mut AppState, work: Work) {
@@ -2591,7 +2640,14 @@ pub fn display_work_at_with_prepared(
         // If the cursor is near the end of the buffer, back up by ~1 page
         // so the viewport fills instead of showing only the trailing lines.
         let lpp = crate::input::viewport::lines_per_page(state);
-        let page_top = if state.current_line + lpp >= line_count {
+        let near_end = state.current_line + lpp >= line_count;
+        let page_top = if near_end && state.text_view.height() > 0 {
+            // Near the end with layout ready: open on the CANONICAL final spread
+            // (the same page G and forward-paging land on — tail in the right
+            // column, both columns full) instead of a rough `current_line - lpp`
+            // guess that renders a non-canonical mid-page spread.
+            crate::input::navigation::last_page_top(state, state.current_line)
+        } else if near_end {
             state.current_line.saturating_sub(lpp)
         } else {
             state.current_line.saturating_sub(1)

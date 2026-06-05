@@ -725,16 +725,32 @@ pub(crate) fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize)
             } else {
                 super::viewport::page_turn_top(&state.buffer, state.current_line)
             };
-            // If turning to `new_top` would leave the RIGHT column empty (the new
-            // page is the work's short tail, e.g. a lone EPILOGUE), redirect to
-            // the final-spread anchor instead — the one that fills BOTH columns
-            // with the tail content (EPILOGUE in the right column). This keeps the
-            // cursor on a full two-column spread; the right column is never empty.
-            let new_top = if state.column_count() == 2
-                && super::viewport::would_empty_right_column(state, new_top)
-            {
-                let anchor = super::navigation::last_page_top(state, state.current_line);
-                log_fmt!("NAV_FWD_LASTPAGE: current={} page_top={} would-empty new_top={} -> anchor={}",
+            // If turning to `new_top` lands on the work's FINAL spread region,
+            // redirect to the canonical final spread (`last_page_top`) — the one
+            // that fills BOTH columns with the tail content (the EPILOGUE in the
+            // right column). This covers two cases the raw `page_turn_top` gets
+            // wrong near the end: (a) the new page would leave the right column
+            // EMPTY (a lone EPILOGUE), and (b) the new page is a too-early final
+            // spread whose right column is UNDERFILLED (page_turn_top picked
+            // `new_top` one spread short, e.g. 4296 with the EPILOGUE cut off,
+            // when the canonical spread is 4297 with the full EPILOGUE). Detect
+            // (b) by: `new_top` reaches the end (no full next page) but isn't the
+            // page `last_page_top` would choose.
+            let anchor = super::navigation::last_page_top(state, state.current_line);
+            // Redirect to the canonical final spread (`anchor`) when `page_turn_top`
+            // lands ON or just BEFORE it — i.e. `new_top` falls inside the anchor's
+            // page span `[anchor, anchor_page_end]` (the empty-right EPILOGUE case,
+            // new_top >= anchor) OR `new_top` is the spread immediately before the
+            // anchor whose right column is UNDERFILLED because page_turn_top picked
+            // a final spread one short (new_top=4296, anchor=4297, both showing the
+            // EPILOGUE region). The unifying test: `new_top` is within one anchor
+            // page span of the work's end, but isn't the anchor itself.
+            let anchor_end = super::viewport::column_split(state, anchor).page_end;
+            let lands_in_final_region = new_top != anchor
+                && (super::viewport::would_empty_right_column(state, new_top)
+                    || (new_top >= anchor.saturating_sub(2) && new_top <= anchor_end));
+            let new_top = if state.column_count() == 2 && lands_in_final_region {
+                log_fmt!("NAV_FWD_LASTPAGE: current={} page_top={} new_top={} -> anchor={}",
                          state.current_line, state.page_top_line, new_top, anchor);
                 anchor
             } else {
