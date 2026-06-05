@@ -1142,8 +1142,18 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
     // (returning a boundary whose `next > current_top` would show lines twice).
     let mut top: usize = 0;          // candidate to return (best so far)
     let mut probe: usize = 0;        // walk cursor
+    // Use the SAME forward boundary the renderer and the page-tiling invariant
+    // use: in two columns that is `column_split(probe).next_page_top` (the right
+    // column's `last_fit + 1`), which can differ from the single-column
+    // `next_page_top()` by a trailing speaker block — that mismatch was the
+    // residual 3-line `y GAP` (backward tiled against next_page_top while the
+    // page actually rendered to column_split's boundary).
+    let two_col = state.column_count() == 2;
+    let fwd_boundary = |b: usize| -> usize {
+        if two_col { column_split(state, b).next_page_top } else { next_page_top(state, b).new_top }
+    };
     loop {
-        let next = next_page_top(state, probe).new_top;
+        let next = fwd_boundary(probe);
         if next == current_top {
             // Exact tile — `probe` is the page directly before current_top.
             let next_dialogue = next_dialogue_from(&state.buffer, probe, line_count);
