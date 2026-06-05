@@ -97,7 +97,6 @@ pub fn handle_key(
             crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_alt),
             crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_name, is_ctrl),
             crate::app::InputMode::DeleteConfirm => handle_delete_confirm_key(state, key_name),
-            crate::app::InputMode::GlossPrompt => handle_gloss_prompt_key(state, key_name, is_ctrl),
             crate::app::InputMode::EchoPicker => handle_echo_picker_key(state, key_name, tokio_handle),
             crate::app::InputMode::EchoTurnsPicker => handle_echo_turns_picker_key(state, key_name, tokio_handle),
             crate::app::InputMode::EchoesOverlay => handle_echoes_overlay_key(state, key_state, key_name, is_ctrl, tokio_handle),
@@ -610,6 +609,36 @@ fn handle_gloss_key(
     is_ctrl: bool,
     is_alt: bool,
 ) -> bool {
+    use crate::ui::gloss_overlay::AskFocus;
+
+    // ---- Stacked add/edit input card (a / e) ------------------------------
+    // When open it behaves like the synopsis ask card: Tab toggles focus,
+    // Ctrl+Enter submits, Esc is two-stage (close card, then close overlay),
+    // and typed characters fall through to the editable input while it holds
+    // focus. These must be handled before the gloss navigation keys below.
+    let (ask_open, ask_focus) = {
+        let s = state.borrow();
+        (s.gloss_overlay.ask_is_open(), s.gloss_overlay.ask_focus())
+    };
+    if ask_open {
+        if key_name == "Tab" || key_name == "ISO_Left_Tab" {
+            state.borrow().gloss_overlay.toggle_ask_focus();
+            return true;
+        }
+        if is_ctrl && key_name == "Return" {
+            crate::input::actions::gloss::submit_gloss_prompt(state);
+            return true;
+        }
+        if key_name == "Escape" {
+            crate::input::actions::gloss::close_gloss_prompt(state);
+            return true;
+        }
+        // Let typed characters through to the input while it holds focus.
+        if ask_focus == AskFocus::Ask {
+            return false;
+        }
+    }
+
     if key_state.borrow().chord == ChordState::PendingG {
         key_state.borrow_mut().chord = ChordState::None;
         if key_name == "g" {
@@ -819,43 +848,6 @@ fn handle_delete_confirm_key(
         }
         _ => true,
     }
-}
-
-fn handle_gloss_prompt_key(
-    state: &Rc<RefCell<AppState>>,
-    key_name: &str,
-    is_ctrl: bool,
-) -> bool {
-    if key_name == "Escape" {
-        crate::input::actions::gloss::close_gloss_prompt(state);
-        return true;
-    }
-    if is_ctrl && key_name == "Return" {
-        let (prompt, mode) = {
-            let s = state.borrow();
-            let text = s.gloss_prompt_textview.as_ref()
-                .and_then(|w| w.upgrade())
-                .map(|tv| {
-                    let buf = tv.buffer();
-                    buf.text(&buf.start_iter(), &buf.end_iter(), false).to_string()
-                })
-                .unwrap_or_default();
-            (text, s.gloss_prompt_mode)
-        };
-        crate::input::actions::gloss::close_gloss_prompt(state);
-        if !prompt.trim().is_empty() {
-            match mode {
-                crate::app::GlossPromptMode::Add => {
-                    crate::input::actions::gloss::add_gloss(state, &prompt);
-                }
-                crate::app::GlossPromptMode::Edit => {
-                    crate::input::actions::gloss::edit_gloss(state, &prompt);
-                }
-            }
-        }
-        return true;
-    }
-    false
 }
 
 fn handle_echo_picker_key(

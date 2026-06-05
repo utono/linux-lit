@@ -63,6 +63,11 @@ pub struct GlossOverlay {
     /// receives typed characters when the ask card holds focus.
     ask_container: gtk4::Box,
     ask_input: gtk4::TextView,
+    /// Heading + footer hint of the ask card. Mutable so the same stacked card
+    /// can serve both the synopsis "ask" flow and the gloss add/edit prompts,
+    /// each with its own label/hint text.
+    ask_title: Label,
+    ask_hint: Label,
     /// Which sub-card currently has focus while the ask card is open. Drives the
     /// `.card-focused` highlight and whether `j/k` scroll vs. type.
     ask_focus: Cell<AskFocus>,
@@ -405,6 +410,8 @@ impl GlossOverlay {
             last_card_size: Cell::new((0, 0)),
             ask_container,
             ask_input,
+            ask_title,
+            ask_hint,
             ask_focus: Cell::new(AskFocus::Synopsis),
         }
     }
@@ -515,7 +522,12 @@ impl GlossOverlay {
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         self.last_card_size.set((card_width, card_height));
+        // A fresh gloss render closes any open add/edit ask card and clears its
+        // focus highlight (e.g. after an add/edit completes or n/p navigates).
         self.ask_container.set_visible(false);
+        self.ask_focus.set(AskFocus::Synopsis);
+        self.ask_container.remove_css_class("card-focused");
+        self.ask_container.remove_css_class("card-dimmed");
         self.title.set_visible(false);
         self.title.set_vexpand(false);
         self.title.set_valign(Align::Start);
@@ -965,8 +977,31 @@ impl GlossOverlay {
     /// card automatically. Clears any prior text, focuses the input, highlights
     /// the ask card.
     pub fn open_ask_card(&self) {
+        self.open_ask_card_with(
+            "ASK ABOUT THIS SCENE",
+            "Ask a question; the synopsis will be expanded to answer it  ·  Tab switch  ·  Ctrl+Enter submit  ·  Esc cancel",
+        );
+    }
+
+    /// Reveal the stacked input card below the open synopsis/gloss card with the
+    /// given heading and footer hint. Shared by the synopsis "ask" flow and the
+    /// gloss add/edit prompts, so the input always appears stacked beneath the
+    /// card it edits (never as a separate floating dialog).
+    pub fn open_ask_card_with(&self, title: &str, hint: &str) {
+        self.ask_title.set_text(title);
+        self.ask_hint.set_text(hint);
         let buffer = self.ask_input.buffer();
         buffer.set_text("");
+        // Align the ask card's left/right edges with the synopsis/gloss prose,
+        // which `show_synopsis`/`show_gloss` inset by `card_width / 4` (not the
+        // static `text_margins` the card was built with). Without this the card
+        // sat far wider than the text it sits beneath.
+        let (card_width, _) = self.last_card_size.get();
+        if card_width > 0 {
+            let margin = card_width / 4;
+            self.ask_container.set_margin_start(margin);
+            self.ask_container.set_margin_end(margin);
+        }
         self.ask_container.set_visible(true);
         self.apply_font();
         self.set_ask_focus(AskFocus::Ask);

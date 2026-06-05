@@ -213,25 +213,6 @@ fn show_prompt_dialog(state_rc: &Rc<RefCell<AppState>>, mode: crate::app::GlossP
         (im, mode == crate::app::GlossPromptMode::Edit)
     };
 
-    let overlay_parent = {
-        let s = state_rc.borrow();
-        s.action_popup_widget.container.parent()
-    };
-    let overlay_parent = match overlay_parent {
-        Some(p) => p.downcast::<gtk4::Overlay>().ok(),
-        None => None,
-    };
-    let overlay_parent = match overlay_parent {
-        Some(o) => o,
-        None => return,
-    };
-
-    let container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-    container.set_halign(gtk4::Align::Center);
-    container.set_valign(gtk4::Align::Center);
-    container.set_width_request(600);
-    container.add_css_class("amend-dialog");
-
     let title_text = if is_edit {
         "EDIT GLOSS — PASTE SUBTEXT LINES"
     } else if is_inner_monologue {
@@ -239,52 +220,19 @@ fn show_prompt_dialog(state_rc: &Rc<RefCell<AppState>>, mode: crate::app::GlossP
     } else {
         "GLOSS PROMPT"
     };
-    let title = gtk4::Label::new(Some(title_text));
-    title.add_css_class("amend-title");
-    title.set_halign(gtk4::Align::Start);
-    container.append(&title);
-
-    let scrolled = gtk4::ScrolledWindow::new();
-    scrolled.set_min_content_height(120);
-    scrolled.set_margin_start(22);
-    scrolled.set_margin_end(22);
-    scrolled.set_margin_top(8);
-    scrolled.set_margin_bottom(8);
-
-    let text_view = gtk4::TextView::new();
-    text_view.set_wrap_mode(gtk4::WrapMode::Word);
-    text_view.set_top_margin(8);
-    text_view.set_bottom_margin(8);
-    text_view.set_left_margin(4);
-    text_view.set_right_margin(4);
-    text_view.add_css_class("amend-text");
-    scrolled.set_child(Some(&text_view));
-    container.append(&scrolled);
-
     let hint_text = if is_edit {
-        "Paste lines for subtext  \u{00b7}  Ctrl+Enter submit  \u{00b7}  Esc cancel"
+        "Paste lines for subtext  \u{00b7}  Tab switch  \u{00b7}  Ctrl+Enter submit  \u{00b7}  Esc cancel"
     } else if is_inner_monologue {
-        "Paste lines from another work  \u{00b7}  Ctrl+Enter submit  \u{00b7}  Esc cancel"
+        "Paste lines from another work  \u{00b7}  Tab switch  \u{00b7}  Ctrl+Enter submit  \u{00b7}  Esc cancel"
     } else {
-        "Ctrl+Enter submit  \u{00b7}  Esc cancel"
+        "Tab switch  \u{00b7}  Ctrl+Enter submit  \u{00b7}  Esc cancel"
     };
-    let hint = gtk4::Label::new(Some(hint_text));
-    hint.add_css_class("amend-hint");
-    hint.set_halign(gtk4::Align::Center);
-    container.append(&hint);
 
-    overlay_parent.add_overlay(&container);
-
-    {
-        let mut s = state_rc.borrow_mut();
-        s.gloss_prompt_container = Some(container.downgrade());
-        s.gloss_prompt_overlay = Some(overlay_parent.downgrade());
-        s.gloss_prompt_textview = Some(text_view.downgrade());
-        s.gloss_prompt_mode = mode;
-        s.input_mode = crate::app::InputMode::GlossPrompt;
-    }
-
-    text_view.grab_focus();
+    // Stack the input as a card below the open gloss (same widget the synopsis
+    // "ask" flow uses) instead of a separate floating dialog. The gloss card
+    // stays visible above it; `gloss_prompt_mode` routes the eventual submit.
+    state_rc.borrow_mut().gloss_prompt_mode = mode;
+    state_rc.borrow().gloss_overlay.open_ask_card_with(title_text, hint_text);
 }
 
 pub(crate) fn show_amend_dialog(state_rc: &Rc<RefCell<AppState>>) {
@@ -520,13 +468,26 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
     }
 }
 
+/// Close the stacked gloss add/edit input card and return focus to the gloss.
+/// The reader stays in `InputMode::GlossOverlay` throughout (the card lives
+/// inside the gloss overlay, like the synopsis ask card).
 pub(crate) fn close_gloss_prompt(state: &Rc<RefCell<AppState>>) {
-    let mut s = state.borrow_mut();
-    if let (Some(cw), Some(ow)) = (s.gloss_prompt_container.take(), s.gloss_prompt_overlay.take()) {
-        if let (Some(c), Some(o)) = (cw.upgrade(), ow.upgrade()) {
-            o.remove_overlay(&c);
-        }
+    state.borrow().gloss_overlay.close_ask_card();
+}
+
+/// Submit the stacked gloss input card: read its text, close it, and route to
+/// `add_gloss` / `edit_gloss` by the active prompt mode. No-op on empty input.
+pub(crate) fn submit_gloss_prompt(state: &Rc<RefCell<AppState>>) {
+    let (prompt, mode) = {
+        let s = state.borrow();
+        (s.gloss_overlay.take_ask_text(), s.gloss_prompt_mode)
+    };
+    close_gloss_prompt(state);
+    if prompt.trim().is_empty() {
+        return;
     }
-    s.gloss_prompt_textview = None;
-    s.input_mode = crate::app::InputMode::GlossOverlay;
+    match mode {
+        crate::app::GlossPromptMode::Add => add_gloss(state, &prompt),
+        crate::app::GlossPromptMode::Edit => edit_gloss(state, &prompt),
+    }
 }
