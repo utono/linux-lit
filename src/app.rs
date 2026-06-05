@@ -4842,9 +4842,9 @@ mod card_width_tests {
 
     #[test]
     fn two_columns_fill_fraction_of_wide_window() {
-        // TWO_COLUMN_WIDTH_FRACTION (0.68) of 1920 = 1305, below the verse-safe
-        // two-column floor (2*700+8 = 1408), so clamp up to 1408.
-        assert_eq!(target_card_width(1920, 1050, 2, false), 1408);
+        // TWO_COLUMN_WIDTH_FRACTION (0.68) of 1920 = 1305, below the wrap-safe
+        // two-column floor (2*760+8 = 1528), so clamp up to 1528.
+        assert_eq!(target_card_width(1920, 1050, 2, false), 1528);
     }
 
     #[test]
@@ -4856,8 +4856,8 @@ mod card_width_tests {
     #[test]
     fn two_columns_never_below_verse_safe_floor() {
         // Narrow window: proportional (0.68*1300=884) and column_width (1050)
-        // are both below the 1408 two-column floor → clamp up to 1408.
-        assert_eq!(target_card_width(1300, 1050, 2, false), 1408);
+        // are both below the 1528 two-column floor → clamp up to 1528.
+        assert_eq!(target_card_width(1300, 1050, 2, false), 1528);
     }
 
     #[test]
