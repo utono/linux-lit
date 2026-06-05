@@ -495,14 +495,6 @@ fn run_step(s: &mut AppState) {
             // by diagnostics on 1H4 (gap lines 124-126 = blank / '[They exit.]' /
             // blank). Exempt non-dialogue gaps.
             if (fwd..pre_top).any(|i| is_dialogue_line(&s.buffer, i)) {
-                // YGAP_DBG: dump the skipped lines to classify real-dialogue-gap
-                // vs scene-transition. Temporary.
-                for i in fwd..pre_top {
-                    let t = buffer_line_text(&s.buffer, i);
-                    crate::log_fmt!("YGAP_DBG: line {} secstart={} dialogue={} '{}'",
-                        i, s.is_section_start(i), is_dialogue_line(&s.buffer, i),
-                        t.trim().chars().take(40).collect::<String>());
-                }
                 fail(s, step_num, step, &format!(
                     "y GAP: back-page top={} ends at next_page_top={} before old top={} ({} dialogue lines skipped)",
                     post_top, fwd, pre_top, pre_top - fwd
