@@ -66,10 +66,13 @@ for w in $WORKS; do
   sleep 1
   pkill -f "$BIN --headless-test" 2>/dev/null
 
-  steps=$(grep -c "NAV_TEST: step" "$LOG" 2>/dev/null || echo 0)
-  unbal=$(grep -c "UNBALANCED SPREAD" "$LOG" 2>/dev/null || echo 0)
-  empty=$(grep -c "RIGHT COLUMN EMPTY" "$LOG" 2>/dev/null || echo 0)
-  fails=$(grep -c "NAV_TEST: FAIL" "$LOG" 2>/dev/null || echo 0)
+  # `grep -c` on a missing/odd file can emit a multi-line "0\n0"; force a single
+  # integer so the `(( ))` arithmetic below never sees a bad token.
+  count() { grep -c "$1" "$LOG" 2>/dev/null | head -1 | tr -dc '0-9'; }
+  steps=$(count "NAV_TEST: step"); steps=${steps:-0}
+  unbal=$(count "UNBALANCED SPREAD"); unbal=${unbal:-0}
+  empty=$(count "RIGHT COLUMN EMPTY"); empty=${empty:-0}
+  fails=$(count "NAV_TEST: FAIL"); fails=${fails:-0}
   line="$w steps=$steps FAIL=$fails UNBALANCED=$unbal RIGHT_EMPTY=$empty"
   echo "$line" >> "$SUMMARY"
   if (( fails > 0 || unbal > 0 || empty > 0 )); then
