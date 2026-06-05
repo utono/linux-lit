@@ -91,6 +91,16 @@ WORKS=$(sqlite3 "$DB_SRC" \
   "SELECT abbrev FROM works WHERE work_type='play' AND author='Shakespeare' \
    AND abbrev NOT LIKE '%-Amb' AND abbrev NOT LIKE '%-BBC' ORDER BY abbrev;")
 
+# Reclaim the IN-FLIGHT work's temp dir if the sweep is killed mid-work (Ctrl+C,
+# closed terminal, SIGTERM). The per-work `purge_rt "$RT"` at the bottom of the
+# loop handles a normal run, but an interrupt skips it and leaks that work's
+# ~630M + the daemons pinning it (the accumulating-leak case in SKILL.md). The
+# trap body is single-quoted so `$RT` is read AT FIRE TIME (the current
+# iteration's dir), not when the trap is installed; `purge_rt` no-ops on an empty
+# or already-removed dir, so firing between iterations is safe.
+RT=""
+trap 'purge_rt "$RT"' EXIT INT TERM
+
 total=0; flagged=0
 for w in $WORKS; do
   total=$((total+1))
