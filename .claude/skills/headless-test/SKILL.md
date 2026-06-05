@@ -30,6 +30,28 @@ Then ask them to paste `/tmp/fuzz-all-works-summary.txt` (one line per play:
 `/tmp/fuzz-<ABBR>.log`. The whole sweep takes ~`70s × number of plays` (≈45 min
 for the ~37 plays). Details below under *Sweep ALL Shakespeare works*.
 
+**`--secs-each` is a per-play wall-clock budget, and it bounds COVERAGE.** Steps
+run at ~400ms each, so `--secs-each 70` ≈ only ~150 steps — the first ~17% of the
+1400-step run (start/end-anchor actions + the first few scene boundaries). That is
+a **fast triage pass**: it finds suspects across all plays in ~45 min, but a
+`FAIL=0` at `steps≈150` means "no *early* failure", NOT "clean" — the per-scene
+boundary sweep, the mid-page anchors, and the random/boundary-stress body are
+never reached. For a genuine clean bill of health across every play, run the
+**thorough "whole-orchard" sweep** at the full ~1400-step budget:
+
+```bash
+cd ~/utono/linux-lit && cargo build
+./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz-all-works.sh --secs-each 600
+```
+
+`--secs-each 600` ≈ the complete coverage prelude + random body per play, so a
+`FAIL=0` there is trustworthy. It costs ~`600s × ~37 plays ≈ 6 h`, so it is NOT
+the default — run it overnight, or as the final confirming pass after fixes land.
+To confirm just ONE play thoroughly without the 6-h sweep, use the single-work
+script instead: `run-fuzz.sh --secs 600 --start-work <ABBR>`.
+
+Rule of thumb: **`--secs-each 70` to find bugs, `--secs-each 600` to prove clean.**
+
 ### Fix-loop (`--stop-on-first-fail`): stop → fix → re-run
 
 The whole-sweep loop is **user-runs → agent-fixes → user-re-runs** (the agent
@@ -246,10 +268,22 @@ the run reproducible from the command alone:
 
 **Sweep ALL Shakespeare works** (verify every play, not just one — page geometry
 is work-specific, so a bug can hide in a play with a different act/scene
-structure, e.g. an underfilled right column at a scene boundary):
+structure, e.g. an underfilled right column at a scene boundary).
+
+**ALWAYS ASK THE USER 70s vs 600s FIRST.** When the user requests a whole-orchard
+sweep (Shakespeare or any other author), do NOT pick the budget yourself — prompt
+them to choose, because the trade-off is steep and theirs to make:
+- **`--secs-each 70`** — fast triage, ≈150 steps/play (~17% of the run), ~45 min.
+  Finds suspects; `FAIL=0` only means "no *early* failure", not clean.
+- **`--secs-each 600`** — thorough, the full ~1400-step prelude+body/play, ~6 h.
+  `FAIL=0` is a real clean bill of health. Run overnight / to confirm fixes.
+
+Then hand them the chosen command:
 
 ```bash
 ./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz-all-works.sh --secs-each 70
+# or, for the thorough whole-orchard sweep:
+./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz-all-works.sh --secs-each 600
 ```
 
 It fuzzes each Folger Shakespeare play in its own isolated cage and prints a

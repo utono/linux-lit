@@ -4,13 +4,29 @@
 # underfilled or empty (or any other hard NAV_TEST FAIL).
 #
 # Usage (always through the env wrapper):
+#   # fast triage sweep (~150 steps/play, ~45 min total) — finds suspects:
 #   ./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz-all-works.sh [--secs-each N]
+#   # thorough "whole-orchard" sweep (full ~1400-step prelude+body/play, ~6 h):
+#   ./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz-all-works.sh --secs-each 600
 #
 # Each work runs in its OWN isolated cage (private DB copy + log, headless
-# offscreen, --headless-test marker) for --secs-each seconds (default 70 — long
-# enough for the coverage prelude to visit every act/scene boundary, where the
-# underfilled-right-column cases live). Per-work results are tallied; a final
-# summary lists every work with UNBALANCED / RIGHT-COLUMN-EMPTY / other FAILs.
+# offscreen, --headless-test marker) for --secs-each seconds. Steps run at
+# ~400ms each, so the budget directly bounds coverage:
+#   --secs-each 70  (default) ≈ 150 steps ≈ first ~17% of the coverage prelude —
+#                   a FAST TRIAGE pass. Reaches the start/end-anchor actions and
+#                   the first few scene boundaries; a FAIL=0 here means "no early
+#                   failure", NOT "clean". Good for finding suspects across all
+#                   plays in one ~45-min sitting.
+#   --secs-each 600           ≈ the full 1400-step run (whole coverage prelude:
+#                   every action from every act/scene boundary + mid-page anchors,
+#                   plus the random/boundary-stress body). This is the THOROUGH
+#                   whole-orchard sweep — a FAIL=0 here is a real clean bill of
+#                   health. Costs ~600s × ~37 plays ≈ 6 h, so it is NOT the
+#                   default; run it overnight or to confirm a fix across all works.
+# Per-work results are tallied; a final summary lists every work with
+# UNBALANCED / RIGHT-COLUMN-EMPTY / other FAILs. To confirm ONE play thoroughly
+# without the 6-h sweep, use the single-work script: run-fuzz.sh --secs 600
+# --start-work <ABBR>.
 #
 # Why this exists: a wrong-spread / underfilled-column bug can be work-specific
 # (different act/scene structure, EPILOGUE vs no EPILOGUE, prose vs verse). One
