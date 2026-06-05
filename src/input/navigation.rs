@@ -964,6 +964,10 @@ pub fn jump_to_prev_chapter(state: &mut AppState) {
                 } else {
                     let top = chapter_page_top_state(state, line_idx);
                     set_page_instant(state, top);
+                    // See jump_to_next_chapter: a chapter/act header that fills a
+                    // degenerate spread leaves the cursor off-page; advance until
+                    // it's visible.
+                    ensure_cursor_visible_ereader(state, line_idx);
                 }
             }
         }
@@ -1015,20 +1019,16 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
                 } else {
                     let top = chapter_page_top_state(state, line_idx);
                     set_page_instant(state, top);
+                    // chapter_page_top backs up to the chapter/act header so it
+                    // shows above the cursor — but when that header fills a
+                    // degenerate spread (Err/Tro: an ACT/scene header whose page is
+                    // a lone 1-line spread at a short viewport), the cursor
+                    // (line_idx, the chapter's first dialogue) lands OFF-PAGE below
+                    // it. Advance until the cursor is actually visible — same guard
+                    // as the scene jumps.
+                    ensure_cursor_visible_ereader(state, line_idx);
                 }
             }
-        }
-        // NEXTCH_DBG: Err/Tro NextChapter lands a degenerate 1-line page with the
-        // cursor (line_idx) off-page below it. Dump target/top/spread to see why.
-        if state.current_work.as_ref()
-            .map(|w| w.abbrev == "Err" || w.abbrev == "Tro").unwrap_or(false)
-            && !is_line_fully_visible(state, line_idx)
-        {
-            let cs = column_split(state, state.page_top_line);
-            let txt = |l: usize| buffer_line_text(&state.buffer, l).trim().chars().take(32).collect::<String>();
-            log_fmt!("NEXTCH_DBG: line_idx={} '{}' page_top={} split={} page_end={} next={} | secstart[idx]={} idx_dialogue={}",
-                line_idx, txt(line_idx), state.page_top_line, cs.split, cs.page_end, cs.next_page_top,
-                state.is_section_start(line_idx), super::viewport::is_dialogue_line(&state.buffer, line_idx));
         }
         after_page_change(state, PageChangeReason::Chapter);
     }
