@@ -828,9 +828,13 @@ pub(crate) fn scroll_after_jump_backward(state: &mut AppState) {
                 let target = state.current_line;
                 let mut new_top = super::viewport::prev_page_top(state, old_top).new_top;
                 let mut guard = 0;
-                while new_top > target
-                    && super::viewport::column_split(state, new_top).page_end < target
-                {
+                // Keep walking back while this spread starts AFTER the target (so it
+                // can't contain it): a single prev_page_top can land on a
+                // legitimately dialogue-less spread whose page_top is still past the
+                // target (H8 1.4: target=1697 in scene 3, but prev_page_top(1704)
+                // lands on the scene-4 header spread at 1701 > 1697). Step back until
+                // page_top <= target, i.e. the spread that actually holds it.
+                while new_top > target {
                     let prev = super::viewport::prev_page_top(state, new_top).new_top;
                     if prev >= new_top {
                         break;
