@@ -689,23 +689,16 @@ fn run_step(s: &mut AppState) {
             let hi = (cs.next_page_top + 1).min(line_count);
             (lo..hi).any(|i| s.is_section_start(i))
         };
-        if !tail_fits_one_col && left_lines < 6 && right_lines < 8 && cs.next_page_top < line_count {
-            // SECSTARTS_DBG: prove (via the authoritative bitmap) whether this
-            // short spread sits on a scene boundary before deciding bug vs.
-            // benign-clamp. Remove once the left-underfill exemption is confirmed.
-            let marks: Vec<usize> = (post_top..(cs.next_page_top + 1).min(line_count))
-                .filter(|&i| s.is_section_start(i))
-                .collect();
-            crate::log_fmt!(
-                "SECSTARTS_DBG: left-underfill top={} split={} page_end={} next_top={} clamped_at_scene={} section_starts_in_spread={:?}",
-                post_top, cs.split, cs.page_end, cs.next_page_top, clamped_at_scene, marks
-            );
-            if !clamped_at_scene {
-                fail(s, step_num, step, &format!(
-                    "LEFT COLUMN UNDERFILLED (top={} left_lines={} right_lines={} split={} page_end={})",
-                    post_top, left_lines, right_lines, cs.split, cs.page_end
-                ));
-            }
+        if !tail_fits_one_col
+            && !clamped_at_scene
+            && left_lines < 6
+            && right_lines < 8
+            && cs.next_page_top < line_count
+        {
+            fail(s, step_num, step, &format!(
+                "LEFT COLUMN UNDERFILLED (top={} left_lines={} right_lines={} split={} page_end={})",
+                post_top, left_lines, right_lines, cs.split, cs.page_end
+            ));
         }
     }
 
