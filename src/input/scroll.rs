@@ -814,23 +814,54 @@ pub(crate) fn scroll_after_jump_backward(state: &mut AppState) {
                 // the highlight on the BOTTOM of that page's right column — the
                 // previous dialogue line in reading order, which is what a reader
                 // expects from `,`/`k` at the page top.
-                let np = super::viewport::prev_page_top(state, state.page_top_line);
+                // Walk back one spread at a time until we reach the page that
+                // actually CONTAINS the target dialogue (`state.current_line`,
+                // already set to the correct prev dialogue by the caller). A single
+                // `prev_page_top` step can land on a legitimately dialogue-less
+                // spread that doesn't hold the target — e.g. H8 1.4's scene-header
+                // spread `[1701,1703]` ('Scene 4'/'====='/blank fill the whole
+                // page at a short viewport, its dialogue pushed to the next spread).
+                // Anchoring there leaves the cursor off-page and the bottom-right
+                // fallback below would snap it onto the blank. Skip past such
+                // spreads to the one that shows the cursor.
+                let old_top = state.page_top_line;
+                let target = state.current_line;
+                let mut new_top = super::viewport::prev_page_top(state, old_top).new_top;
+                let mut guard = 0;
+                while new_top > target
+                    && super::viewport::column_split(state, new_top).page_end < target
+                {
+                    let prev = super::viewport::prev_page_top(state, new_top).new_top;
+                    if prev >= new_top {
+                        break;
+                    }
+                    new_top = prev;
+                    guard += 1;
+                    if guard > 64 {
+                        break;
+                    }
+                }
                 // Record the page we came from (single return entry) so a later
                 // `x`/`y` round-trips, and so `y` never pops a stale older entry.
                 state.page_back_stack.clear();
-                state.page_back_stack.push(state.page_top_line);
-                set_page_instant(state, np.new_top);
-                // Land the cursor on the new spread's last visible dialogue line
-                // (bottom-right), backing up off any trailing non-dialogue.
-                let last_vis = super::viewport::last_fully_visible_line(state, np.new_top);
-                let bottom_dlg = super::viewport::prev_dialogue_line(
-                    &state.buffer, &state.translation_lines, last_vis + 1,
-                )
-                .filter(|&d| d >= np.new_top)
-                .unwrap_or(last_vis);
+                state.page_back_stack.push(old_top);
+                set_page_instant(state, new_top);
+                // If the target now sits on this spread, keep it (it is a real
+                // dialogue line). Otherwise fall back to the spread's bottom-right
+                // dialogue line, backing up off any trailing non-dialogue.
+                let cursor = if super::viewport::is_line_fully_visible(state, target) {
+                    target
+                } else {
+                    let last_vis = super::viewport::last_fully_visible_line(state, new_top);
+                    super::viewport::prev_dialogue_line(
+                        &state.buffer, &state.translation_lines, last_vis + 1,
+                    )
+                    .filter(|&d| d >= new_top)
+                    .unwrap_or(last_vis)
+                };
                 log_fmt!("NAV_PAGE_BACK: new_top={} old_top={} cursor {}->{} (bottom-right)",
-                         np.new_top, state.page_top_line, state.current_line, bottom_dlg);
-                state.current_line = bottom_dlg;
+                         new_top, old_top, state.current_line, cursor);
+                state.current_line = cursor;
             }
         }
     }

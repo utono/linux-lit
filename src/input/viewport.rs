@@ -1152,17 +1152,10 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
         // the whole stage direction moves to the top of the right column
         // instead of being orphaned ("[They put Bassianus' body in the pit and"
         // on the left, "exit, carrying off Lavinia.]" on the right).
-        let r0 = visible_range(&state.text_view, &state.buffer, page_top, line_count, usable);
-        let r1 = clamp_at_section_break(r0, page_top, &state.text_view, &state.buffer, is_break);
-        let r2 = trim_trailing_speaker_only(r1, page_top, &state.text_view, &state.buffer);
-        let r3 = back_up_off_partial_stage_direction(r2, page_top, &state.text_view, &state.buffer);
-        if page_top == 1701
-            && state.current_work.as_ref().map(|w| w.abbrev == "H8").unwrap_or(false)
-        {
-            crate::log_fmt!("H8L_DBG: left_h={} usable={} raw_last={} clamp_last={} trimspk_last={} stagedir_last={}",
-                left_h, usable, r0.last_fit, r1.last_fit, r2.last_fit, r3.last_fit);
-        }
-        r3
+        let r = visible_range(&state.text_view, &state.buffer, page_top, line_count, usable);
+        let r = clamp_at_section_break(r, page_top, &state.text_view, &state.buffer, is_break);
+        let r = trim_trailing_speaker_only(r, page_top, &state.text_view, &state.buffer);
+        back_up_off_partial_stage_direction(r, page_top, &state.text_view, &state.buffer)
     } else {
         // Layout not ready — degenerate single-line range so we don't panic.
         visible_range(&state.text_view, &state.buffer, page_top, line_count, 1)
