@@ -49,6 +49,36 @@ categories → user pastes them → agent fixes the bug + rebuilds → user re-r
 same command. Repeat until it gets through all plays with no FAIL. (Drop
 `--stop-on-first-fail` for the final confirming full sweep.)
 
+**Binary-freshness race — commit BEFORE telling the user to rebuild.** The agent
+commits in a background shell that can lag ~30 s. If the user's `cargo build`
+runs before the commit lands, they test one-commit-behind code and the SAME
+numbers reappear (byte-identical, same `[NNNNms]` timestamp) — looking like "the
+fix didn't work" when it just wasn't built. Always (a) confirm `git log -1` shows
+the new commit before saying "rebuild", and (b) when the numbers are suspiciously
+unchanged, check `stat -c %y target/debug/linux-lit` vs the commit time: if the
+binary is OLDER, it's stale — `touch src/…` + rebuild.
+
+**The per-step diagnostic loop is how page-boundary bugs actually get fixed.**
+Don't reason about `column_split` / `next_page_top` / `prev_page_top` from the
+failure message alone — the geometry is non-obvious and viewport-height-dependent.
+Add a temporary `PPT_DBG:`/`JTE_DBG:`-style `log_fmt!` to the suspect function
+that dumps the walk: each `probe`/`top` with its `split`, `page_end`,
+`next_page_top`, and `buffer_line_text`, plus the gap/overlap lines with their
+`is_dialogue_line` flag. Commit it, have the user re-run, read the log. The line
+TEXT is what disambiguates (e.g. a 3-line `y GAP` whose gap is
+`blank / '[They exit.]' / blank` is a benign scene-transition; a 5-line gap of
+real dialogue is a bug). Remove the diagnostic once the cause is pinned. This
+loop solved the entire `y`-at-scene/final-boundary class.
+
+**Gaps/overlaps: only DIALOGUE counts.** A `y GAP`/`y OVERLAP` or `UNBALANCED`
+is benign when the affected lines are scene-transition (blanks, `[X exits.]`,
+ACT/SCENE markers) rather than dialogue — the invariants gate on
+`is_dialogue_line`. Two boundary cases are inherently un-tileable and are exempt:
+a right column that **clamped at a scene break** (the next scene starts the next
+spread — the chosen reading model), and `y` **from the forward-pulled final
+spread** (`last_page_top` pulls it off the natural chain, so a small seam is
+unavoidable).
+
 ## Run it
 
 Always go through the env wrapper (provides software GL + dbus + the AT-SPI
