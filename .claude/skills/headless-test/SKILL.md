@@ -10,6 +10,26 @@ Drive linux-lit inside a throwaway headless `cage`, inject keybinds, screenshot,
 and assert the reading card never clips its first/last line — all off-screen, on
 its own Wayland socket, never touching the live session.
 
+## Verify ALL Shakespeare works (give the user these two commands)
+
+The agent's headless runs are unreliable in some sandboxes (long runs get killed).
+When a full cross-work check is wanted, **hand the user this exact copy-paste
+block** to run in their own terminal — it builds, then fuzzes every Folger
+Shakespeare play (all navigation binds — `x` `y` `G` `gg` `2` `3` `,` `q` — from
+every act/scene boundary) and reports any play with an underfilled/empty right
+column or other failure:
+
+```bash
+cd ~/utono/linux-lit && cargo build
+./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz-all-works.sh --secs-each 70
+```
+
+Then ask them to paste `/tmp/fuzz-all-works-summary.txt` (one line per play:
+`<ABBR> steps=N FAIL=N UNBALANCED=N RIGHT_EMPTY=N`). Any line with `FAIL>0`,
+`UNBALANCED>0`, or `RIGHT_EMPTY>0` is a real bug; its full log is at
+`/tmp/fuzz-<ABBR>.log`. The whole sweep takes ~`70s × number of plays` (≈45 min
+for the ~37 plays). Details below under *Sweep ALL Shakespeare works*.
+
 ## Run it
 
 Always go through the env wrapper (provides software GL + dbus + the AT-SPI

@@ -73,7 +73,12 @@ Screenshot / clipping test (this script):
       --label synopsis --setup "h" --no-clip
 
 Navigation fuzz test (separate launcher in this skill):
-  FULL SWEEP (~10 min, all 1400 steps — run this for a real check):
+  ALL SHAKESPEARE WORKS (~45 min — fuzz every Folger play, x/y/G/gg/2/3/,/q
+  from every act/scene boundary; flags underfilled/empty right columns):
+    cd ~/utono/linux-lit && cargo build
+    ./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz-all-works.sh --secs-each 70
+    → summary: /tmp/fuzz-all-works-summary.txt ; flagged logs: /tmp/fuzz-<ABBR>.log
+  FULL SWEEP, ONE WORK (~10 min, all 1400 steps):
     ./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh \
       --secs 600 --start-work AWW --start-pos 50
   Quick run while iterating (~200 steps, start of the prelude only):
