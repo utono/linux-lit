@@ -2005,6 +2005,107 @@ mod headless_pagination_tests {
         last_fit
     }
 
+    // --- clamp_at_section_break behavior contract -------------------------------
+    // These encode the TWO requirements that fought each other at runtime so any
+    // future change is verified here, not on a 45-min fuzz sweep:
+    //   (A) A page that OPENS with a scene heading must keep its own stacked
+    //       title (ACT / === / Scene / === / [Enter …]) and NOT self-clamp to a
+    //       tiny page.
+    //   (B) A page whose visible range ENDS with a new scene (dialogue, then a
+    //       trailing [X exits.]/blank, then an ACT/SCENE marker) must clamp BEFORE
+    //       that marker so the new scene starts the next spread (clean `y` tiling).
+    // `clamp_at_section_break_pure` mirrors the real `clamp_at_section_break`
+    // line-classification exactly; keep them in lockstep.
+
+    fn play_lines(raw: &[&str]) -> Vec<String> {
+        raw.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn clamp_a_page_opening_on_act_heading_does_not_self_clamp() {
+        // Page starts on "ACT 1" with the stacked title; the rest is dialogue.
+        let lines = play_lines(&[
+            "ACT 1", "=====", "Scene 1", "=======", "[Enter the King.]",
+            "KING", "So shaken as we are, so wan with care,",
+            "Find we a time for frighted peace to pant",
+            "And breathe short-winded accents of new broils",
+        ]);
+        let last_fit = lines.len() - 1;
+        // The only markers/separators are in the opening header block, which must
+        // be skipped — so NO clamp: the page fills to last_fit.
+        assert_eq!(
+            clamp_at_section_break_pure(&lines, 0, last_fit), last_fit,
+            "a page opening on ACT 1 must keep its whole title + dialogue, not self-clamp"
+        );
+    }
+
+    #[test]
+    fn clamp_before_a_new_scene_that_follows_dialogue() {
+        // Right-column-style page: starts mid-scene on dialogue, the scene ENDS a
+        // few lines in (dialogue, exit, blank), then the NEXT scene heading.
+        let lines = play_lines(&[
+            "What I can help thee to thou shalt not miss.",  // 0 dialogue (page_top)
+            "Be gone tomorrow, and be sure of this:",        // 1 dialogue
+            "",                                              // 2 blank
+            "[They exit.]",                                  // 3 stage dir
+            "",                                              // 4 blank
+            "Scene 2",                                       // 5 NEW scene marker
+            "=======",                                       // 6 separator
+            "[Enter Lafew.]",                                // 7 stage dir
+            "LAFEW",                                         // 8 speaker
+            "But I will attend his Majesty's command.",      // 9 dialogue
+        ]);
+        let last_fit = lines.len() - 1;
+        // Must clamp to line 4 (the line BEFORE the Scene 2 marker at 5).
+        assert_eq!(
+            clamp_at_section_break_pure(&lines, 0, last_fit), 4,
+            "a scene ending mid-page must clamp before the next scene's marker"
+        );
+    }
+
+    #[test]
+    fn clamp_keeps_the_scenes_own_trailing_exit_and_blank() {
+        // The clamp target is the marker line; the trailing [exit]/blanks belong
+        // to the ENDING scene and stay on this page (clamp = marker - 1).
+        let lines = play_lines(&[
+            "Now is the winter of our discontent",  // 0 dialogue
+            "Made glorious summer by this sun of York.", // 1 dialogue
+            "[Exit.]",                              // 2 stage dir (this scene's)
+            "Scene 2",                              // 3 next scene marker
+            "More dialogue here.",                  // 4
+        ]);
+        assert_eq!(
+            clamp_at_section_break_pure(&lines, 0, 4), 2,
+            "trailing exit stays with the ending scene; clamp at marker-1"
+        );
+    }
+
+    #[test]
+    fn clamp_no_marker_in_range_returns_last_fit() {
+        // Pure dialogue page — nothing to clamp.
+        let lines = play_lines(&[
+            "A line of dialogue.", "Another line.", "And a third.",
+        ]);
+        assert_eq!(clamp_at_section_break_pure(&lines, 0, 2), 2);
+    }
+
+    #[test]
+    fn clamp_page_opening_on_act_then_later_scene_clamps_at_the_later_one() {
+        // Page opens on ACT 1 (header skipped), then has real dialogue, then a
+        // Scene 2 marker further down: the LATER marker must still clamp.
+        let lines = play_lines(&[
+            "ACT 1", "=====", "Scene 1", "=======",  // 0-3 opening header (skipped)
+            "First scene dialogue.",                  // 4 dialogue
+            "More of scene one.",                     // 5 dialogue
+            "Scene 2",                                // 6 a real later boundary
+            "Second scene dialogue.",                 // 7
+        ]);
+        assert_eq!(
+            clamp_at_section_break_pure(&lines, 0, 7), 5,
+            "the opening header is skipped, but a later Scene 2 still clamps (at 6-1=5)"
+        );
+    }
+
     fn trim_trailing_pure(lines: &[String], page_top: usize, mut last_fit: usize) -> usize {
         while last_fit > page_top {
             let text = &lines[last_fit];
