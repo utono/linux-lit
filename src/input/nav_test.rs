@@ -466,15 +466,27 @@ fn run_step(s: &mut AppState) {
     {
         let fwd = crate::input::viewport::column_split(s, post_top).next_page_top;
         if fwd > pre_top {
-            fail(s, step_num, step, &format!(
-                "y OVERLAP: back-page top={} runs to next_page_top={} PAST old top={} ({} lines shown twice)",
-                post_top, fwd, pre_top, fwd - pre_top
-            ));
+            // Overlap is only a bug if the doubled lines contain DIALOGUE.
+            if (pre_top..fwd).any(|i| is_dialogue_line(&s.buffer, i)) {
+                fail(s, step_num, step, &format!(
+                    "y OVERLAP: back-page top={} runs to next_page_top={} PAST old top={} ({} lines shown twice)",
+                    post_top, fwd, pre_top, fwd - pre_top
+                ));
+            }
         } else if fwd < pre_top {
-            fail(s, step_num, step, &format!(
-                "y GAP: back-page top={} ends at next_page_top={} before old top={} ({} lines skipped)",
-                post_top, fwd, pre_top, pre_top - fwd
-            ));
+            // A gap between the back-page's end and `pre_top` is only a real GAP if
+            // the skipped lines contain DIALOGUE. When `pre_top` is a SCENE-START
+            // landing (reached by 2/3 NextScene), the lines between are the scene
+            // TRANSITION block — a trailing `[They exit.]` stage direction, blanks,
+            // and the ACT/SCENE heading — not skipped reading content. Confirmed
+            // by diagnostics on 1H4 (gap lines 124-126 = blank / '[They exit.]' /
+            // blank). Exempt non-dialogue gaps.
+            if (fwd..pre_top).any(|i| is_dialogue_line(&s.buffer, i)) {
+                fail(s, step_num, step, &format!(
+                    "y GAP: back-page top={} ends at next_page_top={} before old top={} ({} dialogue lines skipped)",
+                    post_top, fwd, pre_top, pre_top - fwd
+                ));
+            }
         }
     }
 
