@@ -80,6 +80,17 @@ for w in $WORKS; do
     echo "[all-works]   FLAGGED: $line" >&2
     # Keep this work's log for inspection.
     cp "$LOG" "/tmp/fuzz-$w.log" 2>/dev/null || true
+    # Desktop notification so you don't have to watch the terminal. The sweep runs
+    # under dbus-run-session (its OWN bus) and often a temp XDG_RUNTIME_DIR, so
+    # point notify-send at the user's REAL session bus at /run/user/<uid>/bus.
+    if command -v notify-send >/dev/null 2>&1; then
+      _userbus="/run/user/$(id -u)/bus"
+      [ -S "$_userbus" ] && \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=$_userbus" \
+          notify-send -u critical -a "linux-lit fuzz" \
+            "fuzz FAIL: $w" "FAIL=$fails UNBALANCED=$unbal RIGHT_EMPTY=$empty — see /tmp/fuzz-$w.log" \
+            2>/dev/null || true
+    fi
     if (( STOP_ON_FAIL )); then
       rm -rf "$RT"
       echo >&2
@@ -101,3 +112,17 @@ echo >&2
 echo "[all-works] === SUMMARY ($total works, $flagged flagged) ===" >&2
 sort -t= -k3 -rn "$SUMMARY" >&2 || cat "$SUMMARY" >&2
 echo "[all-works] full per-work summary: $SUMMARY; flagged work logs: /tmp/fuzz-<ABBR>.log" >&2
+
+# Final desktop notification: clean sweep vs flagged.
+if command -v notify-send >/dev/null 2>&1; then
+  _userbus="/run/user/$(id -u)/bus"
+  if [ -S "$_userbus" ]; then
+    if (( flagged == 0 )); then
+      DBUS_SESSION_BUS_ADDRESS="unix:path=$_userbus" \
+        notify-send -a "linux-lit fuzz" "fuzz: ALL CLEAN ✓" "$total works, 0 failures" 2>/dev/null || true
+    else
+      DBUS_SESSION_BUS_ADDRESS="unix:path=$_userbus" \
+        notify-send -u critical -a "linux-lit fuzz" "fuzz: $flagged/$total works flagged" "see $SUMMARY" 2>/dev/null || true
+    fi
+  fi
+fi
