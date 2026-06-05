@@ -1132,71 +1132,34 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
     // boundary by the speaker back-up, leaving a ~3-line GAP (forward ends a page
     // before a speaker; the re-derivation lands after it) — the dominant
     // `y GAP delta=3` bug. `next_dialogue` is only the cursor hint.
+    // Walk the forward chain. `top` is always a real forward boundary; advance it
+    // while its forward page stays at or below current_top. When current_top is
+    // itself a boundary (`next == current_top`) `top` is the exact predecessor.
+    // Otherwise — the chain SKIPS current_top (e.g. forward goes 236 → 276,
+    // jumping over a 239 that was reached by a scene-jump / y / startup-snap) —
+    // the right answer is the LAST boundary whose forward page does NOT overshoot
+    // current_top: that is the latest `top` with `next <= current_top`. Returning
+    // it leaves no gap (its page runs right up to current_top) and never overlaps
+    // (a boundary with `next > current_top` would). That's `top` at the moment we
+    // see the first overshoot — NOT the boundary before it.
     let mut top: usize = 0;
-    let mut prev_boundary: Option<usize> = None; // last `top` with next < current_top
-    while top < current_top {
+    loop {
         let next = next_page_top(state, top).new_top;
         if next == current_top {
-            // Exact natural boundary — `top` is the page directly before.
             let next_dialogue = next_dialogue_from(&state.buffer, top, line_count);
             return NextPage { new_top: top, next_dialogue };
         }
-        if next <= top {
-            break; // safety: no progress
-        }
-        if next > current_top {
-            // `top`'s forward boundary overshoots current_top: paging forward from
-            // `top` lands PAST current_top, so `top` is too far back to tile (it
-            // would OVERLAP). Prefer the previous boundary (`prev_boundary`) which
-            // tiles closer; fall through to it below.
+        if next >= current_top || next <= top {
+            // `next` overshoots current_top (or no progress) — `top` is the closest
+            // boundary that tiles without overlapping. Return it verbatim.
             break;
         }
-        prev_boundary = Some(top);
-        top = next;
+        top = next; // next is a real boundary still below current_top; advance.
     }
-    // Fell through (current_top not on the chain, or the next step overshoots).
-    // Use the last real boundary strictly below current_top — its forward page
-    // reaches up toward current_top with minimal gap, and never overlaps.
-    if let Some(prev_top) = prev_boundary {
-        let next_dialogue = next_dialogue_from(&state.buffer, prev_top, line_count);
-        return NextPage { new_top: prev_top, next_dialogue };
-    }
-
-    // Tier 3: lpp approximation — current_top is not on any forward-walkable
-    // boundary. Preserve historical behavior rather than refusing to move.
-    let lpp = lines_per_page(state).max(1);
-    let approx = current_top.saturating_sub(lpp);
-    let next_dialogue = next_dialogue_from(&state.buffer, approx, line_count);
-    let mut new_top = back_up_for_speaker(&state.buffer, next_dialogue);
-    // The raw lpp approximation doesn't run clamp_at_section_break, so it can
-    // place a scene/act marker in the INTERIOR of the resulting page. If a
-    // marker sits strictly between new_top and current_top, snap new_top forward
-    // to that marker's header block so the new section starts the page (matching
-    // how forward pagination clamps section breaks).
-    if let Some(marker) = last_section_marker_in(state, new_top + 1, current_top) {
-        let header_top = back_up_for_speaker(&state.buffer, marker);
-        if header_top > new_top && header_top < current_top {
-            new_top = header_top;
-        }
-    }
-    let next_dialogue = next_dialogue_from(&state.buffer, new_top, line_count);
-    NextPage { new_top, next_dialogue }
-}
-
-/// Last act/scene marker (or separator) line in `[start, end)`, or None.
-fn last_section_marker_in(state: &AppState, start: usize, end: usize) -> Option<usize> {
-    use crate::db::line_types;
-    let mut found = None;
-    let mut i = start;
-    while i < end {
-        let text = buffer_line_text(&state.buffer, i);
-        let t = text.trim();
-        if line_types::is_act_scene_marker(t) {
-            found = Some(i);
-        }
-        i += 1;
-    }
-    found
+    // `top` is the closest forward boundary at/below current_top (worst case 0,
+    // which is always a boundary), so this always returns a clean-tiling page.
+    let next_dialogue = next_dialogue_from(&state.buffer, top, line_count);
+    NextPage { new_top: top, next_dialogue }
 }
 
 /// Build the page_tops index by walking next_page_top from line 0 to the end

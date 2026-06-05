@@ -30,6 +30,25 @@ Then ask them to paste `/tmp/fuzz-all-works-summary.txt` (one line per play:
 `/tmp/fuzz-<ABBR>.log`. The whole sweep takes ~`70s × number of plays` (≈45 min
 for the ~37 plays). Details below under *Sweep ALL Shakespeare works*.
 
+### Fix-loop (`--stop-on-first-fail`): stop → fix → re-run
+
+The whole-sweep loop is **user-runs → agent-fixes → user-re-runs** (the agent
+can't reliably run the fuzz itself). To make each cycle fast, use
+`--stop-on-first-fail`: the sweep halts at the FIRST play that fails, prints that
+play's FAIL categories, and prints the exact re-run command. This avoids waiting
+45 min when there's one obvious bug.
+
+```bash
+cd ~/utono/linux-lit && cargo build
+./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz-all-works.sh \
+  --stop-on-first-fail --secs-each 70
+```
+
+Loop: user runs this → it stops at the first failing play and shows the
+categories → user pastes them → agent fixes the bug + rebuilds → user re-runs the
+same command. Repeat until it gets through all plays with no FAIL. (Drop
+`--stop-on-first-fail` for the final confirming full sweep.)
+
 ## Run it
 
 Always go through the env wrapper (provides software GL + dbus + the AT-SPI

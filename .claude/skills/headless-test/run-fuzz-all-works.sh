@@ -23,9 +23,11 @@ if [[ ! -f Cargo.toml || ! -x scripts/e2e-env.sh ]]; then
 fi
 
 SECS_EACH=70
+STOP_ON_FAIL=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --secs-each) SECS_EACH="$2"; shift 2 ;;
+    --stop-on-first-fail) STOP_ON_FAIL=1; shift ;;
     *) echo "error: unknown option '$1'" >&2; exit 64 ;;
   esac
 done
@@ -75,6 +77,19 @@ for w in $WORKS; do
     echo "[all-works]   FLAGGED: $line" >&2
     # Keep this work's log for inspection.
     cp "$LOG" "/tmp/fuzz-$w.log" 2>/dev/null || true
+    if (( STOP_ON_FAIL )); then
+      rm -rf "$RT"
+      echo >&2
+      echo "[all-works] === STOPPED at first failing work: $w ===" >&2
+      echo "[all-works] FAIL categories in /tmp/fuzz-$w.log:" >&2
+      grep "NAV_TEST: FAIL" "/tmp/fuzz-$w.log" 2>/dev/null \
+        | sed -E 's/.*FAIL step=[0-9]+ ([A-Za-z]+) ([A-Z -]+):.*/  \1 \2/' \
+        | sort | uniq -c | sort -rn >&2
+      echo "[all-works] Fix the bug, rebuild, then re-run:" >&2
+      echo "  cd ~/utono/linux-lit && cargo build" >&2
+      echo "  ./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz-all-works.sh --stop-on-first-fail --secs-each $SECS_EACH" >&2
+      exit 1
+    fi
   fi
   rm -rf "$RT"
 done
