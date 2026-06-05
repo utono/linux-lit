@@ -1132,32 +1132,36 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
     // boundary by the speaker back-up, leaving a ~3-line GAP (forward ends a page
     // before a speaker; the re-derivation lands after it) — the dominant
     // `y GAP delta=3` bug. `next_dialogue` is only the cursor hint.
-    // Walk the forward chain. `top` is always a real forward boundary; advance it
-    // while its forward page stays at or below current_top. When current_top is
-    // itself a boundary (`next == current_top`) `top` is the exact predecessor.
-    // Otherwise — the chain SKIPS current_top (e.g. forward goes 236 → 276,
-    // jumping over a 239 that was reached by a scene-jump / y / startup-snap) —
-    // the right answer is the LAST boundary whose forward page does NOT overshoot
-    // current_top: that is the latest `top` with `next <= current_top`. Returning
-    // it leaves no gap (its page runs right up to current_top) and never overlaps
-    // (a boundary with `next > current_top` would). That's `top` at the moment we
-    // see the first overshoot — NOT the boundary before it.
-    let mut top: usize = 0;
+    // Walk the forward chain looking for the page that tiles into current_top:
+    // the boundary `b` whose forward page ENDS exactly at current_top
+    // (`next_page_top(b) == current_top`). If the chain skips current_top (it was
+    // reached by a scene-jump / y / startup-snap, not forward paging), there is no
+    // exact match — then return the LAST boundary whose forward page does not
+    // overshoot (`next_page_top(b) <= current_top`); its page runs up toward
+    // current_top with the smallest possible gap, and crucially never OVERLAPS
+    // (returning a boundary whose `next > current_top` would show lines twice).
+    let mut top: usize = 0;          // candidate to return (best so far)
+    let mut probe: usize = 0;        // walk cursor
     loop {
-        let next = next_page_top(state, top).new_top;
+        let next = next_page_top(state, probe).new_top;
         if next == current_top {
-            let next_dialogue = next_dialogue_from(&state.buffer, top, line_count);
-            return NextPage { new_top: top, next_dialogue };
+            // Exact tile — `probe` is the page directly before current_top.
+            let next_dialogue = next_dialogue_from(&state.buffer, probe, line_count);
+            return NextPage { new_top: probe, next_dialogue };
         }
-        if next >= current_top || next <= top {
-            // `next` overshoots current_top (or no progress) — `top` is the closest
-            // boundary that tiles without overlapping. Return it verbatim.
+        if next > current_top || next <= probe {
+            // `probe`'s page overshoots current_top (or no forward progress).
+            // `probe` is NOT a safe answer (it would overlap); keep the best
+            // non-overshooting candidate found so far (`top`).
             break;
         }
-        top = next; // next is a real boundary still below current_top; advance.
+        // `next <= current_top - 1`: `probe`'s page ends before current_top, so
+        // `probe` is a valid non-overlapping candidate. Record it and advance.
+        top = probe;
+        probe = next;
     }
-    // `top` is the closest forward boundary at/below current_top (worst case 0,
-    // which is always a boundary), so this always returns a clean-tiling page.
+    // `top` is the latest boundary whose page does not overshoot current_top
+    // (worst case 0). Tiles with the minimal gap, never overlaps.
     let next_dialogue = next_dialogue_from(&state.buffer, top, line_count);
     NextPage { new_top: top, next_dialogue }
 }

@@ -648,21 +648,13 @@ pub fn page_backward(state: &mut AppState) {
                  prev_top, nd, state.page_top_line);
         (prev_top, nd)
     } else {
-        let mut np = prev_page_top(state, state.page_top_line);
-        // Degenerate-tiling guard: when the current page_top was pulled forward off
-        // the natural boundary chain (the EPILOGUE final spread, top 4297), the
-        // nearest tiling predecessor can be a near-zero-length page (4296 — one
-        // speaker line back). That makes `y` barely move and overlap the page we
-        // came from. If the proposed previous page is implausibly short (its
-        // forward boundary leaves only a handful of lines before page_top), step
-        // back another full page so `y` moves a real page.
-        let min_page = (lines_per_page(state) / 2).max(4);
-        if state.page_top_line.saturating_sub(np.new_top) < min_page && np.new_top > 0 {
-            let np2 = prev_page_top(state, np.new_top);
-            log_fmt!("PAGE_BWD: degenerate prev={} (<{} lines), stepping back again to {}",
-                     np.new_top, min_page, np2.new_top);
-            np = np2;
-        }
+        // `prev_page_top` returns the closest forward boundary that tiles into the
+        // current page (no gap, no overlap). A short distance back is FINE — it
+        // means the current top is a speaker line one row past the previous page's
+        // end (forward `back_up_for_speaker`), so the previous page legitimately
+        // ends one line before it. (An earlier "degenerate guard" stepped back an
+        // extra page in that case, which CREATED a multi-line gap — removed.)
+        let np = prev_page_top(state, state.page_top_line);
         log_fmt!("PAGE_BWD: prev_page_top new_top={} next_dialogue={} from page_top={}",
                  np.new_top, np.next_dialogue, state.page_top_line);
         (np.new_top, np.next_dialogue)
