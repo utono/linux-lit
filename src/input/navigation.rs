@@ -200,6 +200,24 @@ pub fn jump_to_end(state: &mut AppState) {
         }
         target -= 1;
     }
+    // Diagnostic for the H8-class bug: if the last-dialogue scan stops far from
+    // the buffer end, the buffer past `target` is all non-dialogue (or the
+    // line-map/buffer lengths disagree). Dump the buffer's real line count and
+    // the text just past `target` so we can see WHY (mis-tagged dialogue, a giant
+    // stage direction, or a line-map mismatch).
+    {
+        let buf_lines = state.buffer.line_count() as usize;
+        if target + 200 < line_count {
+            let txt = |l: usize| buffer_line_text(&state.buffer, l).trim().chars().take(40).collect::<String>();
+            log_fmt!("JTE_DBG: target={} far below line_count={} (buffer.line_count={})",
+                     target, line_count, buf_lines);
+            for l in [target, target + 1, line_count / 2, line_count.saturating_sub(3),
+                      line_count.saturating_sub(2), line_count.saturating_sub(1)] {
+                log_fmt!("JTE_DBG:   line {} dialogue={} '{}'",
+                         l, is_dialogue_line(&state.buffer, l), txt(l));
+            }
+        }
+    }
 
     // Anchor on the canonical final spread (the page the user reaches by paging
     // forward to the end). When the work's tail is a short section that starts
