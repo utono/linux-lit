@@ -1067,23 +1067,6 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
         // exception, `would_empty_right_column` treats the canonical final spread
         // as empty and G/last_page_top skip it.)
         let clamped = clamp_at_section_break(r, split, &state.right_view, &state.buffer);
-        // CSPLIT_DBG: pin why the AWW right column (split ~776) didn't clamp at 780.
-        if split >= 770 && split <= 782 {
-            use crate::db::line_types as lt;
-            let cls = |l: usize| -> String {
-                let t = buffer_line_text(&state.buffer, l);
-                let t = t.trim();
-                format!("'{}' [mk={} sep={} sd={} sp={} blank={}]",
-                    t.chars().take(22).collect::<String>(),
-                    lt::is_act_scene_marker(t), lt::is_separator(t),
-                    lt::is_stage_direction(t), lt::is_speaker(t), t.is_empty())
-            };
-            crate::log_fmt!("CSPLIT_DBG: page_top={} split={} r.last_fit={} r.count={} clamped.last_fit={} line_count={}",
-                page_top, split, r.last_fit, r.count, clamped.last_fit, line_count);
-            for l in split..(split + 8).min(line_count) {
-                crate::log_fmt!("CSPLIT_DBG:   line {} {}", l, cls(l));
-            }
-        }
         let r = if clamped.last_fit < split && r.last_fit + 1 >= line_count {
             r
         } else {
@@ -2077,6 +2060,41 @@ mod headless_pagination_tests {
         assert_eq!(
             clamp_at_section_break_pure(&lines, 0, last_fit), 4,
             "a scene ending mid-page must clamp before the next scene's marker"
+        );
+    }
+
+    // KNOWN BUG (the AWW 25-line `y GAP`). This is the EXACT real pattern: the
+    // right column's first line is dialogue, IMMEDIATELY followed by
+    // blank / [They exit.] / blank / ACT 2 — no dialogue between. The header-skip
+    // (blanks + stage directions + markers) then runs from page_top+1 straight
+    // through the ACT 2 marker and skips it, so nothing clamps and the right
+    // column runs into the next act → `y` from the next scene skips this scene's
+    // tail.
+    //
+    // The obvious fix (only skip the header when `page_top` itself is a heading)
+    // FIXES this case but BREAKS the full-pagination walk on AWW (page at line
+    // 317, no marker nearby, stops advancing — see the shakespeare_pagination_*
+    // tests). The interaction with trim/back_up is subtle and unsolved. Left
+    // `#[ignore]` as a regression target: when you attempt the fix, remove the
+    // attribute and ensure BOTH this AND every shakespeare_pagination_* test pass.
+    #[test]
+    #[ignore = "known AWW y-GAP; naive fix breaks full-pagination walk (see comment)"]
+    fn clamp_when_split_dialogue_is_immediately_followed_by_exit_then_marker() {
+        let lines = play_lines(&[
+            "What I can help thee to thou shalt not miss.",  // 0 dialogue (page_top)
+            "",                                              // 1 blank
+            "[They exit.]",                                  // 2 stage dir
+            "",                                              // 3 blank
+            "ACT 2",                                         // 4 marker
+            "=====",                                         // 5 separator
+            "Scene 1",                                       // 6 marker
+            "[Enter the Duke.]",                             // 7 stage dir
+            "Second act dialogue line one.",                 // 8 dialogue
+        ]);
+        let last_fit = lines.len() - 1;
+        assert_eq!(
+            clamp_at_section_break_pure(&lines, 0, last_fit), 3,
+            "dialogue at split, then exit/blank, then ACT marker → clamp before the marker"
         );
     }
 
