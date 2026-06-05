@@ -323,6 +323,36 @@ Rules:
   (EPILOGUE cut off) while `probe top=4303` gave `page_end=4347` (full EPILOGUE) —
   so `last_page_top` had to pull the top forward from 4296 to 4303.)
 
+### 4. The final spread is reached by FIVE paths — fix and re-test all of them
+
+A "G lands on the wrong spread" bug is almost never one bug. Five independent code
+paths land on the work's last spread, and a fix to one leaves the others broken:
+
+- **startup** — `app.rs` resume + `snap_near_end_to_canonical` (post-layout) →
+  `last_page_top`
+- **`G`** — `jump_to_end` → `last_page_top`
+- **`x`** — `page_forward` (final-region redirect) → `last_page_top`
+- **`j`** — `scroll_after_jump_forward` (final-region redirect) → `last_page_top`
+- **`y`** — `page_backward` → `prev_page_top` (degenerate-tiling guard)
+
+They must ALL resolve to the same canonical spread: tail dialogue in the LEFT
+column, the full trailing section (EPILOGUE) in the RIGHT column, `page_end`
+reaching the work's last dialogue line. When you change one, drive the **whole
+sequence** (startup → G → y → x → j) and confirm every frame is that same spread.
+
+Two recurring traps near a short trailing section:
+
+- **Underfilled, not empty.** A path picks a spread one boundary short — its right
+  column has 2-3 lines and the EPILOGUE is cut off — but `would_empty_right_column`
+  is *false* (the column isn't empty, just short). A redirect gated only on
+  "would empty" misses it. Gate on **overlap with the final region** instead:
+  `column_split(candidate).next_page_top > anchor` (the candidate's page extends
+  past where the canonical anchor begins, so both cover the same tail).
+- **Startup runs before layout.** `display_work` sets `page_top` with
+  `text_view.height() == 0`, so it can only guess (`current_line - lpp`). The real
+  snap to `last_page_top` must happen **after** layout settles — in the
+  RESIZE_TICK reveal / `reveal_snap`, where `widget_h > 0`.
+
 ## Targeted navigation trace (manual key injection)
 
 To pin down a *specific* nav behaviour ("does `k` page back at the left-column

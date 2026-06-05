@@ -136,6 +136,19 @@ copy** of the binary with its own log so you can never read a stale one
 recipe: *headless-testing.md → "Diagnosing a specific page-boundary bug"* (§3 is
 the viewport-height lesson).
 
+**Final-spread bugs are a SET of paths, not one.** FIVE independent code paths can
+land on the work's last spread, and fixing one does NOT fix the others — verify
+each separately: **startup** (`app.rs` resume + `snap_near_end_to_canonical` after
+layout), **G** (`jump_to_end`→`last_page_top`), **x** (`page_forward`), **j**
+(`scroll_after_jump_forward`), **y** (`page_backward`→`prev_page_top`). They must
+all resolve to the SAME canonical spread (`last_page_top` — tail dialogue left,
+full EPILOGUE right). The recurring failure mode near a short trailing section
+(EPILOGUE): a path picks an **underfilled** spread one boundary short (right
+column has 2-3 lines, EPILOGUE cut off) because `would_empty_right_column` is
+*false* (the column isn't empty, just short). The redirect test must therefore be
+"candidate overlaps the final region" (`column_split(cand).next_page_top > anchor`)
+— NOT just "would empty". When a final-spread fix lands, re-test all five.
+
 Re-triage an existing log at any time. Hard failures first (must be 0), then
 the soft warns:
 
