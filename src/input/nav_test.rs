@@ -457,11 +457,24 @@ fn run_step(s: &mut AppState) {
     //     lines [pre_top, fwd) are shown on BOTH pages (overlap). This is the
     //     bug behind the y-from-final-spread spread that barely moved.
     //   * fwd < pre_top  → a gap (content between the pages shown on neither).
-    // Two-column only; skip the no-op and the first-spread guard (pre_top==0).
+    // Skip when the page we came FROM (pre_top) is the work's FINAL spread. That
+    // top is forward-PULLED by last_page_top (so a short tail fills its right
+    // column), which means it is NOT on the natural column_split chain — no
+    // earlier page tiles into it exactly, so a small seam (the pull distance) is
+    // unavoidable and benign. (`y` still lands on a real page; the few lines are
+    // the lead-in that the final spread continues.)
+    let pre_is_final = {
+        let cs_pre = crate::input::viewport::column_split(s, pre_top);
+        cs_pre.next_page_top >= line_count
+            || !(cs_pre.next_page_top..line_count).any(|i| is_dialogue_line(&s.buffer, i))
+    };
+    // Two-column only; skip the no-op, the first-spread guard (pre_top==0), and
+    // the forward-pulled final spread.
     if matches!(step, Step::PageBackward)
         && s.column_count() == 2
         && post_top < pre_top
         && pre_top > 0
+        && !pre_is_final
         && line_count > 0
     {
         let fwd = crate::input::viewport::column_split(s, post_top).next_page_top;

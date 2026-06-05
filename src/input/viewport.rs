@@ -1208,37 +1208,14 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
     let fwd_boundary = |b: usize| -> usize {
         if two_col { column_split(state, b).next_page_top } else { next_page_top(state, b).new_top }
     };
-    let dbg = current_top >= 3824 && current_top <= 3832; // 1H6 scene case
     loop {
         let next = fwd_boundary(probe);
-        if dbg {
-            let cs = column_split(state, probe);
-            let txt = |l: usize| buffer_line_text(&state.buffer, l).trim().chars().take(26).collect::<String>();
-            crate::log_fmt!("PPT_DBG: ct={} probe={} split={} '{}' page_end={} '{}' next={}",
-                current_top, probe, cs.split, txt(cs.split), cs.page_end, txt(cs.page_end), cs.next_page_top);
-        }
         if next == current_top {
             // Exact tile — `probe` is the page directly before current_top.
             let next_dialogue = next_dialogue_from(&state.buffer, probe, line_count);
-            if dbg {
-                let txt = |l: usize| buffer_line_text(&state.buffer, l).trim().chars().take(26).collect::<String>();
-                crate::log_fmt!("PPT_DBG: EXACT probe={} (lines {}..{}): {} {} {} {} {}",
-                    probe, current_top.saturating_sub(6), current_top,
-                    txt(current_top.saturating_sub(5)), txt(current_top.saturating_sub(4)),
-                    txt(current_top.saturating_sub(3)), txt(current_top.saturating_sub(2)),
-                    txt(current_top.saturating_sub(1)));
-            }
             return NextPage { new_top: probe, next_dialogue };
         }
         if next > current_top || next <= probe {
-            if dbg {
-                let txt = |l: usize| buffer_line_text(&state.buffer, l).trim().chars().take(26).collect::<String>();
-                let te = fwd_boundary(top);
-                crate::log_fmt!("PPT_DBG: STOP probe={} next={} -> return top={} (end={}); gap lines:", probe, next, top, te);
-                for l in te..current_top.min(te + 8) {
-                    crate::log_fmt!("PPT_DBG:   gap {} dlg={} '{}'", l, is_dialogue_line(&state.buffer, l), txt(l));
-                }
-            }
             // `probe`'s page overshoots current_top (or no forward progress) — it
             // would OVERLAP. Keep the last non-overshooting candidate (`top`).
             // With the right-column section clamp restored, scene-start tops are
