@@ -1107,10 +1107,11 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
         if let Some(tops) = cached.as_ref() {
             if let Ok(idx) = tops.binary_search(&current_top) {
                 if idx > 0 {
+                    // Return the cached boundary VERBATIM (it tiles); don't re-derive
+                    // via back_up_for_speaker (the y-GAP shift). See Tier 2 below.
                     let prev_top = tops[idx - 1];
                     let next_dialogue = next_dialogue_from(&state.buffer, prev_top, line_count);
-                    let new_top = back_up_for_speaker(&state.buffer, next_dialogue);
-                    return NextPage { new_top, next_dialogue };
+                    return NextPage { new_top: prev_top, next_dialogue };
                 }
             }
         }
@@ -1124,6 +1125,13 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
     // correct predecessor is the natural page whose forward boundary lands ON OR
     // PAST current_top — paging forward from it reaches current_top's content,
     // so paging back lands a full page earlier (no overlap, no barely-moved page).
+    // CRITICAL: return the page `top` we land on VERBATIM as `new_top` — it is a
+    // real forward-chain boundary, so `next_page_top(top)` tiles exactly into
+    // `current_top`. Do NOT re-derive `new_top` via
+    // `back_up_for_speaker(next_dialogue_from(top))`: that shifts the top off the
+    // boundary by the speaker back-up, leaving a ~3-line GAP (forward ends a page
+    // before a speaker; the re-derivation lands after it) — the dominant
+    // `y GAP delta=3` bug. `next_dialogue` is only the cursor hint.
     let mut top: usize = 0;
     let mut prev_boundary: Option<usize> = None; // last `top` with next < current_top
     while top < current_top {
@@ -1131,30 +1139,27 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
         if next == current_top {
             // Exact natural boundary — `top` is the page directly before.
             let next_dialogue = next_dialogue_from(&state.buffer, top, line_count);
-            let new_top = back_up_for_speaker(&state.buffer, next_dialogue);
-            return NextPage { new_top, next_dialogue };
+            return NextPage { new_top: top, next_dialogue };
         }
         if next <= top {
             break; // safety: no progress
         }
-        if next >= current_top {
-            // `top`'s forward boundary reaches/overshoots current_top: `top` is the
-            // page whose NEXT page contains current_top's region. The page before
-            // current_top is `top` itself (paging forward from it lands at/after
-            // current_top — the closest clean predecessor for a pulled top).
-            let next_dialogue = next_dialogue_from(&state.buffer, top, line_count);
-            let new_top = back_up_for_speaker(&state.buffer, next_dialogue);
-            return NextPage { new_top, next_dialogue };
+        if next > current_top {
+            // `top`'s forward boundary overshoots current_top: paging forward from
+            // `top` lands PAST current_top, so `top` is too far back to tile (it
+            // would OVERLAP). Prefer the previous boundary (`prev_boundary`) which
+            // tiles closer; fall through to it below.
+            break;
         }
         prev_boundary = Some(top);
         top = next;
     }
-    // Fell through (current_top not reachable on the chain). Use the last real
-    // boundary below it rather than the lpp approximation.
+    // Fell through (current_top not on the chain, or the next step overshoots).
+    // Use the last real boundary strictly below current_top — its forward page
+    // reaches up toward current_top with minimal gap, and never overlaps.
     if let Some(prev_top) = prev_boundary {
         let next_dialogue = next_dialogue_from(&state.buffer, prev_top, line_count);
-        let new_top = back_up_for_speaker(&state.buffer, next_dialogue);
-        return NextPage { new_top, next_dialogue };
+        return NextPage { new_top: prev_top, next_dialogue };
     }
 
     // Tier 3: lpp approximation — current_top is not on any forward-walkable
