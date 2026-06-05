@@ -113,6 +113,20 @@ the run reproducible from the command alone:
 ./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh --secs 90
 ```
 
+**Sweep ALL Shakespeare works** (verify every play, not just one — page geometry
+is work-specific, so a bug can hide in a play with a different act/scene
+structure, e.g. an underfilled right column at a scene boundary):
+
+```bash
+./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz-all-works.sh --secs-each 70
+```
+
+It fuzzes each Folger Shakespeare play in its own isolated cage and prints a
+per-work summary (`steps FAIL UNBALANCED RIGHT_EMPTY`), flagging any work with a
+hard FAIL or an underfilled/empty right column. Flagged work logs are saved to
+`/tmp/fuzz-<ABBR>.log` for inspection. Use this after any pagination change that
+could affect spread balance.
+
 It writes the log to `/tmp/fuzz-nav.log` and the cage PID to `/tmp/fuzz_pid.txt`.
 Stop early with `kill "$(cat /tmp/fuzz_pid.txt)"` — **never** `pkill -f
 target/debug/linux-lit`, which also signals a live `cargo run` session. (Test

@@ -562,24 +562,22 @@ fn run_step(s: &mut AppState) {
             }
             j
         };
+        // Only scan the LEFT column. The right column intentionally fills past a
+        // section break (the next ACT/SCENE flows on to fill the bottom of the
+        // spread, its heading appearing mid-right-column), so a marker at/after
+        // `split` is expected, not a bug. The left column still starts cleanly at
+        // a scene boundary, so a marker in its interior is a real mid-page break.
+        let left_end = if split != usize::MAX { split.saturating_sub(1).min(last_vis) } else { last_vis };
         let mut i = skip_header(post_top + 1);
-        while i <= last_vis {
-            // A marker that begins the right column is a valid column boundary.
-            if i == split {
-                let skipped = skip_header(i);
-                if skipped > i {
-                    i = skipped;
-                    continue;
-                }
-            }
+        while i <= left_end {
             let text = buffer_line_text(&s.buffer, i);
             let t = text.trim();
             if line_types::is_act_scene_marker(&t) || line_types::is_separator(&t) {
-                // Soft: the two-column header/split-aware scan is approximate and
-                // fires on legitimate column boundaries near the tail.
+                // Soft: the header-skip scan is approximate and fires on legitimate
+                // boundaries near the tail.
                 warn(s, step_num, step, &format!(
-                    "scene break at line {} ('{}') mid-page (top={} last={} split={})",
-                    i, t.chars().take(40).collect::<String>(), post_top, last_vis, split
+                    "scene break at line {} ('{}') mid-LEFT-column (top={} last={} split={})",
+                    i, t.chars().take(40).collect::<String>(), post_top, left_end, split
                 ));
                 break;
             }

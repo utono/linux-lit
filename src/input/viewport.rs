@@ -1008,27 +1008,14 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
         let guard = descender_guard_px(&state.right_view, split);
         let usable = right_h - guard - BASE_BOTTOM_MARGIN;
         let r = visible_range(&state.right_view, &state.buffer, split, line_count, usable);
-        // Clamp at a section break so a new act/scene starts the NEXT spread
-        // rather than appearing mid-right-column (the left column already does
-        // this; without it here `page_end` runs past a marker and the page shows
-        // a scene break in its interior). BUT if clamping would EMPTY the right
-        // column AND that section is the work's FINAL one (no further page to
-        // push it to — all remaining content fits here), do NOT clamp: the
-        // section (a trailing EPILOGUE) is this spread's right-column content, not
-        // a mid-column intrusion. Clamping it off here is what made
-        // `would_empty_right_column` treat the canonical final spread as empty, so
-        // G/last_page_top skipped it.
-        let clamped = clamp_at_section_break(r, split, &state.right_view, &state.buffer);
-        let r = if clamped.last_fit < split
-            && r.last_fit + 1 >= line_count
-        {
-            // clamp emptied the right column, but the unclamped range reaches the
-            // end of the work — keep the unclamped range (the final section fills
-            // the right column).
-            r
-        } else {
-            clamped
-        };
+        // The right column is the BOTTOM of the spread — fill it. Unlike the left
+        // column, we do NOT clamp the right column at a section break: a short
+        // right column ending at a scene boundary leaves a large blank gap (the
+        // next scene's content was pushed to the following spread). Per the reading
+        // model, the next ACT/SCENE flows on to fill the right column instead (its
+        // heading may appear partway down the column). This also subsumes the old
+        // final-section special case (the EPILOGUE simply fills the right column
+        // like any other trailing content).
         // Right column is the bottom of the spread: relax the underfill guard
         // so a too-tall block splits across the boundary to fill the column
         // rather than leaving a mid-spread gap.
