@@ -1270,11 +1270,25 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
     } else {
         raw_next
     };
-    if page_top == 501 {
-        let txt = |l: usize| buffer_line_text(&state.buffer, l).trim().chars().take(20).collect::<String>();
-        crate::log_fmt!("CS501_DBG: top={} split={} '{}' page_end={} '{}' next={} clamped_was secstart[504]={} secstart[505]={}",
-            page_top, split, txt(split), right.last_fit, txt(right.last_fit), next_top,
-            state.is_section_start(504), state.is_section_start(505));
+    // H8_DBG: the G-stuck bug — column_split(1701) returns next_top <= page_top
+    // (a non-advancing forward chain). Dump the geometry + buffer text + the
+    // section_starts bitmap around the stuck region so we can see WHY next_top
+    // goes backward. Remove once the root cause is fixed.
+    if next_top <= page_top
+        && page_top + 1 < line_count
+        && state.current_work.as_ref().map(|w| w.abbrev == "H8").unwrap_or(false)
+    {
+        let txt = |l: usize| buffer_line_text(&state.buffer, l).trim().chars().take(36).collect::<String>();
+        crate::log_fmt!(
+            "H8_DBG: NON-ADVANCING column_split top={} split={} page_end={} raw_next={} next_dlg={} next_top={}",
+            page_top, split, right.last_fit, raw_next, next_dlg, next_top
+        );
+        for l in page_top..=(next_dlg + 1).min(line_count - 1) {
+            crate::log_fmt!(
+                "H8_DBG:   line {} secstart={} dialogue={} '{}'",
+                l, state.is_section_start(l), is_dialogue_line(&state.buffer, l), txt(l)
+            );
+        }
     }
     ColumnSplit { split, page_end: right.last_fit, next_page_top: next_top }
 }
