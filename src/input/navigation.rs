@@ -272,40 +272,38 @@ pub(crate) fn last_page_top(state: &AppState, target: usize) -> usize {
             }
             top = b;
         }
-        // Advance to the natural last spread.
+        // Advance forward, but STOP at the last spread whose right column is
+        // non-empty. The very last page of a work with a short trailing section
+        // (a lone EPILOGUE) has the tail ALONE in its left column and an empty
+        // right column — pressing G must NOT land there (it would move the
+        // EPILOGUE out of the right column into a lonely left column). The
+        // canonical final spread is the one just before that: the tail fills the
+        // RIGHT column, both columns full (this is also the page the saved-
+        // position startup restores and the page `x` stops on). Keep the last
+        // `top` whose own right column is non-empty.
+        let mut last_full = if would_empty_right_column(state, top) { None } else { Some(top) };
         let mut guard = 0;
         loop {
             let next = super::viewport::next_page_top(state, top).new_top;
             if next >= line_count || next <= top {
-                break; // `top` is the last spread (its forward boundary is the end)
+                break; // reached the end of the forward chain
+            }
+            // If advancing to `next` would land on a spread with an EMPTY right
+            // column (the lone-EPILOGUE page), stop — `top` (the last full spread)
+            // is the canonical answer.
+            if would_empty_right_column(state, next) {
+                break;
             }
             top = next;
+            if !would_empty_right_column(state, top) {
+                last_full = Some(top);
+            }
             guard += 1;
             if guard > line_count {
                 break;
             }
         }
-        // Safety guard for the orphaned-tail case: if the natural last spread
-        // still leaves DIALOGUE below its right column (a short trailing section
-        // that column_split clamped off), pull the top forward to the smallest
-        // spread that shows everything down to the last dialogue line. In the
-        // common case (the tail already fills the right column, as the canonical
-        // spread shows) this loop finds `top` immediately and is a no-op.
-        let cs = super::viewport::column_split(state, top);
-        let dialogue_below = (cs.next_page_top..line_count)
-            .any(|i| is_dialogue_line(&state.buffer, i));
-        if dialogue_below {
-            for t in top..=target.min(line_count.saturating_sub(1)) {
-                let tcs = super::viewport::column_split(state, t);
-                let below = (tcs.next_page_top..line_count)
-                    .any(|i| is_dialogue_line(&state.buffer, i));
-                if !below && !would_empty_right_column(state, t) {
-                    top = t;
-                    break;
-                }
-            }
-        }
-        top
+        last_full.unwrap_or(top)
     } else if widget_height > 0 && line_count > 0 {
         // Single column: accumulate `widget_height` of content backward.
         let capacity = widget_height;
