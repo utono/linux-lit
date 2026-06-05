@@ -293,6 +293,36 @@ committing). The relevant geometry lives in `last_page_top`
 (`src/input/navigation.rs`) and `column_split` / `next_page_top`
 (`src/input/viewport.rs`).
 
+### 3. VIEWPORT HEIGHT — page boundaries differ at every height (read this first)
+
+**The single biggest time-sink in page-boundary debugging:** page-turn math
+depends on the viewport height (`text_view.height()`, logged as `widget_h=` in
+`BOTTOM_CLIP` and addable to any diagnostic). The headless cage and the user's
+real session are usually **different heights**, so they compute **different page
+boundaries** — a bug the user sees at their height may not reproduce headless,
+and the line numbers in a headless log are for the wrong layout. A whole debugging
+session was lost computing boundaries at `widget_h≈596` (headless) while the user's
+session was `widget_h=1112`; `last_page_top` returned a different (wrong) top at
+each.
+
+Rules:
+- **Always log `widget_h` alongside any page-boundary diagnostic** so you can tell
+  immediately whether a log is from the user's layout or a headless one. Compare
+  it to the user's `BOTTOM_CLIP: widget_h=…` line before trusting any line number.
+- **When a screenshot bug won't reproduce headless, suspect the height first.**
+  The fix must be correct at the user's height, not just the cage's.
+- **The fastest path is an in-app diagnostic the USER triggers**, not a headless
+  run: add a `*_DBG:` `log_fmt!` to the suspect function (e.g. `jump_to_end`)
+  dumping `widget_h`, the chosen top, `column_split` of the chosen top AND a few
+  candidate tops around it (`top+7`, `top+14`, …) each with `split`, `page_end`,
+  `next_page_top`, `would_empty_right_column`, and line text. Build, ask the user
+  to reproduce once, then read `~/utono/linux-lit/linux-lit-dev.log`. The probe
+  row whose `page_end` reaches the work's last line is the correct spread; the
+  chosen row that falls short is the bug. (This is exactly how the EPILOGUE
+  final-spread bug was finally pinned: `new_top=4296` gave `page_end=4336`
+  (EPILOGUE cut off) while `probe top=4303` gave `page_end=4347` (full EPILOGUE) —
+  so `last_page_top` had to pull the top forward from 4296 to 4303.)
+
 ## Targeted navigation trace (manual key injection)
 
 To pin down a *specific* nav behaviour ("does `k` page back at the left-column

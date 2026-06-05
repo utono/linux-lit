@@ -121,12 +121,20 @@ instances carry a `--headless-test` marker, so
 session.)
 
 **Diagnosing a wrong-spread bug?** Don't guess line numbers from the rendered
-text. (1) Run a **unique copy** of the binary with its own log so you can never
-read a stale one (`cp target/debug/linux-lit /tmp/lit-dbg-$(date +%s)` then run
-that file directly — `run-fuzz.sh`'s rebuild can leave a stale binary running on
-the old log). (2) Log the boundary line numbers **with their text**
-(`buffer_line_text`) so the chain reads back as the page on screen. Full recipe:
-*headless-testing.md → "Diagnosing a specific page-boundary bug"*.
+text. **(0) CHECK VIEWPORT HEIGHT FIRST** — page-turn math depends on
+`text_view.height()` (logged as `widget_h=`), and the headless cage is usually a
+*different height* than the user's session, so it computes *different boundaries*
+and the bug may not reproduce. If a screenshot bug won't reproduce headless, the
+fastest fix is an **in-app `*_DBG:` `log_fmt!`** in the suspect function dumping
+`widget_h`, the chosen top, and `column_split` of a few candidate tops (each with
+`split`/`page_end`/`next_page_top`/`would_empty_right_column` + line text) — build,
+have the **user** reproduce once, read `linux-lit-dev.log`. (1) Or run a **unique
+copy** of the binary with its own log so you can never read a stale one
+(`cp target/debug/linux-lit /tmp/lit-dbg-$(date +%s)` then run that file directly
+— `run-fuzz.sh`'s rebuild can leave a stale binary running on the old log).
+(2) Log boundary line numbers **with their text** (`buffer_line_text`). Full
+recipe: *headless-testing.md → "Diagnosing a specific page-boundary bug"* (§3 is
+the viewport-height lesson).
 
 Re-triage an existing log at any time. Hard failures first (must be 0), then
 the soft warns:

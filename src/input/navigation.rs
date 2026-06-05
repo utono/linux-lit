@@ -289,10 +289,30 @@ pub(crate) fn last_page_top(state: &AppState, target: usize) -> usize {
             if next >= line_count || next <= top {
                 break; // reached the end of the forward chain
             }
-            // If advancing to `next` would land on a spread with an EMPTY right
-            // column (the lone-EPILOGUE page), stop — `top` (the last full spread)
-            // is the canonical answer.
+            // Advancing a full page to `next` would land on the lone-EPILOGUE page
+            // (empty right column). But the natural page boundary SKIPS a better
+            // final spread: a top a few lines past `top` whose left column holds
+            // the dialogue tail and whose right column absorbs the trailing
+            // section (the EPILOGUE), reaching the work's end. At 1112px the walk
+            // gives top=4296 (page_end=4336, EPILOGUE cut off) while top=4303
+            // reaches page_end=4347 (full EPILOGUE in the right column). Search
+            // [top+1, next) for the SMALLEST top whose spread leaves no dialogue
+            // below it and still has a non-empty right column — that is the
+            // canonical last spread.
             if we_next {
+                let mut pulled = None;
+                for t in (top + 1)..next.min(line_count) {
+                    let tcs = super::viewport::column_split(state, t);
+                    let dialogue_below = (tcs.next_page_top..line_count)
+                        .any(|i| is_dialogue_line(&state.buffer, i));
+                    if !dialogue_below && !would_empty_right_column(state, t) {
+                        pulled = Some(t);
+                        break;
+                    }
+                }
+                if let Some(t) = pulled {
+                    last_full = Some(t);
+                }
                 break;
             }
             top = next;
@@ -595,7 +615,21 @@ pub fn page_backward(state: &mut AppState) {
                  prev_top, nd, state.page_top_line);
         (prev_top, nd)
     } else {
-        let np = prev_page_top(state, state.page_top_line);
+        let mut np = prev_page_top(state, state.page_top_line);
+        // Degenerate-tiling guard: when the current page_top was pulled forward off
+        // the natural boundary chain (the EPILOGUE final spread, top 4297), the
+        // nearest tiling predecessor can be a near-zero-length page (4296 — one
+        // speaker line back). That makes `y` barely move and overlap the page we
+        // came from. If the proposed previous page is implausibly short (its
+        // forward boundary leaves only a handful of lines before page_top), step
+        // back another full page so `y` moves a real page.
+        let min_page = (lines_per_page(state) / 2).max(4);
+        if state.page_top_line.saturating_sub(np.new_top) < min_page && np.new_top > 0 {
+            let np2 = prev_page_top(state, np.new_top);
+            log_fmt!("PAGE_BWD: degenerate prev={} (<{} lines), stepping back again to {}",
+                     np.new_top, min_page, np2.new_top);
+            np = np2;
+        }
         log_fmt!("PAGE_BWD: prev_page_top new_top={} next_dialogue={} from page_top={}",
                  np.new_top, np.next_dialogue, state.page_top_line);
         (np.new_top, np.next_dialogue)
