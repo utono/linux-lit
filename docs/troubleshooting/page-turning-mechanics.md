@@ -3,6 +3,60 @@
 Reference for debugging page-forward (`x`), page-backward (`y`), and related
 navigation in e-reader mode.
 
+## The pagination model (read this first)
+
+linux-lit paginates a **flat buffer of lines** into pages on the fly — there is
+no precomputed page list (a font/size/width change would invalidate it). A play
+renders as a **two-column spread**: the reader fills the LEFT column top-to-
+bottom, then the RIGHT column, then turns to the next spread. Prose and
+translation mode use one column.
+
+**One function defines a spread: `column_split(top)`** (`viewport.rs`). Given a
+page-top line it returns a `ColumnSplit { split, page_end, next_page_top }`:
+
+- `split` — first line of the RIGHT column (left column is `[top, split)`).
+- `page_end` — last visible line of the spread (bottom of the right column).
+- `next_page_top` — first line of the FOLLOWING spread (`page_end + 1`).
+
+Everything else is built on this. The renderer scrolls the left view to `top`
+and the right view to `split`; `page_forward` advances `page_top` to
+`next_page_top`; `prev_page_top` walks *backward* to find the spread before the
+current one. **The cardinal rule is TILING:** consecutive spreads must abut with
+no gap and no overlap — `column_split(top).next_page_top` is exactly the next
+spread's `top`. Most pagination bugs are a tiling violation (a line shown twice,
+or skipped).
+
+**How a spread's extent is decided** (inside `column_split`):
+
+1. Fill the left column by pixel height (`visible_range` + a descender guard),
+   then trim what would look broken at the split (a dangling speaker name, a
+   half stage-direction). `split = left.last_fit + 1`.
+2. **If the right column would BEGIN a new (non-final) ACT/SCENE** — skipping
+   leading blanks/exits from `split` lands on a section marker — the page **ends
+   in the left column**: `page_end` is before the marker, `next_page_top` is the
+   marker. The new scene starts the next spread. (This is the "stop at a scene
+   break" reading model — a scene-ending page may have a short/empty right
+   column, and `y` from the next scene tiles into it exactly.)
+3. Otherwise fill the right column, **clamped at a section break** so a new
+   act/scene never appears mid-column — EXCEPT the work's final trailing section
+   (an EPILOGUE), which has nowhere to be pushed and fills the right column.
+
+**The asymmetry that bites every backward/jump fix:** forward paging uses
+`column_split`'s boundary; but the work's **final spread** is special. When the
+tail is short, `last_page_top` (`navigation.rs`) FORWARD-PULLS the final top a
+few lines so the tail fills the right column (a full spread, not a lonely left
+column). That pulled top is NOT on the natural `column_split` chain, so:
+- it must be reached the same way from EVERY entry point (startup, `G`, `x`,
+  `j`, `y`) — see *Diagnosing § "FIVE paths"* in headless-testing.md;
+- `y` from it cannot tile exactly (a small benign seam) — the fuzz exempts it.
+
+**`column_split` is the source of truth.** Render, the page-tiling fuzz
+invariants, `prev_page_top`, and `last_page_top` all consult it. If you change
+how a spread is measured, change `column_split` and everything follows; do NOT
+add a parallel boundary calc (the historical `next_page_top()` single-column
+helper diverged from `column_split` by a speaker block and caused a persistent
+`y GAP` — backward nav now tiles against `column_split` in two-column mode).
+
 ## Architecture
 
 Page state lives in `AppState`:
@@ -156,11 +210,23 @@ further back or to an unrelated position.
 1. Check the log for `PAGE_BWD: stack pop` vs `PAGE_BWD: prev_page_top`.
    Stack pop means the back-stack had an entry; `prev_page_top` means it
    was empty and had to recompute.
-2. If the recomputed `prev_page_top` is wrong, `page_forward` likely used
-   the fallback path (`candidate_top = next_dialogue`) which produced a
-   `page_top_line` not on a natural page boundary. `prev_page_top`'s Tier 2
-   linear walk can't find it, and Tier 3's lpp approximation overshoots.
-3. Check whether the navigation that preceded `y` pushed to or cleared the
+2. **How `prev_page_top` works now:** it walks the forward chain from line 0
+   using the SAME boundary the renderer uses — `column_split(probe).next_page_top`
+   in two-column mode (not the single-column `next_page_top()` helper, which
+   diverges by a speaker block and caused a persistent 3-line `y GAP`). It
+   returns the page `probe` whose forward boundary hits `current_top` exactly
+   (`next == current_top` → perfect tile), or the last boundary that does not
+   overshoot. It returns that boundary VERBATIM — never a
+   `back_up_for_speaker(next_dialogue_from(...))` re-derivation, which shifts off
+   the boundary and re-creates a gap.
+3. **If it still gaps/overlaps, suspect `current_top` itself.** It may not be on
+   the `column_split` chain at all: a scene jump (`2`/`3`) lands at a scene
+   heading, and the forward-pulled final spread (`last_page_top`) sits off the
+   chain. Then no boundary tiles exactly. For the final spread that seam is
+   benign (exempt). For a scene start it should tile — check that `column_split`
+   ends the previous page at the scene boundary (the "right column begins a new
+   scene" rule under *Section-break clamping*).
+4. Check whether the navigation that preceded `y` pushed to or cleared the
    stack. If a jump function forgot to clear, the stack has stale entries.
 
 ### Common causes
@@ -168,11 +234,11 @@ further back or to an unrelated position.
 - **New jump function doesn't clear the stack** — add
   `state.page_back_stack.clear()` before its `set_page`/`set_page_instant`
   call.
-- **`page_forward` fallback path** — when `new_top <= page_top_line`,
-  `page_forward` sets `candidate_top = next_dialogue` (skipping the
-  section break). The resulting `page_top_line` is non-canonical, but the
-  stack push ensures `y` still returns correctly. If the push is missing,
-  `prev_page_top` must recompute and may fail.
+- **`current_top` not a `column_split` boundary** — a scene jump or the
+  forward-pulled final spread produced a `page_top` the forward chain skips. The
+  fix is to make `column_split` produce a boundary there (scene-ends-in-left
+  rule), or to exempt the genuinely un-tileable final spread, NOT to fudge
+  `prev_page_top`.
 
 ## Multi-line stage directions
 
@@ -204,14 +270,31 @@ creating a stuck loop.
 
 ## Section-break clamping
 
-`clamp_at_section_break` in `trim_visible_range` scans the visible range
-for act/scene markers or separators. When found, it clamps `last_fit` to
-the line before the break so the new section starts at the top of the next
-page. The clamp always fires — there is no minimum-fill threshold.
+A new ACT/SCENE must start a fresh spread, never appear mid-column. `column_split`
+enforces this in three places:
 
-The clamp skips its own page's opening header block (consecutive markers,
-separators, blanks, and stage directions starting from `page_top + 1`) so a
-page that starts at a scene header doesn't clamp on itself.
+- **Left column:** `clamp_at_section_break` scans `[page_top, left.last_fit]` for
+  a marker/separator (skipping the page's own opening header block — consecutive
+  markers/separators/blanks/stage-directions from `page_top + 1` — so a page that
+  STARTS at a scene header doesn't clamp on itself) and clamps `last_fit` to the
+  line before the break.
+- **Right column would BEGIN a new scene:** if skipping leading blanks/exits from
+  `split` lands on a section marker, the previous scene ended in the left column.
+  `column_split` ends the page there: `page_end` before the marker, `next_page_top`
+  = the marker, right column empty. The new scene starts the next spread. This is
+  what makes `y` from the next scene's first page tile into this page exactly
+  (`column_split(prev).next_page_top == scene_top`). **Without it** the right
+  column filled the new scene (the marker was skipped as a "header"), no page
+  ended at the boundary, and `y` from the scene start skipped the previous
+  scene's tail (the 1H4 soliloquy bug).
+- **Right column interior:** `clamp_at_section_break` again, so a marker partway
+  down the right column starts the next spread.
+
+**The one exemption: the work's FINAL trailing section** (an EPILOGUE). It has
+nowhere to be pushed and `last_page_top`/`G` expect it to fill the right column,
+so when clamping would empty the right column AND the unclamped range already
+reaches the work's end, `column_split` keeps it unclamped. Detected by "no
+further section marker after this one".
 
 Edge case: when the section break is very close to `page_top` (1-2 lines),
 the clamped page is trivially small. `next_page_top` then computes a

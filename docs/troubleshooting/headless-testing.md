@@ -333,7 +333,7 @@ paths land on the work's last spread, and a fix to one leaves the others broken:
 - **`G`** — `jump_to_end` → `last_page_top`
 - **`x`** — `page_forward` (final-region redirect) → `last_page_top`
 - **`j`** — `scroll_after_jump_forward` (final-region redirect) → `last_page_top`
-- **`y`** — `page_backward` → `prev_page_top` (degenerate-tiling guard)
+- **`y`** — `page_backward` → `prev_page_top`
 
 They must ALL resolve to the same canonical spread: tail dialogue in the LEFT
 column, the full trailing section (EPILOGUE) in the RIGHT column, `page_end`
@@ -352,6 +352,46 @@ Two recurring traps near a short trailing section:
   `text_view.height() == 0`, so it can only guess (`current_line - lpp`). The real
   snap to `last_page_top` must happen **after** layout settles — in the
   RESIZE_TICK reveal / `reveal_snap`, where `widget_h > 0`.
+
+### 5. The fix-loop (`--stop-on-first-fail`) and what a "gap"/"overlap" really is
+
+Whole-sweep page-boundary bugs (`y GAP`, `y OVERLAP`, `UNBALANCED`) are work-
+specific, so fix them one at a time with `run-fuzz-all-works.sh --stop-on-first-fail`
+(§*Sweep ALL Shakespeare works* / SKILL.md). The loop is **user-runs →
+agent-fixes → user-re-runs**; two things make or break it:
+
+- **Commit before rebuilding.** If the binary is built before the new commit
+  lands, you test stale code and the *identical* numbers reappear (same
+  `[NNNNms]` timestamp), looking like "the fix did nothing". Confirm
+  `git log -1`, and if numbers are suspiciously unchanged compare
+  `stat -c %y target/debug/linux-lit` to the commit time — older binary ⇒ stale.
+- **Diagnose with line TEXT, not the message alone.** Add a temporary
+  `PPT_DBG:`/`JTE_DBG:` `log_fmt!` to the suspect function dumping the walk —
+  each candidate top with `split`/`page_end`/`next_page_top` AND
+  `buffer_line_text`, plus the gap/overlap lines with their `is_dialogue_line`
+  flag. The text is what disambiguates a real bug from a benign seam.
+
+**A gap/overlap only matters if the affected lines are DIALOGUE.** The invariants
+gate on `is_dialogue_line`, because most `y GAP`s near a scene change are
+cosmetic: the "skipped" lines are the scene-transition block (a trailing
+`[They exit.]`, blanks, and the next `ACT/SCENE` heading), not reading content.
+Confirmed example (1H4): `y` from a scene's first page lands on the previous
+scene's last page; the 3-line gap was `blank / '[They exit.]' / blank`. Only a
+gap/overlap of real dialogue is a bug.
+
+**Two boundary cases are inherently un-tileable and are exempt:**
+
+- **A right column that clamped at a scene break.** Under the chosen reading
+  model the next ACT/SCENE starts the *next* spread (see
+  page-turning-mechanics.md), so a scene-ending page legitimately has a short or
+  empty right column. `column_split` ends such a page in the left column
+  (`page_end` before the marker, `next_page_top` = the marker) so `y` from the
+  next scene tiles into it exactly.
+- **`y` from the forward-pulled final spread.** `last_page_top` pulls the final
+  spread off the natural `column_split` chain so a short tail fills its right
+  column — no earlier page tiles into a pulled top, so a small seam (the pull
+  distance) is unavoidable and benign. The fuzz exempts `y` when `pre_top` is the
+  final spread.
 
 ## Targeted navigation trace (manual key injection)
 
