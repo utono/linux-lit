@@ -749,6 +749,23 @@ pub(crate) fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize)
                 state.page_back_stack.push(state.page_top_line);
                 log_fmt!("NAV_PAGE_FWD: current={} old_top={} new_top={}", state.current_line, state.page_top_line, new_top);
                 set_page_instant(state, new_top);
+            } else {
+                // No page turn (the "next page" anchors back to the current top —
+                // the work's short tail can't scroll further). The cursor was
+                // advanced to a line that is NOT visible on this clamped final
+                // spread, which would leave NO highlight on screen. Cap it at the
+                // last fully-visible dialogue line so a line is always highlighted.
+                let visible_end = super::viewport::last_fully_visible_line(state, state.page_top_line);
+                if state.current_line > visible_end {
+                    let capped = super::viewport::prev_dialogue_line(
+                        &state.buffer, &state.translation_lines, visible_end + 1,
+                    )
+                    .filter(|&d| d >= state.page_top_line && d <= visible_end)
+                    .unwrap_or(visible_end);
+                    log_fmt!("NAV_FWD_LASTPAGE: cursor {} off-screen, capped to last visible {}",
+                             state.current_line, capped);
+                    state.current_line = capped;
+                }
             }
         }
     }

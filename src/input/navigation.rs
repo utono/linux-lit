@@ -304,7 +304,16 @@ pub(crate) fn last_page_top(state: &AppState, target: usize) -> usize {
                 break;
             }
         }
-        last_full.unwrap_or(top)
+        let chosen = last_full.unwrap_or(top);
+        // The work's tail may be too short to fill a full scroll viewport, so the
+        // viewport CAN'T scroll down to `chosen` — `set_page_instant` would clamp
+        // it to the scroll ceiling, leaving page_top and the rendered top
+        // disagreeing (the bug where G's spread looked different from its computed
+        // top, and j's highlight landed on an off-screen EPILOGUE line). Return
+        // the clamped top so every downstream consumer (cursor placement, the
+        // forward-nav anchor, page_backward) agrees with what's actually on
+        // screen.
+        clamp_page_top_to_scroll_ceiling(state, chosen)
     } else if widget_height > 0 && line_count > 0 {
         // Single column: accumulate `widget_height` of content backward.
         let capacity = widget_height;
@@ -454,9 +463,16 @@ pub fn page_forward(state: &mut AppState) {
     if state.column_count() == 2 {
         let cs = column_split(state, state.page_top_line);
         if cs.next_page_top >= line_count {
-            let last_dlg = prev_dialogue_line(&state.buffer, &state.translation_lines, cs.page_end + 1)
+            // Cap at the last ACTUALLY-VISIBLE line, not column_split's page_end:
+            // when the work's tail is too short to fill the viewport the scroll is
+            // clamped, so page_end can name a line that's rendered off-screen
+            // (below the clamp). Advancing the cursor there leaves NO visible
+            // highlight. `last_fully_visible_line` reflects the clamped viewport.
+            let visible_end = super::viewport::last_fully_visible_line(state, state.page_top_line)
+                .min(cs.page_end);
+            let last_dlg = prev_dialogue_line(&state.buffer, &state.translation_lines, visible_end + 1)
                 .filter(|&d| d >= state.page_top_line)
-                .unwrap_or(cs.page_end);
+                .unwrap_or(visible_end);
             if last_dlg > state.current_line {
                 log_fmt!("PAGE_FWD: final spread — cursor {}->{} (no turn)",
                          state.current_line, last_dlg);
