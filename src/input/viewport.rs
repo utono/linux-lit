@@ -1427,13 +1427,24 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
             let next_dialogue = next_dialogue_from(&state.buffer, probe, line_count);
             return NextPage { new_top: probe, next_dialogue };
         }
+        if next > current_top && probe < current_top {
+            // `probe`'s page CONTAINS current_top (`probe < current_top < next`):
+            // current_top is not a forward-chain boundary — it's a line in the
+            // MIDDLE of `probe`'s page, reached by a scene-jump / y / startup-snap
+            // rather than by paging forward. The correct previous page is `probe`
+            // itself: paging back to it shows the run [probe, current_top) that
+            // belongs to that page. Returning the earlier non-overshoot `top`
+            // instead skips that run entirely (the Tro `y GAP`: current_top=2438 is
+            // mid-page-2429, but the walk fell back to 2388, gapping 2429-2437).
+            // This is NOT a harmful overlap — those lines are page `probe`'s own
+            // content, shown only here, not doubled with current_top's page.
+            let next_dialogue = next_dialogue_from(&state.buffer, probe, line_count);
+            return NextPage { new_top: probe, next_dialogue };
+        }
         if next > current_top || next <= probe {
-            // `probe`'s page overshoots current_top (or no forward progress) — it
-            // would OVERLAP. Keep the last non-overshooting candidate (`top`).
-            // With the right-column section clamp restored, scene-start tops are
-            // now real boundaries (`column_split(prev).next_page_top == scene_top`),
-            // so the `next == current_top` exact-tile case above handles them and
-            // we rarely reach here with a gap.
+            // `probe`'s page overshoots current_top from a position at/after it, or
+            // there is no forward progress — keep the last non-overshooting
+            // candidate (`top`) to avoid a real overlap / infinite walk.
             break;
         }
         // `next <= current_top - 1`: `probe`'s page ends before current_top, so
@@ -1443,19 +1454,6 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
     }
     // `top` is the latest boundary whose page does not overshoot current_top
     // (worst case 0), and showing it skips no dialogue.
-    // PPT_DBG: Tro y GAP — prev_page_top(2438) returns a gapping top. Dump the
-    // last non-overshoot `top`, the overshooting `probe` we broke on, and their
-    // forward boundaries to see whether the predecessor page actually CONTAINS
-    // current_top (so landing on it would be correct, not an overlap). Temporary.
-    if current_top >= 2430 && current_top <= 2445
-        && state.current_work.as_ref().map(|w| w.abbrev == "Tro").unwrap_or(false)
-    {
-        crate::log_fmt!(
-            "PPT_DBG: current_top={} chosen_top={} fwd(chosen)={} broke_at_probe={} fwd(probe)={} is_secstart[ct]={}",
-            current_top, top, fwd_boundary(top), probe, fwd_boundary(probe),
-            state.is_section_start(current_top)
-        );
-    }
     let next_dialogue = next_dialogue_from(&state.buffer, top, line_count);
     NextPage { new_top: top, next_dialogue }
 }
