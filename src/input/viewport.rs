@@ -1239,12 +1239,23 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
         // right-column content, not a mid-column intrusion. (Without the
         // exception, `would_empty_right_column` treats the canonical final spread
         // as empty and G/last_page_top skip it.)
+        let raw_last_dbg = r.last_fit;
         let clamped = clamp_at_section_break(r, split, &state.right_view, &state.buffer, is_break);
         let r = if clamped.last_fit < split && r.last_fit + 1 >= line_count {
             r
         } else {
             clamped
         };
+        // H8_DBG2: right-column stages for the stuck split=1703 case.
+        if split == 1703
+            && state.current_work.as_ref().map(|w| w.abbrev == "H8").unwrap_or(false)
+        {
+            let trimmed = trim_visible_range_opts(r, split, &state.right_view, &state.buffer, is_prose, true, is_break);
+            crate::log_fmt!(
+                "H8_DBG2: right_h={} usable={} split={} raw_last={} clamped_last={} after_clamp_last={} trimmed_last={}",
+                right_h, usable, split, raw_last_dbg, clamped.last_fit, r.last_fit, trimmed.last_fit
+            );
+        }
         // Right column is the bottom of the spread: relax the underfill guard
         // so a too-tall block splits across the boundary to fill the column
         // rather than leaving a mid-spread gap.
