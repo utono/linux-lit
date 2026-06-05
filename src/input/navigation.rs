@@ -1096,9 +1096,35 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
                 } else {
                     set_page_instant(state, top);
                 }
+                ensure_cursor_visible_ereader(state, cursor_idx);
             }
         }
         after_page_change(state, PageChangeReason::Scene);
+    }
+}
+
+/// After a two-column scene jump anchors the page on the scene's marker, make
+/// sure the scene's first dialogue (`cursor_idx`) is actually visible. Normally
+/// the marker page shows it, but when a scene's header + entrance fill the whole
+/// spread and the first spoken line is pushed off (H8 1.4 at a short viewport:
+/// `Scene 4` / `=====` / `[Trumpets…]` / `WOLSEY` fill the page, dialogue at 1706
+/// doesn't fit), the cursor lands OFF-PAGE below a dialogue-less spread. Advance
+/// the page top one spread at a time (via the now-always-progressing
+/// `next_page_top`) until the cursor is visible. Bounded; only engages for the
+/// degenerate dialogue-less-marker-spread case — normal scenes never loop.
+fn ensure_cursor_visible_ereader(state: &mut AppState, cursor_idx: usize) {
+    let line_count = state.effective_line_count();
+    let mut guard = 0;
+    while !is_line_fully_visible(state, cursor_idx) {
+        let next = column_split(state, state.page_top_line).next_page_top;
+        if next <= state.page_top_line || next >= line_count {
+            break;
+        }
+        set_page_instant(state, next);
+        guard += 1;
+        if guard > 8 {
+            break;
+        }
     }
 }
 
@@ -1199,28 +1225,7 @@ pub fn jump_to_next_scene(state: &mut AppState) {
                 } else {
                     set_page_instant(state, marker_idx);
                 }
-                // The scene's marker page normally shows the scene's first
-                // dialogue (`cursor_idx`). But when the header + entrance fill the
-                // whole spread and the first spoken line is pushed off (H8 1.4 at a
-                // short viewport: `Scene 4` / `=====` / `[Trumpets…]` / `WOLSEY`
-                // fill the page, dialogue at 1706 doesn't fit), anchoring on the
-                // marker leaves the cursor OFF-PAGE below a dialogue-less spread.
-                // Advance the page top one spread at a time until the cursor is
-                // visible, so the scene's opening dialogue is actually shown. Only
-                // engages for the degenerate case; normal scenes already pass the
-                // first check and don't loop.
-                let mut guard = 0;
-                while !is_line_fully_visible(state, cursor_idx) {
-                    let next = column_split(state, state.page_top_line).next_page_top;
-                    if next <= state.page_top_line || next >= line_count {
-                        break;
-                    }
-                    set_page_instant(state, next);
-                    guard += 1;
-                    if guard > 8 {
-                        break;
-                    }
-                }
+                ensure_cursor_visible_ereader(state, cursor_idx);
             }
         }
         after_page_change(state, PageChangeReason::Scene);
