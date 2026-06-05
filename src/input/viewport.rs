@@ -1239,23 +1239,12 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
         // right-column content, not a mid-column intrusion. (Without the
         // exception, `would_empty_right_column` treats the canonical final spread
         // as empty and G/last_page_top skip it.)
-        let raw_last_dbg = r.last_fit;
         let clamped = clamp_at_section_break(r, split, &state.right_view, &state.buffer, is_break);
         let r = if clamped.last_fit < split && r.last_fit + 1 >= line_count {
             r
         } else {
             clamped
         };
-        // H8_DBG2: right-column stages for the stuck split=1703 case.
-        if split == 1703
-            && state.current_work.as_ref().map(|w| w.abbrev == "H8").unwrap_or(false)
-        {
-            let trimmed = trim_visible_range_opts(r, split, &state.right_view, &state.buffer, is_prose, true, is_break);
-            crate::log_fmt!(
-                "H8_DBG2: right_h={} usable={} split={} raw_last={} clamped_last={} after_clamp_last={} trimmed_last={}",
-                right_h, usable, split, raw_last_dbg, clamped.last_fit, r.last_fit, trimmed.last_fit
-            );
-        }
         // Right column is the bottom of the spread: relax the underfill guard
         // so a too-tall block splits across the boundary to fill the column
         // rather than leaving a mid-spread gap.
@@ -1277,30 +1266,22 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
         && next_dlg < line_count
         && (raw_next..next_dlg).all(|l| !is_dialogue_line(&state.buffer, l))
     {
-        back_up_for_speaker_state(state, next_dlg)
+        // Back the next page's top up to the next dialogue's scene heading so the
+        // page tiles at the boundary instead of mid-tail. BUT this back-up must
+        // never move the next top to or before THIS page's top: when a scene's
+        // header + entrance fills a spread but its first spoken line doesn't fit
+        // (H8 1.4 at a short viewport — `Scene 4` / `=====` / `[Trumpets…]` /
+        // `WOLSEY` fill the page, the first dialogue is pushed off), the next
+        // dialogue's heading IS this page's own boundary, so backing it up lands
+        // on `page_top` and the forward chain stalls (`next_top == page_top`) —
+        // jump_to_end/G then strand at this page mid-work. A forward step must
+        // advance: if the backed-up top doesn't clear `page_top`, fall back to
+        // `raw_next` (just past page_end), which always progresses.
+        let backed = back_up_for_speaker_state(state, next_dlg);
+        if backed > page_top { backed } else { raw_next }
     } else {
         raw_next
     };
-    // H8_DBG: the G-stuck bug — column_split(1701) returns next_top <= page_top
-    // (a non-advancing forward chain). Dump the geometry + buffer text + the
-    // section_starts bitmap around the stuck region so we can see WHY next_top
-    // goes backward. Remove once the root cause is fixed.
-    if next_top <= page_top
-        && page_top + 1 < line_count
-        && state.current_work.as_ref().map(|w| w.abbrev == "H8").unwrap_or(false)
-    {
-        let txt = |l: usize| buffer_line_text(&state.buffer, l).trim().chars().take(36).collect::<String>();
-        crate::log_fmt!(
-            "H8_DBG: NON-ADVANCING column_split top={} split={} page_end={} raw_next={} next_dlg={} next_top={}",
-            page_top, split, right.last_fit, raw_next, next_dlg, next_top
-        );
-        for l in page_top..=(next_dlg + 1).min(line_count - 1) {
-            crate::log_fmt!(
-                "H8_DBG:   line {} secstart={} dialogue={} '{}'",
-                l, state.is_section_start(l), is_dialogue_line(&state.buffer, l), txt(l)
-            );
-        }
-    }
     ColumnSplit { split, page_end: right.last_fit, next_page_top: next_top }
 }
 
@@ -1353,7 +1334,17 @@ pub(crate) fn next_page_top(state: &AppState, top: usize) -> NextPage {
     if next_dialogue >= line_count {
         return NextPage { new_top: line_count, next_dialogue: line_count };
     }
-    let new_top = back_up_for_speaker_state(state, next_dialogue);
+    // Back the next dialogue up to its scene heading so the next page tiles at the
+    // boundary. A forward step MUST advance, though: when a scene's header +
+    // entrance fills the spread but its first spoken line is pushed off (H8 1.4 at
+    // a short viewport — `Scene 4` / `=====` / `[Trumpets…]` / `WOLSEY` fill the
+    // page, the dialogue doesn't fit), the next dialogue's heading IS this page's
+    // own boundary, so the back-up lands on `top` and the forward chain stalls
+    // (`new_top == top`). `last_page_top`/G walk this chain and would strand
+    // mid-work. If the backed-up top doesn't clear `top`, advance to just past the
+    // visible page instead. (Mirrors the same guard in `column_split`.)
+    let backed = back_up_for_speaker_state(state, next_dialogue);
+    let new_top = if backed > top { backed } else { (last_visible + 1).min(line_count) };
     NextPage { new_top, next_dialogue }
 }
 
