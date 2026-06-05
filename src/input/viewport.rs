@@ -463,22 +463,36 @@ fn clamp_at_section_break(
     if range.count <= 1 {
         return range;
     }
-    // Skip the header block at the top of the page: consecutive markers,
-    // separators, blanks, and stage directions starting from page_top.
-    // These are part of the current page's opening and should not trigger
-    // a clamp that would leave the page nearly empty.
+    // Skip the page's OWN opening header block — but ONLY when this page actually
+    // STARTS with a section heading (its `page_top` is a marker or separator).
+    // Then the stacked "ACT 1 / === / Scene 1 / === / [Enter ...]" lines are this
+    // page's title and must not clamp it to nothing. If `page_top` is dialogue
+    // (e.g. the RIGHT column starts mid-scene), there is NO opening header to
+    // skip: a marker that appears later — after a trailing `[X exits.]`/blank —
+    // is a NEW section and MUST clamp. (Skipping it bridged a scene-ending right
+    // column straight into the next scene: the AWW/1H4 `y`-skips-the-scene-tail
+    // bug. Skipping it unconditionally also clamped a page that opens on ACT 1 to
+    // 2 lines: the catastrophic 169-fail regression. Gating on "page_top is a
+    // heading" fixes both.)
+    let page_starts_with_heading = {
+        let t = buffer_line_text(buffer, page_top);
+        let t = t.trim();
+        line_types::is_act_scene_marker(t) || line_types::is_separator(t)
+    };
     let mut scan_start = page_top + 1;
-    while scan_start <= range.last_fit {
-        let text = buffer_line_text(buffer, scan_start);
-        let trimmed = text.trim();
-        if line_types::is_act_scene_marker(trimmed)
-            || line_types::is_separator(trimmed)
-            || trimmed.is_empty()
-            || line_types::is_stage_direction(trimmed)
-        {
-            scan_start += 1;
-        } else {
-            break;
+    if page_starts_with_heading {
+        while scan_start <= range.last_fit {
+            let text = buffer_line_text(buffer, scan_start);
+            let trimmed = text.trim();
+            if line_types::is_act_scene_marker(trimmed)
+                || line_types::is_separator(trimmed)
+                || trimmed.is_empty()
+                || line_types::is_stage_direction(trimmed)
+            {
+                scan_start += 1;
+            } else {
+                break;
+            }
         }
     }
     // Scan for the first section break after the header block.
