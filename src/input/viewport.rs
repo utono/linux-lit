@@ -463,16 +463,25 @@ fn clamp_at_section_break(
     if range.count <= 1 {
         return range;
     }
-    // Skip the header block at the top of the page: consecutive markers,
-    // separators, blanks, and stage directions starting from page_top.
-    // These are part of the current page's opening and should not trigger
-    // a clamp that would leave the page nearly empty.
+    // Skip the header block at the top of the page: consecutive separators,
+    // blanks, and stage directions starting from page_top. These are part of the
+    // current page's opening (the scene heading + a `[Enter ...]`) and should not
+    // trigger a clamp that leaves the page nearly empty.
+    //
+    // DO NOT skip an ACT/SCENE marker here. A marker is always a clamp target,
+    // never a header to skip — a marker that appears AFTER an exit/blank that
+    // itself follows dialogue is a NEW section starting mid-range, and must clamp.
+    // (Skipping it was the bug where a right column whose scene ended a few lines
+    // in — dialogue, then `[They exit.]`, then the next ACT marker — ran straight
+    // into the following scene instead of ending at the boundary, so `y` from
+    // that next scene skipped this scene's tail. The genuine page-opening header
+    // is unaffected: a page that STARTS at a scene marker has that marker at
+    // `page_top`, so `scan_start = page_top + 1` is already past it.)
     let mut scan_start = page_top + 1;
     while scan_start <= range.last_fit {
         let text = buffer_line_text(buffer, scan_start);
         let trimmed = text.trim();
-        if line_types::is_act_scene_marker(trimmed)
-            || line_types::is_separator(trimmed)
+        if line_types::is_separator(trimmed)
             || trimmed.is_empty()
             || line_types::is_stage_direction(trimmed)
         {
@@ -1208,29 +1217,14 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
     let fwd_boundary = |b: usize| -> usize {
         if two_col { column_split(state, b).next_page_top } else { next_page_top(state, b).new_top }
     };
-    let dbg = current_top >= 776 && current_top <= 784; // AWW scene case
     loop {
         let next = fwd_boundary(probe);
-        if dbg && probe + 80 >= current_top {
-            let cs = column_split(state, probe);
-            let txt = |l: usize| buffer_line_text(&state.buffer, l).trim().chars().take(24).collect::<String>();
-            crate::log_fmt!("PPT_DBG: ct={} probe={} split={} '{}' page_end={} '{}' next={}",
-                current_top, probe, cs.split, txt(cs.split), cs.page_end, txt(cs.page_end), cs.next_page_top);
-        }
         if next == current_top {
             // Exact tile — `probe` is the page directly before current_top.
             let next_dialogue = next_dialogue_from(&state.buffer, probe, line_count);
             return NextPage { new_top: probe, next_dialogue };
         }
         if next > current_top || next <= probe {
-            if dbg {
-                let txt = |l: usize| buffer_line_text(&state.buffer, l).trim().chars().take(24).collect::<String>();
-                let te = fwd_boundary(top);
-                crate::log_fmt!("PPT_DBG: STOP probe={} next={} return top={} end={}", probe, next, top, te);
-                for l in te..current_top.min(te + 28) {
-                    crate::log_fmt!("PPT_DBG:   gap {} dlg={} '{}'", l, is_dialogue_line(&state.buffer, l), txt(l));
-                }
-            }
             // `probe`'s page overshoots current_top (or no forward progress) — it
             // would OVERLAP. Keep the last non-overshooting candidate (`top`).
             // With the right-column section clamp restored, scene-start tops are
