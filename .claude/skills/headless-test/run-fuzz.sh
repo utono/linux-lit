@@ -66,6 +66,18 @@ cleanup() {
   [ -n "${CAGE:-}" ] && kill -- "-${CAGE}" 2>/dev/null
   kill "${CAGE:-0}" 2>/dev/null || true
   pkill -f 'linux-lit --headless-test' 2>/dev/null || true
+  # The cage session spawns dbus/xdg-portal/at-spi daemons that keep $RT/cage.log
+  # open; without killing them, `rm -rf "$RT"` unlinks the dir but the kernel
+  # holds the 628M lit.db space until those FDs close — over many runs the tmpfs
+  # backing /tmp fills to 0 and later runs fail with ENOSPC. Kill any process
+  # still holding an FD into $RT, THEN remove it, so the space is reclaimed.
+  if [ -n "${RT:-}" ] && [ -d "$RT" ]; then
+    for fd in /proc/[0-9]*/fd; do
+      if readlink "$fd"/* 2>/dev/null | grep -q "^$RT"; then
+        kill -9 "$(basename "$(dirname "$fd")")" 2>/dev/null
+      fi
+    done
+  fi
   rm -rf "$RT" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM

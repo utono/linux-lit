@@ -539,17 +539,23 @@ fn run_step(s: &mut AppState) {
         let more_below = cs.next_page_top < line_count
             && (cs.next_page_top..line_count).any(|i| is_dialogue_line(&s.buffer, i));
         // A short right column is EXPECTED when it clamped at a section break:
-        // the next ACT/SCENE legitimately starts the following spread (the chosen
+        // the next scene legitimately starts the following spread (the chosen
         // "stop at scene break" reading model), so the content "below" is a new
-        // scene, not skipped fill. Exempt that — the right column ends right
-        // before a section marker.
+        // scene, not skipped fill. Exempt that. Read the AUTHORITATIVE
+        // `section_starts` bitmap (DB `(div1,div2)`), not buffer-text
+        // classification: scenes like 2H6 4.8 open directly on a stage direction
+        // + speaker with no ACT/SCENE chrome line, so `is_act_scene_marker` /
+        // `is_separator` would miss the boundary that production's
+        // `clamp_at_section_break` correctly clamps at. The boundary that makes
+        // the right column short can fall either at the start of the next page
+        // (`page_end + 1`) or on the right column's own opening line — a lone
+        // scene-opening line filling the right column before the rest of that
+        // scene continues next page (2H6 4.8 `split == page_end == boundary`).
+        // Scan the right column plus the next-page top for any section start.
         let clamped_at_scene = {
-            let after = cs.page_end + 1;
-            after < line_count && {
-                let t = buffer_line_text(&s.buffer, after);
-                let t = t.trim();
-                line_types::is_act_scene_marker(t) || line_types::is_separator(t)
-            }
+            let lo = cs.split;
+            let hi = (cs.next_page_top + 1).min(line_count);
+            (lo..hi).any(|i| s.is_section_start(i))
         };
         // Unbalanced: right column is less than a third of the left AND there's
         // more content that could have filled it AND it didn't clamp at a scene.

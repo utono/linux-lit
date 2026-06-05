@@ -97,6 +97,50 @@ spread — the chosen reading model), and `y` **from the forward-pulled final
 spread** (`last_page_top` pulls it off the natural chain, so a small seam is
 unavoidable).
 
+## Disk space — the cage runs fill /tmp; free it when needed
+
+Every cage run copies the **628M `lit.db`** into a `mktemp -d` under `/tmp` and
+spawns dbus / xdg-desktop-portal / at-spi daemons whose stdio stays open on that
+dir. A plain `rm -rf` unlinks the dir but the kernel keeps the space allocated
+until those daemon FDs close — so `/tmp` (commonly a **32G tmpfs**) creeps to 0%
+free across a sweep, and then **every later run silently fails with ENOSPC after
+~2 `NAV_TEST` steps** (looks like a 2-step "pass"; it isn't). The Claude harness
+also writes its own per-command output file under `/tmp`, so once the tmpfs is
+full *every* Bash tool call fails to capture output — the agent gets wedged.
+
+**Symptoms:** a run reports `steps=2 FAIL=0`; `df -h /tmp` shows ~0 free; tool
+calls fail with `the temp filesystem … is full (0MB free)`.
+
+**Recover (kills the FD-pinning daemons, then deletes the leftover dirs):**
+
+```bash
+.claude/skills/headless-test/free-test-space.sh
+```
+
+It reports `/tmp` free before/after. It only touches test scratch and the
+daemons holding an FD into a `/tmp` test dir — never a live `cargo run`.
+
+**It's mostly automatic now:** `run-fuzz.sh`'s cleanup trap and
+`run-fuzz-all-works.sh`'s per-work teardown both kill the FD-holders before
+`rm -rf "$RT"` (helper `purge_rt`), so a normal run cleans up after itself.
+`run-fuzz-all-works.sh` also **preflights**: it refuses to start if `/tmp` has
+< 2G free and prints the `free-test-space.sh` command. The leak only accumulates
+when a run is killed mid-flight (e.g. the agent's window ends) before teardown —
+that's when to run `free-test-space.sh` by hand.
+
+**If even `free-test-space.sh` can't run** (the harness itself can't write to the
+full `/tmp`), the leftover space is almost always held by orphaned daemons with a
+**deleted-but-open** FD. Find and kill them directly, then delete the dirs — and
+do NOT capture a path through `ls` (aliased to `eza`, whose color escapes poison
+the variable); use `find -print0 | xargs -0`:
+
+```bash
+for fd in /proc/[0-9]*/fd; do readlink "$fd"/* 2>/dev/null \
+  | grep -q '/tmp/.*tmp\.' && kill -9 "$(basename "$(dirname "$fd")")"; done
+find /tmp /tmp/claude-* -maxdepth 1 -name 'tmp.*' -type d -print0 2>/dev/null \
+  | xargs -0r rm -rf
+```
+
 ## Run it
 
 Always go through the env wrapper (provides software GL + dbus + the AT-SPI

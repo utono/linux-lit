@@ -37,6 +37,36 @@ DB_SRC="$HOME/utono/litdb/data/lit.db"
 SUMMARY=/tmp/fuzz-all-works-summary.txt
 : > "$SUMMARY"
 
+# Free a per-work temp dir for real. Each cage run copies the 628M lit.db into
+# $RT and spawns dbus/xdg-portal/at-spi daemons that keep $RT/cage.log open. A
+# bare `rm -rf "$RT"` unlinks the dir but the kernel holds the space until those
+# FDs close — so across ~37 works the tmpfs backing /tmp fills to 0 and every
+# later run silently fails (ENOSPC, ~2 steps). Kill anything still holding an FD
+# into $RT, THEN remove it, so space is actually reclaimed.
+purge_rt() {
+  local rt="$1" pid
+  [ -n "$rt" ] && [ -d "$rt" ] || return 0
+  for fd in /proc/[0-9]*/fd; do
+    pid=$(basename "$(dirname "$fd")")
+    if readlink "$fd"/* 2>/dev/null | grep -q "^$rt"; then
+      kill -9 "$pid" 2>/dev/null
+    fi
+  done
+  rm -rf "$rt" 2>/dev/null
+}
+
+# Preflight: bail before filling the tmpfs. /tmp is often a 32G tmpfs; each work
+# needs ~630M ($RT copy of lit.db). Refuse to start if free space < 2G, and tell
+# the operator how to recover — usually leftover dirs from a prior run whose
+# daemons still pin them.
+free_kb=$(df -Pk /tmp | awk 'NR==2{print $4}')
+if [ "${free_kb:-0}" -lt 2097152 ]; then
+  echo "[all-works] ERROR: /tmp has < 2G free ($((free_kb/1024))M). Each work needs ~630M." >&2
+  echo "[all-works] Reclaim it (kills daemons pinning leftover dirs, then deletes them):" >&2
+  echo "  .claude/skills/headless-test/free-test-space.sh" >&2
+  exit 70
+fi
+
 echo "[all-works] building…" >&2
 cargo build >&2 || { echo "build failed" >&2; exit 1; }
 
@@ -92,7 +122,7 @@ for w in $WORKS; do
             2>/dev/null || true
     fi
     if (( STOP_ON_FAIL )); then
-      rm -rf "$RT"
+      purge_rt "$RT"
       echo >&2
       echo "[all-works] === STOPPED at first failing work: $w ===" >&2
       echo "[all-works] FAIL categories in /tmp/fuzz-$w.log:" >&2
@@ -105,7 +135,7 @@ for w in $WORKS; do
       exit 1
     fi
   fi
-  rm -rf "$RT"
+  purge_rt "$RT"
 done
 
 echo >&2
