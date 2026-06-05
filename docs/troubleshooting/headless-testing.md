@@ -238,6 +238,61 @@ The fuzz tuning (seeded LCG, 400 ms cadence so layout settles, `MAX_STEPS`, the
 per-step invariants) lives in `src/input/nav_test.rs`; the page-navigation
 behaviour it checks is documented in `page-turning-mechanics.md`.
 
+## Diagnosing a specific page-boundary bug (line numbers, no stale binary)
+
+When a screenshot shows the wrong spread (overlap, wrong final page, unbalanced
+columns), you need the **actual line numbers** of the page boundary, not a guess
+from the rendered text. Two hard-won techniques:
+
+### 1. Run a UNIQUE binary so you can never read a stale one
+
+`run-fuzz.sh` builds, but if a prior launch is killed mid-flight the cage can
+exec the *previous* binary and `/tmp/fuzz-nav.log` keeps stale content — you then
+"fix" something and the log never changes (tell: the same numbers reappear at the
+same `[NNNNms]` timestamp every run). Sidestep it entirely: build, copy the
+binary to a unique path, and run THAT exact file with its own log.
+
+```bash
+cargo build
+UNIQ=/tmp/lit-dbg-$(date +%s); cp target/debug/linux-lit "$UNIQ"
+cp ~/utono/litdb/data/lit.db /tmp/lpt.db
+LOG=/tmp/lpt-$(date +%s).log; RT=$(mktemp -d)
+setsid env -u WAYLAND_DISPLAY XDG_RUNTIME_DIR="$RT" GSK_RENDERER=cairo \
+  WLR_BACKENDS=headless WLR_RENDERER=pixman \
+  LIT_DEV=1 LIT_HEADLESS_TEST=1 LIT_NAV_FUZZ=1 \
+  LIT_LOG_PATH="$LOG" LIT_DB_PATH=/tmp/lpt.db \
+  LIT_START_WORK=AWW LIT_START_POS=4340 \
+  dbus-run-session -- cage -- "$UNIQ" --headless-test >"$RT/c.log" 2>&1 &
+echo "log=$LOG"      # read THIS log, never /tmp/fuzz-nav.log
+```
+
+`strings "$UNIQ" | rg -c '<your new log string>'` confirms the binary actually
+contains your change before you trust its output. `LIT_START_POS` near the work's
+end makes the fuzz hit `JumpEnd`/`PageBackward` within seconds.
+
+### 2. Log line numbers AND their text in the pagination code
+
+A bare `top=4324 split=4339 page_end=4347` tells you the boundary but not what's
+*on* it. Add the text with `buffer_line_text` (from `viewport`) so the log reads
+back as the page you see on screen:
+
+```rust
+crate::log_fmt!(
+    "LPT: top={} '{}' split={} '{}' page_end={} '{}'",
+    top,       buffer_line_text(&state.buffer, top).trim(),
+    split,     buffer_line_text(&state.buffer, split).trim(),
+    page_end,  buffer_line_text(&state.buffer, page_end).trim(),
+);
+```
+
+Now a chain like `top=4283 → next=4324` that *skips* the spread the user sees at
+`4307` is unmistakable — the line text confirms `4307` ("Both, both. O, pardon!")
+isn't on the forward `next_page_top` chain at all. These `LPT:`/diagnostic lines
+are temporary: remove them once the boundary is fixed (grep `LPT:` before
+committing). The relevant geometry lives in `last_page_top`
+(`src/input/navigation.rs`) and `column_split` / `next_page_top`
+(`src/input/viewport.rs`).
+
 ## Targeted navigation trace (manual key injection)
 
 To pin down a *specific* nav behaviour ("does `k` page back at the left-column

@@ -285,13 +285,14 @@ pub(crate) fn last_page_top(state: &AppState, target: usize) -> usize {
         let mut guard = 0;
         loop {
             let next = super::viewport::next_page_top(state, top).new_top;
+            let we_next = if next < line_count { would_empty_right_column(state, next) } else { true };
             if next >= line_count || next <= top {
                 break; // reached the end of the forward chain
             }
             // If advancing to `next` would land on a spread with an EMPTY right
             // column (the lone-EPILOGUE page), stop — `top` (the last full spread)
             // is the canonical answer.
-            if would_empty_right_column(state, next) {
+            if we_next {
                 break;
             }
             top = next;

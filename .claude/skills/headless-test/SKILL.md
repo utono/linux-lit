@@ -120,6 +120,14 @@ instances carry a `--headless-test` marker, so
 `pkill -f 'linux-lit --headless-test'` targets only them, never the live
 session.)
 
+**Diagnosing a wrong-spread bug?** Don't guess line numbers from the rendered
+text. (1) Run a **unique copy** of the binary with its own log so you can never
+read a stale one (`cp target/debug/linux-lit /tmp/lit-dbg-$(date +%s)` then run
+that file directly — `run-fuzz.sh`'s rebuild can leave a stale binary running on
+the old log). (2) Log the boundary line numbers **with their text**
+(`buffer_line_text`) so the chain reads back as the page on screen. Full recipe:
+*headless-testing.md → "Diagnosing a specific page-boundary bug"*.
+
 Re-triage an existing log at any time. Hard failures first (must be 0), then
 the soft warns:
 
