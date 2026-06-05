@@ -30,79 +30,36 @@ Break paragraphs at natural shifts in the scene (a new entrance, a turn in the \
 action, a change of subject). If the input synopsis already had <p> tags, keep a \
 similar paragraph structure. Output ONLY the <p>-tagged paragraphs, nothing else.";
 
-/// Open the question input dialog over the synopsis overlay. Reuses the gloss
-/// prompt weakref fields (gloss and synopsis prompts are never open together).
+/// Open the stacked "ask" card below the synopsis card. The synopsis card
+/// shrinks to make room and `Tab` toggles focus between the two; the input
+/// receives typed characters while it holds focus. No-op if already open.
 pub(crate) fn show_amend_prompt(state_rc: &Rc<RefCell<AppState>>) {
-    let overlay_parent = {
-        let s = state_rc.borrow();
-        s.action_popup_widget.container.parent()
-    };
-    let overlay_parent = match overlay_parent.and_then(|p| p.downcast::<gtk4::Overlay>().ok()) {
-        Some(o) => o,
-        None => return,
-    };
-
-    let container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-    container.set_halign(gtk4::Align::Center);
-    container.set_valign(gtk4::Align::Center);
-    container.set_width_request(600);
-    container.add_css_class("amend-dialog");
-
-    let title = gtk4::Label::new(Some("ASK ABOUT THIS SCENE"));
-    title.add_css_class("amend-title");
-    title.set_halign(gtk4::Align::Start);
-    container.append(&title);
-
-    let scrolled = gtk4::ScrolledWindow::new();
-    scrolled.set_min_content_height(120);
-    scrolled.set_margin_start(22);
-    scrolled.set_margin_end(22);
-    scrolled.set_margin_top(8);
-    scrolled.set_margin_bottom(8);
-
-    let text_view = gtk4::TextView::new();
-    text_view.set_wrap_mode(gtk4::WrapMode::Word);
-    text_view.set_top_margin(8);
-    text_view.set_bottom_margin(8);
-    text_view.set_left_margin(4);
-    text_view.set_right_margin(4);
-    text_view.add_css_class("amend-text");
-    scrolled.set_child(Some(&text_view));
-    container.append(&scrolled);
-
-    let hint = gtk4::Label::new(Some(
-        "Ask a question; the synopsis will be expanded to answer it  \u{00b7}  Ctrl+Enter submit  \u{00b7}  Esc cancel",
-    ));
-    hint.add_css_class("amend-hint");
-    hint.set_halign(gtk4::Align::Center);
-    container.append(&hint);
-
-    overlay_parent.add_overlay(&container);
-
-    {
-        let mut s = state_rc.borrow_mut();
-        // Amend the scene currently displayed in the overlay (which n/p may have
-        // moved away from the cursor's scene).
-        s.synopsis_amend_scene = s.synopsis_overlay_scene;
-        s.gloss_prompt_container = Some(container.downgrade());
-        s.gloss_prompt_overlay = Some(overlay_parent.downgrade());
-        s.gloss_prompt_textview = Some(text_view.downgrade());
-        s.input_mode = crate::app::InputMode::SynopsisPrompt;
+    let s = state_rc.borrow();
+    if s.gloss_overlay.ask_is_open() {
+        return;
     }
-
-    text_view.grab_focus();
+    // Amend the scene currently displayed in the overlay (which n/p may have
+    // moved away from the cursor's scene).
+    let scene = s.synopsis_overlay_scene;
+    s.gloss_overlay.open_ask_card();
+    drop(s);
+    state_rc.borrow_mut().synopsis_amend_scene = scene;
 }
 
-/// Remove the prompt dialog and return to the synopsis overlay.
+/// Close the ask card and return focus to the synopsis card (mode stays
+/// `SynopsisOverlay`).
 pub(crate) fn close_amend_prompt(state: &Rc<RefCell<AppState>>) {
-    let mut s = state.borrow_mut();
-    if let (Some(cw), Some(ow)) = (s.gloss_prompt_container.take(), s.gloss_prompt_overlay.take()) {
-        if let (Some(c), Some(o)) = (cw.upgrade(), ow.upgrade()) {
-            o.remove_overlay(&c);
-        }
+    state.borrow().gloss_overlay.close_ask_card();
+}
+
+/// Submit the ask card: read its text, close it, and (if non-empty) kick off the
+/// async synopsis amend. Called on Ctrl+Enter.
+pub(crate) fn submit_amend_prompt(state: &Rc<RefCell<AppState>>) {
+    let question = state.borrow().gloss_overlay.take_ask_text();
+    close_amend_prompt(state);
+    if !question.trim().is_empty() {
+        amend_synopsis(state, &question);
     }
-    s.gloss_prompt_textview = None;
-    s.input_mode = crate::app::InputMode::SynopsisOverlay;
 }
 
 /// Send the question + current synopsis to Claude, then show and persist the

@@ -53,6 +53,26 @@ pub struct GlossOverlay {
     /// re-asserted after every `apply_font` (which else overrides their weight
     /// with the regular-weight buffer-wide font tag). Empty for glosses/echoes.
     synopsis_label_ranges: RefCell<Vec<(usize, usize)>>,
+    /// Last `(card_width, card_height)` a show_* call sized the card to. The
+    /// loading state reuses it so "Glossing…" presents as a full card rather
+    /// than a label-sized box. `(0,0)` until the first card is shown.
+    last_card_size: Cell<(i32, i32)>,
+    /// "Ask about this scene" card, stacked below the synopsis card (inside the
+    /// same `container`, after the footer). Hidden unless the reader pressed `A`
+    /// while the synopsis card is open. `ask_input` is an editable TextView that
+    /// receives typed characters when the ask card holds focus.
+    ask_container: gtk4::Box,
+    ask_input: gtk4::TextView,
+    /// Which sub-card currently has focus while the ask card is open. Drives the
+    /// `.card-focused` highlight and whether `j/k` scroll vs. type.
+    ask_focus: Cell<AskFocus>,
+}
+
+/// Focus target while the synopsis "ask" card is open.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum AskFocus {
+    Synopsis,
+    Ask,
 }
 
 /// Default font for the synopsis/gloss/echoes overlay cards.
@@ -112,6 +132,13 @@ impl GlossOverlay {
         gloss_scrolled.set_vexpand(true);
         gloss_scrolled.set_hscrollbar_policy(gtk4::PolicyType::Never);
         gloss_scrolled.set_vscrollbar_policy(gtk4::PolicyType::External);
+        // Report a small natural height (not the full text height) so the
+        // fixed-height card honors its `height_request` instead of growing to
+        // fit the whole synopsis. The vexpand then distributes the card's
+        // remaining space to this viewport AFTER the title/footer/ask card take
+        // theirs — which is what keeps the stacked ask card inside the card
+        // rather than spilling past the reader's rounded frame.
+        gloss_scrolled.set_propagate_natural_height(false);
 
         let gloss_view = gtk4::TextView::new();
         gloss_view.set_editable(false);
@@ -288,6 +315,57 @@ impl GlossOverlay {
 
         container.append(&footer_box);
 
+        // ---- "Ask about this scene" card, stacked below the synopsis ---------
+        // Lives inside `container` so the two cards form one centered column and
+        // the synopsis scroll viewport (which vexpands) shrinks to make room when
+        // this card is revealed. Hidden until `A` opens it.
+        let ask_container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        ask_container.add_css_class("ask-card");
+        ask_container.set_margin_top(14);
+        ask_container.set_margin_start(text_margins as i32);
+        ask_container.set_margin_end(text_margins as i32);
+        ask_container.set_margin_bottom(14);
+
+        let ask_title = Label::new(Some("ASK ABOUT THIS SCENE"));
+        ask_title.add_css_class("gloss-header");
+        ask_title.set_halign(Align::Start);
+        ask_title.set_margin_start(16);
+        ask_title.set_margin_top(12);
+        ask_container.append(&ask_title);
+
+        let ask_scrolled = gtk4::ScrolledWindow::new();
+        ask_scrolled.set_min_content_height(72);
+        ask_scrolled.set_max_content_height(160);
+        ask_scrolled.set_hscrollbar_policy(gtk4::PolicyType::Never);
+        ask_scrolled.set_margin_start(16);
+        ask_scrolled.set_margin_end(16);
+        ask_scrolled.set_margin_top(6);
+        ask_scrolled.set_margin_bottom(6);
+
+        let ask_input = gtk4::TextView::new();
+        ask_input.set_editable(true);
+        ask_input.set_cursor_visible(true);
+        ask_input.set_wrap_mode(gtk4::WrapMode::Word);
+        ask_input.set_top_margin(6);
+        ask_input.set_bottom_margin(6);
+        ask_input.set_left_margin(6);
+        ask_input.set_right_margin(6);
+        ask_input.add_css_class("gloss-text");
+        ask_input.add_css_class("ask-input");
+        ask_scrolled.set_child(Some(&ask_input));
+        ask_container.append(&ask_scrolled);
+
+        let ask_hint = Label::new(Some(
+            "Ask a question; the synopsis will be expanded to answer it  ·  Tab switch  ·  Ctrl+Enter submit  ·  Esc cancel",
+        ));
+        ask_hint.add_css_class("ask-hint");
+        ask_hint.set_halign(Align::Center);
+        ask_hint.set_margin_bottom(10);
+        ask_container.append(&ask_hint);
+
+        ask_container.set_visible(false);
+        container.append(&ask_container);
+
         container.set_visible(false);
 
         let scrim = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
@@ -324,6 +402,10 @@ impl GlossOverlay {
             font_family: RefCell::new(GLOSS_DEFAULT_FONT_FAMILY.to_string()),
             font_size: std::cell::Cell::new(GLOSS_DEFAULT_FONT_SIZE),
             synopsis_label_ranges: RefCell::new(Vec::new()),
+            last_card_size: Cell::new((0, 0)),
+            ask_container,
+            ask_input,
+            ask_focus: Cell::new(AskFocus::Synopsis),
         }
     }
 
@@ -340,7 +422,7 @@ impl GlossOverlay {
     /// after each populate so a rebuilt buffer keeps the chosen size.
     pub fn apply_font(&self) {
         let font_str = format!("{} {}", self.font_family.borrow(), self.font_size.get());
-        for view in [&self.gloss_view, &self.echo_header_view] {
+        for view in [&self.gloss_view, &self.echo_header_view, &self.ask_input] {
             let buffer = view.buffer();
             let table = buffer.tag_table();
             if let Some(old) = table.lookup("gloss-font") {
@@ -432,6 +514,8 @@ impl GlossOverlay {
         self.synopsis_label_ranges.borrow_mut().clear();
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
+        self.last_card_size.set((card_width, card_height));
+        self.ask_container.set_visible(false);
         self.title.set_visible(false);
         self.title.set_vexpand(false);
         self.title.set_valign(Align::Start);
@@ -502,6 +586,8 @@ impl GlossOverlay {
         self.synopsis_label_ranges.borrow_mut().clear();
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
+        self.last_card_size.set((card_width, card_height));
+        self.ask_container.set_visible(false);
         self.title.set_visible(false);
         let left = self.column_width / 8;
         self.title.set_margin_start(left);
@@ -601,6 +687,13 @@ impl GlossOverlay {
     pub fn show_synopsis(&self, title: &str, synopsis: &str, card_width: i32, card_height: i32) {
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
+        self.last_card_size.set((card_width, card_height));
+        // A fresh synopsis render closes any open ask card and returns focus to
+        // the synopsis (e.g. after an amend completes, or n/p moves scenes).
+        self.ask_container.set_visible(false);
+        self.ask_focus.set(AskFocus::Synopsis);
+        self.ask_container.remove_css_class("card-focused");
+        self.ask_container.remove_css_class("card-dimmed");
         // Match the gloss margins: anchor to the actual (full-screen) card
         // width, not the fixed column_width, so the synopsis prose sits at the
         // same ~65-char measure as the gloss instead of running nearly edge to
@@ -855,17 +948,117 @@ impl GlossOverlay {
         best.clamp(lower, max_value)
     }
 
+    // ---- "Ask about this scene" card -------------------------------------
+
+    /// True while the stacked ask card is visible.
+    pub fn ask_is_open(&self) -> bool {
+        self.ask_container.is_visible()
+    }
+
+    /// Which sub-card currently holds focus while the ask card is open.
+    pub fn ask_focus(&self) -> AskFocus {
+        self.ask_focus.get()
+    }
+
+    /// Reveal the ask card below the synopsis. The synopsis scroll viewport
+    /// vexpands inside the fixed-height card, so it yields height to the ask
+    /// card automatically. Clears any prior text, focuses the input, highlights
+    /// the ask card.
+    pub fn open_ask_card(&self) {
+        let buffer = self.ask_input.buffer();
+        buffer.set_text("");
+        self.ask_container.set_visible(true);
+        self.apply_font();
+        self.set_ask_focus(AskFocus::Ask);
+    }
+
+    /// Hide the ask card and return focus + highlight to the synopsis. Does not
+    /// touch the synopsis text.
+    pub fn close_ask_card(&self) {
+        self.ask_container.set_visible(false);
+        self.ask_focus.set(AskFocus::Synopsis);
+        self.ask_container.remove_css_class("card-focused");
+        self.ask_container.remove_css_class("card-dimmed");
+        // Return keyboard focus to the synopsis scroller.
+        if self.ask_input.has_focus() {
+            let _ = self.gloss_scrolled.grab_focus();
+        }
+    }
+
+    /// Read and clear the ask input's text.
+    pub fn take_ask_text(&self) -> String {
+        let buffer = self.ask_input.buffer();
+        let text = buffer
+            .text(&buffer.start_iter(), &buffer.end_iter(), false)
+            .to_string();
+        buffer.set_text("");
+        text
+    }
+
+    /// Flip focus between the synopsis and the ask card. No-op if the ask card
+    /// is closed.
+    pub fn toggle_ask_focus(&self) {
+        if !self.ask_is_open() {
+            return;
+        }
+        let next = match self.ask_focus.get() {
+            AskFocus::Synopsis => AskFocus::Ask,
+            AskFocus::Ask => AskFocus::Synopsis,
+        };
+        self.set_ask_focus(next);
+    }
+
+    /// Apply a focus target: move the active `.card-focused` highlight and either
+    /// grab the input's focus (Ask) or release it back to the synopsis (the
+    /// synopsis view is non-focusable, so j/k routing is by `ask_focus`, not GTK
+    /// focus — but we still drop the input's focus so typed keys aren't captured).
+    fn set_ask_focus(&self, focus: AskFocus) {
+        self.ask_focus.set(focus);
+        // The synopsis card is full-bleed, so an accent stripe on it would run
+        // the whole window edge. Instead only the (tight) ask card changes: it
+        // shows the accent bar when focused and dims when focus is on the
+        // synopsis. The brighter, accented card is always the active one.
+        match focus {
+            AskFocus::Ask => {
+                self.ask_container.remove_css_class("card-dimmed");
+                self.ask_container.add_css_class("card-focused");
+                self.ask_input.grab_focus();
+            }
+            AskFocus::Synopsis => {
+                self.ask_container.remove_css_class("card-focused");
+                self.ask_container.add_css_class("card-dimmed");
+                // Drop keyboard focus from the editable input so j/k/Tab reach
+                // the global controller instead of typing into the field.
+                if self.ask_input.has_focus() {
+                    let _ = self.gloss_scrolled.grab_focus();
+                }
+            }
+        }
+    }
+
     pub fn show_loading(&self) {
         self.show_loading_message("Glossing...");
     }
 
     pub fn show_loading_message(&self, message: &str) {
         self.synopsis_label_ranges.borrow_mut().clear();
+        // Size the card to the full reading area so the loading state reads as a
+        // proper card (the same footprint the synopsis/gloss card will occupy)
+        // rather than a label-sized box. Reuse the last card geometry; fall back
+        // to the construction width if no card has been shown yet this session.
+        let (cw, ch) = self.last_card_size.get();
+        if cw > 0 {
+            self.container.set_width_request(cw);
+        }
+        if ch > 0 {
+            self.container.set_height_request(ch);
+        }
         self.title.set_text(message);
         self.title.set_visible(true);
         self.title.set_vexpand(true);
         self.title.set_valign(Align::Center);
         self.title.set_halign(Align::Center);
+        self.title.set_margin_start(0);
         self.orig_header.set_visible(false);
         self.original_label.set_visible(false);
         self.corr_header.set_visible(false);
@@ -874,8 +1067,12 @@ impl GlossOverlay {
         self.echo_header_view.set_visible(false);
         self.echo_rule.set_visible(false);
         self.position_label.set_visible(false);
+        self.ask_container.set_visible(false);
         self.hint.set_visible(false);
-        self.scrim.set_visible(false);
+        // Show the dim scrim so the loading state reads as a modal card over the
+        // page, consistent with the synopsis/gloss cards (was hidden, which made
+        // the message float as bare text with no backdrop).
+        self.scrim.set_visible(true);
         self.container.set_visible(true);
     }
 
@@ -927,6 +1124,11 @@ impl GlossOverlay {
     pub fn hide(&self) {
         self.container.set_visible(false);
         self.scrim.set_visible(false);
+        // Reset the ask card so it never re-shows stale when the overlay reopens.
+        self.ask_container.set_visible(false);
+        self.ask_focus.set(AskFocus::Synopsis);
+        self.ask_container.remove_css_class("card-focused");
+        self.ask_container.remove_css_class("card-dimmed");
     }
 
     pub fn set_position(&self, index: usize, total: usize) {

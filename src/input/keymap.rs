@@ -96,7 +96,6 @@ pub fn handle_key(
             crate::app::InputMode::Search => handle_search_key(state, key_name),
             crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_alt),
             crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_name, is_ctrl),
-            crate::app::InputMode::SynopsisPrompt => handle_synopsis_prompt_key(state, key_name, is_ctrl),
             crate::app::InputMode::DeleteConfirm => handle_delete_confirm_key(state, key_name),
             crate::app::InputMode::GlossPrompt => handle_gloss_prompt_key(state, key_name, is_ctrl),
             crate::app::InputMode::EchoPicker => handle_echo_picker_key(state, key_name, tokio_handle),
@@ -710,13 +709,54 @@ fn handle_synopsis_overlay_key(
     key_name: &str,
     is_ctrl: bool,
 ) -> bool {
-    match key_name {
-        "Escape" => {
+    use crate::ui::gloss_overlay::AskFocus;
+
+    let (ask_open, ask_focus) = {
+        let s = state.borrow();
+        (s.gloss_overlay.ask_is_open(), s.gloss_overlay.ask_focus())
+    };
+
+    // ---- Keys that apply whether or not the ask card is open --------------
+
+    // Tab toggles focus between the synopsis and ask cards (only meaningful
+    // while the ask card is open). Consume so it never reaches playback toggle
+    // or the editable input.
+    if key_name == "Tab" || key_name == "ISO_Left_Tab" {
+        if ask_open {
+            state.borrow().gloss_overlay.toggle_ask_focus();
+        }
+        return true;
+    }
+
+    // Ctrl+Enter submits the question when the ask card is open.
+    if ask_open && is_ctrl && key_name == "Return" {
+        crate::input::actions::synopsis::submit_amend_prompt(state);
+        return true;
+    }
+
+    // Escape is two-stage: close the ask card first (back to full synopsis),
+    // then close the whole overlay on a second press.
+    if key_name == "Escape" {
+        if ask_open {
+            crate::input::actions::synopsis::close_amend_prompt(state);
+        } else {
             let mut s = state.borrow_mut();
             s.gloss_overlay.hide();
             s.input_mode = crate::app::InputMode::Reader;
-            true
         }
+        return true;
+    }
+
+    // While the ask card holds focus, let typed characters through to the
+    // editable input. Only the explicit shortcuts above (Tab/Ctrl+Enter/Esc)
+    // are intercepted; everything else falls through to GTK so the field works.
+    if ask_open && ask_focus == AskFocus::Ask {
+        return false;
+    }
+
+    // ---- Synopsis-focused (or ask card closed) navigation -----------------
+
+    match key_name {
         "h" => {
             let mut s = state.borrow_mut();
             s.gloss_overlay.hide();
@@ -761,35 +801,6 @@ fn handle_synopsis_overlay_key(
         }
         _ => true,
     }
-}
-
-fn handle_synopsis_prompt_key(
-    state: &Rc<RefCell<AppState>>,
-    key_name: &str,
-    is_ctrl: bool,
-) -> bool {
-    if key_name == "Escape" {
-        crate::input::actions::synopsis::close_amend_prompt(state);
-        return true;
-    }
-    if is_ctrl && key_name == "Return" {
-        let question = {
-            let s = state.borrow();
-            s.gloss_prompt_textview.as_ref()
-                .and_then(|w| w.upgrade())
-                .map(|tv| {
-                    let buf = tv.buffer();
-                    buf.text(&buf.start_iter(), &buf.end_iter(), false).to_string()
-                })
-                .unwrap_or_default()
-        };
-        crate::input::actions::synopsis::close_amend_prompt(state);
-        if !question.trim().is_empty() {
-            crate::input::actions::synopsis::amend_synopsis(state, &question);
-        }
-        return true;
-    }
-    false
 }
 
 fn handle_delete_confirm_key(

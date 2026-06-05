@@ -514,6 +514,16 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
            color: {dim}; padding-top: 8px; \
            border-top: 1px solid {dim}; }} \
          .gloss-position {{ font-size: 14px; color: {dim}; }} \
+         .ask-card {{ background-color: {gloss_bg}; border-radius: 10px; \
+           border: 1px solid {header_border}; transition: opacity 120ms ease; }} \
+         .ask-card .gloss-header {{ margin-top: 0; }} \
+         textview.ask-input {{ background-color: {gloss_bg}; color: {fg}; }} \
+         textview.ask-input text {{ background-color: {gloss_bg}; }} \
+         .ask-hint {{ font-size: 13px; color: {dim}; }} \
+         .ask-card.card-focused {{ border-color: {cursor_bg}; \
+           border-left: 4px solid {cursor_bg}; \
+           box-shadow: 0 8px 24px rgba(0, 0, 0, 0.30); }} \
+         .ask-card.card-dimmed {{ opacity: 0.55; }} \
          .definition-panel {{ background-color: {bg}; color: {fg}; \
            border-radius: 12px; padding: 20px 24px; }} \
          .vocab-popup {{ background-color: {root}; color: {bg}; \
