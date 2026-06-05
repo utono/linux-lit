@@ -317,6 +317,7 @@ pub fn refresh_bottom_clip(state: &AppState) {
         state.effective_line_count(),
         state.is_prose(),
         left_exact_end,
+        state.section_starts().map(|s| s.to_vec()),
     );
 }
 
@@ -334,15 +335,17 @@ fn schedule_bottom_clip_update(
     line_count: usize,
     is_prose: bool,
     exact_end: Option<usize>,
+    section_starts: Option<Vec<bool>>,
 ) {
     let tv1 = text_view.clone();
     let bc1 = bottom_clip.clone();
     let sw1 = scrolled_window.clone();
+    let ss1 = section_starts.clone();
     glib::idle_add_local_once(move || {
-        update_bottom_clip(&tv1, &bc1, &sw1, page_top, line_count, is_prose, exact_end);
+        update_bottom_clip(&tv1, &bc1, &sw1, page_top, line_count, is_prose, exact_end, ss1.as_deref());
     });
     glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
-        update_bottom_clip(&text_view, &bottom_clip, &scrolled_window, page_top, line_count, is_prose, exact_end);
+        update_bottom_clip(&text_view, &bottom_clip, &scrolled_window, page_top, line_count, is_prose, exact_end, section_starts.as_deref());
     });
 }
 
@@ -425,6 +428,7 @@ pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
         line_count,
         state.is_prose(),
         left_exact_end,
+        state.section_starts().map(|s| s.to_vec()),
     );
 
     if let Some(cs) = cs {
@@ -464,6 +468,7 @@ pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
             line_count,
             state.is_prose(),
             Some(right_end),
+            None, // exact_end set → trim path (and section clamp) never runs
         );
     }
 }
@@ -529,8 +534,9 @@ pub(crate) fn update_bottom_clip_public(
     page_top: usize,
     line_count: usize,
     is_prose: bool,
+    section_starts: Option<&[bool]>,
 ) {
-    update_bottom_clip(text_view, bottom_clip, scrolled_window, page_top, line_count, is_prose, None);
+    update_bottom_clip(text_view, bottom_clip, scrolled_window, page_top, line_count, is_prose, None, section_starts);
 }
 
 /// Set the bottom clip to hide everything below the last fully-visible line.
@@ -549,6 +555,7 @@ fn update_bottom_clip(
     line_count: usize,
     is_prose: bool,
     exact_end: Option<usize>,
+    section_starts: Option<&[bool]>,
 ) {
     let widget_height = text_view.height();
     if widget_height <= 0 {
@@ -609,7 +616,9 @@ fn update_bottom_clip(
     }
 
     let display_range = {
-        let trimmed = trim_visible_range(range, page_top, text_view, &buf_sv, is_prose);
+        let bf = section_starts.map(super::viewport::section_break_fn);
+        let is_break = bf.as_ref().map(|f| f as &dyn Fn(usize) -> bool);
+        let trimmed = trim_visible_range(range, page_top, text_view, &buf_sv, is_prose, is_break);
 
         // Viewport fill guard for display: if trimming left the page less than
         // ~85% full, the dangling-speaker/block trims created too much empty
@@ -717,13 +726,13 @@ pub(crate) fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize)
             }
             // Compute where a turn/snap would land.
             let new_top = if !state.is_prose()
-                && super::viewport::is_first_dialogue_of_scene(
-                    &state.buffer, &state.translation_lines, state.current_line,
+                && super::viewport::is_first_dialogue_of_scene_state(
+                    state, &state.translation_lines, state.current_line,
                 )
             {
-                super::viewport::back_up_for_speaker(&state.buffer, state.current_line)
+                super::viewport::back_up_for_speaker_state(state, state.current_line)
             } else {
-                super::viewport::page_turn_top(&state.buffer, state.current_line)
+                super::viewport::page_turn_top_state(state, state.current_line)
             };
             // If turning to `new_top` lands on the work's FINAL spread region,
             // redirect to the canonical final spread (`last_page_top`) — the one

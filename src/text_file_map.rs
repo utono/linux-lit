@@ -31,6 +31,14 @@ pub struct LineMap {
     /// Buffer line indices where a new chapter starts (`Line.is_chapter == true`).
     /// Sorted ascending. Used by pagination to force page breaks at chapter boundaries.
     pub chapter_breaks: Vec<usize>,
+    /// For each buffer line index, `true` if this line is the first line of a new
+    /// `(div1, div2)` run — i.e. an authoritative scene/section boundary derived
+    /// from the DB's div columns, not inferred from buffer text. The boundary is
+    /// attributed to the first synthesized chrome line (ACT/===/Scene marker) of
+    /// the transition run, so a page that opens on that chrome owns its heading
+    /// while a later boundary inside a range clamps. Empty (`false` everywhere)
+    /// for prose / single-column works. See `build_section_starts`.
+    pub section_starts: Vec<bool>,
 }
 
 /// Normalize a line of text to match the DB's `normalized_text` column:
@@ -270,13 +278,129 @@ pub fn build_line_map(file_lines: &[String], work_lines: &[Line], is_prose: bool
         }
     }
 
+    let section_starts = build_section_starts(file_lines, &buffer_to_work, work_lines);
+
     LineMap {
         buffer_to_work,
         work_to_buffer,
         dialogue_buffer_lines,
         sentence_groups,
         chapter_breaks,
+        section_starts,
     }
+}
+
+/// Compute the authoritative scene/section-boundary bitmap from the DB's
+/// `(div1, div2)` columns.
+///
+/// A boundary is exactly where `(div1, div2)` changes between two consecutive
+/// *mapped* buffer lines (lines with a `buffer_to_work` entry). The `ACT N`,
+/// `=====`, and `Scene N` lines in the buffer are display chrome that
+/// `build_line_map` leaves unmapped (`None`) — they normalize to empty and have
+/// no DB counterpart. We attribute each boundary to the FIRST chrome line
+/// (act/scene marker or separator) of the transition run, so:
+///   - a page that OPENS on that chrome line has `section_starts[page_top] ==
+///     true` and owns its whole stacked heading (no self-clamp),
+///   - a later boundary inside a page's range clamps before its chrome line.
+///
+/// Trailing `[They exit.]` / blank lines that precede the chrome belong to the
+/// ENDING section, so they are NOT marked — only the marker line is.
+///
+/// Returns an all-`false` vec for single-`(div1,div2)` works (prose / single
+/// scene), which the pagination predicate treats as "no boundaries".
+fn build_section_starts(
+    file_lines: &[String],
+    buffer_to_work: &[Option<usize>],
+    work_lines: &[Line],
+) -> Vec<bool> {
+    let n_buf = file_lines.len();
+    let mut section_starts = vec![false; n_buf];
+
+    let div_of = |buf: usize| -> Option<(i64, i64)> {
+        buffer_to_work
+            .get(buf)
+            .copied()
+            .flatten()
+            .and_then(|wi| work_lines.get(wi))
+            .map(|l| (l.div1, l.div2))
+    };
+
+    let mut prev_mapped: Option<(usize, (i64, i64))> = None;
+    for buf in 0..n_buf {
+        let Some(cur_div) = div_of(buf) else { continue };
+        match prev_mapped {
+            None => {
+                // First mapped line: the work's opening section. Mark its
+                // boundary at the first chrome/marker line at or before it (the
+                // opening "ACT 1 / Scene 1" stacked title), falling back to the
+                // line itself when there is no preceding chrome.
+                let start = first_chrome_at_or_before(file_lines, buf);
+                section_starts[start] = true;
+            }
+            Some((prev_buf, prev_div)) if prev_div != cur_div => {
+                // (div1,div2) changed → scene boundary. Attribute it to the
+                // first marker/separator line strictly after the previous
+                // mapped line; if none (e.g. db-only with no chrome), use the
+                // first non-mapped line after prev, else the current line.
+                let start = first_chrome_after(file_lines, prev_buf, buf);
+                section_starts[start] = true;
+            }
+            _ => {}
+        }
+        prev_mapped = Some((buf, cur_div));
+    }
+
+    section_starts
+}
+
+/// Boundary line for the work's OPENING section, given `buf` = the first mapped
+/// (dialogue) line. The whole run of non-dialogue preamble above `buf` —
+/// blanks, the act/scene title (`ACT 1` / `=====` / `Scene 1`), entrance stage
+/// directions, and the leading speaker name — belongs to the opening section,
+/// so the boundary is the TOPMOST act/scene marker (or separator) in that run.
+/// We walk backward across the full preamble (not just chrome) to find it, and
+/// fall back to the topmost preamble line when the work has no opening marker
+/// (e.g. a poem that opens directly on text).
+fn first_chrome_at_or_before(file_lines: &[String], buf: usize) -> usize {
+    // Walk back over ALL non-dialogue preamble to the top of the leading block.
+    let mut top = buf;
+    while top > 0 {
+        let t = file_lines[top - 1].trim();
+        if t.is_empty()
+            || line_types::is_act_scene_marker(t)
+            || line_types::is_separator(t)
+            || line_types::is_speaker(t)
+            || line_types::is_stage_direction(t)
+        {
+            top -= 1;
+        } else {
+            break;
+        }
+    }
+    // Within [top, buf), prefer the first act/scene marker / separator (the
+    // title line the reader should see at the page top); else use `top`.
+    for i in top..buf {
+        let t = file_lines[i].trim();
+        if line_types::is_act_scene_marker(t) || line_types::is_separator(t) {
+            return i;
+        }
+    }
+    top
+}
+
+/// Find the boundary line for a `(div1,div2)` transition occurring between
+/// mapped lines `prev` (last line of the ending section) and `cur` (first line
+/// of the new section). Returns the first act/scene-marker or separator line in
+/// `(prev, cur]`; if there is no such chrome line (db-only works with no
+/// synthesized markers), returns `cur` itself.
+fn first_chrome_after(file_lines: &[String], prev: usize, cur: usize) -> usize {
+    for i in (prev + 1)..=cur.min(file_lines.len().saturating_sub(1)) {
+        let t = file_lines[i].trim();
+        if line_types::is_act_scene_marker(t) || line_types::is_separator(t) {
+            return i;
+        }
+    }
+    cur
 }
 
 /// Returns true if `line` ends with sentence-terminating punctuation,
@@ -552,6 +676,12 @@ mod tests {
     use crate::db::models::Line;
 
     fn make_line(id: i64, text: &str, normalized: &str, is_dialogue: bool) -> Line {
+        make_line_div(id, text, normalized, is_dialogue, 1, 1)
+    }
+
+    fn make_line_div(
+        id: i64, text: &str, normalized: &str, is_dialogue: bool, div1: i64, div2: i64,
+    ) -> Line {
         Line {
             id,
             citation: String::new(),
@@ -560,8 +690,8 @@ mod tests {
             speaker: None,
             is_dialogue,
             timestamp: None,
-            div1: 1,
-            div2: 1,
+            div1,
+            div2,
             line_in_div: id,
             is_chapter: false,
             is_spoken: None,
@@ -694,6 +824,62 @@ mod tests {
         assert_eq!(map.buffer_to_work[0], Some(0));
         assert_eq!(map.buffer_to_work[2], Some(2));
         assert_eq!(map.buffer_to_work[14], Some(5));
+    }
+
+    #[test]
+    fn test_section_starts_attributes_chrome_to_the_marker() {
+        // The AWW y-GAP shape: a scene ends with dialogue, then [They exit.] /
+        // blank, then the stacked ACT 2 / === / Scene 1 chrome, then the next
+        // scene's dialogue. The (div1,div2) change is between the two dialogue
+        // lines (1,1)->(2,1); the boundary must be attributed to the FIRST
+        // chrome line (ACT 2), NOT the [They exit.] that belongs to scene 1.
+        let file_lines: Vec<String> = vec![
+            "And yet a thousand times it answers no.".into(), // 0 dialogue (1,1)
+            "[They exit.]".into(),                            // 1 stage dir (scene 1's)
+            "".into(),                                        // 2 blank
+            "ACT 2".into(),                                   // 3 chrome  <-- boundary
+            "=====".into(),                                   // 4 separator
+            "Scene 1".into(),                                 // 5 chrome
+            "[Enter Valentine.]".into(),                      // 6 stage dir
+            "SPEED".into(),                                   // 7 speaker
+            "Sir, your glove.".into(),                        // 8 dialogue (2,1)
+        ];
+        let work_lines = vec![
+            make_line_div(1, "And yet a thousand times it answers no.", "and yet a thousand times it answers no", true, 1, 1),
+            make_line_div(2, "[They exit.]", "they exit", false, 1, 1),
+            make_line_div(3, "[Enter Valentine.]", "enter valentine", false, 2, 1),
+            make_line_div(4, "Sir, your glove.", "sir your glove", true, 2, 1),
+        ];
+
+        let map = build_line_map(&file_lines, &work_lines, false);
+
+        // First mapped line (buf 0) is the work's opening section — its boundary
+        // is at-or-before it; with no preceding chrome it's line 0 itself.
+        assert!(map.section_starts[0], "opening section boundary at the first mapped line");
+        // The scene boundary is the ACT 2 marker (buf 3), not [They exit.] (buf 1).
+        assert!(map.section_starts[3], "boundary attributed to the ACT 2 chrome line");
+        assert!(!map.section_starts[1], "[They exit.] belongs to the ending scene, not a boundary");
+        assert!(!map.section_starts[2], "trailing blank is not a boundary");
+        assert!(!map.section_starts[8], "the new scene's dialogue is not the boundary line");
+        // Exactly two boundaries total.
+        assert_eq!(map.section_starts.iter().filter(|b| **b).count(), 2);
+    }
+
+    #[test]
+    fn test_section_starts_empty_for_single_section() {
+        // A work entirely in one (div1,div2): only the opening boundary is set.
+        let file_lines: Vec<String> = vec![
+            "First line of the only scene.".into(),
+            "Second line.".into(),
+        ];
+        let work_lines = vec![
+            make_line_div(1, "First line of the only scene.", "first line of the only scene", true, 1, 1),
+            make_line_div(2, "Second line.", "second line", true, 1, 1),
+        ];
+        let map = build_line_map(&file_lines, &work_lines, false);
+        assert!(map.section_starts[0], "opening boundary set");
+        assert_eq!(map.section_starts.iter().filter(|b| **b).count(), 1,
+            "no interior boundaries within a single section");
     }
 
     #[test]

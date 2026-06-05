@@ -224,8 +224,8 @@ fn main() {
                                             && old_scene != Some(scene)
                                             && !already_visible
                                         {
-                                            let mut top = crate::input::viewport::scene_header_top(
-                                                &s.buffer, buffer_line,
+                                            let mut top = crate::input::viewport::scene_header_top_state(
+                                                &s, buffer_line,
                                             );
                                             // If the scene-header spread would leave
                                             // the right column empty (lone EPILOGUE),

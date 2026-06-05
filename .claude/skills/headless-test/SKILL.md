@@ -58,10 +58,28 @@ the new commit before saying "rebuild", and (b) when the numbers are suspiciousl
 unchanged, check `stat -c %y target/debug/linux-lit` vs the commit time: if the
 binary is OLDER, it's stale — `touch src/…` + rebuild.
 
+**Scene/section boundaries are AUTHORITATIVE — check the bitmap, don't infer.**
+A scene boundary is exactly where a line's `(div1, div2)` changes; linux-lit
+precomputes this at load into `LineMap.section_starts` and all pagination reads it
+via `is_section_start` / `section_break_fn` (see
+*page-turning-mechanics.md → "The authoritative-boundary principle"*). When a
+boundary-related FAIL appears (`y GAP`, `UNBALANCED` at a scene edge, a page that
+self-clamps tiny, a scene's tail skipped), the FIRST question is **"is the bitmap
+right here?"** — dump `section_starts` near the failure (first marked indices +
+their `buffer_line_text`) before reasoning about `column_split` geometry. The two
+hardest bugs in this whole class were bitmap-attribution bugs, not geometry bugs:
+the opening boundary mis-marked on the first *dialogue* (because the back-up
+stopped at the leading speaker) instead of on `ACT 1`, and a dialogue-less scene
+tail being tiled as its own tiny spread. Reasoning about heights would never have
+found those; one `SECSTARTS_DBG:` log line did. **Never "fix" a boundary bug by
+re-classifying buffer text (`is_act_scene_marker`/`is_separator`) in a pagination
+path — that is the exact anti-pattern the bitmap replaced.**
+
 **The per-step diagnostic loop is how page-boundary bugs actually get fixed.**
-Don't reason about `column_split` / `next_page_top` / `prev_page_top` from the
-failure message alone — the geometry is non-obvious and viewport-height-dependent.
-Add a temporary `PPT_DBG:`/`JTE_DBG:`-style `log_fmt!` to the suspect function
+Once the bitmap is confirmed correct, don't reason about `column_split` /
+`next_page_top` / `prev_page_top` from the failure message alone — the geometry is
+non-obvious and viewport-height-dependent. Add a temporary
+`PPT_DBG:`/`JTE_DBG:`/`SECSTARTS_DBG:`-style `log_fmt!` to the suspect function
 that dumps the walk: each `probe`/`top` with its `split`, `page_end`,
 `next_page_top`, and `buffer_line_text`, plus the gap/overlap lines with their
 `is_dialogue_line` flag. Commit it, have the user re-run, read the log. The line

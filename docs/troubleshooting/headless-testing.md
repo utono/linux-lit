@@ -242,7 +242,37 @@ behaviour it checks is documented in `page-turning-mechanics.md`.
 
 When a screenshot shows the wrong spread (overlap, wrong final page, unbalanced
 columns), you need the **actual line numbers** of the page boundary, not a guess
-from the rendered text. Two hard-won techniques:
+from the rendered text. Hard-won techniques, in order:
+
+### 0. Is the boundary BITMAP right? (check this before any geometry)
+
+A scene/section boundary is authoritative: it is exactly where a line's
+`(div1, div2)` changes, precomputed at load into `LineMap.section_starts` and read
+by every pagination path via `is_section_start` / `section_break_fn` (see
+*page-turning-mechanics.md → "The authoritative-boundary principle"*). For any
+boundary-shaped failure (`y GAP`, `UNBALANCED` at a scene edge, a tiny
+self-clamped page, a skipped scene tail), **dump the bitmap first** — a wrong bit
+is far more likely than a subtle geometry bug, and no amount of
+`column_split`-height reasoning will reveal it:
+
+```rust
+// temporary, in build_section_starts (text_file_map.rs) or any path with the map:
+let marked: Vec<String> = section_starts.iter().enumerate()
+    .filter(|(_, b)| **b).take(8)
+    .map(|(i, _)| format!("{}:'{}'", i, file_lines.get(i).map(|s| s.trim()).unwrap_or("")))
+    .collect();
+crate::log_fmt!("SECSTARTS_DBG: total={} first8=[{}]",
+    section_starts.iter().filter(|b| **b).count(), marked.join(", "));
+```
+
+A correct dump reads `0:'ACT 1', 317:'Scene 2', 780:'ACT 2', …` — every marked
+index sits on an `ACT`/`Scene`/`=====` chrome line, and the FIRST one is the
+work's opening `ACT 1` (NOT the first dialogue). The two worst bugs in this whole
+class were here, not in geometry: the opening boundary marked on the first
+*dialogue* line (the back-up stopped at the leading speaker before reaching
+`ACT 1`), and a dialogue-less scene tail later tiled as its own tiny spread.
+**Do not "fix" a boundary bug by re-classifying buffer text in a pagination path
+— the bitmap is the fix; correct how it's BUILT, not how pagination reads it.**
 
 ### 1. Run a UNIQUE binary so you can never read a stale one
 

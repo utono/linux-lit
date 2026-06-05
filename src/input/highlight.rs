@@ -6,7 +6,7 @@ use crate::app::AppState;
 use crate::log_fmt;
 use super::viewport::{
     is_line_fully_visible, last_raw_visible_line,
-    lines_per_page, page_turn_top,
+    lines_per_page, page_turn_top_state,
 };
 use super::scroll::{
     set_page, set_page_instant, scroll_to_cursor, PageDirection,
@@ -33,7 +33,7 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
         crate::config::NavigationMode::EReader => {
             if !is_line_fully_visible(state, state.current_line) {
                 let new_top = if state.current_line >= state.page_top_line {
-                    page_turn_top(&state.buffer, state.current_line)
+                    page_turn_top_state(state, state.current_line)
                 } else {
                     state.current_line
                 };
@@ -64,7 +64,7 @@ pub fn update_highlight_and_advance_page(state: &mut AppState) {
                 state.current_line, last_vis, state.page_top_line
             ));
             if state.current_line > last_vis {
-                let mut new_top = page_turn_top(&state.buffer, state.current_line);
+                let mut new_top = page_turn_top_state(state, state.current_line);
                 // Don't turn onto a spread whose right column would be empty (the
                 // work's short tail, e.g. a lone EPILOGUE) — redirect to the
                 // final-spread anchor so the tail fills both columns. Mirrors the
@@ -120,6 +120,7 @@ pub fn update_highlight_and_show(state: &mut AppState) {
     let refresh_flag = state.needs_layout_refresh.clone();
     let buffer = state.buffer.clone();
     let scrolled_window = state.scrolled_window.clone();
+    let section_starts: Option<Vec<bool>> = state.section_starts().map(|s| s.to_vec());
 
     glib::idle_add_local_once(move || {
         if let Some(iter) = buffer.iter_at_line(scroll_to as i32) {
@@ -133,7 +134,7 @@ pub fn update_highlight_and_show(state: &mut AppState) {
         // Defer clip calculation to the next idle tick so line_yrange
         // returns accurate heights after the widget is visible and laid out.
         glib::idle_add_local_once(move || {
-            super::scroll::update_bottom_clip_public(&text_view, &bottom_clip, &scrolled_window, scroll_to, line_count, is_prose);
+            super::scroll::update_bottom_clip_public(&text_view, &bottom_clip, &scrolled_window, scroll_to, line_count, is_prose, section_starts.as_deref());
             loading_flag.set(false);
             // Signal the resize tick to refresh layout once line metrics
             // are valid (may take one or more frames after the scrolled

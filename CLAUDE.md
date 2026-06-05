@@ -221,6 +221,28 @@ Key files: `src/input/actions/concordance.rs`, `src/concordance.rs`, `src/db/con
 
 Compiled-in defaults in `keymap_config.rs` are overridden by `~/.config/linux-lit/keymap.json` (stowed from `~/tty-dotfiles/linux-lit/`). When changing keybinds, **always update both files** or the JSON will silently override your compiled changes.
 
+## Pagination & Scene Boundaries
+
+**Scene/section boundaries are authoritative metadata, not inferred from text.**
+A boundary is exactly where a line's `(div1, div2)` changes (act, scene). At load,
+`build_line_map` precomputes `LineMap.section_starts: Vec<bool>` (the FIRST buffer
+line of each `(div1,div2)` run); all pagination reads it via
+`AppState::is_section_start` / the `section_break_fn` closure threaded into the
+pure helpers in `viewport.rs` (`clamp_at_section_break`, `back_up_for_speaker`,
+the right-column "begins a new scene" check, `scene_header_top`, `scene_snap_top`).
+
+**Do NOT re-infer a boundary from buffer text** (`line_types::is_act_scene_marker`
+/ `is_separator`) in any pagination path. Those text classifiers are for BUILDING
+the bitmap, for *display* (title bar, synopsis), and as a mid-load fallback only.
+Re-inferring structure that the DB already encodes is what caused the long
+`y GAP` / wrong-spread bug class; the fix was to read `(div1,div2)`. General rule:
+if `lit.db` already encodes a per-line fact (boundary, chapter, dialogue,
+spoken-status), surface it through `LineMap`/`Line` and read it — never
+reconstruct it by classifying buffer text. See
+`docs/troubleshooting/page-turning-mechanics.md` → "The authoritative-boundary
+principle" and the snapshot version (`snapshot.rs SNAPSHOT_VERSION`) which must be
+bumped when `LineMap`'s serialized shape changes.
+
 ## MPV Integration
 
 - MPV is reused across work switches via `loadfile replace` (no new process)

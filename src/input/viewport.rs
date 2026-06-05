@@ -448,49 +448,45 @@ pub(crate) fn trim_block_atoms(
         &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height, &is_stanza_number)
 }
 
-/// Scan (page_top, last_fit] for a line that starts a new chapter or scene
-/// (detected from buffer text via `is_act_scene_marker` or `is_separator`).
-/// If found, clamp last_fit to the line before it so the new section starts
-/// on the next page. Uses text-based detection rather than DB flags so it
-/// works uniformly for prose, verse, and plays.
+/// Scan (page_top, last_fit] for a line that STARTS a new scene/section and, if
+/// found, clamp last_fit to the line before it so the new section opens the next
+/// page.
+///
+/// The boundary is the authoritative `is_break` predicate built from the DB's
+/// `(div1,div2)` columns (`AppState::section_starts`). With an authoritative
+/// boundary, the old "skip my own opening heading, but clamp a later one"
+/// problem dissolves: a page that OPENS at a boundary has `is_break(page_top) ==
+/// true` and we scan from `page_top + 1`, so it never self-clamps; a LATER
+/// boundary inside the range still clamps. No `[They exit.]` header-skip
+/// bridging (the AWW y-GAP).
+///
+/// `is_break` is `None` only mid-load (before the line map exists) — then we
+/// fall back to the legacy text heuristic (`is_act_scene_marker`/`is_separator`)
+/// with its header-skip, so an early reveal still paginates sanely.
+/// Build the authoritative section-boundary closure over a `section_starts`
+/// slice: `is_break(line) == section_starts[line]`. Returned as a concrete
+/// closure so callers can pass `Some(&f)` as `Option<&dyn Fn(usize)->bool>`.
+pub(crate) fn section_break_fn(section_starts: &[bool]) -> impl Fn(usize) -> bool + '_ {
+    move |line: usize| section_starts.get(line).copied().unwrap_or(false)
+}
+
 fn clamp_at_section_break(
     range: VisibleRange,
     page_top: usize,
     text_view: &sourceview5::View,
     buffer: &sourceview5::Buffer,
+    is_break: Option<&dyn Fn(usize) -> bool>,
 ) -> VisibleRange {
-    use crate::db::line_types;
     if range.count <= 1 {
         return range;
     }
-    // Skip the header block at the top of the page: consecutive markers,
-    // separators, blanks, and stage directions starting from page_top.
-    // These are part of the current page's opening and should not trigger
-    // a clamp that would leave the page nearly empty.
-    let mut scan_start = page_top + 1;
-    while scan_start <= range.last_fit {
-        let text = buffer_line_text(buffer, scan_start);
-        let trimmed = text.trim();
-        if line_types::is_act_scene_marker(trimmed)
-            || line_types::is_separator(trimmed)
-            || trimmed.is_empty()
-            || line_types::is_stage_direction(trimmed)
-        {
-            scan_start += 1;
-        } else {
-            break;
+    let break_line = match is_break {
+        Some(is_break) => {
+            // Authoritative path: first boundary strictly after page_top.
+            (page_top + 1..=range.last_fit).find(|&i| is_break(i))
         }
-    }
-    // Scan for the first section break after the header block.
-    let mut break_line = None;
-    for i in scan_start..=range.last_fit {
-        let text = buffer_line_text(buffer, i);
-        let trimmed = text.trim();
-        if line_types::is_act_scene_marker(trimmed) || line_types::is_separator(trimmed) {
-            break_line = Some(i);
-            break;
-        }
-    }
+        None => clamp_break_line_from_text(buffer, page_top, range.last_fit),
+    };
     let break_line = match break_line {
         Some(b) => b,
         None => return range,
@@ -511,6 +507,37 @@ fn clamp_at_section_break(
         total_height: total,
         count: clamped_last - page_top + 1,
     }
+}
+
+/// Legacy text-inference fallback for `clamp_at_section_break`, used only before
+/// the line map (and its `section_starts` bitmap) is built. Skips the page's
+/// own opening header block (consecutive markers/separators/blanks/stage
+/// directions) then returns the first act/scene marker or separator after it.
+fn clamp_break_line_from_text(
+    buffer: &sourceview5::Buffer,
+    page_top: usize,
+    last_fit: usize,
+) -> Option<usize> {
+    use crate::db::line_types;
+    let mut scan_start = page_top + 1;
+    while scan_start <= last_fit {
+        let trimmed = buffer_line_text(buffer, scan_start);
+        let trimmed = trimmed.trim();
+        if line_types::is_act_scene_marker(trimmed)
+            || line_types::is_separator(trimmed)
+            || trimmed.is_empty()
+            || line_types::is_stage_direction(trimmed)
+        {
+            scan_start += 1;
+        } else {
+            break;
+        }
+    }
+    (scan_start..=last_fit).find(|&i| {
+        let trimmed = buffer_line_text(buffer, i);
+        let trimmed = trimmed.trim();
+        line_types::is_act_scene_marker(trimmed) || line_types::is_separator(trimmed)
+    })
 }
 
 /// Canonical composition: apply section-break clamping, then
@@ -536,8 +563,9 @@ pub(crate) fn trim_visible_range(
     text_view: &sourceview5::View,
     buffer: &sourceview5::Buffer,
     is_prose: bool,
+    is_break: Option<&dyn Fn(usize) -> bool>,
 ) -> VisibleRange {
-    trim_visible_range_opts(range, page_top, text_view, buffer, is_prose, false)
+    trim_visible_range_opts(range, page_top, text_view, buffer, is_prose, false, is_break)
 }
 
 /// Like `trim_visible_range`, but `relax_underfill` raises the fill-guard
@@ -556,8 +584,9 @@ pub(crate) fn trim_visible_range_opts(
     buffer: &sourceview5::Buffer,
     is_prose: bool,
     relax_underfill: bool,
+    is_break: Option<&dyn Fn(usize) -> bool>,
 ) -> VisibleRange {
-    let r = clamp_at_section_break(range, page_top, text_view, buffer);
+    let r = clamp_at_section_break(range, page_top, text_view, buffer, is_break);
     let r = trim_trailing_speakers(r, page_top, text_view, buffer);
     let r2 = r;
     let r = trim_block_atoms(r, page_top, text_view, buffer, is_prose);
@@ -720,13 +749,41 @@ pub(crate) fn last_dialogue_in_page(buffer: &sourceview5::Buffer, from: usize, c
 /// directions, and the full header block (act/scene markers, separators,
 /// and blanks between them). The page top lands on the earliest header line
 /// so the reader sees "ACT 1 / Scene 1" instead of a bare separator.
-pub(crate) fn back_up_for_speaker(buffer: &sourceview5::Buffer, line: usize) -> usize {
+pub(crate) fn back_up_for_speaker(
+    buffer: &sourceview5::Buffer,
+    line: usize,
+    is_break: Option<&dyn Fn(usize) -> bool>,
+) -> usize {
     use crate::db::line_types;
+    // Authoritative-boundary classifiers: `is_break` (DB div columns) when
+    // available, else the legacy text heuristic (mid-load fallback).
+    let is_section = |idx: usize| -> bool {
+        match is_break {
+            Some(f) => f(idx),
+            None => {
+                let t = buffer_line_text(buffer, idx);
+                let t = t.trim();
+                line_types::is_act_scene_marker(t) || line_types::is_separator(t)
+            }
+        }
+    };
     let mut top = line;
     while top > 0 {
+        // Authoritative path: if the line just above is a section boundary
+        // (the first chrome line of its run), the page top IS that boundary —
+        // stop there. No header-block consume loop: the bitmap marks exactly
+        // one line per boundary, and nothing above it in the run is marked.
+        if is_break.is_some() && is_section(top - 1) {
+            top -= 1;
+            break;
+        }
         let prev = buffer_line_text(buffer, top - 1);
         let trimmed = prev.trim();
-        if line_types::is_act_scene_marker(trimmed) || line_types::is_separator(trimmed) {
+        // Legacy fallback path: consume the whole stacked header block (marker /
+        // separator / blanks). Only reached when `is_break` is None.
+        if is_break.is_none()
+            && (line_types::is_act_scene_marker(trimmed) || line_types::is_separator(trimmed))
+        {
             top -= 1;
             while top > 0 {
                 let above = buffer_line_text(buffer, top - 1);
@@ -742,6 +799,12 @@ pub(crate) fn back_up_for_speaker(buffer: &sourceview5::Buffer, line: usize) -> 
             }
             break;
         }
+        // With the authoritative bitmap, a marker/separator that is NOT a
+        // boundary line (e.g. the lower chrome lines of a run, or a `=====`
+        // separator) is still non-dialogue preamble — back up over it so the
+        // page top lands on the boundary line above, not partway down the title.
+        let is_chrome_text = is_break.is_some()
+            && (line_types::is_act_scene_marker(trimmed) || line_types::is_separator(trimmed));
         // Only back up over a stage direction if it's part of an entrance
         // block (preceded by blank/speaker/stage/header), not a post-dialogue
         // action like "[Countess exits.]" or "[Sings.]".
@@ -760,6 +823,7 @@ pub(crate) fn back_up_for_speaker(buffer: &sourceview5::Buffer, line: usize) -> 
         };
         if trimmed.is_empty()
             || line_types::is_speaker(trimmed)
+            || is_chrome_text
             || is_entrance_stage_dir
             || is_inside_stage_direction(buffer, top - 1)
         {
@@ -771,12 +835,48 @@ pub(crate) fn back_up_for_speaker(buffer: &sourceview5::Buffer, line: usize) -> 
     top
 }
 
-/// Find the best page-top for a forward page turn targeting `target_line`.
-/// Backs up over any non-dialogue content (blanks, speakers, stage directions,
-/// scene markers) immediately preceding the target so transition context is
-/// visible at the top of the new page rather than dropped between pages.
-pub(crate) fn page_turn_top(buffer: &sourceview5::Buffer, target_line: usize) -> usize {
-    back_up_for_speaker(buffer, target_line)
+/// `state`-taking convenience wrapper for `back_up_for_speaker` that builds the
+/// authoritative section-boundary closure from `state.section_starts()`. Use
+/// this from GTK call sites; the bare `back_up_for_speaker` stays for the pure
+/// test mirror and internal helpers that already hold an `is_break`.
+pub(crate) fn back_up_for_speaker_state(state: &AppState, line: usize) -> usize {
+    let sec = state.section_starts();
+    let bf = sec.map(section_break_fn);
+    let is_break = bf.as_ref().map(|f| f as &dyn Fn(usize) -> bool);
+    back_up_for_speaker(&state.buffer, line, is_break)
+}
+
+/// `state`-taking convenience wrapper for `page_turn_top`.
+pub(crate) fn page_turn_top_state(state: &AppState, target_line: usize) -> usize {
+    back_up_for_speaker_state(state, target_line)
+}
+
+/// `state`-taking convenience wrapper for `is_first_dialogue_of_scene`.
+pub(crate) fn is_first_dialogue_of_scene_state(
+    state: &AppState,
+    translation_lines: &[bool],
+    line: usize,
+) -> bool {
+    let sec = state.section_starts();
+    let bf = sec.map(section_break_fn);
+    let is_break = bf.as_ref().map(|f| f as &dyn Fn(usize) -> bool);
+    is_first_dialogue_of_scene(&state.buffer, translation_lines, line, is_break)
+}
+
+/// `state`-taking convenience wrapper for `scene_header_top`.
+pub(crate) fn scene_header_top_state(state: &AppState, line: usize) -> usize {
+    let sec = state.section_starts();
+    let bf = sec.map(section_break_fn);
+    let is_break = bf.as_ref().map(|f| f as &dyn Fn(usize) -> bool);
+    scene_header_top(&state.buffer, line, is_break)
+}
+
+/// `state`-taking convenience wrapper for `chapter_page_top`.
+pub(crate) fn chapter_page_top_state(state: &AppState, target_line: usize) -> usize {
+    let sec = state.section_starts();
+    let bf = sec.map(section_break_fn);
+    let is_break = bf.as_ref().map(|f| f as &dyn Fn(usize) -> bool);
+    chapter_page_top(&state.buffer, target_line, is_break)
 }
 
 /// Returns true when `line` is the first dialogue line of a scene — i.e.
@@ -785,19 +885,38 @@ pub(crate) fn is_first_dialogue_of_scene(
     buffer: &sourceview5::Buffer,
     translation_lines: &[bool],
     line: usize,
+    is_break: Option<&dyn Fn(usize) -> bool>,
 ) -> bool {
     use crate::db::line_types;
     if line == 0 {
         return false;
     }
+    // Authoritative path: `line` is the first dialogue of a scene iff a section
+    // boundary sits between it and the previous dialogue line (i.e. everything
+    // back to a boundary is non-dialogue preamble).
+    let is_section = |idx: usize| -> bool {
+        match is_break {
+            Some(f) => f(idx),
+            None => {
+                let t = buffer_line_text(buffer, idx);
+                let t = t.trim();
+                line_types::is_act_scene_marker(t) || line_types::is_separator(t)
+            }
+        }
+    };
     let mut i = line;
+    // The boundary may be marked on `line` itself (the chrome line) when called
+    // on a page top; treat that as a scene start too.
+    if is_break.is_some() && is_section(line) {
+        return true;
+    }
     while i > 0 {
         i -= 1;
-        let text = buffer_line_text(buffer, i);
-        let t = text.trim();
-        if line_types::is_act_scene_marker(t) || line_types::is_separator(t) {
+        if is_section(i) {
             return true;
         }
+        let text = buffer_line_text(buffer, i);
+        let t = text.trim();
         if t.is_empty()
             || line_types::is_speaker(t)
             || line_types::is_stage_direction(t)
@@ -813,8 +932,30 @@ pub(crate) fn is_first_dialogue_of_scene(
 /// Walk backward from any line within a scene to find the top of the scene
 /// header block (scene marker, separator, blanks above it). Unlike
 /// `back_up_for_speaker`, this crosses dialogue lines to reach the header.
-pub(crate) fn scene_header_top(buffer: &sourceview5::Buffer, line: usize) -> usize {
+pub(crate) fn scene_header_top(
+    buffer: &sourceview5::Buffer,
+    line: usize,
+    is_break: Option<&dyn Fn(usize) -> bool>,
+) -> usize {
     use crate::db::line_types;
+    // Authoritative path: the scene header IS the boundary line at or before
+    // `line` (the first chrome line of this scene's run). Walk back to it.
+    if let Some(f) = is_break {
+        if f(line) {
+            return line;
+        }
+        let mut i = line;
+        while i > 0 {
+            i -= 1;
+            if f(i) {
+                return i;
+            }
+        }
+        // No boundary found above (work opens mid-buffer without one) — fall
+        // back to the speaker back-up so we still land on a sane page top.
+        return back_up_for_speaker(buffer, line, is_break);
+    }
+    // Legacy text-inference fallback (mid-load).
     let mut marker = line;
     let mut i = line;
     while i > 0 {
@@ -830,7 +971,7 @@ pub(crate) fn scene_header_top(buffer: &sourceview5::Buffer, line: usize) -> usi
         }
     }
     if marker == line {
-        return back_up_for_speaker(buffer, line);
+        return back_up_for_speaker(buffer, line, is_break);
     }
     while marker > 0 {
         let text = buffer_line_text(buffer, marker - 1);
@@ -847,12 +988,24 @@ pub(crate) fn scene_header_top(buffer: &sourceview5::Buffer, line: usize) -> usi
 /// Find the page-top for a chapter jump: back up over the speaker name and
 /// any immediately-adjacent scene headers so the chapter's first dialogue
 /// line sits near the viewport top with its speaker visible above it.
-pub(crate) fn chapter_page_top(buffer: &sourceview5::Buffer, target_line: usize) -> usize {
+pub(crate) fn chapter_page_top(
+    buffer: &sourceview5::Buffer,
+    target_line: usize,
+    is_break: Option<&dyn Fn(usize) -> bool>,
+) -> usize {
     use crate::db::line_types;
-    let mut top = back_up_for_speaker(buffer, target_line);
+    let mut top = back_up_for_speaker(buffer, target_line, is_break);
     // Continue backing up over stanza numbers, blanks, and separators
     // to reach the chapter/section header (BOOK I, ACT 1, etc.)
     while top > 0 {
+        // Authoritative path: if the line above is a section boundary, the
+        // chapter header is that line — back up to it and stop.
+        if let Some(f) = is_break {
+            if f(top - 1) {
+                top -= 1;
+                break;
+            }
+        }
         let prev = buffer_line_text(buffer, top - 1);
         let trimmed = prev.trim();
         if line_types::is_stanza_number(trimmed)
@@ -860,7 +1013,7 @@ pub(crate) fn chapter_page_top(buffer: &sourceview5::Buffer, target_line: usize)
             || line_types::is_separator(trimmed)
         {
             top -= 1;
-        } else if line_types::is_act_scene_marker(trimmed) {
+        } else if is_break.is_none() && line_types::is_act_scene_marker(trimmed) {
             top -= 1;
             break;
         } else {
@@ -955,7 +1108,12 @@ pub(crate) fn last_fully_visible_line(state: &AppState, top: usize) -> usize {
     // Trim because this function feeds page-boundary placement decisions
     // (next_page_top): we don't want to put a partial verse stanza or
     // dangling speaker at the BOTTOM of the new page.
-    let trimmed = trim_visible_range(range, top, &state.text_view, &state.buffer, is_prose);
+    let sec = state.section_starts();
+    let bf = sec.map(section_break_fn);
+    let is_break = bf.as_ref().map(|f| f as &dyn Fn(usize) -> bool);
+    let trimmed = trim_visible_range(
+        range, top, &state.text_view, &state.buffer, is_prose, is_break,
+    );
     trimmed.last_fit
 }
 
@@ -970,6 +1128,11 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
         return ColumnSplit { split: page_top, page_end: page_top, next_page_top: line_count };
     }
     let is_prose = state.is_prose();
+    // Authoritative section-boundary predicate (DB div columns), shared by both
+    // columns and the "right column begins a new scene" check below.
+    let sec = state.section_starts();
+    let bf = sec.map(section_break_fn);
+    let is_break = bf.as_ref().map(|f| f as &dyn Fn(usize) -> bool);
 
     // Left column. Unlike a single-column page, a dialogue/verse block (or a
     // stage direction) that doesn't fully fit at the bottom is NOT a problem
@@ -984,7 +1147,7 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
         let guard = descender_guard_px(&state.text_view, page_top);
         let usable = left_h - guard - BASE_BOTTOM_MARGIN;
         let r = visible_range(&state.text_view, &state.buffer, page_top, line_count, usable);
-        let r = clamp_at_section_break(r, page_top, &state.text_view, &state.buffer);
+        let r = clamp_at_section_break(r, page_top, &state.text_view, &state.buffer, is_break);
         let r = trim_trailing_speaker_only(r, page_top, &state.text_view, &state.buffer);
         // Keep multi-line stage directions atomic across the split: if the
         // left column would end partway through a `[...]` block (the next line
@@ -1027,18 +1190,28 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
                 break;
             }
         }
-        let at_break = hi < line_count && {
-            let t = buffer_line_text(&state.buffer, hi);
-            let t = t.trim();
-            line_types::is_act_scene_marker(t) || line_types::is_separator(t)
-        };
+        // Does the right column OPEN on a section boundary? Authoritative path:
+        // `is_break(hi)`. Mid-load fallback: legacy marker/separator text check.
+        let at_break = hi < line_count
+            && match is_break {
+                Some(is_break) => is_break(hi),
+                None => {
+                    let t = buffer_line_text(&state.buffer, hi);
+                    let t = t.trim();
+                    line_types::is_act_scene_marker(t) || line_types::is_separator(t)
+                }
+            };
         // Exempt the work's FINAL trailing section (EPILOGUE): it has nowhere to
         // be pushed, and last_page_top/G expect it in the right column. Detected
-        // by "no further section marker after `hi`" (it is the last section).
-        let is_final_section = at_break && !((hi + 1)..line_count).any(|i| {
-            let t = buffer_line_text(&state.buffer, i);
-            line_types::is_act_scene_marker(t.trim())
-        });
+        // by "no further section boundary after `hi`" (it is the last section).
+        let is_final_section = at_break
+            && match is_break {
+                Some(is_break) => !((hi + 1)..line_count).any(is_break),
+                None => !((hi + 1)..line_count).any(|i| {
+                    let t = buffer_line_text(&state.buffer, i);
+                    line_types::is_act_scene_marker(t.trim())
+                }),
+            };
         if at_break && !is_final_section {
             // The right column would begin a NEW (non-final) scene → end the page
             // here. Left column shows the scene's tail (through the exit/blanks at
@@ -1066,7 +1239,7 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
         // right-column content, not a mid-column intrusion. (Without the
         // exception, `would_empty_right_column` treats the canonical final spread
         // as empty and G/last_page_top skip it.)
-        let clamped = clamp_at_section_break(r, split, &state.right_view, &state.buffer);
+        let clamped = clamp_at_section_break(r, split, &state.right_view, &state.buffer, is_break);
         let r = if clamped.last_fit < split && r.last_fit + 1 >= line_count {
             r
         } else {
@@ -1075,11 +1248,34 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
         // Right column is the bottom of the spread: relax the underfill guard
         // so a too-tall block splits across the boundary to fill the column
         // rather than leaving a mid-spread gap.
-        trim_visible_range_opts(r, split, &state.right_view, &state.buffer, is_prose, true)
+        trim_visible_range_opts(r, split, &state.right_view, &state.buffer, is_prose, true, is_break)
     } else {
         visible_range(&state.right_view, &state.buffer, split, line_count, 1)
     };
-    let next_top = (right.last_fit + 1).min(line_count);
+    // The page ends at `right.last_fit` (trimmed to the last DIALOGUE line). The
+    // lines immediately after it may be a pure non-dialogue tail — a scene's
+    // trailing `[They exit.]` / blank that the trim correctly dropped. Such a
+    // tail is NOT a page of its own, so the next page top must skip it to the
+    // next real page (the next dialogue, backed up to its scene heading).
+    // Without this, `prev_page_top` would tile a tiny dialogue-less tail spread
+    // (the AWW Scene-1→2 underfill). Only skip when everything between is
+    // non-dialogue; otherwise advance one line as before.
+    let raw_next = (right.last_fit + 1).min(line_count);
+    let next_dlg = next_dialogue_from(&state.buffer, raw_next, line_count);
+    let next_top = if next_dlg > raw_next
+        && next_dlg < line_count
+        && (raw_next..next_dlg).all(|l| !is_dialogue_line(&state.buffer, l))
+    {
+        back_up_for_speaker_state(state, next_dlg)
+    } else {
+        raw_next
+    };
+    if page_top == 501 {
+        let txt = |l: usize| buffer_line_text(&state.buffer, l).trim().chars().take(20).collect::<String>();
+        crate::log_fmt!("CS501_DBG: top={} split={} '{}' page_end={} '{}' next={} clamped_was secstart[504]={} secstart[505]={}",
+            page_top, split, txt(split), right.last_fit, txt(right.last_fit), next_top,
+            state.is_section_start(504), state.is_section_start(505));
+    }
     ColumnSplit { split, page_end: right.last_fit, next_page_top: next_top }
 }
 
@@ -1132,7 +1328,7 @@ pub(crate) fn next_page_top(state: &AppState, top: usize) -> NextPage {
     if next_dialogue >= line_count {
         return NextPage { new_top: line_count, next_dialogue: line_count };
     }
-    let new_top = back_up_for_speaker(&state.buffer, next_dialogue);
+    let new_top = back_up_for_speaker_state(state, next_dialogue);
     NextPage { new_top, next_dialogue }
 }
 
@@ -1208,29 +1404,14 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
     let fwd_boundary = |b: usize| -> usize {
         if two_col { column_split(state, b).next_page_top } else { next_page_top(state, b).new_top }
     };
-    let dbg = current_top >= 776 && current_top <= 784; // AWW scene case
     loop {
         let next = fwd_boundary(probe);
-        if dbg && probe + 80 >= current_top {
-            let cs = column_split(state, probe);
-            let txt = |l: usize| buffer_line_text(&state.buffer, l).trim().chars().take(24).collect::<String>();
-            crate::log_fmt!("PPT_DBG: ct={} probe={} split={} '{}' page_end={} '{}' next={}",
-                current_top, probe, cs.split, txt(cs.split), cs.page_end, txt(cs.page_end), cs.next_page_top);
-        }
         if next == current_top {
             // Exact tile — `probe` is the page directly before current_top.
             let next_dialogue = next_dialogue_from(&state.buffer, probe, line_count);
             return NextPage { new_top: probe, next_dialogue };
         }
         if next > current_top || next <= probe {
-            if dbg {
-                let txt = |l: usize| buffer_line_text(&state.buffer, l).trim().chars().take(24).collect::<String>();
-                let te = fwd_boundary(top);
-                crate::log_fmt!("PPT_DBG: STOP probe={} next={} return top={} end={}", probe, next, top, te);
-                for l in te..current_top.min(te + 28) {
-                    crate::log_fmt!("PPT_DBG:   gap {} dlg={} '{}'", l, is_dialogue_line(&state.buffer, l), txt(l));
-                }
-            }
             // `probe`'s page overshoots current_top (or no forward progress) — it
             // would OVERLAP. Keep the last non-overshooting candidate (`top`).
             // With the right-column section clamp restored, scene-start tops are
@@ -2005,6 +2186,19 @@ mod headless_pagination_tests {
         last_fit
     }
 
+    /// Bitmap-driven mirror of the AUTHORITATIVE `clamp_at_section_break` path
+    /// (the `Some(is_break)` branch): clamp to the line before the first section
+    /// boundary strictly after `page_top`. No header-skip — a boundary AT
+    /// `page_top` is the page's own opening (we scan from `page_top + 1`).
+    fn clamp_at_section_break_bitmap(
+        section_starts: &[bool], page_top: usize, last_fit: usize,
+    ) -> usize {
+        match (page_top + 1..=last_fit).find(|&i| section_starts[i]) {
+            Some(b) => b.saturating_sub(1).max(page_top),
+            None => last_fit,
+        }
+    }
+
     // --- clamp_at_section_break behavior contract -------------------------------
     // These encode the TWO requirements that fought each other at runtime so any
     // future change is verified here, not on a 45-min fuzz sweep:
@@ -2063,38 +2257,75 @@ mod headless_pagination_tests {
         );
     }
 
-    // KNOWN BUG (the AWW 25-line `y GAP`). This is the EXACT real pattern: the
-    // right column's first line is dialogue, IMMEDIATELY followed by
-    // blank / [They exit.] / blank / ACT 2 — no dialogue between. The header-skip
-    // (blanks + stage directions + markers) then runs from page_top+1 straight
-    // through the ACT 2 marker and skips it, so nothing clamps and the right
-    // column runs into the next act → `y` from the next scene skips this scene's
-    // tail.
+    // FIXED (the AWW 25-line `y GAP`). The EXACT real pattern: the right column's
+    // first line is dialogue, IMMEDIATELY followed by blank / [They exit.] /
+    // blank / ACT 2 — no dialogue between. The OLD text heuristic's header-skip
+    // (blanks + stage directions + markers from page_top+1) ran straight through
+    // the ACT 2 marker and skipped it, so nothing clamped and the right column
+    // ran into the next act → `y` from the next scene skipped this scene's tail.
     //
-    // The obvious fix (only skip the header when `page_top` itself is a heading)
-    // FIXES this case but BREAKS the full-pagination walk on AWW (page at line
-    // 317, no marker nearby, stops advancing — see the shakespeare_pagination_*
-    // tests). The interaction with trim/back_up is subtle and unsolved. Left
-    // `#[ignore]` as a regression target: when you attempt the fix, remove the
-    // attribute and ensure BOTH this AND every shakespeare_pagination_* test pass.
+    // The fix is the AUTHORITATIVE boundary bitmap (DB `(div1,div2)`): the
+    // boundary is marked on the ACT 2 chrome line (here, line 4) and the clamp is
+    // simply "the line before the first boundary strictly after page_top". No
+    // header-skip to bridge over, so the marker is no longer skipped. The
+    // [They exit.] / blank at 1..3 belong to the ending scene and stay on the
+    // page → clamp at 3 (ACT 2 is at 4).
     #[test]
-    #[ignore = "known AWW y-GAP; naive fix breaks full-pagination walk (see comment)"]
     fn clamp_when_split_dialogue_is_immediately_followed_by_exit_then_marker() {
-        let lines = play_lines(&[
-            "What I can help thee to thou shalt not miss.",  // 0 dialogue (page_top)
-            "",                                              // 1 blank
-            "[They exit.]",                                  // 2 stage dir
-            "",                                              // 3 blank
-            "ACT 2",                                         // 4 marker
-            "=====",                                         // 5 separator
-            "Scene 1",                                       // 6 marker
-            "[Enter the Duke.]",                             // 7 stage dir
-            "Second act dialogue line one.",                 // 8 dialogue
-        ]);
-        let last_fit = lines.len() - 1;
+        // Boundary bitmap: ACT 2 (index 4) is the start of the new (div1,div2)
+        // run; everything before it is the ending scene.
+        let section_starts = [
+            false, // 0 dialogue (page_top, in the ending scene)
+            false, // 1 blank
+            false, // 2 [They exit.] (ending scene's)
+            false, // 3 blank
+            true,  // 4 ACT 2  <-- authoritative boundary
+            false, // 5 =====
+            false, // 6 Scene 1
+            false, // 7 [Enter the Duke.]
+            false, // 8 second-act dialogue
+        ];
+        let last_fit = section_starts.len() - 1;
         assert_eq!(
-            clamp_at_section_break_pure(&lines, 0, last_fit), 3,
-            "dialogue at split, then exit/blank, then ACT marker → clamp before the marker"
+            clamp_at_section_break_bitmap(&section_starts, 0, last_fit), 3,
+            "dialogue at split, then exit/blank, then ACT boundary → clamp before the marker"
+        );
+    }
+
+    #[test]
+    fn clamp_bitmap_page_opening_on_boundary_does_not_self_clamp() {
+        // A page that OPENS on a boundary (page_top is the ACT chrome line) must
+        // keep its whole title + dialogue: the scan starts at page_top+1, so the
+        // boundary AT page_top never triggers a clamp.
+        let section_starts = [
+            true,  // 0 ACT 1 (page_top — this page's own opening)
+            false, // 1 =====
+            false, // 2 Scene 1
+            false, // 3 dialogue
+            false, // 4 dialogue
+        ];
+        assert_eq!(
+            clamp_at_section_break_bitmap(&section_starts, 0, 4), 4,
+            "a page opening on its own boundary keeps its whole title + dialogue"
+        );
+    }
+
+    #[test]
+    fn clamp_bitmap_later_boundary_inside_range_clamps() {
+        // Opening boundary at page_top (skipped), a later boundary at 6 clamps.
+        let section_starts = [
+            true,  // 0 ACT 1 (page_top)
+            false, // 1 =====
+            false, // 2 Scene 1
+            false, // 3 dialogue
+            false, // 4 dialogue
+            false, // 5 [Exit.]
+            true,  // 6 Scene 2  <-- later boundary clamps here
+            false, // 7 dialogue
+        ];
+        assert_eq!(
+            clamp_at_section_break_bitmap(&section_starts, 0, 7), 5,
+            "opening boundary skipped; later Scene 2 boundary clamps at 6-1=5"
         );
     }
 

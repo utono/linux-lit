@@ -394,6 +394,24 @@ impl AppState {
         }
     }
 
+    /// Authoritative scene/section-boundary check for a buffer line, derived
+    /// from the DB `(div1,div2)` columns at load (`LineMap.section_starts`).
+    /// Returns `false` when the bitmap is absent (mid-load) or out of range —
+    /// callers needing a mid-load fallback consult the buffer text directly.
+    pub fn is_section_start(&self, buffer_line: usize) -> bool {
+        self.line_map
+            .as_ref()
+            .and_then(|lm| lm.section_starts.get(buffer_line).copied())
+            .unwrap_or(false)
+    }
+
+    /// Borrow the section-boundary bitmap, if a line map is loaded. Pagination
+    /// helpers thread this slice down so they consult the authoritative DB
+    /// boundary instead of re-inferring it from buffer text.
+    pub fn section_starts(&self) -> Option<&[bool]> {
+        self.line_map.as_ref().map(|lm| lm.section_starts.as_slice())
+    }
+
     /// Get line_mapping.id for a buffer line, if available.
     pub fn line_mapping_id_for_buffer(&self, buffer_line: usize) -> Option<i64> {
         let work_idx = self.work_line_for_buffer(buffer_line)?;

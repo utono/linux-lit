@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::db::models::Work;
 use crate::text_file_map::LineMap;
 
-pub const SNAPSHOT_VERSION: u32 = 3;
+pub const SNAPSHOT_VERSION: u32 = 4;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct WorkSnapshot {
@@ -212,6 +212,7 @@ mod tests {
             dialogue_buffer_lines: vec![0, 2],
             sentence_groups: Vec::new(),
             chapter_breaks: vec![],
+            section_starts: vec![true, false, false],
         }
     }
 

@@ -32,7 +32,7 @@ pub use super::highlight::{
 
 use super::viewport::{
     last_fully_visible_line, next_page_top, prev_page_top, NextPage,
-    back_up_for_speaker, page_turn_top, chapter_page_top,
+    back_up_for_speaker_state, page_turn_top_state, chapter_page_top_state,
     is_dialogue_line, is_blank_buffer_line,
     next_dialogue_line, prev_dialogue_line, buffer_line_text,
     next_dialogue_from, is_line_fully_visible, lines_per_page,
@@ -420,10 +420,10 @@ pub fn toggle_column_layout(state: &mut AppState) {
     // stale after a toggle, so invalidate it before recomputing.
     invalidate_page_tops(state);
 
-    let top = back_up_for_speaker(&state.buffer, state.page_top_line);
+    let top = back_up_for_speaker_state(state, state.page_top_line);
     set_page_instant(state, top);
     if !is_line_on_screen(state, state.current_line) {
-        let new_top = page_turn_top(&state.buffer, state.current_line);
+        let new_top = page_turn_top_state(state, state.current_line);
         set_page_instant(state, new_top);
     }
     after_page_change(state, PageChangeReason::JumpToLine);
@@ -459,23 +459,31 @@ fn scene_snap_top(state: &AppState, line_count: usize) -> Option<usize> {
     if would_empty_right_column(state, split) {
         return None;
     }
-    // Walk back from the right column's first dialogue: if we reach a scene
-    // marker before any other dialogue line, this is the scene's first line.
+    // Walk back from the right column's first dialogue: if we reach a section
+    // boundary before any other dialogue line, this is the scene's first line.
+    // Authoritative boundary (DB div columns) when loaded; legacy text marker
+    // check as the mid-load fallback.
+    let has_bitmap = state.section_starts().is_some();
+    let is_section = |idx: usize| -> bool {
+        if has_bitmap {
+            state.is_section_start(idx)
+        } else {
+            line_types::is_act_scene_marker(buffer_line_text(&state.buffer, idx).trim())
+        }
+    };
     let mut i = rc_first_dlg;
     while i > split {
         i -= 1;
-        let text = buffer_line_text(&state.buffer, i);
-        if line_types::is_act_scene_marker(text.trim()) {
+        if is_section(i) {
             return Some(split);
         }
         if is_dialogue_line(&state.buffer, i) {
             return None;
         }
     }
-    // No marker between split and the first dialogue: also check the marker may
-    // sit exactly at `split` (right column opens on the marker line itself).
-    let split_text = buffer_line_text(&state.buffer, split);
-    if line_types::is_act_scene_marker(split_text.trim()) {
+    // No boundary between split and the first dialogue: also check the boundary
+    // may sit exactly at `split` (right column opens on the marker line itself).
+    if is_section(split) {
         Some(split)
     } else {
         None
@@ -703,7 +711,7 @@ pub fn scroll_cursor_top(state: &mut AppState) {
     }
     state.page_back_stack.clear();
     state.page_back_stack.push(state.page_top_line);
-    let top = back_up_for_speaker(&state.buffer, state.current_line);
+    let top = back_up_for_speaker_state(state, state.current_line);
     crate::logging::log(&format!(
         "ZT: current_line={} effective_top={}", state.current_line, top
     ));
@@ -726,7 +734,7 @@ pub fn page_backward_bottom(state: &mut AppState) {
     let line_count = state.effective_line_count();
     let (prev_top, new_top) = if let Some(prev) = state.page_back_stack.pop() {
         let nd = next_dialogue_from(&state.buffer, prev, line_count);
-        let top = back_up_for_speaker(&state.buffer, nd);
+        let top = back_up_for_speaker_state(state, nd);
         log_fmt!("NAV_BACK_BOTTOM: stack pop prev={} new_top={} from page_top={}",
                  prev, top, state.page_top_line);
         (prev, top)
@@ -734,7 +742,7 @@ pub fn page_backward_bottom(state: &mut AppState) {
         let np = prev_page_top(state, state.page_top_line);
         log_fmt!("NAV_BACK_BOTTOM: prev_page_top new_top={} from page_top={}",
                  np.new_top, state.page_top_line);
-        let top = back_up_for_speaker(&state.buffer, np.new_top);
+        let top = back_up_for_speaker_state(state, np.new_top);
         (np.new_top, top)
     };
     let _ = prev_top;
@@ -954,7 +962,7 @@ pub fn jump_to_prev_chapter(state: &mut AppState) {
                 if is_line_fully_visible(state, line_idx) {
                     update_highlight_only(state);
                 } else {
-                    let top = chapter_page_top(&state.buffer, line_idx);
+                    let top = chapter_page_top_state(state, line_idx);
                     set_page_instant(state, top);
                 }
             }
@@ -1005,7 +1013,7 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
                 if is_line_fully_visible(state, line_idx) {
                     update_highlight_only(state);
                 } else {
-                    let top = chapter_page_top(&state.buffer, line_idx);
+                    let top = chapter_page_top_state(state, line_idx);
                     set_page_instant(state, top);
                 }
             }
@@ -1344,7 +1352,7 @@ pub fn jump_to_line(state: &mut AppState, buffer_line: usize) {
     state.current_line = buffer_line;
     state.page_back_stack.clear();
     state.page_back_stack.push(state.page_top_line);
-    let top = page_turn_top(&state.buffer, buffer_line);
+    let top = page_turn_top_state(state, buffer_line);
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {

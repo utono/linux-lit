@@ -3,6 +3,40 @@
 Reference for debugging page-forward (`x`), page-backward (`y`), and related
 navigation in e-reader mode.
 
+## The authoritative-boundary principle (read this BEFORE touching pagination)
+
+Every line in `lit.db` carries `(div1, div2)` (act, scene). **A scene/section
+boundary is exactly where `(div1, div2)` changes — full stop.** The `ACT N` /
+`=====` / `Scene N` lines you see in the buffer are display chrome that linux-lit
+synthesizes; they are NOT the source of truth. The source of truth is the loaded
+metadata.
+
+linux-lit therefore precomputes a boundary bitmap at load
+(`LineMap.section_starts`, built in `build_line_map`) and all pagination consults
+it through one predicate (`AppState::is_section_start` / the `section_break_fn`
+closure threaded into the pure helpers). **Never re-infer a boundary from buffer
+text in pagination code.** `line_types::is_act_scene_marker` / `is_separator`
+survive only as a mid-load fallback (before the line map exists) and for *display*
+styling (title bar, synopsis) — never for deciding where a page ends.
+
+Why this matters (the expensive lesson): for a long time the pagination paths
+re-inferred "is this a section break?" from the raw `.txt` text. That inference
+is fragile exactly at scene transitions — a scene-ending column reads `dialogue →
+blank → [They exit.] → blank → ACT 2 → ===== → Scene 1`, and the text-based
+"header-block skip" bridged across the exit/blanks straight into the `ACT 2`
+marker and skipped it, so the column ran into the next act (the AWW 25-line `y
+GAP`). Two attempts to patch the text heuristic caused catastrophic regressions
+(169 test fails; `JumpEnd` → a 1-line page). The whole class dissolved the moment
+the boundary was read from `(div1,div2)` instead of guessed from text. **If you
+find yourself reasoning about which buffer lines "look like" a marker to decide a
+page boundary, stop and read the bitmap instead.**
+
+Pattern when adding/keeping a per-line structural fact (boundary, chapter,
+dialogue, spoken-status): if the DB already encodes it, surface it through
+`LineMap` / `Line` and read it — do not reconstruct it by classifying buffer
+text. Reconstruction drifts from the data and the drift surfaces as a pagination
+bug three transformations downstream.
+
 ## The pagination model (read this first)
 
 linux-lit paginates a **flat buffer of lines** into pages on the fly — there is
@@ -81,11 +115,18 @@ Key files:
   `page_backward_bottom`, all jump functions
 - `src/input/viewport.rs` — `next_page_top`, `prev_page_top`,
   `last_fully_visible_line`, `visible_range`, `trim_visible_range`,
-  `clamp_at_section_break`, `back_up_for_speaker`, `is_dialogue_line`,
-  `is_inside_stage_direction`
+  `clamp_at_section_break`, `section_break_fn`, `back_up_for_speaker`
+  (+ `_state` wrappers), `is_dialogue_line`, `is_inside_stage_direction`
+- `src/text_file_map.rs` — `build_line_map`, `build_section_starts`
+  (the `(div1,div2)` boundary bitmap), `LineMap.section_starts`
+- `src/app.rs` — `AppState::is_section_start` / `section_starts` (read the bitmap)
 - `src/input/scroll.rs` — `set_page`, `set_page_instant`, `snap_scroll_to_line`
 - `src/db/line_types.rs` — `is_dialogue`, `is_stage_direction`, `is_speaker`,
-  `is_act_scene_marker`, `is_separator`
+  `is_act_scene_marker`, `is_separator` (text classifiers — for the line-map
+  build and the mid-load pagination FALLBACK only; not the boundary source of
+  truth, see *The authoritative-boundary principle*)
+- `src/db/models.rs` — `Line.div1` / `div2` / `line_in_div` (the authoritative
+  per-line act/scene metadata)
 
 ## page_back_stack rules
 
@@ -270,37 +311,55 @@ creating a stuck loop.
 
 ## Section-break clamping
 
-A new ACT/SCENE must start a fresh spread, never appear mid-column. `column_split`
-enforces this in three places:
+> **Boundaries are AUTHORITATIVE, not inferred.** A scene/section boundary is
+> exactly where a line's `(div1, div2)` changes — that is unambiguous in the DB.
+> At load, `build_line_map` precomputes a `LineMap.section_starts: Vec<bool>`
+> bitmap (one bit per buffer line, `true` on the FIRST line of each new
+> `(div1,div2)` run) and every pagination decision below reads it via the
+> `is_section_start(line)` predicate / `section_break_fn` closure. Do **not**
+> re-derive a boundary from buffer text (`is_act_scene_marker` / `is_separator`)
+> in pagination code — see *The authoritative-boundary principle* at the top of
+> this file. (Those text checks survive only as a mid-load FALLBACK inside the
+> helpers, used before the line map exists.)
 
-- **Left column:** `clamp_at_section_break` scans `[page_top, left.last_fit]` for
-  a marker/separator (skipping the page's own opening header block — consecutive
-  markers/separators/blanks/stage-directions from `page_top + 1` — so a page that
-  STARTS at a scene header doesn't clamp on itself) and clamps `last_fit` to the
-  line before the break.
+A new ACT/SCENE must start a fresh spread, never appear mid-column. `column_split`
+enforces this in three places, all driven by the `section_starts` bitmap:
+
+- **Left column:** `clamp_at_section_break` scans `(page_top, left.last_fit]` for
+  the first line where `is_section_start` is true and clamps `last_fit` to the
+  line before it. A page that STARTS at a boundary (`is_section_start(page_top)`)
+  never self-clamps because the scan begins at `page_top + 1` — the boundary line
+  is the page's own opening heading. (No more text-based "header-block skip":
+  with an authoritative single-line boundary there is nothing to bridge across,
+  which is what eliminated the AWW `y GAP` where the old header-skip ran straight
+  through an `ACT 2` marker hidden behind a `[They exit.]`.)
 - **Right column would BEGIN a new scene:** if skipping leading blanks/exits from
-  `split` lands on a section marker, the previous scene ended in the left column.
-  `column_split` ends the page there: `page_end` before the marker, `next_page_top`
-  = the marker, right column empty. The new scene starts the next spread. This is
-  what makes `y` from the next scene's first page tile into this page exactly
-  (`column_split(prev).next_page_top == scene_top`). **Without it** the right
-  column filled the new scene (the marker was skipped as a "header"), no page
-  ended at the boundary, and `y` from the scene start skipped the previous
-  scene's tail (the 1H4 soliloquy bug).
-- **Right column interior:** `clamp_at_section_break` again, so a marker partway
+  `split` lands on a boundary line (`is_section_start(hi)`), the previous scene
+  ended in the left column. `column_split` ends the page there: `page_end` before
+  the boundary, `next_page_top` = the boundary, right column empty. The new scene
+  starts the next spread, so `y` from it tiles into this page exactly
+  (`column_split(prev).next_page_top == scene_top`).
+- **Right column interior:** `clamp_at_section_break` again, so a boundary partway
   down the right column starts the next spread.
 
-**The one exemption: the work's FINAL trailing section** (an EPILOGUE). It has
-nowhere to be pushed and `last_page_top`/`G` expect it to fill the right column,
-so when clamping would empty the right column AND the unclamped range already
-reaches the work's end, `column_split` keeps it unclamped. Detected by "no
-further section marker after this one".
+**The one exemption: the work's FINAL trailing section** (an EPILOGUE, e.g. AWW's
+`div1=6, div2=0`). It has nowhere to be pushed and `last_page_top`/`G` expect it
+to fill the right column, so when clamping would empty the right column AND the
+unclamped range already reaches the work's end, `column_split` keeps it
+unclamped. Detected by "no further `is_section_start` after this one".
 
-Edge case: when the section break is very close to `page_top` (1-2 lines),
-the clamped page is trivially small. `next_page_top` then computes a
-`next_dialogue` whose `back_up_for_speaker` pulls back behind the break,
-producing `new_top <= page_top` (no progress). `page_forward` handles this
-with the fallback `candidate_top = next_dialogue`.
+**Non-dialogue tail skip (the AWW Scene-1→2 underfill).** A scene's last spread
+ends on its last *dialogue* line; the trailing `[They exit.]` / blank lines the
+trim drops are NOT a page of their own. `column_split` therefore advances
+`next_page_top` past a pure non-dialogue tail to the next real page top
+(`back_up_for_speaker` of the next dialogue). Without this, `prev_page_top` would
+tile a tiny dialogue-less spread on the way back (a 2-line UNBALANCED spread).
+
+Edge case: when the boundary is very close to `page_top` (1-2 lines), the clamped
+page is trivially small. `next_page_top` then computes a `next_dialogue` whose
+`back_up_for_speaker` pulls back behind the break, producing `new_top <=
+page_top` (no progress). `page_forward` handles this with the fallback
+`candidate_top = next_dialogue`.
 
 ## Two-column right-column positioning
 
@@ -533,31 +592,30 @@ Scenes are encoded in the database via `div1` (act) and `div2` (scene)
 fields on each line. `line_in_div` gives the line's position within its
 scene. These are loaded in `db/queries.rs` and stored on each `Line` struct.
 
-### Scene markers in the text buffer
+### Scene markers in the text buffer (display chrome, NOT the boundary source)
 
 Act/scene markers are lines like `ACT 1`, `SCENE 2`, `## Act 3, Scene 1`,
-`PROLOGUE`, `EPILOGUE`, or `INDUCTION`. Detected by
-`line_types::is_act_scene_marker()` which strips optional `## ` markdown
-prefix, uppercases, and checks for keyword prefixes. Standalone keywords
-(PROLOGUE, EPILOGUE, INDUCTION) must not be followed by lowercase
-continuation text.
-
-Separators (`=====`) often accompany scene markers to form a header block.
+`PROLOGUE`, `EPILOGUE`, or `INDUCTION`. `line_types::is_act_scene_marker()`
+(strips optional `## ` prefix, uppercases, checks keyword prefixes) and
+`is_separator()` (`=====`) detect them. **These are synthesized display chrome.**
+The authoritative scene boundary is the `(div1,div2)` change captured in
+`LineMap.section_starts` (see *The authoritative-boundary principle*). The text
+classifiers are used to BUILD that bitmap (and as a mid-load fallback), not to
+make pagination decisions at runtime.
 
 ### Scene headers and page boundaries
 
-`back_up_for_speaker` is the key function that positions page tops. When a
-dialogue line would be the first on a new page, it backs up over:
+`back_up_for_speaker` positions page tops. When a dialogue line would be the
+first on a new page, it backs up over blanks, speaker names, and entrance stage
+directions — and, when the authoritative bitmap is present, it STOPS at the
+`is_section_start` boundary line (the chrome line that opens the scene). This puts
+the scene header (`ACT 1 / SCENE 2 / =====`) at the page top instead of splitting
+it across pages. (Call it via the `back_up_for_speaker_state` wrapper, which
+builds the boundary closure from `state.section_starts()`; the bare
+`back_up_for_speaker(buffer, line, is_break)` is for the pure test mirror.)
 
-- Blank lines, speaker names, entrance stage directions
-- Scene markers and separators (the full header block)
-
-This ensures scene headers like "ACT 1 / SCENE 2 / ======" appear at the
-top of the page rather than being split across pages.
-
-`clamp_at_section_break` in `trim_visible_range` scans for markers/separators
-within the visible range and clamps `last_fit` to end the page before the
-break, so new scenes start fresh.
+`clamp_at_section_break` clamps `last_fit` to the line before the first
+`is_section_start` boundary in the visible range, so new scenes start fresh.
 
 ### Title bar scene display
 
