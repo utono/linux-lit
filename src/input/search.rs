@@ -355,18 +355,23 @@ fn land_on_match_idx(state: &mut AppState, new_idx: usize) {
         .update_counter(state.search_match_idx, total);
     push_page_back_dedup(state);
 
-    match state.config.navigation_mode {
-        crate::config::NavigationMode::Scroll => crate::input::scroll::center_cursor(state),
-        crate::config::NavigationMode::EReader => {
-            let top = crate::input::navigation::canonical_page_top_for(state, line);
-            crate::input::scroll::set_page_instant(state, top);
-            // canonical_page_top_for backs up to the section/chapter header, so
-            // on a degenerate lone-line header spread (Err/Tro at a short
-            // viewport) the matched line can land off-page below it. Advance
-            // until the cursor is actually visible — same guard the chapter
-            // jump uses (navigation.rs jump_to_next_chapter).
-            crate::input::navigation::ensure_cursor_visible_ereader(state, line);
-        }
+    // Land on the CANONICAL spread for the match. Pagination is driven by
+    // column_count(), NOT navigation_mode: a two-column work paginates into
+    // e-reader spreads even when navigation_mode == Scroll (page_forward uses
+    // next_page_top regardless of mode), so the canonical landing must too.
+    // Only a true single-column SCROLL view free-scrolls the cursor to center.
+    let paginated = state.column_count() == 2
+        || matches!(state.config.navigation_mode, crate::config::NavigationMode::EReader);
+    if paginated {
+        let top = crate::input::navigation::canonical_page_top_for(state, line);
+        crate::input::scroll::set_page_instant(state, top);
+        // canonical_page_top_for backs up to the section/chapter header, so on a
+        // degenerate lone-line header spread (Err/Tro at a short viewport) the
+        // matched line can land off-page below it. Advance until the cursor is
+        // actually visible — same guard the chapter jump uses.
+        crate::input::navigation::ensure_cursor_visible_ereader(state, line);
+    } else {
+        crate::input::scroll::center_cursor(state);
     }
 }
 
