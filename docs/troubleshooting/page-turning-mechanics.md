@@ -426,6 +426,36 @@ Key files: `src/input/scroll.rs` (`snap_scroll_to_line`,
 `src/input/navigation.rs` (`page_forward` scene-snap guard, `scene_snap_top`,
 `jump_to_end`), `src/input/viewport.rs` (`column_split`).
 
+### "Empty right column" is NOT just `page_end < split`
+
+When a spread ENDS at a scene break, `column_split` takes the scene-break branch
+(`viewport.rs`, the `at_break && !is_final_section` return). It leaves the
+scene's trailing exit/blank lines in the right range `[split, page_end]` — which
+the bottom-clip then hides — and sets `next_page_top` to the next scene's marker.
+The key subtlety: when a SINGLE trailing line sits at the split, that branch
+returns `page_end == split` (not `< split`). The right column is then VISUALLY
+empty (its one line is a clipped `[They exit.]` / blank), yet the common
+`page_end < split` test reports it as NON-empty.
+
+Observed on H8 1.3 (`split=804 page_end=804 next_page_top=805`): the right
+column shows nothing, but `page_end < split` is false. The robust test for
+"right column is visually empty" is the one the next-scene watermark uses
+(`update_next_scene_watermark` in `scroll.rs`): authoritatively, **`next_page_top`
+is a DB section start (`is_section_start`) AND the right range carries no
+dialogue (`is_dialogue_line`)** — with `page_end < split` kept as the sufficient
+condition for the strict lone-tail geometry, and `next_page_top < line_count`
+excluding end-of-work and the empty-LEFT first-spread mirror.
+
+**`would_empty_right_column` (`viewport.rs`) carries the same too-strict test**
+(`cs.split >= line_count || cs.page_end < cs.split`). It works for its current
+callers (the lone-EPILOGUE geometry it guards has `split >= line_count`), but if
+`G` / `jump_to_end` / `page_forward`'s final-spread guard ever mis-tiles at a
+scene boundary whose new scene opens after exactly one trailing exit line, this
+is the root cause: `would_empty_right_column` returns `false` for a spread whose
+right column is in fact empty. The fix would mirror the watermark's predicate
+(section-start + no-dialogue), not loosen `page_end < split` to `<=` (which would
+mis-flag genuine one-line right columns).
+
 ## Testing
 
 Two layers: headless tests verify the page-turn algorithm across many works
