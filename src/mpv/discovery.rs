@@ -94,9 +94,13 @@ fn probe_socket(path: &Path) -> bool {
 /// already handles "no MPV" gracefully — see the discovery/connect path).
 pub fn launch_mpv(media_path: &str) -> String {
     let socket_path = derive_socket_path(media_path);
-    if std::env::var_os("LIT_HEADLESS_TEST").is_some() {
+    // LIT_NO_MPV: diagnostic toggle to launch with no MPV at all (A/B the startup
+    // flicker against the MPV window-map). Same skip as the headless test path.
+    if std::env::var_os("LIT_HEADLESS_TEST").is_some()
+        || std::env::var_os("LIT_NO_MPV").is_some()
+    {
         crate::logging::log(&format!(
-            "MPV: skipped (LIT_HEADLESS_TEST) for {}",
+            "MPV: skipped (LIT_HEADLESS_TEST/LIT_NO_MPV) for {}",
             media_path
         ));
         return socket_path;
@@ -105,15 +109,10 @@ pub fn launch_mpv(media_path: &str) -> String {
         .arg(format!("--input-ipc-server={}", socket_path))
         .arg("--pause")
         .arg("--no-terminal")
-        // Audio-sync backend only — never maps a window. Without this, MPV opens a
-        // cover-art/video window (even for an audio-only .m4b); when that window
-        // maps ~1s after launch the compositor re-tiles the output and the reader
-        // visibly flickers once. `--no-video` (+ `--force-window=no`) keeps MPV
-        // headless so there's no map event and no flicker. linux-lit drives MPV
-        // purely over the IPC socket, so the window is never needed.
-        .arg("--no-video")
-        .arg("--force-window=no")
         .arg("--volume=75")
+        // Keep MPV's window: some works are videos, and the audiobook window
+        // carries cover art. dwl routes `mpv-lit` to its own tag (config.h), so
+        // it doesn't cover the reader.
         .arg("--wayland-app-id=mpv-lit")
         .arg(media_path)
         .spawn()
