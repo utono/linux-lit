@@ -164,13 +164,19 @@ Ask the user to run `e2e-env.sh` whenever the change's acceptance criterion is
   computed from live Pango pixel heights against `text_view`/`right_view`; there
   are deliberately no pure unit tests for `column_split`/`last_page_top`, so the
   only real check is a rendered spread. For these, the **nav-fuzz** is the
-  workhorse (`run-fuzz.sh`, see the headless-test skill): it drives every nav
-  action and asserts on-page landing, balanced columns, and `G`/jump-to-end
-  idempotency. **Always pass `--start-work <ABBR>`** when reproducing a
-  work-specific failure — without it the run loads the dev config's `last_work`,
-  which a headless run rewrites on exit, so the bug silently moves works and can
-  look "fixed". Set `LIT_LPT_DBG=1` to instrument the `last_page_top` final-spread
-  walk when a `JumpEnd` idempotency FAIL appears.
+  workhorse — it drives every nav action and asserts on-page landing, balanced
+  columns, and `G`/jump-to-end idempotency. It lives in the headless-test skill
+  and **must** be launched through the env wrapper:
+
+```bash
+./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh --start-work <ABBR>
+```
+
+  **Always pass `--start-work <ABBR>`** when reproducing a work-specific failure
+  — without it the run loads the dev config's `last_work`, which a headless run
+  rewrites on exit, so the bug silently moves works and can look "fixed". Add
+  `--secs N` to shorten the run (default ~330s). The FAIL summary prints to the
+  terminal and the full log lands at `/tmp/fuzz-nav.log`.
 - **clipping / bottom-clip / descender-guard** changes — pixel-level, only
   visible in a screenshot.
 - **overlay layout** (synopsis, gloss, pickers, keybinds overlay) — geometry
