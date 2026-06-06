@@ -151,38 +151,34 @@ pub fn toggle_playback(state: &mut AppState) {
     let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
 }
 
-/// Jump to next match, wrapping around. Starts playback at match line.
+/// Jump to next match. Does NOT wrap: at the last match, show the right edge
+/// toast and stay put.
 pub fn next_match(state: &mut AppState) {
     let total = state.search_matches.len();
     if total == 0 {
         return;
     }
-    remove_current_highlight(state);
-    state.search_match_idx = (state.search_match_idx + 1) % total;
-    let m = &state.search_matches[state.search_match_idx];
-    state.current_line = m.line_index;
-    apply_current_highlight(state);
-    state.search_bar.update_counter(state.search_match_idx, total);
-    push_page_back_dedup(state);
-    crate::input::navigation::update_highlight_and_center(state);
-    seek_and_resume(state);
+    if state.search_match_idx + 1 >= total {
+        let q = state.last_search_query.clone().unwrap_or_default();
+        edge_toast(state, Side::Right, &q);
+        return;
+    }
+    goto_match_idx(state, state.search_match_idx + 1);
 }
 
-/// Jump to previous match, wrapping around. Starts playback at match line.
+/// Jump to previous match. Does NOT wrap: at the first match, show the left
+/// edge toast and stay put.
 pub fn prev_match(state: &mut AppState) {
     let total = state.search_matches.len();
     if total == 0 {
         return;
     }
-    remove_current_highlight(state);
-    state.search_match_idx = (state.search_match_idx + total - 1) % total;
-    let m = &state.search_matches[state.search_match_idx];
-    state.current_line = m.line_index;
-    apply_current_highlight(state);
-    state.search_bar.update_counter(state.search_match_idx, total);
-    push_page_back_dedup(state);
-    crate::input::navigation::update_highlight_and_center(state);
-    seek_and_resume(state);
+    if state.search_match_idx == 0 {
+        let q = state.last_search_query.clone().unwrap_or_default();
+        edge_toast(state, Side::Left, &q);
+        return;
+    }
+    goto_match_idx(state, state.search_match_idx - 1);
 }
 
 /// Seek to current line's start_time and resume playback.
@@ -211,6 +207,70 @@ fn push_page_back_dedup(state: &mut AppState) {
     if state.page_back_stack.last() != Some(&top) {
         state.page_back_stack.push(top);
     }
+}
+
+#[derive(Clone, Copy)]
+enum Side {
+    Left,
+    Right,
+}
+
+/// Show the left/right search-edge toast for 3s ("no earlier/later
+/// occurrence"), mirroring show_chapter_toast's auto-hide.
+fn edge_toast(state: &AppState, side: Side, query: &str) {
+    let (label, text) = match side {
+        Side::Left => (
+            &state.search_edge_toast_left,
+            format!("No earlier occurrence of \u{201c}{}\u{201d}", query),
+        ),
+        Side::Right => (
+            &state.search_edge_toast_right,
+            format!("No later occurrence of \u{201c}{}\u{201d}", query),
+        ),
+    };
+    label.set_text(&text);
+    label.set_visible(true);
+    let toast = label.clone();
+    gtk4::glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+        toast.set_visible(false);
+    });
+}
+
+/// Move the current match to `new_idx` and land on the canonical spread for
+/// that line. Mirrors navigation::jump_to_line: if the target line is already
+/// fully visible on the current spread, move the cursor/highlight only (no
+/// re-pagination); otherwise land on canonical_page_top_for. Also seeks +
+/// resumes MPV at the matched line.
+fn goto_match_idx(state: &mut AppState, new_idx: usize) {
+    let total = state.search_matches.len();
+    if total == 0 {
+        return;
+    }
+    remove_current_highlight(state);
+    state.search_match_idx = new_idx.min(total - 1);
+    let line = state.search_matches[state.search_match_idx].line_index;
+    state.current_line = line;
+    apply_current_highlight(state);
+    state
+        .search_bar
+        .update_counter(state.search_match_idx, total);
+    push_page_back_dedup(state);
+
+    if crate::input::viewport::is_line_fully_visible(state, line) {
+        // Already on the current spread — move cursor/highlight only, no flash.
+        crate::input::highlight::update_highlight(state);
+    } else {
+        match state.config.navigation_mode {
+            crate::config::NavigationMode::Scroll => {
+                crate::input::scroll::center_cursor(state)
+            }
+            crate::config::NavigationMode::EReader => {
+                let top = crate::input::navigation::canonical_page_top_for(state, line);
+                crate::input::scroll::set_page_instant(state, top);
+            }
+        }
+    }
+    seek_and_resume(state);
 }
 
 fn clear_highlights(state: &AppState) {
