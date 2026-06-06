@@ -2078,13 +2078,33 @@ fn snap_near_end_to_canonical(s: &mut AppState) {
     if s.column_count() != 2 || line_count == 0 || s.text_view.height() <= 0 {
         return;
     }
-    // Trigger when the current PAGE is in the work's final region — i.e. the
-    // page_top is within one spread of the end. (Checking `current_line` is
-    // wrong: the saved cursor can sit a column or two before the end yet still be
-    // on the final spread, e.g. current_line=4295, page_top=4294 with the canonical
-    // final spread at 4297.)
-    let lpp = crate::input::viewport::lines_per_page(s);
-    if s.page_top_line + lpp * 2 < line_count {
+    // Trigger when the current PAGE is in the work's final region. "Near the end"
+    // must be measured by WALKING THE FORWARD SPREAD CHAIN, not by raw line
+    // distance to `line_count`: a work with a long trailing section (H8's
+    // EPILOGUE is ~130 buffer lines past the final content spread) leaves a page
+    // that is VISUALLY on the last content spread numerically many spreads short
+    // of `line_count`. The old `page_top + lpp*2 < line_count` test returned early
+    // in exactly that case (page_top=4191, lpp≈24, line_count≈4324 → 4239 < 4324),
+    // stranding startup on a non-canonical left-only spread while the EPILOGUE
+    // that belongs in the right column was pushed off. Walk forward a bounded few
+    // spreads; only proceed if the work's end is reachable within that window —
+    // which keeps a genuinely mid-book resume from being yanked to the end (the
+    // authoritative `canonical == page_top_line` guard below would otherwise snap
+    // it). The walk is O(spread-measure) × NEAR_END_SPREADS, cheap on every tick.
+    const NEAR_END_SPREADS: usize = 3;
+    let mut top = s.page_top_line;
+    let mut near_end = false;
+    for _ in 0..NEAR_END_SPREADS {
+        let next = crate::input::viewport::next_page_top(s, top).new_top;
+        if next >= line_count || next <= top {
+            // Forward chain reached the end (or stalled at the final spread)
+            // within the window → this page is in the work's final region.
+            near_end = true;
+            break;
+        }
+        top = next;
+    }
+    if !near_end {
         return;
     }
     // Anchor on the work's last dialogue line (not the saved cursor, which may be

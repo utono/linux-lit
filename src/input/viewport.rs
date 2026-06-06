@@ -1427,24 +1427,13 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
             let next_dialogue = next_dialogue_from(&state.buffer, probe, line_count);
             return NextPage { new_top: probe, next_dialogue };
         }
-        if next > current_top && probe < current_top {
-            // `probe`'s page CONTAINS current_top (`probe < current_top < next`):
-            // current_top is not a forward-chain boundary — it's a line in the
-            // MIDDLE of `probe`'s page, reached by a scene-jump / y / startup-snap
-            // rather than by paging forward. The correct previous page is `probe`
-            // itself: paging back to it shows the run [probe, current_top) that
-            // belongs to that page. Returning the earlier non-overshoot `top`
-            // instead skips that run entirely (the Tro `y GAP`: current_top=2438 is
-            // mid-page-2429, but the walk fell back to 2388, gapping 2429-2437).
-            // This is NOT a harmful overlap — those lines are page `probe`'s own
-            // content, shown only here, not doubled with current_top's page.
-            let next_dialogue = next_dialogue_from(&state.buffer, probe, line_count);
-            return NextPage { new_top: probe, next_dialogue };
-        }
         if next > current_top || next <= probe {
-            // `probe`'s page overshoots current_top from a position at/after it, or
-            // there is no forward progress — keep the last non-overshooting
-            // candidate (`top`) to avoid a real overlap / infinite walk.
+            // `probe`'s page overshoots current_top (or no forward progress) — it
+            // would OVERLAP. Keep the last non-overshooting candidate (`top`).
+            // With the right-column section clamp restored, scene-start tops are
+            // now real boundaries (`column_split(prev).next_page_top == scene_top`),
+            // so the `next == current_top` exact-tile case above handles them and
+            // we rarely reach here with a gap.
             break;
         }
         // `next <= current_top - 1`: `probe`'s page ends before current_top, so

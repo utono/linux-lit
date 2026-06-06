@@ -255,6 +255,13 @@ impl Harness {
         ))
     }
 
+    /// Read the full dev log the app writes under `LIT_DEV`. Empty string if the
+    /// log doesn't exist yet. Used by tests that assert on logged pagination
+    /// decisions (e.g. the near-end canonical-spread snap on startup).
+    pub fn read_dev_log(&self) -> String {
+        fs::read_to_string(Self::dev_log_path()).unwrap_or_default()
+    }
+
     /// Path to the dev log the app writes under `LIT_DEV`.
     fn dev_log_path() -> PathBuf {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
