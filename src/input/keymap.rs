@@ -94,7 +94,7 @@ pub fn handle_key(
             | crate::app::InputMode::GlossPicker => handle_picker_key(state, key_name, is_ctrl, tokio_handle, mode),
             crate::app::InputMode::Settings => handle_settings_key(state, key_name, is_ctrl),
             crate::app::InputMode::Search => handle_search_key(state, key_name),
-            crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_alt),
+            crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_alt, tokio_handle),
             crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_name, is_ctrl),
             crate::app::InputMode::DeleteConfirm => handle_delete_confirm_key(state, key_name),
             crate::app::InputMode::EchoPicker => handle_echo_picker_key(state, key_name, tokio_handle),
@@ -260,7 +260,18 @@ fn handle_picker_key(
                 InputMode::ConcordanceWordPicker => { s.concordance_word_picker.hide(); s.input_mode = InputMode::Reader; }
                 InputMode::ConcordanceListPicker => { s.concordance_list_picker.hide(); s.input_mode = InputMode::Reader; }
                 InputMode::ConcordanceWorksPicker => { s.concordance_works_picker.hide(); s.input_mode = InputMode::Reader; }
-                InputMode::GlossPicker => { s.gloss_picker.hide(); s.input_mode = InputMode::Reader; }
+                InputMode::GlossPicker => {
+                    s.gloss_picker.hide();
+                    // If the picker was opened from within the gloss overlay
+                    // (Alt+g), the overlay is still visible behind it — return to
+                    // it rather than dropping to the reader.
+                    if s.gloss_picker_from_overlay {
+                        s.gloss_picker_from_overlay = false;
+                        s.input_mode = InputMode::GlossOverlay;
+                    } else {
+                        s.input_mode = InputMode::Reader;
+                    }
+                }
                 InputMode::AuthorshipPicker => { s.authorship_picker.hide(); s.input_mode = InputMode::Reader; }
                 InputMode::EchoLinePicker => { drop(s); crate::input::actions::echoes::cancel_add_echo(state); }
                 _ => {}
@@ -355,8 +366,11 @@ fn handle_picker_key(
                     if let Some(idx) = selected {
                         let passage = state.borrow().gloss_picker.items[idx].clone();
                         {
-                            let s = state.borrow();
+                            let mut s = state.borrow_mut();
                             s.gloss_picker.hide();
+                            // Confirming opens a fresh gloss overlay below, so the
+                            // "from overlay" return path no longer applies.
+                            s.gloss_picker_from_overlay = false;
                         }
 
                         let all_glosses = crate::db::queries::open_db()
@@ -608,6 +622,7 @@ fn handle_gloss_key(
     key_name: &str,
     is_ctrl: bool,
     is_alt: bool,
+    tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
     use crate::ui::gloss_overlay::AskFocus;
 
@@ -654,6 +669,15 @@ fn handle_gloss_key(
             }
             "p" => {
                 crate::input::actions::gloss::navigate_gloss_passage(state, -1);
+                return true;
+            }
+            "g" => {
+                // Same as the reader card's Alt+g: open the glosses picker, but
+                // keep the gloss overlay open behind it. The flag tells
+                // `open_gloss_picker` not to hide the overlay and the picker's
+                // Escape handler to return to the overlay (not the reader).
+                state.borrow_mut().gloss_picker_from_overlay = true;
+                crate::input::actions::pickers::open_gloss_picker(state, tokio_handle);
                 return true;
             }
             _ => {}

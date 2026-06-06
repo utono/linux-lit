@@ -215,6 +215,10 @@ pub struct AppState {
     pub gloss_passages: Vec<crate::db::queries::GlossedPassage>,
     pub gloss_passage_index: usize,
     pub gloss_opened_from_picker: bool,
+    /// True when the gloss picker (Alt+g) was opened while a gloss overlay was
+    /// already open. The overlay stays visible behind the picker, and cancelling
+    /// the picker (Escape) returns to the overlay instead of the reader.
+    pub gloss_picker_from_overlay: bool,
     /// Which add/edit prompt the stacked gloss input card will submit as.
     pub gloss_prompt_mode: GlossPromptMode,
     pub delete_confirm_container: Option<glib::WeakRef<gtk4::Box>>,
@@ -1424,6 +1428,7 @@ pub fn build_window(
         gloss_passages: Vec::new(),
         gloss_passage_index: 0,
         gloss_opened_from_picker: false,
+        gloss_picker_from_overlay: false,
         gloss_prompt_mode: GlossPromptMode::Add,
         delete_confirm_container: None,
         delete_confirm_overlay: None,

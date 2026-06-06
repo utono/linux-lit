@@ -394,7 +394,7 @@ fn action_external_command(state: &mut AppState, command: &str) {
 
 
 fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
-    let (ctx, model, tokio_handle, all_glosses) = {
+    let (ctx, model, tokio_handle, all_glosses, passage_doc) = {
         let state = state_rc.borrow();
         let (start, end) = match &state.visual_selection {
             Some(s) => s.range(),
@@ -425,7 +425,12 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
             Err(_) => Vec::new(),
         };
 
-        (ctx, state.config.claude_model.clone(), state.tokio_handle.clone(), all_glosses)
+        // `<speaker>`/`<verse>` markup for the passage being glossed, shared with
+        // the echoes source header so the "Glossing…" loading card formats it the
+        // same single-column way as the original passage in the gloss result.
+        let passage_doc = crate::input::actions::echoes::build_source_header(&selected_lines, &ctx.speaker);
+
+        (ctx, state.config.claude_model.clone(), state.tokio_handle.clone(), all_glosses, passage_doc)
     };
 
     exit_visual_mode(&mut state_rc.borrow_mut());
@@ -450,7 +455,12 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
     {
         let mut s = state_rc.borrow_mut();
         s.gloss_original_text = Some(ctx.source_text.clone());
-        s.gloss_overlay.show_loading();
+        // Show the passage being glossed on the loading card, formatted the same
+        // way (single-column `<speaker>`/`<verse>`) as the original passage in
+        // the gloss result, so it looks identical before and after the gloss.
+        let cw = s.content_hbox.width();
+        let h = s.content_hbox.height();
+        s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color));
         s.input_mode = crate::app::InputMode::GlossOverlay;
     }
 

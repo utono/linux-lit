@@ -817,7 +817,12 @@ pub(crate) fn open_gloss_picker(
                 .unwrap_or_default();
             {
                 let mut s = state_clone.borrow_mut();
-                s.gloss_overlay.hide();
+                // When opened from within the gloss overlay (Alt+g), keep the
+                // overlay visible behind the picker; otherwise hide it so the
+                // picker reads as a modal over the reader.
+                if !s.gloss_picker_from_overlay {
+                    s.gloss_overlay.hide();
+                }
                 s.gloss_picker.set_items(items);
             }
             state_clone.borrow().gloss_picker.show();

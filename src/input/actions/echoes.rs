@@ -519,7 +519,11 @@ fn first_sentence(passage: &str) -> String {
 /// `<speaker>` tag at the start and again whenever the speaker changes, so a
 /// multi-speaker selection attributes each run to its own speaker. Lines
 /// without their own speaker fall back to `speaker` and do not start a new run.
-fn build_source_header(turn: &[Line], speaker: &str) -> String {
+///
+/// Shared with the gloss "Glossing…" loading card so the passage shown while a
+/// gloss is being generated uses the same `<speaker>`/`<verse>` markup (and thus
+/// the same single-column formatting) as the original passage in the result.
+pub(crate) fn build_source_header(turn: &[Line], speaker: &str) -> String {
     let mut doc = String::new();
     let mut current: Option<String> = None;
     for line in turn {

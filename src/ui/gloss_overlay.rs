@@ -495,6 +495,8 @@ impl GlossOverlay {
     pub fn show(&self, original: &str, corrected: &str) {
         self.title.set_visible(true);
         self.title.set_text("Gloss");
+        // Reset the top margin in case `show_glossing` widened it (shared title).
+        self.title.set_margin_top(24);
         let orig_markup = build_diff_markup(original, corrected, true);
         let corr_markup = build_diff_markup(original, corrected, false);
         self.original_label.set_markup(&orig_markup);
@@ -575,6 +577,79 @@ impl GlossOverlay {
 
         self.gloss_scroll_overlay.set_visible(true);
         self.hint.set_visible(true);
+        self.scrim.set_visible(true);
+        self.container.set_visible(true);
+        self.apply_font();
+        self.reset_scroll_top();
+    }
+
+    /// "Glossing…" loading card that shows the passage being glossed, rendered
+    /// single-column with the SAME `<speaker>`/`<verse>` formatting the gloss
+    /// result uses for the original passage. `passage_doc` is the
+    /// `<speaker>`/`<verse>` markup (see `build_source_header`). The "Glossing…"
+    /// status sits as a header above the passage; the result simply replaces this
+    /// view in place when it arrives, so the passage looks identical before/after.
+    pub fn show_glossing(&self, passage_doc: &str, card_width: i32, card_height: i32, root_color: Option<&str>) {
+        self.synopsis_label_ranges.borrow_mut().clear();
+        self.container.set_width_request(card_width);
+        self.container.set_height_request(card_height);
+        self.last_card_size.set((card_width, card_height));
+        self.ask_container.set_visible(false);
+        self.ask_focus.set(AskFocus::Synopsis);
+        self.ask_container.remove_css_class("card-focused");
+        self.ask_container.remove_css_class("card-dimmed");
+
+        // "Glossing…" as a top header (not the centered label of
+        // `show_loading_message`), matching the gloss result's title placement.
+        self.title.set_text("Glossing\u{2026}");
+        self.title.set_visible(true);
+        self.title.set_vexpand(false);
+        self.title.set_valign(Align::Start);
+        self.title.set_halign(Align::Start);
+        // Extra breathing room above the header (constructor default is 24).
+        self.title.set_margin_top(64);
+
+        // Same passage geometry the gloss result uses (`show_gloss_with_color`):
+        // wide side margins anchored to the actual card width, accent bar at
+        // card_width/4.
+        let left = card_width / 4;
+        self.title.set_margin_start(left);
+        self.gloss_view.set_left_margin(left);
+        self.gloss_view.set_right_margin(left);
+        self.gloss_view.set_top_margin(32);
+        self.gloss_view.set_pixels_below_lines(4);
+
+        // No diff labels, echo views, hint, or position while loading.
+        self.orig_header.set_visible(false);
+        self.original_label.set_visible(false);
+        self.corr_header.set_visible(false);
+        self.corrected_label.set_visible(false);
+        self.echo_header_view.set_visible(false);
+        self.echo_rule.set_visible(false);
+        self.hint.set_visible(false);
+        self.position_label.set_visible(false);
+
+        if let Some(color) = root_color {
+            if let Some((r, g, b)) = parse_hex_color(color) {
+                *self.bar_color.borrow_mut() = (r, g, b);
+            }
+        }
+
+        let bar_left = card_width / 4;
+        *self.bar_x.borrow_mut() = bar_left;
+
+        // Render the passage through the SAME path as the gloss result's original
+        // passage, so speaker small-caps + indented verse look identical.
+        let (ranges, _nums) = populate_gloss_buffer(
+            &self.gloss_view, passage_doc, self.text_margins, bar_left, &[],
+            None, None,
+        );
+        *self.bar_ranges.borrow_mut() = ranges;
+        self.line_numbers.borrow_mut().clear();
+        *self.echo_lines.borrow_mut() = Vec::new();
+        self.bar_drawing.queue_draw();
+
+        self.gloss_scroll_overlay.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         self.apply_font();
@@ -717,6 +792,9 @@ impl GlossOverlay {
         self.title.set_valign(Align::Start);
         self.title.set_halign(Align::Start);
         self.title.set_margin_start(left);
+        // Reset the top margin in case `show_glossing` widened it (it shares this
+        // title widget); the synopsis card keeps the constructor default.
+        self.title.set_margin_top(24);
         self.orig_header.set_visible(false);
         self.original_label.set_visible(false);
         self.corr_header.set_visible(false);
