@@ -420,6 +420,18 @@ pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
     };
     let line_count = state.effective_line_count();
     let left_exact_end = cs.map(|c| c.split);
+    // EMPTY LEFT COLUMN (first-spread short opening section → right column):
+    // `cs.split == 0` means the left view renders nothing. The deferred
+    // update_bottom_clip below would only apply the full-height clip an idle
+    // tick later, so the left view paints the opening section for one frame
+    // before it is hidden — a visible flash. Clip the full height SYNCHRONOUSLY
+    // now, before the first paint, so the section only ever appears on the right.
+    if left_exact_end == Some(0) {
+        let h = state.text_view.height();
+        if h > 0 {
+            state.bottom_clip.set_height_request(h);
+        }
+    }
     schedule_bottom_clip_update(
         state.text_view.clone(),
         state.bottom_clip.clone(),
@@ -593,6 +605,17 @@ fn update_bottom_clip(
     // the guard-reduced usable_height would fit fewer lines and underfill.
     // Sum the real heights of [page_top, end-1] directly.
     if let Some(end) = exact_end {
+        // An EMPTY column: column_split chose `split == 0` for the first spread
+        // (short opening section moved to the RIGHT column), so the LEFT view
+        // renders nothing. `end <= page_top` means no line belongs here — clip
+        // the whole height. Without this, the `.max(page_top)` below would force
+        // line `page_top` to render and duplicate the right column's first line.
+        if end <= page_top {
+            if bottom_clip.height_request() != widget_height {
+                bottom_clip.set_height_request(widget_height);
+            }
+            return;
+        }
         let last = end.saturating_sub(1).max(page_top);
         let mut total = 0i32;
         for i in page_top..=last {
@@ -698,6 +721,18 @@ pub(crate) fn emit_test_viewport_rect(state: &AppState) {
         );
     } else {
         crate::logging::log("TEST_VIEWPORT_RECT unavailable (compute_bounds returned None)");
+    }
+    // Also report the FIRST spread's column split so tests can assert the
+    // short-opening-section-to-right-column rule (split=0 → empty left column).
+    // Format (stable, parsed by tests): `FIRST_SPREAD_SPLIT split=S page_end=E next=N`.
+    if state.column_count() == 2 {
+        let cs = super::viewport::column_split(state, 0);
+        log_fmt!(
+            "FIRST_SPREAD_SPLIT split={} page_end={} next={}",
+            cs.split,
+            cs.page_end,
+            cs.next_page_top
+        );
     }
 }
 

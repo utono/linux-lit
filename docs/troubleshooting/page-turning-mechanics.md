@@ -75,6 +75,19 @@ or skipped).
    act/scene never appears mid-column — EXCEPT the work's final trailing section
    (an EPILOGUE), which has nowhere to be pushed and fills the right column.
 
+**Two symmetric exceptions to "fill left first".** A short section at either END
+of the work fills the RIGHT column rather than sitting alone in the left:
+- **EPILOGUE (final spread):** a short tail fills the right column; `last_page_top`
+  forward-pulls the top so it lands there (see *the asymmetry* below).
+- **PROLOGUE / opening section (first spread):** a short COMPLETE opening section
+  (Prologue, Induction, Chorus, or a brief opening scene) that ends at the first
+  section boundary moves to the right column with the LEFT column EMPTY. The
+  start-of-document mirror of the EPILOGUE rule. `column_split(state, 0)` returns
+  `split = 0` (empty left), `page_end = N-1`, `next_page_top = N` — `next_page_top`
+  is UNCHANGED from the empty-right behavior it replaces, so tiling is untouched;
+  only the visual placement within the first spread changes. Requires the whole
+  opening section to fit the right view's height (otherwise normal left-fill).
+
 **The asymmetry that bites every backward/jump fix:** forward paging uses
 `column_split`'s boundary; but the work's **final spread** is special. When the
 tail is short, `last_page_top` (`navigation.rs`) FORWARD-PULLS the final top a
@@ -339,6 +352,17 @@ enforces this in three places, all driven by the `section_starts` bitmap:
   the boundary, `next_page_top` = the boundary, right column empty. The new scene
   starts the next spread, so `y` from it tiles into this page exactly
   (`column_split(prev).next_page_top == scene_top`).
+  - **First-spread exception (short opening section → right column).** When this
+    case fires on the VERY FIRST spread (`page_top == 0`) and the whole opening
+    section `[0, hi)` fits the right view's height, `column_split` instead returns
+    `split = 0` so the section renders in the RIGHT column with an EMPTY left —
+    the start-of-document mirror of the EPILOGUE final-spread rule. `next_page_top`
+    stays `hi` (identical to the empty-right branch), so tiling is unchanged: `y`
+    from Act 1's spread still tiles back here exactly. `update_bottom_clip` treats
+    `exact_end == 0` (`end <= page_top`) as an empty column and clips the left
+    view's full height. Verify visually (H8) — a rendered-spread criterion; the
+    `FIRST_SPREAD_SPLIT split=0 …` log line (under `LIT_HEADLESS_TEST`, asserted by
+    `tests/startup_column_layout.rs`) confirms the rule fired.
 - **Right column interior:** `clamp_at_section_break` again, so a boundary partway
   down the right column starts the next spread.
 

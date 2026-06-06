@@ -72,3 +72,43 @@ fn two_column_play_starts_two_column_no_reflow() {
          still present. First line: {first_card_sizing}\n\nfull log:\n{log}"
     );
 }
+
+/// H8 opens with a Prologue that fits in one column. On the FIRST spread it must
+/// move to the RIGHT column (empty left): `column_split(state, 0).split == 0`.
+/// The app logs `FIRST_SPREAD_SPLIT split=S page_end=E next=N` on reveal (under
+/// LIT_HEADLESS_TEST). Assert `split=0` — the start-of-document mirror of the
+/// EPILOGUE short-tail rule. (See docs/troubleshooting/page-turning-mechanics.md
+/// → "Section-break clamping".)
+#[test]
+#[ignore = "needs cage + grim + wlr-randr; run with --ignored"]
+fn short_prologue_fills_first_spread_right_column() {
+    Harness::reset_dev_log();
+    let h = Harness::start_app(
+        &app_binary(),
+        std::iter::empty::<&str>(),
+        &[
+            ("LIT_DEV", "1"),
+            ("LIT_HEADLESS_TEST", "1"),
+            ("LINUX_LIT_WORK", "H8"),
+            ("LIT_START_COLUMNS", "2"),
+        ],
+    )
+    .expect("launch linux-lit in cage");
+
+    let _ = h.set_output_size(1920, 1236);
+
+    h.wait_for_viewport_rect(Duration::from_secs(10))
+        .expect("app reported its reading-viewport rect");
+    h.settle(Duration::from_millis(400));
+
+    let log = h.read_dev_log();
+    let split_line = log
+        .lines()
+        .find(|l| l.contains("FIRST_SPREAD_SPLIT"))
+        .unwrap_or("<none>");
+    assert!(
+        split_line.contains("split=0"),
+        "H8's short Prologue did not move to the first spread's RIGHT column \
+         (expected `split=0`, i.e. empty left). Line: {split_line}\n\nfull log:\n{log}"
+    );
+}

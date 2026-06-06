@@ -1213,6 +1213,35 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
                 }),
             };
         if at_break && !is_final_section {
+            // FIRST-SPREAD MIRROR OF THE EPILOGUE RULE. On the very first spread
+            // (`page_top == 0`), a short COMPLETE opening section (Prologue,
+            // Induction, Chorus, or a brief opening scene) that ends at the first
+            // section boundary `hi` would otherwise sit alone in the LEFT column
+            // with an empty right. Instead place it in the RIGHT column and leave
+            // the LEFT empty — the start-of-document mirror of the EPILOGUE
+            // short-tail rule (which fills the right column rather than leaving a
+            // lonely left). Requires the whole section `[0, hi)` to fit the RIGHT
+            // view's height; otherwise fall through to the normal empty-right end.
+            // Tiling is preserved: `next_page_top` stays `hi` (the marker), exactly
+            // as the empty-right branch below — only the visual placement within
+            // this first spread changes, never a spread boundary.
+            if page_top == 0 {
+                let right_h = state.right_view.height();
+                let fits = if right_h > 0 {
+                    let guard = descender_guard_px(&state.right_view, 0);
+                    let usable = right_h - guard - BASE_BOTTOM_MARGIN;
+                    let r = visible_range(&state.right_view, &state.buffer, 0, line_count, usable);
+                    // The whole opening section [0, hi) fits the right column.
+                    r.last_fit + 1 >= hi
+                } else {
+                    false
+                };
+                if fits {
+                    // split = 0 → empty left column; right view renders [0, hi).
+                    let page_end = hi.saturating_sub(1);
+                    return ColumnSplit { split: 0, page_end, next_page_top: hi };
+                }
+            }
             // The right column would begin a NEW (non-final) scene → end the page
             // here. Left column shows the scene's tail (through the exit/blanks at
             // split..hi-1); the marker at `hi` starts the next spread. `split` is
