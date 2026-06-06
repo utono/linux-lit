@@ -1278,9 +1278,12 @@ fn dispatch_action(
         OpenKeybindsOverlay => {
             crate::input::actions::pickers::open_keybinds_overlay(state);
         }
-        OpenSearch => {
+        OpenSearch | OpenSearchBackward => {
             let mut s = state.borrow_mut();
             crate::input::search::clear_search(&mut s);
+            // `/` searches forward (first match at/after cursor); `?` searches
+            // backward (last match at/before cursor). execute_search reads this.
+            s.search_backward = matches!(action, OpenSearchBackward);
             // Remember where the reader was so Escape can restore it (live
             // search moves current_line/page_top_line as the user types).
             s.search_return_pos = Some((s.current_line, s.page_top_line));

@@ -332,6 +332,13 @@ fn app_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl_shift("M"), Action::OpenMediaPicker),
         (KeyCombo::ctrl("slash"), Action::OpenKeybindsOverlay),
         (KeyCombo::plain("slash"), Action::OpenSearch),
+        // `?` = Shift+slash → backward search. RPD/xkb maps <AD11> level 2 to
+        // `question`; GTK usually delivers ("question", shift=true). Bind both
+        // the shifted-symbol form and the shift("slash") form so it resolves
+        // regardless of how the layout reports it.
+        (KeyCombo::plain("question"), Action::OpenSearchBackward),
+        (KeyCombo::shift("question"), Action::OpenSearchBackward),
+        (KeyCombo::shift("slash"), Action::OpenSearchBackward),
         (KeyCombo::ctrl_shift("L"), Action::SaveAndQuit),
         (KeyCombo::ctrl("y"), Action::CopyLineMappingId),
         (KeyCombo::plain("n"), Action::SearchNextMatch),

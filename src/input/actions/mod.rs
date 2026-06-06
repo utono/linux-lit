@@ -68,6 +68,9 @@ pub enum Action {
     OpenSettingsOverlay,
     OpenKeybindsOverlay,
     OpenSearch,
+    /// Like OpenSearch but seeks the PREVIOUS occurrence relative to the cursor
+    /// (vim `?` vs `/`). Bound to Shift+slash (`question`).
+    OpenSearchBackward,
 
     // MPV / media
     TogglePlaybackSync,
@@ -254,6 +257,7 @@ impl Action {
             | Action::OpenMediaPicker
             | Action::OpenKeybindsOverlay
             | Action::OpenSearch
+            | Action::OpenSearchBackward
             | Action::TogglePreviousWork => Category::App,
         }
     }
@@ -289,6 +293,7 @@ impl Action {
             Action::OpenSettingsOverlay => "OpenSettingsOverlay",
             Action::OpenKeybindsOverlay => "OpenKeybindsOverlay",
             Action::OpenSearch => "OpenSearch",
+            Action::OpenSearchBackward => "OpenSearchBackward",
             Action::TogglePlaybackSync => "TogglePlaybackSync",
             Action::TogglePlayback => "TogglePlayback",
             Action::SeekShortBackward => "SeekShortBackward",

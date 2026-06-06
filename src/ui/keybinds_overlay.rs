@@ -59,7 +59,7 @@ const UPPER_ROW: &[KeyDef] = &[
     ub("c", "C"),
     key("r", "R", "next vocab", "R: prev vocab", &[]),
     key("l", "L", "toggle signs", "", &[("S-C-l", "save+quit")]),
-    key("/", "?", "search", "", &[("C-/", "keybinds")]),
+    key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
     ub("@", "^"),
     key("\\", "#", "vocab ▶", "◀ vocab", &[("C-\\", "conc picker"), ("M-\\", "vocab hi")]),
 ];
@@ -239,9 +239,12 @@ reader options). -> settings::open_settings — src/input/actions/settings.rs",
         "keybinds" => "Open this keyboard-shortcut overlay. \
 -> pickers::open_keybinds_overlay — src/input/actions/pickers.rs (drawing: \
 src/ui/keybinds_overlay.rs)",
-        "search" => "Open the in-text search bar; Escape restores the pre-search \
-reader position. -> OpenSearch arm (inline) -> search::clear_search — \
-src/input/keymap.rs, src/input/search.rs",
+        "search" => "Open the in-text search bar (forward: first match at or after \
+the cursor); Escape restores the pre-search reader position. -> OpenSearch arm \
+(inline) -> search::clear_search — src/input/keymap.rs, src/input/search.rs",
+        "search back" => "Open the in-text search bar searching BACKWARD (?: last \
+match at or before the cursor); otherwise identical to /. -> OpenSearchBackward \
+arm (inline) — src/input/keymap.rs, src/input/search.rs",
         "next match" => "Move to the next search match (reactivates the last \
 search pattern if search was cancelled; stops at the last match with a toast, \
 no wrap) — or, when a concordance is active, the next concordance hit within \

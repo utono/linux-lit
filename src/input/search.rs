@@ -56,13 +56,23 @@ pub fn execute_search(state_rc: &Rc<RefCell<AppState>>) {
 
     let total = state.search_matches.len();
     if total > 0 {
-        // Jump to first match at or after current_line, landing on its CANONICAL
-        // spread (same as n/N) rather than top-aligning the match line.
-        let idx = state
-            .search_matches
-            .iter()
-            .position(|m| m.line_index >= state.current_line)
-            .unwrap_or(0);
+        // Direction set by which key opened the bar: `/` forward (first match at
+        // or after the cursor), `?` backward (last match at or before it). Land
+        // on the match's CANONICAL spread (same as n/N), not top-aligned.
+        let cur = state.current_line;
+        let idx = if state.search_backward {
+            state
+                .search_matches
+                .iter()
+                .rposition(|m| m.line_index <= cur)
+                .unwrap_or(total - 1)
+        } else {
+            state
+                .search_matches
+                .iter()
+                .position(|m| m.line_index >= cur)
+                .unwrap_or(0)
+        };
         land_on_match_idx(&mut state, idx);
         // Pause playback when search finds results (live search pauses; n/N seek
         // + resume instead).

@@ -134,6 +134,10 @@ pub struct AppState {
     /// (survives Escape and work switches) so n/N can reactivate search. NOT
     /// cleared by clear_search.
     pub last_search_query: Option<String>,
+    /// Direction of the active search: false = forward (`/`, seek first match at
+    /// or after the cursor), true = backward (`?`, seek last match at or before
+    /// the cursor). Set when the search bar opens.
+    pub search_backward: bool,
     /// Reader position (current_line, page_top_line) saved when search opens, so
     /// Escape can cancel the live-search jump and restore the original page.
     pub search_return_pos: Option<(usize, usize)>,
@@ -1400,6 +1404,7 @@ pub fn build_window(
         search_matches: Vec::new(),
         search_match_idx: 0,
         last_search_query: None,
+        search_backward: false,
         search_return_pos: None,
         gloss_return_pos: None,
         search_tag,
