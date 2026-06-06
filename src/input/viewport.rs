@@ -1494,6 +1494,28 @@ pub fn viewport_page_for_line(state: &AppState, target_line: usize) -> usize {
     page
 }
 
+/// The canonical page-top whose spread CONTAINS `target_line` — i.e. the
+/// `next_page_top` boundary you'd reach by paging forward to `target_line`. This
+/// is the spread that actually DISPLAYS the line (in either column), as opposed
+/// to `current_line - 1` which forces the line to the top-left and renders a
+/// different, often near-empty spread. Used to reconstruct the saved reading
+/// spread on resume: only the cursor line is persisted, so the page boundary
+/// must be recomputed, and it must be the one that shows the cursor where the
+/// user left it (e.g. the right column of a two-column play spread).
+///
+/// Returns 0 before layout (height ≤ 0), when the index can't be built.
+pub fn page_top_containing(state: &AppState, target_line: usize) -> usize {
+    let page = viewport_page_for_line(state, target_line); // 1-indexed
+    let cached = state.page_tops.borrow();
+    match cached.as_ref() {
+        Some(tops) if !tops.is_empty() => {
+            // page_for_line_in_index returns ≥1; tops[page-1] is the boundary.
+            tops[(page - 1).min(tops.len() - 1)]
+        }
+        _ => 0,
+    }
+}
+
 /// Drop the page_tops cache. Called when font/size changes invalidate page
 /// boundaries (resnap_page) and when a new work loads (display_work).
 pub fn invalidate_page_tops(state: &AppState) {

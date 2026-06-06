@@ -86,15 +86,28 @@ fn reopen_restores_saved_position_not_epilogue() {
         "expected the saved Scene-3 position to be restored; log:\n{log}"
     );
 
-    // THE REGRESSION: the canonical snap must NOT have fired. Before the fix the
-    // log showed `STARTUP: snap near-end page_top 4191 -> canonical <epilogue>`.
+    // REGRESSION 1: the EPILOGUE override must NOT fire. Before the first fix the
+    // log showed `STARTUP: snap near-end page_top 4191 -> canonical <epilogue>`,
+    // jumping to the end and dropping the highlight.
     assert!(
         !log.contains("STARTUP: snap near-end"),
         "reopen wrongly snapped the saved Scene-3 position to the final/EPILOGUE \
          spread (the saved-position-override regression); log:\n{log}"
     );
 
-    // And the highlight must be on the saved cursor line (4192), not moved.
+    // REGRESSION 2: the restored page must be the CANONICAL spread that DISPLAYS
+    // the cursor (the Chamberlain/Porter spread where `I'll peck…` sits in the
+    // right column), not the pre-layout `current_line - 1` guess (the sparse 4191
+    // spread with the cursor stranded top-left and an empty right column). The app
+    // logs the correction: `STARTUP: snap to containing page_top 4191 -> <top>`.
+    assert!(
+        log.contains("STARTUP: snap to containing page_top 4191 ->"),
+        "reopen did not snap the saved position to the canonical spread that \
+         displays the cursor — it stayed on the sparse pre-layout guess; log:\n{log}"
+    );
+
+    // The highlight must stay on the saved cursor line (4192) — the page moved,
+    // the cursor did not.
     assert!(
         log.contains("CURSOR_LINE: applied tag to line 4192"),
         "expected the highlight to stay on the saved cursor line 4192; log:\n{log}"

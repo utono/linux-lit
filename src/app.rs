@@ -2067,84 +2067,87 @@ pub fn base_work_abbrev(abbrev: &str) -> &str {
     }
 }
 
-/// After layout settles (`text_view.height() > 0`), correct a near-end
-/// `page_top` that `display_work` could only guess (it runs before layout, so it
-/// uses a rough `current_line - lpp` heuristic that lands on a non-canonical,
-/// underfilled final spread). Snap to the CANONICAL final spread — the same page
-/// `G`/forward-paging use — and put the cursor on its last visible dialogue line.
-/// No-op when not near the end, single-column, or layout isn't ready.
+/// After layout settles (`text_view.height() > 0`), correct a `page_top` that
+/// `display_work` could only GUESS before layout (it uses `current_line - 1`,
+/// forcing the cursor to the top-left and rendering a different, often near-empty
+/// spread than the one the user actually quit on). Snap to the canonical spread
+/// that DISPLAYS the cursor:
+///   - near the end: the canonical final spread (`last_page_top`, EPILOGUE in the
+///     right column), re-anchoring the cursor to its last visible dialogue line;
+///   - otherwise: the page boundary that CONTAINS the cursor
+///     (`page_top_containing`), leaving the cursor where it is.
+/// No-op when the cursor is already fully visible on the restored spread,
+/// single-column, or layout isn't ready.
 fn snap_near_end_to_canonical(s: &mut AppState) {
     let line_count = s.effective_line_count();
     if s.column_count() != 2 || line_count == 0 || s.text_view.height() <= 0 {
         return;
     }
-    // If the restored cursor is ALREADY fully visible on the restored spread, the
-    // saved position is valid as-is — do NOT canonicalize. This function exists to
-    // repair a PRE-LAYOUT GUESS that left the cursor off the rendered final spread
-    // (the EPILOGUE-strand bug); it must never override a legitimately-saved
-    // earlier reading position. Without this guard, quitting mid-Act-5 (e.g. H8
-    // Scene 3, cursor on `I'll peck…`, page_top 4191) and reopening snapped the
-    // page forward to the EPILOGUE spread and dropped the highlight, because the
-    // forward-chain "near end" walk reaches the work's end within a few spreads at
-    // a tall viewport and `last_page_top` always returns the EPILOGUE spread —
-    // regardless of where the cursor actually sits.
-    if crate::input::viewport::is_line_fully_visible(s, s.current_line) {
+    // If the restored `page_top` is ALREADY the canonical spread that contains the
+    // cursor, the saved position is faithful — nothing to do. (Cursor merely being
+    // *visible* is NOT enough: the pre-layout guess `current_line - 1` can leave
+    // the cursor visible on a near-empty, non-canonical spread — e.g. H8 4192 on
+    // top of the sparse 4191 spread — that differs from the canonically-tiled
+    // spread the user actually quit on, where the cursor sat in the right column.)
+    if crate::input::viewport::page_top_containing(s, s.current_line) == s.page_top_line {
         return;
     }
-    // Trigger when the current PAGE is in the work's final region. "Near the end"
-    // must be measured by WALKING THE FORWARD SPREAD CHAIN, not by raw line
-    // distance to `line_count`: a work with a long trailing section (H8's
-    // EPILOGUE is ~130 buffer lines past the final content spread) leaves a page
-    // that is VISUALLY on the last content spread numerically many spreads short
-    // of `line_count`. The old `page_top + lpp*2 < line_count` test returned early
-    // in exactly that case (page_top=4191, lpp≈24, line_count≈4324 → 4239 < 4324),
-    // stranding startup on a non-canonical left-only spread while the EPILOGUE
-    // that belongs in the right column was pushed off. Walk forward a bounded few
-    // spreads; only proceed if the work's end is reachable within that window —
-    // which keeps a genuinely mid-book resume from being yanked to the end (the
-    // authoritative `canonical == page_top_line` guard below would otherwise snap
-    // it). The walk is O(spread-measure) × NEAR_END_SPREADS, cheap on every tick.
-    const NEAR_END_SPREADS: usize = 3;
-    let mut top = s.page_top_line;
-    let mut near_end = false;
-    for _ in 0..NEAR_END_SPREADS {
-        let next = crate::input::viewport::next_page_top(s, top).new_top;
-        if next >= line_count || next <= top {
-            // Forward chain reached the end (or stalled at the final spread)
-            // within the window → this page is in the work's final region.
-            near_end = true;
-            break;
+    // The canonical spread that DISPLAYS the cursor — the page boundary you'd
+    // reach by paging forward to `current_line`. This is correct for ALL
+    // positions (mid-book or near-end): `page_top_containing` walks the same
+    // `next_page_top` tiling that defines every spread.
+    let containing = crate::input::viewport::page_top_containing(s, s.current_line);
+
+    // NEAR-END special case: when the cursor's containing page IS the work's final
+    // spread, prefer `last_page_top` over the raw containing page. `last_page_top`
+    // has the EPILOGUE-fill semantics G/forward-paging use (it pulls the top so a
+    // short trailing section — the EPILOGUE — fills the right column rather than
+    // being stranded). It also re-anchors the cursor onto that spread. Detect "the
+    // cursor's page is the final one" by: paging forward from `containing` reaches
+    // the work's end (no further full spread).
+    let containing_reaches_end = {
+        let nxt = crate::input::viewport::next_page_top(s, containing).new_top;
+        nxt >= line_count || nxt <= containing
+    };
+    if containing_reaches_end {
+        let mut target = line_count - 1;
+        while target > 0
+            && (s.translation_lines.get(target).copied().unwrap_or(false)
+                || !crate::input::viewport::is_dialogue_line(&s.buffer, target))
+        {
+            target -= 1;
         }
-        top = next;
-    }
-    if !near_end {
+        let canonical = crate::input::navigation::last_page_top(s, target);
+        if canonical == s.page_top_line {
+            return;
+        }
+        let cs = crate::input::viewport::column_split(s, canonical);
+        let cursor = crate::input::viewport::prev_dialogue_line(
+            &s.buffer, &s.translation_lines, cs.page_end + 1,
+        )
+        .filter(|&d| d >= canonical && d <= cs.page_end)
+        .unwrap_or(s.current_line.min(cs.page_end));
+        crate::logging::log(&format!(
+            "STARTUP: snap near-end page_top {} -> canonical {} (cursor {})",
+            s.page_top_line, canonical, cursor
+        ));
+        s.page_top_line = canonical;
+        s.current_line = cursor;
         return;
     }
-    // Anchor on the work's last dialogue line (not the saved cursor, which may be
-    // stale) so `last_page_top` computes the true final spread.
-    let mut target = line_count - 1;
-    while target > 0
-        && (s.translation_lines.get(target).copied().unwrap_or(false)
-            || !crate::input::viewport::is_dialogue_line(&s.buffer, target))
-    {
-        target -= 1;
+
+    // GENERAL case: snap to the canonical page that contains the cursor — the
+    // spread that displays it where the user left it (e.g. the right column of a
+    // two-column play spread), instead of the pre-layout `current_line - 1` guess
+    // that forces the cursor to the top-left and renders a sparse, off spread. Do
+    // NOT move the cursor; only the page.
+    if containing != s.page_top_line {
+        crate::logging::log(&format!(
+            "STARTUP: snap to containing page_top {} -> {} (cursor {})",
+            s.page_top_line, containing, s.current_line
+        ));
+        s.page_top_line = containing;
     }
-    let canonical = crate::input::navigation::last_page_top(s, target);
-    if canonical == s.page_top_line {
-        return;
-    }
-    let cs = crate::input::viewport::column_split(s, canonical);
-    let cursor = crate::input::viewport::prev_dialogue_line(
-        &s.buffer, &s.translation_lines, cs.page_end + 1,
-    )
-    .filter(|&d| d >= canonical && d <= cs.page_end)
-    .unwrap_or(s.current_line.min(cs.page_end));
-    crate::logging::log(&format!(
-        "STARTUP: snap near-end page_top {} -> canonical {} (cursor {})",
-        s.page_top_line, canonical, cursor
-    ));
-    s.page_top_line = canonical;
-    s.current_line = cursor;
 }
 
 pub fn display_work(state: &mut AppState, work: Work) {
