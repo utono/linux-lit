@@ -99,6 +99,10 @@ pub struct AppState {
     pub right_scrolled_window: ScrolledWindow,
     pub right_scrolled_overlay: gtk4::Overlay,
     pub right_bottom_clip: gtk4::Box,
+    /// Dim "Next: Act N, Scene M" label shown centered in an empty right
+    /// column (scene ended in the left column). Overlay child of
+    /// `right_scrolled_overlay`; hidden in every other case.
+    pub next_scene_watermark: gtk4::Label,
     pub columns_hbox: gtk4::Box,
     /// Thin vertical rule between the two columns; visible only in two-column mode.
     pub column_divider: gtk4::Separator,
@@ -1060,6 +1064,17 @@ pub fn build_window(
     right_bottom_clip.add_css_class("card-bottom");
     right_scrolled_overlay.add_overlay(&right_bottom_clip);
 
+    // Dim "Next: Act N, Scene M" watermark for an empty right column. Overlay
+    // child (NOT buffer text — buffer text is measured by pagination and would
+    // corrupt the right-column clip). Centered; hidden until snap_scroll_to_line
+    // detects an empty right column with a following scene.
+    let next_scene_watermark = gtk4::Label::new(None);
+    next_scene_watermark.set_halign(gtk4::Align::Center);
+    next_scene_watermark.set_valign(gtk4::Align::Center);
+    next_scene_watermark.set_visible(false);
+    next_scene_watermark.add_css_class("next-scene-watermark");
+    right_scrolled_overlay.add_overlay(&next_scene_watermark);
+
     // Columns row: left | divider | right. Right starts hidden (1-column
     // default); the divider is a thin vertical rule shown only in two-column
     // mode to separate the columns like a book's gutter.
@@ -1382,6 +1397,7 @@ pub fn build_window(
         right_scrolled_window: right_scrolled,
         right_scrolled_overlay,
         right_bottom_clip,
+        next_scene_watermark,
         columns_hbox,
         column_divider,
         right_line_number_renderer: None,
