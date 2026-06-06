@@ -143,10 +143,15 @@ pub fn prev_match(state: &mut AppState) {
 }
 
 /// Entry point for n / N pressed in reader mode (concordance already handled by
-/// the caller). If matches are live, step within them. Otherwise, if an MRU
-/// pattern exists, reactivate search against the current work and land on the
-/// first match at/after (n) or last match at/before (N) the cursor.
-pub fn reactivate_and_step(state_rc: &Rc<RefCell<AppState>>, forward: bool) {
+/// the caller). `pressed_next` is true for `n`, false for `N`. If matches are
+/// live, step within them; otherwise reactivate the MRU search. In backward
+/// (`?`) search mode the keys are REVERSED so `n` repeats in the search
+/// direction (earlier) and `N` reverses it (later) — vim semantics.
+pub fn reactivate_and_step(state_rc: &Rc<RefCell<AppState>>, pressed_next: bool) {
+    // n repeats in the search direction: forward search -> n=next; backward (?)
+    // search -> n=prev. XOR the pressed key with the search direction.
+    let forward = pressed_next != state_rc.borrow().search_backward;
+
     // Live matches: just step (handles its own end-of-list edge toasts).
     if !state_rc.borrow().search_matches.is_empty() {
         let mut state = state_rc.borrow_mut();
