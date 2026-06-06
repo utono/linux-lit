@@ -270,13 +270,38 @@ ends the run early (e.g. `--secs 90` ≈ 200 steps, only the start of the prelud
 For the complete sweep use `--secs 600` or more. The hermetic-start flags make
 the run reproducible from the command alone:
 
-- `--start-work AWW` — which work to load (a play with an EPILOGUE exercises the
-  final-spread/clip edge cases). Without it, the dev config's last work is used.
+- `--start-work AWW` — which work to load, by **abbreviation** (e.g. `AWW`, `H8`).
+  A play with an EPILOGUE exercises the final-spread/clip edge cases. **Always
+  pass this when reproducing a work-specific bug** — without it the run is NOT
+  reproducible: the script doesn't set `LIT_START_WORK`, so the app falls back to
+  the dev config's (`config-dev.json`) `last_work`, AND a headless run **rewrites
+  that config on exit**, so `last_work` drifts between runs. A bug seen on H8 can
+  silently load a different work next time and look "fixed". Pin it:
+  `--start-work H8`.
 - `--start-pos 50` — start line; jumping `G` from here is a genuine long jump.
 - `--seed 0x...` — pin the LCG seed to replay a specific run (the seed is printed
   at run start: `NAV_TEST: seed=0x...`).
 
-**Shorter run while iterating** (won't complete the full prelude, but fast):
+**`LIT_LPT_DBG=1`** — env-gated diagnostic for the `last_page_top` final-spread
+walk (the `G`/JumpEnd canonical-spread path). Off by default; set it to log
+`PULL_DBG:` (each candidate spread's `split`/`page_end`/`next_page_top`/
+`dialogue_below`/`would_empty_right_column`) and `LPT_DBG:` (`chosen`/`clamped` +
+the vadjustment ceiling) on every `last_page_top` call. Use it when a `JumpEnd`
+idempotency FAIL appears (`G disagrees with itself`) to see which measurement
+flips between the distant-`page_top` call and the on-spread recompute — the walk
+reads `line_yrange`-based `column_split`, which is lazily validated and can go
+stale for a tail region the viewport hasn't reached. Forwarded into the cage by
+`env`, so just prefix it:
+
+```bash
+LIT_LPT_DBG=1 ./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh \
+  --start-work H8 --secs 600
+# then: rg "PULL_DBG|LPT_DBG|not idempotent" /tmp/fuzz-nav.log | rg -B15 "not idempotent" | tail -45
+```
+
+**Shorter run while iterating** (won't complete the full prelude, but fast; add
+`--start-work <ABBR>` if you're chasing a specific work's bug — see the
+reproducibility note above):
 
 ```bash
 ./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh --secs 90
