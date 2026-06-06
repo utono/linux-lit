@@ -41,7 +41,7 @@ const NUMBER_ROW: &[KeyDef] = &[
     ub("=", "6"),
     ub(")", "7"),
     ub("}", "8"),
-    ub("]", "9"),
+    bare("]", "9", "show chapter"),
     key("*", "0", "", "reset font", &[]),
     bare("!", "%", "font \u{2212}"),
     bare("|", "`", "font +"),
