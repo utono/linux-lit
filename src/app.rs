@@ -4505,6 +4505,34 @@ pub fn current_scene_divs(state: &AppState) -> (i64, i64) {
     (0, 0)
 }
 
+/// Return the `(div1, div2)` (act, scene) for an arbitrary buffer line by
+/// reading the DB-backed `Line` metadata — never inferred from buffer text.
+/// Walks forward from `buffer_line` to the first DB-mapped line (the marker /
+/// `=====` chrome lines are unmapped), then backward as a fallback. Returns
+/// `(0, 0)` when nothing is mapped (treated as "Prologue" by `scene_label`).
+pub fn divs_at_buffer_line(state: &AppState, buffer_line: usize) -> (i64, i64) {
+    let work = match state.current_work.as_ref() {
+        Some(w) => w,
+        None => return (0, 0),
+    };
+    let line_count = state.effective_line_count();
+    for bl in buffer_line..line_count {
+        if let Some(work_idx) = state.work_line_for_buffer(bl) {
+            if let Some(line) = work.lines.get(work_idx) {
+                return (line.div1, line.div2);
+            }
+        }
+    }
+    for bl in (0..buffer_line).rev() {
+        if let Some(work_idx) = state.work_line_for_buffer(bl) {
+            if let Some(line) = work.lines.get(work_idx) {
+                return (line.div1, line.div2);
+            }
+        }
+    }
+    (0, 0)
+}
+
 /// Check if the current line is the first line of a new scene.
 pub fn is_first_line_of_scene(state: &AppState) -> bool {
     if state.current_line == 0 {
