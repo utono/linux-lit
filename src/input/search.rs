@@ -329,6 +329,7 @@ fn edge_toast(state: &AppState, side: Side, query: &str) {
         Side::Left => format!("No earlier occurrence of \u{201c}{}\u{201d}", p),
         Side::Right => format!("No later occurrence of \u{201c}{}\u{201d}", p),
     };
+    crate::log_fmt!("SEARCH_TOAST: {}", text);
     state.search_toast.set_text(&text);
     state.search_toast.set_visible(true);
     let toast = state.search_toast.clone();
