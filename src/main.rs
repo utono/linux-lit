@@ -127,7 +127,13 @@ fn main() {
                         if !s.sync_enabled {
                             continue;
                         }
-                        if !s.search_matches.is_empty() {
+                        // Search matches present: normally we freeze the cursor
+                        // so n/N navigation isn't disturbed by sync. But if
+                        // playback is PLAYING (e.g. the user kept playing after a
+                        // search submit / n / N), let sync track the audio so the
+                        // highlight follows along — the whole point of seeking to
+                        // the match while playing.
+                        if !s.search_matches.is_empty() && !s.mpv_playing {
                             continue;
                         }
                         // During chunk mode, don't let CursorSync move the view
