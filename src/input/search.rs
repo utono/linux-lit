@@ -74,9 +74,11 @@ pub fn execute_search(state_rc: &Rc<RefCell<AppState>>) {
                 .unwrap_or(0)
         };
         land_on_match_idx(&mut state, idx);
-        // Pause playback when search finds results (live search pauses; n/N seek
-        // + resume instead).
-        let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
+        // Submit behaves like n/N: always seek MPV to the found line's start
+        // time; keep playing if it was already playing, stay paused otherwise.
+        // (Previously this force-paused WITHOUT seeking, so a later resume
+        // played from a stale position, not the match.)
+        seek_and_resume(&mut state);
     } else {
         state.search_bar.update_counter(0, 0);
     }
