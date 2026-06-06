@@ -364,7 +364,6 @@ fn edge_toast(state: &AppState, side: Side, query: &str) {
         Side::Left => format!("No earlier occurrence of \u{201c}{}\u{201d}", p),
         Side::Right => format!("No later occurrence of \u{201c}{}\u{201d}", p),
     };
-    crate::log_fmt!("SEARCH_TOAST: {}", text);
     state.search_toast.set_text(&text);
     state.search_toast.set_visible(true);
     let toast = state.search_toast.clone();
@@ -403,10 +402,6 @@ fn land_on_match_idx(state: &mut AppState, new_idx: usize) {
         || matches!(state.config.navigation_mode, crate::config::NavigationMode::EReader);
     if paginated {
         let top = crate::input::navigation::canonical_page_top_for(state, line);
-        crate::log_fmt!(
-            "SEARCH_NAV: line={} canon_top={} prev_page_top={} cols={}",
-            line, top, state.page_top_line, state.column_count()
-        );
         crate::input::scroll::set_page_instant(state, top);
         // canonical_page_top_for backs up to the section/chapter header, so on a
         // degenerate lone-line header spread (Err/Tro at a short viewport) the

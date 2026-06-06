@@ -871,13 +871,6 @@ pub(crate) fn scene_header_top_state(state: &AppState, line: usize) -> usize {
     scene_header_top(&state.buffer, line, is_break)
 }
 
-/// `state`-taking convenience wrapper for `chapter_page_top`.
-pub(crate) fn chapter_page_top_state(state: &AppState, target_line: usize) -> usize {
-    let sec = state.section_starts();
-    let bf = sec.map(section_break_fn);
-    let is_break = bf.as_ref().map(|f| f as &dyn Fn(usize) -> bool);
-    chapter_page_top(&state.buffer, target_line, is_break)
-}
 
 /// Returns true when `line` is the first dialogue line of a scene — i.e.
 /// walking backward hits a scene marker or separator before any dialogue.
@@ -983,44 +976,6 @@ pub(crate) fn scene_header_top(
         }
     }
     marker
-}
-
-/// Find the page-top for a chapter jump: back up over the speaker name and
-/// any immediately-adjacent scene headers so the chapter's first dialogue
-/// line sits near the viewport top with its speaker visible above it.
-pub(crate) fn chapter_page_top(
-    buffer: &sourceview5::Buffer,
-    target_line: usize,
-    is_break: Option<&dyn Fn(usize) -> bool>,
-) -> usize {
-    use crate::db::line_types;
-    let mut top = back_up_for_speaker(buffer, target_line, is_break);
-    // Continue backing up over stanza numbers, blanks, and separators
-    // to reach the chapter/section header (BOOK I, ACT 1, etc.)
-    while top > 0 {
-        // Authoritative path: if the line above is a section boundary, the
-        // chapter header is that line — back up to it and stop.
-        if let Some(f) = is_break {
-            if f(top - 1) {
-                top -= 1;
-                break;
-            }
-        }
-        let prev = buffer_line_text(buffer, top - 1);
-        let trimmed = prev.trim();
-        if line_types::is_stanza_number(trimmed)
-            || trimmed.is_empty()
-            || line_types::is_separator(trimmed)
-        {
-            top -= 1;
-        } else if is_break.is_none() && line_types::is_act_scene_marker(trimmed) {
-            top -= 1;
-            break;
-        } else {
-            break;
-        }
-    }
-    top
 }
 
 /// Earliest line whose y-coordinate is reachable by `vadjustment.set_value`

@@ -265,8 +265,8 @@ pub(crate) fn canonical_page_top_for(state: &AppState, target: usize) -> usize {
     let target = target.min(line_count - 1);
     // Start from a real page boundary at or before the target: the SECTION/SCENE
     // header above it. The forward walk via next_page_top is idempotent ONLY from
-    // a genuine page boundary — so we must NOT start at chapter_page_top, which
-    // falls back to the *speaker* line just above the target when there's no
+    // a genuine page boundary — so we must NOT start from a per-speaker back-up,
+    // which lands on the *speaker* line just above the target when there's no
     // section break immediately above (e.g. a match mid-scene). That speaker line
     // sits mid-page, so the walk's first spread "contains" the target and returns
     // a too-late top (the bug: match line 4043 -> speaker 4042 instead of the
@@ -1136,8 +1136,8 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
 ///
 /// Walks backward from `current_line` looking for an act/scene marker, then
 /// places the cursor on the first dialogue line of that scene. The viewport
-/// top is pinned to the scene marker via `chapter_page_top` so the scene
-/// header stays visible above the cursorline.
+/// top is pinned to the scene marker so the scene header stays visible above
+/// the cursorline.
 pub fn jump_to_prev_scene(state: &mut AppState) {
     use crate::db::line_types;
     let line_count = state.effective_line_count();
