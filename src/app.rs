@@ -1260,11 +1260,15 @@ pub fn build_window(
     speed_toast.set_visible(false);
     authorship_picker.overlay.add_overlay(&speed_toast);
 
+    // Search boundary toast: centered horizontally, sitting in the thin strip
+    // BELOW the card (the card has a 24px bottom margin, so a small-font label
+    // pinned ~5px from the window bottom lands in that gap rather than over the
+    // card). Small font (.search-toast) so it fits the narrow strip.
     let search_toast = gtk4::Label::new(None);
     search_toast.set_valign(gtk4::Align::End);
     search_toast.set_halign(gtk4::Align::Center);
-    search_toast.set_margin_bottom(32);
-    search_toast.add_css_class("chapter-toast");
+    search_toast.set_margin_bottom(5);
+    search_toast.add_css_class("search-toast");
     search_toast.set_visible(false);
     authorship_picker.overlay.add_overlay(&search_toast);
 
