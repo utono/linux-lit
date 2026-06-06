@@ -215,20 +215,35 @@ pub fn reactivate_and_step(state_rc: &Rc<RefCell<AppState>>, pressed_next: bool)
 /// Always seek to the current line's start time (with the usual preroll). Keep
 /// playing if playback was already playing (ResumeAndSeek); if it was paused,
 /// seek the audio position but stay paused (Seek) — never begin playback.
-fn seek_and_resume(state: &AppState) {
-    if let Some(ref work) = state.current_work {
-        if let Some(work_idx) = state.work_line_for_buffer(state.current_line) {
-            if let Some(ts) = &work.lines[work_idx].timestamp {
-                let seek_time = (ts.start - crate::input::navigation::SEEK_PREROLL).max(0.0);
-                let cmd = if state.mpv_playing {
-                    crate::mpv::MpvCommand::ResumeAndSeek(seek_time)
-                } else {
-                    crate::mpv::MpvCommand::Seek(seek_time)
-                };
-                let _ = state.cmd_tx.try_send(cmd);
-            }
-        }
+fn seek_and_resume(state: &mut AppState) {
+    let start = match state.current_work.as_ref().and_then(|work| {
+        state
+            .work_line_for_buffer(state.current_line)
+            .and_then(|idx| work.lines[idx].timestamp.as_ref().map(|ts| ts.start))
+    }) {
+        Some(start) => start,
+        None => return,
+    };
+    let seek_time = (start - crate::input::navigation::SEEK_PREROLL).max(0.0);
+
+    let cmd = if state.mpv_playing {
+        crate::mpv::MpvCommand::ResumeAndSeek(seek_time)
+    } else {
+        crate::mpv::MpvCommand::Seek(seek_time)
+    };
+    let _ = state.cmd_tx.try_send(cmd);
+
+    // Suppress cursor-sync briefly so the seek isn't immediately yanked back to
+    // the previous line by the next TimePos event (the second-seek + re-pause
+    // seen in the log). Also drop any in-flight fade and the prev-highlight
+    // bookkeeping so the highlight settles on the match line. Mirrors
+    // toggle_playback's post-seek handling.
+    if let Some(prev) = state.cursor_fade_anim.take() {
+        prev.skip();
     }
+    state.prev_highlight_line.set(None);
+    state.suppress_sync_until =
+        Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
 }
 
 /// Clear all search state: highlights and matches.
