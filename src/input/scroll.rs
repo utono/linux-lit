@@ -356,6 +356,53 @@ pub(crate) fn set_page_instant(state: &mut AppState, new_top: usize) {
     snap_scroll_to_line(state, new_top);
 }
 
+/// Show a dim "Next: Act N, Scene M" label centered in an EMPTY right column
+/// (the scene ended in the left column), naming the act/scene that opens the
+/// next canonical spread; hide it in every other case. `cs` is the spread's
+/// `ColumnSplit` (already computed by the caller). The next scene's act/scene
+/// is read from `cs.next_page_top`'s DB `(div1, div2)` — authoritative metadata,
+/// never inferred from buffer text.
+fn update_next_scene_watermark(state: &AppState, cs: &super::viewport::ColumnSplit) {
+    let line_count = state.effective_line_count();
+    // The right column is VISUALLY empty when the spread ends at a scene break:
+    // `column_split` leaves the scene's trailing exit/blank lines in the right
+    // range `[split, page_end]` (the bottom-clip then hides them) and sets
+    // `next_page_top` to the next scene's marker. The strict `page_end < split`
+    // test alone is insufficient — when a single trailing line sits at the split
+    // the engine returns `page_end == split` (observed on H8 1.3: split=804
+    // page_end=804 next=805), so the right range is one clipped tail line, NOT
+    // `< split`. Detect the scene-break case authoritatively: `next_page_top` is
+    // a DB section start (the next spread opens a new scene) AND the right range
+    // carries no dialogue — only the tail. `page_end < split` is kept as the
+    // sufficient condition for the strict lone-tail geometry. Both arms require
+    // `next_page_top < line_count`, which also excludes END-OF-WORK (there
+    // `next_page_top == line_count`) and the empty-LEFT first-spread mirror
+    // (`split == 0`, where the right column is non-empty and has dialogue).
+    let next_opens_scene =
+        cs.next_page_top < line_count && state.is_section_start(cs.next_page_top);
+    let right_has_dialogue = (cs.split..=cs.page_end.min(line_count.saturating_sub(1)))
+        .any(|l| super::viewport::is_dialogue_line(&state.buffer, l));
+    let empty_right = (cs.page_end < cs.split || (next_opens_scene && !right_has_dialogue))
+        && cs.next_page_top < line_count;
+    if !empty_right {
+        state.next_scene_watermark.set_visible(false);
+        return;
+    }
+    let (div1, div2) = crate::app::divs_at_buffer_line(state, cs.next_page_top);
+    let label = crate::app::scene_label(div1, div2);
+    // ~120% of the reading font, in Pango units (1pt = 1024). Scales with the
+    // user's configured `font_size` instead of a fragile relative keyword.
+    let size_units = ((state.config.font_size as f64) * 1.2 * 1024.0).round() as i64;
+    let markup = format!(
+        "<span foreground=\"{}\" style=\"italic\" size=\"{}\">Next: {}</span>",
+        state.theme.dim_fg,
+        size_units,
+        glib::markup_escape_text(&label),
+    );
+    state.next_scene_watermark.set_markup(&markup);
+    state.next_scene_watermark.set_visible(true);
+}
+
 /// Scroll so `line` is at the top of the viewport, then size the bottom clip
 /// overlay to hide any partially-visible line at the bottom of the page.
 pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
@@ -444,6 +491,7 @@ pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
     );
 
     if let Some(cs) = cs {
+        update_next_scene_watermark(state, &cs);
         // Make sure the right view has enough bottom headroom that a near-the-end
         // split line can actually be scrolled to its top (otherwise the scroll
         // clamps low and the right column duplicates the start of the buffer).
@@ -482,6 +530,10 @@ pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
             Some(right_end),
             None, // exact_end set → trim path (and section clamp) never runs
         );
+    } else {
+        // Single-column (prose) or layout-not-ready: never show the two-column
+        // watermark.
+        state.next_scene_watermark.set_visible(false);
     }
 }
 
