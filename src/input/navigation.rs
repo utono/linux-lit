@@ -1047,9 +1047,16 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
         if state.current_line == 0 {
             return;
         }
+        // Authoritative `section_starts` bitmap, not `is_act_scene_marker` text
+        // (which false-positives on dialogue like 'act of hares…' — see
+        // jump_to_next_scene). Text fallback only mid-load (no bitmap).
+        let has_bitmap = state.section_starts().is_some();
         let is_marker_at = |bl: usize| -> bool {
-            let text = buffer_line_text(&state.buffer, bl);
-            line_types::is_act_scene_marker(text.trim())
+            if has_bitmap {
+                state.is_section_start(bl)
+            } else {
+                line_types::is_act_scene_marker(buffer_line_text(&state.buffer, bl).trim())
+            }
         };
         // Walk markers backward from just above the cursor and pick the FIRST
         // one whose opening dialogue is strictly before `current_line` — that's
@@ -1202,11 +1209,24 @@ fn first_dialogue_line(state: &AppState) -> usize {
 pub fn jump_to_next_scene(state: &mut AppState) {
     use crate::db::line_types;
     let line_count = state.effective_line_count();
+    // Find the next scene boundary from the AUTHORITATIVE `section_starts` bitmap
+    // (DB `(div1,div2)`), NOT `is_act_scene_marker` buffer-text classification.
+    // The text heuristic matches any line starting with "ACT "/"SCENE "/… — which
+    // false-positives on ordinary dialogue (Tro 2438 'act of hares, are they not
+    // monsters?' was misread as an ACT marker), so `3` jumped into the middle of a
+    // speech, landing off the pagination chain and breaking `y` tiling. The bitmap
+    // marks exactly the real boundaries. Fall back to the text scan only mid-load
+    // (no bitmap yet). See CLAUDE.md "authoritative-boundary principle".
+    let has_bitmap = state.section_starts().is_some();
     let (marker, cursor) = {
         let mut marker = None;
         for bl in (state.current_line + 1)..line_count {
-            let text = buffer_line_text(&state.buffer, bl);
-            if line_types::is_act_scene_marker(text.trim()) {
+            let is_boundary = if has_bitmap {
+                state.is_section_start(bl)
+            } else {
+                line_types::is_act_scene_marker(buffer_line_text(&state.buffer, bl).trim())
+            };
+            if is_boundary {
                 marker = Some(bl);
                 break;
             }
@@ -1218,20 +1238,6 @@ pub fn jump_to_next_scene(state: &mut AppState) {
     };
 
     if let (Some(marker_idx), Some(cursor_idx)) = (marker, cursor) {
-        // SCENEMARK_DBG: Tro 2438 — does the text-classified marker match the
-        // authoritative section_starts bitmap? A mismatch (text says marker, bitmap
-        // says no) is the off-chain landing that makes `y` gap/overlap. Temporary.
-        if state.current_work.as_ref().map(|w| w.abbrev == "Tro").unwrap_or(false)
-            && marker_idx >= 2430 && marker_idx <= 2445
-        {
-            let txt = |l: usize| buffer_line_text(&state.buffer, l).trim().chars().take(36).collect::<String>();
-            log_fmt!("SCENEMARK_DBG: marker_idx={} secstart={} '{}' | cursor_idx={} '{}'",
-                marker_idx, state.is_section_start(marker_idx), txt(marker_idx),
-                cursor_idx, txt(cursor_idx));
-            for l in marker_idx.saturating_sub(2)..=(marker_idx+3).min(state.effective_line_count()-1) {
-                log_fmt!("SCENEMARK_DBG:   line {} secstart={} '{}'", l, state.is_section_start(l), txt(l));
-            }
-        }
         state.current_line = cursor_idx;
         // Clear the back-stack but do NOT push the jump origin: a scene jump can
         // skip many pages (e.g. mid-Scene 3 -> EPILOGUE), and `y` should page
