@@ -394,7 +394,7 @@ fn update_next_scene_watermark(state: &AppState, cs: &super::viewport::ColumnSpl
     // user's configured `font_size` instead of a fragile relative keyword.
     let size_units = ((state.config.font_size as f64) * 1.2 * 1024.0).round() as i64;
     let markup = format!(
-        "<span foreground=\"{}\" style=\"italic\" size=\"{}\">Next: {}</span>",
+        "<span foreground=\"{}\" style=\"italic\" size=\"{}\">next: {}</span>",
         state.theme.dim_fg,
         size_units,
         glib::markup_escape_text(&label),
