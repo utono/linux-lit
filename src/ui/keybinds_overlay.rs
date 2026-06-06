@@ -242,13 +242,17 @@ src/ui/keybinds_overlay.rs)",
         "search" => "Open the in-text search bar; Escape restores the pre-search \
 reader position. -> OpenSearch arm (inline) -> search::clear_search — \
 src/input/keymap.rs, src/input/search.rs",
-        "next match" => "Move to the next search match — or, when a concordance \
-is active, the next concordance hit within this work. \
--> SearchNextMatch arm -> search::next_match / concordance::concordance_next_in_work \
+        "next match" => "Move to the next search match (reactivates the last \
+search pattern if search was cancelled; stops at the last match with a toast, \
+no wrap) — or, when a concordance is active, the next concordance hit within \
+this work. \
+-> SearchNextMatch arm -> search::reactivate_and_step / concordance::concordance_next_in_work \
 — src/input/keymap.rs",
-        "prev match" => "Move to the previous search match — or the previous \
-concordance hit within this work when a concordance is active. \
--> SearchPrevMatch arm -> search::prev_match / concordance::concordance_prev_in_work \
+        "prev match" => "Move to the previous search match (reactivates the last \
+search pattern if search was cancelled; stops at the first match with a toast, \
+no wrap) — or the previous concordance hit within this work when a concordance \
+is active. \
+-> SearchPrevMatch arm -> search::reactivate_and_step / concordance::concordance_prev_in_work \
 — src/input/keymap.rs",
 
         // ── Gloss / echo system ──
