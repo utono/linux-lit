@@ -130,6 +130,10 @@ pub struct AppState {
     pub search_bar: SearchBar,
     pub search_matches: Vec<SearchMatch>,
     pub search_match_idx: usize,
+    /// Most-recently-used non-empty search pattern. Persists for the session
+    /// (survives Escape and work switches) so n/N can reactivate search. NOT
+    /// cleared by clear_search.
+    pub last_search_query: Option<String>,
     /// Reader position (current_line, page_top_line) saved when search opens, so
     /// Escape can cancel the live-search jump and restore the original page.
     pub search_return_pos: Option<(usize, usize)>,
@@ -1378,6 +1382,7 @@ pub fn build_window(
         search_bar,
         search_matches: Vec::new(),
         search_match_idx: 0,
+        last_search_query: None,
         search_return_pos: None,
         gloss_return_pos: None,
         search_tag,
