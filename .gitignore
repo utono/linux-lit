@@ -10,3 +10,5 @@ scripts/data/NRC-VAD-Lexicon.txt
 
 # Claude Code session transcripts & auto-memory (local, not project source)
 .claude/projects/
+# Claude Code runtime lock (per-process scheduled-tasks lock; not source)
+.claude/scheduled_tasks.lock
