@@ -173,6 +173,12 @@ pub struct AppState {
     pub authorship_picker: crate::ui::authorship_picker::AuthorshipPicker,
     pub translations: HashMap<i64, String>,
     pub translations_visible: bool,
+    /// Column count to assume BEFORE `current_work` is loaded — seeded at build
+    /// time from `config.last_column_count`. `column_count()` falls back to this
+    /// instead of `1` when no work is set yet, so the first card-sizing pass
+    /// matches the target layout and there's no visible 1→2-column reflow on
+    /// startup. `None` (no saved value) → fall back to `1` as before.
+    pub pending_column_count: Option<u8>,
     /// Sign-column visibility saved when translations are shown, so it can be
     /// restored when translations are hidden. `None` when not in translation
     /// mode. Signs are hidden while translations are visible.
@@ -372,7 +378,11 @@ impl AppState {
             return 1;
         }
         let Some(work) = self.current_work.as_ref() else {
-            return 1;
+            // No work loaded yet (early startup): use the count the last session
+            // resolved, so the first card-sizing/formatting pass already matches
+            // the target layout and there's no visible 1→2-column reflow. Falls
+            // back to 1 when there's no saved value.
+            return self.pending_column_count.unwrap_or(1).clamp(1, 2);
         };
         let n = self.config.column_overrides
             .get(&work.abbrev)
@@ -1309,6 +1319,16 @@ pub fn build_window(
     };
     let dim_enabled = config.dim_enabled;
     let vocab_highlight_visible = config.vocab_highlight_visible;
+    // Captured before `config` is moved into AppState; seeds the early-startup
+    // column-count guess so the first card pass matches the target layout.
+    // `LIT_START_COLUMNS` overrides it for hermetic test runs (config writeback is
+    // suppressed under LIT_HEADLESS_TEST, so the persisted value can't be relied
+    // on there) — mirrors LIT_START_WORK / LIT_START_POS.
+    let pending_column_count = std::env::var("LIT_START_COLUMNS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u8>().ok())
+        .map(|n| n.clamp(1, 2))
+        .or(config.last_column_count);
 
     let state = Rc::new(RefCell::new(AppState {
         text_view,
@@ -1381,6 +1401,7 @@ pub fn build_window(
         dialogue_formatting_active: false,
         translations: HashMap::new(),
         translations_visible: false,
+        pending_column_count,
         sign_visible_before_translations: None,
         pre_translation_page: None,
         translation_lines: Vec::new(),
@@ -2216,6 +2237,20 @@ pub fn display_work_at_with_prepared(
     }
     state.config.last_work = Some(work.abbrev.clone());
     state.config.push_recent_work(&work.abbrev);
+    // Persist the column count this work will resolve to, so the NEXT startup's
+    // first card pass matches and there's no 1→2-column reflow. Computed from the
+    // same inputs `column_count()` uses (override map → work-type default); we
+    // can't call `column_count()` yet because `current_work` isn't set.
+    if matches!(state.config.navigation_mode, crate::config::NavigationMode::EReader)
+        && !state.translations_visible
+    {
+        let cc = state.config.column_overrides
+            .get(&work.abbrev)
+            .copied()
+            .unwrap_or_else(|| default_column_count_for(&work))
+            .clamp(1, 2);
+        state.config.last_column_count = Some(cc);
+    }
     crate::config::save(&state.config);
 
     // Send timestamp data to MPV client (filtered by active media_id)
@@ -4201,8 +4236,12 @@ pub fn remove_ab_dim(state: &AppState) {
 pub fn save_position(state: &mut AppState) {
     if let Some(work) = &state.current_work {
         let abbrev = work.abbrev.clone();
+        // Record the resolved column count so the NEXT launch can size the first
+        // card pass correctly and avoid the startup 1→2-column reflow.
+        let cc = state.column_count();
         state.config.last_work = Some(abbrev.clone());
         state.config.work_positions.insert(abbrev, state.current_line);
+        state.config.last_column_count = Some(cc);
         crate::config::save(&state.config);
     }
 }

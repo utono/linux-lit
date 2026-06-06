@@ -58,6 +58,13 @@ pub struct Config {
     pub work_positions: HashMap<String, usize>,
     #[serde(default)]
     pub column_overrides: HashMap<String, u8>,
+    /// Column count (1 or 2) the LAST session resolved for `last_work`. Used as
+    /// the initial layout guess at build time — before `current_work` loads —
+    /// so the first card-sizing/formatting pass already matches the target
+    /// layout and there's no visible 1→2-column reflow on startup. Corrected
+    /// after the work loads if the real count differs.
+    #[serde(default)]
+    pub last_column_count: Option<u8>,
     #[serde(default)]
     pub visual_mode_commands: Vec<VisualModeCommand>,
     #[serde(default = "default_claude_model")]
@@ -160,6 +167,7 @@ impl Default for Config {
             recent_works: Vec::new(),
             work_positions: HashMap::new(),
             column_overrides: HashMap::new(),
+            last_column_count: None,
             visual_mode_commands: Vec::new(),
             claude_model: default_claude_model(),
             vocab_highlight_visible: default_vocab_highlight_visible(),
