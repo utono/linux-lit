@@ -578,33 +578,14 @@ fn handle_search_key(
             true
         }
         "Return" => {
-            // The page the reader was on when search opened. If the matched
-            // line is already visible on that page, accepting the search must
-            // not re-paginate (no jump); only when the match lies off-page do
-            // we snap it to a new page top.
-            let orig_top = state
-                .borrow()
-                .search_return_pos
-                .map(|(_, top)| top);
+            // execute_search lands the first match on its CANONICAL spread
+            // (land_on_match_idx). Accepting the search just commits that jump —
+            // do NOT recompute page_top_line here (the old top-align / keep-on-
+            // page logic clobbered the canonical landing, dropping the match to
+            // the top of the page).
             crate::input::search::execute_search(&state);
-            {
-                let mut s = state.borrow_mut();
-                // Accepting a match commits the jump; drop the saved return pos.
-                s.search_return_pos = None;
-                let match_line = s.current_line;
-                let on_page = orig_top.map_or(false, |top| {
-                    let last = crate::input::viewport::last_fully_visible_line(&s, top);
-                    match_line >= top && match_line <= last
-                });
-                if on_page {
-                    // Match is already on the current page — keep pagination put.
-                    s.page_top_line = orig_top.unwrap();
-                } else {
-                    s.page_top_line = s.current_line;
-                }
-                crate::input::scroll::resnap_page(&mut s);
-                crate::input::highlight::update_highlight(&mut s);
-            }
+            // Accepting a match commits the jump; drop the saved return pos.
+            state.borrow_mut().search_return_pos = None;
             state.borrow().search_bar.hide();
             state.borrow_mut().input_mode = crate::app::InputMode::Reader;
             true
