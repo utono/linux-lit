@@ -189,9 +189,25 @@ keysym (`j`, `x`, `g`, `Escape`, `Next`); `+mod:key` is a chord in one press
 (`+shift:g` → Shift+G, `+ctrl:Home`). Repeat a token to repeat the key.
 
 **RPD keymap** (what to inject for common nav): line `j`/`k`, page `x`/`y`, top
-`g g` (sequential), end `+shift:g`, next/prev chapter `braceleft`/`bracketleft`,
-synopsis overlay `h`, close `Escape`. Keys hit the window's global controller —
-no focus step needed.
+`g g` (sequential), end `+shift:g`, next/prev chapter `braceleft`/`bracketleft`
+(`{`/`[`), next/prev bookmark `ampersand`/`parenleft` (`&`/`(`), synopsis overlay
+`h`, close `Escape`. Keys hit the window's global controller — no focus step
+needed.
+
+Chapter (`[`/`{`) and bookmark (`(`/`&`) jumps both land on the **canonical
+spread** containing the target — the same page paging through shows, with the
+target wherever natural pagination places it (not force-top-aligned). To eyeball
+this, screenshot before/after a jump that crosses a page boundary, e.g.:
+
+```bash
+./scripts/e2e-env.sh .claude/skills/headless-test/run-headless-test.sh \
+  --label bookmark --step "ampersand" --step "parenleft"
+```
+
+The nav-fuzz harness (below) drives `NextBookmark`/`PrevBookmark` and
+`NextChapter`/`PrevChapter` from every anchor with the on-page landing invariant;
+it seeds deterministic bookmarks (every 40th dialogue line) at fuzz start so the
+`(`/`&` steps actually cross boundaries.
 
 ## After running
 
@@ -208,7 +224,7 @@ A navigation stress test that drives the app's in-process nav-test harness
 **1400 steps: a deterministic coverage prelude, then a random body.**
 
 - **Coverage prelude** (`build_coverage_prelude`) — drives **every** nav action
-  (x/y/2/3/gg/G/chapter/`q`/`j`/`,`/`k`) from **every** structural anchor on
+  (x/y/2/3/gg/G/chapter `[`/`{`/bookmark `(`/`&`/`q`/`j`/`,`/`k`) from **every** structural anchor on
   **every** run: from the work start, the work end, each of the first 24 scene
   boundaries, and 3 mid-page anchors. This is what makes the fuzz test *all
   scenarios* instead of sampling them — a random seed alone leaves real bugs

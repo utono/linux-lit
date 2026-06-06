@@ -1615,6 +1615,12 @@ pub fn build_window(
         let vbox_for_tick = vbox.clone();
         let last_width: Rc<Cell<i32>> = Rc::new(Cell::new(-1));
         let last_height: Rc<Cell<i32>> = Rc::new(Cell::new(-1));
+        // Bounds the two-column width-settle wait so the tick can't spin forever
+        // when the columns can never reach the balance band (e.g. a viewport too
+        // narrow to hold two MIN_TWO_COLUMN_COLUMN_WIDTH columns: GTK shrinks them
+        // below the band floor, near_target stays false, and layout/reveal would
+        // otherwise block indefinitely — observed wedging the headless fuzz).
+        let settle_attempts: Rc<Cell<u32>> = Rc::new(Cell::new(0));
         window.add_tick_callback(move |_win, _clock| {
             let ww = vbox_for_tick.width();
             let prev_w = last_width.get();
@@ -1722,12 +1728,28 @@ pub fn build_window(
                         let hi = (MIN_TWO_COLUMN_COLUMN_WIDTH as f32 * 1.20) as i32;
                         let near_target = (lo..=hi).contains(&lw) && (lo..=hi).contains(&rw);
                         let balanced = (lw - rw).abs() <= 8;
-                        if !(near_target && balanced) {
+                        if near_target && balanced {
+                            settle_attempts.set(0);
+                        } else {
+                            // Cap the wait: ~60 ticks ≈ 1s at 60fps. If the columns
+                            // still haven't reached the band, they likely never will
+                            // (viewport too narrow to fit two full columns) — proceed
+                            // with the current geometry rather than blocking forever.
+                            const MAX_SETTLE_TICKS: u32 = 60;
+                            let n = settle_attempts.get() + 1;
+                            settle_attempts.set(n);
+                            if n <= MAX_SETTLE_TICKS {
+                                crate::log_fmt!(
+                                    "RESIZE_TICK: two-col width not settled (left_w={} right_w={} band={}..={} balanced={}), waiting ({}/{})",
+                                    lw, rw, lo, hi, balanced, n, MAX_SETTLE_TICKS
+                                );
+                                return glib::ControlFlow::Continue;
+                            }
                             crate::log_fmt!(
-                                "RESIZE_TICK: two-col width not settled (left_w={} right_w={} band={}..={} balanced={}), waiting",
-                                lw, rw, lo, hi, balanced
+                                "RESIZE_TICK: two-col width never settled (left_w={} right_w={} band={}..={}) after {} ticks — proceeding with current geometry",
+                                lw, rw, lo, hi, MAX_SETTLE_TICKS
                             );
-                            return glib::ControlFlow::Continue;
+                            settle_attempts.set(0);
                         }
                     }
                     crate::log_fmt!("RESIZE_TICK: deferred layout refresh, sw_h={}", sw_h);

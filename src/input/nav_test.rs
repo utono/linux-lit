@@ -18,6 +18,8 @@ enum Step {
     PrevScene,
     NextChapter,
     PrevChapter,
+    NextBookmark, // & — forward to next bookmarked line (canonical spread)
+    PrevBookmark, // ( — back to prev bookmarked line (canonical spread)
     JumpTop,
     JumpEnd,
     NextDialogue, // q/j — reading-order forward; can turn the page
@@ -41,10 +43,11 @@ impl Step {
     /// the exhaustive `match` below (no `_` arm) fails to compile if a variant is
     /// added without classifying it. This is what turns "remember to update
     /// ALL_STEPS" from a human checklist into a guarantee.
-    const EVERY: [Step; 12] = [
+    const EVERY: [Step; 14] = [
         Step::PageForward, Step::PageBackward,
         Step::NextScene, Step::PrevScene,
         Step::NextChapter, Step::PrevChapter,
+        Step::NextBookmark, Step::PrevBookmark,
         Step::JumpTop, Step::JumpEnd,
         Step::NextDialogue, Step::PrevDialogue,
         Step::SyncAdvance, Step::SearchJump,
@@ -58,6 +61,7 @@ impl Step {
             Step::PageForward | Step::PageBackward
             | Step::NextScene | Step::PrevScene
             | Step::NextChapter | Step::PrevChapter
+            | Step::NextBookmark | Step::PrevBookmark
             | Step::JumpTop | Step::JumpEnd
             | Step::NextDialogue | Step::PrevDialogue => true,
             // SyncAdvance has its own slow cadence; SearchJump is a simulation —
@@ -71,7 +75,7 @@ impl Step {
 // variants. If a variant is added without extending `EVERY`, this fails to
 // compile. (`variant_count` is stable as of the toolchain this builds against;
 // if unavailable, the exhaustive `match` in `in_coverage` is the backstop.)
-const _: () = assert!(Step::EVERY.len() == 12);
+const _: () = assert!(Step::EVERY.len() == 14);
 
 /// Deterministic LCG — `Math.random` would make runs unreproducible. Seeded from
 /// a fixed constant so a failure can be replayed by re-running the same mode.
@@ -246,6 +250,33 @@ fn build_fuzz_script() -> Vec<Step> {
 /// always runs in full, followed by a long random body for combinatorial depth.
 const MAX_STEPS: usize = 1400;
 
+/// Mark a deterministic, spread-out set of dialogue lines as bookmarked so the
+/// `NextBookmark`/`PrevBookmark` fuzz steps actually move (and cross page
+/// boundaries — the case that exercises `canonical_page_top_for`). Idempotent and
+/// seed-free so re-runs reproduce. Overwrites `is_bookmarked` for the run; the
+/// fuzz uses a private DB copy, so the real bookmark set is never touched.
+fn seed_fuzz_bookmarks(s: &mut AppState) {
+    let line_count = s.effective_line_count();
+    if line_count == 0 {
+        return;
+    }
+    let mut marks = vec![false; line_count];
+    let mut n = 0;
+    for i in 0..line_count {
+        if is_dialogue_line(&s.buffer, i) {
+            // Every 40th dialogue line → bookmarks land far enough apart that most
+            // jumps turn the page rather than staying on the current spread.
+            if n % 40 == 0 {
+                marks[i] = true;
+            }
+            n += 1;
+        }
+    }
+    let count = marks.iter().filter(|&&b| b).count();
+    *s.is_bookmarked.borrow_mut() = marks;
+    crate::log_fmt!("NAV_TEST: seeded {} fuzz bookmarks (every 40th dialogue line)", count);
+}
+
 pub fn toggle(state_rc: &Rc<RefCell<AppState>>) {
     let mut s = state_rc.borrow_mut();
     if s.nav_test_active {
@@ -279,6 +310,12 @@ pub fn toggle(state_rc: &Rc<RefCell<AppState>>) {
         // Print the resolved seed so a FAIL can be replayed exactly with
         // `LIT_NAV_SEED=0x...` (set it to this value to reproduce the same run).
         crate::log_fmt!("NAV_TEST: seed=0x{:016X} (override with LIT_NAV_SEED)", fuzz_seed());
+        // Seed deterministic bookmarks so the `(`/`&` (Prev/NextBookmark) steps
+        // actually move — a fuzzed work usually has few or no real bookmarks, so
+        // without this the binds no-op and their canonical-spread landing is never
+        // exercised. Bookmark ~every 40th DIALOGUE line (spread apart so most jumps
+        // cross a page boundary, the case that stresses canonical_page_top_for).
+        seed_fuzz_bookmarks(&mut s);
     }
 
     let icon = s.debug_icon.clone();
@@ -368,6 +405,8 @@ fn run_step(s: &mut AppState) {
         Step::PrevScene => navigation::jump_to_prev_scene(s),
         Step::NextChapter => navigation::jump_to_next_chapter(s),
         Step::PrevChapter => navigation::jump_to_prev_chapter(s),
+        Step::NextBookmark => navigation::next_bookmark(s),
+        Step::PrevBookmark => navigation::prev_bookmark(s),
         Step::JumpTop => navigation::jump_to_start(s),
         Step::JumpEnd => navigation::jump_to_end(s),
         Step::NextDialogue => navigation::jump_to_next_dialogue(s),
@@ -730,6 +769,7 @@ fn run_step(s: &mut AppState) {
     let is_jump = matches!(
         step,
         Step::NextScene | Step::PrevScene | Step::NextChapter | Step::PrevChapter
+            | Step::NextBookmark | Step::PrevBookmark
             | Step::JumpTop | Step::JumpEnd
     );
     if is_jump && moved && line_count > 0 {

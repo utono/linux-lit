@@ -246,6 +246,55 @@ pub fn jump_to_end(state: &mut AppState) {
     after_page_change(state, PageChangeReason::JumpToLine);
 }
 
+/// The page top of the CANONICAL spread that contains `target` — the same spread
+/// the reader reaches by paging FORWARD through the work, so `target` sits where
+/// natural pagination places it (not force-top-aligned). Walks the forward page
+/// chain (`next_page_top`) from the section/chapter header above `target` until
+/// the spread whose span `[page_top, page_end]` (or `next_page_top` boundary in
+/// single-column) contains `target`. Idempotent: re-running from any earlier
+/// boundary yields the same top, so a jump here agrees with what `x`/`y` produce.
+///
+/// Used by bookmark and structural jumps so they land on the canonical spread
+/// rather than a top-aligned page that disagrees with the natural pagination.
+pub(crate) fn canonical_page_top_for(state: &AppState, target: usize) -> usize {
+    let line_count = state.effective_line_count();
+    if line_count == 0 {
+        return 0;
+    }
+    let target = target.min(line_count - 1);
+    // Start from a real page boundary at or before the target: the section/scene
+    // (or chapter) header above it. The forward walk is idempotent, so any valid
+    // boundary at-or-before `target` converges to the same canonical spread;
+    // chapter_page_top backs up over stanza numbers / separators / blanks to the
+    // header, falling back to the speaker back-up when there is no boundary above
+    // (e.g. a work opening mid-buffer).
+    let mut top = chapter_page_top_state(state, target).min(target);
+    let two_col = state.column_count() == 2;
+    let mut guard = 0;
+    loop {
+        // Does this spread already contain the target?
+        let page_end = if two_col {
+            column_split(state, top).page_end
+        } else {
+            last_fully_visible_line(state, top)
+        };
+        if target <= page_end {
+            return top;
+        }
+        let next = next_page_top(state, top).new_top;
+        if next <= top || next >= line_count {
+            // Forward chain exhausted before reaching the target (shouldn't happen
+            // for an in-bounds target, but stay safe): keep the last top.
+            return top;
+        }
+        top = next;
+        guard += 1;
+        if guard > line_count {
+            return top;
+        }
+    }
+}
+
 /// The page top of the FINAL spread that contains `target`, sized so the work's
 /// tail content fills both columns (two-column) rather than landing `target` as
 /// a lonely left column with an empty right. Used by `jump_to_end` and by the
@@ -975,7 +1024,10 @@ pub fn jump_to_prev_chapter(state: &mut AppState) {
                 if is_line_fully_visible(state, line_idx) {
                     update_highlight_only(state);
                 } else {
-                    let top = chapter_page_top_state(state, line_idx);
+                    // Canonical spread containing the chapter line — same page the
+                    // reader reaches paging through, so the header sits where
+                    // pagination places it (consistent with bookmark jumps).
+                    let top = canonical_page_top_for(state, line_idx);
                     set_page_instant(state, top);
                     // See jump_to_next_chapter: a chapter/act header that fills a
                     // degenerate spread leaves the cursor off-page; advance until
@@ -1030,10 +1082,12 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
                 if is_line_fully_visible(state, line_idx) {
                     update_highlight_only(state);
                 } else {
-                    let top = chapter_page_top_state(state, line_idx);
+                    // Canonical spread containing the chapter line — same page the
+                    // reader reaches paging through (consistent with bookmark jumps).
+                    let top = canonical_page_top_for(state, line_idx);
                     set_page_instant(state, top);
-                    // chapter_page_top backs up to the chapter/act header so it
-                    // shows above the cursor — but when that header fills a
+                    // canonical_page_top_for backs up to the chapter/act header so
+                    // it shows above the cursor — but when that header fills a
                     // degenerate spread (Err/Tro: an ACT/scene header whose page is
                     // a lone 1-line spread at a short viewport), the cursor
                     // (line_idx, the chapter's first dialogue) lands OFF-PAGE below
@@ -1421,10 +1475,23 @@ pub fn jump_to_line(state: &mut AppState, buffer_line: usize) {
     if buffer_line >= line_count {
         return;
     }
+    // If the target is already fully visible on the current spread/page, just
+    // move the highlight — no scroll, no page turn. Re-paging an on-screen line
+    // shifts the viewport for no reason (a bookmark on the current page would
+    // otherwise jolt the spread). Mirrors scroll_after_jump_{forward,backward}.
+    if super::viewport::is_line_fully_visible(state, buffer_line) {
+        state.current_line = buffer_line;
+        after_page_change(state, PageChangeReason::JumpToBookmark);
+        return;
+    }
+
     state.current_line = buffer_line;
     state.page_back_stack.clear();
     state.page_back_stack.push(state.page_top_line);
-    let top = page_turn_top_state(state, buffer_line);
+    // Land on the CANONICAL spread for this line — the same page paging through
+    // the work shows — so the bookmark sits where natural pagination places it,
+    // not force-top-aligned (which page_turn_top_state would do).
+    let top = canonical_page_top_for(state, buffer_line);
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
