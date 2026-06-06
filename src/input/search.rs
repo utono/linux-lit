@@ -358,24 +358,22 @@ fn goto_match_idx(state: &mut AppState, new_idx: usize) {
         .update_counter(state.search_match_idx, total);
     push_page_back_dedup(state);
 
-    if crate::input::viewport::is_line_fully_visible(state, line) {
-        // Already on the current spread — move cursor/highlight only, no flash.
-        crate::input::highlight::update_highlight(state);
-    } else {
-        match state.config.navigation_mode {
-            crate::config::NavigationMode::Scroll => {
-                crate::input::scroll::center_cursor(state)
-            }
-            crate::config::NavigationMode::EReader => {
-                let top = crate::input::navigation::canonical_page_top_for(state, line);
-                crate::input::scroll::set_page_instant(state, top);
-                // canonical_page_top_for backs up to the section/chapter header, so
-                // on a degenerate lone-line header spread (Err/Tro at a short
-                // viewport) the matched line can land off-page below it. Advance
-                // until the cursor is actually visible — same guard the chapter
-                // jump uses (navigation.rs jump_to_next_chapter).
-                crate::input::navigation::ensure_cursor_visible_ereader(state, line);
-            }
+    // ALWAYS land on the canonical spread for the match — the same page paging
+    // through the work shows — even when the match is already visible on the
+    // current page. MPV playback sync drifts page_top, so the "current spread"
+    // is often a non-canonical view of the same line; jumping to the canonical
+    // top is what the reader expects from n/N.
+    match state.config.navigation_mode {
+        crate::config::NavigationMode::Scroll => crate::input::scroll::center_cursor(state),
+        crate::config::NavigationMode::EReader => {
+            let top = crate::input::navigation::canonical_page_top_for(state, line);
+            crate::input::scroll::set_page_instant(state, top);
+            // canonical_page_top_for backs up to the section/chapter header, so
+            // on a degenerate lone-line header spread (Err/Tro at a short
+            // viewport) the matched line can land off-page below it. Advance
+            // until the cursor is actually visible — same guard the chapter
+            // jump uses (navigation.rs jump_to_next_chapter).
+            crate::input::navigation::ensure_cursor_visible_ereader(state, line);
         }
     }
     seek_and_resume(state);
