@@ -444,7 +444,9 @@ fn scene_snap_top(state: &AppState, line_count: usize) -> Option<usize> {
     if state.column_count() != 2 {
         return None;
     }
-    let split = column_split(state, state.page_top_line).split;
+    let cs = column_split(state, state.page_top_line);
+    let split = cs.split;
+    let page_end = cs.page_end;
     if split <= state.page_top_line || split >= line_count {
         return None;
     }
@@ -475,7 +477,18 @@ fn scene_snap_top(state: &AppState, line_count: usize) -> Option<usize> {
     while i > split {
         i -= 1;
         if is_section(i) {
-            return Some(split);
+            // Only snap when the boundary is genuinely INSIDE this spread's right
+            // column ([split, page_end]). If it sits past `page_end` (i.e. the
+            // right column shows the OLD scene's trailing exit chrome — blank /
+            // `[They exit.]` / blank — and the new scene starts on the NEXT page),
+            // the new scene already begins the next spread naturally via
+            // `next_page_top`; snapping to `split` would re-show that exit chrome
+            // at the top of the next page (the Jn 1596 `x` 3-line overlap of
+            // blank/'[They exit.]'/blank). Let the normal path tile to the boundary.
+            if i <= page_end {
+                return Some(split);
+            }
+            return None;
         }
         if is_dialogue_line(&state.buffer, i) {
             return None;
@@ -533,24 +546,6 @@ pub fn page_forward(state: &mut AppState) {
 
     // Scene-aware turn: if the right column opens a new scene, move that scene
     // to the top of the left column instead of paging by viewport height.
-    // JNX_DBG: Jn x OVERLAP at top=1596 — is the scene-snap re-showing the old
-    // right column (3-line overlap), and is the snap target a real bitmap
-    // boundary? Dump column_split + section_starts. Temporary.
-    if state.column_count() == 2
-        && state.page_top_line >= 1590 && state.page_top_line <= 1600
-        && state.current_work.as_ref().map(|w| w.abbrev == "Jn").unwrap_or(false)
-    {
-        let cs = column_split(state, state.page_top_line);
-        let snap = scene_snap_top(state, line_count);
-        let txt = |l: usize| buffer_line_text(&state.buffer, l).trim().chars().take(28).collect::<String>();
-        log_fmt!("JNX_DBG: page_top={} split={} page_end={} next_page_top={} scene_snap={:?}",
-            state.page_top_line, cs.split, cs.page_end, cs.next_page_top, snap);
-        for l in cs.split..=(cs.next_page_top).min(line_count-1) {
-            log_fmt!("JNX_DBG:   line {} secstart={} dialogue={} '{}'",
-                l, state.is_section_start(l), super::viewport::is_dialogue_line(&state.buffer, l), txt(l));
-        }
-    }
-
     if let Some(snap_top) = scene_snap_top(state, line_count) {
         // Near the document end the scene start may sit past the scroll ceiling,
         // so set_page would clamp it back below page_top_line — leaving the view
