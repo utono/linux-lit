@@ -808,21 +808,14 @@ fn run_step(s: &mut AppState) {
     }
 
     // 7b. JUMP-TO-END IDEMPOTENCE: `G` must land on the SAME final spread no
-    // matter where it starts from — recomputing `last_page_top` for the work's
-    // last dialogue line must equal the page G just landed on. A mismatch means
-    // G disagrees with itself (and with the saved-position startup spread): two
-    // different "final" pages, the bug where G from one position lands on a
-    // different, too-early spread than from another.
+    // matter where it starts from — recomputing `last_page_top` must equal the
+    // page G just landed on. A mismatch means G disagrees with itself (and with
+    // the saved-position startup spread): two different "final" pages, the bug
+    // where G from one position lands on a different, too-early spread than from
+    // another. (last_page_top is now target-independent, so this recompute is
+    // from the just-landed scroll position — it must still match.)
     if matches!(step, Step::JumpEnd) && s.column_count() == 2 && line_count > 0 {
-        // last dialogue line of the work
-        let mut target = line_count - 1;
-        loop {
-            if !s.translation_lines.get(target).copied().unwrap_or(false)
-                && is_dialogue_line(&s.buffer, target) { break; }
-            if target == 0 { break; }
-            target -= 1;
-        }
-        let canonical = navigation::last_page_top(s, target);
+        let canonical = navigation::last_page_top(s);
         if canonical != post_top {
             fail(s, step_num, step, &format!(
                 "JUMP-TO-END not idempotent: landed top={} but last_page_top recomputes {} (G disagrees with itself)",

@@ -241,7 +241,7 @@ fn main() {
                                             if s.column_count() == 2
                                                 && crate::input::viewport::would_empty_right_column(&s, top)
                                             {
-                                                top = crate::input::navigation::last_page_top(&s, buffer_line);
+                                                top = crate::input::navigation::last_page_top(&s);
                                             }
                                             if top != s.page_top_line {
                                                 crate::logging::log_always(&format!(

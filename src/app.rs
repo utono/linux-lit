@@ -2209,14 +2209,7 @@ fn snap_near_end_to_canonical(s: &mut AppState) {
         nxt >= line_count || nxt <= containing
     };
     if containing_reaches_end {
-        let mut target = line_count - 1;
-        while target > 0
-            && (s.translation_lines.get(target).copied().unwrap_or(false)
-                || !crate::input::viewport::is_dialogue_line(&s.buffer, target))
-        {
-            target -= 1;
-        }
-        let canonical = crate::input::navigation::last_page_top(s, target);
+        let canonical = crate::input::navigation::last_page_top(s);
         if canonical == s.page_top_line {
             return;
         }
@@ -2817,7 +2810,7 @@ pub fn display_work_at_with_prepared(
             // (the same page G and forward-paging land on — tail in the right
             // column, both columns full) instead of a rough `current_line - lpp`
             // guess that renders a non-canonical mid-page spread.
-            crate::input::navigation::last_page_top(state, state.current_line)
+            crate::input::navigation::last_page_top(state)
         } else if near_end {
             state.current_line.saturating_sub(lpp)
         } else {

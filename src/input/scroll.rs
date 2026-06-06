@@ -832,7 +832,7 @@ pub(crate) fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize)
             // when the canonical spread is 4297 with the full EPILOGUE). Detect
             // (b) by: `new_top` reaches the end (no full next page) but isn't the
             // page `last_page_top` would choose.
-            let anchor = super::navigation::last_page_top(state, state.current_line);
+            let anchor = super::navigation::last_page_top(state);
             // Redirect to the canonical final spread (`anchor`) when `page_turn_top`
             // lands ON or just BEFORE it — i.e. `new_top` falls inside the anchor's
             // page span `[anchor, anchor_page_end]` (the empty-right EPILOGUE case,

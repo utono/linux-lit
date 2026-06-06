@@ -229,7 +229,7 @@ pub fn jump_to_end(state: &mut AppState) {
     // the page first, then place the cursor on the last dialogue line that is
     // actually on this spread (mirrors the forward final-spread guard) so the
     // highlight is never off-page.
-    let new_top = last_page_top(state, target);
+    let new_top = last_page_top(state);
     // Clear the back-stack WITHOUT seeding it with the came-from page: a `y` from
     // the final spread must tile back to the page immediately BEFORE `new_top`,
     // not return to wherever the jump originated. With an empty stack,
@@ -299,19 +299,17 @@ pub(crate) fn canonical_page_top_for(state: &AppState, target: usize) -> usize {
     }
 }
 
-/// TEMP diagnostic gate for the `last_page_top` final-spread walk (PULL_DBG /
-/// LPT_DBG). Off unless `LIT_LPT_DBG=1`, so the instrumentation can't leak into
-/// production logs or get swept into an unrelated commit. Remove with the logs
-/// once the JumpEnd non-idempotency bug is fixed.
-fn lpt_dbg() -> bool {
-    std::env::var("LIT_LPT_DBG").map(|v| v == "1").unwrap_or(false)
-}
-
-/// The page top of the FINAL spread that contains `target`, sized so the work's
-/// tail content fills both columns (two-column) rather than landing `target` as
-/// a lonely left column with an empty right. Used by `jump_to_end` and by the
-/// forward-nav guard that redirects an "empty right column" turn to this anchor.
-pub(crate) fn last_page_top(state: &AppState, target: usize) -> usize {
+/// The page top of the work's CANONICAL FINAL spread — sized so the tail content
+/// fills both columns (two-column) rather than landing as a lonely left column
+/// with an empty right. Used by `jump_to_end` and by the forward-nav guard that
+/// redirects an "empty right column" turn to this anchor.
+///
+/// Depends ONLY on layout + `line_count` — NOT on any target line or the current
+/// scroll position — so it is idempotent: `G` lands on the same spread no matter
+/// where it starts, and recomputing from that spread returns it unchanged. (It
+/// took a `target` argument historically; that made the walk's start point
+/// `target`-relative and broke idempotency — see the two-column branch comment.)
+pub(crate) fn last_page_top(state: &AppState) -> usize {
     let line_count = state.effective_line_count();
     let widget_height = state.text_view.height();
     let columns = state.column_count() as i32;
@@ -319,38 +317,24 @@ pub(crate) fn last_page_top(state: &AppState, target: usize) -> usize {
         // Two-column: land on the CANONICAL last spread — the same page the user
         // reaches by paging forward to the end, so both columns are filled and
         // the work's tail sits in the right column. Walk the forward page chain
-        // (next_page_top) from a safe early start until the spread whose forward
+        // (next_page_top) from the work's START until the spread whose forward
         // boundary reaches the end of the work; that spread's top is the anchor.
-        // The canonical final spread is simply the page you reach by paging
-        // FORWARD (via next_page_top) until the forward boundary hits the end of
-        // the work. That top is IDEMPOTENT — recomputing from any start yields the
-        // same page the saved-position startup restores and the same page `x`
-        // walks to. (An earlier version "pulled" the top forward to fit a short
-        // EPILOGUE into the right column; that produced a DIFFERENT, too-early top
-        // than the natural walk, so G disagreed with the startup spread. The
-        // natural last spread already carries the tail in its right column, so no
-        // pull is needed.)
         //
-        // Start from a safe boundary below `target` and walk forward. Snap onto a
-        // real boundary first, then advance while the next page still begins
-        // before the work's end.
-        let lpp = lines_per_page(state).max(1) * 2; // ~lines on one spread
-        let mut top = target.saturating_sub(lpp * 3); // safe early start
-        // Snap onto a real forward boundary: walk from a known-good start (0 is
-        // always a boundary; but to stay cheap, walk forward until we pass `top`).
-        {
-            let mut b = 0usize;
-            let mut g = 0;
-            while b < top {
-                let nb = super::viewport::next_page_top(state, b).new_top;
-                if nb <= b { break; }
-                if nb > top { break; }
-                b = nb;
-                g += 1;
-                if g > line_count { break; }
-            }
-            top = b;
-        }
+        // Start at line 0 (always a page boundary), NOT a `target`-relative
+        // offset. The forward walk's result must depend ONLY on layout +
+        // line_count — never on `target` or the current scroll position — or
+        // `last_page_top` is not idempotent and `G` disagrees with itself. An
+        // earlier `target.saturating_sub(lpp*3)` "safe early start" broke exactly
+        // this: `lpp` comes from `lines_per_page` measured at the CURRENT
+        // `page_top`, which is content-dependent (a region of tall lines reports
+        // a tiny lpp). For H8, jump_to_end's `target=4321` with a degenerate
+        // `lpp=6` gave start=4303, which snapped the loop directly ONTO the
+        // lone-EPILOGUE spread (4303) — PAST the `top=4271` pull point that
+        // corrects it to the full-right-column spread (4282). So G landed on 4303
+        // but recomputing from page_top=4303 (or from any earlier start) yielded
+        // 4282. Walking from 0 always traverses 4271 and hits the pull. The walk
+        // is O(page_count) but last_page_top is not hot.
+        let mut top = 0usize;
         // Advance forward, but STOP at the last spread whose right column is
         // non-empty. The very last page of a work with a short trailing section
         // (a lone EPILOGUE) has the tail ALONE in its left column and an empty
@@ -384,19 +368,10 @@ pub(crate) fn last_page_top(state: &AppState, target: usize) -> usize {
                     let tcs = super::viewport::column_split(state, t);
                     let dialogue_below = (tcs.next_page_top..line_count)
                         .any(|i| is_dialogue_line(&state.buffer, i));
-                    let we_t = would_empty_right_column(state, t);
-                    if lpt_dbg() && t < top + 40 {
-                        log_fmt!("PULL_DBG:   t={} split={} page_end={} next_pt={} dialogue_below={} we={} page_top={}",
-                                 t, tcs.split, tcs.page_end, tcs.next_page_top, dialogue_below, we_t, state.page_top_line);
-                    }
-                    if !dialogue_below && !we_t {
+                    if !dialogue_below && !would_empty_right_column(state, t) {
                         pulled = Some(t);
                         break;
                     }
-                }
-                if lpt_dbg() {
-                    log_fmt!("PULL_DBG: top={} next={} we_next={} -> pulled={:?} page_top={}",
-                             top, next, we_next, pulled, state.page_top_line);
                 }
                 if let Some(t) = pulled {
                     last_full = Some(t);
@@ -421,17 +396,7 @@ pub(crate) fn last_page_top(state: &AppState, target: usize) -> usize {
         // the clamped top so every downstream consumer (cursor placement, the
         // forward-nav anchor, page_backward) agrees with what's actually on
         // screen.
-        let clamped = clamp_page_top_to_scroll_ceiling(state, chosen);
-        if lpt_dbg() {
-            let adj = state.scrolled_window.vadjustment();
-            log_fmt!(
-                "LPT_DBG: target={} chosen={} clamped={} (vadj upper={:.0} page_size={:.0} max={:.0}) widget_h={} page_top={}",
-                target, chosen, clamped,
-                adj.upper(), adj.page_size(), (adj.upper() - adj.page_size()).max(0.0),
-                widget_height, state.page_top_line,
-            );
-        }
-        clamped
+        clamp_page_top_to_scroll_ceiling(state, chosen)
     } else if widget_height > 0 && line_count > 0 {
         // Single column: accumulate `widget_height` of content backward.
         let capacity = widget_height;
@@ -668,7 +633,7 @@ pub fn page_forward(state: &mut AppState) {
     // candidate 4296 with the EPILOGUE cut off vs the canonical 4308 with the full
     // EPILOGUE). Mirrors the q/j forward rule in scroll_after_jump_forward.
     let candidate_top = if state.column_count() == 2 {
-        let anchor = last_page_top(state, next_dialogue);
+        let anchor = last_page_top(state);
         // Redirect when the candidate isn't the canonical final spread but its
         // page would overlap the final region — its forward boundary reaches at or
         // past where the anchor's page begins (so the two pages cover the same
