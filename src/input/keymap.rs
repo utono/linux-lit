@@ -1536,15 +1536,15 @@ fn dispatch_action(
         SearchNextMatch => {
             if state.borrow().concordance_state.is_some() {
                 crate::input::actions::concordance::concordance_next_in_work(state, tokio_handle);
-            } else if !state.borrow().search_matches.is_empty() {
-                crate::input::search::next_match(&mut state.borrow_mut());
+            } else {
+                crate::input::search::reactivate_and_step(state, true);
             }
         }
         SearchPrevMatch => {
             if state.borrow().concordance_state.is_some() {
                 crate::input::actions::concordance::concordance_prev_in_work(state, tokio_handle);
-            } else if !state.borrow().search_matches.is_empty() {
-                crate::input::search::prev_match(&mut state.borrow_mut());
+            } else {
+                crate::input::search::reactivate_and_step(state, false);
             }
         }
         ToggleSynopsis => crate::app::toggle_synopsis(&mut state.borrow_mut()),

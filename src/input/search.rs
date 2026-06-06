@@ -41,57 +41,12 @@ pub fn execute_search(state_rc: &Rc<RefCell<AppState>>) {
         // Text file mode: search the buffer text directly
         let text = state.buffer.text(&state.buffer.start_iter(), &state.buffer.end_iter(), false);
         for (line_idx, line_text) in text.as_str().lines().enumerate() {
-            if case_sensitive {
-                let mut search_start = 0;
-                while let Some(pos) = line_text[search_start..].find(&*query) {
-                    let byte_start = search_start + pos;
-                    let byte_end = byte_start + query.len();
-                    new_matches.push(SearchMatch { line_index: line_idx, byte_start, byte_end });
-                    search_start = byte_end;
-                }
-            } else {
-                let text_lower = line_text.to_lowercase();
-                let query_lower = query.to_lowercase();
-                let mut search_start = 0;
-                while let Some(pos) = text_lower[search_start..].find(&*query_lower) {
-                    let byte_start = search_start + pos;
-                    let byte_end = byte_start + query_lower.len();
-                    new_matches.push(SearchMatch { line_index: line_idx, byte_start, byte_end });
-                    search_start = byte_end;
-                }
-            }
+            collect_line(line_text, &query, case_sensitive, line_idx, &mut new_matches);
         }
     } else {
         // Original: search work.lines
         for (line_idx, line) in work.lines.iter().enumerate() {
-            if case_sensitive {
-                let mut search_start = 0;
-                while let Some(pos) = line.text[search_start..].find(&*query) {
-                    let byte_start = search_start + pos;
-                    let byte_end = byte_start + query.len();
-                    new_matches.push(SearchMatch {
-                        line_index: line_idx,
-                        byte_start,
-                        byte_end,
-                    });
-                    search_start = byte_end;
-                }
-            } else {
-                // Case-insensitive: lowercase both sides, but track byte positions in original text
-                let text_lower = line.text.to_lowercase();
-                let query_lower = query.to_lowercase();
-                let mut search_start = 0;
-                while let Some(pos) = text_lower[search_start..].find(&*query_lower) {
-                    let byte_start = search_start + pos;
-                    let byte_end = byte_start + query_lower.len();
-                    new_matches.push(SearchMatch {
-                        line_index: line_idx,
-                        byte_start,
-                        byte_end,
-                    });
-                    search_start = byte_end;
-                }
-            }
+            collect_line(&line.text, &query, case_sensitive, line_idx, &mut new_matches);
         }
     }
 
@@ -181,6 +136,71 @@ pub fn prev_match(state: &mut AppState) {
     goto_match_idx(state, state.search_match_idx - 1);
 }
 
+/// Entry point for n / N pressed in reader mode (concordance already handled by
+/// the caller). If matches are live, step within them. Otherwise, if an MRU
+/// pattern exists, reactivate search against the current work and land on the
+/// first match at/after (n) or last match at/before (N) the cursor.
+pub fn reactivate_and_step(state_rc: &Rc<RefCell<AppState>>, forward: bool) {
+    // Live matches: just step (handles its own end-of-list edge toasts).
+    if !state_rc.borrow().search_matches.is_empty() {
+        let mut state = state_rc.borrow_mut();
+        if forward {
+            next_match(&mut state);
+        } else {
+            prev_match(&mut state);
+        }
+        return;
+    }
+
+    // No live matches — try to reactivate from MRU.
+    let mru = state_rc.borrow().last_search_query.clone();
+    let mru = match mru {
+        Some(p) if !p.is_empty() => p,
+        _ => return, // nothing to reactivate
+    };
+
+    // Pre-fill the entry so execute_search's query() reads the MRU pattern,
+    // then collect matches + apply full highlights WITHOUT execute_search's
+    // auto-navigate (we seed the index from the cursor ourselves below).
+    state_rc.borrow().search_bar.set_text(&mru);
+    collect_matches(state_rc);
+
+    let mut state = state_rc.borrow_mut();
+    let total = state.search_matches.len();
+    if total == 0 {
+        // Pattern has no matches in this work; empty counter is the feedback.
+        state.search_bar.update_counter(0, 0);
+        return;
+    }
+
+    let cur = state.current_line;
+    if forward {
+        match state
+            .search_matches
+            .iter()
+            .position(|m| m.line_index >= cur)
+        {
+            Some(idx) => goto_match_idx(&mut state, idx),
+            None => {
+                let q = state.last_search_query.clone().unwrap_or_default();
+                edge_toast(&state, Side::Right, &q);
+            }
+        }
+    } else {
+        match state
+            .search_matches
+            .iter()
+            .rposition(|m| m.line_index <= cur)
+        {
+            Some(idx) => goto_match_idx(&mut state, idx),
+            None => {
+                let q = state.last_search_query.clone().unwrap_or_default();
+                edge_toast(&state, Side::Left, &q);
+            }
+        }
+    }
+}
+
 /// Seek to current line's start_time and resume playback.
 fn seek_and_resume(state: &AppState) {
     if let Some(ref work) = state.current_work {
@@ -206,6 +226,79 @@ fn push_page_back_dedup(state: &mut AppState) {
     let top = state.page_top_line;
     if state.page_back_stack.last() != Some(&top) {
         state.page_back_stack.push(top);
+    }
+}
+
+/// Collect matches for the current search_bar query into state.search_matches
+/// and apply the dim "all matches" highlight. Does NOT navigate, set the
+/// current-match highlight, or touch MPV. Used by reactivate_and_step.
+fn collect_matches(state_rc: &Rc<RefCell<AppState>>) {
+    let mut state = state_rc.borrow_mut();
+    let query = state.search_bar.query();
+
+    clear_highlights(&state);
+    state.search_matches.clear();
+    state.search_match_idx = 0;
+
+    if query.is_empty() {
+        state.search_bar.update_counter(0, 0);
+        return;
+    }
+    state.last_search_query = Some(query.to_string());
+
+    let work = match &state.current_work {
+        Some(w) => w,
+        None => return,
+    };
+    let case_sensitive = query.chars().any(|c| c.is_uppercase());
+    let mut new_matches: Vec<SearchMatch> = Vec::new();
+
+    if state.line_map.is_some() {
+        let text = state
+            .buffer
+            .text(&state.buffer.start_iter(), &state.buffer.end_iter(), false);
+        for (line_idx, line_text) in text.as_str().lines().enumerate() {
+            collect_line(line_text, &query, case_sensitive, line_idx, &mut new_matches);
+        }
+    } else {
+        for (line_idx, line) in work.lines.iter().enumerate() {
+            collect_line(&line.text, &query, case_sensitive, line_idx, &mut new_matches);
+        }
+    }
+
+    state.search_matches = new_matches;
+    apply_highlights(&state);
+    state
+        .search_bar
+        .update_counter(0, state.search_matches.len());
+}
+
+/// Push every occurrence of `query` in `line_text` onto `out`, smart-cased.
+fn collect_line(
+    line_text: &str,
+    query: &str,
+    case_sensitive: bool,
+    line_idx: usize,
+    out: &mut Vec<SearchMatch>,
+) {
+    if case_sensitive {
+        let mut search_start = 0;
+        while let Some(pos) = line_text[search_start..].find(query) {
+            let byte_start = search_start + pos;
+            let byte_end = byte_start + query.len();
+            out.push(SearchMatch { line_index: line_idx, byte_start, byte_end });
+            search_start = byte_end;
+        }
+    } else {
+        let text_lower = line_text.to_lowercase();
+        let query_lower = query.to_lowercase();
+        let mut search_start = 0;
+        while let Some(pos) = text_lower[search_start..].find(&query_lower) {
+            let byte_start = search_start + pos;
+            let byte_end = byte_start + query_lower.len();
+            out.push(SearchMatch { line_index: line_idx, byte_start, byte_end });
+            search_start = byte_end;
+        }
     }
 }
 
