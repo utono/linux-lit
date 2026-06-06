@@ -533,6 +533,24 @@ pub fn page_forward(state: &mut AppState) {
 
     // Scene-aware turn: if the right column opens a new scene, move that scene
     // to the top of the left column instead of paging by viewport height.
+    // JNX_DBG: Jn x OVERLAP at top=1596 — is the scene-snap re-showing the old
+    // right column (3-line overlap), and is the snap target a real bitmap
+    // boundary? Dump column_split + section_starts. Temporary.
+    if state.column_count() == 2
+        && state.page_top_line >= 1590 && state.page_top_line <= 1600
+        && state.current_work.as_ref().map(|w| w.abbrev == "Jn").unwrap_or(false)
+    {
+        let cs = column_split(state, state.page_top_line);
+        let snap = scene_snap_top(state, line_count);
+        let txt = |l: usize| buffer_line_text(&state.buffer, l).trim().chars().take(28).collect::<String>();
+        log_fmt!("JNX_DBG: page_top={} split={} page_end={} next_page_top={} scene_snap={:?}",
+            state.page_top_line, cs.split, cs.page_end, cs.next_page_top, snap);
+        for l in cs.split..=(cs.next_page_top).min(line_count-1) {
+            log_fmt!("JNX_DBG:   line {} secstart={} dialogue={} '{}'",
+                l, state.is_section_start(l), super::viewport::is_dialogue_line(&state.buffer, l), txt(l));
+        }
+    }
+
     if let Some(snap_top) = scene_snap_top(state, line_count) {
         // Near the document end the scene start may sit past the scroll ceiling,
         // so set_page would clamp it back below page_top_line — leaving the view
