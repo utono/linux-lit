@@ -201,24 +201,6 @@ pub fn jump_to_end(state: &mut AppState) {
         }
         target -= 1;
     }
-    // Diagnostic for the H8-class bug: if the last-dialogue scan stops far from
-    // the buffer end, the buffer past `target` is all non-dialogue (or the
-    // line-map/buffer lengths disagree). Dump the buffer's real line count and
-    // the text just past `target` so we can see WHY (mis-tagged dialogue, a giant
-    // stage direction, or a line-map mismatch).
-    {
-        let buf_lines = state.buffer.line_count() as usize;
-        if target + 200 < line_count {
-            let txt = |l: usize| buffer_line_text(&state.buffer, l).trim().chars().take(40).collect::<String>();
-            log_fmt!("JTE_DBG: target={} far below line_count={} (buffer.line_count={})",
-                     target, line_count, buf_lines);
-            for l in [target, target + 1, line_count / 2, line_count.saturating_sub(3),
-                      line_count.saturating_sub(2), line_count.saturating_sub(1)] {
-                log_fmt!("JTE_DBG:   line {} dialogue={} '{}'",
-                         l, is_dialogue_line(&state.buffer, l), txt(l));
-            }
-        }
-    }
 
     // Anchor on the canonical final spread (the page the user reaches by paging
     // forward to the end). When the work's tail is a short section that starts
@@ -296,6 +278,49 @@ pub(crate) fn canonical_page_top_for(state: &AppState, target: usize) -> usize {
         if guard > line_count {
             return top;
         }
+    }
+}
+
+/// Two-column forward-nav guard: when a tentative page top `candidate` falls in
+/// the work's FINAL spread region, return the canonical final spread
+/// (`last_page_top`) instead so the tail content fills BOTH columns rather than
+/// landing as a lonely left column with an empty right.
+///
+/// Returns `Some(anchor)` when `candidate` should be redirected, `None` when it
+/// is fine as-is. Callers in single-column mode should not call this (it assumes
+/// two-column geometry); it returns `None` defensively if columns != 2.
+///
+/// A candidate is "in the final region" when it isn't already the anchor AND
+/// either:
+///   (a) turning to it would leave the right column EMPTY (a lone EPILOGUE), or
+///   (b) its page span overlaps the anchor's tail — its forward boundary reaches
+///       at or past where the anchor's page begins, so the two pages cover the
+///       same trailing content (the UNDERFILLED-final-spread case where
+///       `next_page_top` picked a boundary one short of the canonical one).
+///
+/// This unifies the three forward-nav redirect sites that previously each
+/// re-derived the final-region test with slightly different arithmetic:
+/// `page_forward` (x), `scroll_after_jump_forward` (q/j), and
+/// `update_highlight_and_advance_page` (playback sync).
+pub(crate) fn redirect_to_final_spread(state: &AppState, candidate: usize) -> Option<usize> {
+    if state.column_count() != 2 {
+        return None;
+    }
+    let anchor = last_page_top(state);
+    if candidate == anchor {
+        return None;
+    }
+    let empty_right = super::viewport::would_empty_right_column(state, candidate);
+    // `next_page_top` is the candidate's forward boundary — where its right column
+    // ends. If that reaches at/past the anchor's top while the candidate sits
+    // before the anchor, the candidate's page and the anchor's page cover the same
+    // tail, so the candidate is an underfilled stand-in for the canonical spread.
+    let cand_end = super::viewport::column_split(state, candidate).next_page_top;
+    let overlaps_anchor = candidate < anchor && cand_end > anchor;
+    if empty_right || overlaps_anchor {
+        Some(anchor)
+    } else {
+        None
     }
 }
 
@@ -626,32 +651,15 @@ pub fn page_forward(state: &mut AppState) {
         new_top
     };
     // If the turn lands in the work's FINAL spread region, redirect to the
-    // canonical final spread (`last_page_top`). This covers both (a) the turn
-    // would leave the right column EMPTY (a lone EPILOGUE), and (b) the turn lands
-    // on a too-early final spread whose right column is UNDERFILLED because
-    // `next_page_top` picked a boundary one short of the canonical one (e.g.
-    // candidate 4296 with the EPILOGUE cut off vs the canonical 4308 with the full
-    // EPILOGUE). Mirrors the q/j forward rule in scroll_after_jump_forward.
-    let candidate_top = if state.column_count() == 2 {
-        let anchor = last_page_top(state);
-        // Redirect when the candidate isn't the canonical final spread but its
-        // page would overlap the final region — its forward boundary reaches at or
-        // past where the anchor's page begins (so the two pages cover the same
-        // tail), OR it would empty the right column. This catches the underfilled
-        // 4296 spread (next_page_top 4337 > anchor 4308) AND the lone-EPILOGUE case.
-        let cand_end = super::viewport::column_split(state, candidate_top).next_page_top;
-        let lands_in_final_region = candidate_top != anchor
-            && (super::viewport::would_empty_right_column(state, candidate_top)
-                || (candidate_top < anchor && cand_end > anchor));
-        if lands_in_final_region {
-            log_fmt!("PAGE_FWD: final-region candidate={} (end {}) -> anchor={}",
-                     candidate_top, cand_end, anchor);
+    // canonical final spread so the tail fills both columns (covers the
+    // lone-EPILOGUE empty-right case and the underfilled too-early final spread).
+    // See `redirect_to_final_spread`; shared with q/j and playback sync.
+    let candidate_top = match redirect_to_final_spread(state, candidate_top) {
+        Some(anchor) => {
+            log_fmt!("PAGE_FWD: final-region candidate={} -> anchor={}", candidate_top, anchor);
             anchor
-        } else {
-            candidate_top
         }
-    } else {
-        candidate_top
+        None => candidate_top,
     };
     let effective_top = clamp_page_top_to_scroll_ceiling(state, candidate_top);
     log_fmt!("PAGE_FWD: candidate_top={} effective_top={} (from new_top={})", candidate_top, effective_top, new_top);
@@ -1581,8 +1589,11 @@ pub fn jump_to_next_vocab(state: &mut AppState) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
+            // Land on the CANONICAL spread for this line — the same page paging
+            // through the work shows — not force-top-aligned. Mirrors bookmark
+            // jump_to_line and search n/N; previously this top-aligned target_line.
             if !is_line_fully_visible(state, target_line) {
-                set_page(state, target_line, PageDirection::Forward);
+                set_page_instant(state, canonical_page_top_for(state, target_line));
             }
         }
     }
@@ -1620,8 +1631,9 @@ pub fn jump_to_prev_vocab(state: &mut AppState) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
+            // Land on the CANONICAL spread for this line (see jump_to_next_vocab).
             if !is_line_fully_visible(state, target_line) {
-                set_page_instant(state, target_line);
+                set_page_instant(state, canonical_page_top_for(state, target_line));
             }
         }
     }
