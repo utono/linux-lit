@@ -72,7 +72,7 @@ pub fn update_highlight_and_advance_page(state: &mut AppState) {
                 if state.column_count() == 2
                     && crate::input::viewport::would_empty_right_column(state, new_top)
                 {
-                    new_top = super::navigation::last_page_top(state, state.current_line);
+                    new_top = super::navigation::last_page_top(state);
                 }
                 crate::logging::log_always(&format!(
                     "SYNC_PAGE_TURN: current={} last_vis={} old_top={} new_top={}",

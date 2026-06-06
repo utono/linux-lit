@@ -99,6 +99,10 @@ pub struct AppState {
     pub right_scrolled_window: ScrolledWindow,
     pub right_scrolled_overlay: gtk4::Overlay,
     pub right_bottom_clip: gtk4::Box,
+    /// Dim "Next: Act N, Scene M" label shown centered in an empty right
+    /// column (scene ended in the left column). Overlay child of
+    /// `right_scrolled_overlay`; hidden in every other case.
+    pub next_scene_watermark: gtk4::Label,
     pub columns_hbox: gtk4::Box,
     /// Thin vertical rule between the two columns; visible only in two-column mode.
     pub column_divider: gtk4::Separator,
@@ -758,6 +762,7 @@ pub fn apply_column_layout(state: &mut AppState) {
     state.column_divider.set_visible(two_col);
     if !two_col {
         state.right_bottom_clip.set_height_request(0);
+        state.next_scene_watermark.set_visible(false);
     }
 }
 
@@ -1059,6 +1064,17 @@ pub fn build_window(
     right_bottom_clip.set_height_request(0);
     right_bottom_clip.add_css_class("card-bottom");
     right_scrolled_overlay.add_overlay(&right_bottom_clip);
+
+    // Dim "Next: Act N, Scene M" watermark for an empty right column. Overlay
+    // child (NOT buffer text — buffer text is measured by pagination and would
+    // corrupt the right-column clip). Centered; hidden until snap_scroll_to_line
+    // detects an empty right column with a following scene.
+    let next_scene_watermark = gtk4::Label::new(None);
+    next_scene_watermark.set_halign(gtk4::Align::Center);
+    next_scene_watermark.set_valign(gtk4::Align::Center);
+    next_scene_watermark.set_visible(false);
+    next_scene_watermark.add_css_class("next-scene-watermark");
+    right_scrolled_overlay.add_overlay(&next_scene_watermark);
 
     // Columns row: left | divider | right. Right starts hidden (1-column
     // default); the divider is a thin vertical rule shown only in two-column
@@ -1382,6 +1398,7 @@ pub fn build_window(
         right_scrolled_window: right_scrolled,
         right_scrolled_overlay,
         right_bottom_clip,
+        next_scene_watermark,
         columns_hbox,
         column_divider,
         right_line_number_renderer: None,
@@ -2192,14 +2209,7 @@ fn snap_near_end_to_canonical(s: &mut AppState) {
         nxt >= line_count || nxt <= containing
     };
     if containing_reaches_end {
-        let mut target = line_count - 1;
-        while target > 0
-            && (s.translation_lines.get(target).copied().unwrap_or(false)
-                || !crate::input::viewport::is_dialogue_line(&s.buffer, target))
-        {
-            target -= 1;
-        }
-        let canonical = crate::input::navigation::last_page_top(s, target);
+        let canonical = crate::input::navigation::last_page_top(s);
         if canonical == s.page_top_line {
             return;
         }
@@ -2800,7 +2810,7 @@ pub fn display_work_at_with_prepared(
             // (the same page G and forward-paging land on — tail in the right
             // column, both columns full) instead of a rough `current_line - lpp`
             // guess that renders a non-canonical mid-page spread.
-            crate::input::navigation::last_page_top(state, state.current_line)
+            crate::input::navigation::last_page_top(state)
         } else if near_end {
             state.current_line.saturating_sub(lpp)
         } else {
@@ -4496,6 +4506,34 @@ pub fn current_scene_divs(state: &AppState) -> (i64, i64) {
     }
     // Walk backward as fallback
     for bl in (0..state.current_line).rev() {
+        if let Some(work_idx) = state.work_line_for_buffer(bl) {
+            if let Some(line) = work.lines.get(work_idx) {
+                return (line.div1, line.div2);
+            }
+        }
+    }
+    (0, 0)
+}
+
+/// Return the `(div1, div2)` (act, scene) for an arbitrary buffer line by
+/// reading the DB-backed `Line` metadata — never inferred from buffer text.
+/// Walks forward from `buffer_line` to the first DB-mapped line (the marker /
+/// `=====` chrome lines are unmapped), then backward as a fallback. Returns
+/// `(0, 0)` when nothing is mapped (treated as "Prologue" by `scene_label`).
+pub fn divs_at_buffer_line(state: &AppState, buffer_line: usize) -> (i64, i64) {
+    let work = match state.current_work.as_ref() {
+        Some(w) => w,
+        None => return (0, 0),
+    };
+    let line_count = state.effective_line_count();
+    for bl in buffer_line..line_count {
+        if let Some(work_idx) = state.work_line_for_buffer(bl) {
+            if let Some(line) = work.lines.get(work_idx) {
+                return (line.div1, line.div2);
+            }
+        }
+    }
+    for bl in (0..buffer_line).rev() {
         if let Some(work_idx) = state.work_line_for_buffer(bl) {
             if let Some(line) = work.lines.get(work_idx) {
                 return (line.div1, line.div2);
