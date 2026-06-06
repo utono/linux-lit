@@ -148,6 +148,43 @@ Design notes (so you don't re-derive them):
 - Scope: the tests cover the **main reading card**. The synopsis/gloss overlay
   has its own scroll/clip path and would need an `h`-open step + its own region.
 
+### When to ASK THE USER to run e2e-env.sh
+
+An agent often **cannot** launch cage from its own shell: the live dwl session
+owns the seat, and even the tempdir-isolated harness can be killed with SIGTERM
+(exit 144) before the app ever renders — the dev log never updates. When that
+happens, do **not** claim the change is verified. Build, run `cargo test --bins`
+(the pure-logic suite), state plainly that runtime verification is blocked, and
+**ask the user to run the e2e command** and paste the result / screenshot.
+
+Ask the user to run `e2e-env.sh` whenever the change's acceptance criterion is
+"it renders correctly on screen" rather than "the logic is right":
+
+- **pagination / spread / column-split / page-turn** changes — boundaries are
+  computed from live Pango pixel heights against `text_view`/`right_view`; there
+  are deliberately no pure unit tests for `column_split`/`last_page_top`, so the
+  only real check is a rendered spread.
+- **clipping / bottom-clip / descender-guard** changes — pixel-level, only
+  visible in a screenshot.
+- **overlay layout** (synopsis, gloss, pickers, keybinds overlay) — geometry
+  only settles in a mapped, focused, fullscreen surface.
+- **startup / resume / reveal-timing** changes — the correction paths
+  (`snap_near_end_to_canonical`, the resize tick) only run at settled geometry
+  after reveal; their effect can't be observed without a launch.
+
+You do **not** need the user when `cargo test --bins` already covers the change
+(pure helpers, parsing, DB queries, state machines with no GTK measurement).
+
+Give the user the exact command, e.g.:
+
+```bash
+./scripts/e2e-env.sh cargo test --test <name> -- --ignored --nocapture
+```
+
+and, when the criterion is visual, the manual single-work launch from
+*Headless Verification* above (`LINUX_LIT_WORK=… LIT_START_POS=… cage -- …` +
+`grim`) so they can eyeball the exact spread.
+
 ## UI review protocol
 
 After any e2e run, screenshots land in `target/ui/` (auto-cleaned at the start

@@ -100,6 +100,50 @@ impl Harness {
         })
     }
 
+    /// Resize cage's headless output via `wlr-randr` (wlr-output-management).
+    /// cage's headless backend defaults to 1280×720, which is too narrow for a
+    /// two-column play card (H8 targets ~1528px and the app's "two-col width
+    /// settled" gate then never passes, so the reveal that emits
+    /// `TEST_VIEWPORT_RECT` never fires). Set a wider mode so two-column layout
+    /// settles exactly as it does on a real 1920px monitor. Best-effort: returns
+    /// the wlr-randr exit status; callers that don't need a specific width can
+    /// ignore failures (the default 720p still works for single-column works).
+    ///
+    /// Two-column play tests MUST widen the output: cage's 1280×720 default is too
+    /// narrow for the two-column card (the layout never settles, so the reveal
+    /// that emits `TEST_VIEWPORT_RECT` never fires) AND too short to reproduce
+    /// tall-viewport pagination bugs. The text view ends up ~124px shorter than
+    /// the output (title bar + card margins), so e.g. 1920×1236 → ~1112px text
+    /// view; check the rect's 4th value to confirm the achieved height.
+    pub fn set_output_size(&self, w: u32, h: u32) -> io::Result<bool> {
+        // The headless output is the only one; `--output HEADLESS-1` is the
+        // wlroots naming. Use `--custom-mode` so we don't depend on a preset
+        // modelist (headless outputs advertise none).
+        let name = self.first_output_name().unwrap_or_else(|| "HEADLESS-1".into());
+        let ok = self
+            .client_cmd("wlr-randr")
+            .arg("--output")
+            .arg(&name)
+            .arg("--custom-mode")
+            .arg(format!("{w}x{h}"))
+            .status()?
+            .success();
+        Ok(ok)
+    }
+
+    /// First output name reported by `wlr-randr` (e.g. `HEADLESS-1`). None if
+    /// wlr-randr isn't available or reports nothing.
+    #[allow(dead_code)]
+    fn first_output_name(&self) -> Option<String> {
+        let out = self.client_cmd("wlr-randr").output().ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        // wlr-randr prints each output starting at column 0: "HEADLESS-1 ...".
+        text.lines()
+            .find(|l| !l.starts_with(char::is_whitespace) && !l.trim().is_empty())
+            .and_then(|l| l.split_whitespace().next())
+            .map(|s| s.to_string())
+    }
+
     /// Build a command targeting this cage's wayland socket (grim/wtype/python).
     fn client_cmd(&self, program: impl AsRef<OsStr>) -> Command {
         let mut c = Command::new(program);
@@ -256,8 +300,11 @@ impl Harness {
     }
 
     /// Read the full dev log the app writes under `LIT_DEV`. Empty string if the
-    /// log doesn't exist yet. Used by tests that assert on logged pagination
-    /// decisions (e.g. the near-end canonical-spread snap on startup).
+    /// log doesn't exist yet. For tests that assert on logged pagination
+    /// decisions (e.g. `saved_position_resume` checks the canonical snap did NOT
+    /// fire). `#[allow(dead_code)]` because the test binaries that don't call it
+    /// still compile the shared harness.
+    #[allow(dead_code)]
     pub fn read_dev_log(&self) -> String {
         fs::read_to_string(Self::dev_log_path()).unwrap_or_default()
     }

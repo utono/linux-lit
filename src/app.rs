@@ -2078,6 +2078,19 @@ fn snap_near_end_to_canonical(s: &mut AppState) {
     if s.column_count() != 2 || line_count == 0 || s.text_view.height() <= 0 {
         return;
     }
+    // If the restored cursor is ALREADY fully visible on the restored spread, the
+    // saved position is valid as-is — do NOT canonicalize. This function exists to
+    // repair a PRE-LAYOUT GUESS that left the cursor off the rendered final spread
+    // (the EPILOGUE-strand bug); it must never override a legitimately-saved
+    // earlier reading position. Without this guard, quitting mid-Act-5 (e.g. H8
+    // Scene 3, cursor on `I'll peck…`, page_top 4191) and reopening snapped the
+    // page forward to the EPILOGUE spread and dropped the highlight, because the
+    // forward-chain "near end" walk reaches the work's end within a few spreads at
+    // a tall viewport and `last_page_top` always returns the EPILOGUE spread —
+    // regardless of where the cursor actually sits.
+    if crate::input::viewport::is_line_fully_visible(s, s.current_line) {
+        return;
+    }
     // Trigger when the current PAGE is in the work's final region. "Near the end"
     // must be measured by WALKING THE FORWARD SPREAD CHAIN, not by raw line
     // distance to `line_count`: a work with a long trailing section (H8's
