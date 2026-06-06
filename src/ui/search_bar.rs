@@ -64,4 +64,10 @@ impl SearchBar {
     pub fn query(&self) -> String {
         self.entry.text().to_string()
     }
+
+    /// Set the entry text without showing/hiding the bar. Used to pre-fill the
+    /// MRU pattern when n/N reactivates search outside search mode.
+    pub fn set_text(&self, text: &str) {
+        self.entry.set_text(text);
+    }
 }
