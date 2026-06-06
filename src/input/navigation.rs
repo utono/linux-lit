@@ -32,7 +32,8 @@ pub use super::highlight::{
 
 use super::viewport::{
     last_fully_visible_line, next_page_top, prev_page_top, NextPage,
-    back_up_for_speaker_state, page_turn_top_state, chapter_page_top_state,
+    back_up_for_speaker_state, page_turn_top_state,
+    scene_header_top_state,
     is_dialogue_line, is_blank_buffer_line,
     next_dialogue_line, prev_dialogue_line, buffer_line_text,
     next_dialogue_from, is_line_fully_visible, lines_per_page,
@@ -262,13 +263,16 @@ pub(crate) fn canonical_page_top_for(state: &AppState, target: usize) -> usize {
         return 0;
     }
     let target = target.min(line_count - 1);
-    // Start from a real page boundary at or before the target: the section/scene
-    // (or chapter) header above it. The forward walk is idempotent, so any valid
-    // boundary at-or-before `target` converges to the same canonical spread;
-    // chapter_page_top backs up over stanza numbers / separators / blanks to the
-    // header, falling back to the speaker back-up when there is no boundary above
-    // (e.g. a work opening mid-buffer).
-    let mut top = chapter_page_top_state(state, target).min(target);
+    // Start from a real page boundary at or before the target: the SECTION/SCENE
+    // header above it. The forward walk via next_page_top is idempotent ONLY from
+    // a genuine page boundary — so we must NOT start at chapter_page_top, which
+    // falls back to the *speaker* line just above the target when there's no
+    // section break immediately above (e.g. a match mid-scene). That speaker line
+    // sits mid-page, so the walk's first spread "contains" the target and returns
+    // a too-late top (the bug: match line 4043 -> speaker 4042 instead of the
+    // real page boundary 4032). scene_header_top backs all the way to the scene's
+    // section-break line, a true anchor that the forward chain passes through.
+    let mut top = scene_header_top_state(state, target).min(target);
     let two_col = state.column_count() == 2;
     let mut guard = 0;
     loop {
@@ -293,6 +297,14 @@ pub(crate) fn canonical_page_top_for(state: &AppState, target: usize) -> usize {
             return top;
         }
     }
+}
+
+/// TEMP diagnostic gate for the `last_page_top` final-spread walk (PULL_DBG /
+/// LPT_DBG). Off unless `LIT_LPT_DBG=1`, so the instrumentation can't leak into
+/// production logs or get swept into an unrelated commit. Remove with the logs
+/// once the JumpEnd non-idempotency bug is fixed.
+fn lpt_dbg() -> bool {
+    std::env::var("LIT_LPT_DBG").map(|v| v == "1").unwrap_or(false)
 }
 
 /// The page top of the FINAL spread that contains `target`, sized so the work's
@@ -372,10 +384,19 @@ pub(crate) fn last_page_top(state: &AppState, target: usize) -> usize {
                     let tcs = super::viewport::column_split(state, t);
                     let dialogue_below = (tcs.next_page_top..line_count)
                         .any(|i| is_dialogue_line(&state.buffer, i));
-                    if !dialogue_below && !would_empty_right_column(state, t) {
+                    let we_t = would_empty_right_column(state, t);
+                    if lpt_dbg() && t < top + 40 {
+                        log_fmt!("PULL_DBG:   t={} split={} page_end={} next_pt={} dialogue_below={} we={} page_top={}",
+                                 t, tcs.split, tcs.page_end, tcs.next_page_top, dialogue_below, we_t, state.page_top_line);
+                    }
+                    if !dialogue_below && !we_t {
                         pulled = Some(t);
                         break;
                     }
+                }
+                if lpt_dbg() {
+                    log_fmt!("PULL_DBG: top={} next={} we_next={} -> pulled={:?} page_top={}",
+                             top, next, we_next, pulled, state.page_top_line);
                 }
                 if let Some(t) = pulled {
                     last_full = Some(t);
@@ -400,7 +421,17 @@ pub(crate) fn last_page_top(state: &AppState, target: usize) -> usize {
         // the clamped top so every downstream consumer (cursor placement, the
         // forward-nav anchor, page_backward) agrees with what's actually on
         // screen.
-        clamp_page_top_to_scroll_ceiling(state, chosen)
+        let clamped = clamp_page_top_to_scroll_ceiling(state, chosen);
+        if lpt_dbg() {
+            let adj = state.scrolled_window.vadjustment();
+            log_fmt!(
+                "LPT_DBG: target={} chosen={} clamped={} (vadj upper={:.0} page_size={:.0} max={:.0}) widget_h={} page_top={}",
+                target, chosen, clamped,
+                adj.upper(), adj.page_size(), (adj.upper() - adj.page_size()).max(0.0),
+                widget_height, state.page_top_line,
+            );
+        }
+        clamped
     } else if widget_height > 0 && line_count > 0 {
         // Single column: accumulate `widget_height` of content backward.
         let capacity = widget_height;
