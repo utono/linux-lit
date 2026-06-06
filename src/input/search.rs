@@ -308,22 +308,30 @@ enum Side {
     Right,
 }
 
-/// Show the left/right search-edge toast for 3s ("no earlier/later
-/// occurrence"), mirroring show_chapter_toast's auto-hide.
+/// Truncate an over-long pattern for display so the centered toast text stays
+/// on one line within the card (keeps the first ~24 chars + an ellipsis).
+fn display_pattern(query: &str) -> String {
+    const MAX: usize = 24;
+    if query.chars().count() <= MAX {
+        query.to_string()
+    } else {
+        let head: String = query.chars().take(MAX).collect();
+        format!("{}\u{2026}", head)
+    }
+}
+
+/// Show the centered search-edge toast for 3s. `Side::Left` reports no earlier
+/// occurrence, `Side::Right` no later occurrence. Reuses chapter_toast's
+/// centered-bottom placement so it stays fully visible below the card.
 fn edge_toast(state: &AppState, side: Side, query: &str) {
-    let (label, text) = match side {
-        Side::Left => (
-            &state.search_edge_toast_left,
-            format!("No earlier occurrence of \u{201c}{}\u{201d}", query),
-        ),
-        Side::Right => (
-            &state.search_edge_toast_right,
-            format!("No later occurrence of \u{201c}{}\u{201d}", query),
-        ),
+    let p = display_pattern(query);
+    let text = match side {
+        Side::Left => format!("No earlier occurrence of \u{201c}{}\u{201d}", p),
+        Side::Right => format!("No later occurrence of \u{201c}{}\u{201d}", p),
     };
-    label.set_text(&text);
-    label.set_visible(true);
-    let toast = label.clone();
+    state.search_toast.set_text(&text);
+    state.search_toast.set_visible(true);
+    let toast = state.search_toast.clone();
     gtk4::glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
         toast.set_visible(false);
     });

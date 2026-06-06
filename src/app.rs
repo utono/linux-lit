@@ -306,11 +306,11 @@ pub struct AppState {
     pub word_status_label: gtk4::Label,
     pub chapter_toast: gtk4::Label,
     pub speed_toast: gtk4::Label,
-    /// Left/right edge toasts for search boundaries ("no earlier/later
-    /// occurrence"). Separate from speed_toast so search messages never
-    /// clobber the playback-speed toast text.
-    pub search_edge_toast_left: gtk4::Label,
-    pub search_edge_toast_right: gtk4::Label,
+    /// Centered bottom toast for search boundaries ("no earlier/later
+    /// occurrence"). Placed like chapter_toast (centered, 32px from the bottom)
+    /// so it stays fully visible below the card; separate widget so search
+    /// messages never clobber the chapter/speed toast text.
+    pub search_toast: gtk4::Label,
     pub word_cycle_line: Option<usize>,
     pub word_cycle_index: usize,
     pub word_status_timer: Rc<Cell<u64>>,
@@ -1260,23 +1260,13 @@ pub fn build_window(
     speed_toast.set_visible(false);
     authorship_picker.overlay.add_overlay(&speed_toast);
 
-    let search_edge_toast_left = gtk4::Label::new(None);
-    search_edge_toast_left.set_valign(gtk4::Align::End);
-    search_edge_toast_left.set_halign(gtk4::Align::Start);
-    search_edge_toast_left.set_margin_bottom(32);
-    search_edge_toast_left.set_margin_start(24);
-    search_edge_toast_left.add_css_class("chapter-toast");
-    search_edge_toast_left.set_visible(false);
-    authorship_picker.overlay.add_overlay(&search_edge_toast_left);
-
-    let search_edge_toast_right = gtk4::Label::new(None);
-    search_edge_toast_right.set_valign(gtk4::Align::End);
-    search_edge_toast_right.set_halign(gtk4::Align::End);
-    search_edge_toast_right.set_margin_bottom(32);
-    search_edge_toast_right.set_margin_end(24);
-    search_edge_toast_right.add_css_class("chapter-toast");
-    search_edge_toast_right.set_visible(false);
-    authorship_picker.overlay.add_overlay(&search_edge_toast_right);
+    let search_toast = gtk4::Label::new(None);
+    search_toast.set_valign(gtk4::Align::End);
+    search_toast.set_halign(gtk4::Align::Center);
+    search_toast.set_margin_bottom(32);
+    search_toast.add_css_class("chapter-toast");
+    search_toast.set_visible(false);
+    authorship_picker.overlay.add_overlay(&search_toast);
 
     // Concordance status bar
     let concordance_bar = crate::ui::concordance_bar::ConcordanceBar::new();
@@ -1524,8 +1514,7 @@ pub fn build_window(
         word_status_label,
         chapter_toast,
         speed_toast,
-        search_edge_toast_left,
-        search_edge_toast_right,
+        search_toast,
         word_cycle_line: None,
         word_cycle_index: 0,
         word_status_timer: Rc::new(Cell::new(0)),

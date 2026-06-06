@@ -16,9 +16,16 @@ match, and highlight the matched line — without ever wrapping around the ends.
 1. The last non-empty search pattern persists for the session as the MRU pattern.
 2. After Escape (matches cleared), `n`/`N` re-runs the MRU search against the
    current work, rebuilds match highlights, and navigates.
-3. `n`/`N` never wrap. At the boundaries they stop and show an edge toast:
-   - `n` past the last match → **right-aligned** toast: "No later occurrence of '<pattern>'".
-   - `N` before the first match → **left-aligned** toast: "No earlier occurrence of '<pattern>'".
+3. `n`/`N` never wrap. At the boundaries they stop and show a toast:
+   - `n` past the last match → "No later occurrence of '<pattern>'".
+   - `N` before the first match → "No earlier occurrence of '<pattern>'".
+   - **REVISED (post-implementation):** originally two left/right edge toasts;
+     these clipped against the card's rounded corners on screen, so they were
+     replaced by a SINGLE **centered** bottom toast reusing the chapter-toast
+     placement (valign End, 32px bottom, centered) — fully visible below the
+     card. The displayed pattern is truncated to ~24 chars + ellipsis so the
+     centered line never overflows. The `Side::{Left,Right}` enum is retained
+     only to pick the "earlier"/"later" wording.
 4. The first target after reactivation is the first match **at or after** the
    current cursor line. A match already on the current spread but ahead of the
    cursor is selected first ("if the pattern already appears on the current
