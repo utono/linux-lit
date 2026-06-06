@@ -212,18 +212,20 @@ pub fn reactivate_and_step(state_rc: &Rc<RefCell<AppState>>, pressed_next: bool)
     }
 }
 
-/// If playback was PLAYING, seek to the current line's start time (with the
-/// usual preroll) and keep playing. If it was paused, do nothing — n/N then
-/// only moves the cursor/spread, leaving MPV where it was.
+/// Always seek to the current line's start time (with the usual preroll). Keep
+/// playing if playback was already playing (ResumeAndSeek); if it was paused,
+/// seek the audio position but stay paused (Seek) — never begin playback.
 fn seek_and_resume(state: &AppState) {
-    if !state.mpv_playing {
-        return;
-    }
     if let Some(ref work) = state.current_work {
         if let Some(work_idx) = state.work_line_for_buffer(state.current_line) {
             if let Some(ts) = &work.lines[work_idx].timestamp {
                 let seek_time = (ts.start - crate::input::navigation::SEEK_PREROLL).max(0.0);
-                let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::ResumeAndSeek(seek_time));
+                let cmd = if state.mpv_playing {
+                    crate::mpv::MpvCommand::ResumeAndSeek(seek_time)
+                } else {
+                    crate::mpv::MpvCommand::Seek(seek_time)
+                };
+                let _ = state.cmd_tx.try_send(cmd);
             }
         }
     }
