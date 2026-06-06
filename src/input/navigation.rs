@@ -372,11 +372,20 @@ pub(crate) fn last_page_top(state: &AppState, target: usize) -> usize {
                     let tcs = super::viewport::column_split(state, t);
                     let dialogue_below = (tcs.next_page_top..line_count)
                         .any(|i| is_dialogue_line(&state.buffer, i));
-                    if !dialogue_below && !would_empty_right_column(state, t) {
+                    let we_t = would_empty_right_column(state, t);
+                    // PULL_DBG: dump each candidate's measured split so a transient
+                    // (4303-vs-4282) flip shows which condition moved.
+                    if t < top + 40 {
+                        log_fmt!("PULL_DBG:   t={} split={} page_end={} next_pt={} dialogue_below={} we={} page_top={}",
+                                 t, tcs.split, tcs.page_end, tcs.next_page_top, dialogue_below, we_t, state.page_top_line);
+                    }
+                    if !dialogue_below && !we_t {
                         pulled = Some(t);
                         break;
                     }
                 }
+                log_fmt!("PULL_DBG: top={} next={} we_next={} -> pulled={:?} page_top={}",
+                         top, next, we_next, pulled, state.page_top_line);
                 if let Some(t) = pulled {
                     last_full = Some(t);
                 }
@@ -400,7 +409,17 @@ pub(crate) fn last_page_top(state: &AppState, target: usize) -> usize {
         // the clamped top so every downstream consumer (cursor placement, the
         // forward-nav anchor, page_backward) agrees with what's actually on
         // screen.
-        clamp_page_top_to_scroll_ceiling(state, chosen)
+        let clamped = clamp_page_top_to_scroll_ceiling(state, chosen);
+        {
+            let adj = state.scrolled_window.vadjustment();
+            log_fmt!(
+                "LPT_DBG: target={} chosen={} clamped={} (vadj upper={:.0} page_size={:.0} max={:.0}) widget_h={} page_top={}",
+                target, chosen, clamped,
+                adj.upper(), adj.page_size(), (adj.upper() - adj.page_size()).max(0.0),
+                widget_height, state.page_top_line,
+            );
+        }
+        clamped
     } else if widget_height > 0 && line_count > 0 {
         // Single column: accumulate `widget_height` of content backward.
         let capacity = widget_height;
@@ -1198,7 +1217,7 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
 /// the page top one spread at a time (via the now-always-progressing
 /// `next_page_top`) until the cursor is visible. Bounded; only engages for the
 /// degenerate dialogue-less-marker-spread case — normal scenes never loop.
-fn ensure_cursor_visible_ereader(state: &mut AppState, cursor_idx: usize) {
+pub(crate) fn ensure_cursor_visible_ereader(state: &mut AppState, cursor_idx: usize) {
     let line_count = state.effective_line_count();
     let mut guard = 0;
     while !is_line_fully_visible(state, cursor_idx) {

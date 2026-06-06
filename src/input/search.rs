@@ -360,6 +360,12 @@ fn goto_match_idx(state: &mut AppState, new_idx: usize) {
             crate::config::NavigationMode::EReader => {
                 let top = crate::input::navigation::canonical_page_top_for(state, line);
                 crate::input::scroll::set_page_instant(state, top);
+                // canonical_page_top_for backs up to the section/chapter header, so
+                // on a degenerate lone-line header spread (Err/Tro at a short
+                // viewport) the matched line can land off-page below it. Advance
+                // until the cursor is actually visible — same guard the chapter
+                // jump uses (navigation.rs jump_to_next_chapter).
+                crate::input::navigation::ensure_cursor_visible_ereader(state, line);
             }
         }
     }
