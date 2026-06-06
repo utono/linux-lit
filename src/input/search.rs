@@ -56,20 +56,16 @@ pub fn execute_search(state_rc: &Rc<RefCell<AppState>>) {
 
     let total = state.search_matches.len();
     if total > 0 {
-        // Jump to first match at or after current_line
+        // Jump to first match at or after current_line, landing on its CANONICAL
+        // spread (same as n/N) rather than top-aligning the match line.
         let idx = state
             .search_matches
             .iter()
             .position(|m| m.line_index >= state.current_line)
             .unwrap_or(0);
-        state.search_match_idx = idx;
-        let m = &state.search_matches[idx];
-        state.current_line = m.line_index;
-        apply_current_highlight(&state);
-        state.search_bar.update_counter(idx, total);
-        push_page_back_dedup(&mut state);
-        crate::input::navigation::update_highlight_and_center(&mut state);
-        // Pause playback when search finds results
+        land_on_match_idx(&mut state, idx);
+        // Pause playback when search finds results (live search pauses; n/N seek
+        // + resume instead).
         let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
     } else {
         state.search_bar.update_counter(0, 0);
@@ -338,12 +334,13 @@ fn edge_toast(state: &AppState, side: Side, query: &str) {
     });
 }
 
-/// Move the current match to `new_idx` and land on the canonical spread for
-/// that line. Mirrors navigation::jump_to_line: if the target line is already
-/// fully visible on the current spread, move the cursor/highlight only (no
-/// re-pagination); otherwise land on canonical_page_top_for. Also seeks +
-/// resumes MPV at the matched line.
-fn goto_match_idx(state: &mut AppState, new_idx: usize) {
+/// Select match `new_idx`, highlight it, and land on its CANONICAL spread —
+/// the same page paging through the work shows — even when the match is already
+/// visible on the current page. MPV playback sync drifts `page_top`, so the
+/// "current spread" is often a non-canonical view of the same line; landing on
+/// the canonical top is what the reader expects. Does NOT touch MPV; callers
+/// decide whether to seek/resume (n/N) or pause (live search).
+fn land_on_match_idx(state: &mut AppState, new_idx: usize) {
     let total = state.search_matches.len();
     if total == 0 {
         return;
@@ -358,11 +355,6 @@ fn goto_match_idx(state: &mut AppState, new_idx: usize) {
         .update_counter(state.search_match_idx, total);
     push_page_back_dedup(state);
 
-    // ALWAYS land on the canonical spread for the match — the same page paging
-    // through the work shows — even when the match is already visible on the
-    // current page. MPV playback sync drifts page_top, so the "current spread"
-    // is often a non-canonical view of the same line; jumping to the canonical
-    // top is what the reader expects from n/N.
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => crate::input::scroll::center_cursor(state),
         crate::config::NavigationMode::EReader => {
@@ -376,6 +368,11 @@ fn goto_match_idx(state: &mut AppState, new_idx: usize) {
             crate::input::navigation::ensure_cursor_visible_ereader(state, line);
         }
     }
+}
+
+/// Navigate n/N: land on the match's canonical spread, then seek + resume MPV.
+fn goto_match_idx(state: &mut AppState, new_idx: usize) {
+    land_on_match_idx(state, new_idx);
     seek_and_resume(state);
 }
 
