@@ -1545,16 +1545,22 @@ pub fn build_window(
         let state_for_reveal = Rc::clone(&state);
         glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
             if vbox_for_reveal.opacity() < 1.0 {
-                let loading = state_for_reveal
+                // Reveal here ONLY in the true picker case: no work loading AND no
+                // post-load layout refresh pending. A resumed work clears
+                // `loading_work` quickly but leaves `needs_layout_refresh` set
+                // until the resize tick snaps + settles + reveals; revealing here
+                // in that window shows the pre-layout spread and then visibly
+                // re-flows. Defer to the resize-tick reveal in that case.
+                let (loading, refresh_pending) = state_for_reveal
                     .try_borrow()
-                    .map(|s| s.loading_work.get())
-                    .unwrap_or(true);
-                if !loading {
+                    .map(|s| (s.loading_work.get(), s.needs_layout_refresh.get()))
+                    .unwrap_or((true, true));
+                if !loading && !refresh_pending {
                     crate::logging::log("STARTUP: revealing vbox (500ms grace, no work loading)");
                     reveal_snap(&state_for_reveal);
                     vbox_for_reveal.set_opacity(1.0);
                 } else {
-                    crate::logging::log("STARTUP: 500ms grace skipped — work loading; waiting for deferred refresh");
+                    crate::logging::log("STARTUP: 500ms grace skipped — work load / layout refresh pending; waiting for resize-tick reveal");
                 }
             }
         });
@@ -2202,6 +2208,13 @@ pub fn display_work_at_with_prepared(
     });
 
     state.loading_work.set(true);
+    // Route the post-load reveal through the resize-tick `layout_refresh` branch,
+    // which snaps to the canonical spread and waits for two-column widths to
+    // settle BEFORE revealing. Without this the startup reveal fell to the 500ms
+    // grace timer, which fired as soon as `loading_work` cleared — BEFORE the
+    // deferred snap (`snap to containing`) and re-format ran — so the window
+    // appeared on the pre-layout guess spread and then visibly jumped/re-flowed.
+    state.needs_layout_refresh.set(true);
 
     // Hide the scrolled window to prevent any flash of content at the wrong
     // scroll position while we rebuild the buffer.

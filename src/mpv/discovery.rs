@@ -105,6 +105,14 @@ pub fn launch_mpv(media_path: &str) -> String {
         .arg(format!("--input-ipc-server={}", socket_path))
         .arg("--pause")
         .arg("--no-terminal")
+        // Audio-sync backend only — never maps a window. Without this, MPV opens a
+        // cover-art/video window (even for an audio-only .m4b); when that window
+        // maps ~1s after launch the compositor re-tiles the output and the reader
+        // visibly flickers once. `--no-video` (+ `--force-window=no`) keeps MPV
+        // headless so there's no map event and no flicker. linux-lit drives MPV
+        // purely over the IPC socket, so the window is never needed.
+        .arg("--no-video")
+        .arg("--force-window=no")
         .arg("--volume=75")
         .arg("--wayland-app-id=mpv-lit")
         .arg(media_path)
