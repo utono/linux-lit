@@ -389,7 +389,7 @@ fn update_next_scene_watermark(state: &AppState, cs: &super::viewport::ColumnSpl
         return;
     }
     let (div1, div2) = crate::app::divs_at_buffer_line(state, cs.next_page_top);
-    let label = crate::app::scene_label(div1, div2);
+    let label = crate::app::scene_label_for(state, div1, div2);
     // ~120% of the reading font, in Pango units (1pt = 1024). Scales with the
     // user's configured `font_size` instead of a fragile relative keyword.
     let size_units = ((state.config.font_size as f64) * 1.2 * 1024.0).round() as i64;

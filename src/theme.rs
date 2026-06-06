@@ -497,8 +497,12 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .kb-legend-unbound {{ background-color: #2a2a2a; border-color: #444444; }} \
          .debug-icon {{ font-size: 18px; color: {bg}; opacity: 0.85; }} \
          .word-status {{ font-size: 16px; color: {fg}; opacity: 0.85; }} \
-         .chapter-toast {{ font-size: 13px; color: {toast_fg}; opacity: 0.95; }} \
-         .search-toast {{ font-size: 10px; color: {toast_fg}; opacity: 0.9; }} \
+         .chapter-toast {{ font-size: 13px; color: {toast_fg}; \
+           background-color: {root}; padding: 6px 14px; border-radius: 10px; \
+           box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4); opacity: 0.97; }} \
+         .search-toast {{ font-size: 10px; color: {toast_fg}; \
+           background-color: {root}; padding: 3px 10px; border-radius: 8px; \
+           box-shadow: 0 3px 12px rgba(0, 0, 0, 0.35); opacity: 0.95; }} \
          .gloss-scrim {{ background-color: {root}; }} \
          .gloss-overlay {{ background-color: {gloss_bg}; color: {fg}; border-radius: 12px; \
            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45); }} \

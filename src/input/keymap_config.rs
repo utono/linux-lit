@@ -223,19 +223,19 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("G"), Action::JumpToEnd),
         (KeyCombo::plain("z"), Action::PendingZ),
         // Chapter / scene
-        (KeyCombo::plain("bracketleft"), Action::JumpToPrevChapter),
-        (KeyCombo::plain("braceleft"), Action::JumpToNextChapter),
+        (KeyCombo::plain("parenleft"), Action::JumpToPrevChapter),
+        (KeyCombo::plain("ampersand"), Action::JumpToNextChapter),
         (KeyCombo::plain("2"), Action::JumpToPrevScene),
         (KeyCombo::shift("2"), Action::JumpToPrevScene),
         (KeyCombo::plain("3"), Action::JumpToNextScene),
         (KeyCombo::shift("3"), Action::JumpToNextScene),
-        (KeyCombo::plain("c"), Action::ShowCurrentChapter),
+        (KeyCombo::plain("C"), Action::ShowCurrentChapter),
         // Bookmarks
         (KeyCombo::plain("m"), Action::ToggleBookmark),
         (KeyCombo::plain("semicolon"), Action::ReopenEchoes),
-        (KeyCombo::plain("parenleft"), Action::PrevBookmark),
-        (KeyCombo::plain("ampersand"), Action::NextBookmark),
-        (KeyCombo::ctrl("m"), Action::OpenBookmarkPicker),
+        (KeyCombo::plain("bracketleft"), Action::PrevBookmark),
+        (KeyCombo::plain("braceleft"), Action::NextBookmark),
+        (KeyCombo::ctrl("period"), Action::OpenBookmarkPicker),
     ]
 }
 
@@ -312,7 +312,7 @@ fn timestamp_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("u"), Action::SetStartTime),
         (KeyCombo::plain("Right"), Action::SetStartTime),
         (KeyCombo::alt("u"), Action::SetEndTime),
-        (KeyCombo::plain("period"), Action::SetChapter),
+        (KeyCombo::plain("c"), Action::SetChapter),
         (KeyCombo::plain("BackSpace"), Action::DeleteTimestamp),
         (KeyCombo::plain("p"), Action::NudgeStartBackward),
         (KeyCombo::plain("P"), Action::NudgeStartForward),
@@ -387,7 +387,7 @@ mod tests {
         );
         assert_eq!(
             km.lookup("bracketleft", false, false, false),
-            Some(Action::JumpToPrevChapter),
+            Some(Action::PrevBookmark),
         );
     }
 

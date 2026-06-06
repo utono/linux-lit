@@ -1362,7 +1362,8 @@ pub fn jump_to_prev_section(state: &mut AppState) {
     }
 }
 
-/// Show the chapter containing the current line as a transient toast.
+/// Show the act/scene (plays) or chapter (prose) containing the current line as
+/// a transient toast.
 pub fn show_current_chapter(state: &mut AppState) {
     let work = match &state.current_work {
         Some(w) => w,
@@ -1380,7 +1381,12 @@ pub fn show_current_chapter(state: &mut AppState) {
             .collect()
     };
 
+    // No chapter markers (e.g. a play): show the authoritative act/scene label
+    // derived from the line's (div1, div2) — never inferred from buffer text.
     if chapter_lines.is_empty() {
+        let (div1, div2) = crate::app::current_scene_divs(state);
+        let text = crate::app::scene_label_for(state, div1, div2);
+        show_chapter_toast(state, &text);
         return;
     }
 
@@ -1427,8 +1433,12 @@ pub fn show_current_chapter(state: &mut AppState) {
     };
 
     let text = format!("Chapter {} of {} — {}", chapter_num, total, title);
+    show_chapter_toast(state, &text);
+}
 
-    state.chapter_toast.set_text(&text);
+/// Show `text` in the chapter toast for 3 seconds.
+fn show_chapter_toast(state: &AppState, text: &str) {
+    state.chapter_toast.set_text(text);
     state.chapter_toast.set_visible(true);
 
     let toast = state.chapter_toast.clone();

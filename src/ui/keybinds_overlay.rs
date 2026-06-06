@@ -34,10 +34,10 @@ const fn bare(unshifted: &'static str, shifted: &'static str, action: &'static s
 const NUMBER_ROW: &[KeyDef] = &[
     ub("$", "~"),
     bare("+", "1", "toggle speed"),
-    key("[", "2", "prev ch", "2: prev scene", &[]),
-    key("{", "3", "next ch", "3: next scene", &[]),
-    bare("(", "4", "prev bkmk"),
-    bare("&", "5", "next bkmk"),
+    key("[", "2", "prev bkmk", "2: prev scene", &[]),
+    key("{", "3", "next bkmk", "3: next scene", &[]),
+    bare("(", "4", "prev ch"),
+    bare("&", "5", "next ch"),
     ub("=", "6"),
     ub(")", "7"),
     ub("}", "8"),
@@ -51,12 +51,12 @@ const BACKSPACE: KeyDef = bare("\u{232b}", "", "delete ts");
 const UPPER_ROW: &[KeyDef] = &[
     bare(";", ":", "reopen echoes"),
     key(",", "<", "prev dlg", "", &[("C-,", "settings")]),
-    bare(".", ">", "set chapter"),
+    key(".", ">", "bookmark", "", &[("C-.", "bookmarks")]),
     key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("C-p", "lib picker")]),
     key("y", "Y", "pg back", "", &[("C-y", "copy id")]),
     key("f", "F", "next font", "F: prev font", &[("C-f", "pg fwd"), ("M-f", "font info")]),
     key("g", "G", "", "", &[("C-g", "gloss tog"), ("M-g", "gloss pick"), ("S-C-g", "echo turns")]),
-    ub("c", "C"),
+    key("c", "C", "set chapter", "C: show chapter", &[]),
     key("r", "R", "next vocab", "R: prev vocab", &[]),
     key("l", "L", "toggle signs", "", &[("S-C-l", "save+quit")]),
     key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
@@ -87,7 +87,7 @@ const BOTTOM_ROW: &[KeyDef] = &[
     bare("k", "K", "cursor \u{2191}"),
     bare("x", "X", "pg fwd"),
     key("b", "B", "", "", &[("C-b", "pg back")]),
-    key("m", "M", "bookmark", "", &[("C-m", "bookmarks"), ("C-S-m", "media picker")]),
+    key("m", "M", "bookmark", "", &[("C-S-m", "media picker")]),
     key("w", "W", "copy word", "W: collect", &[]),
     key("v", "V", "", "V: visual mode", &[]),
     bare("z", "Z", "zt…"),
@@ -348,6 +348,9 @@ MPV's current playback position. \
         "set chapter" => "Mark the current line as a chapter/scene boundary at \
 MPV's current playback position. \
 -> timestamps::set_chapter — src/input/timestamps.rs",
+        "show chapter" => "Show the current act/scene (plays) or chapter (prose) \
+for the line the cursor is on, as a transient toast. \
+-> navigation::show_current_chapter — src/input/navigation.rs",
         "delete ts" => "Delete the current line's saved timestamp from lit.db \
 (undoable). -> timestamps::delete_timestamp — src/input/timestamps.rs",
         "nudge −0.2" => "Nudge the current line's start timestamp 0.2s earlier. \
@@ -456,6 +459,8 @@ fn expand_action(label: &str) -> String {
         "title tog" => "toggle title bar",
         "debug log" => "toggle debug log",
         "set chapter" => "set chapter",
+        "show chapter" => "show current chapter",
+        "bookmarks" => "bookmark picker",
         "start time" => "set start time",
         "set end time" => "set end time",
         "play from ts" => "play from timestamp",

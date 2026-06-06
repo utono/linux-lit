@@ -4477,7 +4477,7 @@ pub fn synopsis_label(state: &AppState, div1: i64, div2: i64) -> String {
     if is_chapter_work(state) {
         format!("Chapter {}", div1)
     } else {
-        scene_label(div1, div2)
+        scene_label_for(state, div1, div2)
     }
 }
 
@@ -4673,6 +4673,11 @@ pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) 
 
 /// Human-readable label for a scene, shared by the synopsis overlay and the
 /// gloss overlay. (0,0) = Prologue; (N,0) = Act N, Chorus; else Act N, Scene M.
+///
+/// Note: `(N,0)` is ambiguous without the work — it is a *Chorus* only when act
+/// N also has numbered scenes; a standalone `(N,0)` past the last act is an
+/// *Epilogue*. Prefer `scene_label_for` when an `AppState` is available so the
+/// epilogue is labelled correctly; this pure form falls back to "Act N, Chorus".
 pub fn scene_label(div1: i64, div2: i64) -> String {
     if div1 == 0 && div2 == 0 {
         "Prologue".to_string()
@@ -4681,6 +4686,24 @@ pub fn scene_label(div1: i64, div2: i64) -> String {
     } else {
         format!("Act {}, Scene {}", div1, div2)
     }
+}
+
+/// Work-aware scene label that resolves the `(N,0)` ambiguity using the
+/// authoritative `(div1,div2)` metadata: a `(N,0)` whose act N has no numbered
+/// scenes (`div2 > 0`) in the work is an *Epilogue*, not a Chorus. `(0,0)` is
+/// always the Prologue. Falls back to the pure `scene_label` shape otherwise.
+pub fn scene_label_for(state: &AppState, div1: i64, div2: i64) -> String {
+    if div2 == 0 && div1 > 0 {
+        let has_scenes = state
+            .current_work
+            .as_ref()
+            .map(|w| w.lines.iter().any(|l| l.div1 == div1 && l.div2 > 0))
+            .unwrap_or(false);
+        if !has_scenes {
+            return "Epilogue".to_string();
+        }
+    }
+    scene_label(div1, div2)
 }
 
 /// Ordered list of the work's scene keys (div1, div2) that have a synopsis, in
