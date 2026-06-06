@@ -21,6 +21,9 @@ pub fn execute_search(state_rc: &Rc<RefCell<AppState>>) {
         return;
     }
 
+    // Remember the pattern as MRU so n/N can reactivate search after Escape.
+    state.last_search_query = Some(query.to_string());
+
     let work = match &state.current_work {
         Some(w) => w,
         None => return,
