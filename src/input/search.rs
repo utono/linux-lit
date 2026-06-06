@@ -212,8 +212,13 @@ pub fn reactivate_and_step(state_rc: &Rc<RefCell<AppState>>, pressed_next: bool)
     }
 }
 
-/// Seek to current line's start_time and resume playback.
+/// If playback was PLAYING, seek to the current line's start time (with the
+/// usual preroll) and keep playing. If it was paused, do nothing — n/N then
+/// only moves the cursor/spread, leaving MPV where it was.
 fn seek_and_resume(state: &AppState) {
+    if !state.mpv_playing {
+        return;
+    }
     if let Some(ref work) = state.current_work {
         if let Some(work_idx) = state.work_line_for_buffer(state.current_line) {
             if let Some(ts) = &work.lines[work_idx].timestamp {
