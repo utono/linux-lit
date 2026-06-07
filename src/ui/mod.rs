@@ -19,3 +19,4 @@ pub mod bookmark_picker;
 pub mod media_picker;
 pub mod search_bar;
 pub mod settings_overlay;
+pub mod translation_overlay;
