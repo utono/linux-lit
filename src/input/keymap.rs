@@ -96,7 +96,7 @@ pub fn handle_key(
             crate::app::InputMode::Search => handle_search_key(state, key_name),
             crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_alt, tokio_handle),
             crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_name, is_ctrl),
-            crate::app::InputMode::TranslationOverlay => handle_translation_overlay_key(state, key_name),
+            crate::app::InputMode::TranslationOverlay => handle_translation_overlay_key(state, key_name, is_alt),
             crate::app::InputMode::DeleteConfirm => handle_delete_confirm_key(state, key_name),
             crate::app::InputMode::EchoPicker => handle_echo_picker_key(state, key_name, tokio_handle),
             crate::app::InputMode::EchoTurnsPicker => handle_echo_turns_picker_key(state, key_name, tokio_handle),
@@ -739,7 +739,15 @@ fn handle_gloss_key(
     }
 }
 
-fn handle_translation_overlay_key(state: &Rc<RefCell<AppState>>, key_name: &str) -> bool {
+fn handle_translation_overlay_key(state: &Rc<RefCell<AppState>>, key_name: &str, is_alt: bool) -> bool {
+    // Alt+i (the same bind that opened the overlay) toggles it closed, matching
+    // Escape. Without this, a second Alt+i would be swallowed by the catch-all.
+    if is_alt && key_name == "i" {
+        let mut s = state.borrow_mut();
+        s.translation_overlay.hide();
+        s.input_mode = crate::app::InputMode::Reader;
+        return true;
+    }
     match key_name {
         "Escape" => {
             let mut s = state.borrow_mut();

@@ -4882,15 +4882,6 @@ pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) 
 pub fn show_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
     let s = state.borrow();
 
-    // Toggle off if already open.
-    if s.translation_overlay.is_visible() {
-        drop(s);
-        let mut s = state.borrow_mut();
-        s.translation_overlay.hide();
-        s.input_mode = InputMode::Reader;
-        return;
-    }
-
     let work = match s.current_work.as_ref() {
         Some(w) => w,
         None => return,
