@@ -68,8 +68,8 @@ pub struct TranslationOverlay {
     scrolled: ScrolledWindow,
     /// Vertical stack of header rows + paired column blocks, inside `scrolled`.
     content_vbox: gtk4::Box,
-    /// Per rendered speech/interlude block: the (start_idx, end_idx) source
-    /// range and the block's top widget, so we can scroll to the cursor block.
+    /// Per rendered speech/interlude block: source range, top widget, and the
+    /// original/translation views, so we can scroll to and highlight the cursor.
     block_widgets: RefCell<Vec<(usize, usize, gtk4::Box)>>,
 }
 
