@@ -755,17 +755,66 @@ fn handle_translation_overlay_key(state: &Rc<RefCell<AppState>>, key_name: &str)
             s.input_mode = crate::app::InputMode::Reader;
             true
         }
-        "j" => {
-            state.borrow().translation_overlay.scroll(1);
+        // Dialogue navigation: drive the REAL cursor (same fns as the main
+        // card), which also seeks MPV, then mirror the highlight + follow in
+        // the overlay.
+        "comma" => { overlay_nav(state, navigation::jump_to_prev_dialogue); true }
+        "q" => { overlay_nav(state, navigation::jump_to_next_dialogue); true }
+        "j" => { overlay_nav(state, navigation::cursor_next_dialogue); true }
+        "k" => { overlay_nav(state, navigation::cursor_prev_line); true }
+        // Playback (same as the main card): Tab toggles play/pause, a plays
+        // from the current line. Neither moves the cursor, so no re-highlight.
+        "Tab" | "ISO_Left_Tab" => {
+            crate::input::search::toggle_playback(&mut state.borrow_mut());
             true
         }
-        "k" => {
-            state.borrow().translation_overlay.scroll(-1);
+        "a" => {
+            crate::input::timestamps::play_current_line(&mut state.borrow_mut());
+            true
+        }
+        // Toggle playback sync (same as the main card): identical state +
+        // toast. When enabled, MPV events drive the overlay highlight too.
+        "s" => {
+            toggle_playback_sync(&mut state.borrow_mut());
             true
         }
         // Swallow everything else so stray keys don't leak to the reader.
         _ => true,
     }
+}
+
+/// Toggle MPV playback sync on/off, mirroring concordance state and showing the
+/// bottom-center "Sync: on/off" toast. Shared by the main-card `TogglePlaybackSync`
+/// dispatch and the translation overlay's `s` bind so both behave identically.
+fn toggle_playback_sync(s: &mut AppState) {
+    s.sync_enabled = !s.sync_enabled;
+    if s.sync_enabled {
+        s.suppress_sync_until = None;
+    }
+    if s.sync_enabled_before_concordance.is_some() {
+        s.sync_enabled_before_concordance = Some(s.sync_enabled);
+    }
+    let label = if s.sync_enabled { "Sync: on" } else { "Sync: off" };
+    crate::logging::log(&format!("SYNC: {}", if s.sync_enabled { "enabled" } else { "disabled" }));
+    // Bottom-center (same place as the act/scene pill); reset margins in
+    // case a prior corner toast moved the shared widget.
+    s.speed_toast.set_halign(gtk4::Align::Center);
+    s.speed_toast.set_margin_start(0);
+    s.speed_toast.set_margin_end(0);
+    s.speed_toast.set_text(label);
+    s.speed_toast.set_visible(true);
+    let toast = s.speed_toast.clone();
+    glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+        toast.set_visible(false);
+    });
+}
+
+/// Run a main-card navigation function (moves `current_line` + seeks MPV via
+/// `after_page_change`), then re-highlight and follow in the translation overlay.
+fn overlay_nav(state: &Rc<RefCell<AppState>>, nav_fn: fn(&mut AppState)) {
+    let scene_before = crate::app::current_scene_divs(&state.borrow());
+    nav_fn(&mut state.borrow_mut());
+    crate::app::sync_translation_overlay(state, scene_before);
 }
 
 fn handle_synopsis_overlay_key(
@@ -1127,46 +1176,79 @@ fn handle_keybinds_key(
     state: &Rc<RefCell<AppState>>,
     key_name: &str,
 ) -> bool {
+    // Advance a row; past the last keyboard row hands off to the gamepad screen.
+    fn next_row_or_gamepad(state: &Rc<RefCell<AppState>>) {
+        let advanced = state.borrow().keybinds_overlay.next_row();
+        if !advanced {
+            let s = state.borrow();
+            s.keybinds_overlay.hide();
+            s.gamepad_overlay.show();
+            drop(s);
+            state.borrow_mut().input_mode = crate::app::InputMode::GamepadOverlay;
+        }
+    }
+    // Previous row; before the first keyboard row hands off to the gamepad screen.
+    fn prev_row_or_gamepad(state: &Rc<RefCell<AppState>>) {
+        let moved = state.borrow().keybinds_overlay.prev_row();
+        if !moved {
+            let s = state.borrow();
+            s.keybinds_overlay.hide();
+            s.gamepad_overlay.show();
+            drop(s);
+            state.borrow_mut().input_mode = crate::app::InputMode::GamepadOverlay;
+        }
+    }
+
     match key_name {
         "Escape" => {
             state.borrow().keybinds_overlay.hide();
             state.borrow_mut().input_mode = crate::app::InputMode::Reader;
-            true
+            return true;
         }
-        "n" | "Up" => {
-            // Advance a row; past the last row → gamepad screen.
-            let advanced = state.borrow().keybinds_overlay.next_row();
-            if !advanced {
-                let s = state.borrow();
-                s.keybinds_overlay.hide();
-                s.gamepad_overlay.show();
-                drop(s);
-                state.borrow_mut().input_mode = crate::app::InputMode::GamepadOverlay;
-            }
-            true
+        "Tab" => {
+            state.borrow().keybinds_overlay.toggle_mode();
+            return true;
         }
-        "p" | "Down" => {
-            // Previous row; before the first row → gamepad screen.
-            let moved = state.borrow().keybinds_overlay.prev_row();
-            if !moved {
-                let s = state.borrow();
-                s.keybinds_overlay.hide();
-                s.gamepad_overlay.show();
-                drop(s);
-                state.borrow_mut().input_mode = crate::app::InputMode::GamepadOverlay;
-            }
-            true
+        // Arrows navigate in BOTH modes.
+        "Up" => {
+            next_row_or_gamepad(state);
+            return true;
         }
-        "j" | "Right" => {
+        "Down" => {
+            prev_row_or_gamepad(state);
+            return true;
+        }
+        "Right" => {
             state.borrow().keybinds_overlay.move_selection(1);
-            true
+            return true;
         }
-        "k" | "Left" => {
+        "Left" => {
             state.borrow().keybinds_overlay.move_selection(-1);
-            true
+            return true;
         }
-        _ => true, // consume all other keys when keybinds visible
+        _ => {}
     }
+
+    if state.borrow().keybinds_overlay.is_jump_mode() {
+        // Jump mode: any other key jumps the highlight to its cap (no-op if no
+        // matching cap). Always consume so nothing leaks to the reader.
+        state.borrow().keybinds_overlay.jump_to_key(key_name);
+        return true;
+    }
+
+    // Nav mode: the classic n/p rows, j/k highlight.
+    match key_name {
+        "n" => next_row_or_gamepad(state),
+        "p" => prev_row_or_gamepad(state),
+        "j" => {
+            state.borrow().keybinds_overlay.move_selection(1);
+        }
+        "k" => {
+            state.borrow().keybinds_overlay.move_selection(-1);
+        }
+        _ => {}
+    }
+    true // consume all other keys while keybinds visible
 }
 
 fn handle_action_popup_key(
@@ -1322,29 +1404,7 @@ fn dispatch_action(
         }
 
         // MPV / media
-        TogglePlaybackSync => {
-            let mut s = state.borrow_mut();
-            s.sync_enabled = !s.sync_enabled;
-            if s.sync_enabled {
-                s.suppress_sync_until = None;
-            }
-            if s.sync_enabled_before_concordance.is_some() {
-                s.sync_enabled_before_concordance = Some(s.sync_enabled);
-            }
-            let label = if s.sync_enabled { "Sync: on" } else { "Sync: off" };
-            crate::logging::log(&format!("SYNC: {}", if s.sync_enabled { "enabled" } else { "disabled" }));
-            // Bottom-center (same place as the act/scene pill); reset margins in
-            // case a prior corner toast moved the shared widget.
-            s.speed_toast.set_halign(gtk4::Align::Center);
-            s.speed_toast.set_margin_start(0);
-            s.speed_toast.set_margin_end(0);
-            s.speed_toast.set_text(label);
-            s.speed_toast.set_visible(true);
-            let toast = s.speed_toast.clone();
-            glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-                toast.set_visible(false);
-            });
-        }
+        TogglePlaybackSync => toggle_playback_sync(&mut state.borrow_mut()),
         TogglePlayback => crate::input::search::toggle_playback(&mut state.borrow_mut()),
         SeekShortBackward => do_mpv_seek(state, -3.5),
         SeekShortForward => do_mpv_seek(state, 3.5),

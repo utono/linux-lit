@@ -41,7 +41,7 @@ const NUMBER_ROW: &[KeyDef] = &[
     ub("=", "6"),
     ub(")", "7"),
     ub("}", "8"),
-    bare("]", "9", "show chapter"),
+    ub("]", "9"),
     key("*", "0", "", "reset font", &[]),
     bare("!", "%", "font \u{2212}"),
     bare("|", "`", "font +"),
@@ -49,7 +49,7 @@ const NUMBER_ROW: &[KeyDef] = &[
 const BACKSPACE: KeyDef = bare("\u{232b}", "", "delete ts");
 
 const UPPER_ROW: &[KeyDef] = &[
-    bare(";", ":", "reopen echoes"),
+    bare(";", ":", "show chapter"),
     key(",", "<", "prev dlg", "", &[("C-,", "settings")]),
     key(".", ">", "bookmark", "", &[("C-.", "bookmarks")]),
     key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("C-p", "lib picker")]),
@@ -68,7 +68,7 @@ const TAB_KEY: KeyDef = bare("Tab", "", "play/pause");
 const HOME_ROW: &[KeyDef] = &[
     bare("a", "A", "play from ts"),
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
-    key("e", "E", "seek +3.5", "E: +60", &[]),
+    key("e", "E", "seek +3.5", "E: +60", &[("C-e", "reopen echoes")]),
     key("u", "U", "start time", "", &[("C-u", "pg fwd"), ("M-u", "set end time")]),
     key("i", "I", "echoes", "I: reopen echoes", &[("M-i", "translations")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
@@ -144,6 +144,56 @@ fn first_bound(keys: &[&KeyDef]) -> usize {
         .unwrap_or(0)
 }
 
+/// Map a GTK keyval name for a symbol key to the cap glyph used in the row
+/// tables (`unshifted` field). Single-character letter/digit names are NOT in
+/// this table — `find_cap` matches those by identity. Returns `None` for names
+/// with no symbol cap.
+fn key_name_to_glyph(key_name: &str) -> Option<&'static str> {
+    Some(match key_name {
+        "slash" => "/",
+        "comma" => ",",
+        "period" => ".",
+        "parenleft" => "(",
+        "parenright" => ")",
+        "ampersand" => "&",
+        "bracketleft" => "[",
+        "bracketright" => "]",
+        "braceleft" => "{",
+        "braceright" => "}",
+        "backslash" => "\\",
+        "minus" => "-",
+        "apostrophe" => "'",
+        "semicolon" => ";",
+        "plus" => "+",
+        "asterisk" => "*",
+        "exclam" => "!",
+        "bar" => "|",
+        "at" => "@",
+        "dollar" => "$",
+        "equal" => "=",
+        _ => return None,
+    })
+}
+
+/// Resolve an incoming GTK key name to the `(row_idx, cap_idx)` of the first cap
+/// whose `unshifted` glyph matches. Symbol names go through
+/// `key_name_to_glyph`; everything else (letters/digits) is matched by identity.
+/// Returns `None` when no cap matches (the caller consumes the key as a no-op).
+///
+/// Assumes each unshifted glyph is unique across rows — if a glyph were ever
+/// duplicated, this would jump to the first occurrence. Digit keys never match:
+/// the number-row caps store digits in the `shifted` slot, not `unshifted`, so
+/// `1`..`0` are jump no-ops by design (reach those caps with the arrow keys).
+fn find_cap(key_name: &str) -> Option<(usize, usize)> {
+    let glyph = key_name_to_glyph(key_name).unwrap_or(key_name);
+    for row in 0..ROW_COUNT {
+        let keys = row_keys(row);
+        if let Some(idx) = keys.iter().position(|d| d.unshifted == glyph) {
+            return Some((row, idx));
+        }
+    }
+    None
+}
 
 /// A longer, sentence-length explanation for a binding, keyed by its short
 /// action label (the same strings used in the row definitions above). Returns
@@ -558,6 +608,7 @@ fn draw_row_screen(
     cr: &gtk4::cairo::Context,
     row_idx: usize,
     selected: usize,
+    jump_mode: bool,
     widget_w: f64,
     widget_h: f64,
 ) {
@@ -574,7 +625,8 @@ fn draw_row_screen(
     cr.set_font_size(20.0);
     cr.set_source_rgb(0.96, 0.94, 0.90);
     let title = ROW_TITLES.get(row_idx).copied().unwrap_or("");
-    let header = format!("Row {} of {}  —  {}", row_idx + 1, ROW_COUNT + 1, title);
+    let mode = if jump_mode { "JUMP" } else { "NAV" };
+    let header = format!("Row {} of {}  —  {}  —  {}", row_idx + 1, ROW_COUNT + 1, title, mode);
     let he = cr.text_extents(&header).unwrap();
     let _ = cr.move_to((widget_w - he.width()) / 2.0, 48.0);
     let _ = cr.show_text(&header);
@@ -803,7 +855,11 @@ fn draw_row_screen(
     cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
     cr.set_font_size(14.0);
     cr.set_source_rgb(0.78, 0.76, 0.82);
-    let foot = "Esc close  \u{00b7}  n/p or \u{2191}/\u{2193} cycle rows  \u{00b7}  j/k or \u{2190}/\u{2192} move highlight";
+    let foot = if jump_mode {
+        "Esc close  \u{00b7}  Tab jump/nav  \u{00b7}  press a key to jump to its cap  \u{00b7}  \u{2190}/\u{2192} move  \u{00b7}  \u{2191}/\u{2193} rows"
+    } else {
+        "Esc close  \u{00b7}  Tab jump/nav  \u{00b7}  n/p or \u{2191}/\u{2193} rows  \u{00b7}  j/k or \u{2190}/\u{2192} move"
+    };
     let fe = cr.text_extents(foot).unwrap();
     let _ = cr.move_to((widget_w - fe.width()) / 2.0, widget_h - 28.0);
     let _ = cr.show_text(foot);
@@ -846,6 +902,7 @@ pub struct KeybindsOverlay {
     drawing_area: DrawingArea,
     row_index: Rc<std::cell::Cell<usize>>,
     selected: Rc<std::cell::Cell<usize>>,
+    jump_mode: Rc<std::cell::Cell<bool>>,
 }
 
 impl KeybindsOverlay {
@@ -863,17 +920,20 @@ impl KeybindsOverlay {
 
         let row_index = Rc::new(std::cell::Cell::new(0usize));
         let selected = Rc::new(std::cell::Cell::new(first_bound(&row_keys(0))));
+        let jump_mode = Rc::new(std::cell::Cell::new(true));
 
         let row_draw = row_index.clone();
         let sel_draw = selected.clone();
+        let jump_draw = jump_mode.clone();
         drawing_area.set_draw_func(move |_area, cr, w, h| {
-            draw_row_screen(cr, row_draw.get(), sel_draw.get(), w as f64, h as f64);
+            draw_row_screen(cr, row_draw.get(), sel_draw.get(), jump_draw.get(), w as f64, h as f64);
         });
 
-        KeybindsOverlay { overlay, drawing_area, row_index, selected }
+        KeybindsOverlay { overlay, drawing_area, row_index, selected, jump_mode }
     }
 
     pub fn show(&self) {
+        self.jump_mode.set(true);
         // Reopen on the previously viewed row (row_index/selected persist across
         // hide/show). Clamp the row in case ROW_COUNT changed.
         let row = self.row_index.get().min(ROW_COUNT - 1);
@@ -925,6 +985,7 @@ impl KeybindsOverlay {
     /// Jump directly to the last keyboard row (used when entering from the
     /// gamepad screen via `p`).
     pub fn show_last_row(&self) {
+        self.jump_mode.set(true);
         let last = ROW_COUNT - 1;
         self.row_index.set(last);
         self.selected.set(first_bound(&row_keys(last)));
@@ -944,8 +1005,122 @@ impl KeybindsOverlay {
         self.drawing_area.queue_draw();
     }
 
+    /// Jump the highlight to the cap for `key_name`, switching rows if the cap
+    /// is on another row. Returns true if a cap matched, false otherwise.
+    pub fn jump_to_key(&self, key_name: &str) -> bool {
+        match find_cap(key_name) {
+            Some((row, idx)) => {
+                self.row_index.set(row);
+                self.selected.set(idx);
+                self.drawing_area.queue_draw();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Flip between jump mode and nav mode and redraw.
+    pub fn toggle_mode(&self) {
+        self.jump_mode.set(!self.jump_mode.get());
+        self.drawing_area.queue_draw();
+    }
+
+    /// Whether the overlay is currently in jump mode (vs nav mode).
+    pub fn is_jump_mode(&self) -> bool {
+        self.jump_mode.get()
+    }
+
     pub fn attach(&self, base: &impl IsA<gtk4::Widget>) {
         self.overlay.set_child(Some(base));
         self.overlay.add_overlay(&self.drawing_area);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn glyph_for_symbol_names() {
+        assert_eq!(key_name_to_glyph("slash"), Some("/"));
+        assert_eq!(key_name_to_glyph("comma"), Some(","));
+        assert_eq!(key_name_to_glyph("period"), Some("."));
+        assert_eq!(key_name_to_glyph("parenleft"), Some("("));
+        assert_eq!(key_name_to_glyph("plus"), Some("+"));
+        assert_eq!(key_name_to_glyph("backslash"), Some("\\"));
+        assert_eq!(key_name_to_glyph("apostrophe"), Some("'"));
+    }
+
+    #[test]
+    fn glyph_returns_none_for_letters() {
+        // Letters are matched by identity in find_cap, not via this table.
+        assert_eq!(key_name_to_glyph("h"), None);
+        assert_eq!(key_name_to_glyph("g"), None);
+    }
+
+    #[test]
+    fn find_cap_resolves_representative_keys() {
+        // 'h' is on the home row (index 2).
+        let (row, idx) = find_cap("h").expect("h has a cap");
+        assert_eq!(row, 2);
+        assert_eq!(row_keys(row)[idx].unshifted, "h");
+
+        // '/' (slash) is on the upper row (index 1).
+        let (row, idx) = find_cap("slash").expect("slash has a cap");
+        assert_eq!(row, 1);
+        assert_eq!(row_keys(row)[idx].unshifted, "/");
+
+        // '+' (plus) is on the number row (index 0).
+        let (row, idx) = find_cap("plus").expect("plus has a cap");
+        assert_eq!(row, 0);
+        assert_eq!(row_keys(row)[idx].unshifted, "+");
+    }
+
+    #[test]
+    fn find_cap_none_for_unmapped() {
+        assert_eq!(find_cap("F5"), None);
+        assert_eq!(find_cap("Return"), None);
+    }
+
+    #[test]
+    fn every_lettered_cap_is_findable() {
+        // Every cap with a single-char ASCII-letter glyph must resolve to
+        // itself via identity matching.
+        for row in 0..ROW_COUNT {
+            for def in row_keys(row) {
+                let g = def.unshifted;
+                if g.len() == 1 && g.chars().all(|c| c.is_ascii_alphabetic()) {
+                    let (r, i) = find_cap(g).unwrap_or_else(|| panic!("no cap for {g}"));
+                    assert_eq!(row_keys(r)[i].unshifted, g);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bound_symbol_keys_resolve_by_gtk_name() {
+        // Every symbol key that has a bound cap must be jump-reachable by the
+        // GTK keyval name it is delivered under. Guards against a row cap whose
+        // GTK name is missing from key_name_to_glyph (the semicolon class of bug).
+        let cases = [
+            ("slash", "/"),
+            ("comma", ","),
+            ("period", "."),
+            ("parenleft", "("),
+            ("ampersand", "&"),
+            ("bracketleft", "["),
+            ("braceleft", "{"),
+            ("backslash", "\\"),
+            ("minus", "-"),
+            ("apostrophe", "'"),
+            ("plus", "+"),
+            ("semicolon", ";"),
+        ];
+        for (name, glyph) in cases {
+            let (row, idx) = find_cap(name)
+                .unwrap_or_else(|| panic!("no cap for GTK name {name} (glyph {glyph})"));
+            assert_eq!(row_keys(row)[idx].unshifted, glyph,
+                "find_cap({name}) landed on the wrong cap");
+        }
     }
 }

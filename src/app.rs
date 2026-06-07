@@ -4880,11 +4880,57 @@ pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) 
 /// Open the two-column speaker-grouped translation overlay for the current
 /// scene, scrolled to the speaker block containing the cursor line.
 pub fn show_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+    if rebuild_translation_overlay(state) {
+        state.borrow_mut().input_mode = InputMode::TranslationOverlay;
+    }
+}
+
+/// Build (or rebuild) the two-column translation overlay for the cursor's
+/// current scene and highlight/scroll to the cursor line. Idempotent:
+/// `translation_overlay.show` clears prior content, so calling this again
+/// after the cursor crosses into a new scene re-renders cleanly for that scene.
+///
+/// Returns `true` if the overlay was actually shown, `false` if it bailed early
+/// (no current work / empty scene). Does NOT change `input_mode` — callers that
+/// open the overlay (`show_translation_overlay`) set it themselves only on
+/// success; the in-place rebuild path keeps the existing mode.
+/// Make the translation overlay reflect the current reader cursor: if it's
+/// open, either rebuild it (cursor crossed into a new scene) or just move the
+/// highlight + follow-scroll. No-op when the overlay isn't visible. Takes the
+/// `Rc` so it can manage its own borrows (rebuild needs an unborrowed handle).
+pub fn sync_translation_overlay(
+    state: &std::rc::Rc<std::cell::RefCell<AppState>>,
+    scene_before: (i64, i64),
+) {
+    // Cheap visibility + scene check under a short borrow.
+    let (visible, scene_after, cursor_w) = {
+        let s = state.borrow();
+        (
+            s.translation_overlay.is_visible(),
+            current_scene_divs(&s),
+            s.work_line_for_buffer(s.current_line),
+        )
+    };
+    if !visible {
+        return;
+    }
+    if scene_after != scene_before {
+        rebuild_translation_overlay(state);
+        return;
+    }
+    if let Some(w) = cursor_w {
+        let s = state.borrow();
+        s.translation_overlay.highlight_work_line(w);
+        s.translation_overlay.scroll_to_highlight(w);
+    }
+}
+
+pub fn rebuild_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) -> bool {
     let s = state.borrow();
 
     let work = match s.current_work.as_ref() {
         Some(w) => w,
-        None => return,
+        None => return false,
     };
 
     let (div1, div2) = current_scene_divs(&s);
@@ -4897,7 +4943,7 @@ pub fn show_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>
         .cloned()
         .collect();
     if scene_lines.is_empty() {
-        return;
+        return false;
     }
     // Index of the first scene line within work.lines, for idx_of mapping.
     let base = work
@@ -4916,6 +4962,8 @@ pub fn show_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>
     let card_height = s.content_hbox.height();
     let text_fg = s.theme.text_fg.clone();
     let dim_fg = s.theme.dim_fg.clone();
+    let body_font_size = s.config.font_size as i32;
+    let cursor_line_bg = s.theme.cursor_line_bg.clone();
     let label = synopsis_label(&s, div1, div2);
 
     // Cursor's work index, to pick the block to anchor on.
@@ -4928,14 +4976,16 @@ pub fn show_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>
         card_height,
         &text_fg,
         &dim_fg,
+        body_font_size,
+        &cursor_line_bg,
     );
     if let Some(idx) = cursor_idx {
-        s.translation_overlay.scroll_to_block(idx);
+        s.translation_overlay.highlight_work_line(idx);
+        s.translation_overlay.scroll_to_highlight(idx);
     }
     drop(s);
 
-    let mut s = state.borrow_mut();
-    s.input_mode = InputMode::TranslationOverlay;
+    true
 }
 
 /// Human-readable label for a scene, shared by the synopsis overlay and the

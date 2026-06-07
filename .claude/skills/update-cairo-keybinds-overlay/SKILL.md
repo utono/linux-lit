@@ -41,8 +41,23 @@ separate consts, prepended/appended to their row in `row_keys()`.
 ## Per-Row Rendering (current)
 
 The overlay is **per-row** — one physical keyboard row per screen. Ctrl+/ opens
-row 1; `n`/`p` cycle rows (the gamepad overlay is the 6th screen); `j`/`k` or
-`←`/`→` move the key highlight; Esc closes.
+row 1. The overlay has two input modes, toggled by `Tab` and shown in the
+header (`JUMP`/`NAV`) and footer:
+
+- **Jump mode** (the default on every open): press a key to jump the highlight
+  straight to that key's cap, auto-switching rows if the cap is on another row.
+  Matching is unshifted-glyph only (see `find_cap` / `key_name_to_glyph`), so
+  digit keys (`1`..`0`) and modified combos (Ctrl/Alt/Shift chords) are NOT jump
+  targets — only the bare unshifted glyph printed on the cap is. The Space cap is
+  also not jump-targetable (the global Space handler intercepts it for MPV
+  play/pause before the overlay sees it). Reach any of these caps with the arrow
+  keys instead.
+- **Nav mode**: `n`/`p` cycle rows (the gamepad overlay is the 6th screen) and
+  `j`/`k` move the key highlight.
+
+In both modes `←`/`→` move the highlight, `↑`/`↓` cycle rows, and `Esc` closes.
+Key routing lives in `handle_keybinds_key` (`src/input/keymap.rs`); the mode
+state and `jump_to_key`/`toggle_mode`/`is_jump_mode` live on `KeybindsOverlay`.
 
 ### `row_keys(idx)`
 

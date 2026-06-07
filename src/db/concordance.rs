@@ -258,10 +258,7 @@ mod tests {
             "concordance resolve: {} words, {} total hits, {} resolved, {} skipped (unmatched), {} skipped (no text file)",
             test_words.len(), total_hits, resolved, skipped_unmatched, skipped_no_text_file,
         );
-        for w in &test_words {
-            eprint!("  '{}' ", w);
-        }
-        eprintln!();
+        eprintln!("  words: {:?}", test_words);
 
         assert!(
             wrong_line.is_empty(),

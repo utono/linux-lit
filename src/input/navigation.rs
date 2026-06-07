@@ -659,8 +659,6 @@ pub fn page_forward(state: &mut AppState) {
     }
 
     let NextPage { new_top, next_dialogue } = next_page_top(state, state.page_top_line);
-    log_fmt!("PAGE_FWD: page_top={} new_top={} next_dialogue={} line_count={}",
-             state.page_top_line, new_top, next_dialogue, line_count);
     if next_dialogue >= line_count {
         log_fmt!("PAGE_FWD: at end, returning");
         return; // already at end
@@ -683,7 +681,6 @@ pub fn page_forward(state: &mut AppState) {
         None => candidate_top,
     };
     let effective_top = clamp_page_top_to_scroll_ceiling(state, candidate_top);
-    log_fmt!("PAGE_FWD: candidate_top={} effective_top={} (from new_top={})", candidate_top, effective_top, new_top);
     if effective_top > state.page_top_line {
         state.page_back_stack.push(state.page_top_line);
         state.current_line = next_dialogue;
@@ -855,12 +852,10 @@ pub fn jump_to_prev_dialogue(state: &mut AppState) {
     }
     let buffer = &state.buffer;
     if let Some(target) = prev_dialogue_line(buffer, &state.translation_lines, state.current_line) {
-        let prev = state.current_line;
         state.current_line = target;
         state.pending_advance = None;
         state.pending_advance_ignore_bl = None;
         state.prev_highlight_line.set(None);
-        log_fmt!("NAV_PREV: comma from={} to={} page_top={}", prev, target, state.page_top_line);
         scroll_after_jump_backward(state);
         after_page_change(state, PageChangeReason::Dialogue);
     }
@@ -878,7 +873,6 @@ pub fn jump_to_next_dialogue(state: &mut AppState) {
         state.current_line = target;
         state.pending_advance = None;
         state.pending_advance_ignore_bl = None;
-        log_fmt!("NAV_NEXT: q from={} to={} page_top={}", prev_line, target, state.page_top_line);
         scroll_after_jump_forward(state, prev_line);
         after_page_change(state, PageChangeReason::Dialogue);
     }
@@ -909,7 +903,7 @@ pub fn cursor_prev_line(state: &mut AppState) {
     after_page_change(state, PageChangeReason::Cursor);
 }
 
-/// Move cursor to next dialogue line without seeking media (`k` key).
+/// Move cursor to next dialogue line without seeking media (`j` key).
 pub fn cursor_next_dialogue(state: &mut AppState) {
     let line_count = state.buffer.line_count() as usize;
     if line_count == 0 {
@@ -1391,6 +1385,24 @@ pub fn jump_to_prev_section(state: &mut AppState) {
 /// Show the act/scene (plays) or chapter (prose) containing the current line as
 /// a transient toast.
 pub fn show_current_chapter(state: &mut AppState) {
+    let abbrev = match &state.current_work {
+        Some(w) => w.abbrev.clone(),
+        None => return,
+    };
+
+    // Plays/verse (anything not prose) show the authoritative act/scene label
+    // derived from the line's (div1, div2) — never inferred from buffer text,
+    // and never the "Chapter N of M" form even when the work happens to carry
+    // chapter_breaks. Prose-vs-verse is decided by work_type, not by whether
+    // chapter markers exist. See CLAUDE.md → authoritative-boundary principle.
+    if !state.is_prose() {
+        let (div1, div2) = crate::app::current_scene_divs(state);
+        let label = crate::app::scene_label_for(state, div1, div2);
+        let text = format!("{} — {}", abbrev, label);
+        show_chapter_toast(state, &text);
+        return;
+    }
+
     let work = match &state.current_work {
         Some(w) => w,
         None => return,
@@ -1407,11 +1419,12 @@ pub fn show_current_chapter(state: &mut AppState) {
             .collect()
     };
 
-    // No chapter markers (e.g. a play): show the authoritative act/scene label
-    // derived from the line's (div1, div2) — never inferred from buffer text.
+    // Prose work with no chapter markers: fall back to the scene label so the
+    // toast still shows something meaningful rather than nothing.
     if chapter_lines.is_empty() {
         let (div1, div2) = crate::app::current_scene_divs(state);
-        let text = crate::app::scene_label_for(state, div1, div2);
+        let label = crate::app::scene_label_for(state, div1, div2);
+        let text = format!("{} — {}", abbrev, label);
         show_chapter_toast(state, &text);
         return;
     }
@@ -1458,7 +1471,7 @@ pub fn show_current_chapter(state: &mut AppState) {
         }
     };
 
-    let text = format!("Chapter {} of {} — {}", chapter_num, total, title);
+    let text = format!("{} — Chapter {} of {} — {}", abbrev, chapter_num, total, title);
     show_chapter_toast(state, &text);
 }
 
@@ -1921,7 +1934,7 @@ mod page_turn_tests {
             }
         }
 
-        println!(
+        eprintln!(
             "Page forward test passed: {} pages, {} to {} ({} dialogue lines total)",
             highlighted.len(),
             highlighted[0],
@@ -2011,7 +2024,7 @@ mod page_turn_tests {
             );
         }
 
-        println!(
+        eprintln!(
             "Bleak House forward: {} pages, line {} to {} ({} total lines)",
             highlighted.len(), highlighted[0], highlighted.last().unwrap(), line_count
         );
@@ -2078,7 +2091,7 @@ mod page_turn_tests {
             );
         }
 
-        println!(
+        eprintln!(
             "Bleak House backward (history): {} pages, {} down to {}",
             backward_tops.len(), backward_tops[0], backward_tops.last().unwrap()
         );
@@ -2374,7 +2387,7 @@ mod page_turn_tests {
             total_pages += pages;
         }
 
-        println!(
+        eprintln!(
             "Page forward test passed: {} Shakespeare plays, {} total pages, no stuck states",
             total_plays, total_pages
         );
@@ -2551,7 +2564,7 @@ mod page_turn_tests {
             }
         }
 
-        println!(
+        eprintln!(
             "Synopsis identification: {} total scene markers, {} verified with synopsis match",
             total_scenes, verified
         );

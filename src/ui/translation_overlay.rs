@@ -59,6 +59,16 @@ pub fn group_scene_into_blocks(
     blocks
 }
 
+/// One rendered block's views + source range, for cursor highlighting and
+/// scroll-follow. `trans` is None for a non-spoken interlude block (it has a
+/// single `orig` view).
+struct BlockEntry {
+    start_idx: usize,
+    end_idx: usize,
+    orig: gtk4::TextView,
+    trans: Option<gtk4::TextView>,
+}
+
 pub struct TranslationOverlay {
     pub overlay: Overlay,
     scrim: gtk4::Box,
@@ -68,9 +78,9 @@ pub struct TranslationOverlay {
     scrolled: ScrolledWindow,
     /// Vertical stack of header rows + paired column blocks, inside `scrolled`.
     content_vbox: gtk4::Box,
-    /// Per rendered speech/interlude block: source range, top widget, and the
-    /// original/translation views, so we can scroll to and highlight the cursor.
-    block_widgets: RefCell<Vec<(usize, usize, gtk4::Box)>>,
+    /// Per rendered speech/interlude block: source range and the original/
+    /// translation views, so we can highlight and scroll to the cursor line.
+    block_widgets: RefCell<Vec<BlockEntry>>,
 }
 
 impl TranslationOverlay {
@@ -147,6 +157,8 @@ impl TranslationOverlay {
         card_height: i32,
         text_fg: &str,
         dim_fg: &str,
+        body_font_size: i32,
+        cursor_line_bg: &str,
     ) {
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
@@ -160,6 +172,11 @@ impl TranslationOverlay {
 
         let side_margin = card_width / 12;
         let col_width = ((card_width - 2 * side_margin) / 2 - 12).max(120);
+        // Speaker header point size: 0.75 of the body (reader) font, matching
+        // the main card's `speaker-name` tag (scale 0.75). A relative `size='75%'`
+        // would resolve against the Label's tiny default UI font, so we size it
+        // absolutely against the overlay's actual body font.
+        let header_pt = ((body_font_size as f64) * 0.75).round().max(8.0) as i32;
 
         for block in blocks {
             let block_box = gtk4::Box::new(Orientation::Vertical, 0);
@@ -167,63 +184,70 @@ impl TranslationOverlay {
             block_box.set_margin_end(side_margin);
             block_box.set_margin_top(14);
 
-            if let Some(speaker) = &block.speaker {
-                // Full-width speaker header.
-                let header = Label::new(None);
-                header.set_halign(Align::Start);
-                header.set_markup(&format!(
-                    "<span foreground='{}' size='smaller' font_variant='small-caps' letter_spacing='1024'>{}</span>",
-                    text_fg,
-                    glib_escape(speaker),
-                ));
-                header.set_margin_bottom(4);
-                block_box.append(&header);
+            let (orig_view, trans_view): (gtk4::TextView, Option<gtk4::TextView>) =
+                if let Some(speaker) = &block.speaker {
+                    let header = Label::new(None);
+                    header.set_halign(Align::Start);
+                    header.set_markup(&format!(
+                        "<span foreground='{}' font_variant='small-caps' font_weight='normal' size='{}pt'>{}</span>",
+                        text_fg,
+                        header_pt,
+                        glib_escape(speaker),
+                    ));
+                    header.set_margin_bottom(4);
+                    block_box.append(&header);
 
-                // Two-column paired text.
-                let cols = gtk4::Box::new(Orientation::Horizontal, 0);
-                let orig = make_column(col_width, text_fg, false);
-                let trans = make_column(col_width, dim_fg, true);
-                let mut orig_text = String::new();
-                let mut trans_text = String::new();
-                for (o, t) in &block.lines {
-                    orig_text.push_str(o);
-                    orig_text.push('\n');
-                    trans_text.push_str(t);
-                    trans_text.push('\n');
-                }
-                orig.buffer().set_text(orig_text.trim_end_matches('\n'));
-                trans.buffer().set_text(trans_text.trim_end_matches('\n'));
+                    let cols = gtk4::Box::new(Orientation::Horizontal, 0);
+                    let orig = make_column(col_width, text_fg, false);
+                    let trans = make_column(col_width, dim_fg, true);
+                    let mut orig_text = String::new();
+                    let mut trans_text = String::new();
+                    for (o, t) in &block.lines {
+                        orig_text.push_str(o);
+                        orig_text.push('\n');
+                        trans_text.push_str(t);
+                        trans_text.push('\n');
+                    }
+                    orig.buffer().set_text(orig_text.trim_end_matches('\n'));
+                    trans.buffer().set_text(trans_text.trim_end_matches('\n'));
+                    ensure_cursor_tag(&orig.buffer(), cursor_line_bg);
+                    ensure_cursor_tag(&trans.buffer(), cursor_line_bg);
 
-                let divider = gtk4::Separator::new(Orientation::Vertical);
-                divider.add_css_class("column-divider");
-                divider.set_margin_start(12);
-                divider.set_margin_end(12);
+                    let divider = gtk4::Separator::new(Orientation::Vertical);
+                    divider.add_css_class("column-divider");
+                    divider.set_margin_start(12);
+                    divider.set_margin_end(12);
 
-                cols.append(&orig);
-                cols.append(&divider);
-                cols.append(&trans);
-                block_box.append(&cols);
-            } else {
-                // Non-spoken interlude: full-width italic, no translation column.
-                let view = TextView::new();
-                view.set_editable(false);
-                view.set_cursor_visible(false);
-                view.set_focusable(false);
-                view.set_wrap_mode(gtk4::WrapMode::WordChar);
-                view.add_css_class("gloss-text");
-                let mut text = String::new();
-                for (o, _) in &block.lines {
-                    text.push_str(o);
-                    text.push('\n');
-                }
-                view.buffer().set_text(text.trim_end_matches('\n'));
-                block_box.append(&view);
-            }
+                    cols.append(&orig);
+                    cols.append(&divider);
+                    cols.append(&trans);
+                    block_box.append(&cols);
+                    (orig, Some(trans))
+                } else {
+                    let view = TextView::new();
+                    view.set_editable(false);
+                    view.set_cursor_visible(false);
+                    view.set_focusable(false);
+                    view.set_wrap_mode(gtk4::WrapMode::WordChar);
+                    view.add_css_class("gloss-text");
+                    let mut text = String::new();
+                    for (o, _) in &block.lines {
+                        text.push_str(o);
+                        text.push('\n');
+                    }
+                    view.buffer().set_text(text.trim_end_matches('\n'));
+                    ensure_cursor_tag(&view.buffer(), cursor_line_bg);
+                    block_box.append(&view);
+                    (view, None)
+                };
 
             self.content_vbox.append(&block_box);
-            self.block_widgets
-                .borrow_mut()
-                .push((block.start_idx, block.end_idx, block_box));
+            self.block_widgets.borrow_mut().push(BlockEntry {
+                start_idx: block.start_idx,
+                end_idx: block.end_idx,
+                orig: orig_view,
+                trans: trans_view,
+            });
         }
 
         self.scrim.set_visible(true);
@@ -231,46 +255,112 @@ impl TranslationOverlay {
         self.scroll_to_top();
     }
 
-    pub fn scroll(&self, delta: i32) {
-        let adj = self.scrolled.vadjustment();
-        let step = adj.page_size() * 0.15;
-        let max = (adj.upper() - adj.page_size()).max(adj.lower());
-        let target = (adj.value() + step * 3.0 * delta as f64)
-            .clamp(adj.lower(), max);
-        adj.set_value(target);
-    }
-
     pub fn scroll_to_top(&self) {
         let adj = self.scrolled.vadjustment();
         adj.set_value(adj.lower());
     }
 
-    /// Scroll so the block whose source range contains `work_idx` sits at the
-    /// top of the viewport. No-op if no block matches.
-    pub fn scroll_to_block(&self, work_idx: usize) {
-        let target = self.block_widgets.borrow().iter().find_map(|(s, e, w)| {
-            if work_idx >= *s && work_idx <= *e {
-                Some(w.clone())
-            } else {
-                None
-            }
-        });
-        let Some(widget) = target else { return };
-        // Defer one tick so allocations are settled before measuring.
-        // `compute_point` maps the block's top-left (0,0) into the
-        // content_vbox's coordinate space; that y IS the scroll offset that
-        // brings the block to the viewport top.
+    /// Scroll minimally so the highlighted ORIGINAL line for `work_idx` is fully
+    /// in view: only scroll if it is above the viewport top or below its bottom,
+    /// landing it just inside the crossed edge. No-op if the line isn't found.
+    pub fn scroll_to_highlight(&self, work_idx: usize) {
+        let (orig_view, off) = {
+            let entries = self.block_widgets.borrow();
+            let ranges: Vec<(usize, usize)> =
+                entries.iter().map(|e| (e.start_idx, e.end_idx)).collect();
+            let Some((bi, off)) = locate_line(&ranges, work_idx) else { return };
+            (entries[bi].orig.clone(), off as i32)
+        };
+
         let scrolled = self.scrolled.clone();
         let content = self.content_vbox.clone();
+        // Defer one tick so allocations/wrapping are settled before measuring.
         glib::idle_add_local_once(move || {
-            let origin = gtk4::graphene::Point::new(0.0, 0.0);
-            if let Some(point) = widget.compute_point(&content, &origin) {
-                let adj = scrolled.vadjustment();
-                let max = (adj.upper() - adj.page_size()).max(adj.lower());
-                adj.set_value((point.y() as f64).clamp(adj.lower(), max));
-            }
+            let Some(iter) = orig_view.buffer().iter_at_line(off) else { return };
+            let (line_y, line_h) = orig_view.line_yrange(&iter);
+            // `line_yrange` gives BUFFER coords; `compute_point` wants
+            // WIDGET-local coords. They're equal here only because each orig
+            // view is unscrolled natural-height (no inner ScrolledWindow, height
+            // request -1), so its internal scroll offset is always 0. If an orig
+            // view ever gets height-constrained / independently scrolled, this
+            // mapping must add that view's scroll offset.
+            let pt = gtk4::graphene::Point::new(0.0, line_y as f32);
+            let Some(mapped) = orig_view.compute_point(&content, &pt) else { return };
+            let line_top = mapped.y() as f64;
+            let line_bottom = line_top + line_h as f64;
+
+            let adj = scrolled.vadjustment();
+            let value = adj.value();
+            let page = adj.page_size();
+            let max = (adj.upper() - page).max(adj.lower());
+
+            let new_value = if line_top < value {
+                line_top
+            } else if line_bottom > value + page {
+                line_bottom - page
+            } else {
+                return; // already fully visible — don't move
+            };
+            adj.set_value(new_value.clamp(adj.lower(), max));
         });
     }
+
+    /// Highlight the cursor's source line `work_idx` in BOTH columns (style A):
+    /// the original line on the left and its paired translation on the right.
+    /// Clears any prior highlight first. No-op if the line is outside this scene.
+    pub fn highlight_work_line(&self, work_idx: usize) {
+        let entries = self.block_widgets.borrow();
+
+        // Clear every buffer's existing highlight (small block count per scene).
+        for e in entries.iter() {
+            clear_cursor_tag(&e.orig.buffer());
+            if let Some(t) = &e.trans {
+                clear_cursor_tag(&t.buffer());
+            }
+        }
+
+        let ranges: Vec<(usize, usize)> =
+            entries.iter().map(|e| (e.start_idx, e.end_idx)).collect();
+        let Some((bi, off)) = locate_line(&ranges, work_idx) else { return };
+        let entry = &entries[bi];
+
+        apply_cursor_tag(&entry.orig.buffer(), off as i32);
+        if let Some(t) = &entry.trans {
+            apply_cursor_tag(&t.buffer(), off as i32);
+        }
+    }
+}
+
+/// Ensure the buffer has a `cursor-line` tag painting the paragraph background
+/// with the theme's cursor-line color. Idempotent (lookup before add).
+fn ensure_cursor_tag(buffer: &gtk4::TextBuffer, cursor_line_bg: &str) {
+    if buffer.tag_table().lookup("cursor-line").is_none() {
+        let tag = gtk4::TextTag::builder()
+            .name("cursor-line")
+            .paragraph_background(cursor_line_bg)
+            .build();
+        buffer.tag_table().add(&tag);
+    }
+}
+
+/// Remove the `cursor-line` tag from the whole buffer (if the tag exists).
+fn clear_cursor_tag(buffer: &gtk4::TextBuffer) {
+    if let Some(tag) = buffer.tag_table().lookup("cursor-line") {
+        let (start, end) = buffer.bounds();
+        buffer.remove_tag(&tag, &start, &end);
+    }
+}
+
+/// Apply the `cursor-line` tag to buffer line `line` (0-based). No-op if the
+/// line or tag is missing.
+fn apply_cursor_tag(buffer: &gtk4::TextBuffer, line: i32) {
+    let Some(tag) = buffer.tag_table().lookup("cursor-line") else { return };
+    let Some(start) = buffer.iter_at_line(line) else { return };
+    let mut end = start;
+    if !end.ends_line() {
+        end.forward_to_line_end();
+    }
+    buffer.apply_tag(&tag, &start, &end);
 }
 
 fn make_column(width: i32, color: &str, italic: bool) -> TextView {
@@ -293,6 +383,17 @@ fn make_column(width: i32, color: &str, italic: bool) -> TextView {
 
 fn glib_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// Given each block's inclusive (start_idx, end_idx) work-line range in order,
+/// return (block_index, line_offset) for the block containing `work_idx`.
+fn locate_line(ranges: &[(usize, usize)], work_idx: usize) -> Option<(usize, usize)> {
+    for (i, (start, end)) in ranges.iter().enumerate() {
+        if work_idx >= *start && work_idx <= *end {
+            return Some((i, work_idx - start));
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -374,5 +475,22 @@ mod tests {
     fn empty_input_yields_no_blocks() {
         let blocks = group_scene_into_blocks(&[], |i| i, |_| None);
         assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn locate_line_finds_block_and_offset() {
+        // Two blocks: [10..=12] and [13..=13].
+        let ranges = vec![(10usize, 12usize), (13, 13)];
+        assert_eq!(locate_line(&ranges, 10), Some((0, 0)));
+        assert_eq!(locate_line(&ranges, 12), Some((0, 2)));
+        assert_eq!(locate_line(&ranges, 13), Some((1, 0)));
+    }
+
+    #[test]
+    fn locate_line_returns_none_outside_any_block() {
+        let ranges = vec![(10usize, 12usize)];
+        assert_eq!(locate_line(&ranges, 9), None);
+        assert_eq!(locate_line(&ranges, 13), None);
+        assert_eq!(locate_line(&[], 0), None);
     }
 }
