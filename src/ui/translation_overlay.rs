@@ -169,7 +169,7 @@ impl TranslationOverlay {
 
             if let Some(speaker) = &block.speaker {
                 // Full-width speaker header.
-                let header = Label::new(Some(speaker));
+                let header = Label::new(None);
                 header.set_halign(Align::Start);
                 header.set_markup(&format!(
                     "<span foreground='{}' size='smaller' font_variant='small-caps' letter_spacing='1024'>{}</span>",
@@ -287,7 +287,7 @@ fn make_column(width: i32, color: &str, italic: bool) -> TextView {
     // Color via an inline CSS provider would be heavier; rely on the
     // .gloss-text / .translation-col classes for base style and let the
     // theme's text color show. `color` reserved for a future inline tag.
-    let _ = (color, italic);
+    let _ = color;
     view
 }
 
