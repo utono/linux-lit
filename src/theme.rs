@@ -515,6 +515,8 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .gloss-header {{ font-size: 11px; font-weight: bold; \
            color: {dim}; letter-spacing: 2px; margin-top: 8px; margin-bottom: 4px; }} \
          .gloss-text {{ font-family: {font}; font-size: {size}pt; }} \
+         textview.translation-col text {{ color: {dim}; font-style: italic; }} \
+         textview.translation-col {{ background-color: {gloss_bg}; }} \
          .gloss-hint {{ font-size: 14px; \
            color: {dim}; padding-top: 8px; \
            border-top: 1px solid {dim}; }} \
