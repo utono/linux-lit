@@ -4877,6 +4877,77 @@ pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) 
     s.input_mode = InputMode::SynopsisOverlay;
 }
 
+/// Open the two-column speaker-grouped translation overlay for the current
+/// scene, scrolled to the speaker block containing the cursor line.
+pub fn show_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+    let s = state.borrow();
+
+    // Toggle off if already open.
+    if s.translation_overlay.is_visible() {
+        drop(s);
+        let mut s = state.borrow_mut();
+        s.translation_overlay.hide();
+        s.input_mode = InputMode::Reader;
+        return;
+    }
+
+    let work = match s.current_work.as_ref() {
+        Some(w) => w,
+        None => return,
+    };
+
+    let (div1, div2) = current_scene_divs(&s);
+
+    // Collect this scene's lines (preserving order) with their work indices.
+    let scene_lines: Vec<crate::db::models::Line> = work
+        .lines
+        .iter()
+        .filter(|l| l.div1 == div1 && l.div2 == div2)
+        .cloned()
+        .collect();
+    if scene_lines.is_empty() {
+        return;
+    }
+    // Index of the first scene line within work.lines, for idx_of mapping.
+    let base = work
+        .lines
+        .iter()
+        .position(|l| l.div1 == div1 && l.div2 == div2)
+        .unwrap_or(0);
+
+    let translations = s.translations.clone();
+    let blocks = crate::ui::translation_overlay::group_scene_into_blocks(
+        &scene_lines,
+        |i| base + i,
+        |id| translations.get(&id).cloned(),
+    );
+
+    let card_width = s.content_hbox.width();
+    let card_height = s.content_hbox.height();
+    let text_fg = s.theme.text_fg.clone();
+    let dim_fg = s.theme.dim_fg.clone();
+    let label = synopsis_label(&s, div1, div2);
+
+    // Cursor's work index, to pick the block to anchor on.
+    let cursor_idx = s.work_line_for_buffer(s.current_line);
+
+    s.translation_overlay.show(
+        &label,
+        &blocks,
+        card_width,
+        card_height,
+        &text_fg,
+        &dim_fg,
+    );
+    if let Some(idx) = cursor_idx {
+        s.translation_overlay.scroll_to_block(idx);
+    }
+    drop(s);
+
+    let mut s = state.borrow_mut();
+    s.input_mode = InputMode::TranslationOverlay;
+}
+
 /// Human-readable label for a scene, shared by the synopsis overlay and the
 /// gloss overlay. (0,0) = Prologue; (N,0) = Act N, Chorus; else Act N, Scene M.
 ///
