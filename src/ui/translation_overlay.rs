@@ -287,7 +287,12 @@ impl TranslationOverlay {
         glib::idle_add_local_once(move || {
             let Some(iter) = orig_view.buffer().iter_at_line(off) else { return };
             let (line_y, line_h) = orig_view.line_yrange(&iter);
-            // Map the line's top within the orig view into content_vbox space.
+            // `line_yrange` gives BUFFER coords; `compute_point` wants
+            // WIDGET-local coords. They're equal here only because each orig
+            // view is unscrolled natural-height (no inner ScrolledWindow, height
+            // request -1), so its internal scroll offset is always 0. If an orig
+            // view ever gets height-constrained / independently scrolled, this
+            // mapping must add that view's scroll offset.
             let pt = gtk4::graphene::Point::new(0.0, line_y as f32);
             let Some(mapped) = orig_view.compute_point(&content, &pt) else { return };
             let line_top = mapped.y() as f64;
