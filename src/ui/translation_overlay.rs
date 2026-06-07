@@ -168,11 +168,14 @@ impl TranslationOverlay {
             block_box.set_margin_top(14);
 
             if let Some(speaker) = &block.speaker {
-                // Full-width speaker header.
+                // Full-width speaker header. Match the main reading card's
+                // `speaker-name` tag (app.rs): small-caps, normal weight (400),
+                // 0.75 scale, body text color — NOT the dim, letter-spaced
+                // `gloss-header` look.
                 let header = Label::new(None);
                 header.set_halign(Align::Start);
                 header.set_markup(&format!(
-                    "<span foreground='{}' size='smaller' font_variant='small-caps' letter_spacing='1024'>{}</span>",
+                    "<span foreground='{}' font_variant='small-caps' font_weight='normal' size='75%'>{}</span>",
                     text_fg,
                     glib_escape(speaker),
                 ));
