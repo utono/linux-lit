@@ -255,15 +255,6 @@ impl TranslationOverlay {
         self.scroll_to_top();
     }
 
-    pub fn scroll(&self, delta: i32) {
-        let adj = self.scrolled.vadjustment();
-        let step = adj.page_size() * 0.15;
-        let max = (adj.upper() - adj.page_size()).max(adj.lower());
-        let target = (adj.value() + step * 3.0 * delta as f64)
-            .clamp(adj.lower(), max);
-        adj.set_value(target);
-    }
-
     pub fn scroll_to_top(&self) {
         let adj = self.scrolled.vadjustment();
         adj.set_value(adj.lower());

@@ -755,16 +755,26 @@ fn handle_translation_overlay_key(state: &Rc<RefCell<AppState>>, key_name: &str)
             s.input_mode = crate::app::InputMode::Reader;
             true
         }
-        "j" => {
-            state.borrow().translation_overlay.scroll(1);
-            true
-        }
-        "k" => {
-            state.borrow().translation_overlay.scroll(-1);
-            true
-        }
+        // Dialogue navigation: drive the REAL cursor (same fns as the main
+        // card), which also seeks MPV, then mirror the highlight + follow in
+        // the overlay.
+        "comma" => { overlay_nav(state, navigation::jump_to_prev_dialogue); true }
+        "q" => { overlay_nav(state, navigation::jump_to_next_dialogue); true }
+        "j" => { overlay_nav(state, navigation::cursor_next_dialogue); true }
+        "k" => { overlay_nav(state, navigation::cursor_prev_line); true }
         // Swallow everything else so stray keys don't leak to the reader.
         _ => true,
+    }
+}
+
+/// Run a main-card navigation function (moves `current_line` + seeks MPV via
+/// `after_page_change`), then re-highlight and follow in the translation overlay.
+fn overlay_nav(state: &Rc<RefCell<AppState>>, nav_fn: fn(&mut AppState)) {
+    nav_fn(&mut state.borrow_mut());
+    let s = state.borrow();
+    if let Some(w) = s.work_line_for_buffer(s.current_line) {
+        s.translation_overlay.highlight_work_line(w);
+        s.translation_overlay.scroll_to_highlight(w);
     }
 }
 
