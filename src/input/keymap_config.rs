@@ -294,7 +294,8 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl("a"), Action::ToggleAuthorship),
         (KeyCombo::ctrl_shift("A"), Action::PickAttributionSet),
         (KeyCombo::alt("f"), Action::ShowFontInfo),
-        (KeyCombo::alt("i"), Action::ShowEchoes),
+        (KeyCombo::alt("i"), Action::ShowTranslationOverlay),
+        (KeyCombo::alt("e"), Action::ShowEchoes),
         (KeyCombo::ctrl("h"), Action::ToggleSynopsis),
         (KeyCombo::ctrl("comma"), Action::OpenSettingsOverlay),
     ]
