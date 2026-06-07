@@ -1127,46 +1127,79 @@ fn handle_keybinds_key(
     state: &Rc<RefCell<AppState>>,
     key_name: &str,
 ) -> bool {
+    // Advance a row; past the last keyboard row hands off to the gamepad screen.
+    fn next_row_or_gamepad(state: &Rc<RefCell<AppState>>) {
+        let advanced = state.borrow().keybinds_overlay.next_row();
+        if !advanced {
+            let s = state.borrow();
+            s.keybinds_overlay.hide();
+            s.gamepad_overlay.show();
+            drop(s);
+            state.borrow_mut().input_mode = crate::app::InputMode::GamepadOverlay;
+        }
+    }
+    // Previous row; before the first keyboard row hands off to the gamepad screen.
+    fn prev_row_or_gamepad(state: &Rc<RefCell<AppState>>) {
+        let moved = state.borrow().keybinds_overlay.prev_row();
+        if !moved {
+            let s = state.borrow();
+            s.keybinds_overlay.hide();
+            s.gamepad_overlay.show();
+            drop(s);
+            state.borrow_mut().input_mode = crate::app::InputMode::GamepadOverlay;
+        }
+    }
+
     match key_name {
         "Escape" => {
             state.borrow().keybinds_overlay.hide();
             state.borrow_mut().input_mode = crate::app::InputMode::Reader;
-            true
+            return true;
         }
-        "n" | "Up" => {
-            // Advance a row; past the last row → gamepad screen.
-            let advanced = state.borrow().keybinds_overlay.next_row();
-            if !advanced {
-                let s = state.borrow();
-                s.keybinds_overlay.hide();
-                s.gamepad_overlay.show();
-                drop(s);
-                state.borrow_mut().input_mode = crate::app::InputMode::GamepadOverlay;
-            }
-            true
+        "Tab" => {
+            state.borrow().keybinds_overlay.toggle_mode();
+            return true;
         }
-        "p" | "Down" => {
-            // Previous row; before the first row → gamepad screen.
-            let moved = state.borrow().keybinds_overlay.prev_row();
-            if !moved {
-                let s = state.borrow();
-                s.keybinds_overlay.hide();
-                s.gamepad_overlay.show();
-                drop(s);
-                state.borrow_mut().input_mode = crate::app::InputMode::GamepadOverlay;
-            }
-            true
+        // Arrows navigate in BOTH modes.
+        "Up" => {
+            next_row_or_gamepad(state);
+            return true;
         }
-        "j" | "Right" => {
+        "Down" => {
+            prev_row_or_gamepad(state);
+            return true;
+        }
+        "Right" => {
             state.borrow().keybinds_overlay.move_selection(1);
-            true
+            return true;
         }
-        "k" | "Left" => {
+        "Left" => {
             state.borrow().keybinds_overlay.move_selection(-1);
-            true
+            return true;
         }
-        _ => true, // consume all other keys when keybinds visible
+        _ => {}
     }
+
+    if state.borrow().keybinds_overlay.is_jump_mode() {
+        // Jump mode: any other key jumps the highlight to its cap (no-op if no
+        // matching cap). Always consume so nothing leaks to the reader.
+        state.borrow().keybinds_overlay.jump_to_key(key_name);
+        return true;
+    }
+
+    // Nav mode: the classic n/p rows, j/k highlight.
+    match key_name {
+        "n" => next_row_or_gamepad(state),
+        "p" => prev_row_or_gamepad(state),
+        "j" => {
+            state.borrow().keybinds_overlay.move_selection(1);
+        }
+        "k" => {
+            state.borrow().keybinds_overlay.move_selection(-1);
+        }
+        _ => {}
+    }
+    true // consume all other keys while keybinds visible
 }
 
 fn handle_action_popup_key(
