@@ -603,6 +603,7 @@ fn draw_row_screen(
     cr: &gtk4::cairo::Context,
     row_idx: usize,
     selected: usize,
+    jump_mode: bool,
     widget_w: f64,
     widget_h: f64,
 ) {
@@ -619,7 +620,8 @@ fn draw_row_screen(
     cr.set_font_size(20.0);
     cr.set_source_rgb(0.96, 0.94, 0.90);
     let title = ROW_TITLES.get(row_idx).copied().unwrap_or("");
-    let header = format!("Row {} of {}  —  {}", row_idx + 1, ROW_COUNT + 1, title);
+    let mode = if jump_mode { "JUMP" } else { "NAV" };
+    let header = format!("Row {} of {}  —  {}  —  {}", row_idx + 1, ROW_COUNT + 1, title, mode);
     let he = cr.text_extents(&header).unwrap();
     let _ = cr.move_to((widget_w - he.width()) / 2.0, 48.0);
     let _ = cr.show_text(&header);
@@ -848,7 +850,11 @@ fn draw_row_screen(
     cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
     cr.set_font_size(14.0);
     cr.set_source_rgb(0.78, 0.76, 0.82);
-    let foot = "Esc close  \u{00b7}  n/p or \u{2191}/\u{2193} cycle rows  \u{00b7}  j/k or \u{2190}/\u{2192} move highlight";
+    let foot = if jump_mode {
+        "Esc close  \u{00b7}  Tab jump/nav  \u{00b7}  press a key to jump to its cap  \u{00b7}  \u{2190}/\u{2192} move  \u{00b7}  \u{2191}/\u{2193} rows"
+    } else {
+        "Esc close  \u{00b7}  Tab jump/nav  \u{00b7}  n/p or \u{2191}/\u{2193} rows  \u{00b7}  j/k or \u{2190}/\u{2192} move"
+    };
     let fe = cr.text_extents(foot).unwrap();
     let _ = cr.move_to((widget_w - fe.width()) / 2.0, widget_h - 28.0);
     let _ = cr.show_text(foot);
@@ -891,6 +897,7 @@ pub struct KeybindsOverlay {
     drawing_area: DrawingArea,
     row_index: Rc<std::cell::Cell<usize>>,
     selected: Rc<std::cell::Cell<usize>>,
+    jump_mode: Rc<std::cell::Cell<bool>>,
 }
 
 impl KeybindsOverlay {
@@ -908,17 +915,20 @@ impl KeybindsOverlay {
 
         let row_index = Rc::new(std::cell::Cell::new(0usize));
         let selected = Rc::new(std::cell::Cell::new(first_bound(&row_keys(0))));
+        let jump_mode = Rc::new(std::cell::Cell::new(true));
 
         let row_draw = row_index.clone();
         let sel_draw = selected.clone();
+        let jump_draw = jump_mode.clone();
         drawing_area.set_draw_func(move |_area, cr, w, h| {
-            draw_row_screen(cr, row_draw.get(), sel_draw.get(), w as f64, h as f64);
+            draw_row_screen(cr, row_draw.get(), sel_draw.get(), jump_draw.get(), w as f64, h as f64);
         });
 
-        KeybindsOverlay { overlay, drawing_area, row_index, selected }
+        KeybindsOverlay { overlay, drawing_area, row_index, selected, jump_mode }
     }
 
     pub fn show(&self) {
+        self.jump_mode.set(true);
         // Reopen on the previously viewed row (row_index/selected persist across
         // hide/show). Clamp the row in case ROW_COUNT changed.
         let row = self.row_index.get().min(ROW_COUNT - 1);
@@ -970,6 +980,7 @@ impl KeybindsOverlay {
     /// Jump directly to the last keyboard row (used when entering from the
     /// gamepad screen via `p`).
     pub fn show_last_row(&self) {
+        self.jump_mode.set(true);
         let last = ROW_COUNT - 1;
         self.row_index.set(last);
         self.selected.set(first_bound(&row_keys(last)));
@@ -987,6 +998,31 @@ impl KeybindsOverlay {
         let next = (cur + delta).rem_euclid(len as i32) as usize;
         self.selected.set(next);
         self.drawing_area.queue_draw();
+    }
+
+    /// Jump the highlight to the cap for `key_name`, switching rows if the cap
+    /// is on another row. Returns true if a cap matched, false otherwise.
+    pub fn jump_to_key(&self, key_name: &str) -> bool {
+        match find_cap(key_name) {
+            Some((row, idx)) => {
+                self.row_index.set(row);
+                self.selected.set(idx);
+                self.drawing_area.queue_draw();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Flip between jump mode and nav mode and redraw.
+    pub fn toggle_mode(&self) {
+        self.jump_mode.set(!self.jump_mode.get());
+        self.drawing_area.queue_draw();
+    }
+
+    /// Whether the overlay is currently in jump mode (vs nav mode).
+    pub fn is_jump_mode(&self) -> bool {
+        self.jump_mode.get()
     }
 
     pub fn attach(&self, base: &impl IsA<gtk4::Widget>) {
