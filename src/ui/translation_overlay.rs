@@ -130,4 +130,10 @@ mod tests {
         assert_eq!(blocks[0].start_idx, 100);
         assert_eq!(blocks[0].end_idx, 101);
     }
+
+    #[test]
+    fn empty_input_yields_no_blocks() {
+        let blocks = group_scene_into_blocks(&[], |i| i, |_| None);
+        assert!(blocks.is_empty());
+    }
 }
