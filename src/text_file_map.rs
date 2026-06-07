@@ -371,17 +371,24 @@ fn first_chrome_at_or_before(file_lines: &[String], buf: usize) -> usize {
             || line_types::is_separator(t)
             || line_types::is_speaker(t)
             || line_types::is_stage_direction(t)
+            || line_types::is_stanza_number(t)
         {
             top -= 1;
         } else {
             break;
         }
     }
-    // Within [top, buf), prefer the first act/scene marker / separator (the
-    // title line the reader should see at the page top); else use `top`.
+    // Within [top, buf), prefer the first act/scene marker / separator / bare
+    // stanza number (the title line the reader should see at the page top); else
+    // use `top`. A `sonnet_sequence` heads each section with a bare number ("1"),
+    // which `is_stanza_number` matches but the act/scene/separator predicates do
+    // not — without it the boundary lands on the blank above the number.
     for i in top..buf {
         let t = file_lines[i].trim();
-        if line_types::is_act_scene_marker(t) || line_types::is_separator(t) {
+        if line_types::is_act_scene_marker(t)
+            || line_types::is_separator(t)
+            || line_types::is_stanza_number(t)
+        {
             return i;
         }
     }
@@ -396,7 +403,10 @@ fn first_chrome_at_or_before(file_lines: &[String], buf: usize) -> usize {
 fn first_chrome_after(file_lines: &[String], prev: usize, cur: usize) -> usize {
     for i in (prev + 1)..=cur.min(file_lines.len().saturating_sub(1)) {
         let t = file_lines[i].trim();
-        if line_types::is_act_scene_marker(t) || line_types::is_separator(t) {
+        if line_types::is_act_scene_marker(t)
+            || line_types::is_separator(t)
+            || line_types::is_stanza_number(t)
+        {
             return i;
         }
     }
@@ -863,6 +873,47 @@ mod tests {
         assert!(!map.section_starts[8], "the new scene's dialogue is not the boundary line");
         // Exactly two boundaries total.
         assert_eq!(map.section_starts.iter().filter(|b| **b).count(), 2);
+    }
+
+    #[test]
+    fn test_section_starts_sonnet_sequence_pins_to_number_heading() {
+        // A sonnet sequence: each sonnet is a bare-number heading ("1"), a blank,
+        // the body, a blank, then the next heading. The headings are UNMAPPED
+        // (front matter / chrome, no (div1,div2)); each body is mapped with
+        // div1 = sonnet number. The boundary must pin to the NUMBER heading, not
+        // the blank above the body — without `is_stanza_number` recognition it
+        // landed on the blank (sonnet 1: line 1) and on the body (sonnet 2:
+        // line 7), splitting the heading from its body across pages.
+        let file_lines: Vec<String> = vec![
+            "1".into(),                                  // 0 heading  <-- boundary
+            "".into(),                                   // 1 blank
+            "From fairest creatures we desire increase,".into(), // 2 body (1,0)
+            "That thereby beauty’s rose might never die,".into(), // 3 body (1,0)
+            "His tender heir might bear his memory.".into(),      // 4 body (1,0)
+            "".into(),                                   // 5 blank
+            "2".into(),                                  // 6 heading  <-- boundary
+            "".into(),                                   // 7 blank
+            "When forty winters shall besiege thy brow".into(),  // 8 body (2,0)
+            "And dig deep trenches in thy beauty’s field,".into(), // 9 body (2,0)
+        ];
+        let work_lines = vec![
+            make_line_div(1, "From fairest creatures we desire increase,", "from fairest creatures we desire increase", true, 1, 0),
+            make_line_div(2, "That thereby beauty’s rose might never die,", "that thereby beautys rose might never die", true, 1, 0),
+            make_line_div(3, "His tender heir might bear his memory.", "his tender heir might bear his memory", true, 1, 0),
+            make_line_div(4, "When forty winters shall besiege thy brow", "when forty winters shall besiege thy brow", true, 2, 0),
+            make_line_div(5, "And dig deep trenches in thy beauty’s field,", "and dig deep trenches in thy beautys field", true, 2, 0),
+        ];
+
+        let map = build_line_map(&file_lines, &work_lines, false);
+
+        assert!(map.section_starts[0], "sonnet 1 boundary pins to the '1' heading");
+        assert!(map.section_starts[6], "sonnet 2 boundary pins to the '2' heading");
+        assert!(!map.section_starts[1], "the blank above sonnet 1's body is not the boundary");
+        assert!(!map.section_starts[2], "sonnet 1's body first line is not the boundary");
+        assert!(!map.section_starts[7], "the blank above sonnet 2's body is not the boundary");
+        assert!(!map.section_starts[8], "sonnet 2's body first line is not the boundary");
+        assert_eq!(map.section_starts.iter().filter(|b| **b).count(), 2,
+            "exactly one boundary per sonnet, pinned to its number heading");
     }
 
     #[test]

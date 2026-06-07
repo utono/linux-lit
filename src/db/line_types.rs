@@ -90,6 +90,12 @@ pub fn is_dialogue(text: &str, is_prose: bool) -> bool {
     if is_prose {
         return true;
     }
+    // A bare stanza/sonnet number ("1", "138") is a section heading, not spoken
+    // verse — exclude it so the cursor and playback sync skip it and land on the
+    // first line of verse (sonnet_sequence and other numbered verse).
+    if is_stanza_number(text) {
+        return false;
+    }
     !is_speaker(text) && !is_stage_direction(text)
 }
 
@@ -236,5 +242,19 @@ mod tests {
     fn test_prose_blank_still_not_dialogue() {
         assert!(!is_dialogue("", true));
         assert!(!is_dialogue("   ", true));
+    }
+
+    #[test]
+    fn test_verse_stanza_number_is_not_dialogue() {
+        // A bare sonnet/stanza number is a section heading, not spoken verse —
+        // the cursor and sync skip it (verse mode only).
+        assert!(!is_dialogue("1", false));
+        assert!(!is_dialogue("138", false));
+        assert!(!is_dialogue("  144  ", false));
+        // Real verse is still dialogue.
+        assert!(is_dialogue("From fairest creatures we desire increase,", false));
+        // In prose a number line is still treated as content (prose returns
+        // early before the stanza-number check).
+        assert!(is_dialogue("1", true));
     }
 }

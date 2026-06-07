@@ -110,6 +110,7 @@ pub fn update_highlight_and_show(state: &mut AppState) {
     let scroll_to = state.page_top_line;
     let line_count = state.effective_line_count();
     let is_prose = state.is_prose();
+    let one_section_per_page = state.one_section_per_page();
 
     // Snap scroll position synchronously. line_yrange may return 0 if GTK
     // hasn't validated the layout yet, so we defer to an idle callback.
@@ -133,7 +134,7 @@ pub fn update_highlight_and_show(state: &mut AppState) {
         // Defer clip calculation to the next idle tick so line_yrange
         // returns accurate heights after the widget is visible and laid out.
         glib::idle_add_local_once(move || {
-            super::scroll::update_bottom_clip_public(&text_view, &bottom_clip, &scrolled_window, scroll_to, line_count, is_prose, section_starts.as_deref());
+            super::scroll::update_bottom_clip_public(&text_view, &bottom_clip, &scrolled_window, scroll_to, line_count, is_prose, section_starts.as_deref(), one_section_per_page);
             loading_flag.set(false);
             // Signal the resize tick to refresh layout once line metrics
             // are valid (may take one or more frames after the scrolled

@@ -5,7 +5,11 @@ use serde::{Deserialize, Serialize};
 use crate::db::models::Work;
 use crate::text_file_map::LineMap;
 
-pub const SNAPSHOT_VERSION: u32 = 4;
+// Bumped to 5: build_section_starts now pins a sonnet_sequence boundary to its
+// bare-number heading (is_stanza_number), changing the cached section_starts
+// values for Son. The serialized shape is unchanged, but stale snapshots hold
+// the old (wrong) bitmap; the version bump forces a rebuild.
+pub const SNAPSHOT_VERSION: u32 = 5;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct WorkSnapshot {

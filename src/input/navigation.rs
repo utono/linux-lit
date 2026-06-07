@@ -220,6 +220,17 @@ pub fn jump_to_end(state: &mut AppState) {
     state.page_back_stack.clear();
     set_page_instant(state, new_top);
 
+    if state.one_section_per_page() {
+        // The last page is the final sonnet; land the cursor on its first verse
+        // line (the first dialogue at/after the section heading), matching the
+        // gg/x landing for every other sonnet.
+        let first = next_dialogue_from(&state.buffer, new_top, line_count)
+            .min(line_count.saturating_sub(1));
+        state.current_line = first;
+        after_page_change(state, PageChangeReason::JumpToLine);
+        return;
+    }
+
     let cs = column_split(state, new_top);
     let on_page = prev_dialogue_line(&state.buffer, &state.translation_lines, cs.page_end + 1)
         .filter(|&d| d >= new_top && d <= cs.page_end)
@@ -422,6 +433,16 @@ pub(crate) fn last_page_top(state: &AppState) -> usize {
         // forward-nav anchor, page_backward) agrees with what's actually on
         // screen.
         clamp_page_top_to_scroll_ceiling(state, chosen)
+    } else if state.one_section_per_page() && line_count > 0 {
+        // One section per page (sonnet_sequence): the last page is the last
+        // section — its top is the last section-start boundary at or before the
+        // final line. Scanning the viewport-fill backward would pack several
+        // trailing sonnets onto one page.
+        let mut top = line_count - 1;
+        while top > 0 && !state.is_section_start(top) {
+            top -= 1;
+        }
+        top
     } else if widget_height > 0 && line_count > 0 {
         // Single column: accumulate `widget_height` of content backward.
         let capacity = widget_height;
@@ -739,7 +760,12 @@ pub fn page_backward(state: &mut AppState) {
     // what a reader expects from paging backward. Compute it from the landed
     // page's geometry; fall back to the page's first dialogue if none is found.
     set_page(state, new_top, PageDirection::Backward);
-    let cursor = if state.column_count() == 2 {
+    let cursor = if state.one_section_per_page() {
+        // One section per page (sonnet_sequence): paging back lands on the
+        // sonnet's FIRST verse line, the same landing as gg/x — not the last.
+        next_dialogue_from(&state.buffer, new_top, state.effective_line_count())
+            .min(state.effective_line_count().saturating_sub(1))
+    } else if state.column_count() == 2 {
         let cs = super::viewport::column_split(state, new_top);
         prev_dialogue_line(&state.buffer, &state.translation_lines, cs.page_end + 1)
             .filter(|&d| d >= new_top && d <= cs.page_end)

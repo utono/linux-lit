@@ -88,5 +88,6 @@ pub struct MediaItem {
 pub struct BookmarkItem {
     pub line_mapping_id: i64,
     pub line_text: String,
-    pub created_at: String,
+    pub speaker: String,
+    pub citation: String,
 }

@@ -201,6 +201,14 @@ pub struct AppState {
     pub pre_translation_page: Option<(usize, usize)>,
     /// Tracks which buffer lines are inserted translation lines.
     pub translation_lines: Vec<bool>,
+    /// Section-start bitmap remapped to the inflated (translation-inserted)
+    /// buffer. Built in `show_translations` from the line_map's original-buffer
+    /// `section_starts` via the same insert remap used for `current_line`;
+    /// inserted translation lines are `false`. `section_starts()` returns this
+    /// (instead of the line_map's original-indexed bitmap) while translations
+    /// are visible so the one-section-per-page clamp lands on the right physical
+    /// line. Empty when translations are hidden.
+    pub translation_section_starts: Vec<bool>,
     pub translation_dim_tag: gtk4::TextTag,
     pub translation_text_tag: gtk4::TextTag,
     /// When set, CursorSync events are suppressed until this instant passes.
@@ -334,6 +342,13 @@ pub struct AppState {
     /// Set when loading_work clears so the resize tick can run a deferred
     /// layout refresh (apply_tiled_mode + snap) with correct line metrics.
     pub needs_layout_refresh: Rc<Cell<bool>>,
+    /// One-shot: set by the two-column `hide_translations` branch after it
+    /// restores the faithful pre-toggle `(current_line, page_top_line)`. The
+    /// RESIZE_TICK layout-refresh path consumes it (`replace(false)`) to skip
+    /// `snap_near_end_to_canonical`, so the saved canonical spread is painted
+    /// verbatim instead of being re-derived from the cursor (which lands on the
+    /// previous boundary when the cursor is the last line of the spread).
+    pub trust_restored_page: Rc<Cell<bool>>,
     /// Deferred synopsis show: set in display_work when the cursor lands on a
     /// scene boundary, cleared by the resize tick once layout is valid.
     pub pending_synopsis: Rc<Cell<bool>>,
@@ -370,6 +385,18 @@ impl AppState {
         self.current_work.as_ref()
             .map(|w| crate::db::line_types::is_prose_work(&w.work_type))
             .unwrap_or(true)
+    }
+
+    /// True when the work paginates one `(div1,div2)` section per page rather
+    /// than filling each page to the viewport height. A `sonnet_sequence`
+    /// renders one sonnet per page: each sonnet is its own section, and the
+    /// single-column display clip honors the section break verbatim instead of
+    /// reverting to a full viewport when the sonnet leaves the page underfilled
+    /// (the fill-guard in `update_bottom_clip`).
+    pub fn one_section_per_page(&self) -> bool {
+        self.current_work.as_ref()
+            .map(|w| w.work_type == "sonnet_sequence")
+            .unwrap_or(false)
     }
 
     pub fn effective_line_count(&self) -> usize {
@@ -426,6 +453,9 @@ impl AppState {
     /// Returns `false` when the bitmap is absent (mid-load) or out of range —
     /// callers needing a mid-load fallback consult the buffer text directly.
     pub fn is_section_start(&self, buffer_line: usize) -> bool {
+        if self.translations_visible && !self.translation_section_starts.is_empty() {
+            return self.translation_section_starts.get(buffer_line).copied().unwrap_or(false);
+        }
         self.line_map
             .as_ref()
             .and_then(|lm| lm.section_starts.get(buffer_line).copied())
@@ -435,7 +465,16 @@ impl AppState {
     /// Borrow the section-boundary bitmap, if a line map is loaded. Pagination
     /// helpers thread this slice down so they consult the authoritative DB
     /// boundary instead of re-inferring it from buffer text.
+    ///
+    /// While translations are visible the buffer is inflated with inserted
+    /// translation lines, so the line_map's original-indexed bitmap no longer
+    /// aligns. Return the translation-remapped bitmap built in
+    /// `show_translations` instead, so the section-break clamp (and the
+    /// one-section-per-page clip) lands on the correct physical line.
     pub fn section_starts(&self) -> Option<&[bool]> {
+        if self.translations_visible && !self.translation_section_starts.is_empty() {
+            return Some(self.translation_section_starts.as_slice());
+        }
         self.line_map.as_ref().map(|lm| lm.section_starts.as_slice())
     }
 
@@ -530,16 +569,24 @@ pub const TWO_COLUMN_DIALOGUE_INDENT: i32 = 20;
 /// Fixed height for the top spacer above the first text line.
 pub const TOP_SPACER_HEIGHT: i32 = 40;
 
-/// Pure default-column rule: every work defaults to two columns. Split out from
+/// Pure default-column rule: works default to two columns, except a
+/// `sonnet_sequence`, which defaults to one. A sonnet sequence has each sonnet
+/// as its own `(div1, div2)` section, so the two-column "stop at scene break"
+/// rule would push every sonnet to the right column and leave the left empty;
+/// a single column lets the sonnets flow top-to-bottom instead. Split out from
 /// `default_column_count_for` so it is unit-testable without constructing a
 /// `Work`. Per-work overrides in `config.column_overrides` still take
-/// precedence, and `column_count()` forces a single column when not in EReader
-/// mode or when translations are visible.
-pub(crate) fn default_column_count_for_parts(_author: &str, _work_type: &str) -> u8 {
-    2
+/// precedence (e.g. `Alt+[`), and `column_count()` forces a single column when
+/// not in EReader mode or when translations are visible.
+pub(crate) fn default_column_count_for_parts(_author: &str, work_type: &str) -> u8 {
+    match work_type {
+        "sonnet_sequence" => 1,
+        _ => 2,
+    }
 }
 
-/// Default column count for a work: 2 columns for all works by default.
+/// Default column count for a work: 2 columns by default, 1 for a
+/// `sonnet_sequence`.
 pub(crate) fn default_column_count_for(work: &crate::db::models::Work) -> u8 {
     default_column_count_for_parts(&work.author, &work.work_type)
 }
@@ -568,6 +615,29 @@ pub fn verse_left_offset(window_width: i32, column_width: u32) -> i32 {
     let card_w = (column_width as i32).min(window_width.max(1));
     let slack = window_width - card_w;
     if slack >= 2 * VERSE_LEFT_OFFSET { VERSE_LEFT_OFFSET } else { 0 }
+}
+
+/// Worst-case verse line for sizing the sonnet reading column — the LONGEST line
+/// across all 154 sonnets in the Folger-cleaned text (60 chars, sonnet 14
+/// "Then, churls, their thoughts, although their eyes were kind,"). Sizing the
+/// block to this guarantees NO sonnet line wraps, and keeps the centered left
+/// edge STABLE across sonnets (no jitter as you page) while tracking the
+/// configured font/size. If the source ever gains a longer line, widen this.
+const SONNET_BLOCK_SAMPLE: &str = "Then, churls, their thoughts, although their eyes were kind,";
+
+/// Pixel width of the sonnet reading block, measured with the text_view's Pango
+/// context against `SONNET_BLOCK_SAMPLE`. Used to center the one-section-per-page
+/// block in the card. Returns 0 if measurement isn't possible.
+fn current_block_text_width(state: &AppState) -> i32 {
+    let ctx = state.text_view.create_pango_context();
+    let pango_layout = pango::Layout::new(&ctx);
+    let font = pango::FontDescription::from_string(
+        &format!("{} {}", state.config.font_family, state.config.font_size),
+    );
+    pango_layout.set_font_description(Some(&font));
+    pango_layout.set_text(SONNET_BLOCK_SAMPLE);
+    let (w, _h) = pango_layout.pixel_size();
+    w
 }
 
 /// True when the window is narrow enough that the text card nearly fills
@@ -627,6 +697,21 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
         );
         let card_w = target.min(window_width.max(1));
         (card_w / 4 - state.config.text_margins as i32).max(0)
+    } else if state.one_section_per_page() {
+        // One section per page (sonnet_sequence): center the sonnet BLOCK in the
+        // card — verse lines stay left-aligned to a common edge, but that edge is
+        // placed so the widest line is centered. The number heading is then
+        // center-justified over the block (see apply_one_section_centering).
+        let card_w = state.config.column_width as i32;
+        // +16px slack so a line measured at exactly block_w never wraps at the
+        // text-region boundary (Pango layout width can differ a hair from the
+        // standalone measure).
+        let block_w = current_block_text_width(state) + 16;
+        if block_w > 0 && card_w > block_w {
+            ((card_w - block_w) / 2 - state.config.text_margins as i32).max(0)
+        } else {
+            VERSE_LEFT_OFFSET
+        }
     } else if tiled {
         0
     } else if two_col {
@@ -678,6 +763,12 @@ pub fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, window_width
     // this guard the two columns would also be asymmetric (left narrower).
     if two_col {
         state.text_view.set_right_margin(crate::gutter::LINE_NUMBER_TEXT_GAP_TWO_COL);
+    } else if state.one_section_per_page() {
+        // One section per page: set the right margin symmetric to the centered
+        // left margin so the text region equals the sonnet block. Then a
+        // center-justified number heading centers exactly over the block, and the
+        // block stays centered in the card.
+        state.text_view.set_right_margin(logical_left.max(state.config.text_margins as i32));
     } else if state.translations_visible {
         // Translation view: inset the right edge like the gloss/synopsis cards
         // (~card_width/4) so the reading block is symmetric within the wide card.
@@ -1453,6 +1544,7 @@ pub fn build_window(
         sign_visible_before_translations: None,
         pre_translation_page: None,
         translation_lines: Vec::new(),
+        translation_section_starts: Vec::new(),
         translation_dim_tag,
         translation_text_tag,
         suppress_sync_until: None,
@@ -1553,6 +1645,7 @@ pub fn build_window(
         // expose an empty vbox. Cleared by update_highlight_and_show.
         loading_work: Rc::new(Cell::new(last_work.is_some())),
         needs_layout_refresh: Rc::new(Cell::new(false)),
+        trust_restored_page: Rc::new(Cell::new(false)),
         pending_synopsis: Rc::new(Cell::new(false)),
         pending_top_anchor: Rc::new(Cell::new(false)),
         timestamp_undo: None,
@@ -1817,7 +1910,14 @@ pub fn build_window(
                 // pages near the end of the document can't be reached because
                 // GTK clamps set_value to upper - page_size.
                 crate::input::scroll::ensure_scroll_range(&s);
-                snap_near_end_to_canonical(&mut s);
+                // A translation hide restores the faithful pre-toggle canonical
+                // spread; consume the one-shot flag and skip the canonical
+                // re-derivation (which would resolve the saved cursor — the last
+                // line of the spread — to the previous boundary, painting the
+                // wrong spread). Work-load / resize still snap normally.
+                if !s.trust_restored_page.replace(false) {
+                    snap_near_end_to_canonical(&mut s);
+                }
                 let top = s.page_top_line;
                 crate::input::navigation::snap_scroll_to_line(&mut s, top);
                 // Reveal LAST: apply_tiled_mode, snap_scroll, and the label
@@ -2179,7 +2279,37 @@ pub fn base_work_abbrev(abbrev: &str) -> &str {
 /// single-column, or layout isn't ready.
 fn snap_near_end_to_canonical(s: &mut AppState) {
     let line_count = s.effective_line_count();
-    if s.column_count() != 2 || line_count == 0 || s.text_view.height() <= 0 {
+    if line_count == 0 || s.text_view.height() <= 0 {
+        return;
+    }
+    // One section per page (sonnet_sequence, single column): the saved page_top
+    // may sit mid-sequence (not on a sonnet boundary), so the restored page packs
+    // the surrounding sonnets. Snap page_top to the section that contains the
+    // cursor and put the cursor on that sonnet's first verse line — matching the
+    // gg/x landing. (The two-column path below never runs for these.)
+    if s.one_section_per_page() {
+        // Snap page_top to the SECTION BOUNDARY (the sonnet heading) containing
+        // the cursor — read the authoritative bitmap directly. A forward-walk
+        // (canonical_page_top_for) can return a non-boundary top mid-sonnet,
+        // which is exactly the resumed-mid-sonnet case we're correcting.
+        let anchor = s.current_line.min(line_count.saturating_sub(1));
+        let mut top = anchor;
+        while top > 0 && !s.is_section_start(top) {
+            top -= 1;
+        }
+        let first = crate::input::viewport::next_dialogue_from(&s.buffer, top, line_count)
+            .min(line_count.saturating_sub(1));
+        if top != s.page_top_line || first != s.current_line {
+            crate::logging::log(&format!(
+                "STARTUP: snap one-section page_top {} -> {} (cursor {} -> {})",
+                s.page_top_line, top, s.current_line, first
+            ));
+            s.page_top_line = top;
+            s.current_line = first;
+        }
+        return;
+    }
+    if s.column_count() != 2 {
         return;
     }
     // If the restored `page_top` is ALREADY the canonical spread that contains the
@@ -2505,6 +2635,7 @@ pub fn display_work_at_with_prepared(
     }
     state.translations_visible = false;
     state.translation_lines = Vec::new();
+    state.translation_section_starts = Vec::new();
     // Load translations for this work
     if let Some(ref work) = state.current_work {
         if let Ok(conn) = crate::db::queries::open_db() {
@@ -2663,8 +2794,11 @@ pub fn display_work_at_with_prepared(
             .map(|w| crate::db::line_types::is_prose_work(&w.work_type))
             .unwrap_or(true);
         // Line numbers are skipped entirely in two-column mode unless explicitly
-        // enabled, reclaiming the gutter space for text.
-        let show_numbers = state.column_count() != 2 || SHOW_LINE_NUMBERS_TWO_COL;
+        // enabled, reclaiming the gutter space for text. Also skipped for a
+        // one-section-per-page work (sonnet_sequence): each page is one short
+        // numbered poem, so the every-5th foliation is noise.
+        let show_numbers = (state.column_count() != 2 || SHOW_LINE_NUMBERS_TWO_COL)
+            && !state.one_section_per_page();
         if !is_prose && show_numbers {
             let new_line_numbers: Vec<Option<i64>> = if let Some(ref lm) = state.line_map {
                 lm.buffer_to_work
@@ -3114,6 +3248,33 @@ fn rebuild_buffer_text(state: &mut AppState) {
 /// - Applies "dialogue-indent" tag (extra left margin) to dialogue lines
 /// - Applies "speaker-gap" tag (extra pixels above) to speaker lines
 /// - Applies "stage-direction-gap" tag to stage directions
+/// Center-justify every bare stanza-number heading line in the buffer (a
+/// `sonnet_sequence`'s "1", "2", …). The text region is made symmetric in
+/// `apply_tiled_mode`, so center justification places the number over the
+/// centered verse block. Idempotent: the tag is reused and re-applied.
+fn apply_stanza_number_centering(state: &AppState) {
+    use crate::db::line_types;
+    let tag_table = state.buffer.tag_table();
+    let tag = tag_table.lookup("stanza-number-center").unwrap_or_else(|| {
+        let t = gtk4::TextTag::builder()
+            .name("stanza-number-center")
+            .justification(gtk4::Justification::Center)
+            .build();
+        tag_table.add(&t);
+        t
+    });
+    let line_count = state.buffer.line_count() as usize;
+    for i in 0..line_count {
+        let Some(start) = state.buffer.iter_at_line(i as i32) else { continue };
+        let mut end = start;
+        if !end.ends_line() { end.forward_to_line_end(); }
+        let text = state.buffer.text(&start, &end, false).to_string();
+        if line_types::is_stanza_number(text.trim()) {
+            state.buffer.apply_tag(&tag, &start, &end);
+        }
+    }
+}
+
 pub fn apply_dialogue_formatting(state: &mut AppState) {
     use crate::db::line_types;
 
@@ -3121,6 +3282,15 @@ pub fn apply_dialogue_formatting(state: &mut AppState) {
     if state.line_map.is_none() {
         state.dialogue_formatting_active = false;
         return;
+    }
+
+    // One section per page (sonnet_sequence): center the bare stanza-number
+    // headings over the centered block (the text region is symmetric, set in
+    // apply_tiled_mode). Verse lines keep the default left justification.
+    // Runs before the speaker scan below — sonnets have no speakers, so the rest
+    // of this function early-returns.
+    if state.one_section_per_page() {
+        apply_stanza_number_centering(state);
     }
 
     // Scan first 200 lines for any speaker
@@ -3710,11 +3880,13 @@ fn show_translations(state: &mut AppState) {
     }
     state.translation_lines = tl;
 
-    // Configure the translation gloss tag: Charter Italic at 4pt below the
-    // independent translation font size (not the two-column reader size).
-    let trans_size = state.config.translation_font_size.saturating_sub(4);
+    // Configure the translation gloss tag: the main card font, italic, 4pt
+    // below the reader size. reapply_font (below) keeps this in sync on every
+    // font change; set it here too so the first paint isn't a flash of the
+    // previous size/family.
+    let trans_size = state.config.font_size.saturating_sub(4);
     let desc = pango::FontDescription::from_string(
-        &format!("Charter Italic {}", trans_size),
+        &format!("{} Italic {}", state.config.font_family, trans_size),
     );
     state.translation_text_tag.set_font_desc(Some(&desc));
 
@@ -3742,6 +3914,26 @@ fn show_translations(state: &mut AppState) {
     state.pre_translation_page = Some((old_current, old_top));
     state.current_line = map_line_after_insert(state.current_line, &inserts);
     state.page_top_line = map_line_after_insert(state.page_top_line, &inserts);
+
+    // Remap the section-start bitmap onto the inflated buffer so the
+    // section-break clamp (and the one-section-per-page clip for sonnets) lands
+    // on the right physical line. Each original section start at index `i`
+    // moves to `map_line_after_insert(i, &inserts)`; inserted translation lines
+    // stay `false`. `section_starts()` returns this while translations show.
+    if let Some(orig) = state.line_map.as_ref().map(|lm| lm.section_starts.clone()) {
+        let mut remapped = vec![false; new_line_count];
+        for (i, is_start) in orig.iter().enumerate() {
+            if *is_start {
+                let j = map_line_after_insert(i, &inserts);
+                if j < remapped.len() {
+                    remapped[j] = true;
+                }
+            }
+        }
+        state.translation_section_starts = remapped;
+    } else {
+        state.translation_section_starts = Vec::new();
+    }
 
     let cursor_on_translation = state.current_line < state.translation_lines.len()
         && state.translation_lines[state.current_line];
@@ -3788,16 +3980,16 @@ fn show_translations(state: &mut AppState) {
     // Defer viewport anchor to an idle callback — GTK hasn't re-laid the
     // buffer yet so line_yrange and adjustment.upper are stale right now.
     //
-    // In e-reader mode the page top is a fixed line boundary, so anchor the
-    // viewport to page_top_line's EXACT pixel top (a whole-line edge) rather
-    // than to the cursor's screen-y. Anchoring to the cursor after a 3000-line
-    // insert leaves the scroll between line boundaries, which clips the top
-    // line and throws off the bottom-clip computation. Snapping to the line top
-    // is the same thing snap_scroll_to_line does for normal page turns; the
-    // deferred refresh_bottom_clip below then reads this aligned scroll value
-    // and covers the partial bottom line correctly. (See the anti-clipping
-    // note in docs/troubleshooting/page-turning-mechanics.md.)
-    let top_line = state.page_top_line;
+    // The translation overlay scrolls continuously (cursor-following, vim
+    // scrolloff) — it is NOT pinned to the old two-column page boundary. So
+    // CENTER the highlighted cursor line: target = cursor_y - page_size*0.25
+    // (the same ¼-down offset center_cursor uses). Snap that target to a
+    // whole-line top so the continuously-scrolling overlay never lands between
+    // line boundaries (which would clip the top/bottom lines); the deferred
+    // refresh_bottom_clip below reads the aligned value and covers the partial
+    // bottom line. (See the anti-clipping note in
+    // docs/troubleshooting/page-turning-mechanics.md.)
+    let cursor_line = state.current_line;
     let _ = cursor_screen_y; // no longer used for anchoring
     let tv = state.text_view.clone();
     let sw = state.scrolled_window.clone();
@@ -3805,22 +3997,37 @@ fn show_translations(state: &mut AppState) {
     let vbox = state.card_vbox.clone();
     gtk4::glib::idle_add_local_once(move || {
         let adj = sw.vadjustment();
-        let top_y = tv.buffer().iter_at_line(top_line as i32).map(|iter| {
+        let cursor_y = tv.buffer().iter_at_line(cursor_line as i32).map(|iter| {
             let (y, h) = tv.line_yrange(&iter);
             crate::logging::log(&format!(
-                "TRANSLATIONS_SHOW: idle snap page_top yrange y={} h={} line={}",
-                y, h, top_line,
+                "TRANSLATIONS_SHOW: idle center cursor yrange y={} h={} line={}",
+                y, h, cursor_line,
             ));
             y as f64
         });
-        if let Some(y) = top_y {
+        if let Some(cy) = cursor_y {
             let max_val = (adj.upper() - adj.page_size()).max(0.0);
-            let val = y.clamp(0.0, max_val);
+            let offset = adj.page_size() * 0.25;
+            let raw = (cy - offset).clamp(0.0, max_val);
+            // Snap the centered target down to the top of whatever line begins
+            // at or above it, so the viewport top sits on a whole-line edge.
+            let (snap_line, _) = tv.line_at_y(raw as i32);
+            let val = tv
+                .buffer()
+                .iter_at_line(snap_line.line())
+                .map(|it| tv.line_yrange(&it).0 as f64)
+                .unwrap_or(raw)
+                .clamp(0.0, max_val);
             crate::logging::log(&format!(
-                "TRANSLATIONS_SHOW: idle snap to page_top y={} clamped={} upper={} page={}",
-                y as i64, val as i64, adj.upper() as i64, adj.page_size() as i64,
+                "TRANSLATIONS_SHOW: idle center cursor_y={} offset={} raw={} snapped={} upper={} page={}",
+                cy as i64, offset as i64, raw as i64, val as i64,
+                adj.upper() as i64, adj.page_size() as i64,
             ));
             adj.set_value(val);
+            // page_top_line is left as-is: the overlay's j/k scrolloff path
+            // (scroll_cursor_into_view_scrolloff) recomputes it from the live
+            // adjustment on the first move, and the bottom-clip below is
+            // scroll-aware (not page_top-relative), so it covers correctly now.
             // Cover the partial line at the bottom edge immediately on reveal —
             // the paged refresh_bottom_clip is page_top-relative and unreliable
             // here, so use the same scroll-aware clip the j/k path uses.
@@ -3922,6 +4129,15 @@ fn hide_translations(state: &mut AppState) {
             .unwrap_or((state.current_line, state.page_top_line));
         state.current_line = cur;
         state.page_top_line = top;
+        // When we restored the FAITHFUL pre-toggle spread, tell the RESIZE_TICK
+        // re-snap to trust it verbatim — skip snap_near_end_to_canonical, which
+        // would re-derive the page from the saved cursor and (when the cursor is
+        // the last line of the spread) land on the previous boundary, painting a
+        // different, non-canonical spread. Only when no saved page existed do we
+        // let the canonical snap correct the overlay-scrolled position.
+        if saved_pre_toggle.is_some() {
+            state.trust_restored_page.set(true);
+        }
         crate::input::navigation::update_highlight_only(state);
         rebuild_line_number_gutter(state);
         state.needs_layout_refresh.set(true);
@@ -4015,6 +4231,7 @@ fn strip_translation_lines(state: &mut AppState) {
     ));
 
     state.translation_lines.clear();
+    state.translation_section_starts = Vec::new();
     state.translations_visible = false;
 
     // Clear the saved pre-toggle page (covers navigation-driven hide and
@@ -4066,14 +4283,12 @@ fn reapply_font(state: &AppState) {
     if let Some(old) = tag_table.lookup("font-size") {
         tag_table.remove(&old);
     }
-    // The single-column translation view uses its own Charter font at an
-    // independent size, so adjusting it never changes the two-column reader
-    // font. Otherwise use the configured reader family/size.
-    let (font_family, font_size): (&str, u32) = if state.translations_visible {
-        ("Charter", state.config.translation_font_size)
-    } else {
-        (state.config.font_family.as_str(), state.config.font_size)
-    };
+    // The translation overlay follows the main card font: same family and size
+    // as the two-column reader, so changing the reader font (size via +/-, or
+    // family via f/F) changes the overlay too. The interlinear paraphrase is
+    // rendered 4pt smaller and italic (below), in the same family.
+    let font_family = state.config.font_family.as_str();
+    let font_size = state.config.font_size;
     let font_str = format!("{} {}", font_family, font_size);
     let tag = gtk4::TextTag::builder()
         .name("font-size")
@@ -4117,8 +4332,12 @@ fn rebuild_line_number_gutter(state: &mut AppState) {
     // column.
     // No verse line numbers in the translation overlay — the interleaved
     // original/translation lines make the right-gutter foliation noise.
+    // No line numbers for a one-section-per-page work (sonnet_sequence): each
+    // page is a single short poem with its own number heading, so the every-5th
+    // foliation is noise.
     let show_numbers = (state.column_count() != 2 || SHOW_LINE_NUMBERS_TWO_COL)
-        && !state.translations_visible;
+        && !state.translations_visible
+        && !state.one_section_per_page();
     if !is_prose && show_numbers {
         let base: Vec<Option<i64>> = if let Some(ref lm) = state.line_map {
             lm.buffer_to_work
@@ -4177,23 +4396,11 @@ fn rebuild_line_number_gutter(state: &mut AppState) {
 }
 
 /// Adjust font size by delta, clamp to 8..=72, reapply CSS and repaginate.
-/// While the translation view is visible, this adjusts the INDEPENDENT
-/// translation font size (Charter), leaving the two-column reader size
-/// (`config.font_size`) untouched.
+/// Adjust the reader font size. The translation overlay follows this size
+/// (reapply_font reads `config.font_size` whether or not the overlay is open),
+/// so adjusting while the overlay is visible scales both the original lines and
+/// the interlinear paraphrase.
 pub fn adjust_font_size(state: &mut AppState, delta: i32) {
-    if state.translations_visible {
-        let new_size = (state.config.translation_font_size as i32 + delta).clamp(8, 72) as u32;
-        if new_size == state.config.translation_font_size {
-            return;
-        }
-        state.config.translation_font_size = new_size;
-        reapply_font(state);
-        rebuild_line_number_gutter(state);
-        crate::input::navigation::resnap_page(state);
-        crate::input::navigation::invalidate_page_tops(state);
-        crate::config::save(&state.config);
-        return;
-    }
     let new_size = (state.config.font_size as i32 + delta).clamp(8, 72) as u32;
     if new_size == state.config.font_size {
         return;
@@ -4206,7 +4413,7 @@ pub fn adjust_font_size(state: &mut AppState, delta: i32) {
     crate::config::save(&state.config);
 }
 
-/// Reset font size to default (18pt).
+/// Reset font size to default (16pt).
 pub fn reset_font_size(state: &mut AppState) {
     let default = 16u32;
     if state.config.font_size == default {
@@ -4246,15 +4453,6 @@ pub fn cycle_font(state: &mut AppState, forward: bool) {
 
 /// Show current font info via desktop notification.
 pub fn show_font_info(state: &AppState) {
-    // In the translation view, report the independent Charter translation size.
-    if state.translations_visible {
-        let body = format!("Charter {}pt (translation)", state.config.translation_font_size);
-        let _ = std::process::Command::new("notify-send")
-            .args(["-t", "1500", "-h", "string:x-canonical-private-synchronous:linux-lit-font",
-                   "Font", &body])
-            .spawn();
-        return;
-    }
     let cycle = crate::config::FONT_CYCLE;
     let idx = cycle.iter().position(|f| *f == state.config.font_family).unwrap_or(0);
     let position = format!("{}/{}", idx + 1, cycle.len());
@@ -5024,8 +5222,14 @@ mod column_default_tests {
     #[test]
     fn shakespeare_poem_defaults_to_two() {
         assert_eq!(default_column_count_for_parts("Shakespeare", "poem"), 2);
-        assert_eq!(default_column_count_for_parts("Shakespeare", "sonnet_sequence"), 2);
         assert_eq!(default_column_count_for_parts("Shakespeare", "narrative_poem"), 2);
+    }
+    #[test]
+    fn sonnet_sequence_defaults_to_one() {
+        // Each sonnet is its own (div1,div2) section; two columns would push every
+        // sonnet to the right column and leave the left empty. See
+        // default_column_count_for_parts.
+        assert_eq!(default_column_count_for_parts("Shakespeare", "sonnet_sequence"), 1);
     }
     #[test]
     fn non_shakespeare_play_defaults_to_two() {

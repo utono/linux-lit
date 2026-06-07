@@ -318,6 +318,7 @@ pub fn refresh_bottom_clip(state: &AppState) {
         state.is_prose(),
         left_exact_end,
         state.section_starts().map(|s| s.to_vec()),
+        state.one_section_per_page(),
     );
 }
 
@@ -336,16 +337,17 @@ fn schedule_bottom_clip_update(
     is_prose: bool,
     exact_end: Option<usize>,
     section_starts: Option<Vec<bool>>,
+    one_section_per_page: bool,
 ) {
     let tv1 = text_view.clone();
     let bc1 = bottom_clip.clone();
     let sw1 = scrolled_window.clone();
     let ss1 = section_starts.clone();
     glib::idle_add_local_once(move || {
-        update_bottom_clip(&tv1, &bc1, &sw1, page_top, line_count, is_prose, exact_end, ss1.as_deref());
+        update_bottom_clip(&tv1, &bc1, &sw1, page_top, line_count, is_prose, exact_end, ss1.as_deref(), one_section_per_page);
     });
     glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
-        update_bottom_clip(&text_view, &bottom_clip, &scrolled_window, page_top, line_count, is_prose, exact_end, section_starts.as_deref());
+        update_bottom_clip(&text_view, &bottom_clip, &scrolled_window, page_top, line_count, is_prose, exact_end, section_starts.as_deref(), one_section_per_page);
     });
 }
 
@@ -419,7 +421,35 @@ pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
         // top — earlier lines bleed in clipped. Walk backward to find the
         // line whose y <= the clamped scroll position and re-scroll to that
         // line's exact y so the page starts on a clean line boundary.
-        if (y as f64) > max_value && line > 0 {
+        //
+        // EXCEPT one-section-per-page (sonnet_sequence): the last sonnet sits
+        // near the buffer end and may not be scrollable to the very top, but
+        // walking back here would drag page_top into the PREVIOUS sonnet's tail
+        // (the visible bug). Instead, extend the bottom margin so the section's
+        // heading CAN reach the top, then scroll to it; do not back up.
+        if (y as f64) > max_value && state.one_section_per_page() {
+            let page_size = adj.page_size();
+            let needed_upper = y as f64 + page_size;
+            let extra = (needed_upper - adj.upper()).ceil().max(0.0) as i32;
+            if extra > 0 {
+                let cur = state.text_view.bottom_margin();
+                state.text_view.set_bottom_margin(cur + extra);
+            }
+            // Re-read upper after extending; set_value again now that the line
+            // can reach the top. A deferred re-scroll backstops the case where
+            // upper hasn't recomputed synchronously yet.
+            let new_max = (adj.upper() - adj.page_size()).max(0.0);
+            adj.set_value((y as f64).min(new_max));
+            let sw = state.scrolled_window.clone();
+            let tv = state.text_view.clone();
+            let target_y = y as f64;
+            glib::idle_add_local_once(move || {
+                let a = sw.vadjustment();
+                let m = (a.upper() - a.page_size()).max(0.0);
+                a.set_value(target_y.min(m));
+                let _ = &tv;
+            });
+        } else if (y as f64) > max_value && line > 0 {
             for l in (0..line).rev() {
                 if let Some(it) = state.buffer.iter_at_line(l as i32) {
                     let (ly, _) = state.text_view.line_yrange(&it);
@@ -488,6 +518,7 @@ pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
         state.is_prose(),
         left_exact_end,
         state.section_starts().map(|s| s.to_vec()),
+        state.one_section_per_page(),
     );
 
     if let Some(cs) = cs {
@@ -529,6 +560,7 @@ pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
             state.is_prose(),
             Some(right_end),
             None, // exact_end set → trim path (and section clamp) never runs
+            false, // two-column right view: exact_end drives the clip, not the section fill-guard
         );
     } else {
         // Single-column (prose) or layout-not-ready: never show the two-column
@@ -599,8 +631,9 @@ pub(crate) fn update_bottom_clip_public(
     line_count: usize,
     is_prose: bool,
     section_starts: Option<&[bool]>,
+    one_section_per_page: bool,
 ) {
-    update_bottom_clip(text_view, bottom_clip, scrolled_window, page_top, line_count, is_prose, None, section_starts);
+    update_bottom_clip(text_view, bottom_clip, scrolled_window, page_top, line_count, is_prose, None, section_starts, one_section_per_page);
 }
 
 /// Set the bottom clip to hide everything below the last fully-visible line.
@@ -620,6 +653,7 @@ fn update_bottom_clip(
     is_prose: bool,
     exact_end: Option<usize>,
     section_starts: Option<&[bool]>,
+    one_section_per_page: bool,
 ) {
     let widget_height = text_view.height();
     if widget_height <= 0 {
@@ -695,12 +729,19 @@ fn update_bottom_clip(
         let is_break = bf.as_ref().map(|f| f as &dyn Fn(usize) -> bool);
         let trimmed = trim_visible_range(range, page_top, text_view, &buf_sv, is_prose, is_break);
 
+        // One-section-per-page works (sonnet_sequence): the section-break clamp is
+        // the intended page boundary even when the section is short (a 14-line
+        // sonnet fills well under 85% of the viewport). Skip the fill-guard so the
+        // page stops at the end of this sonnet rather than packing the next ones.
+        if one_section_per_page {
+            trimmed
+        }
         // Viewport fill guard for display: if trimming left the page less than
         // ~85% full, the dangling-speaker/block trims created too much empty
         // space. Fall back to the raw visible range which only clips the partial
         // bottom line. A dangling speaker at the bottom looks better than 15%+
         // empty space.
-        if widget_height > 0
+        else if widget_height > 0
             && trimmed.last_fit < range.last_fit
             && trimmed.total_height * 20 < widget_height * 17
         {

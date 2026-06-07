@@ -676,6 +676,7 @@ pub(crate) fn is_dialogue_line(buffer: &sourceview5::Buffer, line: usize) -> boo
         && !line_types::is_stage_direction(trimmed)
         && !line_types::is_act_scene_marker(trimmed)
         && !line_types::is_separator(trimmed)
+        && !line_types::is_stanza_number(trimmed)
         && !is_inside_stage_direction(buffer, line)
 }
 
@@ -767,6 +768,14 @@ pub(crate) fn back_up_for_speaker(
             }
         }
     };
+    // If the target line IS a section boundary (its own opening heading), the
+    // page top is that line — do not back up below it onto the previous
+    // section's trailing blank. Without this, a one-section-per-page work
+    // (sonnet_sequence: heading "2" at the section start) lands page_top on the
+    // blank above the heading, producing a blank page between sonnets.
+    if is_break.is_some() && is_section(line) {
+        return line;
+    }
     let mut top = line;
     while top > 0 {
         // Authoritative path: if the line just above is a section boundary

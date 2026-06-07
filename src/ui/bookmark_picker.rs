@@ -91,34 +91,38 @@ impl BookmarkPicker {
 
         for item in &self.items {
             if !filter.is_empty() {
-                let target = item.line_text.to_lowercase();
+                let target = format!("{} {}", item.speaker, item.line_text).to_lowercase();
                 if !subsequence_match(&filter_lower, &target) {
                     continue;
                 }
             }
 
-            let text = truncate_text(&item.line_text, 80);
-            let time_label = format_relative_time(&item.created_at);
+            let first_line = item.line_text.lines().next().unwrap_or("");
+            let display = if item.speaker.is_empty() {
+                first_line.to_string()
+            } else {
+                format!("{}: {}", item.speaker, first_line)
+            };
 
             let text_label = Label::builder()
-                .label(&text)
+                .label(&display)
                 .halign(gtk4::Align::Start)
                 .hexpand(true)
                 .ellipsize(gtk4::pango::EllipsizeMode::End)
                 .build();
 
-            let time_lbl = Label::builder()
-                .label(&time_label)
+            let citation_label = Label::builder()
+                .label(&item.citation)
                 .halign(gtk4::Align::End)
                 .build();
-            time_lbl.add_css_class("picker-item-detail");
+            citation_label.add_css_class("picker-item-detail");
 
             let hbox = GtkBox::builder()
                 .orientation(Orientation::Horizontal)
                 .spacing(8)
                 .build();
             hbox.append(&text_label);
-            hbox.append(&time_lbl);
+            hbox.append(&citation_label);
 
             let row = ListBoxRow::builder().child(&hbox).build();
             row.set_widget_name(&item.line_mapping_id.to_string());
@@ -168,72 +172,6 @@ impl BookmarkPicker {
     pub fn has_items(&self) -> bool {
         !self.items.is_empty()
     }
-}
-
-fn truncate_text(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        text.to_string()
-    } else {
-        let end = text.char_indices().nth(max_chars).map(|(i, _)| i).unwrap_or(text.len());
-        format!("{}...", &text[..end])
-    }
-}
-
-fn format_relative_time(iso: &str) -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-
-    let created = parse_iso_to_unix(iso).unwrap_or(now);
-    if created >= now {
-        return "just now".to_string();
-    }
-    let diff = now - created;
-
-    if diff < 60 {
-        "just now".to_string()
-    } else if diff < 3600 {
-        format!("{}m ago", diff / 60)
-    } else if diff < 86400 {
-        format!("{}h ago", diff / 3600)
-    } else if diff < 86400 * 30 {
-        format!("{}d ago", diff / 86400)
-    } else {
-        format!("{}mo ago", diff / (86400 * 30))
-    }
-}
-
-fn parse_iso_to_unix(iso: &str) -> Option<u64> {
-    let s = iso.trim_end_matches('Z');
-    let (date_part, time_part) = s.split_once('T')?;
-    let mut date_iter = date_part.split('-');
-    let year: i64 = date_iter.next()?.parse().ok()?;
-    let month: i64 = date_iter.next()?.parse().ok()?;
-    let day: i64 = date_iter.next()?.parse().ok()?;
-
-    let time_no_frac = time_part.split('.').next()?;
-    let mut time_iter = time_no_frac.split(':');
-    let hour: i64 = time_iter.next()?.parse().ok()?;
-    let minute: i64 = time_iter.next()?.parse().ok()?;
-    let second: i64 = time_iter.next().unwrap_or("0").parse().ok()?;
-
-    let mut days: i64 = 0;
-    for y in 1970..year {
-        days += if is_leap(y) { 366 } else { 365 };
-    }
-    let month_days = [31, if is_leap(year) { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    for m in 0..(month - 1) as usize {
-        days += month_days.get(m).copied().unwrap_or(30) as i64;
-    }
-    days += day - 1;
-
-    let secs = days * 86400 + hour * 3600 + minute * 60 + second;
-    Some(secs as u64)
-}
-
-fn is_leap(y: i64) -> bool {
-    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
 }
 
 fn subsequence_match(filter: &str, target: &str) -> bool {

@@ -536,17 +536,23 @@ pub fn load_bookmarks_with_details(
     work_abbrev: &str,
 ) -> Result<Vec<super::models::BookmarkItem>, rusqlite::Error> {
     let mut stmt = conn.prepare(
-        "SELECT b.line_mapping_id, lm.canonical_text, b.created_at \
+        "SELECT b.line_mapping_id, lm.canonical_text, lm.speaker, \
+                lm.div1, lm.div2, lm.line_in_div \
          FROM bookmarks b \
          JOIN line_mapping lm ON b.line_mapping_id = lm.id \
          WHERE b.work_abbrev = ?1 \
-         ORDER BY b.created_at DESC"
+         ORDER BY lm.div1, lm.div2, lm.line_in_div"
     )?;
     let rows = stmt.query_map([work_abbrev], |row| {
+        let div1: i64 = row.get(3)?;
+        let div2: i64 = row.get(4)?;
+        let line_in_div: i64 = row.get(5)?;
+        let citation = format!("{}.{}.{}.{}", work_abbrev, div1, div2, line_in_div);
         Ok(super::models::BookmarkItem {
             line_mapping_id: row.get(0)?,
             line_text: row.get(1)?,
-            created_at: row.get(2)?,
+            speaker: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+            citation,
         })
     })?;
     rows.collect()
@@ -1703,7 +1709,7 @@ mod tests {
         assert!(found.is_some(), "Should find the bookmarked line");
         let item = found.unwrap();
         assert!(!item.line_text.is_empty(), "Line text should not be empty");
-        assert!(!item.created_at.is_empty(), "created_at should not be empty");
+        assert!(!item.citation.is_empty(), "citation should not be empty");
 
         // Delete it
         delete_bookmark(&conn, work_abbrev, line_id).unwrap();
