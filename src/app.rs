@@ -4935,7 +4935,7 @@ pub fn show_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>
     );
     if let Some(idx) = cursor_idx {
         s.translation_overlay.highlight_work_line(idx);
-        s.translation_overlay.scroll_to_block(idx);
+        s.translation_overlay.scroll_to_highlight(idx);
     }
     drop(s);
 

@@ -271,30 +271,43 @@ impl TranslationOverlay {
         adj.set_value(adj.lower());
     }
 
-    /// Scroll so the block whose source range contains `work_idx` sits at the
-    /// top of the viewport. No-op if no block matches.
-    pub fn scroll_to_block(&self, work_idx: usize) {
-        let target = self.block_widgets.borrow().iter().find_map(|e| {
-            if work_idx >= e.start_idx && work_idx <= e.end_idx {
-                Some(e.block_box.clone())
-            } else {
-                None
-            }
-        });
-        let Some(widget) = target else { return };
-        // Defer one tick so allocations are settled before measuring.
-        // `compute_point` maps the block's top-left (0,0) into the
-        // content_vbox's coordinate space; that y IS the scroll offset that
-        // brings the block to the viewport top.
+    /// Scroll minimally so the highlighted ORIGINAL line for `work_idx` is fully
+    /// in view: only scroll if it is above the viewport top or below its bottom,
+    /// landing it just inside the crossed edge. No-op if the line isn't found.
+    pub fn scroll_to_highlight(&self, work_idx: usize) {
+        let (orig_view, off) = {
+            let entries = self.block_widgets.borrow();
+            let ranges: Vec<(usize, usize)> =
+                entries.iter().map(|e| (e.start_idx, e.end_idx)).collect();
+            let Some((bi, off)) = locate_line(&ranges, work_idx) else { return };
+            (entries[bi].orig.clone(), off as i32)
+        };
+
         let scrolled = self.scrolled.clone();
         let content = self.content_vbox.clone();
+        // Defer one tick so allocations/wrapping are settled before measuring.
         glib::idle_add_local_once(move || {
-            let origin = gtk4::graphene::Point::new(0.0, 0.0);
-            if let Some(point) = widget.compute_point(&content, &origin) {
-                let adj = scrolled.vadjustment();
-                let max = (adj.upper() - adj.page_size()).max(adj.lower());
-                adj.set_value((point.y() as f64).clamp(adj.lower(), max));
-            }
+            let Some(iter) = orig_view.buffer().iter_at_line(off) else { return };
+            let (line_y, line_h) = orig_view.line_yrange(&iter);
+            // Map the line's top within the orig view into content_vbox space.
+            let pt = gtk4::graphene::Point::new(0.0, line_y as f32);
+            let Some(mapped) = orig_view.compute_point(&content, &pt) else { return };
+            let line_top = mapped.y() as f64;
+            let line_bottom = line_top + line_h as f64;
+
+            let adj = scrolled.vadjustment();
+            let value = adj.value();
+            let page = adj.page_size();
+            let max = (adj.upper() - page).max(adj.lower());
+
+            let new_value = if line_top < value {
+                line_top
+            } else if line_bottom > value + page {
+                line_bottom - page
+            } else {
+                return; // already fully visible — don't move
+            };
+            adj.set_value(new_value.clamp(adj.lower(), max));
         });
     }
 
