@@ -59,6 +59,17 @@ pub fn group_scene_into_blocks(
     blocks
 }
 
+/// One rendered block's widgets + source range, for cursor highlighting and
+/// scroll-follow. `trans` is None for a non-spoken interlude block (it has a
+/// single `orig` view).
+struct BlockEntry {
+    start_idx: usize,
+    end_idx: usize,
+    block_box: gtk4::Box,
+    orig: gtk4::TextView,
+    trans: Option<gtk4::TextView>,
+}
+
 pub struct TranslationOverlay {
     pub overlay: Overlay,
     scrim: gtk4::Box,
@@ -70,7 +81,7 @@ pub struct TranslationOverlay {
     content_vbox: gtk4::Box,
     /// Per rendered speech/interlude block: the (start_idx, end_idx) source
     /// range and the block's top widget, so we can scroll to the cursor block.
-    block_widgets: RefCell<Vec<(usize, usize, gtk4::Box)>>,
+    block_widgets: RefCell<Vec<BlockEntry>>,
 }
 
 impl TranslationOverlay {
@@ -173,67 +184,68 @@ impl TranslationOverlay {
             block_box.set_margin_end(side_margin);
             block_box.set_margin_top(14);
 
-            if let Some(speaker) = &block.speaker {
-                // Full-width speaker header. Match the main reading card's
-                // `speaker-name` tag (app.rs): small-caps, normal weight (400),
-                // 0.75 scale, body text color — NOT the dim, letter-spaced
-                // `gloss-header` look.
-                let header = Label::new(None);
-                header.set_halign(Align::Start);
-                header.set_markup(&format!(
-                    "<span foreground='{}' font_variant='small-caps' font_weight='normal' size='{}pt'>{}</span>",
-                    text_fg,
-                    header_pt,
-                    glib_escape(speaker),
-                ));
-                header.set_margin_bottom(4);
-                block_box.append(&header);
+            let (orig_view, trans_view): (gtk4::TextView, Option<gtk4::TextView>) =
+                if let Some(speaker) = &block.speaker {
+                    let header = Label::new(None);
+                    header.set_halign(Align::Start);
+                    header.set_markup(&format!(
+                        "<span foreground='{}' font_variant='small-caps' font_weight='normal' size='{}pt'>{}</span>",
+                        text_fg,
+                        header_pt,
+                        glib_escape(speaker),
+                    ));
+                    header.set_margin_bottom(4);
+                    block_box.append(&header);
 
-                // Two-column paired text.
-                let cols = gtk4::Box::new(Orientation::Horizontal, 0);
-                let orig = make_column(col_width, text_fg, false);
-                let trans = make_column(col_width, dim_fg, true);
-                let mut orig_text = String::new();
-                let mut trans_text = String::new();
-                for (o, t) in &block.lines {
-                    orig_text.push_str(o);
-                    orig_text.push('\n');
-                    trans_text.push_str(t);
-                    trans_text.push('\n');
-                }
-                orig.buffer().set_text(orig_text.trim_end_matches('\n'));
-                trans.buffer().set_text(trans_text.trim_end_matches('\n'));
+                    let cols = gtk4::Box::new(Orientation::Horizontal, 0);
+                    let orig = make_column(col_width, text_fg, false);
+                    let trans = make_column(col_width, dim_fg, true);
+                    let mut orig_text = String::new();
+                    let mut trans_text = String::new();
+                    for (o, t) in &block.lines {
+                        orig_text.push_str(o);
+                        orig_text.push('\n');
+                        trans_text.push_str(t);
+                        trans_text.push('\n');
+                    }
+                    orig.buffer().set_text(orig_text.trim_end_matches('\n'));
+                    trans.buffer().set_text(trans_text.trim_end_matches('\n'));
 
-                let divider = gtk4::Separator::new(Orientation::Vertical);
-                divider.add_css_class("column-divider");
-                divider.set_margin_start(12);
-                divider.set_margin_end(12);
+                    let divider = gtk4::Separator::new(Orientation::Vertical);
+                    divider.add_css_class("column-divider");
+                    divider.set_margin_start(12);
+                    divider.set_margin_end(12);
 
-                cols.append(&orig);
-                cols.append(&divider);
-                cols.append(&trans);
-                block_box.append(&cols);
-            } else {
-                // Non-spoken interlude: full-width italic, no translation column.
-                let view = TextView::new();
-                view.set_editable(false);
-                view.set_cursor_visible(false);
-                view.set_focusable(false);
-                view.set_wrap_mode(gtk4::WrapMode::WordChar);
-                view.add_css_class("gloss-text");
-                let mut text = String::new();
-                for (o, _) in &block.lines {
-                    text.push_str(o);
-                    text.push('\n');
-                }
-                view.buffer().set_text(text.trim_end_matches('\n'));
-                block_box.append(&view);
-            }
+                    cols.append(&orig);
+                    cols.append(&divider);
+                    cols.append(&trans);
+                    block_box.append(&cols);
+                    (orig, Some(trans))
+                } else {
+                    let view = TextView::new();
+                    view.set_editable(false);
+                    view.set_cursor_visible(false);
+                    view.set_focusable(false);
+                    view.set_wrap_mode(gtk4::WrapMode::WordChar);
+                    view.add_css_class("gloss-text");
+                    let mut text = String::new();
+                    for (o, _) in &block.lines {
+                        text.push_str(o);
+                        text.push('\n');
+                    }
+                    view.buffer().set_text(text.trim_end_matches('\n'));
+                    block_box.append(&view);
+                    (view, None)
+                };
 
             self.content_vbox.append(&block_box);
-            self.block_widgets
-                .borrow_mut()
-                .push((block.start_idx, block.end_idx, block_box));
+            self.block_widgets.borrow_mut().push(BlockEntry {
+                start_idx: block.start_idx,
+                end_idx: block.end_idx,
+                block_box,
+                orig: orig_view,
+                trans: trans_view,
+            });
         }
 
         self.scrim.set_visible(true);
@@ -258,9 +270,9 @@ impl TranslationOverlay {
     /// Scroll so the block whose source range contains `work_idx` sits at the
     /// top of the viewport. No-op if no block matches.
     pub fn scroll_to_block(&self, work_idx: usize) {
-        let target = self.block_widgets.borrow().iter().find_map(|(s, e, w)| {
-            if work_idx >= *s && work_idx <= *e {
-                Some(w.clone())
+        let target = self.block_widgets.borrow().iter().find_map(|e| {
+            if work_idx >= e.start_idx && work_idx <= e.end_idx {
+                Some(e.block_box.clone())
             } else {
                 None
             }
@@ -303,6 +315,17 @@ fn make_column(width: i32, color: &str, italic: bool) -> TextView {
 
 fn glib_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// Given each block's inclusive (start_idx, end_idx) work-line range in order,
+/// return (block_index, line_offset) for the block containing `work_idx`.
+fn locate_line(ranges: &[(usize, usize)], work_idx: usize) -> Option<(usize, usize)> {
+    for (i, (start, end)) in ranges.iter().enumerate() {
+        if work_idx >= *start && work_idx <= *end {
+            return Some((i, work_idx - start));
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -384,5 +407,22 @@ mod tests {
     fn empty_input_yields_no_blocks() {
         let blocks = group_scene_into_blocks(&[], |i| i, |_| None);
         assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn locate_line_finds_block_and_offset() {
+        // Two blocks: [10..=12] and [13..=13].
+        let ranges = vec![(10usize, 12usize), (13, 13)];
+        assert_eq!(locate_line(&ranges, 10), Some((0, 0)));
+        assert_eq!(locate_line(&ranges, 12), Some((0, 2)));
+        assert_eq!(locate_line(&ranges, 13), Some((1, 0)));
+    }
+
+    #[test]
+    fn locate_line_returns_none_outside_any_block() {
+        let ranges = vec![(10usize, 12usize)];
+        assert_eq!(locate_line(&ranges, 9), None);
+        assert_eq!(locate_line(&ranges, 13), None);
+        assert_eq!(locate_line(&[], 0), None);
     }
 }
