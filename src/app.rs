@@ -4917,6 +4917,7 @@ pub fn show_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>
     let text_fg = s.theme.text_fg.clone();
     let dim_fg = s.theme.dim_fg.clone();
     let body_font_size = s.config.font_size as i32;
+    let cursor_line_bg = s.theme.cursor_line_bg.clone();
     let label = synopsis_label(&s, div1, div2);
 
     // Cursor's work index, to pick the block to anchor on.
@@ -4930,8 +4931,10 @@ pub fn show_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>
         &text_fg,
         &dim_fg,
         body_font_size,
+        &cursor_line_bg,
     );
     if let Some(idx) = cursor_idx {
+        s.translation_overlay.highlight_work_line(idx);
         s.translation_overlay.scroll_to_block(idx);
     }
     drop(s);

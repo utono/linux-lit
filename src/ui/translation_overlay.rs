@@ -159,6 +159,7 @@ impl TranslationOverlay {
         text_fg: &str,
         dim_fg: &str,
         body_font_size: i32,
+        cursor_line_bg: &str,
     ) {
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
@@ -210,6 +211,8 @@ impl TranslationOverlay {
                     }
                     orig.buffer().set_text(orig_text.trim_end_matches('\n'));
                     trans.buffer().set_text(trans_text.trim_end_matches('\n'));
+                    ensure_cursor_tag(&orig.buffer(), cursor_line_bg);
+                    ensure_cursor_tag(&trans.buffer(), cursor_line_bg);
 
                     let divider = gtk4::Separator::new(Orientation::Vertical);
                     divider.add_css_class("column-divider");
@@ -234,6 +237,7 @@ impl TranslationOverlay {
                         text.push('\n');
                     }
                     view.buffer().set_text(text.trim_end_matches('\n'));
+                    ensure_cursor_tag(&view.buffer(), cursor_line_bg);
                     block_box.append(&view);
                     (view, None)
                 };
@@ -293,6 +297,63 @@ impl TranslationOverlay {
             }
         });
     }
+
+    /// Highlight the cursor's source line `work_idx` in BOTH columns (style A):
+    /// the original line on the left and its paired translation on the right.
+    /// Clears any prior highlight first. No-op if the line is outside this scene.
+    pub fn highlight_work_line(&self, work_idx: usize) {
+        let entries = self.block_widgets.borrow();
+
+        // Clear every buffer's existing highlight (small block count per scene).
+        for e in entries.iter() {
+            clear_cursor_tag(&e.orig.buffer());
+            if let Some(t) = &e.trans {
+                clear_cursor_tag(&t.buffer());
+            }
+        }
+
+        let ranges: Vec<(usize, usize)> =
+            entries.iter().map(|e| (e.start_idx, e.end_idx)).collect();
+        let Some((bi, off)) = locate_line(&ranges, work_idx) else { return };
+        let entry = &entries[bi];
+
+        apply_cursor_tag(&entry.orig.buffer(), off as i32);
+        if let Some(t) = &entry.trans {
+            apply_cursor_tag(&t.buffer(), off as i32);
+        }
+    }
+}
+
+/// Ensure the buffer has a `cursor-line` tag painting the paragraph background
+/// with the theme's cursor-line color. Idempotent (lookup before add).
+fn ensure_cursor_tag(buffer: &gtk4::TextBuffer, cursor_line_bg: &str) {
+    if buffer.tag_table().lookup("cursor-line").is_none() {
+        let tag = gtk4::TextTag::builder()
+            .name("cursor-line")
+            .paragraph_background(cursor_line_bg)
+            .build();
+        buffer.tag_table().add(&tag);
+    }
+}
+
+/// Remove the `cursor-line` tag from the whole buffer (if the tag exists).
+fn clear_cursor_tag(buffer: &gtk4::TextBuffer) {
+    if let Some(tag) = buffer.tag_table().lookup("cursor-line") {
+        let (start, end) = buffer.bounds();
+        buffer.remove_tag(&tag, &start, &end);
+    }
+}
+
+/// Apply the `cursor-line` tag to buffer line `line` (0-based). No-op if the
+/// line or tag is missing.
+fn apply_cursor_tag(buffer: &gtk4::TextBuffer, line: i32) {
+    let Some(tag) = buffer.tag_table().lookup("cursor-line") else { return };
+    let Some(start) = buffer.iter_at_line(line) else { return };
+    let mut end = start;
+    if !end.ends_line() {
+        end.forward_to_line_end();
+    }
+    buffer.apply_tag(&tag, &start, &end);
 }
 
 fn make_column(width: i32, color: &str, italic: bool) -> TextView {
