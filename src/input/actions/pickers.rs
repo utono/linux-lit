@@ -793,10 +793,21 @@ pub(crate) fn open_concordance_works_picker(state: &Rc<RefCell<AppState>>) {
     state.borrow_mut().input_mode = crate::app::InputMode::ConcordanceWorksPicker;
 }
 
+/// The gloss_type the picker filters to, given the inner-monologue toggle.
+pub(crate) fn gloss_picker_type(inner_monologue: bool) -> &'static str {
+    if inner_monologue {
+        "inner-monologue"
+    } else {
+        "teacher-generic"
+    }
+}
+
 pub(crate) fn open_gloss_picker(
     state: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
 ) {
+    // Opening always starts on the default type (teacher-generic).
+    state.borrow_mut().gloss_picker_inner_monologue = false;
     let abbrev = state
         .borrow()
         .current_work
@@ -806,11 +817,12 @@ pub(crate) fn open_gloss_picker(
         let state_clone = Rc::clone(state);
         let handle = tokio_handle.clone();
         glib::spawn_future_local(async move {
+            let gloss_type = gloss_picker_type(false);
             let items = handle
                 .spawn_blocking(move || {
                     let conn =
                         crate::db::queries::open_db().expect("Failed to open lit.db");
-                    crate::db::queries::find_glossed_passages(&conn, &abbrev, &["teacher-generic", "inner-monologue"])
+                    crate::db::queries::find_glossed_passages(&conn, &abbrev, &[gloss_type])
                         .unwrap_or_default()
                 })
                 .await
@@ -824,9 +836,48 @@ pub(crate) fn open_gloss_picker(
                     s.gloss_overlay.hide();
                 }
                 s.gloss_picker.set_items(items);
+                s.gloss_picker.set_type_label(gloss_type);
             }
             state_clone.borrow().gloss_picker.show();
             state_clone.borrow_mut().input_mode = crate::app::InputMode::GlossPicker;
+        });
+    }
+}
+
+/// Flip the gloss-picker type filter (teacher-generic <-> inner-monologue) and
+/// re-query the current work's glossed passages for the newly selected type.
+/// Called from the GlossPicker's Ctrl+t handler.
+pub(crate) fn toggle_gloss_picker_type(
+    state: &Rc<RefCell<AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+) {
+    let inner_monologue = {
+        let mut s = state.borrow_mut();
+        s.gloss_picker_inner_monologue = !s.gloss_picker_inner_monologue;
+        s.gloss_picker_inner_monologue
+    };
+    let abbrev = state
+        .borrow()
+        .current_work
+        .as_ref()
+        .map(|w| w.abbrev.clone());
+    if let Some(abbrev) = abbrev {
+        let state_clone = Rc::clone(state);
+        let handle = tokio_handle.clone();
+        glib::spawn_future_local(async move {
+            let gloss_type = gloss_picker_type(inner_monologue);
+            let items = handle
+                .spawn_blocking(move || {
+                    let conn =
+                        crate::db::queries::open_db().expect("Failed to open lit.db");
+                    crate::db::queries::find_glossed_passages(&conn, &abbrev, &[gloss_type])
+                        .unwrap_or_default()
+                })
+                .await
+                .unwrap_or_default();
+            let mut s = state_clone.borrow_mut();
+            s.gloss_picker.set_items(items);
+            s.gloss_picker.set_type_label(gloss_type);
         });
     }
 }

@@ -489,6 +489,15 @@ fn handle_picker_key(
                         }
                     }
                 }
+                InputMode::GlossPicker => {
+                    // Ctrl+t toggles the type filter (teacher-generic <->
+                    // inner-monologue). Ctrl combos don't type into the search
+                    // entry, so no focus guard is needed.
+                    if is_ctrl && key_name == "t" {
+                        crate::input::actions::pickers::toggle_gloss_picker_type(state, tokio_handle);
+                        return true;
+                    }
+                }
                 _ => {}
             }
             false
@@ -724,14 +733,18 @@ fn handle_gloss_key(
             s.gloss_overlay.hide();
             s.input_mode = crate::app::InputMode::Reader;
             s.gloss_opened_from_picker = false;
-            // Return to the exact page the user was on before the gloss opened
-            // (saved by every open path) rather than jumping to the glossed
-            // passage. resnap_page re-tiles the original page cleanly.
-            if let Some((line, top)) = s.gloss_return_pos.take() {
-                s.current_line = line;
-                s.page_top_line = top;
-                crate::input::scroll::resnap_page(&mut s);
-                crate::input::highlight::update_highlight(&mut s);
+            // Jump the cursor to the first dialogue line of the glossed passage's
+            // source text. If that can't be resolved, fall back to the exact page
+            // the user was on before the gloss opened (saved by every open path).
+            let jumped = crate::input::actions::gloss::jump_to_gloss_source_start(&mut s);
+            let saved = s.gloss_return_pos.take();
+            if !jumped {
+                if let Some((line, top)) = saved {
+                    s.current_line = line;
+                    s.page_top_line = top;
+                    crate::input::scroll::resnap_page(&mut s);
+                    crate::input::highlight::update_highlight(&mut s);
+                }
             }
             true
         }

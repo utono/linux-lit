@@ -5,6 +5,72 @@ use gtk4::prelude::*;
 
 use crate::app::AppState;
 
+/// Jump the reader cursor to the first dialogue line of the glossed passage's
+/// source text (the line `start_citation` points at, advanced to the first
+/// `is_dialogue` line at or after it). Returns true if it jumped.
+///
+/// Falls back to `false` if the current gloss context, work, or matching line
+/// can't be resolved, so the caller can restore the saved page instead.
+pub(crate) fn jump_to_gloss_source_start(s: &mut AppState) -> bool {
+    let start_citation = match &s.gloss_context {
+        Some(ctx) => ctx.start_citation.clone(),
+        None => return false,
+    };
+
+    // start_citation is `ABBR.div1.div2.line_in_div`; the gloss strips any
+    // `-Amb` suffix from the abbrev, so match on the numeric tail rather than
+    // the full citation string to stay robust across Ambrose works.
+    let cite_tail = |cite: &str| -> Option<(i64, i64, i64)> {
+        let mut parts = cite.rsplitn(4, '.');
+        let lid = parts.next()?.parse().ok()?;
+        let d2 = parts.next()?.parse().ok()?;
+        let d1 = parts.next()?.parse().ok()?;
+        Some((d1, d2, lid))
+    };
+    let target = match cite_tail(&start_citation) {
+        Some(t) => t,
+        None => return false,
+    };
+
+    let work = match s.current_work.as_ref() {
+        Some(w) => w,
+        None => return false,
+    };
+    // First work-line whose (div1,div2,line_in_div) matches the citation, then
+    // the first dialogue line at or after it.
+    let start_idx = match work
+        .lines
+        .iter()
+        .position(|l| (l.div1, l.div2, l.line_in_div) == target)
+    {
+        Some(i) => i,
+        None => return false,
+    };
+    let work_idx = work.lines[start_idx..]
+        .iter()
+        .position(|l| l.is_dialogue)
+        .map(|off| start_idx + off)
+        .unwrap_or(start_idx);
+
+    // Resolve the work index to a buffer line through the line map.
+    let buf_idx = if let Some(ref lm) = s.line_map {
+        match lm.work_to_buffer.get(work_idx) {
+            Some(&bi) => bi,
+            None => return false,
+        }
+    } else {
+        work_idx
+    };
+
+    // Use jump_to_line, not center-on-cursor: when the source passage opens a
+    // scene (e.g. H8 Porter at (5,3,1)), naive centering lets the scene-break
+    // clamp pull the spread back to the PREVIOUS scene, leaving the cursor
+    // off-page. jump_to_line lands on the canonical spread for the line in
+    // EReader mode (the same page paging through the work would show).
+    crate::input::navigation::jump_to_line(s, buf_idx);
+    true
+}
+
 pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) {
     let mut s = state.borrow_mut();
 

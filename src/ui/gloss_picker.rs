@@ -57,6 +57,13 @@ impl GlossPicker {
         self.populate_list("");
     }
 
+    /// Update the search-entry placeholder to show which gloss_type the picker
+    /// is currently filtered to (toggled with Ctrl+t).
+    pub fn set_type_label(&self, gloss_type: &str) {
+        self.search_entry
+            .set_placeholder_text(Some(&format!("Filter {} glosses... (Ctrl+t toggle)", gloss_type)));
+    }
+
     pub fn show(&self) {
         self.picker_box.set_visible(true);
         self.search_entry.set_text("");

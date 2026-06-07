@@ -241,6 +241,10 @@ pub struct AppState {
     /// already open. The overlay stays visible behind the picker, and cancelling
     /// the picker (Escape) returns to the overlay instead of the reader.
     pub gloss_picker_from_overlay: bool,
+    /// Gloss-picker type filter: false shows `teacher-generic` glosses (the
+    /// default), true shows `inner-monologue`. Toggled with Ctrl+t while the
+    /// picker is open; reset to false each time the picker is opened.
+    pub gloss_picker_inner_monologue: bool,
     /// Which add/edit prompt the stacked gloss input card will submit as.
     pub gloss_prompt_mode: GlossPromptMode,
     pub delete_confirm_container: Option<glib::WeakRef<gtk4::Box>>,
@@ -1573,6 +1577,7 @@ pub fn build_window(
         gloss_passage_index: 0,
         gloss_opened_from_picker: false,
         gloss_picker_from_overlay: false,
+        gloss_picker_inner_monologue: false,
         gloss_prompt_mode: GlossPromptMode::Add,
         delete_confirm_container: None,
         delete_confirm_overlay: None,
