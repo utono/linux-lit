@@ -194,6 +194,11 @@ fn main() {
                         // CursorSync targets a different line — clear the guard
                         s.pending_advance_ignore_bl = None;
 
+                        // Capture the overlay's scene BEFORE the cursor moves so
+                        // sync_translation_overlay (end of arm) can detect a
+                        // cross-scene move and rebuild rather than just re-highlight.
+                        let ov_scene_before = crate::app::current_scene_divs(&s);
+
                         if s.current_line != buffer_line {
                             crate::logging::log_always(&format!(
                                 "CURSOR_SYNC: line_idx={} buffer_line={} current={} page_top={} translations_visible={} buf_lines={}",
@@ -321,6 +326,11 @@ fn main() {
                                 }
                             }
                         }
+                        // Mirror the (possibly moved) cursor into the translation
+                        // overlay so its highlight follows audio playback. Drop the
+                        // borrow first — sync_translation_overlay re-borrows.
+                        drop(s);
+                        crate::app::sync_translation_overlay(&state_for_events, ov_scene_before);
                     }
                     MpvEvent::ConnectionStatus(connected) => {
                         state_for_events.borrow_mut().mpv_connected = connected;
@@ -337,6 +347,10 @@ fn main() {
                         let mut s = state_for_events.borrow_mut();
                         s.current_time_pos = pos;
 
+                        // Set to the overlay's pre-move scene only when the
+                        // pending_advance actually moves the cursor below.
+                        let mut ov_moved: Option<(i64, i64)> = None;
+
                         // Advance to untimestamped next line when current line's audio ends
                         if s.sync_enabled && !s.loading_work.get() {
                             if let Some((end_time, next_bl, _source_wi)) = s.pending_advance {
@@ -344,6 +358,7 @@ fn main() {
                                     s.pending_advance_ignore_bl = Some(s.current_line);
                                     s.pending_advance = None;
                                     if s.current_line != next_bl {
+                                        ov_moved = Some(crate::app::current_scene_divs(&s));
                                         s.current_line = next_bl;
                                         crate::input::navigation::update_highlight_and_advance_page(
                                             &mut s,
@@ -351,6 +366,13 @@ fn main() {
                                     }
                                 }
                             }
+                        }
+
+                        // Mirror the advanced cursor into the translation overlay.
+                        // Only when pending_advance moved it; drop the borrow first.
+                        if let Some(scene_before) = ov_moved {
+                            drop(s);
+                            crate::app::sync_translation_overlay(&state_for_events, scene_before);
                         }
                     }
                     MpvEvent::ThemeChanged => {

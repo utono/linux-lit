@@ -4894,6 +4894,37 @@ pub fn show_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>
 /// (no current work / empty scene). Does NOT change `input_mode` — callers that
 /// open the overlay (`show_translation_overlay`) set it themselves only on
 /// success; the in-place rebuild path keeps the existing mode.
+/// Make the translation overlay reflect the current reader cursor: if it's
+/// open, either rebuild it (cursor crossed into a new scene) or just move the
+/// highlight + follow-scroll. No-op when the overlay isn't visible. Takes the
+/// `Rc` so it can manage its own borrows (rebuild needs an unborrowed handle).
+pub fn sync_translation_overlay(
+    state: &std::rc::Rc<std::cell::RefCell<AppState>>,
+    scene_before: (i64, i64),
+) {
+    // Cheap visibility + scene check under a short borrow.
+    let (visible, scene_after, cursor_w) = {
+        let s = state.borrow();
+        (
+            s.translation_overlay.is_visible(),
+            current_scene_divs(&s),
+            s.work_line_for_buffer(s.current_line),
+        )
+    };
+    if !visible {
+        return;
+    }
+    if scene_after != scene_before {
+        rebuild_translation_overlay(state);
+        return;
+    }
+    if let Some(w) = cursor_w {
+        let s = state.borrow();
+        s.translation_overlay.highlight_work_line(w);
+        s.translation_overlay.scroll_to_highlight(w);
+    }
+}
+
 pub fn rebuild_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) -> bool {
     let s = state.borrow();
 

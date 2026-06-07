@@ -772,9 +772,41 @@ fn handle_translation_overlay_key(state: &Rc<RefCell<AppState>>, key_name: &str)
             crate::input::timestamps::play_current_line(&mut state.borrow_mut());
             true
         }
+        // Toggle playback sync (same as the main card): identical state +
+        // toast. When enabled, MPV events drive the overlay highlight too.
+        "s" => {
+            toggle_playback_sync(&mut state.borrow_mut());
+            true
+        }
         // Swallow everything else so stray keys don't leak to the reader.
         _ => true,
     }
+}
+
+/// Toggle MPV playback sync on/off, mirroring concordance state and showing the
+/// bottom-center "Sync: on/off" toast. Shared by the main-card `TogglePlaybackSync`
+/// dispatch and the translation overlay's `s` bind so both behave identically.
+fn toggle_playback_sync(s: &mut AppState) {
+    s.sync_enabled = !s.sync_enabled;
+    if s.sync_enabled {
+        s.suppress_sync_until = None;
+    }
+    if s.sync_enabled_before_concordance.is_some() {
+        s.sync_enabled_before_concordance = Some(s.sync_enabled);
+    }
+    let label = if s.sync_enabled { "Sync: on" } else { "Sync: off" };
+    crate::logging::log(&format!("SYNC: {}", if s.sync_enabled { "enabled" } else { "disabled" }));
+    // Bottom-center (same place as the act/scene pill); reset margins in
+    // case a prior corner toast moved the shared widget.
+    s.speed_toast.set_halign(gtk4::Align::Center);
+    s.speed_toast.set_margin_start(0);
+    s.speed_toast.set_margin_end(0);
+    s.speed_toast.set_text(label);
+    s.speed_toast.set_visible(true);
+    let toast = s.speed_toast.clone();
+    glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+        toast.set_visible(false);
+    });
 }
 
 /// Run a main-card navigation function (moves `current_line` + seeks MPV via
@@ -782,18 +814,7 @@ fn handle_translation_overlay_key(state: &Rc<RefCell<AppState>>, key_name: &str)
 fn overlay_nav(state: &Rc<RefCell<AppState>>, nav_fn: fn(&mut AppState)) {
     let scene_before = crate::app::current_scene_divs(&state.borrow());
     nav_fn(&mut state.borrow_mut());
-    let scene_after = crate::app::current_scene_divs(&state.borrow());
-    if scene_after != scene_before {
-        // Cursor crossed into a new scene — rebuild the overlay for it so it
-        // keeps following the cursor (and stays in sync with MPV).
-        crate::app::rebuild_translation_overlay(state);
-        return;
-    }
-    let s = state.borrow();
-    if let Some(w) = s.work_line_for_buffer(s.current_line) {
-        s.translation_overlay.highlight_work_line(w);
-        s.translation_overlay.scroll_to_highlight(w);
-    }
+    crate::app::sync_translation_overlay(state, scene_before);
 }
 
 fn handle_synopsis_overlay_key(
@@ -1383,29 +1404,7 @@ fn dispatch_action(
         }
 
         // MPV / media
-        TogglePlaybackSync => {
-            let mut s = state.borrow_mut();
-            s.sync_enabled = !s.sync_enabled;
-            if s.sync_enabled {
-                s.suppress_sync_until = None;
-            }
-            if s.sync_enabled_before_concordance.is_some() {
-                s.sync_enabled_before_concordance = Some(s.sync_enabled);
-            }
-            let label = if s.sync_enabled { "Sync: on" } else { "Sync: off" };
-            crate::logging::log(&format!("SYNC: {}", if s.sync_enabled { "enabled" } else { "disabled" }));
-            // Bottom-center (same place as the act/scene pill); reset margins in
-            // case a prior corner toast moved the shared widget.
-            s.speed_toast.set_halign(gtk4::Align::Center);
-            s.speed_toast.set_margin_start(0);
-            s.speed_toast.set_margin_end(0);
-            s.speed_toast.set_text(label);
-            s.speed_toast.set_visible(true);
-            let toast = s.speed_toast.clone();
-            glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-                toast.set_visible(false);
-            });
-        }
+        TogglePlaybackSync => toggle_playback_sync(&mut state.borrow_mut()),
         TogglePlayback => crate::input::search::toggle_playback(&mut state.borrow_mut()),
         SeekShortBackward => do_mpv_seek(state, -3.5),
         SeekShortForward => do_mpv_seek(state, 3.5),
