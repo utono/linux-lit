@@ -144,6 +144,51 @@ fn first_bound(keys: &[&KeyDef]) -> usize {
         .unwrap_or(0)
 }
 
+/// Map a GTK keyval name for a symbol key to the cap glyph used in the row
+/// tables (`unshifted` field). Single-character letter/digit names are NOT in
+/// this table — `find_cap` matches those by identity. Returns `None` for names
+/// with no symbol cap.
+fn key_name_to_glyph(key_name: &str) -> Option<&'static str> {
+    Some(match key_name {
+        "slash" => "/",
+        "comma" => ",",
+        "period" => ".",
+        "parenleft" => "(",
+        "parenright" => ")",
+        "ampersand" => "&",
+        "bracketleft" => "[",
+        "bracketright" => "]",
+        "braceleft" => "{",
+        "braceright" => "}",
+        "backslash" => "\\",
+        "minus" => "-",
+        "apostrophe" => "'",
+        "semicolon" => ";",
+        "plus" => "+",
+        "asterisk" => "*",
+        "exclam" => "!",
+        "bar" => "|",
+        "at" => "@",
+        "dollar" => "$",
+        "equal" => "=",
+        _ => return None,
+    })
+}
+
+/// Resolve an incoming GTK key name to the `(row_idx, cap_idx)` of the first cap
+/// whose `unshifted` glyph matches. Symbol names go through
+/// `key_name_to_glyph`; everything else (letters/digits) is matched by identity.
+/// Returns `None` when no cap matches (the caller consumes the key as a no-op).
+fn find_cap(key_name: &str) -> Option<(usize, usize)> {
+    let glyph = key_name_to_glyph(key_name).unwrap_or(key_name);
+    for row in 0..ROW_COUNT {
+        let keys = row_keys(row);
+        if let Some(idx) = keys.iter().position(|d| d.unshifted == glyph) {
+            return Some((row, idx));
+        }
+    }
+    None
+}
 
 /// A longer, sentence-length explanation for a binding, keyed by its short
 /// action label (the same strings used in the row definitions above). Returns
@@ -947,5 +992,94 @@ impl KeybindsOverlay {
     pub fn attach(&self, base: &impl IsA<gtk4::Widget>) {
         self.overlay.set_child(Some(base));
         self.overlay.add_overlay(&self.drawing_area);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn glyph_for_symbol_names() {
+        assert_eq!(key_name_to_glyph("slash"), Some("/"));
+        assert_eq!(key_name_to_glyph("comma"), Some(","));
+        assert_eq!(key_name_to_glyph("period"), Some("."));
+        assert_eq!(key_name_to_glyph("parenleft"), Some("("));
+        assert_eq!(key_name_to_glyph("plus"), Some("+"));
+        assert_eq!(key_name_to_glyph("backslash"), Some("\\"));
+        assert_eq!(key_name_to_glyph("apostrophe"), Some("'"));
+    }
+
+    #[test]
+    fn glyph_returns_none_for_letters() {
+        // Letters are matched by identity in find_cap, not via this table.
+        assert_eq!(key_name_to_glyph("h"), None);
+        assert_eq!(key_name_to_glyph("g"), None);
+    }
+
+    #[test]
+    fn find_cap_resolves_representative_keys() {
+        // 'h' is on the home row (index 2).
+        let (row, idx) = find_cap("h").expect("h has a cap");
+        assert_eq!(row, 2);
+        assert_eq!(row_keys(row)[idx].unshifted, "h");
+
+        // '/' (slash) is on the upper row (index 1).
+        let (row, idx) = find_cap("slash").expect("slash has a cap");
+        assert_eq!(row, 1);
+        assert_eq!(row_keys(row)[idx].unshifted, "/");
+
+        // '+' (plus) is on the number row (index 0).
+        let (row, idx) = find_cap("plus").expect("plus has a cap");
+        assert_eq!(row, 0);
+        assert_eq!(row_keys(row)[idx].unshifted, "+");
+    }
+
+    #[test]
+    fn find_cap_none_for_unmapped() {
+        assert_eq!(find_cap("F5"), None);
+        assert_eq!(find_cap("Return"), None);
+    }
+
+    #[test]
+    fn every_lettered_cap_is_findable() {
+        // Every cap with a single-char ASCII-letter glyph must resolve to
+        // itself via identity matching.
+        for row in 0..ROW_COUNT {
+            for def in row_keys(row) {
+                let g = def.unshifted;
+                if g.len() == 1 && g.chars().all(|c| c.is_ascii_alphabetic()) {
+                    let (r, i) = find_cap(g).unwrap_or_else(|| panic!("no cap for {g}"));
+                    assert_eq!(row_keys(r)[i].unshifted, g);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bound_symbol_keys_resolve_by_gtk_name() {
+        // Every symbol key that has a bound cap must be jump-reachable by the
+        // GTK keyval name it is delivered under. Guards against a row cap whose
+        // GTK name is missing from key_name_to_glyph (the semicolon class of bug).
+        let cases = [
+            ("slash", "/"),
+            ("comma", ","),
+            ("period", "."),
+            ("parenleft", "("),
+            ("ampersand", "&"),
+            ("bracketleft", "["),
+            ("braceleft", "{"),
+            ("backslash", "\\"),
+            ("minus", "-"),
+            ("apostrophe", "'"),
+            ("plus", "+"),
+            ("semicolon", ";"),
+        ];
+        for (name, glyph) in cases {
+            let (row, idx) = find_cap(name)
+                .unwrap_or_else(|| panic!("no cap for GTK name {name} (glyph {glyph})"));
+            assert_eq!(row_keys(row)[idx].unshifted, glyph,
+                "find_cap({name}) landed on the wrong cap");
+        }
     }
 }
