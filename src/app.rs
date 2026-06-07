@@ -4880,11 +4880,26 @@ pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) 
 /// Open the two-column speaker-grouped translation overlay for the current
 /// scene, scrolled to the speaker block containing the cursor line.
 pub fn show_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+    if rebuild_translation_overlay(state) {
+        state.borrow_mut().input_mode = InputMode::TranslationOverlay;
+    }
+}
+
+/// Build (or rebuild) the two-column translation overlay for the cursor's
+/// current scene and highlight/scroll to the cursor line. Idempotent:
+/// `translation_overlay.show` clears prior content, so calling this again
+/// after the cursor crosses into a new scene re-renders cleanly for that scene.
+///
+/// Returns `true` if the overlay was actually shown, `false` if it bailed early
+/// (no current work / empty scene). Does NOT change `input_mode` — callers that
+/// open the overlay (`show_translation_overlay`) set it themselves only on
+/// success; the in-place rebuild path keeps the existing mode.
+pub fn rebuild_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) -> bool {
     let s = state.borrow();
 
     let work = match s.current_work.as_ref() {
         Some(w) => w,
-        None => return,
+        None => return false,
     };
 
     let (div1, div2) = current_scene_divs(&s);
@@ -4897,7 +4912,7 @@ pub fn show_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>
         .cloned()
         .collect();
     if scene_lines.is_empty() {
-        return;
+        return false;
     }
     // Index of the first scene line within work.lines, for idx_of mapping.
     let base = work
@@ -4939,8 +4954,7 @@ pub fn show_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>
     }
     drop(s);
 
-    let mut s = state.borrow_mut();
-    s.input_mode = InputMode::TranslationOverlay;
+    true
 }
 
 /// Human-readable label for a scene, shared by the synopsis overlay and the

@@ -770,7 +770,15 @@ fn handle_translation_overlay_key(state: &Rc<RefCell<AppState>>, key_name: &str)
 /// Run a main-card navigation function (moves `current_line` + seeks MPV via
 /// `after_page_change`), then re-highlight and follow in the translation overlay.
 fn overlay_nav(state: &Rc<RefCell<AppState>>, nav_fn: fn(&mut AppState)) {
+    let scene_before = crate::app::current_scene_divs(&state.borrow());
     nav_fn(&mut state.borrow_mut());
+    let scene_after = crate::app::current_scene_divs(&state.borrow());
+    if scene_after != scene_before {
+        // Cursor crossed into a new scene — rebuild the overlay for it so it
+        // keeps following the cursor (and stays in sync with MPV).
+        crate::app::rebuild_translation_overlay(state);
+        return;
+    }
     let s = state.borrow();
     if let Some(w) = s.work_line_for_buffer(s.current_line) {
         s.translation_overlay.highlight_work_line(w);
