@@ -43,6 +43,7 @@ pub enum InputMode {
     Search,
     GlossOverlay,
     SynopsisOverlay,
+    TranslationOverlay,
     GlossPicker,
     EchoPicker,
     EchoTurnsPicker,
@@ -228,6 +229,7 @@ pub struct AppState {
     pub keybinds_overlay: crate::ui::keybinds_overlay::KeybindsOverlay,
     pub gamepad_overlay: crate::ui::gamepad_overlay::GamepadOverlay,
     pub gloss_overlay: crate::ui::gloss_overlay::GlossOverlay,
+    pub translation_overlay: crate::ui::translation_overlay::TranslationOverlay,
     pub gloss_original_text: Option<String>,
     pub gloss_list: Vec<crate::db::queries::SavedGloss>,
     pub gloss_index: usize,
@@ -1266,9 +1268,14 @@ pub fn build_window(
     gloss_overlay.attach(&gamepad_overlay.overlay);
     gloss_overlay.overlay.set_vexpand(true);
 
-    // Gloss picker wraps the gloss overlay
+    // Translation overlay wraps the gloss overlay (above gloss, below pickers)
+    let translation_overlay = crate::ui::translation_overlay::TranslationOverlay::new();
+    translation_overlay.attach(&gloss_overlay.overlay);
+    translation_overlay.overlay.set_vexpand(true);
+
+    // Gloss picker wraps the translation overlay
     let gloss_picker = GlossPicker::new();
-    gloss_picker.attach(&gloss_overlay.overlay);
+    gloss_picker.attach(&translation_overlay.overlay);
     gloss_picker.overlay.set_vexpand(true);
 
     // Echo picker wraps the gloss picker
@@ -1557,6 +1564,7 @@ pub fn build_window(
         keybinds_overlay,
         gamepad_overlay,
         gloss_overlay,
+        translation_overlay,
         gloss_original_text: None,
         gloss_list: Vec::new(),
         gloss_index: 0,
