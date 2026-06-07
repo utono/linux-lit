@@ -59,13 +59,12 @@ pub fn group_scene_into_blocks(
     blocks
 }
 
-/// One rendered block's widgets + source range, for cursor highlighting and
+/// One rendered block's views + source range, for cursor highlighting and
 /// scroll-follow. `trans` is None for a non-spoken interlude block (it has a
 /// single `orig` view).
 struct BlockEntry {
     start_idx: usize,
     end_idx: usize,
-    block_box: gtk4::Box,
     orig: gtk4::TextView,
     trans: Option<gtk4::TextView>,
 }
@@ -79,8 +78,8 @@ pub struct TranslationOverlay {
     scrolled: ScrolledWindow,
     /// Vertical stack of header rows + paired column blocks, inside `scrolled`.
     content_vbox: gtk4::Box,
-    /// Per rendered speech/interlude block: source range, top widget, and the
-    /// original/translation views, so we can scroll to and highlight the cursor.
+    /// Per rendered speech/interlude block: source range and the original/
+    /// translation views, so we can highlight and scroll to the cursor line.
     block_widgets: RefCell<Vec<BlockEntry>>,
 }
 
@@ -246,7 +245,6 @@ impl TranslationOverlay {
             self.block_widgets.borrow_mut().push(BlockEntry {
                 start_idx: block.start_idx,
                 end_idx: block.end_idx,
-                block_box,
                 orig: orig_view,
                 trans: trans_view,
             });
