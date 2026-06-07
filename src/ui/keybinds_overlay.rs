@@ -41,7 +41,7 @@ const NUMBER_ROW: &[KeyDef] = &[
     ub("=", "6"),
     ub(")", "7"),
     ub("}", "8"),
-    bare("]", "9", "show chapter"),
+    ub("]", "9"),
     key("*", "0", "", "reset font", &[]),
     bare("!", "%", "font \u{2212}"),
     bare("|", "`", "font +"),
@@ -49,7 +49,7 @@ const NUMBER_ROW: &[KeyDef] = &[
 const BACKSPACE: KeyDef = bare("\u{232b}", "", "delete ts");
 
 const UPPER_ROW: &[KeyDef] = &[
-    bare(";", ":", "reopen echoes"),
+    bare(";", ":", "show chapter"),
     key(",", "<", "prev dlg", "", &[("C-,", "settings")]),
     key(".", ">", "bookmark", "", &[("C-.", "bookmarks")]),
     key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("C-p", "lib picker")]),
@@ -68,7 +68,7 @@ const TAB_KEY: KeyDef = bare("Tab", "", "play/pause");
 const HOME_ROW: &[KeyDef] = &[
     bare("a", "A", "play from ts"),
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
-    key("e", "E", "seek +3.5", "E: +60", &[]),
+    key("e", "E", "seek +3.5", "E: +60", &[("C-e", "reopen echoes")]),
     key("u", "U", "start time", "", &[("C-u", "pg fwd"), ("M-u", "set end time")]),
     key("i", "I", "echoes", "I: reopen echoes", &[("M-i", "translations")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),

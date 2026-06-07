@@ -59,10 +59,6 @@ pub fn update_highlight_and_advance_page(state: &mut AppState) {
         crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
         crate::config::NavigationMode::EReader => {
             let last_vis = last_raw_visible_line(state, state.page_top_line);
-            crate::logging::log_always(&format!(
-                "SYNC_ADVANCE: current={} last_vis={} page_top={}",
-                state.current_line, last_vis, state.page_top_line
-            ));
             if state.current_line > last_vis {
                 let mut new_top = page_turn_top_state(state, state.current_line);
                 // Don't turn onto a spread in the work's FINAL region (an empty
@@ -265,10 +261,7 @@ pub(crate) fn update_highlight(state: &mut AppState) {
                     line_end.forward_to_line_end();
                 }
                 buffer.apply_tag(cl_tag, &line_start, &line_end);
-                log_fmt!("CURSOR_LINE: applied tag to line {} bg={}", state.current_line, state.theme.cursor_line_bg);
             }
-        } else {
-            log_fmt!("CURSOR_LINE: show_cursor_line is OFF");
         }
         // When visual selection is active, apply highlight even when dim is off
         crate::input::visual::clear_selection_highlight(state);
