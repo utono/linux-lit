@@ -739,8 +739,25 @@ fn handle_gloss_key(
     }
 }
 
-fn handle_translation_overlay_key(_state: &Rc<RefCell<AppState>>, _key_name: &str) -> bool {
-    true
+fn handle_translation_overlay_key(state: &Rc<RefCell<AppState>>, key_name: &str) -> bool {
+    match key_name {
+        "Escape" => {
+            let mut s = state.borrow_mut();
+            s.translation_overlay.hide();
+            s.input_mode = crate::app::InputMode::Reader;
+            true
+        }
+        "j" => {
+            state.borrow().translation_overlay.scroll(1);
+            true
+        }
+        "k" => {
+            state.borrow().translation_overlay.scroll(-1);
+            true
+        }
+        // Swallow everything else so stray keys don't leak to the reader.
+        _ => true,
+    }
 }
 
 fn handle_synopsis_overlay_key(
@@ -1534,6 +1551,7 @@ fn dispatch_action(
         }
         ToggleSynopsis => crate::app::toggle_synopsis(&mut state.borrow_mut()),
         ShowSynopsisOverlay => crate::app::show_synopsis_overlay(state),
+        ShowTranslationOverlay => crate::app::show_translation_overlay(state),
 
         // Authorship display
         ToggleAuthorship => {
