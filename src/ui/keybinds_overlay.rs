@@ -179,6 +179,11 @@ fn key_name_to_glyph(key_name: &str) -> Option<&'static str> {
 /// whose `unshifted` glyph matches. Symbol names go through
 /// `key_name_to_glyph`; everything else (letters/digits) is matched by identity.
 /// Returns `None` when no cap matches (the caller consumes the key as a no-op).
+///
+/// Assumes each unshifted glyph is unique across rows — if a glyph were ever
+/// duplicated, this would jump to the first occurrence. Digit keys never match:
+/// the number-row caps store digits in the `shifted` slot, not `unshifted`, so
+/// `1`..`0` are jump no-ops by design (reach those caps with the arrow keys).
 fn find_cap(key_name: &str) -> Option<(usize, usize)> {
     let glyph = key_name_to_glyph(key_name).unwrap_or(key_name);
     for row in 0..ROW_COUNT {

@@ -46,9 +46,12 @@ header (`JUMP`/`NAV`) and footer:
 
 - **Jump mode** (the default on every open): press a key to jump the highlight
   straight to that key's cap, auto-switching rows if the cap is on another row.
-  Matching is unshifted-glyph only (see `find_cap` / `key_name_to_glyph`). The
-  Space cap is not jump-targetable (the global Space handler intercepts it for
-  MPV play/pause before the overlay sees it).
+  Matching is unshifted-glyph only (see `find_cap` / `key_name_to_glyph`), so
+  digit keys (`1`..`0`) and modified combos (Ctrl/Alt/Shift chords) are NOT jump
+  targets — only the bare unshifted glyph printed on the cap is. The Space cap is
+  also not jump-targetable (the global Space handler intercepts it for MPV
+  play/pause before the overlay sees it). Reach any of these caps with the arrow
+  keys instead.
 - **Nav mode**: `n`/`p` cycle rows (the gamepad overlay is the 6th screen) and
   `j`/`k` move the key highlight.
 
