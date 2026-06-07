@@ -4915,11 +4915,10 @@ pub fn show_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>
         .position(|l| l.div1 == div1 && l.div2 == div2)
         .unwrap_or(0);
 
-    let translations = s.translations.clone();
     let blocks = crate::ui::translation_overlay::group_scene_into_blocks(
         &scene_lines,
         |i| base + i,
-        |id| translations.get(&id).cloned(),
+        |id| s.translations.get(&id).cloned(),
     );
 
     let card_width = s.content_hbox.width();
