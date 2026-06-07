@@ -34,7 +34,7 @@ const fn bare(unshifted: &'static str, shifted: &'static str, action: &'static s
 const NUMBER_ROW: &[KeyDef] = &[
     ub("$", "~"),
     bare("+", "1", "toggle speed"),
-    key("[", "2", "prev bkmk", "2: prev scene", &[]),
+    key("[", "2", "prev bkmk", "2: prev scene", &[("M-[", "col layout")]),
     key("{", "3", "next bkmk", "3: next scene", &[]),
     bare("(", "4", "prev ch"),
     bare("&", "5", "next ch"),
@@ -50,14 +50,14 @@ const BACKSPACE: KeyDef = bare("\u{232b}", "", "delete ts");
 
 const UPPER_ROW: &[KeyDef] = &[
     bare(";", ":", "show chapter"),
-    key(",", "<", "prev dlg", "", &[("C-,", "settings")]),
-    key(".", ">", "bookmark", "", &[("C-.", "bookmarks")]),
-    key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("C-p", "lib picker")]),
+    key(",", "<", "prev dlg", "<: pg back btm", &[("C-,", "settings")]),
+    key(".", ">", "", "", &[("C-.", "bookmarks")]),
+    key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("C-p", "lib picker"), ("S-C-p", "conc word"), ("C-M-p", "conc list")]),
     key("y", "Y", "pg back", "", &[("C-y", "copy id")]),
-    key("f", "F", "next font", "F: prev font", &[("C-f", "pg fwd"), ("M-f", "font info")]),
-    key("g", "G", "", "", &[("C-g", "gloss tog"), ("M-g", "gloss pick")]),
+    key("f", "F", "next font", "F: prev font", &[("M-f", "font info")]),
+    key("g", "G", "", "", &[("C-g", "gloss pick"), ("S-C-g", "gloss tog")]),
     key("c", "C", "set chapter", "C: show chapter", &[]),
-    key("r", "R", "next vocab", "R: prev vocab", &[]),
+    key("r", "R", "next conc", "R: prev conc", &[("C-r", "next vocab"), ("S-C-r", "prev vocab"), ("M-r", "conc works")]),
     key("l", "L", "toggle signs", "", &[("S-C-l", "save+quit")]),
     key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
     ub("@", "^"),
@@ -66,28 +66,28 @@ const UPPER_ROW: &[KeyDef] = &[
 const TAB_KEY: KeyDef = bare("Tab", "", "play/pause");
 
 const HOME_ROW: &[KeyDef] = &[
-    bare("a", "A", "play from ts"),
+    key("a", "A", "play from ts", "", &[("C-a", "authorship"), ("S-C-a", "attr set")]),
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
-    key("e", "E", "seek +3.5", "E: +60", &[("C-e", "reopen echoes"), ("S-C-e", "echo turns")]),
-    key("u", "U", "start time", "", &[("C-u", "pg fwd"), ("M-u", "set end time")]),
-    key("i", "I", "echoes", "", &[("M-i", "translations")]),
+    key("e", "E", "seek +3.5", "E: +60", &[("C-e", "echo turns"), ("S-C-e", "reopen echoes"), ("M-e", "echoes")]),
+    key("u", "U", "start time", "U: undo ts", &[("M-u", "set end time")]),
+    key("i", "I", "translation", "", &[("M-i", "translations")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
-    key("h", "H", "synopsis", "H: auto vocab", &[]),
-    key("t", "T", "", "", &[("M-t", "title tog")]),
+    key("h", "H", "synopsis", "H: auto vocab", &[("C-h", "synopsis side")]),
+    key("t", "T", "", "", &[("S-C-t", "nav test")]),
     key("n", "N", "next match", "N: prev match", &[]),
     bare("s", "S", "sync tog"),
-    key("-", "_", "", "", &[("C--", "recent")]),
+    key("-", "_", "prev work", "", &[("C--", "recent")]),
 ];
 const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 
 const BOTTOM_ROW: &[KeyDef] = &[
     bare("'", "\"", "reopen echoes"),
-    bare("q", "Q", "next dlg"),
+    key("q", "Q", "next dlg", "Q: page bottom", &[]),
     bare("j", "J", "cursor \u{2193}"),
     bare("k", "K", "cursor \u{2191}"),
     bare("x", "X", "pg fwd"),
-    key("b", "B", "", "", &[("C-b", "pg back")]),
-    key("m", "M", "bookmark", "", &[("C-S-m", "media picker")]),
+    bare("b", "B", ""),
+    key("m", "M", "bookmark", "", &[("C-m", "media picker")]),
     key("w", "W", "copy word", "W: collect", &[]),
     key("v", "V", "", "V: visual mode", &[]),
     bare("z", "Z", "zt…"),
@@ -97,12 +97,12 @@ const SHIFT_KEY: KeyDef = ub("Shift", "");
 
 /// Row 5: modifiers, sequences, and arrows gathered into one screen.
 const MOD_SEQ_ROW: &[KeyDef] = &[
-    key("Space", "", "page \u{2193}", "page \u{2191}", &[]),
+    bare("Space", "", "play/pause"),
     bare("gg", "", "go to start"),
     key("G", "", "", "go to end", &[]),
     bare("g;", "", "latest bookmark"),
     bare("zt", "", "scroll cursor top"),
-    key("\u{2191}", "", "cursor up", "", &[("C-\u{2191}", "volume +")]),
+    key("\u{2191}", "", "cursor up", "pg back btm", &[("C-\u{2191}", "volume +")]),
     key("\u{2193}", "", "cursor down", "", &[("C-\u{2193}", "volume \u{2212}")]),
     bare("\u{2190}", "", "seek \u{2212}3.5"),
     bare("\u{2192}", "", "set start time"),
@@ -218,10 +218,10 @@ fn describe(label: &str) -> Option<&'static str> {
     let d = match key {
         // ── Page / cursor navigation ──
         "pg fwd" => "Turn one page forward in the e-reader pagination (the cursor \
-follows to the new page top). Aliased on x and Ctrl+f / Ctrl+u. \
+follows to the new page top). Aliased on x. \
 -> navigation::page_forward — src/input/navigation.rs",
         "pg back" => "Turn one page backward in the e-reader pagination. Aliased \
-on y and Ctrl+b. -> navigation::page_backward — src/input/navigation.rs",
+on y. -> navigation::page_backward — src/input/navigation.rs",
         "page ↓" => "Page forward by one screen (Space). \
 -> navigation::page_forward — src/input/navigation.rs",
         "page ↑" => "Page backward by one screen (Shift+Space). \
@@ -245,6 +245,11 @@ speaker names, stage directions, and blank lines. \
         "scroll cursor top" | "zt…" => "Scroll the viewport so the cursor line \
 sits at the top of the page (vim zt). \
 -> navigation::scroll_cursor_top — src/input/navigation.rs",
+        "page bottom" => "Move the cursor to the last visible dialogue line on the \
+current page (vim L). -> navigation::cursor_to_page_bottom — src/input/navigation.rs",
+        "pg back btm" => "Turn one page backward and land the cursor on the bottom \
+line of the new page (Shift+Up / Shift+,). \
+-> navigation::page_backward_bottom — src/input/navigation.rs",
 
         // ── Chapters / scenes ──
         "prev ch" => "Jump to the previous chapter boundary (a line marked \
@@ -282,8 +287,20 @@ with this work; the MPV socket path is derived from the file path. \
 of words used across this author's works. Pick a word to start cross-work \
 concordance navigation, then step through occurrences with r / R. \
 -> concordance::open_picker — src/input/actions/concordance.rs",
+        "conc word" => "Open the concordance WORD picker — choose the word whose \
+cross-work occurrences r / R will step through. \
+-> pickers::open_concordance_word_picker — src/input/actions/pickers.rs",
+        "conc list" => "Open the concordance LIST picker (the list of occurrences \
+for the active concordance word). \
+-> pickers::open_concordance_list_picker — src/input/actions/pickers.rs",
+        "conc works" => "Open the concordance WORKS picker — choose which work to \
+jump into for the active concordance word. \
+-> pickers::open_concordance_works_picker — src/input/actions/pickers.rs",
         "recent" => "Open the recent-works picker (most-recently-used works). \
 -> pickers::open_recent_picker — src/input/actions/pickers.rs",
+        "prev work" => "Toggle back to the previously open work (a quick A/B swap \
+between the last two works, like vim's Ctrl-^). \
+-> pickers::toggle_previous_work — src/input/actions/pickers.rs",
         "settings" => "Open the settings overlay (margins, offsets, and other \
 reader options). -> settings::open_settings — src/input/actions/settings.rs",
         "keybinds" => "Open this keyboard-shortcut overlay. \
@@ -335,6 +352,13 @@ results, without running a new search. \
 -> echoes::reopen_echoes — src/input/actions/echoes.rs",
 
         // ── Vocab ──
+        "next conc" => "Step to the next concordance hit for the active word — \
+cross-work, loading the new work in place and seeking MPV to the hit line. \
+Shows a \"no concordance active\" toast if no word is selected. \
+-> concordance::concordance_next — src/input/actions/concordance.rs",
+        "prev conc" => "Step to the previous concordance hit for the active word \
+(cross-work, loads the work in place). \
+-> concordance::concordance_prev — src/input/actions/concordance.rs",
         "next vocab" => "Jump the cursor to the next vocabulary word in the work \
 (words you have collected for study), independent of any active concordance. \
 -> concordance::jump_to_next_vocab — src/input/actions/concordance.rs",
@@ -403,6 +427,9 @@ for the line the cursor is on, as a transient toast. \
 -> navigation::show_current_chapter — src/input/navigation.rs",
         "delete ts" => "Delete the current line's saved timestamp from lit.db \
 (undoable). -> timestamps::delete_timestamp — src/input/timestamps.rs",
+        "undo ts" => "Undo the last timestamp edit (the most recent u start-time \
+set, . chapter mark, or timestamp delete), restoring the previous value in \
+lit.db. -> timestamps::undo_timestamp — src/input/timestamps.rs",
         "nudge −0.2" => "Nudge the current line's start timestamp 0.2s earlier. \
 -> timestamps::nudge_start_backward — src/input/timestamps.rs",
         "+0.2" => "Nudge the current line's start timestamp 0.2s later (Shift+p). \
@@ -433,12 +460,28 @@ that flag timestamps, chapters, bookmarks, and A/B points. \
         "synopsis" => "Show the synopsis overlay for the current scene. \
 -> app::show_synopsis_overlay — src/app.rs (Ctrl+h toggles the side panel via \
 app::toggle_synopsis).",
+        "synopsis side" => "Toggle the persistent synopsis side panel (distinct \
+from h's transient synopsis overlay). -> app::toggle_synopsis — src/app.rs",
+        "col layout" => "Toggle between one-column and two-column (spread) page \
+layout. -> navigation::toggle_column_layout — src/input/navigation.rs",
+        "authorship" => "Toggle authorship formatting on/off — visually marks each \
+line by its attributed author (for collaboratively-written works). Toasts \"No \
+authorship data\" when the work has none. -> ToggleAuthorship arm -> \
+app::apply_authorship_formatting — src/input/keymap.rs, src/app.rs",
+        "attr set" => "Pick which attribution set to apply (when a work has more \
+than one scholarly authorship attribution). -> PickAttributionSet arm — \
+src/input/keymap.rs",
+        "nav test" => "Toggle the in-app navigation test harness (Ctrl+Shift+T) — \
+drives nav actions and asserts on-page landing; for development only. \
+-> ToggleNavTest arm — src/input/keymap.rs",
+        "translation" => "Open the scrolling two-column translation overlay for \
+the current scene (source text beside its translation), with its own nav, \
+playback, and sync binds. Distinct from Alt+i's inline translation column. \
+-> app::show_translation_overlay — src/app.rs",
         "translations" => "Toggle the parallel translation column alongside the \
 text (pauses MPV first). -> app::toggle_translations — src/app.rs",
         "dim tog" => "Toggle dimming of lines outside the current A–B sync range \
 and refresh the highlight. -> ToggleDim arm (inline) — src/input/keymap.rs",
-        "title tog" => "Toggle the title bar (work author/title and current \
-scene). -> ToggleTitleBar arm (inline) — src/input/keymap.rs",
         "save+quit" => "Save the current reading position, tell MPV to quit, and \
 close the window. -> SaveAndQuit arm -> app::save_position — src/input/keymap.rs, \
 src/app.rs",
@@ -506,7 +549,6 @@ fn expand_action(label: &str) -> String {
         "toggle signs" => "toggle sign column",
         "sync tog" => "toggle playback sync",
         "dim tog" => "toggle dim",
-        "title tog" => "toggle title bar",
         "debug log" => "toggle debug log",
         "set chapter" => "set chapter",
         "show chapter" => "show current chapter",
@@ -758,7 +800,11 @@ fn draw_row_screen(
     let pad: f64 = 40.0; // inner padding (left/right/top/bottom breathing room)
     let glyph_x = panel_x + pad; // key-glyph column
     let act_x = panel_x + pad + 170.0; // action label column
-    let desc_x = panel_x + pad + 440.0; // wrapped blurb column (gap after action)
+    // Wrapped blurb column. The gap after the action column must clear the
+    // WIDEST expanded action label (see expand_action) so the two columns never
+    // overlap — e.g. "H: toggle auto-vocab popup" is ~26 monospace chars at
+    // desc_font, ~345px, which overran the old 270px action column.
+    let desc_x = panel_x + pad + 540.0; // wrapped blurb column (gap after action)
     let desc_max_w = panel_x + panel_w - pad - desc_x; // free width for blurbs
     let row_pad: f64 = 24.0; // vertical breathing room per binding row
     let desc_line_h: f64 = 30.0; // line height inside a wrapped blurb

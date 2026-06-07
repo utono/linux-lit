@@ -271,6 +271,29 @@ Key files: `src/input/actions/concordance.rs`, `src/concordance.rs`, `src/db/con
 
 Compiled-in defaults in `keymap_config.rs` are overridden by `~/.config/linux-lit/keymap.json` (stowed from `~/tty-dotfiles/linux-lit/`). When changing keybinds, **always update both files** or the JSON will silently override your compiled changes.
 
+### Always update the Ctrl+/ overlay too
+
+Adding, removing, or changing ANY keybind also requires updating the
+Ctrl+/ keybinds overlay in `src/ui/keybinds_overlay.rs` — both the keycap
+strip and the per-key **detail panel**:
+
+- Update the key's `KeyDef` (`action` / `shift_action` / `modifiers`) in the
+  right row table (`NUMBER_ROW`, `UPPER_ROW`, `HOME_ROW`, `BOTTOM_ROW`,
+  `MOD_SEQ_ROW`, or a row-leader const) so the cap and detail rows render the
+  change.
+- Add or update the `describe()` arm for every label you introduce, so the
+  detail panel shows a full description (and the `-> handler — src/path`
+  reference) for that key. A label with no arm renders blank in the detail
+  panel; a real binding with an empty slot renders a blank detail row.
+
+The overlay is a hand-maintained mirror with no compile-time enforcement, so it
+drifts silently. **Use the `update-cairo-keybinds-overlay` skill** — it carries
+the mandatory exhaustive cross-reference (three passes: no blank slot hides a
+real binding; no label names the wrong action; every label has a `describe()`
+arm) that catches missing/wrong descriptions. Run it after any keybind change so
+every bind — and each modifier variant on each key — is represented and
+described.
+
 ## Pagination & Scene Boundaries
 
 **Scene/section boundaries are authoritative metadata, not inferred from text.**

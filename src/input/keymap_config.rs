@@ -205,9 +205,6 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("less"), Action::PageBackward),
         // space / Shift+space were PageForward/PageBackward; space is now a
         // global play/pause toggle handled directly in handle_key.
-        (KeyCombo::ctrl("f"), Action::PageForward),
-        (KeyCombo::ctrl("u"), Action::PageForward),
-        (KeyCombo::ctrl("b"), Action::PageBackward),
         // Cursor / dialogue
         (KeyCombo::plain("j"), Action::CursorNextDialogue),
         (KeyCombo::plain("k"), Action::CursorPrevLine),
@@ -233,7 +230,7 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("semicolon"), Action::ShowCurrentChapter),
         // Bookmarks
         (KeyCombo::plain("m"), Action::ToggleBookmark),
-        (KeyCombo::ctrl("e"), Action::ReopenEchoes),
+        (KeyCombo::ctrl("e"), Action::ShowEchoTurns),
         (KeyCombo::plain("bracketleft"), Action::PrevBookmark),
         (KeyCombo::plain("braceleft"), Action::NextBookmark),
         (KeyCombo::ctrl("period"), Action::OpenBookmarkPicker),
@@ -265,14 +262,14 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl("r"), Action::JumpToNextVocab),
         (KeyCombo::ctrl_shift("R"), Action::JumpToPrevVocab),
         (KeyCombo::alt("backslash"), Action::ToggleVocabHighlight),
-        (KeyCombo::ctrl("g"), Action::ToggleGlossOverlay),
+        (KeyCombo::ctrl_shift("G"), Action::ToggleGlossOverlay),
         (KeyCombo::plain("i"), Action::ShowTranslationOverlay),
         (KeyCombo::plain("apostrophe"), Action::ReopenEchoes),
         (KeyCombo::ctrl("backslash"), Action::OpenConcordancePicker),
         (KeyCombo::ctrl_shift("P"), Action::OpenConcordanceWordPicker),
         (KeyCombo::ctrl_alt("p"), Action::OpenConcordanceListPicker),
         (KeyCombo::alt("r"), Action::OpenConcordanceWorksPicker),
-        (KeyCombo::alt("g"), Action::OpenGlossPicker),
+        (KeyCombo::ctrl("g"), Action::OpenGlossPicker),
         (KeyCombo::plain("H"), Action::ToggleVocabPopup),
     ]
 }
@@ -288,7 +285,6 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("minus"), Action::TogglePreviousWork),
         (KeyCombo::alt("d"), Action::ToggleDim),
         (KeyCombo::alt("bracketleft"), Action::ToggleColumnLayout),
-        (KeyCombo::alt("t"), Action::ToggleTitleBar),
         (KeyCombo::ctrl("a"), Action::ToggleAuthorship),
         (KeyCombo::ctrl_shift("A"), Action::PickAttributionSet),
         (KeyCombo::alt("f"), Action::ShowFontInfo),
@@ -326,10 +322,10 @@ fn app_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("Escape"), Action::EscapeReaderMode),
         (KeyCombo::ctrl("d"), Action::ToggleDebugLogging),
         (KeyCombo::ctrl_shift("T"), Action::ToggleNavTest),
-        (KeyCombo::ctrl_shift("E"), Action::ShowEchoTurns),
+        (KeyCombo::ctrl_shift("E"), Action::ReopenEchoes),
         (KeyCombo::ctrl("p"), Action::OpenLibraryPicker),
         (KeyCombo::ctrl("minus"), Action::OpenRecentPicker),
-        (KeyCombo::ctrl_shift("M"), Action::OpenMediaPicker),
+        (KeyCombo::ctrl("m"), Action::OpenMediaPicker),
         (KeyCombo::ctrl("slash"), Action::OpenKeybindsOverlay),
         (KeyCombo::plain("slash"), Action::OpenSearch),
         // `?` = Shift+slash → backward search. RPD/xkb maps <AD11> level 2 to
@@ -364,8 +360,8 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::plain("y")), Some(&Action::PageBackward));
         assert_eq!(m.get(&KeyCombo::plain("j")), Some(&Action::CursorNextDialogue));
         assert_eq!(m.get(&KeyCombo::plain("k")), Some(&Action::CursorPrevLine));
-        assert_eq!(m.get(&KeyCombo::ctrl("f")), Some(&Action::PageForward));
-        assert_eq!(m.get(&KeyCombo::ctrl_shift("M")), Some(&Action::OpenMediaPicker));
+        assert_eq!(m.get(&KeyCombo::plain("y")), Some(&Action::PageBackward));
+        assert_eq!(m.get(&KeyCombo::ctrl("m")), Some(&Action::OpenMediaPicker));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("L")), Some(&Action::SaveAndQuit));
         assert_eq!(m.get(&KeyCombo::ctrl("a")), Some(&Action::ToggleAuthorship));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("A")), Some(&Action::PickAttributionSet));
@@ -375,7 +371,7 @@ mod tests {
     fn keymap_lookup_returns_action_for_bound_key() {
         let km = Keymap::default();
         assert_eq!(km.lookup("x", false, false, false), Some(Action::PageForward));
-        assert_eq!(km.lookup("f", true, false, false), Some(Action::PageForward));
+        assert_eq!(km.lookup("y", false, false, false), Some(Action::PageBackward));
     }
 
     #[test]
@@ -400,12 +396,12 @@ mod tests {
     #[test]
     fn keymap_lookup_distinguishes_modifiers() {
         let km = Keymap::default();
-        // "f" is bound to CycleFontForward; Ctrl+f to PageForward.
-        let f_plain = km.lookup("f", false, false, false);
-        let f_ctrl = km.lookup("f", true, false, false);
-        assert_ne!(f_plain, f_ctrl);
-        assert_eq!(f_plain, Some(Action::CycleFontForward));
-        assert_eq!(f_ctrl, Some(Action::PageForward));
+        // "a" plain is ToggleAuthorship; Ctrl+a vs Ctrl+Shift+a differ.
+        let a_ctrl = km.lookup("a", true, false, false);
+        let a_ctrl_shift = km.lookup("A", true, true, false);
+        assert_ne!(a_ctrl, a_ctrl_shift);
+        assert_eq!(km.lookup("f", false, false, false), Some(Action::CycleFontForward));
+        assert_eq!(a_ctrl, Some(Action::ToggleAuthorship));
     }
 
     #[test]

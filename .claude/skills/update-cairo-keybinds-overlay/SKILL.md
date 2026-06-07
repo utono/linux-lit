@@ -82,4 +82,59 @@ separate `key_colors`/`build_layout`/`draw_keyboard`/`hit_test` (removed).
    and keycap hint pick it up automatically; no layout edit needed
 4. For a new key: add a `KeyDef` to the appropriate row constant (it renders in
    that row's keycap strip automatically)
-5. `cargo build` to verify
+5. Add/adjust the `describe()` arm for any label you introduced (step 6 verifies
+   this is complete)
+6. **Run the exhaustive cross-reference (below)** — this is mandatory, not
+   optional. The overlay silently drifts: a blank detail row or a label naming
+   the wrong action both render fine and compile clean.
+7. `cargo build` to verify
+
+## Exhaustive cross-reference (mandatory)
+
+The overlay is a *hand-maintained mirror* of the keymap. Nothing enforces that
+the mirror is accurate — a `KeyDef` can show a stale label, an empty slot for a
+real binding, or a label with no `describe()` blurb, and it all compiles. After
+ANY overlay edit, verify EVERY binding round-trips. Do not spot-check; check all.
+
+**The two sources of truth:**
+
+- **Bindings (what each key does):** `default_reader_bindings()` in
+  `src/input/keymap_config.rs`. Each is `(KeyCombo::<MOD>("<key>"), Action::X)`.
+  An **uppercase single letter** in `plain("X")` means **Shift+x** (GTK delivers
+  shifted letters as the uppercase name; the shift flag is redundant). So
+  `plain("U")` is Shift+u, `plain("Q")` is Shift+q. A few keys are handled
+  *before* the keymap in `handle_key`/`handle_key_inner` (`src/input/keymap.rs`)
+  — notably **Space = MPV play/pause** (not in `default_reader_bindings()`).
+  Check there for any key whose overlay label looks unbound in the config.
+- **Display (what the overlay claims):** the row `KeyDef` tables +
+  `describe(label)`, both in `src/ui/keybinds_overlay.rs`. A `KeyDef` slot that
+  is `""` renders a **blank** detail row. A non-empty label with no matching
+  `describe()` arm renders the short label with **no long blurb**. Modifier glyph
+  prefixes: `C-` Ctrl, `M-` Alt, `S-C-`/`C-S-` Ctrl+Shift, `C-M-` Ctrl+Alt.
+
+**Run all three passes. Report each gap with file:line before fixing.**
+
+- **Pass A — no blank slot hides a real binding.** For every binding in
+  `default_reader_bindings()`, find its keycap and confirm the matching slot is
+  populated: bare key → `action`; `plain("<UPPER>")` → `shift_action` on the
+  lowercase cap; `ctrl`/`alt`/`ctrl_shift`/`ctrl_alt` → a `modifiers` entry with
+  the right glyph prefix. A populated slot elsewhere counts (e.g. Shift+g's
+  `JumpToEnd` shows on the standalone `G` cap in `MOD_SEQ_ROW`, so the `g` cap's
+  empty `shift_action` is fine) — note such cases explicitly rather than
+  "fixing" them into a duplicate.
+- **Pass B — no label names the wrong action.** For every populated keycap slot
+  (action, shift_action, every modifier label), confirm the keymap actually binds
+  that key+modifier to an action whose meaning matches the label. Watch for: a
+  bare label for a key that is only bound *with* a modifier (bare slot should be
+  `""`), and labels left over from a since-moved binding.
+- **Pass C — every label has a `describe()` arm.** Collect every non-empty label
+  string used anywhere in the tables. For each, apply `strip_shift_prefix` (drops
+  a leading `"<char>: "`) and confirm a `describe()` match arm exists — i.e. it
+  does NOT fall through to `_ => return None`. Add an arm for any miss, ending
+  with the `-> handler — src/path` reference like the existing arms.
+
+For a large or post-refactor sweep, dispatch this as a single read-only
+subagent task (give it the two file paths, the uppercase=Shift rule, the
+`handle_key` Space caveat, and the three passes) and have it report
+`key / claimed / actual / file:line` for every gap. Then apply fixes and
+re-run `cargo build`.
