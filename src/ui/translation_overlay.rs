@@ -147,6 +147,7 @@ impl TranslationOverlay {
         card_height: i32,
         text_fg: &str,
         dim_fg: &str,
+        body_font_size: i32,
     ) {
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
@@ -160,6 +161,11 @@ impl TranslationOverlay {
 
         let side_margin = card_width / 12;
         let col_width = ((card_width - 2 * side_margin) / 2 - 12).max(120);
+        // Speaker header point size: 0.75 of the body (reader) font, matching
+        // the main card's `speaker-name` tag (scale 0.75). A relative `size='75%'`
+        // would resolve against the Label's tiny default UI font, so we size it
+        // absolutely against the overlay's actual body font.
+        let header_pt = ((body_font_size as f64) * 0.75).round().max(8.0) as i32;
 
         for block in blocks {
             let block_box = gtk4::Box::new(Orientation::Vertical, 0);
@@ -175,8 +181,9 @@ impl TranslationOverlay {
                 let header = Label::new(None);
                 header.set_halign(Align::Start);
                 header.set_markup(&format!(
-                    "<span foreground='{}' font_variant='small-caps' font_weight='normal' size='75%'>{}</span>",
+                    "<span foreground='{}' font_variant='small-caps' font_weight='normal' size='{}pt'>{}</span>",
                     text_fg,
+                    header_pt,
                     glib_escape(speaker),
                 ));
                 header.set_margin_bottom(4);

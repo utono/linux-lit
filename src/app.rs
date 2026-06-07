@@ -4916,6 +4916,7 @@ pub fn show_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>
     let card_height = s.content_hbox.height();
     let text_fg = s.theme.text_fg.clone();
     let dim_fg = s.theme.dim_fg.clone();
+    let body_font_size = s.config.font_size as i32;
     let label = synopsis_label(&s, div1, div2);
 
     // Cursor's work index, to pick the block to anchor on.
@@ -4928,6 +4929,7 @@ pub fn show_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>
         card_height,
         &text_fg,
         &dim_fg,
+        body_font_size,
     );
     if let Some(idx) = cursor_idx {
         s.translation_overlay.scroll_to_block(idx);
