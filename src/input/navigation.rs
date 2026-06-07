@@ -903,7 +903,7 @@ pub fn cursor_prev_line(state: &mut AppState) {
     after_page_change(state, PageChangeReason::Cursor);
 }
 
-/// Move cursor to next dialogue line without seeking media (`k` key).
+/// Move cursor to next dialogue line without seeking media (`j` key).
 pub fn cursor_next_dialogue(state: &mut AppState) {
     let line_count = state.buffer.line_count() as usize;
     if line_count == 0 {
