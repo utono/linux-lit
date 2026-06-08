@@ -603,6 +603,13 @@ impl GlossOverlay {
         self.apply_font();
         self.reset_scroll_top();
         self.mark_cursor_block();
+        // mark_cursor_block sets bar_ranges, but the bar DRAW reads per-line
+        // geometry (line_yrange) which is 0/stale until GTK lays out the buffer
+        // just made visible above — so the synchronous draw paints nothing and
+        // the accent bar only appeared after the first j/k/Alt+n. Repaint once
+        // more after layout settles (same fix the echo/synopsis path uses).
+        let bar = self.bar_drawing.clone();
+        glib::idle_add_local_once(move || bar.queue_draw());
     }
 
     /// "Glossing…" loading card that shows the passage being glossed, rendered
