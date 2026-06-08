@@ -20,14 +20,21 @@ and the v3 prompting best-practices page
   `[sighs]`, `[sarcastic]`) as delivery instructions. v2 ignores these.
 - **A stability slider that matters.** v3's stability setting trades adherence
   to the reference voice against expressive freedom (see below).
-- **No SSML break tags.** v3 does **not** support `<break>`. Control pauses with
-  punctuation and line structure instead. Too many forced breaks cause
-  instability (speed-ups, artifacts, stray noises).
+- **No SSML break tags.** v3 does **not** support `<break>` (every other
+  ElevenLabs model does). Control pauses with punctuation and line structure
+  instead — and, where a comma reads too lightly, with v3's own bracketed pause
+  tags `[pause]` / `[short pause]` / `[long pause]` (these are v3-exclusive and
+  silently ignored by other models). Reach for a `[pause]` only for a deliberate
+  held caesura; routine verse pacing should come from punctuation and line
+  breaks. Too many forced breaks of any kind cause instability (speed-ups,
+  artifacts, stray noises).
 - **IPA pronunciation.** v3 natively supports International Phonetic Alphabet
   transcription across 70+ languages — write IPA wrapped in **forward slashes**
   (`/tɛːk/`) directly in the text, no XML. This is v3-specific: the legacy
-  `<phoneme>` SSML tag works only on `flash_v2_5` / `eleven_monolingual_v1` and is
-  silently skipped elsewhere. The slash-IPA is the lever for an Original
+  `<phoneme>` SSML tag works only on `eleven_flash_v2` / `eleven_turbo_v2` /
+  `eleven_monolingual_v1` (Eleven English V1) and is silently skipped by every
+  other model — including `flash_v2_5`, `multilingual_v2`, and v3 itself. The
+  slash-IPA is the lever for an Original
   Pronunciation voice (see below): the only reliable way to push v3 toward
   mid-shift vowels and rhoticity, since "Original Pronunciation" is not a
   selectable accent. v3's IPA lands ~80–90% consistently, so generate several
@@ -208,10 +215,12 @@ single modern accent in the description prompt. Instead:
    saved voice durably keeps.
 2. **Carry the real pronunciation as `/IPA/` in the narration text at render
    time.** This is the key reframe: Voice Design saves a voice *identity*
-   (timbre), and whatever IPA you put in the preview only steers which candidate
-   you pick — it is **not** absorbed into the saved voice as permanent
-   pronunciation. The per-word OP vowels must be re-supplied as `/IPA/` in the
-   **actual text every render** (see the worked example and the `lit.db` sketch
+   (timbre), and IPA placed in the preview is best treated as steering only
+   which candidate you pick — not as something absorbed into the saved voice as
+   permanent pronunciation. (This is also why the preview below is left *plain*:
+   you want to audition the voice's intrinsic timbre, not vowels painted on by
+   IPA.) The per-word OP vowels must be re-supplied as `/IPA/` in the **actual
+   text every render** (see the worked example and the `lit.db` sketch
    below). The preview's only durable job is timbre audition.
 3. **Cadence is render-time too.** Durable verse cadence is carried by the
    punctuation and hard line breaks of the narration text at render time, not by
@@ -332,6 +341,21 @@ Pipeline:
    best; identical input can vary.
 4. Store `op_ipa_text` as UTF-8; the `/` are literal characters. Leave audio
    (`[…]`) tags out for verse — metre and punctuation carry delivery.
+5. **Mind v3's input cap.** `eleven_v3` takes ~5,000 characters per request (vs
+   ~10,000 for `multilingual_v2` and ~40,000 for `flash_v2_5`). A single line is
+   nowhere near that, but a long speech or a multi-line block can brush it, and
+   the limit is model-dependent — a v3 concern that did not exist on the v2
+   models. Chunk to ≤5k chars on natural line breaks (never mid-line, to preserve
+   cadence) and stitch the audio.
+
+**Why a per-line column and not a pronunciation dictionary.** ElevenLabs
+pronunciation dictionaries are the obvious "centralize it" temptation, but their
+*phoneme* rules are silently skipped on v3 (same as the inline legacy `<phoneme>`
+tags), so they cannot carry OP vowels at all. Their *alias* (respelling) rules do
+work on every model — but they apply **globally**, which would clobber the same
+word in the neutral-modern prose voice and mishandle homographs. Scoping OP to a
+per-line `op_ipa_text` column keeps the accent on the verse and leaves the prose
+untouched, which is why it is the better design here.
 
 ## Voice B — prose explication (neutral modern register)
 
@@ -363,7 +387,12 @@ though plain prose tolerates `multilingual_v2` if you need it. Stability:
 ## Workflow
 
 1. ElevenLabs app → **Voices → Add a new voice → Voice Design (Text to Voice)**.
-2. Select the **Eleven v3** model.
+2. Select the **Eleven v3** model. *Confirm v3 is actually the selectable
+   generation engine in Voice Design* — the v3 guidance is otherwise oriented to
+   cloning. If Voice Design auditions only on a v2-family engine, the pipeline
+   still holds: the `/IPA/` fires at **render** time on `eleven_v3` regardless of
+   which engine generated the identity — but the audition timbre may then differ
+   slightly from the v3 render.
 3. Paste the description prompt and the matching preview text.
 4. Set stability to **Natural**; adjust **Guidance Scale** if the voice drifts.
 5. Generate; audition the multiple previews.
@@ -401,15 +430,17 @@ voice prompt.
 - [Prompting Eleven v3 (best practices)](https://elevenlabs.io/docs/best-practices/prompting/eleven-v3)
 - [What are Eleven v3 audio tags](https://elevenlabs.io/blog/v3-audiotags)
 - [How do audio tags work with Eleven v3 (help center)](https://help.elevenlabs.io/hc/en-us/articles/35869142561297-How-do-audio-tags-work-with-Eleven-v3)
+- [Do pauses and SSML phoneme tags work with the API (help center)](https://help.elevenlabs.io/hc/en-us/articles/24352686926609-Do-pauses-and-SSML-phoneme-tags-work-with-the-API)
+  (v3 has no `<break>`; use `[pause]` tags; legacy `<phoneme>` is English V1 /
+  Flash V2 / Turbo V2 only).
 
 ### Original Pronunciation (Voice A-OP)
 
-- [`how-shakespeare-spoke.md`](./how-shakespeare-spoke.md) — survey of the OP
-  evidence, feature set, and caveats this guide draws on.
-- [`eleven-v3-op-review-and-ipa-example.md`](./eleven-v3-op-review-and-ipa-example.md)
-  — review notes (IPA is render-time not preview, lock OP renders to
-  `eleven_v3`) and the worked IPA annotation + `lit.db` sketch this guide
-  incorporates.
+- `~/Downloads/how-shakespeare-spoke.md` — survey of the OP evidence, feature
+  set, and caveats this guide draws on.
+- `~/Downloads/eleven-v3-op-review-and-ipa-example.md` — review notes (IPA is
+  render-time not preview, lock OP renders to `eleven_v3`) and the worked IPA
+  annotation + `lit.db` sketch this guide incorporates.
 - [ElevenLabs — Prompting controls](https://elevenlabs.io/docs/best-practices/prompting/controls)
   (IPA in v3, `/slash/` syntax, ~80–90% consistency, `ˈ`/`ˌ` stress markers).
 - [ElevenLabs — Pronunciation dictionaries](https://elevenlabs.io/docs/cookbooks/text-to-speech/pronunciation-dictionaries)
