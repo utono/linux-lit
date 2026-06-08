@@ -1047,7 +1047,7 @@ impl GlossOverlay {
             };
             let end_line = if b.kind == BlockKind::Source && lines.len() > 1 {
                 let last_needle = lines.last().map(|s| s.trim()).unwrap_or("");
-                find_line(last_needle, start_line).unwrap_or(start_line)
+                find_line(last_needle, start_line + 1).unwrap_or(start_line)
             } else {
                 start_line
             };
