@@ -507,7 +507,7 @@ pub fn ensure_gloss_audio_table(conn: &Connection) -> Result<(), rusqlite::Error
 pub fn find_gloss_audio(
     conn: &Connection,
     gloss_id: i64,
-    paragraph_index: i32,
+    paragraph_index: i64,
 ) -> Result<Option<String>, rusqlite::Error> {
     conn.query_row(
         "SELECT audio_path FROM gloss_audio WHERE gloss_id = ?1 AND paragraph_index = ?2",
@@ -521,7 +521,7 @@ pub fn find_gloss_audio(
 pub fn save_gloss_audio(
     conn: &Connection,
     gloss_id: i64,
-    paragraph_index: i32,
+    paragraph_index: i64,
     audio_path: &str,
     voice_id: &str,
     model_id: &str,
