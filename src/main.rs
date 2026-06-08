@@ -8,6 +8,7 @@ mod input;
 mod logging;
 mod mode;
 mod claude;
+mod elevenlabs;
 mod gloss;
 mod voyage;
 mod mpv;
