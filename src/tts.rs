@@ -31,7 +31,7 @@ impl TtsPlayer {
                 }),
             },
             Err(e) => {
-                crate::logging::log(&format!("TTS: no audio output device: {}", e));
+                crate::log_fmt!("TTS: no audio output device: {}", e);
                 TtsPlayer { inner: None }
             }
         }
@@ -47,14 +47,14 @@ impl TtsPlayer {
         let file = match File::open(path) {
             Ok(f) => f,
             Err(e) => {
-                crate::logging::log(&format!("TTS: open {} failed: {}", path.display(), e));
+                crate::log_fmt!("TTS: open {} failed: {}", path.display(), e);
                 return;
             }
         };
         let decoder = match rodio::Decoder::new(BufReader::new(file)) {
             Ok(d) => d,
             Err(e) => {
-                crate::logging::log(&format!("TTS: decode failed: {}", e));
+                crate::log_fmt!("TTS: decode failed: {}", e);
                 return;
             }
         };
@@ -63,10 +63,12 @@ impl TtsPlayer {
                 sink.append(decoder);
                 *inner.sink.borrow_mut() = Some(sink);
             }
-            Err(e) => crate::logging::log(&format!("TTS: sink failed: {}", e)),
+            Err(e) => crate::log_fmt!("TTS: sink failed: {}", e),
         }
     }
 
+    /// Stop and drop the current clip. Takes `&self` (not `&mut self`) so it can
+    /// be called from `play_file` and from shared `Rc<RefCell<AppState>>` borrows.
     pub fn stop(&self) {
         if let Some(inner) = &self.inner {
             if let Some(sink) = inner.sink.borrow_mut().take() {
@@ -76,6 +78,7 @@ impl TtsPlayer {
     }
 
     /// True while a clip is still playing.
+    #[must_use]
     pub fn is_playing(&self) -> bool {
         match &self.inner {
             Some(inner) => inner
