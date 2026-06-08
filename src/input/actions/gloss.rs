@@ -513,6 +513,13 @@ pub(crate) fn read_current_paragraph(state_rc: &Rc<RefCell<AppState>>) {
         }
     }
 
+    // No explication paragraph (e.g. an all-echo gloss) -> nothing to read.
+    let has_para = state_rc.borrow().gloss_overlay.current_explication_para().is_some();
+    if !has_para {
+        show_tts_toast(state_rc, "No explication to read");
+        return;
+    }
+
     // Resolve cursor paragraph -> (gloss_id, paragraph_index, work_abbrev, text).
     let (gloss_id, para_index, work_abbrev, text, voice_id, model_id, tokio_handle) = {
         let s = state_rc.borrow();
@@ -561,9 +568,8 @@ pub(crate) fn read_current_paragraph(state_rc: &Rc<RefCell<AppState>>) {
     glib::spawn_future_local(async move {
         let voice = voice_id.clone();
         let model = model_id.clone();
-        let synth_text = text.clone();
         let result = tokio_handle
-            .spawn(async move { crate::elevenlabs::synthesize(&synth_text, &voice, &model).await })
+            .spawn(async move { crate::elevenlabs::synthesize(&text, &voice, &model).await })
             .await;
 
         match result {
@@ -581,14 +587,16 @@ pub(crate) fn read_current_paragraph(state_rc: &Rc<RefCell<AppState>>) {
                     return;
                 }
                 if let Ok(conn) = crate::db::queries::open_db_rw() {
-                    let _ = crate::db::queries::save_gloss_audio(
+                    if let Err(e) = crate::db::queries::save_gloss_audio(
                         &conn,
                         gloss_id,
                         para_index as i64,
                         &path.to_string_lossy(),
                         &voice_id,
                         &model_id,
-                    );
+                    ) {
+                        crate::log_fmt!("TTS: save_gloss_audio failed: {}", e);
+                    }
                 }
                 state_for_result.borrow().tts.play_file(&path);
                 crate::log_fmt!("TTS: synthesized gloss {} para {}", gloss_id, para_index);
