@@ -219,11 +219,21 @@ impl SettingsOverlay {
         self.picker_box.is_visible()
     }
 
+    /// Wire this overlay into the widget chain as a pass-through link only. Its
+    /// scrim + card are NOT added here — they are `add_overlay`'d onto the
+    /// OUTERMOST overlay in app.rs so they render above the gloss/synopsis
+    /// overlay (which sits higher in this chain). See `panels()`. This follows
+    /// the "pickers: overlay panel, not chain link" rule for the visible cards.
     pub fn attach(&self, base: &impl IsA<gtk4::Widget>) {
         self.overlay.set_child(Some(base));
-        self.overlay.add_overlay(&self.scrim);
-        self.overlay.add_overlay(&self.picker_box);
         self.picker_box.set_visible(false);
+    }
+
+    /// The scrim + card panels, to be `add_overlay`'d onto the outermost overlay
+    /// so settings renders above all chain-link overlays (e.g. the gloss
+    /// overlay). Returned in back-to-front order (scrim first).
+    pub fn panels(&self) -> (&GtkBox, &GtkBox) {
+        (&self.scrim, &self.picker_box)
     }
 
     pub fn move_selection(&mut self, delta: i32) {

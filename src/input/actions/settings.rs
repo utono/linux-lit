@@ -248,12 +248,10 @@ pub(crate) fn open_settings_from_overlay(
     if s.settings_overlay.is_visible() || s.picker.is_visible() {
         return;
     }
-    // The gloss overlay sits ABOVE the settings overlay in the z-stack (its
-    // opaque full-screen scrim would hide settings entirely), so we must HIDE
-    // it while settings is shown and re-`reveal()` it on close. hide() only
-    // toggles visibility — the content survives — so reveal() restores it
-    // without a rebuild. See close_settings_to_return_mode.
-    s.gloss_overlay.hide();
+    // The gloss overlay stays VISIBLE behind the settings overlay: the settings
+    // scrim + card are add_overlay panels on the outermost overlay (see app.rs),
+    // so they render ABOVE the gloss overlay. We just record the return mode and
+    // show settings on top. close_settings_to_return_mode restores the mode.
     let ls = s.config.line_spacing;
     let cw = s.config.column_width;
     let tm = s.config.text_margins;
@@ -277,10 +275,8 @@ pub(crate) fn close_settings_to_return_mode(state: &Rc<RefCell<crate::app::AppSt
     let return_mode = s.settings_return_mode;
     match return_mode {
         crate::app::InputMode::GlossOverlay | crate::app::InputMode::SynopsisOverlay => {
-            // The gloss overlay was hidden when settings opened (settings sits
-            // below it in the z-stack); re-reveal its preserved content and
-            // restore the input mode so its key handler takes over again.
-            s.gloss_overlay.reveal();
+            // The gloss overlay stayed visible behind settings — just restore
+            // the input mode so its key handler takes over again.
             s.input_mode = return_mode;
         }
         _ => {

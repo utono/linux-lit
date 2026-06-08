@@ -1329,6 +1329,19 @@ pub fn build_window(
     let echo_line_picker = crate::ui::echo_line_picker::EchoLinePicker::new();
     authorship_picker.overlay.add_overlay(&echo_line_picker.picker_box);
 
+    // Settings overlay panels (scrim + card). Added here as add_overlay panels
+    // on the OUTERMOST overlay — NOT via the chain link at settings_overlay.attach
+    // above — so settings renders ABOVE the gloss/synopsis overlay (which is a
+    // chain link lower in the z-stack). This lets Ctrl+, from those overlays show
+    // settings on top while the overlay stays visible behind it. Added before the
+    // voice picker so the voice picker (opened from the settings Voice row) layers
+    // above settings.
+    {
+        let (settings_scrim, settings_card) = settings_overlay.panels();
+        authorship_picker.overlay.add_overlay(settings_scrim);
+        authorship_picker.overlay.add_overlay(settings_card);
+    }
+
     // Voice picker (settings overlay → Voice row). add_overlay panel, NOT a
     // chain link (chain insertion collapses the reader layout).
     let voice_picker = crate::ui::voice_picker::VoicePicker::new();
