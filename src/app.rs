@@ -243,6 +243,12 @@ pub struct AppState {
     /// already open. The overlay stays visible behind the picker, and cancelling
     /// the picker (Escape) returns to the overlay instead of the reader.
     pub gloss_picker_from_overlay: bool,
+    /// Where to return when the settings overlay closes. Settings can be opened
+    /// from the reader (→ `Reader`) or from the gloss / synopsis overlay (→
+    /// `GlossOverlay` / `SynopsisOverlay`), in which case that overlay stays
+    /// visible behind the settings scrim and is restored on close. Reset to
+    /// `Reader` each time settings opens from the reader.
+    pub settings_return_mode: InputMode,
     /// Gloss-picker type filter: false shows `teacher-generic` glosses (the
     /// default), true shows `inner-monologue`. Toggled with Ctrl+t while the
     /// picker is open; reset to false each time the picker is opened.
@@ -1323,6 +1329,19 @@ pub fn build_window(
     let echo_line_picker = crate::ui::echo_line_picker::EchoLinePicker::new();
     authorship_picker.overlay.add_overlay(&echo_line_picker.picker_box);
 
+    // Settings overlay panels (scrim + card). Added here as add_overlay panels
+    // on the OUTERMOST overlay — NOT via the chain link at settings_overlay.attach
+    // above — so settings renders ABOVE the gloss/synopsis overlay (which is a
+    // chain link lower in the z-stack). This lets Ctrl+, from those overlays show
+    // settings on top while the overlay stays visible behind it. Added before the
+    // voice picker so the voice picker (opened from the settings Voice row) layers
+    // above settings.
+    {
+        let (settings_scrim, settings_card) = settings_overlay.panels();
+        authorship_picker.overlay.add_overlay(settings_scrim);
+        authorship_picker.overlay.add_overlay(settings_card);
+    }
+
     // Voice picker (settings overlay → Voice row). add_overlay panel, NOT a
     // chain link (chain insertion collapses the reader layout).
     let voice_picker = crate::ui::voice_picker::VoicePicker::new();
@@ -1586,6 +1605,7 @@ pub fn build_window(
         gloss_passage_index: 0,
         gloss_opened_from_picker: false,
         gloss_picker_from_overlay: false,
+        settings_return_mode: InputMode::Reader,
         gloss_picker_inner_monologue: false,
         gloss_prompt_mode: GlossPromptMode::Add,
         delete_confirm_container: None,
