@@ -506,10 +506,14 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
     });
 }
 
-/// Space in the gloss overlay: read the cursor's explication paragraph aloud.
-/// Toggles: if audio is playing, stop. Otherwise play the cached MP3, or
-/// synthesize it via ElevenLabs (async), cache it, and play.
-pub(crate) fn read_current_paragraph(state_rc: &Rc<RefCell<AppState>>) {
+/// Space in the gloss overlay: act on the cursor's current block.
+/// - Explication block -> read the paragraph aloud via TTS (cached).
+/// - Source block -> seek media to the first quoted line's start time and play
+///   (when MPV is connected and the line is timestamped); otherwise fall back
+///   to TTS of the verse text (cached).
+pub(crate) fn read_current_block(state_rc: &Rc<RefCell<AppState>>) {
+    use crate::ui::gloss_overlay::BlockKind;
+
     {
         let s = state_rc.borrow();
         if s.tts.is_playing() {
@@ -518,18 +522,41 @@ pub(crate) fn read_current_paragraph(state_rc: &Rc<RefCell<AppState>>) {
         }
     }
 
-    // No explication paragraph (e.g. an all-echo gloss) -> nothing to read.
-    // Resolve once; the Ref is dropped before show_tts_toast is called.
+    // Resolve current block once; drop the Ref before any toast call.
     let block_opt = state_rc.borrow().gloss_overlay.current_block();
-    let para_index = match block_opt {
-        Some((crate::ui::gloss_overlay::BlockKind::Explication, i)) => i,
-        _ => {
-            show_tts_toast(state_rc, "No explication to read");
+    let (kind, index) = match block_opt {
+        Some(t) => t,
+        None => {
+            show_tts_toast(state_rc, "Nothing to read");
             return;
         }
     };
 
-    // Resolve cursor paragraph -> (gloss_id, paragraph_index, work_abbrev, text).
+    // For a source block, try media playback first.
+    if kind == BlockKind::Source {
+        let seek = {
+            let s = state_rc.borrow();
+            if !s.mpv_connected {
+                None
+            } else {
+                source_block_seek_time(&s, index)
+            }
+        };
+        if let Some(start) = seek {
+            let _ = state_rc
+                .borrow()
+                .cmd_tx
+                .try_send(crate::mpv::MpvCommand::ResumeAndSeek(start));
+            crate::log_fmt!("TTS: source block {} -> media seek {}", index, start);
+            return;
+        }
+        // else: fall through to TTS fallback below.
+    }
+
+    let kind_str = match kind {
+        BlockKind::Source => "source",
+        BlockKind::Explication => "explication",
+    };
     let (gloss_id, work_abbrev, text, voice_id, model_id, tokio_handle) = {
         let s = state_rc.borrow();
         let gloss = match s.gloss_list.get(s.gloss_index) {
@@ -541,9 +568,9 @@ pub(crate) fn read_current_paragraph(state_rc: &Rc<RefCell<AppState>>) {
             Some(ctx) => ctx.work_abbrev.clone(),
             None => return,
         };
-        let paras = crate::ui::gloss_overlay::explication_paragraphs(&gloss.gloss_text);
-        let text = match paras.iter().find(|(i, _)| *i == para_index) {
-            Some((_, t)) => t.clone(),
+        let blocks = crate::ui::gloss_overlay::gloss_blocks(&gloss.gloss_text);
+        let text = match blocks.iter().find(|b| b.kind == kind && b.index == index) {
+            Some(b) => b.text.clone(),
             None => return,
         };
         (
@@ -556,9 +583,17 @@ pub(crate) fn read_current_paragraph(state_rc: &Rc<RefCell<AppState>>) {
         )
     };
 
+    // Filename stem: explication uses "<index>", source uses "source-<index>".
+    let stem = match kind {
+        BlockKind::Source => format!("source-{}", index),
+        BlockKind::Explication => format!("{}", index),
+    };
+
     // Cache hit?
     if let Ok(conn) = crate::db::queries::open_db() {
-        if let Ok(Some(path)) = crate::db::queries::find_gloss_audio(&conn, gloss_id, "explication", para_index as i64) {
+        if let Ok(Some(path)) =
+            crate::db::queries::find_gloss_audio(&conn, gloss_id, kind_str, index as i64)
+        {
             if std::path::Path::new(&path).exists() {
                 state_rc.borrow().tts.play_file(std::path::Path::new(&path));
                 return;
@@ -569,6 +604,7 @@ pub(crate) fn read_current_paragraph(state_rc: &Rc<RefCell<AppState>>) {
     // Miss: synthesize asynchronously.
     show_tts_toast(state_rc, "Synthesizing\u{2026}");
     let state_for_result = Rc::clone(state_rc);
+    let kind_owned = kind_str.to_string();
     glib::spawn_future_local(async move {
         let voice = voice_id.clone();
         let model = model_id.clone();
@@ -579,7 +615,7 @@ pub(crate) fn read_current_paragraph(state_rc: &Rc<RefCell<AppState>>) {
         match result {
             Ok(Ok(bytes)) => {
                 let dir = gloss_audio_dir(&work_abbrev, gloss_id);
-                let path = dir.join(format!("{}.mp3", para_index));
+                let path = dir.join(format!("{}.mp3", stem));
                 if let Err(e) = std::fs::create_dir_all(&dir) {
                     crate::log_fmt!("TTS: mkdir {} failed: {}", dir.display(), e);
                     show_tts_toast(&state_for_result, "Could not save audio");
@@ -594,8 +630,8 @@ pub(crate) fn read_current_paragraph(state_rc: &Rc<RefCell<AppState>>) {
                     if let Err(e) = crate::db::queries::save_gloss_audio(
                         &conn,
                         gloss_id,
-                        "explication",
-                        para_index as i64,
+                        &kind_owned,
+                        index as i64,
                         &path.to_string_lossy(),
                         &voice_id,
                         &model_id,
@@ -604,7 +640,7 @@ pub(crate) fn read_current_paragraph(state_rc: &Rc<RefCell<AppState>>) {
                     }
                 }
                 state_for_result.borrow().tts.play_file(&path);
-                crate::log_fmt!("TTS: synthesized gloss {} para {}", gloss_id, para_index);
+                crate::log_fmt!("TTS: synthesized gloss {} {} {}", gloss_id, kind_owned, index);
             }
             Ok(Err(e)) => {
                 crate::log_fmt!("TTS: synth error: {}", e);
@@ -615,6 +651,24 @@ pub(crate) fn read_current_paragraph(state_rc: &Rc<RefCell<AppState>>) {
             }
         }
     });
+}
+
+/// Resolve a source block's first-line start time from the current work's line
+/// timestamps. Returns None if no current work, no matching block, or no
+/// matched verse line carries a timestamp.
+fn source_block_seek_time(s: &AppState, index: i32) -> Option<f64> {
+    let gloss = s.gloss_list.get(s.gloss_index)?;
+    let blocks = crate::ui::gloss_overlay::gloss_blocks(&gloss.gloss_text);
+    let block = blocks
+        .iter()
+        .find(|b| b.kind == crate::ui::gloss_overlay::BlockKind::Source && b.index == index)?;
+    let work = s.current_work.as_ref()?;
+    let work_pairs: Vec<(String, Option<f64>)> = work
+        .lines
+        .iter()
+        .map(|l| (l.text.clone(), l.timestamp.map(|t| t.start)))
+        .collect();
+    first_source_start_time(&block.text, &work_pairs)
 }
 
 /// `~/Music/glosses/<work-abbrev>/<gloss-id>/`

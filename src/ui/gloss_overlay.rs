@@ -1508,22 +1508,6 @@ pub fn gloss_blocks(gloss: &str) -> Vec<GlossBlock> {
     blocks
 }
 
-/// The explication paragraphs of a gloss, in order: `(paragraph_index, text)`
-/// for each `<gloss>` element that is NOT an echo bracket. These are the
-/// read-aloud targets. Echo glosses (`["quote" — Source]`) are excluded.
-pub fn explication_paragraphs(gloss: &str) -> Vec<(i32, String)> {
-    let mut out = Vec::new();
-    let mut idx = 0i32;
-    for el in parse_gloss_tags(gloss) {
-        if let GlossElement::Gloss(text) = el {
-            if split_echo(&text).is_none() {
-                out.push((idx, text.trim().to_string()));
-                idx += 1;
-            }
-        }
-    }
-    out
-}
 
 fn parse_gloss_tags(gloss: &str) -> Vec<GlossElement> {
     let mut elements = Vec::new();
@@ -1921,33 +1905,6 @@ fn build_diff_markup(original: &str, corrected: &str, is_original: bool) -> Stri
     result
 }
 
-#[cfg(test)]
-mod explication_tests {
-    use super::*;
-
-    #[test]
-    fn extracts_only_non_echo_gloss_paragraphs() {
-        let gloss = "<speaker>HAMLET</speaker>\n\
-                     <verse>To be, or not to be</verse>\n\
-                     <gloss>This is the teacher's first explication.</gloss>\n\
-                     <gloss>[\"a quote\" — Macbeth 1.1]</gloss>\n\
-                     <gloss>Second explication paragraph here.</gloss>";
-        let paras = explication_paragraphs(gloss);
-        assert_eq!(paras.len(), 2);
-        assert_eq!(paras[0].0, 0); // paragraph_index
-        assert_eq!(paras[0].1, "This is the teacher's first explication.");
-        assert_eq!(paras[1].0, 1);
-        assert_eq!(paras[1].1, "Second explication paragraph here.");
-    }
-
-    #[test]
-    fn no_explications_when_all_echoes() {
-        let gloss = "<speaker>HAMLET</speaker>\n\
-                     <verse>To be</verse>\n\
-                     <gloss>[\"q\" — Lr 1.1]</gloss>";
-        assert!(explication_paragraphs(gloss).is_empty());
-    }
-}
 
 #[cfg(test)]
 mod block_tests {
