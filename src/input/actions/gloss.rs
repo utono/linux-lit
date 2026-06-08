@@ -4,6 +4,7 @@ use std::rc::Rc;
 use gtk4::prelude::*;
 
 use crate::app::AppState;
+use crate::ui::gloss_overlay::BlockKind;
 
 /// Jump the reader cursor to the first dialogue line of the glossed passage's
 /// source text (the line `start_citation` points at, advanced to the first
@@ -512,8 +513,6 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
 ///   (when MPV is connected and the line is timestamped); otherwise fall back
 ///   to TTS of the verse text (cached).
 pub(crate) fn read_current_block(state_rc: &Rc<RefCell<AppState>>) {
-    use crate::ui::gloss_overlay::BlockKind;
-
     {
         let s = state_rc.borrow();
         if s.tts.is_playing() {
@@ -547,7 +546,7 @@ pub(crate) fn read_current_block(state_rc: &Rc<RefCell<AppState>>) {
                 .borrow()
                 .cmd_tx
                 .try_send(crate::mpv::MpvCommand::ResumeAndSeek(start));
-            crate::log_fmt!("TTS: source block {} -> media seek {}", index, start);
+            crate::log_fmt!("GLOSS: source block {} -> media seek {}", index, start);
             return;
         }
         // else: fall through to TTS fallback below.
@@ -604,7 +603,6 @@ pub(crate) fn read_current_block(state_rc: &Rc<RefCell<AppState>>) {
     // Miss: synthesize asynchronously.
     show_tts_toast(state_rc, "Synthesizing\u{2026}");
     let state_for_result = Rc::clone(state_rc);
-    let kind_owned = kind_str.to_string();
     glib::spawn_future_local(async move {
         let voice = voice_id.clone();
         let model = model_id.clone();
@@ -630,7 +628,7 @@ pub(crate) fn read_current_block(state_rc: &Rc<RefCell<AppState>>) {
                     if let Err(e) = crate::db::queries::save_gloss_audio(
                         &conn,
                         gloss_id,
-                        &kind_owned,
+                        kind_str,
                         index as i64,
                         &path.to_string_lossy(),
                         &voice_id,
@@ -640,7 +638,7 @@ pub(crate) fn read_current_block(state_rc: &Rc<RefCell<AppState>>) {
                     }
                 }
                 state_for_result.borrow().tts.play_file(&path);
-                crate::log_fmt!("TTS: synthesized gloss {} {} {}", gloss_id, kind_owned, index);
+                crate::log_fmt!("TTS: synthesized gloss {} {} {}", gloss_id, kind_str, index);
             }
             Ok(Err(e)) => {
                 crate::log_fmt!("TTS: synth error: {}", e);
@@ -661,7 +659,7 @@ fn source_block_seek_time(s: &AppState, index: i32) -> Option<f64> {
     let blocks = crate::ui::gloss_overlay::gloss_blocks(&gloss.gloss_text);
     let block = blocks
         .iter()
-        .find(|b| b.kind == crate::ui::gloss_overlay::BlockKind::Source && b.index == index)?;
+        .find(|b| b.kind == BlockKind::Source && b.index == index)?;
     let work = s.current_work.as_ref()?;
     let work_pairs: Vec<(String, Option<f64>)> = work
         .lines
