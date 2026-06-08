@@ -261,6 +261,12 @@ pub(crate) fn update_highlight(state: &mut AppState) {
                     line_end.forward_to_line_end();
                 }
                 buffer.apply_tag(cl_tag, &line_start, &line_end);
+                // Intentional observability hook (NOT stale per-keystroke trace):
+                // the saved-position-resume regression test asserts the highlight
+                // lands on the restored cursor line. Keep this log — removing it
+                // orphaned that assertion once before (commit e7de29f). See
+                // tests/saved_position_resume.rs.
+                log_fmt!("CURSOR_LINE: applied tag to line {}", state.current_line);
             }
         }
         // When visual selection is active, apply highlight even when dim is off
