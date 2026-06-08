@@ -520,10 +520,10 @@ pub(crate) fn read_current_paragraph(state_rc: &Rc<RefCell<AppState>>) {
 
     // No explication paragraph (e.g. an all-echo gloss) -> nothing to read.
     // Resolve once; the Ref is dropped before show_tts_toast is called.
-    let para_index_opt = state_rc.borrow().gloss_overlay.current_explication_para();
-    let para_index = match para_index_opt {
-        Some(i) => i,
-        None => {
+    let block_opt = state_rc.borrow().gloss_overlay.current_block();
+    let para_index = match block_opt {
+        Some((crate::ui::gloss_overlay::BlockKind::Explication, i)) => i,
+        _ => {
             show_tts_toast(state_rc, "No explication to read");
             return;
         }
