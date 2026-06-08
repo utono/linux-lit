@@ -1555,9 +1555,13 @@ pub struct GlossBlock {
     /// 0-based index WITHIN its kind (source blocks numbered separately from
     /// explication paragraphs).
     pub index: i32,
+    /// RAW text, including any inline `/IPA/` — this is what TTS synthesizes.
     /// For Source: the joined verse-line text (speaker labels excluded).
     /// For Explication: the paragraph prose.
     pub text: String,
+    /// DISPLAY text: `text` with `/IPA/` stripped (`strip_ipa`). Used for the
+    /// reader's buffer and the accent-bar block matcher.
+    pub display: String,
 }
 
 /// Parse a gloss into ordered cursor-stop blocks: each contiguous
@@ -1573,10 +1577,13 @@ pub fn gloss_blocks(gloss: &str) -> Vec<GlossBlock> {
     let flush_source =
         |blocks: &mut Vec<GlossBlock>, source_idx: &mut i32, pending: &mut Vec<String>| {
             if !pending.is_empty() {
+                let text = pending.join("\n");
+                let display = strip_ipa(&text);
                 blocks.push(GlossBlock {
                     kind: BlockKind::Source,
                     index: *source_idx,
-                    text: pending.join("\n"),
+                    text,
+                    display,
                 });
                 *source_idx += 1;
                 pending.clear();
@@ -1593,10 +1600,13 @@ pub fn gloss_blocks(gloss: &str) -> Vec<GlossBlock> {
                 }
                 // A real explication paragraph ends the current source run.
                 flush_source(&mut blocks, &mut source_idx, &mut pending_verses);
+                let text = text.trim().to_string();
+                let display = strip_ipa(&text);
                 blocks.push(GlossBlock {
                     kind: BlockKind::Explication,
                     index: expl_idx,
-                    text: text.trim().to_string(),
+                    text,
+                    display,
                 });
                 expl_idx += 1;
             }
@@ -2096,6 +2106,26 @@ mod block_tests {
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].kind, BlockKind::Source);
         assert_eq!(blocks[0].text, "To be, or not to be");
+    }
+
+    #[test]
+    fn source_block_keeps_raw_ipa_and_derives_clean_display() {
+        let g = "<speaker>HAMLET</speaker>\n<verse>To /biː/ or not to /biː/</verse>";
+        let blocks = gloss_blocks(g);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].kind, BlockKind::Source);
+        // raw text (for TTS) keeps the IPA
+        assert_eq!(blocks[0].text, "To /biː/ or not to /biː/");
+        // display text (for the reader / accent-bar matcher) is stripped
+        assert_eq!(blocks[0].display, "To  or not to ");
+    }
+
+    #[test]
+    fn lone_pron_note_produces_no_block() {
+        // a <pron> note is neither a source nor explication block
+        let g = "<pron>BEE: be /biː/ keeps the long vowel.</pron>";
+        let blocks = gloss_blocks(g);
+        assert_eq!(blocks.len(), 0);
     }
 }
 
