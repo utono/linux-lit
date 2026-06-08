@@ -123,8 +123,9 @@ fn default_claude_model() -> String {
 }
 
 fn default_elevenlabs_voice_id() -> String {
-    // Rachel — ElevenLabs' stock default voice.
-    "21m00Tcm4TlvDq8ikWAM".to_string()
+    // Alice — "Clear, Engaging Educator". A premade voice (free-tier API
+    // usable); library voices return HTTP 402 paid_plan_required on free plans.
+    "Xb7hH8MSUJpSbSDYk0k2".to_string()
 }
 
 fn default_elevenlabs_model_id() -> String {
