@@ -49,6 +49,11 @@ impl SettingsOverlay {
             .halign(gtk4::Align::Center)
             .valign(gtk4::Align::Center)
             .width_request(500)
+            // Fixed height so the vexpand scroll fills the space between header
+            // and footer; without it the centered box collapses to the scroll's
+            // tiny min height and only ~2 of the 7 rows show (footer overlaps).
+            // Sized to fit all 7 setting rows + header + footer.
+            .height_request(360)
             .build();
         picker_box.add_css_class("library-picker");
 
