@@ -697,3 +697,56 @@ pub(crate) fn submit_gloss_prompt(state: &Rc<RefCell<AppState>>) {
         crate::app::GlossPromptMode::Edit => edit_gloss(state, &prompt),
     }
 }
+
+/// Given a source block's verse text (one quoted line per `\n`) and the work's
+/// lines as `(text, Option<start_seconds>)`, return the start time of the FIRST
+/// verse line (in block order) that matches a work line carrying a timestamp.
+/// Matching is exact on trimmed text. None if no matched line has timing.
+fn first_source_start_time(verses: &str, work: &[(String, Option<f64>)]) -> Option<f64> {
+    for verse in verses.lines() {
+        let needle = verse.trim();
+        if needle.is_empty() {
+            continue;
+        }
+        for (text, start) in work {
+            if text.trim() == needle {
+                if let Some(s) = start {
+                    return Some(*s);
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod source_timing_tests {
+    use super::*;
+
+    #[test]
+    fn first_timed_matching_line_wins() {
+        let work: Vec<(String, Option<f64>)> = vec![
+            ("Ah, my good Lord of Winchester, I thank you.".into(), None),
+            ("You are always my good friend.".into(), Some(12.5)),
+            ("I shall both find your Lordship judge and juror,".into(), Some(15.0)),
+        ];
+        let verses = "Ah, my good Lord of Winchester, I thank you.\nYou are always my good friend.";
+        assert_eq!(first_source_start_time(verses, &work), Some(12.5));
+    }
+
+    #[test]
+    fn none_when_no_match_has_timing() {
+        let work: Vec<(String, Option<f64>)> = vec![
+            ("Ah, my good Lord of Winchester, I thank you.".into(), None),
+        ];
+        let verses = "Ah, my good Lord of Winchester, I thank you.";
+        assert_eq!(first_source_start_time(verses, &work), None);
+    }
+
+    #[test]
+    fn none_when_no_text_match() {
+        let work: Vec<(String, Option<f64>)> = vec![("Unrelated line.".into(), Some(1.0))];
+        let verses = "Ah, my good Lord of Winchester, I thank you.";
+        assert_eq!(first_source_start_time(verses, &work), None);
+    }
+}
