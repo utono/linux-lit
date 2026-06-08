@@ -731,7 +731,7 @@ fn handle_gloss_key(
             true
         }
         "space" => {
-            crate::input::actions::gloss::read_current_paragraph(state);
+            crate::input::actions::gloss::read_current_block(state);
             true
         }
         "Escape" | "n" => {

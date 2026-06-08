@@ -485,56 +485,83 @@ pub fn ensure_bookmarks_table(conn: &Connection) -> Result<(), rusqlite::Error> 
     Ok(())
 }
 
-/// Ensure the gloss_audio table exists (per-explication-paragraph TTS cache).
+/// Column + constraint body of the gloss_audio table, shared by the fresh-install
+/// CREATE and the legacy-rebuild migration so the two cannot drift.
+const GLOSS_AUDIO_COLUMNS: &str = "
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    gloss_id        INTEGER NOT NULL REFERENCES glosses(id) ON DELETE CASCADE,
+    kind            TEXT NOT NULL DEFAULT 'explication',
+    paragraph_index INTEGER NOT NULL,
+    audio_path      TEXT NOT NULL,
+    voice_id        TEXT NOT NULL,
+    model_id        TEXT NOT NULL,
+    timestamp       DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(gloss_id, kind, paragraph_index)
+";
+
+/// Ensure the gloss_audio table exists (per-block TTS cache, keyed by kind).
 pub fn ensure_gloss_audio_table(conn: &Connection) -> Result<(), rusqlite::Error> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS gloss_audio (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            gloss_id        INTEGER NOT NULL REFERENCES glosses(id) ON DELETE CASCADE,
-            paragraph_index INTEGER NOT NULL,
-            audio_path      TEXT NOT NULL,
-            voice_id        TEXT NOT NULL,
-            model_id        TEXT NOT NULL,
-            timestamp       DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(gloss_id, paragraph_index)
-        );
-        CREATE INDEX IF NOT EXISTS idx_gloss_audio_gloss_id ON gloss_audio(gloss_id);",
-    )?;
+    // Fresh installs get the new shape directly.
+    conn.execute_batch(&format!(
+        "CREATE TABLE IF NOT EXISTS gloss_audio ({GLOSS_AUDIO_COLUMNS});
+         CREATE INDEX IF NOT EXISTS idx_gloss_audio_gloss_id ON gloss_audio(gloss_id);"
+    ))?;
+
+    // Upgrade a legacy table (no `kind` column) by rebuilding to the new shape.
+    let has_kind: bool = conn
+        .prepare("SELECT 1 FROM pragma_table_info('gloss_audio') WHERE name = 'kind'")?
+        .exists([])?;
+    if !has_kind {
+        conn.execute_batch(&format!(
+            "BEGIN;
+             ALTER TABLE gloss_audio RENAME TO gloss_audio_old;
+             CREATE TABLE gloss_audio ({GLOSS_AUDIO_COLUMNS});
+             INSERT INTO gloss_audio (id, gloss_id, kind, paragraph_index, audio_path, voice_id, model_id, timestamp)
+                SELECT id, gloss_id, 'explication', paragraph_index, audio_path, voice_id, model_id, timestamp
+                FROM gloss_audio_old;
+             DROP TABLE gloss_audio_old;
+             CREATE INDEX IF NOT EXISTS idx_gloss_audio_gloss_id ON gloss_audio(gloss_id);
+             COMMIT;"
+        ))?;
+    }
     Ok(())
 }
 
-/// Return the cached audio path for a gloss paragraph, if any.
+/// Return the cached audio path for a gloss block, if any.
 pub fn find_gloss_audio(
     conn: &Connection,
     gloss_id: i64,
-    paragraph_index: i64,
+    kind: &str,
+    index: i64,
 ) -> Result<Option<String>, rusqlite::Error> {
     conn.query_row(
-        "SELECT audio_path FROM gloss_audio WHERE gloss_id = ?1 AND paragraph_index = ?2",
-        rusqlite::params![gloss_id, paragraph_index],
+        "SELECT audio_path FROM gloss_audio
+         WHERE gloss_id = ?1 AND kind = ?2 AND paragraph_index = ?3",
+        rusqlite::params![gloss_id, kind, index],
         |row| row.get::<_, String>(0),
     )
     .optional()
 }
 
-/// Insert or replace the audio path for a gloss paragraph.
+/// Insert or replace the audio path for a gloss block.
 pub fn save_gloss_audio(
     conn: &Connection,
     gloss_id: i64,
-    paragraph_index: i64,
+    kind: &str,
+    index: i64,
     audio_path: &str,
     voice_id: &str,
     model_id: &str,
 ) -> Result<(), rusqlite::Error> {
     conn.execute(
-        "INSERT INTO gloss_audio (gloss_id, paragraph_index, audio_path, voice_id, model_id)
-         VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT(gloss_id, paragraph_index)
+        "INSERT INTO gloss_audio (gloss_id, kind, paragraph_index, audio_path, voice_id, model_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(gloss_id, kind, paragraph_index)
          DO UPDATE SET audio_path = excluded.audio_path,
                        voice_id   = excluded.voice_id,
                        model_id   = excluded.model_id,
                        timestamp  = CURRENT_TIMESTAMP",
-        rusqlite::params![gloss_id, paragraph_index, audio_path, voice_id, model_id],
+        rusqlite::params![gloss_id, kind, index, audio_path, voice_id, model_id],
     )?;
     Ok(())
 }
@@ -1796,26 +1823,26 @@ mod tests {
         ensure_gloss_audio_table(&conn).unwrap();
 
         // Miss before insert.
-        assert_eq!(find_gloss_audio(&conn, 4823, 0).unwrap(), None);
+        assert_eq!(find_gloss_audio(&conn, 4823, "explication", 0).unwrap(), None);
 
         // Insert, then hit.
-        save_gloss_audio(&conn, 4823, 0, "/tmp/a/0.mp3", "voiceA", "modelA").unwrap();
+        save_gloss_audio(&conn, 4823, "explication", 0, "/tmp/a/0.mp3", "voiceA", "modelA").unwrap();
         assert_eq!(
-            find_gloss_audio(&conn, 4823, 0).unwrap(),
+            find_gloss_audio(&conn, 4823, "explication", 0).unwrap(),
             Some("/tmp/a/0.mp3".to_string())
         );
 
-        // Upsert: same (gloss_id, paragraph_index) replaces the path.
-        save_gloss_audio(&conn, 4823, 0, "/tmp/a/0b.mp3", "voiceB", "modelB").unwrap();
+        // Upsert: same (gloss_id, kind, paragraph_index) replaces the path.
+        save_gloss_audio(&conn, 4823, "explication", 0, "/tmp/a/0b.mp3", "voiceB", "modelB").unwrap();
         assert_eq!(
-            find_gloss_audio(&conn, 4823, 0).unwrap(),
+            find_gloss_audio(&conn, 4823, "explication", 0).unwrap(),
             Some("/tmp/a/0b.mp3".to_string())
         );
 
         // Distinct paragraph_index is a separate row.
-        save_gloss_audio(&conn, 4823, 1, "/tmp/a/1.mp3", "voiceA", "modelA").unwrap();
+        save_gloss_audio(&conn, 4823, "explication", 1, "/tmp/a/1.mp3", "voiceA", "modelA").unwrap();
         assert_eq!(
-            find_gloss_audio(&conn, 4823, 1).unwrap(),
+            find_gloss_audio(&conn, 4823, "explication", 1).unwrap(),
             Some("/tmp/a/1.mp3".to_string())
         );
     }
@@ -1829,12 +1856,68 @@ mod tests {
         )
         .unwrap();
         ensure_gloss_audio_table(&conn).unwrap();
-        save_gloss_audio(&conn, 7, 0, "/tmp/7/0.mp3", "v", "m").unwrap();
-        save_gloss_audio(&conn, 7, 1, "/tmp/7/1.mp3", "v", "m").unwrap();
-        assert!(find_gloss_audio(&conn, 7, 0).unwrap().is_some());
+        save_gloss_audio(&conn, 7, "explication", 0, "/tmp/7/0.mp3", "v", "m").unwrap();
+        save_gloss_audio(&conn, 7, "explication", 1, "/tmp/7/1.mp3", "v", "m").unwrap();
+        assert!(find_gloss_audio(&conn, 7, "explication", 0).unwrap().is_some());
         delete_gloss_audio(&conn, 7).unwrap();
-        assert!(find_gloss_audio(&conn, 7, 0).unwrap().is_none());
-        assert!(find_gloss_audio(&conn, 7, 1).unwrap().is_none());
+        assert!(find_gloss_audio(&conn, 7, "explication", 0).unwrap().is_none());
+        assert!(find_gloss_audio(&conn, 7, "explication", 1).unwrap().is_none());
+    }
+
+    #[test]
+    fn gloss_audio_kind_distinct_rows() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE glosses (id INTEGER PRIMARY KEY);
+             INSERT INTO glosses (id) VALUES (9);",
+        )
+        .unwrap();
+        ensure_gloss_audio_table(&conn).unwrap();
+
+        save_gloss_audio(&conn, 9, "explication", 0, "/e0.mp3", "v", "m").unwrap();
+        save_gloss_audio(&conn, 9, "source", 0, "/s0.mp3", "v", "m").unwrap();
+        assert_eq!(find_gloss_audio(&conn, 9, "explication", 0).unwrap(), Some("/e0.mp3".to_string()));
+        assert_eq!(find_gloss_audio(&conn, 9, "source", 0).unwrap(), Some("/s0.mp3".to_string()));
+
+        save_gloss_audio(&conn, 9, "source", 0, "/s0b.mp3", "v", "m").unwrap();
+        assert_eq!(find_gloss_audio(&conn, 9, "source", 0).unwrap(), Some("/s0b.mp3".to_string()));
+        assert_eq!(find_gloss_audio(&conn, 9, "explication", 0).unwrap(), Some("/e0.mp3".to_string()));
+    }
+
+    #[test]
+    fn gloss_audio_migrates_legacy_table() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE glosses (id INTEGER PRIMARY KEY);
+             INSERT INTO glosses (id) VALUES (3);",
+        )
+        .unwrap();
+        // Legacy table shape (no `kind` column), with one row.
+        conn.execute_batch(
+            "CREATE TABLE gloss_audio (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                gloss_id INTEGER NOT NULL,
+                paragraph_index INTEGER NOT NULL,
+                audio_path TEXT NOT NULL,
+                voice_id TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(gloss_id, paragraph_index)
+            );
+            INSERT INTO gloss_audio (gloss_id, paragraph_index, audio_path, voice_id, model_id)
+                VALUES (3, 0, '/legacy0.mp3', 'v', 'm');",
+        )
+        .unwrap();
+
+        ensure_gloss_audio_table(&conn).unwrap();
+        assert_eq!(find_gloss_audio(&conn, 3, "explication", 0).unwrap(), Some("/legacy0.mp3".to_string()));
+        save_gloss_audio(&conn, 3, "source", 0, "/s.mp3", "v", "m").unwrap();
+        assert_eq!(find_gloss_audio(&conn, 3, "source", 0).unwrap(), Some("/s.mp3".to_string()));
+
+        // Idempotent: a second ensure call is a no-op and preserves data.
+        ensure_gloss_audio_table(&conn).unwrap();
+        assert_eq!(find_gloss_audio(&conn, 3, "explication", 0).unwrap(), Some("/legacy0.mp3".to_string()));
+        assert_eq!(find_gloss_audio(&conn, 3, "source", 0).unwrap(), Some("/s.mp3".to_string()));
     }
 
     #[test]
