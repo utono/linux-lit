@@ -595,6 +595,7 @@ impl GlossOverlay {
         self.container.set_visible(true);
         self.apply_font();
         self.reset_scroll_top();
+        self.mark_cursor_paragraph();
     }
 
     /// "Glossing…" loading card that shows the passage being glossed, rendered
@@ -1073,6 +1074,25 @@ impl GlossOverlay {
         best.map(|(idx, _)| idx)
     }
 
+    /// Move the left accent bar to the current cursor explication paragraph and
+    /// repaint. No-op when there are no explication paragraphs.
+    fn mark_cursor_paragraph(&self) {
+        let idx = match self.current_explication_para() {
+            Some(i) => i,
+            None => return,
+        };
+        let span = self
+            .explication_paras
+            .borrow()
+            .iter()
+            .find(|r| r.paragraph_index == idx)
+            .map(|r| (r.start_line, r.end_line));
+        if let Some((start_line, end_line)) = span {
+            *self.bar_ranges.borrow_mut() = vec![BarRange { start_line, end_line }];
+            self.bar_drawing.queue_draw();
+        }
+    }
+
     /// Approximate height of one line of gloss text, derived from the view's
     /// font. Used ONLY as the per-press *step distance* for `scroll_gloss`
     /// (how far one j/k moves before snapping) — never as a snapping grid, since
@@ -1296,6 +1316,7 @@ impl GlossOverlay {
         adj.set_value(target);
         self.update_bottom_clip();
         self.bar_drawing.queue_draw();
+        self.mark_cursor_paragraph();
     }
 
     pub fn scroll_gloss_to_top(&self) {
@@ -1303,6 +1324,7 @@ impl GlossOverlay {
         adj.set_value(adj.lower());
         self.update_bottom_clip();
         self.bar_drawing.queue_draw();
+        self.mark_cursor_paragraph();
     }
 
     pub fn scroll_gloss_to_bottom(&self) {
@@ -1316,6 +1338,7 @@ impl GlossOverlay {
         adj.set_value(bottom);
         self.update_bottom_clip();
         self.bar_drawing.queue_draw();
+        self.mark_cursor_paragraph();
     }
 
     pub fn hide(&self) {
