@@ -5,7 +5,10 @@ use gtk4::{
 
 use crate::theme::Theme;
 
-const NUM_SETTINGS: usize = 7;
+const NUM_SETTINGS: usize = 8;
+/// Index of the Voice row (action-on-Enter: opens the voice picker rather than
+/// cycling a value).
+const VOICE_ROW: usize = 7;
 
 #[derive(Clone)]
 struct SettingsSnapshot {
@@ -51,9 +54,10 @@ impl SettingsOverlay {
             .width_request(500)
             // Fixed height so the vexpand scroll fills the space between header
             // and footer; without it the centered box collapses to the scroll's
-            // tiny min height and only ~2 of the 7 rows show (footer overlaps).
-            // Sized to fit all 7 setting rows + header + footer.
-            .height_request(360)
+            // tiny min height and only a couple of rows show (footer overlaps).
+            // Sized to fit all NUM_SETTINGS rows + header + footer; grows with
+            // the row count (≈ +50px per added row).
+            .height_request(410)
             .build();
         picker_box.add_css_class("library-picker");
 
@@ -71,7 +75,7 @@ impl SettingsOverlay {
         header_title.add_css_class("library-picker-title");
 
         let header_count = Label::builder()
-            .label("7 items")
+            .label("8 items")
             .halign(gtk4::Align::End)
             .build();
         header_count.add_css_class("library-picker-crumb");
@@ -103,6 +107,7 @@ impl SettingsOverlay {
             "Navigation",
             "Transition",
             "Cursor Line",
+            "Voice",
         ];
 
         let mut rows = Vec::new();
@@ -168,6 +173,7 @@ impl SettingsOverlay {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
         line_spacing: u32,
@@ -176,6 +182,7 @@ impl SettingsOverlay {
         navigation_mode: crate::config::NavigationMode,
         transition_style: crate::config::TransitionStyle,
         show_cursor_line: bool,
+        voice_label: &str,
     ) {
         self.snapshot = SettingsSnapshot {
             line_spacing,
@@ -195,6 +202,7 @@ impl SettingsOverlay {
             navigation_mode,
             transition_style,
             show_cursor_line,
+            voice_label,
         );
         self.update_row_opacity();
         self.list_box.select_row(Some(&self.rows[0]));
@@ -236,6 +244,7 @@ impl SettingsOverlay {
         self.navigation_mode == crate::config::NavigationMode::Scroll
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn adjust_value(
         &mut self,
         delta: i32,
@@ -337,6 +346,8 @@ impl SettingsOverlay {
                     .set_label(&format!("\u{25C0} {} \u{25B6}", label));
                 SettingsChange::CursorLine(new_val)
             }
+            // Voice row: not a value cycle — h/l/Right all open the picker.
+            VOICE_ROW => SettingsChange::OpenVoicePicker,
             _ => SettingsChange::None,
         }
     }
@@ -371,6 +382,7 @@ impl SettingsOverlay {
         &self.themes
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn update_displayed_values(
         &self,
         line_spacing: u32,
@@ -379,6 +391,7 @@ impl SettingsOverlay {
         navigation_mode: crate::config::NavigationMode,
         transition_style: crate::config::TransitionStyle,
         show_cursor_line: bool,
+        voice_label: &str,
     ) {
         if let Some(theme) = self.themes.get(self.theme_index) {
             self.value_labels[0]
@@ -402,6 +415,17 @@ impl SettingsOverlay {
         let cursor_label = if show_cursor_line { "On" } else { "Off" };
         self.value_labels[6]
             .set_label(&format!("\u{25C0} {} \u{25B6}", cursor_label));
+        // Voice row is action-on-Enter (opens the picker), so only a trailing
+        // ▶ — no ◀ — to signal "press right/Enter to choose".
+        self.value_labels[VOICE_ROW]
+            .set_label(&format!("{} \u{25B6}", voice_label));
+    }
+
+    /// Update just the Voice row's displayed value (after the picker confirms a
+    /// new voice).
+    pub fn set_voice_label(&self, voice_label: &str) {
+        self.value_labels[VOICE_ROW]
+            .set_label(&format!("{} \u{25B6}", voice_label));
     }
 
     fn update_row_opacity(&self) {
@@ -418,5 +442,8 @@ pub enum SettingsChange {
     Navigation(crate::config::NavigationMode),
     Transition(crate::config::TransitionStyle),
     CursorLine(bool),
+    /// The Voice row was activated — open the voice picker (handled in
+    /// `apply_settings_change`, no config field changes directly here).
+    OpenVoicePicker,
     None,
 }
