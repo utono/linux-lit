@@ -13,6 +13,13 @@ struct LineNumber {
     number: i64,
 }
 
+/// Buffer-line span of one explication paragraph, for the read-aloud cursor.
+struct ParaRange {
+    paragraph_index: i32,
+    start_line: i32,
+    end_line: i32,
+}
+
 pub struct GlossOverlay {
     pub overlay: Overlay,
     scrim: gtk4::Box,
@@ -57,6 +64,10 @@ pub struct GlossOverlay {
     /// loading state reuses it so "Glossing…" presents as a full card rather
     /// than a label-sized box. `(0,0)` until the first card is shown.
     last_card_size: Cell<(i32, i32)>,
+    /// Explication paragraphs of the currently shown gloss, with their buffer
+    /// line spans. Drives the read-aloud cursor (the paragraph nearest the
+    /// viewport center). Empty in echo/synopsis/glossing modes.
+    explication_paras: Rc<RefCell<Vec<ParaRange>>>,
     /// "Ask about this scene" card, stacked below the synopsis card (inside the
     /// same `container`, after the footer). Hidden unless the reader pressed `A`
     /// while the synopsis card is open. `ask_input` is an editable TextView that
@@ -165,6 +176,7 @@ impl GlossOverlay {
         let bar_x: Rc<RefCell<i32>> = Rc::new(RefCell::new((column_width as i32) / 8));
         let line_numbers: Rc<RefCell<Vec<LineNumber>>> = Rc::new(RefCell::new(Vec::new()));
         let echo_lines: Rc<RefCell<Vec<i32>>> = Rc::new(RefCell::new(Vec::new()));
+        let explication_paras: Rc<RefCell<Vec<ParaRange>>> = Rc::new(RefCell::new(Vec::new()));
 
         let ranges_clone = bar_ranges.clone();
         let color_clone = bar_color.clone();
@@ -408,6 +420,7 @@ impl GlossOverlay {
             font_size: std::cell::Cell::new(GLOSS_DEFAULT_FONT_SIZE),
             synopsis_label_ranges: RefCell::new(Vec::new()),
             last_card_size: Cell::new((0, 0)),
+            explication_paras,
             ask_container,
             ask_input,
             ask_title,
@@ -575,6 +588,7 @@ impl GlossOverlay {
         *self.echo_lines.borrow_mut() = Vec::new();
         self.bar_drawing.queue_draw();
 
+        self.rebuild_explication_ranges(gloss);
         self.gloss_scroll_overlay.set_visible(true);
         self.hint.set_visible(true);
         self.scrim.set_visible(true);
@@ -591,6 +605,7 @@ impl GlossOverlay {
     /// view in place when it arrives, so the passage looks identical before/after.
     pub fn show_glossing(&self, passage_doc: &str, card_width: i32, card_height: i32, root_color: Option<&str>) {
         self.synopsis_label_ranges.borrow_mut().clear();
+        self.explication_paras.borrow_mut().clear();
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         self.last_card_size.set((card_width, card_height));
@@ -671,6 +686,7 @@ impl GlossOverlay {
     ) {
         // No synopsis label bolding in echo view.
         self.synopsis_label_ranges.borrow_mut().clear();
+        self.explication_paras.borrow_mut().clear();
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         self.last_card_size.set((card_width, card_height));
@@ -806,6 +822,7 @@ impl GlossOverlay {
         *self.bar_ranges.borrow_mut() = Vec::new();
         *self.line_numbers.borrow_mut() = Vec::new();
         *self.echo_lines.borrow_mut() = Vec::new();
+        self.explication_paras.borrow_mut().clear();
 
         self.gloss_view.set_left_margin(left);
         self.gloss_view.set_right_margin(left);
@@ -990,6 +1007,72 @@ impl GlossOverlay {
         Self::recompute_bottom_clip(&self.gloss_view, &self.bottom_clip, &self.gloss_scrolled);
     }
 
+    /// Recompute `explication_paras` line spans from the current buffer + gloss
+    /// text. Each explication paragraph is located by scanning buffer lines for
+    /// the paragraph's first text.
+    fn rebuild_explication_ranges(&self, gloss: &str) {
+        let paras = explication_paragraphs(gloss);
+        let buffer = self.gloss_view.buffer();
+        let line_count = buffer.line_count();
+        let mut ranges: Vec<ParaRange> = Vec::new();
+        let mut search_from = 0i32;
+        for (pidx, text) in paras {
+            // Match on the paragraph's first non-empty trimmed line.
+            let needle = text.lines().next().unwrap_or("").trim();
+            if needle.is_empty() {
+                continue;
+            }
+            let mut found: Option<i32> = None;
+            for line in search_from..line_count {
+                if let Some(start) = buffer.iter_at_line(line) {
+                    let mut end = start.clone();
+                    if !end.ends_line() {
+                        end.forward_to_line_end();
+                    }
+                    let line_text = buffer.text(&start, &end, false);
+                    if line_text.as_str().trim().starts_with(needle) {
+                        found = Some(line);
+                        break;
+                    }
+                }
+            }
+            if let Some(start_line) = found {
+                ranges.push(ParaRange {
+                    paragraph_index: pidx,
+                    start_line,
+                    end_line: start_line,
+                });
+                search_from = start_line + 1;
+            }
+        }
+        *self.explication_paras.borrow_mut() = ranges;
+    }
+
+    /// The explication paragraph nearest the viewport vertical center, by
+    /// `paragraph_index`. None when the current card has no explication
+    /// paragraphs (echoes/synopsis/empty gloss).
+    pub fn current_explication_para(&self) -> Option<i32> {
+        let ranges = self.explication_paras.borrow();
+        if ranges.is_empty() {
+            return None;
+        }
+        let adj = self.gloss_scrolled.vadjustment();
+        let center_y = adj.value() + adj.page_size() / 2.0;
+        let buffer = self.gloss_view.buffer();
+        let mut best: Option<(i32, f64)> = None;
+        for r in ranges.iter() {
+            if let Some(iter) = buffer.iter_at_line(r.start_line) {
+                let (y, h) = self.gloss_view.line_yrange(&iter);
+                let mid = (y + self.gloss_view.top_margin()) as f64 + h as f64 / 2.0;
+                let dist = (mid - center_y).abs();
+                if best.map(|(_, d)| dist < d).unwrap_or(true) {
+                    best = Some((r.paragraph_index, dist));
+                }
+            }
+        }
+        best.map(|(idx, _)| idx)
+    }
+
     /// Approximate height of one line of gloss text, derived from the view's
     /// font. Used ONLY as the per-press *step distance* for `scroll_gloss`
     /// (how far one j/k moves before snapping) — never as a snapping grid, since
@@ -1155,6 +1238,7 @@ impl GlossOverlay {
 
     pub fn show_loading_message(&self, message: &str) {
         self.synopsis_label_ranges.borrow_mut().clear();
+        self.explication_paras.borrow_mut().clear();
         // Size the card to the full reading area so the loading state reads as a
         // proper card (the same footprint the synopsis/gloss card will occupy)
         // rather than a label-sized box. Reuse the last card geometry; fall back
