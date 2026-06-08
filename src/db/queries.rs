@@ -539,6 +539,16 @@ pub fn save_gloss_audio(
     Ok(())
 }
 
+/// Delete all cached audio rows for a gloss (call when the gloss is removed,
+/// since SQLite FK cascade is not enabled app-wide).
+pub fn delete_gloss_audio(conn: &Connection, gloss_id: i64) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "DELETE FROM gloss_audio WHERE gloss_id = ?1",
+        rusqlite::params![gloss_id],
+    )?;
+    Ok(())
+}
+
 /// Load all bookmarked line_mapping_ids for a work.
 pub fn load_bookmarks(conn: &Connection, work_abbrev: &str) -> Result<Vec<i64>, rusqlite::Error> {
     let mut stmt = conn.prepare(
@@ -1808,6 +1818,23 @@ mod tests {
             find_gloss_audio(&conn, 4823, 1).unwrap(),
             Some("/tmp/a/1.mp3".to_string())
         );
+    }
+
+    #[test]
+    fn delete_gloss_audio_removes_rows() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE glosses (id INTEGER PRIMARY KEY);
+             INSERT INTO glosses (id) VALUES (7);",
+        )
+        .unwrap();
+        ensure_gloss_audio_table(&conn).unwrap();
+        save_gloss_audio(&conn, 7, 0, "/tmp/7/0.mp3", "v", "m").unwrap();
+        save_gloss_audio(&conn, 7, 1, "/tmp/7/1.mp3", "v", "m").unwrap();
+        assert!(find_gloss_audio(&conn, 7, 0).unwrap().is_some());
+        delete_gloss_audio(&conn, 7).unwrap();
+        assert!(find_gloss_audio(&conn, 7, 0).unwrap().is_none());
+        assert!(find_gloss_audio(&conn, 7, 1).unwrap().is_none());
     }
 
     #[test]

@@ -192,6 +192,7 @@ pub(crate) fn delete_current_gloss(state_rc: &Rc<RefCell<AppState>>) {
         let gloss_id = gloss.gloss_id;
         if let Ok(conn) = crate::db::queries::open_db_rw() {
             let _ = crate::db::queries::delete_gloss(&conn, gloss_id);
+            let _ = crate::db::queries::delete_gloss_audio(&conn, gloss_id);
         }
         if let Some(ctx) = s.gloss_context.as_ref() {
             let dir = gloss_audio_dir(&ctx.work_abbrev, gloss_id);
@@ -518,19 +519,19 @@ pub(crate) fn read_current_paragraph(state_rc: &Rc<RefCell<AppState>>) {
     }
 
     // No explication paragraph (e.g. an all-echo gloss) -> nothing to read.
-    let has_para = state_rc.borrow().gloss_overlay.current_explication_para().is_some();
-    if !has_para {
-        show_tts_toast(state_rc, "No explication to read");
-        return;
-    }
+    // Resolve once; the Ref is dropped before show_tts_toast is called.
+    let para_index_opt = state_rc.borrow().gloss_overlay.current_explication_para();
+    let para_index = match para_index_opt {
+        Some(i) => i,
+        None => {
+            show_tts_toast(state_rc, "No explication to read");
+            return;
+        }
+    };
 
     // Resolve cursor paragraph -> (gloss_id, paragraph_index, work_abbrev, text).
-    let (gloss_id, para_index, work_abbrev, text, voice_id, model_id, tokio_handle) = {
+    let (gloss_id, work_abbrev, text, voice_id, model_id, tokio_handle) = {
         let s = state_rc.borrow();
-        let para_index = match s.gloss_overlay.current_explication_para() {
-            Some(i) => i,
-            None => return,
-        };
         let gloss = match s.gloss_list.get(s.gloss_index) {
             Some(g) => g,
             None => return,
@@ -547,7 +548,6 @@ pub(crate) fn read_current_paragraph(state_rc: &Rc<RefCell<AppState>>) {
         };
         (
             gloss_id,
-            para_index,
             work_abbrev,
             text,
             s.config.elevenlabs_voice_id.clone(),
