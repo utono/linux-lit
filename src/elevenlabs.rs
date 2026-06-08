@@ -64,7 +64,7 @@ pub async fn synthesize(
         return Err(ElevenLabsError::RateLimited);
     }
     if !status.is_success() {
-        let text = response.text().await.unwrap_or_default();
+        let text = response.text().await.unwrap_or_else(|e| e.to_string());
         return Err(ElevenLabsError::ApiError(format!("HTTP {}: {}", status, text)));
     }
 
