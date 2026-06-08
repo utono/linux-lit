@@ -66,9 +66,14 @@ pub struct GlossOverlay {
     /// than a label-sized box. `(0,0)` until the first card is shown.
     last_card_size: Cell<(i32, i32)>,
     /// Cursor-stop blocks of the currently shown gloss, with their buffer
-    /// line spans. Drives the read-aloud cursor (the block nearest the
-    /// viewport center). Empty in echo/synopsis/glossing modes.
+    /// line spans, in document order. Empty in echo/synopsis/glossing modes.
     blocks: Rc<RefCell<Vec<BlockRange>>>,
+    /// Index into `blocks` of the selected cursor block. `j`/`k` step it, `gg`/
+    /// `G` jump to first/last; the accent bar marks it and `Space` acts on it.
+    /// Reset to 0 on each gloss render. The cursor is an explicit selection, NOT
+    /// derived from scroll position (a tall card's viewport center can leave
+    /// top/bottom blocks unreachable — see GLOSS-CURSOR debug logging).
+    cursor_block: Cell<usize>,
     /// "Ask about this scene" card, stacked below the synopsis card (inside the
     /// same `container`, after the footer). Hidden unless the reader pressed `A`
     /// while the synopsis card is open. `ask_input` is an editable TextView that
@@ -422,6 +427,7 @@ impl GlossOverlay {
             synopsis_label_ranges: RefCell::new(Vec::new()),
             last_card_size: Cell::new((0, 0)),
             blocks,
+            cursor_block: Cell::new(0),
             ask_container,
             ask_input,
             ask_title,
@@ -558,7 +564,7 @@ impl GlossOverlay {
         self.gloss_view.set_right_margin(left);
         self.gloss_view.set_top_margin(32);
         self.gloss_view.set_pixels_below_lines(4);
-        self.hint.set_text("Esc close · Space play/read · a add · e edit · d delete · c copy id · Ctrl+n/p gloss · Alt+n/p passage");
+        self.hint.set_text("Esc close · Space play/pause · a play · A add · e edit · d delete · c copy id · Ctrl+n/p gloss · Alt+n/p passage");
         self.orig_header.set_visible(false);
         self.original_label.set_visible(false);
         self.corr_header.set_visible(false);
@@ -1060,35 +1066,115 @@ impl GlossOverlay {
             search_from = end_line + 1;
         }
         *self.blocks.borrow_mut() = ranges;
+        // A fresh render selects the first block.
+        self.cursor_block.set(0);
     }
 
-    /// The cursor-stop block nearest the viewport vertical center, as
-    /// `(kind, index)`. None when the current card has no blocks
-    /// (echoes/synopsis/empty gloss).
+    /// The selected cursor block as `(kind, index)`. None when the current card
+    /// has no blocks (echoes/synopsis/empty gloss). The selection is the stored
+    /// `cursor_block` index (set by j/k/gg/G), clamped to the block list — NOT
+    /// derived from scroll position.
     pub fn current_block(&self) -> Option<(BlockKind, i32)> {
         let ranges = self.blocks.borrow();
         if ranges.is_empty() {
             return None;
         }
-        let adj = self.gloss_scrolled.vadjustment();
-        let center_y = adj.value() + adj.page_size() / 2.0;
-        let buffer = self.gloss_view.buffer();
-        let mut best: Option<((BlockKind, i32), f64)> = None;
-        for r in ranges.iter() {
-            if let Some(iter) = buffer.iter_at_line(r.start_line) {
-                let (y, h) = self.gloss_view.line_yrange(&iter);
-                let mid = (y + self.gloss_view.top_margin()) as f64 + h as f64 / 2.0;
-                let dist = (mid - center_y).abs();
-                if best.map(|(_, d)| dist < d).unwrap_or(true) {
-                    best = Some(((r.kind, r.index), dist));
-                }
-            }
-        }
-        best.map(|(k, _)| k)
+        let i = self.cursor_block.get().min(ranges.len() - 1);
+        ranges.get(i).map(|r| (r.kind, r.index))
     }
 
-    /// Move the left accent bar to the current cursor block and repaint. No-op
-    /// when there are no blocks.
+    /// `j`/`k`: move the block cursor down/up one block.
+    pub fn cursor_next_block(&self) {
+        self.step_cursor(1);
+    }
+    pub fn cursor_prev_block(&self) {
+        self.step_cursor(-1);
+    }
+    /// `gg`/`G`: move the block cursor to the first/last block.
+    pub fn cursor_first_block(&self) {
+        self.cursor_to_end(false);
+    }
+    pub fn cursor_last_block(&self) {
+        self.cursor_to_end(true);
+    }
+
+    /// Step the cursor to the next (`+1`) or previous (`-1`) block, clamped to
+    /// the ends; mark it and scroll it into view. No-op with no blocks.
+    fn step_cursor(&self, delta: i32) {
+        let len = self.blocks.borrow().len();
+        if len == 0 {
+            return;
+        }
+        let cur = self.cursor_block.get().min(len - 1) as i64;
+        let next = (cur + delta as i64).clamp(0, len as i64 - 1) as usize;
+        self.cursor_block.set(next);
+        self.mark_cursor_block();
+        self.scroll_cursor_into_view();
+    }
+
+    /// Jump the cursor to the first (`false`) or last (`true`) block; mark it and
+    /// scroll it into view.
+    fn cursor_to_end(&self, last: bool) {
+        let len = self.blocks.borrow().len();
+        if len == 0 {
+            return;
+        }
+        self.cursor_block.set(if last { len - 1 } else { 0 });
+        self.mark_cursor_block();
+        self.scroll_cursor_into_view();
+    }
+
+    /// Scroll the viewport so the selected cursor block is visible. Only scrolls
+    /// when the block falls outside the current viewport: brings its top into
+    /// view (with a small pad) if above, or its bottom into view if below.
+    fn scroll_cursor_into_view(&self) {
+        let (start_line, end_line) = {
+            let ranges = self.blocks.borrow();
+            let i = self.cursor_block.get().min(ranges.len().saturating_sub(1));
+            match ranges.get(i) {
+                Some(r) => (r.start_line, r.end_line),
+                None => return,
+            }
+        };
+        let buffer = self.gloss_view.buffer();
+        let top_margin = self.gloss_view.top_margin() as f64;
+        let block_top = match buffer.iter_at_line(start_line) {
+            Some(it) => self.gloss_view.line_yrange(&it).0 as f64 + top_margin,
+            None => return,
+        };
+        let block_bottom = match buffer.iter_at_line(end_line) {
+            Some(it) => {
+                let (y, h) = self.gloss_view.line_yrange(&it);
+                (y + h) as f64 + top_margin
+            }
+            None => block_top,
+        };
+
+        let adj = self.gloss_scrolled.vadjustment();
+        let view_top = adj.value();
+        let view_bottom = view_top + adj.page_size();
+        let max_value = (adj.upper() - adj.page_size()).max(adj.lower());
+        let pad = 24.0;
+
+        let new_value = if block_top < view_top + pad {
+            // Block starts above the viewport: bring its top into view.
+            (block_top - pad).clamp(adj.lower(), max_value)
+        } else if block_bottom > view_bottom - pad {
+            // Block ends below the viewport: bring its bottom into view (but
+            // never scroll its top above the viewport top).
+            let by_bottom = (block_bottom + pad - adj.page_size()).clamp(adj.lower(), max_value);
+            by_bottom.min((block_top - pad).max(adj.lower()))
+        } else {
+            return; // already fully visible
+        };
+        adj.set_value(new_value);
+        self.update_bottom_clip();
+        self.bar_drawing.queue_draw();
+    }
+
+    /// Move the left accent bar to the selected cursor block and repaint. No-op
+    /// when there are no blocks. Logs the landing block so j/k/gg/G navigation
+    /// stays verifiable from the dev log.
     fn mark_cursor_block(&self) {
         let (kind, index) = match self.current_block() {
             Some(t) => t,
@@ -1101,6 +1187,10 @@ impl GlossOverlay {
             .find(|r| r.kind == kind && r.index == index)
             .map(|r| (r.start_line, r.end_line));
         if let Some((start_line, end_line)) = span {
+            crate::log_fmt!(
+                "GLOSS-CURSOR: cursor#{} -> {:?}#{} bar lines [{}, {}]",
+                self.cursor_block.get(), kind, index, start_line, end_line
+            );
             *self.bar_ranges.borrow_mut() = vec![BarRange { start_line, end_line }];
             self.bar_drawing.queue_draw();
         }

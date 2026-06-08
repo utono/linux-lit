@@ -650,7 +650,8 @@ fn handle_gloss_key(
     if key_state.borrow().chord == ChordState::PendingG {
         key_state.borrow_mut().chord = ChordState::None;
         if key_name == "g" {
-            state.borrow().gloss_overlay.scroll_gloss_to_top();
+            crate::input::actions::gloss::stop_all_gloss_audio(state);
+            state.borrow().gloss_overlay.cursor_first_block();
         }
         return true;
     }
@@ -691,6 +692,10 @@ fn handle_gloss_key(
     }
     match key_name {
         "a" => {
+            crate::input::actions::gloss::begin_current_block(state);
+            true
+        }
+        "A" => {
             crate::input::actions::gloss::show_amend_dialog(state);
             true
         }
@@ -711,7 +716,8 @@ fn handle_gloss_key(
             true
         }
         "G" => {
-            state.borrow().gloss_overlay.scroll_gloss_to_bottom();
+            crate::input::actions::gloss::stop_all_gloss_audio(state);
+            state.borrow().gloss_overlay.cursor_last_block();
             true
         }
         "bar" => {
@@ -723,11 +729,13 @@ fn handle_gloss_key(
             true
         }
         "j" => {
-            state.borrow().gloss_overlay.scroll_gloss(1);
+            crate::input::actions::gloss::stop_all_gloss_audio(state);
+            state.borrow().gloss_overlay.cursor_next_block();
             true
         }
         "k" => {
-            state.borrow().gloss_overlay.scroll_gloss(-1);
+            crate::input::actions::gloss::stop_all_gloss_audio(state);
+            state.borrow().gloss_overlay.cursor_prev_block();
             true
         }
         "space" => {

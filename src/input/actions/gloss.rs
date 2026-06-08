@@ -507,11 +507,20 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
     });
 }
 
-/// Space in the gloss overlay: act on the cursor's current block.
-/// - Explication block -> read the paragraph aloud via TTS (cached).
-/// - Source block -> seek media to the first quoted line's start time and play
-///   (when MPV is connected and the line is timestamped); otherwise fall back
-///   to TTS of the verse text (cached).
+/// Stop all gloss audio so only one source can ever play: pause MPV media and
+/// stop the rodio TTS player. Called on every cursor move (j/k/gg/G) so moving
+/// off a playing block silences it before the user starts the next one. Both
+/// calls are harmless no-ops when nothing is playing.
+pub(crate) fn stop_all_gloss_audio(state_rc: &Rc<RefCell<AppState>>) {
+    let s = state_rc.borrow();
+    s.tts.stop();
+    let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
+}
+
+/// Space in the gloss overlay: toggle play/pause for the cursor's block.
+/// - If TTS is playing -> stop it.
+/// - Source block + media playing -> pause; else seek to the block start + play.
+/// - Explication block (or source with no media) -> play its TTS (cached).
 pub(crate) fn read_current_block(state_rc: &Rc<RefCell<AppState>>) {
     {
         let s = state_rc.borrow();
@@ -521,26 +530,20 @@ pub(crate) fn read_current_block(state_rc: &Rc<RefCell<AppState>>) {
         }
     }
 
-    // Resolve current block once; drop the Ref before any toast call.
-    let block_opt = state_rc.borrow().gloss_overlay.current_block();
-    let (kind, index) = match block_opt {
+    let (kind, index) = match resolve_cursor_block(state_rc) {
         Some(t) => t,
-        None => {
-            show_tts_toast(state_rc, "Nothing to read");
-            return;
-        }
+        None => return,
     };
 
-    // For a source block, try media playback first.
+    // Source block: Space toggles media play/pause.
     if kind == BlockKind::Source {
-        let seek = {
-            let s = state_rc.borrow();
-            if !s.mpv_connected {
-                None
-            } else {
-                source_block_seek_time(&s, index)
-            }
-        };
+        let (connected, playing, seek) = source_media_state(state_rc, index);
+        if connected && playing {
+            // Currently playing -> pause. (Next Space restarts from block start.)
+            let _ = state_rc.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
+            crate::log_fmt!("GLOSS: source block {} -> pause", index);
+            return;
+        }
         if let Some(start) = seek {
             let _ = state_rc
                 .borrow()
@@ -549,9 +552,74 @@ pub(crate) fn read_current_block(state_rc: &Rc<RefCell<AppState>>) {
             crate::log_fmt!("GLOSS: source block {} -> media seek {}", index, start);
             return;
         }
-        // else: fall through to TTS fallback below.
+        // No media available -> fall through to TTS.
     }
 
+    play_block_tts(state_rc, kind, index);
+}
+
+/// `a` in the gloss overlay: ALWAYS begin playback of the cursor's block from
+/// its start (no pause-toggle). Source block + media -> seek to start + play;
+/// otherwise -> play the block's TTS (cached).
+pub(crate) fn begin_current_block(state_rc: &Rc<RefCell<AppState>>) {
+    // Stop any current audio first so we never overlap.
+    stop_all_gloss_audio(state_rc);
+
+    let (kind, index) = match resolve_cursor_block(state_rc) {
+        Some(t) => t,
+        None => return,
+    };
+
+    if kind == BlockKind::Source {
+        let (connected, _playing, seek) = source_media_state(state_rc, index);
+        if connected {
+            if let Some(start) = seek {
+                let _ = state_rc
+                    .borrow()
+                    .cmd_tx
+                    .try_send(crate::mpv::MpvCommand::ResumeAndSeek(start));
+                crate::log_fmt!("GLOSS: source block {} -> begin media seek {}", index, start);
+                return;
+            }
+        }
+        // No media available -> fall through to TTS.
+    }
+
+    play_block_tts(state_rc, kind, index);
+}
+
+/// Resolve the cursor's current block as `(kind, index)`, toasting "Nothing to
+/// read" and returning None when the card has no blocks. The borrow is dropped
+/// before the toast call.
+fn resolve_cursor_block(state_rc: &Rc<RefCell<AppState>>) -> Option<(BlockKind, i32)> {
+    let block_opt = state_rc.borrow().gloss_overlay.current_block();
+    match block_opt {
+        Some(t) => Some(t),
+        None => {
+            show_tts_toast(state_rc, "Nothing to read");
+            None
+        }
+    }
+}
+
+/// `(mpv_connected, mpv_playing, Some(start))` for a source block's media, where
+/// `start` is the first timestamped line's start time (None if no timing / not
+/// connected).
+fn source_media_state(state_rc: &Rc<RefCell<AppState>>, index: i32) -> (bool, bool, Option<f64>) {
+    let s = state_rc.borrow();
+    let seek = if s.mpv_connected {
+        source_block_seek_time(&s, index)
+    } else {
+        None
+    };
+    (s.mpv_connected, s.mpv_playing, seek)
+}
+
+/// Play a block's TTS audio: cache hit -> play the stored MP3; miss ->
+/// synthesize via ElevenLabs (async), cache it, and play. `kind`/`index`
+/// identify the block; the filename stem is `<index>` (explication) or
+/// `source-<index>` (source).
+fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32) {
     let kind_str = match kind {
         BlockKind::Source => "source",
         BlockKind::Explication => "explication",
