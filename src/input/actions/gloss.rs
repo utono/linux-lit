@@ -193,6 +193,10 @@ pub(crate) fn delete_current_gloss(state_rc: &Rc<RefCell<AppState>>) {
         if let Ok(conn) = crate::db::queries::open_db_rw() {
             let _ = crate::db::queries::delete_gloss(&conn, gloss_id);
         }
+        if let Some(ctx) = s.gloss_context.as_ref() {
+            let dir = gloss_audio_dir(&ctx.work_abbrev, gloss_id);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
         crate::logging::log(&format!("GLOSS: deleted gloss {}", gloss_id));
         s.gloss_list.remove(idx);
 
