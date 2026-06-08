@@ -690,10 +690,13 @@ fn handle_gloss_key(
     if is_alt {
         match key_name {
             "n" => {
+                // Silence audio on passage nav (pause MPV + stop TTS), like j/k.
+                crate::input::actions::gloss::stop_all_gloss_audio(state);
                 crate::input::actions::gloss::navigate_gloss_passage(state, 1);
                 return true;
             }
             "p" => {
+                crate::input::actions::gloss::stop_all_gloss_audio(state);
                 crate::input::actions::gloss::navigate_gloss_passage(state, -1);
                 return true;
             }
@@ -712,10 +715,13 @@ fn handle_gloss_key(
     if is_ctrl {
         match key_name {
             "n" => {
+                // Silence audio on gloss nav (pause MPV + stop TTS), like j/k.
+                crate::input::actions::gloss::stop_all_gloss_audio(state);
                 crate::input::actions::gloss::navigate_gloss(state, -1);
                 return true;
             }
             "p" => {
+                crate::input::actions::gloss::stop_all_gloss_audio(state);
                 crate::input::actions::gloss::navigate_gloss(state, 1);
                 return true;
             }
@@ -727,6 +733,16 @@ fn handle_gloss_key(
                     state,
                     crate::app::InputMode::GlossOverlay,
                 );
+                return true;
+            }
+            // Ctrl+Up/Ctrl+Down adjust volume, mirroring the reader's
+            // VolumeUp/VolumeDown (and the echoes overlay).
+            "Up" => {
+                let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(5.0));
+                return true;
+            }
+            "Down" => {
+                let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(-5.0));
                 return true;
             }
             _ => {}
@@ -981,6 +997,16 @@ fn handle_synopsis_overlay_key(
                 state,
                 crate::app::InputMode::SynopsisOverlay,
             );
+            true
+        }
+        // Ctrl+Up/Ctrl+Down adjust volume, mirroring the reader's
+        // VolumeUp/VolumeDown (and the echoes overlay).
+        "Up" if is_ctrl => {
+            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(5.0));
+            true
+        }
+        "Down" if is_ctrl => {
+            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(-5.0));
             true
         }
         "j" => {
