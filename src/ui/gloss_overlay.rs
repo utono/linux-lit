@@ -1923,6 +1923,35 @@ fn strip_brackets(text: &str) -> String {
     result
 }
 
+/// Remove inline `/IPA/` pronunciation spans for DISPLAY. Mirrors
+/// `strip_brackets`. An IPA span is `/…/` whose contents contain at least one
+/// non-ASCII-letter / IPA-class character (length marks, stress marks, schwa,
+/// etc.), so a bare literal slash between plain words ("and/or") is NOT treated
+/// as a span and survives. The raw, IPA-bearing text is what TTS gets; this is
+/// the reader-facing form. See the gloss-IPA spec, §4.
+fn strip_ipa(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '/' {
+            if let Some(close_rel) = chars[i + 1..].iter().position(|&c| c == '/') {
+                let close = i + 1 + close_rel;
+                let inner = &chars[i + 1..close];
+                let is_ipa = !inner.is_empty()
+                    && inner.iter().any(|&c| !c.is_ascii_alphabetic());
+                if is_ipa {
+                    i = close + 1; // skip the whole /…/ span
+                    continue;
+                }
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
 /// Split an echo bracket `["quote" — Source]` into (quote, citation).
 /// Returns None if the text is not in echo-bracket form. Any trailing
 /// suffix outside the brackets (e.g. "(unverified)") is kept on the
@@ -2083,5 +2112,26 @@ mod synopsis_label_tests {
         let (text, labels) = render_synopsis_with_labels("Just plain text.");
         assert_eq!(text, "Just plain text.");
         assert!(labels.is_empty());
+    }
+
+    #[test]
+    fn strip_ipa_removes_tagged_words() {
+        assert_eq!(strip_ipa("To /biː/ or not to /biː/"), "To  or not to ");
+    }
+
+    #[test]
+    fn strip_ipa_keeps_literal_slash() {
+        // a bare slash between ordinary words is NOT an IPA span
+        assert_eq!(strip_ipa("read and/or write"), "read and/or write");
+    }
+
+    #[test]
+    fn strip_ipa_no_tags_is_identity() {
+        assert_eq!(strip_ipa("plain modern line"), "plain modern line");
+    }
+
+    #[test]
+    fn strip_ipa_handles_stress_marks() {
+        assert_eq!(strip_ipa("the /ˈsʊfər/ of it"), "the  of it");
     }
 }
