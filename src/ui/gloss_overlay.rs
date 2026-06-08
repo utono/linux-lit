@@ -1431,6 +1431,70 @@ pub fn render_synopsis_with_labels(synopsis: &str) -> (String, Vec<(usize, usize
     (out, labels)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BlockKind {
+    Source,
+    Explication,
+}
+
+/// One cursor stop in the gloss, in document order.
+pub struct GlossBlock {
+    pub kind: BlockKind,
+    /// 0-based index WITHIN its kind (source blocks numbered separately from
+    /// explication paragraphs).
+    pub index: i32,
+    /// For Source: the joined verse-line text (speaker labels excluded).
+    /// For Explication: the paragraph prose.
+    pub text: String,
+}
+
+/// Parse a gloss into ordered cursor-stop blocks: each contiguous
+/// `<speaker>`/`<verse>` run is one Source block; each non-echo `<gloss>` is one
+/// Explication block. Echo `<gloss>` brackets are excluded. Source and
+/// explication indices increment independently.
+pub fn gloss_blocks(gloss: &str) -> Vec<GlossBlock> {
+    let mut blocks = Vec::new();
+    let mut source_idx = 0i32;
+    let mut expl_idx = 0i32;
+    let mut pending_verses: Vec<String> = Vec::new();
+
+    let flush_source =
+        |blocks: &mut Vec<GlossBlock>, source_idx: &mut i32, pending: &mut Vec<String>| {
+            if !pending.is_empty() {
+                blocks.push(GlossBlock {
+                    kind: BlockKind::Source,
+                    index: *source_idx,
+                    text: pending.join("\n"),
+                });
+                *source_idx += 1;
+                pending.clear();
+            }
+        };
+
+    for el in parse_gloss_tags(gloss) {
+        match el {
+            GlossElement::Speaker(_) => { /* drop speaker labels from source text */ }
+            GlossElement::Verse(text) => pending_verses.push(text.trim().to_string()),
+            GlossElement::Gloss(text) => {
+                if split_echo(&text).is_some() {
+                    continue; // echo bracket: not a cursor stop
+                }
+                // A real explication paragraph ends the current source run.
+                flush_source(&mut blocks, &mut source_idx, &mut pending_verses);
+                blocks.push(GlossBlock {
+                    kind: BlockKind::Explication,
+                    index: expl_idx,
+                    text: text.trim().to_string(),
+                });
+                expl_idx += 1;
+            }
+        }
+    }
+    // Trailing source run (gloss that ends on verse).
+    flush_source(&mut blocks, &mut source_idx, &mut pending_verses);
+    blocks
+}
+
 /// The explication paragraphs of a gloss, in order: `(paragraph_index, text)`
 /// for each `<gloss>` element that is NOT an echo bracket. These are the
 /// read-aloud targets. Echo glosses (`["quote" — Source]`) are excluded.
@@ -1869,6 +1933,55 @@ mod explication_tests {
                      <verse>To be</verse>\n\
                      <gloss>[\"q\" — Lr 1.1]</gloss>";
         assert!(explication_paragraphs(gloss).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod block_tests {
+    use super::*;
+
+    #[test]
+    fn blocks_in_document_order_with_kinds() {
+        let gloss = "<speaker>CRANMER</speaker>\n\
+                     <verse>Ah, my good Lord of Winchester, I thank you.</verse>\n\
+                     <verse>You are always my good friend.</verse>\n\
+                     <gloss>Cranmer opens with cutting irony.</gloss>\n\
+                     <speaker>CRANMER</speaker>\n\
+                     <verse>'Tis my undoing. Love and meekness, lord,</verse>\n\
+                     <gloss>The tone shifts from irony to sincere counsel.</gloss>\n\
+                     <gloss>[\"a quote\" — Macbeth 1.1]</gloss>";
+        let blocks = gloss_blocks(gloss);
+        assert_eq!(blocks.len(), 4); // source, explication, source, explication (echo excluded)
+
+        assert_eq!(blocks[0].kind, BlockKind::Source);
+        assert_eq!(blocks[0].index, 0);
+        assert_eq!(
+            blocks[0].text,
+            "Ah, my good Lord of Winchester, I thank you.\nYou are always my good friend."
+        );
+
+        assert_eq!(blocks[1].kind, BlockKind::Explication);
+        assert_eq!(blocks[1].index, 0);
+        assert_eq!(blocks[1].text, "Cranmer opens with cutting irony.");
+
+        assert_eq!(blocks[2].kind, BlockKind::Source);
+        assert_eq!(blocks[2].index, 1);
+        assert_eq!(blocks[2].text, "'Tis my undoing. Love and meekness, lord,");
+
+        assert_eq!(blocks[3].kind, BlockKind::Explication);
+        assert_eq!(blocks[3].index, 1);
+        assert_eq!(blocks[3].text, "The tone shifts from irony to sincere counsel.");
+    }
+
+    #[test]
+    fn all_echo_gloss_has_only_source_block() {
+        let gloss = "<speaker>HAMLET</speaker>\n\
+                     <verse>To be, or not to be</verse>\n\
+                     <gloss>[\"q\" — Lr 1.1]</gloss>";
+        let blocks = gloss_blocks(gloss);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].kind, BlockKind::Source);
+        assert_eq!(blocks[0].text, "To be, or not to be");
     }
 }
 
