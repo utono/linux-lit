@@ -64,6 +64,10 @@ pub struct Config {
     pub visual_mode_commands: Vec<VisualModeCommand>,
     #[serde(default = "default_claude_model")]
     pub claude_model: String,
+    #[serde(default = "default_elevenlabs_voice_id")]
+    pub elevenlabs_voice_id: String,
+    #[serde(default = "default_elevenlabs_model_id")]
+    pub elevenlabs_model_id: String,
     #[serde(default = "default_vocab_highlight_visible")]
     pub vocab_highlight_visible: bool,
     #[serde(default = "default_dim_enabled")]
@@ -118,6 +122,15 @@ fn default_claude_model() -> String {
     "claude-opus-4-7".to_string()
 }
 
+fn default_elevenlabs_voice_id() -> String {
+    // Rachel — ElevenLabs' stock default voice.
+    "21m00Tcm4TlvDq8ikWAM".to_string()
+}
+
+fn default_elevenlabs_model_id() -> String {
+    "eleven_turbo_v2_5".to_string()
+}
+
 fn default_previous_work() -> Option<String> {
     Some("Dominion".to_string())
 }
@@ -160,6 +173,8 @@ impl Default for Config {
             last_column_count: None,
             visual_mode_commands: Vec::new(),
             claude_model: default_claude_model(),
+            elevenlabs_voice_id: default_elevenlabs_voice_id(),
+            elevenlabs_model_id: default_elevenlabs_model_id(),
             vocab_highlight_visible: default_vocab_highlight_visible(),
             dim_enabled: default_dim_enabled(),
             show_cursor_line: true,
