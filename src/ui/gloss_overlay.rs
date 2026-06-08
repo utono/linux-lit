@@ -558,7 +558,7 @@ impl GlossOverlay {
         self.gloss_view.set_right_margin(left);
         self.gloss_view.set_top_margin(32);
         self.gloss_view.set_pixels_below_lines(4);
-        self.hint.set_text("Esc close · Space read aloud · a add · e edit · d delete · c copy id · Ctrl+n/p gloss · Alt+n/p passage");
+        self.hint.set_text("Esc close · Space play/read · a add · e edit · d delete · c copy id · Ctrl+n/p gloss · Alt+n/p passage");
         self.orig_header.set_visible(false);
         self.original_label.set_visible(false);
         self.corr_header.set_visible(false);
