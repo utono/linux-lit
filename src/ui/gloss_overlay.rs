@@ -1454,6 +1454,16 @@ impl GlossOverlay {
         self.ask_container.remove_css_class("card-dimmed");
     }
 
+    /// Re-show the overlay's existing content without rebuilding it. `hide()`
+    /// only toggles visibility (the container keeps its rendered gloss/synopsis
+    /// text), so this is the inverse used to restore the overlay after a
+    /// temporary cover — e.g. opening the settings overlay (which sits BELOW the
+    /// gloss overlay in the z-stack) from `Ctrl+,`. The ask card stays hidden.
+    pub fn reveal(&self) {
+        self.container.set_visible(true);
+        self.scrim.set_visible(true);
+    }
+
     pub fn set_position(&self, index: usize, total: usize) {
         if total > 1 {
             self.position_label.set_text(&format!("{} / {}", index + 1, total));
