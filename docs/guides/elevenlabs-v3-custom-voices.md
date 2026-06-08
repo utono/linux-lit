@@ -54,6 +54,45 @@ Two different things produce a "custom voice":
   "Will – Poetical & Measured" is a `professional` clone — you can target its
   *qualities* with a Voice Design prompt but cannot copy its prompt).
 
+### Why Voice Design, not cloning, for the OP voice
+
+It is tempting to think a voice cloned from real recordings would produce a
+better Original Pronunciation read than a synthetic one. For this pipeline it
+would not — the synthetic-vs-cloned choice is **orthogonal to OP**, and Voice
+Design is the better fit. Four reasons:
+
+1. **The OP accent lives at render time, not in the voice.** This guide's
+   central reframe (see *The hard constraint*) is that the OP vowels are carried
+   by `/IPA/` in the narration text on every render; the saved voice — cloned or
+   designed — durably keeps only **timbre and character**. A clone absorbs OP
+   pronunciation no more than a designed voice does, so you would *still* tag
+   `/ɔːr/`, `/tɛːk/`, `/sɛː/` word by word at render time. Cloning changes whose
+   timbre you start from, never whether OP is reproduced — it leaves the hard
+   part of the pipeline untouched.
+2. **You'd have to source OP audio to clone OP — which is the whole problem.**
+   A clone reproduces the accent of its source recordings. A faithful OP read
+   needs the Crystals' dictionary and a trained actor (see *Honest caveat*); if
+   you had that audio the synthesis question would be moot. Clone an ordinary
+   actor instead and you inherit *their* accent (usually RP or modern), then
+   fight it back toward rhotic/earthy with `/IPA/` — strictly harder than Voice
+   Design, where you simply *describe* "strongly rhotic, every R sounded, earthy,
+   never posh" and audition for it.
+3. **The high-fidelity clone needs a tier you may not have.** Instant cloning
+   (a minute or two of audio) is lower-fidelity and inherits the source's room
+   tone, mic colour, and real accent. Professional cloning — the kind that could
+   plausibly capture a trained OP actor — requires a paid tier
+   (`professional_voice_limit > 0`) *and* the recordings. On a free/starter plan
+   it is unavailable regardless.
+4. **Cloning wins only when the goal is a specific person's timbre — not OP.**
+   If you ever want to sound *exactly* like one named narrator (the thing a
+   Voice Design prompt can only approximate), cloning is correct. But that is a
+   timbre-fidelity goal, not an accent goal; it still relies on render-time
+   `/IPA/` for OP and so does nothing the designed voice doesn't already do here.
+
+**Bottom line:** use Voice Design for Voice A-OP. Reach for cloning only if you
+need a particular known voice's exact timbre *and* have both the recordings and
+professional-cloning access — neither of which advances OP fidelity.
+
 ## The prompt structure
 
 ElevenLabs' recommended Voice Design prompt format:
@@ -83,6 +122,16 @@ Dimensions to describe:
 - **Audio quality** — ok / good / very good / excellent / studio / broadcast
 
 ## Audio tags (v3 only)
+
+**Where tags act: in the render text, not the creation prompt.** Audio tags are
+*delivery instructions for a render* — v3 acts on them only in the narration text
+you send at synthesis time. They do **nothing** in the Voice Design **description
+prompt**, which describes the voice's *identity* (timbre, character), not a
+performance — write that field as plain prose, never with `[tags]`. The Voice
+Design **preview text** is narration-like, so a tag there would register, but you
+generally want the preview plain so you audition intrinsic timbre, not painted-on
+performance (see the OP preview, which is deliberately tagless). So: describe the
+voice in the prompt; reach for tags only in the text you actually render.
 
 Inline bracketed tags direct delivery. Put a tag immediately before the text it
 affects. Categories and examples:
@@ -357,6 +406,54 @@ word in the neutral-modern prose voice and mishandle homographs. Scoping OP to a
 per-line `op_ipa_text` column keeps the accent on the verse and leaves the prose
 untouched, which is why it is the better design here.
 
+### Hiding `/IPA/` from the reader (linux-lit rendering requirement)
+
+`/IPA/` markup is **TTS-only metadata**: ElevenLabs consumes it at synthesis
+time, but the reader must never show `/sɛː/` or `/ˈrɛvɪnjuː/` on screen. There
+are two ways to store it, and they differ exactly in how hiding is achieved:
+
+- **Sibling-column storage (preferred for verse).** The `op_ipa_text` column
+  above already solves hiding by construction: the IPA lives in a *separate*
+  column, the reader-facing `display_text` is never contaminated, so there is
+  **nothing to strip** — the display path reads `display_text`, the TTS path
+  reads `op_ipa_text`. Use this wherever the source and IPA can be stored as two
+  parallel strings (the verse lines).
+- **Inline storage (gloss explication, and any single-field text).** Where IPA
+  must sit *inside one text field* — e.g. a gloss explication that quotes a verse
+  word in OP (see *When the prose quotes the verse*) — the same field feeds both
+  display and TTS, so the renderer must **strip `/IPA/` for display while sending
+  the raw field to TTS**. This is the case that needs code in linux-lit.
+
+For the inline case the design is:
+
+- **Keep the raw, IPA-bearing text as the TTS value; derive the stripped text for
+  display.** Do the divergence in exactly one place so the two never drift.
+- **The strip is a sibling of the existing `strip_brackets` helper** (which
+  already removes `[…]` spans for line-number matching) — add a `strip_ipa`
+  that removes `/…/` spans (a slash-delimited span of IPA characters; mind that a
+  lone literal slash, e.g. "and/or", is not an IPA span, so the matcher should
+  require IPA-class contents between the slashes).
+- **Strip for display, keep raw for TTS:**
+  - *Display* — strip when inserting block text into the gloss `TextView`
+    buffer, and the main reading card's verse line transform, so the user never
+    sees the slashes.
+  - *TTS* — the gloss block's text sent to `synthesize()` must remain the raw
+    IPA-bearing value; leave that path untouched.
+- **Watch the block-range matcher.** The gloss overlay matches block text against
+  the *displayed* buffer to position the accent bar. If display is stripped but
+  the block text keeps IPA, that match breaks — so the matcher must compare on the
+  **stripped** form (or blocks should carry both a raw `text` for TTS and a
+  stripped form for display/matching).
+- **The audio cache is unaffected.** `gloss_audio` keys on
+  `(gloss_id, kind, paragraph_index)` (+ stored `voice_id`/`model_id`); the MP3
+  is the synthesized-with-IPA audio. No new key field is needed — but editing a
+  gloss's IPA must invalidate its cached rows, the same staleness contract any
+  gloss-text edit already has.
+
+In short: **verse → sibling column (hidden by construction); inline IPA → store
+raw, strip a `/…/` span for display, send raw to TTS, and keep the accent-bar
+matcher on the stripped text.** No `/IPA/` should ever reach the GTK buffer.
+
 ## Voice B — prose explication (neutral modern register)
 
 The companion voice reads the guide's **own explanatory prose**, not Shakespeare.
@@ -383,6 +480,32 @@ In these opening lines the speaker weighs existence against oblivion, framing th
 No `/IPA/` and no audio tags. Render with `eleven_v3` for a consistent narrator,
 though plain prose tolerates `multilingual_v2` if you need it. Stability:
 **Natural**.
+
+### When the prose quotes the verse
+
+The explication often *quotes* the source — a word or phrase lifted from the
+verse (e.g. "the metaphors of **slings**, **arrows**, and **a sea of troubles**…",
+or "the older **revénue**…"). Because OP is render-time `/IPA/`, you decide
+per-quotation whether that fragment stays modern or echoes the verse:
+
+- **Default: keep quotations modern.** Voice B is editorial speech in the
+  present; a quoted word is being *discussed as a word*, not *performed as verse*.
+  Reading "sea" as modern `[siː]` inside a modern sentence is the natural, least
+  jarring choice and keeps Voice B's "no `/IPA/`" rule simple. Use this unless you
+  have a specific reason not to.
+- **Exception: OP-tag a quotation when the archaic sound *is* the point.** If the
+  prose is explaining the pronunciation itself — the MEAT–MEET split, a rhotic
+  final, an older stress like *revénue* — the listener should *hear* it. There,
+  selectively inject the verse's `/IPA/` on just that quoted word
+  (`/sɛː/`, `/ˈrɛvɪnjuː/`) so the gloss demonstrates what it describes. This is a
+  deliberate, per-word override of the default, not a register change: the
+  surrounding sentence stays modern; only the quoted token carries OP.
+
+Mechanically this needs no new voice — it is the same render-time `/IPA/` lever
+from Voice A-OP, applied to a single quoted word inside a Voice B render. Store
+the choice with the explication text (the quoted token already carries its
+`/IPA/` or not), so the prose renders identically every time. Keep it rare:
+over-tagging Voice B reintroduces the instability you avoided by keeping it plain.
 
 ## Workflow
 
