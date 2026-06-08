@@ -15,6 +15,7 @@ mod mpv;
 mod snapshot;
 mod text_file_map;
 mod theme;
+mod tts;
 mod ui;
 
 use gtk4::prelude::*;
