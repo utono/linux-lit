@@ -558,7 +558,7 @@ pub(crate) fn read_current_paragraph(state_rc: &Rc<RefCell<AppState>>) {
 
     // Cache hit?
     if let Ok(conn) = crate::db::queries::open_db() {
-        if let Ok(Some(path)) = crate::db::queries::find_gloss_audio(&conn, gloss_id, para_index as i64) {
+        if let Ok(Some(path)) = crate::db::queries::find_gloss_audio(&conn, gloss_id, "explication", para_index as i64) {
             if std::path::Path::new(&path).exists() {
                 state_rc.borrow().tts.play_file(std::path::Path::new(&path));
                 return;
@@ -594,6 +594,7 @@ pub(crate) fn read_current_paragraph(state_rc: &Rc<RefCell<AppState>>) {
                     if let Err(e) = crate::db::queries::save_gloss_audio(
                         &conn,
                         gloss_id,
+                        "explication",
                         para_index as i64,
                         &path.to_string_lossy(),
                         &voice_id,
