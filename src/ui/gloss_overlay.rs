@@ -1475,10 +1475,12 @@ impl GlossOverlay {
     }
 }
 
+#[derive(Debug)]
 enum GlossElement {
     Speaker(String),
     Verse(String),
     Gloss(String),
+    Pron(String),
 }
 
 /// Render a synopsis for display, honoring paragraph markup. Synopses may be
@@ -1598,6 +1600,7 @@ pub fn gloss_blocks(gloss: &str) -> Vec<GlossBlock> {
                 });
                 expl_idx += 1;
             }
+            GlossElement::Pron(_) => { /* pronunciation note: not a cursor stop, not TTS */ }
         }
     }
     // Trailing source run (gloss that ends on verse).
@@ -1621,6 +1624,9 @@ fn parse_gloss_tags(gloss: &str) -> Vec<GlossElement> {
                 remaining = el.1;
             } else if let Some(el) = try_extract(after_open, "gloss") {
                 elements.push(GlossElement::Gloss(el.0.to_string()));
+                remaining = el.1;
+            } else if let Some(el) = try_extract(after_open, "pron") {
+                elements.push(GlossElement::Pron(el.0.to_string()));
                 remaining = el.1;
             } else {
                 remaining = &remaining[pos + 1..];
@@ -1881,6 +1887,7 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
                     buffer.apply_tag(&para_tag, &start, &buffer.end_iter());
                 }
             }
+            GlossElement::Pron(_) => { /* rendered in a later task */ }
         }
     }
 
@@ -2035,6 +2042,17 @@ fn build_diff_markup(original: &str, corrected: &str, is_original: bool) -> Stri
 #[cfg(test)]
 mod block_tests {
     use super::*;
+
+    #[test]
+    fn parse_extracts_pron_element() {
+        let g = "<verse>To /biː/</verse>\n<pron>BEE: be /biː/ keeps the long vowel.</pron>";
+        let els = parse_gloss_tags(g);
+        assert!(matches!(els[0], GlossElement::Verse(_)));
+        assert!(
+            matches!(&els[1], GlossElement::Pron(t) if t.contains("long vowel")),
+            "expected a Pron element carrying the note, got {:?}", els.get(1)
+        );
+    }
 
     #[test]
     fn blocks_in_document_order_with_kinds() {
