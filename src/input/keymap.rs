@@ -729,6 +729,16 @@ fn handle_gloss_key(
                 );
                 return true;
             }
+            // Ctrl+Up/Ctrl+Down adjust volume, mirroring the reader's
+            // VolumeUp/VolumeDown (and the echoes overlay).
+            "Up" => {
+                let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(5.0));
+                return true;
+            }
+            "Down" => {
+                let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(-5.0));
+                return true;
+            }
             _ => {}
         }
     }
@@ -981,6 +991,16 @@ fn handle_synopsis_overlay_key(
                 state,
                 crate::app::InputMode::SynopsisOverlay,
             );
+            true
+        }
+        // Ctrl+Up/Ctrl+Down adjust volume, mirroring the reader's
+        // VolumeUp/VolumeDown (and the echoes overlay).
+        "Up" if is_ctrl => {
+            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(5.0));
+            true
+        }
+        "Down" if is_ctrl => {
+            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(-5.0));
             true
         }
         "j" => {
