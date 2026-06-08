@@ -204,19 +204,81 @@ must *be the kind of text you'll narrate*:
 
 Build **two voices that share one identity** so the listener hears a single
 narrator switching modes — verse measured by the line, prose measured by the
-sentence. Keep the identity baseline (warm, resonant baritone) byte-identical
-across both prompts; only accent register and delivery change — rhotic OP for the
-verse, neutral modern for the prose.
+sentence. Keep the identity baseline (a clear, resonant, higher-pitched ringing
+theatrical tenor) byte-identical across both prompts; only accent register and
+delivery change — rhotic OP for the verse, neutral modern for the prose.
 
 - **Voice A-OP — verse** in Original Pronunciation (rhotic, Shakespeare-era).
   This is the primary verse voice; see its full section immediately below.
-- **Voice B — prose explication**: the same baritone, but reading the guide's
+- **Voice B — prose explication**: the same voice, but reading the guide's
   *own* explanatory prose in a neutral modern register (the explication is
   editorial commentary, not stage speech, so it does **not** take OP). See below.
 
 There is no separate RP "classical" verse voice: an RP read of Shakespeare is a
 nineteenth-century anachronism (see the OP section), so the verse voice **is**
 Voice A-OP.
+
+### Female speakers: a mirrored voice set, selected by speaker gender
+
+The A-OP / B male voice reads male characters. Female characters — Ophelia,
+Portia, Lady Macbeth, Cleopatra — need their own timbre, so build a **mirrored
+female set** and select the pair per gloss by the **gender of the character who
+speaks the source passage**:
+
+- **Male speaker → A-OP (verse) + B (prose explication)** — the male set
+  above.
+- **Female speaker → A-OP-F (verse) + B-F (prose explication)** — a female-timbre
+  clone of the same two voices.
+
+A-OP-F and B-F use the **identical pipeline** as their male counterparts — same
+OP/rhotic treatment, same render-time `/IPA/`, same two-linked-voices identity
+trick (one female narrator switching verse/prose modes). **Only the timbre
+changes**: build them with the same description prompts but `Gender: female`,
+the same `15 to 25` age as the male set, and a colour that reads as the same
+*kind* of narrator — a clear, bright, resonant young female voice (a high,
+ringing soprano/light-mezzo, not deep), with the same crisp articulation and
+authority-beyond-its-years. Everything else in this guide — the `/IPA/` render
+strings, stability, audio-tag discipline, the input cap, hiding `/IPA/` from the
+reader — applies unchanged to the female set.
+
+So the explication voice (B vs B-F) follows the *speaker's* gender too: a female
+character's gloss is narrated by B-F even though the explication is editorial
+commentary, so a listener hears one consistent female narrator across both the
+quoted verse and its gloss. (If you would rather keep all explication in a single
+narrator regardless of character gender, use B for every gloss and switch only
+the *verse* voice A-OP ↔ A-OP-F — a defensible alternative; pick one and be
+consistent.)
+
+**Prerequisite: a speaker → gender data source (does not exist yet).** linux-lit
+can already resolve a gloss to its **speaker name** (`passages.character`, or
+`line_mapping.speaker` over the citation span — e.g. `HAMLET`, `OPHELIA`), but
+**nothing in `lit.db` stores a character's gender**. Before this feature can
+choose a voice you must add that mapping. Cleanest is a small table, e.g.:
+
+```sql
+CREATE TABLE characters (
+  work_abbrev TEXT,
+  speaker     TEXT,   -- normalized speaker name as it appears in line_mapping
+  gender      TEXT,   -- 'male' | 'female' | 'neutral'
+  PRIMARY KEY (work_abbrev, speaker)
+);
+```
+
+populated from each play's dramatis personae, then joined on
+`passages.character` / `line_mapping.speaker`. Mind the **name-normalization edge
+cases** the speaker strings carry, all of which need a rule and a safe fallback:
+
+- **Combined speakers** — `CORNELIUS / VOLTEMAND`, `BARNARDO / MARCELLUS` (two
+  characters on one line).
+- **Role-prefixed / generic names** — `PLAYER KING`, `FIRST PLAYER`, `KING`,
+  `QUEEN`, `GHOST`.
+- **Edition-qualified names** — `ANTIPHOLUS OF SYRACUSE`.
+- **`UNKNOWN`** (the gloss-context fallback when no speaker resolved).
+
+When gender is ambiguous or unresolved, fall back to the **male (A-OP/B)** set
+(or a neutral voice) rather than guessing — a wrong-gender read is more jarring
+than a default one. This data source is the gating work; once it exists, voice
+selection is a single `gender → {A-OP/B | A-OP-F/B-F}` switch at synthesis time.
 
 ## Voice A-OP — verse in Original Pronunciation (the Shakespeare-era accent)
 
@@ -285,15 +347,16 @@ single modern accent in the description prompt. Instead:
 ### Description prompt (OP-flavoured, no accent label)
 
 ```
-Native English. Male, late 40s to 50s. Studio quality.
+Native English. Male, 15 to 25. Studio quality.
 Persona: Elizabethan stage player, Shakespearean narrator. Emotion: measured, dignified, earthy, quietly intense.
-A warm, resonant baritone, strongly rhotic — every written R is sounded and colours the vowel before it. Vowels sit slightly archaic and old-fashioned, caught between medieval and modern. Reads at a brisk, conversational, plain-spoken pace, honouring the verse line with a light lift at each line ending, but never posh, never elevated, never refined — earthy and direct rather than cathedral-grand. The metre is felt, never hammered; sense flows across line breaks.
+A clear, resonant, higher-pitched young voice — a bright, ringing theatrical tenor, light rather than a deep baritone, with crisp articulation and an effortless natural authority beyond its years. Strongly rhotic — every written R is sounded and colours the vowel before it. Vowels sit slightly archaic and old-fashioned, caught between medieval and modern. Reads at a brisk, conversational, plain-spoken pace, honouring the verse line with a light lift at each line ending, but never posh, never elevated, never refined — earthy and direct rather than cathedral-grand. The metre is felt, never hammered; sense flows across line breaks.
 ```
 
-The identity baseline (`Native English. Male, late 40s to 50s. Studio quality.` +
-"A warm, resonant baritone") stays byte-identical to Voice B so the two read as
-one narrator — only the *accent* and *register* change: here, rhotic, earthy, and
-plain for the verse; in Voice B, neutral modern for the explanatory prose.
+The identity baseline (`Native English. Male, 15 to 25. Studio quality.` +
+"A clear, resonant, higher-pitched ringing theatrical tenor") stays byte-identical
+to Voice B so the two read as one narrator — only the *accent* and *register*
+change: here, rhotic, earthy, and plain for the verse; in Voice B, neutral modern
+for the explanatory prose.
 
 ### Preview text — audition timbre, not vowels
 
@@ -408,6 +471,16 @@ untouched, which is why it is the better design here.
 
 ### Hiding `/IPA/` from the reader (linux-lit rendering requirement)
 
+> **Prerequisite — build the IPA pipeline first.** These voices are only useful
+> once Shakespeare verse actually carries OP `/IPA/` for `eleven_v3` to read, and
+> that markup is *produced* by the gloss pipeline. Design and implement
+> **[gloss-driven OP IPA tagging](../superpowers/specs/2026-06-08-gloss-ipa-tagging-design.md)**
+> before (or alongside) creating the custom voices — it defines how the
+> explication drives sparse per-word tagging, the two-tier (`<verse>` for TTS /
+> `<pron>` for the reader) markup, `lit.db` storage, and the strip-for-display
+> rendering this section summarizes. The custom-voice work consumes that markup;
+> without it there is nothing for the voices to pronounce.
+
 `/IPA/` markup is **TTS-only metadata**: ElevenLabs consumes it at synthesis
 time, but the reader must never show `/sɛː/` or `/ˈrɛvɪnjuː/` on screen. There
 are two ways to store it, and they differ exactly in how hiding is achieved:
@@ -459,16 +532,16 @@ matcher on the stripped text.** No `/IPA/` should ever reach the GTK buffer.
 The companion voice reads the guide's **own explanatory prose**, not Shakespeare.
 The explication is editorial commentary in the present, so it takes a **neutral
 modern register — no OP, no `/IPA/`**. It shares Voice A-OP's identity baseline
-(same baritone) so the listener hears one narrator switching modes: rhotic and
+(same voice) so the listener hears one narrator switching modes: rhotic and
 earthy for the verse, plain and contemporary for the gloss.
 
 Description prompt (identity baseline byte-identical to Voice A-OP, delivery
 different):
 
 ```
-Native English. Male, late 40s to 50s. Studio quality.
+Native English. Male, 15 to 25. Studio quality.
 Persona: erudite literary guide, audiobook narrator. Emotion: clear, warm, conversational.
-A warm, resonant baritone, reading explanatory prose in a neutral modern voice: a natural, even pace, sentence rhythm rather than metrical lift, gently instructive and lucid. Confident and unhurried, like an expert explaining a poem to an attentive listener.
+A clear, resonant, higher-pitched young voice — a bright, ringing theatrical tenor, light rather than a deep baritone, with crisp articulation and effortless authority beyond its years — reading explanatory prose in a neutral modern voice: a natural, even pace, sentence rhythm rather than metrical lift, gently instructive and lucid. Confident and unhurried, like an expert explaining a poem to an attentive listener.
 ```
 
 Preview text — a real explication paragraph from `lit.db`, e.g.:
@@ -531,9 +604,9 @@ over-tagging Voice B reintroduces the instability you avoided by keeping it plai
 ## Two rules that matter most for fidelity
 
 1. **Keep the identity baseline byte-identical** across both prompts
-   (`Native English. Male, late 40s to 50s. Studio quality.` plus "A warm,
-   resonant baritone") so they read as one narrator in two modes — rhotic OP for
-   the verse, neutral modern for the prose.
+   (`Native English. Male, 15 to 25. Studio quality.` plus "A clear,
+   resonant, higher-pitched ringing theatrical tenor") so they read as one
+   narrator in two modes — rhotic OP for the verse, neutral modern for the prose.
 2. **Preview on the real text type** — verse sample with line breaks for the verse
    voice, a prose paragraph for the prose voice — to pick the candidate whose
    *timbre* fits. But cadence and pronunciation are **render-time** properties of
