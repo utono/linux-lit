@@ -59,20 +59,22 @@ pub fn handle_key(
     // text-input widget has focus (an Entry, or an editable TextView), in which
     // case space must type a literal space. The reader's main TextView is
     // non-editable, so it does not block this.
+    // Exception: GlossOverlay intercepts Space to read the cursor's explication
+    // paragraph aloud via handle_gloss_key — do not intercept there.
     if key_name == "space" && !is_ctrl && !is_shift && !is_alt {
-        let focus_is_editable = {
-            let s = state.borrow();
-            // The search bar (opened by /) is a text-input field; space must
-            // type a literal space there, never toggle playback. Treat Search
-            // mode as editable explicitly rather than relying on window focus.
-            s.input_mode == crate::app::InputMode::Search
-                || gtk4::prelude::GtkWindowExt::focus(&s.window).is_some_and(|w| {
-                    w.is::<gtk4::Entry>()
-                        || w.downcast_ref::<gtk4::TextView>()
-                            .is_some_and(|tv| tv.is_editable())
-                })
-        };
-        if !focus_is_editable {
+        let s = state.borrow();
+        let gloss_open = s.input_mode == crate::app::InputMode::GlossOverlay;
+        // The search bar (opened by /) is a text-input field; space must
+        // type a literal space there, never toggle playback. Treat Search
+        // mode as editable explicitly rather than relying on window focus.
+        let focus_is_editable = s.input_mode == crate::app::InputMode::Search
+            || gtk4::prelude::GtkWindowExt::focus(&s.window).is_some_and(|w| {
+                w.is::<gtk4::Entry>()
+                    || w.downcast_ref::<gtk4::TextView>()
+                        .is_some_and(|tv| tv.is_editable())
+            });
+        drop(s);
+        if !focus_is_editable && !gloss_open {
             let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
             return true;
         }
@@ -728,8 +730,13 @@ fn handle_gloss_key(
             state.borrow().gloss_overlay.scroll_gloss(-1);
             true
         }
+        "space" => {
+            crate::input::actions::gloss::read_current_paragraph(state);
+            true
+        }
         "Escape" | "n" => {
             let mut s = state.borrow_mut();
+            s.tts.stop();
             s.gloss_overlay.hide();
             s.input_mode = crate::app::InputMode::Reader;
             s.gloss_opened_from_picker = false;

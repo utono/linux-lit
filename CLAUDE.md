@@ -348,7 +348,31 @@ Use `update_highlight_and_center` (not `center_cursor` alone) when jumping the c
 
 - Database: `~/utono/litdb/data/lit.db` (read-write)
 - Themes: `~/utono/themes/.config/themes/themes-unified.json`
-- Config: `~/.config/linux-lit/config.json`
+- Config: `~/.config/linux-lit/config.json` (release) **or**
+  `~/.config/linux-lit/config-dev.json` (dev / `cargo run`) — see gotcha below
+
+### Dev vs release use SEPARATE config files
+
+`config_path()` in `src/config.rs` selects the filename by build mode
+(`crate::mode::is_dev_mode()`):
+
+- **`cargo run` (dev)** reads/writes `~/.config/linux-lit/config-dev.json`
+- **release build** reads/writes `~/.config/linux-lit/config.json`
+
+Both files are independent, and **each rewrites its own file on exit** (the
+"config clobbered on exit" behavior). Consequences when debugging:
+
+- A **stored** config value always overrides the compiled-in `default_*` fn.
+  Changing a default in `src/config.rs` only affects a config file that does
+  NOT already have that key — once the app has run and persisted the key, the
+  stored value wins. To change a setting for `cargo run`, edit
+  **`config-dev.json`** (not `config.json`), and do it while **no dev instance
+  is running** (a running instance re-clobbers the file on exit).
+- When a `cargo run` session uses an unexpected value, check
+  `config-dev.json` first — `config.json` is the wrong file in dev mode and
+  will look "clean" while `config-dev.json` holds the real value. (This caused
+  a long false hunt: a TTS default-voice change in `src/config.rs` had no
+  effect because `config-dev.json` still pinned the old voice id.)
 
 ## Keymap Configuration
 

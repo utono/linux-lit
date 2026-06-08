@@ -229,6 +229,7 @@ pub struct AppState {
     pub keybinds_overlay: crate::ui::keybinds_overlay::KeybindsOverlay,
     pub gamepad_overlay: crate::ui::gamepad_overlay::GamepadOverlay,
     pub gloss_overlay: crate::ui::gloss_overlay::GlossOverlay,
+    pub tts: crate::tts::TtsPlayer,
     pub translation_overlay: crate::ui::translation_overlay::TranslationOverlay,
     pub gloss_original_text: Option<String>,
     pub gloss_list: Vec<crate::db::queries::SavedGloss>,
@@ -1568,6 +1569,7 @@ pub fn build_window(
         keybinds_overlay,
         gamepad_overlay,
         gloss_overlay,
+        tts: crate::tts::TtsPlayer::new(),
         translation_overlay,
         gloss_original_text: None,
         gloss_list: Vec::new(),
@@ -2412,6 +2414,7 @@ pub fn display_work_at_with_prepared(
         if let Ok(conn) = crate::db::queries::open_db_rw() {
             let _ = crate::db::queries::ensure_bookmarks_table(&conn);
             let _ = crate::db::queries::ensure_echo_tables(&conn);
+            let _ = crate::db::queries::ensure_gloss_audio_table(&conn);
         }
     });
 
