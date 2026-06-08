@@ -167,7 +167,10 @@ When synthesizing a source-verse block, pick the voice by the speaker's gender
 (the guide's A-OP / A-OP-F switch):
 
 - Resolve gloss → speaker → gender via the `characters(work_abbrev, speaker,
-  gender)` table (the gating prerequisite documented in the guide).
+  gender)` table — designed in
+  [Character gender in lit.db](./2026-06-08-character-gender-design.md), a
+  separate prerequisite spec (gating for voice selection only, not for the IPA
+  markup itself).
 - **Male → A-OP**, **female → A-OP-F**, **ambiguous / `UNKNOWN` → male (A-OP)
   fallback** — never guess.
 - Send the verse block's raw IPA-bearing `text` to that voice on `eleven_v3`.
@@ -247,8 +250,9 @@ speaker's gender (hence voice) naturally yields a distinct cached entry.
 ## Open questions / future work
 
 - The `characters(speaker, gender)` data source and its name-normalization
-  (combined speakers, role-prefixed/generic names, `UNKNOWN`) — gated separately;
-  see the guide.
+  (combined speakers, role-prefixed/generic names, `UNKNOWN`) — designed
+  separately in
+  [Character gender in lit.db](./2026-06-08-character-gender-design.md).
 - Auto-score selection via an external phonetic recognizer (above) — phase 2.
 - Whether `<pron>` notes should also be vocalizable (probably not; they are
   reader-facing metadata).

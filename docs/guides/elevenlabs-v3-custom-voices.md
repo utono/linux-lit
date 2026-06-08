@@ -253,7 +253,10 @@ consistent.)
 can already resolve a gloss to its **speaker name** (`passages.character`, or
 `line_mapping.speaker` over the citation span — e.g. `HAMLET`, `OPHELIA`), but
 **nothing in `lit.db` stores a character's gender**. Before this feature can
-choose a voice you must add that mapping. Cleanest is a small table, e.g.:
+choose a voice you must add that mapping — designed in
+[Character gender in lit.db](../superpowers/specs/2026-06-08-character-gender-design.md)
+(true-gender per character, LLM-assigned, `male`/`female`/`neutral`/`unknown`,
+default-to-male fallback). Its core is a small table:
 
 ```sql
 CREATE TABLE characters (
