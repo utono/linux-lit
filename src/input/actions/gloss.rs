@@ -639,6 +639,7 @@ fn show_tts_toast(state_rc: &Rc<RefCell<AppState>>, msg: &str) {
 pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
     if state.borrow().input_mode == crate::app::InputMode::GlossOverlay {
         let mut s = state.borrow_mut();
+        s.tts.stop();
         s.gloss_overlay.hide();
         s.input_mode = crate::app::InputMode::Reader;
         // Restore the page the user was on before toggling the gloss open.

@@ -728,8 +728,13 @@ fn handle_gloss_key(
             state.borrow().gloss_overlay.scroll_gloss(-1);
             true
         }
+        "space" => {
+            crate::input::actions::gloss::read_current_paragraph(state);
+            true
+        }
         "Escape" | "n" => {
             let mut s = state.borrow_mut();
+            s.tts.stop();
             s.gloss_overlay.hide();
             s.input_mode = crate::app::InputMode::Reader;
             s.gloss_opened_from_picker = false;
