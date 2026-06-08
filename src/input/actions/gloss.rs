@@ -672,51 +672,96 @@ fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32)
     show_tts_toast(state_rc, "Synthesizing\u{2026}");
     let state_for_result = Rc::clone(state_rc);
     glib::spawn_future_local(async move {
-        let voice = voice_id.clone();
-        let model = model_id.clone();
-        let result = tokio_handle
-            .spawn(async move { crate::elevenlabs::synthesize(&text, &voice, &model).await })
-            .await;
-
-        match result {
-            Ok(Ok(bytes)) => {
-                let dir = gloss_audio_dir(&work_abbrev, gloss_id);
-                let path = dir.join(format!("{}.mp3", stem));
-                if let Err(e) = std::fs::create_dir_all(&dir) {
-                    crate::log_fmt!("TTS: mkdir {} failed: {}", dir.display(), e);
-                    show_tts_toast(&state_for_result, "Could not save audio");
-                    return;
-                }
-                if let Err(e) = std::fs::write(&path, &bytes) {
-                    crate::log_fmt!("TTS: write {} failed: {}", path.display(), e);
-                    show_tts_toast(&state_for_result, "Could not save audio");
-                    return;
-                }
-                if let Ok(conn) = crate::db::queries::open_db_rw() {
-                    if let Err(e) = crate::db::queries::save_gloss_audio(
-                        &conn,
-                        gloss_id,
-                        kind_str,
-                        index as i64,
-                        &path.to_string_lossy(),
-                        &voice_id,
-                        &model_id,
-                    ) {
-                        crate::log_fmt!("TTS: save_gloss_audio failed: {}", e);
+        // Try the preferred voice; on `paid_plan_required` fall back to Alice
+        // (a free premade voice), keeping the user's preference unchanged.
+        let result = synth_via(&tokio_handle, &text, &voice_id, &model_id).await;
+        let (bytes, used_voice, used_model) = match result {
+            Ok(bytes) => (bytes, voice_id.clone(), model_id.clone()),
+            Err(crate::elevenlabs::ElevenLabsError::PaidPlanRequired)
+                if voice_id != crate::elevenlabs::ALICE_VOICE_ID =>
+            {
+                crate::log_fmt!(
+                    "TTS: voice {} needs a paid plan — falling back to Alice",
+                    voice_id
+                );
+                show_tts_toast(&state_for_result, "Voice needs a paid plan — using Alice");
+                let alice_voice = crate::elevenlabs::ALICE_VOICE_ID.to_string();
+                let alice_model = crate::elevenlabs::ALICE_MODEL_ID.to_string();
+                match synth_via(&tokio_handle, &text, &alice_voice, &alice_model).await {
+                    Ok(bytes) => (bytes, alice_voice, alice_model),
+                    Err(e) => {
+                        crate::log_fmt!("TTS: Alice fallback failed: {}", e);
+                        show_tts_toast(&state_for_result, &e.to_string());
+                        return;
                     }
                 }
-                state_for_result.borrow().tts.play_file(&path);
-                crate::log_fmt!("TTS: synthesized gloss {} {} {}", gloss_id, kind_str, index);
-            }
-            Ok(Err(e)) => {
-                crate::log_fmt!("TTS: synth error: {}", e);
-                show_tts_toast(&state_for_result, &e.to_string());
             }
             Err(e) => {
-                crate::log_fmt!("TTS: tokio join error: {}", e);
+                crate::log_fmt!("TTS: synth error: {}", e);
+                show_tts_toast(&state_for_result, &e.to_string());
+                return;
+            }
+        };
+
+        // Persist the bytes and play, caching under the voice that actually
+        // produced them (Alice on a fallback, not the rejected preferred voice).
+        let dir = gloss_audio_dir(&work_abbrev, gloss_id);
+        let path = dir.join(format!("{}.mp3", stem));
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            crate::log_fmt!("TTS: mkdir {} failed: {}", dir.display(), e);
+            show_tts_toast(&state_for_result, "Could not save audio");
+            return;
+        }
+        if let Err(e) = std::fs::write(&path, &bytes) {
+            crate::log_fmt!("TTS: write {} failed: {}", path.display(), e);
+            show_tts_toast(&state_for_result, "Could not save audio");
+            return;
+        }
+        if let Ok(conn) = crate::db::queries::open_db_rw() {
+            if let Err(e) = crate::db::queries::save_gloss_audio(
+                &conn,
+                gloss_id,
+                kind_str,
+                index as i64,
+                &path.to_string_lossy(),
+                &used_voice,
+                &used_model,
+            ) {
+                crate::log_fmt!("TTS: save_gloss_audio failed: {}", e);
             }
         }
+        state_for_result.borrow().tts.play_file(&path);
+        crate::log_fmt!(
+            "TTS: synthesized gloss {} {} {} (voice {})",
+            gloss_id,
+            kind_str,
+            index,
+            used_voice
+        );
     });
+}
+
+/// Run one ElevenLabs synthesis on the Tokio runtime, flattening the
+/// `JoinError` into an `ElevenLabsError` so callers match a single error type.
+async fn synth_via(
+    tokio_handle: &tokio::runtime::Handle,
+    text: &str,
+    voice_id: &str,
+    model_id: &str,
+) -> Result<Vec<u8>, crate::elevenlabs::ElevenLabsError> {
+    let text = text.to_string();
+    let voice = voice_id.to_string();
+    let model = model_id.to_string();
+    match tokio_handle
+        .spawn(async move { crate::elevenlabs::synthesize(&text, &voice, &model).await })
+        .await
+    {
+        Ok(inner) => inner,
+        Err(e) => Err(crate::elevenlabs::ElevenLabsError::ApiError(format!(
+            "tokio join error: {}",
+            e
+        ))),
+    }
 }
 
 /// Resolve a source block's first-line start time from the current work's line

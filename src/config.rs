@@ -125,11 +125,12 @@ fn default_claude_model() -> String {
 fn default_elevenlabs_voice_id() -> String {
     // Alice — "Clear, Engaging Educator". A premade voice (free-tier API
     // usable); library voices return HTTP 402 paid_plan_required on free plans.
-    "Xb7hH8MSUJpSbSDYk0k2".to_string()
+    // Also the 402 fallback voice (see elevenlabs.rs). Id lives in one place.
+    crate::elevenlabs::ALICE_VOICE_ID.to_string()
 }
 
 fn default_elevenlabs_model_id() -> String {
-    "eleven_turbo_v2_5".to_string()
+    crate::elevenlabs::ALICE_MODEL_ID.to_string()
 }
 
 fn default_previous_work() -> Option<String> {
