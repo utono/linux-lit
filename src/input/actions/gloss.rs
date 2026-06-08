@@ -501,6 +501,129 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
     });
 }
 
+/// Space in the gloss overlay: read the cursor's explication paragraph aloud.
+/// Toggles: if audio is playing, stop. Otherwise play the cached MP3, or
+/// synthesize it via ElevenLabs (async), cache it, and play.
+pub(crate) fn read_current_paragraph(state_rc: &Rc<RefCell<AppState>>) {
+    {
+        let s = state_rc.borrow();
+        if s.tts.is_playing() {
+            s.tts.stop();
+            return;
+        }
+    }
+
+    // Resolve cursor paragraph -> (gloss_id, paragraph_index, work_abbrev, text).
+    let (gloss_id, para_index, work_abbrev, text, voice_id, model_id, tokio_handle) = {
+        let s = state_rc.borrow();
+        let para_index = match s.gloss_overlay.current_explication_para() {
+            Some(i) => i,
+            None => return,
+        };
+        let gloss = match s.gloss_list.get(s.gloss_index) {
+            Some(g) => g,
+            None => return,
+        };
+        let gloss_id = gloss.gloss_id;
+        let work_abbrev = match &s.gloss_context {
+            Some(ctx) => ctx.work_abbrev.clone(),
+            None => return,
+        };
+        let paras = crate::ui::gloss_overlay::explication_paragraphs(&gloss.gloss_text);
+        let text = match paras.iter().find(|(i, _)| *i == para_index) {
+            Some((_, t)) => t.clone(),
+            None => return,
+        };
+        (
+            gloss_id,
+            para_index,
+            work_abbrev,
+            text,
+            s.config.elevenlabs_voice_id.clone(),
+            s.config.elevenlabs_model_id.clone(),
+            s.tokio_handle.clone(),
+        )
+    };
+
+    // Cache hit?
+    if let Ok(conn) = crate::db::queries::open_db() {
+        if let Ok(Some(path)) = crate::db::queries::find_gloss_audio(&conn, gloss_id, para_index as i64) {
+            if std::path::Path::new(&path).exists() {
+                state_rc.borrow().tts.play_file(std::path::Path::new(&path));
+                return;
+            }
+        }
+    }
+
+    // Miss: synthesize asynchronously.
+    show_tts_toast(state_rc, "Synthesizing\u{2026}");
+    let state_for_result = Rc::clone(state_rc);
+    glib::spawn_future_local(async move {
+        let voice = voice_id.clone();
+        let model = model_id.clone();
+        let synth_text = text.clone();
+        let result = tokio_handle
+            .spawn(async move { crate::elevenlabs::synthesize(&synth_text, &voice, &model).await })
+            .await;
+
+        match result {
+            Ok(Ok(bytes)) => {
+                let dir = gloss_audio_dir(&work_abbrev, gloss_id);
+                let path = dir.join(format!("{}.mp3", para_index));
+                if let Err(e) = std::fs::create_dir_all(&dir) {
+                    crate::log_fmt!("TTS: mkdir {} failed: {}", dir.display(), e);
+                    show_tts_toast(&state_for_result, "Could not save audio");
+                    return;
+                }
+                if let Err(e) = std::fs::write(&path, &bytes) {
+                    crate::log_fmt!("TTS: write {} failed: {}", path.display(), e);
+                    show_tts_toast(&state_for_result, "Could not save audio");
+                    return;
+                }
+                if let Ok(conn) = crate::db::queries::open_db_rw() {
+                    let _ = crate::db::queries::save_gloss_audio(
+                        &conn,
+                        gloss_id,
+                        para_index as i64,
+                        &path.to_string_lossy(),
+                        &voice_id,
+                        &model_id,
+                    );
+                }
+                state_for_result.borrow().tts.play_file(&path);
+                crate::log_fmt!("TTS: synthesized gloss {} para {}", gloss_id, para_index);
+            }
+            Ok(Err(e)) => {
+                crate::log_fmt!("TTS: synth error: {}", e);
+                show_tts_toast(&state_for_result, &e.to_string());
+            }
+            Err(e) => {
+                crate::log_fmt!("TTS: tokio join error: {}", e);
+            }
+        }
+    });
+}
+
+/// `~/Music/glosses/<work-abbrev>/<gloss-id>/`
+fn gloss_audio_dir(work_abbrev: &str, gloss_id: i64) -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    std::path::PathBuf::from(home)
+        .join("Music")
+        .join("glosses")
+        .join(work_abbrev)
+        .join(gloss_id.to_string())
+}
+
+fn show_tts_toast(state_rc: &Rc<RefCell<AppState>>, msg: &str) {
+    let s = state_rc.borrow();
+    s.chapter_toast.set_text(msg);
+    s.chapter_toast.set_visible(true);
+    let toast = s.chapter_toast.clone();
+    glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+        toast.set_visible(false);
+    });
+}
+
 pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
     if state.borrow().input_mode == crate::app::InputMode::GlossOverlay {
         let mut s = state.borrow_mut();
