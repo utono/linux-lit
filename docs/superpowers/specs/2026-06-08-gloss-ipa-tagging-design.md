@@ -214,7 +214,9 @@ one:
     Scoring then compares the recognizer's phoneme string for each tagged word
     against the target `/IPA/` (e.g. phoneme edit distance on the tagged spans),
     and keeps the take with the best match. This is a heavier, external pipeline
-    (a separate model + alignment), which is why it is deferred past v1.
+    (a separate model + alignment), which is why it is deferred past v1. See
+    [Phonetic STT for automatic OP take-selection](../../guides/phonetic-stt-candidate-selection.md)
+    for the candidate models, the auto-score loop, scoring, and limits.
 
 ### Input cap
 
