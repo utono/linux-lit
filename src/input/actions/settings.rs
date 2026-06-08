@@ -208,8 +208,10 @@ pub(crate) fn revert_to_snapshot(state: &Rc<RefCell<crate::app::AppState>>) {
         s.settings_overlay.set_theme_index(snap_ti);
         apply_theme_to_state(&mut s, &snap_theme);
     }
-    s.settings_overlay.hide();
-    s.input_mode = crate::app::InputMode::Reader;
+    drop(s);
+    // Return to wherever settings was opened from (reader, or the gloss /
+    // synopsis overlay still visible underneath).
+    close_settings_to_return_mode(state);
 }
 
 /// Open the settings overlay, reading current config values and passing them
@@ -226,9 +228,60 @@ pub(crate) fn open_settings(state: &Rc<RefCell<crate::app::AppState>>) {
         let cl = s.config.show_cursor_line;
         let voice = crate::elevenlabs::voice_label_for_id(&s.config.elevenlabs_voice_id);
         drop(s);
-        state.borrow_mut().settings_overlay.show(ls, cw, tm, nm, ts, cl, &voice);
-        state.borrow_mut().input_mode = crate::app::InputMode::Settings;
+        let mut s = state.borrow_mut();
+        s.settings_return_mode = crate::app::InputMode::Reader;
+        s.settings_overlay.show(ls, cw, tm, nm, ts, cl, &voice);
+        s.input_mode = crate::app::InputMode::Settings;
     }
+}
+
+/// Open settings from the gloss or synopsis overlay (`Ctrl+,`). Unlike
+/// `open_settings`, the gloss-overlay widget is left VISIBLE underneath the
+/// settings scrim, and `settings_return_mode` records which overlay to restore
+/// when settings closes (so Enter/Escape return to the gloss/synopsis overlay,
+/// not the reader). `return_mode` must be `GlossOverlay` or `SynopsisOverlay`.
+pub(crate) fn open_settings_from_overlay(
+    state: &Rc<RefCell<crate::app::AppState>>,
+    return_mode: crate::app::InputMode,
+) {
+    let s = state.borrow();
+    if s.settings_overlay.is_visible() || s.picker.is_visible() {
+        return;
+    }
+    // NOTE: do NOT hide the gloss overlay — it stays behind the settings scrim
+    // and is restored on close.
+    let ls = s.config.line_spacing;
+    let cw = s.config.column_width;
+    let tm = s.config.text_margins;
+    let nm = s.config.navigation_mode;
+    let ts = s.config.transition_style;
+    let cl = s.config.show_cursor_line;
+    let voice = crate::elevenlabs::voice_label_for_id(&s.config.elevenlabs_voice_id);
+    drop(s);
+    let mut s = state.borrow_mut();
+    s.settings_return_mode = return_mode;
+    s.settings_overlay.show(ls, cw, tm, nm, ts, cl, &voice);
+    s.input_mode = crate::app::InputMode::Settings;
+}
+
+/// Close the settings overlay and return to wherever it was opened from
+/// (`settings_return_mode`): the reader, or the gloss/synopsis overlay left
+/// visible underneath. Shared by Confirm (Enter) and the revert path.
+pub(crate) fn close_settings_to_return_mode(state: &Rc<RefCell<crate::app::AppState>>) {
+    let mut s = state.borrow_mut();
+    s.settings_overlay.hide();
+    let return_mode = s.settings_return_mode;
+    match return_mode {
+        crate::app::InputMode::GlossOverlay | crate::app::InputMode::SynopsisOverlay => {
+            // The gloss overlay is still visible underneath — just restore the
+            // input mode so its key handler takes over again.
+            s.input_mode = return_mode;
+        }
+        _ => {
+            s.input_mode = crate::app::InputMode::Reader;
+        }
+    }
+    s.settings_return_mode = crate::app::InputMode::Reader;
 }
 
 /// Reset AppState to default settings. Called from `r` in settings overlay.

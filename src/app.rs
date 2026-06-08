@@ -243,6 +243,12 @@ pub struct AppState {
     /// already open. The overlay stays visible behind the picker, and cancelling
     /// the picker (Escape) returns to the overlay instead of the reader.
     pub gloss_picker_from_overlay: bool,
+    /// Where to return when the settings overlay closes. Settings can be opened
+    /// from the reader (→ `Reader`) or from the gloss / synopsis overlay (→
+    /// `GlossOverlay` / `SynopsisOverlay`), in which case that overlay stays
+    /// visible behind the settings scrim and is restored on close. Reset to
+    /// `Reader` each time settings opens from the reader.
+    pub settings_return_mode: InputMode,
     /// Gloss-picker type filter: false shows `teacher-generic` glosses (the
     /// default), true shows `inner-monologue`. Toggled with Ctrl+t while the
     /// picker is open; reset to false each time the picker is opened.
@@ -1586,6 +1592,7 @@ pub fn build_window(
         gloss_passage_index: 0,
         gloss_opened_from_picker: false,
         gloss_picker_from_overlay: false,
+        settings_return_mode: InputMode::Reader,
         gloss_picker_inner_monologue: false,
         gloss_prompt_mode: GlossPromptMode::Add,
         delete_confirm_container: None,

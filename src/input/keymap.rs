@@ -520,10 +520,8 @@ fn handle_settings_key(
             true
         }
         PickerAction::Confirm => {
-            let mut s = state.borrow_mut();
-            crate::config::save(&s.config);
-            s.settings_overlay.hide();
-            s.input_mode = crate::app::InputMode::Reader;
+            crate::config::save(&state.borrow().config);
+            crate::input::actions::settings::close_settings_to_return_mode(state);
             true
         }
         PickerAction::MoveDown => {
@@ -719,6 +717,16 @@ fn handle_gloss_key(
             }
             "p" => {
                 crate::input::actions::gloss::navigate_gloss(state, 1);
+                return true;
+            }
+            // Ctrl+, opens the settings overlay (same as the reading card),
+            // keeping the gloss overlay visible underneath and returning to it
+            // when settings closes.
+            "comma" => {
+                crate::input::actions::settings::open_settings_from_overlay(
+                    state,
+                    crate::app::InputMode::GlossOverlay,
+                );
                 return true;
             }
             _ => {}
@@ -964,6 +972,15 @@ fn handle_synopsis_overlay_key(
         }
         "g" if is_ctrl => {
             crate::input::actions::synopsis::open_work_glosses(state);
+            true
+        }
+        // Ctrl+, opens the settings overlay (same as the reading card), keeping
+        // the synopsis overlay visible underneath and returning to it on close.
+        "comma" if is_ctrl => {
+            crate::input::actions::settings::open_settings_from_overlay(
+                state,
+                crate::app::InputMode::SynopsisOverlay,
+            );
             true
         }
         "j" => {
