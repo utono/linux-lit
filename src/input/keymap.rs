@@ -95,6 +95,7 @@ pub fn handle_key(
             | crate::app::InputMode::AuthorshipPicker
             | crate::app::InputMode::GlossPicker => handle_picker_key(state, key_name, is_ctrl, tokio_handle, mode),
             crate::app::InputMode::Settings => handle_settings_key(state, key_name, is_ctrl),
+            crate::app::InputMode::VoicePicker => handle_voice_picker_key(state, key_name, is_ctrl),
             crate::app::InputMode::Search => handle_search_key(state, key_name),
             crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_alt, tokio_handle),
             crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_name, is_ctrl),
@@ -560,6 +561,39 @@ fn handle_settings_key(
                 _ => true, // consume all other keys when settings visible
             }
         }
+    }
+}
+
+/// Voice picker (opened from the settings overlay's Voice row). Typed text
+/// reaches the focused search entry via GTK; here we handle nav/confirm/cancel.
+/// Confirm and cancel both return to the settings overlay (still visible
+/// underneath), NOT the reader.
+fn handle_voice_picker_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+    is_ctrl: bool,
+) -> bool {
+    use crate::input::picker_keys::{resolve_picker_key, PickerAction};
+    match resolve_picker_key(key_name, is_ctrl) {
+        PickerAction::Hide => {
+            crate::input::actions::settings::cancel_voice_picker(state);
+            true
+        }
+        PickerAction::Confirm => {
+            crate::input::actions::settings::confirm_voice_picker(state);
+            true
+        }
+        PickerAction::MoveDown => {
+            state.borrow().voice_picker.move_selection(1);
+            true
+        }
+        PickerAction::MoveUp => {
+            state.borrow().voice_picker.move_selection(-1);
+            true
+        }
+        // Let typed characters fall through to the focused GTK entry so the
+        // fuzzy filter works; consume everything else.
+        PickerAction::Unhandled => false,
     }
 }
 

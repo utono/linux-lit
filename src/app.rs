@@ -52,6 +52,7 @@ pub enum InputMode {
     KeybindsOverlay,
     ConcordancePicker,
     ConcordanceWordPicker,
+    VoicePicker,
     EchoLinePicker,
     EchoKeybindsOverlay,
     ConcordanceListPicker,
@@ -295,6 +296,7 @@ pub struct AppState {
     pub concordance_origin: Option<crate::concordance::ConcordanceOrigin>,
     pub concordance_word_cache: Option<(String, Vec<(String, usize)>)>,
     pub concordance_word_picker: crate::ui::concordance_word_picker::ConcordanceWordPicker,
+    pub voice_picker: crate::ui::voice_picker::VoicePicker,
     pub echo_line_picker: crate::ui::echo_line_picker::EchoLinePicker,
     pub echo_keybinds_overlay: crate::ui::echo_keybinds_overlay::EchoKeybindsOverlay,
     /// turn_id the add-echo picker will attach the chosen line to.
@@ -1321,6 +1323,11 @@ pub fn build_window(
     let echo_line_picker = crate::ui::echo_line_picker::EchoLinePicker::new();
     authorship_picker.overlay.add_overlay(&echo_line_picker.picker_box);
 
+    // Voice picker (settings overlay → Voice row). add_overlay panel, NOT a
+    // chain link (chain insertion collapses the reader layout).
+    let voice_picker = crate::ui::voice_picker::VoicePicker::new();
+    authorship_picker.overlay.add_overlay(&voice_picker.picker_box);
+
     // Echo keybinds legend (Ctrl+/ in the echoes overlay). add_overlay panel,
     // NOT a chain link (chain insertion collapses the reader layout).
     let echo_keybinds_overlay = crate::ui::echo_keybinds_overlay::EchoKeybindsOverlay::new();
@@ -1619,6 +1626,7 @@ pub fn build_window(
         concordance_origin: None,
         concordance_word_cache: None,
         concordance_word_picker,
+        voice_picker,
         echo_line_picker,
         echo_keybinds_overlay,
         echo_add_turn_id: None,
@@ -2021,6 +2029,15 @@ pub fn build_window(
         let s = state.borrow();
         s.concordance_word_picker.entry().connect_changed(move |_| {
             state_for_conc_word_filter.borrow().concordance_word_picker.filter_changed();
+        });
+    }
+
+    // Connect voice picker search entry filter
+    let state_for_voice_filter = Rc::clone(&state);
+    {
+        let s = state.borrow();
+        s.voice_picker.entry().connect_changed(move |_| {
+            state_for_voice_filter.borrow().voice_picker.filter_changed();
         });
     }
 

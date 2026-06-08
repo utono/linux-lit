@@ -53,8 +53,85 @@ pub(crate) fn apply_settings_change(
             s.config.show_cursor_line = val;
             crate::input::navigation::update_highlight_only(&mut s);
         }
+        SettingsChange::OpenVoicePicker => {
+            drop(s);
+            open_voice_picker(state);
+        }
         SettingsChange::None => {}
     }
+}
+
+/// Open the voice picker from the settings overlay's Voice row. Fetches the
+/// account's voices asynchronously (showing "Loading voices…" meanwhile),
+/// keeps the settings overlay underneath, and switches input to the picker.
+pub(crate) fn open_voice_picker(state: &Rc<RefCell<crate::app::AppState>>) {
+    {
+        let s = state.borrow();
+        s.voice_picker.set_status("Loading voices\u{2026}");
+        s.voice_picker.show();
+    }
+    state.borrow_mut().input_mode = crate::app::InputMode::VoicePicker;
+
+    // Fetch voices off the GTK main thread via the Tokio runtime.
+    let tokio_handle = state.borrow().tokio_handle.clone();
+    let state_for_result = Rc::clone(state);
+    gtk4::glib::spawn_future_local(async move {
+        let result = tokio_handle
+            .spawn(async move { crate::elevenlabs::list_voices().await })
+            .await;
+        match result {
+            Ok(Ok(voices)) => {
+                let s = state_for_result.borrow();
+                // Ignore if the user already closed the picker.
+                if s.input_mode == crate::app::InputMode::VoicePicker {
+                    if voices.is_empty() {
+                        s.voice_picker.set_status("No voices found");
+                    } else {
+                        drop(s);
+                        state_for_result.borrow_mut().voice_picker.set_voices(voices);
+                    }
+                }
+            }
+            Ok(Err(e)) => {
+                let s = state_for_result.borrow();
+                if s.input_mode == crate::app::InputMode::VoicePicker {
+                    s.voice_picker.set_status(&format!("Error: {}", e));
+                }
+            }
+            Err(e) => {
+                crate::log_fmt!("VOICE: list_voices join error: {}", e);
+                let s = state_for_result.borrow();
+                if s.input_mode == crate::app::InputMode::VoicePicker {
+                    s.voice_picker.set_status("Error loading voices");
+                }
+            }
+        }
+    });
+}
+
+/// Confirm the voice picker selection: persist the chosen voice id, refresh the
+/// settings Voice row, and return to the settings overlay.
+pub(crate) fn confirm_voice_picker(state: &Rc<RefCell<crate::app::AppState>>) {
+    let selected = state.borrow().voice_picker.selected_voice();
+    let mut s = state.borrow_mut();
+    s.voice_picker.hide();
+    if let Some((voice_id, name, _free)) = selected {
+        s.config.elevenlabs_voice_id = voice_id.clone();
+        crate::config::save(&s.config);
+        // Show the live name from the picker list on the settings Voice row.
+        s.settings_overlay.set_voice_label(&name);
+        crate::log_fmt!("VOICE: preferred voice set to {} ({})", name, voice_id);
+    }
+    // Return to the settings overlay (still visible underneath).
+    s.input_mode = crate::app::InputMode::Settings;
+}
+
+/// Cancel the voice picker: return to the settings overlay without changing the
+/// preferred voice.
+pub(crate) fn cancel_voice_picker(state: &Rc<RefCell<crate::app::AppState>>) {
+    let mut s = state.borrow_mut();
+    s.voice_picker.hide();
+    s.input_mode = crate::app::InputMode::Settings;
 }
 
 /// Apply a theme to AppState: load CSS, update tag colors, write
@@ -147,8 +224,9 @@ pub(crate) fn open_settings(state: &Rc<RefCell<crate::app::AppState>>) {
         let nm = s.config.navigation_mode;
         let ts = s.config.transition_style;
         let cl = s.config.show_cursor_line;
+        let voice = crate::elevenlabs::voice_label_for_id(&s.config.elevenlabs_voice_id);
         drop(s);
-        state.borrow_mut().settings_overlay.show(ls, cw, tm, nm, ts, cl);
+        state.borrow_mut().settings_overlay.show(ls, cw, tm, nm, ts, cl, &voice);
         state.borrow_mut().input_mode = crate::app::InputMode::Settings;
     }
 }
@@ -187,5 +265,7 @@ pub(crate) fn reset_to_defaults(state: &Rc<RefCell<crate::app::AppState>>) {
         crate::app::apply_dialogue_formatting(&mut s);
     }
     crate::input::navigation::update_highlight_only(&mut s);
-    s.settings_overlay.update_displayed_values(ls, cw, tm, nm, ts, false);
+    // Reset does not touch the preferred voice; keep the row showing it.
+    let voice = crate::elevenlabs::voice_label_for_id(&s.config.elevenlabs_voice_id);
+    s.settings_overlay.update_displayed_values(ls, cw, tm, nm, ts, false, &voice);
 }
