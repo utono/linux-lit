@@ -485,50 +485,44 @@ pub fn ensure_bookmarks_table(conn: &Connection) -> Result<(), rusqlite::Error> 
     Ok(())
 }
 
+/// Column + constraint body of the gloss_audio table, shared by the fresh-install
+/// CREATE and the legacy-rebuild migration so the two cannot drift.
+const GLOSS_AUDIO_COLUMNS: &str = "
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    gloss_id        INTEGER NOT NULL REFERENCES glosses(id) ON DELETE CASCADE,
+    kind            TEXT NOT NULL DEFAULT 'explication',
+    paragraph_index INTEGER NOT NULL,
+    audio_path      TEXT NOT NULL,
+    voice_id        TEXT NOT NULL,
+    model_id        TEXT NOT NULL,
+    timestamp       DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(gloss_id, kind, paragraph_index)
+";
+
 /// Ensure the gloss_audio table exists (per-block TTS cache, keyed by kind).
 pub fn ensure_gloss_audio_table(conn: &Connection) -> Result<(), rusqlite::Error> {
     // Fresh installs get the new shape directly.
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS gloss_audio (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            gloss_id        INTEGER NOT NULL REFERENCES glosses(id) ON DELETE CASCADE,
-            kind            TEXT NOT NULL DEFAULT 'explication',
-            paragraph_index INTEGER NOT NULL,
-            audio_path      TEXT NOT NULL,
-            voice_id        TEXT NOT NULL,
-            model_id        TEXT NOT NULL,
-            timestamp       DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(gloss_id, kind, paragraph_index)
-        );
-        CREATE INDEX IF NOT EXISTS idx_gloss_audio_gloss_id ON gloss_audio(gloss_id);",
-    )?;
+    conn.execute_batch(&format!(
+        "CREATE TABLE IF NOT EXISTS gloss_audio ({GLOSS_AUDIO_COLUMNS});
+         CREATE INDEX IF NOT EXISTS idx_gloss_audio_gloss_id ON gloss_audio(gloss_id);"
+    ))?;
 
     // Upgrade a legacy table (no `kind` column) by rebuilding to the new shape.
     let has_kind: bool = conn
         .prepare("SELECT 1 FROM pragma_table_info('gloss_audio') WHERE name = 'kind'")?
         .exists([])?;
     if !has_kind {
-        conn.execute_batch(
+        conn.execute_batch(&format!(
             "BEGIN;
              ALTER TABLE gloss_audio RENAME TO gloss_audio_old;
-             CREATE TABLE gloss_audio (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                gloss_id INTEGER NOT NULL REFERENCES glosses(id) ON DELETE CASCADE,
-                kind TEXT NOT NULL DEFAULT 'explication',
-                paragraph_index INTEGER NOT NULL,
-                audio_path TEXT NOT NULL,
-                voice_id TEXT NOT NULL,
-                model_id TEXT NOT NULL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(gloss_id, kind, paragraph_index)
-             );
+             CREATE TABLE gloss_audio ({GLOSS_AUDIO_COLUMNS});
              INSERT INTO gloss_audio (id, gloss_id, kind, paragraph_index, audio_path, voice_id, model_id, timestamp)
                 SELECT id, gloss_id, 'explication', paragraph_index, audio_path, voice_id, model_id, timestamp
                 FROM gloss_audio_old;
              DROP TABLE gloss_audio_old;
              CREATE INDEX IF NOT EXISTS idx_gloss_audio_gloss_id ON gloss_audio(gloss_id);
-             COMMIT;",
-        )?;
+             COMMIT;"
+        ))?;
     }
     Ok(())
 }
@@ -1918,6 +1912,11 @@ mod tests {
         ensure_gloss_audio_table(&conn).unwrap();
         assert_eq!(find_gloss_audio(&conn, 3, "explication", 0).unwrap(), Some("/legacy0.mp3".to_string()));
         save_gloss_audio(&conn, 3, "source", 0, "/s.mp3", "v", "m").unwrap();
+        assert_eq!(find_gloss_audio(&conn, 3, "source", 0).unwrap(), Some("/s.mp3".to_string()));
+
+        // Idempotent: a second ensure call is a no-op and preserves data.
+        ensure_gloss_audio_table(&conn).unwrap();
+        assert_eq!(find_gloss_audio(&conn, 3, "explication", 0).unwrap(), Some("/legacy0.mp3".to_string()));
         assert_eq!(find_gloss_audio(&conn, 3, "source", 0).unwrap(), Some("/s.mp3".to_string()));
     }
 
