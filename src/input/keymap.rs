@@ -845,6 +845,12 @@ fn handle_gloss_key(
             crate::input::actions::gloss::pick_source_voice(state);
             true
         }
+        "i" => {
+            // Source verse only: open the fix-IPA card to correct one word's
+            // /IPA/ (type /IPA/ literally or a plain hint for the LLM).
+            crate::input::actions::gloss::open_fix_ipa_prompt(state);
+            true
+        }
         _ => true,
     }
 }

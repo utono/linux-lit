@@ -354,6 +354,15 @@ pub(crate) fn show_edit_dialog(state_rc: &Rc<RefCell<AppState>>) {
     show_prompt_dialog(state_rc, crate::app::GlossPromptMode::Edit);
 }
 
+/// Gloss-overlay `i`: open the fix-IPA input card for the cursor's source verse.
+/// No-op (toast) off a source block.
+pub(crate) fn open_fix_ipa_prompt(state_rc: &Rc<RefCell<AppState>>) {
+    if source_block_index(state_rc).is_none() {
+        return; // not a source block — `source_block_index` toasted already
+    }
+    show_prompt_dialog(state_rc, crate::app::GlossPromptMode::FixIpa);
+}
+
 /// Gloss-overlay `i` submit: parse `word [/IPA/ | hint]` and fix the word's OP
 /// IPA in the cursor's source verse, splice it into `gloss_text`, persist,
 /// drop the source block's cached audio, patch the in-memory gloss, and
