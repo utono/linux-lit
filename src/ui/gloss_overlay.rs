@@ -1645,7 +1645,48 @@ fn parse_gloss_tags(gloss: &str) -> Vec<GlossElement> {
             break;
         }
     }
-    elements
+    carry_forward_block_speakers(elements)
+}
+
+/// Repair speaker-less verse blocks. A verse block normally opens with a
+/// `<speaker>` (which supplies BOTH the label and the 36px breathing-room above
+/// the block — `verse_tag` itself has no top spacing). When the gloss model
+/// omits the speaker for a continued speech (an observed defect in stored data,
+/// e.g. gloss 21730's middle block), the block renders with neither label nor
+/// gap, jammed against the preceding `<gloss>` prose.
+///
+/// Here we detect a `Verse` that begins a new block — the previous element is a
+/// `Gloss` — with no `Speaker` of its own, and splice in a synthetic `Speaker`
+/// carrying the last-seen speaker name. The synthetic element flows through the
+/// normal Speaker render arm, so the block regains both its label and its gap
+/// with no special-casing downstream (block ranges, cursor, bars all follow).
+fn carry_forward_block_speakers(elements: Vec<GlossElement>) -> Vec<GlossElement> {
+    let mut out: Vec<GlossElement> = Vec::with_capacity(elements.len());
+    let mut last_speaker: Option<String> = None;
+    let mut prev_was_gloss = false;
+    for el in elements {
+        match &el {
+            GlossElement::Speaker(name) => {
+                last_speaker = Some(name.clone());
+                prev_was_gloss = false;
+            }
+            GlossElement::Verse(_) => {
+                // A verse opening a new block (right after prose) with no speaker
+                // of its own: re-insert the carried speaker so the block keeps
+                // its label and top spacing.
+                if prev_was_gloss {
+                    if let Some(name) = &last_speaker {
+                        out.push(GlossElement::Speaker(name.clone()));
+                    }
+                }
+                prev_was_gloss = false;
+            }
+            GlossElement::Gloss(_) => prev_was_gloss = true,
+            GlossElement::Pron(_) => {}
+        }
+        out.push(el);
+    }
+    out
 }
 
 fn try_extract<'a>(s: &'a str, tag: &str) -> Option<(&'a str, &'a str)> {
@@ -2372,6 +2413,40 @@ mod block_tests {
             matches!(&els[1], GlossElement::Pron(t) if t.contains("long vowel")),
             "expected a Pron element carrying the note, got {:?}", els.get(1)
         );
+    }
+
+    #[test]
+    fn speakerless_verse_block_carries_forward_prior_speaker() {
+        // Gloss 21730's defect: a continued speech's middle verse block omits
+        // its <speaker>, so it rendered with neither label nor top spacing.
+        // parse_gloss_tags must splice the carried speaker back in.
+        let gloss = "<speaker>KING</speaker>\n\
+                     <verse>You were ever good at sudden commendations,</verse>\n\
+                     <gloss>The King opens with a rebuke.</gloss>\n\
+                     <verse>To me you cannot reach. You play the spaniel,</verse>\n\
+                     <gloss>Blunt and final.</gloss>\n\
+                     <speaker>KING</speaker>\n\
+                     <verse>Good man, sit down.</verse>";
+        let els = parse_gloss_tags(gloss);
+        // The speaker-less middle block must now open with a carried KING.
+        assert!(
+            matches!(&els[3], GlossElement::Speaker(n) if n == "KING"),
+            "expected a carried-forward KING speaker before the middle verse \
+             block, got {:?}",
+            els.get(3)
+        );
+        assert!(matches!(&els[4], GlossElement::Verse(t) if t.starts_with("To me")));
+        // The original two real speakers plus one synthetic = three speakers.
+        let speakers = els
+            .iter()
+            .filter(|e| matches!(e, GlossElement::Speaker(_)))
+            .count();
+        assert_eq!(speakers, 3, "got elements: {:?}", els);
+        // The synthetic speaker is dropped by gloss_blocks, so it must NOT add a
+        // spurious block: still 3 source + 2 explication = 5 blocks.
+        let blocks = gloss_blocks(gloss);
+        let sources = blocks.iter().filter(|b| b.kind == BlockKind::Source).count();
+        assert_eq!(sources, 3, "synthetic speaker must not add a source block");
     }
 
     #[test]
