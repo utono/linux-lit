@@ -490,14 +490,24 @@ pub fn ensure_bookmarks_table(conn: &Connection) -> Result<(), rusqlite::Error> 
 /// TTS-time lookup joins exactly with no runtime normalization. Rows are loaded
 /// by scripts/curate_genders.py, not the app. See the character-gender spec.
 pub fn ensure_characters_table(conn: &Connection) -> Result<(), rusqlite::Error> {
+    // Fresh installs get the age column directly.
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS characters (
             work_abbrev TEXT NOT NULL,
             speaker     TEXT NOT NULL,
             gender      TEXT NOT NULL,
+            age         INTEGER,
             PRIMARY KEY (work_abbrev, speaker)
         );"
     )?;
+    // Legacy migration: a pre-age table lacks the `age` column. ADD it (the
+    // pragma probe mirrors ensure_gloss_audio_table's column-existence check).
+    let has_age: bool = conn
+        .prepare("SELECT 1 FROM pragma_table_info('characters') WHERE name = 'age'")?
+        .exists([])?;
+    if !has_age {
+        conn.execute_batch("ALTER TABLE characters ADD COLUMN age INTEGER;")?;
+    }
     Ok(())
 }
 
@@ -2199,11 +2209,56 @@ mod tests {
         assert_eq!(g, "male");
     }
 
+    #[test]
+    fn characters_table_has_age_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_characters_table(&conn).unwrap();
+        // age column exists and is nullable
+        conn.execute(
+            "INSERT INTO characters (work_abbrev, speaker, gender, age) VALUES ('Ham','HAMLET','male',30)",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO characters (work_abbrev, speaker, gender) VALUES ('Ham','GHOST','male')",
+            [],
+        ).unwrap();
+        let age: Option<i64> = conn
+            .query_row("SELECT age FROM characters WHERE speaker='HAMLET'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(age, Some(30));
+        let none: Option<i64> = conn
+            .query_row("SELECT age FROM characters WHERE speaker='GHOST'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(none, None);
+    }
+
+    #[test]
+    fn characters_table_migrates_legacy_no_age() {
+        let conn = Connection::open_in_memory().unwrap();
+        // legacy 3-column table (pre-age) with a row
+        conn.execute_batch(
+            "CREATE TABLE characters (
+                work_abbrev TEXT NOT NULL, speaker TEXT NOT NULL, gender TEXT NOT NULL,
+                PRIMARY KEY (work_abbrev, speaker));
+             INSERT INTO characters VALUES ('Ham','HAMLET','male');",
+        ).unwrap();
+        ensure_characters_table(&conn).unwrap(); // should ALTER ADD age
+        // existing row preserved, age NULL
+        let (g, a): (String, Option<i64>) = conn
+            .query_row("SELECT gender, age FROM characters WHERE speaker='HAMLET'", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!(g, "male");
+        assert_eq!(a, None);
+    }
+
     fn seed(conn: &Connection) {
         ensure_characters_table(conn).unwrap();
-        conn.execute("INSERT INTO characters VALUES ('Ham','HAMLET','male')", []).unwrap();
-        conn.execute("INSERT INTO characters VALUES ('Ham','OPHELIA','female')", []).unwrap();
-        conn.execute("INSERT INTO characters VALUES ('Ham','ALL','neutral')", []).unwrap();
+        // Column-explicit so the now-nullable trailing `age` column is omitted
+        // (defaults NULL); a bare positional VALUES (a,b,c) would error against
+        // the 4-column table.
+        conn.execute("INSERT INTO characters (work_abbrev, speaker, gender) VALUES ('Ham','HAMLET','male')", []).unwrap();
+        conn.execute("INSERT INTO characters (work_abbrev, speaker, gender) VALUES ('Ham','OPHELIA','female')", []).unwrap();
+        conn.execute("INSERT INTO characters (work_abbrev, speaker, gender) VALUES ('Ham','ALL','neutral')", []).unwrap();
     }
 
     #[test]
