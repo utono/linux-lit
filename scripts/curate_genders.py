@@ -21,10 +21,12 @@ import anthropic  # pip install anthropic
 
 DB_PATH = os.path.expanduser("~/utono/litdb/data/lit.db")
 MODEL = "claude-opus-4-7"
-BATCH = 40  # speakers per Claude call
+BATCH = 25  # speakers per Claude call
+DELIM = " ::: "  # visible key separator (won't occur in speaker names)
 
 SYSTEM = """You assign a gender to each Shakespeare character speaker name.
-Return ONLY a JSON object mapping each input "work_abbrev\\tspeaker" key to one
+Return ONLY a JSON object mapping each input "work_abbrev ::: speaker" key (the
+parts are separated by the literal string " ::: ") to one
 of: "male", "female", "neutral", "unknown". Rules:
 - Use the character's TRUE gender, ignoring disguises (Viola disguised as
   Cesario is "female"; Rosalind as Ganymede is "female").
@@ -59,16 +61,22 @@ def missing_speakers(conn):
 
 
 def assign_batch(client, batch):
-    keys = [f"{w}\t{s}" for (w, s) in batch]
-    user = "Assign a gender to each of these work\\tspeaker keys:\n" + "\n".join(keys)
+    keys = [f"{w}{DELIM}{s}" for (w, s) in batch]
+    user = (
+        "Assign a gender to each of these keys (each line is "
+        "work_abbrev ::: speaker):\n" + "\n".join(keys)
+    )
     resp = client.messages.create(
-        model=MODEL, max_tokens=2048, system=SYSTEM,
+        model=MODEL, max_tokens=4096, system=SYSTEM,
         messages=[{"role": "user", "content": user}],
     )
     text = resp.content[0].text.strip()
-    # tolerate a ```json fence
     if text.startswith("```"):
-        text = text.split("```", 2)[1].lstrip("json").strip()
+        # strip a ```json ... ``` fence
+        text = text.split("```", 2)[1]
+        if text.startswith("json"):
+            text = text[len("json"):]
+        text = text.strip()
     return json.loads(text)
 
 
@@ -92,13 +100,18 @@ def main():
     written = 0
     for i in range(0, len(todo), BATCH):
         batch = todo[i:i + BATCH]
-        result = assign_batch(client, batch)
+        try:
+            result = assign_batch(client, batch)
+        except Exception as e:  # malformed JSON, API error, truncation
+            print(f"  ...batch {i}-{i + len(batch)} FAILED ({e}); skipping "
+                  f"(re-run will retry these)", file=sys.stderr)
+            continue
         for (w, s) in batch:
-            gender = result.get(f"{w}\t{s}", "unknown")
+            gender = result.get(f"{w}{DELIM}{s}", "unknown")
             if gender not in ("male", "female", "neutral", "unknown"):
                 gender = "unknown"
             if args.dry_run:
-                print(f"  {w}\t{s}\t{gender}")
+                print(f"  {w}{DELIM}{s}\t{gender}")
             else:
                 conn.execute(
                     "INSERT OR REPLACE INTO characters (work_abbrev, speaker, gender)"
