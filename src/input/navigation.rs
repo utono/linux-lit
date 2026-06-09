@@ -1300,42 +1300,35 @@ fn first_dialogue_line(state: &AppState) -> usize {
 // Speaker-turn navigation (J / K)
 // ---------------------------------------------------------------------------
 
-/// A per-buffer-line view used by the pure speaker-turn scan. `speaker` is the
-/// authoritative `line_mapping.speaker` for that buffer line (None for unmapped
-/// chrome lines — blanks, separators, structural headers). `is_dialogue` is the
-/// same dialogue test the rest of navigation uses.
-#[derive(Clone, Debug)]
-pub(crate) struct SpeakerLine {
-    pub speaker: Option<String>,
-    pub is_dialogue: bool,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Direction {
     Next,
     Prev,
 }
 
-/// Pure scan: from buffer line `from`, return the first dialogue line of the
-/// next / previous speaker turn — the next run of consecutive lines whose
-/// speaker differs from `from`'s speaker. Returns the FIRST dialogue line of
-/// that run in both directions. `None` when there is no such turn ahead /
-/// behind (work boundary, or a work with no speakers).
+/// Pure scan over a line range `[0, len)`: from line `from`, return the first
+/// dialogue line of the next / previous speaker turn — the next run of
+/// consecutive lines whose speaker differs from `from`'s speaker. Returns the
+/// FIRST dialogue line of that run in both directions. `None` when there is no
+/// such turn ahead / behind (range boundary, or no speakers at all).
 ///
-/// Authoritative: operates only on the per-line speaker carried in `lines`,
-/// never on buffer text. See CLAUDE.md → authoritative-boundary principle.
+/// `speaker_at(i)` returns the authoritative `line_mapping.speaker` for line `i`
+/// (None for unmapped chrome lines); `is_dialogue_at(i)` is the dialogue test.
+/// Both are accessors so the scan reads lazily and allocates nothing — matching
+/// the in-place scan pattern used by `next_dialogue_line` / `prev_dialogue_line`.
+/// Operates only on per-line speaker metadata, never on buffer text (CLAUDE.md
+/// → authoritative-boundary principle).
 pub(crate) fn speaker_turn_target(
-    lines: &[SpeakerLine],
+    len: usize,
     from: usize,
     dir: Direction,
+    speaker_at: impl Fn(usize) -> Option<String>,
+    is_dialogue_at: impl Fn(usize) -> bool,
 ) -> Option<usize> {
-    let cur = lines.get(from).and_then(|l| l.speaker.clone());
+    let cur = speaker_at(from);
     match dir {
         Direction::Next => {
-            ((from + 1)..lines.len()).find(|&i| {
-                let l = &lines[i];
-                l.is_dialogue && l.speaker != cur
-            })
+            ((from + 1)..len).find(|&i| is_dialogue_at(i) && speaker_at(i) != cur)
         }
         Direction::Prev => {
             let mut i = from;
@@ -1345,18 +1338,16 @@ pub(crate) fn speaker_turn_target(
                     return None;
                 }
                 i -= 1;
-                let l = &lines[i];
-                if l.is_dialogue && l.speaker != cur {
-                    prev_block_speaker = l.speaker.clone();
+                if is_dialogue_at(i) && speaker_at(i) != cur {
+                    prev_block_speaker = speaker_at(i);
                     break;
                 }
             }
             let mut first = i;
             while i > 0 {
                 i -= 1;
-                let l = &lines[i];
-                if l.is_dialogue {
-                    if l.speaker == prev_block_speaker {
+                if is_dialogue_at(i) {
+                    if speaker_at(i) == prev_block_speaker {
                         first = i;
                     } else {
                         break;
@@ -1368,35 +1359,23 @@ pub(crate) fn speaker_turn_target(
     }
 }
 
-/// Build the per-buffer-line speaker view for the current work. Index is the
-/// buffer line; `speaker` comes from `work.lines[work_line_for_buffer(bl)]`.
-fn build_speaker_view(state: &AppState) -> Vec<SpeakerLine> {
-    let line_count = state.effective_line_count();
-    let work = match state.current_work.as_ref() {
-        Some(w) => w,
-        None => return Vec::new(),
-    };
-    (0..line_count)
-        .map(|bl| {
-            let speaker = state
-                .work_line_for_buffer(bl)
-                .and_then(|wi| work.lines.get(wi))
-                .and_then(|l| l.speaker.clone());
-            SpeakerLine {
-                speaker,
-                is_dialogue: is_dialogue_line(&state.buffer, bl),
-            }
-        })
-        .collect()
-}
-
 /// Jump to the first dialogue line of the NEXT speaker turn (`J`). Seeks audio.
 pub fn jump_to_next_speaker(state: &mut AppState) {
     if state.current_work.is_none() {
         return;
     }
-    let view = build_speaker_view(state);
-    if let Some(target) = speaker_turn_target(&view, state.current_line, Direction::Next) {
+    let line_count = state.effective_line_count();
+    let target = {
+        let work = state.current_work.as_ref().unwrap();
+        speaker_turn_target(
+            line_count,
+            state.current_line,
+            Direction::Next,
+            |i| state.work_line_for_buffer(i).and_then(|wi| work.lines.get(wi)).and_then(|l| l.speaker.clone()),
+            |i| is_dialogue_line(&state.buffer, i),
+        )
+    };
+    if let Some(target) = target {
         let prev_line = state.current_line;
         state.current_line = target;
         state.pending_advance = None;
@@ -1412,8 +1391,18 @@ pub fn jump_to_prev_speaker(state: &mut AppState) {
     if state.current_work.is_none() {
         return;
     }
-    let view = build_speaker_view(state);
-    if let Some(target) = speaker_turn_target(&view, state.current_line, Direction::Prev) {
+    let line_count = state.effective_line_count();
+    let target = {
+        let work = state.current_work.as_ref().unwrap();
+        speaker_turn_target(
+            line_count,
+            state.current_line,
+            Direction::Prev,
+            |i| state.work_line_for_buffer(i).and_then(|wi| work.lines.get(wi)).and_then(|l| l.speaker.clone()),
+            |i| is_dialogue_line(&state.buffer, i),
+        )
+    };
+    if let Some(target) = target {
         log_fmt!("SPEAKER_PREV: {} -> {}", state.current_line, target);
         state.current_line = target;
         state.pending_advance = None;
@@ -3100,23 +3089,33 @@ mod after_page_change_tests {
 
 #[cfg(test)]
 mod speaker_turn_tests {
-    use super::{speaker_turn_target, SpeakerLine, Direction};
+    use super::{speaker_turn_target, Direction};
 
-    /// Build a view from compact tuples: (speaker, is_dialogue).
+    /// Build a fixture from compact tuples: (speaker, is_dialogue).
     /// `""` speaker means None (unmapped/chrome line).
-    fn view(rows: &[(&str, bool)]) -> Vec<SpeakerLine> {
+    fn fixture(rows: &[(&str, bool)]) -> Vec<(Option<String>, bool)> {
         rows.iter()
-            .map(|(sp, dlg)| SpeakerLine {
-                speaker: if sp.is_empty() { None } else { Some(sp.to_string()) },
-                is_dialogue: *dlg,
+            .map(|(sp, dlg)| {
+                (if sp.is_empty() { None } else { Some(sp.to_string()) }, *dlg)
             })
             .collect()
     }
 
+    /// Run speaker_turn_target against a fixture.
+    fn target(rows: &[(Option<String>, bool)], from: usize, dir: Direction) -> Option<usize> {
+        speaker_turn_target(
+            rows.len(),
+            from,
+            dir,
+            |i| rows[i].0.clone(),
+            |i| rows[i].1,
+        )
+    }
+
     // Sequence with wrapped continuation lines, a stage direction, and a
     // re-appearing speaker:  A A [stage] B B A C C
-    fn sample() -> Vec<SpeakerLine> {
-        view(&[
+    fn sample() -> Vec<(Option<String>, bool)> {
+        fixture(&[
             ("A", true),   // 0
             ("A", true),   // 1  (wrapped continuation of A)
             ("", false),   // 2  [stage direction] — unmapped
@@ -3131,51 +3130,51 @@ mod speaker_turn_tests {
     #[test]
     fn next_lands_on_first_line_of_next_turn() {
         let v = sample();
-        assert_eq!(speaker_turn_target(&v, 0, Direction::Next), Some(3));
-        assert_eq!(speaker_turn_target(&v, 4, Direction::Next), Some(5));
-        assert_eq!(speaker_turn_target(&v, 5, Direction::Next), Some(6));
+        assert_eq!(target(&v, 0, Direction::Next), Some(3));
+        assert_eq!(target(&v, 4, Direction::Next), Some(5));
+        assert_eq!(target(&v, 5, Direction::Next), Some(6));
     }
 
     #[test]
     fn next_returns_none_at_last_turn() {
         let v = sample();
-        assert_eq!(speaker_turn_target(&v, 6, Direction::Next), None);
-        assert_eq!(speaker_turn_target(&v, 7, Direction::Next), None);
+        assert_eq!(target(&v, 6, Direction::Next), None);
+        assert_eq!(target(&v, 7, Direction::Next), None);
     }
 
     #[test]
     fn prev_lands_on_first_line_of_previous_turn() {
         let v = sample();
-        assert_eq!(speaker_turn_target(&v, 7, Direction::Prev), Some(5));
-        assert_eq!(speaker_turn_target(&v, 5, Direction::Prev), Some(3));
-        assert_eq!(speaker_turn_target(&v, 4, Direction::Prev), Some(0));
-        assert_eq!(speaker_turn_target(&v, 3, Direction::Prev), Some(0));
+        assert_eq!(target(&v, 7, Direction::Prev), Some(5));
+        assert_eq!(target(&v, 5, Direction::Prev), Some(3));
+        assert_eq!(target(&v, 4, Direction::Prev), Some(0));
+        assert_eq!(target(&v, 3, Direction::Prev), Some(0));
     }
 
     #[test]
     fn prev_returns_none_at_first_turn() {
         let v = sample();
-        assert_eq!(speaker_turn_target(&v, 0, Direction::Prev), None);
-        assert_eq!(speaker_turn_target(&v, 1, Direction::Prev), None);
+        assert_eq!(target(&v, 0, Direction::Prev), None);
+        assert_eq!(target(&v, 1, Direction::Prev), None);
     }
 
     #[test]
     fn none_speaker_origin_treats_any_some_as_different() {
-        let v = view(&[("", false), ("", true), ("A", true), ("A", true), ("B", true)]);
-        assert_eq!(speaker_turn_target(&v, 0, Direction::Next), Some(2));
+        let v = fixture(&[("", false), ("", true), ("A", true), ("A", true), ("B", true)]);
+        assert_eq!(target(&v, 0, Direction::Next), Some(2));
     }
 
     #[test]
     fn prose_with_no_speakers_is_noop_both_directions() {
-        let v = view(&[("", true), ("", true), ("", true)]);
-        assert_eq!(speaker_turn_target(&v, 1, Direction::Next), None);
-        assert_eq!(speaker_turn_target(&v, 1, Direction::Prev), None);
+        let v = fixture(&[("", true), ("", true), ("", true)]);
+        assert_eq!(target(&v, 1, Direction::Next), None);
+        assert_eq!(target(&v, 1, Direction::Prev), None);
     }
 
     #[test]
     fn non_dialogue_lines_are_never_a_target() {
-        let v = view(&[("A", true), ("", false), ("B", true)]);
-        assert_eq!(speaker_turn_target(&v, 0, Direction::Next), Some(2));
-        assert_eq!(speaker_turn_target(&v, 2, Direction::Prev), Some(0));
+        let v = fixture(&[("A", true), ("", false), ("B", true)]);
+        assert_eq!(target(&v, 0, Direction::Next), Some(2));
+        assert_eq!(target(&v, 2, Direction::Prev), Some(0));
     }
 }
