@@ -683,10 +683,11 @@ fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32)
                     let i = s.gloss_active_voice.min(voices.len() - 1);
                     (voices[i].0.clone(), voices[i].1.clone())
                 } else {
-                    let gender =
-                        crate::db::queries::get_character_gender(&conn, &work_abbrev, &speaker);
-                    let (v, m) = crate::elevenlabs::voice_for(gender, is_verse);
-                    (v.to_string(), m.to_string())
+                    // No associated voices → age-aware default voice by
+                    // (gender, age) from the voice_catalog (verse/prose by kind).
+                    crate::db::queries::resolve_default_voice(
+                        &conn, &work_abbrev, &speaker, is_verse,
+                    )
                 }
             }
             Err(_) => {
