@@ -220,36 +220,68 @@ Voice A-OP.
 
 ### Saved voice IDs (built)
 
-The four voices below have been created via Voice Design and saved. Render with
-**`eleven_v3`** only (the sole model that reads `/IPA/` and `[…]` audio tags).
-Verse voices take OP `/IPA/` in the narration text at render time; prose voices
-are neutral modern (no `/IPA/`).
+The voices below are the live state of the `voice_catalog` table in `lit.db`.
+Render with **`eleven_v3`** only (the sole model that reads `/IPA/` and `[…]`
+audio tags). For verse the narration text carries OP `/IPA/`; for prose it does
+not (neutral modern). The **age band** on each entry is the
+`(gender, age_min, age_max, role)` band as stored in `voice_catalog` — that
+table, not the generation-prompt age, drives speaker → voice selection.
 
-- **Will OP — Verse (A-OP)** — male verse, Original Pronunciation —
-  `qIorOnPHyesnVMLvolyz`
-- **Will — Prose (B)** — male prose explication, neutral modern —
-  `jTudAEr52RK5998TOYLM`
-- **Willa OP — Verse (A-OP-F)** — female verse, Original Pronunciation —
-  `AJEmTDfBuB294lokNL10`
-- **Willa — Prose (B-F)** — female prose explication, neutral modern —
-  `EKXvXWSM0PF7VaEykbP4`
-- **Petruchio OP — Verse (C-OP)** — male verse (older, swaggering), Original
-  Pronunciation — `8BQp5xsRbw3h92wPAOm9`
-- **Petruchio — Prose (D)** — male prose explication (older), neutral modern —
-  `0C3liWwHU3pG3IcPThkh`
-- **Beatrice OP — Verse (E-OP)** — female verse (sharp-witted, ~25), Original
-  Pronunciation — `d0tyHmCGhjY1al3AD4mO`
-- **Beatrice — Prose (F)** — female prose explication (~25), neutral modern —
-  `FTksVX7bTBbE2R5yfiYi`
+> **Every character now uses ONE voice for both verse and prose.** The original
+> design used a *pair* of voices per character (a verse voice + a separate prose
+> voice). That has been **collapsed: each character is now a single voice used
+> for BOTH roles**, because the verse↔prose timbre seam (two independently
+> generated voices never match perfectly) matters more than register contrast
+> within one character (see *Pros/cons of one voice for both* below). The OP
+> *verse* voice was kept for each character and now serves prose too; the
+> separate prose voices were retired.
+>
+> In `voice_catalog` each character is stored as **two rows with the same
+> `voice_id`** (one `role=verse`, one `role=prose`), so selection returns the one
+> voice for either role with no code change. **The verse render text still
+> carries OP `/IPA/`; the prose render text does not** — the role distinction now
+> lives only in the *text* (IPA or not), not in the voice.
+>
+> Retired voices were deleted from `voice_catalog`; **delete them in the
+> ElevenLabs UI too** (the MCP has no delete-voice tool): Will OP
+> `qIorOnPHyesnVMLvolyz`, Will prose `jTudAEr52RK5998TOYLM`, Willa OP
+> `AJEmTDfBuB294lokNL10`, Willa prose `EKXvXWSM0PF7VaEykbP4`, Petruchio prose (D)
+> `0C3liWwHU3pG3IcPThkh`, Beatrice prose (F) `FTksVX7bTBbE2R5yfiYi`.
+
+Current rows (4 voices × 2 roles = 8 rows; each voice's `verse` and `prose` rows
+share one `voice_id`):
+
+- **Romeo** — young male, verse **and** prose — 15–25 —
+  `6yZ2TgQ0ylkuKI3AMAbI`
+- **Juliet** — young female, verse **and** prose — 12–19 —
+  `91oz9H5XlpZKQkoXkN6w`
+- **Petruchio** — older male (swaggering), verse **and** prose — 35–45 —
+  `8BQp5xsRbw3h92wPAOm9`
+- **Beatrice** — female (sharp-witted), verse **and** prose — 20–30 —
+  `d0tyHmCGhjY1al3AD4mO`
+
+(The ElevenLabs voice names are now just the bare character — **Romeo, Juliet,
+Petruchio, Beatrice** — since each voice serves both roles; the older
+`OP — Verse (C-OP)` / `(E-OP)` suffixes were dropped.)
+
+All four render with **`eleven_v3`**. Verse text carries OP `/IPA/`; prose text
+does not.
+
+The design-discussion sections below (Voice A-OP, Voice B, the female set, the
+Petruchio C/D and Beatrice E/F pairs) still describe voices as verse+prose
+*pairs* with distinct prose voices — they remain useful as the canonical prompt
+recipes that produced each timbre, but the live `voice_catalog` no longer keeps a
+separate prose voice for any character; the OP verse voice does both jobs.
 
 Source clone they were modelled on: **Will – Poetical & Measured** (a
 `professional` clone) — `KjWPwHJWLungxeiYigoM`.
 
-**Selection rule at render:** speaker's gender → `{Will set | Willa set}`, then
-verse → OP voice + `/IPA/`, prose → plain voice. Default to the **male** set when
-gender is ambiguous or unresolved. The female set is only *auto-selected* once a
-speaker → gender data source exists in `lit.db` (see *Female speakers* below and
-the character-gender design spec) — that data source does not exist yet.
+**Selection rule at render:** match the speaker's `(gender, age, role)` against
+`voice_catalog`; for a young lead that resolves to Romeo (male) or Juliet
+(female) for *both* verse and prose. Default to the **male** voice when gender is
+ambiguous or unresolved. Per-speaker gender auto-selection is only possible once
+a speaker → gender data source exists in `lit.db` (see *Female speakers* below
+and the character-gender design spec) — that data source does not exist yet.
 
 ### Female speakers: a mirrored voice set, selected by speaker gender
 
@@ -266,13 +298,14 @@ speaks the source passage**:
 A-OP-F and B-F use the **identical pipeline** as their male counterparts — same
 OP/rhotic treatment, same render-time `/IPA/`, same two-linked-voices identity
 trick (one female narrator switching verse/prose modes). **Only the timbre
-changes**: build them with the same description prompts but `Gender: female`,
-the same `15 to 25` age as the male set, and a colour that reads as the same
-*kind* of narrator — a clear, bright, resonant young female voice (a high,
-ringing soprano/light-mezzo, not deep), with the same crisp articulation and
-authority-beyond-its-years. Everything else in this guide — the `/IPA/` render
-strings, stability, audio-tag discipline, the input cap, hiding `/IPA/` from the
-reader — applies unchanged to the female set.
+changes**: build them with the same description prompts but `Gender: female`, a
+young age (cataloged in `voice_catalog` at **`12 to 19`** — the youthful end,
+distinct from the older Beatrice female band below), and a colour that reads as
+the same *kind* of narrator — a clear, bright, resonant young female voice (a
+high, ringing soprano/light-mezzo, not deep), with the same crisp articulation
+and authority-beyond-its-years. Everything else in this guide — the `/IPA/`
+render strings, stability, audio-tag discipline, the input cap, hiding `/IPA/`
+from the reader — applies unchanged to the female set.
 
 So the explication voice (B vs B-F) follows the *speaker's* gender too: a female
 character's gloss is narrated by B-F even though the explication is editorial
@@ -619,29 +652,35 @@ over-tagging Voice B reintroduces the instability you avoided by keeping it plai
 ## Voices C/D — the Petruchio pair (a second, older male narrator)
 
 A separate male family — **not** a replacement for the Will set (A/B). The
-conceit: the same young player imagined **about ten years older** (`26 to 35`),
-now grown into **Petruchio** from *The Taming of the Shrew* — brash, swaggering,
-mercurial, commanding, witty. Letters **C/D** keep it distinct from the Will
-(A/B) and Willa (A-OP-F/B-F) families.
+conceit: the same player imagined **a generation older** (`35 to 45` in
+`voice_catalog`), now grown into **Petruchio** from *The Taming of the Shrew* —
+brash, swaggering, mercurial, commanding, witty. Letters **C/D** keep it distinct
+from the Will (A/B) and Willa (A-OP-F/B-F) families.
 
 The same pipeline applies unchanged: two linked voices sharing one identity
 (verse C-OP carries OP `/IPA/` at render time; prose D is neutral modern),
 render with **`eleven_v3`**, same stability/audio-tag discipline. The one
 intended departure: the identity baseline is byte-identical **within this pair**
 (so C-OP and D read as one narrator) but **deliberately different from the Will
-baseline** — matured ~10 years, fuller and baritone-leaning rather than the
+baseline** — matured and weathered, fuller and baritone-leaning rather than the
 youth's light tenor. This is a *different narrator*, so a different baseline is
 correct; the byte-identical rule applies only between a voice and its own
 verse/prose sibling.
+
+> **Age note.** These were originally generated with a `26 to 35` prompt, but
+> are cataloged in `voice_catalog` at **`35 to 45`** (the band that actually
+> drives selection). The prompts below have been aligned to `35 to 45` to match
+> the catalog; the live DB band is the source of truth for which speaker ages
+> route here.
 
 ### Voice C-OP — Petruchio verse (Original Pronunciation)
 
 Description / generation prompt:
 
 ```
-Native English. Male, 26 to 35. Studio quality.
+Native English. Male, 35 to 45. Studio quality.
 Persona: Petruchio, swaggering Veronese gentleman, Shakespearean stage player. Emotion: bold, mercurial, commanding, sardonic, mischievous.
-A fuller, warmer, resonant young-man's voice — a baritone-leaning tenor with weight and ring, matured about ten years past youth, carrying the easy authority and swagger of a man who dominates every room. Crisp, vigorous articulation; a glint of wit and provocation under the command. Strongly rhotic — every written R is sounded and colours the vowel before it. Vowels sit slightly archaic and old-fashioned, caught between medieval and modern. Reads at a brisk, muscular, plain-spoken pace, honouring the verse line with a light lift at each line ending, but never posh, never elevated, never refined — earthy, direct, and brazen rather than cathedral-grand. The metre is felt, never hammered; sense drives hard across line breaks.
+A fuller, warmer, resonant mature man's voice — a baritone-leaning tenor with weight and ring, weathered and settled, carrying the easy authority and swagger of a man who dominates every room. Crisp, vigorous articulation; a glint of wit and provocation under the command. Strongly rhotic — every written R is sounded and colours the vowel before it. Vowels sit slightly archaic and old-fashioned, caught between medieval and modern. Reads at a brisk, muscular, plain-spoken pace, honouring the verse line with a light lift at each line ending, but never posh, never elevated, never refined — earthy, direct, and brazen rather than cathedral-grand. The metre is felt, never hammered; sense drives hard across line breaks.
 ```
 
 Preview text — audition the swagger/timbre on a real Petruchio passage (plain;
@@ -661,9 +700,9 @@ the swagger; toward Robust if it over-emotes).
 Save-time Description (≤500 chars):
 
 ```
-Native English. Male, 26 to 35. Studio quality.
+Native English. Male, 35 to 45. Studio quality.
 Persona: Petruchio, swaggering Veronese gentleman, Shakespearean stage player. Emotion: bold, mercurial, commanding, sardonic, mischievous.
-A fuller, warmer, resonant baritone-leaning tenor with weight and ring, matured ~10 years past youth, carrying easy authority and swagger. Crisp vigorous articulation, a glint of wit. Strongly rhotic — every R sounded. Brisk, muscular, plain-spoken, never posh — earthy, direct, brazen. Metre felt, never hammered.
+A fuller, warmer, resonant baritone-leaning tenor with weight and ring, weathered and settled, carrying easy authority and swagger. Crisp vigorous articulation, a glint of wit. Strongly rhotic — every R sounded. Brisk, muscular, plain-spoken, never posh — earthy, direct, brazen. Metre felt, never hammered.
 ```
 
 ### Voice D — Petruchio prose explication (neutral modern)
@@ -675,9 +714,9 @@ change.
 Description / generation prompt:
 
 ```
-Native English. Male, 26 to 35. Studio quality.
+Native English. Male, 35 to 45. Studio quality.
 Persona: erudite literary guide, audiobook narrator. Emotion: clear, warm, conversational, assured.
-A fuller, warmer, resonant young-man's voice — a baritone-leaning tenor with weight and ring, matured about ten years past youth, carrying easy authority — reading explanatory prose in a neutral modern voice: a natural, even pace, sentence rhythm rather than metrical lift, gently instructive and lucid. Confident and unhurried, like an expert explaining a play to an attentive listener.
+A fuller, warmer, resonant mature man's voice — a baritone-leaning tenor with weight and ring, weathered and settled, carrying easy authority — reading explanatory prose in a neutral modern voice: a natural, even pace, sentence rhythm rather than metrical lift, gently instructive and lucid. Confident and unhurried, like an expert explaining a play to an attentive listener.
 ```
 
 Preview text — a real explication paragraph (no IPA/tags):
@@ -689,9 +728,9 @@ Petruchio enters Padua frankly admitting that fortune, not love, has drawn him t
 Save-time Description (≤500 chars):
 
 ```
-Native English. Male, 26 to 35. Studio quality.
+Native English. Male, 35 to 45. Studio quality.
 Persona: erudite literary guide, audiobook narrator. Emotion: clear, warm, conversational, assured.
-A fuller, warmer, resonant baritone-leaning tenor with weight and ring, matured ~10 years past youth, carrying easy authority — reading explanatory prose in a neutral modern voice: natural even pace, sentence rhythm not metrical lift, gently instructive and lucid. Confident and unhurried.
+A fuller, warmer, resonant baritone-leaning tenor with weight and ring, weathered and settled, carrying easy authority — reading explanatory prose in a neutral modern voice: natural even pace, sentence rhythm not metrical lift, gently instructive and lucid. Confident and unhurried.
 ```
 
 ### Render and selection
@@ -716,8 +755,8 @@ Same pipeline: two linked voices sharing one identity (verse E-OP carries OP
 same stability/audio-tag discipline. As with the other character pairs, the
 identity baseline is byte-identical **within this pair** but deliberately its own
 — a bright, agile young woman's voice with a glint of mockery, not the neutral
-Willa baseline. Age `22 to 28` (centred on ~25, a touch above the youthful Willa
-set) to fit her worldly, commanding wit.
+Willa baseline. Age `20 to 30` in `voice_catalog` (centred on ~25, above the
+youthful `12 to 19` Willa band) to fit her worldly, commanding wit.
 
 ### Voice E-OP — Beatrice verse (Original Pronunciation)
 
@@ -726,7 +765,7 @@ speaks (and to keep the family symmetric) the verse voice carries OP. Descriptio
 / generation prompt:
 
 ```
-Native English. Female, 22 to 28. Studio quality.
+Native English. Female, 20 to 30. Studio quality.
 Persona: Beatrice, quick-witted noblewoman, Shakespearean stage player. Emotion: sharp, mocking, spirited, fearless, warm beneath the wit.
 A bright, agile, resonant young woman's voice — a clear soprano or light mezzo with quick, dancing articulation and a glint of mockery, fast and fearless yet warm underneath the barbs, carrying easy self-possession and the relish of a brilliant talker who always has the last word. Strongly rhotic — every written R is sounded and colours the vowel before it. Vowels sit slightly archaic and old-fashioned, caught between medieval and modern. Reads at a brisk, nimble, plain-spoken pace, honouring the verse line with a light lift at each line ending, but never posh, never elevated, never refined — earthy, direct, and quick rather than cathedral-grand. The metre is felt, never hammered; wit drives the sense across line breaks.
 ```
@@ -749,7 +788,7 @@ the wit; toward Robust if it over-emotes).
 Save-time Description (≤500 chars):
 
 ```
-Native English. Female, 22 to 28. Studio quality.
+Native English. Female, 20 to 30. Studio quality.
 Persona: Beatrice, quick-witted noblewoman, Shakespearean stage player. Emotion: sharp, mocking, spirited, fearless, warm beneath the wit.
 A bright, agile, resonant soprano or light mezzo with quick dancing articulation and a glint of mockery, fast and fearless yet warm under the barbs, the relish of a brilliant talker. Strongly rhotic — every R sounded. Brisk, nimble, plain-spoken, never posh — earthy, direct, quick. Metre felt, never hammered.
 ```
@@ -764,7 +803,7 @@ combatant).
 Description / generation prompt:
 
 ```
-Native English. Female, 22 to 28. Studio quality.
+Native English. Female, 20 to 30. Studio quality.
 Persona: erudite literary guide, audiobook narrator. Emotion: clear, warm, conversational, quick and engaging.
 A bright, agile, resonant young woman's voice — a clear soprano or light mezzo with quick articulation and easy self-possession — reading explanatory prose in a neutral modern voice: a natural, even pace, sentence rhythm rather than metrical lift, gently instructive, lucid, and quietly amused. Confident and unhurried, like a sharp, engaging reader explaining a comedy to an attentive listener.
 ```
@@ -778,7 +817,7 @@ Beatrice meets every overture from Benedick with a counterstroke, turning courts
 Save-time Description (≤500 chars):
 
 ```
-Native English. Female, 22 to 28. Studio quality.
+Native English. Female, 20 to 30. Studio quality.
 Persona: erudite literary guide, audiobook narrator. Emotion: clear, warm, conversational, quick and engaging.
 A bright, agile, resonant soprano or light mezzo with quick articulation and easy self-possession — reading explanatory prose in a neutral modern voice: natural even pace, sentence rhythm not metrical lift, gently instructive, lucid, and quietly amused. Confident and unhurried.
 ```
