@@ -355,10 +355,268 @@ pub(crate) fn show_edit_dialog(state_rc: &Rc<RefCell<AppState>>) {
 }
 
 /// Gloss-overlay `i` submit: parse `word [/IPA/ | hint]` and fix the word's OP
-/// IPA in the cursor's source verse. (Full implementation in Task 4.)
+/// IPA in the cursor's source verse, splice it into `gloss_text`, persist,
+/// drop the source block's cached audio, patch the in-memory gloss, and
+/// re-synthesize + play. Two paths: a literal `/IPA/` (applied directly, no
+/// LLM) and a plain hint (LLM resolves the IPA, then applies the same way).
 pub(crate) fn fix_word_ipa(state_rc: &Rc<RefCell<AppState>>, input: &str) {
-    let _ = input;
-    show_tts_toast(state_rc, "Fix IPA: not yet wired");
+    // 1. Parse `word <rest>`.
+    let trimmed = input.trim();
+    let (word, rest) = match trimmed.split_once(char::is_whitespace) {
+        Some((w, r)) => (w.trim().to_string(), r.trim().to_string()),
+        None => {
+            show_tts_toast(state_rc, "Usage: word /IPA/  or  word <hint>");
+            return;
+        }
+    };
+    if word.is_empty() || rest.is_empty() {
+        show_tts_toast(state_rc, "Usage: word /IPA/  or  word <hint>");
+        return;
+    }
+
+    // 2. Resolve the cursor's source block under a single borrow, then drop it
+    //    before any toast / async spawn. On a non-Source block, a missing gloss,
+    //    or a block index not present in the parsed gloss, toast and bail.
+    enum Resolve {
+        Ok {
+            gloss_index_pos: usize,
+            gloss_id: i64,
+            block_index: i32,
+            gloss_text: String,
+            block_text: String,
+        },
+        NotSource,
+        NoGloss,
+    }
+    let resolved = {
+        let s = state_rc.borrow();
+        match s.gloss_overlay.current_block() {
+            Some((BlockKind::Source, block_index)) => {
+                let gloss_index_pos = s.gloss_index;
+                match s.gloss_list.get(gloss_index_pos) {
+                    Some(g) => {
+                        let gloss_text = g.gloss_text.clone();
+                        let blocks = crate::ui::gloss_overlay::gloss_blocks(&gloss_text);
+                        match blocks
+                            .iter()
+                            .find(|b| b.kind == BlockKind::Source && b.index == block_index)
+                        {
+                            Some(block) => Resolve::Ok {
+                                gloss_index_pos,
+                                gloss_id: g.gloss_id,
+                                block_index,
+                                gloss_text: gloss_text.clone(),
+                                block_text: block.text.clone(),
+                            },
+                            None => Resolve::NotSource,
+                        }
+                    }
+                    None => Resolve::NoGloss,
+                }
+            }
+            _ => Resolve::NotSource,
+        }
+    };
+
+    let (gloss_index_pos, gloss_id, block_index, gloss_text, block_text) = match resolved {
+        Resolve::Ok {
+            gloss_index_pos,
+            gloss_id,
+            block_index,
+            gloss_text,
+            block_text,
+        } => (gloss_index_pos, gloss_id, block_index, gloss_text, block_text),
+        Resolve::NotSource => {
+            show_tts_toast(state_rc, "Source verse only");
+            return;
+        }
+        Resolve::NoGloss => {
+            show_tts_toast(state_rc, "No gloss");
+            return;
+        }
+    };
+
+    // 3. Literal `/IPA/` -> apply directly; plain hint -> ask the LLM first.
+    if crate::ui::gloss_overlay::contains_ipa_span(&rest) {
+        let new_ipa = first_ipa_span(&rest);
+        apply_ipa_fix(
+            state_rc,
+            gloss_index_pos,
+            gloss_id,
+            block_index,
+            &gloss_text,
+            &block_text,
+            &word,
+            &new_ipa,
+        );
+    } else {
+        request_ipa_then_apply(
+            state_rc,
+            gloss_index_pos,
+            gloss_id,
+            block_index,
+            gloss_text,
+            block_text,
+            word,
+            rest,
+        );
+    }
+}
+
+/// The first inline IPA span (with slashes) in `s`, e.g. "daily /ˈdeɪli/" ->
+/// "/ˈdeɪli/". Falls back to the trimmed input if no span (callers only use
+/// this when `contains_ipa_span` is true).
+fn first_ipa_span(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '/' {
+            if let Some(rel) = chars[i + 1..].iter().position(|&c| c == '/') {
+                let close = i + 1 + rel;
+                let inner = &chars[i + 1..close];
+                if !inner.is_empty() && inner.iter().any(|&c| !c.is_ascii_alphabetic()) {
+                    return chars[i..=close].iter().collect();
+                }
+                i = close + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    s.trim().to_string()
+}
+
+/// Shared back half for both the literal and hint paths: swap `word`'s IPA in
+/// the source block, splice the rewritten block into `gloss_text`, persist via
+/// `update_gloss`, delete the block's cached audio (DB rows + files), patch the
+/// in-memory gloss so `play_block_tts` reads the corrected verse, then
+/// re-synthesize + play (pausing MPV first). Holds no borrow across the toast /
+/// play calls.
+#[allow(clippy::too_many_arguments)]
+fn apply_ipa_fix(
+    state_rc: &Rc<RefCell<AppState>>,
+    gloss_index_pos: usize,
+    gloss_id: i64,
+    block_index: i32,
+    gloss_text: &str,
+    block_text: &str,
+    word: &str,
+    new_ipa: &str,
+) {
+    let new_block_text = match crate::ui::gloss_overlay::replace_word_ipa(block_text, word, new_ipa)
+    {
+        Some(t) => t,
+        None => {
+            show_tts_toast(state_rc, &format!("No IPA for {}", word));
+            return;
+        }
+    };
+    // `block.text` is a verbatim contiguous substring of `gloss_text` (gloss_blocks
+    // copies it), so a single replacen splices the rewritten block back in.
+    let new_gloss_text = gloss_text.replacen(block_text, &new_block_text, 1);
+    if new_gloss_text == gloss_text {
+        show_tts_toast(state_rc, "Could not apply IPA fix");
+        return;
+    }
+
+    // Persist the corrected gloss and invalidate this block's cached audio.
+    let removed: Vec<String> = match crate::db::queries::open_db_rw() {
+        Ok(conn) => {
+            let _ = crate::db::queries::update_gloss(&conn, gloss_id, &new_gloss_text);
+            crate::db::queries::delete_gloss_audio_block(
+                &conn,
+                gloss_id,
+                "source",
+                block_index as i64,
+            )
+            .unwrap_or_default()
+        }
+        Err(_) => {
+            show_tts_toast(state_rc, "Could not save IPA fix");
+            return;
+        }
+    };
+    for p in &removed {
+        let _ = std::fs::remove_file(p);
+    }
+
+    // Patch the in-memory gloss BEFORE play so play_block_tts re-synthesizes the
+    // corrected verse, not the stale IPA.
+    {
+        let mut s = state_rc.borrow_mut();
+        if let Some(g) = s.gloss_list.get_mut(gloss_index_pos) {
+            g.gloss_text = new_gloss_text;
+        }
+    }
+    crate::log_fmt!(
+        "GLOSS: fixed IPA for '{}' in gloss {} source block {} -> {}",
+        word,
+        gloss_id,
+        block_index,
+        new_ipa
+    );
+
+    // Re-synthesize + play (pauses MPV first). No borrow held here.
+    play_source_tts_pausing_mpv(state_rc, block_index);
+}
+
+/// Hint/LLM path: ask Claude for the OP IPA of `word` given `hint`, then apply
+/// the result via `apply_ipa_fix`. Mirrors `edit_gloss`'s async shape
+/// (`glib::spawn_future_local` + `tokio_handle.spawn` + `Ok(Ok(_))`). Captures
+/// owned strings into the closure; the apply call runs after the await with no
+/// outstanding borrow.
+#[allow(clippy::too_many_arguments)]
+fn request_ipa_then_apply(
+    state_rc: &Rc<RefCell<AppState>>,
+    gloss_index_pos: usize,
+    gloss_id: i64,
+    block_index: i32,
+    gloss_text: String,
+    block_text: String,
+    word: String,
+    hint: String,
+) {
+    let (model, tokio_handle) = {
+        let s = state_rc.borrow();
+        (s.config.claude_model.clone(), s.tokio_handle.clone())
+    };
+
+    state_rc.borrow().gloss_overlay.show_loading();
+
+    let state_for_result = Rc::clone(state_rc);
+    let user_msg = format!("word: {}\nhint: {}", word, hint);
+
+    glib::spawn_future_local(async move {
+        let system_prompt = crate::gloss::FIX_IPA_PROMPT.to_string();
+        let result = tokio_handle
+            .spawn(async move {
+                crate::gloss::call_claude_with_prompt(&system_prompt, &user_msg, &model).await
+            })
+            .await;
+
+        match result {
+            Ok(Ok(reply)) => {
+                if !crate::ui::gloss_overlay::contains_ipa_span(&reply) {
+                    show_tts_toast(&state_for_result, "Could not get IPA");
+                    return;
+                }
+                let new_ipa = first_ipa_span(&reply);
+                apply_ipa_fix(
+                    &state_for_result,
+                    gloss_index_pos,
+                    gloss_id,
+                    block_index,
+                    &gloss_text,
+                    &block_text,
+                    &word,
+                    &new_ipa,
+                );
+            }
+            _ => {
+                show_tts_toast(&state_for_result, "Could not get IPA");
+            }
+        }
+    });
 }
 
 pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {

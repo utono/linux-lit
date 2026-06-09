@@ -218,6 +218,13 @@ Rules:
 - ALWAYS place a <speaker> tag before EVERY group of <verse> lines
 - No markdown, no bullets, no numbered lists, no headers";
 
+pub const FIX_IPA_PROMPT: &str = "\
+Return ONLY the Original-Pronunciation IPA for the given English word, wrapped in \
+forward slashes (e.g. /ˈdeɪli/). Use Shakespearean Original Pronunciation (rhotic; \
+FACE as the monophthong /ɛː/ or diphthong per the hint; PRICE /əɪ/; MOUTH /əʊ/). \
+Honor the user's hint about the desired sound. Output the slash-wrapped IPA and \
+nothing else — no prose, no the word, no explanation.";
+
 const TEACHER_GENERIC_PROMPT: &str = "\
 You are a performance-focused teacher helping a reader understand a passage from a literary text.
 
