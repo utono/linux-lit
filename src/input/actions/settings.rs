@@ -195,23 +195,37 @@ pub(crate) fn confirm_voice_picker(state: &Rc<RefCell<crate::app::AppState>>) {
 
             if let (Some((voice_id, name, _free)), Some(gid)) = (selected, gloss_id) {
                 let model = crate::elevenlabs::OP_MODEL_ID.to_string();
-                if let Ok(conn) = crate::db::queries::open_db_rw() {
-                    // Associate the voice if it isn't already (do NOT blindly
-                    // toggle — that would REMOVE an already-associated voice).
-                    let existing = crate::db::queries::get_gloss_voices(&conn, gid);
-                    let already = existing.iter().any(|(vid, _)| vid == &voice_id);
-                    if !already {
-                        let _ = crate::db::queries::toggle_gloss_voice(&conn, gid, &voice_id, &model);
+                match crate::db::queries::open_db_rw() {
+                    Ok(conn) => {
+                        // Associate the voice if it isn't already (do NOT blindly
+                        // toggle — that would REMOVE an already-associated voice).
+                        let existing = crate::db::queries::get_gloss_voices(&conn, gid);
+                        let already = existing.iter().any(|(vid, _)| vid == &voice_id);
+                        if !already {
+                            let _ = crate::db::queries::toggle_gloss_voice(
+                                &conn, gid, &voice_id, &model,
+                            );
+                        }
+                        // Set this voice as the active one: its index in the re-read list.
+                        let voices = crate::db::queries::get_gloss_voices(&conn, gid);
+                        if let Some(pos) = voices.iter().position(|(vid, _)| vid == &voice_id) {
+                            state.borrow_mut().gloss_active_voice = pos;
+                        }
+                        crate::log_fmt!(
+                            "VOICE: gloss {} active voice {} ({})", gid, voice_id, name
+                        );
+                        crate::input::actions::gloss::voice_picker_toast(state, "Voice", &name);
                     }
-                    // Set this voice as the active one: its index in the re-read list.
-                    let voices = crate::db::queries::get_gloss_voices(&conn, gid);
-                    if let Some(pos) = voices.iter().position(|(vid, _)| vid == &voice_id) {
-                        state.borrow_mut().gloss_active_voice = pos;
+                    Err(e) => {
+                        // Match the GlossOverlay arm: log + toast so a failed pick
+                        // isn't silently played in the previously-active voice.
+                        crate::log_fmt!(
+                            "VOICE: could not open db to set gloss active voice: {}", e
+                        );
+                        crate::input::actions::gloss::voice_picker_toast(
+                            state, "Could not update", &name,
+                        );
                     }
-                    crate::log_fmt!(
-                        "VOICE: gloss {} active voice {} ({})", gid, voice_id, name
-                    );
-                    crate::input::actions::gloss::voice_picker_toast(state, "Voice", &name);
                 }
             }
 
