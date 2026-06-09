@@ -97,7 +97,7 @@ const SHIFT_KEY: KeyDef = ub("Shift", "");
 
 /// Row 5: modifiers, sequences, and arrows gathered into one screen.
 const MOD_SEQ_ROW: &[KeyDef] = &[
-    bare("Space", "", "play/pause"),
+    bare("Space", "", "play from ts"),
     bare("gg", "", "go to start"),
     key("G", "", "", "go to end", &[]),
     bare("g;", "", "latest bookmark"),

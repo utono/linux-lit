@@ -61,23 +61,38 @@ pub fn handle_key(
     // non-editable, so it does not block this.
     // Exception: GlossOverlay intercepts Space to read the cursor's explication
     // paragraph aloud via handle_gloss_key — do not intercept there.
+    // Spacebar (no modifiers) replicates the `a` bind on each surface:
+    // begin playback from the cursor line's start time. This block handles the
+    // Reader (main card) case; overlays handle space in their own arms so each
+    // surface's space matches that surface's `a`. Guards stay here because they
+    // gate Search and Gloss before their handlers run:
+    //  - editable widget focus (Entry / editable TextView / Search) → space
+    //    must type a literal space, so let GTK route it (return false);
+    //  - GlossOverlay → its handler owns space (read-block), so skip here.
+    // For any other non-editable mode, fall through to mode dispatch.
     if key_name == "space" && !is_ctrl && !is_shift && !is_alt {
         let s = state.borrow();
-        let gloss_open = s.input_mode == crate::app::InputMode::GlossOverlay;
-        // The search bar (opened by /) is a text-input field; space must
-        // type a literal space there, never toggle playback. Treat Search
-        // mode as editable explicitly rather than relying on window focus.
-        let focus_is_editable = s.input_mode == crate::app::InputMode::Search
+        let mode = s.input_mode;
+        let gloss_open = mode == crate::app::InputMode::GlossOverlay;
+        let focus_is_editable = mode == crate::app::InputMode::Search
             || gtk4::prelude::GtkWindowExt::focus(&s.window).is_some_and(|w| {
                 w.is::<gtk4::Entry>()
                     || w.downcast_ref::<gtk4::TextView>()
                         .is_some_and(|tv| tv.is_editable())
             });
         drop(s);
-        if !focus_is_editable && !gloss_open {
-            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
+        if focus_is_editable {
+            return false; // type a literal space in the text field
+        }
+        if !gloss_open && mode == crate::app::InputMode::Reader {
+            let mut s = state.borrow_mut();
+            if !crate::input::timestamps::play_current_line(&mut s) {
+                show_no_timestamp_toast(&s);
+            }
             return true;
         }
+        // Non-editable, non-Reader, non-gloss (e.g. an overlay): fall through
+        // to mode dispatch so the overlay's own space arm runs.
     }
 
     // Mode dispatch — delegate to per-mode handler functions
@@ -884,8 +899,11 @@ fn handle_translation_overlay_key(state: &Rc<RefCell<AppState>>, key_name: &str)
             crate::input::search::toggle_playback(&mut state.borrow_mut());
             true
         }
-        "a" => {
-            crate::input::timestamps::play_current_line(&mut state.borrow_mut());
+        "a" | "space" => {
+            let mut s = state.borrow_mut();
+            if !crate::input::timestamps::play_current_line(&mut s) {
+                show_no_timestamp_toast(&s);
+            }
             true
         }
         // Toggle playback sync (same as the main card): identical state +
@@ -920,6 +938,17 @@ fn toggle_playback_sync(s: &mut AppState) {
     s.speed_toast.set_text(label);
     s.speed_toast.set_visible(true);
     let toast = s.speed_toast.clone();
+    glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+        toast.set_visible(false);
+    });
+}
+
+/// Show a transient bottom-center toast (reuses `chapter_toast`, 3s auto-hide).
+/// Used when a play attempt is a no-op because the line has no timestamp.
+fn show_no_timestamp_toast(s: &AppState) {
+    s.chapter_toast.set_text("No timestamp on this line");
+    s.chapter_toast.set_visible(true);
+    let toast = s.chapter_toast.clone();
     glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
         toast.set_visible(false);
     });
@@ -1192,7 +1221,7 @@ fn handle_echoes_overlay_key(
             crate::input::actions::echoes::play_source_turn(state);
             true
         }
-        "a" => {
+        "a" | "space" => {
             crate::input::actions::echoes::play_selected_echo(state, tokio_handle);
             true
         }
