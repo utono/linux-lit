@@ -89,7 +89,7 @@ const BOTTOM_ROW: &[KeyDef] = &[
     bare("b", "B", ""),
     key("m", "M", "bookmark", "", &[("C-m", "media picker")]),
     key("w", "W", "copy word", "W: collect", &[]),
-    key("v", "V", "", "V: visual mode", &[]),
+    key("v", "V", "", "V: visual mode", &[("v", "voice: add/remove"), ("V", "voice: cycle")]),
     bare("z", "Z", "zt…"),
 ];
 
@@ -350,6 +350,12 @@ works, and show them in the echoes overlay. \
         "reopen echoes" => "Reopen the echoes overlay with the most recent echo \
 results, without running a new search. \
 -> echoes::reopen_echoes — src/input/actions/echoes.rs",
+        "voice: add/remove" => "While the gloss overlay is open, open the voice \
+picker to add or remove a voice associated with this gloss (toggles voice-set \
+membership). -> open_voice_picker(GlossOverlay) — src/input/actions/settings.rs",
+        "voice: cycle" => "While the gloss overlay is open, cycle which associated \
+voice plays for this gloss. \
+-> cycle_active_voice — src/input/actions/gloss.rs",
 
         // ── Vocab ──
         "next conc" => "Step to the next concordance hit for the active word — \
