@@ -631,8 +631,8 @@ fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32)
             None => return,
         };
         let gloss_id = gloss.gloss_id;
-        let work_abbrev = match &s.gloss_context {
-            Some(ctx) => ctx.work_abbrev.clone(),
+        let (work_abbrev, speaker) = match &s.gloss_context {
+            Some(ctx) => (ctx.work_abbrev.clone(), ctx.speaker.clone()),
             None => return,
         };
         let blocks = crate::ui::gloss_overlay::gloss_blocks(&gloss.gloss_text);
@@ -640,12 +640,25 @@ fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32)
             Some(b) => b.text.clone(),
             None => return,
         };
+        // Gendered voice: speaker -> gender (default male), block kind -> verse
+        // vs prose. Source blocks are verse (OP voice + the /IPA/ already in the
+        // text); explication blocks are prose (plain voice).
+        let gender = match crate::db::queries::open_db() {
+            Ok(conn) => crate::db::queries::get_character_gender(&conn, &work_abbrev, &speaker),
+            Err(_) => crate::elevenlabs::Gender::Unknown,
+        };
+        let is_verse = kind == BlockKind::Source;
+        let (vid, mid) = crate::elevenlabs::voice_for(gender, is_verse);
+        crate::log_fmt!(
+            "TTS: voice {:?} {} -> {} (speaker={}, {})",
+            gender, work_abbrev, vid, speaker, if is_verse { "verse" } else { "prose" }
+        );
         (
             gloss_id,
             work_abbrev,
             text,
-            s.config.elevenlabs_voice_id.clone(),
-            s.config.elevenlabs_model_id.clone(),
+            vid.to_string(),
+            mid.to_string(),
             s.tokio_handle.clone(),
         )
     };
