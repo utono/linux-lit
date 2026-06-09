@@ -579,7 +579,18 @@ pub fn get_character_gender(
     );
     match row {
         Ok(g) => crate::elevenlabs::Gender::from_db(&g),
-        Err(_) => crate::elevenlabs::Gender::Unknown,
+        // No row for this speaker is the common, benign case → Unknown (→ male
+        // fallback). A genuine error (locked DB, schema drift) also yields
+        // Unknown so playback never crashes, but is logged so it isn't mistaken
+        // for "this character simply has no gender row".
+        Err(rusqlite::Error::QueryReturnedNoRows) => crate::elevenlabs::Gender::Unknown,
+        Err(e) => {
+            crate::log_fmt!(
+                "get_character_gender: unexpected DB error for {}/{}: {}",
+                work_abbrev, speaker, e
+            );
+            crate::elevenlabs::Gender::Unknown
+        }
     }
 }
 
