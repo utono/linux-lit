@@ -501,6 +501,76 @@ pub fn ensure_characters_table(conn: &Connection) -> Result<(), rusqlite::Error>
     Ok(())
 }
 
+/// Ensure the per-gloss voice-set table exists. A gloss can be associated with
+/// zero, one, or more voices; `position` gives a stable cycle order. Rows are
+/// added/removed via `toggle_gloss_voice`. See the per-gloss-voice-set spec.
+pub fn ensure_gloss_voices_table(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS gloss_voices (
+            gloss_id  INTEGER NOT NULL REFERENCES glosses(id) ON DELETE CASCADE,
+            voice_id  TEXT NOT NULL,
+            model_id  TEXT NOT NULL,
+            position  INTEGER NOT NULL,
+            PRIMARY KEY (gloss_id, voice_id)
+        );"
+    )?;
+    Ok(())
+}
+
+/// The voices associated with a gloss, ordered by `position` (cycle order).
+pub fn get_gloss_voices(conn: &Connection, gloss_id: i64) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT voice_id, model_id FROM gloss_voices WHERE gloss_id = ?1 ORDER BY position",
+    ) {
+        if let Ok(rows) = stmt.query_map(rusqlite::params![gloss_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        }) {
+            for row in rows.flatten() {
+                out.push(row);
+            }
+        }
+    }
+    out
+}
+
+/// Toggle a voice's membership in a gloss's set. Returns `true` if it was ADDED
+/// (appended at the next position), `false` if it was REMOVED.
+pub fn toggle_gloss_voice(
+    conn: &Connection,
+    gloss_id: i64,
+    voice_id: &str,
+    model_id: &str,
+) -> bool {
+    let exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM gloss_voices WHERE gloss_id = ?1 AND voice_id = ?2",
+            rusqlite::params![gloss_id, voice_id],
+            |_| Ok(()),
+        )
+        .is_ok();
+    if exists {
+        let _ = conn.execute(
+            "DELETE FROM gloss_voices WHERE gloss_id = ?1 AND voice_id = ?2",
+            rusqlite::params![gloss_id, voice_id],
+        );
+        false
+    } else {
+        let next_pos: i64 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(position) + 1, 0) FROM gloss_voices WHERE gloss_id = ?1",
+                rusqlite::params![gloss_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let _ = conn.execute(
+            "INSERT INTO gloss_voices (gloss_id, voice_id, model_id, position) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![gloss_id, voice_id, model_id, next_pos],
+        );
+        true
+    }
+}
+
 /// Column + constraint body of the gloss_audio table, shared by the fresh-install
 /// CREATE and the legacy-rebuild migration so the two cannot drift.
 const GLOSS_AUDIO_COLUMNS: &str = "
@@ -2041,5 +2111,29 @@ mod tests {
         assert_eq!(Gender::from_db("neutral"), Gender::Neutral);
         assert_eq!(Gender::from_db("MALE"), Gender::Unknown);   // case-sensitive by design
         assert_eq!(Gender::from_db("garbage"), Gender::Unknown);
+    }
+
+    #[test]
+    fn gloss_voices_toggle_add_remove_and_order() {
+        let conn = Connection::open_in_memory().unwrap();
+        // Parent table for the gloss_id FK (rusqlite enforces foreign keys).
+        conn.execute_batch(
+            "CREATE TABLE glosses (id INTEGER PRIMARY KEY);
+             INSERT INTO glosses (id) VALUES (1), (2);",
+        )
+        .unwrap();
+        ensure_gloss_voices_table(&conn).unwrap();
+        // add two voices -> both present, in insertion order
+        assert!(toggle_gloss_voice(&conn, 1, "vA", "m1"));   // true = added
+        assert!(toggle_gloss_voice(&conn, 1, "vB", "m2"));
+        assert_eq!(
+            get_gloss_voices(&conn, 1),
+            vec![("vA".to_string(), "m1".to_string()), ("vB".to_string(), "m2".to_string())]
+        );
+        // toggling vA again removes it
+        assert!(!toggle_gloss_voice(&conn, 1, "vA", "m1"));  // false = removed
+        assert_eq!(get_gloss_voices(&conn, 1), vec![("vB".to_string(), "m2".to_string())]);
+        // a different gloss has its own (empty) set
+        assert!(get_gloss_voices(&conn, 2).is_empty());
     }
 }
