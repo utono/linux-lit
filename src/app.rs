@@ -243,6 +243,10 @@ pub struct AppState {
     /// already open. The overlay stays visible behind the picker, and cancelling
     /// the picker (Escape) returns to the overlay instead of the reader.
     pub gloss_picker_from_overlay: bool,
+    /// Index into the current gloss's associated voice set (gloss_voices,
+    /// position order) — which voice plays next. Session-only; reset to 0 on
+    /// gloss change. With no associated voices, the gender default is used.
+    pub gloss_active_voice: usize,
     /// Where to return when the settings overlay closes. Settings can be opened
     /// from the reader (→ `Reader`) or from the gloss / synopsis overlay (→
     /// `GlossOverlay` / `SynopsisOverlay`), in which case that overlay stays
@@ -1605,6 +1609,7 @@ pub fn build_window(
         gloss_passage_index: 0,
         gloss_opened_from_picker: false,
         gloss_picker_from_overlay: false,
+        gloss_active_voice: 0,
         settings_return_mode: InputMode::Reader,
         gloss_picker_inner_monologue: false,
         gloss_prompt_mode: GlossPromptMode::Add,

@@ -640,43 +640,63 @@ fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32)
             Some(b) => b.text.clone(),
             None => return,
         };
-        // Gendered voice: speaker -> gender (default male), block kind -> verse
-        // vs prose. Source blocks are verse (OP voice + the /IPA/ already in the
-        // text); explication blocks are prose (plain voice).
-        let gender = match crate::db::queries::open_db() {
-            Ok(conn) => crate::db::queries::get_character_gender(&conn, &work_abbrev, &speaker),
-            Err(_) => crate::elevenlabs::Gender::Unknown,
-        };
         let is_verse = kind == BlockKind::Source;
-        let (vid, mid) = crate::elevenlabs::voice_for(gender, is_verse);
+        // Per-gloss voice override: if the gloss has associated voices, play the
+        // active one (gloss_active_voice index, clamped). Else fall back to the
+        // character-gender default (verse->OP, prose->plain).
+        let (vid, mid): (String, String) = match crate::db::queries::open_db() {
+            Ok(conn) => {
+                let voices = crate::db::queries::get_gloss_voices(&conn, gloss_id);
+                if !voices.is_empty() {
+                    let i = s.gloss_active_voice.min(voices.len() - 1);
+                    (voices[i].0.clone(), voices[i].1.clone())
+                } else {
+                    let gender =
+                        crate::db::queries::get_character_gender(&conn, &work_abbrev, &speaker);
+                    let (v, m) = crate::elevenlabs::voice_for(gender, is_verse);
+                    (v.to_string(), m.to_string())
+                }
+            }
+            Err(_) => {
+                let (v, m) =
+                    crate::elevenlabs::voice_for(crate::elevenlabs::Gender::Unknown, is_verse);
+                (v.to_string(), m.to_string())
+            }
+        };
         crate::log_fmt!(
-            "TTS: voice {:?} {} -> {} (speaker={}, {})",
-            gender, work_abbrev, vid, speaker, if is_verse { "verse" } else { "prose" }
+            "TTS: voice -> {} (gloss {}, {})",
+            vid, gloss_id, if is_verse { "verse" } else { "prose" }
         );
         (
             gloss_id,
             work_abbrev,
             text,
-            vid.to_string(),
-            mid.to_string(),
+            vid,
+            mid,
             s.tokio_handle.clone(),
         )
     };
 
-    // Filename stem: explication uses "<index>", source uses "source-<index>".
+    // Filename stem includes a short voice tag so each voice's audio for a block
+    // is a distinct file (voice ids are alphanumeric, filesystem-safe).
+    let voice_tag: String = voice_id.chars().take(12).collect();
     let stem = match kind {
-        BlockKind::Source => format!("source-{}", index),
-        BlockKind::Explication => format!("{}", index),
+        BlockKind::Source => format!("source-{}-{}", index, voice_tag),
+        BlockKind::Explication => format!("{}-{}", index, voice_tag),
     };
 
-    // Cache hit?
+    // Cache hit? Try the selected voice first; then the Alice fallback voice
+    // (a block whose preferred voice 402'd was cached under Alice — without this
+    // second lookup it would re-synthesize and re-hit the paywall every play).
     if let Ok(conn) = crate::db::queries::open_db() {
-        if let Ok(Some(path)) =
-            crate::db::queries::find_gloss_audio(&conn, gloss_id, kind_str, index as i64, &voice_id)
-        {
-            if std::path::Path::new(&path).exists() {
-                state_rc.borrow().tts.play_file(std::path::Path::new(&path));
-                return;
+        for vid_try in [voice_id.as_str(), crate::elevenlabs::ALICE_VOICE_ID] {
+            if let Ok(Some(path)) =
+                crate::db::queries::find_gloss_audio(&conn, gloss_id, kind_str, index as i64, vid_try)
+            {
+                if std::path::Path::new(&path).exists() {
+                    state_rc.borrow().tts.play_file(std::path::Path::new(&path));
+                    return;
+                }
             }
         }
     }
