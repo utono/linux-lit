@@ -2098,6 +2098,187 @@ pub(crate) fn ipa_for_tts(text: &str) -> String {
     normalize_ipa_whitespace(&s)
 }
 
+/// True if `s` contains an inline IPA span — a `/…/` whose inner is non-empty
+/// and has at least one non-ASCII-letter char (length/stress marks, schwa, etc.).
+/// Same heuristic `strip_ipa`/`ipa_for_tts` use to tell `/tɛːk/` from `and/or`.
+/// Used to decide whether a fix-IPA input is a literal `/IPA/` or a plain hint.
+pub(crate) fn contains_ipa_span(s: &str) -> bool {
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '/' {
+            if let Some(rel) = chars[i + 1..].iter().position(|&c| c == '/') {
+                let close = i + 1 + rel;
+                let inner = &chars[i + 1..close];
+                if !inner.is_empty() && inner.iter().any(|&c| !c.is_ascii_alphabetic()) {
+                    return true;
+                }
+                i = close + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Replace the `/IPA/` that immediately follows each whole-word, case-insensitive
+/// occurrence of `word` in `text` with `new_ipa` (which includes its slashes,
+/// e.g. `"/ˈdeɪli/"`). Returns the rewritten text, or `None` if no
+/// `word /IPA/` pair was found (nothing changed). A match requires the word as a
+/// whole token (not a substring) directly followed (after one run of spaces) by
+/// an IPA span. Used by the gloss-overlay `i` (fix-IPA) flow on a source block's
+/// text.
+pub(crate) fn replace_word_ipa(text: &str, word: &str, new_ipa: &str) -> Option<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let wlc: Vec<char> = word.to_ascii_lowercase().chars().collect();
+    if wlc.is_empty() {
+        return None;
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    let mut replaced = false;
+    while i < chars.len() {
+        let at_word_boundary = i == 0 || !chars[i - 1].is_alphanumeric();
+        let word_matches = at_word_boundary
+            && i + wlc.len() <= chars.len()
+            && chars[i..i + wlc.len()]
+                .iter()
+                .map(|c| c.to_ascii_lowercase())
+                .eq(wlc.iter().copied())
+            && chars
+                .get(i + wlc.len())
+                .map_or(true, |c| !c.is_alphanumeric());
+        if word_matches {
+            // word, then a run of spaces, then an IPA span -> replace the span.
+            let mut k = i + wlc.len();
+            while k < chars.len() && chars[k] == ' ' {
+                k += 1;
+            }
+            if k < chars.len() && chars[k] == '/' {
+                if let Some(rel) = chars[k + 1..].iter().position(|&c| c == '/') {
+                    let close = k + 1 + rel;
+                    let inner = &chars[k + 1..close];
+                    let is_ipa =
+                        !inner.is_empty() && inner.iter().any(|&c| !c.is_ascii_alphabetic());
+                    if is_ipa {
+                        out.extend(&chars[i..k]); // word + original spacing verbatim
+                        out.push_str(new_ipa);
+                        i = close + 1;
+                        replaced = true;
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    if replaced {
+        Some(out)
+    } else {
+        None
+    }
+}
+
+/// Rewrite the `/IPA/` after `word` (whole-word, all occurrences) within ONLY
+/// the source block at `source_index`, operating on the TAGGED `gloss_text`
+/// (each verse line is wrapped in `<verse>…</verse>`). Returns the full updated
+/// gloss_text, or None if that block has no `word /IPA/` pair. Other blocks are
+/// untouched even if they contain the same word.
+///
+/// Scoped by POSITION, not text: each `<verse>` is identified by its
+/// document-order ordinal, and only verses belonging to the target source run
+/// (per `gloss_blocks`' exact flush rule) are rewritten. This distinguishes
+/// byte-identical verse lines that appear in different source blocks (e.g. a
+/// repeated refrain) — a text-membership match would wrongly rewrite both.
+pub(crate) fn replace_word_ipa_in_source_block(
+    gloss_text: &str,
+    source_index: i32,
+    word: &str,
+    new_ipa: &str,
+) -> Option<String> {
+    // Phase 1: which verse ORDINALS (0-based, document order) belong to the
+    // target source block? Mirror gloss_blocks' flush rule exactly: a non-echo
+    // <gloss> flushes the pending source run, and the source index advances
+    // ONLY when that pending run is non-empty (matching flush_source).
+    let mut target_ordinals: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    {
+        let mut cur_source = 0i32;
+        let mut verse_ord = 0usize;
+        let mut pending_ords: Vec<usize> = Vec::new();
+        for el in parse_gloss_tags(gloss_text) {
+            match el {
+                GlossElement::Verse(_) => {
+                    pending_ords.push(verse_ord);
+                    verse_ord += 1;
+                }
+                GlossElement::Gloss(text) => {
+                    if split_echo(&text).is_some() {
+                        continue; // echo bracket: does not flush
+                    }
+                    // non-echo gloss flushes the current source run (if non-empty)
+                    if !pending_ords.is_empty() {
+                        if cur_source == source_index {
+                            target_ordinals.extend(pending_ords.iter().copied());
+                        }
+                        cur_source += 1;
+                        pending_ords.clear();
+                    }
+                }
+                GlossElement::Speaker(_) | GlossElement::Pron(_) => {}
+            }
+        }
+        // trailing run (gloss that ends on verse)
+        if !pending_ords.is_empty() && cur_source == source_index {
+            target_ordinals.extend(pending_ords.iter().copied());
+        }
+    }
+    if target_ordinals.is_empty() {
+        return None; // no such source block / no verses
+    }
+
+    // Phase 2: walk raw <verse>…</verse> spans by ordinal (same document order
+    // as Phase 1, since parse_gloss_tags emits one Verse per tag in order);
+    // rewrite only target ones, copy everything else verbatim.
+    let mut out = String::with_capacity(gloss_text.len());
+    let mut rest = gloss_text;
+    let mut ord = 0usize;
+    let mut any = false;
+    while let Some(open) = rest.find("<verse>") {
+        let after_open = open + "<verse>".len();
+        out.push_str(&rest[..after_open]);
+        let tail = &rest[after_open..];
+        if let Some(close_rel) = tail.find("</verse>") {
+            let inner = &tail[..close_rel];
+            if target_ordinals.contains(&ord) {
+                if let Some(fixed) = replace_word_ipa(inner, word, new_ipa) {
+                    out.push_str(&fixed);
+                    any = true;
+                } else {
+                    out.push_str(inner);
+                }
+            } else {
+                out.push_str(inner);
+            }
+            out.push_str("</verse>");
+            rest = &tail[close_rel + "</verse>".len()..];
+            ord += 1;
+        } else {
+            // malformed: no closing tag — copy the remainder and stop
+            out.push_str(tail);
+            rest = "";
+            break;
+        }
+    }
+    out.push_str(rest);
+    if any {
+        Some(out)
+    } else {
+        None
+    }
+}
+
 /// Split an echo bracket `["quote" — Source]` into (quote, citation).
 /// Returns None if the text is not in echo-bracket form. Any trailing
 /// suffix outside the brackets (e.g. "(unverified)") is kept on the
@@ -2423,5 +2604,88 @@ mod synopsis_label_tests {
         // 'be' precedes the first span and is dropped; the second span has only a
         // prior IPA span before it, so the guard keeps that span intact.
         assert_eq!(ipa_for_tts("To be /biː/ /tuː/"), "To /biː/ /tuː/");
+    }
+
+    #[test]
+    fn contains_ipa_span_detects_real_ipa() {
+        assert!(contains_ipa_span("/ˈdeɪli/"));
+        assert!(contains_ipa_span("daily /ˈdeɪli/"));
+        assert!(!contains_ipa_span("hard a"));          // plain hint
+        assert!(!contains_ipa_span("and/or"));          // literal slash, ascii-only
+        assert!(!contains_ipa_span("/word/"));          // ascii-only inner, not IPA
+        assert!(!contains_ipa_span(""));
+    }
+
+    #[test]
+    fn replace_word_ipa_swaps_the_words_ipa() {
+        assert_eq!(
+            replace_word_ipa("In daily /ˈdɛːli/ thanks, that gave /gɛːv/ us", "daily", "/ˈdeɪli/"),
+            Some("In daily /ˈdeɪli/ thanks, that gave /gɛːv/ us".to_string())
+        );
+    }
+
+    #[test]
+    fn replace_word_ipa_all_occurrences() {
+        assert_eq!(
+            replace_word_ipa("good /gʊd/ and more good /gʊd/", "good", "/guːd/"),
+            Some("good /guːd/ and more good /guːd/".to_string())
+        );
+    }
+
+    #[test]
+    fn replace_word_ipa_is_whole_word() {
+        assert_eq!(replace_word_ipa("daily /ˈdɛːli/ here", "day", "/deɪ/"), None);
+    }
+
+    #[test]
+    fn replace_word_ipa_word_without_following_ipa_is_none() {
+        assert_eq!(replace_word_ipa("In daily /ˈdɛːli/ thanks", "thanks", "/θaŋks/"), None);
+    }
+
+    #[test]
+    fn replace_word_ipa_case_insensitive_word_match() {
+        assert_eq!(
+            replace_word_ipa("Daily /ˈdɛːli/ thanks", "daily", "/ˈdeɪli/"),
+            Some("Daily /ˈdeɪli/ thanks".to_string())
+        );
+    }
+
+    #[test]
+    fn replace_in_source_block_rewrites_multiline_verse() {
+        let g = "<speaker>GARDINER</speaker>\n<verse>In daily /ˈdɛːli/ thanks</verse>\n<verse>that gave /gɛːv/ us</verse>\n<gloss>note</gloss>";
+        let out = replace_word_ipa_in_source_block(g, 0, "daily", "/ˈdeɪli/").unwrap();
+        assert!(out.contains("daily /ˈdeɪli/"));
+        assert!(out.contains("gave /gɛːv/")); // other word untouched
+        assert!(out.contains("<gloss>note</gloss>")); // tags intact
+        assert!(out.contains("<verse>"));
+    }
+
+    #[test]
+    fn replace_in_source_block_none_when_word_absent() {
+        let g = "<verse>In daily /ˈdɛːli/ thanks</verse>";
+        assert!(replace_word_ipa_in_source_block(g, 0, "missing", "/x/").is_none());
+    }
+
+    #[test]
+    fn replace_in_source_block_scopes_to_the_block() {
+        // 'good' appears in TWO source blocks; fixing block 1 must not touch block 0.
+        let g = "<verse>good /gʊd/ first</verse>\n<gloss>a</gloss>\n<verse>good /gʊd/ second</verse>\n<gloss>b</gloss>";
+        let out = replace_word_ipa_in_source_block(g, 1, "good", "/guːd/").unwrap();
+        // block 0 (index 0) keeps old IPA; block 1 (index 1) gets new.
+        let first = out.find("first").unwrap();
+        let second = out.find("second").unwrap();
+        assert!(out[..first].contains("good /gʊd/")); // block 0 unchanged
+        assert!(out[..second].contains("good /guːd/")); // block 1 changed
+    }
+
+    #[test]
+    fn replace_in_source_block_distinguishes_identical_lines_across_blocks() {
+        // Same verse line text in TWO source blocks; fixing block 1 must leave
+        // block 0's identical line untouched (position-scoped, not text-scoped).
+        let g = "<verse>good /gʊd/ same</verse>\n<gloss>a</gloss>\n<verse>good /gʊd/ same</verse>\n<gloss>b</gloss>";
+        let out = replace_word_ipa_in_source_block(g, 1, "good", "/guːd/").unwrap();
+        // exactly ONE rewrite: block 1's. Block 0 keeps /gʊd/.
+        assert_eq!(out.matches("good /guːd/ same").count(), 1);
+        assert_eq!(out.matches("good /gʊd/ same").count(), 1);
     }
 }
