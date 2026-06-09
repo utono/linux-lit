@@ -79,6 +79,8 @@ pub enum InputMode {
 pub enum GlossPromptMode {
     Add,
     Edit,
+    /// Gloss-overlay `i`: correct one word's /IPA/ in the cursor's source verse.
+    FixIpa,
 }
 
 #[derive(Clone, Copy, PartialEq)]

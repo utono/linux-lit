@@ -318,15 +318,20 @@ fn show_prompt_dialog(state_rc: &Rc<RefCell<AppState>>, mode: crate::app::GlossP
             .unwrap_or(false);
         (im, mode == crate::app::GlossPromptMode::Edit)
     };
+    let is_fix_ipa = mode == crate::app::GlossPromptMode::FixIpa;
 
-    let title_text = if is_edit {
+    let title_text = if is_fix_ipa {
+        "FIX IPA — word /IPA/  OR  word <hint>"
+    } else if is_edit {
         "EDIT GLOSS — PASTE SUBTEXT LINES"
     } else if is_inner_monologue {
         "INNER MONOLOGUE PASSAGE"
     } else {
         "GLOSS PROMPT"
     };
-    let hint_text = if is_edit {
+    let hint_text = if is_fix_ipa {
+        "e.g. `daily /\u{02c8}de\u{026a}li/` or `daily hard a`  \u{00b7}  Ctrl+Enter submit  \u{00b7}  Esc cancel"
+    } else if is_edit {
         "Paste lines for subtext  \u{00b7}  Tab switch  \u{00b7}  Ctrl+Enter submit  \u{00b7}  Esc cancel"
     } else if is_inner_monologue {
         "Paste lines from another work  \u{00b7}  Tab switch  \u{00b7}  Ctrl+Enter submit  \u{00b7}  Esc cancel"
@@ -347,6 +352,13 @@ pub(crate) fn show_amend_dialog(state_rc: &Rc<RefCell<AppState>>) {
 
 pub(crate) fn show_edit_dialog(state_rc: &Rc<RefCell<AppState>>) {
     show_prompt_dialog(state_rc, crate::app::GlossPromptMode::Edit);
+}
+
+/// Gloss-overlay `i` submit: parse `word [/IPA/ | hint]` and fix the word's OP
+/// IPA in the cursor's source verse. (Full implementation in Task 4.)
+pub(crate) fn fix_word_ipa(state_rc: &Rc<RefCell<AppState>>, input: &str) {
+    let _ = input;
+    show_tts_toast(state_rc, "Fix IPA: not yet wired");
 }
 
 pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
@@ -1176,6 +1188,7 @@ pub(crate) fn submit_gloss_prompt(state: &Rc<RefCell<AppState>>) {
     match mode {
         crate::app::GlossPromptMode::Add => add_gloss(state, &prompt),
         crate::app::GlossPromptMode::Edit => edit_gloss(state, &prompt),
+        crate::app::GlossPromptMode::FixIpa => fix_word_ipa(state, &prompt),
     }
 }
 
