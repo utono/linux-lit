@@ -149,6 +149,7 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
     s.gloss_overlay.set_position(0, all_glosses.len());
     s.gloss_list = all_glosses;
     s.gloss_index = 0;
+    s.gloss_active_voice = 0;
     s.gloss_context = Some(ctx);
 }
 
@@ -163,6 +164,7 @@ pub(crate) fn navigate_gloss(state: &Rc<RefCell<AppState>>, delta: i32) {
         return;
     }
     s.gloss_index = new_idx;
+    s.gloss_active_voice = 0;
     let gloss = &s.gloss_list[new_idx];
     let ctx = s.gloss_context.as_ref().unwrap();
     let cw = s.content_hbox.width();
@@ -209,6 +211,7 @@ pub(crate) fn delete_current_gloss(state_rc: &Rc<RefCell<AppState>>) {
         }
 
         s.gloss_index = idx.min(s.gloss_list.len() - 1);
+        s.gloss_active_voice = 0;
         let new_idx = s.gloss_index;
         let gloss = &s.gloss_list[new_idx];
         let ctx = s.gloss_context.as_ref().unwrap();
@@ -397,6 +400,7 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
                 s.gloss_overlay.set_position(0, all.len());
                 s.gloss_list = all;
                 s.gloss_index = 0;
+                s.gloss_active_voice = 0;
                 crate::logging::log(&format!("GLOSS: added new {} gloss", gloss_type_owned));
             }
             Ok(Err(e)) => {
@@ -493,6 +497,7 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
                 s.gloss_overlay.set_position(0, all.len());
                 s.gloss_list = all;
                 s.gloss_index = 0;
+                s.gloss_active_voice = 0;
                 crate::logging::log(&format!("GLOSS: edited {} gloss (added new)", gloss_type_owned));
             }
             Ok(Err(e)) => {
@@ -615,6 +620,33 @@ fn source_media_state(state_rc: &Rc<RefCell<AppState>>, index: i32) -> (bool, bo
     (s.mpv_connected, s.mpv_playing, seek)
 }
 
+/// Cycle which associated voice is active for the current gloss (wraps). Toasts
+/// the now-active voice id; no-op toast if the gloss has no associated voices.
+/// Does NOT auto-play — the next Space uses the new active voice.
+pub(crate) fn cycle_active_voice(state_rc: &Rc<RefCell<AppState>>) {
+    let gloss_id = {
+        let s = state_rc.borrow();
+        match s.gloss_list.get(s.gloss_index) {
+            Some(g) => g.gloss_id,
+            None => return,
+        }
+    };
+    let voices = match crate::db::queries::open_db() {
+        Ok(conn) => crate::db::queries::get_gloss_voices(&conn, gloss_id),
+        Err(_) => Vec::new(),
+    };
+    if voices.is_empty() {
+        show_tts_toast(state_rc, "No voices associated — default in use");
+        return;
+    }
+    let next = {
+        let mut s = state_rc.borrow_mut();
+        s.gloss_active_voice = (s.gloss_active_voice + 1) % voices.len();
+        s.gloss_active_voice
+    };
+    show_tts_toast(state_rc, &format!("Voice: {}", voices[next].0));
+}
+
 /// Play a block's TTS audio: cache hit -> play the stored MP3; miss ->
 /// synthesize via ElevenLabs (async), cache it, and play. `kind`/`index`
 /// identify the block; the filename stem is `<index>` (explication) or
@@ -640,43 +672,63 @@ fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32)
             Some(b) => b.text.clone(),
             None => return,
         };
-        // Gendered voice: speaker -> gender (default male), block kind -> verse
-        // vs prose. Source blocks are verse (OP voice + the /IPA/ already in the
-        // text); explication blocks are prose (plain voice).
-        let gender = match crate::db::queries::open_db() {
-            Ok(conn) => crate::db::queries::get_character_gender(&conn, &work_abbrev, &speaker),
-            Err(_) => crate::elevenlabs::Gender::Unknown,
-        };
         let is_verse = kind == BlockKind::Source;
-        let (vid, mid) = crate::elevenlabs::voice_for(gender, is_verse);
+        // Per-gloss voice override: if the gloss has associated voices, play the
+        // active one (gloss_active_voice index, clamped). Else fall back to the
+        // character-gender default (verse->OP, prose->plain).
+        let (vid, mid): (String, String) = match crate::db::queries::open_db() {
+            Ok(conn) => {
+                let voices = crate::db::queries::get_gloss_voices(&conn, gloss_id);
+                if !voices.is_empty() {
+                    let i = s.gloss_active_voice.min(voices.len() - 1);
+                    (voices[i].0.clone(), voices[i].1.clone())
+                } else {
+                    let gender =
+                        crate::db::queries::get_character_gender(&conn, &work_abbrev, &speaker);
+                    let (v, m) = crate::elevenlabs::voice_for(gender, is_verse);
+                    (v.to_string(), m.to_string())
+                }
+            }
+            Err(_) => {
+                let (v, m) =
+                    crate::elevenlabs::voice_for(crate::elevenlabs::Gender::Unknown, is_verse);
+                (v.to_string(), m.to_string())
+            }
+        };
         crate::log_fmt!(
-            "TTS: voice {:?} {} -> {} (speaker={}, {})",
-            gender, work_abbrev, vid, speaker, if is_verse { "verse" } else { "prose" }
+            "TTS: voice -> {} (gloss {}, {})",
+            vid, gloss_id, if is_verse { "verse" } else { "prose" }
         );
         (
             gloss_id,
             work_abbrev,
             text,
-            vid.to_string(),
-            mid.to_string(),
+            vid,
+            mid,
             s.tokio_handle.clone(),
         )
     };
 
-    // Filename stem: explication uses "<index>", source uses "source-<index>".
+    // Filename stem includes a short voice tag so each voice's audio for a block
+    // is a distinct file (voice ids are alphanumeric, filesystem-safe).
+    let voice_tag: String = voice_id.chars().take(12).collect();
     let stem = match kind {
-        BlockKind::Source => format!("source-{}", index),
-        BlockKind::Explication => format!("{}", index),
+        BlockKind::Source => format!("source-{}-{}", index, voice_tag),
+        BlockKind::Explication => format!("{}-{}", index, voice_tag),
     };
 
-    // Cache hit?
+    // Cache hit? Try the selected voice first; then the Alice fallback voice
+    // (a block whose preferred voice 402'd was cached under Alice — without this
+    // second lookup it would re-synthesize and re-hit the paywall every play).
     if let Ok(conn) = crate::db::queries::open_db() {
-        if let Ok(Some(path)) =
-            crate::db::queries::find_gloss_audio(&conn, gloss_id, kind_str, index as i64)
-        {
-            if std::path::Path::new(&path).exists() {
-                state_rc.borrow().tts.play_file(std::path::Path::new(&path));
-                return;
+        for vid_try in [voice_id.as_str(), crate::elevenlabs::ALICE_VOICE_ID] {
+            if let Ok(Some(path)) =
+                crate::db::queries::find_gloss_audio(&conn, gloss_id, kind_str, index as i64, vid_try)
+            {
+                if std::path::Path::new(&path).exists() {
+                    state_rc.borrow().tts.play_file(std::path::Path::new(&path));
+                    return;
+                }
             }
         }
     }
@@ -805,6 +857,12 @@ fn gloss_audio_dir(work_abbrev: &str, gloss_id: i64) -> std::path::PathBuf {
         .join("glosses")
         .join(work_abbrev)
         .join(gloss_id.to_string())
+}
+
+/// Toast helper exposed for the voice-picker confirm path (settings.rs) to
+/// report gloss-voice association from the gloss overlay.
+pub(crate) fn voice_picker_toast(state_rc: &Rc<RefCell<AppState>>, verb: &str, name: &str) {
+    show_tts_toast(state_rc, &format!("{}: {}", verb, name));
 }
 
 fn show_tts_toast(state_rc: &Rc<RefCell<AppState>>, msg: &str) {

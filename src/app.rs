@@ -33,6 +33,14 @@ pub struct VocabMatch {
     pub char_end: usize,
 }
 
+/// Where the voice picker was opened from, so confirm/cancel route back
+/// correctly and write the right target.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum VoicePickerOrigin {
+    Settings,
+    GlossOverlay,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputMode {
     Reader,
@@ -243,6 +251,13 @@ pub struct AppState {
     /// already open. The overlay stays visible behind the picker, and cancelling
     /// the picker (Escape) returns to the overlay instead of the reader.
     pub gloss_picker_from_overlay: bool,
+    /// Index into the current gloss's associated voice set (gloss_voices,
+    /// position order) — which voice plays next. Session-only; reset to 0 on
+    /// gloss change. With no associated voices, the gender default is used.
+    pub gloss_active_voice: usize,
+    /// Where the voice picker was opened from, so confirm/cancel route back
+    /// correctly and write the right target.
+    pub voice_picker_origin: VoicePickerOrigin,
     /// Where to return when the settings overlay closes. Settings can be opened
     /// from the reader (→ `Reader`) or from the gloss / synopsis overlay (→
     /// `GlossOverlay` / `SynopsisOverlay`), in which case that overlay stays
@@ -1605,6 +1620,8 @@ pub fn build_window(
         gloss_passage_index: 0,
         gloss_opened_from_picker: false,
         gloss_picker_from_overlay: false,
+        gloss_active_voice: 0,
+        voice_picker_origin: VoicePickerOrigin::Settings,
         settings_return_mode: InputMode::Reader,
         gloss_picker_inner_monologue: false,
         gloss_prompt_mode: GlossPromptMode::Add,
@@ -2453,6 +2470,7 @@ pub fn display_work_at_with_prepared(
             let _ = crate::db::queries::ensure_echo_tables(&conn);
             let _ = crate::db::queries::ensure_gloss_audio_table(&conn);
             let _ = crate::db::queries::ensure_characters_table(&conn);
+            let _ = crate::db::queries::ensure_gloss_voices_table(&conn);
         }
     });
 

@@ -18,6 +18,7 @@ pub struct VoicePicker {
     search_entry: Entry,
     list_box: ListBox,
     voices: Vec<VoiceInfo>,
+    associated: Vec<String>,
 }
 
 impl VoicePicker {
@@ -50,6 +51,16 @@ impl VoicePicker {
             search_entry,
             list_box,
             voices: Vec::new(),
+            associated: Vec::new(),
+        }
+    }
+
+    /// Mark which voice ids are already in the current gloss's set (✓ badge).
+    pub fn set_associated(&mut self, ids: Vec<String>) {
+        self.associated = ids;
+        if self.is_visible() {
+            let filter = self.search_entry.text().to_string();
+            self.populate_list(&filter);
         }
     }
 
@@ -129,6 +140,13 @@ impl VoicePicker {
             badge.set_halign(Align::End);
             badge.add_css_class("picker-item-detail");
             row_box.append(&badge);
+
+            if self.associated.iter().any(|id| id == &voice.voice_id) {
+                let assoc = Label::new(Some("\u{2713}")); // ✓ associated
+                assoc.set_halign(Align::End);
+                assoc.add_css_class("picker-item-detail");
+                row_box.append(&assoc);
+            }
 
             let row = ListBoxRow::new();
             row.set_child(Some(&row_box));

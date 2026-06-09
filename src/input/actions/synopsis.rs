@@ -269,6 +269,7 @@ pub(crate) fn open_work_glosses(state_rc: &Rc<RefCell<AppState>>) {
     s.gloss_overlay.set_position(0, all_glosses.len());
     s.gloss_list = all_glosses;
     s.gloss_index = 0;
+    s.gloss_active_voice = 0;
     s.gloss_passages = passages;
     s.gloss_passage_index = 0;
     s.gloss_context = Some(ctx);

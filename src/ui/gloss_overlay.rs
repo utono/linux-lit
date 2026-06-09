@@ -1861,6 +1861,8 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
                 in_echoes = true;
 
                 if let Some((quote, citation)) = split_echo(text) {
+                    let quote = strip_ipa(&quote);
+                    let citation = strip_ipa(&citation);
                     // Echo: quote on one line, citation indented below it.
                     let quote_line = buffer.end_iter().line();
                     echo_lines.push(quote_line);
@@ -1907,20 +1909,19 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
                         });
                     }
                 } else {
+                    let shown = strip_ipa(text);
                     let mut end = buffer.end_iter();
-                    buffer.insert(&mut end, text);
+                    buffer.insert(&mut end, &shown);
                     let start = buffer.iter_at_offset(offset);
                     buffer.apply_tag(&para_tag, &start, &buffer.end_iter());
                 }
             }
-            GlossElement::Pron(text) => {
+            GlossElement::Pron(_) => {
                 only_speakers_so_far = false;
-                // The <pron> note's IPA is MEANT to be visible (teaching tier),
-                // so do NOT strip it. Render dim+italic beneath its verse block.
-                let mut end = buffer.end_iter();
-                buffer.insert(&mut end, text);
-                let start = buffer.iter_at_offset(offset);
-                buffer.apply_tag(&pron_tag, &start, &buffer.end_iter());
+                // <pron> notes are no longer shown to the reader: IPA is not
+                // helpful pedagogy and is TTS-only. Already-stored notes are
+                // silently dropped from display. (The tag stays defined; just
+                // unused now.)
             }
         }
     }
@@ -2228,5 +2229,14 @@ mod synopsis_label_tests {
     #[test]
     fn strip_ipa_handles_stress_marks() {
         assert_eq!(strip_ipa("the /ˈsʊfər/ of it"), "the  of it");
+    }
+
+    #[test]
+    fn strip_ipa_removes_leaked_prose_ipa() {
+        // IPA the LLM might leak into explication prose must be strippable.
+        assert_eq!(
+            strip_ipa("the modern diphthong /eɪ/ vs the older /eː/"),
+            "the modern diphthong  vs the older "
+        );
     }
 }

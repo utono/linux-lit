@@ -55,7 +55,7 @@ pub(crate) fn apply_settings_change(
         }
         SettingsChange::OpenVoicePicker => {
             drop(s);
-            open_voice_picker(state);
+            open_voice_picker(state, crate::app::VoicePickerOrigin::Settings);
         }
         SettingsChange::None => {}
     }
@@ -64,9 +64,25 @@ pub(crate) fn apply_settings_change(
 /// Open the voice picker from the settings overlay's Voice row. Fetches the
 /// account's voices asynchronously (showing "Loading voices…" meanwhile),
 /// keeps the settings overlay underneath, and switches input to the picker.
-pub(crate) fn open_voice_picker(state: &Rc<RefCell<crate::app::AppState>>) {
+pub(crate) fn open_voice_picker(
+    state: &Rc<RefCell<crate::app::AppState>>,
+    origin: crate::app::VoicePickerOrigin,
+) {
     {
-        let s = state.borrow();
+        let mut s = state.borrow_mut();
+        s.voice_picker_origin = origin;
+        // Seed ✓ badges with the current gloss's associated voices (gloss origin).
+        let assoc: Vec<String> = if origin == crate::app::VoicePickerOrigin::GlossOverlay {
+            let gid = s.gloss_list.get(s.gloss_index).map(|g| g.gloss_id);
+            match (gid, crate::db::queries::open_db()) {
+                (Some(gid), Ok(conn)) => crate::db::queries::get_gloss_voices(&conn, gid)
+                    .into_iter().map(|(vid, _)| vid).collect(),
+                _ => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+        s.voice_picker.set_associated(assoc);
         s.voice_picker.set_status("Loading voices\u{2026}");
         s.voice_picker.show();
     }
@@ -113,25 +129,64 @@ pub(crate) fn open_voice_picker(state: &Rc<RefCell<crate::app::AppState>>) {
 /// settings Voice row, and return to the settings overlay.
 pub(crate) fn confirm_voice_picker(state: &Rc<RefCell<crate::app::AppState>>) {
     let selected = state.borrow().voice_picker.selected_voice();
-    let mut s = state.borrow_mut();
-    s.voice_picker.hide();
-    if let Some((voice_id, name, _free)) = selected {
-        s.config.elevenlabs_voice_id = voice_id.clone();
-        crate::config::save(&s.config);
-        // Show the live name from the picker list on the settings Voice row.
-        s.settings_overlay.set_voice_label(&name);
-        crate::log_fmt!("VOICE: preferred voice set to {} ({})", name, voice_id);
+    let origin = state.borrow().voice_picker_origin;
+    match origin {
+        crate::app::VoicePickerOrigin::Settings => {
+            let mut s = state.borrow_mut();
+            s.voice_picker.hide();
+            if let Some((voice_id, name, _free)) = selected {
+                s.config.elevenlabs_voice_id = voice_id.clone();
+                crate::config::save(&s.config);
+                // Show the live name from the picker list on the settings Voice row.
+                s.settings_overlay.set_voice_label(&name);
+                crate::log_fmt!("VOICE: preferred voice set to {} ({})", name, voice_id);
+            }
+            // Return to the settings overlay (still visible underneath).
+            s.input_mode = crate::app::InputMode::Settings;
+        }
+        crate::app::VoicePickerOrigin::GlossOverlay => {
+            let gloss_id = {
+                let s = state.borrow();
+                s.gloss_list.get(s.gloss_index).map(|g| g.gloss_id)
+            };
+            state.borrow().voice_picker.hide();
+            if let (Some((voice_id, name, _free)), Some(gid)) = (selected, gloss_id) {
+                let model = crate::elevenlabs::OP_MODEL_ID.to_string();
+                match crate::db::queries::open_db_rw() {
+                    Ok(conn) => {
+                        let added =
+                            crate::db::queries::toggle_gloss_voice(&conn, gid, &voice_id, &model);
+                        crate::log_fmt!(
+                            "VOICE: gloss {} {} voice {} ({})",
+                            gid, if added { "associated" } else { "removed" }, voice_id, name
+                        );
+                        crate::input::actions::gloss::voice_picker_toast(
+                            state, if added { "Associated" } else { "Removed" }, &name,
+                        );
+                    }
+                    Err(e) => {
+                        crate::log_fmt!("VOICE: could not open db to toggle gloss voice: {}", e);
+                        crate::input::actions::gloss::voice_picker_toast(
+                            state, "Could not update", &name,
+                        );
+                    }
+                }
+            }
+            state.borrow_mut().input_mode = crate::app::InputMode::GlossOverlay;
+        }
     }
-    // Return to the settings overlay (still visible underneath).
-    s.input_mode = crate::app::InputMode::Settings;
 }
 
-/// Cancel the voice picker: return to the settings overlay without changing the
-/// preferred voice.
+/// Cancel the voice picker: return to the origin (settings or gloss overlay)
+/// without changing anything.
 pub(crate) fn cancel_voice_picker(state: &Rc<RefCell<crate::app::AppState>>) {
+    let origin = state.borrow().voice_picker_origin;
     let mut s = state.borrow_mut();
     s.voice_picker.hide();
-    s.input_mode = crate::app::InputMode::Settings;
+    s.input_mode = match origin {
+        crate::app::VoicePickerOrigin::Settings => crate::app::InputMode::Settings,
+        crate::app::VoicePickerOrigin::GlossOverlay => crate::app::InputMode::GlossOverlay,
+    };
 }
 
 /// Apply a theme to AppState: load CSS, update tag colors, write

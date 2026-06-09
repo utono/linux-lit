@@ -427,6 +427,7 @@ fn handle_picker_key(
                         s.gloss_passage_index = idx;
                         s.gloss_list = all_glosses;
                         s.gloss_index = 0;
+                        s.gloss_active_voice = 0;
                         s.gloss_context = Some(ctx);
                         s.gloss_opened_from_picker = true;
                         s.input_mode = InputMode::GlossOverlay;
@@ -819,6 +820,17 @@ fn handle_gloss_key(
                     crate::input::highlight::update_highlight(&mut s);
                 }
             }
+            true
+        }
+        "V" => {
+            crate::input::actions::gloss::cycle_active_voice(state);
+            true
+        }
+        "v" => {
+            crate::input::actions::settings::open_voice_picker(
+                state,
+                crate::app::VoicePickerOrigin::GlossOverlay,
+            );
             true
         }
         _ => true,
