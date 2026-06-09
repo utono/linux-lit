@@ -80,7 +80,18 @@ same thing with the same word):
 III 1.3]</gloss>
 
 Rules:
-- Quote verbatim — exact words, exact spelling, exact line breaks
+- Quote verbatim — exact words, exact spelling, exact line breaks. \
+\"Verbatim\" governs the original words only; inline /IPA/ tags are \
+ADDITIONAL markup placed immediately AFTER the word they annotate \
+(e.g. take /tɛːk/) and never replace, reorder, or alter the source word.
+- On each <verse> line, APPEND inline Original-Pronunciation IPA in \
+forward slashes IMMEDIATELY AFTER the operative / accent-bearing / \
+metrically stressed words (e.g. take /tɛːk/), leaving the original \
+words unchanged; per word never per phrase; let line structure govern \
+syllable count. Encode OP vowels (rhotic finals, FACE/GOAT \
+monophthongs, the MEAT–MEET split) and ˈ/ˌ stress where metre demands.
+- Do NOT add a <pron> note. The <gloss> remains EXACTLY the single \
+bracketed echo — the /IPA/ goes only inside <verse>.
 - Never use / to join verse lines
 - Each <verse> tag contains exactly one line of the original
 - ONE <gloss> tag per verse line: the bracketed echo only. Do NOT add \
@@ -127,7 +138,14 @@ Output format — use these XML tags exactly, in this order for each line:
 - <gloss>[\"echo from the provided lines\" — Source Work act.scene]</gloss>
 
 Rules:
-- Quote verbatim — exact words, exact spelling, exact line breaks
+- Quote verbatim — exact words, exact spelling, exact line breaks. \
+\"Verbatim\" governs the original words only; inline /IPA/ tags are \
+ADDITIONAL markup placed immediately AFTER the word they annotate \
+(e.g. take /tɛːk/) and never replace, reorder, or alter the source word.
+- On each <verse> line, APPEND inline Original-Pronunciation IPA in \
+forward slashes IMMEDIATELY AFTER the operative / accent-bearing / \
+metrically stressed words (e.g. take /tɛːk/), leaving the original \
+words unchanged; per word never per phrase.
 - Never use / to join verse lines
 - Each <verse> tag contains exactly one line of the original
 - ONE <gloss> tag per verse line: the bracketed echo only. Do NOT add \
@@ -159,7 +177,14 @@ Output format — use these XML tags exactly, in this order for each line:
 - <gloss>[\"echo from the provided lines\" — Source Work act.scene]</gloss>
 
 Rules:
-- Quote verbatim — exact words, exact spelling, exact line breaks
+- Quote verbatim — exact words, exact spelling, exact line breaks. \
+\"Verbatim\" governs the original words only; inline /IPA/ tags are \
+ADDITIONAL markup placed immediately AFTER the word they annotate \
+(e.g. take /tɛːk/) and never replace, reorder, or alter the source word.
+- On each <verse> line, APPEND inline Original-Pronunciation IPA in \
+forward slashes IMMEDIATELY AFTER the operative / accent-bearing / \
+metrically stressed words (e.g. take /tɛːk/), leaving the original \
+words unchanged; per word never per phrase.
 - Never use / to join verse lines
 - Each <verse> tag contains exactly one line of the original
 - ONE <gloss> tag per verse line: the bracketed echo only. Do NOT add \
