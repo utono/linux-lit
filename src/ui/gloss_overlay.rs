@@ -1861,6 +1861,8 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
                 in_echoes = true;
 
                 if let Some((quote, citation)) = split_echo(text) {
+                    let quote = strip_ipa(&quote);
+                    let citation = strip_ipa(&citation);
                     // Echo: quote on one line, citation indented below it.
                     let quote_line = buffer.end_iter().line();
                     echo_lines.push(quote_line);
@@ -1915,6 +1917,7 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
                 }
             }
             GlossElement::Pron(_) => {
+                only_speakers_so_far = false;
                 // <pron> notes are no longer shown to the reader: IPA is not
                 // helpful pedagogy and is TTS-only. Already-stored notes are
                 // silently dropped from display. (The tag stays defined; just
