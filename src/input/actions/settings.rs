@@ -152,11 +152,24 @@ pub(crate) fn confirm_voice_picker(state: &Rc<RefCell<crate::app::AppState>>) {
             state.borrow().voice_picker.hide();
             if let (Some((voice_id, name, _free)), Some(gid)) = (selected, gloss_id) {
                 let model = crate::elevenlabs::OP_MODEL_ID.to_string();
-                if let Ok(conn) = crate::db::queries::open_db_rw() {
-                    let added = crate::db::queries::toggle_gloss_voice(&conn, gid, &voice_id, &model);
-                    crate::input::actions::gloss::voice_picker_toast(
-                        state, if added { "Associated" } else { "Removed" }, &name,
-                    );
+                match crate::db::queries::open_db_rw() {
+                    Ok(conn) => {
+                        let added =
+                            crate::db::queries::toggle_gloss_voice(&conn, gid, &voice_id, &model);
+                        crate::log_fmt!(
+                            "VOICE: gloss {} {} voice {} ({})",
+                            gid, if added { "associated" } else { "removed" }, voice_id, name
+                        );
+                        crate::input::actions::gloss::voice_picker_toast(
+                            state, if added { "Associated" } else { "Removed" }, &name,
+                        );
+                    }
+                    Err(e) => {
+                        crate::log_fmt!("VOICE: could not open db to toggle gloss voice: {}", e);
+                        crate::input::actions::gloss::voice_picker_toast(
+                            state, "Could not update", &name,
+                        );
+                    }
                 }
             }
             state.borrow_mut().input_mode = crate::app::InputMode::GlossOverlay;
