@@ -1007,6 +1007,13 @@ fn hide_tts_toast(state_rc: &Rc<RefCell<AppState>>) {
     state_rc.borrow().chapter_toast.set_visible(false);
 }
 
+/// True when the cursor's `(div1, div2, line_in_div)` triple falls within the
+/// inclusive `[start, end]` citation range of a glossed passage. Rust tuple
+/// ordering compares lexicographically, which matches citation ordering.
+fn passage_covers(start: (i64, i64, i64), end: (i64, i64, i64), cur: (i64, i64, i64)) -> bool {
+    start <= cur && cur <= end
+}
+
 pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
     if state.borrow().input_mode == crate::app::InputMode::GlossOverlay {
         let mut s = state.borrow_mut();
@@ -1022,26 +1029,130 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         }
         return;
     }
-    let has_gloss = !state.borrow().gloss_list.is_empty();
-    if has_gloss {
+
+    const GLOSS_TYPES: &[&str] = &["teacher-generic", "inner-monologue"];
+
+    // Resolve the cursor line -> its (work abbrev, (div1, div2, line_in_div)).
+    let (work_abbrev, cur_triple) = {
         let s = state.borrow();
-        let idx = s.gloss_index;
-        let gloss = &s.gloss_list[idx];
-        let ctx = s.gloss_context.as_ref().unwrap();
-        let cw = s.content_hbox.width();
-        let h = s.content_hbox.height();
-        let pairs = ctx.source_line_pairs();
-        s.gloss_overlay.show_gloss_with_color(
-            &ctx.source_text, &gloss.gloss_text, cw, h,
-            Some(&s.theme.root_color), &pairs,
-        );
-        s.gloss_overlay.set_position(idx, s.gloss_list.len());
-        drop(s);
-        let mut s = state.borrow_mut();
-        // Remember the current page so toggling/Escape returns here.
-        s.gloss_return_pos = Some((s.current_line, s.page_top_line));
-        s.input_mode = crate::app::InputMode::GlossOverlay;
+        let work = match s.current_work.as_ref() {
+            Some(w) => w,
+            None => {
+                drop(s);
+                show_tts_toast(state, "No gloss on this line");
+                return;
+            }
+        };
+        let wl = match s.work_line_for_buffer(s.current_line) {
+            Some(wl) => wl,
+            None => {
+                drop(s);
+                show_tts_toast(state, "No gloss on this line");
+                return;
+            }
+        };
+        let line = match work.lines.get(wl) {
+            Some(l) => l,
+            None => {
+                drop(s);
+                show_tts_toast(state, "No gloss on this line");
+                return;
+            }
+        };
+        (
+            crate::app::base_work_abbrev(&work.abbrev).to_string(),
+            (line.div1, line.div2, line.line_in_div),
+        )
+    };
+
+    // Decode the tail of a citation (`ABBR.div1.div2.line_in_div`) into a triple.
+    let cite_tail = |cite: &str| -> Option<(i64, i64, i64)> {
+        let mut parts = cite.rsplitn(4, '.');
+        let lid = parts.next()?.parse().ok()?;
+        let d2 = parts.next()?.parse().ok()?;
+        let d1 = parts.next()?.parse().ok()?;
+        Some((d1, d2, lid))
+    };
+
+    // Load every glossed passage for this work and find the one covering the
+    // cursor line. All read-only DB work happens before any state mutation.
+    let conn = match crate::db::queries::open_db() {
+        Ok(c) => c,
+        Err(_) => {
+            show_tts_toast(state, "No gloss on this line");
+            return;
+        }
+    };
+    let passages = crate::db::queries::find_glossed_passages(&conn, &work_abbrev, GLOSS_TYPES)
+        .unwrap_or_default();
+
+    let covering = passages.iter().enumerate().find(|(_, p)| {
+        match (cite_tail(&p.start_citation), cite_tail(&p.end_citation)) {
+            (Some(start), Some(end)) => passage_covers(start, end, cur_triple),
+            _ => false,
+        }
+    });
+    let (passage_index, passage) = match covering {
+        Some((i, p)) => (i, p.clone()),
+        None => {
+            show_tts_toast(state, "No gloss on this line");
+            return;
+        }
+    };
+
+    let all_glosses = crate::db::queries::find_all_glosses(
+        &conn,
+        &passage.work_abbrev,
+        &passage.start_citation,
+        &passage.end_citation,
+        GLOSS_TYPES,
+    )
+    .unwrap_or_default();
+
+    if all_glosses.is_empty() {
+        show_tts_toast(state, "No gloss on this line");
+        return;
     }
+
+    // All resolution done; mutate state and open the overlay under one borrow.
+    let mut s = state.borrow_mut();
+    let work_title = s.current_work.as_ref().map(|w| w.title.clone()).unwrap_or_default();
+    let ctx = crate::gloss::GlossContext {
+        work_abbrev: passage.work_abbrev,
+        work_title,
+        start_citation: passage.start_citation,
+        end_citation: passage.end_citation,
+        act: passage.act,
+        scene: passage.scene,
+        speaker: passage.speaker,
+        source_text: passage.source_text,
+        source_line_numbers: Vec::new(),
+        hash: String::new(),
+        gloss_type: all_glosses[0].gloss_type.clone(),
+    };
+
+    // Remember the reader page so Escape returns here.
+    s.gloss_return_pos = Some((s.current_line, s.page_top_line));
+
+    let cw = s.content_hbox.width();
+    let h = s.content_hbox.height();
+    let source_lines: Vec<(String, i64)> = Vec::new();
+    s.gloss_overlay.show_gloss_with_color(
+        &ctx.source_text, &all_glosses[0].gloss_text, cw, h,
+        Some(&s.theme.root_color), &source_lines,
+    );
+    s.gloss_overlay.set_position(0, all_glosses.len());
+
+    s.gloss_passages = passages;
+    s.gloss_passage_index = passage_index;
+    s.gloss_list = all_glosses;
+    s.gloss_index = 0;
+    s.gloss_active_voice = 0;
+    s.gloss_context = Some(ctx);
+    // Opened from the reader cursor, not the picker, so Escape uses the
+    // saved reader page (gloss_return_pos), not the picker return path.
+    s.gloss_opened_from_picker = false;
+    s.input_mode = crate::app::InputMode::GlossOverlay;
 }
 
 /// Close the stacked gloss add/edit input card and return focus to the gloss.
@@ -1087,6 +1198,39 @@ fn first_source_start_time(verses: &str, work: &[(String, Option<f64>)]) -> Opti
         }
     }
     None
+}
+
+#[cfg(test)]
+mod passage_cover_tests {
+    use super::passage_covers;
+
+    #[test]
+    fn covers_inclusive_endpoints_and_interior() {
+        let start = (1, 2, 10);
+        let end = (1, 2, 20);
+        assert!(passage_covers(start, end, (1, 2, 10))); // start endpoint
+        assert!(passage_covers(start, end, (1, 2, 20))); // end endpoint
+        assert!(passage_covers(start, end, (1, 2, 15))); // interior
+    }
+
+    #[test]
+    fn excludes_outside_the_range() {
+        let start = (1, 2, 10);
+        let end = (1, 2, 20);
+        assert!(!passage_covers(start, end, (1, 2, 9)));  // before start
+        assert!(!passage_covers(start, end, (1, 2, 21))); // after end
+    }
+
+    #[test]
+    fn spans_div_boundaries_lexicographically() {
+        // Passage from 1.2.50 through 2.1.3 covers everything between.
+        let start = (1, 2, 50);
+        let end = (2, 1, 3);
+        assert!(passage_covers(start, end, (1, 3, 1))); // later scene, same act
+        assert!(passage_covers(start, end, (2, 1, 1))); // next act, within end
+        assert!(!passage_covers(start, end, (2, 1, 4))); // past end line
+        assert!(!passage_covers(start, end, (1, 2, 49))); // before start line
+    }
 }
 
 #[cfg(test)]
