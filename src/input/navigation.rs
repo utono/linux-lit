@@ -1367,6 +1367,9 @@ pub fn jump_to_next_section(state: &mut AppState) {
     } else {
         jump_to_next_chapter(state);
     }
+    // Mirror `;` (ShowCurrentChapter): surface the new act/scene (or chapter)
+    // as the same transient toast after landing.
+    show_current_chapter(state);
 }
 
 /// Jump to the previous structural section: scene marker for plays,
@@ -1380,6 +1383,9 @@ pub fn jump_to_prev_section(state: &mut AppState) {
     } else {
         jump_to_prev_chapter(state);
     }
+    // Mirror `;` (ShowCurrentChapter): surface the new act/scene (or chapter)
+    // as the same transient toast after landing.
+    show_current_chapter(state);
 }
 
 /// Show the act/scene (plays) or chapter (prose) containing the current line as
