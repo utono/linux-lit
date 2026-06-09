@@ -756,6 +756,17 @@ pub fn resolve_default_voice(
     speaker: &str,
     is_verse: bool,
 ) -> (String, String) {
+    // All prose (explication) is read by Beatrice — one consistent narrator for
+    // the modern-English commentary, regardless of the speaker's gender/age.
+    // (Verse still picks by (gender, age) below; a per-gloss associated voice
+    // still overrides this default at the call site in play_block_tts.)
+    if !is_verse {
+        return (
+            crate::elevenlabs::BEATRICE_VOICE_ID.to_string(),
+            crate::elevenlabs::OP_MODEL_ID.to_string(),
+        );
+    }
+
     let (gender, age_opt) = get_character_gender_age(conn, work_abbrev, speaker);
     // Catalog gender is 'male' | 'female'; everything not Female → male.
     let cat_gender = if gender == crate::elevenlabs::Gender::Female { "female" } else { "male" };
@@ -2482,10 +2493,11 @@ mod tests {
     fn resolve_nearest_band_when_no_containment() {
         let conn = Connection::open_in_memory().unwrap();
         seed_catalog_and_chars(&conn);
-        // Lear 80 male prose: no band contains 80; nearest male band is Benedick
-        // (26-34, distance 46) vs Romeo (15-25, distance 55) -> Benedick prose.
+        // Lear 80 male VERSE: no band contains 80; nearest male band is Benedick
+        // (26-34, distance 46) vs Romeo (15-25, distance 55) -> Benedick verse.
+        // (Prose is always Beatrice — see resolve_prose_always_beatrice.)
         assert_eq!(
-            resolve_default_voice(&conn, "Lr", "LEAR", false),
+            resolve_default_voice(&conn, "Lr", "LEAR", true),
             (crate::elevenlabs::BENEDICK_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
         );
     }
@@ -2507,9 +2519,9 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         seed_catalog_and_chars(&conn);
         // No characters row -> Unknown gender -> male; NULL age -> 40; no male band
-        // contains 40, nearest is Benedick (26-34, dist 6) -> Benedick prose.
+        // contains 40, nearest is Benedick (26-34, dist 6) -> Benedick verse.
         assert_eq!(
-            resolve_default_voice(&conn, "Rom", "NOBODY", false),
+            resolve_default_voice(&conn, "Rom", "NOBODY", true),
             (crate::elevenlabs::BENEDICK_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
         );
     }
@@ -2523,9 +2535,28 @@ mod tests {
             [],
         ).unwrap();
         // neutral -> male; age 40, no male band contains it, nearest is Benedick
-        // (26-34, dist 6) -> Benedick prose.
+        // (26-34, dist 6) -> Benedick verse.
         assert_eq!(
-            resolve_default_voice(&conn, "Rom", "CHORUS", false),
+            resolve_default_voice(&conn, "Rom", "CHORUS", true),
+            (crate::elevenlabs::BENEDICK_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_prose_always_beatrice() {
+        let conn = Connection::open_in_memory().unwrap();
+        seed_catalog_and_chars(&conn);
+        // Prose (is_verse=false) is ALWAYS Beatrice, regardless of the speaker's
+        // gender/age — even a young male like Romeo, or an unknown speaker.
+        let beatrice = (
+            crate::elevenlabs::BEATRICE_VOICE_ID.to_string(),
+            crate::elevenlabs::OP_MODEL_ID.to_string(),
+        );
+        assert_eq!(resolve_default_voice(&conn, "Lr", "LEAR", false), beatrice);
+        assert_eq!(resolve_default_voice(&conn, "Rom", "NOBODY", false), beatrice);
+        // ...while the same speaker in VERSE still picks by gender/age (Benedick).
+        assert_eq!(
+            resolve_default_voice(&conn, "Lr", "LEAR", true),
             (crate::elevenlabs::BENEDICK_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
         );
     }

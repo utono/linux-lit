@@ -19,6 +19,23 @@ pub const BENEDICK_VOICE_ID: &str = "ucMnuQhzouQI2nuPOYUw"; // Benedick — witt
 pub const BEATRICE_VOICE_ID: &str = "d0tyHmCGhjY1al3AD4mO"; // Beatrice — witty female, 20–30 (DEFAULT female)
 pub const OP_MODEL_ID: &str = "eleven_v3";
 
+/// The user's four custom Voice-Design narration voices — the only voices the
+/// voice picker should offer (the ElevenLabs account also returns dozens of
+/// generic premade voices, which are not wanted here). Source of truth for the
+/// picker's allowlist; keep in sync with the per-voice consts above and the
+/// `voice_catalog` seed.
+pub const CUSTOM_VOICE_IDS: [&str; 4] = [
+    ROMEO_VOICE_ID,
+    JULIET_VOICE_ID,
+    BENEDICK_VOICE_ID,
+    BEATRICE_VOICE_ID,
+];
+
+/// True if `voice_id` is one of the user's custom narration voices.
+pub fn is_custom_voice(voice_id: &str) -> bool {
+    CUSTOM_VOICE_IDS.contains(&voice_id)
+}
+
 /// A character's gender, for gendered-voice selection. `Neutral` (deliberately
 /// non-gendered) and `Unknown` (unresolved) both fall back to the male voice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -97,6 +97,12 @@ pub(crate) fn open_voice_picker(
             .await;
         match result {
             Ok(Ok(voices)) => {
+                // The account returns dozens of generic premade voices; the
+                // picker should only offer the user's custom narration voices.
+                let voices: Vec<_> = voices
+                    .into_iter()
+                    .filter(|v| crate::elevenlabs::is_custom_voice(&v.voice_id))
+                    .collect();
                 let s = state_for_result.borrow();
                 // Ignore if the user already closed the picker.
                 if s.input_mode == crate::app::InputMode::VoicePicker {
