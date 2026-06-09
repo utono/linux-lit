@@ -779,7 +779,9 @@ fn source_block_seek_time(s: &AppState, index: i32) -> Option<f64> {
         .iter()
         .map(|l| (l.text.clone(), l.timestamp.map(|t| t.start)))
         .collect();
-    first_source_start_time(&block.text, &work_pairs)
+    // Match on `display` (IPA-stripped) text: work line text has no `/IPA/`,
+    // so the raw `block.text` would never match an IPA-bearing verse line.
+    first_source_start_time(&block.display, &work_pairs)
 }
 
 /// `~/Music/glosses/<work-abbrev>/<gloss-id>/`
@@ -913,5 +915,29 @@ mod source_timing_tests {
         let work: Vec<(String, Option<f64>)> = vec![("Unrelated line.".into(), Some(1.0))];
         let verses = "Ah, my good Lord of Winchester, I thank you.";
         assert_eq!(first_source_start_time(verses, &work), None);
+    }
+
+    /// Regression: an IPA-bearing source block must still resolve a seek time.
+    /// The work line text (from the DB) has NO `/IPA/`, so the seek matcher
+    /// must compare the STRIPPED (`display`) verse text — the raw `text` (with
+    /// `/IPA/`) never matches and would silently break MPV seeking.
+    #[test]
+    fn ipa_stripped_display_matches_work_line() {
+        let work: Vec<(String, Option<f64>)> =
+            vec![("To be, or not to be".into(), Some(42.0))];
+
+        // RAW block text (what TTS uses) carries inline IPA and does NOT match
+        // the IPA-free work line — this is exactly the bug if `.text` is used.
+        let raw = "To /biː/ or not to /biː/";
+        assert_eq!(
+            first_source_start_time(raw, &work),
+            None,
+            "raw IPA text must not match the IPA-free work line"
+        );
+
+        // DISPLAY block text (IPA stripped, what the seek matcher now passes)
+        // DOES match and resolves the time.
+        let display = "To be, or not to be";
+        assert_eq!(first_source_start_time(display, &work), Some(42.0));
     }
 }
