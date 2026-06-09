@@ -160,7 +160,8 @@ GARDINER is male. Each character voice is now used for **both** roles (one
 `voice_id`, two `voice_catalog` rows), so the male bands are:
 
 - male, verse **and** prose → `6yZ2TgQ0ylkuKI3AMAbI` (Romeo, 15–25) or
-  `8BQp5xsRbw3h92wPAOm9` (Petruchio, 35–45), depending on resolved age
+  `ucMnuQhzouQI2nuPOYUw` (Benedick, 26–34 — the default male), depending on
+  resolved age. GARDINER reads older, so he resolves to Benedick.
 
 So in this gloss, the two **Source** blocks and the two **Explication** blocks
 all go to the **same** male voice. The only difference between them is the

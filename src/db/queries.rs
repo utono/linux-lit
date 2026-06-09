@@ -552,17 +552,20 @@ pub fn ensure_voice_catalog_table(conn: &Connection) -> Result<(), rusqlite::Err
             PRIMARY KEY (gender, age_min, age_max, role)
         );"
     )?;
-    // Seed the four pairs (verse + prose each). INSERT OR IGNORE keeps it
-    // idempotent and lets a user-edited row survive a re-run.
+    // Seed the four character voices, each used for BOTH verse and prose (same
+    // voice_id in its verse + prose row). INSERT OR IGNORE keeps it idempotent
+    // and lets a user-edited row survive a re-run. Benedick (male) / Beatrice
+    // (female) are the gender defaults; a male speaker older than Romeo's 15–25
+    // band resolves to Benedick via resolve_default_voice's nearest-band step.
     let seed: [(&str, &str, i64, i64, &str, &str); 8] = [
-        (A_OP_VOICE_ID, "male", 15, 25, "verse", "Will OP — young male verse"),
-        (B_VOICE_ID,    "male", 15, 25, "prose", "Will — young male prose"),
-        (C_OP_VOICE_ID, "male", 35, 45, "verse", "Petruchio OP — older male verse"),
-        (D_VOICE_ID,    "male", 35, 45, "prose", "Petruchio — older male prose"),
-        (A_OP_F_VOICE_ID, "female", 12, 19, "verse", "Willa OP — young female verse"),
-        (B_F_VOICE_ID,    "female", 12, 19, "prose", "Willa — young female prose"),
-        (E_OP_VOICE_ID, "female", 20, 30, "verse", "Beatrice OP — female verse"),
-        (F_VOICE_ID,    "female", 20, 30, "prose", "Beatrice — female prose"),
+        (ROMEO_VOICE_ID,    "male",   15, 25, "verse", "Romeo — young male verse+prose"),
+        (ROMEO_VOICE_ID,    "male",   15, 25, "prose", "Romeo — young male verse+prose"),
+        (BENEDICK_VOICE_ID, "male",   26, 34, "verse", "Benedick — witty male verse+prose"),
+        (BENEDICK_VOICE_ID, "male",   26, 34, "prose", "Benedick — witty male verse+prose"),
+        (JULIET_VOICE_ID,   "female", 12, 19, "verse", "Juliet — young female verse+prose"),
+        (JULIET_VOICE_ID,   "female", 12, 19, "prose", "Juliet — young female verse+prose"),
+        (BEATRICE_VOICE_ID, "female", 20, 30, "verse", "Beatrice — female verse+prose"),
+        (BEATRICE_VOICE_ID, "female", 20, 30, "prose", "Beatrice — female verse+prose"),
     ];
     for (vid, gender, lo, hi, role, label) in seed {
         conn.execute(
@@ -2381,17 +2384,17 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM voice_catalog", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 8);
-        // Petruchio prose (older male) is present with its band
+        // Benedick prose (witty male, the older/default male) is present with its band
         let (vid, lo, hi): (String, i64, i64) = conn
             .query_row(
                 "SELECT voice_id, age_min, age_max FROM voice_catalog \
-                 WHERE gender='male' AND role='prose' AND age_min=35",
+                 WHERE gender='male' AND role='prose' AND age_min=26",
                 [],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .unwrap();
-        assert_eq!(vid, crate::elevenlabs::D_VOICE_ID);
-        assert_eq!((lo, hi), (35, 45));
+        assert_eq!(vid, crate::elevenlabs::BENEDICK_VOICE_ID);
+        assert_eq!((lo, hi), (26, 34));
         // idempotent: a second ensure does not duplicate rows
         ensure_voice_catalog_table(&conn).unwrap();
         let n2: i64 = conn
@@ -2413,10 +2416,10 @@ mod tests {
     fn resolve_containment_picks_the_band_containing_age() {
         let conn = Connection::open_in_memory().unwrap();
         seed_catalog_and_chars(&conn);
-        // Juliet 14 female -> Willa (12-19) verse
+        // Juliet 14 female -> Juliet voice (12-19) verse
         assert_eq!(
             resolve_default_voice(&conn, "Rom", "JULIET", true),
-            (crate::elevenlabs::A_OP_F_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
+            (crate::elevenlabs::JULIET_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
         );
     }
 
@@ -2424,11 +2427,11 @@ mod tests {
     fn resolve_nearest_band_when_no_containment() {
         let conn = Connection::open_in_memory().unwrap();
         seed_catalog_and_chars(&conn);
-        // Lear 80 male prose: no band contains 80; nearest male band is Petruchio
-        // (35-45, distance 35) vs Will (15-25, distance 55) -> Petruchio prose (D).
+        // Lear 80 male prose: no band contains 80; nearest male band is Benedick
+        // (26-34, distance 46) vs Romeo (15-25, distance 55) -> Benedick prose.
         assert_eq!(
             resolve_default_voice(&conn, "Lr", "LEAR", false),
-            (crate::elevenlabs::D_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
+            (crate::elevenlabs::BENEDICK_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
         );
     }
 
@@ -2437,10 +2440,10 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         seed_catalog_and_chars(&conn);
         // Nurse female, NULL age -> DEFAULT_AGE 40. No female band contains 40
-        // (Willa 12-19, Beatrice 20-30); nearest is Beatrice (dist 10) -> E_OP verse.
+        // (Juliet 12-19, Beatrice 20-30); nearest is Beatrice (dist 10) verse.
         assert_eq!(
             resolve_default_voice(&conn, "Rom", "NURSE", true),
-            (crate::elevenlabs::E_OP_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
+            (crate::elevenlabs::BEATRICE_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
         );
     }
 
@@ -2448,11 +2451,11 @@ mod tests {
     fn resolve_unknown_gender_defaults_male() {
         let conn = Connection::open_in_memory().unwrap();
         seed_catalog_and_chars(&conn);
-        // No characters row -> Unknown gender -> male; NULL age -> 40; male band
-        // Petruchio (35-45) contains 40 -> D prose.
+        // No characters row -> Unknown gender -> male; NULL age -> 40; no male band
+        // contains 40, nearest is Benedick (26-34, dist 6) -> Benedick prose.
         assert_eq!(
             resolve_default_voice(&conn, "Rom", "NOBODY", false),
-            (crate::elevenlabs::D_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
+            (crate::elevenlabs::BENEDICK_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
         );
     }
 
@@ -2464,10 +2467,11 @@ mod tests {
             "INSERT INTO characters (work_abbrev, speaker, gender, age) VALUES ('Rom','CHORUS','neutral',40)",
             [],
         ).unwrap();
-        // neutral -> male; age 40 in Petruchio band (35-45) -> D prose.
+        // neutral -> male; age 40, no male band contains it, nearest is Benedick
+        // (26-34, dist 6) -> Benedick prose.
         assert_eq!(
             resolve_default_voice(&conn, "Rom", "CHORUS", false),
-            (crate::elevenlabs::D_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
+            (crate::elevenlabs::BENEDICK_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
         );
     }
 }
