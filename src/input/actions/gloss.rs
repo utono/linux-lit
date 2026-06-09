@@ -675,7 +675,7 @@ fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32)
         let is_verse = kind == BlockKind::Source;
         // Per-gloss voice override: if the gloss has associated voices, play the
         // active one (gloss_active_voice index, clamped). Else fall back to the
-        // character-gender default (verse->OP, prose->plain).
+        // age-aware character default (verse->OP, prose->plain).
         let (vid, mid): (String, String) = match crate::db::queries::open_db() {
             Ok(conn) => {
                 let voices = crate::db::queries::get_gloss_voices(&conn, gloss_id);
