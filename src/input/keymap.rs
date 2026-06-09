@@ -821,6 +821,10 @@ fn handle_gloss_key(
             }
             true
         }
+        "V" => {
+            crate::input::actions::gloss::cycle_active_voice(state);
+            true
+        }
         _ => true,
     }
 }

@@ -618,6 +618,33 @@ fn source_media_state(state_rc: &Rc<RefCell<AppState>>, index: i32) -> (bool, bo
     (s.mpv_connected, s.mpv_playing, seek)
 }
 
+/// Cycle which associated voice is active for the current gloss (wraps). Toasts
+/// the now-active voice id; no-op toast if the gloss has no associated voices.
+/// Does NOT auto-play — the next Space uses the new active voice.
+pub(crate) fn cycle_active_voice(state_rc: &Rc<RefCell<AppState>>) {
+    let gloss_id = {
+        let s = state_rc.borrow();
+        match s.gloss_list.get(s.gloss_index) {
+            Some(g) => g.gloss_id,
+            None => return,
+        }
+    };
+    let voices = match crate::db::queries::open_db() {
+        Ok(conn) => crate::db::queries::get_gloss_voices(&conn, gloss_id),
+        Err(_) => Vec::new(),
+    };
+    if voices.is_empty() {
+        show_tts_toast(state_rc, "No voices associated — default in use");
+        return;
+    }
+    let next = {
+        let mut s = state_rc.borrow_mut();
+        s.gloss_active_voice = (s.gloss_active_voice + 1) % voices.len();
+        s.gloss_active_voice
+    };
+    show_tts_toast(state_rc, &format!("Voice: {}", voices[next].0));
+}
+
 /// Play a block's TTS audio: cache hit -> play the stored MP3; miss ->
 /// synthesize via ElevenLabs (async), cache it, and play. `kind`/`index`
 /// identify the block; the filename stem is `<index>` (explication) or
