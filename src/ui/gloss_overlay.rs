@@ -2032,6 +2032,67 @@ fn normalize_ipa_whitespace(text: &str) -> String {
     out.trim().to_string()
 }
 
+/// Build the TTS-facing form of a verse block: REPLACE each appended `word
+/// /IPA/` pair with just `/IPA/`, so ElevenLabs `eleven_v3` voices the word once
+/// (via the IPA) instead of saying the plain word AND the IPA (the doubling
+/// bug). The prompt emits `take /tɛːk/` — word then IPA — which the reader path
+/// strips back to `take` (see `strip_ipa`); for audio we do the opposite and
+/// drop the preceding word, leaving `/tɛːk/`, the docs' single-pronunciation
+/// form. Words with NO following IPA span are left untouched (sparse tagging:
+/// only operative words carry OP). Detection of an IPA span matches `strip_ipa`
+/// (a `/…/` whose inner has at least one non-ASCII-letter char), so a literal
+/// `and/or` or a plain `/word/` is never treated as IPA. This is applied ONLY on
+/// the TTS path; the stored gloss text and the reader display are unchanged.
+pub(crate) fn ipa_for_tts(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out: Vec<char> = Vec::with_capacity(chars.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '/' {
+            if let Some(close_rel) = chars[i + 1..].iter().position(|&c| c == '/') {
+                let close = i + 1 + close_rel;
+                let inner = &chars[i + 1..close];
+                let is_ipa = !inner.is_empty()
+                    && inner.iter().any(|&c| !c.is_ascii_alphabetic());
+                if is_ipa {
+                    // Drop the word the IPA annotates: remove a single run of
+                    // spaces then the immediately-preceding word from `out`, so
+                    // `take /tɛːk/` becomes `/tɛːk/`. Stop at the word boundary
+                    // (space) or punctuation so we never eat earlier words or
+                    // the punctuation between them.
+                    while matches!(out.last(), Some(' ')) {
+                        out.pop();
+                    }
+                    while let Some(&c) = out.last() {
+                        if c == ' '
+                            || matches!(c, ',' | ';' | ':' | '.' | '!' | '?' | '\n')
+                        {
+                            break;
+                        }
+                        out.pop();
+                    }
+                    // Re-insert a separating space if the IPA now abuts a prior
+                    // word/punctuation (so `good, take /tɛːk/` -> `good, /tɛːk/`,
+                    // not `good,/tɛːk/`).
+                    if matches!(out.last(), Some(c) if *c != ' ' && *c != '\n') {
+                        out.push(' ');
+                    }
+                    // Copy the IPA span verbatim.
+                    out.extend(&chars[i..=close]);
+                    i = close + 1;
+                    continue;
+                }
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    let s: String = out.into_iter().collect();
+    // Reuse the same whitespace normalization the display path uses, so any
+    // doubled gaps / pre-punctuation spaces left by the word removal are cleaned.
+    normalize_ipa_whitespace(&s)
+}
+
 /// Split an echo bracket `["quote" — Source]` into (quote, citation).
 /// Returns None if the text is not in echo-bracket form. Any trailing
 /// suffix outside the brackets (e.g. "(unverified)") is kept on the
@@ -2304,5 +2365,47 @@ mod synopsis_label_tests {
             strip_ipa("Dread /drɛːd/ sovereign, how much are we bound /baʊnd/ to heaven /ˈhɛvn̩/"),
             "Dread sovereign, how much are we bound to heaven"
         );
+    }
+
+    #[test]
+    fn ipa_for_tts_replaces_word_with_its_ipa() {
+        // 'take /tɛːk/' -> '/tɛːk/' (word dropped) so v3 voices it once.
+        assert_eq!(ipa_for_tts("take /tɛːk/"), "/tɛːk/");
+        assert_eq!(ipa_for_tts("To take /tɛːk/ arms"), "To /tɛːk/ arms");
+    }
+
+    #[test]
+    fn ipa_for_tts_keeps_untagged_words() {
+        // Sparse tagging: words with no following IPA span are spoken as-is.
+        assert_eq!(
+            ipa_for_tts("Dread /drɛːd/ sovereign, how much are we bound /baʊnd/ to heaven /ˈhɛvn̩/"),
+            "/drɛːd/ sovereign, how much are we /baʊnd/ to /ˈhɛvn̩/"
+        );
+    }
+
+    #[test]
+    fn ipa_for_tts_before_punctuation() {
+        // 'good /gʊd/,' -> '/gʊd/,' — the IPA replaces the word but the comma
+        // stays attached, no doubled word.
+        assert_eq!(
+            ipa_for_tts("Not only good /gʊd/, but most religious /rɪˈlɪdʒəs/;"),
+            "Not only /gʊd/, but most /rɪˈlɪdʒəs/;"
+        );
+    }
+
+    #[test]
+    fn ipa_for_tts_ipa_at_line_start_is_kept() {
+        // A leading IPA span with no preceding word stays as-is (nothing to drop).
+        assert_eq!(ipa_for_tts("/biː/ or not"), "/biː/ or not");
+        // Each IPA span replaces the word immediately before it: here the second
+        // /biː/ follows "to", so "to" is the word it replaces.
+        assert_eq!(ipa_for_tts("/biː/ or not to /biː/"), "/biː/ or not /biː/");
+    }
+
+    #[test]
+    fn ipa_for_tts_keeps_literal_slash_and_plain() {
+        // 'and/or' is not IPA; a no-IPA line is identity.
+        assert_eq!(ipa_for_tts("read and/or write"), "read and/or write");
+        assert_eq!(ipa_for_tts("plain modern line"), "plain modern line");
     }
 }

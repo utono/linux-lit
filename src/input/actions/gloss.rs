@@ -189,41 +189,69 @@ pub(crate) fn copy_gloss_id(state: &Rc<RefCell<AppState>>) {
 }
 
 pub(crate) fn delete_current_gloss(state_rc: &Rc<RefCell<AppState>>) {
-    let mut s = state_rc.borrow_mut();
-    let idx = s.gloss_index;
-    if let Some(gloss) = s.gloss_list.get(idx) {
+    // Phase 1: delete under a mutable borrow and gather counts for the
+    // verification pill (audio rows purged + .mp3 files removed). The borrow is
+    // released before toasting, since show_tts_toast borrows state again.
+    let toast_msg;
+    {
+        let mut s = state_rc.borrow_mut();
+        let idx = s.gloss_index;
+        let Some(gloss) = s.gloss_list.get(idx) else { return };
         let gloss_id = gloss.gloss_id;
+
+        let mut audio_rows = 0usize;
         if let Ok(conn) = crate::db::queries::open_db_rw() {
             let _ = crate::db::queries::delete_gloss(&conn, gloss_id);
-            let _ = crate::db::queries::delete_gloss_audio(&conn, gloss_id);
+            audio_rows = crate::db::queries::delete_gloss_audio(&conn, gloss_id).unwrap_or(0);
         }
+        // Count .mp3 files in the gloss's audio dir before removing it, so the
+        // pill verifies the on-disk files actually went too.
+        let mut mp3_files = 0usize;
         if let Some(ctx) = s.gloss_context.as_ref() {
             let dir = gloss_audio_dir(&ctx.work_abbrev, gloss_id);
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                mp3_files = entries
+                    .flatten()
+                    .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("mp3"))
+                    .count();
+            }
             let _ = std::fs::remove_dir_all(&dir);
         }
-        crate::logging::log(&format!("GLOSS: deleted gloss {}", gloss_id));
+        crate::logging::log(&format!(
+            "GLOSS: deleted gloss {} ({} audio rows, {} mp3 files)",
+            gloss_id, audio_rows, mp3_files
+        ));
+        toast_msg = format!(
+            "Deleted gloss {} · {} mp3{}",
+            gloss_id,
+            mp3_files,
+            if mp3_files == 1 { "" } else { "s" }
+        );
+
         s.gloss_list.remove(idx);
 
         if s.gloss_list.is_empty() {
             s.gloss_overlay.hide();
             s.input_mode = crate::app::InputMode::Reader;
-            return;
+        } else {
+            s.gloss_index = idx.min(s.gloss_list.len() - 1);
+            s.gloss_active_voice = 0;
+            let new_idx = s.gloss_index;
+            let gloss = &s.gloss_list[new_idx];
+            let ctx = s.gloss_context.as_ref().unwrap();
+            let cw = s.content_hbox.width();
+            let h = s.content_hbox.height();
+            let pairs = ctx.source_line_pairs();
+            s.gloss_overlay.show_gloss_with_color(
+                &ctx.source_text, &gloss.gloss_text, cw, h,
+                Some(&s.theme.root_color), &pairs,
+            );
+            s.gloss_overlay.set_position(new_idx, s.gloss_list.len());
         }
-
-        s.gloss_index = idx.min(s.gloss_list.len() - 1);
-        s.gloss_active_voice = 0;
-        let new_idx = s.gloss_index;
-        let gloss = &s.gloss_list[new_idx];
-        let ctx = s.gloss_context.as_ref().unwrap();
-        let cw = s.content_hbox.width();
-        let h = s.content_hbox.height();
-        let pairs = ctx.source_line_pairs();
-        s.gloss_overlay.show_gloss_with_color(
-            &ctx.source_text, &gloss.gloss_text, cw, h,
-            Some(&s.theme.root_color), &pairs,
-        );
-        s.gloss_overlay.set_position(new_idx, s.gloss_list.len());
     }
+    // Phase 2: verification pill (borrow released above). Shown whether or not
+    // the overlay closed, so the user always gets confirmation.
+    show_tts_toast(state_rc, &toast_msg);
 }
 
 pub(crate) fn show_delete_confirmation(state_rc: &Rc<RefCell<AppState>>) {
@@ -709,6 +737,12 @@ fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32)
             s.tokio_handle.clone(),
         )
     };
+
+    // TTS form: the prompt appends `/IPA/` after the word it annotates
+    // (`take /tɛːk/`); ElevenLabs v3 would otherwise voice BOTH the word and the
+    // IPA (the doubling). Replace each `word /IPA/` pair with just `/IPA/` so the
+    // word is spoken once, in OP. Display/storage keep the word (see strip_ipa).
+    let text = crate::ui::gloss_overlay::ipa_for_tts(&text);
 
     // Filename stem includes a short voice tag so each voice's audio for a block
     // is a distinct file (voice ids are alphanumeric, filesystem-safe).
