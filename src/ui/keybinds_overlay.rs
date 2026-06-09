@@ -70,7 +70,7 @@ const HOME_ROW: &[KeyDef] = &[
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
     key("e", "E", "seek +3.5", "E: +60", &[("C-e", "echo turns"), ("S-C-e", "reopen echoes"), ("M-e", "echoes")]),
     key("u", "U", "start time", "U: undo ts", &[("M-u", "set end time")]),
-    key("i", "I", "translation", "", &[("M-i", "translations")]),
+    key("i", "I", "translation", "", &[("M-i", "translations"), ("i", "fix IPA")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
     key("h", "H", "synopsis", "H: auto vocab", &[("C-h", "synopsis side")]),
     key("t", "T", "", "", &[("S-C-t", "nav test")]),
@@ -368,6 +368,11 @@ voice as the gloss's active voice and plays the verse (pausing MPV first). If \
 the synthesized audio is already playing, this stops it instead. R is the only \
 key that opens the picker; r replays in the current active voice. \
 -> pick_source_voice — src/input/actions/gloss.rs",
+        "fix IPA" => "While the gloss overlay is open, on a source verse: open a \
+card to correct one word's Original-Pronunciation IPA. Type `word /IPA/` (used \
+literally) or `word <hint>` (the LLM regenerates it). Rewrites the stored verse, \
+drops that line's synthesized audio, and re-synthesizes + plays. \
+-> open_fix_ipa_prompt — src/input/actions/gloss.rs",
 
         // ── Vocab ──
         "next conc" => "Step to the next concordance hit for the active word — \
