@@ -38,7 +38,9 @@ and the v3 prompting best-practices page
   Pronunciation voice (see below): the only reliable way to push v3 toward
   mid-shift vowels and rhoticity, since "Original Pronunciation" is not a
   selectable accent. v3's IPA lands ~80–90% consistently, so generate several
-  takes and keep the best.
+  takes and keep the best. For the OP symbols you'll actually type when
+  correcting a word's pronunciation, see
+  [op-ipa-cheatsheet.md](./op-ipa-cheatsheet.md).
   - **Syntax to keep straight:** in v3, `[brackets]` = **delivery** (whispers,
     sighs); `/slashes/` = **pronunciation** (IPA). They are not the same thing.
 
