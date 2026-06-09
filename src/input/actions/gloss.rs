@@ -954,7 +954,11 @@ fn source_block_seek_time(s: &AppState, index: i32) -> Option<f64> {
         .collect();
     // Match on `display` (IPA-stripped) text: work line text has no `/IPA/`,
     // so the raw `block.text` would never match an IPA-bearing verse line.
-    first_source_start_time(&block.display, &work_pairs)
+    // Seek a `SEEK_PREROLL` (0.2s) before the line start, matching every other
+    // line-seek in the app (search / concordance / echoes), so `a`/`space` begin
+    // just ahead of the first word rather than clipping its onset.
+    let start = first_source_start_time(&block.display, &work_pairs)?;
+    Some((start - crate::input::navigation::SEEK_PREROLL).max(0.0))
 }
 
 /// `~/Music/glosses/<work-abbrev>/<gloss-id>/`
