@@ -768,8 +768,10 @@ fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32)
         }
     }
 
-    // Miss: synthesize asynchronously.
-    show_tts_toast(state_rc, "Synthesizing\u{2026}");
+    // Miss: synthesize asynchronously. Keep the pill up until playback begins
+    // (synthesis can exceed the 3s auto-dismiss); it is hidden just before
+    // play_file below, or replaced by an error toast on a failure path.
+    show_persistent_tts_toast(state_rc, "Synthesizing\u{2026}");
     let state_for_result = Rc::clone(state_rc);
     glib::spawn_future_local(async move {
         // Try the preferred voice; on `paid_plan_required` fall back to Alice
@@ -830,6 +832,8 @@ fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32)
                 crate::log_fmt!("TTS: save_gloss_audio failed: {}", e);
             }
         }
+        // Playback begins now — dismiss the persistent "Synthesizing…" pill.
+        hide_tts_toast(&state_for_result);
         state_for_result.borrow().tts.play_file(&path);
         crate::log_fmt!(
             "TTS: synthesized gloss {} {} {} (voice {})",
@@ -985,6 +989,22 @@ fn show_tts_toast(state_rc: &Rc<RefCell<AppState>>, msg: &str) {
     glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
         toast.set_visible(false);
     });
+}
+
+/// Show a toast that stays up until something explicitly replaces it (another
+/// `show_tts_toast`, which re-arms the 3s dismiss) or `hide_tts_toast`. Used for
+/// "Synthesizing…", which must persist until playback begins — ElevenLabs often
+/// takes longer than the 3s auto-dismiss, so a timed toast would vanish mid-synth.
+fn show_persistent_tts_toast(state_rc: &Rc<RefCell<AppState>>, msg: &str) {
+    let s = state_rc.borrow();
+    s.chapter_toast.set_text(msg);
+    s.chapter_toast.set_visible(true);
+}
+
+/// Hide the toast pill immediately (used to dismiss the persistent "Synthesizing…"
+/// toast the moment audio starts playing).
+fn hide_tts_toast(state_rc: &Rc<RefCell<AppState>>) {
+    state_rc.borrow().chapter_toast.set_visible(false);
 }
 
 pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
