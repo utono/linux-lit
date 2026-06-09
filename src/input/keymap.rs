@@ -899,8 +899,11 @@ fn handle_translation_overlay_key(state: &Rc<RefCell<AppState>>, key_name: &str)
             crate::input::search::toggle_playback(&mut state.borrow_mut());
             true
         }
-        "a" => {
-            crate::input::timestamps::play_current_line(&mut state.borrow_mut());
+        "a" | "space" => {
+            let mut s = state.borrow_mut();
+            if !crate::input::timestamps::play_current_line(&mut s) {
+                show_no_timestamp_toast(&s);
+            }
             true
         }
         // Toggle playback sync (same as the main card): identical state +
@@ -1218,7 +1221,7 @@ fn handle_echoes_overlay_key(
             crate::input::actions::echoes::play_source_turn(state);
             true
         }
-        "a" => {
+        "a" | "space" => {
             crate::input::actions::echoes::play_selected_echo(state, tokio_handle);
             true
         }
