@@ -825,6 +825,13 @@ fn handle_gloss_key(
             crate::input::actions::gloss::cycle_active_voice(state);
             true
         }
+        "v" => {
+            crate::input::actions::settings::open_voice_picker(
+                state,
+                crate::app::VoicePickerOrigin::GlossOverlay,
+            );
+            true
+        }
         _ => true,
     }
 }

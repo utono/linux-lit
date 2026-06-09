@@ -857,6 +857,12 @@ fn gloss_audio_dir(work_abbrev: &str, gloss_id: i64) -> std::path::PathBuf {
         .join(gloss_id.to_string())
 }
 
+/// Toast helper exposed for the voice-picker confirm path (settings.rs) to
+/// report gloss-voice association from the gloss overlay.
+pub(crate) fn voice_picker_toast(state_rc: &Rc<RefCell<AppState>>, verb: &str, name: &str) {
+    show_tts_toast(state_rc, &format!("{}: {}", verb, name));
+}
+
 fn show_tts_toast(state_rc: &Rc<RefCell<AppState>>, msg: &str) {
     let s = state_rc.borrow();
     s.chapter_toast.set_text(msg);
