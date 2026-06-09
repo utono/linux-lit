@@ -427,6 +427,7 @@ fn handle_picker_key(
                         s.gloss_passage_index = idx;
                         s.gloss_list = all_glosses;
                         s.gloss_index = 0;
+                        s.gloss_active_voice = 0;
                         s.gloss_context = Some(ctx);
                         s.gloss_opened_from_picker = true;
                         s.input_mode = InputMode::GlossOverlay;

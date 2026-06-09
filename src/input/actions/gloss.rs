@@ -400,6 +400,7 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
                 s.gloss_overlay.set_position(0, all.len());
                 s.gloss_list = all;
                 s.gloss_index = 0;
+                s.gloss_active_voice = 0;
                 crate::logging::log(&format!("GLOSS: added new {} gloss", gloss_type_owned));
             }
             Ok(Err(e)) => {
@@ -496,6 +497,7 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
                 s.gloss_overlay.set_position(0, all.len());
                 s.gloss_list = all;
                 s.gloss_index = 0;
+                s.gloss_active_voice = 0;
                 crate::logging::log(&format!("GLOSS: edited {} gloss (added new)", gloss_type_owned));
             }
             Ok(Err(e)) => {
