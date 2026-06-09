@@ -485,10 +485,12 @@ pub fn ensure_bookmarks_table(conn: &Connection) -> Result<(), rusqlite::Error> 
     Ok(())
 }
 
-/// Ensure the character-gender table exists. Keyed by (work_abbrev, speaker)
-/// with speaker stored verbatim as it appears in line_mapping.speaker, so the
-/// TTS-time lookup joins exactly with no runtime normalization. Rows are loaded
-/// by scripts/curate_genders.py, not the app. See the character-gender spec.
+/// Ensure the characters table exists. Keyed by (work_abbrev, speaker) with
+/// speaker stored verbatim as it appears in line_mapping.speaker, so the
+/// TTS-time lookup joins exactly with no runtime normalization. Carries gender
+/// and a nullable `age` used by the age-aware default-voice selection. Rows are
+/// loaded by scripts/curate_genders.py, not the app. See the character-gender
+/// spec.
 pub fn ensure_characters_table(conn: &Connection) -> Result<(), rusqlite::Error> {
     // Fresh installs get the age column directly.
     conn.execute_batch(
@@ -2240,6 +2242,7 @@ mod tests {
             "CREATE TABLE characters (
                 work_abbrev TEXT NOT NULL, speaker TEXT NOT NULL, gender TEXT NOT NULL,
                 PRIMARY KEY (work_abbrev, speaker));
+             -- 3-col positional INSERT is valid here: legacy table, pre-migration
              INSERT INTO characters VALUES ('Ham','HAMLET','male');",
         ).unwrap();
         ensure_characters_table(&conn).unwrap(); // should ALTER ADD age
