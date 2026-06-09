@@ -72,7 +72,7 @@ pub(crate) fn open_voice_picker(
         let mut s = state.borrow_mut();
         s.voice_picker_origin = origin;
         // Seed ✓ badges with the current gloss's associated voices (gloss origin).
-        let assoc: Vec<String> = if origin == crate::app::VoicePickerOrigin::GlossOverlay {
+        let assoc: Vec<String> = if origin != crate::app::VoicePickerOrigin::Settings {
             let gid = s.gloss_list.get(s.gloss_index).map(|g| g.gloss_id);
             match (gid, crate::db::queries::open_db()) {
                 (Some(gid), Ok(conn)) => crate::db::queries::get_gloss_voices(&conn, gid)
@@ -144,10 +144,8 @@ pub(crate) fn confirm_voice_picker(state: &Rc<RefCell<crate::app::AppState>>) {
             // Return to the settings overlay (still visible underneath).
             s.input_mode = crate::app::InputMode::Settings;
         }
-        // GlossPlay is wired in a later task; for now confirm exactly like
-        // GlossOverlay (associate/remove the picked voice on the gloss).
-        crate::app::VoicePickerOrigin::GlossOverlay
-        | crate::app::VoicePickerOrigin::GlossPlay => {
+        // GlossOverlay: pressing v in the overlay — toggle voice ASSOCIATION.
+        crate::app::VoicePickerOrigin::GlossOverlay => {
             let gloss_id = {
                 let s = state.borrow();
                 s.gloss_list.get(s.gloss_index).map(|g| g.gloss_id)
@@ -176,6 +174,51 @@ pub(crate) fn confirm_voice_picker(state: &Rc<RefCell<crate::app::AppState>>) {
                 }
             }
             state.borrow_mut().input_mode = crate::app::InputMode::GlossOverlay;
+        }
+        // GlossPlay: opened by R on a Source block — set the picked voice as the
+        // gloss's ACTIVE voice and play the source verse (pausing MPV first).
+        crate::app::VoicePickerOrigin::GlossPlay => {
+            let gloss_id = {
+                let s = state.borrow();
+                s.gloss_list.get(s.gloss_index).map(|g| g.gloss_id)
+            };
+            // The Source block index to play (R is only reachable on a Source block).
+            let source_index = {
+                let s = state.borrow();
+                match s.gloss_overlay.current_block() {
+                    Some((crate::ui::gloss_overlay::BlockKind::Source, idx)) => Some(idx),
+                    _ => None,
+                }
+            };
+            state.borrow().voice_picker.hide();
+            state.borrow_mut().input_mode = crate::app::InputMode::GlossOverlay;
+
+            if let (Some((voice_id, name, _free)), Some(gid)) = (selected, gloss_id) {
+                let model = crate::elevenlabs::OP_MODEL_ID.to_string();
+                if let Ok(conn) = crate::db::queries::open_db_rw() {
+                    // Associate the voice if it isn't already (do NOT blindly
+                    // toggle — that would REMOVE an already-associated voice).
+                    let existing = crate::db::queries::get_gloss_voices(&conn, gid);
+                    let already = existing.iter().any(|(vid, _)| vid == &voice_id);
+                    if !already {
+                        let _ = crate::db::queries::toggle_gloss_voice(&conn, gid, &voice_id, &model);
+                    }
+                    // Set this voice as the active one: its index in the re-read list.
+                    let voices = crate::db::queries::get_gloss_voices(&conn, gid);
+                    if let Some(pos) = voices.iter().position(|(vid, _)| vid == &voice_id) {
+                        state.borrow_mut().gloss_active_voice = pos;
+                    }
+                    crate::log_fmt!(
+                        "VOICE: gloss {} active voice {} ({})", gid, voice_id, name
+                    );
+                    crate::input::actions::gloss::voice_picker_toast(state, "Voice", &name);
+                }
+            }
+
+            // Play the source verse in the now-active voice (pauses MPV first).
+            if let Some(idx) = source_index {
+                crate::input::actions::gloss::play_source_tts_pausing_mpv(state, idx);
+            }
         }
     }
 }
