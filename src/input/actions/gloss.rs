@@ -547,11 +547,36 @@ fn apply_ipa_fix(
     }
 
     // Patch the in-memory gloss BEFORE play so play_block_tts re-synthesizes the
-    // corrected verse, not the stale IPA.
+    // corrected verse, not the stale IPA. Re-render the gloss card under the same
+    // borrow: the hint/LLM path called `show_loading()` (which clears the cursor
+    // `blocks` and shows a "Glossing..." spinner), so without this the corrected
+    // verse would play but the card would stay stuck on the loading screen with
+    // no navigable blocks. Re-rendering also refreshes the displayed inline IPA
+    // on both paths.
     {
         let mut s = state_rc.borrow_mut();
         if let Some(g) = s.gloss_list.get_mut(gloss_index_pos) {
             g.gloss_text = new_gloss_text;
+        }
+        if let (Some(ctx), Some(gloss)) =
+            (s.gloss_context.as_ref(), s.gloss_list.get(gloss_index_pos))
+        {
+            let cw = s.content_hbox.width();
+            let h = s.content_hbox.height();
+            let pairs = ctx.source_line_pairs();
+            let gloss_text = gloss.gloss_text.clone();
+            let source_text = ctx.source_text.clone();
+            let root_color = s.theme.root_color.clone();
+            s.gloss_overlay.show_gloss_with_color(
+                &source_text,
+                &gloss_text,
+                cw,
+                h,
+                Some(&root_color),
+                &pairs,
+            );
+            s.gloss_overlay
+                .set_position(gloss_index_pos, s.gloss_list.len());
         }
     }
     crate::log_fmt!(
