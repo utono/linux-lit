@@ -1530,6 +1530,8 @@ fn dispatch_action(
         CursorToPageBottom => navigation::cursor_to_page_bottom(&mut state.borrow_mut()),
         JumpToNextDialogue => navigation::jump_to_next_dialogue(&mut state.borrow_mut()),
         JumpToPrevDialogue => navigation::jump_to_prev_dialogue(&mut state.borrow_mut()),
+        JumpToNextSpeaker => navigation::jump_to_next_speaker(&mut state.borrow_mut()),
+        JumpToPrevSpeaker => navigation::jump_to_prev_speaker(&mut state.borrow_mut()),
         JumpToNextChapter => navigation::jump_to_next_chapter(&mut state.borrow_mut()),
         JumpToPrevChapter => navigation::jump_to_prev_chapter(&mut state.borrow_mut()),
         JumpToNextScene => navigation::jump_to_next_section(&mut state.borrow_mut()),
