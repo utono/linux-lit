@@ -2,9 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add an `r` keybind in the gloss overlay that, **only when the accent-bar cursor is on a Source block**, opens the voice picker; on confirm it sets the picked voice as the gloss's **active voice** and **plays the source verse** in it. If audio is already playing when `r` is pressed, instead **stop and seek the synced MPV media to the verse's first-line start time** (rewound, ready to replay) — no picker.
+**Goal:** Add an `r` keybind in the gloss overlay that, **only when the accent-bar cursor is on a Source block**, opens the voice picker; on confirm it sets the picked voice as the gloss's **active voice** and **plays the source verse** in it — via the ElevenLabs-synthesized MP3 through the Rust `TtsPlayer` (rodio). If the TTS MP3 is already playing when `r` is pressed, instead **stop the `TtsPlayer` sink** (rewound to the MP3's start, ready to replay) — no picker.
 
-**Architecture:** Reuse the existing voice picker (`open_voice_picker` / `confirm_voice_picker` in `src/input/actions/settings.rs`) via a NEW `VoicePickerOrigin::GlossPlay` variant so confirm sets the active voice + plays rather than toggling association. The `r` key is a new arm in `handle_gloss_key` (`src/input/keymap.rs`) gated on `gloss_overlay.current_block()` being `BlockKind::Source`. The "already playing → stop+seek-to-start" path reuses the stop + MPV-seek pattern from `read_current_block` (`src/input/actions/gloss.rs`). No new TTS machinery — `play_block_tts` already does cache-or-synthesize-then-play.
+**CRITICAL — two separate audio worlds. Do not conflate them:**
+- On a Source block, **`space` (`read_current_block`) and `a` (`begin_current_block`) drive the MPV instance** playing the work's media file (the real human recording): `ResumeAndSeek` / `Pause` on `cmd_tx`. They only fall through to TTS when the block has NO media.
+- The new **`r` ALWAYS drives the ElevenLabs-synthesized MP3 via `TtsPlayer` (rodio)** — `play_block_tts` → `tts.play_file` / `tts.stop`. It does this **regardless of whether MPV media exists** for the verse, and it **NEVER** touches MPV (no `cmd_tx`, no `Pause`, no `ResumeAndSeek`, no seek). `space` = recorded human voice; `r` = synthesized AI voice; the same verse can have both, and `r` always means the AI one.
+
+**Architecture:** Reuse the existing voice picker (`open_voice_picker` / `confirm_voice_picker` in `src/input/actions/settings.rs`) via a NEW `VoicePickerOrigin::GlossPlay` variant so confirm sets the active voice + plays rather than toggling association. The `r` key is a new arm in `handle_gloss_key` (`src/input/keymap.rs`) gated on `gloss_overlay.current_block()` being `BlockKind::Source`. The "already playing → stop" path is `s.tts.is_playing()` → `s.tts.stop()` (the rodio sink ONLY — MPV is never consulted or commanded by `r`); "ready to replay from start" is satisfied because the next `r`→pick→play re-invokes `play_block_tts`, which plays the cached MP3 from its beginning. No new TTS machinery — `play_block_tts` already does cache-or-synthesize-then-play.
 
 **Tech Stack:** Rust + GTK4 (gtk4 crate) + rusqlite + MPV IPC. Binary-only crate: `cargo build`; tests `cargo test --bins -- --test-threads=1` (rare parallel flake). DO NOT run the GUI (`cargo run`) — the user runs it; visual/runtime behavior is a user check.
 
@@ -15,10 +19,10 @@
 - Picker selection: `voice_picker.selected_voice() -> Option<(String /*voice_id*/, String /*name*/, bool /*free*/)>` (`src/ui/voice_picker.rs:164`).
 - `play_block_tts(state_rc, kind, index)` — private fn (`src/input/actions/gloss.rs:654`): resolves voice (active voice if the gloss has associated voices via `gloss_active_voice` index, else `resolve_default_voice`), cache-or-synthesize, `tts.play_file`.
 - Active-voice state: `AppState.gloss_active_voice: usize` (index into the gloss's associated voices). `cycle_active_voice` (key `V`) advances it. Associated voices come from `get_gloss_voices`; toggled by `toggle_gloss_voice`.
-- `read_current_block` (`gloss.rs:529`): the existing space-toggle — `if s.tts.is_playing() { s.tts.stop(); return; }`; for Source blocks with media it pause/seeks MPV. `resolve_cursor_block` (`gloss.rs:599`) wraps `current_block()` with a "Nothing to read" toast.
-- TtsPlayer: `play_file`/`stop`/`is_playing` only — NO true pause (`src/tts.rs:41/72/82`).
+- `read_current_block` (`gloss.rs:529`, key `space`) and `begin_current_block` (`gloss.rs:569`, key `a`): the existing Source-block audio keys. **These are the MPV-media path** — `space` checks `source_media_state` (`mpv_connected`/`mpv_playing`) and sends `MpvCommand::Pause` / `MpvCommand::ResumeAndSeek(start)` via `cmd_tx`; both fall through to `play_block_tts` ONLY when the block has no media. **The new `r` key does NOT use this path** — it is TTS-only (see below). `resolve_cursor_block` (`gloss.rs:599`) wraps `current_block()` with a "Nothing to read" toast.
+- `stop_all_gloss_audio` (`gloss.rs:519`) stops BOTH: `s.tts.stop()` + MPV `Pause`. The `r` key must NOT use this (it would pause MPV) — `r` stops the TTS sink ONLY via `s.tts.stop()`.
+- TtsPlayer (`src/tts.rs`): `play_file(path)` (line 41, stops current + plays the MP3 from its start), `stop()` (72), `is_playing()` (82) — NO true pause. This is the ONLY audio system `r` touches. Replay-from-start = `play_file` re-invoked on the cached MP3 (it always starts the file at 0).
 - Gloss-overlay key dispatch: `handle_gloss_key` (`src/input/keymap.rs:645`); plain-key `match` at line 752; `_ => true` swallows unbound keys. GTK key name for the letter is `"r"` (matches the established `"v"`/`"a"`/`"j"` pattern). `r` is currently UNBOUND in the overlay.
-- MPV seek-to-line-start: the per-line start time + the MPV `Seek`/`ResumeAndSeek`/`Pause` commands are how `read_current_block` seeks media for a Source block — reuse that exact path for the "stop and seek to first-line start" behavior. (Implementer: read `read_current_block`'s Source-block branch in full and mirror its seek; do not invent a new seek.)
 
 **Per CLAUDE.md, this keybind change ALSO requires (Tasks 4–5):** updating the Ctrl+/ keybinds overlay (`src/ui/keybinds_overlay.rs` — keycap + `describe()` arm) via the `update-cairo-keybinds-overlay` skill. It does **NOT** require a `keymap.json` change: gloss-overlay internal keys (space/a/v/V/j/k) are hardcoded in `handle_gloss_key`, not in keymap.json (which only maps reader-mode `Action` variants). Confirm this during Task 5.
 
@@ -93,14 +97,17 @@ pub(crate) fn play_block_now(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, 
 
 (If `play_block_tts` is already reachable from `settings.rs` via its module path, you may instead make it `pub(crate)` directly and skip the wrapper — pick whichever is the smaller diff. Confirm the call site in Task 1 Step 4 uses whatever you expose.)
 
-- [ ] **Step 2: Add the `r`-key entry fn.** Add to `src/input/actions/gloss.rs`:
+- [ ] **Step 2: Add the `r`-key entry fn.** Add to `src/input/actions/gloss.rs`. This is **TTS-only** — it must NEVER touch MPV (`cmd_tx`, `Pause`, `ResumeAndSeek`) even on a Source block that has synced media:
 
 ```rust
-/// Gloss-overlay `r`: on a Source block, either (a) if audio is currently
-/// playing, stop and seek the synced media back to the verse's first-line start
-/// (rewound, ready to replay); or (b) open the voice picker in `GlossPlay` mode
-/// so confirming sets the active voice and plays the verse. No-op (toast) when
-/// the accent-bar cursor is not on a Source block.
+/// Gloss-overlay `r`: on a Source block, drive the ELEVENLABS-SYNTHESIZED MP3
+/// via `TtsPlayer` (rodio) — independent of MPV. (`space`/`a` drive the MPV
+/// recording; `r` is always the AI voice, even when the verse has real media.)
+/// - If the TTS sink is already playing -> stop it (rewound; next `r`→pick→play
+///   replays the MP3 from its start). MPV is NOT touched.
+/// - Else -> open the voice picker in `GlossPlay` mode; confirming sets the
+///   active voice and plays the verse's MP3.
+/// No-op (toast) when the accent-bar cursor is not on a Source block.
 pub(crate) fn pick_or_replay_source(state_rc: &Rc<RefCell<AppState>>) {
     // 1. Gate: only act on a Source block.
     let on_source = {
@@ -108,20 +115,20 @@ pub(crate) fn pick_or_replay_source(state_rc: &Rc<RefCell<AppState>>) {
         matches!(s.gloss_overlay.current_block(), Some((BlockKind::Source, _)))
     };
     if !on_source {
-        // Match the existing "wrong block" UX: a brief toast, no action.
-        let s = state_rc.borrow();
-        s.show_toast("Source verse only"); // use the actual toast API — see below
+        show_tts_toast(state_rc, "Source verse only"); // see note below
         return;
     }
 
-    // 2. If audio is playing, stop + seek media to the verse's first-line start.
-    let playing = { state_rc.borrow().tts.is_playing() };
-    if playing {
-        stop_and_seek_source_to_start(state_rc); // Step 3
+    // 2. If the TTS MP3 is already playing, stop the rodio sink (TTS ONLY —
+    //    do NOT consult or command MPV here; mpv_playing is irrelevant to `r`).
+    let tts_playing = { state_rc.borrow().tts.is_playing() };
+    if tts_playing {
+        state_rc.borrow().tts.stop();
         return;
     }
 
-    // 3. Otherwise open the picker in GlossPlay mode.
+    // 3. Otherwise open the picker in GlossPlay mode (Task 1: confirm sets the
+    //    active voice + plays the verse's MP3 via play_block_tts).
     crate::input::actions::settings::open_voice_picker(
         state_rc,
         crate::app::VoicePickerOrigin::GlossPlay,
@@ -129,29 +136,11 @@ pub(crate) fn pick_or_replay_source(state_rc: &Rc<RefCell<AppState>>) {
 }
 ```
 
-IMPORTANT: Replace `s.show_toast("Source verse only")` with the project's ACTUAL toast call. Find how `resolve_cursor_block` (`gloss.rs:599`) emits its "Nothing to read" toast and copy that exact mechanism (it may be `crate::ui::...` or a method on state / a channel send). Do NOT invent an API.
+NOTE on the toast: use the project's ACTUAL toast helper — `show_tts_toast(state_rc, "…")` already exists in this module and is what `resolve_cursor_block` (`gloss.rs:599`) uses for "Nothing to read" (it handles dropping the borrow before showing). Confirm its signature with `rg -n "fn show_tts_toast" src/input/actions/gloss.rs` and call it exactly; do NOT invent `s.show_toast`.
 
-Also: the MPV "is playing" notion for a Source block may be tracked separately from `tts.is_playing()` (MPV vs rodio). Read `read_current_block`'s Source branch: if it checks an MPV-playing flag (e.g. `s.mpv_playing`) rather than `tts.is_playing()` for media blocks, the `playing` check here must consider BOTH (TTS sink playing OR MPV playing). Mirror exactly what `read_current_block` treats as "currently playing" for a Source block.
+IMPORTANT — only the TTS sink matters here, NOT MPV. Deliberately use `s.tts.is_playing()` and `s.tts.stop()` only. Do NOT add an `|| s.mpv_playing` check and do NOT call `stop_all_gloss_audio` (which would also `Pause` MPV). The whole point of `r` is that it is a second, independent audio channel (synthesized AI) that leaves the MPV recording controlled by `space`/`a` completely alone — pressing `r` while MPV media is playing must NOT stop the recording; it should layer/replace only the TTS sink. (If overlapping the AI MP3 over a playing MPV recording is undesirable in practice, that is a UX refinement for the user to flag after seeing it — the spec here is "r controls only the TTS sink"; do not pre-emptively add MPV stopping.)
 
-- [ ] **Step 3: Implement `stop_and_seek_source_to_start`.** Mirror `read_current_block`'s Source-block media handling, but the requested behavior is **stop + seek to the FIRST LINE's start time** (rewound), not pause-in-place:
-
-```rust
-/// Stop any gloss TTS and seek the synced MPV media to the start time of the
-/// current Source block's first line, leaving it paused/ready to replay.
-fn stop_and_seek_source_to_start(state_rc: &Rc<RefCell<AppState>>) {
-    // a. Stop the TTS sink.
-    { state_rc.borrow().tts.stop(); }
-    // b. Resolve the current Source block's first-line start time and send the
-    //    MPV seek (paused). Reuse the SAME seek/pause command read_current_block
-    //    uses for a Source block — read that branch and replicate it, but target
-    //    the block's FIRST line start time and issue a pause-after-seek (so it is
-    //    rewound and not playing).
-    // ...(implementer fills from read_current_block + the per-line start-time
-    //    lookup the overlay/AppState already exposes for the cursor block)...
-}
-```
-
-Implementer: the per-line start time for a block's first line is already obtainable on the Source path (read_current_block seeks media to a line time). Find that lookup (likely via the block's `start_line` → `line_mapping` start time, or an AppState helper). If `read_current_block` pauses MPV in place rather than seeking to a specific time, the new requirement differs: you must seek to the first-line start time THEN pause. Use the MPV command enum (`src/mpv/commands.rs` — `Seek` / `ResumeAndSeek` / `Pause`) the rest of the code already uses; do not add a new command. If there is genuinely no synced media for the block (TTS-only), `stop` alone (step a) satisfies "ready to replay from start" since the next `r`→pick→play re-synthesizes from the block start.
+- [ ] **Step 3: (removed — no MPV seek).** The earlier draft had a `stop_and_seek_source_to_start` that seeked MPV; that was WRONG. `r` is TTS-only, so "ready to replay from start" is achieved entirely by `tts.stop()` in Step 2 plus the fact that `play_block_tts`→`tts.play_file` always starts the MP3 at 0. No MPV seek, no extra function. Skip directly to Step 4.
 
 - [ ] **Step 4: Build.**
 
@@ -161,7 +150,7 @@ Run: `cargo build 2>&1 | rg "^error" || echo OK` — expect `OK`.
 
 ```bash
 git add src/input/actions/gloss.rs
-git commit -m "feat(gloss): pick_or_replay_source — r-key entry (Source-only): replay-seek or open GlossPlay picker"
+git commit -m "feat(gloss): pick_or_replay_source — r-key (Source-only, TTS-only): stop sink or open GlossPlay picker"
 ```
 
 ---
@@ -210,8 +199,10 @@ REQUIRED SUB-SKILL: Use the `update-cairo-keybinds-overlay` skill — it carries
         "voice: pick & play verse" => (
             "Gloss overlay, on a Source block (accent bar on the verse): open the \
              voice picker; confirming sets that voice as the gloss's active voice \
-             and plays the source verse in it. If audio is already playing, stop \
-             and rewind the media to the verse's first line, ready to replay.",
+             and plays the source verse as a synthesized MP3 (ElevenLabs voice — \
+             separate from the recorded media on space/a). If that synthesized \
+             audio is already playing, stop it (ready to replay from the start). \
+             Does not affect the MPV recording.",
             "-> pick_or_replay_source — src/input/actions/gloss.rs",
         ),
 ```
@@ -247,8 +238,9 @@ Run: `cargo build && cargo test --bins -- --test-threads=1 2>&1 | rg "test resul
 
 - [ ] **Step 3: User runtime verification (cannot be done by an agent).** Provide the user this checklist (the acceptance criterion is on-screen behavior):
   - Open a gloss with a source verse; move the accent bar (`j`/`k`) onto the **Source** block.
-  - Press `r` → voice picker opens. Pick a voice, Enter → the verse plays in that voice; the picked voice is now the active voice (subsequent `space`/`a` use it; `V` cycles from it).
-  - While it's playing, press `r` again → playback stops and the media rewinds to the verse's first line (next `r`→pick→Enter replays from the start).
+  - Press `r` → voice picker opens. Pick a voice, Enter → the verse plays as a **synthesized ElevenLabs MP3** in that voice; the picked voice becomes the gloss's active voice (`V` now cycles from it; the TTS-fallback path uses it).
+  - While that synthesized audio is playing, press `r` again → **the TTS audio stops** (next `r`→pick→Enter replays the MP3 from its start). Confirm pressing `r` does **NOT** stop or seek the MPV recording.
+  - Confirm the audio worlds stay separate: with the MPV recording playing (via `space`), pressing `r` controls only the synthesized voice — `space` still governs the recording.
   - Move the accent bar onto an **Explication** block, press `r` → nothing plays; a "Source verse only" toast appears.
   - Press Ctrl+/ → the overlay shows `r` with the "voice: pick & play verse" detail.
 
@@ -256,9 +248,10 @@ Run: `cargo build && cargo test --bins -- --test-threads=1 2>&1 | rg "test resul
 
 ## Self-review notes
 
-- **Decision coverage:** "set active voice, then play" → Task 1 Step 4 (associate-if-needed + set `gloss_active_voice` + play). "pause = stop and seek to first-line start, ready to replay" → Task 2 Step 3 (`stop_and_seek_source_to_start`). Key `r` → Task 3. Source-only gate ("accent bar to left of source text") → Task 2 Step 2 (`current_block()` == `Source`).
-- **Reuse over invention:** the picker (open/confirm/cancel), `play_block_tts`, the MPV seek/pause commands, the toast API, and the active-voice indexing are all EXISTING — the plan reuses each and flags exactly where to read the real shape (no invented APIs). The only genuinely new surface is `VoicePickerOrigin::GlossPlay` + two small gloss-module fns.
-- **Borrow discipline** is called out explicitly (Task 1 Step 4, Task 2): mutate under the borrow, drop it, then call `play_block_*` with `state_rc` — the recurring GTK/Rc<RefCell> hazard in this codebase.
+- **Decision coverage:** "set active voice, then play" → Task 1 Step 4 (associate-if-needed + set `gloss_active_voice` + play via `play_block_tts`). "pause = stop, ready to replay from start" → Task 2 Step 2 (`tts.stop()`; replay is `play_file`-from-0). Key `r` → Task 3. Source-only gate ("accent bar to left of source text") → Task 2 Step 2 (`current_block()` == `Source`).
+- **The two audio worlds are kept strictly separate (the load-bearing clarification):** `space`/`a` = MPV recording; `r` = ElevenLabs synthesized MP3 via `TtsPlayer`. `r` reads/writes ONLY the rodio sink (`tts.is_playing()`/`tts.stop()`/`play_block_tts`) and NEVER issues an MPV command. This is the single most important correctness property; Task 2 Step 2 forbids `|| s.mpv_playing` and `stop_all_gloss_audio`.
+- **Reuse over invention:** the picker (open/confirm/cancel), `play_block_tts`, the toast helper `show_tts_toast`, and the active-voice indexing are all EXISTING — the plan reuses each and flags where to read the real shape (no invented APIs). The only genuinely new surface is `VoicePickerOrigin::GlossPlay` + two small gloss-module fns. (No MPV seek function is added — the original draft's `stop_and_seek_source_to_start` was removed as wrong.)
+- **Borrow discipline** is called out explicitly (Task 1 Step 4): mutate under the borrow, drop it, then call `play_block_*` with `state_rc` — the recurring GTK/Rc<RefCell> hazard in this codebase.
 - **No keymap.json change** is the deliberate, verified conclusion (Task 5 Step 1), consistent with how the gloss overlay's other internal keys work.
-- **Risk — the "currently playing" notion for a Source block** (TTS sink vs MPV) is the subtlest point; Task 2 Step 2 directs the implementer to mirror exactly what `read_current_block` treats as playing, rather than assume `tts.is_playing()` alone. If the implementer finds `read_current_block` uses an MPV flag, the `r` handler must consider both.
 - **Active-voice index validity:** Task 1 Step 4 sets `gloss_active_voice` to the picked voice's index in the freshly re-read associated list, so `play_block_tts`'s `voices[i]` access (clamped via `.min(len-1)`) stays valid even if the list changed.
+- **Open UX question (flag, don't pre-solve):** pressing `r` while the MPV recording plays will layer the synthesized MP3 over it (two audio streams). The plan deliberately does NOT stop MPV on `r` (per the clarification). If the user finds the overlap undesirable in practice, stopping/pausing MPV on `r`-play is a one-line follow-up — left to a post-demo decision.
