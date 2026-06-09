@@ -1676,7 +1676,7 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
     buffer.set_text("");
 
     let tag_table = buffer.tag_table();
-    for name in &["gloss-speaker", "gloss-speaker-first", "gloss-speaker-source", "gloss-verse", "gloss-para", "gloss-bracket", "gloss-quote", "gloss-quote-cont", "gloss-citation"] {
+    for name in &["gloss-speaker", "gloss-speaker-first", "gloss-speaker-source", "gloss-verse", "gloss-para", "gloss-bracket", "gloss-quote", "gloss-quote-cont", "gloss-citation", "gloss-pron"] {
         if let Some(old) = tag_table.lookup(name) {
             tag_table.remove(&old);
         }
@@ -1776,6 +1776,19 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
         None => citation_builder.build(),
     };
 
+    // Pronunciation teaching note beneath its verse block: italic and slightly
+    // smaller (like the bracket tag), dimmed with the theme's dim foreground
+    // (like the citation/para tags) so it reads as a recessed teaching aside.
+    let pron_builder = gtk4::TextTag::builder()
+        .name("gloss-pron")
+        .left_margin(quote_verse)
+        .style(pango::Style::Italic)
+        .scale(0.92);
+    let pron_tag = match dim_color {
+        Some(c) => pron_builder.foreground(c).build(),
+        None => pron_builder.build(),
+    };
+
     tag_table.add(&speaker_tag);
     tag_table.add(&speaker_first_tag);
     tag_table.add(&speaker_source_tag);
@@ -1785,6 +1798,7 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
     tag_table.add(&quote_tag);
     tag_table.add(&quote_cont_tag);
     tag_table.add(&citation_tag);
+    tag_table.add(&pron_tag);
 
     let elements = parse_gloss_tags(gloss);
     let mut first = true;
@@ -1899,7 +1913,15 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
                     buffer.apply_tag(&para_tag, &start, &buffer.end_iter());
                 }
             }
-            GlossElement::Pron(_) => { /* rendered in a later task */ }
+            GlossElement::Pron(text) => {
+                only_speakers_so_far = false;
+                // The <pron> note's IPA is MEANT to be visible (teaching tier),
+                // so do NOT strip it. Render dim+italic beneath its verse block.
+                let mut end = buffer.end_iter();
+                buffer.insert(&mut end, text);
+                let start = buffer.iter_at_offset(offset);
+                buffer.apply_tag(&pron_tag, &start, &buffer.end_iter());
+            }
         }
     }
 
