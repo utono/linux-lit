@@ -125,7 +125,7 @@ def main():
             if gender not in ("male", "female", "neutral", "unknown"):
                 gender = "unknown"
             age = obj.get("age", None)
-            if not isinstance(age, int) or isinstance(age, bool):
+            if not isinstance(age, int) or isinstance(age, bool) or not (0 < age <= 120):
                 age = None
             if args.dry_run:
                 print(f"  {w}{DELIM}{s}\t{gender}\t{age}")
@@ -134,7 +134,11 @@ def main():
                     "INSERT INTO characters (work_abbrev, speaker, gender, age)"
                     " VALUES (?, ?, ?, ?)"
                     " ON CONFLICT(work_abbrev, speaker)"
-                    " DO UPDATE SET gender = excluded.gender, age = excluded.age",
+                    " DO UPDATE SET"
+                    "   age = excluded.age,"
+                    "   gender = CASE WHEN excluded.gender = 'unknown'"
+                    "                 THEN characters.gender"
+                    "                 ELSE excluded.gender END",
                     (w, s, gender, age),
                 )
                 written += 1
