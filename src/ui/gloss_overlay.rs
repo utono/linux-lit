@@ -2064,7 +2064,12 @@ pub(crate) fn ipa_for_tts(text: &str) -> String {
                         out.pop();
                     }
                     while let Some(&c) = out.last() {
+                        // Stop at a word boundary: space, punctuation, newline,
+                        // or a prior IPA span's closing `/` (so two adjacent
+                        // spans never eat each other — defensive; the prompt
+                        // always separates spans with a plain word).
                         if c == ' '
+                            || c == '/'
                             || matches!(c, ',' | ';' | ':' | '.' | '!' | '?' | '\n')
                         {
                             break;
@@ -2407,5 +2412,16 @@ mod synopsis_label_tests {
         // 'and/or' is not IPA; a no-IPA line is identity.
         assert_eq!(ipa_for_tts("read and/or write"), "read and/or write");
         assert_eq!(ipa_for_tts("plain modern line"), "plain modern line");
+    }
+
+    #[test]
+    fn ipa_for_tts_adjacent_spans_dont_eat_each_other() {
+        // Defensive: the prompt never emits two IPA spans with no word between,
+        // but if it did, the word-pop must stop at the prior span's closing `/`
+        // and not delete it. Each span survives.
+        assert_eq!(ipa_for_tts("/biː/ /tuː/"), "/biː/ /tuː/");
+        // 'be' precedes the first span and is dropped; the second span has only a
+        // prior IPA span before it, so the guard keeps that span intact.
+        assert_eq!(ipa_for_tts("To be /biː/ /tuː/"), "To /biː/ /tuː/");
     }
 }
