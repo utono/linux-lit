@@ -2471,6 +2471,7 @@ pub fn display_work_at_with_prepared(
             let _ = crate::db::queries::ensure_gloss_audio_table(&conn);
             let _ = crate::db::queries::ensure_characters_table(&conn);
             let _ = crate::db::queries::ensure_gloss_voices_table(&conn);
+            let _ = crate::db::queries::ensure_voice_catalog_table(&conn);
         }
     });
 

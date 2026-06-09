@@ -521,6 +521,48 @@ pub fn ensure_gloss_voices_table(conn: &Connection) -> Result<(), rusqlite::Erro
     Ok(())
 }
 
+/// Ensure the voice catalog exists and is seeded with the four narration voice
+/// pairs and their age bands. Used by `resolve_default_voice` to pick the
+/// default voice by (gender, age). Seeding is idempotent (INSERT OR IGNORE on
+/// the (voice_id, role) PK). The user can later add/adjust rows. See the
+/// per-gloss-voice-set spec §2.1.
+pub fn ensure_voice_catalog_table(conn: &Connection) -> Result<(), rusqlite::Error> {
+    use crate::elevenlabs::*;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS voice_catalog (
+            voice_id  TEXT NOT NULL,
+            model_id  TEXT NOT NULL,
+            gender    TEXT NOT NULL,
+            age_min   INTEGER NOT NULL,
+            age_max   INTEGER NOT NULL,
+            role      TEXT NOT NULL,
+            label     TEXT,
+            PRIMARY KEY (voice_id, role)
+        );"
+    )?;
+    // Seed the four pairs (verse + prose each). INSERT OR IGNORE keeps it
+    // idempotent and lets a user-edited row survive a re-run.
+    let seed: [(&str, &str, i64, i64, &str, &str); 8] = [
+        (A_OP_VOICE_ID, "male", 15, 25, "verse", "Will OP — young male verse"),
+        (B_VOICE_ID,    "male", 15, 25, "prose", "Will — young male prose"),
+        (C_OP_VOICE_ID, "male", 35, 45, "verse", "Petruchio OP — older male verse"),
+        (D_VOICE_ID,    "male", 35, 45, "prose", "Petruchio — older male prose"),
+        (A_OP_F_VOICE_ID, "female", 12, 19, "verse", "Willa OP — young female verse"),
+        (B_F_VOICE_ID,    "female", 12, 19, "prose", "Willa — young female prose"),
+        (E_OP_VOICE_ID, "female", 20, 30, "verse", "Beatrice OP — female verse"),
+        (F_VOICE_ID,    "female", 20, 30, "prose", "Beatrice — female prose"),
+    ];
+    for (vid, gender, lo, hi, role, label) in seed {
+        conn.execute(
+            "INSERT OR IGNORE INTO voice_catalog
+             (voice_id, model_id, gender, age_min, age_max, role, label)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![vid, OP_MODEL_ID, gender, lo, hi, role, label],
+        )?;
+    }
+    Ok(())
+}
+
 /// The voices associated with a gloss, ordered by `position` (cycle order).
 pub fn get_gloss_voices(conn: &Connection, gloss_id: i64) -> Vec<(String, String)> {
     let mut out = Vec::new();
@@ -2242,5 +2284,33 @@ mod tests {
             vec![("vB".to_string(), "m".to_string()), ("vA".to_string(), "m".to_string())],
             "re-added voice should sort after existing ones (end of cycle order)"
         );
+    }
+
+    #[test]
+    fn voice_catalog_seeds_four_pairs() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_voice_catalog_table(&conn).unwrap();
+        // 8 rows: 4 pairs x verse/prose
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM voice_catalog", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 8);
+        // Petruchio prose (older male) is present with its band
+        let (vid, lo, hi): (String, i64, i64) = conn
+            .query_row(
+                "SELECT voice_id, age_min, age_max FROM voice_catalog \
+                 WHERE gender='male' AND role='prose' AND age_min=35",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(vid, crate::elevenlabs::D_VOICE_ID);
+        assert_eq!((lo, hi), (35, 45));
+        // idempotent: a second ensure does not duplicate rows
+        ensure_voice_catalog_table(&conn).unwrap();
+        let n2: i64 = conn
+            .query_row("SELECT COUNT(*) FROM voice_catalog", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n2, 8);
     }
 }
