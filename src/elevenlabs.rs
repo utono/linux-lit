@@ -8,6 +8,51 @@ use std::fmt;
 pub const ALICE_VOICE_ID: &str = "Xb7hH8MSUJpSbSDYk0k2";
 pub const ALICE_MODEL_ID: &str = "eleven_turbo_v2_5";
 
+/// The four custom Voice-Design narration voices (see
+/// docs/guides/elevenlabs-v3-custom-voices.md "Saved voice IDs"). All render on
+/// `eleven_v3` (the only model that reads inline /IPA/ and [audio tags]).
+pub const A_OP_VOICE_ID: &str = "qIorOnPHyesnVMLvolyz"; // Will OP — male verse, OP
+pub const B_VOICE_ID: &str = "jTudAEr52RK5998TOYLM"; // Will — male prose
+pub const A_OP_F_VOICE_ID: &str = "AJEmTDfBuB294lokNL10"; // Willa OP — female verse, OP
+pub const B_F_VOICE_ID: &str = "EKXvXWSM0PF7VaEykbP4"; // Willa — female prose
+pub const OP_MODEL_ID: &str = "eleven_v3";
+
+/// A character's gender, for gendered-voice selection. `Neutral` (deliberately
+/// non-gendered) and `Unknown` (unresolved) both fall back to the male voice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gender {
+    Male,
+    Female,
+    Neutral,
+    Unknown,
+}
+
+impl Gender {
+    /// Parse the stored TEXT value; anything unrecognized → `Unknown`.
+    pub fn from_db(s: &str) -> Gender {
+        match s {
+            "male" => Gender::Male,
+            "female" => Gender::Female,
+            "neutral" => Gender::Neutral,
+            _ => Gender::Unknown,
+        }
+    }
+}
+
+/// Pick (voice_id, model_id) for a `gender` reading a verse (`is_verse=true`,
+/// the OP voice) or prose (`false`, the plain voice). Neutral/Unknown default to
+/// the MALE set — never guess (per the design spec / guide).
+pub fn voice_for(gender: Gender, is_verse: bool) -> (&'static str, &'static str) {
+    let female = gender == Gender::Female;
+    let id = match (female, is_verse) {
+        (false, true) => A_OP_VOICE_ID,
+        (false, false) => B_VOICE_ID,
+        (true, true) => A_OP_F_VOICE_ID,
+        (true, false) => B_F_VOICE_ID,
+    };
+    (id, OP_MODEL_ID)
+}
+
 #[derive(Debug)]
 pub enum ElevenLabsError {
     MissingApiKey,
@@ -201,6 +246,23 @@ fn parse_voices(json: &serde_json::Value) -> Vec<VoiceInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn voice_for_male_verse_is_aop() {
+        assert_eq!(voice_for(Gender::Male, true), (A_OP_VOICE_ID, OP_MODEL_ID));
+    }
+
+    #[test]
+    fn voice_for_female_prose_is_bf() {
+        assert_eq!(voice_for(Gender::Female, false), (B_F_VOICE_ID, OP_MODEL_ID));
+    }
+
+    #[test]
+    fn voice_for_neutral_and_unknown_default_to_male() {
+        // neutral/unknown -> male set (never guess)
+        assert_eq!(voice_for(Gender::Neutral, true), (A_OP_VOICE_ID, OP_MODEL_ID));
+        assert_eq!(voice_for(Gender::Unknown, false), (B_VOICE_ID, OP_MODEL_ID));
+    }
 
     #[test]
     fn error_display_messages() {

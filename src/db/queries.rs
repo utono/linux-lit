@@ -485,6 +485,22 @@ pub fn ensure_bookmarks_table(conn: &Connection) -> Result<(), rusqlite::Error> 
     Ok(())
 }
 
+/// Ensure the character-gender table exists. Keyed by (work_abbrev, speaker)
+/// with speaker stored verbatim as it appears in line_mapping.speaker, so the
+/// TTS-time lookup joins exactly with no runtime normalization. Rows are loaded
+/// by scripts/curate_genders.py, not the app. See the character-gender spec.
+pub fn ensure_characters_table(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS characters (
+            work_abbrev TEXT NOT NULL,
+            speaker     TEXT NOT NULL,
+            gender      TEXT NOT NULL,
+            PRIMARY KEY (work_abbrev, speaker)
+        );"
+    )?;
+    Ok(())
+}
+
 /// Column + constraint body of the gloss_audio table, shared by the fresh-install
 /// CREATE and the legacy-rebuild migration so the two cannot drift.
 const GLOSS_AUDIO_COLUMNS: &str = "
@@ -541,6 +557,41 @@ pub fn find_gloss_audio(
         |row| row.get::<_, String>(0),
     )
     .optional()
+}
+
+/// Resolve a (work, speaker) to a `Gender`. A multi-speaker string (contains a
+/// comma — `GlossContext.speaker` joins multiple speakers that way) or a missing
+/// row resolves to `Unknown`, which the voice selector maps to the male
+/// fallback. Reads the `characters` table; a missing table or any error also
+/// yields `Unknown` (safe default).
+pub fn get_character_gender(
+    conn: &Connection,
+    work_abbrev: &str,
+    speaker: &str,
+) -> crate::elevenlabs::Gender {
+    if speaker.contains(',') {
+        return crate::elevenlabs::Gender::Unknown;
+    }
+    let row: Result<String, _> = conn.query_row(
+        "SELECT gender FROM characters WHERE work_abbrev = ?1 AND speaker = ?2",
+        rusqlite::params![work_abbrev, speaker],
+        |r| r.get(0),
+    );
+    match row {
+        Ok(g) => crate::elevenlabs::Gender::from_db(&g),
+        // No row for this speaker is the common, benign case → Unknown (→ male
+        // fallback). A genuine error (locked DB, schema drift) also yields
+        // Unknown so playback never crashes, but is logged so it isn't mistaken
+        // for "this character simply has no gender row".
+        Err(rusqlite::Error::QueryReturnedNoRows) => crate::elevenlabs::Gender::Unknown,
+        Err(e) => {
+            crate::log_fmt!(
+                "get_character_gender: unexpected DB error for {}/{}: {}",
+                work_abbrev, speaker, e
+            );
+            crate::elevenlabs::Gender::Unknown
+        }
+    }
 }
 
 /// Insert or replace the audio path for a gloss block.
@@ -1930,5 +1981,65 @@ mod tests {
         assert_eq!(work.lines[0].text, "Who\u{2019}s there?");
         assert!(work.lines[0].is_dialogue);
         assert!(!work.timestamps.is_empty(), "Work should have timestamps loaded");
+    }
+
+    #[test]
+    fn ensure_characters_table_creates_usable_table() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        ensure_characters_table(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO characters (work_abbrev, speaker, gender) VALUES ('Ham','HAMLET','male')",
+            [],
+        ).unwrap();
+        let g: String = conn
+            .query_row(
+                "SELECT gender FROM characters WHERE work_abbrev='Ham' AND speaker='HAMLET'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(g, "male");
+    }
+
+    fn seed(conn: &Connection) {
+        ensure_characters_table(conn).unwrap();
+        conn.execute("INSERT INTO characters VALUES ('Ham','HAMLET','male')", []).unwrap();
+        conn.execute("INSERT INTO characters VALUES ('Ham','OPHELIA','female')", []).unwrap();
+        conn.execute("INSERT INTO characters VALUES ('Ham','ALL','neutral')", []).unwrap();
+    }
+
+    #[test]
+    fn get_gender_resolves_known_speakers() {
+        let conn = Connection::open_in_memory().unwrap();
+        seed(&conn);
+        assert_eq!(get_character_gender(&conn, "Ham", "HAMLET"), crate::elevenlabs::Gender::Male);
+        assert_eq!(get_character_gender(&conn, "Ham", "OPHELIA"), crate::elevenlabs::Gender::Female);
+        assert_eq!(get_character_gender(&conn, "Ham", "ALL"), crate::elevenlabs::Gender::Neutral);
+    }
+
+    #[test]
+    fn get_gender_no_row_is_unknown() {
+        let conn = Connection::open_in_memory().unwrap();
+        seed(&conn);
+        assert_eq!(get_character_gender(&conn, "Ham", "NOBODY"), crate::elevenlabs::Gender::Unknown);
+    }
+
+    #[test]
+    fn get_gender_multi_speaker_string_is_unknown() {
+        // GlossContext.speaker can be a comma-joined multi-speaker string; we
+        // can't pick one gender, so it resolves Unknown (-> male fallback).
+        let conn = Connection::open_in_memory().unwrap();
+        seed(&conn);
+        assert_eq!(get_character_gender(&conn, "Ham", "HAMLET, OPHELIA"), crate::elevenlabs::Gender::Unknown);
+    }
+
+    #[test]
+    fn from_db_parses_lowercase_and_defaults_unknown() {
+        use crate::elevenlabs::Gender;
+        assert_eq!(Gender::from_db("male"), Gender::Male);
+        assert_eq!(Gender::from_db("female"), Gender::Female);
+        assert_eq!(Gender::from_db("neutral"), Gender::Neutral);
+        assert_eq!(Gender::from_db("MALE"), Gender::Unknown);   // case-sensitive by design
+        assert_eq!(Gender::from_db("garbage"), Gender::Unknown);
     }
 }

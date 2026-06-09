@@ -112,9 +112,14 @@ At TTS voice-selection time (IPA spec §5), for a source-verse block:
    - `neutral`, `unknown`, **or no matching row** → **A-OP / B (male) fallback**
      — never guess (per the guide's rule).
 
-The `gloss_audio` cache key already carries `voice_id`/`model_id`, so a later
-gender correction (different voice) naturally produces a distinct cached entry;
-re-rendering the affected glosses picks up the new voice.
+The `gloss_audio` cache keys only on `(gloss_id, kind, paragraph_index)` —
+`voice_id`/`model_id` are stored columns, NOT part of the key. So a later gender
+correction does **not** auto-invalidate: the next play is a cache hit on the old
+audio and replays the old voice until that gloss's cached rows are deleted
+(`delete_gloss_audio`) and re-synthesized. A gender re-curation that should change
+existing audio must therefore clear the affected glosses' cache explicitly; for a
+fresh gloss (no cached audio yet) the gendered voice is picked correctly on first
+synthesis with no extra step.
 
 ## Key files (when implemented)
 

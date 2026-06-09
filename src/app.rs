@@ -2452,6 +2452,7 @@ pub fn display_work_at_with_prepared(
             let _ = crate::db::queries::ensure_bookmarks_table(&conn);
             let _ = crate::db::queries::ensure_echo_tables(&conn);
             let _ = crate::db::queries::ensure_gloss_audio_table(&conn);
+            let _ = crate::db::queries::ensure_characters_table(&conn);
         }
     });
 
