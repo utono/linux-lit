@@ -1368,6 +1368,62 @@ pub(crate) fn speaker_turn_target(
     }
 }
 
+/// Build the per-buffer-line speaker view for the current work. Index is the
+/// buffer line; `speaker` comes from `work.lines[work_line_for_buffer(bl)]`.
+fn build_speaker_view(state: &AppState) -> Vec<SpeakerLine> {
+    let line_count = state.effective_line_count();
+    let work = match state.current_work.as_ref() {
+        Some(w) => w,
+        None => return Vec::new(),
+    };
+    (0..line_count)
+        .map(|bl| {
+            let speaker = state
+                .work_line_for_buffer(bl)
+                .and_then(|wi| work.lines.get(wi))
+                .and_then(|l| l.speaker.clone());
+            SpeakerLine {
+                speaker,
+                is_dialogue: is_dialogue_line(&state.buffer, bl),
+            }
+        })
+        .collect()
+}
+
+/// Jump to the first dialogue line of the NEXT speaker turn (`J`). Seeks audio.
+pub fn jump_to_next_speaker(state: &mut AppState) {
+    if state.current_work.is_none() {
+        return;
+    }
+    let view = build_speaker_view(state);
+    if let Some(target) = speaker_turn_target(&view, state.current_line, Direction::Next) {
+        let prev_line = state.current_line;
+        state.current_line = target;
+        state.pending_advance = None;
+        state.pending_advance_ignore_bl = None;
+        log_fmt!("SPEAKER_NEXT: {} -> {}", prev_line, target);
+        scroll_after_jump_forward(state, prev_line);
+        after_page_change(state, PageChangeReason::Dialogue);
+    }
+}
+
+/// Jump to the first dialogue line of the PREVIOUS speaker turn (`K`). Seeks audio.
+pub fn jump_to_prev_speaker(state: &mut AppState) {
+    if state.current_work.is_none() {
+        return;
+    }
+    let view = build_speaker_view(state);
+    if let Some(target) = speaker_turn_target(&view, state.current_line, Direction::Prev) {
+        log_fmt!("SPEAKER_PREV: {} -> {}", state.current_line, target);
+        state.current_line = target;
+        state.pending_advance = None;
+        state.pending_advance_ignore_bl = None;
+        state.prev_highlight_line.set(None);
+        scroll_after_jump_backward(state);
+        after_page_change(state, PageChangeReason::Dialogue);
+    }
+}
+
 /// Next scene marker (used for plays on the `3` key).
 pub fn jump_to_next_scene(state: &mut AppState) {
     use crate::db::line_types;
