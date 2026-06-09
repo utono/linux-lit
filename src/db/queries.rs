@@ -803,12 +803,21 @@ pub fn resolve_default_voice(
             rusqlite::params![cat_gender, role, age],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
-        .ok();
+        .optional()
+        .unwrap_or_else(|e| {
+            crate::log_fmt!(
+                "resolve_default_voice: containment query error for {}/{}: {}",
+                work_abbrev, speaker, e
+            );
+            None
+        });
     if let Some(hit) = contained {
         return hit;
     }
 
-    // 2. Nearest same-gender/role band by distance from `age` to [age_min,age_max].
+    // 2. Nearest same-gender/role band: clamped distance from `age` to the band's
+    //    [age_min, age_max] interval — below-band uses (age_min - age), above-band
+    //    uses (age - age_max), inside-band is 0 (those are already caught by step 1).
     let nearest: Option<(String, String)> = conn
         .query_row(
             "SELECT voice_id, model_id FROM voice_catalog
@@ -817,7 +826,14 @@ pub fn resolve_default_voice(
             rusqlite::params![cat_gender, role, age],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
-        .ok();
+        .optional()
+        .unwrap_or_else(|e| {
+            crate::log_fmt!(
+                "resolve_default_voice: nearest query error for {}/{}: {}",
+                work_abbrev, speaker, e
+            );
+            None
+        });
     if let Some(hit) = nearest {
         return hit;
     }
@@ -2506,6 +2522,21 @@ mod tests {
         // Petruchio (35-45) contains 40 -> D prose.
         assert_eq!(
             resolve_default_voice(&conn, "Rom", "NOBODY", false),
+            (crate::elevenlabs::D_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_neutral_gender_uses_male_voice() {
+        let conn = Connection::open_in_memory().unwrap();
+        seed_catalog_and_chars(&conn);
+        conn.execute(
+            "INSERT INTO characters (work_abbrev, speaker, gender, age) VALUES ('Rom','CHORUS','neutral',40)",
+            [],
+        ).unwrap();
+        // neutral -> male; age 40 in Petruchio band (35-45) -> D prose.
+        assert_eq!(
+            resolve_default_voice(&conn, "Rom", "CHORUS", false),
             (crate::elevenlabs::D_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
         );
     }
