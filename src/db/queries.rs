@@ -503,7 +503,11 @@ pub fn ensure_characters_table(conn: &Connection) -> Result<(), rusqlite::Error>
 
 /// Ensure the per-gloss voice-set table exists. A gloss can be associated with
 /// zero, one, or more voices; `position` gives a stable cycle order. Rows are
-/// added/removed via `toggle_gloss_voice`. See the per-gloss-voice-set spec.
+/// added/removed via `toggle_gloss_voice`. The FK declares ON DELETE CASCADE,
+/// but note SQLite enforces FKs per-connection and `open_db_rw` does not set
+/// `PRAGMA foreign_keys = ON`, so in practice deleting a gloss leaves orphaned
+/// gloss_voices rows (harmless — they reference a gloss that can no longer be
+/// queried). See the per-gloss-voice-set spec.
 pub fn ensure_gloss_voices_table(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS gloss_voices (
@@ -2135,5 +2139,26 @@ mod tests {
         assert_eq!(get_gloss_voices(&conn, 1), vec![("vB".to_string(), "m2".to_string())]);
         // a different gloss has its own (empty) set
         assert!(get_gloss_voices(&conn, 2).is_empty());
+    }
+
+    #[test]
+    fn gloss_voices_readd_goes_to_end() {
+        let conn = Connection::open_in_memory().unwrap();
+        // Parent table for the gloss_id FK (rusqlite enforces foreign keys).
+        conn.execute_batch(
+            "CREATE TABLE glosses (id INTEGER PRIMARY KEY);
+             INSERT INTO glosses (id) VALUES (1), (2);",
+        )
+        .unwrap();
+        ensure_gloss_voices_table(&conn).unwrap();
+        toggle_gloss_voice(&conn, 1, "vA", "m");  // pos 0
+        toggle_gloss_voice(&conn, 1, "vB", "m");  // pos 1
+        toggle_gloss_voice(&conn, 1, "vA", "m");  // remove vA
+        toggle_gloss_voice(&conn, 1, "vA", "m");  // re-add vA -> pos 2 (after vB)
+        assert_eq!(
+            get_gloss_voices(&conn, 1),
+            vec![("vB".to_string(), "m".to_string()), ("vA".to_string(), "m".to_string())],
+            "re-added voice should sort after existing ones (end of cycle order)"
+        );
     }
 }
