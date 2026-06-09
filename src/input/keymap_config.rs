@@ -215,6 +215,8 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("comma"), Action::JumpToPrevDialogue),
         (KeyCombo::shift("comma"), Action::PageBackwardBottom),
         (KeyCombo::plain("q"), Action::JumpToNextDialogue),
+        (KeyCombo::plain("J"), Action::JumpToNextSpeaker),
+        (KeyCombo::plain("K"), Action::JumpToPrevSpeaker),
         // Multi-key chord entry (gg → JumpToStart, zt → ScrollCursorTop)
         (KeyCombo::plain("g"), Action::PendingG),
         (KeyCombo::plain("G"), Action::JumpToEnd),
@@ -365,6 +367,25 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::ctrl_shift("L")), Some(&Action::SaveAndQuit));
         assert_eq!(m.get(&KeyCombo::ctrl("a")), Some(&Action::ToggleAuthorship));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("A")), Some(&Action::PickAttributionSet));
+    }
+
+    #[test]
+    fn speaker_turn_keys_bound_to_capital_j_and_k() {
+        let m = default_reader_bindings();
+        assert_eq!(m.get(&KeyCombo::plain("J")), Some(&Action::JumpToNextSpeaker));
+        assert_eq!(m.get(&KeyCombo::plain("K")), Some(&Action::JumpToPrevSpeaker));
+        // Lowercase j / k keep their existing cursor bindings (regression guard).
+        assert_eq!(m.get(&KeyCombo::plain("j")), Some(&Action::CursorNextDialogue));
+        assert_eq!(m.get(&KeyCombo::plain("k")), Some(&Action::CursorPrevLine));
+    }
+
+    #[test]
+    fn shift_j_resolves_to_next_speaker_via_lookup() {
+        let km = Keymap::default();
+        // GTK delivers Shift+j as key "J" with shift=true; is_uppercase_letter
+        // strips the redundant shift, so plain("J") matches.
+        assert_eq!(km.lookup("J", false, true, false), Some(Action::JumpToNextSpeaker));
+        assert_eq!(km.lookup("K", false, true, false), Some(Action::JumpToPrevSpeaker));
     }
 
     #[test]

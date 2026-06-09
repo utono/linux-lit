@@ -83,8 +83,8 @@ const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 const BOTTOM_ROW: &[KeyDef] = &[
     bare("'", "\"", "reopen echoes"),
     key("q", "Q", "next dlg", "Q: page bottom", &[]),
-    bare("j", "J", "cursor \u{2193}"),
-    bare("k", "K", "cursor \u{2191}"),
+    key("j", "J", "cursor \u{2193}", "J: next speaker", &[]),
+    key("k", "K", "cursor \u{2191}", "K: prev speaker", &[]),
     bare("x", "X", "pg fwd"),
     bare("b", "B", ""),
     key("m", "M", "bookmark", "", &[("C-m", "media picker")]),
@@ -238,6 +238,12 @@ speaker names, stage directions, and blank lines. \
         "next dlg" => "Jump the cursor to the next line of dialogue, skipping \
 speaker names, stage directions, and blank lines. \
 -> navigation::jump_to_next_dialogue — src/input/navigation.rs",
+        "next speaker" => "Jump the cursor to the first dialogue line of the next \
+speaker turn — the next time the speaker changes — and seek audio to it. \
+-> navigation::jump_to_next_speaker — src/input/navigation.rs",
+        "prev speaker" => "Jump the cursor to the first dialogue line of the previous \
+speaker turn — the previous time the speaker changes — and seek audio to it. \
+-> navigation::jump_to_prev_speaker — src/input/navigation.rs",
         "go to start" => "Jump to the very first line of the work (gg). \
 -> navigation::jump_to_start — src/input/navigation.rs",
         "go to end" => "Jump to the very last line of the work (G). \

@@ -45,6 +45,8 @@ pub enum Action {
     CursorToPageBottom,
     JumpToNextDialogue,
     JumpToPrevDialogue,
+    JumpToNextSpeaker,
+    JumpToPrevSpeaker,
     JumpToNextChapter,
     JumpToPrevChapter,
     JumpToNextScene,
@@ -168,6 +170,8 @@ impl Action {
             | Action::CursorToPageBottom
             | Action::JumpToNextDialogue
             | Action::JumpToPrevDialogue
+            | Action::JumpToNextSpeaker
+            | Action::JumpToPrevSpeaker
             | Action::JumpToNextChapter
             | Action::JumpToPrevChapter
             | Action::JumpToNextScene
@@ -276,6 +280,8 @@ impl Action {
             Action::CursorToPageBottom => "CursorToPageBottom",
             Action::JumpToNextDialogue => "JumpToNextDialogue",
             Action::JumpToPrevDialogue => "JumpToPrevDialogue",
+            Action::JumpToNextSpeaker => "JumpToNextSpeaker",
+            Action::JumpToPrevSpeaker => "JumpToPrevSpeaker",
             Action::JumpToNextChapter => "JumpToNextChapter",
             Action::JumpToPrevChapter => "JumpToPrevChapter",
             Action::JumpToNextScene => "JumpToNextScene",
@@ -396,6 +402,16 @@ mod tests {
         assert_eq!(Action::PendingG.category(), Category::App);
         assert_eq!(Action::PendingZ.category(), Category::App);
         assert_eq!(Action::OpenSearch.category(), Category::App);
+    }
+
+    #[test]
+    fn speaker_turn_actions_are_navigation() {
+        assert_eq!(Action::JumpToNextSpeaker.category(), Category::Navigation);
+        assert_eq!(Action::JumpToPrevSpeaker.category(), Category::Navigation);
+        assert_eq!(Action::JumpToNextSpeaker.name(), "JumpToNextSpeaker");
+        assert_eq!(Action::JumpToPrevSpeaker.name(), "JumpToPrevSpeaker");
+        let a: Action = serde_json::from_str("\"JumpToNextSpeaker\"").expect("parse");
+        assert_eq!(a, Action::JumpToNextSpeaker);
     }
 
     #[test]
