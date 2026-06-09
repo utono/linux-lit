@@ -39,6 +39,10 @@ pub struct VocabMatch {
 pub enum VoicePickerOrigin {
     Settings,
     GlossOverlay,
+    /// Opened from the gloss overlay's `R` source-verse TTS key: confirming
+    /// picks the active voice and plays the source verse (pausing MPV first).
+    /// Wired in a later task; currently routes like `GlossOverlay`.
+    GlossPlay,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

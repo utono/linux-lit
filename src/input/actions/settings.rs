@@ -144,7 +144,10 @@ pub(crate) fn confirm_voice_picker(state: &Rc<RefCell<crate::app::AppState>>) {
             // Return to the settings overlay (still visible underneath).
             s.input_mode = crate::app::InputMode::Settings;
         }
-        crate::app::VoicePickerOrigin::GlossOverlay => {
+        // GlossPlay is wired in a later task; for now confirm exactly like
+        // GlossOverlay (associate/remove the picked voice on the gloss).
+        crate::app::VoicePickerOrigin::GlossOverlay
+        | crate::app::VoicePickerOrigin::GlossPlay => {
             let gloss_id = {
                 let s = state.borrow();
                 s.gloss_list.get(s.gloss_index).map(|g| g.gloss_id)
@@ -185,7 +188,9 @@ pub(crate) fn cancel_voice_picker(state: &Rc<RefCell<crate::app::AppState>>) {
     s.voice_picker.hide();
     s.input_mode = match origin {
         crate::app::VoicePickerOrigin::Settings => crate::app::InputMode::Settings,
-        crate::app::VoicePickerOrigin::GlossOverlay => crate::app::InputMode::GlossOverlay,
+        // GlossPlay routes back like GlossOverlay until the later task refines it.
+        crate::app::VoicePickerOrigin::GlossOverlay
+        | crate::app::VoicePickerOrigin::GlossPlay => crate::app::InputMode::GlossOverlay,
     };
 }
 

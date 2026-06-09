@@ -807,6 +807,78 @@ fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32)
     });
 }
 
+/// Play a Source block's synthesized (ElevenLabs) MP3 in the gloss's active /
+/// default voice, FIRST pausing the MPV recording so the two audio streams do
+/// not overlap. Cache hit -> play the stored MP3; miss -> synthesize then play
+/// (both handled by `play_block_tts`). Used by the gloss-overlay `r` key and by
+/// the `R` picker-confirm path. MPV is paused exactly once here, immediately
+/// before playback; it is never resumed by this path (the user resumes the
+/// recording with `space`).
+pub(crate) fn play_source_tts_pausing_mpv(state_rc: &Rc<RefCell<AppState>>, index: i32) {
+    {
+        let s = state_rc.borrow();
+        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
+    }
+    play_block_tts(state_rc, BlockKind::Source, index);
+}
+
+/// The current cursor block's index if it is a Source block; otherwise toast
+/// "Source verse only" and return None. (The `r`/`R` synthesized-voice keys act
+/// only on the source verse, where the accent bar sits to the left of the
+/// source text.)
+fn source_block_index(state_rc: &Rc<RefCell<AppState>>) -> Option<i32> {
+    let block = state_rc.borrow().gloss_overlay.current_block();
+    match block {
+        Some((BlockKind::Source, index)) => Some(index),
+        _ => {
+            show_tts_toast(state_rc, "Source verse only");
+            None
+        }
+    }
+}
+
+/// Gloss-overlay `r`: play/stop the Source block's synthesized MP3 in the
+/// gloss's ACTIVE voice (or the age-aware default voice when the gloss has no
+/// associated voices) — the ElevenLabs/`TtsPlayer` channel, NOT the MPV
+/// recording (`space`/`a`). Toggle: if the TTS sink is playing, stop it (MPV
+/// stays paused; the user resumes the recording with `space`); else pause MPV
+/// and play (cache hit -> play; miss -> synthesize then play). No picker. No-op
+/// (toast) off a Source block.
+pub(crate) fn toggle_source_tts(state_rc: &Rc<RefCell<AppState>>) {
+    let index = match source_block_index(state_rc) {
+        Some(i) => i,
+        None => return,
+    };
+    let tts_playing = { state_rc.borrow().tts.is_playing() };
+    if tts_playing {
+        state_rc.borrow().tts.stop();
+        return;
+    }
+    play_source_tts_pausing_mpv(state_rc, index);
+}
+
+/// Gloss-overlay `R` (shift+r): open the voice picker for the Source block's
+/// synthesized reading. If the TTS sink is already playing, stop it (MPV stays
+/// paused) — same stop semantics as `r`. Otherwise open the picker in
+/// `GlossPlay` mode; confirming sets the picked voice as the gloss's active
+/// voice and plays the verse (pausing MPV first, via the GlossPlay confirm
+/// path). `R` is the ONLY key that opens the picker. No-op (toast) off a Source
+/// block.
+pub(crate) fn pick_source_voice(state_rc: &Rc<RefCell<AppState>>) {
+    if source_block_index(state_rc).is_none() {
+        return;
+    }
+    let tts_playing = { state_rc.borrow().tts.is_playing() };
+    if tts_playing {
+        state_rc.borrow().tts.stop();
+        return;
+    }
+    crate::input::actions::settings::open_voice_picker(
+        state_rc,
+        crate::app::VoicePickerOrigin::GlossPlay,
+    );
+}
+
 /// Run one ElevenLabs synthesis on the Tokio runtime, flattening the
 /// `JoinError` into an `ElevenLabsError` so callers match a single error type.
 async fn synth_via(
