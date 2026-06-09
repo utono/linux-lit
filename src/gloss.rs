@@ -18,6 +18,7 @@ Rules:
 - When quoting verse from the text, use <speaker> and <verse> tags — never embed verse lines inside <gloss> tags
 - Quote verbatim — exact words, exact spelling, exact line breaks from the source
 - Never use / to join verse lines
+- On each <verse> line, tag ONLY the operative / accent-bearing / metrically stressed words with inline Original-Pronunciation IPA in forward slashes (e.g. /tɛːk/), per word never per phrase; let line structure govern syllable count.
 - Each <verse> tag contains exactly one line of the original
 - Each <gloss> tag contains one flowing prose paragraph (3-6 sentences)
 - No markdown, no bullets, no numbered lists, no headers";
@@ -185,6 +186,7 @@ Use the same output format as the original gloss — use these XML tags:
 Rules:
 - Quote verbatim — exact words, exact spelling, exact line breaks
 - Never use / to join verse lines
+- On each <verse> line, tag ONLY the operative / accent-bearing / metrically stressed words with inline Original-Pronunciation IPA in forward slashes (e.g. /tɛːk/), per word never per phrase; let line structure govern syllable count.
 - Each <verse> tag contains exactly one line of the original
 - Each <gloss> tag contains one flowing prose paragraph (3-6 sentences)
 - Incorporate the reader's provided lines as evidence or context
@@ -198,6 +200,7 @@ Given a passage with speaker names and dialogue, provide an actor's explication 
 - Paraphrases the passage in clear, modern English
 - Explains archaic vocabulary, allusions, and complex syntax
 - Notes rhetorical devices, verse structure, and breath patterns that shape delivery
+- On each <verse> line, tag for Original Pronunciation ONLY the few words you have already identified as operative / accent-bearing / metrically stressed — per word, never per phrase. Tagging every word destabilizes synthesis and muddies the teaching. Write the pronunciation as IPA wrapped in forward slashes inline, e.g. /tɛːk/ for \"take\", /ˈsʊfər/ for \"suffer\". Encode OP vowels (rhotic finals, FACE/GOAT monophthongs, the MEAT–MEET split) and ˈ/ˌ stress where metre or rhetoric demands — but let line structure, not IPA, govern syllable count (leave -ed/-ion to the metre).
 - Identifies the speaker's intention, operative words, and emotional arc
 - References classical pedagogy where relevant (Barton, Berry, Hall, Rodenburg, Linklater)
 - Defines literary terminology on first use (enjambment, caesura, anaphora, antithesis, etc.)
@@ -206,11 +209,14 @@ Output format — use these XML tags exactly:
 - <speaker>NAME</speaker> for each speaker attribution (ALL CAPS, no period)
 - <verse>one line of quoted text</verse> for each quoted line (one tag per line, verbatim from source, preserving exact words and spelling)
 - <gloss>paragraph of analysis</gloss> for each analysis paragraph
+- <pron>note</pron> AFTER a verse block: name only the 1-3 most pedagogically striking pronunciations from that block and say which OP feature each illustrates (a vowel shift, a rhotic, a stress that changes the scansion). This is a STRICT SUBSET of the words you tagged in <verse>.
 
 Rules:
 - Quote verbatim — exact words, exact spelling, exact line breaks from the source
 - Never use / to join verse lines
 - Never truncate with ...
+- Tag sparsely: only operative/accent-bearing words get /IPA/. A 40-word line should have far fewer than 40 tags.
+- The <pron> note shows its IPA to the reader; the <verse> /IPA/ is hidden from the reader and used only for audio. Do not explain this in the output — just produce both.
 - Each <verse> tag contains exactly one line of the original
 - Each <gloss> tag contains one flowing prose paragraph (3-4 sentences preferred, never exceed 6)
 - For long speeches (over 8 lines), break into 4-8 line chunks with analysis between each chunk
