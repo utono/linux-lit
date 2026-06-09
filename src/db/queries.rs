@@ -489,7 +489,7 @@ pub fn ensure_bookmarks_table(conn: &Connection) -> Result<(), rusqlite::Error> 
 /// speaker stored verbatim as it appears in line_mapping.speaker, so the
 /// TTS-time lookup joins exactly with no runtime normalization. Carries gender
 /// and a nullable `age` used by the age-aware default-voice selection. Rows are
-/// loaded by scripts/curate_genders.py, not the app. See the character-gender
+/// loaded by scripts/curate_characters.py, not the app. See the character-gender
 /// spec.
 pub fn ensure_characters_table(conn: &Connection) -> Result<(), rusqlite::Error> {
     // Fresh installs get the age column directly.
