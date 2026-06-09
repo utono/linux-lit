@@ -485,19 +485,31 @@ pub fn ensure_bookmarks_table(conn: &Connection) -> Result<(), rusqlite::Error> 
     Ok(())
 }
 
-/// Ensure the character-gender table exists. Keyed by (work_abbrev, speaker)
-/// with speaker stored verbatim as it appears in line_mapping.speaker, so the
-/// TTS-time lookup joins exactly with no runtime normalization. Rows are loaded
-/// by scripts/curate_genders.py, not the app. See the character-gender spec.
+/// Ensure the characters table exists. Keyed by (work_abbrev, speaker) with
+/// speaker stored verbatim as it appears in line_mapping.speaker, so the
+/// TTS-time lookup joins exactly with no runtime normalization. Carries gender
+/// and a nullable `age` used by the age-aware default-voice selection. Rows are
+/// loaded by scripts/curate_characters.py, not the app. See the character-gender
+/// spec.
 pub fn ensure_characters_table(conn: &Connection) -> Result<(), rusqlite::Error> {
+    // Fresh installs get the age column directly.
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS characters (
             work_abbrev TEXT NOT NULL,
             speaker     TEXT NOT NULL,
             gender      TEXT NOT NULL,
+            age         INTEGER,
             PRIMARY KEY (work_abbrev, speaker)
         );"
     )?;
+    // Legacy migration: a pre-age table lacks the `age` column. ADD it (the
+    // pragma probe mirrors ensure_gloss_audio_table's column-existence check).
+    let has_age: bool = conn
+        .prepare("SELECT 1 FROM pragma_table_info('characters') WHERE name = 'age'")?
+        .exists([])?;
+    if !has_age {
+        conn.execute_batch("ALTER TABLE characters ADD COLUMN age INTEGER;")?;
+    }
     Ok(())
 }
 
@@ -518,6 +530,48 @@ pub fn ensure_gloss_voices_table(conn: &Connection) -> Result<(), rusqlite::Erro
             PRIMARY KEY (gloss_id, voice_id)
         );"
     )?;
+    Ok(())
+}
+
+/// Ensure the voice catalog exists and is seeded with the four narration voice
+/// pairs and their age bands. Used by `resolve_default_voice` to pick the
+/// default voice by (gender, age). Seeding is idempotent (INSERT OR IGNORE on
+/// the (gender, age_min, age_max, role) PK). The user can later add/adjust rows.
+/// See docs/superpowers/plans/2026-06-08-age-aware-default-voice-phase2.md.
+pub fn ensure_voice_catalog_table(conn: &Connection) -> Result<(), rusqlite::Error> {
+    use crate::elevenlabs::*;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS voice_catalog (
+            voice_id  TEXT NOT NULL,
+            model_id  TEXT NOT NULL,
+            gender    TEXT NOT NULL,
+            age_min   INTEGER NOT NULL,
+            age_max   INTEGER NOT NULL,
+            role      TEXT NOT NULL,
+            label     TEXT,
+            PRIMARY KEY (gender, age_min, age_max, role)
+        );"
+    )?;
+    // Seed the four pairs (verse + prose each). INSERT OR IGNORE keeps it
+    // idempotent and lets a user-edited row survive a re-run.
+    let seed: [(&str, &str, i64, i64, &str, &str); 8] = [
+        (A_OP_VOICE_ID, "male", 15, 25, "verse", "Will OP — young male verse"),
+        (B_VOICE_ID,    "male", 15, 25, "prose", "Will — young male prose"),
+        (C_OP_VOICE_ID, "male", 35, 45, "verse", "Petruchio OP — older male verse"),
+        (D_VOICE_ID,    "male", 35, 45, "prose", "Petruchio — older male prose"),
+        (A_OP_F_VOICE_ID, "female", 12, 19, "verse", "Willa OP — young female verse"),
+        (B_F_VOICE_ID,    "female", 12, 19, "prose", "Willa — young female prose"),
+        (E_OP_VOICE_ID, "female", 20, 30, "verse", "Beatrice OP — female verse"),
+        (F_VOICE_ID,    "female", 20, 30, "prose", "Beatrice — female prose"),
+    ];
+    for (vid, gender, lo, hi, role, label) in seed {
+        conn.execute(
+            "INSERT OR IGNORE INTO voice_catalog
+             (voice_id, model_id, gender, age_min, age_max, role, label)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![vid, OP_MODEL_ID, gender, lo, hi, role, label],
+        )?;
+    }
     Ok(())
 }
 
@@ -657,39 +711,102 @@ pub fn find_gloss_audio(
     .optional()
 }
 
-/// Resolve a (work, speaker) to a `Gender`. A multi-speaker string (contains a
-/// comma — `GlossContext.speaker` joins multiple speakers that way) or a missing
-/// row resolves to `Unknown`, which the voice selector maps to the male
-/// fallback. Reads the `characters` table; a missing table or any error also
-/// yields `Unknown` (safe default).
-pub fn get_character_gender(
+/// Default age used when a character has no curated age (NULL).
+const DEFAULT_AGE: i64 = 40;
+
+/// Read (Gender, age) for a speaker. Multi-speaker (comma) / no row → (Unknown,
+/// None); a real DB error is logged and also yields (Unknown, None). Generalizes
+/// get_character_gender to also pull age.
+fn get_character_gender_age(
     conn: &Connection,
     work_abbrev: &str,
     speaker: &str,
-) -> crate::elevenlabs::Gender {
+) -> (crate::elevenlabs::Gender, Option<i64>) {
     if speaker.contains(',') {
-        return crate::elevenlabs::Gender::Unknown;
+        return (crate::elevenlabs::Gender::Unknown, None);
     }
-    let row: Result<String, _> = conn.query_row(
-        "SELECT gender FROM characters WHERE work_abbrev = ?1 AND speaker = ?2",
+    let row: Result<(String, Option<i64>), _> = conn.query_row(
+        "SELECT gender, age FROM characters WHERE work_abbrev = ?1 AND speaker = ?2",
         rusqlite::params![work_abbrev, speaker],
-        |r| r.get(0),
+        |r| Ok((r.get(0)?, r.get(1)?)),
     );
     match row {
-        Ok(g) => crate::elevenlabs::Gender::from_db(&g),
-        // No row for this speaker is the common, benign case → Unknown (→ male
-        // fallback). A genuine error (locked DB, schema drift) also yields
-        // Unknown so playback never crashes, but is logged so it isn't mistaken
-        // for "this character simply has no gender row".
-        Err(rusqlite::Error::QueryReturnedNoRows) => crate::elevenlabs::Gender::Unknown,
+        Ok((g, a)) => (crate::elevenlabs::Gender::from_db(&g), a),
+        Err(rusqlite::Error::QueryReturnedNoRows) => (crate::elevenlabs::Gender::Unknown, None),
         Err(e) => {
             crate::log_fmt!(
-                "get_character_gender: unexpected DB error for {}/{}: {}",
+                "get_character_gender_age: unexpected DB error for {}/{}: {}",
                 work_abbrev, speaker, e
             );
-            crate::elevenlabs::Gender::Unknown
+            (crate::elevenlabs::Gender::Unknown, None)
         }
     }
+}
+
+/// Pick the default (voice_id, model_id) for a speaker by (gender, age) from the
+/// voice_catalog: the narrowest band CONTAINING the age, else the NEAREST
+/// same-gender band, else the legacy `voice_for` constants. `is_verse` selects
+/// the verse/prose role. Unknown/neutral gender → male; missing age → DEFAULT_AGE.
+pub fn resolve_default_voice(
+    conn: &Connection,
+    work_abbrev: &str,
+    speaker: &str,
+    is_verse: bool,
+) -> (String, String) {
+    let (gender, age_opt) = get_character_gender_age(conn, work_abbrev, speaker);
+    // Catalog gender is 'male' | 'female'; everything not Female → male.
+    let cat_gender = if gender == crate::elevenlabs::Gender::Female { "female" } else { "male" };
+    let age = age_opt.unwrap_or(DEFAULT_AGE);
+    let role = if is_verse { "verse" } else { "prose" };
+
+    // 1. Containment: narrowest band that contains `age`.
+    let contained: Option<(String, String)> = conn
+        .query_row(
+            "SELECT voice_id, model_id FROM voice_catalog
+             WHERE gender = ?1 AND role = ?2 AND ?3 BETWEEN age_min AND age_max
+             ORDER BY (age_max - age_min) ASC LIMIT 1",
+            rusqlite::params![cat_gender, role, age],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .unwrap_or_else(|e| {
+            crate::log_fmt!(
+                "resolve_default_voice: containment query error for {}/{}: {}",
+                work_abbrev, speaker, e
+            );
+            None
+        });
+    if let Some(hit) = contained {
+        return hit;
+    }
+
+    // 2. Nearest same-gender/role band: clamped distance from `age` to the band's
+    //    [age_min, age_max] interval — below-band uses (age_min - age), above-band
+    //    uses (age - age_max), inside-band is 0 (those are already caught by step 1).
+    let nearest: Option<(String, String)> = conn
+        .query_row(
+            "SELECT voice_id, model_id FROM voice_catalog
+             WHERE gender = ?1 AND role = ?2
+             ORDER BY MAX(0, age_min - ?3) + MAX(0, ?3 - age_max) ASC LIMIT 1",
+            rusqlite::params![cat_gender, role, age],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .unwrap_or_else(|e| {
+            crate::log_fmt!(
+                "resolve_default_voice: nearest query error for {}/{}: {}",
+                work_abbrev, speaker, e
+            );
+            None
+        });
+    if let Some(hit) = nearest {
+        return hit;
+    }
+
+    // 3. Last resort (catalog empty / no same-gender voice — unreachable given
+    //    the seed rows): the legacy gender-only constants.
+    let (v, m) = crate::elevenlabs::voice_for(gender, is_verse);
+    (v.to_string(), m.to_string())
 }
 
 /// Insert or replace the audio path for a gloss block in a specific voice.
@@ -2157,36 +2274,47 @@ mod tests {
         assert_eq!(g, "male");
     }
 
-    fn seed(conn: &Connection) {
-        ensure_characters_table(conn).unwrap();
-        conn.execute("INSERT INTO characters VALUES ('Ham','HAMLET','male')", []).unwrap();
-        conn.execute("INSERT INTO characters VALUES ('Ham','OPHELIA','female')", []).unwrap();
-        conn.execute("INSERT INTO characters VALUES ('Ham','ALL','neutral')", []).unwrap();
+    #[test]
+    fn characters_table_has_age_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_characters_table(&conn).unwrap();
+        // age column exists and is nullable
+        conn.execute(
+            "INSERT INTO characters (work_abbrev, speaker, gender, age) VALUES ('Ham','HAMLET','male',30)",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO characters (work_abbrev, speaker, gender) VALUES ('Ham','GHOST','male')",
+            [],
+        ).unwrap();
+        let age: Option<i64> = conn
+            .query_row("SELECT age FROM characters WHERE speaker='HAMLET'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(age, Some(30));
+        let none: Option<i64> = conn
+            .query_row("SELECT age FROM characters WHERE speaker='GHOST'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(none, None);
     }
 
     #[test]
-    fn get_gender_resolves_known_speakers() {
+    fn characters_table_migrates_legacy_no_age() {
         let conn = Connection::open_in_memory().unwrap();
-        seed(&conn);
-        assert_eq!(get_character_gender(&conn, "Ham", "HAMLET"), crate::elevenlabs::Gender::Male);
-        assert_eq!(get_character_gender(&conn, "Ham", "OPHELIA"), crate::elevenlabs::Gender::Female);
-        assert_eq!(get_character_gender(&conn, "Ham", "ALL"), crate::elevenlabs::Gender::Neutral);
-    }
-
-    #[test]
-    fn get_gender_no_row_is_unknown() {
-        let conn = Connection::open_in_memory().unwrap();
-        seed(&conn);
-        assert_eq!(get_character_gender(&conn, "Ham", "NOBODY"), crate::elevenlabs::Gender::Unknown);
-    }
-
-    #[test]
-    fn get_gender_multi_speaker_string_is_unknown() {
-        // GlossContext.speaker can be a comma-joined multi-speaker string; we
-        // can't pick one gender, so it resolves Unknown (-> male fallback).
-        let conn = Connection::open_in_memory().unwrap();
-        seed(&conn);
-        assert_eq!(get_character_gender(&conn, "Ham", "HAMLET, OPHELIA"), crate::elevenlabs::Gender::Unknown);
+        // legacy 3-column table (pre-age) with a row
+        conn.execute_batch(
+            "CREATE TABLE characters (
+                work_abbrev TEXT NOT NULL, speaker TEXT NOT NULL, gender TEXT NOT NULL,
+                PRIMARY KEY (work_abbrev, speaker));
+             -- 3-col positional INSERT is valid here: legacy table, pre-migration
+             INSERT INTO characters VALUES ('Ham','HAMLET','male');",
+        ).unwrap();
+        ensure_characters_table(&conn).unwrap(); // should ALTER ADD age
+        // existing row preserved, age NULL
+        let (g, a): (String, Option<i64>) = conn
+            .query_row("SELECT gender, age FROM characters WHERE speaker='HAMLET'", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!(g, "male");
+        assert_eq!(a, None);
     }
 
     #[test]
@@ -2241,6 +2369,105 @@ mod tests {
             get_gloss_voices(&conn, 1),
             vec![("vB".to_string(), "m".to_string()), ("vA".to_string(), "m".to_string())],
             "re-added voice should sort after existing ones (end of cycle order)"
+        );
+    }
+
+    #[test]
+    fn voice_catalog_seeds_four_pairs() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_voice_catalog_table(&conn).unwrap();
+        // 8 rows: 4 pairs x verse/prose
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM voice_catalog", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 8);
+        // Petruchio prose (older male) is present with its band
+        let (vid, lo, hi): (String, i64, i64) = conn
+            .query_row(
+                "SELECT voice_id, age_min, age_max FROM voice_catalog \
+                 WHERE gender='male' AND role='prose' AND age_min=35",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(vid, crate::elevenlabs::D_VOICE_ID);
+        assert_eq!((lo, hi), (35, 45));
+        // idempotent: a second ensure does not duplicate rows
+        ensure_voice_catalog_table(&conn).unwrap();
+        let n2: i64 = conn
+            .query_row("SELECT COUNT(*) FROM voice_catalog", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n2, 8);
+    }
+
+    fn seed_catalog_and_chars(conn: &Connection) {
+        ensure_voice_catalog_table(conn).unwrap();
+        ensure_characters_table(conn).unwrap();
+        conn.execute("INSERT INTO characters (work_abbrev, speaker, gender, age) VALUES ('Rom','JULIET','female',14)", []).unwrap();
+        conn.execute("INSERT INTO characters (work_abbrev, speaker, gender, age) VALUES ('Lr','LEAR','male',80)", []).unwrap();
+        conn.execute("INSERT INTO characters (work_abbrev, speaker, gender, age) VALUES ('Ham','HAMLET','male',30)", []).unwrap();
+        conn.execute("INSERT INTO characters (work_abbrev, speaker, gender) VALUES ('Rom','NURSE','female')", []).unwrap();
+    }
+
+    #[test]
+    fn resolve_containment_picks_the_band_containing_age() {
+        let conn = Connection::open_in_memory().unwrap();
+        seed_catalog_and_chars(&conn);
+        // Juliet 14 female -> Willa (12-19) verse
+        assert_eq!(
+            resolve_default_voice(&conn, "Rom", "JULIET", true),
+            (crate::elevenlabs::A_OP_F_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_nearest_band_when_no_containment() {
+        let conn = Connection::open_in_memory().unwrap();
+        seed_catalog_and_chars(&conn);
+        // Lear 80 male prose: no band contains 80; nearest male band is Petruchio
+        // (35-45, distance 35) vs Will (15-25, distance 55) -> Petruchio prose (D).
+        assert_eq!(
+            resolve_default_voice(&conn, "Lr", "LEAR", false),
+            (crate::elevenlabs::D_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_null_age_uses_default_age_40() {
+        let conn = Connection::open_in_memory().unwrap();
+        seed_catalog_and_chars(&conn);
+        // Nurse female, NULL age -> DEFAULT_AGE 40. No female band contains 40
+        // (Willa 12-19, Beatrice 20-30); nearest is Beatrice (dist 10) -> E_OP verse.
+        assert_eq!(
+            resolve_default_voice(&conn, "Rom", "NURSE", true),
+            (crate::elevenlabs::E_OP_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_unknown_gender_defaults_male() {
+        let conn = Connection::open_in_memory().unwrap();
+        seed_catalog_and_chars(&conn);
+        // No characters row -> Unknown gender -> male; NULL age -> 40; male band
+        // Petruchio (35-45) contains 40 -> D prose.
+        assert_eq!(
+            resolve_default_voice(&conn, "Rom", "NOBODY", false),
+            (crate::elevenlabs::D_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_neutral_gender_uses_male_voice() {
+        let conn = Connection::open_in_memory().unwrap();
+        seed_catalog_and_chars(&conn);
+        conn.execute(
+            "INSERT INTO characters (work_abbrev, speaker, gender, age) VALUES ('Rom','CHORUS','neutral',40)",
+            [],
+        ).unwrap();
+        // neutral -> male; age 40 in Petruchio band (35-45) -> D prose.
+        assert_eq!(
+            resolve_default_voice(&conn, "Rom", "CHORUS", false),
+            (crate::elevenlabs::D_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
         );
     }
 }
