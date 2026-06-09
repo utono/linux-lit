@@ -845,15 +845,16 @@ fn source_block_index(state_rc: &Rc<RefCell<AppState>>) -> Option<i32> {
 /// and play (cache hit -> play; miss -> synthesize then play). No picker. No-op
 /// (toast) off a Source block.
 pub(crate) fn toggle_source_tts(state_rc: &Rc<RefCell<AppState>>) {
+    // Stop-if-playing FIRST (like `read_current_block`), before the Source gate:
+    // a press while the synthesized audio plays always stops it. MPV stays paused.
+    if state_rc.borrow().tts.is_playing() {
+        state_rc.borrow().tts.stop();
+        return;
+    }
     let index = match source_block_index(state_rc) {
         Some(i) => i,
         None => return,
     };
-    let tts_playing = { state_rc.borrow().tts.is_playing() };
-    if tts_playing {
-        state_rc.borrow().tts.stop();
-        return;
-    }
     play_source_tts_pausing_mpv(state_rc, index);
 }
 
@@ -865,12 +866,12 @@ pub(crate) fn toggle_source_tts(state_rc: &Rc<RefCell<AppState>>) {
 /// path). `R` is the ONLY key that opens the picker. No-op (toast) off a Source
 /// block.
 pub(crate) fn pick_source_voice(state_rc: &Rc<RefCell<AppState>>) {
-    if source_block_index(state_rc).is_none() {
+    // Stop-if-playing FIRST (same as `r`), before the Source gate.
+    if state_rc.borrow().tts.is_playing() {
+        state_rc.borrow().tts.stop();
         return;
     }
-    let tts_playing = { state_rc.borrow().tts.is_playing() };
-    if tts_playing {
-        state_rc.borrow().tts.stop();
+    if source_block_index(state_rc).is_none() {
         return;
     }
     crate::input::actions::settings::open_voice_picker(
