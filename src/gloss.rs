@@ -19,6 +19,7 @@ Rules:
 - Quote verbatim — exact words, exact spelling, exact line breaks from the source
 - Never use / to join verse lines
 - On each <verse> line, APPEND inline Original-Pronunciation IPA in forward slashes IMMEDIATELY AFTER the operative / accent-bearing / metrically stressed words (e.g. take /tɛːk/), leaving the original words unchanged; per word never per phrase; let line structure govern syllable count.
+- Use Crystal's Shakespearean Original Pronunciation (OP), NOT modern values, for the /IPA/. OP is rhotic — sound every written r and let it colour the vowel (letter /ˈlɛtɚ/, art /ɑrt/). Pin these lexical-set vowels to the OP value, never the modern one: FACE (daily, gave, day) = OP monophthong /eː/ NOT /eɪ/; GOAT (go, so) = /oː/ NOT /əʊ/; PRICE (wise, time, I) = /əɪ/ NOT /aɪ/; CHOICE (boy) = /əɪ/; MOUTH (house, now) = /əʊ/ NOT /aʊ/; happY (city, money) = /əɪ/ NOT /i/; STRUT (love, blood, cut) = /ɤ/; TRAP (bath, path, man) = /a/ (no broad-a); LOT/THOUGHT (lot, call) = /ɑ/; DRESS (bed) = /ɛ/ or /ɛː/; FLEECE (meet) = /eː/~/iː/; GOOSE (food) = /uː/; KIT (sit) = /ɪ/. MEAT–MEET split: great/break/steak keep /ɛː/ (great /ɡrɛːt/, not /ɡriːt/). Suffix -ing → /ɪn/. So daily is /ˈdeːli/ (or /ˈdeɪli/), gave /ɡeːv/, wise /wəɪz/ — never modern diphthongs.
 - Each <verse> tag contains exactly one line of the original
 - Each <gloss> tag contains one flowing prose paragraph (3-6 sentences)
 - No markdown, no bullets, no numbered lists, no headers";
@@ -88,8 +89,19 @@ ADDITIONAL markup placed immediately AFTER the word they annotate \
 forward slashes IMMEDIATELY AFTER the operative / accent-bearing / \
 metrically stressed words (e.g. take /tɛːk/), leaving the original \
 words unchanged; per word never per phrase; let line structure govern \
-syllable count. Encode OP vowels (rhotic finals, FACE/GOAT \
-monophthongs, the MEAT–MEET split) and ˈ/ˌ stress where metre demands.
+syllable count.
+- Use Crystal's Shakespearean Original Pronunciation (OP), NOT modern values, \
+for the /IPA/. OP is rhotic — sound every written r and let it colour the vowel \
+(letter /ˈlɛtɚ/, art /ɑrt/). Pin these lexical-set vowels to the OP value, never \
+the modern one: FACE (daily, gave, day) = OP monophthong /eː/ NOT /eɪ/; GOAT \
+(go, so) = /oː/ NOT /əʊ/; PRICE (wise, time, I) = /əɪ/ NOT /aɪ/; CHOICE (boy) = \
+/əɪ/; MOUTH (house, now) = /əʊ/ NOT /aʊ/; happY (city, money) = /əɪ/ NOT /i/; \
+STRUT (love, blood, cut) = /ɤ/; TRAP (bath, path, man) = /a/ (no broad-a); \
+LOT/THOUGHT (lot, call) = /ɑ/; DRESS (bed) = /ɛ/ or /ɛː/; FLEECE (meet) = \
+/eː/~/iː/; GOOSE (food) = /uː/; KIT (sit) = /ɪ/. MEAT–MEET split: \
+great/break/steak keep /ɛː/ (great /ɡrɛːt/, not /ɡriːt/). Suffix -ing → /ɪn/. \
+So daily is /ˈdeːli/ (or /ˈdeɪli/), gave /ɡeːv/, wise /wəɪz/ — never modern \
+diphthongs.
 - Do NOT add a <pron> note. The <gloss> remains EXACTLY the single \
 bracketed echo — the /IPA/ goes only inside <verse>.
 - Never use / to join verse lines
@@ -146,6 +158,18 @@ ADDITIONAL markup placed immediately AFTER the word they annotate \
 forward slashes IMMEDIATELY AFTER the operative / accent-bearing / \
 metrically stressed words (e.g. take /tɛːk/), leaving the original \
 words unchanged; per word never per phrase.
+- Use Crystal's Shakespearean Original Pronunciation (OP), NOT modern values, \
+for the /IPA/. OP is rhotic — sound every written r and let it colour the vowel \
+(letter /ˈlɛtɚ/, art /ɑrt/). Pin these lexical-set vowels to the OP value, never \
+the modern one: FACE (daily, gave, day) = OP monophthong /eː/ NOT /eɪ/; GOAT \
+(go, so) = /oː/ NOT /əʊ/; PRICE (wise, time, I) = /əɪ/ NOT /aɪ/; CHOICE (boy) = \
+/əɪ/; MOUTH (house, now) = /əʊ/ NOT /aʊ/; happY (city, money) = /əɪ/ NOT /i/; \
+STRUT (love, blood, cut) = /ɤ/; TRAP (bath, path, man) = /a/ (no broad-a); \
+LOT/THOUGHT (lot, call) = /ɑ/; DRESS (bed) = /ɛ/ or /ɛː/; FLEECE (meet) = \
+/eː/~/iː/; GOOSE (food) = /uː/; KIT (sit) = /ɪ/. MEAT–MEET split: \
+great/break/steak keep /ɛː/ (great /ɡrɛːt/, not /ɡriːt/). Suffix -ing → /ɪn/. \
+So daily is /ˈdeːli/ (or /ˈdeɪli/), gave /ɡeːv/, wise /wəɪz/ — never modern \
+diphthongs.
 - Never use / to join verse lines
 - Each <verse> tag contains exactly one line of the original
 - ONE <gloss> tag per verse line: the bracketed echo only. Do NOT add \
@@ -185,6 +209,18 @@ ADDITIONAL markup placed immediately AFTER the word they annotate \
 forward slashes IMMEDIATELY AFTER the operative / accent-bearing / \
 metrically stressed words (e.g. take /tɛːk/), leaving the original \
 words unchanged; per word never per phrase.
+- Use Crystal's Shakespearean Original Pronunciation (OP), NOT modern values, \
+for the /IPA/. OP is rhotic — sound every written r and let it colour the vowel \
+(letter /ˈlɛtɚ/, art /ɑrt/). Pin these lexical-set vowels to the OP value, never \
+the modern one: FACE (daily, gave, day) = OP monophthong /eː/ NOT /eɪ/; GOAT \
+(go, so) = /oː/ NOT /əʊ/; PRICE (wise, time, I) = /əɪ/ NOT /aɪ/; CHOICE (boy) = \
+/əɪ/; MOUTH (house, now) = /əʊ/ NOT /aʊ/; happY (city, money) = /əɪ/ NOT /i/; \
+STRUT (love, blood, cut) = /ɤ/; TRAP (bath, path, man) = /a/ (no broad-a); \
+LOT/THOUGHT (lot, call) = /ɑ/; DRESS (bed) = /ɛ/ or /ɛː/; FLEECE (meet) = \
+/eː/~/iː/; GOOSE (food) = /uː/; KIT (sit) = /ɪ/. MEAT–MEET split: \
+great/break/steak keep /ɛː/ (great /ɡrɛːt/, not /ɡriːt/). Suffix -ing → /ɪn/. \
+So daily is /ˈdeːli/ (or /ˈdeɪli/), gave /ɡeːv/, wise /wəɪz/ — never modern \
+diphthongs.
 - Never use / to join verse lines
 - Each <verse> tag contains exactly one line of the original
 - ONE <gloss> tag per verse line: the bracketed echo only. Do NOT add \
@@ -212,6 +248,7 @@ Rules:
 - Quote verbatim — exact words, exact spelling, exact line breaks
 - Never use / to join verse lines
 - On each <verse> line, APPEND inline Original-Pronunciation IPA in forward slashes IMMEDIATELY AFTER the operative / accent-bearing / metrically stressed words (e.g. take /tɛːk/), leaving the original words unchanged; per word never per phrase; let line structure govern syllable count.
+- Use Crystal's Shakespearean Original Pronunciation (OP), NOT modern values, for the /IPA/. OP is rhotic — sound every written r and let it colour the vowel (letter /ˈlɛtɚ/, art /ɑrt/). Pin these lexical-set vowels to the OP value, never the modern one: FACE (daily, gave, day) = OP monophthong /eː/ NOT /eɪ/; GOAT (go, so) = /oː/ NOT /əʊ/; PRICE (wise, time, I) = /əɪ/ NOT /aɪ/; CHOICE (boy) = /əɪ/; MOUTH (house, now) = /əʊ/ NOT /aʊ/; happY (city, money) = /əɪ/ NOT /i/; STRUT (love, blood, cut) = /ɤ/; TRAP (bath, path, man) = /a/ (no broad-a); LOT/THOUGHT (lot, call) = /ɑ/; DRESS (bed) = /ɛ/ or /ɛː/; FLEECE (meet) = /eː/~/iː/; GOOSE (food) = /uː/; KIT (sit) = /ɪ/. MEAT–MEET split: great/break/steak keep /ɛː/ (great /ɡrɛːt/, not /ɡriːt/). Suffix -ing → /ɪn/. So daily is /ˈdeːli/ (or /ˈdeɪli/), gave /ɡeːv/, wise /wəɪz/ — never modern diphthongs.
 - Each <verse> tag contains exactly one line of the original
 - Each <gloss> tag contains one flowing prose paragraph (3-6 sentences)
 - Incorporate the reader's provided lines as evidence or context
@@ -232,7 +269,19 @@ Given a passage with speaker names and dialogue, provide an actor's explication 
 - Paraphrases the passage in clear, modern English
 - Explains archaic vocabulary, allusions, and complex syntax
 - Notes rhetorical devices, verse structure, and breath patterns that shape delivery
-- On each <verse> line, tag for Original Pronunciation ONLY the few words you have already identified as operative / accent-bearing / metrically stressed — per word, never per phrase. Tagging every word destabilizes synthesis and muddies the teaching. Append the pronunciation as IPA in forward slashes IMMEDIATELY AFTER the operative word, leaving the original word unchanged, e.g. take /tɛːk/, suffer /ˈsʊfər/. Encode OP vowels (rhotic finals, FACE/GOAT monophthongs, the MEAT–MEET split) and ˈ/ˌ stress where metre or rhetoric demands — but let line structure, not IPA, govern syllable count (leave -ed/-ion to the metre).
+- On each <verse> line, tag for Original Pronunciation ONLY the few words you have already identified as operative / accent-bearing / metrically stressed — per word, never per phrase. Tagging every word destabilizes synthesis and muddies the teaching. Append the pronunciation as IPA in forward slashes IMMEDIATELY AFTER the operative word, leaving the original word unchanged, e.g. take /tɛːk/, suffer /ˈsʊfər/. \
+Use Crystal's Shakespearean Original Pronunciation (OP), NOT modern values, \
+for the /IPA/. OP is rhotic — sound every written r and let it colour the vowel \
+(letter /ˈlɛtɚ/, art /ɑrt/). Pin these lexical-set vowels to the OP value, never \
+the modern one: FACE (daily, gave, day) = OP monophthong /eː/ NOT /eɪ/; GOAT \
+(go, so) = /oː/ NOT /əʊ/; PRICE (wise, time, I) = /əɪ/ NOT /aɪ/; CHOICE (boy) = \
+/əɪ/; MOUTH (house, now) = /əʊ/ NOT /aʊ/; happY (city, money) = /əɪ/ NOT /i/; \
+STRUT (love, blood, cut) = /ɤ/; TRAP (bath, path, man) = /a/ (no broad-a); \
+LOT/THOUGHT (lot, call) = /ɑ/; DRESS (bed) = /ɛ/ or /ɛː/; FLEECE (meet) = \
+/eː/~/iː/; GOOSE (food) = /uː/; KIT (sit) = /ɪ/. MEAT–MEET split: \
+great/break/steak keep /ɛː/ (great /ɡrɛːt/, not /ɡriːt/). Suffix -ing → /ɪn/. \
+So daily is /ˈdeːli/ (or /ˈdeɪli/), gave /ɡeːv/, wise /wəɪz/ — never modern \
+diphthongs. But let line structure, not IPA, govern syllable count (leave -ed/-ion to the metre).
 - Identifies the speaker's intention, operative words, and emotional arc
 - References classical pedagogy where relevant (Barton, Berry, Hall, Rodenburg, Linklater)
 - Defines literary terminology on first use (enjambment, caesura, anaphora, antithesis, etc.)
