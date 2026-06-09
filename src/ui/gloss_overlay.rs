@@ -2181,6 +2181,71 @@ pub(crate) fn replace_word_ipa(text: &str, word: &str, new_ipa: &str) -> Option<
     }
 }
 
+/// Rewrite the `/IPA/` after `word` (whole-word, all occurrences) within ONLY
+/// the source block at `source_index`, operating on the TAGGED `gloss_text`
+/// (each verse line is wrapped in `<verse>…</verse>`). Returns the full updated
+/// gloss_text, or None if that block has no `word /IPA/` pair. Other blocks are
+/// untouched even if they contain the same word.
+///
+/// Necessary because a source `GlossBlock.text` is the verse lines joined by
+/// `\n` (tags stripped), so it is NOT a substring of the stored gloss_text for
+/// any block with 2+ verse lines (those are separated by `</verse>\n<verse>`).
+/// We instead walk the `<verse>` tags and rewrite only the ones whose inner
+/// text belongs to this block.
+pub(crate) fn replace_word_ipa_in_source_block(
+    gloss_text: &str,
+    source_index: i32,
+    word: &str,
+    new_ipa: &str,
+) -> Option<String> {
+    // Find the target source block's raw verse lines via gloss_blocks.
+    let blocks = gloss_blocks(gloss_text);
+    let block = blocks
+        .iter()
+        .find(|b| b.kind == BlockKind::Source && b.index == source_index)?;
+    // block.text is the (trimmed) verse lines joined by '\n'. Rewrite each
+    // verse line in the tagged gloss_text: for each `<verse>LINE</verse>`,
+    // replace LINE with replace_word_ipa(LINE, word, new_ipa) when it changes.
+    let block_lines: std::collections::HashSet<&str> = block.text.lines().collect();
+    let mut any = false;
+    let mut out = String::with_capacity(gloss_text.len());
+    let mut rest = gloss_text;
+    while let Some(open) = rest.find("<verse>") {
+        let after_open = open + "<verse>".len();
+        // copy up to and including <verse>
+        out.push_str(&rest[..after_open]);
+        let tail = &rest[after_open..];
+        if let Some(close_rel) = tail.find("</verse>") {
+            let inner = &tail[..close_rel];
+            // gloss_blocks trims verse inner text, so match on the trimmed form
+            // (fall back to the untrimmed form defensively).
+            if block_lines.contains(inner.trim()) || block_lines.contains(inner) {
+                if let Some(fixed) = replace_word_ipa(inner, word, new_ipa) {
+                    out.push_str(&fixed);
+                    any = true;
+                } else {
+                    out.push_str(inner);
+                }
+            } else {
+                out.push_str(inner);
+            }
+            out.push_str("</verse>");
+            rest = &tail[close_rel + "</verse>".len()..];
+        } else {
+            // malformed: no closing tag — copy the remainder and stop
+            out.push_str(tail);
+            rest = "";
+            break;
+        }
+    }
+    out.push_str(rest);
+    if any {
+        Some(out)
+    } else {
+        None
+    }
+}
+
 /// Split an echo bracket `["quote" — Source]` into (quote, citation).
 /// Returns None if the text is not in echo-bracket form. Any trailing
 /// suffix outside the brackets (e.g. "(unverified)") is kept on the
@@ -2550,5 +2615,33 @@ mod synopsis_label_tests {
             replace_word_ipa("Daily /ˈdɛːli/ thanks", "daily", "/ˈdeɪli/"),
             Some("Daily /ˈdeɪli/ thanks".to_string())
         );
+    }
+
+    #[test]
+    fn replace_in_source_block_rewrites_multiline_verse() {
+        let g = "<speaker>GARDINER</speaker>\n<verse>In daily /ˈdɛːli/ thanks</verse>\n<verse>that gave /gɛːv/ us</verse>\n<gloss>note</gloss>";
+        let out = replace_word_ipa_in_source_block(g, 0, "daily", "/ˈdeɪli/").unwrap();
+        assert!(out.contains("daily /ˈdeɪli/"));
+        assert!(out.contains("gave /gɛːv/")); // other word untouched
+        assert!(out.contains("<gloss>note</gloss>")); // tags intact
+        assert!(out.contains("<verse>"));
+    }
+
+    #[test]
+    fn replace_in_source_block_none_when_word_absent() {
+        let g = "<verse>In daily /ˈdɛːli/ thanks</verse>";
+        assert!(replace_word_ipa_in_source_block(g, 0, "missing", "/x/").is_none());
+    }
+
+    #[test]
+    fn replace_in_source_block_scopes_to_the_block() {
+        // 'good' appears in TWO source blocks; fixing block 1 must not touch block 0.
+        let g = "<verse>good /gʊd/ first</verse>\n<gloss>a</gloss>\n<verse>good /gʊd/ second</verse>\n<gloss>b</gloss>";
+        let out = replace_word_ipa_in_source_block(g, 1, "good", "/guːd/").unwrap();
+        // block 0 (index 0) keeps old IPA; block 1 (index 1) gets new.
+        let first = out.find("first").unwrap();
+        let second = out.find("second").unwrap();
+        assert!(out[..first].contains("good /gʊd/")); // block 0 unchanged
+        assert!(out[..second].contains("good /guːd/")); // block 1 changed
     }
 }

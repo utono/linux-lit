@@ -383,7 +383,6 @@ pub(crate) fn fix_word_ipa(state_rc: &Rc<RefCell<AppState>>, input: &str) {
             gloss_id: i64,
             block_index: i32,
             gloss_text: String,
-            block_text: String,
         },
         NotSource,
         NoGloss,
@@ -397,18 +396,18 @@ pub(crate) fn fix_word_ipa(state_rc: &Rc<RefCell<AppState>>, input: &str) {
                     Some(g) => {
                         let gloss_text = g.gloss_text.clone();
                         let blocks = crate::ui::gloss_overlay::gloss_blocks(&gloss_text);
-                        match blocks
+                        if blocks
                             .iter()
-                            .find(|b| b.kind == BlockKind::Source && b.index == block_index)
+                            .any(|b| b.kind == BlockKind::Source && b.index == block_index)
                         {
-                            Some(block) => Resolve::Ok {
+                            Resolve::Ok {
                                 gloss_index_pos,
                                 gloss_id: g.gloss_id,
                                 block_index,
                                 gloss_text: gloss_text.clone(),
-                                block_text: block.text.clone(),
-                            },
-                            None => Resolve::NotSource,
+                            }
+                        } else {
+                            Resolve::NotSource
                         }
                     }
                     None => Resolve::NoGloss,
@@ -418,14 +417,13 @@ pub(crate) fn fix_word_ipa(state_rc: &Rc<RefCell<AppState>>, input: &str) {
         }
     };
 
-    let (gloss_index_pos, gloss_id, block_index, gloss_text, block_text) = match resolved {
+    let (gloss_index_pos, gloss_id, block_index, gloss_text) = match resolved {
         Resolve::Ok {
             gloss_index_pos,
             gloss_id,
             block_index,
             gloss_text,
-            block_text,
-        } => (gloss_index_pos, gloss_id, block_index, gloss_text, block_text),
+        } => (gloss_index_pos, gloss_id, block_index, gloss_text),
         Resolve::NotSource => {
             show_tts_toast(state_rc, "Source verse only");
             return;
@@ -445,7 +443,6 @@ pub(crate) fn fix_word_ipa(state_rc: &Rc<RefCell<AppState>>, input: &str) {
             gloss_id,
             block_index,
             &gloss_text,
-            &block_text,
             &word,
             &new_ipa,
         );
@@ -456,7 +453,6 @@ pub(crate) fn fix_word_ipa(state_rc: &Rc<RefCell<AppState>>, input: &str) {
             gloss_id,
             block_index,
             gloss_text,
-            block_text,
             word,
             rest,
         );
@@ -499,25 +495,26 @@ fn apply_ipa_fix(
     gloss_id: i64,
     block_index: i32,
     gloss_text: &str,
-    block_text: &str,
     word: &str,
     new_ipa: &str,
 ) {
-    let new_block_text = match crate::ui::gloss_overlay::replace_word_ipa(block_text, word, new_ipa)
-    {
+    // Splice the rewritten IPA into the TAGGED gloss_text, scoped to this source
+    // block's `<verse>` span. Operating on block.text directly was a no-op for
+    // multi-line verse: block.text joins verse lines with '\n' (tags stripped),
+    // but gloss_text separates them with `</verse>\n<verse>`, so block.text is
+    // not a substring of gloss_text for any 2+ line block.
+    let new_gloss_text = match crate::ui::gloss_overlay::replace_word_ipa_in_source_block(
+        gloss_text,
+        block_index,
+        word,
+        new_ipa,
+    ) {
         Some(t) => t,
         None => {
             show_tts_toast(state_rc, &format!("No IPA for {}", word));
             return;
         }
     };
-    // `block.text` is a verbatim contiguous substring of `gloss_text` (gloss_blocks
-    // copies it), so a single replacen splices the rewritten block back in.
-    let new_gloss_text = gloss_text.replacen(block_text, &new_block_text, 1);
-    if new_gloss_text == gloss_text {
-        show_tts_toast(state_rc, "Could not apply IPA fix");
-        return;
-    }
 
     // Persist the corrected gloss and invalidate this block's cached audio.
     let removed: Vec<String> = match crate::db::queries::open_db_rw() {
@@ -572,7 +569,6 @@ fn request_ipa_then_apply(
     gloss_id: i64,
     block_index: i32,
     gloss_text: String,
-    block_text: String,
     word: String,
     hint: String,
 ) {
@@ -607,7 +603,6 @@ fn request_ipa_then_apply(
                     gloss_id,
                     block_index,
                     &gloss_text,
-                    &block_text,
                     &word,
                     &new_ipa,
                 );
