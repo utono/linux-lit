@@ -835,13 +835,14 @@ pub fn save_gloss_audio(
 }
 
 /// Delete all cached audio rows for a gloss (call when the gloss is removed,
-/// since SQLite FK cascade is not enabled app-wide).
-pub fn delete_gloss_audio(conn: &Connection, gloss_id: i64) -> Result<(), rusqlite::Error> {
-    conn.execute(
+/// since SQLite FK cascade is not enabled app-wide). Returns the number of rows
+/// removed, so a caller can report exactly how many cached takes were purged.
+pub fn delete_gloss_audio(conn: &Connection, gloss_id: i64) -> Result<usize, rusqlite::Error> {
+    let n = conn.execute(
         "DELETE FROM gloss_audio WHERE gloss_id = ?1",
         rusqlite::params![gloss_id],
     )?;
-    Ok(())
+    Ok(n)
 }
 
 /// Load all bookmarked line_mapping_ids for a work.
@@ -2127,7 +2128,8 @@ mod tests {
         save_gloss_audio(&conn, 7, "explication", 0, "/tmp/7/0.mp3", "v", "m").unwrap();
         save_gloss_audio(&conn, 7, "explication", 1, "/tmp/7/1.mp3", "v", "m").unwrap();
         assert!(find_gloss_audio(&conn, 7, "explication", 0, "v").unwrap().is_some());
-        delete_gloss_audio(&conn, 7).unwrap();
+        let removed = delete_gloss_audio(&conn, 7).unwrap();
+        assert_eq!(removed, 2, "should report both deleted audio rows");
         assert!(find_gloss_audio(&conn, 7, "explication", 0, "v").unwrap().is_none());
         assert!(find_gloss_audio(&conn, 7, "explication", 1, "v").unwrap().is_none());
     }
