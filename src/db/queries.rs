@@ -586,7 +586,7 @@ const GLOSS_AUDIO_COLUMNS: &str = "
     voice_id        TEXT NOT NULL,
     model_id        TEXT NOT NULL,
     timestamp       DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(gloss_id, kind, paragraph_index)
+    UNIQUE(gloss_id, kind, paragraph_index, voice_id)
 ";
 
 /// Ensure the gloss_audio table exists (per-block TTS cache, keyed by kind).
@@ -614,20 +614,44 @@ pub fn ensure_gloss_audio_table(conn: &Connection) -> Result<(), rusqlite::Error
              COMMIT;"
         ))?;
     }
+
+    // Legacy migration 2: the UNIQUE key omits voice_id (pre per-voice cache).
+    // Detect by the table's stored DDL still naming the 3-column UNIQUE.
+    let old_unique: bool = conn
+        .prepare(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='gloss_audio' \
+             AND sql LIKE '%UNIQUE(gloss_id, kind, paragraph_index)%' \
+             AND sql NOT LIKE '%voice_id)%'",
+        )?
+        .exists([])?;
+    if old_unique {
+        conn.execute_batch(&format!(
+            "BEGIN;
+             ALTER TABLE gloss_audio RENAME TO gloss_audio_old;
+             CREATE TABLE gloss_audio ({GLOSS_AUDIO_COLUMNS});
+             INSERT INTO gloss_audio (id, gloss_id, kind, paragraph_index, audio_path, voice_id, model_id, timestamp)
+                SELECT id, gloss_id, kind, paragraph_index, audio_path, voice_id, model_id, timestamp
+                FROM gloss_audio_old;
+             DROP TABLE gloss_audio_old;
+             CREATE INDEX IF NOT EXISTS idx_gloss_audio_gloss_id ON gloss_audio(gloss_id);
+             COMMIT;"
+        ))?;
+    }
     Ok(())
 }
 
-/// Return the cached audio path for a gloss block, if any.
+/// Return the cached audio path for a gloss block in a SPECIFIC voice, if any.
 pub fn find_gloss_audio(
     conn: &Connection,
     gloss_id: i64,
     kind: &str,
     index: i64,
+    voice_id: &str,
 ) -> Result<Option<String>, rusqlite::Error> {
     conn.query_row(
         "SELECT audio_path FROM gloss_audio
-         WHERE gloss_id = ?1 AND kind = ?2 AND paragraph_index = ?3",
-        rusqlite::params![gloss_id, kind, index],
+         WHERE gloss_id = ?1 AND kind = ?2 AND paragraph_index = ?3 AND voice_id = ?4",
+        rusqlite::params![gloss_id, kind, index, voice_id],
         |row| row.get::<_, String>(0),
     )
     .optional()
@@ -668,7 +692,7 @@ pub fn get_character_gender(
     }
 }
 
-/// Insert or replace the audio path for a gloss block.
+/// Insert or replace the audio path for a gloss block in a specific voice.
 pub fn save_gloss_audio(
     conn: &Connection,
     gloss_id: i64,
@@ -681,9 +705,8 @@ pub fn save_gloss_audio(
     conn.execute(
         "INSERT INTO gloss_audio (gloss_id, kind, paragraph_index, audio_path, voice_id, model_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-         ON CONFLICT(gloss_id, kind, paragraph_index)
+         ON CONFLICT(gloss_id, kind, paragraph_index, voice_id)
          DO UPDATE SET audio_path = excluded.audio_path,
-                       voice_id   = excluded.voice_id,
                        model_id   = excluded.model_id,
                        timestamp  = CURRENT_TIMESTAMP",
         rusqlite::params![gloss_id, kind, index, audio_path, voice_id, model_id],
@@ -1948,26 +1971,26 @@ mod tests {
         ensure_gloss_audio_table(&conn).unwrap();
 
         // Miss before insert.
-        assert_eq!(find_gloss_audio(&conn, 4823, "explication", 0).unwrap(), None);
+        assert_eq!(find_gloss_audio(&conn, 4823, "explication", 0, "voiceA").unwrap(), None);
 
         // Insert, then hit.
         save_gloss_audio(&conn, 4823, "explication", 0, "/tmp/a/0.mp3", "voiceA", "modelA").unwrap();
         assert_eq!(
-            find_gloss_audio(&conn, 4823, "explication", 0).unwrap(),
+            find_gloss_audio(&conn, 4823, "explication", 0, "voiceA").unwrap(),
             Some("/tmp/a/0.mp3".to_string())
         );
 
-        // Upsert: same (gloss_id, kind, paragraph_index) replaces the path.
-        save_gloss_audio(&conn, 4823, "explication", 0, "/tmp/a/0b.mp3", "voiceB", "modelB").unwrap();
+        // Upsert: same (gloss_id, kind, paragraph_index, voice_id) replaces the path.
+        save_gloss_audio(&conn, 4823, "explication", 0, "/tmp/a/0b.mp3", "voiceA", "modelB").unwrap();
         assert_eq!(
-            find_gloss_audio(&conn, 4823, "explication", 0).unwrap(),
+            find_gloss_audio(&conn, 4823, "explication", 0, "voiceA").unwrap(),
             Some("/tmp/a/0b.mp3".to_string())
         );
 
         // Distinct paragraph_index is a separate row.
         save_gloss_audio(&conn, 4823, "explication", 1, "/tmp/a/1.mp3", "voiceA", "modelA").unwrap();
         assert_eq!(
-            find_gloss_audio(&conn, 4823, "explication", 1).unwrap(),
+            find_gloss_audio(&conn, 4823, "explication", 1, "voiceA").unwrap(),
             Some("/tmp/a/1.mp3".to_string())
         );
     }
@@ -1983,10 +2006,10 @@ mod tests {
         ensure_gloss_audio_table(&conn).unwrap();
         save_gloss_audio(&conn, 7, "explication", 0, "/tmp/7/0.mp3", "v", "m").unwrap();
         save_gloss_audio(&conn, 7, "explication", 1, "/tmp/7/1.mp3", "v", "m").unwrap();
-        assert!(find_gloss_audio(&conn, 7, "explication", 0).unwrap().is_some());
+        assert!(find_gloss_audio(&conn, 7, "explication", 0, "v").unwrap().is_some());
         delete_gloss_audio(&conn, 7).unwrap();
-        assert!(find_gloss_audio(&conn, 7, "explication", 0).unwrap().is_none());
-        assert!(find_gloss_audio(&conn, 7, "explication", 1).unwrap().is_none());
+        assert!(find_gloss_audio(&conn, 7, "explication", 0, "v").unwrap().is_none());
+        assert!(find_gloss_audio(&conn, 7, "explication", 1, "v").unwrap().is_none());
     }
 
     #[test]
@@ -2001,12 +2024,71 @@ mod tests {
 
         save_gloss_audio(&conn, 9, "explication", 0, "/e0.mp3", "v", "m").unwrap();
         save_gloss_audio(&conn, 9, "source", 0, "/s0.mp3", "v", "m").unwrap();
-        assert_eq!(find_gloss_audio(&conn, 9, "explication", 0).unwrap(), Some("/e0.mp3".to_string()));
-        assert_eq!(find_gloss_audio(&conn, 9, "source", 0).unwrap(), Some("/s0.mp3".to_string()));
+        assert_eq!(find_gloss_audio(&conn, 9, "explication", 0, "v").unwrap(), Some("/e0.mp3".to_string()));
+        assert_eq!(find_gloss_audio(&conn, 9, "source", 0, "v").unwrap(), Some("/s0.mp3".to_string()));
 
         save_gloss_audio(&conn, 9, "source", 0, "/s0b.mp3", "v", "m").unwrap();
-        assert_eq!(find_gloss_audio(&conn, 9, "source", 0).unwrap(), Some("/s0b.mp3".to_string()));
-        assert_eq!(find_gloss_audio(&conn, 9, "explication", 0).unwrap(), Some("/e0.mp3".to_string()));
+        assert_eq!(find_gloss_audio(&conn, 9, "source", 0, "v").unwrap(), Some("/s0b.mp3".to_string()));
+        assert_eq!(find_gloss_audio(&conn, 9, "explication", 0, "v").unwrap(), Some("/e0.mp3".to_string()));
+    }
+
+    #[test]
+    fn gloss_audio_caches_per_voice() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE glosses (id INTEGER PRIMARY KEY);
+             INSERT INTO glosses (id) VALUES (1);",
+        ).unwrap();
+        ensure_gloss_audio_table(&conn).unwrap();
+        // two voices for the SAME (gloss, kind, index) coexist as separate rows
+        save_gloss_audio(&conn, 1, "source", 0, "/a.mp3", "vA", "m1").unwrap();
+        save_gloss_audio(&conn, 1, "source", 0, "/b.mp3", "vB", "m2").unwrap();
+        assert_eq!(find_gloss_audio(&conn, 1, "source", 0, "vA").unwrap(), Some("/a.mp3".into()));
+        assert_eq!(find_gloss_audio(&conn, 1, "source", 0, "vB").unwrap(), Some("/b.mp3".into()));
+        // re-saving the same (gloss,kind,index,voice) overwrites just that one
+        save_gloss_audio(&conn, 1, "source", 0, "/a2.mp3", "vA", "m1").unwrap();
+        assert_eq!(find_gloss_audio(&conn, 1, "source", 0, "vA").unwrap(), Some("/a2.mp3".into()));
+        assert_eq!(find_gloss_audio(&conn, 1, "source", 0, "vB").unwrap(), Some("/b.mp3".into()));
+        // a voice with no cached row -> None
+        assert_eq!(find_gloss_audio(&conn, 1, "source", 0, "vZ").unwrap(), None);
+    }
+
+    #[test]
+    fn gloss_audio_migrates_unique_key_to_per_voice() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE glosses (id INTEGER PRIMARY KEY);
+             INSERT INTO glosses (id) VALUES (5);",
+        ).unwrap();
+        // Pre-per-voice shape: has `kind`, but 3-column UNIQUE (no voice_id).
+        conn.execute_batch(
+            "CREATE TABLE gloss_audio (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                gloss_id INTEGER NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'explication',
+                paragraph_index INTEGER NOT NULL,
+                audio_path TEXT NOT NULL,
+                voice_id TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(gloss_id, kind, paragraph_index)
+            );
+            INSERT INTO gloss_audio (gloss_id, kind, paragraph_index, audio_path, voice_id, model_id)
+                VALUES (5, 'source', 0, '/old.mp3', 'vA', 'm');",
+        ).unwrap();
+
+        ensure_gloss_audio_table(&conn).unwrap();
+        // Existing row preserved under its voice.
+        assert_eq!(find_gloss_audio(&conn, 5, "source", 0, "vA").unwrap(), Some("/old.mp3".to_string()));
+        // A second voice now coexists (was impossible under the old UNIQUE).
+        save_gloss_audio(&conn, 5, "source", 0, "/new.mp3", "vB", "m").unwrap();
+        assert_eq!(find_gloss_audio(&conn, 5, "source", 0, "vA").unwrap(), Some("/old.mp3".to_string()));
+        assert_eq!(find_gloss_audio(&conn, 5, "source", 0, "vB").unwrap(), Some("/new.mp3".to_string()));
+
+        // Idempotent: a second ensure does not re-migrate or lose data.
+        ensure_gloss_audio_table(&conn).unwrap();
+        assert_eq!(find_gloss_audio(&conn, 5, "source", 0, "vA").unwrap(), Some("/old.mp3".to_string()));
+        assert_eq!(find_gloss_audio(&conn, 5, "source", 0, "vB").unwrap(), Some("/new.mp3".to_string()));
     }
 
     #[test]
@@ -2035,14 +2117,14 @@ mod tests {
         .unwrap();
 
         ensure_gloss_audio_table(&conn).unwrap();
-        assert_eq!(find_gloss_audio(&conn, 3, "explication", 0).unwrap(), Some("/legacy0.mp3".to_string()));
+        assert_eq!(find_gloss_audio(&conn, 3, "explication", 0, "v").unwrap(), Some("/legacy0.mp3".to_string()));
         save_gloss_audio(&conn, 3, "source", 0, "/s.mp3", "v", "m").unwrap();
-        assert_eq!(find_gloss_audio(&conn, 3, "source", 0).unwrap(), Some("/s.mp3".to_string()));
+        assert_eq!(find_gloss_audio(&conn, 3, "source", 0, "v").unwrap(), Some("/s.mp3".to_string()));
 
         // Idempotent: a second ensure call is a no-op and preserves data.
         ensure_gloss_audio_table(&conn).unwrap();
-        assert_eq!(find_gloss_audio(&conn, 3, "explication", 0).unwrap(), Some("/legacy0.mp3".to_string()));
-        assert_eq!(find_gloss_audio(&conn, 3, "source", 0).unwrap(), Some("/s.mp3".to_string()));
+        assert_eq!(find_gloss_audio(&conn, 3, "explication", 0, "v").unwrap(), Some("/legacy0.mp3".to_string()));
+        assert_eq!(find_gloss_audio(&conn, 3, "source", 0, "v").unwrap(), Some("/s.mp3".to_string()));
     }
 
     #[test]

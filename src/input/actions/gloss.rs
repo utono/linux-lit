@@ -672,7 +672,7 @@ fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32)
     // Cache hit?
     if let Ok(conn) = crate::db::queries::open_db() {
         if let Ok(Some(path)) =
-            crate::db::queries::find_gloss_audio(&conn, gloss_id, kind_str, index as i64)
+            crate::db::queries::find_gloss_audio(&conn, gloss_id, kind_str, index as i64, &voice_id)
         {
             if std::path::Path::new(&path).exists() {
                 state_rc.borrow().tts.play_file(std::path::Path::new(&path));
