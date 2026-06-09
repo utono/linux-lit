@@ -2098,6 +2098,89 @@ pub(crate) fn ipa_for_tts(text: &str) -> String {
     normalize_ipa_whitespace(&s)
 }
 
+/// True if `s` contains an inline IPA span — a `/…/` whose inner is non-empty
+/// and has at least one non-ASCII-letter char (length/stress marks, schwa, etc.).
+/// Same heuristic `strip_ipa`/`ipa_for_tts` use to tell `/tɛːk/` from `and/or`.
+/// Used to decide whether a fix-IPA input is a literal `/IPA/` or a plain hint.
+pub(crate) fn contains_ipa_span(s: &str) -> bool {
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '/' {
+            if let Some(rel) = chars[i + 1..].iter().position(|&c| c == '/') {
+                let close = i + 1 + rel;
+                let inner = &chars[i + 1..close];
+                if !inner.is_empty() && inner.iter().any(|&c| !c.is_ascii_alphabetic()) {
+                    return true;
+                }
+                i = close + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Replace the `/IPA/` that immediately follows each whole-word, case-insensitive
+/// occurrence of `word` in `text` with `new_ipa` (which includes its slashes,
+/// e.g. `"/ˈdeɪli/"`). Returns the rewritten text, or `None` if no
+/// `word /IPA/` pair was found (nothing changed). A match requires the word as a
+/// whole token (not a substring) directly followed (after one run of spaces) by
+/// an IPA span. Used by the gloss-overlay `i` (fix-IPA) flow on a source block's
+/// text.
+pub(crate) fn replace_word_ipa(text: &str, word: &str, new_ipa: &str) -> Option<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let wlc: Vec<char> = word.to_ascii_lowercase().chars().collect();
+    if wlc.is_empty() {
+        return None;
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    let mut replaced = false;
+    while i < chars.len() {
+        let at_word_boundary = i == 0 || !chars[i - 1].is_alphanumeric();
+        let word_matches = at_word_boundary
+            && i + wlc.len() <= chars.len()
+            && chars[i..i + wlc.len()]
+                .iter()
+                .map(|c| c.to_ascii_lowercase())
+                .eq(wlc.iter().copied())
+            && chars
+                .get(i + wlc.len())
+                .map_or(true, |c| !c.is_alphanumeric());
+        if word_matches {
+            // word, then a run of spaces, then an IPA span -> replace the span.
+            let mut k = i + wlc.len();
+            while k < chars.len() && chars[k] == ' ' {
+                k += 1;
+            }
+            if k < chars.len() && chars[k] == '/' {
+                if let Some(rel) = chars[k + 1..].iter().position(|&c| c == '/') {
+                    let close = k + 1 + rel;
+                    let inner = &chars[k + 1..close];
+                    let is_ipa =
+                        !inner.is_empty() && inner.iter().any(|&c| !c.is_ascii_alphabetic());
+                    if is_ipa {
+                        out.extend(&chars[i..k]); // word + original spacing verbatim
+                        out.push_str(new_ipa);
+                        i = close + 1;
+                        replaced = true;
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    if replaced {
+        Some(out)
+    } else {
+        None
+    }
+}
+
 /// Split an echo bracket `["quote" — Source]` into (quote, citation).
 /// Returns None if the text is not in echo-bracket form. Any trailing
 /// suffix outside the brackets (e.g. "(unverified)") is kept on the
@@ -2423,5 +2506,49 @@ mod synopsis_label_tests {
         // 'be' precedes the first span and is dropped; the second span has only a
         // prior IPA span before it, so the guard keeps that span intact.
         assert_eq!(ipa_for_tts("To be /biː/ /tuː/"), "To /biː/ /tuː/");
+    }
+
+    #[test]
+    fn contains_ipa_span_detects_real_ipa() {
+        assert!(contains_ipa_span("/ˈdeɪli/"));
+        assert!(contains_ipa_span("daily /ˈdeɪli/"));
+        assert!(!contains_ipa_span("hard a"));          // plain hint
+        assert!(!contains_ipa_span("and/or"));          // literal slash, ascii-only
+        assert!(!contains_ipa_span("/word/"));          // ascii-only inner, not IPA
+        assert!(!contains_ipa_span(""));
+    }
+
+    #[test]
+    fn replace_word_ipa_swaps_the_words_ipa() {
+        assert_eq!(
+            replace_word_ipa("In daily /ˈdɛːli/ thanks, that gave /gɛːv/ us", "daily", "/ˈdeɪli/"),
+            Some("In daily /ˈdeɪli/ thanks, that gave /gɛːv/ us".to_string())
+        );
+    }
+
+    #[test]
+    fn replace_word_ipa_all_occurrences() {
+        assert_eq!(
+            replace_word_ipa("good /gʊd/ and more good /gʊd/", "good", "/guːd/"),
+            Some("good /guːd/ and more good /guːd/".to_string())
+        );
+    }
+
+    #[test]
+    fn replace_word_ipa_is_whole_word() {
+        assert_eq!(replace_word_ipa("daily /ˈdɛːli/ here", "day", "/deɪ/"), None);
+    }
+
+    #[test]
+    fn replace_word_ipa_word_without_following_ipa_is_none() {
+        assert_eq!(replace_word_ipa("In daily /ˈdɛːli/ thanks", "thanks", "/θaŋks/"), None);
+    }
+
+    #[test]
+    fn replace_word_ipa_case_insensitive_word_match() {
+        assert_eq!(
+            replace_word_ipa("Daily /ˈdɛːli/ thanks", "daily", "/ˈdeɪli/"),
+            Some("Daily /ˈdeɪli/ thanks".to_string())
+        );
     }
 }
