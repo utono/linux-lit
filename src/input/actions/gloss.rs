@@ -149,6 +149,7 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
     s.gloss_overlay.set_position(0, all_glosses.len());
     s.gloss_list = all_glosses;
     s.gloss_index = 0;
+    s.gloss_active_voice = 0;
     s.gloss_context = Some(ctx);
 }
 
@@ -163,6 +164,7 @@ pub(crate) fn navigate_gloss(state: &Rc<RefCell<AppState>>, delta: i32) {
         return;
     }
     s.gloss_index = new_idx;
+    s.gloss_active_voice = 0;
     let gloss = &s.gloss_list[new_idx];
     let ctx = s.gloss_context.as_ref().unwrap();
     let cw = s.content_hbox.width();
@@ -209,6 +211,7 @@ pub(crate) fn delete_current_gloss(state_rc: &Rc<RefCell<AppState>>) {
         }
 
         s.gloss_index = idx.min(s.gloss_list.len() - 1);
+        s.gloss_active_voice = 0;
         let new_idx = s.gloss_index;
         let gloss = &s.gloss_list[new_idx];
         let ctx = s.gloss_context.as_ref().unwrap();
