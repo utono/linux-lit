@@ -234,15 +234,13 @@ Output format — use these XML tags exactly:
 - <speaker>NAME</speaker> for each speaker attribution (ALL CAPS, no period)
 - <verse>one line of quoted text</verse> for each quoted line (one tag per line, verbatim from source, preserving exact words and spelling)
 - <gloss>paragraph of analysis</gloss> for each analysis paragraph
-- <pron>note</pron> AFTER a verse block: name only the 1-3 most pedagogically striking pronunciations from that block and say which OP feature each illustrates (a vowel shift, a rhotic, a stress that changes the scansion). This is a STRICT SUBSET of the words you tagged in <verse>.
 
 Rules:
 - Quote verbatim — exact words, exact spelling, exact line breaks from the source. \"Verbatim\" governs the original words only; inline /IPA/ tags are ADDITIONAL markup placed immediately AFTER the word they annotate (e.g. take /tɛːk/) and never replace, reorder, or alter the source word.
-- /IPA/ appears only in <verse> and <pron>, never in <gloss> prose.
+- /IPA/ appears ONLY inside <verse> lines (where it is hidden from the reader and used only to generate audio). NEVER write IPA, phonetic symbols, or slash-wrapped pronunciations anywhere in <gloss> prose — do not mention how a word is pronounced using symbols. Explain meaning and delivery in plain words only.
 - Never use / to join verse lines
 - Never truncate with ...
 - Tag sparsely: only operative/accent-bearing words get /IPA/. A 40-word line should have far fewer than 40 tags.
-- The <pron> note shows its IPA to the reader; the <verse> /IPA/ is hidden from the reader and used only for audio. Do not explain this in the output — just produce both.
 - Each <verse> tag contains exactly one line of the original
 - Each <gloss> tag contains one flowing prose paragraph (3-4 sentences preferred, never exceed 6)
 - For long speeches (over 8 lines), break into 4-8 line chunks with analysis between each chunk
