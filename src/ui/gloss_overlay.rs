@@ -1052,7 +1052,7 @@ impl GlossOverlay {
         };
 
         for b in blocks {
-            let lines: Vec<&str> = b.text.lines().collect();
+            let lines: Vec<&str> = b.display.lines().collect();
             let first_needle = lines.first().map(|s| s.trim()).unwrap_or("");
             let start_line = match find_line(first_needle, search_from) {
                 Some(l) => l,
@@ -1475,10 +1475,12 @@ impl GlossOverlay {
     }
 }
 
+#[derive(Debug)]
 enum GlossElement {
     Speaker(String),
     Verse(String),
     Gloss(String),
+    Pron(String),
 }
 
 /// Render a synopsis for display, honoring paragraph markup. Synopses may be
@@ -1553,9 +1555,13 @@ pub struct GlossBlock {
     /// 0-based index WITHIN its kind (source blocks numbered separately from
     /// explication paragraphs).
     pub index: i32,
+    /// RAW text, including any inline `/IPA/` — this is what TTS synthesizes.
     /// For Source: the joined verse-line text (speaker labels excluded).
     /// For Explication: the paragraph prose.
     pub text: String,
+    /// DISPLAY text: `text` with `/IPA/` stripped (`strip_ipa`). Used for the
+    /// reader's buffer and the accent-bar block matcher.
+    pub display: String,
 }
 
 /// Parse a gloss into ordered cursor-stop blocks: each contiguous
@@ -1571,10 +1577,13 @@ pub fn gloss_blocks(gloss: &str) -> Vec<GlossBlock> {
     let flush_source =
         |blocks: &mut Vec<GlossBlock>, source_idx: &mut i32, pending: &mut Vec<String>| {
             if !pending.is_empty() {
+                let text = pending.join("\n");
+                let display = strip_ipa(&text);
                 blocks.push(GlossBlock {
                     kind: BlockKind::Source,
                     index: *source_idx,
-                    text: pending.join("\n"),
+                    text,
+                    display,
                 });
                 *source_idx += 1;
                 pending.clear();
@@ -1591,13 +1600,17 @@ pub fn gloss_blocks(gloss: &str) -> Vec<GlossBlock> {
                 }
                 // A real explication paragraph ends the current source run.
                 flush_source(&mut blocks, &mut source_idx, &mut pending_verses);
+                let text = text.trim().to_string();
+                let display = strip_ipa(&text);
                 blocks.push(GlossBlock {
                     kind: BlockKind::Explication,
                     index: expl_idx,
-                    text: text.trim().to_string(),
+                    text,
+                    display,
                 });
                 expl_idx += 1;
             }
+            GlossElement::Pron(_) => { /* pronunciation note: not a cursor stop, not TTS */ }
         }
     }
     // Trailing source run (gloss that ends on verse).
@@ -1621,6 +1634,9 @@ fn parse_gloss_tags(gloss: &str) -> Vec<GlossElement> {
                 remaining = el.1;
             } else if let Some(el) = try_extract(after_open, "gloss") {
                 elements.push(GlossElement::Gloss(el.0.to_string()));
+                remaining = el.1;
+            } else if let Some(el) = try_extract(after_open, "pron") {
+                elements.push(GlossElement::Pron(el.0.to_string()));
                 remaining = el.1;
             } else {
                 remaining = &remaining[pos + 1..];
@@ -1660,7 +1676,7 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
     buffer.set_text("");
 
     let tag_table = buffer.tag_table();
-    for name in &["gloss-speaker", "gloss-speaker-first", "gloss-speaker-source", "gloss-verse", "gloss-para", "gloss-bracket", "gloss-quote", "gloss-quote-cont", "gloss-citation"] {
+    for name in &["gloss-speaker", "gloss-speaker-first", "gloss-speaker-source", "gloss-verse", "gloss-para", "gloss-bracket", "gloss-quote", "gloss-quote-cont", "gloss-citation", "gloss-pron"] {
         if let Some(old) = tag_table.lookup(name) {
             tag_table.remove(&old);
         }
@@ -1760,6 +1776,19 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
         None => citation_builder.build(),
     };
 
+    // Pronunciation teaching note beneath its verse block: italic and slightly
+    // smaller (like the bracket tag), dimmed with the theme's dim foreground
+    // (like the citation/para tags) so it reads as a recessed teaching aside.
+    let pron_builder = gtk4::TextTag::builder()
+        .name("gloss-pron")
+        .left_margin(quote_verse)
+        .style(pango::Style::Italic)
+        .scale(0.92);
+    let pron_tag = match dim_color {
+        Some(c) => pron_builder.foreground(c).build(),
+        None => pron_builder.build(),
+    };
+
     tag_table.add(&speaker_tag);
     tag_table.add(&speaker_first_tag);
     tag_table.add(&speaker_source_tag);
@@ -1769,6 +1798,7 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
     tag_table.add(&quote_tag);
     tag_table.add(&quote_cont_tag);
     tag_table.add(&citation_tag);
+    tag_table.add(&pron_tag);
 
     let elements = parse_gloss_tags(gloss);
     let mut first = true;
@@ -1813,13 +1843,15 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
             }
             GlossElement::Verse(text) => {
                 only_speakers_so_far = false;
+                let shown = strip_ipa(text);
                 let mut end = buffer.end_iter();
-                buffer.insert(&mut end, text);
+                buffer.insert(&mut end, &shown);
                 let start = buffer.iter_at_offset(offset);
                 buffer.apply_tag(&verse_tag, &start, &buffer.end_iter());
                 apply_bracket_styling(&buffer, offset, &bracket_tag);
 
-                let stripped = strip_brackets(text);
+                // line-number gutter: match on bracket+IPA-stripped, trimmed text
+                let stripped = strip_brackets(&shown);
                 if let Some(&num) = line_lookup.get(stripped.trim()) {
                     line_nums.push(LineNumber { buffer_line: line, number: num });
                 }
@@ -1881,6 +1913,15 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
                     buffer.apply_tag(&para_tag, &start, &buffer.end_iter());
                 }
             }
+            GlossElement::Pron(text) => {
+                only_speakers_so_far = false;
+                // The <pron> note's IPA is MEANT to be visible (teaching tier),
+                // so do NOT strip it. Render dim+italic beneath its verse block.
+                let mut end = buffer.end_iter();
+                buffer.insert(&mut end, text);
+                let start = buffer.iter_at_offset(offset);
+                buffer.apply_tag(&pron_tag, &start, &buffer.end_iter());
+            }
         }
     }
 
@@ -1921,6 +1962,35 @@ fn strip_brackets(text: &str) -> String {
         }
     }
     result
+}
+
+/// Remove inline `/IPA/` pronunciation spans for DISPLAY. Mirrors
+/// `strip_brackets`. An IPA span is `/…/` whose contents contain at least one
+/// non-ASCII-letter / IPA-class character (length marks, stress marks, schwa,
+/// etc.), so a bare literal slash between plain words ("and/or") is NOT treated
+/// as a span and survives. The raw, IPA-bearing text is what TTS gets; this is
+/// the reader-facing form. See the gloss-IPA spec, §4.
+fn strip_ipa(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '/' {
+            if let Some(close_rel) = chars[i + 1..].iter().position(|&c| c == '/') {
+                let close = i + 1 + close_rel;
+                let inner = &chars[i + 1..close];
+                let is_ipa = !inner.is_empty()
+                    && inner.iter().any(|&c| !c.is_ascii_alphabetic());
+                if is_ipa {
+                    i = close + 1; // skip the whole /…/ span
+                    continue;
+                }
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
 }
 
 /// Split an echo bracket `["quote" — Source]` into (quote, citation).
@@ -2008,6 +2078,17 @@ mod block_tests {
     use super::*;
 
     #[test]
+    fn parse_extracts_pron_element() {
+        let g = "<verse>To /biː/</verse>\n<pron>BEE: be /biː/ keeps the long vowel.</pron>";
+        let els = parse_gloss_tags(g);
+        assert!(matches!(els[0], GlossElement::Verse(_)));
+        assert!(
+            matches!(&els[1], GlossElement::Pron(t) if t.contains("long vowel")),
+            "expected a Pron element carrying the note, got {:?}", els.get(1)
+        );
+    }
+
+    #[test]
     fn blocks_in_document_order_with_kinds() {
         let gloss = "<speaker>CRANMER</speaker>\n\
                      <verse>Ah, my good Lord of Winchester, I thank you.</verse>\n\
@@ -2050,6 +2131,49 @@ mod block_tests {
         assert_eq!(blocks[0].kind, BlockKind::Source);
         assert_eq!(blocks[0].text, "To be, or not to be");
     }
+
+    #[test]
+    fn source_block_keeps_raw_ipa_and_derives_clean_display() {
+        let g = "<speaker>HAMLET</speaker>\n<verse>To /biː/ or not to /biː/</verse>";
+        let blocks = gloss_blocks(g);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].kind, BlockKind::Source);
+        // raw text (for TTS) keeps the IPA
+        assert_eq!(blocks[0].text, "To /biː/ or not to /biː/");
+        // display text (for the reader / accent-bar matcher) is stripped
+        assert_eq!(blocks[0].display, "To  or not to ");
+    }
+
+    #[test]
+    fn lone_pron_note_produces_no_block() {
+        // a <pron> note is neither a source nor explication block
+        let g = "<pron>BEE: be /biː/ keeps the long vowel.</pron>";
+        let blocks = gloss_blocks(g);
+        assert_eq!(blocks.len(), 0);
+    }
+
+    #[test]
+    fn tts_field_is_raw_display_field_is_stripped() {
+        // play_block_tts (gloss.rs) clones `.text` for synthesis; the reader
+        // path uses `.display`. This locks that the two diverge as intended:
+        // raw keeps /IPA/, display strips it.
+        let g = "<verse>/biː/ or not</verse>";
+        let b = &gloss_blocks(g)[0];
+        assert!(b.text.contains('/'), "TTS text must keep raw /IPA/");
+        assert!(!b.display.contains('/'), "display text must be stripped");
+    }
+
+    #[test]
+    fn explication_block_keeps_raw_ipa_and_strips_display() {
+        // The explication push is a SEPARATE code path from the source push;
+        // ensure it also keeps raw /IPA/ in `text` and strips it in `display`.
+        let g = "<gloss>The operative word /ˈsʊfər/ carries the line.</gloss>";
+        let blocks = gloss_blocks(g);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].kind, BlockKind::Explication);
+        assert_eq!(blocks[0].text, "The operative word /ˈsʊfər/ carries the line.");
+        assert_eq!(blocks[0].display, "The operative word  carries the line.");
+    }
 }
 
 #[cfg(test)]
@@ -2083,5 +2207,26 @@ mod synopsis_label_tests {
         let (text, labels) = render_synopsis_with_labels("Just plain text.");
         assert_eq!(text, "Just plain text.");
         assert!(labels.is_empty());
+    }
+
+    #[test]
+    fn strip_ipa_removes_tagged_words() {
+        assert_eq!(strip_ipa("To /biː/ or not to /biː/"), "To  or not to ");
+    }
+
+    #[test]
+    fn strip_ipa_keeps_literal_slash() {
+        // a bare slash between ordinary words is NOT an IPA span
+        assert_eq!(strip_ipa("read and/or write"), "read and/or write");
+    }
+
+    #[test]
+    fn strip_ipa_no_tags_is_identity() {
+        assert_eq!(strip_ipa("plain modern line"), "plain modern line");
+    }
+
+    #[test]
+    fn strip_ipa_handles_stress_marks() {
+        assert_eq!(strip_ipa("the /ˈsʊfər/ of it"), "the  of it");
     }
 }

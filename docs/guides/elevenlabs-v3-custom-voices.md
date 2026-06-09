@@ -218,6 +218,31 @@ There is no separate RP "classical" verse voice: an RP read of Shakespeare is a
 nineteenth-century anachronism (see the OP section), so the verse voice **is**
 Voice A-OP.
 
+### Saved voice IDs (built)
+
+The four voices below have been created via Voice Design and saved. Render with
+**`eleven_v3`** only (the sole model that reads `/IPA/` and `[…]` audio tags).
+Verse voices take OP `/IPA/` in the narration text at render time; prose voices
+are neutral modern (no `/IPA/`).
+
+- **Will OP — Verse (A-OP)** — male verse, Original Pronunciation —
+  `qIorOnPHyesnVMLvolyz`
+- **Will — Prose (B)** — male prose explication, neutral modern —
+  `jTudAEr52RK5998TOYLM`
+- **Willa OP — Verse (A-OP-F)** — female verse, Original Pronunciation —
+  `AJEmTDfBuB294lokNL10`
+- **Willa — Prose (B-F)** — female prose explication, neutral modern —
+  `EKXvXWSM0PF7VaEykbP4`
+
+Source clone they were modelled on: **Will – Poetical & Measured** (a
+`professional` clone) — `KjWPwHJWLungxeiYigoM`.
+
+**Selection rule at render:** speaker's gender → `{Will set | Willa set}`, then
+verse → OP voice + `/IPA/`, prose → plain voice. Default to the **male** set when
+gender is ambiguous or unresolved. The female set is only *auto-selected* once a
+speaker → gender data source exists in `lit.db` (see *Female speakers* below and
+the character-gender design spec) — that data source does not exist yet.
+
 ### Female speakers: a mirrored voice set, selected by speaker gender
 
 The A-OP / B male voice reads male characters. Female characters — Ophelia,
