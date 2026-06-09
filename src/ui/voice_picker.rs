@@ -28,12 +28,13 @@ impl VoicePicker {
         picker_box.set_valign(Align::Start);
         picker_box.set_margin_top(40);
         picker_box.set_width_request(450);
-        picker_box.add_css_class("picker-box");
+        // Use the shared themed picker style (cream card, themed entry/rows),
+        // matching the library/media/gloss pickers — not the old dark picker-box.
+        picker_box.add_css_class("library-picker");
         picker_box.set_visible(false);
 
         let search_entry = Entry::new();
         search_entry.set_placeholder_text(Some("Search voices..."));
-        search_entry.add_css_class("picker-entry");
         picker_box.append(&search_entry);
 
         let scrolled = ScrolledWindow::new();
@@ -42,7 +43,6 @@ impl VoicePicker {
         scrolled.set_propagate_natural_height(true);
 
         let list_box = ListBox::new();
-        list_box.add_css_class("picker-list");
         scrolled.set_child(Some(&list_box));
         picker_box.append(&scrolled);
 
