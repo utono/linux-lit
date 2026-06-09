@@ -218,3 +218,15 @@ what it can durably do: fix the narrator's timbre and general character.
   in the parent guide).
 - OP feature set and values: see companion `how-shakespeare-spoke.md`; David
   Crystal, *The Oxford Dictionary of Original Shakespearean Pronunciation* (2016).
+
+### Verified 2026-06 (phoneme-tag vs. v3 inline-IPA review)
+
+URLs checked when confirming that the legacy `<phoneme>`/Arpabet guidance applies
+only to v2 models (`eleven_flash_v2` / `eleven_monolingual_v1`), while
+`eleven_v3` — the model linux-lit renders the custom OP voices with — reads
+inline `/IPA/` directly:
+
+- <https://elevenlabs.io/docs/overview/capabilities/text-to-speech/best-practices>
+- <https://help.elevenlabs.io/hc/en-us/articles/16712320194577-How-can-I-force-a-certain-pronunciation-of-a-word-or-name>
+- <https://help.elevenlabs.io/hc/en-us/articles/24352686926609-Do-pauses-and-SSML-phoneme-tags-work-with-the-API>
+- <https://elevenlabs.io/blog/eleven-v3-audio-tags-emulating-accents-with-precision>
