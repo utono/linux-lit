@@ -2151,6 +2151,29 @@ mod block_tests {
         let blocks = gloss_blocks(g);
         assert_eq!(blocks.len(), 0);
     }
+
+    #[test]
+    fn tts_field_is_raw_display_field_is_stripped() {
+        // play_block_tts (gloss.rs) clones `.text` for synthesis; the reader
+        // path uses `.display`. This locks that the two diverge as intended:
+        // raw keeps /IPA/, display strips it.
+        let g = "<verse>/biː/ or not</verse>";
+        let b = &gloss_blocks(g)[0];
+        assert!(b.text.contains('/'), "TTS text must keep raw /IPA/");
+        assert!(!b.display.contains('/'), "display text must be stripped");
+    }
+
+    #[test]
+    fn explication_block_keeps_raw_ipa_and_strips_display() {
+        // The explication push is a SEPARATE code path from the source push;
+        // ensure it also keeps raw /IPA/ in `text` and strips it in `display`.
+        let g = "<gloss>The operative word /ˈsʊfər/ carries the line.</gloss>";
+        let blocks = gloss_blocks(g);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].kind, BlockKind::Explication);
+        assert_eq!(blocks[0].text, "The operative word /ˈsʊfər/ carries the line.");
+        assert_eq!(blocks[0].display, "The operative word  carries the line.");
+    }
 }
 
 #[cfg(test)]
