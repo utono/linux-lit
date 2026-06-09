@@ -845,6 +845,31 @@ pub fn delete_gloss_audio(conn: &Connection, gloss_id: i64) -> Result<usize, rus
     Ok(n)
 }
 
+/// Delete the cached audio rows for ONE block of a gloss (all voices) and return
+/// their `audio_path`s so the caller can remove the files. Scoped, unlike
+/// `delete_gloss_audio` which clears a whole gloss. Used by the fix-IPA flow to
+/// invalidate just the corrected source block before re-synthesis.
+pub fn delete_gloss_audio_block(
+    conn: &Connection,
+    gloss_id: i64,
+    kind: &str,
+    index: i64,
+) -> Result<Vec<String>, rusqlite::Error> {
+    let paths: Vec<String> = {
+        let mut stmt = conn.prepare(
+            "SELECT audio_path FROM gloss_audio
+             WHERE gloss_id = ?1 AND kind = ?2 AND paragraph_index = ?3",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![gloss_id, kind, index], |r| r.get(0))?;
+        rows.collect::<Result<_, _>>()?
+    };
+    conn.execute(
+        "DELETE FROM gloss_audio WHERE gloss_id = ?1 AND kind = ?2 AND paragraph_index = ?3",
+        rusqlite::params![gloss_id, kind, index],
+    )?;
+    Ok(paths)
+}
+
 /// Load all bookmarked line_mapping_ids for a work.
 pub fn load_bookmarks(conn: &Connection, work_abbrev: &str) -> Result<Vec<i64>, rusqlite::Error> {
     let mut stmt = conn.prepare(
@@ -2132,6 +2157,34 @@ mod tests {
         assert_eq!(removed, 2, "should report both deleted audio rows");
         assert!(find_gloss_audio(&conn, 7, "explication", 0, "v").unwrap().is_none());
         assert!(find_gloss_audio(&conn, 7, "explication", 1, "v").unwrap().is_none());
+    }
+
+    #[test]
+    fn delete_gloss_audio_block_scopes_to_one_block() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE glosses (id INTEGER PRIMARY KEY);
+             INSERT INTO glosses (id) VALUES (7);",
+        ).unwrap();
+        ensure_gloss_audio_table(&conn).unwrap();
+        let ins = |kind: &str, idx: i64, voice: &str, path: &str| {
+            conn.execute(
+                "INSERT INTO gloss_audio (gloss_id, kind, paragraph_index, audio_path, voice_id, model_id)
+                 VALUES (7, ?1, ?2, ?3, ?4, 'm')",
+                rusqlite::params![kind, idx, path, voice],
+            ).unwrap();
+        };
+        ins("source", 0, "vA", "/a0.mp3");
+        ins("source", 0, "vB", "/a0b.mp3"); // same block, second voice
+        ins("source", 1, "vA", "/a1.mp3");  // different block — must survive
+        let paths = delete_gloss_audio_block(&conn, 7, "source", 0).unwrap();
+        assert_eq!(paths.len(), 2);
+        assert!(paths.contains(&"/a0.mp3".to_string()));
+        assert!(paths.contains(&"/a0b.mp3".to_string()));
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM gloss_audio WHERE gloss_id=7", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(remaining, 1);
     }
 
     #[test]
