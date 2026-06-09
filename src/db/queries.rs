@@ -524,8 +524,8 @@ pub fn ensure_gloss_voices_table(conn: &Connection) -> Result<(), rusqlite::Erro
 /// Ensure the voice catalog exists and is seeded with the four narration voice
 /// pairs and their age bands. Used by `resolve_default_voice` to pick the
 /// default voice by (gender, age). Seeding is idempotent (INSERT OR IGNORE on
-/// the (voice_id, role) PK). The user can later add/adjust rows. See the
-/// per-gloss-voice-set spec §2.1.
+/// the (voice_id, role) PK). The user can later add/adjust rows.
+/// See docs/superpowers/plans/2026-06-08-age-aware-default-voice-phase2.md.
 pub fn ensure_voice_catalog_table(conn: &Connection) -> Result<(), rusqlite::Error> {
     use crate::elevenlabs::*;
     conn.execute_batch(
@@ -537,7 +537,7 @@ pub fn ensure_voice_catalog_table(conn: &Connection) -> Result<(), rusqlite::Err
             age_max   INTEGER NOT NULL,
             role      TEXT NOT NULL,
             label     TEXT,
-            PRIMARY KEY (voice_id, role)
+            PRIMARY KEY (gender, age_min, age_max, role)
         );"
     )?;
     // Seed the four pairs (verse + prose each). INSERT OR IGNORE keeps it
