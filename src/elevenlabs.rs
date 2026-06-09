@@ -10,15 +10,13 @@ pub const ALICE_MODEL_ID: &str = "eleven_turbo_v2_5";
 
 /// The four custom Voice-Design narration voices (see
 /// docs/guides/elevenlabs-v3-custom-voices.md "Saved voice IDs"). All render on
-/// `eleven_v3` (the only model that reads inline /IPA/ and [audio tags]).
-pub const A_OP_VOICE_ID: &str = "qIorOnPHyesnVMLvolyz"; // Will OP — male verse, OP
-pub const B_VOICE_ID: &str = "jTudAEr52RK5998TOYLM"; // Will — male prose
-pub const A_OP_F_VOICE_ID: &str = "AJEmTDfBuB294lokNL10"; // Willa OP — female verse, OP
-pub const B_F_VOICE_ID: &str = "EKXvXWSM0PF7VaEykbP4"; // Willa — female prose
-pub const C_OP_VOICE_ID: &str = "8BQp5xsRbw3h92wPAOm9"; // Petruchio OP — older male verse, OP
-pub const D_VOICE_ID: &str = "0C3liWwHU3pG3IcPThkh"; // Petruchio — older male prose
-pub const E_OP_VOICE_ID: &str = "d0tyHmCGhjY1al3AD4mO"; // Beatrice OP — female verse, OP
-pub const F_VOICE_ID: &str = "FTksVX7bTBbE2R5yfiYi"; // Beatrice — female prose
+/// `eleven_v3` (the only model that reads inline /IPA/ and [audio tags]). Each
+/// voice is used for BOTH verse and prose — the role distinction lives only in
+/// the render TEXT (verse carries OP /IPA/, prose does not), not in the voice.
+pub const ROMEO_VOICE_ID: &str = "6yZ2TgQ0ylkuKI3AMAbI"; // Romeo — young male, 15–25
+pub const JULIET_VOICE_ID: &str = "91oz9H5XlpZKQkoXkN6w"; // Juliet — young female, 12–19
+pub const BENEDICK_VOICE_ID: &str = "ucMnuQhzouQI2nuPOYUw"; // Benedick — witty male, 26–34 (DEFAULT male)
+pub const BEATRICE_VOICE_ID: &str = "d0tyHmCGhjY1al3AD4mO"; // Beatrice — witty female, 20–30 (DEFAULT female)
 pub const OP_MODEL_ID: &str = "eleven_v3";
 
 /// A character's gender, for gendered-voice selection. `Neutral` (deliberately
@@ -43,18 +41,17 @@ impl Gender {
     }
 }
 
-/// Pick (voice_id, model_id) for a `gender` reading verse (`is_verse=true`, OP
-/// voice) or prose (`false`, plain voice). The gender DEFAULT is the
-/// Petruchio (older male) / Beatrice (female) pair. Neutral/Unknown -> male
-/// (Petruchio) — never guess. Will/Willa (A_OP/B/A_OP_F/B_F) are non-default
-/// voices reachable via the per-gloss voice picker.
-pub fn voice_for(gender: Gender, is_verse: bool) -> (&'static str, &'static str) {
-    let female = gender == Gender::Female;
-    let id = match (female, is_verse) {
-        (false, true) => C_OP_VOICE_ID,   // Petruchio verse
-        (false, false) => D_VOICE_ID,     // Petruchio prose
-        (true, true) => E_OP_VOICE_ID,    // Beatrice verse
-        (true, false) => F_VOICE_ID,      // Beatrice prose
+/// Pick (voice_id, model_id) for a `gender`. This is the catalog-empty LAST
+/// RESORT (the live `voice_catalog` is what normally drives selection — see
+/// `resolve_default_voice`); each character voice serves both verse and prose,
+/// so `is_verse` no longer changes the voice, only the render text does.
+/// The gender DEFAULT is **Benedick** (male) / **Beatrice** (female).
+/// Neutral/Unknown → male (Benedick) — never guess.
+pub fn voice_for(gender: Gender, _is_verse: bool) -> (&'static str, &'static str) {
+    let id = if gender == Gender::Female {
+        BEATRICE_VOICE_ID
+    } else {
+        BENEDICK_VOICE_ID
     };
     (id, OP_MODEL_ID)
 }
@@ -254,20 +251,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn voice_for_male_verse_is_petruchio() {
-        assert_eq!(voice_for(Gender::Male, true), (C_OP_VOICE_ID, OP_MODEL_ID));
+    fn voice_for_male_defaults_to_benedick() {
+        // one voice both roles: is_verse no longer changes the voice
+        assert_eq!(voice_for(Gender::Male, true), (BENEDICK_VOICE_ID, OP_MODEL_ID));
+        assert_eq!(voice_for(Gender::Male, false), (BENEDICK_VOICE_ID, OP_MODEL_ID));
     }
 
     #[test]
-    fn voice_for_female_prose_is_beatrice() {
-        assert_eq!(voice_for(Gender::Female, false), (F_VOICE_ID, OP_MODEL_ID));
+    fn voice_for_female_defaults_to_beatrice() {
+        assert_eq!(voice_for(Gender::Female, false), (BEATRICE_VOICE_ID, OP_MODEL_ID));
+        assert_eq!(voice_for(Gender::Female, true), (BEATRICE_VOICE_ID, OP_MODEL_ID));
     }
 
     #[test]
     fn voice_for_neutral_and_unknown_default_to_male() {
-        // neutral/unknown -> male (Petruchio) set
-        assert_eq!(voice_for(Gender::Neutral, true), (C_OP_VOICE_ID, OP_MODEL_ID));
-        assert_eq!(voice_for(Gender::Unknown, false), (D_VOICE_ID, OP_MODEL_ID));
+        // neutral/unknown -> male default (Benedick)
+        assert_eq!(voice_for(Gender::Neutral, true), (BENEDICK_VOICE_ID, OP_MODEL_ID));
+        assert_eq!(voice_for(Gender::Unknown, false), (BENEDICK_VOICE_ID, OP_MODEL_ID));
     }
 
     #[test]

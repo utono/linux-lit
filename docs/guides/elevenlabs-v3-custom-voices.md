@@ -242,11 +242,12 @@ table, not the generation-prompt age, drives speaker → voice selection.
 > carries OP `/IPA/`; the prose render text does not** — the role distinction now
 > lives only in the *text* (IPA or not), not in the voice.
 >
-> Retired voices were deleted from `voice_catalog`; **delete them in the
-> ElevenLabs UI too** (the MCP has no delete-voice tool): Will OP
+> Retired voices (deleted from `voice_catalog` AND from ElevenLabs): Will OP
 > `qIorOnPHyesnVMLvolyz`, Will prose `jTudAEr52RK5998TOYLM`, Willa OP
-> `AJEmTDfBuB294lokNL10`, Willa prose `EKXvXWSM0PF7VaEykbP4`, Petruchio prose (D)
-> `0C3liWwHU3pG3IcPThkh`, Beatrice prose (F) `FTksVX7bTBbE2R5yfiYi`.
+> `AJEmTDfBuB294lokNL10`, Willa prose `EKXvXWSM0PF7VaEykbP4`, Petruchio verse
+> `8BQp5xsRbw3h92wPAOm9` and prose `0C3liWwHU3pG3IcPThkh`, Beatrice prose (F)
+> `FTksVX7bTBbE2R5yfiYi`. Petruchio (the older swaggering male) was replaced by
+> Benedick (younger, witty) as the older/default male slot.
 
 Current rows (4 voices × 2 roles = 8 rows; each voice's `verse` and `prose` rows
 share one `voice_id`):
@@ -255,14 +256,30 @@ share one `voice_id`):
   `6yZ2TgQ0ylkuKI3AMAbI`
 - **Juliet** — young female, verse **and** prose — 12–19 —
   `91oz9H5XlpZKQkoXkN6w`
-- **Petruchio** — older male (swaggering), verse **and** prose — 35–45 —
-  `8BQp5xsRbw3h92wPAOm9`
+- **Benedick** — witty male (Much Ado), verse **and** prose — 26–34 —
+  `ucMnuQhzouQI2nuPOYUw` — **DEFAULT male voice**
 - **Beatrice** — female (sharp-witted), verse **and** prose — 20–30 —
-  `d0tyHmCGhjY1al3AD4mO`
+  `d0tyHmCGhjY1al3AD4mO` — **DEFAULT female voice**
 
 (The ElevenLabs voice names are now just the bare character — **Romeo, Juliet,
-Petruchio, Beatrice** — since each voice serves both roles; the older
-`OP — Verse (C-OP)` / `(E-OP)` suffixes were dropped.)
+Benedick, Beatrice** — since each voice serves both roles; the older
+`OP — Verse (X-OP)` suffixes were dropped.)
+
+> **Benedick / Beatrice are the gender defaults.** `resolve_default_voice` first
+> tries the band CONTAINING the speaker's age, then falls back to the NEAREST
+> same-gender band. Because Benedick (26–34) is the only male band above Romeo
+> (15–25), any male speaker older than 25 — including 35, 80 — resolves to
+> Benedick by nearest-band; likewise any female above 30 resolves to Beatrice. So
+> Benedick replaced the retired Petruchio (35–45) as the catch-all older/default
+> male with no coverage gap. The catalog-empty last resort `voice_for()` also
+> returns Benedick (male) / Beatrice (female).
+
+> **Source is the seed of record.** These rows are also hard-coded in
+> `src/db/queries.rs::ensure_voice_catalog_table` (seed array) and
+> `src/elevenlabs.rs` (`ROMEO/JULIET/BENEDICK/BEATRICE_VOICE_ID` constants +
+> `voice_for` fallback). A fresh `lit.db` re-seeds these four voices. When you
+> change a voice, update BOTH the live DB and that Rust source or a fresh DB will
+> diverge.
 
 All four render with **`eleven_v3`**. Verse text carries OP `/IPA/`; prose text
 does not.
