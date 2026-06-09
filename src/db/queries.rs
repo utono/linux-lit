@@ -485,6 +485,22 @@ pub fn ensure_bookmarks_table(conn: &Connection) -> Result<(), rusqlite::Error> 
     Ok(())
 }
 
+/// Ensure the character-gender table exists. Keyed by (work_abbrev, speaker)
+/// with speaker stored verbatim as it appears in line_mapping.speaker, so the
+/// TTS-time lookup joins exactly with no runtime normalization. Rows are loaded
+/// by scripts/curate_genders.py, not the app. See the character-gender spec.
+pub fn ensure_characters_table(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS characters (
+            work_abbrev TEXT NOT NULL,
+            speaker     TEXT NOT NULL,
+            gender      TEXT NOT NULL,
+            PRIMARY KEY (work_abbrev, speaker)
+        );"
+    )?;
+    Ok(())
+}
+
 /// Column + constraint body of the gloss_audio table, shared by the fresh-install
 /// CREATE and the legacy-rebuild migration so the two cannot drift.
 const GLOSS_AUDIO_COLUMNS: &str = "
@@ -1930,5 +1946,23 @@ mod tests {
         assert_eq!(work.lines[0].text, "Who\u{2019}s there?");
         assert!(work.lines[0].is_dialogue);
         assert!(!work.timestamps.is_empty(), "Work should have timestamps loaded");
+    }
+
+    #[test]
+    fn ensure_characters_table_creates_usable_table() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        ensure_characters_table(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO characters (work_abbrev, speaker, gender) VALUES ('Ham','HAMLET','male')",
+            [],
+        ).unwrap();
+        let g: String = conn
+            .query_row(
+                "SELECT gender FROM characters WHERE work_abbrev='Ham' AND speaker='HAMLET'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(g, "male");
     }
 }
