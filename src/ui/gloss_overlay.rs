@@ -1052,7 +1052,7 @@ impl GlossOverlay {
         };
 
         for b in blocks {
-            let lines: Vec<&str> = b.text.lines().collect();
+            let lines: Vec<&str> = b.display.lines().collect();
             let first_needle = lines.first().map(|s| s.trim()).unwrap_or("");
             let start_line = match find_line(first_needle, search_from) {
                 Some(l) => l,
@@ -1829,13 +1829,15 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
             }
             GlossElement::Verse(text) => {
                 only_speakers_so_far = false;
+                let shown = strip_ipa(text);
                 let mut end = buffer.end_iter();
-                buffer.insert(&mut end, text);
+                buffer.insert(&mut end, &shown);
                 let start = buffer.iter_at_offset(offset);
                 buffer.apply_tag(&verse_tag, &start, &buffer.end_iter());
                 apply_bracket_styling(&buffer, offset, &bracket_tag);
 
-                let stripped = strip_brackets(text);
+                // line-number gutter: match on bracket+IPA-stripped, trimmed text
+                let stripped = strip_brackets(&shown);
                 if let Some(&num) = line_lookup.get(stripped.trim()) {
                     line_nums.push(LineNumber { buffer_line: line, number: num });
                 }
