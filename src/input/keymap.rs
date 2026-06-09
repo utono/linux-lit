@@ -833,6 +833,18 @@ fn handle_gloss_key(
             );
             true
         }
+        "r" => {
+            // Source verse only: play/stop the synthesized MP3 in the active /
+            // default voice (pauses MPV first). No picker.
+            crate::input::actions::gloss::toggle_source_tts(state);
+            true
+        }
+        "R" => {
+            // Source verse only: open the voice picker for the synthesized
+            // reading (the only picker key); confirm sets active voice + plays.
+            crate::input::actions::gloss::pick_source_voice(state);
+            true
+        }
         _ => true,
     }
 }

@@ -57,7 +57,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key("f", "F", "next font", "F: prev font", &[("M-f", "font info")]),
     key("g", "G", "", "", &[("C-g", "gloss pick"), ("S-C-g", "gloss tog")]),
     key("c", "C", "set chapter", "C: show chapter", &[]),
-    key("r", "R", "next conc", "R: prev conc", &[("C-r", "next vocab"), ("S-C-r", "prev vocab"), ("M-r", "conc works")]),
+    key("r", "R", "next conc", "R: prev conc", &[("C-r", "next vocab"), ("S-C-r", "prev vocab"), ("M-r", "conc works"), ("r", "verse audio: play/stop"), ("R", "verse audio: pick voice")]),
     key("l", "L", "toggle signs", "", &[("S-C-l", "save+quit")]),
     key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
     ub("@", "^"),
@@ -356,6 +356,18 @@ membership). -> open_voice_picker(GlossOverlay) — src/input/actions/settings.r
         "voice: cycle" => "While the gloss overlay is open, cycle which associated \
 voice plays for this gloss. \
 -> cycle_active_voice — src/input/actions/gloss.rs",
+        "verse audio: play/stop" => "While the gloss overlay is open, on a source \
+verse: play or stop the synthesized (ElevenLabs) reading in the gloss's active \
+voice — the AI voice, separate from the recorded media that space/a play. \
+Starting it pauses the MPV recording so they don't overlap; press again to stop \
+(recording stays paused, resume with space). Cache miss synthesizes on first \
+play. -> toggle_source_tts — src/input/actions/gloss.rs",
+        "verse audio: pick voice" => "While the gloss overlay is open, on a source \
+verse: open the voice picker for the synthesized reading; confirming sets that \
+voice as the gloss's active voice and plays the verse (pausing MPV first). If \
+the synthesized audio is already playing, this stops it instead. R is the only \
+key that opens the picker; r replays in the current active voice. \
+-> pick_source_voice — src/input/actions/gloss.rs",
 
         // ── Vocab ──
         "next conc" => "Step to the next concordance hit for the active word — \
