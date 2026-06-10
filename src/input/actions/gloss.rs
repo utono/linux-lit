@@ -1885,11 +1885,14 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
     s.gloss_index = 0;
     s.gloss_active_voice = 0;
     s.gloss_context = Some(ctx);
+    // Set GlossOverlay mode BEFORE recolor: recolor_cached_blocks selects the
+    // gloss vs synopsis branch off input_mode, so the just-opened gloss must
+    // already be in GlossOverlay or its blocks won't get colored on first open.
+    s.input_mode = crate::app::InputMode::GlossOverlay;
     recolor_cached_blocks(&s);
     // Opened from the reader cursor, not the picker, so Escape uses the
     // saved reader page (gloss_return_pos), not the picker return path.
     s.gloss_opened_from_picker = false;
-    s.input_mode = crate::app::InputMode::GlossOverlay;
 }
 
 /// Close the stacked gloss add/edit input card and return focus to the gloss.
