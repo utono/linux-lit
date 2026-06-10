@@ -151,6 +151,7 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
     s.gloss_index = 0;
     s.gloss_active_voice = 0;
     s.gloss_context = Some(ctx);
+    recolor_cached_blocks(&s);
 }
 
 pub(crate) fn navigate_gloss(state: &Rc<RefCell<AppState>>, delta: i32) {
@@ -175,6 +176,7 @@ pub(crate) fn navigate_gloss(state: &Rc<RefCell<AppState>>, delta: i32) {
         Some(&s.theme.root_color), &pairs,
     );
     s.gloss_overlay.set_position(new_idx, s.gloss_list.len());
+    recolor_cached_blocks(&s);
 }
 
 pub(crate) fn copy_gloss_id(state: &Rc<RefCell<AppState>>) {
@@ -247,6 +249,7 @@ pub(crate) fn delete_current_gloss(state_rc: &Rc<RefCell<AppState>>) {
                 Some(&s.theme.root_color), &pairs,
             );
             s.gloss_overlay.set_position(new_idx, s.gloss_list.len());
+            recolor_cached_blocks(&s);
         }
     }
     // Phase 2: verification pill (borrow released above). Shown whether or not
@@ -577,6 +580,7 @@ fn apply_ipa_fix(
             );
             s.gloss_overlay
                 .set_position(gloss_index_pos, s.gloss_list.len());
+            recolor_cached_blocks(&s);
         }
     }
     crate::log_fmt!(
@@ -728,6 +732,7 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
                 s.gloss_list = all;
                 s.gloss_index = 0;
                 s.gloss_active_voice = 0;
+                recolor_cached_blocks(&s);
                 crate::logging::log(&format!("GLOSS: added new {} gloss", gloss_type_owned));
             }
             Ok(Err(e)) => {
@@ -825,6 +830,7 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
                 s.gloss_list = all;
                 s.gloss_index = 0;
                 s.gloss_active_voice = 0;
+                recolor_cached_blocks(&s);
                 crate::logging::log(&format!("GLOSS: edited {} gloss (added new)", gloss_type_owned));
             }
             Ok(Err(e)) => {
@@ -1875,6 +1881,7 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
     s.gloss_index = 0;
     s.gloss_active_voice = 0;
     s.gloss_context = Some(ctx);
+    recolor_cached_blocks(&s);
     // Opened from the reader cursor, not the picker, so Escape uses the
     // saved reader page (gloss_return_pos), not the picker return path.
     s.gloss_opened_from_picker = false;
