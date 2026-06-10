@@ -112,8 +112,8 @@ pub fn handle_key(
             crate::app::InputMode::Settings => handle_settings_key(state, key_name, is_ctrl),
             crate::app::InputMode::VoicePicker => handle_voice_picker_key(state, key_name, is_ctrl),
             crate::app::InputMode::Search => handle_search_key(state, key_name),
-            crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_alt, tokio_handle),
-            crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_state, key_name, is_ctrl),
+            crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_shift, is_alt, tokio_handle),
+            crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_state, key_name, is_ctrl, is_shift),
             crate::app::InputMode::TranslationOverlay => handle_translation_overlay_key(state, key_name),
             crate::app::InputMode::DeleteConfirm => handle_delete_confirm_key(state, key_name),
             crate::app::InputMode::EchoPicker => handle_echo_picker_key(state, key_name, tokio_handle),
@@ -662,6 +662,7 @@ fn handle_gloss_key(
     key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
     is_ctrl: bool,
+    is_shift: bool,
     is_alt: bool,
     tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
@@ -693,6 +694,12 @@ fn handle_gloss_key(
         if ask_focus == AskFocus::Ask {
             return false;
         }
+    }
+
+    // Shift+Space: batch-synthesize all prose blocks (cache-only).
+    if key_name == "space" && is_shift {
+        crate::input::actions::gloss::synth_all_prose_blocks(state);
+        return true;
     }
 
     if key_state.borrow().chord == ChordState::PendingG {
@@ -967,6 +974,7 @@ fn handle_synopsis_overlay_key(
     key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
     is_ctrl: bool,
+    is_shift: bool,
 ) -> bool {
     use crate::ui::gloss_overlay::AskFocus;
 
@@ -981,6 +989,12 @@ fn handle_synopsis_overlay_key(
         if key_name == "g" {
             state.borrow().gloss_overlay.cursor_first_block();
         }
+        return true;
+    }
+
+    // Shift+Space: batch-synthesize all synopsis paragraphs (cache-only).
+    if key_name == "space" && is_shift {
+        crate::input::actions::gloss::synth_all_synopsis_blocks(state);
         return true;
     }
 
