@@ -120,7 +120,8 @@ pub(crate) fn amend_synopsis(state_rc: &Rc<RefCell<AppState>>, question: &str) {
                 s.synopsis_cache.insert((div1, div2), revised.clone());
                 let cw = s.content_hbox.width();
                 let h = s.content_hbox.height();
-                s.gloss_overlay.show_synopsis(&label, &revised, cw, h);
+                let root_color = s.theme.root_color.clone();
+                s.gloss_overlay.show_synopsis(&label, &revised, Some(&root_color), cw, h);
                 s.input_mode = crate::app::InputMode::SynopsisOverlay;
                 crate::logging::log(&format!(
                     "SYNOPSIS: amended {} ({},{})",
@@ -131,8 +132,9 @@ pub(crate) fn amend_synopsis(state_rc: &Rc<RefCell<AppState>>, question: &str) {
                 let mut s = state_for_result.borrow_mut();
                 let cw = s.content_hbox.width();
                 let h = s.content_hbox.height();
+                let root_color = s.theme.root_color.clone();
                 s.gloss_overlay
-                    .show_synopsis(&label, &format!("Error: {}", e), cw, h);
+                    .show_synopsis(&label, &format!("Error: {}", e), Some(&root_color), cw, h);
                 s.input_mode = crate::app::InputMode::SynopsisOverlay;
                 crate::logging::log(&format!("SYNOPSIS: amend error: {}", e));
             }
@@ -184,7 +186,8 @@ pub(crate) fn undo_amend(state_rc: &Rc<RefCell<AppState>>) {
     let cw = s.content_hbox.width();
     let h = s.content_hbox.height();
     let label = crate::app::synopsis_label(&s, div1, div2);
-    s.gloss_overlay.show_synopsis(&label, &original, cw, h);
+    let root_color = s.theme.root_color.clone();
+    s.gloss_overlay.show_synopsis(&label, &original, Some(&root_color), cw, h);
     crate::logging::log(&format!("SYNOPSIS: undid amend ({},{})", div1, div2));
 }
 

@@ -4945,7 +4945,8 @@ pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) 
     let card_width = s.content_hbox.width();
     let card_height = s.content_hbox.height();
     let label = synopsis_label(&s, div1, div2);
-    s.gloss_overlay.show_synopsis(&label, &synopsis, card_width, card_height);
+    let root_color = s.theme.root_color.clone();
+    s.gloss_overlay.show_synopsis(&label, &synopsis, Some(&root_color), card_width, card_height);
     drop(s);
     let mut s = state.borrow_mut();
     s.synopsis_overlay_scene = (div1, div2);
@@ -5151,7 +5152,8 @@ pub fn cycle_synopsis(state: &std::rc::Rc<std::cell::RefCell<AppState>>, delta: 
     let label = synopsis_label(&s, div1, div2);
     let card_width = s.content_hbox.width();
     let card_height = s.content_hbox.height();
-    s.gloss_overlay.show_synopsis(&label, &synopsis, card_width, card_height);
+    let root_color = s.theme.root_color.clone();
+    s.gloss_overlay.show_synopsis(&label, &synopsis, Some(&root_color), card_width, card_height);
     s.synopsis_overlay_scene = (div1, div2);
 }
 

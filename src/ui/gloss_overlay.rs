@@ -817,7 +817,14 @@ impl GlossOverlay {
         });
     }
 
-    pub fn show_synopsis(&self, title: &str, synopsis: &str, card_width: i32, card_height: i32) {
+    pub fn show_synopsis(
+        &self,
+        title: &str,
+        synopsis: &str,
+        root_color: Option<&str>,
+        card_width: i32,
+        card_height: i32,
+    ) {
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         self.last_card_size.set((card_width, card_height));
@@ -871,7 +878,14 @@ impl GlossOverlay {
         self.apply_synopsis_label_bold();
         // Block cursor + left accent bar, exactly like the gloss overlay. Each
         // <p> paragraph (non-label) is one Explication cursor stop; j/k move the
-        // bar between them (see handle_synopsis_overlay_key).
+        // bar between them (see handle_synopsis_overlay_key). Match the gloss
+        // overlay's accent color (theme root_color) so the bar is the same
+        // saturated accent, not the pale constructor default.
+        if let Some(color) = root_color {
+            if let Some((r, g, b)) = parse_hex_color(color) {
+                *self.bar_color.borrow_mut() = (r, g, b);
+            }
+        }
         *self.bar_x.borrow_mut() = left;
         self.rebuild_block_ranges_from(synopsis_blocks(synopsis));
         self.mark_cursor_block();
