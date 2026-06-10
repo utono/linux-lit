@@ -1008,17 +1008,21 @@ pub(crate) fn gloss_block_voice(
 }
 
 /// Re-apply accent coloring to every block of the currently-open gloss OR
-/// synopsis overlay whose mp3 is cached. Detects mode from which context is set:
-/// a live `gloss_context` + non-empty `gloss_list` means gloss mode; otherwise
-/// fall through to synopsis mode keyed by `synopsis_overlay_scene`. UI-only side
+/// synopsis overlay whose mp3 is cached. Mode is taken from `s.input_mode`
+/// (the authoritative overlay discriminator) — NOT from `gloss_context`, which
+/// is never cleared and so lingers `Some` after a gloss is closed; keying mode
+/// off it would mis-route synopsis coloring into the gloss branch. UI-only side
 /// effect; DB errors degrade to "uncached" (no color). Call with `s` already
 /// borrowed (the display sites) — see `recolor_cached_blocks_rc` for the
 /// borrow-and-call wrapper used by async synth completions.
 pub(crate) fn recolor_cached_blocks(s: &AppState) {
-    // Gloss mode.
-    if let (Some(ctx), Some(gloss)) =
-        (s.gloss_context.as_ref(), s.gloss_list.get(s.gloss_index))
-    {
+    // Gloss mode: only when the gloss overlay is the active one.
+    if s.input_mode == crate::app::InputMode::GlossOverlay {
+        let (Some(ctx), Some(gloss)) =
+            (s.gloss_context.as_ref(), s.gloss_list.get(s.gloss_index))
+        else {
+            return;
+        };
         let gloss_id = gloss.gloss_id;
         let work_abbrev = ctx.work_abbrev.clone();
         let speaker = ctx.speaker.clone();
