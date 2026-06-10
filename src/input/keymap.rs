@@ -113,7 +113,7 @@ pub fn handle_key(
             crate::app::InputMode::VoicePicker => handle_voice_picker_key(state, key_name, is_ctrl),
             crate::app::InputMode::Search => handle_search_key(state, key_name),
             crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_alt, tokio_handle),
-            crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_name, is_ctrl),
+            crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_state, key_name, is_ctrl),
             crate::app::InputMode::TranslationOverlay => handle_translation_overlay_key(state, key_name),
             crate::app::InputMode::DeleteConfirm => handle_delete_confirm_key(state, key_name),
             crate::app::InputMode::EchoPicker => handle_echo_picker_key(state, key_name, tokio_handle),
@@ -964,6 +964,7 @@ fn overlay_nav(state: &Rc<RefCell<AppState>>, nav_fn: fn(&mut AppState)) {
 
 fn handle_synopsis_overlay_key(
     state: &Rc<RefCell<AppState>>,
+    key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
     is_ctrl: bool,
 ) -> bool {
@@ -973,6 +974,15 @@ fn handle_synopsis_overlay_key(
         let s = state.borrow();
         (s.gloss_overlay.ask_is_open(), s.gloss_overlay.ask_focus())
     };
+
+    // gg: jump to the first block.
+    if key_state.borrow().chord == ChordState::PendingG {
+        key_state.borrow_mut().chord = ChordState::None;
+        if key_name == "g" {
+            state.borrow().gloss_overlay.cursor_first_block();
+        }
+        return true;
+    }
 
     // ---- Keys that apply whether or not the ask card is open --------------
 
@@ -1069,11 +1079,19 @@ fn handle_synopsis_overlay_key(
             true
         }
         "j" => {
-            state.borrow().gloss_overlay.scroll_gloss(1);
+            state.borrow().gloss_overlay.cursor_next_block();
             true
         }
         "k" => {
-            state.borrow().gloss_overlay.scroll_gloss(-1);
+            state.borrow().gloss_overlay.cursor_prev_block();
+            true
+        }
+        "g" => {
+            KeyState::start_chord(key_state, ChordState::PendingG);
+            true
+        }
+        "G" => {
+            state.borrow().gloss_overlay.cursor_last_block();
             true
         }
         _ => true,
