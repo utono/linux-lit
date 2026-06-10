@@ -983,21 +983,6 @@ fn handle_synopsis_overlay_key(
         (s.gloss_overlay.ask_is_open(), s.gloss_overlay.ask_focus())
     };
 
-    // gg: jump to the first block.
-    if key_state.borrow().chord == ChordState::PendingG {
-        key_state.borrow_mut().chord = ChordState::None;
-        if key_name == "g" {
-            state.borrow().gloss_overlay.cursor_first_block();
-        }
-        return true;
-    }
-
-    // Shift+Space: batch-synthesize all synopsis paragraphs (cache-only).
-    if key_name == "space" && is_shift {
-        crate::input::actions::gloss::synth_all_synopsis_blocks(state);
-        return true;
-    }
-
     // ---- Keys that apply whether or not the ask card is open --------------
 
     // Tab toggles focus between the synopsis and ask cards (only meaningful
@@ -1034,6 +1019,21 @@ fn handle_synopsis_overlay_key(
     // are intercepted; everything else falls through to GTK so the field works.
     if ask_open && ask_focus == AskFocus::Ask {
         return false;
+    }
+
+    // gg: jump to the first block.
+    if key_state.borrow().chord == ChordState::PendingG {
+        key_state.borrow_mut().chord = ChordState::None;
+        if key_name == "g" {
+            state.borrow().gloss_overlay.cursor_first_block();
+        }
+        return true;
+    }
+
+    // Shift+Space: batch-synthesize all synopsis paragraphs (cache-only).
+    if key_name == "space" && is_shift {
+        crate::input::actions::gloss::synth_all_synopsis_blocks(state);
+        return true;
     }
 
     // ---- Synopsis-focused (or ask card closed) navigation -----------------

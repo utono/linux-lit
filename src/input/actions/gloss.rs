@@ -1265,7 +1265,6 @@ pub(crate) fn synth_all_synopsis_blocks(state_rc: &Rc<RefCell<AppState>>) {
     glib::spawn_future_local(async move {
         for (index, raw) in &blocks {
             if let Ok(conn) = crate::db::queries::open_db() {
-                let _ = crate::db::queries::ensure_synopsis_audio_table(&conn);
                 if let Ok(Some(path)) = crate::db::queries::find_synopsis_audio(
                     &conn, &work_abbrev, div1, div2, *index as i64, &voice_id,
                 ) {
