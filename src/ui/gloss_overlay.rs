@@ -892,7 +892,7 @@ impl GlossOverlay {
         self.bar_drawing.queue_draw();
 
         self.gloss_scroll_overlay.set_visible(true);
-        self.hint.set_text("Esc close · j/k block · n/p scene · ⇧Space synth · Ctrl+g glosses · A ask · U undo");
+        self.hint.set_text("Esc close · j/k block · Space play · n/p scene · ⇧Space synth · Ctrl+g glosses · A ask · U undo");
         self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);

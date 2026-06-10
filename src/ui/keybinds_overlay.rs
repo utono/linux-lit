@@ -492,10 +492,12 @@ that flag timestamps, chapters, bookmarks, and A/B points. \
 -> app::toggle_sign_column — src/app.rs",
         "synopsis" => "Show the synopsis overlay for the current scene. Inside \
 it, j/k move the cursor block (left accent bar) and gg/G jump first/last, like \
-the gloss overlay; Shift+Space batch-synthesizes every synopsis paragraph to \
+the gloss overlay; Space plays/stops the cursor paragraph's TTS (synthesizing \
+on a cache miss); Shift+Space batch-synthesizes every synopsis paragraph to \
 cached ElevenLabs MP3s (cache only, no playback), showing a \u{201c}Synthesizing\u{2026}\u{201d} \
 toast. -> app::show_synopsis_overlay — src/app.rs; \
-gloss::synth_all_synopsis_blocks — src/input/actions/gloss.rs (Ctrl+h toggles \
+gloss::read_current_synopsis_block, gloss::synth_all_synopsis_blocks \
+— src/input/actions/gloss.rs (Ctrl+h toggles \
 the side panel via app::toggle_synopsis).",
         "synopsis side" => "Toggle the persistent synopsis side panel (distinct \
 from h's transient synopsis overlay). -> app::toggle_synopsis — src/app.rs",
