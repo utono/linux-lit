@@ -335,8 +335,12 @@ is active. \
         "gloss tog" => "Show or hide the gloss overlay for the current passage. \
 A gloss is a saved AI commentary on a highlighted passage — either a \
 teacher-style Q&A note or an inner-monologue cross-reference. If a gloss is \
-already loaded it reopens that one without re-querying the database. \
--> gloss::toggle_overlay — src/input/actions/gloss.rs",
+already loaded it reopens that one without re-querying the database. Inside the \
+overlay, Shift+Space batch-synthesizes every prose (explication) block to \
+cached ElevenLabs MP3s (cache only, no playback), showing a \
+\u{201c}Synthesizing\u{2026}\u{201d} toast. \
+-> gloss::toggle_overlay — src/input/actions/gloss.rs; \
+gloss::synth_all_prose_blocks — src/input/actions/gloss.rs",
         "gloss pick" => "Open a fuzzy-filterable list of every passage in this \
 work that has a saved gloss (teacher-generic or inner-monologue). Each row \
 shows the speaker, the first source line, and the citation; confirming loads \
@@ -486,9 +490,13 @@ and play from there. -> timestamps::play_current_line — src/input/timestamps.r
         "toggle signs" => "Toggle the sign column — the left gutter dots/markers \
 that flag timestamps, chapters, bookmarks, and A/B points. \
 -> app::toggle_sign_column — src/app.rs",
-        "synopsis" => "Show the synopsis overlay for the current scene. \
--> app::show_synopsis_overlay — src/app.rs (Ctrl+h toggles the side panel via \
-app::toggle_synopsis).",
+        "synopsis" => "Show the synopsis overlay for the current scene. Inside \
+it, j/k move the cursor block (left accent bar) and gg/G jump first/last, like \
+the gloss overlay; Shift+Space batch-synthesizes every synopsis paragraph to \
+cached ElevenLabs MP3s (cache only, no playback), showing a \u{201c}Synthesizing\u{2026}\u{201d} \
+toast. -> app::show_synopsis_overlay — src/app.rs; \
+gloss::synth_all_synopsis_blocks — src/input/actions/gloss.rs (Ctrl+h toggles \
+the side panel via app::toggle_synopsis).",
         "synopsis side" => "Toggle the persistent synopsis side panel (distinct \
 from h's transient synopsis overlay). -> app::toggle_synopsis — src/app.rs",
         "col layout" => "Toggle between one-column and two-column (spread) page \
