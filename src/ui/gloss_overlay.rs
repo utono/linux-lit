@@ -824,8 +824,9 @@ impl GlossOverlay {
         self.title.set_halign(Align::Start);
         self.title.set_margin_start(left);
         // Reset the top margin in case `show_glossing` widened it (it shares this
-        // title widget); the synopsis card keeps the constructor default.
-        self.title.set_margin_top(24);
+        // title widget). The synopsis card gives the "Act N, Scene N" header
+        // extra breathing room above it.
+        self.title.set_margin_top(56);
         self.orig_header.set_visible(false);
         self.original_label.set_visible(false);
         self.corr_header.set_visible(false);
@@ -841,7 +842,10 @@ impl GlossOverlay {
 
         self.gloss_view.set_left_margin(left);
         self.gloss_view.set_right_margin(left);
-        self.gloss_view.set_top_margin(32);
+        // Tighten the gap between the title rule and the first synopsis line by
+        // ~one line (was 32) — the title's own margin/padding-bottom already
+        // supplies separation, so the prose can sit closer under the rule.
+        self.gloss_view.set_top_margin(8);
         self.gloss_view.set_pixels_below_lines(6);
         let buffer = self.gloss_view.buffer();
         let (text, label_ranges) = render_synopsis_with_labels(synopsis);
