@@ -853,7 +853,6 @@ impl GlossOverlay {
         *self.bar_ranges.borrow_mut() = Vec::new();
         *self.line_numbers.borrow_mut() = Vec::new();
         *self.echo_lines.borrow_mut() = Vec::new();
-        self.blocks.borrow_mut().clear();
 
         self.gloss_view.set_left_margin(left);
         self.gloss_view.set_right_margin(left);
@@ -870,10 +869,16 @@ impl GlossOverlay {
         // a regular-weight buffer-wide font tag that would otherwise win).
         *self.synopsis_label_ranges.borrow_mut() = label_ranges;
         self.apply_synopsis_label_bold();
+        // Block cursor + left accent bar, exactly like the gloss overlay. Each
+        // <p> paragraph (non-label) is one Explication cursor stop; j/k move the
+        // bar between them (see handle_synopsis_overlay_key).
+        *self.bar_x.borrow_mut() = left;
+        self.rebuild_block_ranges_from(synopsis_blocks(synopsis));
+        self.mark_cursor_block();
         self.bar_drawing.queue_draw();
 
         self.gloss_scroll_overlay.set_visible(true);
-        self.hint.set_text("Esc close · j/k scroll · n/p scene · Ctrl+g glosses · A ask · U undo");
+        self.hint.set_text("Esc close · j/k block · n/p scene · ⇧Space synth · Ctrl+g glosses · A ask · U undo");
         self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
@@ -1056,6 +1061,14 @@ impl GlossOverlay {
     /// source block extends to its last verse line.
     fn rebuild_block_ranges(&self, gloss: &str) {
         let blocks = gloss_blocks(gloss);
+        self.rebuild_block_ranges_from(blocks);
+    }
+
+    /// Map a pre-built block list to buffer-line spans (shared by the gloss path,
+    /// which builds blocks with `gloss_blocks`, and the synopsis path, which uses
+    /// `synopsis_blocks`). Matches each block's first `display` line against
+    /// buffer lines, stores `self.blocks`, resets the cursor to block 0.
+    fn rebuild_block_ranges_from(&self, blocks: Vec<GlossBlock>) {
         let buffer = self.gloss_view.buffer();
         let line_count = buffer.line_count();
         let mut ranges: Vec<BlockRange> = Vec::new();
