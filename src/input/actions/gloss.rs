@@ -1231,6 +1231,8 @@ fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32)
                 crate::log_fmt!("TTS: save_gloss_audio failed: {}", e);
             }
         }
+        // Block is now cached — recolor the open overlay so it shows the accent.
+        recolor_cached_blocks_rc(&state_for_result);
         // Playback begins now — dismiss the persistent "Synthesizing…" pill.
         hide_tts_toast(&state_for_result);
         state_for_result.borrow().tts.play_file(&path);
@@ -1323,6 +1325,8 @@ pub(crate) fn synth_all_prose_blocks(state_rc: &Rc<RefCell<AppState>>) {
                     &path.to_string_lossy(), &voice_id, &model_id,
                 );
             }
+            // This block is now cached — color it in the open overlay now.
+            recolor_cached_blocks_rc(&state_for_result);
         }
         hide_tts_toast(&state_for_result);
         state_for_result.borrow().tts_batch_running.set(false);
@@ -1405,6 +1409,8 @@ pub(crate) fn synth_all_synopsis_blocks(state_rc: &Rc<RefCell<AppState>>) {
                     &path.to_string_lossy(), &voice_id, &model_id,
                 );
             }
+            // This paragraph is now cached — color it in the open overlay now.
+            recolor_cached_blocks_rc(&state_for_result);
         }
         hide_tts_toast(&state_for_result);
         state_for_result.borrow().tts_batch_running.set(false);
@@ -1538,6 +1544,8 @@ fn play_synopsis_block(state_rc: &Rc<RefCell<AppState>>, index: i32) {
                 &used_model,
             );
         }
+        // Paragraph is now cached — recolor the open overlay so it shows the accent.
+        recolor_cached_blocks_rc(&state_for_result);
         // Playback begins now — dismiss the persistent "Synthesizing…" pill.
         hide_tts_toast(&state_for_result);
         state_for_result.borrow().tts.play_file(&path);
