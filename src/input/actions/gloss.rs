@@ -1001,6 +1001,83 @@ pub(crate) fn gloss_block_voice(
     }
 }
 
+/// Re-apply accent coloring to every block of the currently-open gloss OR
+/// synopsis overlay whose mp3 is cached. Detects mode from which context is set:
+/// a live `gloss_context` + non-empty `gloss_list` means gloss mode; otherwise
+/// fall through to synopsis mode keyed by `synopsis_overlay_scene`. UI-only side
+/// effect; DB errors degrade to "uncached" (no color). Call with `s` already
+/// borrowed (the display sites) — see `recolor_cached_blocks_rc` for the
+/// borrow-and-call wrapper used by async synth completions.
+pub(crate) fn recolor_cached_blocks(s: &AppState) {
+    // Gloss mode.
+    if let (Some(ctx), Some(gloss)) =
+        (s.gloss_context.as_ref(), s.gloss_list.get(s.gloss_index))
+    {
+        let gloss_id = gloss.gloss_id;
+        let work_abbrev = ctx.work_abbrev.clone();
+        let speaker = ctx.speaker.clone();
+        let active = s.gloss_active_voice;
+        let conn = match crate::db::queries::open_db() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        s.gloss_overlay.color_audio_blocks(move |kind, index| {
+            let kind_str = match kind {
+                BlockKind::Source => "source",
+                BlockKind::Explication => "explication",
+            };
+            let (vid, _mid) =
+                gloss_block_voice(&conn, gloss_id, &work_abbrev, &speaker, *kind, active);
+            for vid_try in [vid.as_str(), crate::elevenlabs::ALICE_VOICE_ID] {
+                if let Ok(Some(path)) = crate::db::queries::find_gloss_audio(
+                    &conn, gloss_id, kind_str, index as i64, vid_try,
+                ) {
+                    if std::path::Path::new(&path).exists() {
+                        return true;
+                    }
+                }
+            }
+            false
+        });
+        return;
+    }
+
+    // Synopsis mode. Key by the work's plain abbrev — matching
+    // `play_synopsis_block` / `synth_all_synopsis_blocks`, which write/read
+    // synopsis audio under `w.abbrev` (NOT base-normalized) — so the existence
+    // check finds the same files those synth paths wrote.
+    let (div1, div2) = s.synopsis_overlay_scene;
+    let work_abbrev = match s.current_work.as_ref() {
+        Some(w) => w.abbrev.clone(),
+        None => return,
+    };
+    let (voice_id, _mid) =
+        crate::elevenlabs::voice_for(crate::elevenlabs::Gender::Unknown, false);
+    let voice_id = voice_id.to_string();
+    let conn = match crate::db::queries::open_db() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    s.gloss_overlay.color_audio_blocks(move |_kind, index| {
+        for vid_try in [voice_id.as_str(), crate::elevenlabs::ALICE_VOICE_ID] {
+            if let Ok(Some(path)) = crate::db::queries::find_synopsis_audio(
+                &conn, &work_abbrev, div1, div2, index as i64, vid_try,
+            ) {
+                if std::path::Path::new(&path).exists() {
+                    return true;
+                }
+            }
+        }
+        false
+    });
+}
+
+/// Borrow `state` and recolor. For async synth-completion sites that hold an
+/// `Rc<RefCell<AppState>>` and must not already hold a borrow.
+pub(crate) fn recolor_cached_blocks_rc(state: &Rc<RefCell<AppState>>) {
+    recolor_cached_blocks(&state.borrow());
+}
+
 fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32) {
     let kind_str = match kind {
         BlockKind::Source => "source",
