@@ -1108,6 +1108,12 @@ fn handle_synopsis_overlay_key(
             state.borrow().gloss_overlay.cursor_last_block();
             true
         }
+        // Plain Space: play/stop the cursor paragraph's TTS (Shift+Space, the
+        // batch-synth, is handled by the guard above before this match).
+        "space" => {
+            crate::input::actions::gloss::read_current_synopsis_block(state);
+            true
+        }
         _ => true,
     }
 }

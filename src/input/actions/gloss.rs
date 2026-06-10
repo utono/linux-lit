@@ -1312,6 +1312,165 @@ pub(crate) fn synth_all_synopsis_blocks(state_rc: &Rc<RefCell<AppState>>) {
     });
 }
 
+/// Play the synopsis cursor paragraph's TTS: cache hit -> play the stored MP3;
+/// miss -> synthesize via ElevenLabs (async), cache under `synopsis_audio`, and
+/// play. Mirrors `play_block_tts` but for synopsis paragraphs (which have no
+/// source media). Shares the EXACT cache path/key with
+/// `synth_all_synopsis_blocks` so a Space-synth and a Shift+Space-batch reuse the
+/// same MP3 files and DB rows. Does NOT touch `tts_batch_running` (batch-only).
+fn play_synopsis_block(state_rc: &Rc<RefCell<AppState>>, index: i32) {
+    let (work_abbrev, div1, div2, text, voice_id, model_id, tokio_handle) = {
+        let s = state_rc.borrow();
+        let (div1, div2) = s.synopsis_overlay_scene;
+        let synopsis = match s.synopsis_cache.get(&(div1, div2)) {
+            Some(t) => t.clone(),
+            None => return,
+        };
+        let work_abbrev = match s.current_work.as_ref() {
+            Some(w) => w.abbrev.clone(),
+            None => return,
+        };
+        let text = match crate::ui::gloss_overlay::synopsis_blocks(&synopsis)
+            .into_iter()
+            .find(|b| b.index == index)
+        {
+            Some(b) => b.text,
+            None => return,
+        };
+        let (vid, mid) = crate::elevenlabs::voice_for(crate::elevenlabs::Gender::Unknown, false);
+        (
+            work_abbrev,
+            div1,
+            div2,
+            text,
+            vid.to_string(),
+            mid.to_string(),
+            s.tokio_handle.clone(),
+        )
+    };
+
+    // Cache hit? Try the selected voice first; then the Alice fallback voice
+    // (a paragraph whose preferred voice 402'd was cached under Alice — without
+    // this second lookup it would re-synthesize and re-hit the paywall).
+    if let Ok(conn) = crate::db::queries::open_db() {
+        for vid_try in [voice_id.as_str(), crate::elevenlabs::ALICE_VOICE_ID] {
+            if let Ok(Some(path)) = crate::db::queries::find_synopsis_audio(
+                &conn,
+                &work_abbrev,
+                div1,
+                div2,
+                index as i64,
+                vid_try,
+            ) {
+                if std::path::Path::new(&path).exists() {
+                    state_rc.borrow().tts.play_file(std::path::Path::new(&path));
+                    return;
+                }
+            }
+        }
+    }
+
+    // TTS form: rewrite `word /IPA/` pairs to just `/IPA/` (no-op on synopsis
+    // text, which carries no IPA, but applied for consistency with other paths).
+    let tts_text = crate::ui::gloss_overlay::ipa_for_tts(&text);
+
+    // Miss: synthesize asynchronously. Keep the pill up until playback begins.
+    show_persistent_tts_toast(state_rc, "Synthesizing\u{2026}");
+    let state_for_result = Rc::clone(state_rc);
+    glib::spawn_future_local(async move {
+        // Try the preferred voice; on `paid_plan_required` fall back to Alice.
+        let result = synth_via(&tokio_handle, &tts_text, &voice_id, &model_id).await;
+        let (bytes, used_voice, used_model) = match result {
+            Ok(bytes) => (bytes, voice_id.clone(), model_id.clone()),
+            Err(crate::elevenlabs::ElevenLabsError::PaidPlanRequired)
+                if voice_id != crate::elevenlabs::ALICE_VOICE_ID =>
+            {
+                crate::log_fmt!(
+                    "SYNOPSIS TTS: voice {} needs a paid plan — falling back to Alice",
+                    voice_id
+                );
+                show_tts_toast(&state_for_result, "Voice needs a paid plan — using Alice");
+                let alice_voice = crate::elevenlabs::ALICE_VOICE_ID.to_string();
+                let alice_model = crate::elevenlabs::ALICE_MODEL_ID.to_string();
+                match synth_via(&tokio_handle, &tts_text, &alice_voice, &alice_model).await {
+                    Ok(bytes) => (bytes, alice_voice, alice_model),
+                    Err(e) => {
+                        crate::log_fmt!("SYNOPSIS TTS: Alice fallback failed: {}", e);
+                        show_tts_toast(&state_for_result, &e.to_string());
+                        return;
+                    }
+                }
+            }
+            Err(e) => {
+                crate::log_fmt!("SYNOPSIS TTS: synth error: {}", e);
+                show_tts_toast(&state_for_result, &e.to_string());
+                return;
+            }
+        };
+
+        // Persist the bytes and play, caching under the voice that actually
+        // produced them (Alice on a fallback, not the rejected preferred voice).
+        // The filename tag uses `used_voice` so the row's voice_id and the
+        // filename stem agree — exactly as `play_block_tts` does.
+        let used_tag: String = used_voice.chars().take(12).collect();
+        let dir = synopsis_audio_dir(&work_abbrev, div1, div2);
+        let path = dir.join(format!("{}-{}.mp3", index, used_tag));
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            crate::log_fmt!("SYNOPSIS TTS: mkdir {} failed: {}", dir.display(), e);
+            show_tts_toast(&state_for_result, "Could not save audio");
+            return;
+        }
+        if let Err(e) = std::fs::write(&path, &bytes) {
+            crate::log_fmt!("SYNOPSIS TTS: write {} failed: {}", path.display(), e);
+            show_tts_toast(&state_for_result, "Could not save audio");
+            return;
+        }
+        if let Ok(conn) = crate::db::queries::open_db_rw() {
+            let _ = crate::db::queries::ensure_synopsis_audio_table(&conn);
+            let _ = crate::db::queries::save_synopsis_audio(
+                &conn,
+                &work_abbrev,
+                div1,
+                div2,
+                index as i64,
+                &path.to_string_lossy(),
+                &used_voice,
+                &used_model,
+            );
+        }
+        // Playback begins now — dismiss the persistent "Synthesizing…" pill.
+        hide_tts_toast(&state_for_result);
+        state_for_result.borrow().tts.play_file(&path);
+        crate::log_fmt!(
+            "SYNOPSIS TTS: synthesized {} {}-{} para {} (voice {})",
+            work_abbrev,
+            div1,
+            div2,
+            index,
+            used_voice
+        );
+    });
+}
+
+/// Spacebar in the synopsis overlay: if TTS is playing, stop it; otherwise play
+/// the cursor paragraph's TTS (cache hit plays the stored MP3, miss synthesizes
+/// then plays). The synopsis overlay's blocks are all Explication paragraphs with
+/// no source media, so there is no media-toggle branch — purely TTS play/stop.
+pub(crate) fn read_current_synopsis_block(state_rc: &Rc<RefCell<AppState>>) {
+    {
+        let s = state_rc.borrow();
+        if s.tts.is_playing() {
+            s.tts.stop();
+            return;
+        }
+    }
+    let index = match state_rc.borrow().gloss_overlay.current_block() {
+        Some((_kind, index)) => index,
+        None => return,
+    };
+    play_synopsis_block(state_rc, index);
+}
+
 /// Play a Source block's synthesized (ElevenLabs) MP3 in the gloss's active /
 /// default voice, FIRST pausing the MPV recording so the two audio streams do
 /// not overlap. Cache hit -> play the stored MP3; miss -> synthesize then play
