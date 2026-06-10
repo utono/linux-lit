@@ -1230,6 +1230,89 @@ pub(crate) fn synth_all_prose_blocks(state_rc: &Rc<RefCell<AppState>>) {
     });
 }
 
+/// Shift+Space (synopsis overlay): synthesize ALL synopsis paragraphs of the
+/// open scene to cached MP3s in the fixed plain-prose voice. Cache-only.
+/// Persistent toast; stop on first error. Re-entrant-safe via tts_batch_running.
+pub(crate) fn synth_all_synopsis_blocks(state_rc: &Rc<RefCell<AppState>>) {
+    if state_rc.borrow().tts_batch_running.get() {
+        return;
+    }
+    let (work_abbrev, div1, div2, blocks, voice_id, model_id, tokio_handle) = {
+        let s = state_rc.borrow();
+        let (div1, div2) = s.synopsis_overlay_scene;
+        let synopsis = match s.synopsis_cache.get(&(div1, div2)) {
+            Some(t) => t.clone(),
+            None => return,
+        };
+        let work_abbrev = match s.current_work.as_ref() {
+            Some(w) => w.abbrev.clone(),
+            None => return,
+        };
+        let prose: Vec<(i32, String)> = crate::ui::gloss_overlay::synopsis_blocks(&synopsis)
+            .into_iter()
+            .map(|b| (b.index, b.text))
+            .collect();
+        if prose.is_empty() {
+            return;
+        }
+        let (vid, mid) = crate::elevenlabs::voice_for(crate::elevenlabs::Gender::Unknown, false);
+        (work_abbrev, div1, div2, prose, vid.to_string(), mid.to_string(), s.tokio_handle.clone())
+    };
+
+    state_rc.borrow().tts_batch_running.set(true);
+    show_persistent_tts_toast(state_rc, "Synthesizing\u{2026}");
+    let state_for_result = Rc::clone(state_rc);
+    glib::spawn_future_local(async move {
+        for (index, raw) in &blocks {
+            if let Ok(conn) = crate::db::queries::open_db() {
+                let _ = crate::db::queries::ensure_synopsis_audio_table(&conn);
+                if let Ok(Some(path)) = crate::db::queries::find_synopsis_audio(
+                    &conn, &work_abbrev, div1, div2, *index as i64, &voice_id,
+                ) {
+                    if std::path::Path::new(&path).exists() {
+                        continue;
+                    }
+                }
+            }
+            let tts_text = crate::ui::gloss_overlay::ipa_for_tts(raw);
+            let bytes = match synth_via(&tokio_handle, &tts_text, &voice_id, &model_id).await {
+                Ok(b) => b,
+                Err(e) => {
+                    crate::log_fmt!("BATCH: synopsis synth error at para {}: {}", index, e);
+                    show_tts_toast(&state_for_result, &format!("Synthesis failed: {}", e));
+                    state_for_result.borrow().tts_batch_running.set(false);
+                    return;
+                }
+            };
+            let dir = synopsis_audio_dir(&work_abbrev, div1, div2);
+            let voice_tag: String = voice_id.chars().take(12).collect();
+            let path = dir.join(format!("{}-{}.mp3", index, voice_tag));
+            if let Err(e) = std::fs::create_dir_all(&dir) {
+                crate::log_fmt!("BATCH: mkdir {} failed: {}", dir.display(), e);
+                show_tts_toast(&state_for_result, "Could not save audio");
+                state_for_result.borrow().tts_batch_running.set(false);
+                return;
+            }
+            if let Err(e) = std::fs::write(&path, &bytes) {
+                crate::log_fmt!("BATCH: write {} failed: {}", path.display(), e);
+                show_tts_toast(&state_for_result, "Could not save audio");
+                state_for_result.borrow().tts_batch_running.set(false);
+                return;
+            }
+            if let Ok(conn) = crate::db::queries::open_db_rw() {
+                let _ = crate::db::queries::ensure_synopsis_audio_table(&conn);
+                let _ = crate::db::queries::save_synopsis_audio(
+                    &conn, &work_abbrev, div1, div2, *index as i64,
+                    &path.to_string_lossy(), &voice_id, &model_id,
+                );
+            }
+        }
+        hide_tts_toast(&state_for_result);
+        state_for_result.borrow().tts_batch_running.set(false);
+        crate::log_fmt!("BATCH: synthesized {} synopsis paragraphs", blocks.len());
+    });
+}
+
 /// Play a Source block's synthesized (ElevenLabs) MP3 in the gloss's active /
 /// default voice, FIRST pausing the MPV recording so the two audio streams do
 /// not overlap. Cache hit -> play the stored MP3; miss -> synthesize then play
@@ -1358,6 +1441,16 @@ fn gloss_audio_dir(work_abbrev: &str, gloss_id: i64) -> std::path::PathBuf {
         .join("glosses")
         .join(work_abbrev)
         .join(gloss_id.to_string())
+}
+
+/// `~/Music/synopses/<work-abbrev>/<div1>-<div2>/`
+fn synopsis_audio_dir(work_abbrev: &str, div1: i64, div2: i64) -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    std::path::PathBuf::from(home)
+        .join("Music")
+        .join("synopses")
+        .join(work_abbrev)
+        .join(format!("{}-{}", div1, div2))
 }
 
 /// Toast helper exposed for the voice-picker confirm path (settings.rs) to
