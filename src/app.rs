@@ -4950,6 +4950,7 @@ pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) 
     drop(s);
     let mut s = state.borrow_mut();
     s.synopsis_overlay_scene = (div1, div2);
+    crate::input::actions::gloss::recolor_cached_blocks(&s);
     s.input_mode = InputMode::SynopsisOverlay;
 }
 
@@ -5155,6 +5156,7 @@ pub fn cycle_synopsis(state: &std::rc::Rc<std::cell::RefCell<AppState>>, delta: 
     let root_color = s.theme.root_color.clone();
     s.gloss_overlay.show_synopsis(&label, &synopsis, Some(&root_color), card_width, card_height);
     s.synopsis_overlay_scene = (div1, div2);
+    crate::input::actions::gloss::recolor_cached_blocks(&s);
 }
 
 /// Load vocab data for all words on the current line into state, show popup with first word.
