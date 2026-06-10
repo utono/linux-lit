@@ -517,6 +517,58 @@ impl GlossOverlay {
         }
     }
 
+    /// Color every block whose `is_cached(kind, index)` returns true with the
+    /// stored accent color (`bar_color`, = theme root_color). Idempotent;
+    /// re-tagging an already-colored block is harmless. Call AFTER `apply_font`
+    /// with `self.blocks` already populated (every `show_*` path does both).
+    /// The injected `is_cached` predicate must NOT borrow the overlay's own
+    /// block/`bar_color` state (it runs while `self.blocks` is borrowed), as a
+    /// re-entrant borrow would panic.
+    pub fn color_audio_blocks(&self, is_cached: impl Fn(&BlockKind, i32) -> bool) {
+        let buffer = self.gloss_view.buffer();
+        let table = buffer.tag_table();
+        let (r, g, b) = *self.bar_color.borrow();
+        let rgba = format!(
+            "#{:02x}{:02x}{:02x}",
+            (r * 255.0).round() as u8,
+            (g * 255.0).round() as u8,
+            (b * 255.0).round() as u8,
+        );
+        let tag = match table.lookup("gloss-audio-cached") {
+            Some(t) => {
+                t.set_foreground(Some(&rgba));
+                t
+            }
+            None => {
+                let t = gtk4::TextTag::builder()
+                    .name("gloss-audio-cached")
+                    .foreground(&rgba)
+                    .build();
+                table.add(&t);
+                t
+            }
+        };
+        // Outrank the buffer-wide `gloss-font` tag (added last on first show).
+        let size = table.size();
+        if size > 0 {
+            tag.set_priority(size - 1);
+        }
+        let line_count = buffer.line_count();
+        for blk in self.blocks.borrow().iter() {
+            if !is_cached(&blk.kind, blk.index) {
+                continue;
+            }
+            let start = buffer
+                .iter_at_line(blk.start_line)
+                .unwrap_or_else(|| buffer.start_iter());
+            let end_line = (blk.end_line + 1).min(line_count);
+            let end = buffer
+                .iter_at_line(end_line)
+                .unwrap_or_else(|| buffer.end_iter());
+            buffer.apply_tag(&tag, &start, &end);
+        }
+    }
+
     pub fn attach(&self, child: &impl IsA<gtk4::Widget>) {
         self.overlay.set_child(Some(child));
         self.overlay.add_overlay(&self.scrim);

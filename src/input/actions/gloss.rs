@@ -151,6 +151,7 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
     s.gloss_index = 0;
     s.gloss_active_voice = 0;
     s.gloss_context = Some(ctx);
+    recolor_cached_blocks(&s);
 }
 
 pub(crate) fn navigate_gloss(state: &Rc<RefCell<AppState>>, delta: i32) {
@@ -175,6 +176,7 @@ pub(crate) fn navigate_gloss(state: &Rc<RefCell<AppState>>, delta: i32) {
         Some(&s.theme.root_color), &pairs,
     );
     s.gloss_overlay.set_position(new_idx, s.gloss_list.len());
+    recolor_cached_blocks(&s);
 }
 
 pub(crate) fn copy_gloss_id(state: &Rc<RefCell<AppState>>) {
@@ -247,6 +249,7 @@ pub(crate) fn delete_current_gloss(state_rc: &Rc<RefCell<AppState>>) {
                 Some(&s.theme.root_color), &pairs,
             );
             s.gloss_overlay.set_position(new_idx, s.gloss_list.len());
+            recolor_cached_blocks(&s);
         }
     }
     // Phase 2: verification pill (borrow released above). Shown whether or not
@@ -577,6 +580,7 @@ fn apply_ipa_fix(
             );
             s.gloss_overlay
                 .set_position(gloss_index_pos, s.gloss_list.len());
+            recolor_cached_blocks(&s);
         }
     }
     crate::log_fmt!(
@@ -728,6 +732,7 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
                 s.gloss_list = all;
                 s.gloss_index = 0;
                 s.gloss_active_voice = 0;
+                recolor_cached_blocks(&s);
                 crate::logging::log(&format!("GLOSS: added new {} gloss", gloss_type_owned));
             }
             Ok(Err(e)) => {
@@ -825,6 +830,7 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
                 s.gloss_list = all;
                 s.gloss_index = 0;
                 s.gloss_active_voice = 0;
+                recolor_cached_blocks(&s);
                 crate::logging::log(&format!("GLOSS: edited {} gloss (added new)", gloss_type_owned));
             }
             Ok(Err(e)) => {
@@ -978,6 +984,110 @@ pub(crate) fn cycle_active_voice(state_rc: &Rc<RefCell<AppState>>) {
 /// synthesize via ElevenLabs (async), cache it, and play. `kind`/`index`
 /// identify the block; the filename stem is `<index>` (explication) or
 /// `source-<index>` (source).
+/// Resolve the (voice_id, model_id) a gloss block plays in: the active per-gloss
+/// override voice if the gloss has associated voices (clamped to
+/// `active_voice`), else the age-aware default by kind (verse->OP, prose->plain).
+/// Shared by `play_block_tts` and the cached-audio recolor check so both look at
+/// the same mp3. Mirrors the inline logic at the former call site.
+pub(crate) fn gloss_block_voice(
+    conn: &rusqlite::Connection,
+    gloss_id: i64,
+    work_abbrev: &str,
+    speaker: &str,
+    kind: BlockKind,
+    active_voice: usize,
+) -> (String, String) {
+    let is_verse = kind == BlockKind::Source;
+    let voices = crate::db::queries::get_gloss_voices(conn, gloss_id);
+    if !voices.is_empty() {
+        let i = active_voice.min(voices.len() - 1);
+        (voices[i].0.clone(), voices[i].1.clone())
+    } else {
+        crate::db::queries::resolve_default_voice(conn, work_abbrev, speaker, is_verse)
+    }
+}
+
+/// Re-apply accent coloring to every block of the currently-open gloss OR
+/// synopsis overlay whose mp3 is cached. Mode is taken from `s.input_mode`
+/// (the authoritative overlay discriminator) — NOT from `gloss_context`, which
+/// is never cleared and so lingers `Some` after a gloss is closed; keying mode
+/// off it would mis-route synopsis coloring into the gloss branch. UI-only side
+/// effect; DB errors degrade to "uncached" (no color). Call with `s` already
+/// borrowed (the display sites) — see `recolor_cached_blocks_rc` for the
+/// borrow-and-call wrapper used by async synth completions.
+pub(crate) fn recolor_cached_blocks(s: &AppState) {
+    // Gloss mode: only when the gloss overlay is the active one.
+    if s.input_mode == crate::app::InputMode::GlossOverlay {
+        let (Some(ctx), Some(gloss)) =
+            (s.gloss_context.as_ref(), s.gloss_list.get(s.gloss_index))
+        else {
+            return;
+        };
+        let gloss_id = gloss.gloss_id;
+        let work_abbrev = ctx.work_abbrev.clone();
+        let speaker = ctx.speaker.clone();
+        let active = s.gloss_active_voice;
+        let conn = match crate::db::queries::open_db() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        s.gloss_overlay.color_audio_blocks(move |kind, index| {
+            let kind_str = match kind {
+                BlockKind::Source => "source",
+                BlockKind::Explication => "explication",
+            };
+            let (vid, _mid) =
+                gloss_block_voice(&conn, gloss_id, &work_abbrev, &speaker, *kind, active);
+            for vid_try in [vid.as_str(), crate::elevenlabs::ALICE_VOICE_ID] {
+                if let Ok(Some(path)) = crate::db::queries::find_gloss_audio(
+                    &conn, gloss_id, kind_str, index as i64, vid_try,
+                ) {
+                    if std::path::Path::new(&path).exists() {
+                        return true;
+                    }
+                }
+            }
+            false
+        });
+        return;
+    }
+
+    // Synopsis mode. Key by the work's plain abbrev — matching
+    // `play_synopsis_block` / `synth_all_synopsis_blocks`, which write/read
+    // synopsis audio under `w.abbrev` (NOT base-normalized) — so the existence
+    // check finds the same files those synth paths wrote.
+    let (div1, div2) = s.synopsis_overlay_scene;
+    let work_abbrev = match s.current_work.as_ref() {
+        Some(w) => w.abbrev.clone(),
+        None => return,
+    };
+    let (voice_id, _mid) =
+        crate::elevenlabs::voice_for(crate::elevenlabs::Gender::Unknown, false);
+    let voice_id = voice_id.to_string();
+    let conn = match crate::db::queries::open_db() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    s.gloss_overlay.color_audio_blocks(move |_kind, index| {
+        for vid_try in [voice_id.as_str(), crate::elevenlabs::ALICE_VOICE_ID] {
+            if let Ok(Some(path)) = crate::db::queries::find_synopsis_audio(
+                &conn, &work_abbrev, div1, div2, index as i64, vid_try,
+            ) {
+                if std::path::Path::new(&path).exists() {
+                    return true;
+                }
+            }
+        }
+        false
+    });
+}
+
+/// Borrow `state` and recolor. For async synth-completion sites that hold an
+/// `Rc<RefCell<AppState>>` and must not already hold a borrow.
+pub(crate) fn recolor_cached_blocks_rc(state: &Rc<RefCell<AppState>>) {
+    recolor_cached_blocks(&state.borrow());
+}
+
 fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32) {
     let kind_str = match kind {
         BlockKind::Source => "source",
@@ -1004,19 +1114,9 @@ fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32)
         // active one (gloss_active_voice index, clamped). Else fall back to the
         // age-aware character default (verse->OP, prose->plain).
         let (vid, mid): (String, String) = match crate::db::queries::open_db() {
-            Ok(conn) => {
-                let voices = crate::db::queries::get_gloss_voices(&conn, gloss_id);
-                if !voices.is_empty() {
-                    let i = s.gloss_active_voice.min(voices.len() - 1);
-                    (voices[i].0.clone(), voices[i].1.clone())
-                } else {
-                    // No associated voices → age-aware default voice by
-                    // (gender, age) from the voice_catalog (verse/prose by kind).
-                    crate::db::queries::resolve_default_voice(
-                        &conn, &work_abbrev, &speaker, is_verse,
-                    )
-                }
-            }
+            Ok(conn) => gloss_block_voice(
+                &conn, gloss_id, &work_abbrev, &speaker, kind, s.gloss_active_voice,
+            ),
             Err(_) => {
                 let (v, m) =
                     crate::elevenlabs::voice_for(crate::elevenlabs::Gender::Unknown, is_verse);
@@ -1131,6 +1231,8 @@ fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32)
                 crate::log_fmt!("TTS: save_gloss_audio failed: {}", e);
             }
         }
+        // Block is now cached — recolor the open overlay so it shows the accent.
+        recolor_cached_blocks_rc(&state_for_result);
         // Playback begins now — dismiss the persistent "Synthesizing…" pill.
         hide_tts_toast(&state_for_result);
         state_for_result.borrow().tts.play_file(&path);
@@ -1173,7 +1275,16 @@ pub(crate) fn synth_all_prose_blocks(state_rc: &Rc<RefCell<AppState>>) {
         if prose.is_empty() {
             return;
         }
-        let (vid, mid) = crate::elevenlabs::voice_for(crate::elevenlabs::Gender::Unknown, false);
+        // Explication prose is always read by Beatrice (see resolve_default_voice:
+        // "All prose is read by Beatrice"). Single-block synth resolves the same
+        // voice via gloss_block_voice, and the cached-audio recolor check looks
+        // under Beatrice — so the batch MUST cache under Beatrice too, or its
+        // mp3s land under a different voice id and neither playback-cache-hit nor
+        // the recolor existence check will find them.
+        let (vid, mid) = (
+            crate::elevenlabs::BEATRICE_VOICE_ID,
+            crate::elevenlabs::OP_MODEL_ID,
+        );
         (gloss_id, work_abbrev, prose, vid.to_string(), mid.to_string(), s.tokio_handle.clone())
     };
 
@@ -1223,6 +1334,8 @@ pub(crate) fn synth_all_prose_blocks(state_rc: &Rc<RefCell<AppState>>) {
                     &path.to_string_lossy(), &voice_id, &model_id,
                 );
             }
+            // This block is now cached — color it in the open overlay now.
+            recolor_cached_blocks_rc(&state_for_result);
         }
         hide_tts_toast(&state_for_result);
         state_for_result.borrow().tts_batch_running.set(false);
@@ -1305,6 +1418,8 @@ pub(crate) fn synth_all_synopsis_blocks(state_rc: &Rc<RefCell<AppState>>) {
                     &path.to_string_lossy(), &voice_id, &model_id,
                 );
             }
+            // This paragraph is now cached — color it in the open overlay now.
+            recolor_cached_blocks_rc(&state_for_result);
         }
         hide_tts_toast(&state_for_result);
         state_for_result.borrow().tts_batch_running.set(false);
@@ -1438,6 +1553,8 @@ fn play_synopsis_block(state_rc: &Rc<RefCell<AppState>>, index: i32) {
                 &used_model,
             );
         }
+        // Paragraph is now cached — recolor the open overlay so it shows the accent.
+        recolor_cached_blocks_rc(&state_for_result);
         // Playback begins now — dismiss the persistent "Synthesizing…" pill.
         hide_tts_toast(&state_for_result);
         state_for_result.borrow().tts.play_file(&path);
@@ -1785,10 +1902,14 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
     s.gloss_index = 0;
     s.gloss_active_voice = 0;
     s.gloss_context = Some(ctx);
+    // Set GlossOverlay mode BEFORE recolor: recolor_cached_blocks selects the
+    // gloss vs synopsis branch off input_mode, so the just-opened gloss must
+    // already be in GlossOverlay or its blocks won't get colored on first open.
+    s.input_mode = crate::app::InputMode::GlossOverlay;
+    recolor_cached_blocks(&s);
     // Opened from the reader cursor, not the picker, so Escape uses the
     // saved reader page (gloss_return_pos), not the picker return path.
     s.gloss_opened_from_picker = false;
-    s.input_mode = crate::app::InputMode::GlossOverlay;
 }
 
 /// Close the stacked gloss add/edit input card and return focus to the gloss.

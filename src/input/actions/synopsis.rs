@@ -122,6 +122,8 @@ pub(crate) fn amend_synopsis(state_rc: &Rc<RefCell<AppState>>, question: &str) {
                 let h = s.content_hbox.height();
                 let root_color = s.theme.root_color.clone();
                 s.gloss_overlay.show_synopsis(&label, &revised, Some(&root_color), cw, h);
+                s.synopsis_overlay_scene = (div1, div2);
+                crate::input::actions::gloss::recolor_cached_blocks(&s);
                 s.input_mode = crate::app::InputMode::SynopsisOverlay;
                 crate::logging::log(&format!(
                     "SYNOPSIS: amended {} ({},{})",
@@ -135,6 +137,8 @@ pub(crate) fn amend_synopsis(state_rc: &Rc<RefCell<AppState>>, question: &str) {
                 let root_color = s.theme.root_color.clone();
                 s.gloss_overlay
                     .show_synopsis(&label, &format!("Error: {}", e), Some(&root_color), cw, h);
+                s.synopsis_overlay_scene = (div1, div2);
+                crate::input::actions::gloss::recolor_cached_blocks(&s);
                 s.input_mode = crate::app::InputMode::SynopsisOverlay;
                 crate::logging::log(&format!("SYNOPSIS: amend error: {}", e));
             }
@@ -188,6 +192,8 @@ pub(crate) fn undo_amend(state_rc: &Rc<RefCell<AppState>>) {
     let label = crate::app::synopsis_label(&s, div1, div2);
     let root_color = s.theme.root_color.clone();
     s.gloss_overlay.show_synopsis(&label, &original, Some(&root_color), cw, h);
+    s.synopsis_overlay_scene = (div1, div2);
+    crate::input::actions::gloss::recolor_cached_blocks(&s);
     crate::logging::log(&format!("SYNOPSIS: undid amend ({},{})", div1, div2));
 }
 
