@@ -245,6 +245,9 @@ pub struct AppState {
     pub gamepad_overlay: crate::ui::gamepad_overlay::GamepadOverlay,
     pub gloss_overlay: crate::ui::gloss_overlay::GlossOverlay,
     pub tts: crate::tts::TtsPlayer,
+    /// True while a Shift+Space batch synthesis is running, so a second press is
+    /// a no-op rather than launching a concurrent batch.
+    pub tts_batch_running: std::cell::Cell<bool>,
     pub translation_overlay: crate::ui::translation_overlay::TranslationOverlay,
     pub gloss_original_text: Option<String>,
     pub gloss_list: Vec<crate::db::queries::SavedGloss>,
@@ -1725,6 +1728,7 @@ pub fn build_window(
         active_attribution_set_id: None,
         authorship_picker,
         input_mode: InputMode::Reader,
+        tts_batch_running: std::cell::Cell::new(false),
     }));
 
     // Suppress startup flicker: vbox is hidden (opacity 0) until layout has

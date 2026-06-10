@@ -853,7 +853,6 @@ impl GlossOverlay {
         *self.bar_ranges.borrow_mut() = Vec::new();
         *self.line_numbers.borrow_mut() = Vec::new();
         *self.echo_lines.borrow_mut() = Vec::new();
-        self.blocks.borrow_mut().clear();
 
         self.gloss_view.set_left_margin(left);
         self.gloss_view.set_right_margin(left);
@@ -870,10 +869,16 @@ impl GlossOverlay {
         // a regular-weight buffer-wide font tag that would otherwise win).
         *self.synopsis_label_ranges.borrow_mut() = label_ranges;
         self.apply_synopsis_label_bold();
+        // Block cursor + left accent bar, exactly like the gloss overlay. Each
+        // <p> paragraph (non-label) is one Explication cursor stop; j/k move the
+        // bar between them (see handle_synopsis_overlay_key).
+        *self.bar_x.borrow_mut() = left;
+        self.rebuild_block_ranges_from(synopsis_blocks(synopsis));
+        self.mark_cursor_block();
         self.bar_drawing.queue_draw();
 
         self.gloss_scroll_overlay.set_visible(true);
-        self.hint.set_text("Esc close · j/k scroll · n/p scene · Ctrl+g glosses · A ask · U undo");
+        self.hint.set_text("Esc close · j/k block · n/p scene · ⇧Space synth · Ctrl+g glosses · A ask · U undo");
         self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
@@ -1056,6 +1061,14 @@ impl GlossOverlay {
     /// source block extends to its last verse line.
     fn rebuild_block_ranges(&self, gloss: &str) {
         let blocks = gloss_blocks(gloss);
+        self.rebuild_block_ranges_from(blocks);
+    }
+
+    /// Map a pre-built block list to buffer-line spans (shared by the gloss path,
+    /// which builds blocks with `gloss_blocks`, and the synopsis path, which uses
+    /// `synopsis_blocks`). Matches each block's first `display` line against
+    /// buffer lines, stores `self.blocks`, resets the cursor to block 0.
+    fn rebuild_block_ranges_from(&self, blocks: Vec<GlossBlock>) {
         let buffer = self.gloss_view.buffer();
         let line_count = buffer.line_count();
         let mut ranges: Vec<BlockRange> = Vec::new();
@@ -1600,6 +1613,57 @@ pub struct GlossBlock {
     /// DISPLAY text: `text` with `/IPA/` stripped (`strip_ipa`). Used for the
     /// reader's buffer and the accent-bar block matcher.
     pub display: String,
+}
+
+/// Parse a `<p>`-tagged synopsis into cursor-stop blocks, one per paragraph,
+/// each a `BlockKind::Explication` (synopses are prose, never verse). Label
+/// paragraphs (`is_label_paragraph`, e.g. "Shakespearean parallels:") are shown
+/// in the buffer but are NOT cursor stops, so they are skipped here — exactly
+/// the paragraphs `render_synopsis_with_labels` marks for bolding. Synopsis text
+/// carries no inline `/IPA/`, so `text == display`. Legacy untagged prose (no
+/// `<p>`) is returned as a single block. Indices count the emitted (non-label)
+/// blocks from 0, matching the cache `paragraph_index`.
+pub fn synopsis_blocks(synopsis: &str) -> Vec<GlossBlock> {
+    let mut paras: Vec<String> = Vec::new();
+    let mut remaining = synopsis;
+    while let Some(pos) = remaining.find("<p>") {
+        let after = &remaining[pos..];
+        if let Some((content, rest)) = try_extract(after, "p") {
+            if !content.is_empty() {
+                paras.push(content.to_string());
+            }
+            remaining = rest;
+        } else {
+            remaining = &remaining[pos + 3..];
+        }
+    }
+    if paras.is_empty() {
+        let t = synopsis.trim();
+        if t.is_empty() {
+            return Vec::new();
+        }
+        return vec![GlossBlock {
+            kind: BlockKind::Explication,
+            index: 0,
+            text: t.to_string(),
+            display: t.to_string(),
+        }];
+    }
+    let mut blocks: Vec<GlossBlock> = Vec::new();
+    let mut index = 0i32;
+    for p in &paras {
+        if is_label_paragraph(p) {
+            continue;
+        }
+        blocks.push(GlossBlock {
+            kind: BlockKind::Explication,
+            index,
+            text: p.clone(),
+            display: p.clone(),
+        });
+        index += 1;
+    }
+    blocks
 }
 
 /// Parse a gloss into ordered cursor-stop blocks: each contiguous
@@ -2800,5 +2864,40 @@ mod synopsis_label_tests {
         // exactly ONE rewrite: block 1's. Block 0 keeps /gʊd/.
         assert_eq!(out.matches("good /guːd/ same").count(), 1);
         assert_eq!(out.matches("good /gʊd/ same").count(), 1);
+    }
+}
+
+#[cfg(test)]
+mod synopsis_blocks_tests {
+    use super::{synopsis_blocks, BlockKind};
+
+    #[test]
+    fn each_p_becomes_one_explication_block_skipping_labels() {
+        let syn = "<p>First paragraph of action.</p>\
+                   <p>Shakespearean parallels:</p>\
+                   <p>Second paragraph continues.</p>";
+        let blocks = synopsis_blocks(syn);
+        // Label paragraph ("…parallels:") is skipped as a cursor stop.
+        assert_eq!(blocks.len(), 2);
+        assert!(blocks.iter().all(|b| b.kind == BlockKind::Explication));
+        assert_eq!(blocks[0].index, 0);
+        assert_eq!(blocks[1].index, 1);
+        assert_eq!(blocks[0].text, "First paragraph of action.");
+        assert_eq!(blocks[0].display, "First paragraph of action.");
+        assert_eq!(blocks[1].text, "Second paragraph continues.");
+    }
+
+    #[test]
+    fn legacy_plain_text_is_one_block() {
+        let blocks = synopsis_blocks("Just plain text, no tags.");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].kind, BlockKind::Explication);
+        assert_eq!(blocks[0].index, 0);
+        assert_eq!(blocks[0].text, "Just plain text, no tags.");
+    }
+
+    #[test]
+    fn empty_yields_no_blocks() {
+        assert_eq!(synopsis_blocks("").len(), 0);
     }
 }

@@ -845,6 +845,74 @@ pub fn save_gloss_audio(
     Ok(())
 }
 
+/// Column body of the synopsis_audio table (per-paragraph synopsis TTS cache).
+/// Keyed by scene + paragraph + voice (synopses have no glosses FK).
+const SYNOPSIS_AUDIO_COLUMNS: &str = "
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    work_abbrev     TEXT NOT NULL,
+    div1            INTEGER NOT NULL,
+    div2            INTEGER NOT NULL,
+    paragraph_index INTEGER NOT NULL,
+    audio_path      TEXT NOT NULL,
+    voice_id        TEXT NOT NULL,
+    model_id        TEXT NOT NULL,
+    timestamp       DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(work_abbrev, div1, div2, paragraph_index, voice_id)
+";
+
+/// Ensure the synopsis_audio table exists (lazy CREATE, like gloss_audio — no
+/// user_version migration, no SNAPSHOT bump; this is not a LineMap change).
+pub fn ensure_synopsis_audio_table(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute_batch(&format!(
+        "CREATE TABLE IF NOT EXISTS synopsis_audio ({SYNOPSIS_AUDIO_COLUMNS});
+         CREATE INDEX IF NOT EXISTS idx_synopsis_audio_scene
+             ON synopsis_audio(work_abbrev, div1, div2);"
+    ))
+}
+
+/// Cached MP3 path for a synopsis paragraph in a specific voice, if any.
+pub fn find_synopsis_audio(
+    conn: &Connection,
+    work_abbrev: &str,
+    div1: i64,
+    div2: i64,
+    paragraph_index: i64,
+    voice_id: &str,
+) -> Result<Option<String>, rusqlite::Error> {
+    conn.query_row(
+        "SELECT audio_path FROM synopsis_audio
+         WHERE work_abbrev = ?1 AND div1 = ?2 AND div2 = ?3
+           AND paragraph_index = ?4 AND voice_id = ?5",
+        rusqlite::params![work_abbrev, div1, div2, paragraph_index, voice_id],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
+}
+
+/// Upsert a cached synopsis-paragraph MP3 path.
+pub fn save_synopsis_audio(
+    conn: &Connection,
+    work_abbrev: &str,
+    div1: i64,
+    div2: i64,
+    paragraph_index: i64,
+    audio_path: &str,
+    voice_id: &str,
+    model_id: &str,
+) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "INSERT INTO synopsis_audio
+            (work_abbrev, div1, div2, paragraph_index, audio_path, voice_id, model_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT(work_abbrev, div1, div2, paragraph_index, voice_id)
+         DO UPDATE SET audio_path = excluded.audio_path,
+                       model_id   = excluded.model_id,
+                       timestamp  = CURRENT_TIMESTAMP",
+        rusqlite::params![work_abbrev, div1, div2, paragraph_index, audio_path, voice_id, model_id],
+    )?;
+    Ok(())
+}
+
 /// Delete all cached audio rows for a gloss (call when the gloss is removed,
 /// since SQLite FK cascade is not enabled app-wide). Returns the number of rows
 /// removed, so a caller can report exactly how many cached takes were purged.
@@ -2540,6 +2608,36 @@ mod tests {
             resolve_default_voice(&conn, "Rom", "CHORUS", true),
             (crate::elevenlabs::BENEDICK_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
         );
+    }
+
+    #[test]
+    fn synopsis_audio_round_trip() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        ensure_synopsis_audio_table(&conn).unwrap();
+
+        // Miss before save.
+        let hit = find_synopsis_audio(&conn, "KingJohn", 4, 2, 0, "voice123").unwrap();
+        assert_eq!(hit, None);
+
+        save_synopsis_audio(
+            &conn, "KingJohn", 4, 2, 0, "/tmp/a.mp3", "voice123", "eleven_v3",
+        )
+        .unwrap();
+
+        let hit = find_synopsis_audio(&conn, "KingJohn", 4, 2, 0, "voice123").unwrap();
+        assert_eq!(hit.as_deref(), Some("/tmp/a.mp3"));
+
+        // Different voice is a separate cache entry → miss.
+        let other = find_synopsis_audio(&conn, "KingJohn", 4, 2, 0, "voiceXYZ").unwrap();
+        assert_eq!(other, None);
+
+        // Upsert updates the path in place.
+        save_synopsis_audio(
+            &conn, "KingJohn", 4, 2, 0, "/tmp/b.mp3", "voice123", "eleven_v3",
+        )
+        .unwrap();
+        let hit = find_synopsis_audio(&conn, "KingJohn", 4, 2, 0, "voice123").unwrap();
+        assert_eq!(hit.as_deref(), Some("/tmp/b.mp3"));
     }
 
     #[test]
