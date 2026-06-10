@@ -1203,6 +1203,15 @@ impl GlossOverlay {
         } else {
             return; // already fully visible
         };
+        // Floor the viewport top to a whole visual row, exactly like the
+        // synopsis `scroll_gloss` path. Without this the value above lands on a
+        // fractional row (e.g. `block_top - pad` rarely coincides with a real
+        // wrapped-row boundary), so the first line shows clipped under the title
+        // rule (there is no top clip box — only `snap_value_to_line` keeps the
+        // top edge clean). Flooring can only reveal MORE at the top, never push
+        // the cursor block off the bottom; any partial row left at the viewport
+        // bottom is masked by the bottom-clip box.
+        let new_value = self.snap_value_to_line(new_value);
         adj.set_value(new_value);
         self.update_bottom_clip();
         self.bar_drawing.queue_draw();
