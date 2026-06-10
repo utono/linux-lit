@@ -978,6 +978,29 @@ pub(crate) fn cycle_active_voice(state_rc: &Rc<RefCell<AppState>>) {
 /// synthesize via ElevenLabs (async), cache it, and play. `kind`/`index`
 /// identify the block; the filename stem is `<index>` (explication) or
 /// `source-<index>` (source).
+/// Resolve the (voice_id, model_id) a gloss block plays in: the active per-gloss
+/// override voice if the gloss has associated voices (clamped to
+/// `active_voice`), else the age-aware default by kind (verse->OP, prose->plain).
+/// Shared by `play_block_tts` and the cached-audio recolor check so both look at
+/// the same mp3. Mirrors the inline logic at the former call site.
+pub(crate) fn gloss_block_voice(
+    conn: &rusqlite::Connection,
+    gloss_id: i64,
+    work_abbrev: &str,
+    speaker: &str,
+    kind: BlockKind,
+    active_voice: usize,
+) -> (String, String) {
+    let is_verse = kind == BlockKind::Source;
+    let voices = crate::db::queries::get_gloss_voices(conn, gloss_id);
+    if !voices.is_empty() {
+        let i = active_voice.min(voices.len() - 1);
+        (voices[i].0.clone(), voices[i].1.clone())
+    } else {
+        crate::db::queries::resolve_default_voice(conn, work_abbrev, speaker, is_verse)
+    }
+}
+
 fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32) {
     let kind_str = match kind {
         BlockKind::Source => "source",
@@ -1004,19 +1027,9 @@ fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32)
         // active one (gloss_active_voice index, clamped). Else fall back to the
         // age-aware character default (verse->OP, prose->plain).
         let (vid, mid): (String, String) = match crate::db::queries::open_db() {
-            Ok(conn) => {
-                let voices = crate::db::queries::get_gloss_voices(&conn, gloss_id);
-                if !voices.is_empty() {
-                    let i = s.gloss_active_voice.min(voices.len() - 1);
-                    (voices[i].0.clone(), voices[i].1.clone())
-                } else {
-                    // No associated voices → age-aware default voice by
-                    // (gender, age) from the voice_catalog (verse/prose by kind).
-                    crate::db::queries::resolve_default_voice(
-                        &conn, &work_abbrev, &speaker, is_verse,
-                    )
-                }
-            }
+            Ok(conn) => gloss_block_voice(
+                &conn, gloss_id, &work_abbrev, &speaker, kind, s.gloss_active_voice,
+            ),
             Err(_) => {
                 let (v, m) =
                     crate::elevenlabs::voice_for(crate::elevenlabs::Gender::Unknown, is_verse);
