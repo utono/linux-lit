@@ -521,6 +521,9 @@ impl GlossOverlay {
     /// stored accent color (`bar_color`, = theme root_color). Idempotent;
     /// re-tagging an already-colored block is harmless. Call AFTER `apply_font`
     /// with `self.blocks` already populated (every `show_*` path does both).
+    /// The injected `is_cached` predicate must NOT borrow the overlay's own
+    /// block/`bar_color` state (it runs while `self.blocks` is borrowed), as a
+    /// re-entrant borrow would panic.
     pub fn color_audio_blocks(&self, is_cached: impl Fn(&BlockKind, i32) -> bool) {
         let buffer = self.gloss_view.buffer();
         let table = buffer.tag_table();
