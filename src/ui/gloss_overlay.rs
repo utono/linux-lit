@@ -1602,6 +1602,57 @@ pub struct GlossBlock {
     pub display: String,
 }
 
+/// Parse a `<p>`-tagged synopsis into cursor-stop blocks, one per paragraph,
+/// each a `BlockKind::Explication` (synopses are prose, never verse). Label
+/// paragraphs (`is_label_paragraph`, e.g. "Shakespearean parallels:") are shown
+/// in the buffer but are NOT cursor stops, so they are skipped here — exactly
+/// the paragraphs `render_synopsis_with_labels` marks for bolding. Synopsis text
+/// carries no inline `/IPA/`, so `text == display`. Legacy untagged prose (no
+/// `<p>`) is returned as a single block. Indices count the emitted (non-label)
+/// blocks from 0, matching the cache `paragraph_index`.
+pub fn synopsis_blocks(synopsis: &str) -> Vec<GlossBlock> {
+    let mut paras: Vec<String> = Vec::new();
+    let mut remaining = synopsis;
+    while let Some(pos) = remaining.find("<p>") {
+        let after = &remaining[pos..];
+        if let Some((content, rest)) = try_extract(after, "p") {
+            if !content.is_empty() {
+                paras.push(content.to_string());
+            }
+            remaining = rest;
+        } else {
+            remaining = &remaining[pos + 3..];
+        }
+    }
+    if paras.is_empty() {
+        let t = synopsis.trim();
+        if t.is_empty() {
+            return Vec::new();
+        }
+        return vec![GlossBlock {
+            kind: BlockKind::Explication,
+            index: 0,
+            text: t.to_string(),
+            display: t.to_string(),
+        }];
+    }
+    let mut blocks: Vec<GlossBlock> = Vec::new();
+    let mut index = 0i32;
+    for p in &paras {
+        if is_label_paragraph(p) {
+            continue;
+        }
+        blocks.push(GlossBlock {
+            kind: BlockKind::Explication,
+            index,
+            text: p.clone(),
+            display: p.clone(),
+        });
+        index += 1;
+    }
+    blocks
+}
+
 /// Parse a gloss into ordered cursor-stop blocks: each contiguous
 /// `<speaker>`/`<verse>` run is one Source block; each non-echo `<gloss>` is one
 /// Explication block. Echo `<gloss>` brackets are excluded. Source and
@@ -2800,5 +2851,40 @@ mod synopsis_label_tests {
         // exactly ONE rewrite: block 1's. Block 0 keeps /gʊd/.
         assert_eq!(out.matches("good /guːd/ same").count(), 1);
         assert_eq!(out.matches("good /gʊd/ same").count(), 1);
+    }
+}
+
+#[cfg(test)]
+mod synopsis_blocks_tests {
+    use super::{synopsis_blocks, BlockKind};
+
+    #[test]
+    fn each_p_becomes_one_explication_block_skipping_labels() {
+        let syn = "<p>First paragraph of action.</p>\
+                   <p>Shakespearean parallels:</p>\
+                   <p>Second paragraph continues.</p>";
+        let blocks = synopsis_blocks(syn);
+        // Label paragraph ("…parallels:") is skipped as a cursor stop.
+        assert_eq!(blocks.len(), 2);
+        assert!(blocks.iter().all(|b| b.kind == BlockKind::Explication));
+        assert_eq!(blocks[0].index, 0);
+        assert_eq!(blocks[1].index, 1);
+        assert_eq!(blocks[0].text, "First paragraph of action.");
+        assert_eq!(blocks[0].display, "First paragraph of action.");
+        assert_eq!(blocks[1].text, "Second paragraph continues.");
+    }
+
+    #[test]
+    fn legacy_plain_text_is_one_block() {
+        let blocks = synopsis_blocks("Just plain text, no tags.");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].kind, BlockKind::Explication);
+        assert_eq!(blocks[0].index, 0);
+        assert_eq!(blocks[0].text, "Just plain text, no tags.");
+    }
+
+    #[test]
+    fn empty_yields_no_blocks() {
+        assert_eq!(synopsis_blocks("").len(), 0);
     }
 }
