@@ -851,15 +851,55 @@ top always aligns to a whole line.
 ### Bottom edge — invisible clip box (`recompute_bottom_clip`)
 
 `bottom_clip` is a `gtk4::Box` overlaid on `gloss_scroll_overlay` (valign=End,
-halign=Fill, `can_target=false`, `add_css_class("gloss-overlay")` so it paints
-the card background and hides — rather than recolors — whatever is beneath it).
-`recompute_bottom_clip` mirrors `update_bottom_clip` + `visible_range` from the
-main card: from the line currently at the viewport top (accounting for that
-line's partial scroll-off via `top_offset`), it sums whole-line heights via
-`line_yrange` until the next line would exceed the viewport `page_size`, then
-sets the clip height to `viewport_h - consumed` so the leftover partial line at
-the bottom is covered. It is recomputed from `reset_scroll_top`, `scroll_gloss`,
-`scroll_gloss_to_top`, and `scroll_gloss_to_bottom`.
+halign=Fill, `can_target=false`, `add_css_class("gloss-bottom-clip")` so it
+paints the card background and hides — rather than recolors — whatever is beneath
+it).
+
+`recompute_bottom_clip` walks **real per-visual-row rects** (`display_rows`,
+which steps `forward_display_line` and reads each row's `iter_location` rect),
+**not** `line_yrange`. This is deliberate: the synopsis/gloss buffers join
+paragraphs into single multi-row buffer lines and apply per-tag
+`pixels_above_lines`/`scale`, so rows are not uniform and `line_yrange`
+(logical-line granular) would collapse a wrapped paragraph to one paragraph-tall
+"row" and clip the wrong amount. It finds the bottom of the last visual row that
+fits **entirely** above the viewport bottom (`top_y + page_size`), then sets the
+clip height to `viewport_bottom − last_full_bottom` so the leftover partial row
+at the bottom is covered. Two guards: if the document ends inside the viewport it
+covers only the slack below `content_h`; if a single row is taller than the
+viewport (nothing fits) the clip stays at 0 so that row is not blanked.
+
+**Recompute on EVERY scroll, not just on the named scroll methods.** The clip is
+recomputed from (a) `reset_scroll_top`'s `changed`-signal handler + idle backstop
+during an open, (b) the explicit `update_bottom_clip()` calls inside
+`scroll_gloss` / `scroll_gloss_to_top` / `scroll_gloss_to_bottom`, **and** (c) a
+dedicated handler on the vadjustment's **`value_changed`** signal (connected in
+`new()` right after `bottom_clip` is created). Path (c) is the catch-all: the
+`changed` handler fires only while the adjustment *range* shifts (during an
+open), so once the user scrolls and the range is stable the clip would keep its
+stale open-time height. Recomputing on every *value* change keeps the bottom
+mask aligned no matter how the scroll position moved.
+
+**The clip box only masks the BOTTOM edge.** There is no top clip box — the top
+edge is kept clean entirely by line-snapping the viewport top to a whole row
+(`snap_value_to_line`). If a scroll lands the viewport top on a fractional row,
+the first line shows clipped under the title rule with no mask to hide it, so
+the snap must be correct or the top clips. See the section above on
+`scroll_gloss` for the snap.
+
+**Coordinate-space gotcha — `display_rows` must add `top_margin`.** Both the
+bottom-clip and the top-snap walk visual rows via `display_rows`, which reads
+each row rect with `iter_location`. `iter_location` returns **buffer**
+coordinates (y = 0 at the first line of text; the view's `top_margin` is NOT
+included), but the vadjustment scrolls over `top_margin + text + bottom_margin`,
+so `adj.value()` / `adj.upper()` are `top_margin` larger. Comparing the two
+directly shifts every row up by `top_margin`. Symptom (both edges clipped at
+once): the bottom-clip under-counts the last partial row so it pokes through
+under the footer rule, AND `snap_value_to_line` returns a top `top_margin` px
+above the real row top so the first line clips under the title rule after a
+scroll. `display_rows` therefore adds `view.top_margin()` to every row so its
+output is in vadjustment space. (The main reading card avoids this entirely by
+using `line_yrange`, whose y already includes the relevant offsets — but the
+overlay can't, because its multi-row paragraphs need per-visual-row rects.)
 
 ### Margins (cosmetic, separate from clipping)
 

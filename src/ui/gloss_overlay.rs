@@ -280,6 +280,21 @@ impl GlossOverlay {
         gloss_scroll_overlay.set_measure_overlay(&bottom_clip, false);
         gloss_scroll_overlay.set_clip_overlay(&bottom_clip, true);
 
+        // Re-size the bottom clip on EVERY scroll, not just on the open's range
+        // changes. The `changed`-signal handler in `reset_scroll_top` fires only
+        // while the vadjustment *range* shifts during an open; once the user
+        // scrolls with j/k the clip would otherwise keep its stale open-time
+        // height and stop masking the new partial last row — so a half-line at
+        // the bottom edge reads as clipped by the footer rule.
+        {
+            let view = gloss_view.clone();
+            let clip = bottom_clip.clone();
+            let scrolled = gloss_scrolled.clone();
+            gloss_scrolled.vadjustment().connect_value_changed(move |_| {
+                Self::recompute_bottom_clip(&view, &clip, &scrolled);
+            });
+        }
+
         gloss_scroll_overlay.set_visible(false);
 
         // Echoes-only: a fixed source-turn header + a fixed rule, above the
@@ -997,21 +1012,31 @@ impl GlossOverlay {
     }
 
     /// Yield `(row_top, row_bottom)` for each visual (wrapped) row from the start
-    /// of the buffer, in `iter_location` coordinate space (buffer-content y,
-    /// which matches the vadjustment value: GTK scrolls the viewport over this
-    /// same content space). Steps display line by display line with
-    /// `forward_display_line` and reads each row's rect via `iter_location`, so
-    /// wrapped paragraphs contribute one entry per real visual row at its true
-    /// height — `line_yrange` would collapse them to one paragraph-tall row.
+    /// of the buffer, in **vadjustment / scroll coordinate space**. Steps display
+    /// line by display line with `forward_display_line` and reads each row's rect
+    /// via `iter_location`, so wrapped paragraphs contribute one entry per real
+    /// visual row at its true height — `line_yrange` would collapse them to one
+    /// paragraph-tall row.
+    ///
+    /// CRITICAL: `iter_location` returns **buffer** coordinates (y = 0 at the
+    /// first line of text, the view's `top_margin` NOT included), but the
+    /// vadjustment scrolls over `top_margin + text + bottom_margin`, so its
+    /// `value`/`upper` are `top_margin` larger. Comparing the two directly (the
+    /// old code did) shifted every row up by `top_margin`, so the bottom-clip
+    /// under-counted the partial last row (it poked through under the footer)
+    /// and `snap_value_to_line` snapped the viewport top `top_margin` px above
+    /// the real row top (the first line clipped under the title after a scroll).
+    /// We add `top_margin` here so callers can compare against `adj.value()`.
     fn display_rows(view: &gtk4::TextView) -> Vec<(f64, f64)> {
         let mut rows: Vec<(f64, f64)> = Vec::new();
+        let top_margin = view.top_margin() as f64;
         let buffer = view.buffer();
         let mut iter = buffer.start_iter();
         let end = buffer.end_iter();
         for _ in 0..8192 {
             let rect = view.iter_location(&iter);
             if rect.height() > 0 {
-                let top = rect.y() as f64;
+                let top = rect.y() as f64 + top_margin;
                 rows.push((top, top + rect.height() as f64));
             }
             if iter == end || !view.forward_display_line(&mut iter) {
@@ -1413,20 +1438,18 @@ impl GlossOverlay {
         // boundary so no partial row is left clipped at the viewport top.
         // `row_step` is only the step distance; the snap aligns to actual rows.
         let step = self.row_step();
-        let max_value = (adj.upper() - adj.page_size()).max(adj.lower());
         let raw_target = adj.value() + step * 3.0 * delta as f64;
-        // Row-snapping floors the viewport top to a whole row. On the last page
-        // that floor can land a fraction of a row short of `max_value`, leaving
-        // the final row(s) clipped under the footer and unreachable by further
-        // `j` presses (the snap keeps returning the same sub-max top). When a
-        // downward scroll already targets the bottom, go to `max_value` exactly
-        // so the document end is fully shown; a partial row at the top of this
-        // last page is acceptable (mirrors `scroll_gloss_to_bottom`).
-        let target = if delta > 0 && raw_target >= max_value {
-            max_value
-        } else {
-            self.snap_value_to_line(raw_target)
-        };
+        // ALWAYS snap the viewport top to a whole visual row — the top edge has
+        // no clip box, so any fractional top reads as a half-line clipped under
+        // the title rule. We do NOT shortcut to an unsnapped `max_value` to
+        // "reveal the last row" the way the old code did: when the content
+        // overflows by less than a full line (max_value < line height), that
+        // shortcut left the top fractional (the visible top-clip bug). The
+        // bottom-clip box masks whatever partial row remains at the viewport
+        // bottom of the snapped last page, so the last partial line is hidden
+        // cleanly rather than shown clipped — whole rows only, like the main
+        // reading card.
+        let target = self.snap_value_to_line(raw_target);
         adj.set_value(target);
         self.update_bottom_clip();
         self.bar_drawing.queue_draw();
@@ -1442,14 +1465,16 @@ impl GlossOverlay {
     }
 
     pub fn scroll_gloss_to_bottom(&self) {
-        // Go to the true bottom: `upper - page_size` guarantees the final row is
-        // reachable and shown. We do NOT row-snap here — snapping floors the top
-        // and would push the last row below the viewport, hiding the end of the
-        // document. Any partial row at the *top* of this last page is acceptable
-        // (the user asked for the end); the bottom edge is exact.
+        // Snap the top to a whole row at the bottom of the document. The raw
+        // `upper - page_size` would land the top on a fractional row (clipped
+        // under the title rule, since the top has no clip box); snapping floors
+        // it to the greatest whole-row top that still shows the most content.
+        // The bottom-clip box masks any partial row left at the viewport bottom,
+        // so the document end reads as whole rows, not a clipped top + clipped
+        // bottom.
         let adj = self.gloss_scrolled.vadjustment();
         let bottom = (adj.upper() - adj.page_size()).max(adj.lower());
-        adj.set_value(bottom);
+        adj.set_value(self.snap_value_to_line(bottom));
         self.update_bottom_clip();
         self.bar_drawing.queue_draw();
         self.mark_cursor_block();
