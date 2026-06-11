@@ -1007,6 +1007,13 @@ pub(crate) fn gloss_block_voice(
     }
 }
 
+/// Accent color for cached (already-synthesized) gloss/synopsis blocks:
+/// deep slate blue — deliberately NOT the theme's `cursor_bg` (a love-red that
+/// clashed against the cream paper and read like an error). A flat constant for
+/// now: no theme exposes a dedicated slate accent role, so promote this to a
+/// `Theme` field if/when other palettes need their own cached accent.
+const CACHED_BLOCK_ACCENT: &str = "#2d5570";
+
 /// Re-apply accent coloring to every block of the currently-open gloss OR
 /// synopsis overlay whose mp3 is cached. Mode is taken from `s.input_mode`
 /// (the authoritative overlay discriminator) — NOT from `gloss_context`, which
@@ -1027,11 +1034,12 @@ pub(crate) fn recolor_cached_blocks(s: &AppState) {
         let work_abbrev = ctx.work_abbrev.clone();
         let speaker = ctx.speaker.clone();
         let active = s.gloss_active_voice;
+        let accent = CACHED_BLOCK_ACCENT.to_string();
         let conn = match crate::db::queries::open_db() {
             Ok(c) => c,
             Err(_) => return,
         };
-        s.gloss_overlay.color_audio_blocks(move |kind, index| {
+        s.gloss_overlay.color_audio_blocks(&accent, move |kind, index| {
             let kind_str = match kind {
                 BlockKind::Source => "source",
                 BlockKind::Explication => "explication",
@@ -1064,11 +1072,12 @@ pub(crate) fn recolor_cached_blocks(s: &AppState) {
     let (voice_id, _mid) =
         crate::elevenlabs::voice_for(crate::elevenlabs::Gender::Unknown, false);
     let voice_id = voice_id.to_string();
+    let accent = CACHED_BLOCK_ACCENT.to_string();
     let conn = match crate::db::queries::open_db() {
         Ok(c) => c,
         Err(_) => return,
     };
-    s.gloss_overlay.color_audio_blocks(move |_kind, index| {
+    s.gloss_overlay.color_audio_blocks(&accent, move |_kind, index| {
         for vid_try in [voice_id.as_str(), crate::elevenlabs::ALICE_VOICE_ID] {
             if let Ok(Some(path)) = crate::db::queries::find_synopsis_audio(
                 &conn, &work_abbrev, div1, div2, index as i64, vid_try,

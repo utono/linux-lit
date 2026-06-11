@@ -518,22 +518,26 @@ impl GlossOverlay {
     }
 
     /// Color every block whose `is_cached(kind, index)` returns true with the
-    /// stored accent color (`bar_color`, = theme root_color). Idempotent;
-    /// re-tagging an already-colored block is harmless. Call AFTER `apply_font`
-    /// with `self.blocks` already populated (every `show_*` path does both).
-    /// The injected `is_cached` predicate must NOT borrow the overlay's own
-    /// block/`bar_color` state (it runs while `self.blocks` is borrowed), as a
-    /// re-entrant borrow would panic.
-    pub fn color_audio_blocks(&self, is_cached: impl Fn(&BlockKind, i32) -> bool) {
+    /// theme accent (`accent`, = theme `cursor_bg`) — deliberately DISTINCT from
+    /// the bar/divider `root_color`, so a synthesized block reads as "active"
+    /// rather than blending into the bar. Idempotent; re-tagging an
+    /// already-colored block is harmless. Call AFTER `apply_font` with
+    /// `self.blocks` already populated (every `show_*` path does both). The
+    /// injected `is_cached` predicate must NOT borrow the overlay's own block
+    /// state (it runs while `self.blocks` is borrowed), as a re-entrant borrow
+    /// would panic.
+    pub fn color_audio_blocks(&self, accent: &str, is_cached: impl Fn(&BlockKind, i32) -> bool) {
         let buffer = self.gloss_view.buffer();
         let table = buffer.tag_table();
-        let (r, g, b) = *self.bar_color.borrow();
-        let rgba = format!(
-            "#{:02x}{:02x}{:02x}",
-            (r * 255.0).round() as u8,
-            (g * 255.0).round() as u8,
-            (b * 255.0).round() as u8,
-        );
+        let rgba = match parse_hex_color(accent) {
+            Some((r, g, b)) => format!(
+                "#{:02x}{:02x}{:02x}",
+                (r * 255.0).round() as u8,
+                (g * 255.0).round() as u8,
+                (b * 255.0).round() as u8,
+            ),
+            None => accent.to_string(),
+        };
         let tag = match table.lookup("gloss-audio-cached") {
             Some(t) => {
                 t.set_foreground(Some(&rgba));
@@ -1241,7 +1245,8 @@ impl GlossOverlay {
 
     /// Scroll the viewport so the selected cursor block is visible. Only scrolls
     /// when the block falls outside the current viewport: brings its top into
-    /// view (with a small pad) if above, or its bottom into view if below.
+    /// view (with a small pad) if above, or its bottom into view if below. The
+    /// scroll target is decided by the pure `cursor_scroll_target` helper.
     fn scroll_cursor_into_view(&self) {
         let (start_line, end_line) = {
             let ranges = self.blocks.borrow();
@@ -1271,16 +1276,18 @@ impl GlossOverlay {
         let max_value = (adj.upper() - adj.page_size()).max(adj.lower());
         let pad = 24.0;
 
-        let new_value = if block_top < view_top + pad {
-            // Block starts above the viewport: bring its top into view.
-            (block_top - pad).clamp(adj.lower(), max_value)
-        } else if block_bottom > view_bottom - pad {
-            // Block ends below the viewport: bring its bottom into view (but
-            // never scroll its top above the viewport top).
-            let by_bottom = (block_bottom + pad - adj.page_size()).clamp(adj.lower(), max_value);
-            by_bottom.min((block_top - pad).max(adj.lower()))
-        } else {
-            return; // already fully visible
+        let new_value = match cursor_scroll_target(&CursorScrollGeom {
+            block_top,
+            block_bottom,
+            view_top,
+            view_bottom,
+            page_size: adj.page_size(),
+            lower: adj.lower(),
+            max_value,
+            pad,
+        }) {
+            Some(v) => v,
+            None => return, // already fully visible
         };
         // Floor the viewport top to a whole visual row, exactly like the
         // synopsis `scroll_gloss` path. Without this the value above lands on a
@@ -2516,6 +2523,72 @@ fn split_echo(text: &str) -> Option<(String, String)> {
     Some((quote, citation))
 }
 
+/// Inputs to `cursor_scroll_target`: the cursor block's vertical span and the
+/// current viewport/scroll geometry, all in vadjustment coordinate space.
+struct CursorScrollGeom {
+    block_top: f64,
+    block_bottom: f64,
+    view_top: f64,
+    view_bottom: f64,
+    page_size: f64,
+    lower: f64,
+    max_value: f64,
+    pad: f64,
+}
+
+/// Decide the scroll value (viewport top) that brings the cursor block into
+/// view, or `None` if it is already fully visible. Pure arithmetic so it can be
+/// unit-tested without GTK.
+///
+/// Three cases:
+/// - block starts above the viewport → reveal its top (clamped).
+/// - block ends below the viewport → reveal its bottom, BUT keep the block's
+///   top in view *only when the block actually fits* in the viewport. A block
+///   TALLER than the viewport cannot show both edges; for it we reveal the
+///   bottom unconditionally (the final explication is often taller than the
+///   card, and capping at its top stranded the last line below the fold — the
+///   bottom-clip box only masks a sub-row sliver, not a whole clipped line).
+/// - otherwise already visible → `None`.
+fn cursor_scroll_target(g: &CursorScrollGeom) -> Option<f64> {
+    let CursorScrollGeom {
+        block_top,
+        block_bottom,
+        view_top,
+        view_bottom,
+        page_size,
+        lower,
+        max_value,
+        pad,
+    } = *g;
+    // Does the block (plus its top pad) fit inside one viewport height? An
+    // over-tall block (e.g. the final explication, often taller than the card)
+    // cannot show both edges, so it gets special handling below.
+    let fits = (block_bottom - block_top) + pad <= page_size;
+    let bottom_hidden = block_bottom > view_bottom - pad;
+    let top_hidden = block_top < view_top + pad;
+
+    if !fits && bottom_hidden {
+        // Over-tall block whose bottom is below the fold: reveal the bottom even
+        // if that scrolls the block's top off the top edge. This MUST take
+        // priority over the "reveal top" branch — otherwise, once the cursor is
+        // on the last (over-tall) block and the top is already in view, the
+        // top-reveal branch wins forever and the final rows stay clipped below
+        // the fold (the bottom-clip box only masks a sub-row sliver, not a whole
+        // line). by_bottom brings `block_bottom + pad` to the viewport bottom.
+        Some((block_bottom + pad - page_size).clamp(lower, max_value))
+    } else if top_hidden {
+        // Block starts above the viewport: bring its top into view.
+        Some((block_top - pad).clamp(lower, max_value))
+    } else if bottom_hidden {
+        // Fitting block ending below the viewport: bring its bottom into view,
+        // but never scroll its own top above the viewport top.
+        let by_bottom = (block_bottom + pad - page_size).clamp(lower, max_value);
+        Some(by_bottom.min((block_top - pad).max(lower)))
+    } else {
+        None // already fully visible
+    }
+}
+
 fn parse_hex_color(hex: &str) -> Option<(f64, f64, f64)> {
     let hex = hex.trim_start_matches('#');
     if hex.len() != 6 {
@@ -2703,6 +2776,112 @@ mod block_tests {
         assert_eq!(blocks[0].kind, BlockKind::Explication);
         assert_eq!(blocks[0].text, "The operative word /ˈsʊfər/ carries the line.");
         assert_eq!(blocks[0].display, "The operative word carries the line.");
+    }
+}
+
+#[cfg(test)]
+mod cursor_scroll_tests {
+    use super::{cursor_scroll_target, CursorScrollGeom};
+
+    // Geometry captured from the live dev log for the Cranmer (H8) gloss whose
+    // final explication clipped: viewport page_size=1055, scroll ceiling
+    // max_value=570 (upper 1625 - page 1055), last block spans 450..1539 — a
+    // block 1089px tall, i.e. TALLER than the 1055px viewport. The cursor sits
+    // on this last block.
+    const PAGE: f64 = 1055.0;
+    const MAX_VALUE: f64 = 570.0;
+    const LOWER: f64 = 0.0;
+    const PAD: f64 = 24.0;
+
+    #[test]
+    fn over_tall_last_block_reveals_bottom_not_top() {
+        // Cursor on the last block; viewport currently at top=450 (the buggy
+        // plateau). The block's bottom (1539) is below the fold (450+1055=1505).
+        let target = cursor_scroll_target(&CursorScrollGeom {
+            block_top: 450.0,
+            block_bottom: 1539.0,
+            view_top: 450.0,
+            view_bottom: 450.0 + PAGE,
+            page_size: PAGE,
+            lower: LOWER,
+            max_value: MAX_VALUE,
+            pad: PAD,
+        })
+        .expect("over-tall block below fold must scroll, not report already-visible");
+
+        // The fix: reveal the bottom. by_bottom = 1539+24-1055 = 508, clamped to
+        // max_value 570 => 508. The OLD code did .min(block_top-pad=426) => 426,
+        // which left the last line clipped. Assert we do NOT cap at the top.
+        assert!(
+            target > 450.0,
+            "must scroll past the plateau top (450) to reveal the last row; got {target}"
+        );
+        assert!(
+            (target - 508.0).abs() < 0.5,
+            "should target by_bottom (508) to bring the block bottom to the fold; got {target}"
+        );
+    }
+
+    #[test]
+    fn fitting_block_below_fold_keeps_top_in_view() {
+        // A SHORT block that fits in the viewport, sitting just below the fold:
+        // reveal its bottom but never scroll its own top off-screen.
+        let target = cursor_scroll_target(&CursorScrollGeom {
+            block_top: 1400.0,
+            block_bottom: 1500.0, // 100px tall, fits easily
+            view_top: 0.0,
+            view_bottom: PAGE,
+            page_size: PAGE,
+            lower: LOWER,
+            max_value: 5000.0, // big ceiling so clamping doesn't mask the cap
+            pad: PAD,
+        })
+        .expect("block below fold must scroll");
+
+        // by_bottom = 1500+24-1055 = 469; block_top-pad = 1376. min => 469.
+        // The cap (1376) does not bind here, so we land on by_bottom and the
+        // block's top stays comfortably in view.
+        assert!(
+            (target - 469.0).abs() < 0.5,
+            "fitting block should reveal bottom via by_bottom (469); got {target}"
+        );
+    }
+
+    #[test]
+    fn fully_visible_block_does_not_scroll() {
+        // Block already inside the viewport (with pad): no scroll.
+        let target = cursor_scroll_target(&CursorScrollGeom {
+            block_top: 200.0,
+            block_bottom: 400.0,
+            view_top: 100.0,
+            view_bottom: 100.0 + PAGE,
+            page_size: PAGE,
+            lower: LOWER,
+            max_value: MAX_VALUE,
+            pad: PAD,
+        });
+        assert!(target.is_none(), "fully visible block must not scroll");
+    }
+
+    #[test]
+    fn block_above_viewport_reveals_top() {
+        // Block starts above the current viewport top: bring its top into view.
+        let target = cursor_scroll_target(&CursorScrollGeom {
+            block_top: 300.0,
+            block_bottom: 500.0,
+            view_top: 800.0,
+            view_bottom: 800.0 + PAGE,
+            page_size: PAGE,
+            lower: LOWER,
+            max_value: 5000.0,
+            pad: PAD,
+        })
+        .expect("block above viewport must scroll up");
+        // block_top - pad = 276.
+        assert!(
+            (target - 276.0).abs() < 0.5,
+            "should reveal block top (276); got {target}"
+        );
     }
 }
 
