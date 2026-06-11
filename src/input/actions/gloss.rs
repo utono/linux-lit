@@ -1039,6 +1039,10 @@ pub(crate) fn recolor_cached_blocks(s: &AppState) {
             Ok(c) => c,
             Err(_) => return,
         };
+        crate::log_fmt!(
+            "RECOLOR: gloss {} active_voice={} blocks recoloring",
+            gloss_id, active
+        );
         s.gloss_overlay.color_audio_blocks(&accent, move |kind, index| {
             let kind_str = match kind {
                 BlockKind::Source => "source",
@@ -1051,10 +1055,15 @@ pub(crate) fn recolor_cached_blocks(s: &AppState) {
                     &conn, gloss_id, kind_str, index as i64, vid_try,
                 ) {
                     if std::path::Path::new(&path).exists() {
+                        crate::log_fmt!(
+                            "RECOLOR: {}#{} CACHED (voice {}) -> color",
+                            kind_str, index, vid_try
+                        );
                         return true;
                     }
                 }
             }
+            crate::log_fmt!("RECOLOR: {}#{} not cached (voice {})", kind_str, index, vid);
             false
         });
         return;

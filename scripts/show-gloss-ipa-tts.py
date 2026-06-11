@@ -24,13 +24,27 @@ import sys
 
 DB_PATH = os.path.expanduser("~/utono/litdb/data/lit.db")
 PUNCT = set(",;:.!?\n")
+BOUNDARY_PUNCT = set(",;:.!?([")
 
 
-def _is_ipa(inner: str) -> bool:
-    # An IPA span is `/…/` whose inner has >=1 non-ASCII-letter char (length
-    # marks, stress marks, schwa, etc.), so `and/or` and a plain `/word/` are
-    # NOT spans. Mirrors strip_ipa's `is_ipa` heuristic.
-    return len(inner) > 0 and any(not (c.isascii() and c.isalpha()) for c in inner)
+def _opener_on_boundary(chars: list, slash_idx: int) -> bool:
+    # True if the char before an opening `/` (or its absence at index 0) marks a
+    # word boundary, so a free-standing `/word/` is distinguished from a
+    # letter-glued literal like `and/or`. Mirrors `opener_on_boundary`.
+    if slash_idx == 0:
+        return True
+    c = chars[slash_idx - 1]
+    return c.isspace() or c in BOUNDARY_PUNCT
+
+
+def _is_ipa(inner: str, on_boundary: bool) -> bool:
+    # A `/…/` run is an IPA span if its inner has >=1 non-ASCII-letter char
+    # (length/stress marks, schwa, …) OR its opening `/` sits on a word boundary
+    # (so all-ASCII OP spans like `/hav/` are caught while a letter-glued
+    # `and/or` is not). Mirrors `is_ipa_span` in src/ui/gloss_overlay.rs.
+    if len(inner) == 0:
+        return False
+    return any(not (c.isascii() and c.isalpha()) for c in inner) or on_boundary
 
 
 def _normalize_ws(text: str) -> str:
@@ -58,7 +72,9 @@ def strip_ipa(text: str) -> str:
     while i < len(chars):
         if chars[i] == "/":
             close = next((j for j in range(i + 1, len(chars)) if chars[j] == "/"), None)
-            if close is not None and _is_ipa("".join(chars[i + 1 : close])):
+            if close is not None and _is_ipa(
+                "".join(chars[i + 1 : close]), _opener_on_boundary(chars, i)
+            ):
                 i = close + 1
                 continue
         out.append(chars[i])
@@ -74,7 +90,9 @@ def ipa_for_tts(text: str) -> str:
     while i < len(chars):
         if chars[i] == "/":
             close = next((j for j in range(i + 1, len(chars)) if chars[j] == "/"), None)
-            if close is not None and _is_ipa("".join(chars[i + 1 : close])):
+            if close is not None and _is_ipa(
+                "".join(chars[i + 1 : close]), _opener_on_boundary(chars, i)
+            ):
                 # Drop trailing spaces, then the immediately-preceding word.
                 while out and out[-1] == " ":
                     out.pop()

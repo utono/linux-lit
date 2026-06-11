@@ -558,7 +558,12 @@ impl GlossOverlay {
             tag.set_priority(size - 1);
         }
         let line_count = buffer.line_count();
-        for blk in self.blocks.borrow().iter() {
+        let blocks = self.blocks.borrow();
+        crate::log_fmt!(
+            "COLOR-AUDIO: {} blocks, prio set to {}, tag fg={}",
+            blocks.len(), tag.priority(), rgba
+        );
+        for blk in blocks.iter() {
             if !is_cached(&blk.kind, blk.index) {
                 continue;
             }
@@ -570,6 +575,10 @@ impl GlossOverlay {
                 .iter_at_line(end_line)
                 .unwrap_or_else(|| buffer.end_iter());
             buffer.apply_tag(&tag, &start, &end);
+            crate::log_fmt!(
+                "COLOR-AUDIO: tagged {:?}#{} lines [{}, {})",
+                blk.kind, blk.index, blk.start_line, end_line
+            );
         }
     }
 
@@ -2222,6 +2231,38 @@ fn strip_brackets(text: &str) -> String {
 /// whitespace: collapse internal space runs to one, drop any space immediately
 /// before `,;:.!?`, and trim the ends. This is display-only (every caller is a
 /// render path); the stored gloss text is untouched.
+/// Decide whether a `/…/` run is an inline IPA span (vs. a literal slash like
+/// `and/or`). Two signals, either of which marks it IPA:
+///
+/// 1. **inner has a non-ASCII-letter char** — length `ː`, stress `ˈ`, schwa `ə`,
+///    etc. Catches the overwhelming majority of OP IPA.
+/// 2. **the opening `/` sits on a word boundary** (preceded by whitespace, start
+///    of text, or punctuation) — catches the all-ASCII IPA spans the prompt
+///    still emits, e.g. `have /hav/`, where the inner is `hav` (all ASCII
+///    letters) and signal 1 alone would misread it as a literal slash. A literal
+///    `and/or` fails this test because its slash is glued to a letter on the left.
+///
+/// Without signal 2, an all-ASCII span like `/hav/` was left unstripped, and its
+/// two slashes then mis-paired with the NEXT span's slash, swallowing the text
+/// between them (the `have /hav/ been. 'Tis a cruelty /ˈkruːəltɪ/` →
+/// `have /havˈkruːəltɪ/` corruption seen in the reader).
+fn is_ipa_span(inner: &[char], opener_on_boundary: bool) -> bool {
+    if inner.is_empty() {
+        return false;
+    }
+    inner.iter().any(|&c| !c.is_ascii_alphabetic()) || opener_on_boundary
+}
+
+/// True if the char before an opening `/` (or its absence at index 0) marks a
+/// word boundary — so a free-standing `/word/` token is distinguished from a
+/// letter-glued literal like `and/or`.
+fn opener_on_boundary(chars: &[char], slash_idx: usize) -> bool {
+    match slash_idx.checked_sub(1).map(|p| chars[p]) {
+        None => true, // start of text
+        Some(c) => c.is_whitespace() || matches!(c, ',' | ';' | ':' | '.' | '!' | '?' | '(' | '['),
+    }
+}
+
 fn strip_ipa(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut stripped = String::new();
@@ -2231,9 +2272,7 @@ fn strip_ipa(text: &str) -> String {
             if let Some(close_rel) = chars[i + 1..].iter().position(|&c| c == '/') {
                 let close = i + 1 + close_rel;
                 let inner = &chars[i + 1..close];
-                let is_ipa = !inner.is_empty()
-                    && inner.iter().any(|&c| !c.is_ascii_alphabetic());
-                if is_ipa {
+                if is_ipa_span(inner, opener_on_boundary(&chars, i)) {
                     i = close + 1; // skip the whole /…/ span
                     continue;
                 }
@@ -2283,9 +2322,10 @@ fn normalize_ipa_whitespace(text: &str) -> String {
 /// drop the preceding word, leaving `/tɛːk/`, the docs' single-pronunciation
 /// form. Words with NO following IPA span are left untouched (sparse tagging:
 /// only operative words carry OP). Detection of an IPA span matches `strip_ipa`
-/// (a `/…/` whose inner has at least one non-ASCII-letter char), so a literal
-/// `and/or` or a plain `/word/` is never treated as IPA. This is applied ONLY on
-/// the TTS path; the stored gloss text and the reader display are unchanged.
+/// (the shared [`is_ipa_span`] heuristic: non-ASCII inner OR a boundary-anchored
+/// `/word/`), so an all-ASCII span like `/hav/` is handled while a letter-glued
+/// literal `and/or` is not. This is applied ONLY on the TTS path; the stored
+/// gloss text and the reader display are unchanged.
 pub(crate) fn ipa_for_tts(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out: Vec<char> = Vec::with_capacity(chars.len());
@@ -2295,9 +2335,7 @@ pub(crate) fn ipa_for_tts(text: &str) -> String {
             if let Some(close_rel) = chars[i + 1..].iter().position(|&c| c == '/') {
                 let close = i + 1 + close_rel;
                 let inner = &chars[i + 1..close];
-                let is_ipa = !inner.is_empty()
-                    && inner.iter().any(|&c| !c.is_ascii_alphabetic());
-                if is_ipa {
+                if is_ipa_span(inner, opener_on_boundary(&chars, i)) {
                     // Drop the word the IPA annotates: remove a single run of
                     // spaces then the immediately-preceding word from `out`, so
                     // `take /tɛːk/` becomes `/tɛːk/`. Stop at the word boundary
@@ -2341,10 +2379,11 @@ pub(crate) fn ipa_for_tts(text: &str) -> String {
     normalize_ipa_whitespace(&s)
 }
 
-/// True if `s` contains an inline IPA span — a `/…/` whose inner is non-empty
-/// and has at least one non-ASCII-letter char (length/stress marks, schwa, etc.).
-/// Same heuristic `strip_ipa`/`ipa_for_tts` use to tell `/tɛːk/` from `and/or`.
-/// Used to decide whether a fix-IPA input is a literal `/IPA/` or a plain hint.
+/// True if `s` contains an inline IPA span. Uses the shared [`is_ipa_span`]
+/// heuristic (non-ASCII inner OR a boundary-anchored `/word/`), so it agrees
+/// with `strip_ipa`/`ipa_for_tts` and recognizes all-ASCII spans like `/hav/`
+/// while still rejecting a letter-glued literal `and/or`. Used to decide whether
+/// a fix-IPA input is a literal `/IPA/` or a plain hint.
 pub(crate) fn contains_ipa_span(s: &str) -> bool {
     let chars: Vec<char> = s.chars().collect();
     let mut i = 0;
@@ -2353,7 +2392,7 @@ pub(crate) fn contains_ipa_span(s: &str) -> bool {
             if let Some(rel) = chars[i + 1..].iter().position(|&c| c == '/') {
                 let close = i + 1 + rel;
                 let inner = &chars[i + 1..close];
-                if !inner.is_empty() && inner.iter().any(|&c| !c.is_ascii_alphabetic()) {
+                if is_ipa_span(inner, opener_on_boundary(&chars, i)) {
                     return true;
                 }
                 i = close + 1;
@@ -3021,6 +3060,47 @@ mod synopsis_label_tests {
     }
 
     #[test]
+    fn strip_ipa_strips_all_ascii_span() {
+        // `/hav/` is valid OP IPA whose inner is all ASCII letters. The old
+        // non-ASCII-only heuristic missed it, so its slashes mis-paired with the
+        // NEXT span and swallowed the text between — the reader saw
+        // `have /havˈkruːəltɪ/`. The boundary signal (space before the opening
+        // `/`) now marks it IPA and strips it cleanly.
+        assert_eq!(
+            strip_ipa("For what they have /hav/ been. ’Tis a cruelty /ˈkruːəltɪ/"),
+            "For what they have been. ’Tis a cruelty"
+        );
+    }
+
+    #[test]
+    fn strip_ipa_all_ascii_span_does_not_eat_following_text() {
+        // Minimal form of the corruption: an all-ASCII span must not swallow the
+        // words up to the next span.
+        assert_eq!(strip_ipa("a /hav/ b /biː/"), "a b");
+    }
+
+    #[test]
+    fn strip_ipa_all_ascii_span_does_not_collapse_newlines() {
+        // The accent-bar bug: a Source block's `display` is strip_ipa(verses
+        // joined by '\n'). The old heuristic let an all-ASCII `/hav/` span
+        // mis-pair across the '\n', collapsing a 5-line block into 4 lines whose
+        // last line no longer matched any buffer line — so the bar's end_line
+        // matcher failed and the bar shrank to one line ([1,1] in the log).
+        // strip must preserve every newline so the block keeps its line count.
+        let block = "However faulty, yet should find /fəɪnd/ respect\n\
+                     For what they have /hav/ been. ’Tis a cruelty /ˈkruːəltɪ/\n\
+                     To load /loːd/ a falling /ˈfɑlɪn/ man.";
+        let stripped = strip_ipa(block);
+        assert_eq!(stripped.lines().count(), 3, "newlines must survive stripping");
+        assert_eq!(
+            stripped.lines().last().unwrap(),
+            "To load a falling man.",
+            "last line must stay matchable for the accent-bar end_line lookup"
+        );
+        assert!(!stripped.contains('/'), "no slash should remain: {stripped:?}");
+    }
+
+    #[test]
     fn strip_ipa_no_tags_is_identity() {
         assert_eq!(strip_ipa("plain modern line"), "plain modern line");
     }
@@ -3069,6 +3149,17 @@ mod synopsis_label_tests {
         // 'take /tɛːk/' -> '/tɛːk/' (word dropped) so v3 voices it once.
         assert_eq!(ipa_for_tts("take /tɛːk/"), "/tɛːk/");
         assert_eq!(ipa_for_tts("To take /tɛːk/ arms"), "To /tɛːk/ arms");
+    }
+
+    #[test]
+    fn ipa_for_tts_all_ascii_span_replaces_its_word() {
+        // The TTS twin of strip_ipa_strips_all_ascii_span: `have /hav/` must
+        // become `/hav/` (word dropped, span kept), not get mis-paired with the
+        // next span.
+        assert_eq!(
+            ipa_for_tts("they have /hav/ been. ’Tis a cruelty /ˈkruːəltɪ/"),
+            "they /hav/ been. ’Tis a /ˈkruːəltɪ/"
+        );
     }
 
     #[test]
@@ -3121,9 +3212,14 @@ mod synopsis_label_tests {
     fn contains_ipa_span_detects_real_ipa() {
         assert!(contains_ipa_span("/ˈdeɪli/"));
         assert!(contains_ipa_span("daily /ˈdeɪli/"));
-        assert!(!contains_ipa_span("hard a"));          // plain hint
-        assert!(!contains_ipa_span("and/or"));          // literal slash, ascii-only
-        assert!(!contains_ipa_span("/word/"));          // ascii-only inner, not IPA
+        assert!(!contains_ipa_span("hard a"));          // plain hint, no slashes
+        assert!(!contains_ipa_span("and/or"));          // glued literal slash, not on a boundary
+        // A boundary-anchored slash token IS IPA even with an all-ASCII inner —
+        // the same rule that lets strip_ipa handle `/hav/`. A user who wraps a
+        // token in slashes means it as a pronunciation, and an all-ASCII OP span
+        // (e.g. `/hav/`) must be recognized, not mistaken for a plain hint.
+        assert!(contains_ipa_span("/word/"));
+        assert!(contains_ipa_span("have /hav/"));
         assert!(!contains_ipa_span(""));
     }
 

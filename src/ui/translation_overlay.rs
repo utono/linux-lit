@@ -260,9 +260,11 @@ impl TranslationOverlay {
         adj.set_value(adj.lower());
     }
 
-    /// Scroll minimally so the highlighted ORIGINAL line for `work_idx` is fully
-    /// in view: only scroll if it is above the viewport top or below its bottom,
-    /// landing it just inside the crossed edge. No-op if the line isn't found.
+    /// Scroll so the highlighted ORIGINAL line for `work_idx` is vertically
+    /// centered in the viewport, matching the reading card's `center_cursor`
+    /// convention (the line lands a quarter of a page down from the top, not
+    /// dead-center). Clamps at the document edges so no blank space appears.
+    /// No-op if the line isn't found.
     pub fn scroll_to_highlight(&self, work_idx: usize) {
         let (orig_view, off) = {
             let entries = self.block_widgets.borrow();
@@ -277,7 +279,7 @@ impl TranslationOverlay {
         // Defer one tick so allocations/wrapping are settled before measuring.
         glib::idle_add_local_once(move || {
             let Some(iter) = orig_view.buffer().iter_at_line(off) else { return };
-            let (line_y, line_h) = orig_view.line_yrange(&iter);
+            let (line_y, _line_h) = orig_view.line_yrange(&iter);
             // `line_yrange` gives BUFFER coords; `compute_point` wants
             // WIDGET-local coords. They're equal here only because each orig
             // view is unscrolled natural-height (no inner ScrolledWindow, height
@@ -287,20 +289,14 @@ impl TranslationOverlay {
             let pt = gtk4::graphene::Point::new(0.0, line_y as f32);
             let Some(mapped) = orig_view.compute_point(&content, &pt) else { return };
             let line_top = mapped.y() as f64;
-            let line_bottom = line_top + line_h as f64;
 
             let adj = scrolled.vadjustment();
-            let value = adj.value();
             let page = adj.page_size();
             let max = (adj.upper() - page).max(adj.lower());
 
-            let new_value = if line_top < value {
-                line_top
-            } else if line_bottom > value + page {
-                line_bottom - page
-            } else {
-                return; // already fully visible — don't move
-            };
+            // Center the line vertically. Like the card's `center_cursor`, place
+            // the line a quarter-page down from the top rather than dead-center.
+            let new_value = line_top - page * 0.25;
             adj.set_value(new_value.clamp(adj.lower(), max));
         });
     }
