@@ -567,8 +567,22 @@ impl GlossOverlay {
             if !is_cached(&blk.kind, blk.index) {
                 continue;
             }
+            // A Source block's range begins at its first VERSE line; the speaker
+            // heading (gloss_blocks drops it from the block text) sits one line
+            // above. Recolor it together with the verse so the whole turn —
+            // label and body — reads as cached. Only extend when that line truly
+            // carries a speaker tag, so we never bleed the accent onto a
+            // preceding verse/prose line of another block.
+            let start_line = if blk.kind == BlockKind::Source
+                && blk.start_line > 0
+                && line_is_speaker(&buffer, blk.start_line - 1)
+            {
+                blk.start_line - 1
+            } else {
+                blk.start_line
+            };
             let start = buffer
-                .iter_at_line(blk.start_line)
+                .iter_at_line(start_line)
                 .unwrap_or_else(|| buffer.start_iter());
             let end_line = (blk.end_line + 1).min(line_count);
             let end = buffer
@@ -577,7 +591,7 @@ impl GlossOverlay {
             buffer.apply_tag(&tag, &start, &end);
             crate::log_fmt!(
                 "COLOR-AUDIO: tagged {:?}#{} lines [{}, {})",
-                blk.kind, blk.index, blk.start_line, end_line
+                blk.kind, blk.index, start_line, end_line
             );
         }
     }
@@ -1773,6 +1787,24 @@ pub fn synopsis_blocks(synopsis: &str) -> Vec<GlossBlock> {
         index += 1;
     }
     blocks
+}
+
+/// True when `line` of `buffer` is rendered as a speaker heading — i.e. its
+/// first character carries one of the speaker tags (`gloss-speaker`,
+/// `gloss-speaker-first`, `gloss-speaker-source`). Used by `color_audio_blocks`
+/// to decide whether a cached Source block should also recolor the heading on
+/// the line above its first verse line.
+fn line_is_speaker(buffer: &gtk4::TextBuffer, line: i32) -> bool {
+    let iter = match buffer.iter_at_line(line) {
+        Some(it) => it,
+        None => return false,
+    };
+    iter.tags().iter().any(|t| {
+        matches!(
+            t.name().as_deref(),
+            Some("gloss-speaker") | Some("gloss-speaker-first") | Some("gloss-speaker-source")
+        )
+    })
 }
 
 /// Parse a gloss into ordered cursor-stop blocks: each contiguous
