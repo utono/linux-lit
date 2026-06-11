@@ -1289,15 +1289,23 @@ impl GlossOverlay {
             Some(v) => v,
             None => return, // already fully visible
         };
-        // Floor the viewport top to a whole visual row, exactly like the
-        // synopsis `scroll_gloss` path. Without this the value above lands on a
-        // fractional row (e.g. `block_top - pad` rarely coincides with a real
-        // wrapped-row boundary), so the first line shows clipped under the title
-        // rule (there is no top clip box — only `snap_value_to_line` keeps the
-        // top edge clean). Flooring can only reveal MORE at the top, never push
-        // the cursor block off the bottom; any partial row left at the viewport
-        // bottom is masked by the bottom-clip box.
-        let new_value = self.snap_value_to_line(new_value);
+        // Snap the viewport top to a whole visual row so the first line is not
+        // clipped under the title rule (the top edge has no clip box).
+        //
+        // Direction matters. When we are revealing a block's BOTTOM (it ended
+        // below the fold), flooring the top to the nearest row *below* the
+        // target scrolls the viewport back UP and re-hides the bottom we just
+        // tried to show — the exact bug where the last explication clipped:
+        // target 514 floored to row-top 450, losing 64px. For that case snap
+        // UP to the nearest whole row at/above the target (clamped to the scroll
+        // ceiling), which keeps the bottom in view. Otherwise (revealing a top)
+        // floor as before so the revealed top isn't pushed under the title.
+        let revealing_bottom = block_bottom > view_bottom - pad && block_top >= view_top + pad;
+        let new_value = if revealing_bottom {
+            self.snap_value_to_line_up(new_value)
+        } else {
+            self.snap_value_to_line(new_value)
+        };
         adj.set_value(new_value);
         self.update_bottom_clip();
         self.bar_drawing.queue_draw();
@@ -1373,6 +1381,25 @@ impl GlossOverlay {
             }
         }
         best.clamp(lower, max_value)
+    }
+
+    /// Snap a scroll value to the *least* real visual-row top at or above
+    /// `target_y`, clamped to `[lower, max_value]`. The up-direction counterpart
+    /// of `snap_value_to_line`, used when revealing a block's BOTTOM: flooring
+    /// (the default) would scroll the viewport back up and re-hide the bottom we
+    /// are trying to show. Snapping UP keeps a whole row at the top (no half row
+    /// under the title rule) while never giving back the reveal. If no row top
+    /// is >= target (target sits past the last row top but within the scroll
+    /// ceiling), use `max_value` so the document end is reached.
+    fn snap_value_to_line_up(&self, target_y: f64) -> f64 {
+        let adj = self.gloss_scrolled.vadjustment();
+        let lower = adj.lower();
+        let max_value = (adj.upper() - adj.page_size()).max(lower);
+        let row_tops: Vec<f64> = Self::display_rows(&self.gloss_view)
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        snap_up_to_row(target_y, &row_tops, lower, max_value)
     }
 
     // ---- "Ask about this scene" card -------------------------------------
@@ -2589,6 +2616,20 @@ fn cursor_scroll_target(g: &CursorScrollGeom) -> Option<f64> {
     }
 }
 
+/// Snap `target_y` to the least row top at/above it (clamped to
+/// `[lower, max_value]`). If no row top is >= target, use `max_value`. Pure so
+/// the snap-UP direction (used for bottom-reveal) can be unit-tested. `row_tops`
+/// must be ascending.
+fn snap_up_to_row(target_y: f64, row_tops: &[f64], lower: f64, max_value: f64) -> f64 {
+    let target = target_y.clamp(lower, max_value);
+    row_tops
+        .iter()
+        .copied()
+        .find(|t| *t + 0.5 >= target)
+        .unwrap_or(max_value)
+        .clamp(lower, max_value)
+}
+
 fn parse_hex_color(hex: &str) -> Option<(f64, f64, f64)> {
     let hex = hex.trim_start_matches('#');
     if hex.len() != 6 {
@@ -2776,6 +2817,54 @@ mod block_tests {
         assert_eq!(blocks[0].kind, BlockKind::Explication);
         assert_eq!(blocks[0].text, "The operative word /ˈsʊfər/ carries the line.");
         assert_eq!(blocks[0].display, "The operative word carries the line.");
+    }
+}
+
+#[cfg(test)]
+mod snap_up_tests {
+    use super::snap_up_to_row;
+
+    // Live geometry from the dev log for the clipped Cranmer gloss: revealing
+    // the last block computed target=514, and the visual row tops near it were
+    // [450, 520, 547, 582] with the scroll ceiling max_value=570. The OLD
+    // floor-snap pulled 514 down to 450 (re-hiding the bottom). Snapping UP must
+    // pick 520 — the least row top >= 514 — keeping the bottom in view.
+    #[test]
+    fn snaps_up_to_next_row_not_down() {
+        let rows = [450.0, 520.0, 547.0, 582.0];
+        let v = snap_up_to_row(514.0, &rows, 0.0, 570.0);
+        assert!(
+            (v - 520.0).abs() < 0.5,
+            "514 must snap UP to 520 (next row), not down to 450; got {v}"
+        );
+    }
+
+    #[test]
+    fn target_on_a_row_top_stays_put() {
+        let rows = [450.0, 520.0, 547.0];
+        let v = snap_up_to_row(520.0, &rows, 0.0, 570.0);
+        assert!((v - 520.0).abs() < 0.5, "exact row top stays; got {v}");
+    }
+
+    #[test]
+    fn target_past_last_row_uses_max_value() {
+        // No row top >= target but target <= ceiling: use max_value so the
+        // document end is reachable.
+        let rows = [450.0, 520.0];
+        let v = snap_up_to_row(560.0, &rows, 0.0, 570.0);
+        assert!(
+            (v - 570.0).abs() < 0.5,
+            "target past last row top should use max_value (570); got {v}"
+        );
+    }
+
+    #[test]
+    fn clamps_to_max_value() {
+        let rows = [450.0, 520.0, 600.0];
+        // target above ceiling clamps to max_value first; next row 600 > 570
+        // would exceed ceiling, so result clamps to 570.
+        let v = snap_up_to_row(900.0, &rows, 0.0, 570.0);
+        assert!((v - 570.0).abs() < 0.5, "must clamp to max_value; got {v}");
     }
 }
 
