@@ -1,5 +1,23 @@
 use crate::claude::ClaudeError;
 use crate::db::models::{Line, Work};
+use std::sync::LazyLock;
+
+/// Master switch for inline OP-IPA tagging on `<verse>` source lines.
+///
+/// `false` (current) — every gloss prompt (and `FIX_IPA_PROMPT`) is built with
+/// its IPA-tagging instructions replaced by a one-line directive telling the
+/// model NOT to add any `/IPA/` markup. New glosses quote the source words
+/// exactly, with no phonetic tags.
+///
+/// `true` — restores the original behavior: prompts instruct the model to
+/// append inline OP-IPA after operative words, using the OP conventions block.
+///
+/// **To revert** (re-enable IPA wrapping): flip this to `true`, or `git revert`
+/// the commit that introduced this flag. Nothing else needs to change — the
+/// `IPA_*` fragments below are selected from this single constant. Existing
+/// stored glosses are untouched either way (display strips `/IPA/`; TTS still
+/// reads it from stored verse).
+const APPEND_IPA: bool = false;
 
 /// Shared Original-Pronunciation (OP) sound rules, embedded in every gloss
 /// prompt via the `op_ipa_conventions!` macro. This is the SINGLE source of
@@ -47,7 +65,38 @@ and -ion syllabicity to the metre."
     };
 }
 
-pub const USER_QUESTION_PROMPT: &str = concat!("\
+/// The IPA-instruction block spliced into each *gloss* prompt's rule list.
+/// When `APPEND_IPA` is false this is a single suppression line; when true it is
+/// the full "APPEND inline IPA" directive plus the shared OP conventions.
+/// Selected once at first use from the single `APPEND_IPA` switch above.
+static IPA_VERSE_RULES: LazyLock<String> = LazyLock::new(|| {
+    if APPEND_IPA {
+        concat!(
+            "On each <verse> line, APPEND inline Original-Pronunciation IPA in forward slashes IMMEDIATELY AFTER the operative / accent-bearing / metrically stressed words (e.g. take /tɛːk/), leaving the original words unchanged; per word never per phrase; let line structure govern syllable count.\n- ",
+            op_ipa_conventions!()
+        )
+        .to_string()
+    } else {
+        "Do NOT add /IPA/ pronunciation tags to verse lines. Quote the source words exactly as written, with no phonetic markup of any kind.".to_string()
+    }
+});
+
+/// The IPA-tagging clause for `TEACHER_GENERIC_PROMPT` (its sparse-tagging
+/// wording) when `APPEND_IPA` is true, or the same no-IPA suppression line when
+/// false.
+static IPA_VERSE_RULES_SPARSE: LazyLock<String> = LazyLock::new(|| {
+    if APPEND_IPA {
+        concat!(
+            "On each <verse> line, tag for Original Pronunciation ONLY the few words you have already identified as operative / accent-bearing / metrically stressed — per word, never per phrase. Tagging every word destabilizes synthesis and muddies the teaching. A 40-word line should have far fewer than 40 tags. /IPA/ appears ONLY inside <verse> lines (hidden from the reader, used only to generate audio). Append the pronunciation as IPA in forward slashes IMMEDIATELY AFTER the operative word, leaving the original word unchanged, e.g. take /tɛːk/, suffer /ˈsʊfər/. \n",
+            op_ipa_conventions!()
+        )
+        .to_string()
+    } else {
+        "Do NOT add /IPA/ pronunciation tags to verse lines. Quote the source words exactly as written, with no phonetic markup of any kind.".to_string()
+    }
+});
+
+pub static USER_QUESTION_PROMPT: LazyLock<String> = LazyLock::new(|| format!("\
 You are a literary scholar answering a reader's question about a passage from a literary text.
 
 The reader has asked a specific question. Answer it thoroughly, drawing on the passage provided.
@@ -64,13 +113,12 @@ Rules:
 - When quoting verse from the text, use <speaker> and <verse> tags — never embed verse lines inside <gloss> tags
 - Quote verbatim — exact words, exact spelling, exact line breaks from the source
 - Never use / to join verse lines
-- On each <verse> line, APPEND inline Original-Pronunciation IPA in forward slashes IMMEDIATELY AFTER the operative / accent-bearing / metrically stressed words (e.g. take /tɛːk/), leaving the original words unchanged; per word never per phrase; let line structure govern syllable count.
-- ", op_ipa_conventions!(), "
+- {}
 - Each <verse> tag contains exactly one line of the original
 - Each <gloss> tag contains one flowing prose paragraph (3-6 sentences)
-- No markdown, no bullets, no numbered lists, no headers");
+- No markdown, no bullets, no numbered lists, no headers", *IPA_VERSE_RULES));
 
-pub const INNER_MONOLOGUE_PROMPT: &str = concat!("\
+pub static INNER_MONOLOGUE_PROMPT: LazyLock<String> = LazyLock::new(|| format!("\
 You are a director using the actioning technique to discover the inner \
 monologue beneath a passage from a dramatic text.
 
@@ -127,18 +175,10 @@ same thing with the same word):
 III 1.3]</gloss>
 
 Rules:
-- Quote verbatim — exact words, exact spelling, exact line breaks. \
-\"Verbatim\" governs the original words only; inline /IPA/ tags are \
-ADDITIONAL markup placed immediately AFTER the word they annotate \
-(e.g. take /tɛːk/) and never replace, reorder, or alter the source word.
-- On each <verse> line, APPEND inline Original-Pronunciation IPA in \
-forward slashes IMMEDIATELY AFTER the operative / accent-bearing / \
-metrically stressed words (e.g. take /tɛːk/), leaving the original \
-words unchanged; per word never per phrase; let line structure govern \
-syllable count.
-- ", op_ipa_conventions!(), "
+- Quote verbatim — exact words, exact spelling, exact line breaks.
+- {}
 - Do NOT add a <pron> note. The <gloss> remains EXACTLY the single \
-bracketed echo — the /IPA/ goes only inside <verse>.
+bracketed echo.
 - Never use / to join verse lines
 - Each <verse> tag contains exactly one line of the original
 - ONE <gloss> tag per verse line: the bracketed echo only. Do NOT add \
@@ -162,9 +202,9 @@ a secret (Viola concealing identity, Hal concealing intention, etc.)
 - For READING lines, find echoes where a character responds to what \
 they see in the other (Iago reading Othello, Portia reading Bassanio)
 - ALWAYS place a <speaker> tag before EVERY group of <verse> lines
-- No markdown, no bullets, no numbered lists, no headers");
+- No markdown, no bullets, no numbered lists, no headers", *IPA_VERSE_RULES));
 
-pub const INNER_MONOLOGUE_ADD_PROMPT: &str = concat!("\
+pub static INNER_MONOLOGUE_ADD_PROMPT: LazyLock<String> = LazyLock::new(|| format!("\
 You are a director using the actioning technique to discover the inner \
 monologue beneath a passage from a dramatic text.
 
@@ -185,15 +225,8 @@ Output format — use these XML tags exactly, in this order for each line:
 - <gloss>[\"echo from the provided lines\" — Source Work act.scene]</gloss>
 
 Rules:
-- Quote verbatim — exact words, exact spelling, exact line breaks. \
-\"Verbatim\" governs the original words only; inline /IPA/ tags are \
-ADDITIONAL markup placed immediately AFTER the word they annotate \
-(e.g. take /tɛːk/) and never replace, reorder, or alter the source word.
-- On each <verse> line, APPEND inline Original-Pronunciation IPA in \
-forward slashes IMMEDIATELY AFTER the operative / accent-bearing / \
-metrically stressed words (e.g. take /tɛːk/), leaving the original \
-words unchanged; per word never per phrase.
-- ", op_ipa_conventions!(), "
+- Quote verbatim — exact words, exact spelling, exact line breaks.
+- {}
 - Never use / to join verse lines
 - Each <verse> tag contains exactly one line of the original
 - ONE <gloss> tag per verse line: the bracketed echo only. Do NOT add \
@@ -202,9 +235,9 @@ any actable-subtext sentence or any prose after the echo.
 citation — never list alternatives or show your deliberation
 - Draw the echoes FROM THE PROVIDED LINES, not your own knowledge
 - ALWAYS place a <speaker> tag before EVERY group of <verse> lines
-- No markdown, no bullets, no numbered lists, no headers");
+- No markdown, no bullets, no numbered lists, no headers", *IPA_VERSE_RULES));
 
-pub const INNER_MONOLOGUE_EDIT_PROMPT: &str = concat!("\
+pub static INNER_MONOLOGUE_EDIT_PROMPT: LazyLock<String> = LazyLock::new(|| format!("\
 You are a director using the actioning technique to discover the inner \
 monologue beneath a passage from a dramatic text.
 
@@ -225,15 +258,8 @@ Output format — use these XML tags exactly, in this order for each line:
 - <gloss>[\"echo from the provided lines\" — Source Work act.scene]</gloss>
 
 Rules:
-- Quote verbatim — exact words, exact spelling, exact line breaks. \
-\"Verbatim\" governs the original words only; inline /IPA/ tags are \
-ADDITIONAL markup placed immediately AFTER the word they annotate \
-(e.g. take /tɛːk/) and never replace, reorder, or alter the source word.
-- On each <verse> line, APPEND inline Original-Pronunciation IPA in \
-forward slashes IMMEDIATELY AFTER the operative / accent-bearing / \
-metrically stressed words (e.g. take /tɛːk/), leaving the original \
-words unchanged; per word never per phrase.
-- ", op_ipa_conventions!(), "
+- Quote verbatim — exact words, exact spelling, exact line breaks.
+- {}
 - Never use / to join verse lines
 - Each <verse> tag contains exactly one line of the original
 - ONE <gloss> tag per verse line: the bracketed echo only. Do NOT add \
@@ -242,9 +268,9 @@ any actable-subtext sentence or any prose after the echo.
 citation — never list alternatives or show your deliberation
 - Draw the echoes FROM THE PROVIDED LINES, not your own knowledge
 - ALWAYS place a <speaker> tag before EVERY group of <verse> lines
-- No markdown, no bullets, no numbered lists, no headers");
+- No markdown, no bullets, no numbered lists, no headers", *IPA_VERSE_RULES));
 
-pub const EDIT_GLOSS_PROMPT: &str = concat!("\
+pub static EDIT_GLOSS_PROMPT: LazyLock<String> = LazyLock::new(|| format!("\
 You are a literary scholar revising an existing gloss about a passage \
 from a literary text.
 
@@ -260,30 +286,38 @@ Use the same output format as the original gloss — use these XML tags:
 Rules:
 - Quote verbatim — exact words, exact spelling, exact line breaks
 - Never use / to join verse lines
-- On each <verse> line, APPEND inline Original-Pronunciation IPA in forward slashes IMMEDIATELY AFTER the operative / accent-bearing / metrically stressed words (e.g. take /tɛːk/), leaving the original words unchanged; per word never per phrase; let line structure govern syllable count.
-- ", op_ipa_conventions!(), "
+- {}
 - Each <verse> tag contains exactly one line of the original
 - Each <gloss> tag contains one flowing prose paragraph (3-6 sentences)
 - Incorporate the reader's provided lines as evidence or context
 - ALWAYS place a <speaker> tag before EVERY group of <verse> lines
-- No markdown, no bullets, no numbered lists, no headers");
+- No markdown, no bullets, no numbered lists, no headers", *IPA_VERSE_RULES));
 
-pub const FIX_IPA_PROMPT: &str = "\
+pub static FIX_IPA_PROMPT: LazyLock<String> = LazyLock::new(|| {
+    if APPEND_IPA {
+        "\
 Return ONLY the Original-Pronunciation IPA for the given English word, wrapped in \
 forward slashes (e.g. /ˈdeɪli/). Use Shakespearean Original Pronunciation (rhotic; \
 FACE as the monophthong /ɛː/ or diphthong per the hint; PRICE /əɪ/; MOUTH /əʊ/). \
 Honor the user's hint about the desired sound. Output the slash-wrapped IPA and \
-nothing else — no prose, no the word, no explanation.";
+nothing else — no prose, no the word, no explanation.".to_string()
+    } else {
+        // IPA tagging is disabled; the i-key fix path should not synthesize new
+        // /IPA/. Return an empty pronunciation so nothing is appended.
+        "\
+IPA pronunciation tagging is currently disabled. Return ONLY two forward slashes \
+with nothing between them (//) and no other text.".to_string()
+    }
+});
 
-const TEACHER_GENERIC_PROMPT: &str = concat!("\
+static TEACHER_GENERIC_PROMPT: LazyLock<String> = LazyLock::new(|| format!("\
 You are a performance-focused teacher helping a reader understand a passage from a literary text.
 
 Given a passage with speaker names and dialogue, provide an actor's explication that:
 - Paraphrases the passage in clear, modern English
 - Explains archaic vocabulary, allusions, and complex syntax
 - Notes rhetorical devices, verse structure, and breath patterns that shape delivery
-- On each <verse> line, tag for Original Pronunciation ONLY the few words you have already identified as operative / accent-bearing / metrically stressed — per word, never per phrase. Tagging every word destabilizes synthesis and muddies the teaching. Append the pronunciation as IPA in forward slashes IMMEDIATELY AFTER the operative word, leaving the original word unchanged, e.g. take /tɛːk/, suffer /ˈsʊfər/. \
-", op_ipa_conventions!(), "
+- {}
 - Identifies the speaker's intention, operative words, and emotional arc
 - References classical pedagogy where relevant (Barton, Berry, Hall, Rodenburg, Linklater)
 - Defines literary terminology on first use (enjambment, caesura, anaphora, antithesis, etc.)
@@ -294,16 +328,15 @@ Output format — use these XML tags exactly:
 - <gloss>paragraph of analysis</gloss> for each analysis paragraph
 
 Rules:
-- Quote verbatim — exact words, exact spelling, exact line breaks from the source. \"Verbatim\" governs the original words only; inline /IPA/ tags are ADDITIONAL markup placed immediately AFTER the word they annotate (e.g. take /tɛːk/) and never replace, reorder, or alter the source word.
-- /IPA/ appears ONLY inside <verse> lines (where it is hidden from the reader and used only to generate audio). NEVER write IPA, phonetic symbols, or slash-wrapped pronunciations anywhere in <gloss> prose — do not mention how a word is pronounced using symbols. Explain meaning and delivery in plain words only.
+- Quote verbatim — exact words, exact spelling, exact line breaks from the source.
+- NEVER write IPA, phonetic symbols, or slash-wrapped pronunciations anywhere in <gloss> prose — do not mention how a word is pronounced using symbols. Explain meaning and delivery in plain words only.
 - Never use / to join verse lines
 - Never truncate with ...
-- Tag sparsely: only operative/accent-bearing words get /IPA/. A 40-word line should have far fewer than 40 tags.
 - Each <verse> tag contains exactly one line of the original
 - Each <gloss> tag contains one flowing prose paragraph (3-4 sentences preferred, never exceed 6)
 - For long speeches (over 8 lines), break into 4-8 line chunks with analysis between each chunk
 - ALWAYS place a <speaker> tag before EVERY group of <verse> lines, even when the speaker has not changed — every quoted block must be preceded by its speaker name
-- No markdown, no bullets, no numbered lists, no headers");
+- No markdown, no bullets, no numbered lists, no headers", *IPA_VERSE_RULES_SPARSE));
 
 #[derive(Clone)]
 pub struct GlossContext {
@@ -506,7 +539,7 @@ pub async fn call_claude(
     user_message: &str,
     model: &str,
 ) -> Result<String, ClaudeError> {
-    crate::claude::send_message(TEACHER_GENERIC_PROMPT, user_message, model).await
+    crate::claude::send_message(&TEACHER_GENERIC_PROMPT, user_message, model).await
 }
 
 pub async fn call_claude_with_prompt(

@@ -724,7 +724,7 @@ fn run_pending_inner_monologue_blocking(
         let result = handle
             .spawn(async move {
                 crate::gloss::call_claude_with_prompt(
-                    crate::gloss::INNER_MONOLOGUE_PROMPT, &user_msg, &model,
+                    crate::gloss::INNER_MONOLOGUE_PROMPT.as_str(), &user_msg, &model,
                 ).await
             })
             .await;
