@@ -265,11 +265,33 @@ pub fn save_synopsis(
     div1: i64,
     div2: i64,
     synopsis: &str,
+    claude_model: &str,
 ) -> Result<(), rusqlite::Error> {
     conn.execute(
-        "INSERT INTO scene_synopses (work_abbrev, div1, div2, synopsis) \
-         VALUES (?1, ?2, ?3, ?4) \
-         ON CONFLICT(work_abbrev, div1, div2) DO UPDATE SET synopsis = excluded.synopsis",
+        "INSERT INTO scene_synopses (work_abbrev, div1, div2, synopsis, claude_model) \
+         VALUES (?1, ?2, ?3, ?4, ?5) \
+         ON CONFLICT(work_abbrev, div1, div2) DO UPDATE SET \
+             synopsis = excluded.synopsis, claude_model = excluded.claude_model",
+        rusqlite::params![work_abbrev, div1, div2, synopsis, claude_model],
+    )?;
+    Ok(())
+}
+
+/// Restore a synopsis's text WITHOUT changing its recorded `claude_model`. Used
+/// by the `U` undo path, which reverts to the pre-amend text — that earlier text
+/// was authored by whatever model the row already records, so undo must not
+/// overwrite the model the way a fresh amend (save_synopsis) does. If the row
+/// doesn't exist yet (no prior amend persisted), this is a no-op UPDATE.
+pub fn restore_synopsis_text(
+    conn: &Connection,
+    work_abbrev: &str,
+    div1: i64,
+    div2: i64,
+    synopsis: &str,
+) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "UPDATE scene_synopses SET synopsis = ?4 \
+         WHERE work_abbrev = ?1 AND div1 = ?2 AND div2 = ?3",
         rusqlite::params![work_abbrev, div1, div2, synopsis],
     )?;
     Ok(())
@@ -467,6 +489,42 @@ pub fn open_db_rw() -> Result<Connection, rusqlite::Error> {
     let conn = Connection::open(db_path())?;
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
     Ok(conn)
+}
+
+/// Ensure the `glosses` and `scene_synopses` tables carry a `claude_model`
+/// column recording which Claude model authored each row. These two tables are
+/// part of the external lit.db core schema (not created by the app), so this is
+/// an idempotent legacy migration: probe for the column and ADD it if missing,
+/// mirroring `ensure_characters_table`'s `pragma_table_info` pattern. Existing
+/// rows predate model tracking and are backfilled once to the long-standing
+/// default model so they are not left as NULL "unknown". New writes stamp the
+/// actual model via `save_gloss` / `save_synopsis` / `update_gloss`.
+pub fn ensure_claude_model_columns(conn: &Connection) -> Result<(), rusqlite::Error> {
+    // The default model glosses/synopses were created with before this column
+    // existed (see default_claude_model in src/config.rs at the time of the
+    // backfill). Used only to stamp pre-tracking rows.
+    const BACKFILL_MODEL: &str = "claude-opus-4-7";
+
+    for table in ["glosses", "scene_synopses"] {
+        let has_col: bool = conn
+            .prepare(&format!(
+                "SELECT 1 FROM pragma_table_info('{table}') WHERE name = 'claude_model'"
+            ))?
+            .exists([])?;
+        if !has_col {
+            conn.execute_batch(&format!(
+                "ALTER TABLE {table} ADD COLUMN claude_model TEXT;"
+            ))?;
+            // One-time backfill of the rows that existed before the column did.
+            conn.execute(
+                &format!(
+                    "UPDATE {table} SET claude_model = ?1 WHERE claude_model IS NULL"
+                ),
+                rusqlite::params![BACKFILL_MODEL],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// Ensure the bookmarks table exists in the database.
@@ -1373,6 +1431,7 @@ pub fn save_gloss(
     source_text: &str,
     gloss_text: &str,
     gloss_type: &str,
+    claude_model: &str,
 ) -> Result<(), rusqlite::Error> {
     conn.execute(
         "INSERT OR IGNORE INTO passages \
@@ -1388,17 +1447,22 @@ pub fn save_gloss(
     )?;
 
     conn.execute(
-        "INSERT INTO glosses (passage_id, gloss_type, gloss_text) VALUES (?1, ?2, ?3)",
-        rusqlite::params![passage_id, gloss_type, gloss_text],
+        "INSERT INTO glosses (passage_id, gloss_type, gloss_text, claude_model) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![passage_id, gloss_type, gloss_text, claude_model],
     )?;
 
     Ok(())
 }
 
-pub fn update_gloss(conn: &Connection, gloss_id: i64, gloss_text: &str) -> Result<(), rusqlite::Error> {
+pub fn update_gloss(
+    conn: &Connection,
+    gloss_id: i64,
+    gloss_text: &str,
+    claude_model: &str,
+) -> Result<(), rusqlite::Error> {
     conn.execute(
-        "UPDATE glosses SET gloss_text = ?1, timestamp = CURRENT_TIMESTAMP WHERE id = ?2",
-        rusqlite::params![gloss_text, gloss_id],
+        "UPDATE glosses SET gloss_text = ?1, claude_model = ?2, timestamp = CURRENT_TIMESTAMP WHERE id = ?3",
+        rusqlite::params![gloss_text, claude_model, gloss_id],
     )?;
     Ok(())
 }

@@ -97,6 +97,8 @@ pub(crate) fn amend_synopsis(state_rc: &Rc<RefCell<AppState>>, question: &str) {
 
     let state_for_result = Rc::clone(state_rc);
     glib::spawn_future_local(async move {
+        // Keep a copy for the DB stamp; `model` itself is moved into the spawn.
+        let model_for_db = model.clone();
         let result = tokio_handle
             .spawn(async move {
                 crate::claude::send_message(SYNOPSIS_AMEND_PROMPT, &user_msg, &model).await
@@ -106,11 +108,11 @@ pub(crate) fn amend_synopsis(state_rc: &Rc<RefCell<AppState>>, question: &str) {
         match result {
             Ok(Ok(revised)) => {
                 let revised = revised.trim().to_string();
-                // Persist (upsert) to lit.db.
+                // Persist (upsert) to lit.db, stamping the authoring model.
                 if let Ok(conn) = crate::db::queries::open_db_rw() {
-                    if let Err(e) =
-                        crate::db::queries::save_synopsis(&conn, &work_abbrev, div1, div2, &revised)
-                    {
+                    if let Err(e) = crate::db::queries::save_synopsis(
+                        &conn, &work_abbrev, div1, div2, &revised, &model_for_db,
+                    ) {
                         crate::logging::log(&format!("SYNOPSIS: save error: {}", e));
                     }
                 }
@@ -176,8 +178,10 @@ pub(crate) fn undo_amend(state_rc: &Rc<RefCell<AppState>>) {
     };
     if let Some(abbrev) = work_abbrev {
         if let Ok(conn) = crate::db::queries::open_db_rw() {
+            // Undo restores the pre-amend text only; leave claude_model as the
+            // row's existing value (that model authored the text being restored).
             if let Err(e) =
-                crate::db::queries::save_synopsis(&conn, &abbrev, div1, div2, &original)
+                crate::db::queries::restore_synopsis_text(&conn, &abbrev, div1, div2, &original)
             {
                 crate::logging::log(&format!("SYNOPSIS: undo save error: {}", e));
             }

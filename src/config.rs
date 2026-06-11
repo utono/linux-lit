@@ -119,7 +119,7 @@ fn default_text_margins() -> u32 {
 }
 
 fn default_claude_model() -> String {
-    "claude-opus-4-7".to_string()
+    "claude-opus-4-8".to_string()
 }
 
 fn default_elevenlabs_voice_id() -> String {

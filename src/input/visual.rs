@@ -468,6 +468,8 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
     let state_for_result = std::rc::Rc::clone(state_rc);
 
     glib::spawn_future_local(async move {
+        // Keep a copy for the DB stamp; `model` itself is moved into the spawn.
+        let model_for_db = model.clone();
         let result = tokio_handle
             .spawn(async move {
                 crate::gloss::call_claude(&user_msg, &model).await
@@ -489,6 +491,7 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
                         &ctx.source_text,
                         &gloss_text,
                         "teacher-generic",
+                        &model_for_db,
                     );
                 }
 
@@ -721,6 +724,8 @@ fn run_pending_inner_monologue_blocking(
     let handle = tokio_handle.clone();
 
     glib::spawn_future_local(async move {
+        // Keep a copy for the DB stamp; `model` itself is moved into the spawn.
+        let model_for_db = model.clone();
         let result = handle
             .spawn(async move {
                 crate::gloss::call_claude_with_prompt(
@@ -745,6 +750,7 @@ fn run_pending_inner_monologue_blocking(
                         &ctx.source_text,
                         &verified_text,
                         "inner-monologue",
+                        &model_for_db,
                     );
                 }
 
