@@ -336,7 +336,8 @@ is active. \
 A gloss is a saved AI commentary on a highlighted passage — either a \
 teacher-style Q&A note or an inner-monologue cross-reference. If a gloss is \
 already loaded it reopens that one without re-querying the database. Inside the \
-overlay, Shift+Space batch-synthesizes every prose (explication) block to \
+overlay, Space (or Tab) reads the cursor block aloud; Shift+Space \
+batch-synthesizes every prose (explication) block to \
 cached ElevenLabs MP3s (cache only, no playback), showing a \
 \u{201c}Synthesizing\u{2026}\u{201d} toast. \
 -> gloss::toggle_overlay — src/input/actions/gloss.rs; \
@@ -492,8 +493,8 @@ that flag timestamps, chapters, bookmarks, and A/B points. \
 -> app::toggle_sign_column — src/app.rs",
         "synopsis" => "Show the synopsis overlay for the current scene. Inside \
 it, j/k move the cursor block (left accent bar) and gg/G jump first/last, like \
-the gloss overlay; Space plays/stops the cursor paragraph's TTS (synthesizing \
-on a cache miss); Shift+Space batch-synthesizes every synopsis paragraph to \
+the gloss overlay; Space (or Tab) plays/stops the cursor paragraph's TTS \
+(synthesizing on a cache miss); Shift+Space batch-synthesizes every synopsis paragraph to \
 cached ElevenLabs MP3s (cache only, no playback), showing a \u{201c}Synthesizing\u{2026}\u{201d} \
 toast. -> app::show_synopsis_overlay — src/app.rs; \
 gloss::read_current_synopsis_block, gloss::synth_all_synopsis_blocks \

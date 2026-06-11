@@ -819,7 +819,10 @@ fn handle_gloss_key(
             state.borrow().gloss_overlay.cursor_prev_block();
             true
         }
-        "space" => {
+        // Tab mirrors Space: read the cursor block aloud (ISO_Left_Tab is
+        // Shift+Tab). The ask-card Tab guard above takes precedence when the
+        // input is focused, so this only fires in normal overlay navigation.
+        "space" | "Tab" | "ISO_Left_Tab" => {
             crate::input::actions::gloss::read_current_block(state);
             true
         }
@@ -1110,7 +1113,8 @@ fn handle_synopsis_overlay_key(
         }
         // Plain Space: play/stop the cursor paragraph's TTS (Shift+Space, the
         // batch-synth, is handled by the guard above before this match).
-        "space" => {
+        // Tab mirrors Space (ISO_Left_Tab is Shift+Tab).
+        "space" | "Tab" | "ISO_Left_Tab" => {
             crate::input::actions::gloss::read_current_synopsis_block(state);
             true
         }
