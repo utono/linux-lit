@@ -535,6 +535,14 @@ fn scene_snap_top(state: &AppState, line_count: usize) -> Option<usize> {
     if state.column_count() != 2 {
         return None;
     }
+    // Anthology works pack excerpts into BOTH columns (column_split advances the
+    // split to the next excerpt for the right column). The play "snap the next
+    // scene to the left column" turn would re-show the right-column excerpt as
+    // the next spread's left column (duplicating it). Fall through to the normal
+    // next_page_top turn, which advances a full spread.
+    if state.is_anthology() {
+        return None;
+    }
     let cs = column_split(state, state.page_top_line);
     let split = cs.split;
     let page_end = cs.page_end;
