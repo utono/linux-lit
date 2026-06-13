@@ -372,20 +372,26 @@ fn first_chrome_at_or_before(file_lines: &[String], buf: usize) -> usize {
             || line_types::is_speaker(t)
             || line_types::is_stage_direction(t)
             || line_types::is_stanza_number(t)
+            || is_title_above_separator(file_lines, top - 1)
         {
             top -= 1;
         } else {
             break;
         }
     }
-    // Within [top, buf), prefer the first act/scene marker / separator / bare
-    // stanza number (the title line the reader should see at the page top); else
-    // use `top`. A `sonnet_sequence` heads each section with a bare number ("1"),
-    // which `is_stanza_number` matches but the act/scene/separator predicates do
-    // not — without it the boundary lands on the blank above the number.
+    // Within [top, buf), prefer the first heading line the reader should see at
+    // the page top: an act/scene marker, a separator, a bare stanza number, or a
+    // plain TITLE line sitting directly above a separator (the anthology header
+    // form `Sonnet 116` / `=====`, where the title matches none of the other
+    // predicates but heads the section). Checked title-first so the boundary
+    // lands on the title, not the underline beneath it. Else use `top`. A
+    // `sonnet_sequence` heads each section with a bare number ("1"), which
+    // `is_stanza_number` matches but the act/scene/separator predicates do not —
+    // without it the boundary lands on the blank above the number.
     for i in top..buf {
         let t = file_lines[i].trim();
-        if line_types::is_act_scene_marker(t)
+        if is_title_above_separator(file_lines, i)
+            || line_types::is_act_scene_marker(t)
             || line_types::is_separator(t)
             || line_types::is_stanza_number(t)
         {
@@ -393,6 +399,27 @@ fn first_chrome_at_or_before(file_lines: &[String], buf: usize) -> usize {
         }
     }
     top
+}
+
+/// True if `file_lines[i]` is a plain title line that sits directly above a
+/// `=====` separator — the anthology header form (`Sonnet 116` / `=====`).
+/// Such a title heads its section but matches none of the act/scene/separator/
+/// stanza-number predicates, so the section boundary would otherwise land on
+/// the separator below it and orphan the title onto its own truncated page.
+/// Folger plays never trip this: their pre-separator line is an `ACT N` marker,
+/// which `is_act_scene_marker` already claims.
+fn is_title_above_separator(file_lines: &[String], i: usize) -> bool {
+    let t = file_lines[i].trim();
+    if t.is_empty()
+        || line_types::is_act_scene_marker(t)
+        || line_types::is_separator(t)
+        || line_types::is_stanza_number(t)
+        || line_types::is_speaker(t)
+        || line_types::is_stage_direction(t)
+    {
+        return false;
+    }
+    matches!(file_lines.get(i + 1), Some(next) if line_types::is_separator(next.trim()))
 }
 
 /// Find the boundary line for a `(div1,div2)` transition occurring between
@@ -403,7 +430,8 @@ fn first_chrome_at_or_before(file_lines: &[String], buf: usize) -> usize {
 fn first_chrome_after(file_lines: &[String], prev: usize, cur: usize) -> usize {
     for i in (prev + 1)..=cur.min(file_lines.len().saturating_sub(1)) {
         let t = file_lines[i].trim();
-        if line_types::is_act_scene_marker(t)
+        if is_title_above_separator(file_lines, i)
+            || line_types::is_act_scene_marker(t)
             || line_types::is_separator(t)
             || line_types::is_stanza_number(t)
         {
@@ -872,6 +900,46 @@ mod tests {
         assert!(!map.section_starts[2], "trailing blank is not a boundary");
         assert!(!map.section_starts[8], "the new scene's dialogue is not the boundary line");
         // Exactly two boundaries total.
+        assert_eq!(map.section_starts.iter().filter(|b| **b).count(), 2);
+    }
+
+    #[test]
+    fn test_section_starts_anthology_title_above_separator() {
+        // Anthology (work_type='anthology', e.g. DavidCrystalOP) header shape:
+        // a plain TITLE line directly above a `=====` separator heads each
+        // excerpt. The title matches none of the act/scene/separator/stanza
+        // predicates, so without is_title_above_separator the boundary would
+        // land on the `=====` and orphan the title onto a one-line page (the
+        // bug: only "Sonnet 116" rendered). Each excerpt is its own (div1,div2).
+        let file_lines: Vec<String> = vec![
+            "Sonnet 116".into(),                              // 0 title  <-- boundary
+            "==========".into(),                              // 1 separator
+            "".into(),                                        // 2 blank
+            "Let me not to the marriage of true minds".into(),// 3 verse (1,1)
+            "".into(),                                        // 4 blank
+            "".into(),                                        // 5 blank
+            "Hamlet".into(),                                  // 6 title  <-- boundary
+            "======".into(),                                  // 7 separator
+            "Act 3, Scene 1".into(),                          // 8 subheader
+            "".into(),                                        // 9 blank
+            "To be or not to be—that is the question:".into(),// 10 verse (2,1)
+        ];
+        let work_lines = vec![
+            make_line_div(1, "Let me not to the marriage of true minds",
+                          "let me not to the marriage of true minds", true, 1, 1),
+            make_line_div(2, "To be or not to be—that is the question:",
+                          "to be or not to be that is the question", true, 2, 1),
+        ];
+
+        let map = build_line_map(&file_lines, &work_lines, false);
+
+        // Opening excerpt boundary lands on the title (buf 0), NOT the separator.
+        assert!(map.section_starts[0], "opening boundary on the title 'Sonnet 116'");
+        assert!(!map.section_starts[1], "the ===== underline is not the boundary");
+        // Second excerpt boundary lands on its title (buf 6), NOT the separator.
+        assert!(map.section_starts[6], "second excerpt boundary on the title 'Hamlet'");
+        assert!(!map.section_starts[7], "the ===== underline is not the boundary");
+        // Exactly two boundaries (one per excerpt).
         assert_eq!(map.section_starts.iter().filter(|b| **b).count(), 2);
     }
 
