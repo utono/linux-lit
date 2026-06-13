@@ -1176,7 +1176,11 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
                     line_types::is_act_scene_marker(t.trim())
                 }),
             };
-        if at_break && !is_final_section {
+        // Anthology works pack excerpts continuously: each excerpt is its own
+        // tiny section, so the play "stop at scene break" model would waste the
+        // right column on every excerpt (one-excerpt-per-spread). Skip it so the
+        // right column simply begins the next excerpt and both columns fill.
+        if at_break && !is_final_section && !state.is_anthology() {
             // FIRST-SPREAD MIRROR OF THE EPILOGUE RULE. On the very first spread
             // (`page_top == 0`), a short COMPLETE opening section (Prologue,
             // Induction, Chorus, or a brief opening scene) that ends at the first
@@ -1212,6 +1216,29 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
             // unchanged so the right column simply renders nothing past page_end.
             let page_end = hi.saturating_sub(1).max(split.saturating_sub(1));
             return ColumnSplit { split, page_end, next_page_top: hi };
+        }
+    }
+
+    // Anthology packing: the left column clamps at the end of one excerpt, so
+    // `split` lands on the trailing blank lines BEFORE the next excerpt's title.
+    // Starting the right column there makes its own section-break clamp stop
+    // after a single blank (right.count == 1, a visually empty column — the bug).
+    // Advance `split` past those blanks to the next section start so the right
+    // column BEGINS the next excerpt and fills with it. (Plays keep the
+    // "stop at scene break" model above and never reach here at a break.)
+    let mut split = split;
+    if state.is_anthology() {
+        let mut hi = split;
+        while hi < line_count && !state.is_section_start(hi) {
+            let t = buffer_line_text(&state.buffer, hi);
+            if t.trim().is_empty() {
+                hi += 1;
+            } else {
+                break;
+            }
+        }
+        if hi < line_count && hi > split && state.is_section_start(hi) {
+            split = hi;
         }
     }
 
