@@ -438,6 +438,19 @@ impl AppState {
             .unwrap_or(false)
     }
 
+    /// True for an anthology work (`work_type='anthology'`, e.g. DavidCrystalOP):
+    /// one media performing excerpts from many works, where each excerpt is its
+    /// own `(div1,div2)` section (div1 = excerpt index, not an act number).
+    /// Anthology excerpts flow continuously to fill both columns rather than
+    /// claiming a spread each (the play "stop at scene break" model is disabled),
+    /// and the "next: Act N, Scene N" watermark is suppressed (its div1 is an
+    /// excerpt index, so the label would be meaningless).
+    pub fn is_anthology(&self) -> bool {
+        self.current_work.as_ref()
+            .map(|w| w.work_type == "anthology")
+            .unwrap_or(false)
+    }
+
     pub fn effective_line_count(&self) -> usize {
         if let Some(ref lm) = self.line_map {
             lm.buffer_to_work.len()

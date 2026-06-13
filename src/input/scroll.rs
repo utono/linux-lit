@@ -365,6 +365,14 @@ pub(crate) fn set_page_instant(state: &mut AppState, new_top: usize) {
 /// is read from `cs.next_page_top`'s DB `(div1, div2)` — authoritative metadata,
 /// never inferred from buffer text.
 fn update_next_scene_watermark(state: &AppState, cs: &super::viewport::ColumnSplit) {
+    // Anthology works have no act/scene structure (div1 is an excerpt index),
+    // and they pack excerpts into both columns rather than ending the spread at
+    // each section break — so there is no "empty right column awaiting the next
+    // scene" to annotate. Never show the watermark for them.
+    if state.is_anthology() {
+        state.next_scene_watermark.set_visible(false);
+        return;
+    }
     let line_count = state.effective_line_count();
     // The right column is VISUALLY empty when the spread ends at a scene break:
     // `column_split` leaves the scene's trailing exit/blank lines in the right
