@@ -351,6 +351,30 @@ Use `update_highlight_and_center` (not `center_cursor` alone) when jumping the c
 - Config: `~/.config/linux-lit/config.json` (release) **or**
   `~/.config/linux-lit/config-dev.json` (dev / `cargo run`) — see gotcha below
 
+### Renaming a work's abbrev is a multi-table migration — use the skill
+
+`works.abbrev` is the de-facto foreign key for ~15 lit.db tables
+(`line_mapping`, `media_files`, `work_media_associations`, `bookmarks`,
+`characters`, `passages`, `chunks`, `echo_turns`, `scene_synopses`,
+`passage_embeddings`, `attribution_sets`, ...). A bare
+`UPDATE works SET abbrev=...` orphans every dependent row, the work loses its
+`(div1,div2)` boundary metadata, and **pagination breaks** (anthology stops
+putting one excerpt per column, plays show wrong spreads). The snapshot cache
+(`~/.cache/linux-lit/snapshots/<abbrev>.text.bin`) and config (`last_work`,
+`recent_works`, `work_positions`) are also abbrev-keyed and must move too.
+
+**Never rename an abbrev with a raw `UPDATE works`.** Use the
+`rename-work-abbrev` skill at
+`~/utono/litdb/.claude/skills/rename-work-abbrev/` (it also optionally renames
+the title). It migrates all dependent tables in one transaction, renames the
+snapshot, and fixes the config — close linux-lit first so the app doesn't
+clobber the config on exit:
+
+```bash
+~/utono/litdb/.claude/skills/rename-work-abbrev/rename-work-abbrev.sh --dry-run OLD NEW
+~/utono/litdb/.claude/skills/rename-work-abbrev/rename-work-abbrev.sh OLD NEW ["New Title"]
+```
+
 ### Dev vs release use SEPARATE config files
 
 `config_path()` in `src/config.rs` selects the filename by build mode
