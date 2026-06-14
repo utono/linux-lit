@@ -80,6 +80,28 @@ pub fn is_stanza_number(text: &str) -> bool {
     !trimmed.is_empty() && trimmed.chars().all(|c| c.is_ascii_digit())
 }
 
+/// True when `text` is a plain title line sitting directly above a `=====`
+/// separator — the anthology header form (`Sonnet 116` / `==========`), where
+/// `next_text` is the immediately following line. Such a title heads its
+/// section but matches none of the speaker/act-scene/separator/stanza-number
+/// predicates, so without this check the cursor-landing paths treat it as
+/// spoken dialogue and `gg`/`x` highlight the title instead of the first verse
+/// line. Mirrors `text_file_map::is_title_above_separator` (which works on the
+/// raw file lines for `section_starts`) but on already-prepared text.
+pub fn is_title_above_separator(text: &str, next_text: &str) -> bool {
+    let t = text.trim();
+    if t.is_empty()
+        || is_act_scene_marker(t)
+        || is_separator(t)
+        || is_stanza_number(t)
+        || is_speaker(t)
+        || is_stage_direction(t)
+    {
+        return false;
+    }
+    is_separator(next_text.trim())
+}
+
 pub fn is_dialogue(text: &str, is_prose: bool) -> bool {
     if is_blank(text) {
         return false;
@@ -111,6 +133,26 @@ mod tests {
         assert!(is_prose_work("prose"));
         assert!(!is_prose_work("play"));
         assert!(!is_prose_work("poem"));
+    }
+
+    #[test]
+    fn test_title_above_separator() {
+        // The anthology header form: a plain title directly above a ===== rule.
+        assert!(is_title_above_separator("Sonnet 116", "=========="));
+        assert!(is_title_above_separator("Sonnet 18", "========="));
+        // Not a heading without a separator beneath it.
+        assert!(!is_title_above_separator("Sonnet 116", ""));
+        assert!(!is_title_above_separator(
+            "Let me not to the marriage of true minds",
+            "Admit impediments. Love is not love"
+        ));
+        // A bare stanza number is handled by is_stanza_number, not this.
+        assert!(!is_title_above_separator("116", "=========="));
+        // Speaker / act markers above a rule are claimed by their own predicate.
+        assert!(!is_title_above_separator("HAMLET", "=========="));
+        assert!(!is_title_above_separator("ACT 1", "=========="));
+        // The separator line itself is not a title.
+        assert!(!is_title_above_separator("==========", "Some text"));
     }
 
     #[test]

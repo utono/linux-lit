@@ -1870,7 +1870,10 @@ mod page_turn_tests {
 
     fn is_dialogue_line(lines: &[String], idx: usize) -> bool {
         let text = &lines[idx];
-        !line_types::is_blank(text) && line_types::is_dialogue(text, false)
+        let next = lines.get(idx + 1).map(String::as_str).unwrap_or("");
+        !line_types::is_blank(text)
+            && line_types::is_dialogue(text, false)
+            && !line_types::is_title_above_separator(text, next)
             && !is_in_stage_block(lines, idx)
     }
 

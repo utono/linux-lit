@@ -671,12 +671,14 @@ pub(crate) fn is_dialogue_line(buffer: &sourceview5::Buffer, line: usize) -> boo
     use crate::db::line_types;
     let text = buffer_line_text(buffer, line);
     let trimmed = text.trim();
+    let next = buffer_line_text(buffer, line + 1);
     !trimmed.is_empty()
         && !line_types::is_speaker(trimmed)
         && !line_types::is_stage_direction(trimmed)
         && !line_types::is_act_scene_marker(trimmed)
         && !line_types::is_separator(trimmed)
         && !line_types::is_stanza_number(trimmed)
+        && !line_types::is_title_above_separator(&text, &next)
         && !is_inside_stage_direction(buffer, line)
 }
 
