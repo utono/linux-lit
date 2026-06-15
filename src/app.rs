@@ -298,6 +298,11 @@ pub struct AppState {
     pub vocab_match_idx: Option<usize>,
     pub vocab_tag: gtk4::TextTag,
     pub dim_enabled: bool,
+    /// Current Wright scansion overlay level (Off/StressOnly/Full).
+    pub scansion_level: crate::scansion::ScanLevel,
+    /// Cached scansion for the current work, keyed by line_mapping.id. Empty
+    /// until first toggle-on (or for works with no scansion).
+    pub scansion_data: std::collections::HashMap<i64, crate::scansion::LineScansion>,
     pub vocab_highlight_visible: bool,
     pub vocab_popup: crate::ui::vocab_popup::VocabPopup,
     pub vocab_popup_data: Vec<crate::ui::vocab_popup::VocabWordData>,
@@ -1666,6 +1671,8 @@ pub fn build_window(
         vocab_match_idx: None,
         vocab_tag,
         dim_enabled,
+        scansion_level: crate::scansion::ScanLevel::Off,
+        scansion_data: std::collections::HashMap::new(),
         vocab_highlight_visible,
         vocab_popup,
         vocab_popup_data: Vec::new(),
