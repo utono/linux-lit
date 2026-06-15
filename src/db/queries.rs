@@ -1711,7 +1711,7 @@ pub fn list_echo_turns_for_work(
         "SELECT t.div1, t.div2, t.start_line, t.speaker, t.turn_text \
          FROM echo_turns t \
          JOIN echo_links l ON l.turn_id = t.id \
-         WHERE t.work_abbrev = ?1 AND l.{} \
+         WHERE t.work_abbrev = ?1 AND {} \
          GROUP BY t.id \
          ORDER BY t.div1, t.div2, t.start_line",
         channel.sql_predicate(),
@@ -1795,12 +1795,15 @@ pub fn save_echo_turn(conn: &Connection, key: &EchoTurnKey) -> Result<i64, rusql
 
 /// Load all echo links for a turn, curated first then by rank.
 pub fn load_echo_links(conn: &Connection, turn_id: i64, channel: crate::db::echo_channel::EchoChannel) -> Result<Vec<StoredEchoLink>, rusqlite::Error> {
+    // JOIN echo_turns so the channel predicate can see the turn's work_abbrev
+    // (the BCP channel is "either side is BCP", not just the link side).
     let sql = format!(
-        "SELECT id, echo_work_abbrev, COALESCE(echo_div1, 0), COALESCE(echo_div2, 0), \
-                COALESCE(echo_start_line, 0), echo_text, \
-                COALESCE(similarity, 0.0), curated, rank \
-         FROM echo_links WHERE turn_id = ?1 AND {} \
-         ORDER BY curated DESC, rank ASC",
+        "SELECT l.id, l.echo_work_abbrev, COALESCE(l.echo_div1, 0), COALESCE(l.echo_div2, 0), \
+                COALESCE(l.echo_start_line, 0), l.echo_text, \
+                COALESCE(l.similarity, 0.0), l.curated, l.rank \
+         FROM echo_links l JOIN echo_turns t ON t.id = l.turn_id \
+         WHERE l.turn_id = ?1 AND {} \
+         ORDER BY l.curated DESC, l.rank ASC",
         channel.sql_predicate(),
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -2181,6 +2184,31 @@ mod tests {
         let shx = list_echo_turns_for_work(&conn, "Ham", EchoChannel::Shakespeare).unwrap();
         assert_eq!(shx.len(), 1);
         assert_eq!(shx[0].start_line, 10);
+    }
+
+    #[test]
+    fn bcp_channel_includes_bcp_turn_with_shakespeare_echo() {
+        // The inverse direction (BCP -> Shakespeare): turn is a BCP work, echo
+        // is a Shakespeare work. The two-sided filter must put this in the BCP
+        // channel even though echo_work_abbrev is NOT 'BCP%'.
+        use crate::db::echo_channel::EchoChannel;
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_echo_tables(&conn).unwrap();
+        conn.execute("INSERT INTO echo_turns (id, work_abbrev, div1, div2, start_line, end_line, speaker, turn_text) VALUES (1,'BCP1559',11,NULL,1,3,NULL,'I am the resurrection')", []).unwrap();
+        conn.execute("INSERT INTO echo_links (turn_id, echo_work_abbrev, echo_div1, echo_div2, echo_start_line, echo_text, similarity, curated, rank) VALUES (1,'Ham',5,1,1,'the grave',0.9,1,0)", []).unwrap();
+
+        // load_echo_links: the Shakespeare echo of a BCP turn is BCP-channel.
+        let bcp = load_echo_links(&conn, 1, EchoChannel::Bcp).unwrap();
+        assert_eq!(bcp.len(), 1);
+        assert_eq!(bcp[0].echo_work_abbrev, "Ham");
+        // ...and NOT in the Shakespeare channel.
+        assert_eq!(load_echo_links(&conn, 1, EchoChannel::Shakespeare).unwrap().len(), 0);
+
+        // list_echo_turns_for_work: the BCP work's turn shows in the BCP channel.
+        let turns = list_echo_turns_for_work(&conn, "BCP1559", EchoChannel::Bcp).unwrap();
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].start_line, 1);
+        assert_eq!(list_echo_turns_for_work(&conn, "BCP1559", EchoChannel::Shakespeare).unwrap().len(), 0);
     }
 
     #[test]
