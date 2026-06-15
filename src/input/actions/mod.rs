@@ -124,6 +124,7 @@ pub enum Action {
     ToggleColumnLayout,
     TogglePreviousWork,
     ToggleDim,
+    CycleScansion,
     ToggleTitleBar,
     ToggleAuthorship,
     PickAttributionSet,
@@ -222,6 +223,7 @@ impl Action {
             | Action::ToggleSignColumn
             | Action::ToggleColumnLayout
             | Action::ToggleDim
+            | Action::CycleScansion
             | Action::ToggleTitleBar
             | Action::ToggleAuthorship
             | Action::PickAttributionSet
@@ -341,6 +343,7 @@ impl Action {
             Action::ToggleColumnLayout => "ToggleColumnLayout",
             Action::TogglePreviousWork => "TogglePreviousWork",
             Action::ToggleDim => "ToggleDim",
+            Action::CycleScansion => "CycleScansion",
             Action::ToggleTitleBar => "ToggleTitleBar",
             Action::ToggleAuthorship => "ToggleAuthorship",
             Action::PickAttributionSet => "PickAttributionSet",
