@@ -1773,7 +1773,28 @@ fn dispatch_action(
             crate::config::save(&s.config);
             crate::logging::log(&format!("SCANSION: level -> {:?}", s.scansion_level));
             crate::app::rebuild_buffer_text(&mut s);
+            // Scansion marks change every verse line's content and height, so the
+            // cached page-tops and the left/right column split are now stale.
+            // Do NOT resnap synchronously: GTK has not re-laid-out the
+            // just-replaced buffer yet, so line_yrange/adjustment.upper are stale
+            // and a synchronous snap_scroll_to_line lands on a garbage offset and
+            // blanks the spread (the top-of-document `i` blank). Instead drop the
+            // stale page-tops and defer the resnap to the RESIZE_TICK via
+            // needs_layout_refresh — the same mechanism hide_translations uses for
+            // its two-column buffer change, which waits for layout to settle and
+            // produces the one correct resnap.
+            navigation::invalidate_page_tops(&mut s);
             navigation::update_highlight_only(&mut s);
+            // Hold the CURRENT spread verbatim across the deferred refresh.
+            // Without this, the RESIZE_TICK runs snap_near_end_to_canonical,
+            // which re-derives the page from the cursor and (e.g. at the top of
+            // a play, where page_top=0 "ACT 1" but the canonical first spread
+            // begins at the first dialogue boundary, line 1) shifts page_top off
+            // the spread the user is looking at. A scansion toggle must not move
+            // the page — only re-render it with/without marks. (Same one-shot
+            // flag hide_translations sets to keep its restored spread.)
+            s.trust_restored_page.set(true);
+            s.needs_layout_refresh.set(true);
         }
         ToggleTitleBar => {
             let mut s = state.borrow_mut();

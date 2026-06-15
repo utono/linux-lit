@@ -2023,6 +2023,22 @@ pub fn build_window(
                 }
                 let top = s.page_top_line;
                 crate::input::navigation::snap_scroll_to_line(&mut s, top);
+                // The synchronous snap above can race ahead of GTK's layout pass:
+                // when a buffer swap (a scansion toggle) changes the content
+                // height, `adjustment.upper` is momentarily stale, so column_split
+                // measures against the wrong height and the spread blanks (observed
+                // upper 103321 at snap time, settling to 71654 one tick later).
+                // Re-snap once on idle, after layout settles, so the final spread
+                // is computed against the real geometry.
+                let state_idle = Rc::clone(&state_for_tick);
+                glib::idle_add_local_once(move || {
+                    if let Ok(mut s) = state_idle.try_borrow_mut() {
+                        crate::input::navigation::invalidate_page_tops(&s);
+                        crate::input::scroll::ensure_scroll_range(&s);
+                        let top = s.page_top_line;
+                        crate::input::navigation::snap_scroll_to_line(&mut s, top);
+                    }
+                });
                 // Reveal LAST: apply_tiled_mode, snap_scroll, and the label
                 // update inside snap can all shift visible geometry. Doing
                 // them before opacity=1 keeps everything stable when the
@@ -3348,6 +3364,12 @@ pub fn prepare_text_for_display(work: &Work) -> Option<PreparedText> {
 }
 
 pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
+    // The scansion line-type label is appended to each verse line and would
+    // overflow the tight per-column width budget in two-column mode (the column
+    // is sized for the ~63-char verse worst case, with no room for a trailing
+    // label word — see apply_scansion_marks). Suppress the label when two
+    // columns are showing; the marks themselves still render in both columns.
+    let two_col = state.column_count() == 2;
     let work = match &state.current_work {
         Some(w) => w,
         None => return,
@@ -3368,9 +3390,16 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
                 &work.lines,
                 &state.scansion_data,
                 state.scansion_level,
+                two_col,
             )
         };
         state.buffer.set_text(&display_text);
+        // set_text replaces the whole buffer, discarding every applied TextTag —
+        // including the buffer-wide "font-size" tag that carries the configured
+        // reader font size. Without re-applying it the text falls back to the
+        // smaller CSS-default size (the scansion-toggle "small font" bug). Restore
+        // it so scansion mode inherits the main card's font size.
+        reapply_font(state);
         state.scansion_label_starts = label_starts;
         // Dim-tag each scansion line-type label span (from its start char to the
         // line end). Clone the small map so iterating it doesn't hold an immutable
@@ -3424,6 +3453,7 @@ fn apply_scansion_marks(
     work_lines: &[crate::db::models::Line],
     scansion: &std::collections::HashMap<i64, crate::scansion::LineScansion>,
     level: crate::scansion::ScanLevel,
+    two_col: bool,
 ) -> (String, std::collections::HashMap<usize, usize>) {
     let mut out_lines: Vec<String> = Vec::new();
     let mut map: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
@@ -3438,9 +3468,18 @@ fn apply_scansion_marks(
         match scan {
             Some(s) => {
                 let m = crate::scansion::mark_line(line, s, level);
-                // The label begins after the marked text and the 3 separator spaces.
-                map.insert(buf_idx, m.text.chars().count() + 3);
-                out_lines.push(format!("{}   {}", m.text, m.label));
+                if two_col {
+                    // No trailing line-type label in two-column mode: it would
+                    // overflow the per-column width budget and break the verse
+                    // flow across columns. Marks (and caesura) still render.
+                    out_lines.push(m.text);
+                } else {
+                    // Single column: append the line-type label after the marked
+                    // text and 3 separator spaces. Record where the label begins
+                    // so rebuild_buffer_text can dim-tag it.
+                    map.insert(buf_idx, m.text.chars().count() + 3);
+                    out_lines.push(format!("{}   {}", m.text, m.label));
+                }
             }
             None => out_lines.push(line.to_string()),
         }
