@@ -68,7 +68,7 @@ const TAB_KEY: KeyDef = bare("Tab", "", "play/pause");
 const HOME_ROW: &[KeyDef] = &[
     key("a", "A", "play from ts", "", &[("C-a", "authorship"), ("S-C-a", "attr set")]),
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
-    key("e", "E", "seek +3.5", "E: +60", &[("C-e", "echo turns"), ("S-C-e", "reopen echoes"), ("M-e", "echoes")]),
+    key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echo turns"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echoes")]),
     key("u", "U", "start time", "U: undo ts", &[("M-u", "set end time")]),
     key("i", "I", "scansion", "", &[("M-i", "2-col translation"), ("C-M-i", "inline translation"), ("i", "fix IPA")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
@@ -81,14 +81,14 @@ const HOME_ROW: &[KeyDef] = &[
 const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 
 const BOTTOM_ROW: &[KeyDef] = &[
-    bare("'", "\"", "reopen echoes"),
+    bare("'", "\"", "reopen BCP echoes"),
     key("q", "Q", "next speaker", "Q: next dlg", &[]),
     key("j", "J", "cursor \u{2193}", "J: next speaker", &[]),
     key("k", "K", "cursor \u{2191}", "K: prev speaker", &[]),
     bare("x", "X", "pg fwd"),
     bare("b", "B", ""),
     key("m", "M", "bookmark", "", &[("C-m", "media picker")]),
-    key("w", "W", "copy word", "W: collect", &[]),
+    key("w", "W", "copy word", "W: collect", &[("M-w", "Shx echoes"), ("C-w", "Shx echo turns"), ("S-C-w", "reopen Shx echoes")]),
     key("v", "V", "", "V: visual mode", &[("v", "voice: add/remove"), ("V", "voice: cycle")]),
     bare("z", "Z", "zt…"),
 ];
@@ -347,19 +347,31 @@ shows the speaker, the first source line, and the citation; confirming loads \
 that passage's glosses into the overlay and jumps the reader to it. \
 -> pickers::open_gloss_picker — src/input/actions/pickers.rs (confirm: \
 handle_gloss_picker_key in src/input/keymap.rs)",
-        "echo turns" => "List every speaker turn in this work that already has \
-cached cross-work echoes — thematically similar passages found by a prior echo \
-search and stored in lit.db. Selecting a turn jumps the cursor to its first \
-line and reopens its stored echoes instantly, with no new Voyage embedding \
-call. -> echoes::open_echo_turns_picker — src/input/actions/echoes.rs (confirm: \
-echoes::confirm_echo_turns_pick)",
-        "echoes" => "Run a cross-work echo search on the current speaker turn: \
+        "BCP echo turns" => "List every speaker turn in this work that has cached \
+Book of Common Prayer inner-monologue echoes (echo_work_abbrev LIKE 'BCP%'). \
+Selecting a turn jumps the cursor to its first line and reopens its stored BCP \
+echoes instantly. BCP echoes are precomputed (ws-book-of-common-prayer-references) \
+— this channel never runs a live search. -> echoes::open_echo_turns_picker(Bcp) \
+— src/input/actions/echoes.rs (confirm: echoes::confirm_echo_turns_pick)",
+        "BCP echoes" => "Show cached Book of Common Prayer inner-monologue echoes \
+for the current speaker turn — liturgical passages that resonate with the speech, \
+to animate performance. Cache-only: no live Voyage search. \
+-> echoes::show_echoes_for_cursor_line(Bcp) — src/input/actions/echoes.rs",
+        "reopen BCP echoes" => "Reopen the BCP echoes overlay with the most recent \
+results, without running a new search. \
+-> echoes::reopen_echoes(Bcp) — src/input/actions/echoes.rs",
+        "Shx echo turns" => "List every speaker turn in this work that has cached \
+Shakespeare-to-Shakespeare cross-work echoes (echo_work_abbrev NOT LIKE 'BCP%') — \
+thematically similar passages found by a prior echo search. Selecting a turn \
+jumps the cursor to its first line and reopens its stored echoes instantly. \
+-> echoes::open_echo_turns_picker(Shakespeare) — src/input/actions/echoes.rs",
+        "Shx echoes" => "Run a cross-work echo search on the current speaker turn: \
 embed the turn, find thematically similar passages elsewhere in the author's \
 works, and show them in the echoes overlay. \
--> echoes::show_echoes_for_cursor_line — src/input/actions/echoes.rs",
-        "reopen echoes" => "Reopen the echoes overlay with the most recent echo \
-results, without running a new search. \
--> echoes::reopen_echoes — src/input/actions/echoes.rs",
+-> echoes::show_echoes_for_cursor_line(Shakespeare) — src/input/actions/echoes.rs",
+        "reopen Shx echoes" => "Reopen the Shakespeare echoes overlay with the most \
+recent echo results, without running a new search. \
+-> echoes::reopen_echoes(Shakespeare) — src/input/actions/echoes.rs",
         "voice: add/remove" => "While the gloss overlay is open, open the voice \
 picker to add or remove a voice associated with this gloss (toggles voice-set \
 membership). -> open_voice_picker(GlossOverlay) — src/input/actions/settings.rs",
@@ -586,7 +598,8 @@ fn expand_action(label: &str) -> String {
         "media picker" => "media picker",
         "gloss tog" => "toggle gloss overlay",
         "gloss pick" => "gloss picker",
-        "echo turns" => "echo turns picker",
+        "BCP echo turns" => "BCP echo turns picker",
+        "Shx echo turns" => "Shakespeare echo turns picker",
         "vocab hi" => "toggle vocab highlight",
         "auto vocab" => "toggle auto-vocab popup",
         "toggle signs" => "toggle sign column",
