@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 use super::line_types;
 use super::models::{Line, MediaItem, TimeRange, Timestamp, Work, WorkSummary};
+use crate::scansion::{LineScansion, ScanSyllable};
 
 fn db_path() -> String {
     // LIT_DB_PATH lets an isolated run (e.g. the headless nav-fuzz) read its own
@@ -33,6 +34,53 @@ pub fn list_works(conn: &Connection) -> Result<Vec<WorkSummary>, rusqlite::Error
         })
     })?;
     rows.collect()
+}
+
+/// Load Wright scansion for every scanned line of `abbrev`, keyed by
+/// `line_mapping.id`. Lines with no `line_meter` row are absent from the map
+/// (rendered plain by the caller). Mirrors `load_work`'s query idiom.
+pub fn load_scansion_for_work(
+    conn: &Connection,
+    abbrev: &str,
+) -> Result<HashMap<i64, LineScansion>, rusqlite::Error> {
+    // 1. line_meter rows for this work's lines.
+    let mut meter_stmt = conn.prepare(
+        "SELECT lm.line_id, lm.line_type, lm.caesura_after \
+         FROM line_meter lm JOIN line_mapping m ON lm.line_id = m.id \
+         WHERE m.work_abbrev = ?1",
+    )?;
+    let mut map: HashMap<i64, LineScansion> = HashMap::new();
+    let meter_rows = meter_stmt.query_map([abbrev], |row| {
+        let line_id: i64 = row.get(0)?;
+        let line_type: String = row.get(1)?;
+        let caesura_after: Option<i32> = row.get(2)?;
+        Ok((line_id, line_type, caesura_after))
+    })?;
+    for r in meter_rows {
+        let (line_id, line_type, caesura_after) = r?;
+        map.insert(line_id, LineScansion { line_type, caesura_after, syllables: Vec::new() });
+    }
+
+    // 2. syllable_scan rows, appended in position order to their line.
+    let mut syl_stmt = conn.prepare(
+        "SELECT s.line_id, s.surface, s.ictus, s.is_extrametrical \
+         FROM syllable_scan s JOIN line_mapping m ON s.line_id = m.id \
+         WHERE m.work_abbrev = ?1 ORDER BY s.line_id, s.position",
+    )?;
+    let syl_rows = syl_stmt.query_map([abbrev], |row| {
+        let line_id: i64 = row.get(0)?;
+        let surface: Option<String> = row.get(1)?;
+        let ictus: i64 = row.get(2)?;
+        let is_extra: i64 = row.get::<_, Option<i64>>(3)?.unwrap_or(0);
+        Ok((line_id, surface.unwrap_or_default(), ictus as i8, is_extra != 0))
+    })?;
+    for r in syl_rows {
+        let (line_id, surface, ictus, is_extrametrical) = r?;
+        if let Some(ls) = map.get_mut(&line_id) {
+            ls.syllables.push(ScanSyllable { surface, ictus, is_extrametrical });
+        }
+    }
+    Ok(map)
 }
 
 pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Error> {
@@ -2721,5 +2769,69 @@ mod tests {
             resolve_default_voice(&conn, "Lr", "LEAR", true),
             (crate::elevenlabs::BENEDICK_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
         );
+    }
+}
+
+#[cfg(test)]
+mod scansion_tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn fixture() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE line_mapping (id INTEGER PRIMARY KEY, work_abbrev TEXT,
+               div1 INTEGER, div2 INTEGER, line_in_div INTEGER, canonical_text TEXT);
+             CREATE TABLE line_meter (line_id INTEGER, syllable_count INTEGER,
+               nominal_feet INTEGER, line_type TEXT, caesura_after INTEGER,
+               is_rhymed INTEGER, confidence REAL, source_note TEXT);
+             CREATE TABLE syllable_scan (line_id INTEGER, position INTEGER,
+               foot_index INTEGER, ictus INTEGER, foot_type TEXT, surface TEXT,
+               start_char INTEGER, end_char INTEGER, phenomenon TEXT,
+               is_extrametrical INTEGER);
+             INSERT INTO line_mapping VALUES (10,'TN',1,1,1,'If music');
+             INSERT INTO line_meter (line_id,syllable_count,nominal_feet,line_type,caesura_after)
+               VALUES (10,2,5,'regular',NULL);
+             INSERT INTO syllable_scan (line_id,position,foot_index,ictus,surface,is_extrametrical)
+               VALUES (10,1,1,0,'If',0),(10,2,1,1,'mu',0);
+             INSERT INTO line_mapping VALUES (11,'TN',1,1,2,'O brave');
+             INSERT INTO line_meter (line_id,syllable_count,nominal_feet,line_type,caesura_after)
+               VALUES (11,2,5,'feminine_ending',1);
+             INSERT INTO syllable_scan (line_id,position,foot_index,ictus,surface,is_extrametrical)
+               VALUES (11,1,1,1,'O',0),(11,2,1,0,'brave',1);",
+        ).unwrap();
+        c
+    }
+
+    #[test]
+    fn loads_scansion_keyed_by_line_id() {
+        let c = fixture();
+        let map = load_scansion_for_work(&c, "TN").unwrap();
+        let ls = map.get(&10).expect("line 10 present");
+        assert_eq!(ls.line_type, "regular");
+        assert_eq!(ls.caesura_after, None);
+        assert_eq!(ls.syllables.len(), 2);
+        assert_eq!(ls.syllables[1].ictus, 1);
+        assert_eq!(ls.syllables[1].surface, "mu");
+    }
+
+    #[test]
+    fn loads_caesura_and_extrametrical() {
+        let c = fixture();
+        let map = load_scansion_for_work(&c, "TN").unwrap();
+        let ls = map.get(&11).expect("line 11 present");
+        assert_eq!(ls.line_type, "feminine_ending");
+        assert_eq!(ls.caesura_after, Some(1));          // Option<i32> Some-branch
+        assert_eq!(ls.syllables.len(), 2);
+        assert!(!ls.syllables[0].is_extrametrical);     // 0 -> false
+        assert!(ls.syllables[1].is_extrametrical);      // 1 -> true
+        assert_eq!(ls.syllables[0].surface, "O");
+    }
+
+    #[test]
+    fn unscanned_line_absent_from_map() {
+        let c = fixture();
+        let map = load_scansion_for_work(&c, "TN").unwrap();
+        assert!(map.get(&999).is_none());
     }
 }

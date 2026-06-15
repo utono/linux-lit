@@ -266,7 +266,7 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl_shift("R"), Action::JumpToPrevVocab),
         (KeyCombo::alt("backslash"), Action::ToggleVocabHighlight),
         (KeyCombo::ctrl_shift("G"), Action::ToggleGlossOverlay),
-        (KeyCombo::plain("i"), Action::ShowTranslationOverlay),
+        (KeyCombo::alt("i"), Action::ShowTranslationOverlay),
         (KeyCombo::plain("apostrophe"), Action::ReopenEchoes),
         (KeyCombo::ctrl("backslash"), Action::OpenConcordancePicker),
         (KeyCombo::ctrl_shift("P"), Action::OpenConcordanceWordPicker),
@@ -287,11 +287,12 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("l"), Action::ToggleSignColumn),
         (KeyCombo::plain("minus"), Action::TogglePreviousWork),
         (KeyCombo::alt("d"), Action::ToggleDim),
+        (KeyCombo::plain("i"), Action::CycleScansion),
         (KeyCombo::alt("bracketleft"), Action::ToggleColumnLayout),
         (KeyCombo::ctrl("a"), Action::ToggleAuthorship),
         (KeyCombo::ctrl_shift("A"), Action::PickAttributionSet),
         (KeyCombo::alt("f"), Action::ShowFontInfo),
-        (KeyCombo::alt("i"), Action::ToggleTranslations),
+        (KeyCombo::ctrl_alt("i"), Action::ToggleTranslations),
         (KeyCombo::alt("e"), Action::ShowEchoes),
         (KeyCombo::ctrl("h"), Action::ToggleSynopsis),
         (KeyCombo::ctrl("comma"), Action::OpenSettingsOverlay),
@@ -368,6 +369,9 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::ctrl_shift("L")), Some(&Action::SaveAndQuit));
         assert_eq!(m.get(&KeyCombo::ctrl("a")), Some(&Action::ToggleAuthorship));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("A")), Some(&Action::PickAttributionSet));
+        assert_eq!(m.get(&KeyCombo::plain("i")), Some(&Action::CycleScansion));
+        assert_eq!(m.get(&KeyCombo::alt("i")), Some(&Action::ShowTranslationOverlay));
+        assert_eq!(m.get(&KeyCombo::ctrl_alt("i")), Some(&Action::ToggleTranslations));
     }
 
     #[test]

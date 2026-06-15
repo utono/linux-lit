@@ -1718,6 +1718,40 @@ fn dispatch_action(
             crate::config::save(&s.config);
             crate::logging::log(&format!("DIM: {}", if s.dim_enabled { "on" } else { "off" }));
         }
+        CycleScansion => {
+            let mut s = state.borrow_mut();
+            // Populate the cache on first use (or for a freshly loaded work).
+            if s.scansion_data.is_empty() {
+                if let Some(work) = s.current_work.as_ref() {
+                    let abbrev = work.abbrev.clone();
+                    if let Ok(conn) = crate::db::queries::open_db() {
+                        match crate::db::queries::load_scansion_for_work(&conn, &abbrev) {
+                            Ok(map) => s.scansion_data = map,
+                            Err(e) => crate::logging::log(&format!("SCANSION: load failed: {}", e)),
+                        }
+                    }
+                }
+            }
+            if s.scansion_data.is_empty() {
+                s.scansion_level = crate::scansion::ScanLevel::Off;
+                // Reuse the chapter-toast widget for a transient reader message
+                // (same pattern as show_chapter_toast in navigation.rs:1670).
+                s.chapter_toast.set_text("No scansion for this work");
+                s.chapter_toast.set_visible(true);
+                let toast = s.chapter_toast.clone();
+                glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+                    toast.set_visible(false);
+                });
+                crate::logging::log("SCANSION: no scansion for this work");
+                return;
+            }
+            s.scansion_level = s.scansion_level.next();
+            s.config.scansion_level = s.scansion_level.as_str().to_string();
+            crate::config::save(&s.config);
+            crate::logging::log(&format!("SCANSION: level -> {:?}", s.scansion_level));
+            crate::app::rebuild_buffer_text(&mut s);
+            navigation::update_highlight_only(&mut s);
+        }
         ToggleTitleBar => {
             let mut s = state.borrow_mut();
             let visible = s.title_bar.is_visible();

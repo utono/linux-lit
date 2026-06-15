@@ -227,6 +227,11 @@ pub struct AppState {
     pub translation_section_starts: Vec<bool>,
     pub translation_dim_tag: gtk4::TextTag,
     pub translation_text_tag: gtk4::TextTag,
+    pub scansion_label_tag: gtk4::TextTag,
+    /// For each buffer line that carries a scansion line-type label, the char
+    /// offset (into that line) where the label text begins. Empty when the overlay
+    /// is off. Used to dim-tag the label and exclude it from vocab highlighting.
+    pub scansion_label_starts: std::collections::HashMap<usize, usize>,
     /// When set, CursorSync events are suppressed until this instant passes.
     /// Prevents playback sync from overriding manual navigation.
     pub suppress_sync_until: Option<std::time::Instant>,
@@ -298,6 +303,11 @@ pub struct AppState {
     pub vocab_match_idx: Option<usize>,
     pub vocab_tag: gtk4::TextTag,
     pub dim_enabled: bool,
+    /// Current Wright scansion overlay level (Off/StressOnly/Full).
+    pub scansion_level: crate::scansion::ScanLevel,
+    /// Cached scansion for the current work, keyed by line_mapping.id. Empty
+    /// until first toggle-on (or for works with no scansion).
+    pub scansion_data: std::collections::HashMap<i64, crate::scansion::LineScansion>,
     pub vocab_highlight_visible: bool,
     pub vocab_popup: crate::ui::vocab_popup::VocabPopup,
     pub vocab_popup_data: Vec<crate::ui::vocab_popup::VocabWordData>,
@@ -1068,6 +1078,12 @@ pub fn build_window(
         .build();
     buffer.tag_table().add(&translation_dim_tag);
 
+    let scansion_label_tag = gtk4::TextTag::builder()
+        .name("scansion-label")
+        .foreground(&theme.dim_fg)
+        .build();
+    buffer.tag_table().add(&scansion_label_tag);
+
     let translation_text_tag = gtk4::TextTag::builder()
         .name("translation-text")
         .pixels_above_lines(0)
@@ -1622,6 +1638,8 @@ pub fn build_window(
         translation_section_starts: Vec::new(),
         translation_dim_tag,
         translation_text_tag,
+        scansion_label_tag,
+        scansion_label_starts: std::collections::HashMap::new(),
         suppress_sync_until: None,
         pending_advance: None,
         pending_advance_ignore_bl: None,
@@ -1666,6 +1684,8 @@ pub fn build_window(
         vocab_match_idx: None,
         vocab_tag,
         dim_enabled,
+        scansion_level: crate::scansion::ScanLevel::Off,
+        scansion_data: std::collections::HashMap::new(),
         vocab_highlight_visible,
         vocab_popup,
         vocab_popup_data: Vec::new(),
@@ -2759,8 +2779,33 @@ pub fn display_work_at_with_prepared(
     }
     state.sidebar_mode = SidebarMode::Vocab;
     state.synopsis_visible = false;
+    // Restore the persisted scansion level for this work. When it is on,
+    // load the cache now so the marks paint on open (true restore), not on
+    // the first keypress. The off-thread set_text path below does NOT bake
+    // marks, so when the overlay is on we must route through
+    // rebuild_buffer_text; we do that by short-circuiting the prepared
+    // fast-path for this case.
+    state.scansion_level =
+        crate::scansion::ScanLevel::from_config_str(&state.config.scansion_level);
+    state.scansion_data.clear(); // force reload for the new work
+    if state.scansion_level != crate::scansion::ScanLevel::Off {
+        if let Some(work) = state.current_work.as_ref() {
+            let abbrev = work.abbrev.clone();
+            if let Ok(conn) = crate::db::queries::open_db() {
+                match crate::db::queries::load_scansion_for_work(&conn, &abbrev) {
+                    Ok(map) => state.scansion_data = map,
+                    Err(e) => crate::logging::log(&format!("SCANSION: load failed: {}", e)),
+                }
+            }
+        }
+    }
     let t0 = std::time::Instant::now();
-    if let Some(prep) = prepared {
+    // The off-thread set_text path renders PLAIN (no combining marks). When the
+    // overlay is on and we have scansion for this work, skip that fast-path and
+    // render through rebuild_buffer_text, which bakes the marks in.
+    let overlay_on = state.scansion_level != crate::scansion::ScanLevel::Off
+        && !state.scansion_data.is_empty();
+    if let (Some(prep), false) = (prepared, overlay_on) {
         // Heavy work was done off-thread; just apply the result.
         let mapped = prep.line_map.buffer_to_work.iter().filter(|o| o.is_some()).count();
         let first_mapped = prep.line_map.buffer_to_work.iter().position(|o| o.is_some());
@@ -3302,7 +3347,7 @@ pub fn prepare_text_for_display(work: &Work) -> Option<PreparedText> {
     })
 }
 
-fn rebuild_buffer_text(state: &mut AppState) {
+pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
     let work = match &state.current_work {
         Some(w) => w,
         None => return,
@@ -3311,7 +3356,36 @@ fn rebuild_buffer_text(state: &mut AppState) {
     if let Some(prep) = prepare_text_for_display(work) {
         let mapped = prep.line_map.buffer_to_work.iter().filter(|o| o.is_some()).count();
         let first_mapped = prep.line_map.buffer_to_work.iter().position(|o| o.is_some());
-        state.buffer.set_text(&prep.filtered_contents);
+
+        let (display_text, label_starts) = if state.scansion_level == crate::scansion::ScanLevel::Off
+            || state.scansion_data.is_empty()
+        {
+            (prep.filtered_contents.clone(), std::collections::HashMap::new())
+        } else {
+            apply_scansion_marks(
+                &prep.filtered_contents,
+                &prep.line_map,
+                &work.lines,
+                &state.scansion_data,
+                state.scansion_level,
+            )
+        };
+        state.buffer.set_text(&display_text);
+        state.scansion_label_starts = label_starts;
+        // Dim-tag each scansion line-type label span (from its start char to the
+        // line end). Clone the small map so iterating it doesn't hold an immutable
+        // borrow of `state` across the `state.buffer.apply_tag` call.
+        let label_starts = state.scansion_label_starts.clone();
+        for (&buf_idx, &label_start) in &label_starts {
+            if let Some(mut start_iter) = state.buffer.iter_at_line(buf_idx as i32) {
+                start_iter.forward_chars(label_start as i32);
+                let mut end_iter = start_iter;
+                if !end_iter.ends_line() {
+                    end_iter.forward_to_line_end();
+                }
+                state.buffer.apply_tag(&state.scansion_label_tag, &start_iter, &end_iter);
+            }
+        }
         state.line_map = Some(prep.line_map);
         crate::logging::log(&format!(
             "TEXT_FILE: loaded '{}' work_type='{}' is_prose={} file_lines={} cleaned_lines={} work_lines={} mapped_buffer_lines={} first_mapped={:?} path={}",
@@ -3337,6 +3411,41 @@ fn rebuild_buffer_text(state: &mut AppState) {
         .collect::<Vec<_>>()
         .join("\n");
     state.buffer.set_text(&text);
+}
+
+/// Rebuild the joined buffer text with scansion marks baked into each verse line
+/// that has scansion. Operates line-by-line on the already-joined display text so
+/// the line count (and thus the line_map) is unchanged — only intra-line combining
+/// chars and a trailing label are added. Un-mapped / un-scanned lines pass through
+/// unchanged.
+fn apply_scansion_marks(
+    joined: &str,
+    line_map: &crate::text_file_map::LineMap,
+    work_lines: &[crate::db::models::Line],
+    scansion: &std::collections::HashMap<i64, crate::scansion::LineScansion>,
+    level: crate::scansion::ScanLevel,
+) -> (String, std::collections::HashMap<usize, usize>) {
+    let mut out_lines: Vec<String> = Vec::new();
+    let mut map: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    for (buf_idx, line) in joined.lines().enumerate() {
+        let scan = line_map
+            .buffer_to_work
+            .get(buf_idx)
+            .copied()
+            .flatten()
+            .and_then(|work_idx| work_lines.get(work_idx))
+            .and_then(|wl| scansion.get(&wl.id));
+        match scan {
+            Some(s) => {
+                let m = crate::scansion::mark_line(line, s, level);
+                // The label begins after the marked text and the 3 separator spaces.
+                map.insert(buf_idx, m.text.chars().count() + 3);
+                out_lines.push(format!("{}   {}", m.text, m.label));
+            }
+            None => out_lines.push(line.to_string()),
+        }
+    }
+    (out_lines.join("\n"), map)
 }
 
 /// Apply dialogue indentation and tight spacing for text-file mode.
@@ -4648,12 +4757,24 @@ fn build_vocab_matches(state: &mut AppState) {
         {
             continue;
         }
+        // If this line carries a scansion label, only scan the text BEFORE it so
+        // the line-type label isn't vocab-highlighted.
+        let scan_text: &str = match state.scansion_label_starts.get(&line_idx) {
+            Some(&label_start) => {
+                // label_start is a CHAR offset; convert to a byte index for slicing.
+                match line_text.char_indices().nth(label_start) {
+                    Some((byte_idx, _)) => &line_text[..byte_idx],
+                    None => line_text,
+                }
+            }
+            None => line_text,
+        };
         let mut char_offset = 0usize;
         let mut in_word = false;
         let mut word_start = 0usize;
         let mut word_buf = String::new();
 
-        for ch in line_text.chars() {
+        for ch in scan_text.chars() {
             let is_word_char = ch.is_alphanumeric() || ch == '\'' || ch == '\u{2019}';
             if is_word_char {
                 if !in_word {
@@ -5509,5 +5630,32 @@ mod chapter_synopsis_tests {
         assert_eq!(super::chapter_number_from_flags(&flags, 0), 0);
         assert_eq!(super::chapter_number_from_flags(&flags, 1), 0);
         assert_eq!(super::chapter_number_from_flags(&flags, 2), 1);
+    }
+}
+
+/// Count word-character runs in a line, treating combining marks (which attach to
+/// the preceding letter) as part of the word. Used to verify scansion marks don't
+/// split vocab words. Mirrors the word-character rule used by the vocab highlight pass.
+#[cfg(test)]
+fn word_run_count(line: &str) -> usize {
+    let mut runs = 0;
+    let mut in_word = false;
+    for ch in line.chars() {
+        let is_word = ch.is_alphanumeric() || ch == '\'' || ch == '\u{2019}'
+            || ch == '\u{0301}' || ch == '\u{0306}';
+        if is_word && !in_word { runs += 1; }
+        in_word = is_word;
+    }
+    runs
+}
+
+#[cfg(test)]
+mod scansion_vocab_tests {
+    use super::word_run_count;
+    #[test]
+    fn combining_marks_dont_split_words() {
+        // "músic" (acute after u) is still one word run.
+        let marked = "If m\u{0075}\u{0301}sic be";
+        assert_eq!(word_run_count(marked), 3); // If, músic, be
     }
 }
