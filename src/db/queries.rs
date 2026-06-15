@@ -2793,7 +2793,12 @@ mod scansion_tests {
              INSERT INTO line_meter (line_id,syllable_count,nominal_feet,line_type,caesura_after)
                VALUES (10,2,5,'regular',NULL);
              INSERT INTO syllable_scan (line_id,position,foot_index,ictus,surface,is_extrametrical)
-               VALUES (10,1,1,0,'If',0),(10,2,1,1,'mu',0);",
+               VALUES (10,1,1,0,'If',0),(10,2,1,1,'mu',0);
+             INSERT INTO line_mapping VALUES (11,'TN',1,1,2,'O brave');
+             INSERT INTO line_meter (line_id,syllable_count,nominal_feet,line_type,caesura_after)
+               VALUES (11,2,5,'feminine_ending',1);
+             INSERT INTO syllable_scan (line_id,position,foot_index,ictus,surface,is_extrametrical)
+               VALUES (11,1,1,1,'O',0),(11,2,1,0,'brave',1);",
         ).unwrap();
         c
     }
@@ -2808,6 +2813,19 @@ mod scansion_tests {
         assert_eq!(ls.syllables.len(), 2);
         assert_eq!(ls.syllables[1].ictus, 1);
         assert_eq!(ls.syllables[1].surface, "mu");
+    }
+
+    #[test]
+    fn loads_caesura_and_extrametrical() {
+        let c = fixture();
+        let map = load_scansion_for_work(&c, "TN").unwrap();
+        let ls = map.get(&11).expect("line 11 present");
+        assert_eq!(ls.line_type, "feminine_ending");
+        assert_eq!(ls.caesura_after, Some(1));          // Option<i32> Some-branch
+        assert_eq!(ls.syllables.len(), 2);
+        assert!(!ls.syllables[0].is_extrametrical);     // 0 -> false
+        assert!(ls.syllables[1].is_extrametrical);      // 1 -> true
+        assert_eq!(ls.syllables[0].surface, "O");
     }
 
     #[test]
