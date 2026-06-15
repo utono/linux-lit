@@ -50,7 +50,7 @@ const BACKSPACE: KeyDef = bare("\u{232b}", "", "delete ts");
 
 const UPPER_ROW: &[KeyDef] = &[
     bare(";", ":", "show chapter"),
-    key(",", "<", "prev dlg", "<: prev speaker", &[("C-,", "settings")]),
+    key(",", "<", "prev speaker", "<: prev dlg", &[("C-,", "settings")]),
     key(".", ">", "", "", &[("C-.", "bookmarks")]),
     key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("C-p", "lib picker"), ("S-C-p", "conc word"), ("C-M-p", "conc list")]),
     key("y", "Y", "pg back", "", &[("C-y", "copy id")]),
@@ -82,7 +82,7 @@ const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 
 const BOTTOM_ROW: &[KeyDef] = &[
     bare("'", "\"", "reopen echoes"),
-    key("q", "Q", "next dlg", "Q: next speaker", &[]),
+    key("q", "Q", "next speaker", "Q: next dlg", &[]),
     key("j", "J", "cursor \u{2193}", "J: next speaker", &[]),
     key("k", "K", "cursor \u{2191}", "K: prev speaker", &[]),
     bare("x", "X", "pg fwd"),

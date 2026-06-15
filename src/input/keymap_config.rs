@@ -204,18 +204,18 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("y"), Action::PageBackward),
         // Shift+, emits ("less", shift=true) on this layout (verified in the
         // debug log), NOT ("comma", shift=true) — bind the shifted glyph.
-        (KeyCombo::shift("less"), Action::JumpToPrevSpeaker),
+        (KeyCombo::shift("less"), Action::JumpToPrevDialogue),
         // space / Shift+space were PageForward/PageBackward; space is now a
         // global play/pause toggle handled directly in handle_key.
         // Cursor / dialogue
         (KeyCombo::plain("j"), Action::CursorNextDialogue),
         (KeyCombo::plain("k"), Action::CursorPrevLine),
-        (KeyCombo::plain("Q"), Action::JumpToNextSpeaker),
+        (KeyCombo::plain("Q"), Action::JumpToNextDialogue),
         (KeyCombo::plain("Up"), Action::CursorPrevLine),
         (KeyCombo::shift("Up"), Action::PageBackwardBottom),
         (KeyCombo::plain("Down"), Action::CursorNextDialogue),
-        (KeyCombo::plain("comma"), Action::JumpToPrevDialogue),
-        (KeyCombo::plain("q"), Action::JumpToNextDialogue),
+        (KeyCombo::plain("comma"), Action::JumpToPrevSpeaker),
+        (KeyCombo::plain("q"), Action::JumpToNextSpeaker),
         (KeyCombo::plain("J"), Action::JumpToNextSpeaker),
         (KeyCombo::plain("K"), Action::JumpToPrevSpeaker),
         // Multi-key chord entry (gg → JumpToStart, zt → ScrollCursorTop)
@@ -387,11 +387,14 @@ mod tests {
         // strips the redundant shift, so plain("J") matches.
         assert_eq!(km.lookup("J", false, true, false), Some(Action::JumpToNextSpeaker));
         assert_eq!(km.lookup("K", false, true, false), Some(Action::JumpToPrevSpeaker));
-        // Shift+, aliases K and Shift+q aliases J. On this layout Shift+,
-        // emits ("less", shift=true) — NOT ("comma", shift=true) — and Shift+q
-        // emits "Q" (uppercase, shift stripped).
-        assert_eq!(km.lookup("less", false, true, false), Some(Action::JumpToPrevSpeaker));
-        assert_eq!(km.lookup("Q", false, true, false), Some(Action::JumpToNextSpeaker));
+        // Bare , / q are the speaker jumps; the shifted forms are the
+        // dialogue-line jumps. On this layout Shift+, emits ("less", shift=true)
+        // — NOT ("comma", shift=true) — and Shift+q emits "Q" (uppercase,
+        // shift stripped).
+        assert_eq!(km.lookup("comma", false, false, false), Some(Action::JumpToPrevSpeaker));
+        assert_eq!(km.lookup("q", false, false, false), Some(Action::JumpToNextSpeaker));
+        assert_eq!(km.lookup("less", false, true, false), Some(Action::JumpToPrevDialogue));
+        assert_eq!(km.lookup("Q", false, true, false), Some(Action::JumpToNextDialogue));
         // Ctrl+, opens the settings overlay (mirrors the per-overlay handlers).
         assert_eq!(km.lookup("comma", true, false, false), Some(Action::OpenSettingsOverlay));
     }
