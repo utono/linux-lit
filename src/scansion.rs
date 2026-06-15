@@ -65,8 +65,8 @@ fn is_vowel(c: char) -> bool {
 /// For each syllable it locates the syllable's first vowel at or after the cursor
 /// (anchored on the syllable's `surface` when that substring is found ahead, so
 /// repeated letters don't misalign) and records a combining mark for that char
-/// index. A syllable whose vowel can't be located is skipped (no mark) rather
-/// than mis-placed. Marks are inserted AFTER the vowel char so stripping the
+/// index. A syllable whose surface can't be located (or which has no vowel ahead)
+/// is skipped (no mark) rather than mis-placed. Marks are inserted AFTER the vowel char so stripping the
 /// combining chars reproduces `displayed_line` exactly.
 pub fn mark_line(displayed_line: &str, scan: &LineScansion, level: ScanLevel) -> MarkedLine {
     if level == ScanLevel::Off {
@@ -81,12 +81,18 @@ pub fn mark_line(displayed_line: &str, scan: &LineScansion, level: ScanLevel) ->
 
     let mut cursor = 0usize; // char index into `chars`
     for (pos, syl) in scan.syllables.iter().enumerate() {
-        // Anchor the search: if the surface appears at/after cursor, start there.
-        let search_from = find_surface(&chars, cursor, &syl.surface).unwrap_or(cursor);
-        let vowel_idx = (search_from..chars.len()).find(|&i| is_vowel(chars[i]));
-        let vowel_idx = match vowel_idx {
+        // Anchor on the syllable's surface. If the surface is non-empty but cannot
+        // be located at/after the cursor, skip this syllable (no mark) rather than
+        // mis-placing a mark on an unrelated vowel ahead.
+        let has_surface = syl.surface.chars().any(|c| c.is_alphanumeric());
+        let search_from = match find_surface(&chars, cursor, &syl.surface) {
             Some(i) => i,
-            None => continue, // no vowel locatable — skip this syllable
+            None if has_surface => continue, // surface present but not found -> skip
+            None => cursor,                  // empty/punctuation-only surface -> best effort from cursor
+        };
+        let vowel_idx = match (search_from..chars.len()).find(|&i| is_vowel(chars[i])) {
+            Some(i) => i,
+            None => continue, // no vowel locatable -> skip
         };
         // Place the stress mark per level.
         let want_mark = match level {
@@ -207,11 +213,17 @@ mod tests {
 
     #[test]
     fn surface_not_found_skips_syllable_no_panic() {
-        // "xyz" isn't in the line; that syllable gets no mark, others still do.
+        // "xyz" isn't in the line; that syllable is skipped (no mark mis-placed),
+        // and other syllables still mark normally.
         let scan = LineScansion { line_type: "regular".into(), caesura_after: None,
             syllables: vec![syl("If", 1), syl("xyz", 1)] };
         let m = mark_line("If music", &scan, ScanLevel::StressOnly);
-        assert_eq!(strip(&m.text), "If music");
-        assert!(m.text.contains(ACUTE)); // "If" still marked
+        assert_eq!(strip(&m.text), "If music"); // strip-invariant holds
+        // Exactly one acute, and it's on "If" (after the 'I'), not on "music".
+        assert_eq!(m.text.matches(ACUTE).count(), 1);
+        let i_pos = m.text.find('I').unwrap();
+        let acute_pos = m.text.find(ACUTE).unwrap();
+        assert!(acute_pos > i_pos && acute_pos < m.text.find('f').unwrap(),
+                "acute should sit on the I of 'If', not later");
     }
 }
