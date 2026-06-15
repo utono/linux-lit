@@ -70,7 +70,7 @@ const HOME_ROW: &[KeyDef] = &[
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
     key("e", "E", "seek +3.5", "E: +60", &[("C-e", "echo turns"), ("S-C-e", "reopen echoes"), ("M-e", "echoes")]),
     key("u", "U", "start time", "U: undo ts", &[("M-u", "set end time")]),
-    key("i", "I", "translation", "", &[("M-i", "translations"), ("i", "fix IPA")]),
+    key("i", "I", "scansion", "", &[("M-i", "2-col translation"), ("C-M-i", "inline translation"), ("i", "fix IPA")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
     key("h", "H", "synopsis", "H: auto vocab", &[("C-h", "synopsis side")]),
     key("t", "T", "", "", &[("S-C-t", "nav test")]),
@@ -513,12 +513,16 @@ src/input/keymap.rs",
         "nav test" => "Toggle the in-app navigation test harness (Ctrl+Shift+T) — \
 drives nav actions and asserts on-page landing; for development only. \
 -> ToggleNavTest arm — src/input/keymap.rs",
-        "translation" => "Open the scrolling two-column translation overlay for \
-the current scene (source text beside its translation), with its own nav, \
-playback, and sync binds. Distinct from Alt+i's inline translation column. \
--> app::show_translation_overlay — src/app.rs",
-        "translations" => "Toggle the parallel translation column alongside the \
-text (pauses MPV first). -> app::toggle_translations — src/app.rs",
+        "scansion" => "Cycle the Wright metrical scansion overlay on verse lines: \
+off -> stress-only -> full (stress + unstressed marks), with line-type label and \
+caesura. -> input::keymap CycleScansion",
+        "2-col translation" => "Open the scrolling two-column translation overlay \
+(Alt+i) for the current scene (source text beside its translation), with its own \
+nav, playback, and sync binds. Distinct from Ctrl+Alt+i's inline translation \
+column. -> app::show_translation_overlay — src/app.rs",
+        "inline translation" => "Toggle the parallel inline translation column \
+(Ctrl+Alt+i) alongside the text (pauses MPV first). \
+-> app::toggle_translations — src/app.rs",
         "dim tog" => "Toggle dimming of lines outside the current A–B sync range \
 and refresh the highlight. -> ToggleDim arm (inline) — src/input/keymap.rs",
         "save+quit" => "Save the current reading position, tell MPV to quit, and \

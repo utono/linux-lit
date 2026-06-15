@@ -2766,6 +2766,16 @@ pub fn display_work_at_with_prepared(
     }
     state.sidebar_mode = SidebarMode::Vocab;
     state.synopsis_visible = false;
+    // Apply the persisted scansion level for this newly-loaded work and clear
+    // the per-work scansion cache so it reloads. If the persisted level is
+    // non-Off but the work has no scansion, rebuild_buffer_text returns plain
+    // text (scansion_data.is_empty()), so the overlay stays visually Off.
+    state.scansion_level = match state.config.scansion_level.as_str() {
+        "stress" => crate::scansion::ScanLevel::StressOnly,
+        "full" => crate::scansion::ScanLevel::Full,
+        _ => crate::scansion::ScanLevel::Off,
+    };
+    state.scansion_data.clear(); // force reload for the new work
     let t0 = std::time::Instant::now();
     if let Some(prep) = prepared {
         // Heavy work was done off-thread; just apply the result.
