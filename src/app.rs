@@ -5589,3 +5589,30 @@ mod chapter_synopsis_tests {
         assert_eq!(super::chapter_number_from_flags(&flags, 2), 1);
     }
 }
+
+/// Count word-character runs in a line, treating combining marks (which attach to
+/// the preceding letter) as part of the word. Used to verify scansion marks don't
+/// split vocab words. Mirrors the word-character rule used by the vocab highlight pass.
+#[cfg(test)]
+fn word_run_count(line: &str) -> usize {
+    let mut runs = 0;
+    let mut in_word = false;
+    for ch in line.chars() {
+        let is_word = ch.is_alphanumeric() || ch == '\'' || ch == '\u{2019}'
+            || ch == '\u{0301}' || ch == '\u{0306}';
+        if is_word && !in_word { runs += 1; }
+        in_word = is_word;
+    }
+    runs
+}
+
+#[cfg(test)]
+mod scansion_vocab_tests {
+    use super::word_run_count;
+    #[test]
+    fn combining_marks_dont_split_words() {
+        // "músic" (acute after u) is still one word run.
+        let marked = "If m\u{0075}\u{0301}sic be";
+        assert_eq!(word_run_count(marked), 3); // If, músic, be
+    }
+}
