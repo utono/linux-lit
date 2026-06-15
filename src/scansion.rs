@@ -28,6 +28,24 @@ impl ScanLevel {
             ScanLevel::Full => ScanLevel::Off,
         }
     }
+
+    /// The persisted/config string form.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ScanLevel::Off => "off",
+            ScanLevel::StressOnly => "stress",
+            ScanLevel::Full => "full",
+        }
+    }
+
+    /// Parse the persisted/config string form; unknown -> Off.
+    pub fn from_config_str(s: &str) -> ScanLevel {
+        match s {
+            "stress" => ScanLevel::StressOnly,
+            "full" => ScanLevel::Full,
+            _ => ScanLevel::Off,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

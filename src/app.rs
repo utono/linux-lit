@@ -2766,18 +2766,33 @@ pub fn display_work_at_with_prepared(
     }
     state.sidebar_mode = SidebarMode::Vocab;
     state.synopsis_visible = false;
-    // Apply the persisted scansion level for this newly-loaded work and clear
-    // the per-work scansion cache so it reloads. If the persisted level is
-    // non-Off but the work has no scansion, rebuild_buffer_text returns plain
-    // text (scansion_data.is_empty()), so the overlay stays visually Off.
-    state.scansion_level = match state.config.scansion_level.as_str() {
-        "stress" => crate::scansion::ScanLevel::StressOnly,
-        "full" => crate::scansion::ScanLevel::Full,
-        _ => crate::scansion::ScanLevel::Off,
-    };
+    // Restore the persisted scansion level for this work. When it is on,
+    // load the cache now so the marks paint on open (true restore), not on
+    // the first keypress. The off-thread set_text path below does NOT bake
+    // marks, so when the overlay is on we must route through
+    // rebuild_buffer_text; we do that by short-circuiting the prepared
+    // fast-path for this case.
+    state.scansion_level =
+        crate::scansion::ScanLevel::from_config_str(&state.config.scansion_level);
     state.scansion_data.clear(); // force reload for the new work
+    if state.scansion_level != crate::scansion::ScanLevel::Off {
+        if let Some(work) = state.current_work.as_ref() {
+            let abbrev = work.abbrev.clone();
+            if let Ok(conn) = crate::db::queries::open_db() {
+                match crate::db::queries::load_scansion_for_work(&conn, &abbrev) {
+                    Ok(map) => state.scansion_data = map,
+                    Err(e) => crate::logging::log(&format!("SCANSION: load failed: {}", e)),
+                }
+            }
+        }
+    }
     let t0 = std::time::Instant::now();
-    if let Some(prep) = prepared {
+    // The off-thread set_text path renders PLAIN (no combining marks). When the
+    // overlay is on and we have scansion for this work, skip that fast-path and
+    // render through rebuild_buffer_text, which bakes the marks in.
+    let overlay_on = state.scansion_level != crate::scansion::ScanLevel::Off
+        && !state.scansion_data.is_empty();
+    if let (Some(prep), false) = (prepared, overlay_on) {
         // Heavy work was done off-thread; just apply the result.
         let mapped = prep.line_map.buffer_to_work.iter().filter(|o| o.is_some()).count();
         let first_mapped = prep.line_map.buffer_to_work.iter().position(|o| o.is_some());

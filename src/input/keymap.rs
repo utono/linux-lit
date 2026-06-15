@@ -1550,15 +1550,6 @@ fn handle_visual_key(
 
 /// Execute an Action by calling its corresponding verb. The key is always
 /// consumed when a mapped action is dispatched.
-fn scansion_level_to_str(level: crate::scansion::ScanLevel) -> String {
-    match level {
-        crate::scansion::ScanLevel::Off => "off",
-        crate::scansion::ScanLevel::StressOnly => "stress",
-        crate::scansion::ScanLevel::Full => "full",
-    }
-    .to_string()
-}
-
 fn dispatch_action(
     state: &Rc<RefCell<AppState>>,
     action: crate::input::actions::Action,
@@ -1755,7 +1746,7 @@ fn dispatch_action(
                 return;
             }
             s.scansion_level = s.scansion_level.next();
-            s.config.scansion_level = scansion_level_to_str(s.scansion_level);
+            s.config.scansion_level = s.scansion_level.as_str().to_string();
             crate::config::save(&s.config);
             crate::logging::log(&format!("SCANSION: level -> {:?}", s.scansion_level));
             crate::app::rebuild_buffer_text(&mut s);
