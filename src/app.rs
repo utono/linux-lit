@@ -3309,7 +3309,7 @@ pub fn prepare_text_for_display(work: &Work) -> Option<PreparedText> {
     })
 }
 
-fn rebuild_buffer_text(state: &mut AppState) {
+pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
     let work = match &state.current_work {
         Some(w) => w,
         None => return,
@@ -3318,7 +3318,21 @@ fn rebuild_buffer_text(state: &mut AppState) {
     if let Some(prep) = prepare_text_for_display(work) {
         let mapped = prep.line_map.buffer_to_work.iter().filter(|o| o.is_some()).count();
         let first_mapped = prep.line_map.buffer_to_work.iter().position(|o| o.is_some());
-        state.buffer.set_text(&prep.filtered_contents);
+
+        let display_text = if state.scansion_level == crate::scansion::ScanLevel::Off
+            || state.scansion_data.is_empty()
+        {
+            prep.filtered_contents.clone()
+        } else {
+            apply_scansion_marks(
+                &prep.filtered_contents,
+                &prep.line_map,
+                &work.lines,
+                &state.scansion_data,
+                state.scansion_level,
+            )
+        };
+        state.buffer.set_text(&display_text);
         state.line_map = Some(prep.line_map);
         crate::logging::log(&format!(
             "TEXT_FILE: loaded '{}' work_type='{}' is_prose={} file_lines={} cleaned_lines={} work_lines={} mapped_buffer_lines={} first_mapped={:?} path={}",
@@ -3344,6 +3358,38 @@ fn rebuild_buffer_text(state: &mut AppState) {
         .collect::<Vec<_>>()
         .join("\n");
     state.buffer.set_text(&text);
+}
+
+/// Rebuild the joined buffer text with scansion marks baked into each verse line
+/// that has scansion. Operates line-by-line on the already-joined display text so
+/// the line count (and thus the line_map) is unchanged — only intra-line combining
+/// chars and a trailing label are added. Un-mapped / un-scanned lines pass through
+/// unchanged.
+fn apply_scansion_marks(
+    joined: &str,
+    line_map: &crate::text_file_map::LineMap,
+    work_lines: &[crate::db::models::Line],
+    scansion: &std::collections::HashMap<i64, crate::scansion::LineScansion>,
+    level: crate::scansion::ScanLevel,
+) -> String {
+    let mut out_lines: Vec<String> = Vec::new();
+    for (buf_idx, line) in joined.lines().enumerate() {
+        let scan = line_map
+            .buffer_to_work
+            .get(buf_idx)
+            .copied()
+            .flatten()
+            .and_then(|work_idx| work_lines.get(work_idx))
+            .and_then(|wl| scansion.get(&wl.id));
+        match scan {
+            Some(s) => {
+                let m = crate::scansion::mark_line(line, s, level);
+                out_lines.push(format!("{}   {}", m.text, m.label));
+            }
+            None => out_lines.push(line.to_string()),
+        }
+    }
+    out_lines.join("\n")
 }
 
 /// Apply dialogue indentation and tight spacing for text-file mode.
