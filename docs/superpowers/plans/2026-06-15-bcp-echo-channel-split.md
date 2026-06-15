@@ -4,7 +4,9 @@
 
 **Goal:** Make the existing echoes feature channel-aware so BCP→Shakespeare echoes and Shakespeare→Shakespeare echoes never appear in the same overlay. Bind the BCP channel to `Alt+e` / `Ctrl+e` / `Ctrl+Shift+E` / `'`; move the Shakespeare→Shakespeare channel to a new key family.
 
-**Architecture:** Introduce an `EchoChannel { Bcp, Shakespeare }` enum threaded through the echo actions, `EchoSession`, and the two DB queries that read cached echoes. The channel is a pure data filter on `echo_work_abbrev` (`LIKE 'BCP%'` vs `NOT LIKE 'BCP%'`) — no schema change. One rendering/navigation implementation; only the data-load boundary and the opening keybind differ.
+**Architecture:** Introduce an `EchoChannel { Bcp, Shakespeare }` enum threaded through the echo actions, `EchoSession`, and the two DB queries that read cached echoes. The channel is a pure data filter — a pair is BCP when **either side is a BCP work** (`t.work_abbrev LIKE 'BCP%' OR l.echo_work_abbrev LIKE 'BCP%'`), covering both reading directions (Shakespeare→BCP and BCP→Shakespeare). No schema change. One rendering/navigation implementation; only the data-load boundary and the opening keybind differ. (A later task makes BCP works openable in the reader so the BCP→Shakespeare direction is usable.)
+
+> **Status note:** Tasks 1–8 (the channel split, two-sided filter, keybind rebind, overlay docs) are **implemented and committed** on this branch. Task 9 (manual verification) and Task 10 (BCP-reading interaction) remain, both gated on the BCP data pipeline having run. The code blocks below reflect the as-built two-sided design.
 
 **Tech Stack:** Rust (linux-lit), `rusqlite`, GTK. Tests are inline `#[test]` fns with in-memory SQLite, matching the existing pattern in `src/db/queries.rs`.
 
@@ -12,10 +14,12 @@
 
 ## Reference facts (verified against the codebase)
 
-- **Channel definition:** a BCP echo row is an `echo_links` row with
-  `echo_work_abbrev LIKE 'BCP%'`; a Shakespeare echo row is `NOT LIKE 'BCP%'`.
-  `echo_work_abbrev` is `NOT NULL`, so the `LIKE` is NULL-safe. The BCP repo
-  guarantees every BCP row carries that prefix; **no schema change here.**
+- **Channel definition (two-sided):** a pair is BCP when **either side is a BCP
+  work** — `t.work_abbrev LIKE 'BCP%' OR l.echo_work_abbrev LIKE 'BCP%'`; a
+  Shakespeare pair is `NOT LIKE 'BCP%'` on both. Both columns are `NOT NULL`, so
+  `LIKE` is NULL-safe. This covers both directions: Shakespeare→BCP (BCP on the
+  link side) and BCP→Shakespeare (BCP on the turn side). The BCP repo guarantees
+  a `BCP*` work on exactly one side of every BCP pair; **no schema change here.**
 - **Action enum** (`src/input/actions/mod.rs`): variants `ShowEchoes` (100),
   `ReopenEchoes` (101), `ShowEchoTurns` (102); also referenced at 207–209 (some
   predicate group) and 325–327 (`as_str`/name match).
@@ -76,26 +80,32 @@
 ```rust
 //! Which class of cross-work echo an overlay shows.
 //!
-//! The channel is a pure data filter on `echo_links.echo_work_abbrev`:
-//! BCP editions are registered as works `BCP1549` / `BCP1559` / `BCP1662`, so a
-//! BCP echo row matches `echo_work_abbrev LIKE 'BCP%'`. There is no schema
-//! column — the BCP pipeline guarantees the prefix on every row it writes.
+//! A BCP pairing exists in both reading directions:
+//!   - Shakespeare -> BCP: turn is Shakespeare, echo is a `BCP*` work.
+//!   - BCP -> Shakespeare: turn is a `BCP*` work, echo is Shakespeare.
+//! So a pair is BCP when EITHER side is a BCP work. The predicate references
+//! two aliases — `t` (echo_turns, the turn's work_abbrev) and `l` (echo_links,
+//! echo_work_abbrev); every query using it must expose both (load_echo_links
+//! JOINs echo_turns). No schema column.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EchoChannel {
-    /// Book of Common Prayer inner-monologue echoes (echo_work_abbrev LIKE 'BCP%').
+    /// BCP pairings, either direction: t.work_abbrev or l.echo_work_abbrev is BCP.
     Bcp,
-    /// Shakespeare-to-Shakespeare dramatic echoes (everything else).
+    /// Shakespeare-to-Shakespeare: neither side is BCP.
     Shakespeare,
 }
 
 impl EchoChannel {
-    /// SQL predicate (no leading AND) selecting this channel's echo_links rows.
-    /// `echo_work_abbrev` is NOT NULL, so LIKE is well-defined.
+    /// SQL predicate (no leading AND). References `t.work_abbrev` (turn) and
+    /// `l.echo_work_abbrev` (link); both NOT NULL, so LIKE is well-defined.
+    /// Callers must alias echo_turns AS t and echo_links AS l.
     pub fn sql_predicate(self) -> &'static str {
         match self {
-            EchoChannel::Bcp => "echo_work_abbrev LIKE 'BCP%'",
-            EchoChannel::Shakespeare => "echo_work_abbrev NOT LIKE 'BCP%'",
+            EchoChannel::Bcp =>
+                "(t.work_abbrev LIKE 'BCP%' OR l.echo_work_abbrev LIKE 'BCP%')",
+            EchoChannel::Shakespeare =>
+                "(t.work_abbrev NOT LIKE 'BCP%' AND l.echo_work_abbrev NOT LIKE 'BCP%')",
         }
     }
 }
@@ -176,11 +186,15 @@ pub fn load_echo_links(
     turn_id: i64,
     channel: crate::db::echo_channel::EchoChannel,
 ) -> Result<Vec<StoredEchoLink>, rusqlite::Error> {
+    // JOIN echo_turns so the channel predicate can see the turn's work_abbrev
+    // (the BCP channel is "either side is BCP", not just the link side).
     let sql = format!(
-        "SELECT id, echo_work_abbrev, echo_div1, echo_div2, \
-                echo_start_line, echo_text, similarity, curated, rank \
-         FROM echo_links WHERE turn_id = ?1 AND {} \
-         ORDER BY curated DESC, rank ASC",
+        "SELECT l.id, l.echo_work_abbrev, COALESCE(l.echo_div1, 0), COALESCE(l.echo_div2, 0), \
+                COALESCE(l.echo_start_line, 0), l.echo_text, \
+                COALESCE(l.similarity, 0.0), l.curated, l.rank \
+         FROM echo_links l JOIN echo_turns t ON t.id = l.turn_id \
+         WHERE l.turn_id = ?1 AND {} \
+         ORDER BY l.curated DESC, l.rank ASC",
         channel.sql_predicate(),
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -188,7 +202,7 @@ pub fn load_echo_links(
 }
 ```
 
-(Keep the existing `query_map`/closure that builds `StoredEchoLink`; only the SQL string and the signature change. The predicate is a fixed `&'static str`, so `format!` introduces no injection risk.)
+(Keep the existing `query_map`/closure that builds `StoredEchoLink`; only the SQL string and the signature change. All selected columns are now `l.`-qualified because of the JOIN. The predicate is a fixed `&'static str`, so `format!` introduces no injection risk.)
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -250,7 +264,7 @@ pub fn list_echo_turns_for_work(
         "SELECT t.div1, t.div2, t.start_line, t.speaker, t.turn_text \
          FROM echo_turns t \
          JOIN echo_links l ON l.turn_id = t.id \
-         WHERE t.work_abbrev = ?1 AND l.{} \
+         WHERE t.work_abbrev = ?1 AND {} \
          GROUP BY t.id \
          ORDER BY t.div1, t.div2, t.start_line",
         channel.sql_predicate(),
@@ -260,8 +274,30 @@ pub fn list_echo_turns_for_work(
 }
 ```
 
-(Note the `l.` qualifier — `sql_predicate()` names a bare `echo_work_abbrev`
-column, and in this JOIN it lives on `echo_links` aliased `l`.)
+(No `l.` prefix before `{}` — `sql_predicate()` now self-qualifies both sides
+with `t.`/`l.`. This query already aliases `echo_turns AS t` and
+`echo_links AS l`, so the predicate drops in directly.)
+
+Also add a test for the **inverse direction** — a BCP *turn* with a Shakespeare
+echo must land in the BCP channel (the case a link-side-only filter would miss):
+
+```rust
+#[test]
+fn bcp_channel_includes_bcp_turn_with_shakespeare_echo() {
+    use crate::db::echo_channel::EchoChannel;
+    let conn = Connection::open_in_memory().unwrap();
+    ensure_echo_tables(&conn).unwrap();
+    conn.execute("INSERT INTO echo_turns (id, work_abbrev, div1, div2, start_line, end_line, speaker, turn_text) VALUES (1,'BCP1559',11,NULL,1,3,NULL,'I am the resurrection')", []).unwrap();
+    conn.execute("INSERT INTO echo_links (turn_id, echo_work_abbrev, echo_div1, echo_div2, echo_start_line, echo_text, similarity, curated, rank) VALUES (1,'Ham',5,1,1,'the grave',0.9,1,0)", []).unwrap();
+    let bcp = load_echo_links(&conn, 1, EchoChannel::Bcp).unwrap();
+    assert_eq!(bcp.len(), 1);
+    assert_eq!(bcp[0].echo_work_abbrev, "Ham");
+    assert_eq!(load_echo_links(&conn, 1, EchoChannel::Shakespeare).unwrap().len(), 0);
+    let turns = list_echo_turns_for_work(&conn, "BCP1559", EchoChannel::Bcp).unwrap();
+    assert_eq!(turns.len(), 1);
+    assert_eq!(list_echo_turns_for_work(&conn, "BCP1559", EchoChannel::Shakespeare).unwrap().len(), 0);
+}
+```
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -542,27 +578,78 @@ separation. Otherwise use real data.
 - [ ] **Step 4: Confirm no intermixing** — neither overlay ever shows a row from
   the other channel.
 
+- [ ] **Step 5: BCP→Shakespeare direction (needs Task 10 + bcp2shx data).** Open
+  a `BCP*` work, highlight/cursor a passage that has `bcp2shx` echoes, trigger the
+  BCP channel (`Alt+e`), and confirm Shakespeare echoes appear in the BCP overlay
+  (and `Enter` jumps into the Shakespeare work). Confirm those same rows do NOT
+  appear in the Shakespeare (`w`-family) channel.
+
+---
+
+## Task 10: BCP-reading interaction (BCP→Shakespeare direction)
+
+The two-sided filter (Tasks 1–3) already routes BCP→Shakespeare rows into the BCP
+channel. This task makes them *reachable from the reader*: the user must be able
+to open a `BCP*` work and resolve a highlighted passage to its `echo_turns` row.
+**Gated on `bcp2shx` data existing.** Investigate-then-fix; the exact edits depend
+on what the reader currently assumes.
+
+**Files:** TBD by investigation — likely `src/input/actions/echoes.rs`
+(cursor-turn / selection resolution) and possibly the work-open path.
+
+- [ ] **Step 1: Verify a `BCP*` work opens in the reader.** BCP works are normal
+  `works` + `line_mapping` entries (`work_type='bible_book'`, `div1`=rite,
+  `speaker=NULL`). Open one (once ingested) via the existing work picker and
+  confirm it renders. If the open path rejects `bible_book` or assumes a speaker,
+  note and fix.
+
+- [ ] **Step 2: Check cursor-turn / selection resolution for `speaker = NULL`.**
+  `cursor_turn` (`src/input/actions/echoes.rs:32`) groups the contiguous block of
+  lines by the same `speaker`. BCP lines have `speaker = NULL`. Determine how it
+  behaves: if a `NULL` speaker collapses the "turn" to a single line or misbehaves,
+  add a path that, for a BCP work, resolves the turn by the highlighted *selection*
+  (visual mode already exists — `show_echoes_for_selection`) or by the
+  `(work_abbrev, div1, div2, start_line, end_line)` key the BCP repo wrote.
+
+- [ ] **Step 3: Confirm the BCP turn key matches.** The BCP repo keys `bcp2shx`
+  `echo_turns` rows by `(work_abbrev, div1, div2, start_line, end_line)` with the
+  BCP work_abbrev. Ensure the reader's resolved key for a BCP selection matches
+  that shape so `find_echo_turn` hits.
+
+- [ ] **Step 4: Build + manual check** per Task 9 Step 5. (No new unit test
+  unless Step 2 introduces a pure function worth testing in isolation.)
+
+- [ ] **Step 5: Commit** (message describing the BCP-reading resolution fix).
+
 ---
 
 ## Final verification
 
 - [ ] `cargo build` clean.
-- [ ] `cargo test echo` — channel-filter tests green.
-- [ ] `git log --oneline` shows: enum → load filter → turns filter → session field → action threading → action split → rebind → overlay.
-- [ ] Manual check (Task 9): channels never intermix; BCP on `e`-family, Shakespeare on the new family.
-- [ ] When done, finish the branch per `~/CLAUDE.md` (merge `bcp-echo-channel-split-spec` back to master with `--no-ff`, push, delete) — only after the BCP repo's data pipeline can actually populate BCP echoes, so the feature is testable end-to-end.
+- [ ] `cargo test echo` — channel-filter tests green (incl.
+  `bcp_channel_includes_bcp_turn_with_shakespeare_echo`).
+- [ ] `git log --oneline` shows: enum → channel split (queries/session/actions/
+  rebind) → overlay → two-sided filter → (Task 10) BCP-reading.
+- [ ] Manual check (Task 9): channels never intermix; BCP on `e`-family,
+  Shakespeare on the new family; both reading directions work (Task 9 Step 5).
+- [ ] When done, finish the branch per `~/CLAUDE.md` (merge
+  `bcp-echo-channel-split-spec` back to master with `--no-ff`, push, delete) —
+  only after the BCP repo's data pipeline (both `shx2bcp` and `bcp2shx`) can
+  populate echoes, so the feature is testable end-to-end.
 
 ---
 
 ## Self-review notes (addressed)
 
 - **Spec coverage:** `EchoChannel` enum threaded through actions/session/queries
-  (T1,4,5,6), channel = `echo_work_abbrev LIKE 'BCP%'` filter with no schema
-  change (T1–T3), BCP on `Alt+e`/`Ctrl+e`/`Ctrl+Shift+E`/`'` + Shakespeare on a
-  new family (T6,T7), one rendering impl differentiated only at data-load +
-  keybind (no overlay duplication), BCP cache-only / no live search (T5 Step 4),
-  keybinds overlay updated (T8). Open item (the new key family) is decided in T7
-  Step 0 via a concrete audit command, not left vague.
+  (T1,4,5,6), channel = **two-sided** "either side is BCP" filter
+  (`t.work_abbrev` OR `l.echo_work_abbrev` LIKE 'BCP%') with no schema change and
+  a JOIN in `load_echo_links` (T1–T3), covering both reading directions; BCP on
+  `Alt+e`/`Ctrl+e`/`Ctrl+Shift+E`/`'` + Shakespeare on a new family (T6,T7), one
+  rendering impl differentiated only at data-load + keybind (no overlay
+  duplication), BCP cache-only / no live search (T5 Step 4), keybinds overlay
+  updated (T8), BCP-reading interaction for the inverse direction (T10). Open item
+  (the new key family) is decided in T7 Step 0 via a concrete audit command.
 - **Build-ordering hazard called out:** the signature changes (T2,T3,T5) and the
   Action split (T6,T7) must land together for `cargo build`/`cargo test` to pass
   at a commit boundary; each task notes this and the final commit groups them.
