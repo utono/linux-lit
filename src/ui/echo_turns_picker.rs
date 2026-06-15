@@ -14,6 +14,7 @@ pub struct EchoTurnsPicker {
     pub items: Vec<EchoTurnSummary>,
     titles: std::collections::HashMap<String, String>,
     work_abbrev: String,
+    pub channel: crate::db::echo_channel::EchoChannel,
 }
 
 impl EchoTurnsPicker {
@@ -70,6 +71,7 @@ impl EchoTurnsPicker {
             items: Vec::new(),
             titles: std::collections::HashMap::new(),
             work_abbrev: String::new(),
+            channel: crate::db::echo_channel::EchoChannel::Shakespeare,
         }
     }
 

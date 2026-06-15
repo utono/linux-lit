@@ -16,6 +16,7 @@ use crate::db::queries::{EchoTurnKey, StoredEchoLink};
 /// only when the user presses `I` on a new line.
 #[derive(Clone)]
 pub struct EchoSession {
+    pub channel: crate::db::echo_channel::EchoChannel,
     pub turn_key: EchoTurnKey,
     pub turn_id: Option<i64>,
     pub links: Vec<StoredEchoLink>,
@@ -122,6 +123,7 @@ fn selection_key(work_abbrev: &str, turn: &[Line]) -> crate::db::queries::EchoTu
 
 pub(crate) fn show_echoes_for_cursor_line(
     state_rc: &Rc<RefCell<AppState>>,
+    channel: crate::db::echo_channel::EchoChannel,
     tokio_handle: &tokio::runtime::Handle,
 ) {
     let (turn, speaker, addressee, source_work) = {
@@ -160,7 +162,7 @@ pub(crate) fn show_echoes_for_cursor_line(
     // Cache hit: load stored links and render immediately, no API call.
     let cached = crate::db::queries::open_db().ok().and_then(|conn| {
         let turn_id = crate::db::queries::find_echo_turn(&conn, &key).ok().flatten()?;
-        let links = crate::db::queries::load_echo_links(&conn, turn_id).ok()?;
+        let links = crate::db::queries::load_echo_links(&conn, turn_id, channel).ok()?;
         if links.is_empty() { None } else { Some((turn_id, links)) }
     });
 
@@ -180,6 +182,7 @@ pub(crate) fn show_echoes_for_cursor_line(
         s.echo_overlay_turn_id = Some(turn_id);
         s.echo_overlay_turn_key = Some(key.clone());
         s.echo_session = Some(EchoSession {
+            channel,
             turn_key: key,
             turn_id: Some(turn_id),
             links,
@@ -192,6 +195,16 @@ pub(crate) fn show_echoes_for_cursor_line(
         s.input_mode = crate::app::InputMode::EchoesOverlay;
         render_echoes(&mut s);
         crate::logging::log("ECHOES: showing cached echoes");
+        return;
+    }
+
+    // BCP echoes are cache-only: never trigger the Voyage search fallback.
+    if channel == crate::db::echo_channel::EchoChannel::Bcp {
+        let mut s = state_rc.borrow_mut();
+        s.echo_overlay_turn_key = Some(key);
+        s.gloss_overlay.show("No echoes found for this line.", "");
+        s.input_mode = crate::app::InputMode::EchoesOverlay;
+        crate::logging::log("ECHOES: BCP cache miss, no search fallback");
         return;
     }
 
@@ -276,7 +289,7 @@ pub(crate) fn show_echoes_for_cursor_line(
 
         // Persist: save the turn and its echo links, then read them back as
         // StoredEchoLinks (so the cache-hit and cache-miss render paths match).
-        let (turn_id, links) = persist_and_load(&key_for_async, &candidates);
+        let (turn_id, links) = persist_and_load(&key_for_async, &candidates, channel);
 
         let mut s = state_for_result.borrow_mut();
         let source_doc = build_source_header(&turn, &speaker);
@@ -286,6 +299,7 @@ pub(crate) fn show_echoes_for_cursor_line(
         s.echo_overlay_source = source_doc.clone();
         s.echo_overlay_turn_id = turn_id;
         s.echo_session = Some(EchoSession {
+            channel,
             turn_key: key_for_async.clone(),
             turn_id,
             links,
@@ -305,6 +319,7 @@ pub(crate) fn show_echoes_for_cursor_line(
 /// Visual selection. Exits Visual mode, then lands in the EchoesOverlay state.
 pub(crate) fn show_echoes_for_selection(
     state_rc: &Rc<RefCell<AppState>>,
+    channel: crate::db::echo_channel::EchoChannel,
     tokio_handle: &tokio::runtime::Handle,
 ) {
     let (turn, speaker, source_work) = {
@@ -346,7 +361,7 @@ pub(crate) fn show_echoes_for_selection(
 
     let cached = crate::db::queries::open_db().ok().and_then(|conn| {
         let turn_id = crate::db::queries::find_echo_turn(&conn, &key).ok().flatten()?;
-        let links = crate::db::queries::load_echo_links(&conn, turn_id).ok()?;
+        let links = crate::db::queries::load_echo_links(&conn, turn_id, channel).ok()?;
         if links.is_empty() { None } else { Some((turn_id, links)) }
     });
 
@@ -364,6 +379,7 @@ pub(crate) fn show_echoes_for_selection(
         s.echo_overlay_turn_id = Some(turn_id);
         s.echo_overlay_turn_key = Some(key.clone());
         s.echo_session = Some(EchoSession {
+            channel,
             turn_key: key,
             turn_id: Some(turn_id),
             links,
@@ -376,6 +392,16 @@ pub(crate) fn show_echoes_for_selection(
         s.input_mode = crate::app::InputMode::EchoesOverlay;
         render_echoes(&mut s);
         crate::logging::log("ECHOES: showing cached echoes (selection)");
+        return;
+    }
+
+    // BCP echoes are cache-only: never trigger the Voyage search fallback.
+    if channel == crate::db::echo_channel::EchoChannel::Bcp {
+        let mut s = state_rc.borrow_mut();
+        s.echo_overlay_turn_key = Some(key);
+        s.gloss_overlay.show("No echoes found for this line.", "");
+        s.input_mode = crate::app::InputMode::EchoesOverlay;
+        crate::logging::log("ECHOES: BCP cache miss, no search fallback (selection)");
         return;
     }
 
@@ -453,7 +479,7 @@ pub(crate) fn show_echoes_for_selection(
                 .then(a.div2.cmp(&b.div2))
         });
 
-        let (turn_id, links) = persist_and_load(&key_for_async, &candidates);
+        let (turn_id, links) = persist_and_load(&key_for_async, &candidates, channel);
 
         let mut s = state_for_result.borrow_mut();
         let source_doc = build_source_header(&turn, &speaker);
@@ -463,6 +489,7 @@ pub(crate) fn show_echoes_for_selection(
         s.echo_overlay_source = source_doc.clone();
         s.echo_overlay_turn_id = turn_id;
         s.echo_session = Some(EchoSession {
+            channel,
             turn_key: key_for_async.clone(),
             turn_id,
             links,
@@ -576,6 +603,7 @@ fn render_echoes(s: &mut AppState) {
 fn persist_and_load(
     key: &crate::db::queries::EchoTurnKey,
     candidates: &[crate::db::queries::EchoCandidate],
+    channel: crate::db::echo_channel::EchoChannel,
 ) -> (Option<i64>, Vec<crate::db::queries::StoredEchoLink>) {
     let conn = match crate::db::queries::open_db_rw() {
         Ok(c) => c,
@@ -601,7 +629,7 @@ fn persist_and_load(
         })
         .collect();
     let _ = crate::db::queries::insert_echo_links(&conn, turn_id, &rows);
-    let links = crate::db::queries::load_echo_links(&conn, turn_id).unwrap_or_default();
+    let links = crate::db::queries::load_echo_links(&conn, turn_id, channel).unwrap_or_default();
     (Some(turn_id), links)
 }
 
@@ -768,13 +796,14 @@ pub(crate) fn play_source_turn(state_rc: &Rc<RefCell<AppState>>) {
 /// Toggle the curated flag on the selected echo, persist, and re-render
 /// (curated echoes re-sort to the top).
 pub(crate) fn toggle_curated(state_rc: &Rc<RefCell<AppState>>) {
-    let (turn_id, link_id) = {
+    let (turn_id, link_id, channel) = {
         let s = state_rc.borrow();
         let link = match s.echo_overlay_links.get(s.echo_overlay_index) {
             Some(l) => l,
             None => return,
         };
-        (s.echo_overlay_turn_id, link.link_id)
+        let channel = s.echo_session.as_ref().map(|x| x.channel).unwrap_or(crate::db::echo_channel::EchoChannel::Shakespeare);
+        (s.echo_overlay_turn_id, link.link_id, channel)
     };
     let turn_id = match turn_id {
         Some(id) => id,
@@ -788,7 +817,7 @@ pub(crate) fn toggle_curated(state_rc: &Rc<RefCell<AppState>>) {
     // Reload from DB to pick up the new curated-first ordering.
     let links = crate::db::queries::open_db()
         .ok()
-        .and_then(|conn| crate::db::queries::load_echo_links(&conn, turn_id).ok())
+        .and_then(|conn| crate::db::queries::load_echo_links(&conn, turn_id, channel).ok())
         .unwrap_or_default();
 
     let mut s = state_rc.borrow_mut();
@@ -805,14 +834,15 @@ pub(crate) fn toggle_curated(state_rc: &Rc<RefCell<AppState>>) {
 /// `d`: delete the selected echo link, then reload the list keeping the
 /// selection near where it was.
 pub(crate) fn delete_selected_echo(state_rc: &Rc<RefCell<AppState>>) {
-    let (turn_id, link_id, old_idx) = {
+    let (turn_id, link_id, old_idx, channel) = {
         let s = state_rc.borrow();
         let link = match s.echo_overlay_links.get(s.echo_overlay_index) {
             Some(l) => l,
             None => return,
         };
+        let channel = s.echo_session.as_ref().map(|x| x.channel).unwrap_or(crate::db::echo_channel::EchoChannel::Shakespeare);
         match s.echo_overlay_turn_id {
-            Some(id) => (id, link.link_id, s.echo_overlay_index),
+            Some(id) => (id, link.link_id, s.echo_overlay_index, channel),
             None => return,
         }
     };
@@ -823,7 +853,7 @@ pub(crate) fn delete_selected_echo(state_rc: &Rc<RefCell<AppState>>) {
 
     let links = crate::db::queries::open_db()
         .ok()
-        .and_then(|conn| crate::db::queries::load_echo_links(&conn, turn_id).ok())
+        .and_then(|conn| crate::db::queries::load_echo_links(&conn, turn_id, channel).ok())
         .unwrap_or_default();
 
     let mut s = state_rc.borrow_mut();
@@ -863,14 +893,15 @@ pub(crate) fn delete_all_echoes(state_rc: &Rc<RefCell<AppState>>) {
 /// the selection among them and persists sequential ranks. Mirrors toggle_curated's
 /// reload-and-keep-selection pattern.
 pub(crate) fn reorder_selected_echo(state_rc: &Rc<RefCell<AppState>>, delta: i32) {
-    let (turn_id, sel_link_id, links) = {
+    let (turn_id, sel_link_id, links, channel) = {
         let s = state_rc.borrow();
         let link = match s.echo_overlay_links.get(s.echo_overlay_index) {
             Some(l) => l.clone(),
             None => return,
         };
+        let channel = s.echo_session.as_ref().map(|x| x.channel).unwrap_or(crate::db::echo_channel::EchoChannel::Shakespeare);
         match s.echo_overlay_turn_id {
-            Some(id) => (id, link.link_id, s.echo_overlay_links.clone()),
+            Some(id) => (id, link.link_id, s.echo_overlay_links.clone(), channel),
             None => return,
         }
     };
@@ -908,7 +939,7 @@ pub(crate) fn reorder_selected_echo(state_rc: &Rc<RefCell<AppState>>, delta: i32
     // Reload, keep selection on the moved link.
     let links = crate::db::queries::open_db()
         .ok()
-        .and_then(|conn| crate::db::queries::load_echo_links(&conn, turn_id).ok())
+        .and_then(|conn| crate::db::queries::load_echo_links(&conn, turn_id, channel).ok())
         .unwrap_or_default();
     let mut s = state_rc.borrow_mut();
     let new_idx = links.iter().position(|l| l.link_id == sel_link_id).unwrap_or(0);
@@ -1012,9 +1043,10 @@ pub(crate) fn confirm_add_echo(state_rc: &Rc<RefCell<AppState>>) {
         None
     };
 
+    let channel = state_rc.borrow().echo_session.as_ref().map(|x| x.channel).unwrap_or(crate::db::echo_channel::EchoChannel::Shakespeare);
     let links = crate::db::queries::open_db()
         .ok()
-        .and_then(|conn| crate::db::queries::load_echo_links(&conn, turn_id).ok())
+        .and_then(|conn| crate::db::queries::load_echo_links(&conn, turn_id, channel).ok())
         .unwrap_or_default();
     let mut s = state_rc.borrow_mut();
     s.echo_line_picker.hide();
@@ -1045,10 +1077,11 @@ pub(crate) fn refresh_echoes(
     state_rc: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
 ) {
-    let (key, turn_id) = {
+    let (key, turn_id, channel) = {
         let s = state_rc.borrow();
+        let channel = s.echo_session.as_ref().map(|x| x.channel).unwrap_or(crate::db::echo_channel::EchoChannel::Shakespeare);
         match (&s.echo_overlay_turn_key, s.echo_overlay_turn_id) {
-            (Some(k), Some(id)) => (k.clone(), id),
+            (Some(k), Some(id)) => (k.clone(), id, channel),
             _ => return,
         }
     };
@@ -1109,7 +1142,7 @@ pub(crate) fn refresh_echoes(
 
         let links = crate::db::queries::open_db()
             .ok()
-            .and_then(|conn| crate::db::queries::load_echo_links(&conn, turn_id).ok())
+            .and_then(|conn| crate::db::queries::load_echo_links(&conn, turn_id, channel).ok())
             .unwrap_or_default();
 
         let mut s = state_for_result.borrow_mut();
@@ -1234,6 +1267,7 @@ pub(crate) fn play_selected_echo(
 /// from the sticky session.
 pub(crate) fn reopen_echoes(
     state_rc: &Rc<RefCell<AppState>>,
+    _channel: crate::db::echo_channel::EchoChannel,
     tokio_handle: &tokio::runtime::Handle,
 ) {
     let session = match state_rc.borrow().echo_session.clone() {
@@ -1392,7 +1426,7 @@ fn switch_mpv_to_current_line(state_rc: &Rc<RefCell<AppState>>, line_id: i64, wa
 
 /// Open the echo-turns picker: list every turn in the current work that has
 /// echoes (Ctrl+Shift+G). Empty work -> toast and stay in Reader.
-pub(crate) fn open_echo_turns_picker(state_rc: &Rc<RefCell<AppState>>) {
+pub(crate) fn open_echo_turns_picker(state_rc: &Rc<RefCell<AppState>>, channel: crate::db::echo_channel::EchoChannel) {
     let work_abbrev = match state_rc.borrow().current_work.as_ref() {
         Some(w) => w.abbrev.clone(),
         None => return,
@@ -1407,7 +1441,7 @@ pub(crate) fn open_echo_turns_picker(state_rc: &Rc<RefCell<AppState>>) {
                 return;
             }
         };
-        let turns = crate::db::queries::list_echo_turns_for_work(&conn, &work_abbrev)
+        let turns = crate::db::queries::list_echo_turns_for_work(&conn, &work_abbrev, channel)
             .unwrap_or_default();
         let titles = crate::db::queries::load_work_titles(&conn).unwrap_or_default();
         (turns, titles)
@@ -1420,6 +1454,7 @@ pub(crate) fn open_echo_turns_picker(state_rc: &Rc<RefCell<AppState>>) {
     }
 
     let mut s = state_rc.borrow_mut();
+    s.echo_turns_picker.channel = channel;
     s.echo_turns_picker.set_titles(titles);
     s.echo_turns_picker.set_items(turns, work_abbrev);
     s.echo_turns_picker.show();
@@ -1443,6 +1478,7 @@ pub(crate) fn confirm_echo_turns_pick(
     state_rc: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
 ) {
+    let channel = state_rc.borrow().echo_turns_picker.channel;
     let picked = {
         let s = state_rc.borrow();
         s.echo_turns_picker
@@ -1492,7 +1528,7 @@ pub(crate) fn confirm_echo_turns_pick(
     };
 
     if jumped {
-        show_echoes_for_cursor_line(state_rc, tokio_handle);
+        show_echoes_for_cursor_line(state_rc, channel, tokio_handle);
     }
 }
 

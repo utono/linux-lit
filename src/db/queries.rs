@@ -1705,15 +1705,18 @@ pub struct EchoTurnSummary {
 pub fn list_echo_turns_for_work(
     conn: &Connection,
     work_abbrev: &str,
+    channel: crate::db::echo_channel::EchoChannel,
 ) -> Result<Vec<EchoTurnSummary>, rusqlite::Error> {
-    let mut stmt = conn.prepare(
+    let sql = format!(
         "SELECT t.div1, t.div2, t.start_line, t.speaker, t.turn_text \
          FROM echo_turns t \
          JOIN echo_links l ON l.turn_id = t.id \
-         WHERE t.work_abbrev = ?1 \
+         WHERE t.work_abbrev = ?1 AND l.{} \
          GROUP BY t.id \
          ORDER BY t.div1, t.div2, t.start_line",
-    )?;
+        channel.sql_predicate(),
+    );
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([work_abbrev], |row| {
         Ok(EchoTurnSummary {
             div1: row.get::<_, Option<i64>>(0)?.unwrap_or(0),
@@ -1791,14 +1794,16 @@ pub fn save_echo_turn(conn: &Connection, key: &EchoTurnKey) -> Result<i64, rusql
 }
 
 /// Load all echo links for a turn, curated first then by rank.
-pub fn load_echo_links(conn: &Connection, turn_id: i64) -> Result<Vec<StoredEchoLink>, rusqlite::Error> {
-    let mut stmt = conn.prepare(
-        "SELECT id, echo_work_abbrev, echo_div1, echo_div2, \
+pub fn load_echo_links(conn: &Connection, turn_id: i64, channel: crate::db::echo_channel::EchoChannel) -> Result<Vec<StoredEchoLink>, rusqlite::Error> {
+    let sql = format!(
+        "SELECT id, echo_work_abbrev, COALESCE(echo_div1, 0), COALESCE(echo_div2, 0), \
                 COALESCE(echo_start_line, 0), echo_text, \
                 COALESCE(similarity, 0.0), curated, rank \
-         FROM echo_links WHERE turn_id = ?1 \
+         FROM echo_links WHERE turn_id = ?1 AND {} \
          ORDER BY curated DESC, rank ASC",
-    )?;
+        channel.sql_predicate(),
+    );
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([turn_id], |row| {
         Ok(StoredEchoLink {
             link_id: row.get(0)?,
@@ -2132,7 +2137,7 @@ mod tests {
                 (4, 'Ham', 'echo d', 0, 0);",
         ).unwrap();
 
-        let rows = list_echo_turns_for_work(&conn, "Ham").unwrap();
+        let rows = list_echo_turns_for_work(&conn, "Ham", crate::db::echo_channel::EchoChannel::Shakespeare).unwrap();
         // Turn 3 (no links) and turn 4 (other work) excluded -> only 2 rows.
         assert_eq!(rows.len(), 2);
         // Reading order: (1,2,10) before (3,1,56) -> turn 2 first, then turn 1.
@@ -2143,6 +2148,39 @@ mod tests {
         assert_eq!(rows[1].div1, 3);
         assert_eq!(rows[1].start_line, 56);
         assert_eq!(rows[1].turn_text, "To be or not to be");
+    }
+
+    #[test]
+    fn load_echo_links_filters_by_channel() {
+        use crate::db::echo_channel::EchoChannel;
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_echo_tables(&conn).unwrap();
+        conn.execute("INSERT INTO echo_turns (id, work_abbrev, div1, div2, start_line, end_line, speaker, turn_text) VALUES (1,'Ham',5,1,1,4,'Clown','a')", []).unwrap();
+        conn.execute("INSERT INTO echo_links (turn_id, echo_work_abbrev, echo_div1, echo_div2, echo_start_line, echo_text, similarity, curated, rank) VALUES (1,'BCP1559',11,NULL,1,'I am the resurrection',0.9,1,0)", []).unwrap();
+        conn.execute("INSERT INTO echo_links (turn_id, echo_work_abbrev, echo_div1, echo_div2, echo_start_line, echo_text, similarity, curated, rank) VALUES (1,'Mac',1,2,5,'Tomorrow',0.8,0,0)", []).unwrap();
+        let bcp = load_echo_links(&conn, 1, EchoChannel::Bcp).unwrap();
+        assert_eq!(bcp.len(), 1);
+        assert_eq!(bcp[0].echo_work_abbrev, "BCP1559");
+        let shx = load_echo_links(&conn, 1, EchoChannel::Shakespeare).unwrap();
+        assert_eq!(shx.len(), 1);
+        assert_eq!(shx[0].echo_work_abbrev, "Mac");
+    }
+
+    #[test]
+    fn list_echo_turns_for_work_filters_by_channel() {
+        use crate::db::echo_channel::EchoChannel;
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_echo_tables(&conn).unwrap();
+        conn.execute("INSERT INTO echo_turns (id, work_abbrev, div1, div2, start_line, end_line, speaker, turn_text) VALUES (1,'Ham',5,1,1,4,'Clown','a')", []).unwrap();
+        conn.execute("INSERT INTO echo_turns (id, work_abbrev, div1, div2, start_line, end_line, speaker, turn_text) VALUES (2,'Ham',1,2,10,12,'Hamlet','b')", []).unwrap();
+        conn.execute("INSERT INTO echo_links (turn_id, echo_work_abbrev, echo_div1, echo_div2, echo_start_line, echo_text, similarity, curated, rank) VALUES (1,'BCP1559',11,NULL,1,'x',0.9,1,0)", []).unwrap();
+        conn.execute("INSERT INTO echo_links (turn_id, echo_work_abbrev, echo_div1, echo_div2, echo_start_line, echo_text, similarity, curated, rank) VALUES (2,'Mac',1,2,5,'y',0.8,0,0)", []).unwrap();
+        let bcp = list_echo_turns_for_work(&conn, "Ham", EchoChannel::Bcp).unwrap();
+        assert_eq!(bcp.len(), 1);
+        assert_eq!(bcp[0].start_line, 1);
+        let shx = list_echo_turns_for_work(&conn, "Ham", EchoChannel::Shakespeare).unwrap();
+        assert_eq!(shx.len(), 1);
+        assert_eq!(shx[0].start_line, 10);
     }
 
     #[test]
