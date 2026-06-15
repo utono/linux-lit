@@ -17,6 +17,7 @@ mod text_file_map;
 mod theme;
 mod tts;
 mod ui;
+mod scansion;
 
 use gtk4::prelude::*;
 use libadwaita as adw;
