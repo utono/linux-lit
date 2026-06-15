@@ -53,3 +53,165 @@ pub struct MarkedLine {
     pub text: String,
     pub label: String,
 }
+
+/// Vowels that can carry a combining mark.
+fn is_vowel(c: char) -> bool {
+    matches!(c.to_ascii_lowercase(), 'a' | 'e' | 'i' | 'o' | 'u' | 'y')
+}
+
+/// Render `displayed_line` with stress marks for `scan` at `level`.
+///
+/// Walks the syllables in order, advancing a cursor across the displayed line.
+/// For each syllable it locates the syllable's first vowel at or after the cursor
+/// (anchored on the syllable's `surface` when that substring is found ahead, so
+/// repeated letters don't misalign) and records a combining mark for that char
+/// index. A syllable whose vowel can't be located is skipped (no mark) rather
+/// than mis-placed. Marks are inserted AFTER the vowel char so stripping the
+/// combining chars reproduces `displayed_line` exactly.
+pub fn mark_line(displayed_line: &str, scan: &LineScansion, level: ScanLevel) -> MarkedLine {
+    if level == ScanLevel::Off {
+        return MarkedLine { text: displayed_line.to_string(), label: scan.line_type.clone() };
+    }
+
+    let chars: Vec<char> = displayed_line.chars().collect();
+    // char index -> combining mark to insert after it
+    let mut marks: std::collections::BTreeMap<usize, char> = std::collections::BTreeMap::new();
+    // char indices after which to insert a caesura glyph
+    let mut caesura_at: Option<usize> = None;
+
+    let mut cursor = 0usize; // char index into `chars`
+    for (pos, syl) in scan.syllables.iter().enumerate() {
+        // Anchor the search: if the surface appears at/after cursor, start there.
+        let search_from = find_surface(&chars, cursor, &syl.surface).unwrap_or(cursor);
+        let vowel_idx = (search_from..chars.len()).find(|&i| is_vowel(chars[i]));
+        let vowel_idx = match vowel_idx {
+            Some(i) => i,
+            None => continue, // no vowel locatable — skip this syllable
+        };
+        // Place the stress mark per level.
+        let want_mark = match level {
+            ScanLevel::StressOnly => syl.ictus == 1,
+            ScanLevel::Full => true,
+            ScanLevel::Off => false,
+        };
+        if want_mark {
+            marks.insert(vowel_idx, if syl.ictus == 1 { ACUTE } else { BREVE });
+        }
+        // Caesura falls after the 1-based `caesura_after` syllable's vowel.
+        if scan.caesura_after == Some(pos as i32 + 1) {
+            caesura_at = Some(vowel_idx);
+        }
+        cursor = vowel_idx + 1;
+    }
+
+    // Rebuild the string, inserting marks/caesura after the relevant chars.
+    let mut out = String::with_capacity(displayed_line.len() + marks.len() * 2 + 3);
+    for (i, &c) in chars.iter().enumerate() {
+        out.push(c);
+        if let Some(&mk) = marks.get(&i) {
+            out.push(mk);
+        }
+        if caesura_at == Some(i) {
+            out.push(' ');
+            out.push_str(CAESURA);
+            out.push(' ');
+        }
+    }
+    MarkedLine { text: out, label: scan.line_type.clone() }
+}
+
+/// First char index >= `from` where `surface` begins in `chars` (case-insensitive,
+/// alphanumeric-only comparison so punctuation/spacing differences don't block it).
+/// Returns None if not found.
+fn find_surface(chars: &[char], from: usize, surface: &str) -> Option<usize> {
+    let needle: Vec<char> = surface.chars()
+        .filter(|c| c.is_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    if needle.is_empty() {
+        return None;
+    }
+    for start in from..chars.len() {
+        let mut ni = 0usize;
+        let mut ci = start;
+        while ci < chars.len() && ni < needle.len() {
+            let cc = chars[ci];
+            if cc.is_alphanumeric() {
+                if cc.to_ascii_lowercase() != needle[ni] {
+                    break;
+                }
+                ni += 1;
+            }
+            ci += 1;
+        }
+        if ni == needle.len() {
+            return Some(start);
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn syl(surface: &str, ictus: i8) -> ScanSyllable {
+        ScanSyllable { surface: surface.to_string(), ictus, is_extrametrical: false }
+    }
+
+    fn strip(s: &str) -> String {
+        s.chars().filter(|c| *c != ACUTE && *c != BREVE).collect()
+    }
+
+    #[test]
+    fn off_is_identity() {
+        let scan = LineScansion { line_type: "regular".into(), caesura_after: None,
+            syllables: vec![syl("If", 0), syl("mu", 1)] };
+        let m = mark_line("If music", &scan, ScanLevel::Off);
+        assert_eq!(m.text, "If music");
+        assert_eq!(m.label, "regular");
+    }
+
+    #[test]
+    fn stress_only_marks_only_strong() {
+        let scan = LineScansion { line_type: "regular".into(), caesura_after: None,
+            syllables: vec![syl("If", 0), syl("mu", 1), syl("sic", 0)] };
+        let m = mark_line("If music", &scan, ScanLevel::StressOnly);
+        assert!(m.text.contains(ACUTE));   // the strong "mu"
+        assert!(!m.text.contains(BREVE));  // no breve in StressOnly
+        assert_eq!(strip(&m.text), "If music"); // invariant: strip -> displayed line
+    }
+
+    #[test]
+    fn full_marks_both() {
+        let scan = LineScansion { line_type: "regular".into(), caesura_after: None,
+            syllables: vec![syl("If", 0), syl("mu", 1)] };
+        let m = mark_line("If mu", &scan, ScanLevel::Full);
+        assert!(m.text.contains(ACUTE));
+        assert!(m.text.contains(BREVE));
+        assert_eq!(strip(&m.text), "If mu");
+    }
+
+    #[test]
+    fn caesura_inserted_after_position() {
+        let scan = LineScansion { line_type: "regular".into(), caesura_after: Some(1),
+            syllables: vec![syl("If", 1), syl("mu", 0)] };
+        let m = mark_line("If mu", &scan, ScanLevel::StressOnly);
+        assert!(m.text.contains(CAESURA));
+        // The caesura is inserted chrome (` ‖ ` with padding), not a combining-mark
+        // overlay. Removing the combining marks AND the full caesura chrome must
+        // reproduce the displayed line exactly.
+        let cleaned = strip(&m.text).replace(&format!(" {} ", CAESURA), "");
+        assert_eq!(cleaned, "If mu");
+    }
+
+    #[test]
+    fn surface_not_found_skips_syllable_no_panic() {
+        // "xyz" isn't in the line; that syllable gets no mark, others still do.
+        let scan = LineScansion { line_type: "regular".into(), caesura_after: None,
+            syllables: vec![syl("If", 1), syl("xyz", 1)] };
+        let m = mark_line("If music", &scan, ScanLevel::StressOnly);
+        assert_eq!(strip(&m.text), "If music");
+        assert!(m.text.contains(ACUTE)); // "If" still marked
+    }
+}
