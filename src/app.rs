@@ -2023,6 +2023,22 @@ pub fn build_window(
                 }
                 let top = s.page_top_line;
                 crate::input::navigation::snap_scroll_to_line(&mut s, top);
+                // The synchronous snap above can race ahead of GTK's layout pass:
+                // when a buffer swap (a scansion toggle) changes the content
+                // height, `adjustment.upper` is momentarily stale, so column_split
+                // measures against the wrong height and the spread blanks (observed
+                // upper 103321 at snap time, settling to 71654 one tick later).
+                // Re-snap once on idle, after layout settles, so the final spread
+                // is computed against the real geometry.
+                let state_idle = Rc::clone(&state_for_tick);
+                glib::idle_add_local_once(move || {
+                    if let Ok(mut s) = state_idle.try_borrow_mut() {
+                        crate::input::navigation::invalidate_page_tops(&s);
+                        crate::input::scroll::ensure_scroll_range(&s);
+                        let top = s.page_top_line;
+                        crate::input::navigation::snap_scroll_to_line(&mut s, top);
+                    }
+                });
                 // Reveal LAST: apply_tiled_mode, snap_scroll, and the label
                 // update inside snap can all shift visible geometry. Doing
                 // them before opacity=1 keeps everything stable when the
@@ -3378,6 +3394,12 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
             )
         };
         state.buffer.set_text(&display_text);
+        // set_text replaces the whole buffer, discarding every applied TextTag —
+        // including the buffer-wide "font-size" tag that carries the configured
+        // reader font size. Without re-applying it the text falls back to the
+        // smaller CSS-default size (the scansion-toggle "small font" bug). Restore
+        // it so scansion mode inherits the main card's font size.
+        reapply_font(state);
         state.scansion_label_starts = label_starts;
         // Dim-tag each scansion line-type label span (from its start char to the
         // line end). Clone the small map so iterating it doesn't hold an immutable
