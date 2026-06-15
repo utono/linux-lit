@@ -19,10 +19,24 @@ base text, cursor, audio sync, or audio highlight.
 
 ## Keybind & states
 
-- **Key:** `Ctrl+Alt+i` (free — `i` = translation overlay, `Alt+i` = toggle
-  translations; `Ctrl+Alt+i` unbound). Added in `display_bindings()` in
-  `src/input/keymap_config.rs`, alongside `Alt+d` (ToggleDim). `KeyCombo::ctrl_alt`
-  already exists (keymap_config.rs:42).
+- **Key:** plain `i` cycles the scansion overlay. This requires reorganizing the
+  `i`-family bindings (the translation actions shift up one modifier level to free
+  plain `i`):
+  - `i` → `Action::CycleScansion` (new)
+  - `Alt+i` → `Action::ShowTranslationOverlay` (the two-column parallel-text
+    overlay; **was** plain `i`)
+  - `Ctrl+Alt+i` → `Action::ToggleTranslations` (the inline interleave toggle;
+    **was** `Alt+i`)
+
+  Rationale: `i` is the natural mnemonic and the scansion overlay is the most-used
+  of the three. The two translation actions remain reachable, just one level
+  deeper. `ToggleTranslations` is also bound on the gamepad (`src/input/gamepad.rs`)
+  — that path is unchanged; only the keyboard `KeyCombo`s move.
+
+  All three live in `keymap_config.rs`; `CycleScansion` is added in
+  `display_bindings()` alongside `Alt+d` (ToggleDim). `KeyCombo::ctrl_alt` already
+  exists (keymap_config.rs:42). The two-column overlay's plain-`i` open is the only
+  binding being *displaced*; nothing is removed.
 - **Cycle (one key, three states):** `Off → StressOnly → Full → Off`.
   - **Off** — plain text, exactly as today.
   - **StressOnly** — combining acute (U+0301) over stressed syllables only
@@ -121,10 +135,23 @@ Defaults (tunable, flagged open in the handoff doc):
 - `AppState.scansion_data: HashMap<i64, LineScansion>` — loaded once per work
   (lazily on first toggle-on, or at work-load). Empty map for works with no
   scansion → overlay is a no-op (toast "No scansion for this work").
-- `Action::CycleScansion` (`src/input/actions/mod.rs`).
+- `Action::CycleScansion` (`src/input/actions/mod.rs`) — enum variant + `category()`
+  + `name()` arms (mirror an existing display action).
 - Dispatch arm (`src/input/keymap.rs`): advance `scansion_level` (Off→StressOnly→
   Full→Off), populate `scansion_data` if empty, then rebuild the buffer. Mirrors the
   `ToggleDim` arm's shape (borrow_mut, mutate flag, re-render, persist).
+- **Keybind rebind** (`src/input/keymap_config.rs`): `i` → `CycleScansion`;
+  `Alt+i` → `ShowTranslationOverlay` (moved from plain `i`); `Ctrl+Alt+i` →
+  `ToggleTranslations` (moved from `Alt+i`). Update the `keymap_config.rs` default
+  test assertions that reference these combos.
+- **Keybinds overlay** (`src/ui/keybinds_overlay.rs`): add the `i` = scansion entry
+  and update the two moved translation entries, per the CLAUDE.md requirement that
+  every keybind change is reflected in the overlay. Note the overlay's `i` key entry
+  (keybinds_overlay.rs:73) already groups multiple meanings (`M-i` translations, and
+  an `i` "fix IPA" that is gloss-overlay-context-specific, NOT a reader binding —
+  leave that one); only the reader-mode `i`/`Alt+i`/`Ctrl+Alt+i` meanings change.
+  Update the `describe()` arms for "translation" / "translations" to reflect the new
+  modifier levels.
 - Persist last level in `Config` (`src/config.rs`) so it survives restart
   (optional; default Off if absent). On work-load, if the persisted level is
   non-Off but the work has no scansion rows, the overlay silently stays visually
@@ -156,7 +183,7 @@ untouched.
 ## Data flow
 
 1. Work loads → `scansion_data` empty, `scansion_level` = persisted (default Off).
-2. User presses `Ctrl+Alt+i` → dispatch advances level; if `scansion_data` empty,
+2. User presses `i` → dispatch advances level; if `scansion_data` empty,
    `load_scansion_for_work` populates it (toast + revert to Off if the work has no
    scansion rows).
 3. `rebuild_buffer_text` runs with the new level → marked (or plain) buffer text →
