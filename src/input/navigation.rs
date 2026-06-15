@@ -497,6 +497,17 @@ pub fn toggle_column_layout(state: &mut AppState) {
         state.right_bottom_clip.set_height_request(0);
     }
 
+    // Scansion appends a line-type label per verse line in single column but
+    // omits it in two columns (it would overflow the per-column width budget).
+    // The column count just changed, so rebuild the buffer to add/drop those
+    // labels before pages are recomputed below — otherwise the stale labels
+    // either overflow (1→2) or vanish (2→1) until the next full reformat.
+    // column_overrides was already updated above, so column_count() inside
+    // rebuild_buffer_text now reflects new_count.
+    if state.scansion_level != crate::scansion::ScanLevel::Off {
+        crate::app::rebuild_buffer_text(state);
+    }
+
     // Card width depends on column count (two columns fill more of the window),
     // so resize the card to match the new layout before recomputing pages.
     crate::app::apply_card_sizing(

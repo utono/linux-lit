@@ -3348,6 +3348,12 @@ pub fn prepare_text_for_display(work: &Work) -> Option<PreparedText> {
 }
 
 pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
+    // The scansion line-type label is appended to each verse line and would
+    // overflow the tight per-column width budget in two-column mode (the column
+    // is sized for the ~63-char verse worst case, with no room for a trailing
+    // label word — see apply_scansion_marks). Suppress the label when two
+    // columns are showing; the marks themselves still render in both columns.
+    let two_col = state.column_count() == 2;
     let work = match &state.current_work {
         Some(w) => w,
         None => return,
@@ -3368,6 +3374,7 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
                 &work.lines,
                 &state.scansion_data,
                 state.scansion_level,
+                two_col,
             )
         };
         state.buffer.set_text(&display_text);
@@ -3424,6 +3431,7 @@ fn apply_scansion_marks(
     work_lines: &[crate::db::models::Line],
     scansion: &std::collections::HashMap<i64, crate::scansion::LineScansion>,
     level: crate::scansion::ScanLevel,
+    two_col: bool,
 ) -> (String, std::collections::HashMap<usize, usize>) {
     let mut out_lines: Vec<String> = Vec::new();
     let mut map: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
@@ -3438,9 +3446,18 @@ fn apply_scansion_marks(
         match scan {
             Some(s) => {
                 let m = crate::scansion::mark_line(line, s, level);
-                // The label begins after the marked text and the 3 separator spaces.
-                map.insert(buf_idx, m.text.chars().count() + 3);
-                out_lines.push(format!("{}   {}", m.text, m.label));
+                if two_col {
+                    // No trailing line-type label in two-column mode: it would
+                    // overflow the per-column width budget and break the verse
+                    // flow across columns. Marks (and caesura) still render.
+                    out_lines.push(m.text);
+                } else {
+                    // Single column: append the line-type label after the marked
+                    // text and 3 separator spaces. Record where the label begins
+                    // so rebuild_buffer_text can dim-tag it.
+                    map.insert(buf_idx, m.text.chars().count() + 3);
+                    out_lines.push(format!("{}   {}", m.text, m.label));
+                }
             }
             None => out_lines.push(line.to_string()),
         }
