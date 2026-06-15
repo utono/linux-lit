@@ -706,7 +706,14 @@ fn handle_gloss_key(
         key_state.borrow_mut().chord = ChordState::None;
         if key_name == "g" {
             crate::input::actions::gloss::stop_all_gloss_audio(state);
-            state.borrow().gloss_overlay.cursor_first_block();
+            // Loading card (no blocks): scroll the viewport to the top.
+            // Result gloss: jump the block cursor to the first block.
+            let has_blocks = state.borrow().gloss_overlay.current_block().is_some();
+            if has_blocks {
+                state.borrow().gloss_overlay.cursor_first_block();
+            } else {
+                state.borrow().gloss_overlay.scroll_gloss_to_top();
+            }
         }
         return true;
     }
@@ -798,7 +805,13 @@ fn handle_gloss_key(
         }
         "G" => {
             crate::input::actions::gloss::stop_all_gloss_audio(state);
-            state.borrow().gloss_overlay.cursor_last_block();
+            // Loading card (no blocks): scroll the viewport to the bottom.
+            // Result gloss: jump the block cursor to the last block.
+            if state.borrow().gloss_overlay.current_block().is_some() {
+                state.borrow().gloss_overlay.cursor_last_block();
+            } else {
+                state.borrow().gloss_overlay.scroll_gloss_to_bottom();
+            }
             true
         }
         "bar" => {
@@ -811,12 +824,22 @@ fn handle_gloss_key(
         }
         "j" => {
             crate::input::actions::gloss::stop_all_gloss_audio(state);
-            state.borrow().gloss_overlay.cursor_next_block();
+            // Loading card (no blocks): scroll the viewport down.
+            // Result gloss: step the block cursor to the next block.
+            if state.borrow().gloss_overlay.current_block().is_some() {
+                state.borrow().gloss_overlay.cursor_next_block();
+            } else {
+                state.borrow().gloss_overlay.scroll_gloss(1);
+            }
             true
         }
         "k" => {
             crate::input::actions::gloss::stop_all_gloss_audio(state);
-            state.borrow().gloss_overlay.cursor_prev_block();
+            if state.borrow().gloss_overlay.current_block().is_some() {
+                state.borrow().gloss_overlay.cursor_prev_block();
+            } else {
+                state.borrow().gloss_overlay.scroll_gloss(-1);
+            }
             true
         }
         // Tab mirrors Space: read the cursor block aloud (ISO_Left_Tab is
