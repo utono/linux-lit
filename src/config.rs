@@ -72,6 +72,8 @@ pub struct Config {
     pub vocab_highlight_visible: bool,
     #[serde(default = "default_dim_enabled")]
     pub dim_enabled: bool,
+    #[serde(default = "default_scansion_level")]
+    pub scansion_level: String,
     #[serde(default = "default_show_cursor_line")]
     pub show_cursor_line: bool,
     #[serde(default = "default_title_bar_visible")]
@@ -145,6 +147,10 @@ fn default_dim_enabled() -> bool {
     false
 }
 
+fn default_scansion_level() -> String {
+    "off".to_string()
+}
+
 fn default_show_cursor_line() -> bool {
     true
 }
@@ -179,6 +185,7 @@ impl Default for Config {
             elevenlabs_model_id: default_elevenlabs_model_id(),
             vocab_highlight_visible: default_vocab_highlight_visible(),
             dim_enabled: default_dim_enabled(),
+            scansion_level: default_scansion_level(),
             show_cursor_line: true,
             title_bar_visible: default_title_bar_visible(),
             echo_affect_weight: default_echo_affect_weight(),
