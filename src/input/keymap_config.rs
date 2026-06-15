@@ -202,18 +202,19 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         // Page navigation
         (KeyCombo::plain("x"), Action::PageForward),
         (KeyCombo::plain("y"), Action::PageBackward),
-        (KeyCombo::plain("less"), Action::PageBackward),
+        // Shift+, emits ("less", shift=true) on this layout (verified in the
+        // debug log), NOT ("comma", shift=true) — bind the shifted glyph.
+        (KeyCombo::shift("less"), Action::JumpToPrevSpeaker),
         // space / Shift+space were PageForward/PageBackward; space is now a
         // global play/pause toggle handled directly in handle_key.
         // Cursor / dialogue
         (KeyCombo::plain("j"), Action::CursorNextDialogue),
         (KeyCombo::plain("k"), Action::CursorPrevLine),
-        (KeyCombo::plain("Q"), Action::CursorToPageBottom),
+        (KeyCombo::plain("Q"), Action::JumpToNextSpeaker),
         (KeyCombo::plain("Up"), Action::CursorPrevLine),
         (KeyCombo::shift("Up"), Action::PageBackwardBottom),
         (KeyCombo::plain("Down"), Action::CursorNextDialogue),
         (KeyCombo::plain("comma"), Action::JumpToPrevDialogue),
-        (KeyCombo::shift("comma"), Action::PageBackwardBottom),
         (KeyCombo::plain("q"), Action::JumpToNextDialogue),
         (KeyCombo::plain("J"), Action::JumpToNextSpeaker),
         (KeyCombo::plain("K"), Action::JumpToPrevSpeaker),
@@ -386,6 +387,13 @@ mod tests {
         // strips the redundant shift, so plain("J") matches.
         assert_eq!(km.lookup("J", false, true, false), Some(Action::JumpToNextSpeaker));
         assert_eq!(km.lookup("K", false, true, false), Some(Action::JumpToPrevSpeaker));
+        // Shift+, aliases K and Shift+q aliases J. On this layout Shift+,
+        // emits ("less", shift=true) — NOT ("comma", shift=true) — and Shift+q
+        // emits "Q" (uppercase, shift stripped).
+        assert_eq!(km.lookup("less", false, true, false), Some(Action::JumpToPrevSpeaker));
+        assert_eq!(km.lookup("Q", false, true, false), Some(Action::JumpToNextSpeaker));
+        // Ctrl+, opens the settings overlay (mirrors the per-overlay handlers).
+        assert_eq!(km.lookup("comma", true, false, false), Some(Action::OpenSettingsOverlay));
     }
 
     #[test]

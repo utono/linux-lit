@@ -1367,6 +1367,40 @@ pub(crate) fn speaker_turn_target(
     }
 }
 
+/// Pure scan: the FIRST dialogue line of the speaker block that contains `from`
+/// — walking backward over the run of consecutive same-speaker dialogue lines.
+/// Returns `None` when `from` is not itself a dialogue line with a speaker
+/// (a chrome / stage-direction line has no block to anchor to). Used by `K` /
+/// Shift+, to land on the top of the current speech before stepping to the
+/// previous speaker. Reads only per-line speaker metadata (CLAUDE.md →
+/// authoritative-boundary principle).
+pub(crate) fn current_block_first_line(
+    from: usize,
+    speaker_at: impl Fn(usize) -> Option<String>,
+    is_dialogue_at: impl Fn(usize) -> bool,
+) -> Option<usize> {
+    if !is_dialogue_at(from) {
+        return None;
+    }
+    let cur = speaker_at(from);
+    if cur.is_none() {
+        return None;
+    }
+    let mut first = from;
+    let mut i = from;
+    while i > 0 {
+        i -= 1;
+        if is_dialogue_at(i) {
+            if speaker_at(i) == cur {
+                first = i;
+            } else {
+                break;
+            }
+        }
+    }
+    Some(first)
+}
+
 /// Jump to the first dialogue line of the NEXT speaker turn (`J`). Seeks audio.
 pub fn jump_to_next_speaker(state: &mut AppState) {
     if state.current_work.is_none() {
@@ -1394,22 +1428,48 @@ pub fn jump_to_next_speaker(state: &mut AppState) {
     }
 }
 
-/// Jump to the first dialogue line of the PREVIOUS speaker turn (`K`). Seeks audio.
+/// Block-aware previous-speaker jump (`K` / Shift+,). Two-stage: if the cursor
+/// is mid-block (not on the first dialogue line of the current speaker's run),
+/// land on that first line first. Only when already at the block top does it
+/// step to the first line of the PREVIOUS speaker turn. Seeks audio.
 pub fn jump_to_prev_speaker(state: &mut AppState) {
     if state.current_work.is_none() {
         return;
     }
     let line_count = state.effective_line_count();
-    let target = {
+    let speaker_at = |i: usize| {
         let work = state.current_work.as_ref().unwrap();
-        speaker_turn_target(
-            line_count,
-            state.current_line,
-            Direction::Prev,
-            |i| state.work_line_for_buffer(i).and_then(|wi| work.lines.get(wi)).and_then(|l| l.speaker.clone()),
-            |i| is_dialogue_line(&state.buffer, i),
-        )
+        state.work_line_for_buffer(i).and_then(|wi| work.lines.get(wi)).and_then(|l| l.speaker.clone())
     };
+    // Stage 1: if mid-block, snap to the top of the current speech instead of
+    // leaving it. `current_block_first_line` returns None for a non-dialogue
+    // cursor, so chrome lines fall straight through to the prev-speaker scan.
+    let block_top = current_block_first_line(
+        state.current_line,
+        speaker_at,
+        |i| is_dialogue_line(&state.buffer, i),
+    );
+    if let Some(top) = block_top {
+        if top != state.current_line {
+            log_fmt!("SPEAKER_PREV (block top): {} -> {}", state.current_line, top);
+            state.current_line = top;
+            state.pending_advance = None;
+            state.pending_advance_ignore_bl = None;
+            state.prev_highlight_line.set(None);
+            scroll_after_jump_backward(state);
+            after_page_change(state, PageChangeReason::Dialogue);
+            return;
+        }
+    }
+    // Stage 2: already at the block top (or on a chrome line) — step to the
+    // previous speaker turn.
+    let target = speaker_turn_target(
+        line_count,
+        state.current_line,
+        Direction::Prev,
+        speaker_at,
+        |i| is_dialogue_line(&state.buffer, i),
+    );
     if let Some(target) = target {
         log_fmt!("SPEAKER_PREV: {} -> {}", state.current_line, target);
         state.current_line = target;
@@ -3100,7 +3160,7 @@ mod after_page_change_tests {
 
 #[cfg(test)]
 mod speaker_turn_tests {
-    use super::{speaker_turn_target, Direction};
+    use super::{current_block_first_line, speaker_turn_target, Direction};
 
     /// Build a fixture from compact tuples: (speaker, is_dialogue).
     /// `""` speaker means None (unmapped/chrome line).
@@ -3187,5 +3247,65 @@ mod speaker_turn_tests {
         let v = fixture(&[("A", true), ("", false), ("B", true)]);
         assert_eq!(target(&v, 0, Direction::Next), Some(2));
         assert_eq!(target(&v, 2, Direction::Prev), Some(0));
+    }
+
+    /// Run current_block_first_line against a fixture.
+    fn block_first(rows: &[(Option<String>, bool)], from: usize) -> Option<usize> {
+        current_block_first_line(from, |i| rows[i].0.clone(), |i| rows[i].1)
+    }
+
+    #[test]
+    fn block_first_returns_top_of_current_speech() {
+        // A A [stage] B B A C C  (same fixture as `sample`).
+        let v = sample();
+        // Mid-block B -> top of the B run (3).
+        assert_eq!(block_first(&v, 4), Some(3));
+        // Mid-block C -> top of the C run (6).
+        assert_eq!(block_first(&v, 7), Some(6));
+        // Already at a block top returns itself (caller then falls through).
+        assert_eq!(block_first(&v, 0), Some(0));
+        assert_eq!(block_first(&v, 3), Some(3));
+        assert_eq!(block_first(&v, 5), Some(5));
+    }
+
+    #[test]
+    fn block_first_crosses_embedded_stage_direction() {
+        // One speaker's turn split by a standalone stage direction (None):
+        //   B  H H [stage] H H  C
+        // From the last H (5), the block top is the FIRST H of the turn (1),
+        // crossing the [stage] at 3 — a stage direction inside a speech is not
+        // a turn boundary; only the speaker label (B->H at 0->1) is.
+        let v = fixture(&[
+            ("B", true),   // 0  previous speaker
+            ("H", true),   // 1  <- true turn start
+            ("H", true),   // 2
+            ("", false),   // 3  [stage direction] — standalone, None
+            ("H", true),   // 4  H resumes (after the stage direction)
+            ("H", true),   // 5  cursor here
+            ("C", true),   // 6  next speaker
+        ]);
+        assert_eq!(block_first(&v, 5), Some(1));
+        assert_eq!(block_first(&v, 4), Some(1));
+        // The line right after the stage direction is NOT the block top.
+        assert_ne!(block_first(&v, 5), Some(4));
+    }
+
+    #[test]
+    fn block_first_stops_at_unmapped_chrome_line() {
+        // A wrapped continuation walking back must not cross the [stage] gap
+        // into the previous speaker. From line 1 (second A) -> 0, not past it.
+        let v = sample();
+        assert_eq!(block_first(&v, 1), Some(0));
+    }
+
+    #[test]
+    fn block_first_none_for_non_dialogue_cursor() {
+        // Cursor on a chrome/stage line has no block to anchor to -> None,
+        // so jump_to_prev_speaker falls straight through to the prev-speaker scan.
+        let v = sample();
+        assert_eq!(block_first(&v, 2), None);
+        // Also None when the line is dialogue=true but has no speaker.
+        let p = fixture(&[("", true), ("", true)]);
+        assert_eq!(block_first(&p, 1), None);
     }
 }

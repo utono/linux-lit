@@ -50,7 +50,7 @@ const BACKSPACE: KeyDef = bare("\u{232b}", "", "delete ts");
 
 const UPPER_ROW: &[KeyDef] = &[
     bare(";", ":", "show chapter"),
-    key(",", "<", "prev dlg", "<: pg back btm", &[("C-,", "settings")]),
+    key(",", "<", "prev dlg", "<: prev speaker", &[("C-,", "settings")]),
     key(".", ">", "", "", &[("C-.", "bookmarks")]),
     key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("C-p", "lib picker"), ("S-C-p", "conc word"), ("C-M-p", "conc list")]),
     key("y", "Y", "pg back", "", &[("C-y", "copy id")]),
@@ -82,7 +82,7 @@ const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 
 const BOTTOM_ROW: &[KeyDef] = &[
     bare("'", "\"", "reopen echoes"),
-    key("q", "Q", "next dlg", "Q: page bottom", &[]),
+    key("q", "Q", "next dlg", "Q: next speaker", &[]),
     key("j", "J", "cursor \u{2193}", "J: next speaker", &[]),
     key("k", "K", "cursor \u{2191}", "K: prev speaker", &[]),
     bare("x", "X", "pg fwd"),
@@ -241,8 +241,9 @@ speaker names, stage directions, and blank lines. \
         "next speaker" => "Jump the cursor to the first dialogue line of the next \
 speaker turn — the next time the speaker changes — and seek audio to it. \
 -> navigation::jump_to_next_speaker — src/input/navigation.rs",
-        "prev speaker" => "Jump the cursor to the first dialogue line of the previous \
-speaker turn — the previous time the speaker changes — and seek audio to it. \
+        "prev speaker" => "If mid-speech, jump the cursor to the first dialogue line \
+of the CURRENT speaker's block; if already at the block top, step to the first \
+line of the previous speaker turn. Seeks audio to the landing line. \
 -> navigation::jump_to_prev_speaker — src/input/navigation.rs",
         "go to start" => "Jump to the very first line of the work (gg). \
 -> navigation::jump_to_start — src/input/navigation.rs",
@@ -251,10 +252,8 @@ speaker turn — the previous time the speaker changes — and seek audio to it.
         "scroll cursor top" | "zt…" => "Scroll the viewport so the cursor line \
 sits at the top of the page (vim zt). \
 -> navigation::scroll_cursor_top — src/input/navigation.rs",
-        "page bottom" => "Move the cursor to the last visible dialogue line on the \
-current page (vim L). -> navigation::cursor_to_page_bottom — src/input/navigation.rs",
         "pg back btm" => "Turn one page backward and land the cursor on the bottom \
-line of the new page (Shift+Up / Shift+,). \
+line of the new page (Shift+Up). \
 -> navigation::page_backward_bottom — src/input/navigation.rs",
 
         // ── Chapters / scenes ──
