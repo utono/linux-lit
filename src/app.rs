@@ -3523,6 +3523,16 @@ fn apply_stanza_number_centering(state: &AppState) {
 pub fn apply_dialogue_formatting(state: &mut AppState) {
     use crate::db::line_types;
 
+    // BCP works get liturgical typography instead of play dialogue formatting.
+    if state
+        .current_work
+        .as_ref()
+        .is_some_and(|w| line_types::is_bcp_work(&w.abbrev))
+    {
+        apply_bcp_formatting(state);
+        return;
+    }
+
     // Only in text-file mode
     if state.line_map.is_none() {
         state.dialogue_formatting_active = false;
@@ -3708,6 +3718,129 @@ pub fn apply_dialogue_formatting(state: &mut AppState) {
         "FORMATTING: applied dialogue formatting ({} lines)",
         line_count
     ));
+}
+
+/// Liturgical typography for Book of Common Prayer works. Mirrors
+/// apply_dialogue_formatting's per-line tag application, but styles the
+/// `## ` headings, `[...]` rubrics, and whole-word GOD/LORD that the BCP data
+/// carries. Reuses the same TextTag primitives (centered, italic, small-caps,
+/// indent) the speaker/stage-direction code already proves out.
+pub fn apply_bcp_formatting(state: &mut AppState) {
+    use crate::db::line_types;
+
+    if state.line_map.is_none() {
+        state.dialogue_formatting_active = false;
+        return;
+    }
+    state.dialogue_formatting_active = true;
+    state.text_view.set_pixels_above_lines(0);
+    state.text_view.set_pixels_below_lines(0);
+
+    let tag_table = state.buffer.tag_table();
+    for name in &[
+        "bcp-heading", "bcp-rubric-centered", "bcp-rubric-hanging",
+        "bcp-divine-name", "bcp-blank",
+    ] {
+        if let Some(old) = tag_table.lookup(name) {
+            tag_table.remove(&old);
+        }
+    }
+
+    let base_margin = state.text_view.left_margin();
+
+    let heading_tag = gtk4::TextTag::builder()
+        .name("bcp-heading")
+        .justification(gtk4::Justification::Center)
+        .weight(700)
+        .scale(1.1)
+        .pixels_above_lines(12)
+        .pixels_below_lines(6)
+        .build();
+    let rubric_centered_tag = gtk4::TextTag::builder()
+        .name("bcp-rubric-centered")
+        .justification(gtk4::Justification::Center)
+        .style(pango::Style::Italic)
+        .pixels_above_lines(6)
+        .build();
+    // Hanging indent: the paragraph is pushed in by `left_margin`, while the
+    // first line is pulled back out by a negative `indent`, so wrapped lines
+    // sit indented under a flush opening — the printed-rubric look.
+    let rubric_hanging_tag = gtk4::TextTag::builder()
+        .name("bcp-rubric-hanging")
+        .style(pango::Style::Italic)
+        .left_margin(base_margin + 24)
+        .indent(-24)
+        .pixels_above_lines(6)
+        .build();
+    let divine_name_tag = gtk4::TextTag::builder()
+        .name("bcp-divine-name")
+        .variant(pango::Variant::SmallCaps)
+        .build();
+    let blank_tag = gtk4::TextTag::builder()
+        .name("bcp-blank")
+        .scale(0.25)
+        .build();
+
+    tag_table.add(&heading_tag);
+    tag_table.add(&rubric_centered_tag);
+    tag_table.add(&rubric_hanging_tag);
+    tag_table.add(&divine_name_tag);
+    tag_table.add(&blank_tag);
+
+    let line_count = state.buffer.line_count() as usize;
+    for i in 0..line_count {
+        let Some(line_start) = state.buffer.iter_at_line(i as i32) else { continue };
+        let line_end = if i + 1 < line_count {
+            state.buffer.iter_at_line((i + 1) as i32).unwrap_or_else(|| state.buffer.end_iter())
+        } else {
+            state.buffer.end_iter()
+        };
+        let text = state.buffer.text(&line_start, &line_end, false);
+        let text = text.trim_end_matches('\n').to_string();
+        let trimmed = text.trim();
+
+        if line_types::is_blank(&text) {
+            state.buffer.apply_tag(&blank_tag, &line_start, &line_end);
+        } else if line_types::is_bcp_heading(&text) {
+            state.buffer.apply_tag(&heading_tag, &line_start, &line_end);
+        } else if line_types::is_rubric(&text) {
+            let inner = &trimmed[1..trimmed.len() - 1]; // strip [ ]
+            if line_types::rubric_is_centered(inner) {
+                state.buffer.apply_tag(&rubric_centered_tag, &line_start, &line_end);
+            } else {
+                state.buffer.apply_tag(&rubric_hanging_tag, &line_start, &line_end);
+            }
+        }
+        // Divine-name small-caps applies on ANY non-blank line (headings,
+        // rubrics, body), layered over the line tag above.
+        if !line_types::is_blank(&text) {
+            for (s, e) in line_types::divine_name_spans(&text) {
+                // Build span iters with the codebase's idiom (iter_at_line +
+                // forward_chars, as in the label-span code ~app.rs:3416), not
+                // iter_at_line_offset. divine_name_spans returns BYTE offsets;
+                // convert to CHAR offsets so multi-byte chars (¶, curly quotes)
+                // earlier in the line don't misplace the span.
+                let Some(mut span_start) = state.buffer.iter_at_line(i as i32) else { continue };
+                span_start.forward_chars(char_offset(&text, s) as i32);
+                let mut span_end = span_start;
+                span_end.forward_chars((char_offset(&text, e) - char_offset(&text, s)) as i32);
+                state.buffer.apply_tag(&divine_name_tag, &span_start, &span_end);
+            }
+        }
+    }
+
+    crate::logging::log(&format!(
+        "FORMATTING: applied BCP formatting ({} lines)",
+        line_count
+    ));
+}
+
+/// GTK text iters address characters, but divine_name_spans returns BYTE
+/// offsets (regex match positions). Convert a byte offset within `line` to a
+/// char offset so `iter_at_line_offset` lands correctly even with multi-byte
+/// characters (¶, curly quotes) earlier in the line.
+fn char_offset(line: &str, byte_off: usize) -> usize {
+    line[..byte_off].chars().count()
 }
 
 pub fn apply_authorship_formatting(state: &mut AppState) {
