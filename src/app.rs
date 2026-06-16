@@ -3837,7 +3837,7 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
 
 /// GTK text iters address characters, but divine_name_spans returns BYTE
 /// offsets (regex match positions). Convert a byte offset within `line` to a
-/// char offset so `iter_at_line_offset` lands correctly even with multi-byte
+/// char offset so `forward_chars` lands correctly even with multi-byte
 /// characters (¶, curly quotes) earlier in the line.
 fn char_offset(line: &str, byte_off: usize) -> usize {
     line[..byte_off].chars().count()
