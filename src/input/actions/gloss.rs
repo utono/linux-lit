@@ -357,8 +357,10 @@ pub(crate) fn show_edit_dialog(state_rc: &Rc<RefCell<AppState>>) {
     show_prompt_dialog(state_rc, crate::app::GlossPromptMode::Edit);
 }
 
-/// Gloss-overlay `i`: open the fix-IPA input card for the cursor's source verse.
-/// No-op (toast) off a source block.
+/// Open the fix-IPA input card for the cursor's source verse. No-op (toast) off
+/// a source block. (Formerly the gloss-overlay `i` key — that bind was removed;
+/// kept so the FixIpa flow can be rebound later without reconstruction.)
+#[allow(dead_code)]
 pub(crate) fn open_fix_ipa_prompt(state_rc: &Rc<RefCell<AppState>>) {
     if source_block_index(state_rc).is_none() {
         return; // not a source block — `source_block_index` toasted already
@@ -1606,6 +1608,22 @@ pub(crate) fn read_current_synopsis_block(state_rc: &Rc<RefCell<AppState>>) {
             return;
         }
     }
+    let index = match state_rc.borrow().gloss_overlay.current_block() {
+        Some((_kind, index)) => index,
+        None => return,
+    };
+    play_synopsis_block(state_rc, index);
+}
+
+/// `a` in the synopsis overlay: ALWAYS begin playback of the cursor's paragraph
+/// from its start (no pause-toggle), mirroring the gloss-overlay `a`
+/// (`begin_current_block`). Stops any current audio first, then plays the
+/// paragraph's TTS — cache hit plays the stored MP3, miss synthesizes via
+/// ElevenLabs then plays (both handled by `play_synopsis_block`).
+pub(crate) fn begin_current_synopsis_block(state_rc: &Rc<RefCell<AppState>>) {
+    // Stop any current audio first so we never overlap.
+    stop_all_gloss_audio(state_rc);
+
     let index = match state_rc.borrow().gloss_overlay.current_block() {
         Some((_kind, index)) => index,
         None => return,

@@ -1625,6 +1625,16 @@ impl GlossOverlay {
         self.mark_cursor_block();
     }
 
+    /// Re-show the overlay widget after it was hidden by `hide()` without
+    /// rebuilding its content (the rendered blocks + cursor persist in the
+    /// widget). Used when returning from the Ctrl+/ keybinds overlay, which
+    /// hides the gloss/synopsis overlay on open. The ask card stays hidden —
+    /// `hide()` reset it — matching a fresh navigation state.
+    pub fn show_again(&self) {
+        self.container.set_visible(true);
+        self.scrim.set_visible(true);
+    }
+
     pub fn hide(&self) {
         self.container.set_visible(false);
         self.scrim.set_visible(false);

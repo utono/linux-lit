@@ -278,6 +278,11 @@ pub struct AppState {
     /// visible behind the settings scrim and is restored on close. Reset to
     /// `Reader` each time settings opens from the reader.
     pub settings_return_mode: InputMode,
+    /// When the Ctrl+/ keybinds overlay is opened from another overlay (gloss,
+    /// synopsis, a picker, …), this records which mode to restore when it
+    /// closes, so Escape returns to that overlay instead of the reader. Reset to
+    /// `Reader` each time the keybinds overlay opens from the reader.
+    pub keybinds_return_mode: InputMode,
     /// Gloss-picker type filter: false shows `teacher-generic` glosses (the
     /// default), true shows `inner-monologue`. Toggled with Ctrl+t while the
     /// picker is open; reset to false each time the picker is opened.
@@ -1663,6 +1668,7 @@ pub fn build_window(
         gloss_active_voice: 0,
         voice_picker_origin: VoicePickerOrigin::Settings,
         settings_return_mode: InputMode::Reader,
+        keybinds_return_mode: InputMode::Reader,
         gloss_picker_inner_monologue: false,
         gloss_prompt_mode: GlossPromptMode::Add,
         delete_confirm_container: None,

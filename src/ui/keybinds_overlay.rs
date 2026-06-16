@@ -70,7 +70,7 @@ const HOME_ROW: &[KeyDef] = &[
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
     key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echo turns"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echoes")]),
     key("u", "U", "start time", "U: undo ts", &[("M-u", "set end time")]),
-    key("i", "I", "scansion", "", &[("M-i", "2-col translation"), ("C-M-i", "inline translation"), ("i", "fix IPA")]),
+    key("i", "I", "scansion", "", &[("M-i", "2-col translation"), ("C-M-i", "inline translation")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
     key("h", "H", "synopsis", "H: auto vocab", &[("C-h", "synopsis side")]),
     key("t", "T", "", "", &[("S-C-t", "nav test")]),
@@ -308,9 +308,10 @@ between the last two works, like vim's Ctrl-^). \
 -> pickers::toggle_previous_work — src/input/actions/pickers.rs",
         "settings" => "Open the settings overlay (margins, offsets, and other \
 reader options). -> settings::open_settings — src/input/actions/settings.rs",
-        "keybinds" => "Open this keyboard-shortcut overlay. \
--> pickers::open_keybinds_overlay — src/input/actions/pickers.rs (drawing: \
-src/ui/keybinds_overlay.rs)",
+        "keybinds" => "Open this keyboard-shortcut overlay. Also works inside the \
+gloss and synopsis overlays (Ctrl+/), returning to that overlay when closed. \
+-> pickers::open_keybinds_overlay / open_keybinds_from_mode — \
+src/input/actions/pickers.rs (drawing: src/ui/keybinds_overlay.rs)",
         "search" => "Open the in-text search bar (forward: first match at or after \
 the cursor); Escape restores the pre-search reader position. -> OpenSearch arm \
 (inline) -> search::clear_search — src/input/keymap.rs, src/input/search.rs",
@@ -390,11 +391,6 @@ voice as the gloss's active voice and plays the verse (pausing MPV first). If \
 the synthesized audio is already playing, this stops it instead. R is the only \
 key that opens the picker; r replays in the current active voice. \
 -> pick_source_voice — src/input/actions/gloss.rs",
-        "fix IPA" => "While the gloss overlay is open, on a source verse: open a \
-card to correct one word's Original-Pronunciation IPA. Type `word /IPA/` (used \
-literally) or `word <hint>` (the LLM regenerates it). Rewrites the stored verse, \
-drops that line's synthesized audio, and re-synthesizes + plays. \
--> open_fix_ipa_prompt — src/input/actions/gloss.rs",
 
         // ── Vocab ──
         "next conc" => "Step to the next concordance hit for the active word — \

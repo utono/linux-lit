@@ -727,12 +727,25 @@ pub(crate) fn open_library_picker_from_reader(state: &Rc<RefCell<AppState>>) {
 /// Note: the chord start (KeyState::start_chord) must be called separately
 /// by the dispatch arm since it touches key_state.
 pub(crate) fn open_keybinds_overlay(state: &Rc<RefCell<AppState>>) {
+    open_keybinds_from_mode(state, crate::app::InputMode::Reader);
+}
+
+/// Open the Ctrl+/ keybinds overlay, recording `return_mode` so its close paths
+/// restore that mode (the overlay it was opened from) instead of always
+/// dropping to the reader. Called by `open_keybinds_overlay` (reader, return
+/// mode `Reader`) and from the per-overlay Ctrl+/ handlers with their own mode.
+/// Toggles closed (back to `return_mode`) if already visible.
+pub(crate) fn open_keybinds_from_mode(
+    state: &Rc<RefCell<AppState>>,
+    return_mode: crate::app::InputMode,
+) {
     let s = state.borrow();
     if s.keybinds_overlay.is_visible() || s.gamepad_overlay.is_visible() {
         s.keybinds_overlay.hide();
         s.gamepad_overlay.hide();
+        let back = s.keybinds_return_mode;
         drop(s);
-        state.borrow_mut().input_mode = crate::app::InputMode::Reader;
+        restore_mode_after_keybinds(state, back);
     } else {
         s.picker.hide();
         s.media_picker.hide();
@@ -742,8 +755,37 @@ pub(crate) fn open_keybinds_overlay(state: &Rc<RefCell<AppState>>) {
         s.vocab_popup.hide();
         s.keybinds_overlay.show();
         drop(s);
-        state.borrow_mut().input_mode = crate::app::InputMode::KeybindsOverlay;
+        let mut s = state.borrow_mut();
+        s.keybinds_return_mode = return_mode;
+        s.input_mode = crate::app::InputMode::KeybindsOverlay;
     }
+}
+
+/// Restore the input mode (and re-show the overlay widget) after the keybinds
+/// overlay closes. For gloss/synopsis the overlay widget was hidden on open, so
+/// it must be shown again; other modes just need the input mode restored. Always
+/// resets `keybinds_return_mode` to `Reader`.
+pub(crate) fn restore_mode_after_keybinds(
+    state: &Rc<RefCell<AppState>>,
+    return_mode: crate::app::InputMode,
+) {
+    let mut s = state.borrow_mut();
+    match return_mode {
+        crate::app::InputMode::GlossOverlay | crate::app::InputMode::SynopsisOverlay => {
+            s.gloss_overlay.show_again();
+            s.input_mode = return_mode;
+        }
+        crate::app::InputMode::Reader => {
+            s.input_mode = crate::app::InputMode::Reader;
+        }
+        // Any other recorded overlay: its widget is a persistent add_overlay
+        // panel that was not hidden on open, so only the input mode needs
+        // restoring.
+        other => {
+            s.input_mode = other;
+        }
+    }
+    s.keybinds_return_mode = crate::app::InputMode::Reader;
 }
 
 /// Open the concordance word picker with the current work's vocab words.

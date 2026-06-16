@@ -765,6 +765,15 @@ fn handle_gloss_key(
                 );
                 return true;
             }
+            // Ctrl+/ opens the keybinds overlay, returning to the gloss overlay
+            // on close (same overlay-return pattern as Ctrl+, settings).
+            "slash" => {
+                crate::input::actions::pickers::open_keybinds_from_mode(
+                    state,
+                    crate::app::InputMode::GlossOverlay,
+                );
+                return true;
+            }
             // Ctrl+Up/Ctrl+Down adjust volume, mirroring the reader's
             // VolumeUp/VolumeDown (and the echoes overlay).
             "Up" => {
@@ -891,12 +900,6 @@ fn handle_gloss_key(
             // Source verse only: open the voice picker for the synthesized
             // reading (the only picker key); confirm sets active voice + plays.
             crate::input::actions::gloss::pick_source_voice(state);
-            true
-        }
-        "i" => {
-            // Source verse only: open the fix-IPA card to correct one word's
-            // /IPA/ (type /IPA/ literally or a plain hint for the LLM).
-            crate::input::actions::gloss::open_fix_ipa_prompt(state);
             true
         }
         _ => true,
@@ -1071,6 +1074,13 @@ fn handle_synopsis_overlay_key(
             s.input_mode = crate::app::InputMode::Reader;
             true
         }
+        // `a`: always (re)start the cursor paragraph's TTS from the start,
+        // mirroring the gloss-overlay `a` (`begin_current_block`). Plain
+        // Space/Tab below is the play/pause toggle.
+        "a" => {
+            crate::input::actions::gloss::begin_current_synopsis_block(state);
+            true
+        }
         "A" => {
             crate::input::actions::synopsis::show_amend_prompt(state);
             true
@@ -1103,6 +1113,15 @@ fn handle_synopsis_overlay_key(
         // the synopsis overlay visible underneath and returning to it on close.
         "comma" if is_ctrl => {
             crate::input::actions::settings::open_settings_from_overlay(
+                state,
+                crate::app::InputMode::SynopsisOverlay,
+            );
+            true
+        }
+        // Ctrl+/ opens the keybinds overlay, returning to the synopsis overlay
+        // on close (same overlay-return pattern as Ctrl+, settings).
+        "slash" if is_ctrl => {
+            crate::input::actions::pickers::open_keybinds_from_mode(
                 state,
                 crate::app::InputMode::SynopsisOverlay,
             );
@@ -1362,7 +1381,11 @@ fn handle_gamepad_key(
     match key_name {
         "Escape" => {
             state.borrow().gamepad_overlay.hide();
-            state.borrow_mut().input_mode = crate::app::InputMode::Reader;
+            // Honor the keybinds-overlay return mode (the gamepad screen is part
+            // of the Ctrl+/ cycle), so closing returns to the overlay it opened
+            // from rather than always the reader.
+            let back = state.borrow().keybinds_return_mode;
+            crate::input::actions::pickers::restore_mode_after_keybinds(state, back);
             true
         }
         "n" | "Up" => {
@@ -1431,7 +1454,8 @@ fn handle_keybinds_key(
     match key_name {
         "Escape" => {
             state.borrow().keybinds_overlay.hide();
-            state.borrow_mut().input_mode = crate::app::InputMode::Reader;
+            let back = state.borrow().keybinds_return_mode;
+            crate::input::actions::pickers::restore_mode_after_keybinds(state, back);
             return true;
         }
         "Tab" => {
