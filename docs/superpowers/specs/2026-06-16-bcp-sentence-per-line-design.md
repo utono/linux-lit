@@ -18,6 +18,18 @@ equality**. Splitting a prayer into sentence lines naively would leave each
 sub-line unmatched → broken timestamps/sync/`u`-`.`/concordance. The split must
 teach the line_map that N sentence lines map to one DB row.
 
+## Implementation note (differs from the original plan)
+
+BCP works have a NULL `text_file` and are loaded **directly from the DB** in
+`display_work`'s "Default: join work.lines" branch (which set `line_map = None`
+and a buffer==work identity mapping). They never touch `clean_file_lines` /
+`prepare_text_*` / the snapshot cache. So the split was implemented in that DB
+branch, not in `clean_file_lines`, and `build_line_map_bcp` assigns the mapping
+**directly** (source group `g` == work line `g`) rather than text-matching —
+text-matching would orphan every `[...]` rubric, since `normalize()` strips
+bracketed text to empty. The snapshot-version bump is therefore unnecessary (BCP
+has no cached representation) and was reverted.
+
 ## Approach: split + sub-line map
 
 ### 1. Sentence splitting (BCP-only, in the clean step)

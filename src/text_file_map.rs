@@ -131,15 +131,104 @@ fn strip_brackets(s: &str) -> String {
 
 const WINDOW: usize = 50;
 
-/// Build a bidirectional map between `file_lines` (raw lines from a plain-text file)
-/// and `work_lines` (DB rows for a work).
+/// Build a LineMap for a BCP work whose body prayers were split one sentence
+/// per buffer line. `file_lines` are the split (display) lines;
+/// `source_index[i]` is the work-line index that split line `i` came from
+/// (consecutive equal values are a prayer's sentence sub-lines).
+///
+/// Unlike `build_line_map` (which text-matches a .txt against DB rows), BCP is
+/// built straight from `work.lines` — `display_work` produces `source_index` by
+/// enumerating `work.lines`, so the mapping is an exact, ordered 1:1: source
+/// group `g` IS work line `g`. We therefore assign directly rather than
+/// text-match. (Text-matching would orphan every `[...]` rubric, since
+/// `normalize()` strips bracketed text to empty.) Every sub-line of a prayer
+/// maps to its one work row; the FIRST sub-line is canonical in `work_to_buffer`
+/// / `chapter_breaks` / `section_starts` (timestamps, sync, `u`/`.`, and scene
+/// snapping key off that first line). `section_starts` reuses the authoritative
+/// `(div1,div2)` logic on the split view.
+pub fn build_line_map_bcp(
+    file_lines: &[String],
+    source_index: &[usize],
+    work_lines: &[Line],
+) -> LineMap {
+    assert_eq!(file_lines.len(), source_index.len());
+    let n_split = file_lines.len();
+    let n_work = work_lines.len();
+
+    // BCP works are built directly from `work.lines` (one source group per work
+    // line, in order), so the mapping is an exact 1:1 — group `g` is work line
+    // `g`. We do NOT text-match (build_line_map's normalize() strips `[...]`
+    // rubrics to empty, which would orphan every rubric line); instead we map
+    // every line, including rubrics, the way the old line_map-less identity did.
+    //
+    // collapsed_first_split[g] = first split (buffer) line of work group g.
+    let mut collapsed_first_split: Vec<usize> = Vec::with_capacity(n_work);
+    let mut buffer_to_work: Vec<Option<usize>> = vec![None; n_split];
+    {
+        let mut i = 0usize;
+        while i < n_split {
+            let src = source_index[i];
+            collapsed_first_split.push(i);
+            let mut j = i;
+            while j < n_split && source_index[j] == src {
+                buffer_to_work[j] = Some(src);
+                j += 1;
+            }
+            i = j;
+        }
+    }
+    debug_assert_eq!(collapsed_first_split.len(), n_work);
+
+    // work_to_buffer: each work line -> its FIRST split line (canonical for
+    // timestamps / sync / u-. / scene snapping).
+    let work_to_buffer: Vec<usize> = (0..n_work)
+        .map(|wi| collapsed_first_split.get(wi).copied().unwrap_or(0))
+        .collect();
+
+    // dialogue_buffer_lines: every split sub-line of a dialogue work line.
+    let mut dialogue_buffer_lines: Vec<usize> = Vec::new();
+    for (split_idx, w) in buffer_to_work.iter().enumerate() {
+        if let Some(wi) = w {
+            if work_lines[*wi].is_dialogue {
+                dialogue_buffer_lines.push(split_idx);
+            }
+        }
+    }
+
+    // chapter_breaks: first split line of each chapter work line.
+    let mut chapter_breaks: Vec<usize> = Vec::new();
+    for (wi, l) in work_lines.iter().enumerate() {
+        if l.is_chapter {
+            chapter_breaks.push(collapsed_first_split[wi]);
+        }
+    }
+
+    // section_starts: reuse the authoritative (div1,div2)-change logic, which
+    // works off buffer_to_work + the buffer text. Runs on the SPLIT view; a
+    // boundary attributes to the split line where the new (div1,div2) first
+    // appears (a prayer's first sentence line).
+    let section_starts = build_section_starts(file_lines, &buffer_to_work, work_lines);
+
+    LineMap {
+        buffer_to_work,
+        work_to_buffer,
+        dialogue_buffer_lines,
+        // BCP is not a prose work; no character-level sentence groups.
+        sentence_groups: Vec::new(),
+        chapter_breaks,
+        section_starts,
+    }
+}
+
+/// Build a bidirectional map between `file_lines` (raw lines from a plain-text
+/// file) and `work_lines` (DB rows for a work).
 ///
 /// Algorithm (ported from Lua):
 /// - Pre-normalize all file lines.
-/// - For each non-empty normalized file line, scan forward in work_lines within a
-///   sliding window of `WINDOW` rows starting at the current DB cursor position.
-/// - On a match beyond the current cursor: verify that the next non-empty file line
-///   also matches the next DB row. If the confirmation check fails, skip this candidate.
+/// - For each non-empty normalized file line, scan forward in work_lines within
+///   a sliding window of `WINDOW` rows starting at the current DB cursor.
+/// - On a match beyond the current cursor: verify the next non-empty file line
+///   also matches the next DB row. If the confirmation check fails, skip it.
 /// - Log match percentage; warn if < 80%.
 pub fn build_line_map(file_lines: &[String], work_lines: &[Line], is_prose: bool) -> LineMap {
     let norm_file: Vec<String> = file_lines.iter().map(|l| normalize(l)).collect();
@@ -1286,5 +1375,89 @@ mod tests {
         assert_eq!(groups[0].end_col, None);
         assert_eq!(groups[1].start_col, 0);
         assert_eq!(groups[1].line_range.start, 1);
+    }
+
+    #[test]
+    fn test_build_line_map_bcp_sublines_map_to_one_row() {
+        // A rite title (its own work line), then a 2-sentence prayer split into
+        // two buffer lines (both from work line 1), then a 1-line litany prayer.
+        // source_index indexes work_lines directly (1:1, every work line present).
+        let file_lines = vec![
+            "## THE PREFACE.".to_string(),                    // work 0 (heading)
+            "O GOD merciful father, oppress us.".to_string(), // work 1, sentence 1
+            "And graciously hear us, our Lord.".to_string(),  // work 1, sentence 2
+            "Lord have mercy upon us.".to_string(),           // work 2, single sentence
+        ];
+        let source_index = vec![0, 1, 1, 2];
+
+        let work_lines = vec![
+            make_line(1, "## THE PREFACE.", "the preface", false),
+            make_line(
+                2,
+                "O GOD merciful father, oppress us. And graciously hear us, our Lord.",
+                "o god merciful father oppress us and graciously hear us our lord",
+                true,
+            ),
+            make_line(3, "Lord have mercy upon us.", "lord have mercy upon us", true),
+        ];
+
+        let map = build_line_map_bcp(&file_lines, &source_index, &work_lines);
+
+        // Heading line maps to its own work row (identity preserved).
+        assert_eq!(map.buffer_to_work[0], Some(0));
+        // BOTH sentence sub-lines map to the same prayer work row (index 1).
+        assert_eq!(map.buffer_to_work[1], Some(1));
+        assert_eq!(map.buffer_to_work[2], Some(1));
+        // The litany line maps to its own row.
+        assert_eq!(map.buffer_to_work[3], Some(2));
+
+        // work_to_buffer points at the FIRST sub-line of each work line.
+        assert_eq!(map.work_to_buffer[0], 0);
+        assert_eq!(map.work_to_buffer[1], 1, "prayer canonical = its first sentence line");
+        assert_eq!(map.work_to_buffer[2], 3);
+
+        // Dialogue lines: the two prayer sentences + litany; not the heading.
+        assert!(!map.dialogue_buffer_lines.contains(&0));
+        assert!(map.dialogue_buffer_lines.contains(&1));
+        assert!(map.dialogue_buffer_lines.contains(&2));
+        assert!(map.dialogue_buffer_lines.contains(&3));
+    }
+
+    #[test]
+    fn test_build_line_map_bcp_repeated_litany_and_rubric() {
+        // Repeated identical litany lines must map to distinct DB rows in order
+        // (the matcher advances its cursor); a rubric line maps too; a
+        // 2-sentence prayer splits across two buffer lines -> one row.
+        let file_lines = vec![
+            "Lord have mercy upon us.".to_string(),     // row 0
+            "Christ have mercy upon us.".to_string(),   // row 1
+            "Lord have mercy upon us.".to_string(),     // row 2 (repeat)
+            "[Then shall the Priest say.]".to_string(), // row 3 (rubric)
+            "O GOD our refuge, defend us.".to_string(), // row 4 sentence 1
+            "Grant us peace, our Lord.".to_string(),    // row 4 sentence 2
+        ];
+        let source_index = vec![0, 1, 2, 3, 4, 4];
+        let work_lines = vec![
+            make_line(1, "Lord have mercy upon us.", "lord have mercy upon us", true),
+            make_line(2, "Christ have mercy upon us.", "christ have mercy upon us", true),
+            make_line(3, "Lord have mercy upon us.", "lord have mercy upon us", true),
+            make_line(4, "[Then shall the Priest say.]", "then shall the priest say", false),
+            make_line(
+                5,
+                "O GOD our refuge, defend us. Grant us peace, our Lord.",
+                "o god our refuge defend us grant us peace our lord",
+                true,
+            ),
+        ];
+
+        let map = build_line_map_bcp(&file_lines, &source_index, &work_lines);
+
+        assert_eq!(map.buffer_to_work[0], Some(0));
+        assert_eq!(map.buffer_to_work[1], Some(1));
+        assert_eq!(map.buffer_to_work[2], Some(2), "repeat maps to the 2nd matching row, not the 1st");
+        assert_eq!(map.buffer_to_work[3], Some(3));
+        assert_eq!(map.buffer_to_work[4], Some(4));
+        assert_eq!(map.buffer_to_work[5], Some(4), "prayer's 2nd sentence shares its row");
+        assert_eq!(map.work_to_buffer[4], 4, "prayer canonical = first sentence line");
     }
 }

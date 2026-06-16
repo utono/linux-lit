@@ -9,6 +9,10 @@ use crate::text_file_map::LineMap;
 // bare-number heading (is_stanza_number), changing the cached section_starts
 // values for Son. The serialized shape is unchanged, but stale snapshots hold
 // the old (wrong) bitmap; the version bump forces a rebuild.
+//
+// NB: BCP works are loaded straight from the DB (text_file is NULL) and never
+// hit the snapshot cache, so the sentence-per-line split needs no version bump —
+// it has no cached representation to invalidate.
 pub const SNAPSHOT_VERSION: u32 = 5;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
