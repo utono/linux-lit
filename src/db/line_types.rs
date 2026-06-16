@@ -74,6 +74,25 @@ pub fn is_rubric(text: &str) -> bool {
     t.starts_with('[') && t.ends_with(']') && t.len() >= 2
 }
 
+/// Max words for a rubric to be treated as a short centered cue rather than a
+/// hanging-indent instructional paragraph. Tunable; 8 fits the Oxford text.
+const RUBRIC_CENTER_MAX_WORDS: usize = 8;
+
+/// Decide a rubric's layout. Pass the rubric's INNER text (no surrounding
+/// brackets). Short cues with no sentence-internal period ("The Priest.",
+/// "Then likewise he shall say.") center; longer instructional prose hangs.
+/// Display heuristic only — a wrong call misplaces alignment, never text.
+pub fn rubric_is_centered(inner: &str) -> bool {
+    let t = inner.trim().trim_start_matches('¶').trim();
+    let words = t.split_whitespace().count();
+    if words == 0 || words > RUBRIC_CENTER_MAX_WORDS {
+        return false;
+    }
+    // A period anywhere but the very end signals multi-sentence instruction.
+    let trimmed_end = t.trim_end_matches('.');
+    !trimmed_end.contains('.')
+}
+
 fn is_standalone_keyword(upper: &str, keyword: &str) -> bool {
     upper == keyword
         || upper.starts_with(&format!("{},", keyword))
@@ -345,5 +364,21 @@ mod tests {
         assert!(is_rubric("[¶ The Morning prayer shall be used.]"));
         assert!(!is_rubric("## A heading"));
         assert!(!is_rubric("Our Father, which art in heaven."));
+    }
+
+    #[test]
+    fn test_rubric_is_centered() {
+        // Short transition/speaker cues -> centered.
+        assert!(rubric_is_centered("The Priest."));
+        assert!(rubric_is_centered("The Answer."));
+        assert!(rubric_is_centered("Then likewise he shall say."));
+        // A leading pilcrow does not change the decision.
+        assert!(rubric_is_centered("¶ Then the Collect of the day."));
+        // Long instructional prose -> hanging (not centered).
+        assert!(!rubric_is_centered(
+            "At the beginning both of Morning Prayer, and likewise of Evening \
+             Prayer, the Minister shall read with a loud voice, some one of these \
+             sentences of the Scriptures that follow."
+        ));
     }
 }
