@@ -170,6 +170,84 @@ pub fn divine_name_spans(line: &str) -> Vec<(usize, usize)> {
         .collect()
 }
 
+/// A BCP body paragraph: a non-blank line that is neither a `## ` heading nor a
+/// `[...]` rubric. These are the prayers and litany petitions that get
+/// justified, block-spaced typography (and first-line indent / opening
+/// small-caps). Display classification only.
+pub fn is_bcp_body(text: &str) -> bool {
+    !is_blank(text) && !is_bcp_heading(text) && !is_rubric(text)
+}
+
+/// Byte range (start, end) of the leading all-caps word run that opens a BCP
+/// prayer, for small-caps styling of the opening word (LYGHTEN, WHOSOEVER,
+/// ALMIGHTY, WE, THE). The source sets the opening word in caps as a proxy for
+/// the printed small-caps. Returns `None` when the line does not begin with an
+/// all-caps alphabetic word.
+///
+/// A lone leading "O" (the vocative, "O GOD merciful father") is skipped so the
+/// span lands on the substantive opening word — but if the line is *only* "O"
+/// followed by lowercase, nothing matches. Trailing all-caps divine names mid
+/// run (e.g. "O LORD our heavenly father") are picked up by `divine_name_spans`
+/// instead, so this only spans the very first emphatic word.
+pub fn bcp_opening_smallcaps_span(line: &str) -> Option<(usize, usize)> {
+    let mut chars = line.char_indices().peekable();
+    // Skip leading whitespace.
+    while let Some(&(_, c)) = chars.peek() {
+        if c.is_whitespace() {
+            chars.next();
+        } else {
+            break;
+        }
+    }
+    // Optionally skip a lone vocative "O" so the span lands on the next word.
+    let mut start = match chars.peek() {
+        Some(&(i, _)) => i,
+        None => return None,
+    };
+    if let Some(&(i, 'O')) = chars.peek() {
+        let mut look = chars.clone();
+        look.next(); // consume the O
+        if matches!(look.peek(), Some(&(_, c)) if c.is_whitespace()) {
+            // It's a standalone "O " — advance start past it and the space.
+            chars.next();
+            while let Some(&(_, c)) = chars.peek() {
+                if c.is_whitespace() {
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            start = match chars.peek() {
+                Some(&(j, _)) => j,
+                None => return None,
+            };
+            let _ = i;
+        }
+    }
+    // Consume the leading word; it must be all-uppercase alphabetic.
+    let mut end = start;
+    let mut has_alpha = false;
+    let mut all_upper = true;
+    while let Some(&(i, c)) = chars.peek() {
+        if c.is_whitespace() {
+            break;
+        }
+        if c.is_alphabetic() {
+            has_alpha = true;
+            if !c.is_uppercase() {
+                all_upper = false;
+            }
+        }
+        end = i + c.len_utf8();
+        chars.next();
+    }
+    if has_alpha && all_upper && end > start {
+        Some((start, end))
+    } else {
+        None
+    }
+}
+
 pub fn is_dialogue(text: &str, is_prose: bool) -> bool {
     if is_blank(text) {
         return false;
@@ -425,6 +503,35 @@ mod tests {
         assert_eq!(divine_name_spans("the LORDES table"), vec![]); // LORDES != LORD
         // Whole-word all-caps LORD is found.
         assert_eq!(divine_name_spans("the LORD reigneth"), vec![(4, 8)]);
+    }
+
+    #[test]
+    fn test_is_bcp_body() {
+        assert!(is_bcp_body("O GOD merciful father, that despisest not"));
+        assert!(is_bcp_body("Lord have mercy upon us."));
+        assert!(!is_bcp_body("## THE SUPPER")); // heading
+        assert!(!is_bcp_body("[The Priest shall say.]")); // rubric
+        assert!(!is_bcp_body("   ")); // blank
+    }
+
+    #[test]
+    fn test_bcp_opening_smallcaps_span() {
+        // Leading all-caps word -> spanned.
+        assert_eq!(bcp_opening_smallcaps_span("ALMIGHTY God, which"), Some((0, 8)));
+        assert_eq!(bcp_opening_smallcaps_span("WE humbly beseech the"), Some((0, 2)));
+        assert_eq!(bcp_opening_smallcaps_span("THE grace of our Lord"), Some((0, 3)));
+        assert_eq!(bcp_opening_smallcaps_span("LYGHTEN our darkenes"), Some((0, 7)));
+        // Vocative "O " is skipped; span lands on the next emphatic word.
+        assert_eq!(bcp_opening_smallcaps_span("O GOD merciful father"), Some((2, 5)));
+        assert_eq!(bcp_opening_smallcaps_span("O LORD our heavenly father"), Some((2, 6)));
+        // Title-case / lowercase openings -> no span.
+        assert_eq!(bcp_opening_smallcaps_span("Lord have mercy upon us."), None);
+        assert_eq!(bcp_opening_smallcaps_span("Our father which art"), None);
+        assert_eq!(bcp_opening_smallcaps_span("And lead us not"), None);
+        // Leading whitespace tolerated.
+        assert_eq!(bcp_opening_smallcaps_span("  WHOSOEVER will be"), Some((2, 11)));
+        // Lone "O" with lowercase after the vocative skip leaves no caps word.
+        assert_eq!(bcp_opening_smallcaps_span("O father, mercifully"), None);
     }
 
     #[test]

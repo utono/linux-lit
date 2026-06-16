@@ -3741,11 +3741,19 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
     state.dialogue_formatting_active = true;
     state.text_view.set_pixels_above_lines(0);
     state.text_view.set_pixels_below_lines(0);
+    // NB: full (Fill) justification is intentionally NOT used. GtkTextView does
+    // not implement fill-justify for word-wrapped text — both view-level
+    // set_justification(Fill) and a TextTag Justification::Fill render
+    // ragged-right (verified empirically; GTK docs scope Justification::Fill to
+    // GtkLabel). The Kindle's justified look would require a custom Pango/Cairo
+    // text widget, which is out of scope. Block spacing + a continuation-block
+    // left-indent carry the paragraph-separation the layout needs instead.
 
     let tag_table = state.buffer.tag_table();
     for name in &[
         "bcp-heading", "bcp-rubric-centered", "bcp-rubric-hanging",
-        "bcp-divine-name", "bcp-blank",
+        "bcp-divine-name", "bcp-blank", "bcp-body", "bcp-body-indent",
+        "bcp-opening",
     ] {
         if let Some(old) = tag_table.lookup(name) {
             tag_table.remove(&old);
@@ -3768,14 +3776,15 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
         .style(pango::Style::Italic)
         .pixels_above_lines(6)
         .build();
-    // Hanging indent: the paragraph is pushed in by `left_margin`, while the
-    // first line is pulled back out by a negative `indent`, so wrapped lines
-    // sit indented under a flush opening — the printed-rubric look.
+    // Instructional rubric: a block left-indent (whole paragraph shifted right)
+    // sets it off from the prayers, italicised. A true hanging indent (flush
+    // first line, indented wraps) would need `TextTag:indent`, which this
+    // GtkTextView build does not render (see the body-indent note below) — so a
+    // uniform `left_margin` block indent is used instead.
     let rubric_hanging_tag = gtk4::TextTag::builder()
         .name("bcp-rubric-hanging")
         .style(pango::Style::Italic)
         .left_margin(base_margin + 24)
-        .indent(-24)
         .pixels_above_lines(6)
         .build();
     let divine_name_tag = gtk4::TextTag::builder()
@@ -3786,14 +3795,51 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
         .name("bcp-blank")
         .scale(0.25)
         .build();
+    // Body prayers/petitions: block spacing above so each prayer reads as a
+    // distinct block (the Kindle/Oxford look) instead of the data's gap-less
+    // stacking. (No Fill justification — see the note at the top of this fn.)
+    let body_tag = gtk4::TextTag::builder()
+        .name("bcp-body")
+        .pixels_above_lines(10)
+        .build();
+    // A continuation body paragraph (one body line directly following another):
+    // same as body, plus an indent so successive prayers in a run are visually
+    // separated even where block spacing is subtle.
+    //
+    // NB: we indent via `left_margin` (the WHOLE paragraph shifts right), NOT
+    // via `indent` (first-line only). GtkTextView in this build does not render
+    // the `TextTag:indent` property — verified: a body tag's `pixels_above_lines`
+    // renders but its `indent` does not, and the hanging-rubric `indent(-24)`
+    // never hung. `left_margin` IS honored (the play `dialogue-indent` tag proves
+    // it). A full-paragraph left shift reads cleanly for the short litany
+    // petitions and is the printed look for continued prayers.
+    let body_indent_tag = gtk4::TextTag::builder()
+        .name("bcp-body-indent")
+        .pixels_above_lines(10)
+        .left_margin(base_margin + 28)
+        .build();
+    // The opening word of a prayer, set small-caps (LYGHTEN, WHOSOEVER,
+    // ALMIGHTY). Layered over the body line tag like the divine-name span.
+    let opening_tag = gtk4::TextTag::builder()
+        .name("bcp-opening")
+        .variant(pango::Variant::SmallCaps)
+        .build();
 
     tag_table.add(&heading_tag);
     tag_table.add(&rubric_centered_tag);
     tag_table.add(&rubric_hanging_tag);
     tag_table.add(&divine_name_tag);
     tag_table.add(&blank_tag);
+    tag_table.add(&body_tag);
+    tag_table.add(&body_indent_tag);
+    tag_table.add(&opening_tag);
 
     let line_count = state.buffer.line_count() as usize;
+    // Track whether the previous non-blank line was itself a body paragraph, so
+    // a run of consecutive prayers gets a block left-indent on the 2nd+ block
+    // while the first prayer after a heading/rubric stays flush (the Kindle
+    // look). Blank lines don't reset the run.
+    let mut prev_nonblank_was_body = false;
     for i in 0..line_count {
         let Some(line_start) = state.buffer.iter_at_line(i as i32) else { continue };
         let line_end = if i + 1 < line_count {
@@ -3816,6 +3862,7 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
             // or draws them via an overlay. Centered bold is the title look
             // until then.
             let _ = line_types::is_bcp_rite_title(&text);
+            prev_nonblank_was_body = false;
         } else if line_types::is_rubric(&text) {
             let inner = &trimmed[1..trimmed.len() - 1]; // strip [ ]
             if line_types::rubric_is_centered(inner) {
@@ -3823,6 +3870,22 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
             } else {
                 state.buffer.apply_tag(&rubric_hanging_tag, &line_start, &line_end);
             }
+            prev_nonblank_was_body = false;
+        } else {
+            // A body prayer/petition. Block-space always; left-indent the whole
+            // block when it continues a run of body paragraphs.
+            let body = if prev_nonblank_was_body { &body_indent_tag } else { &body_tag };
+            state.buffer.apply_tag(body, &line_start, &line_end);
+            // Opening-word small-caps (LYGHTEN/WHOSOEVER/ALMIGHTY), layered over
+            // the body tag. Byte span -> char span, same idiom as divine names.
+            if let Some((s, e)) = line_types::bcp_opening_smallcaps_span(&text) {
+                let Some(mut span_start) = state.buffer.iter_at_line(i as i32) else { continue };
+                span_start.forward_chars(char_offset(&text, s) as i32);
+                let mut span_end = span_start;
+                span_end.forward_chars((char_offset(&text, e) - char_offset(&text, s)) as i32);
+                state.buffer.apply_tag(&opening_tag, &span_start, &span_end);
+            }
+            prev_nonblank_was_body = true;
         }
         // Divine-name small-caps applies on ANY non-blank line (headings,
         // rubrics, body), layered over the line tag above.
