@@ -97,9 +97,12 @@ pub enum Action {
     ToggleVocabHighlight,
     ToggleGlossOverlay,
     OpenGlossPicker,
-    ShowEchoes,
-    ReopenEchoes,
-    ShowEchoTurns,
+    ShowEchoesBcp,
+    ReopenEchoesBcp,
+    ShowEchoTurnsBcp,
+    ShowEchoesShx,
+    ReopenEchoesShx,
+    ShowEchoTurnsShx,
 
     // Visual / selection
     EnterVisualMode,
@@ -204,9 +207,12 @@ impl Action {
             | Action::ToggleVocabHighlight
             | Action::ToggleGlossOverlay
             | Action::OpenGlossPicker
-            | Action::ShowEchoes
-            | Action::ReopenEchoes
-            | Action::ShowEchoTurns
+            | Action::ShowEchoesBcp
+            | Action::ReopenEchoesBcp
+            | Action::ShowEchoTurnsBcp
+            | Action::ShowEchoesShx
+            | Action::ReopenEchoesShx
+            | Action::ShowEchoTurnsShx
             | Action::OpenConcordancePicker
             | Action::OpenConcordanceWordPicker
             | Action::OpenConcordanceListPicker
@@ -322,9 +328,12 @@ impl Action {
             Action::ToggleVocabHighlight => "ToggleVocabHighlight",
             Action::ToggleGlossOverlay => "ToggleGlossOverlay",
             Action::OpenGlossPicker => "OpenGlossPicker",
-            Action::ShowEchoes => "ShowEchoes",
-            Action::ReopenEchoes => "ReopenEchoes",
-            Action::ShowEchoTurns => "ShowEchoTurns",
+            Action::ShowEchoesBcp => "ShowEchoesBcp",
+            Action::ReopenEchoesBcp => "ReopenEchoesBcp",
+            Action::ShowEchoTurnsBcp => "ShowEchoTurnsBcp",
+            Action::ShowEchoesShx => "ShowEchoesShx",
+            Action::ReopenEchoesShx => "ReopenEchoesShx",
+            Action::ShowEchoTurnsShx => "ShowEchoTurnsShx",
             Action::ConcordanceNext => "ConcordanceNext",
             Action::ConcordancePrev => "ConcordancePrev",
             Action::EnterVisualMode => "EnterVisualMode",

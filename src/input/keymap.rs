@@ -1561,7 +1561,7 @@ fn handle_visual_key(
             true
         }
         "i" => {
-            crate::input::actions::echoes::show_echoes_for_selection(state, tokio_handle);
+            crate::input::actions::echoes::show_echoes_for_selection(state, crate::db::echo_channel::EchoChannel::Shakespeare, tokio_handle);
             true
         }
         _ => {
@@ -1701,9 +1701,12 @@ fn dispatch_action(
         }
         ToggleGlossOverlay => crate::input::actions::gloss::toggle_overlay(state),
         OpenGlossPicker => crate::input::actions::pickers::open_gloss_picker(state, tokio_handle),
-        ShowEchoes => crate::input::actions::echoes::show_echoes_for_cursor_line(state, tokio_handle),
-        ReopenEchoes => crate::input::actions::echoes::reopen_echoes(state, tokio_handle),
-        ShowEchoTurns => crate::input::actions::echoes::open_echo_turns_picker(state),
+        ShowEchoesBcp => crate::input::actions::echoes::show_echoes_for_cursor_line(state, crate::db::echo_channel::EchoChannel::Bcp, tokio_handle),
+        ReopenEchoesBcp => crate::input::actions::echoes::reopen_echoes(state, crate::db::echo_channel::EchoChannel::Bcp, tokio_handle),
+        ShowEchoTurnsBcp => crate::input::actions::echoes::open_echo_turns_picker(state, crate::db::echo_channel::EchoChannel::Bcp),
+        ShowEchoesShx => crate::input::actions::echoes::show_echoes_for_cursor_line(state, crate::db::echo_channel::EchoChannel::Shakespeare, tokio_handle),
+        ReopenEchoesShx => crate::input::actions::echoes::reopen_echoes(state, crate::db::echo_channel::EchoChannel::Shakespeare, tokio_handle),
+        ShowEchoTurnsShx => crate::input::actions::echoes::open_echo_turns_picker(state, crate::db::echo_channel::EchoChannel::Shakespeare),
 
         // Visual / selection
         EnterVisualMode => crate::input::visual::enter_visual_mode(&mut state.borrow_mut()),

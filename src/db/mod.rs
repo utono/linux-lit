@@ -2,6 +2,7 @@ pub mod affect;
 pub mod authorship;
 pub mod chunks;
 pub mod concordance;
+pub mod echo_channel;
 pub mod line_types;
 pub mod models;
 pub mod queries;
