@@ -121,11 +121,116 @@ fn selection_key(work_abbrev: &str, turn: &[Line]) -> crate::db::queries::EchoTu
     }
 }
 
+/// True if the current work is a Book of Common Prayer edition (BCP1549, …).
+/// BCP works carry no speaker, so the speaker-block `cursor_turn` path can't
+/// resolve them; the reader resolves them by chunk range instead.
+fn current_work_is_bcp(state: &AppState) -> bool {
+    state
+        .current_work
+        .as_ref()
+        .map(|w| w.abbrev.starts_with("BCP"))
+        .unwrap_or(false)
+}
+
+/// For a BCP work, resolve the cursor line to (work_abbrev, div1, line_in_div,
+/// line_id). Used to look up the containing chunk's echo_turns row by range.
+fn bcp_cursor_location(state: &AppState) -> Option<(String, i64, i64, i64)> {
+    let work = state.current_work.as_ref()?;
+    let work_idx = state.work_line_for_buffer(state.current_line)?;
+    let cursor = work.lines.get(work_idx)?;
+    Some((work.abbrev.clone(), cursor.div1, cursor.line_in_div, cursor.id))
+}
+
+/// BCP-reading path (BCP→Shakespeare direction): the reader is in a BCP work and
+/// pressed the BCP-channel show key. Resolve the cursor line to its containing
+/// chunk's echo_turns row (range match), load that turn's Shakespeare echoes,
+/// and render. Returns true if it handled the event (always, for a BCP work —
+/// either showing echoes or the no-echoes state); false if not a BCP work.
+fn show_bcp_reading_echoes(
+    state_rc: &Rc<RefCell<AppState>>,
+    channel: crate::db::echo_channel::EchoChannel,
+) -> bool {
+    let loc = {
+        let s = state_rc.borrow();
+        if !current_work_is_bcp(&s) {
+            return false;
+        }
+        bcp_cursor_location(&s)
+    };
+    let (work_abbrev, div1, line_in_div, origin_line_id) = match loc {
+        Some(v) => v,
+        None => return true, // BCP work but no resolvable cursor line — handled (no-op)
+    };
+
+    let resolved = crate::db::queries::open_db().ok().and_then(|conn| {
+        let (turn_id, start_line, end_line, speaker, turn_text) =
+            crate::db::queries::find_echo_turn_containing(&conn, &work_abbrev, div1, line_in_div)
+                .ok()
+                .flatten()?;
+        let links = crate::db::queries::load_echo_links(&conn, turn_id, channel).ok()?;
+        if links.is_empty() {
+            return None;
+        }
+        let titles = crate::db::queries::load_work_titles(&conn).unwrap_or_default();
+        Some((turn_id, start_line, end_line, speaker, turn_text, links, titles))
+    });
+
+    let mut s = state_rc.borrow_mut();
+    match resolved {
+        Some((turn_id, start_line, end_line, speaker, turn_text, links, titles)) => {
+            let key = crate::db::queries::EchoTurnKey {
+                work_abbrev: work_abbrev.clone(),
+                div1,
+                div2: 0,
+                start_line,
+                end_line,
+                speaker: speaker.clone().unwrap_or_default(),
+                turn_text: turn_text.clone(),
+            };
+            let source_doc = format!("{} {}.{}", work_abbrev, div1, start_line);
+            s.echo_overlay_source = source_doc.clone();
+            s.echo_overlay_links = links.clone();
+            s.echo_overlay_index = 0;
+            s.echo_overlay_titles = titles.clone();
+            s.echo_overlay_turn_id = Some(turn_id);
+            s.echo_overlay_turn_key = Some(key.clone());
+            s.echo_session = Some(EchoSession {
+                channel,
+                turn_key: key,
+                turn_id: Some(turn_id),
+                links,
+                selected: 0,
+                titles,
+                source_doc,
+                origin_work: work_abbrev,
+                origin_line_id,
+            });
+            s.input_mode = crate::app::InputMode::EchoesOverlay;
+            render_echoes(&mut s);
+            crate::logging::log("ECHOES: showing cached BCP-reading echoes");
+        }
+        None => {
+            s.gloss_overlay.show("No echoes found for this passage.", "");
+            s.input_mode = crate::app::InputMode::EchoesOverlay;
+            crate::logging::log("ECHOES: BCP-reading, no echoes for this passage");
+        }
+    }
+    true
+}
+
 pub(crate) fn show_echoes_for_cursor_line(
     state_rc: &Rc<RefCell<AppState>>,
     channel: crate::db::echo_channel::EchoChannel,
     tokio_handle: &tokio::runtime::Handle,
 ) {
+    // BCP→Shakespeare: if the reader is in a BCP work, resolve by chunk range
+    // (BCP lines have no speaker, so the speaker-block path below can't run).
+    if channel == crate::db::echo_channel::EchoChannel::Bcp
+        && show_bcp_reading_echoes(state_rc, channel)
+    {
+        return;
+    }
+
     let (turn, speaker, addressee, source_work) = {
         let s = state_rc.borrow();
         let (turn, speaker, addressee) = match cursor_turn(&s) {

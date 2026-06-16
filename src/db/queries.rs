@@ -1765,6 +1765,37 @@ pub fn ensure_echo_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
+/// Find a cached turn whose line range CONTAINS the given line, for a work.
+///
+/// BCP echo_turns are keyed by chunk boundaries (start_line..end_line spanning
+/// several physical lines), so a reader's cursor on a single line inside a chunk
+/// won't match `find_echo_turn`'s exact start/end. This range lookup resolves the
+/// containing chunk. Returns (turn_id, start_line, end_line, speaker, turn_text)
+/// so the caller can build a full EchoSession. Prefers the smallest matching
+/// span if chunks ever overlap.
+pub fn find_echo_turn_containing(
+    conn: &Connection,
+    work_abbrev: &str,
+    div1: i64,
+    line: i64,
+) -> Result<Option<(i64, i64, i64, Option<String>, String)>, rusqlite::Error> {
+    conn.query_row(
+        "SELECT id, start_line, end_line, speaker, turn_text FROM echo_turns \
+         WHERE work_abbrev = ?1 AND div1 = ?2 \
+           AND start_line <= ?3 AND end_line >= ?3 \
+         ORDER BY (end_line - start_line) ASC LIMIT 1",
+        rusqlite::params![work_abbrev, div1, line],
+        |row| Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, Option<String>>(3)?,
+            row.get::<_, String>(4)?,
+        )),
+    )
+    .optional()
+}
+
 /// Find a cached turn row id by its key.
 pub fn find_echo_turn(conn: &Connection, key: &EchoTurnKey) -> Result<Option<i64>, rusqlite::Error> {
     conn.query_row(
@@ -2184,6 +2215,27 @@ mod tests {
         let shx = list_echo_turns_for_work(&conn, "Ham", EchoChannel::Shakespeare).unwrap();
         assert_eq!(shx.len(), 1);
         assert_eq!(shx[0].start_line, 10);
+    }
+
+    #[test]
+    fn find_echo_turn_containing_matches_by_range() {
+        // BCP echo_turns span a chunk; a cursor on any line inside resolves it.
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_echo_tables(&conn).unwrap();
+        conn.execute("INSERT INTO echo_turns (id, work_abbrev, div1, div2, start_line, end_line, speaker, turn_text) VALUES (1,'BCP1559',11,NULL,13,20,NULL,'I AM the resurrection')", []).unwrap();
+        // A line inside the chunk resolves.
+        let hit = find_echo_turn_containing(&conn, "BCP1559", 11, 15).unwrap();
+        assert!(hit.is_some());
+        let (id, start, end, speaker, _text) = hit.unwrap();
+        assert_eq!((id, start, end), (1, 13, 20));
+        assert!(speaker.is_none());
+        // A line outside the chunk does not.
+        assert!(find_echo_turn_containing(&conn, "BCP1559", 11, 99).unwrap().is_none());
+        // Boundaries are inclusive.
+        assert!(find_echo_turn_containing(&conn, "BCP1559", 11, 13).unwrap().is_some());
+        assert!(find_echo_turn_containing(&conn, "BCP1559", 11, 20).unwrap().is_some());
+        // Wrong rite (div1) does not match.
+        assert!(find_echo_turn_containing(&conn, "BCP1559", 5, 15).unwrap().is_none());
     }
 
     #[test]
