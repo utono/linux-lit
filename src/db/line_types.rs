@@ -143,6 +143,22 @@ pub fn is_title_above_separator(text: &str, next_text: &str) -> bool {
     is_separator(next_text.trim())
 }
 
+fn divine_name_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    // Whole-word all-caps GOD or LORD. \b word boundaries reject GODLY/LORDES.
+    RE.get_or_init(|| Regex::new(r"\b(GOD|LORD)\b").unwrap())
+}
+
+/// Byte ranges (start, end) of whole-word all-caps divine names (GOD, LORD) in
+/// `line`, for word-level small-caps tagging. Title-case ("Lord") and partials
+/// ("GODLY", "LORDES") are not matched — only the source's emphatic all-caps.
+pub fn divine_name_spans(line: &str) -> Vec<(usize, usize)> {
+    divine_name_re()
+        .find_iter(line)
+        .map(|m| (m.start(), m.end()))
+        .collect()
+}
+
 pub fn is_dialogue(text: &str, is_prose: bool) -> bool {
     if is_blank(text) {
         return false;
@@ -380,5 +396,23 @@ mod tests {
              Prayer, the Minister shall read with a loud voice, some one of these \
              sentences of the Scriptures that follow."
         ));
+    }
+
+    #[test]
+    fn test_divine_name_spans() {
+        // Whole-word GOD / LORD -> byte ranges of each.
+        let line = "O Lord GOD, Lamb of GOD";
+        let spans = divine_name_spans(line);
+        // "GOD" at byte 7..10 and 20..23; "Lord" is title-case, not all-caps -> skip.
+        assert_eq!(spans, vec![(7, 10), (20, 23)]);
+    }
+
+    #[test]
+    fn test_divine_name_spans_ignores_partials_and_lowercase() {
+        assert_eq!(divine_name_spans("god is good"), vec![]); // lowercase
+        assert_eq!(divine_name_spans("GODLY living"), vec![]); // not whole word
+        assert_eq!(divine_name_spans("the LORDES table"), vec![]); // LORDES != LORD
+        // Whole-word all-caps LORD is found.
+        assert_eq!(divine_name_spans("the LORD reigneth"), vec![(4, 8)]);
     }
 }
