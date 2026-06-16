@@ -6,7 +6,7 @@
 
 **Architecture:** Introduce an `EchoChannel { Bcp, Shakespeare }` enum threaded through the echo actions, `EchoSession`, and the two DB queries that read cached echoes. The channel is a pure data filter — a pair is BCP when **either side is a BCP work** (`t.work_abbrev LIKE 'BCP%' OR l.echo_work_abbrev LIKE 'BCP%'`), covering both reading directions (Shakespeare→BCP and BCP→Shakespeare). No schema change. One rendering/navigation implementation; only the data-load boundary and the opening keybind differ. (A later task makes BCP works openable in the reader so the BCP→Shakespeare direction is usable.)
 
-> **Status note:** Tasks 1–8 (the channel split, two-sided filter, keybind rebind, overlay docs) are **implemented and committed** on this branch. Task 9 (manual verification) and Task 10 (BCP-reading interaction) remain, both gated on the BCP data pipeline having run. The code blocks below reflect the as-built two-sided design.
+> **Status note:** Tasks 1–8 (channel split, two-sided filter, keybind rebind, overlay docs) and **Task 10 (BCP-reading interaction)** are **implemented and committed** on this branch; 349 tests pass. Task 10 resolves a BCP cursor line to its containing chunk via `find_echo_turn_containing` (range match), verified against real lit.db data. Only **Task 9 (manual in-app verification)** remains — it needs a human running the GTK app. The code blocks below reflect the as-built two-sided design.
 
 **Tech Stack:** Rust (linux-lit), `rusqlite`, GTK. Tests are inline `#[test]` fns with in-memory SQLite, matching the existing pattern in `src/db/queries.rs`.
 
