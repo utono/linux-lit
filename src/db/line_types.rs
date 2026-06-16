@@ -52,6 +52,58 @@ pub fn is_stage_direction(text: &str) -> bool {
     false
 }
 
+/// A Book of Common Prayer work, identified by its abbrev prefix. Mirrors the
+/// `LIKE 'BCP%'` echo-channel rule (src/db/echo_channel.rs) and the inline
+/// `abbrev.starts_with("BCP")` test in src/input/actions/echoes.rs.
+pub fn is_bcp_work(abbrev: &str) -> bool {
+    abbrev.starts_with("BCP")
+}
+
+/// A BCP heading line, carrying the `## ` marker from extract_blocks. Kept
+/// distinct from `is_act_scene_marker` so BCP headings get centered liturgical
+/// styling rather than the play act/scene treatment.
+pub fn is_bcp_heading(text: &str) -> bool {
+    text.trim().starts_with("## ")
+}
+
+/// A top-level BCP rite title: a `## ` heading whose text is all-caps (e.g.
+/// "## THE SUPPER"). Distinguished from mixed-case sub-headings so only rite
+/// titles get ornamental flourishes.
+pub fn is_bcp_rite_title(text: &str) -> bool {
+    let Some(rest) = text.trim().strip_prefix("## ") else { return false };
+    let rest = rest.trim();
+    !rest.is_empty()
+        && rest.chars().any(|c| c.is_alphabetic())
+        && rest.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_uppercase())
+}
+
+/// A BCP rubric (stage direction / instruction), wrapped in `[ ]` by
+/// extract_blocks. Distinct from `is_stage_direction` (which also matches
+/// multi-line bracket fragments) because BCP rubrics are whole-line `[...]`.
+pub fn is_rubric(text: &str) -> bool {
+    let t = text.trim();
+    t.starts_with('[') && t.ends_with(']') && t.len() >= 2
+}
+
+/// Max words for a rubric to be treated as a short centered cue rather than a
+/// hanging-indent instructional paragraph. Tunable; 8 fits the Oxford text.
+const RUBRIC_CENTER_MAX_WORDS: usize = 8;
+
+/// Decide a rubric's layout. Pass the rubric's INNER text (no surrounding
+/// brackets). Short cues with no sentence-internal period ("The Priest.",
+/// "Then likewise he shall say.") center; longer instructional prose hangs.
+/// Display heuristic only — a wrong call misplaces alignment, never text.
+pub fn rubric_is_centered(inner: &str) -> bool {
+    let t = inner.trim().trim_start_matches('¶').trim();
+    let words = t.split_whitespace().count();
+    if words == 0 || words > RUBRIC_CENTER_MAX_WORDS {
+        return false;
+    }
+    // A period anywhere but the very end signals multi-sentence instruction.
+    let trimmed_end = t.trim_end_matches('.');
+    !trimmed_end.contains('.')
+}
+
 fn is_standalone_keyword(upper: &str, keyword: &str) -> bool {
     upper == keyword
         || upper.starts_with(&format!("{},", keyword))
@@ -100,6 +152,22 @@ pub fn is_title_above_separator(text: &str, next_text: &str) -> bool {
         return false;
     }
     is_separator(next_text.trim())
+}
+
+fn divine_name_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    // Whole-word all-caps GOD or LORD. \b word boundaries reject GODLY/LORDES.
+    RE.get_or_init(|| Regex::new(r"\b(GOD|LORD)\b").unwrap())
+}
+
+/// Byte ranges (start, end) of whole-word all-caps divine names (GOD, LORD) in
+/// `line`, for word-level small-caps tagging. Title-case ("Lord") and partials
+/// ("GODLY", "LORDES") are not matched — only the source's emphatic all-caps.
+pub fn divine_name_spans(line: &str) -> Vec<(usize, usize)> {
+    divine_name_re()
+        .find_iter(line)
+        .map(|m| (m.start(), m.end()))
+        .collect()
 }
 
 pub fn is_dialogue(text: &str, is_prose: bool) -> bool {
@@ -298,5 +366,73 @@ mod tests {
         // In prose a number line is still treated as content (prose returns
         // early before the stanza-number check).
         assert!(is_dialogue("1", true));
+    }
+
+    #[test]
+    fn test_is_bcp_work() {
+        assert!(is_bcp_work("BCP1559"));
+        assert!(is_bcp_work("BCP1559M"));
+        assert!(is_bcp_work("BCP1662"));
+        assert!(!is_bcp_work("Ham"));
+        assert!(!is_bcp_work("bcp1559")); // case-sensitive, matches echo-channel convention
+    }
+
+    #[test]
+    fn test_is_bcp_heading() {
+        assert!(is_bcp_heading("## THE SUPPER"));
+        assert!(is_bcp_heading("## An Order for Morning"));
+        assert!(!is_bcp_heading("THE SUPPER")); // no marker
+        assert!(!is_bcp_heading("[a rubric]"));
+    }
+
+    #[test]
+    fn test_is_rubric() {
+        assert!(is_rubric("[The Priest shall say.]"));
+        assert!(is_rubric("[¶ The Morning prayer shall be used.]"));
+        assert!(!is_rubric("## A heading"));
+        assert!(!is_rubric("Our Father, which art in heaven."));
+    }
+
+    #[test]
+    fn test_rubric_is_centered() {
+        // Short transition/speaker cues -> centered.
+        assert!(rubric_is_centered("The Priest."));
+        assert!(rubric_is_centered("The Answer."));
+        assert!(rubric_is_centered("Then likewise he shall say."));
+        // A leading pilcrow does not change the decision.
+        assert!(rubric_is_centered("¶ Then the Collect of the day."));
+        // Long instructional prose -> hanging (not centered).
+        assert!(!rubric_is_centered(
+            "At the beginning both of Morning Prayer, and likewise of Evening \
+             Prayer, the Minister shall read with a loud voice, some one of these \
+             sentences of the Scriptures that follow."
+        ));
+    }
+
+    #[test]
+    fn test_divine_name_spans() {
+        // Whole-word GOD / LORD -> byte ranges of each.
+        let line = "O Lord GOD, Lamb of GOD";
+        let spans = divine_name_spans(line);
+        // "GOD" at byte 7..10 and 20..23; "Lord" is title-case, not all-caps -> skip.
+        assert_eq!(spans, vec![(7, 10), (20, 23)]);
+    }
+
+    #[test]
+    fn test_divine_name_spans_ignores_partials_and_lowercase() {
+        assert_eq!(divine_name_spans("god is good"), vec![]); // lowercase
+        assert_eq!(divine_name_spans("GODLY living"), vec![]); // not whole word
+        assert_eq!(divine_name_spans("the LORDES table"), vec![]); // LORDES != LORD
+        // Whole-word all-caps LORD is found.
+        assert_eq!(divine_name_spans("the LORD reigneth"), vec![(4, 8)]);
+    }
+
+    #[test]
+    fn test_is_bcp_rite_title() {
+        assert!(is_bcp_rite_title("## THE SUPPER"));
+        assert!(is_bcp_rite_title("## AN ORDER FOR MORNING"));
+        // Mixed-case heading is a sub-heading, not a rite title.
+        assert!(!is_bcp_rite_title("## The third Collect: for grace."));
+        assert!(!is_bcp_rite_title("Our Father")); // not a heading
     }
 }
