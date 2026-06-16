@@ -52,6 +52,28 @@ pub fn is_stage_direction(text: &str) -> bool {
     false
 }
 
+/// A Book of Common Prayer work, identified by its abbrev prefix. Mirrors the
+/// `LIKE 'BCP%'` echo-channel rule (src/db/echo_channel.rs) and the inline
+/// `abbrev.starts_with("BCP")` test in src/input/actions/echoes.rs.
+pub fn is_bcp_work(abbrev: &str) -> bool {
+    abbrev.starts_with("BCP")
+}
+
+/// A BCP heading line, carrying the `## ` marker from extract_blocks. Kept
+/// distinct from `is_act_scene_marker` so BCP headings get centered liturgical
+/// styling rather than the play act/scene treatment.
+pub fn is_bcp_heading(text: &str) -> bool {
+    text.trim().starts_with("## ")
+}
+
+/// A BCP rubric (stage direction / instruction), wrapped in `[ ]` by
+/// extract_blocks. Distinct from `is_stage_direction` (which also matches
+/// multi-line bracket fragments) because BCP rubrics are whole-line `[...]`.
+pub fn is_rubric(text: &str) -> bool {
+    let t = text.trim();
+    t.starts_with('[') && t.ends_with(']') && t.len() >= 2
+}
+
 fn is_standalone_keyword(upper: &str, keyword: &str) -> bool {
     upper == keyword
         || upper.starts_with(&format!("{},", keyword))
@@ -298,5 +320,30 @@ mod tests {
         // In prose a number line is still treated as content (prose returns
         // early before the stanza-number check).
         assert!(is_dialogue("1", true));
+    }
+
+    #[test]
+    fn test_is_bcp_work() {
+        assert!(is_bcp_work("BCP1559"));
+        assert!(is_bcp_work("BCP1559M"));
+        assert!(is_bcp_work("BCP1662"));
+        assert!(!is_bcp_work("Ham"));
+        assert!(!is_bcp_work("bcp1559")); // case-sensitive, matches echo-channel convention
+    }
+
+    #[test]
+    fn test_is_bcp_heading() {
+        assert!(is_bcp_heading("## THE SUPPER"));
+        assert!(is_bcp_heading("## An Order for Morning"));
+        assert!(!is_bcp_heading("THE SUPPER")); // no marker
+        assert!(!is_bcp_heading("[a rubric]"));
+    }
+
+    #[test]
+    fn test_is_rubric() {
+        assert!(is_rubric("[The Priest shall say.]"));
+        assert!(is_rubric("[¶ The Morning prayer shall be used.]"));
+        assert!(!is_rubric("## A heading"));
+        assert!(!is_rubric("Our Father, which art in heaven."));
     }
 }
