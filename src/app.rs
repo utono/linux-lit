@@ -3803,6 +3803,13 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
             state.buffer.apply_tag(&blank_tag, &line_start, &line_end);
         } else if line_types::is_bcp_heading(&text) {
             state.buffer.apply_tag(&heading_tag, &line_start, &line_end);
+            // Ornamental ❧ flourishes on rite titles (is_bcp_rite_title) are
+            // deferred: GTK TextTags cannot inject glyphs, and editing buffer
+            // text here would desync search/navigation offsets. A future pass
+            // injects ornaments at buffer-build time (where `## ` is stripped),
+            // or draws them via an overlay. Centered bold is the title look
+            // until then.
+            let _ = line_types::is_bcp_rite_title(&text);
         } else if line_types::is_rubric(&text) {
             let inner = &trimmed[1..trimmed.len() - 1]; // strip [ ]
             if line_types::rubric_is_centered(inner) {

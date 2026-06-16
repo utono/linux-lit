@@ -66,6 +66,17 @@ pub fn is_bcp_heading(text: &str) -> bool {
     text.trim().starts_with("## ")
 }
 
+/// A top-level BCP rite title: a `## ` heading whose text is all-caps (e.g.
+/// "## THE SUPPER"). Distinguished from mixed-case sub-headings so only rite
+/// titles get ornamental flourishes.
+pub fn is_bcp_rite_title(text: &str) -> bool {
+    let Some(rest) = text.trim().strip_prefix("## ") else { return false };
+    let rest = rest.trim();
+    !rest.is_empty()
+        && rest.chars().any(|c| c.is_alphabetic())
+        && rest.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_uppercase())
+}
+
 /// A BCP rubric (stage direction / instruction), wrapped in `[ ]` by
 /// extract_blocks. Distinct from `is_stage_direction` (which also matches
 /// multi-line bracket fragments) because BCP rubrics are whole-line `[...]`.
@@ -414,5 +425,14 @@ mod tests {
         assert_eq!(divine_name_spans("the LORDES table"), vec![]); // LORDES != LORD
         // Whole-word all-caps LORD is found.
         assert_eq!(divine_name_spans("the LORD reigneth"), vec![(4, 8)]);
+    }
+
+    #[test]
+    fn test_is_bcp_rite_title() {
+        assert!(is_bcp_rite_title("## THE SUPPER"));
+        assert!(is_bcp_rite_title("## AN ORDER FOR MORNING"));
+        // Mixed-case heading is a sub-heading, not a rite title.
+        assert!(!is_bcp_rite_title("## The third Collect: for grace."));
+        assert!(!is_bcp_rite_title("Our Father")); // not a heading
     }
 }
