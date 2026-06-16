@@ -3457,6 +3457,13 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
                     buf_lines.push(sentence);
                     source_index.push(wi);
                 }
+            } else if let Some(stripped) = l.text.strip_prefix("## ") {
+                // Strip the `## ` heading marker from the DISPLAYED buffer text.
+                // apply_bcp_formatting re-derives heading-ness from the mapped
+                // work-line's original text (which keeps the marker), so it still
+                // styles the line as a centered heading.
+                buf_lines.push(stripped.to_string());
+                source_index.push(wi);
             } else {
                 buf_lines.push(l.text.clone());
                 source_index.push(wi);
@@ -3853,6 +3860,22 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
     tag_table.add(&opening_tag);
 
     let line_count = state.buffer.line_count() as usize;
+    // Heading-ness is re-derived per buffer line from the mapped work-line's
+    // ORIGINAL text (which retains the `## ` marker); the displayed buffer text
+    // has had `## ` stripped at buffer-build time, so we can't detect it there.
+    // Precomputed before the loop to avoid borrowing `state` while mutating the
+    // buffer inside it.
+    let heading_line: Vec<bool> = {
+        let work_lines = state.current_work.as_ref().map(|w| &w.lines);
+        (0..line_count)
+            .map(|i| {
+                state
+                    .work_line_for_buffer(i)
+                    .and_then(|wi| work_lines.and_then(|wl| wl.get(wi)))
+                    .is_some_and(|l| line_types::is_bcp_heading(&l.text))
+            })
+            .collect()
+    };
     for i in 0..line_count {
         let Some(line_start) = state.buffer.iter_at_line(i as i32) else { continue };
         let line_end = if i + 1 < line_count {
@@ -3866,7 +3889,7 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
 
         if line_types::is_blank(&text) {
             state.buffer.apply_tag(&blank_tag, &line_start, &line_end);
-        } else if line_types::is_bcp_heading(&text) {
+        } else if heading_line[i] {
             state.buffer.apply_tag(&heading_tag, &line_start, &line_end);
             // Ornamental ❧ flourishes on rite titles (is_bcp_rite_title) are
             // deferred: GTK TextTags cannot inject glyphs, and editing buffer
