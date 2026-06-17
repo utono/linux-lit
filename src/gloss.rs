@@ -2,6 +2,17 @@ use crate::claude::ClaudeError;
 use crate::db::models::{Line, Work};
 use std::sync::LazyLock;
 
+/// Active template for `key` from lit.db, or the compiled `fallback` verbatim.
+///
+/// The lit.db row (managed by the `claude-api-prompts` repo) is authoritative
+/// and may have been edited past the compiled `fallback`. Each `FALLBACK` const
+/// below is the seed/v1 text and only renders when the DB row is missing or the
+/// DB is unreachable — so a `FALLBACK` deliberately diverging from the active DB
+/// prompt is expected, not a bug.
+fn template_or(key: &str, fallback: &str) -> String {
+    crate::db::prompts::active_prompt(key).unwrap_or_else(|| fallback.to_string())
+}
+
 /// Master switch for inline OP-IPA tagging on `<verse>` source lines.
 ///
 /// `false` (current) — every gloss prompt (and `FIX_IPA_PROMPT`) is built with
@@ -77,7 +88,10 @@ static IPA_VERSE_RULES: LazyLock<String> = LazyLock::new(|| {
         )
         .to_string()
     } else {
-        "Do NOT add /IPA/ pronunciation tags to verse lines. Quote the source words exactly as written, with no phonetic markup of any kind.".to_string()
+        template_or(
+            "ipa.verse-rules",
+            "Do NOT add /IPA/ pronunciation tags to verse lines. Quote the source words exactly as written, with no phonetic markup of any kind.",
+        )
     }
 });
 
@@ -92,11 +106,15 @@ static IPA_VERSE_RULES_SPARSE: LazyLock<String> = LazyLock::new(|| {
         )
         .to_string()
     } else {
-        "Do NOT add /IPA/ pronunciation tags to verse lines. Quote the source words exactly as written, with no phonetic markup of any kind.".to_string()
+        template_or(
+            "ipa.verse-rules-sparse",
+            "Do NOT add /IPA/ pronunciation tags to verse lines. Quote the source words exactly as written, with no phonetic markup of any kind.",
+        )
     }
 });
 
-pub static USER_QUESTION_PROMPT: LazyLock<String> = LazyLock::new(|| format!("\
+pub static USER_QUESTION_PROMPT: LazyLock<String> = LazyLock::new(|| {
+    const FALLBACK: &str = "\
 You are a literary scholar answering a reader's question about a passage from a literary text.
 
 The reader has asked a specific question. Answer it thoroughly, drawing on the passage provided.
@@ -116,9 +134,18 @@ Rules:
 - {}
 - Each <verse> tag contains exactly one line of the original
 - Each <gloss> tag contains one flowing prose paragraph (3-6 sentences)
-- No markdown, no bullets, no numbered lists, no headers", *IPA_VERSE_RULES));
+- No markdown, no bullets, no numbered lists, no headers";
+    let template = template_or("gloss.user-question", FALLBACK);
+    let rules: &str = &IPA_VERSE_RULES;
+    if template.contains("{ipa_rules}") {
+        template.replace("{ipa_rules}", rules)
+    } else {
+        template.replacen("{}", rules, 1)
+    }
+});
 
-pub static INNER_MONOLOGUE_PROMPT: LazyLock<String> = LazyLock::new(|| format!("\
+pub static INNER_MONOLOGUE_PROMPT: LazyLock<String> = LazyLock::new(|| {
+    const FALLBACK: &str = "\
 You are a director using the actioning technique to discover the inner \
 monologue beneath a passage from a dramatic text.
 
@@ -202,9 +229,18 @@ a secret (Viola concealing identity, Hal concealing intention, etc.)
 - For READING lines, find echoes where a character responds to what \
 they see in the other (Iago reading Othello, Portia reading Bassanio)
 - ALWAYS place a <speaker> tag before EVERY group of <verse> lines
-- No markdown, no bullets, no numbered lists, no headers", *IPA_VERSE_RULES));
+- No markdown, no bullets, no numbered lists, no headers";
+    let template = template_or("gloss.inner-monologue", FALLBACK);
+    let rules: &str = &IPA_VERSE_RULES;
+    if template.contains("{ipa_rules}") {
+        template.replace("{ipa_rules}", rules)
+    } else {
+        template.replacen("{}", rules, 1)
+    }
+});
 
-pub static INNER_MONOLOGUE_ADD_PROMPT: LazyLock<String> = LazyLock::new(|| format!("\
+pub static INNER_MONOLOGUE_ADD_PROMPT: LazyLock<String> = LazyLock::new(|| {
+    const FALLBACK: &str = "\
 You are a director using the actioning technique to discover the inner \
 monologue beneath a passage from a dramatic text.
 
@@ -235,9 +271,18 @@ any actable-subtext sentence or any prose after the echo.
 citation — never list alternatives or show your deliberation
 - Draw the echoes FROM THE PROVIDED LINES, not your own knowledge
 - ALWAYS place a <speaker> tag before EVERY group of <verse> lines
-- No markdown, no bullets, no numbered lists, no headers", *IPA_VERSE_RULES));
+- No markdown, no bullets, no numbered lists, no headers";
+    let template = template_or("gloss.inner-monologue-add", FALLBACK);
+    let rules: &str = &IPA_VERSE_RULES;
+    if template.contains("{ipa_rules}") {
+        template.replace("{ipa_rules}", rules)
+    } else {
+        template.replacen("{}", rules, 1)
+    }
+});
 
-pub static INNER_MONOLOGUE_EDIT_PROMPT: LazyLock<String> = LazyLock::new(|| format!("\
+pub static INNER_MONOLOGUE_EDIT_PROMPT: LazyLock<String> = LazyLock::new(|| {
+    const FALLBACK: &str = "\
 You are a director using the actioning technique to discover the inner \
 monologue beneath a passage from a dramatic text.
 
@@ -268,9 +313,18 @@ any actable-subtext sentence or any prose after the echo.
 citation — never list alternatives or show your deliberation
 - Draw the echoes FROM THE PROVIDED LINES, not your own knowledge
 - ALWAYS place a <speaker> tag before EVERY group of <verse> lines
-- No markdown, no bullets, no numbered lists, no headers", *IPA_VERSE_RULES));
+- No markdown, no bullets, no numbered lists, no headers";
+    let template = template_or("gloss.inner-monologue-edit", FALLBACK);
+    let rules: &str = &IPA_VERSE_RULES;
+    if template.contains("{ipa_rules}") {
+        template.replace("{ipa_rules}", rules)
+    } else {
+        template.replacen("{}", rules, 1)
+    }
+});
 
-pub static EDIT_GLOSS_PROMPT: LazyLock<String> = LazyLock::new(|| format!("\
+pub static EDIT_GLOSS_PROMPT: LazyLock<String> = LazyLock::new(|| {
+    const FALLBACK: &str = "\
 You are a literary scholar revising an existing gloss about a passage \
 from a literary text.
 
@@ -291,7 +345,15 @@ Rules:
 - Each <gloss> tag contains one flowing prose paragraph (3-6 sentences)
 - Incorporate the reader's provided lines as evidence or context
 - ALWAYS place a <speaker> tag before EVERY group of <verse> lines
-- No markdown, no bullets, no numbered lists, no headers", *IPA_VERSE_RULES));
+- No markdown, no bullets, no numbered lists, no headers";
+    let template = template_or("gloss.edit", FALLBACK);
+    let rules: &str = &IPA_VERSE_RULES;
+    if template.contains("{ipa_rules}") {
+        template.replace("{ipa_rules}", rules)
+    } else {
+        template.replacen("{}", rules, 1)
+    }
+});
 
 pub static FIX_IPA_PROMPT: LazyLock<String> = LazyLock::new(|| {
     if APPEND_IPA {
@@ -304,13 +366,15 @@ nothing else — no prose, no the word, no explanation.".to_string()
     } else {
         // IPA tagging is disabled; the i-key fix path should not synthesize new
         // /IPA/. Return an empty pronunciation so nothing is appended.
-        "\
-IPA pronunciation tagging is currently disabled. Return ONLY two forward slashes \
-with nothing between them (//) and no other text.".to_string()
+        template_or(
+            "gloss.fix-ipa",
+            "IPA pronunciation tagging is currently disabled. Return ONLY two forward slashes with nothing between them (//) and no other text.",
+        )
     }
 });
 
-static TEACHER_GENERIC_PROMPT: LazyLock<String> = LazyLock::new(|| format!("\
+static TEACHER_GENERIC_PROMPT: LazyLock<String> = LazyLock::new(|| {
+    const FALLBACK: &str = "\
 You are a performance-focused teacher helping a reader understand a passage from a literary text.
 
 Given a passage with speaker names and dialogue, provide an actor's explication that:
@@ -336,7 +400,15 @@ Rules:
 - Each <gloss> tag contains one flowing prose paragraph (3-4 sentences preferred, never exceed 6)
 - For long speeches (over 8 lines), break into 4-8 line chunks with analysis between each chunk
 - ALWAYS place a <speaker> tag before EVERY group of <verse> lines, even when the speaker has not changed — every quoted block must be preceded by its speaker name
-- No markdown, no bullets, no numbered lists, no headers", *IPA_VERSE_RULES_SPARSE));
+- No markdown, no bullets, no numbered lists, no headers";
+    let template = template_or("gloss.teacher-generic", FALLBACK);
+    let rules: &str = &IPA_VERSE_RULES_SPARSE;
+    if template.contains("{ipa_rules}") {
+        template.replace("{ipa_rules}", rules)
+    } else {
+        template.replacen("{}", rules, 1)
+    }
+});
 
 #[derive(Clone)]
 pub struct GlossContext {
@@ -678,4 +750,40 @@ fn flag_unverified(line: &str) -> String {
         return line.to_string();
     }
     line.replace("</gloss>", " (unverified)</gloss>")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn teacher_generic_has_no_unfilled_placeholder() {
+        // Assembled from the live DB (active version) or the compiled fallback —
+        // either way the IPA placeholder must be filled. Anchor on the prompt's
+        // stable opening line, not on version-specific bullet wording (the body
+        // is edited across versions; the role line is invariant).
+        let p = &*TEACHER_GENERIC_PROMPT;
+        assert!(!p.contains("{ipa_rules}"), "ipa_rules token left unfilled");
+        assert!(!p.contains("{}"), "positional placeholder left unfilled");
+        assert!(p.contains("You are a performance-focused teacher"));
+    }
+
+    #[test]
+    fn all_templated_gloss_prompts_fill_their_placeholder() {
+        // Every templated gloss prompt interpolates an IPA fragment into its
+        // {ipa_rules}/{} slot; none may leave the slot unfilled, whether the
+        // template came from the DB master or the compiled fallback.
+        for (name, p) in [
+            ("user-question", &*USER_QUESTION_PROMPT),
+            ("inner-monologue", &*INNER_MONOLOGUE_PROMPT),
+            ("inner-monologue-add", &*INNER_MONOLOGUE_ADD_PROMPT),
+            ("inner-monologue-edit", &*INNER_MONOLOGUE_EDIT_PROMPT),
+            ("edit", &*EDIT_GLOSS_PROMPT),
+            ("teacher-generic", &*TEACHER_GENERIC_PROMPT),
+        ] {
+            assert!(!p.contains("{ipa_rules}"), "{name}: ipa_rules token left unfilled");
+            assert!(!p.contains("{}"), "{name}: positional placeholder left unfilled");
+            assert!(!p.is_empty(), "{name}: assembled prompt is empty");
+        }
+    }
 }
