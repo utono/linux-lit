@@ -409,49 +409,15 @@ fn handle_picker_key(
                         }
 
                         let mut s = state.borrow_mut();
-                        let work_title = s.current_work.as_ref()
-                            .map(|w| w.title.clone()).unwrap_or_default();
-                        let ctx = crate::gloss::GlossContext {
-                            work_abbrev: passage.work_abbrev,
-                            work_title,
-                            start_citation: passage.start_citation,
-                            end_citation: passage.end_citation,
-                            act: passage.act,
-                            scene: passage.scene,
-                            speaker: passage.speaker,
-                            source_text: passage.source_text,
-                            source_line_numbers: Vec::new(),
-                            hash: String::new(),
-                            gloss_type: all_glosses[0].gloss_type.clone(),
-                        };
-
+                        let passages = s.gloss_picker.items.clone();
                         // Remember where the reader was so Escape returns here
                         // (instead of jumping to the glossed passage).
                         s.gloss_return_pos = Some((s.current_line, s.page_top_line));
-
-                        let cw = s.content_hbox.width();
-                        let h = s.content_hbox.height();
-                        let source_lines: Vec<(String, i64)> = Vec::new();
-                        s.gloss_overlay.show_gloss_with_color(
-                            &ctx.source_text, &all_glosses[0].gloss_text, cw, h,
-                            Some(&s.theme.root_color), &source_lines,
+                        // Shared open path (also used by the cursor open) — from
+                        // the picker, so Escape uses the picker return path.
+                        crate::input::actions::gloss::open_gloss_overlay(
+                            &mut s, passages, idx, passage, all_glosses, true,
                         );
-                        s.gloss_overlay.set_position(0, all_glosses.len());
-
-                        s.gloss_passages = s.gloss_picker.items.clone();
-                        s.gloss_passage_index = idx;
-                        s.gloss_list = all_glosses;
-                        s.gloss_index = 0;
-                        s.gloss_active_voice = 0;
-                        s.gloss_context = Some(ctx);
-                        s.gloss_opened_from_picker = true;
-                        // input_mode MUST be set before recolor: recolor_cached_blocks
-                        // selects the gloss branch off it and no-ops otherwise.
-                        s.input_mode = InputMode::GlossOverlay;
-                        // Color already-synthesized blocks on open — the cursor
-                        // open path (open_gloss) does this too; without it a gloss
-                        // opened via the picker never gets its cached-block accent.
-                        crate::input::actions::gloss::recolor_cached_blocks(&s);
                     }
                     true
                 }

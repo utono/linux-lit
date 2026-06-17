@@ -15,8 +15,13 @@ pub const ALICE_MODEL_ID: &str = "eleven_turbo_v2_5";
 /// the render TEXT (verse carries OP /IPA/, prose does not), not in the voice.
 pub const ROMEO_VOICE_ID: &str = "6yZ2TgQ0ylkuKI3AMAbI"; // Romeo — young male, 15–25
 pub const JULIET_VOICE_ID: &str = "91oz9H5XlpZKQkoXkN6w"; // Juliet — young female, 12–19
-pub const BENEDICK_VOICE_ID: &str = "ucMnuQhzouQI2nuPOYUw"; // Benedick — witty male, 26–34 (DEFAULT male)
-pub const IMOGEN_VOICE_ID: &str = "gC6a93GAfmZaFo4pG9yy"; // Imogen — British female, 20–30 (DEFAULT female + prose narrator)
+// The two GENDER DEFAULTS. To swap a default voice, edit ONLY the value + the
+// trailing character-name comment here (the identifier is role-based and never
+// needs renaming), then update the live `voice_catalog` rows in lit.db — the
+// `set-default-voice` skill does both in one step. The character name lives only
+// in the comment, so changing it is never a code-wide rename.
+pub const DEFAULT_MALE_VOICE_ID: &str = "ucMnuQhzouQI2nuPOYUw"; // Benedick — witty male, 26–34
+pub const DEFAULT_FEMALE_VOICE_ID: &str = "D4LX5VBnEN6zrrsnTMO8"; // Eleanor — British female, 20–30 (also all-prose narrator)
 pub const OP_MODEL_ID: &str = "eleven_v3";
 
 /// The user's four custom Voice-Design narration voices — the only voices the
@@ -27,8 +32,8 @@ pub const OP_MODEL_ID: &str = "eleven_v3";
 pub const CUSTOM_VOICE_IDS: [&str; 4] = [
     ROMEO_VOICE_ID,
     JULIET_VOICE_ID,
-    BENEDICK_VOICE_ID,
-    IMOGEN_VOICE_ID,
+    DEFAULT_MALE_VOICE_ID,
+    DEFAULT_FEMALE_VOICE_ID,
 ];
 
 /// True if `voice_id` is one of the user's custom narration voices.
@@ -62,13 +67,13 @@ impl Gender {
 /// RESORT (the live `voice_catalog` is what normally drives selection — see
 /// `resolve_default_voice`); each character voice serves both verse and prose,
 /// so `is_verse` no longer changes the voice, only the render text does.
-/// The gender DEFAULT is **Benedick** (male) / **Imogen** (female).
+/// The gender DEFAULT is **Benedick** (male) / **Eleanor** (female).
 /// Neutral/Unknown → male (Benedick) — never guess.
 pub fn voice_for(gender: Gender, _is_verse: bool) -> (&'static str, &'static str) {
     let id = if gender == Gender::Female {
-        IMOGEN_VOICE_ID
+        DEFAULT_FEMALE_VOICE_ID
     } else {
-        BENEDICK_VOICE_ID
+        DEFAULT_MALE_VOICE_ID
     };
     (id, OP_MODEL_ID)
 }
@@ -270,21 +275,21 @@ mod tests {
     #[test]
     fn voice_for_male_defaults_to_benedick() {
         // one voice both roles: is_verse no longer changes the voice
-        assert_eq!(voice_for(Gender::Male, true), (BENEDICK_VOICE_ID, OP_MODEL_ID));
-        assert_eq!(voice_for(Gender::Male, false), (BENEDICK_VOICE_ID, OP_MODEL_ID));
+        assert_eq!(voice_for(Gender::Male, true), (DEFAULT_MALE_VOICE_ID, OP_MODEL_ID));
+        assert_eq!(voice_for(Gender::Male, false), (DEFAULT_MALE_VOICE_ID, OP_MODEL_ID));
     }
 
     #[test]
-    fn voice_for_female_defaults_to_imogen() {
-        assert_eq!(voice_for(Gender::Female, false), (IMOGEN_VOICE_ID, OP_MODEL_ID));
-        assert_eq!(voice_for(Gender::Female, true), (IMOGEN_VOICE_ID, OP_MODEL_ID));
+    fn voice_for_female_defaults_to_eleanor() {
+        assert_eq!(voice_for(Gender::Female, false), (DEFAULT_FEMALE_VOICE_ID, OP_MODEL_ID));
+        assert_eq!(voice_for(Gender::Female, true), (DEFAULT_FEMALE_VOICE_ID, OP_MODEL_ID));
     }
 
     #[test]
     fn voice_for_neutral_and_unknown_default_to_male() {
         // neutral/unknown -> male default (Benedick)
-        assert_eq!(voice_for(Gender::Neutral, true), (BENEDICK_VOICE_ID, OP_MODEL_ID));
-        assert_eq!(voice_for(Gender::Unknown, false), (BENEDICK_VOICE_ID, OP_MODEL_ID));
+        assert_eq!(voice_for(Gender::Neutral, true), (DEFAULT_MALE_VOICE_ID, OP_MODEL_ID));
+        assert_eq!(voice_for(Gender::Unknown, false), (DEFAULT_MALE_VOICE_ID, OP_MODEL_ID));
     }
 
     #[test]

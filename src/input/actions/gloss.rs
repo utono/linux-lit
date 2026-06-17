@@ -1302,14 +1302,14 @@ pub(crate) fn synth_all_prose_blocks(state_rc: &Rc<RefCell<AppState>>) {
         if prose.is_empty() {
             return;
         }
-        // Explication prose is always read by Imogen (see resolve_default_voice:
-        // "All prose is read by Imogen"). Single-block synth resolves the same
+        // Explication prose is always read by Eleanor (see resolve_default_voice:
+        // "All prose is read by Eleanor"). Single-block synth resolves the same
         // voice via gloss_block_voice, and the cached-audio recolor check looks
-        // under Imogen — so the batch MUST cache under Imogen too, or its
+        // under Eleanor — so the batch MUST cache under Eleanor too, or its
         // mp3s land under a different voice id and neither playback-cache-hit nor
         // the recolor existence check will find them.
         let (vid, mid) = (
-            crate::elevenlabs::IMOGEN_VOICE_ID,
+            crate::elevenlabs::DEFAULT_FEMALE_VOICE_ID,
             crate::elevenlabs::OP_MODEL_ID,
         );
         (gloss_id, work_abbrev, prose, vid.to_string(), mid.to_string(), s.tokio_handle.clone())
@@ -1810,6 +1810,68 @@ fn passage_covers(start: (i64, i64, i64), end: (i64, i64, i64), cur: (i64, i64, 
     start <= cur && cur <= end
 }
 
+/// Open the gloss overlay for a resolved passage and its glosses, wiring up all
+/// the `gloss_*` state, painting the card, and coloring already-synthesized
+/// blocks. Shared by the cursor open path (`toggle_overlay`) and the gloss
+/// picker confirm path so they cannot drift — a missing `recolor_cached_blocks`
+/// here was a real bug (cached blocks uncolored only when opened via the picker).
+///
+/// Caller responsibilities (done identically by both sites before this call):
+/// set `gloss_return_pos`, and hold the `&mut AppState` borrow. `all_glosses`
+/// must be non-empty. `from_picker` controls the Escape return path.
+pub(crate) fn open_gloss_overlay(
+    s: &mut AppState,
+    passages: Vec<crate::db::queries::GlossedPassage>,
+    passage_index: usize,
+    passage: crate::db::queries::GlossedPassage,
+    all_glosses: Vec<crate::db::queries::SavedGloss>,
+    from_picker: bool,
+) {
+    let work_title = s
+        .current_work
+        .as_ref()
+        .map(|w| w.title.clone())
+        .unwrap_or_default();
+    let ctx = crate::gloss::GlossContext {
+        work_abbrev: passage.work_abbrev,
+        work_title,
+        start_citation: passage.start_citation,
+        end_citation: passage.end_citation,
+        act: passage.act,
+        scene: passage.scene,
+        speaker: passage.speaker,
+        source_text: passage.source_text,
+        source_line_numbers: Vec::new(),
+        hash: String::new(),
+        gloss_type: all_glosses[0].gloss_type.clone(),
+    };
+
+    let cw = s.content_hbox.width();
+    let h = s.content_hbox.height();
+    let source_lines: Vec<(String, i64)> = Vec::new();
+    s.gloss_overlay.show_gloss_with_color(
+        &ctx.source_text,
+        &all_glosses[0].gloss_text,
+        cw,
+        h,
+        Some(&s.theme.root_color),
+        &source_lines,
+    );
+    s.gloss_overlay.set_position(0, all_glosses.len());
+
+    s.gloss_passages = passages;
+    s.gloss_passage_index = passage_index;
+    s.gloss_list = all_glosses;
+    s.gloss_index = 0;
+    s.gloss_active_voice = 0;
+    s.gloss_context = Some(ctx);
+    s.gloss_opened_from_picker = from_picker;
+    // input_mode MUST be set before recolor: recolor_cached_blocks selects the
+    // gloss vs synopsis branch off it and no-ops otherwise.
+    s.input_mode = crate::app::InputMode::GlossOverlay;
+    recolor_cached_blocks(s);
+}
+
 pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
     if state.borrow().input_mode == crate::app::InputMode::GlossOverlay {
         let mut s = state.borrow_mut();
@@ -1912,47 +1974,11 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
 
     // All resolution done; mutate state and open the overlay under one borrow.
     let mut s = state.borrow_mut();
-    let work_title = s.current_work.as_ref().map(|w| w.title.clone()).unwrap_or_default();
-    let ctx = crate::gloss::GlossContext {
-        work_abbrev: passage.work_abbrev,
-        work_title,
-        start_citation: passage.start_citation,
-        end_citation: passage.end_citation,
-        act: passage.act,
-        scene: passage.scene,
-        speaker: passage.speaker,
-        source_text: passage.source_text,
-        source_line_numbers: Vec::new(),
-        hash: String::new(),
-        gloss_type: all_glosses[0].gloss_type.clone(),
-    };
-
     // Remember the reader page so Escape returns here.
     s.gloss_return_pos = Some((s.current_line, s.page_top_line));
-
-    let cw = s.content_hbox.width();
-    let h = s.content_hbox.height();
-    let source_lines: Vec<(String, i64)> = Vec::new();
-    s.gloss_overlay.show_gloss_with_color(
-        &ctx.source_text, &all_glosses[0].gloss_text, cw, h,
-        Some(&s.theme.root_color), &source_lines,
-    );
-    s.gloss_overlay.set_position(0, all_glosses.len());
-
-    s.gloss_passages = passages;
-    s.gloss_passage_index = passage_index;
-    s.gloss_list = all_glosses;
-    s.gloss_index = 0;
-    s.gloss_active_voice = 0;
-    s.gloss_context = Some(ctx);
-    // Set GlossOverlay mode BEFORE recolor: recolor_cached_blocks selects the
-    // gloss vs synopsis branch off input_mode, so the just-opened gloss must
-    // already be in GlossOverlay or its blocks won't get colored on first open.
-    s.input_mode = crate::app::InputMode::GlossOverlay;
-    recolor_cached_blocks(&s);
-    // Opened from the reader cursor, not the picker, so Escape uses the
-    // saved reader page (gloss_return_pos), not the picker return path.
-    s.gloss_opened_from_picker = false;
+    // Opened from the reader cursor, not the picker (from_picker = false): Escape
+    // uses the saved reader page, not the picker return path.
+    open_gloss_overlay(&mut s, passages, passage_index, passage, all_glosses, false);
 }
 
 /// Close the stacked gloss add/edit input card and return focus to the gloss.
