@@ -278,12 +278,16 @@ Benedick, Beatrice** — since each voice serves both roles; the older
 > returns Benedick (male) / Eleanor (female). Eleanor (the 20–30 female band +
 > all-prose narrator) replaced Imogen.
 >
-> **Prose narrator, with one exception.** All prose (explication) is read by a
-> single narrator regardless of speaker — Eleanor everywhere, EXCEPT the Book of
-> Common Prayer works (`work_abbrev` starting `BCP`: BCP1549/1549M/1559/1559M/
-> 1662), whose liturgical register reads prose in the male default (Benedick).
-> Verse is unaffected — it still resolves by (gender, age), so a BCP work's
-> UNKNOWN speakers land on the male default there too.
+> **Prose narrator is data-driven.** All prose (explication) reads in one
+> narrator per work, resolved by `resolve_prose_voice`:
+> `works.default_voice_id` (per-work override) → `author_default_voice` matched
+> on `works.author` (per-author default) → the global male default (Benedick).
+> Shakespeare is seeded to Eleanor; every other author (BCP, Dickens, Ibsen,
+> KJV, …) falls to the male default unless given an `author_default_voice` row
+> or a per-work `default_voice_id`. To change a work's narrator, set
+> `works.default_voice_id`; to change an author's, insert/update
+> `author_default_voice`. Verse is unaffected — it still resolves by
+> (gender, age), so a work's UNKNOWN speakers land on the male default there too.
 
 > **Source is the seed of record.** These rows are also hard-coded in
 > `src/db/queries.rs::ensure_voice_catalog_table` (seed array) and
