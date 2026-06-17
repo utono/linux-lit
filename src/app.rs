@@ -633,6 +633,11 @@ pub const TWO_COLUMN_LEFT_OFFSET: i32 = 30;
 pub const DIALOGUE_INDENT: i32 = 60;
 pub const TWO_COLUMN_DIALOGUE_INDENT: i32 = 20;
 
+/// Vertical gap (pixels above) on each BCP body sentence line. BCP body prayers
+/// are split one sentence per buffer line; this gap gives the airy, separated
+/// "blank line between sentences" layout. Tunable.
+pub const BCP_SENTENCE_GAP: i32 = 12;
+
 /// Fixed height for the top spacer above the first text line.
 pub const TOP_SPACER_HEIGHT: i32 = 40;
 
@@ -3437,6 +3442,41 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
         return;
     }
 
+    // BCP works are loaded straight from the DB (no text_file). Split body
+    // prayers one sentence per buffer line for the airy, separated layout, and
+    // build a LineMap so every sentence sub-line still maps to its one DB row
+    // (timestamps / sync / u-. / concordance key off work_line_for_buffer, which
+    // is the buffer==work identity when line_map is None — splitting breaks that
+    // identity, so the map is mandatory).
+    if crate::db::line_types::is_bcp_work(&work.abbrev) {
+        let mut buf_lines: Vec<String> = Vec::with_capacity(work.lines.len());
+        let mut source_index: Vec<usize> = Vec::with_capacity(work.lines.len());
+        for (wi, l) in work.lines.iter().enumerate() {
+            if crate::db::line_types::is_bcp_body(&l.text) {
+                for sentence in crate::db::line_types::split_bcp_sentences(&l.text) {
+                    buf_lines.push(sentence);
+                    source_index.push(wi);
+                }
+            } else if let Some(stripped) = l.text.strip_prefix("## ") {
+                // Strip the `## ` heading marker from the DISPLAYED buffer text.
+                // apply_bcp_formatting re-derives heading-ness from the mapped
+                // work-line's original text (which keeps the marker), so it still
+                // styles the line as a centered heading.
+                buf_lines.push(stripped.to_string());
+                source_index.push(wi);
+            } else {
+                buf_lines.push(l.text.clone());
+                source_index.push(wi);
+            }
+        }
+        let line_map = crate::text_file_map::build_line_map_bcp(
+            &buf_lines, &source_index, &work.lines,
+        );
+        state.buffer.set_text(&buf_lines.join("\n"));
+        state.line_map = Some(line_map);
+        return;
+    }
+
     // Default: join work.lines
     state.line_map = None;
     let text: String = work
@@ -3741,11 +3781,19 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
     state.dialogue_formatting_active = true;
     state.text_view.set_pixels_above_lines(0);
     state.text_view.set_pixels_below_lines(0);
+    // NB: full (Fill) justification is intentionally NOT used. GtkTextView does
+    // not implement fill-justify for word-wrapped text — both view-level
+    // set_justification(Fill) and a TextTag Justification::Fill render
+    // ragged-right (verified empirically; GTK docs scope Justification::Fill to
+    // GtkLabel). The Kindle's justified look would require a custom Pango/Cairo
+    // text widget, which is out of scope. Block spacing + a continuation-block
+    // left-indent carry the paragraph-separation the layout needs instead.
 
     let tag_table = state.buffer.tag_table();
     for name in &[
         "bcp-heading", "bcp-rubric-centered", "bcp-rubric-hanging",
-        "bcp-divine-name", "bcp-blank",
+        "bcp-divine-name", "bcp-blank", "bcp-body", "bcp-body-indent",
+        "bcp-opening",
     ] {
         if let Some(old) = tag_table.lookup(name) {
             tag_table.remove(&old);
@@ -3768,14 +3816,15 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
         .style(pango::Style::Italic)
         .pixels_above_lines(6)
         .build();
-    // Hanging indent: the paragraph is pushed in by `left_margin`, while the
-    // first line is pulled back out by a negative `indent`, so wrapped lines
-    // sit indented under a flush opening — the printed-rubric look.
+    // Instructional rubric: a block left-indent (whole paragraph shifted right)
+    // sets it off from the prayers, italicised. A true hanging indent (flush
+    // first line, indented wraps) would need `TextTag:indent`, which this
+    // GtkTextView build does not render (see the body-indent note below) — so a
+    // uniform `left_margin` block indent is used instead.
     let rubric_hanging_tag = gtk4::TextTag::builder()
         .name("bcp-rubric-hanging")
         .style(pango::Style::Italic)
         .left_margin(base_margin + 24)
-        .indent(-24)
         .pixels_above_lines(6)
         .build();
     let divine_name_tag = gtk4::TextTag::builder()
@@ -3786,14 +3835,47 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
         .name("bcp-blank")
         .scale(0.25)
         .build();
+    // Body prayers/petitions: BCP body lines are split one sentence per buffer
+    // line (in display_work, via split_bcp_sentences). A gap above each sentence
+    // line gives the airy, separated layout the printed/Kindle text has. (No
+    // Fill justification — see the note at the top of this fn; no continuation
+    // indent — the gap alone separates sentences and prayers.)
+    let body_tag = gtk4::TextTag::builder()
+        .name("bcp-body")
+        .pixels_above_lines(BCP_SENTENCE_GAP)
+        .build();
+    // The opening word of a prayer, set small-caps (LYGHTEN, WHOSOEVER,
+    // ALMIGHTY). Layered over the body line tag like the divine-name span.
+    let opening_tag = gtk4::TextTag::builder()
+        .name("bcp-opening")
+        .variant(pango::Variant::SmallCaps)
+        .build();
 
     tag_table.add(&heading_tag);
     tag_table.add(&rubric_centered_tag);
     tag_table.add(&rubric_hanging_tag);
     tag_table.add(&divine_name_tag);
     tag_table.add(&blank_tag);
+    tag_table.add(&body_tag);
+    tag_table.add(&opening_tag);
 
     let line_count = state.buffer.line_count() as usize;
+    // Heading-ness is re-derived per buffer line from the mapped work-line's
+    // ORIGINAL text (which retains the `## ` marker); the displayed buffer text
+    // has had `## ` stripped at buffer-build time, so we can't detect it there.
+    // Precomputed before the loop to avoid borrowing `state` while mutating the
+    // buffer inside it.
+    let heading_line: Vec<bool> = {
+        let work_lines = state.current_work.as_ref().map(|w| &w.lines);
+        (0..line_count)
+            .map(|i| {
+                state
+                    .work_line_for_buffer(i)
+                    .and_then(|wi| work_lines.and_then(|wl| wl.get(wi)))
+                    .is_some_and(|l| line_types::is_bcp_heading(&l.text))
+            })
+            .collect()
+    };
     for i in 0..line_count {
         let Some(line_start) = state.buffer.iter_at_line(i as i32) else { continue };
         let line_end = if i + 1 < line_count {
@@ -3807,7 +3889,7 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
 
         if line_types::is_blank(&text) {
             state.buffer.apply_tag(&blank_tag, &line_start, &line_end);
-        } else if line_types::is_bcp_heading(&text) {
+        } else if heading_line[i] {
             state.buffer.apply_tag(&heading_tag, &line_start, &line_end);
             // Ornamental ❧ flourishes on rite titles (is_bcp_rite_title) are
             // deferred: GTK TextTags cannot inject glyphs, and editing buffer
@@ -3822,6 +3904,22 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
                 state.buffer.apply_tag(&rubric_centered_tag, &line_start, &line_end);
             } else {
                 state.buffer.apply_tag(&rubric_hanging_tag, &line_start, &line_end);
+            }
+        } else {
+            // A body prayer/petition — one sentence per line. Block-space above
+            // every sentence line so prayers and their sentences read airily.
+            state.buffer.apply_tag(&body_tag, &line_start, &line_end);
+            // Opening-word small-caps (LYGHTEN/WHOSOEVER/ALMIGHTY), layered over
+            // the body tag. Only fires on a prayer's first sentence line, whose
+            // first word is the emphatic all-caps opener; continuation sentences
+            // start title-case ("And...", "Grant...") so the span finds nothing.
+            // Byte span -> char span, same idiom as divine names.
+            if let Some((s, e)) = line_types::bcp_opening_smallcaps_span(&text) {
+                let Some(mut span_start) = state.buffer.iter_at_line(i as i32) else { continue };
+                span_start.forward_chars(char_offset(&text, s) as i32);
+                let mut span_end = span_start;
+                span_end.forward_chars((char_offset(&text, e) - char_offset(&text, s)) as i32);
+                state.buffer.apply_tag(&opening_tag, &span_start, &span_end);
             }
         }
         // Divine-name small-caps applies on ANY non-blank line (headings,

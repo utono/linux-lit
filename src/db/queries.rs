@@ -660,18 +660,18 @@ pub fn ensure_voice_catalog_table(conn: &Connection) -> Result<(), rusqlite::Err
     )?;
     // Seed the four character voices, each used for BOTH verse and prose (same
     // voice_id in its verse + prose row). INSERT OR IGNORE keeps it idempotent
-    // and lets a user-edited row survive a re-run. Benedick (male) / Beatrice
+    // and lets a user-edited row survive a re-run. Benedick (male) / Eleanor
     // (female) are the gender defaults; a male speaker older than Romeo's 15–25
     // band resolves to Benedick via resolve_default_voice's nearest-band step.
     let seed: [(&str, &str, i64, i64, &str, &str); 8] = [
         (ROMEO_VOICE_ID,    "male",   15, 25, "verse", "Romeo — young male verse+prose"),
         (ROMEO_VOICE_ID,    "male",   15, 25, "prose", "Romeo — young male verse+prose"),
-        (BENEDICK_VOICE_ID, "male",   26, 34, "verse", "Benedick — witty male verse+prose"),
-        (BENEDICK_VOICE_ID, "male",   26, 34, "prose", "Benedick — witty male verse+prose"),
+        (DEFAULT_MALE_VOICE_ID, "male",   26, 34, "verse", "Benedick — witty male verse+prose"),
+        (DEFAULT_MALE_VOICE_ID, "male",   26, 34, "prose", "Benedick — witty male verse+prose"),
         (JULIET_VOICE_ID,   "female", 12, 19, "verse", "Juliet — young female verse+prose"),
         (JULIET_VOICE_ID,   "female", 12, 19, "prose", "Juliet — young female verse+prose"),
-        (BEATRICE_VOICE_ID, "female", 20, 30, "verse", "Beatrice — female verse+prose"),
-        (BEATRICE_VOICE_ID, "female", 20, 30, "prose", "Beatrice — female verse+prose"),
+        (DEFAULT_FEMALE_VOICE_ID,   "female", 20, 30, "verse", "Eleanor — British female verse+prose"),
+        (DEFAULT_FEMALE_VOICE_ID,   "female", 20, 30, "prose", "Eleanor — British female verse+prose"),
     ];
     for (vid, gender, lo, hi, role, label) in seed {
         conn.execute(
@@ -862,13 +862,13 @@ pub fn resolve_default_voice(
     speaker: &str,
     is_verse: bool,
 ) -> (String, String) {
-    // All prose (explication) is read by Beatrice — one consistent narrator for
+    // All prose (explication) is read by Eleanor — one consistent narrator for
     // the modern-English commentary, regardless of the speaker's gender/age.
     // (Verse still picks by (gender, age) below; a per-gloss associated voice
     // still overrides this default at the call site in play_block_tts.)
     if !is_verse {
         return (
-            crate::elevenlabs::BEATRICE_VOICE_ID.to_string(),
+            crate::elevenlabs::DEFAULT_FEMALE_VOICE_ID.to_string(),
             crate::elevenlabs::OP_MODEL_ID.to_string(),
         );
     }
@@ -2757,7 +2757,7 @@ mod tests {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .unwrap();
-        assert_eq!(vid, crate::elevenlabs::BENEDICK_VOICE_ID);
+        assert_eq!(vid, crate::elevenlabs::DEFAULT_MALE_VOICE_ID);
         assert_eq!((lo, hi), (26, 34));
         // idempotent: a second ensure does not duplicate rows
         ensure_voice_catalog_table(&conn).unwrap();
@@ -2793,10 +2793,10 @@ mod tests {
         seed_catalog_and_chars(&conn);
         // Lear 80 male VERSE: no band contains 80; nearest male band is Benedick
         // (26-34, distance 46) vs Romeo (15-25, distance 55) -> Benedick verse.
-        // (Prose is always Beatrice — see resolve_prose_always_beatrice.)
+        // (Prose is always Eleanor — see resolve_prose_always_eleanor.)
         assert_eq!(
             resolve_default_voice(&conn, "Lr", "LEAR", true),
-            (crate::elevenlabs::BENEDICK_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
+            (crate::elevenlabs::DEFAULT_MALE_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
         );
     }
 
@@ -2805,10 +2805,10 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         seed_catalog_and_chars(&conn);
         // Nurse female, NULL age -> DEFAULT_AGE 40. No female band contains 40
-        // (Juliet 12-19, Beatrice 20-30); nearest is Beatrice (dist 10) verse.
+        // (Juliet 12-19, Eleanor 20-30); nearest is Eleanor (dist 10) verse.
         assert_eq!(
             resolve_default_voice(&conn, "Rom", "NURSE", true),
-            (crate::elevenlabs::BEATRICE_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
+            (crate::elevenlabs::DEFAULT_FEMALE_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
         );
     }
 
@@ -2820,7 +2820,7 @@ mod tests {
         // contains 40, nearest is Benedick (26-34, dist 6) -> Benedick verse.
         assert_eq!(
             resolve_default_voice(&conn, "Rom", "NOBODY", true),
-            (crate::elevenlabs::BENEDICK_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
+            (crate::elevenlabs::DEFAULT_MALE_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
         );
     }
 
@@ -2836,7 +2836,7 @@ mod tests {
         // (26-34, dist 6) -> Benedick verse.
         assert_eq!(
             resolve_default_voice(&conn, "Rom", "CHORUS", true),
-            (crate::elevenlabs::BENEDICK_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
+            (crate::elevenlabs::DEFAULT_MALE_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
         );
     }
 
@@ -2871,21 +2871,21 @@ mod tests {
     }
 
     #[test]
-    fn resolve_prose_always_beatrice() {
+    fn resolve_prose_always_eleanor() {
         let conn = Connection::open_in_memory().unwrap();
         seed_catalog_and_chars(&conn);
-        // Prose (is_verse=false) is ALWAYS Beatrice, regardless of the speaker's
+        // Prose (is_verse=false) is ALWAYS Eleanor, regardless of the speaker's
         // gender/age — even a young male like Romeo, or an unknown speaker.
-        let beatrice = (
-            crate::elevenlabs::BEATRICE_VOICE_ID.to_string(),
+        let eleanor = (
+            crate::elevenlabs::DEFAULT_FEMALE_VOICE_ID.to_string(),
             crate::elevenlabs::OP_MODEL_ID.to_string(),
         );
-        assert_eq!(resolve_default_voice(&conn, "Lr", "LEAR", false), beatrice);
-        assert_eq!(resolve_default_voice(&conn, "Rom", "NOBODY", false), beatrice);
+        assert_eq!(resolve_default_voice(&conn, "Lr", "LEAR", false), eleanor);
+        assert_eq!(resolve_default_voice(&conn, "Rom", "NOBODY", false), eleanor);
         // ...while the same speaker in VERSE still picks by gender/age (Benedick).
         assert_eq!(
             resolve_default_voice(&conn, "Lr", "LEAR", true),
-            (crate::elevenlabs::BENEDICK_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
+            (crate::elevenlabs::DEFAULT_MALE_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
         );
     }
 }
