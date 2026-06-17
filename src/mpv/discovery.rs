@@ -109,7 +109,7 @@ pub fn launch_mpv(media_path: &str) -> String {
         .arg(format!("--input-ipc-server={}", socket_path))
         .arg("--pause")
         .arg("--no-terminal")
-        .arg("--volume=75")
+        .arg("--volume=100")
         // Keep MPV's window: some works are videos, and the audiobook window
         // carries cover art. dwl routes `mpv-lit` to its own tag (config.h), so
         // it doesn't cover the reader.

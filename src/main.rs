@@ -42,6 +42,19 @@ fn main() {
     logging::init(&log_path);
     crate::logging::log("STARTUP: main entry");
 
+    // Set the system volume to 70% on launch (matches the dwl session default in
+    // ~/utono/dwl-mlj/start-dwl). Skipped under LIT_HEADLESS_TEST so isolated UI
+    // test runs never touch the live session's audio sink.
+    if std::env::var("LIT_HEADLESS_TEST").is_err() {
+        match std::process::Command::new("pactl")
+            .args(["set-sink-volume", "@DEFAULT_SINK@", "70%"])
+            .spawn()
+        {
+            Ok(_) => crate::logging::log("STARTUP: set system volume to 70%"),
+            Err(e) => crate::logging::log(&format!("STARTUP: failed to set volume: {}", e)),
+        }
+    }
+
     // Handle --clear-cache: delete all snapshot files and exit immediately.
     // Maintenance command; doesn't proceed to launch the window.
     if std::env::args().any(|a| a == "--clear-cache") {
