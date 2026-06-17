@@ -277,6 +277,13 @@ Benedick, Beatrice** — since each voice serves both roles; the older
 > male with no coverage gap. The catalog-empty last resort `voice_for()` also
 > returns Benedick (male) / Eleanor (female). Eleanor (the 20–30 female band +
 > all-prose narrator) replaced Imogen.
+>
+> **Prose narrator, with one exception.** All prose (explication) is read by a
+> single narrator regardless of speaker — Eleanor everywhere, EXCEPT the Book of
+> Common Prayer works (`work_abbrev` starting `BCP`: BCP1549/1549M/1559/1559M/
+> 1662), whose liturgical register reads prose in the male default (Benedick).
+> Verse is unaffected — it still resolves by (gender, age), so a BCP work's
+> UNKNOWN speakers land on the male default there too.
 
 > **Source is the seed of record.** These rows are also hard-coded in
 > `src/db/queries.rs::ensure_voice_catalog_table` (seed array) and

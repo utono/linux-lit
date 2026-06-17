@@ -862,15 +862,20 @@ pub fn resolve_default_voice(
     speaker: &str,
     is_verse: bool,
 ) -> (String, String) {
-    // All prose (explication) is read by Eleanor — one consistent narrator for
-    // the modern-English commentary, regardless of the speaker's gender/age.
-    // (Verse still picks by (gender, age) below; a per-gloss associated voice
-    // still overrides this default at the call site in play_block_tts.)
+    // All prose (explication) is read by ONE consistent narrator — the modern-
+    // English commentary keeps a single voice regardless of the speaker's
+    // gender/age. That narrator is the female default (Eleanor) everywhere
+    // EXCEPT the Book of Common Prayer works, whose liturgical register reads
+    // in the male default. (Verse still picks by (gender, age) below; a
+    // per-gloss associated voice still overrides this default at the call site
+    // in play_block_tts.)
     if !is_verse {
-        return (
-            crate::elevenlabs::DEFAULT_FEMALE_VOICE_ID.to_string(),
-            crate::elevenlabs::OP_MODEL_ID.to_string(),
-        );
+        let voice = if work_abbrev.starts_with("BCP") {
+            crate::elevenlabs::DEFAULT_MALE_VOICE_ID
+        } else {
+            crate::elevenlabs::DEFAULT_FEMALE_VOICE_ID
+        };
+        return (voice.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string());
     }
 
     let (gender, age_opt) = get_character_gender_age(conn, work_abbrev, speaker);
@@ -2871,22 +2876,26 @@ mod tests {
     }
 
     #[test]
-    fn resolve_prose_always_eleanor() {
+    fn resolve_prose_narrator_eleanor_except_bcp() {
         let conn = Connection::open_in_memory().unwrap();
         seed_catalog_and_chars(&conn);
-        // Prose (is_verse=false) is ALWAYS Eleanor, regardless of the speaker's
-        // gender/age — even a young male like Romeo, or an unknown speaker.
         let eleanor = (
             crate::elevenlabs::DEFAULT_FEMALE_VOICE_ID.to_string(),
             crate::elevenlabs::OP_MODEL_ID.to_string(),
         );
+        let male = (
+            crate::elevenlabs::DEFAULT_MALE_VOICE_ID.to_string(),
+            crate::elevenlabs::OP_MODEL_ID.to_string(),
+        );
+        // Non-BCP prose (is_verse=false) is Eleanor regardless of the speaker's
+        // gender/age — even a young male like Romeo, or an unknown speaker.
         assert_eq!(resolve_default_voice(&conn, "Lr", "LEAR", false), eleanor);
         assert_eq!(resolve_default_voice(&conn, "Rom", "NOBODY", false), eleanor);
-        // ...while the same speaker in VERSE still picks by gender/age (Benedick).
-        assert_eq!(
-            resolve_default_voice(&conn, "Lr", "LEAR", true),
-            (crate::elevenlabs::DEFAULT_MALE_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
-        );
+        // BCP prose reads in the male default, regardless of speaker.
+        assert_eq!(resolve_default_voice(&conn, "BCP1662", "UNKNOWN", false), male);
+        assert_eq!(resolve_default_voice(&conn, "BCP1549M", "NOBODY", false), male);
+        // ...while a non-BCP speaker in VERSE still picks by gender/age (Benedick).
+        assert_eq!(resolve_default_voice(&conn, "Lr", "LEAR", true), male);
     }
 }
 
