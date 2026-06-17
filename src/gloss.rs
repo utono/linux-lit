@@ -3,6 +3,12 @@ use crate::db::models::{Line, Work};
 use std::sync::LazyLock;
 
 /// Active template for `key` from lit.db, or the compiled `fallback` verbatim.
+///
+/// The lit.db row (managed by the `claude-api-prompts` repo) is authoritative
+/// and may have been edited past the compiled `fallback`. Each `FALLBACK` const
+/// below is the seed/v1 text and only renders when the DB row is missing or the
+/// DB is unreachable — so a `FALLBACK` deliberately diverging from the active DB
+/// prompt is expected, not a bug.
 fn template_or(key: &str, fallback: &str) -> String {
     crate::db::prompts::active_prompt(key).unwrap_or_else(|| fallback.to_string())
 }
@@ -760,5 +766,24 @@ mod tests {
         assert!(!p.contains("{ipa_rules}"), "ipa_rules token left unfilled");
         assert!(!p.contains("{}"), "positional placeholder left unfilled");
         assert!(p.contains("You are a performance-focused teacher"));
+    }
+
+    #[test]
+    fn all_templated_gloss_prompts_fill_their_placeholder() {
+        // Every templated gloss prompt interpolates an IPA fragment into its
+        // {ipa_rules}/{} slot; none may leave the slot unfilled, whether the
+        // template came from the DB master or the compiled fallback.
+        for (name, p) in [
+            ("user-question", &*USER_QUESTION_PROMPT),
+            ("inner-monologue", &*INNER_MONOLOGUE_PROMPT),
+            ("inner-monologue-add", &*INNER_MONOLOGUE_ADD_PROMPT),
+            ("inner-monologue-edit", &*INNER_MONOLOGUE_EDIT_PROMPT),
+            ("edit", &*EDIT_GLOSS_PROMPT),
+            ("teacher-generic", &*TEACHER_GENERIC_PROMPT),
+        ] {
+            assert!(!p.contains("{ipa_rules}"), "{name}: ipa_rules token left unfilled");
+            assert!(!p.contains("{}"), "{name}: positional placeholder left unfilled");
+            assert!(!p.is_empty(), "{name}: assembled prompt is empty");
+        }
     }
 }
