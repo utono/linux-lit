@@ -752,9 +752,13 @@ mod tests {
 
     #[test]
     fn teacher_generic_has_no_unfilled_placeholder() {
+        // Assembled from the live DB (active version) or the compiled fallback —
+        // either way the IPA placeholder must be filled. Anchor on the prompt's
+        // stable opening line, not on version-specific bullet wording (the body
+        // is edited across versions; the role line is invariant).
         let p = &*TEACHER_GENERIC_PROMPT;
         assert!(!p.contains("{ipa_rules}"), "ipa_rules token left unfilled");
         assert!(!p.contains("{}"), "positional placeholder left unfilled");
-        assert!(p.contains("Defines literary terminology"));
+        assert!(p.contains("You are a performance-focused teacher"));
     }
 }
