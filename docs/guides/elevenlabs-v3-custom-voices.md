@@ -260,25 +260,27 @@ share one `voice_id`):
   `91oz9H5XlpZKQkoXkN6w`
 - **Benedick** — witty male (Much Ado), verse **and** prose — 26–34 —
   `ucMnuQhzouQI2nuPOYUw` — **DEFAULT male voice**
-- **Beatrice** — female (sharp-witted), verse **and** prose — 20–30 —
-  `d0tyHmCGhjY1al3AD4mO` — **DEFAULT female voice**
+- **Imogen** — British female, verse **and** prose — 20–30 —
+  `gC6a93GAfmZaFo4pG9yy` — **DEFAULT female voice** (replaced Beatrice
+  `d0tyHmCGhjY1al3AD4mO`)
 
 (The ElevenLabs voice names are now just the bare character — **Romeo, Juliet,
 Benedick, Beatrice** — since each voice serves both roles; the older
 `OP — Verse (X-OP)` suffixes were dropped.)
 
-> **Benedick / Beatrice are the gender defaults.** `resolve_default_voice` first
+> **Benedick / Imogen are the gender defaults.** `resolve_default_voice` first
 > tries the band CONTAINING the speaker's age, then falls back to the NEAREST
 > same-gender band. Because Benedick (26–34) is the only male band above Romeo
 > (15–25), any male speaker older than 25 — including 35, 80 — resolves to
-> Benedick by nearest-band; likewise any female above 30 resolves to Beatrice. So
+> Benedick by nearest-band; likewise any female above 30 resolves to Imogen. So
 > Benedick replaced the retired Petruchio (35–45) as the catch-all older/default
 > male with no coverage gap. The catalog-empty last resort `voice_for()` also
-> returns Benedick (male) / Beatrice (female).
+> returns Benedick (male) / Imogen (female). Imogen (the 20–30 female band +
+> all-prose narrator) replaced Beatrice.
 
 > **Source is the seed of record.** These rows are also hard-coded in
 > `src/db/queries.rs::ensure_voice_catalog_table` (seed array) and
-> `src/elevenlabs.rs` (`ROMEO/JULIET/BENEDICK/BEATRICE_VOICE_ID` constants +
+> `src/elevenlabs.rs` (`ROMEO/JULIET/BENEDICK/IMOGEN_VOICE_ID` constants +
 > `voice_for` fallback). A fresh `lit.db` re-seeds these four voices. When you
 > change a voice, update BOTH the live DB and that Rust source or a fresh DB will
 > diverge.

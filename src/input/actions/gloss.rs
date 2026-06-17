@@ -1302,14 +1302,14 @@ pub(crate) fn synth_all_prose_blocks(state_rc: &Rc<RefCell<AppState>>) {
         if prose.is_empty() {
             return;
         }
-        // Explication prose is always read by Beatrice (see resolve_default_voice:
-        // "All prose is read by Beatrice"). Single-block synth resolves the same
+        // Explication prose is always read by Imogen (see resolve_default_voice:
+        // "All prose is read by Imogen"). Single-block synth resolves the same
         // voice via gloss_block_voice, and the cached-audio recolor check looks
-        // under Beatrice — so the batch MUST cache under Beatrice too, or its
+        // under Imogen — so the batch MUST cache under Imogen too, or its
         // mp3s land under a different voice id and neither playback-cache-hit nor
         // the recolor existence check will find them.
         let (vid, mid) = (
-            crate::elevenlabs::BEATRICE_VOICE_ID,
+            crate::elevenlabs::IMOGEN_VOICE_ID,
             crate::elevenlabs::OP_MODEL_ID,
         );
         (gloss_id, work_abbrev, prose, vid.to_string(), mid.to_string(), s.tokio_handle.clone())
