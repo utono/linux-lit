@@ -681,6 +681,33 @@ pub fn ensure_voice_catalog_table(conn: &Connection) -> Result<(), rusqlite::Err
             rusqlite::params![vid, OP_MODEL_ID, gender, lo, hi, role, label],
         )?;
     }
+
+    // --- Per-work / per-author narrator voice (prose/gloss) ---
+    // works.default_voice_id: nullable per-work override. SQLite ADD COLUMN has
+    // no IF NOT EXISTS, so guard on PRAGMA table_info to stay idempotent.
+    let has_default_voice_col: bool = conn
+        .prepare("SELECT 1 FROM pragma_table_info('works') WHERE name = 'default_voice_id'")
+        .and_then(|mut s| s.query_row([], |_| Ok(true)).optional())
+        .unwrap_or(None)
+        .unwrap_or(false);
+    if !has_default_voice_col {
+        // Ignore the error if the works table doesn't exist yet (fresh/test DB).
+        let _ = conn.execute("ALTER TABLE works ADD COLUMN default_voice_id TEXT", []);
+    }
+
+    // author_default_voice: per-author narrator. Seed Shakespeare -> Eleanor;
+    // every other author falls through to the global male default at resolve time.
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS author_default_voice (
+            author   TEXT PRIMARY KEY,
+            voice_id TEXT NOT NULL
+        );"
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO author_default_voice (author, voice_id) VALUES ('Shakespeare', ?1)",
+        rusqlite::params![DEFAULT_FEMALE_VOICE_ID],
+    )?;
+
     Ok(())
 }
 
@@ -2779,6 +2806,30 @@ mod tests {
         conn.execute("INSERT INTO characters (work_abbrev, speaker, gender, age) VALUES ('Lr','LEAR','male',80)", []).unwrap();
         conn.execute("INSERT INTO characters (work_abbrev, speaker, gender, age) VALUES ('Ham','HAMLET','male',30)", []).unwrap();
         conn.execute("INSERT INTO characters (work_abbrev, speaker, gender) VALUES ('Rom','NURSE','female')", []).unwrap();
+    }
+
+    #[test]
+    fn ensure_voice_catalog_adds_author_voice_schema() {
+        let conn = Connection::open_in_memory().unwrap();
+        // works table must exist for the ADD COLUMN to target.
+        conn.execute_batch(
+            "CREATE TABLE works (abbrev TEXT UNIQUE NOT NULL, author TEXT);"
+        ).unwrap();
+        ensure_voice_catalog_table(&conn).unwrap();
+        // works.default_voice_id column now exists.
+        let has_col: bool = conn
+            .prepare("SELECT default_voice_id FROM works")
+            .is_ok();
+        assert!(has_col, "works.default_voice_id column should exist");
+        // author_default_voice seeded Shakespeare -> Eleanor.
+        let vid: String = conn
+            .query_row(
+                "SELECT voice_id FROM author_default_voice WHERE author = 'Shakespeare'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(vid, crate::elevenlabs::DEFAULT_FEMALE_VOICE_ID);
     }
 
     #[test]
