@@ -445,7 +445,13 @@ fn handle_picker_key(
                         s.gloss_active_voice = 0;
                         s.gloss_context = Some(ctx);
                         s.gloss_opened_from_picker = true;
+                        // input_mode MUST be set before recolor: recolor_cached_blocks
+                        // selects the gloss branch off it and no-ops otherwise.
                         s.input_mode = InputMode::GlossOverlay;
+                        // Color already-synthesized blocks on open — the cursor
+                        // open path (open_gloss) does this too; without it a gloss
+                        // opened via the picker never gets its cached-block accent.
+                        crate::input::actions::gloss::recolor_cached_blocks(&s);
                     }
                     true
                 }
