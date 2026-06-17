@@ -879,6 +879,48 @@ fn get_character_gender_age(
     }
 }
 
+/// The narrator voice_id for PROSE/gloss of `work_abbrev`:
+/// per-work `works.default_voice_id` → per-author `author_default_voice` →
+/// global male default (Benedick). Always resolves; a query error logs and
+/// falls through (e.g. a fresh DB without a `works` table → global default).
+fn resolve_prose_voice(conn: &Connection, work_abbrev: &str) -> String {
+    // 1. Per-work override.
+    let per_work: Option<String> = conn
+        .query_row(
+            "SELECT default_voice_id FROM works
+             WHERE abbrev = ?1 AND default_voice_id IS NOT NULL",
+            rusqlite::params![work_abbrev],
+            |r| r.get(0),
+        )
+        .optional()
+        .unwrap_or_else(|e| {
+            crate::log_fmt!("resolve_prose_voice: per-work query error for {}: {}", work_abbrev, e);
+            None
+        });
+    if let Some(v) = per_work {
+        return v;
+    }
+    // 2. Per-author default (join works.author -> author_default_voice).
+    let per_author: Option<String> = conn
+        .query_row(
+            "SELECT adv.voice_id FROM works w
+             JOIN author_default_voice adv ON adv.author = w.author
+             WHERE w.abbrev = ?1",
+            rusqlite::params![work_abbrev],
+            |r| r.get(0),
+        )
+        .optional()
+        .unwrap_or_else(|e| {
+            crate::log_fmt!("resolve_prose_voice: per-author query error for {}: {}", work_abbrev, e);
+            None
+        });
+    if let Some(v) = per_author {
+        return v;
+    }
+    // 3. Global default: the male narrator.
+    crate::elevenlabs::DEFAULT_MALE_VOICE_ID.to_string()
+}
+
 /// Pick the default (voice_id, model_id) for a speaker by (gender, age) from the
 /// voice_catalog: the narrowest band CONTAINING the age, else the NEAREST
 /// same-gender band, else the legacy `voice_for` constants. `is_verse` selects
@@ -889,20 +931,16 @@ pub fn resolve_default_voice(
     speaker: &str,
     is_verse: bool,
 ) -> (String, String) {
-    // All prose (explication) is read by ONE consistent narrator — the modern-
-    // English commentary keeps a single voice regardless of the speaker's
-    // gender/age. That narrator is the female default (Eleanor) everywhere
-    // EXCEPT the Book of Common Prayer works, whose liturgical register reads
-    // in the male default. (Verse still picks by (gender, age) below; a
-    // per-gloss associated voice still overrides this default at the call site
-    // in play_block_tts.)
+    // Prose (explication) reads in ONE narrator per work, resolved from data:
+    // per-work override → per-author default → global male default. Shakespeare
+    // is seeded to Eleanor; all other authors fall to the male default. (Verse
+    // still picks by (gender, age) below; a per-gloss associated voice still
+    // overrides this default at the call site in play_block_tts.)
     if !is_verse {
-        let voice = if work_abbrev.starts_with("BCP") {
-            crate::elevenlabs::DEFAULT_MALE_VOICE_ID
-        } else {
-            crate::elevenlabs::DEFAULT_FEMALE_VOICE_ID
-        };
-        return (voice.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string());
+        return (
+            resolve_prose_voice(conn, work_abbrev),
+            crate::elevenlabs::OP_MODEL_ID.to_string(),
+        );
     }
 
     let (gender, age_opt) = get_character_gender_age(conn, work_abbrev, speaker);
@@ -2802,6 +2840,26 @@ mod tests {
     fn seed_catalog_and_chars(conn: &Connection) {
         ensure_voice_catalog_table(conn).unwrap();
         ensure_characters_table(conn).unwrap();
+        // works table with authors, for prose narrator resolution.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS works (
+                abbrev TEXT UNIQUE NOT NULL,
+                author TEXT,
+                default_voice_id TEXT
+            );
+            INSERT INTO works (abbrev, author) VALUES ('Rom', 'Shakespeare');
+            INSERT INTO works (abbrev, author) VALUES ('Lr', 'Shakespeare');
+            INSERT INTO works (abbrev, author) VALUES ('Ham', 'Shakespeare');
+            INSERT INTO works (abbrev, author) VALUES ('BCP1662', 'Book of Common Prayer');
+            INSERT INTO works (abbrev, author) VALUES ('BCP1549M', 'Book of Common Prayer');
+            INSERT INTO works (abbrev, author) VALUES ('OT', 'Charles Dickens');
+            INSERT INTO works (abbrev, author, default_voice_id)
+                VALUES ('OVERRIDE', 'Shakespeare', 'OVERRIDE_VOICE_XXXXX');"
+        ).unwrap();
+        // Re-run migration now that works exists (idempotent): the first call
+        // above already created+seeded author_default_voice; this second call is
+        // a no-op safety net proving idempotency with the works table present.
+        ensure_voice_catalog_table(conn).unwrap();
         conn.execute("INSERT INTO characters (work_abbrev, speaker, gender, age) VALUES ('Rom','JULIET','female',14)", []).unwrap();
         conn.execute("INSERT INTO characters (work_abbrev, speaker, gender, age) VALUES ('Lr','LEAR','male',80)", []).unwrap();
         conn.execute("INSERT INTO characters (work_abbrev, speaker, gender, age) VALUES ('Ham','HAMLET','male',30)", []).unwrap();
@@ -2849,7 +2907,7 @@ mod tests {
         seed_catalog_and_chars(&conn);
         // Lear 80 male VERSE: no band contains 80; nearest male band is Benedick
         // (26-34, distance 46) vs Romeo (15-25, distance 55) -> Benedick verse.
-        // (Prose is always Eleanor — see resolve_prose_always_eleanor.)
+        // (Prose resolves separately — see resolve_prose_voice_precedence.)
         assert_eq!(
             resolve_default_voice(&conn, "Lr", "LEAR", true),
             (crate::elevenlabs::DEFAULT_MALE_VOICE_ID.to_string(), crate::elevenlabs::OP_MODEL_ID.to_string())
@@ -2927,26 +2985,42 @@ mod tests {
     }
 
     #[test]
-    fn resolve_prose_narrator_eleanor_except_bcp() {
+    fn resolve_prose_voice_precedence() {
         let conn = Connection::open_in_memory().unwrap();
         seed_catalog_and_chars(&conn);
-        let eleanor = (
-            crate::elevenlabs::DEFAULT_FEMALE_VOICE_ID.to_string(),
-            crate::elevenlabs::OP_MODEL_ID.to_string(),
+        let model = crate::elevenlabs::OP_MODEL_ID.to_string();
+        let eleanor = crate::elevenlabs::DEFAULT_FEMALE_VOICE_ID.to_string();
+        let benedick = crate::elevenlabs::DEFAULT_MALE_VOICE_ID.to_string();
+
+        // Shakespeare prose -> Eleanor (author_default_voice row).
+        assert_eq!(
+            resolve_default_voice(&conn, "Rom", "JULIET", false),
+            (eleanor.clone(), model.clone())
         );
-        let male = (
-            crate::elevenlabs::DEFAULT_MALE_VOICE_ID.to_string(),
-            crate::elevenlabs::OP_MODEL_ID.to_string(),
+        // BCP prose -> Benedick (no author row -> global default).
+        assert_eq!(
+            resolve_default_voice(&conn, "BCP1662", "UNKNOWN", false),
+            (benedick.clone(), model.clone())
         );
-        // Non-BCP prose (is_verse=false) is Eleanor regardless of the speaker's
-        // gender/age — even a young male like Romeo, or an unknown speaker.
-        assert_eq!(resolve_default_voice(&conn, "Lr", "LEAR", false), eleanor);
-        assert_eq!(resolve_default_voice(&conn, "Rom", "NOBODY", false), eleanor);
-        // BCP prose reads in the male default, regardless of speaker.
-        assert_eq!(resolve_default_voice(&conn, "BCP1662", "UNKNOWN", false), male);
-        assert_eq!(resolve_default_voice(&conn, "BCP1549M", "NOBODY", false), male);
-        // ...while a non-BCP speaker in VERSE still picks by gender/age (Benedick).
-        assert_eq!(resolve_default_voice(&conn, "Lr", "LEAR", true), male);
+        // Other author (Dickens) prose -> Benedick (global default).
+        assert_eq!(
+            resolve_default_voice(&conn, "OT", "NOBODY", false),
+            (benedick.clone(), model.clone())
+        );
+        // Per-work override beats the author default (even for Shakespeare).
+        assert_eq!(
+            resolve_default_voice(&conn, "OVERRIDE", "ANY", false),
+            ("OVERRIDE_VOICE_XXXXX".to_string(), model.clone())
+        );
+        // Verse path is UNCHANGED: UNKNOWN verse -> male; Juliet verse -> female.
+        assert_eq!(
+            resolve_default_voice(&conn, "BCP1662", "UNKNOWN", true),
+            (benedick.clone(), model.clone())
+        );
+        assert_eq!(
+            resolve_default_voice(&conn, "Rom", "JULIET", true),
+            (crate::elevenlabs::JULIET_VOICE_ID.to_string(), model)
+        );
     }
 }
 
