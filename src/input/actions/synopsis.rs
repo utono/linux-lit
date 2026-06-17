@@ -95,13 +95,16 @@ pub(crate) fn amend_synopsis(state_rc: &Rc<RefCell<AppState>>, question: &str) {
 
     state_rc.borrow().gloss_overlay.show_loading();
 
+    let system_prompt = crate::db::prompts::active_prompt("synopsis.amend")
+        .unwrap_or_else(|| SYNOPSIS_AMEND_PROMPT.to_string());
+
     let state_for_result = Rc::clone(state_rc);
     glib::spawn_future_local(async move {
         // Keep a copy for the DB stamp; `model` itself is moved into the spawn.
         let model_for_db = model.clone();
         let result = tokio_handle
             .spawn(async move {
-                crate::claude::send_message(SYNOPSIS_AMEND_PROMPT, &user_msg, &model).await
+                crate::claude::send_message(&system_prompt, &user_msg, &model).await
             })
             .await;
 
