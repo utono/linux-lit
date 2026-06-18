@@ -241,6 +241,11 @@ pub fn build_line_map_bcp(
 /// - On a match beyond the current cursor: verify the next non-empty file line
 ///   also matches the next DB row. If the confirmation check fails, skip it.
 /// - Log match percentage; warn if < 80%.
+///
+/// Thin `WholeLine` wrapper kept as the documented default API and exercised by
+/// tests; all production callers now go through `build_line_map_mode` (the BCP
+/// path needs `ParagraphAccumulate`), so it is dead outside test builds.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn build_line_map(file_lines: &[String], work_lines: &[Line], is_prose: bool) -> LineMap {
     build_line_map_mode(file_lines, work_lines, is_prose, MatchMode::WholeLine)
 }
