@@ -3294,6 +3294,11 @@ fn clean_file_lines(file_lines: &[String]) -> Vec<String> {
 
         if let Some(stripped) = line.strip_prefix("## ") {
             result.push(stripped.to_string());
+        } else if crate::db::line_types::is_bcp_speaker(line) {
+            // Strip the `@ ` BCP speaker-cue marker for display; apply_bcp_formatting
+            // re-derives cue-ness from the work-line (which keeps the marker) and
+            // styles the bare cue centered-italic.
+            result.push(crate::db::line_types::strip_bcp_speaker_marker(line).to_string());
         } else {
             result.push(line.clone());
         }
@@ -3591,17 +3596,20 @@ fn apply_stanza_number_centering(state: &AppState) {
 pub fn apply_dialogue_formatting(state: &mut AppState) {
     use crate::db::line_types;
 
-    // BCP works that are loaded straight from the DB (no text_file) get
-    // liturgical typography instead of play dialogue formatting:
-    // apply_bcp_formatting styles the one-sentence-per-line DB buffer (centered
-    // headings, indented rubrics, body gaps). When a BCP work has a text_file,
-    // the TEI-rendered .txt already bakes that layout in literally (space
-    // centering, 4-space rubric indent, inline `Priest.`/`Answer.` speakers),
-    // so it renders through the generic prose path below — applying
-    // apply_bcp_formatting there would double up the gaps/centering.
-    if state.current_work.as_ref().is_some_and(|w| {
-        line_types::is_bcp_work(&w.abbrev) && w.text_file.is_none()
-    }) {
+    // BCP works get liturgical typography (centered headings, centered/italic
+    // rubrics, centered-italic speaker cues, small-caps, body gaps) instead of
+    // play dialogue formatting — on BOTH load paths:
+    //   - DB path (no text_file): the buffer is built from work.lines.
+    //   - text_file path: the TEI-rendered .txt. Its blocks carry the same
+    //     structural markers as the DB rows (## head, [rubric], @ speaker) — and
+    //     apply_bcp_formatting re-derives every line type from the mapped
+    //     work-line's ORIGINAL text (which always has the markers), not from the
+    //     displayed buffer, so it works identically on the .txt buffer.
+    if state
+        .current_work
+        .as_ref()
+        .is_some_and(|w| line_types::is_bcp_work(&w.abbrev))
+    {
         apply_bcp_formatting(state);
         return;
     }
@@ -3902,7 +3910,11 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
     // the displayed buffer text has had those markers stripped at buffer-build
     // time, so we can't detect them there. Precomputed before the loop to avoid
     // borrowing `state` while mutating the buffer inside it.
-    let (heading_line, speaker_line): (Vec<bool>, Vec<bool>) = {
+    // (heading, speaker, rubric) per buffer line. Rubric-ness is re-derived from
+    // the work-line too (not the buffer): on the text_file path the displayed
+    // rubric is cosmetically indented, not `[...]`-bracketed, so a buffer test
+    // would miss it; the work-line (DB row) always has the `[...]` marker.
+    let line_kinds: Vec<(bool, bool, bool)> = {
         let work_lines = state.current_work.as_ref().map(|w| &w.lines);
         (0..line_count)
             .map(|i| {
@@ -3912,10 +3924,14 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
                 (
                     orig.is_some_and(|l| line_types::is_bcp_heading(&l.text)),
                     orig.is_some_and(|l| line_types::is_bcp_speaker(&l.text)),
+                    orig.is_some_and(|l| line_types::is_rubric(&l.text)),
                 )
             })
-            .unzip()
+            .collect()
     };
+    let heading_line: Vec<bool> = line_kinds.iter().map(|k| k.0).collect();
+    let speaker_line: Vec<bool> = line_kinds.iter().map(|k| k.1).collect();
+    let rubric_line: Vec<bool> = line_kinds.iter().map(|k| k.2).collect();
     for i in 0..line_count {
         let Some(line_start) = state.buffer.iter_at_line(i as i32) else { continue };
         let line_end = if i + 1 < line_count {
@@ -3942,9 +3958,17 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
             // Standalone speaker cue (marker stripped at buffer-build): centered
             // italic above the response, like a centered rubric.
             state.buffer.apply_tag(&speaker_centered_tag, &line_start, &line_end);
-        } else if line_types::is_rubric(&text) {
-            let inner = &trimmed[1..trimmed.len() - 1]; // strip [ ]
-            if line_types::rubric_is_centered(inner) {
+        } else if rubric_line[i] || line_types::is_rubric(&text) {
+            // Rubric-ness comes from the work-line (rubric_line[i]); fall back to a
+            // buffer test for the DB path where the buffer keeps the `[...]`. Use
+            // whichever bracketed form is available to pick centered vs hanging:
+            // the buffer text if it is bracketed, else strip the displayed text.
+            let inner: String = if trimmed.starts_with('[') && trimmed.ends_with(']') {
+                trimmed[1..trimmed.len() - 1].to_string()
+            } else {
+                trimmed.to_string()
+            };
+            if line_types::rubric_is_centered(&inner) {
                 state.buffer.apply_tag(&rubric_centered_tag, &line_start, &line_end);
             } else {
                 state.buffer.apply_tag(&rubric_hanging_tag, &line_start, &line_end);
