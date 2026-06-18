@@ -3917,7 +3917,43 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
     };
     let heading_line: Vec<bool> = line_kinds.iter().map(|k| k.0).collect();
     let speaker_line: Vec<bool> = line_kinds.iter().map(|k| k.1).collect();
-    let rubric_line: Vec<bool> = line_kinds.iter().map(|k| k.2).collect();
+    let mut rubric_line: Vec<bool> = line_kinds.iter().map(|k| k.2).collect();
+
+    // Strip the `[...]` brackets from rubric lines for display (the Oxford Kindle
+    // shows no brackets), bottom-up so earlier offsets stay valid. On the
+    // text_file path the rubric row is unmapped (it normalizes to empty), so
+    // rubric_line[i] (work-line-derived) is false there; detect from the buffer
+    // `[...]` instead and record it, so the tagging loop still centers it.
+    for i in (0..line_count).rev() {
+        let Some(line_start) = state.buffer.iter_at_line(i as i32) else { continue };
+        let line_end = if i + 1 < line_count {
+            state.buffer.iter_at_line((i + 1) as i32).unwrap_or_else(|| state.buffer.end_iter())
+        } else {
+            state.buffer.end_iter()
+        };
+        let raw = state.buffer.text(&line_start, &line_end, false);
+        let raw = raw.trim_end_matches('\n');
+        if !line_types::is_rubric(raw) {
+            continue;
+        }
+        rubric_line[i] = true;
+        // Delete the trailing `]` then the leading `[` (a leading-`¶` stays as a
+        // visible pilcrow). Compute char positions on the de-newlined text.
+        let lead_ws = raw.len() - raw.trim_start().len();
+        let content_len = raw.trim().chars().count();
+        // Trailing ']' : last non-ws char.
+        let mut del = state.buffer.iter_at_line(i as i32).unwrap();
+        del.forward_chars((lead_ws + content_len - 1) as i32);
+        let mut del_end = del;
+        del_end.forward_char();
+        state.buffer.delete(&mut del, &mut del_end);
+        // Leading '[' : first non-ws char.
+        let mut s = state.buffer.iter_at_line(i as i32).unwrap();
+        s.forward_chars(lead_ws as i32);
+        let mut s_end = s;
+        s_end.forward_char();
+        state.buffer.delete(&mut s, &mut s_end);
+    }
     for i in 0..line_count {
         let Some(line_start) = state.buffer.iter_at_line(i as i32) else { continue };
         let line_end = if i + 1 < line_count {
@@ -3943,12 +3979,12 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
             // Standalone speaker cue (marker stripped at buffer-build): centered
             // italic above the response, like a centered rubric.
             state.buffer.apply_tag(&speaker_centered_tag, &line_start, &line_end);
-        } else if rubric_line[i] || line_types::is_rubric(&text) {
-            // Rubric-ness comes from the work-line (rubric_line[i]); fall back to a
-            // buffer test for the DB path where the buffer keeps the `[...]`. ALL
-            // BCP rubrics render centered-italic, matching the Oxford Kindle
-            // edition (which centers even long instructional rubrics). The
-            // earlier short-cue-centered / long-hanging split is no longer used.
+        } else if rubric_line[i] {
+            // rubric_line[i] is set from the work-line (DB path) or from the
+            // bracketed buffer line in the strip pre-pass above (text_file path,
+            // where the rubric row is unmapped). Brackets are already stripped.
+            // ALL BCP rubrics render centered-italic, matching the Oxford Kindle
+            // edition (which centers even long instructional rubrics).
             state.buffer.apply_tag(&rubric_centered_tag, &line_start, &line_end);
         } else {
             // A body prayer/petition — one sentence per line. Block-space above
