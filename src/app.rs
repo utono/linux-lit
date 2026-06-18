@@ -3477,6 +3477,15 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
                 // styles the line as a centered heading.
                 buf_lines.push(stripped.to_string());
                 source_index.push(wi);
+            } else if crate::db::line_types::is_bcp_speaker(&l.text) {
+                // Strip the `@ ` speaker-cue marker for display (same pattern as
+                // `## `): apply_bcp_formatting re-derives cue-ness from the mapped
+                // work-line (which keeps the marker) and styles the bare cue
+                // centered-italic. The cue is its own row, so no buffer split.
+                buf_lines.push(
+                    crate::db::line_types::strip_bcp_speaker_marker(&l.text).to_string(),
+                );
+                source_index.push(wi);
             } else {
                 buf_lines.push(l.text.clone());
                 source_index.push(wi);
@@ -3811,7 +3820,7 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
     for name in &[
         "bcp-heading", "bcp-rubric-centered", "bcp-rubric-hanging",
         "bcp-divine-name", "bcp-blank", "bcp-body", "bcp-body-indent",
-        "bcp-opening",
+        "bcp-opening", "bcp-speaker-centered",
     ] {
         if let Some(old) = tag_table.lookup(name) {
             tag_table.remove(&old);
@@ -3849,6 +3858,15 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
         .name("bcp-divine-name")
         .variant(pango::Variant::SmallCaps)
         .build();
+    // A speaker cue (`Priest.`, `Aunswere.`) on its own row (the TEI emits it as
+    // its own `@ `-marked line; the marker is stripped at buffer-build): the
+    // Kindle layout centers it in italic above the response.
+    let speaker_centered_tag = gtk4::TextTag::builder()
+        .name("bcp-speaker-centered")
+        .justification(gtk4::Justification::Center)
+        .style(pango::Style::Italic)
+        .pixels_above_lines(6)
+        .build();
     let blank_tag = gtk4::TextTag::builder()
         .name("bcp-blank")
         .scale(0.25)
@@ -3876,23 +3894,27 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
     tag_table.add(&blank_tag);
     tag_table.add(&body_tag);
     tag_table.add(&opening_tag);
+    tag_table.add(&speaker_centered_tag);
 
     let line_count = state.buffer.line_count() as usize;
-    // Heading-ness is re-derived per buffer line from the mapped work-line's
-    // ORIGINAL text (which retains the `## ` marker); the displayed buffer text
-    // has had `## ` stripped at buffer-build time, so we can't detect it there.
-    // Precomputed before the loop to avoid borrowing `state` while mutating the
-    // buffer inside it.
-    let heading_line: Vec<bool> = {
+    // Heading-ness and speaker-cue-ness are re-derived per buffer line from the
+    // mapped work-line's ORIGINAL text (which retains the `## ` / `@ ` marker);
+    // the displayed buffer text has had those markers stripped at buffer-build
+    // time, so we can't detect them there. Precomputed before the loop to avoid
+    // borrowing `state` while mutating the buffer inside it.
+    let (heading_line, speaker_line): (Vec<bool>, Vec<bool>) = {
         let work_lines = state.current_work.as_ref().map(|w| &w.lines);
         (0..line_count)
             .map(|i| {
-                state
+                let orig = state
                     .work_line_for_buffer(i)
-                    .and_then(|wi| work_lines.and_then(|wl| wl.get(wi)))
-                    .is_some_and(|l| line_types::is_bcp_heading(&l.text))
+                    .and_then(|wi| work_lines.and_then(|wl| wl.get(wi)));
+                (
+                    orig.is_some_and(|l| line_types::is_bcp_heading(&l.text)),
+                    orig.is_some_and(|l| line_types::is_bcp_speaker(&l.text)),
+                )
             })
-            .collect()
+            .unzip()
     };
     for i in 0..line_count {
         let Some(line_start) = state.buffer.iter_at_line(i as i32) else { continue };
@@ -3916,6 +3938,10 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
             // or draws them via an overlay. Centered bold is the title look
             // until then.
             let _ = line_types::is_bcp_rite_title(&text);
+        } else if speaker_line[i] {
+            // Standalone speaker cue (marker stripped at buffer-build): centered
+            // italic above the response, like a centered rubric.
+            state.buffer.apply_tag(&speaker_centered_tag, &line_start, &line_end);
         } else if line_types::is_rubric(&text) {
             let inner = &trimmed[1..trimmed.len() - 1]; // strip [ ]
             if line_types::rubric_is_centered(inner) {

@@ -175,7 +175,32 @@ pub fn divine_name_spans(line: &str) -> Vec<(usize, usize)> {
 /// justified, block-spaced typography (and first-line indent / opening
 /// small-caps). Display classification only.
 pub fn is_bcp_body(text: &str) -> bool {
-    !is_blank(text) && !is_bcp_heading(text) && !is_rubric(text)
+    !is_blank(text) && !is_bcp_heading(text) && !is_rubric(text) && !is_bcp_speaker(text)
+}
+
+/// Marker prefix on a BCP speaker cue row emitted on its own line by the TEI
+/// pipeline (`@ Aunswere.`, `@ Priest.`). Mirrors the `## ` heading and `[...]`
+/// rubric markers: a text-only signal the reader keys on, so a cue is never
+/// confused with a one-word liturgical response (`Alleluya.`, `Amen.`) — which a
+/// pure text heuristic cannot distinguish. Must match the BCP TEI pipeline's
+/// `tei_to_rows.SPEAKER_MARKER` / `tei_to_text` `@ `. The `@ ` normalizes away,
+/// so the cue row still text-matches its lit.db row.
+pub const BCP_SPEAKER_MARKER: &str = "@ ";
+
+/// True when `text` is a BCP speaker cue on its own line (Kindle layout): the
+/// `Aunswere.` / `Priest.` cue rendered centered + italic above its response.
+/// Keyed on the `@ ` marker (`BCP_SPEAKER_MARKER`), not a heuristic — BCP cues
+/// are title-case so `is_speaker`'s all-caps regex never fires, and a one-word
+/// response is textually identical to a one-word cue.
+pub fn is_bcp_speaker(text: &str) -> bool {
+    text.trim_start().starts_with(BCP_SPEAKER_MARKER)
+}
+
+/// Strip the `@ ` speaker marker for display (`@ Priest.` → `Priest.`). Returns
+/// the input unchanged when unmarked.
+pub fn strip_bcp_speaker_marker(text: &str) -> &str {
+    let t = text.trim_start();
+    t.strip_prefix(BCP_SPEAKER_MARKER).unwrap_or(text)
 }
 
 /// Split a BCP body prayer into one string per sentence, for sentence-per-line
@@ -611,6 +636,23 @@ mod tests {
              Prayer, the Minister shall read with a loud voice, some one of these \
              sentences of the Scriptures that follow."
         ));
+    }
+
+    #[test]
+    fn test_is_bcp_speaker_and_strip() {
+        assert!(is_bcp_speaker("@ Priest."));
+        assert!(is_bcp_speaker("@ Aunswere."));
+        assert!(is_bcp_speaker("   @ Answer."));
+        // Unmarked lines are NOT cues — a one-word response is left as body.
+        assert!(!is_bcp_speaker("Alleluya."));
+        assert!(!is_bcp_speaker("Priest."));
+        assert!(!is_bcp_speaker("## A heading"));
+        assert!(!is_bcp_speaker("[a rubric]"));
+        assert_eq!(strip_bcp_speaker_marker("@ Priest."), "Priest.");
+        assert_eq!(strip_bcp_speaker_marker("Alleluya."), "Alleluya.");
+        // A marked cue is not body (no body spacing / opening small-caps).
+        assert!(!is_bcp_body("@ Priest."));
+        assert!(is_bcp_body("Alleluya."));
     }
 
     #[test]
