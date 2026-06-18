@@ -87,12 +87,18 @@ pub fn is_rubric(text: &str) -> bool {
 
 /// Max words for a rubric to be treated as a short centered cue rather than a
 /// hanging-indent instructional paragraph. Tunable; 8 fits the Oxford text.
+#[allow(dead_code)] // retained with rubric_is_centered (BCP now centers all rubrics)
 const RUBRIC_CENTER_MAX_WORDS: usize = 8;
 
 /// Decide a rubric's layout. Pass the rubric's INNER text (no surrounding
 /// brackets). Short cues with no sentence-internal period ("The Priest.",
 /// "Then likewise he shall say.") center; longer instructional prose hangs.
 /// Display heuristic only — a wrong call misplaces alignment, never text.
+///
+/// No longer used by the BCP path (which centers ALL rubrics to match the Oxford
+/// Kindle edition); retained — with its tests — for any future non-BCP rubric
+/// layout that wants the short-cue/long-instruction distinction.
+#[allow(dead_code)]
 pub fn rubric_is_centered(inner: &str) -> bool {
     let t = inner.trim().trim_start_matches('¶').trim();
     let words = t.split_whitespace().count();

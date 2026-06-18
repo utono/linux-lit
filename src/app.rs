@@ -3826,7 +3826,7 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
 
     let tag_table = state.buffer.tag_table();
     for name in &[
-        "bcp-heading", "bcp-rubric-centered", "bcp-rubric-hanging",
+        "bcp-heading", "bcp-rubric-centered",
         "bcp-divine-name", "bcp-blank", "bcp-body", "bcp-body-indent",
         "bcp-opening", "bcp-speaker-centered",
     ] {
@@ -3834,8 +3834,6 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
             tag_table.remove(&old);
         }
     }
-
-    let base_margin = state.text_view.left_margin();
 
     let heading_tag = gtk4::TextTag::builder()
         .name("bcp-heading")
@@ -3849,17 +3847,6 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
         .name("bcp-rubric-centered")
         .justification(gtk4::Justification::Center)
         .style(pango::Style::Italic)
-        .pixels_above_lines(6)
-        .build();
-    // Instructional rubric: a block left-indent (whole paragraph shifted right)
-    // sets it off from the prayers, italicised. A true hanging indent (flush
-    // first line, indented wraps) would need `TextTag:indent`, which this
-    // GtkTextView build does not render (see the body-indent note below) — so a
-    // uniform `left_margin` block indent is used instead.
-    let rubric_hanging_tag = gtk4::TextTag::builder()
-        .name("bcp-rubric-hanging")
-        .style(pango::Style::Italic)
-        .left_margin(base_margin + 24)
         .pixels_above_lines(6)
         .build();
     let divine_name_tag = gtk4::TextTag::builder()
@@ -3897,7 +3884,6 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
 
     tag_table.add(&heading_tag);
     tag_table.add(&rubric_centered_tag);
-    tag_table.add(&rubric_hanging_tag);
     tag_table.add(&divine_name_tag);
     tag_table.add(&blank_tag);
     tag_table.add(&body_tag);
@@ -3941,7 +3927,6 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
         };
         let text = state.buffer.text(&line_start, &line_end, false);
         let text = text.trim_end_matches('\n').to_string();
-        let trimmed = text.trim();
 
         if line_types::is_blank(&text) {
             state.buffer.apply_tag(&blank_tag, &line_start, &line_end);
@@ -3960,19 +3945,11 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
             state.buffer.apply_tag(&speaker_centered_tag, &line_start, &line_end);
         } else if rubric_line[i] || line_types::is_rubric(&text) {
             // Rubric-ness comes from the work-line (rubric_line[i]); fall back to a
-            // buffer test for the DB path where the buffer keeps the `[...]`. Use
-            // whichever bracketed form is available to pick centered vs hanging:
-            // the buffer text if it is bracketed, else strip the displayed text.
-            let inner: String = if trimmed.starts_with('[') && trimmed.ends_with(']') {
-                trimmed[1..trimmed.len() - 1].to_string()
-            } else {
-                trimmed.to_string()
-            };
-            if line_types::rubric_is_centered(&inner) {
-                state.buffer.apply_tag(&rubric_centered_tag, &line_start, &line_end);
-            } else {
-                state.buffer.apply_tag(&rubric_hanging_tag, &line_start, &line_end);
-            }
+            // buffer test for the DB path where the buffer keeps the `[...]`. ALL
+            // BCP rubrics render centered-italic, matching the Oxford Kindle
+            // edition (which centers even long instructional rubrics). The
+            // earlier short-cue-centered / long-hanging split is no longer used.
+            state.buffer.apply_tag(&rubric_centered_tag, &line_start, &line_end);
         } else {
             // A body prayer/petition — one sentence per line. Block-space above
             // every sentence line so prayers and their sentences read airily.
