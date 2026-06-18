@@ -245,6 +245,17 @@ pub fn build_line_map(file_lines: &[String], work_lines: &[Line], is_prose: bool
     build_line_map_mode(file_lines, work_lines, is_prose, MatchMode::WholeLine)
 }
 
+/// Choose the matcher for a work. A BCP work rendered from its sentence-split
+/// `.txt` needs paragraph accumulation; everything else (plays, future prose
+/// with a 1:1 .txt) uses whole-line matching.
+pub fn match_mode_for_work(abbrev: &str, has_text_file: bool) -> MatchMode {
+    if has_text_file && crate::db::line_types::is_bcp_work(abbrev) {
+        MatchMode::ParagraphAccumulate
+    } else {
+        MatchMode::WholeLine
+    }
+}
+
 /// Build a LineMap with an explicit `MatchMode` (see `MatchMode`). `build_line_map`
 /// is the thin `WholeLine` wrapper.
 pub fn build_line_map_mode(
@@ -1750,6 +1761,13 @@ mod tests {
         assert_eq!(map.buffer_to_work, vec![None, None, Some(0), Some(1)]);
         assert_eq!(map.work_to_buffer[0], 2);
         assert_eq!(map.work_to_buffer[1], 3);
+    }
+
+    #[test]
+    fn test_match_mode_for_work_picks_accumulate_for_bcp_textfile() {
+        assert_eq!(match_mode_for_work("BCP1662", true), MatchMode::ParagraphAccumulate);
+        assert_eq!(match_mode_for_work("Ham", true), MatchMode::WholeLine);   // play with .txt stays whole-line
+        assert_eq!(match_mode_for_work("BCP1662", false), MatchMode::WholeLine); // no text_file -> whole-line
     }
 
     #[test]

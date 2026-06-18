@@ -2297,10 +2297,14 @@ pub fn build_window(
                     let cleaned = text_only.cleaned_lines.clone();
                     let work_lines = work.lines.clone();
                     let is_prose = text_only.is_prose;
+                    let mode = crate::text_file_map::match_mode_for_work(
+                        &work.abbrev,
+                        work.text_file.is_some(),
+                    );
                     let line_map = handle
                         .spawn_blocking(move || {
                             let t_map = std::time::Instant::now();
-                            let lm = crate::text_file_map::build_line_map(&cleaned, &work_lines, is_prose);
+                            let lm = crate::text_file_map::build_line_map_mode(&cleaned, &work_lines, is_prose, mode);
                             crate::logging::log(&format!(
                                 "PREP: build_line_map (phase 2) {}ms",
                                 t_map.elapsed().as_millis()
@@ -3334,9 +3338,13 @@ pub fn build_line_map_for_prepared(
     cleaned_lines: &[String],
     work_lines: &[crate::db::models::Line],
     is_prose: bool,
+    abbrev: &str,
+    has_text_file: bool,
 ) -> crate::text_file_map::LineMap {
     let t_map = std::time::Instant::now();
-    let line_map = crate::text_file_map::build_line_map(cleaned_lines, work_lines, is_prose);
+    let mode = crate::text_file_map::match_mode_for_work(abbrev, has_text_file);
+    let line_map =
+        crate::text_file_map::build_line_map_mode(cleaned_lines, work_lines, is_prose, mode);
     crate::logging::log(&format!("PREP: build_line_map {}ms", t_map.elapsed().as_millis()));
     line_map
 }
@@ -3354,7 +3362,8 @@ pub fn prepare_text_for_display(work: &Work) -> Option<PreparedText> {
 
     let is_prose = crate::db::line_types::is_prose_work(&work.work_type);
     let t_map = std::time::Instant::now();
-    let line_map = crate::text_file_map::build_line_map(&cleaned_lines, &work.lines, is_prose);
+    let mode = crate::text_file_map::match_mode_for_work(&work.abbrev, work.text_file.is_some());
+    let line_map = crate::text_file_map::build_line_map_mode(&cleaned_lines, &work.lines, is_prose, mode);
     crate::logging::log(&format!("PREP: build_line_map {}ms", t_map.elapsed().as_millis()));
 
     let t_join = std::time::Instant::now();
