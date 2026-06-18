@@ -5,6 +5,11 @@ use serde::{Deserialize, Serialize};
 use crate::db::models::Work;
 use crate::text_file_map::LineMap;
 
+// Bumped to 6: BCP text_file works now render one sentence per line and map via
+// MatchMode::ParagraphAccumulate, so the cached buffer_to_work values differ from
+// any v5 snapshot. The serialized shape is unchanged; the bump forces a rebuild
+// of stale BCP snapshots.
+//
 // Bumped to 5: build_section_starts now pins a sonnet_sequence boundary to its
 // bare-number heading (is_stanza_number), changing the cached section_starts
 // values for Son. The serialized shape is unchanged, but stale snapshots hold
@@ -17,7 +22,7 @@ use crate::text_file_map::LineMap;
 // text_file (1549/1559/1559M/…) still loads straight from the DB (the
 // sentence-per-line split in display_work) and never hits this cache, so that
 // split needs no version bump — it has no cached representation to invalidate.
-pub const SNAPSHOT_VERSION: u32 = 5;
+pub const SNAPSHOT_VERSION: u32 = 6;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct WorkSnapshot {
