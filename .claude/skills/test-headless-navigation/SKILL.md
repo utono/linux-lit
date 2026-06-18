@@ -10,6 +10,18 @@ Drive linux-lit inside a throwaway headless `cage`, inject keybinds, screenshot,
 and assert the reading card never clips its first/last line — all off-screen, on
 its own Wayland socket, never touching the live session.
 
+**Any work loadable by abbrev is testable — not just Folger plays.** The
+all-works sweep below targets Folger plays, but the single-work `run-fuzz.sh`
+`--start-work <ABBR>` accepts **any** work in lit.db, including production works
+(`2H6-Amb`, `MND-BBC`, …) and prose imports. This is the recommended post-import
+verification for `/wizard-ambrose` / `/wizard-poetry` / `/wizard-gutenberg`: a
+bounded single-work run confirms the freshly-imported `line_mapping` + timestamps
+paginate and the cursor lands correctly. It validates **structure** (pagination +
+cursor landing), NOT audio playback — MPV is skipped headless
+(`LIT_HEADLESS_TEST=1`), which is exactly what a data-import check wants. Confirm
+the log shows `STARTUP: env override work='<ABBR>'` so a config fallback didn't
+silently load a different work. (2H6-Amb wizard import: 409 steps, 0 FAIL.)
+
 ## Verify ALL Shakespeare works (give the user these two commands)
 
 The agent's headless runs are unreliable in some sandboxes (long runs get killed).
