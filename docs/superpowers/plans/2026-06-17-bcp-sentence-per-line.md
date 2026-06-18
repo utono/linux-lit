@@ -133,6 +133,14 @@ def test_split_sentences_no_break_lowercase_after():
     # or a number list), do not split.
     assert split_sentences("seen at the font. and again later.") == [
         "seen at the font. and again later."]
+
+
+def test_split_sentences_two_char_initial_no_break():
+    # Faithful-to-Rust: a token with exactly one alpha char and length <= 2 is an
+    # initial, so "x'." does NOT end a sentence (regression guard for the
+    # narrower len==1 port).
+    assert split_sentences("named x'. Then prayed.") == [
+        "named x'. Then prayed."]
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -173,21 +181,25 @@ def _is_sentence_break_at(chars, dot):
         return False
     if k > 0 and chars[k] == ".":           # ".roman." numeral group
         return False
-    if len(token) == 1 and token.isalpha():  # single-letter initial
+    # Single-letter token + period: an initial/abbreviation (e.g. "S." "x.").
+    # Faithful to Rust: EXACTLY one alphabetic char AND total token length <= 2
+    # (so a 2-char form like "x'" also suppresses the break).
+    if sum(1 for c in token if c.isalpha()) == 1 and len(token) <= 2:
         return False
     return True
 
 
 def _next_word_after(chars, i):
-    """The next whitespace-delimited word starting at/after index i (lowercased
-    comparison done by the caller). Port of next_word_after."""
+    """The next whitespace-delimited word at/after index i, stripped of trailing
+    .,!? — used to detect a following 'Amen.' sentence. Port of next_word_after
+    (Rust strips trailing '.' ',' '!' '?')."""
     n = len(chars)
     while i < n and chars[i].isspace():
         i += 1
     start = i
     while i < n and not chars[i].isspace():
         i += 1
-    return "".join(chars[start:i])
+    return "".join(chars[start:i]).rstrip(".,!?")
 
 
 def split_sentences(line):
@@ -202,7 +214,7 @@ def split_sentences(line):
     i = 0
     while i < n:
         if chars[i] == "." and _is_sentence_break_at(chars, i):
-            after = _next_word_after(chars, i + 1).rstrip(".")
+            after = _next_word_after(chars, i + 1)  # already trailing-stripped
             if after.lower() == "amen":
                 i += 1
                 continue
@@ -471,9 +483,36 @@ fn test_build_line_map_accumulates_sentences_into_paragraph_row() {
         "Lord have mercy upon us.".to_string(),
         "Christ have mercy upon us.".to_string(),
     ];
-    let map = build_line_map_mode(&file_lines, &work_lines, MatchMode::ParagraphAccumulate);
+    let map = build_line_map_mode(&file_lines, &work_lines, false, MatchMode::ParagraphAccumulate);
     assert_eq!(map.buffer_to_work, vec![Some(0), Some(0)]);
     assert_eq!(map.work_to_buffer[0], 0);
+}
+
+#[test]
+fn test_build_line_map_accumulate_merged_head_covers_two_rows() {
+    // lit.db stores a split title as TWO rows ("The Order for Morning Prayer,"
+    // and "Daily Throughout the Year.") but the TEI <head> merges them into ONE
+    // .txt line. The merged line must map to the FIRST of the two rows, and the
+    // matcher must then advance PAST the second row (consumed by the same line)
+    // so the prayer that follows still maps. work_to_buffer for BOTH rows points
+    // at the merged buffer line.
+    let work_lines = vec![
+        make_line(10, "The Order for Morning Prayer,", 1, 0, 1),
+        make_line(11, "Daily Throughout the Year.", 1, 0, 2),
+        make_line(12, "O Lord, open thou our lips.", 1, 0, 3),
+    ];
+    let file_lines = vec![
+        "      The Order for Morning Prayer, Daily Throughout the Year".to_string(),
+        "O Lord, open thou our lips.".to_string(),
+    ];
+    let map = build_line_map_mode(&file_lines, &work_lines, false, MatchMode::ParagraphAccumulate);
+    // Merged head line maps to the first head row; prayer maps to row 2.
+    assert_eq!(map.buffer_to_work, vec![Some(0), Some(2)]);
+    // Both merged rows resolve to the merged buffer line (canonical for any
+    // chapter/section sign on either).
+    assert_eq!(map.work_to_buffer[0], 0);
+    assert_eq!(map.work_to_buffer[1], 0);
+    assert_eq!(map.work_to_buffer[2], 1);
 }
 
 #[test]
@@ -489,7 +528,7 @@ fn test_build_line_map_accumulate_skips_chrome_between_rows() {
         "        A Centered Head".to_string(),  // chrome, no row
         "Second prayer here.".to_string(),
     ];
-    let map = build_line_map_mode(&file_lines, &work_lines, MatchMode::ParagraphAccumulate);
+    let map = build_line_map_mode(&file_lines, &work_lines, false, MatchMode::ParagraphAccumulate);
     assert_eq!(map.buffer_to_work, vec![Some(0), None, Some(1)]);
 }
 ```
@@ -582,6 +621,18 @@ per-line search with accumulation:
             //  work_to_buffer, matched)
         }
         MatchMode::ParagraphAccumulate => {
+            // Walk buffer lines, accumulating consecutive non-empty lines until
+            // the running normalized concat equals the current DB row. Three
+            // wrinkles beyond plain equality:
+            //   (1) a paragraph DB row spans several sentence lines  -> accumulate;
+            //   (2) chrome lines (heads / rubrics with no DB row)    -> leave None,
+            //       resync the cursor without consuming a row;
+            //   (3) a MERGED-TITLE buffer line covers two+ DB rows
+            //       ("The Order for Morning Prayer, Daily Throughout the Year"
+            //        == rows "The Order for Morning Prayer," + "Daily Throughout
+            //        the Year.") -> the row is a PREFIX of the line: consume the
+            //       row against this line and keep matching further rows against
+            //       the SAME line until it is exhausted.
             let mut wi = 0usize;                 // current DB row cursor
             let mut run_start: Option<usize> = None; // first buffer line of the run
             let mut acc = String::new();         // normalized accumulation
@@ -592,18 +643,15 @@ per-line search with accumulation:
                 if wi >= n_work {
                     break;
                 }
-                // Tentatively extend the current run with this buffer line.
                 let candidate = if acc.is_empty() {
                     nf.clone()
                 } else {
                     format!("{} {}", acc, nf)
                 };
-                let target = &norm_db[wi];
-                if &candidate == target {
-                    // Run complete: map every buffer line in the run to wi.
+                if candidate == norm_db[wi] {
+                    // (1) Run complete: map every line in the run to wi.
                     let start = run_start.unwrap_or(bi);
                     for b in start..=bi {
-                        // only map non-empty buffer lines in the run
                         if !norm_file[b].is_empty() {
                             buffer_to_work[b] = Some(wi);
                         }
@@ -613,39 +661,65 @@ per-line search with accumulation:
                     wi += 1;
                     run_start = None;
                     acc.clear();
-                } else if target.starts_with(&candidate) {
-                    // Still inside this paragraph: keep accumulating.
+                } else if norm_db[wi].starts_with(&candidate) {
+                    // Still inside this paragraph row: keep accumulating.
                     if run_start.is_none() {
                         run_start = Some(bi);
                     }
                     acc = candidate;
+                } else if run_start.is_none() && consume_merged_rows(
+                    nf, &norm_db, &mut wi, &mut work_to_buffer, &mut matched, bi,
+                ) {
+                    // (3) Merged-title line: `consume_merged_rows` greedily peeled
+                    // one or more whole rows that are successive prefixes of `nf`
+                    // (each followed by the next, covering the whole line). It set
+                    // buffer_to_work for `bi` and advanced `wi`. Nothing else to do.
+                    buffer_to_work[bi] = buffer_to_work[bi].or(Some(wi.saturating_sub(1)));
                 } else {
-                    // This line is NOT part of the current row (chrome: a head /
-                    // rubric / split-title with no DB row, OR a resync point).
-                    // Drop the partial run and treat this line as unmatched, then
-                    // RETRY it against the same row from a clean slate so a prayer
-                    // that immediately follows chrome still starts a fresh run.
-                    if run_start.is_some() {
-                        // abandon partial accumulation (those lines stay None)
-                        run_start = None;
-                        acc.clear();
+                    // (2) Resync. Abandon any partial run, then RETRY this line as
+                    // a fresh single-line run against the (possibly advanced) row.
+                    run_start = None;
+                    acc.clear();
+                    if wi < n_work {
+                        if norm_db[wi] == *nf {
+                            buffer_to_work[bi] = Some(wi);
+                            work_to_buffer[wi] = bi;
+                            matched += 1;
+                            wi += 1;
+                        } else if norm_db[wi].starts_with(nf.as_str()) {
+                            run_start = Some(bi);
+                            acc = nf.clone();
+                        }
+                        // else: genuine chrome line — leave None, stay on wi.
                     }
-                    // Retry this line as a fresh single-line run.
-                    if target == nf {
-                        buffer_to_work[bi] = Some(wi);
-                        work_to_buffer[wi] = bi;
-                        matched += 1;
-                        wi += 1;
-                    } else if target.starts_with(nf.as_str()) {
-                        run_start = Some(bi);
-                        acc = nf.clone();
-                    }
-                    // else: genuine chrome line — leave None, stay on same wi.
                 }
             }
         }
     }
 ```
+
+The `consume_merged_rows(...)` call above refers to a free helper you must add
+near `build_line_map_mode`. **Implement it to satisfy the
+`test_build_line_map_accumulate_merged_head_covers_two_rows` test (Step 1)** —
+that test is the contract. Required behavior:
+
+- Input: one normalized buffer line `nf`, the `norm_db` rows, the current cursor
+  `wi`, and `bi`.
+- Greedily peel consecutive DB rows that are successive leading prefixes of `nf`
+  (row 0 is a prefix of `nf`; after stripping it + one space, row 1 equals the
+  remainder, etc.), until `nf` is fully consumed.
+- Accept ONLY when **≥ 2** rows were consumed AND they exactly account for the
+  whole line (no leftover) — a single-row exact line is already handled by the
+  plain-equality branch, so requiring ≥ 2 avoids hijacking ordinary lines.
+- On accept: set `work_to_buffer[w] = bi` for each consumed row `w`, advance
+  `*wi` past them, add the count to `*matched`, and return `true`. The caller
+  sets `buffer_to_work[bi] = Some(first consumed row)`.
+- On reject: **fully roll back** any mutation to `work_to_buffer` and `*wi`
+  (mutate local copies first, commit only on accept) and return `false`.
+
+Write it test-first: the Step-1 merged-head test must pass, and a one-row line
+must NOT be consumed by it (covered by the plain accumulate test). Keep it pure
+(no `state`), so it is unit-testable.
 
 Everything after the match (the `dialogue_buffer_lines` collection, the
 `LINEMAP: matched` log, `sentence_groups`, `chapter_breaks`, `section_starts`,
@@ -662,6 +736,45 @@ Expected: PASS (both new tests).
 Run: `cd ~/utono/linux-lit && cargo test --bins text_file_map -- --nocapture`
 Expected: PASS — all existing `build_line_map` / `build_line_map_bcp` tests
 still green (the `WholeLine` path is unchanged).
+
+- [ ] **Step 5b: Authoritative integration test against the real BCP1662 data**
+
+The brittle offline Python gate from Task 3 is retired; THIS is the oracle. Add
+an `#[ignore]`d test (it needs the real `lit.db` + `.txt` on disk, so it must not
+run in the default suite) that loads BCP1662 through the real code path and
+asserts a high match rate via the actual matcher:
+
+```rust
+#[test]
+#[ignore] // needs ~/utono/litdb/data/lit.db + the regenerated .txt on disk
+fn bcp1662_accumulate_maps_most_rows() {
+    let conn = crate::db::queries::open_db().expect("open lit.db");
+    let work = crate::db::queries::load_work(&conn, "BCP1662").expect("load BCP1662");
+    let path = work.text_file.clone().expect("BCP1662 has a text_file");
+    let contents = std::fs::read_to_string(&path).expect("read .txt");
+    let file_lines: Vec<String> = contents.lines().map(String::from).collect();
+    let map = build_line_map_mode(
+        &file_lines, &work.lines, false, MatchMode::ParagraphAccumulate);
+    let matched = map.work_to_buffer.iter().enumerate()
+        // a row counts as matched if some buffer line maps to it
+        .filter(|(wi, _)| map.buffer_to_work.iter().any(|o| *o == Some(*wi)))
+        .count();
+    let pct = 100.0 * matched as f64 / work.lines.len() as f64;
+    eprintln!("BCP1662 accumulate: {}/{} rows matched ({:.1}%)",
+              matched, work.lines.len(), pct);
+    assert!(pct >= 95.0, "only {:.1}% of rows matched (want >= 95%)", pct);
+}
+```
+
+Run it explicitly: `cargo test --bins bcp1662_accumulate -- --ignored --nocapture`
+Expected: prints the percentage and PASSES at ≥ 95%. **If it is below 95%, do
+NOT commit — report the percentage and the first few unmatched rows as a
+DONE_WITH_CONCERNS / BLOCKED so the controller can decide** (the residue may be
+a handful of split-title rows that are acceptable, or a real matcher bug). The
+controller has already established that 538/677 rows are verbatim single lines
+and ~131 are legitimately sentence-split paragraphs, so a correct matcher should
+land well above 95%; a much lower number means the accumulation/merge logic is
+wrong.
 
 - [ ] **Step 6: Commit**
 
