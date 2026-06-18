@@ -981,7 +981,7 @@ Per `linux-lit/CLAUDE.md` → *When to ASK THE USER*, pagination changes need th
 nav-fuzz. Ask the user to run:
 ```bash
 cd ~/utono/linux-lit
-./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh --start-work BCP1662 --secs 120
+./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz.sh --start-work BCP1662 --secs 120
 ```
 Expected: no `UNBALANCED` / stuck-page / gap FAILs attributable to BCP. The full
 log lands at `/tmp/fuzz-nav.log`.

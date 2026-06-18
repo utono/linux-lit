@@ -9,7 +9,7 @@
 # break, viewport fill, cursor-is-dialogue). Each violation logs `NAV_TEST: FAIL`.
 #
 # MUST be launched through the env wrapper (dbus + AT-SPI), e.g.:
-#   ./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh [--secs N]
+#   ./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz.sh [--secs N]
 #
 # A bare run (no e2e-env.sh) aborts the app right after `STARTUP: main entry`.
 #

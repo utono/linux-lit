@@ -1,5 +1,5 @@
 ---
-name: headless-test
+name: test-headless-navigation
 description: Use when verifying linux-lit's GUI headlessly — screenshotting the reader/overlay, injecting keybinds (j/k/x/y/gg/G/h/Escape), or checking the reading card for top/bottom line clipping without a monitor or the live session
 argument-hint: --label NAME [--setup "KEYS"] [--step "KEYS"]… [--no-clip] [--region X,Y,W,H]
 ---
@@ -21,7 +21,7 @@ column or other failure:
 
 ```bash
 cd ~/utono/linux-lit && cargo build
-./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz-all-works.sh --secs-each 70
+./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz-all-works.sh --secs-each 70
 ```
 
 Then ask them to paste `/tmp/fuzz-all-works-summary.txt` (one line per play:
@@ -41,7 +41,7 @@ never reached. For a genuine clean bill of health across every play, run the
 
 ```bash
 cd ~/utono/linux-lit && cargo build
-./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz-all-works.sh --secs-each 600
+./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz-all-works.sh --secs-each 600
 ```
 
 `--secs-each 600` ≈ the complete coverage prelude + random body per play, so a
@@ -62,7 +62,7 @@ play's FAIL categories, and prints the exact re-run command. This avoids waiting
 
 ```bash
 cd ~/utono/linux-lit && cargo build
-./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz-all-works.sh \
+./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz-all-works.sh \
   --stop-on-first-fail --secs-each 70
 ```
 
@@ -136,7 +136,7 @@ calls fail with `the temp filesystem … is full (0MB free)`.
 **Recover (kills the FD-pinning daemons, then deletes the leftover dirs):**
 
 ```bash
-.claude/skills/headless-test/free-test-space.sh
+.claude/skills/test-headless-navigation/free-test-space.sh
 ```
 
 It reports `/tmp` free before/after. It only touches test scratch and the
@@ -169,7 +169,7 @@ Always go through the env wrapper (provides software GL + dbus + the AT-SPI
 registry the artifacts want):
 
 ```bash
-./scripts/e2e-env.sh .claude/skills/headless-test/run-headless-test.sh \
+./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-headless-test.sh \
   --label clip --step "g g" --step "x x x" --step "+shift:g"
 ```
 
@@ -200,7 +200,7 @@ target wherever natural pagination places it (not force-top-aligned). To eyeball
 this, screenshot before/after a jump that crosses a page boundary, e.g.:
 
 ```bash
-./scripts/e2e-env.sh .claude/skills/headless-test/run-headless-test.sh \
+./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-headless-test.sh \
   --label bookmark --step "ampersand" --step "parenleft"
 ```
 
@@ -262,7 +262,7 @@ failure summary. Always go through `e2e-env.sh`.
 + random body; needs ~10 min, so size the window so it isn't cut short):
 
 ```bash
-./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh --secs 600 --start-work AWW --start-pos 50
+./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz.sh --secs 600 --start-work AWW --start-pos 50
 ```
 
 `--secs` is a wall-clock cap, not a step count: at ~400 ms/step a short window
@@ -297,7 +297,7 @@ rg "PAGE_FWD|NAV_FWD_LASTPAGE|not idempotent" /tmp/fuzz-nav.log | rg -B15 "not i
 reproducibility note above):
 
 ```bash
-./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh --secs 90
+./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz.sh --secs 90
 ```
 
 **Sweep ALL Shakespeare works** (verify every play, not just one — page geometry
@@ -315,9 +315,9 @@ them to choose, because the trade-off is steep and theirs to make:
 Then hand them the chosen command:
 
 ```bash
-./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz-all-works.sh --secs-each 70
+./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz-all-works.sh --secs-each 70
 # or, for the thorough whole-orchard sweep:
-./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz-all-works.sh --secs-each 600
+./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz-all-works.sh --secs-each 600
 ```
 
 It fuzzes each Folger Shakespeare play in its own isolated cage and prints a

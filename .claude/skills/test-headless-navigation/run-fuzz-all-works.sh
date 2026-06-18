@@ -5,9 +5,9 @@
 #
 # Usage (always through the env wrapper):
 #   # fast triage sweep (~150 steps/play, ~45 min total) — finds suspects:
-#   ./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz-all-works.sh [--secs-each N]
+#   ./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz-all-works.sh [--secs-each N]
 #   # thorough "whole-orchard" sweep (full ~1400-step prelude+body/play, ~6 h):
-#   ./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz-all-works.sh --secs-each 600
+#   ./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz-all-works.sh --secs-each 600
 #
 # Each work runs in its OWN isolated cage (private DB copy + log, headless
 # offscreen, --headless-test marker) for --secs-each seconds. Steps run at
@@ -79,7 +79,7 @@ free_kb=$(df -Pk /tmp | awk 'NR==2{print $4}')
 if [ "${free_kb:-0}" -lt 2097152 ]; then
   echo "[all-works] ERROR: /tmp has < 2G free ($((free_kb/1024))M). Each work needs ~630M." >&2
   echo "[all-works] Reclaim it (kills daemons pinning leftover dirs, then deletes them):" >&2
-  echo "  .claude/skills/headless-test/free-test-space.sh" >&2
+  echo "  .claude/skills/test-headless-navigation/free-test-space.sh" >&2
   exit 70
 fi
 
@@ -157,7 +157,7 @@ for w in $WORKS; do
         | sort | uniq -c | sort -rn >&2
       echo "[all-works] Fix the bug, rebuild, then re-run:" >&2
       echo "  cd ~/utono/linux-lit && cargo build" >&2
-      echo "  ./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz-all-works.sh --stop-on-first-fail --secs-each $SECS_EACH" >&2
+      echo "  ./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz-all-works.sh --stop-on-first-fail --secs-each $SECS_EACH" >&2
       exit 1
     fi
   fi

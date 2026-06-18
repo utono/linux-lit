@@ -26,7 +26,7 @@
 # into a /tmp test dir — never a live `cargo run` session.
 #
 # Usage:
-#   .claude/skills/headless-test/free-test-space.sh
+#   .claude/skills/test-headless-navigation/free-test-space.sh
 #
 # Run it when a headless/fuzz run reports only ~2 steps, `df -h /tmp` shows little
 # free, the preflight in run-fuzz-all-works.sh refuses to start, or Bash tool

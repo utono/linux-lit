@@ -1,7 +1,7 @@
 # Headless Testing
 
-How the `headless-test` skill
-(`.claude/skills/headless-test/`) drives linux-lit's GUI with no monitor and
+How the `test-headless-navigation` skill
+(`.claude/skills/test-headless-navigation/`) drives linux-lit's GUI with no monitor and
 without touching a live `cargo run` session — for screenshot/clip verification
 and for the randomized navigation fuzz. Read this when a headless run won't
 start, stalls, surfaces a stray window, or you need to understand the
@@ -12,7 +12,7 @@ start, stalls, surfaces a stray window, or you need to understand the
 1. **Screenshot UI tests** — launch the reader in a throwaway headless `cage`,
    inject keybinds with `wtype`, screenshot with `grim`, and assert the reading
    card never clips its first/last line. Driven by
-   `.claude/skills/headless-test/run-headless-test.sh`.
+   `.claude/skills/test-headless-navigation/run-headless-test.sh`.
 2. **Navigation fuzz** — auto-start the app's in-process nav-test harness
    (`src/input/nav_test.rs`). Each run is a **deterministic coverage prelude**
    followed by a **random body** (1400 steps total), and checks invariants after
@@ -177,7 +177,7 @@ final-spread-too-early / orphaned-EPILOGUE bug.)
 
 ## How to run the fuzz
 
-Use the `headless-test` skill's bundled launcher. It builds, makes a private DB
+Use the `test-headless-navigation` skill's bundled launcher. It builds, makes a private DB
 copy, sets all the env overrides, launches an isolated cage, kills its own cage
 by PID, and prints a failure summary. It's safe to run **even while a live
 `cargo run` session is open** — it touches no shared file. Always go through the
@@ -187,7 +187,7 @@ env wrapper (`e2e-env.sh`, which supplies dbus + AT-SPI):
 # FULL SWEEP — run this for a real check. ~10 min: the entire 1400-step
 # coverage prelude (every nav action from every structural anchor) + random body.
 cd ~/utono/linux-lit
-./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh \
+./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz.sh \
   --secs 600 --start-work AWW --start-pos 50
 ```
 
@@ -204,7 +204,7 @@ hermetic-start flags make the run reproducible from the command alone:
 
 ```bash
 # Quick run while iterating (fast, but does NOT complete the prelude):
-./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh --secs 90
+./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz.sh --secs 90
 ```
 
 It writes the run log to `/tmp/fuzz-nav.log` and the cage PID to
@@ -229,7 +229,7 @@ target/debug/linux-lit`; it would also signal a live session:
 kill "$(cat /tmp/fuzz_pid.txt)"
 ```
 
-The launcher is `~/utono/linux-lit/.claude/skills/headless-test/run-fuzz.sh`; if
+The launcher is `~/utono/linux-lit/.claude/skills/test-headless-navigation/run-fuzz.sh`; if
 the fuzz stays at 1 step it logs `NAV_TEST: step=0` then nothing (CPU idle, no
 panic) — almost always `LIT_DB_PATH` wasn't honored, i.e. it's contending on the
 shared `lit.db` lock. Confirm `/tmp/fuzz-lit.db` exists and is being passed.
@@ -585,8 +585,8 @@ deterministic). Status:
 
 ## Key files
 
-- `.claude/skills/headless-test/SKILL.md` — the skill (flags, fuzz recipe).
-- `.claude/skills/headless-test/run-headless-test.sh` — the screenshot driver.
+- `.claude/skills/test-headless-navigation/SKILL.md` — the skill (flags, fuzz recipe).
+- `.claude/skills/test-headless-navigation/run-headless-test.sh` — the screenshot driver.
 - `scripts/e2e-env.sh` — dbus + AT-SPI + software-GL wrapper.
 - `scripts/check_line_clipping.py` — fail-closed clipping detector.
 - `src/db/queries.rs::db_path` — honors `LIT_DB_PATH`.

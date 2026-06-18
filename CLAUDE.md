@@ -165,11 +165,12 @@ Ask the user to run `e2e-env.sh` whenever the change's acceptance criterion is
   are deliberately no pure unit tests for `column_split`/`last_page_top`, so the
   only real check is a rendered spread. For these, the **nav-fuzz** is the
   workhorse — it drives every nav action and asserts on-page landing, balanced
-  columns, and `G`/jump-to-end idempotency. It lives in the headless-test skill
-  and **must** be launched through the env wrapper:
+  columns, and `G`/jump-to-end idempotency. It lives in the
+  test-headless-navigation skill and **must** be launched through the env
+  wrapper:
 
 ```bash
-./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh --start-work <ABBR>
+./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz.sh --start-work <ABBR>
 ```
 
   **Always pass `--start-work <ABBR>`** when reproducing a work-specific failure

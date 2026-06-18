@@ -44,7 +44,7 @@
 #   run-headless-test.sh --label synopsis --setup "h" --no-clip
 #
 # Run THROUGH the env wrapper so numpy/pillow + the a11y/dbus session exist:
-#   ./scripts/e2e-env.sh .claude/skills/headless-test/run-headless-test.sh …
+#   ./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-headless-test.sh …
 set -uo pipefail
 
 usage() {
@@ -52,7 +52,7 @@ usage() {
 headless-test — drive linux-lit's GUI headlessly (screenshot/clip tests + nav fuzz).
 
 ALWAYS run through the env wrapper (dbus + AT-SPI + software GL):
-  ./scripts/e2e-env.sh .claude/skills/headless-test/run-headless-test.sh [options]
+  ./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-headless-test.sh [options]
 
 Screenshot / clipping test (this script):
   --label NAME       output basename under target/ui/ (default: headless)
@@ -67,22 +67,22 @@ Screenshot / clipping test (this script):
   (j, x, g, Escape); `+mod:key` is a chord (+shift:g -> Shift+G). Repeat to repeat.
 
   Examples:
-    ./scripts/e2e-env.sh .claude/skills/headless-test/run-headless-test.sh \
+    ./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-headless-test.sh \
       --label clip --step "g g" --step "x x x" --step "+shift:g"
-    ./scripts/e2e-env.sh .claude/skills/headless-test/run-headless-test.sh \
+    ./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-headless-test.sh \
       --label synopsis --setup "h" --no-clip
 
 Navigation fuzz test (separate launcher in this skill):
   ALL SHAKESPEARE WORKS (~45 min — fuzz every Folger play, x/y/G/gg/2/3/,/q
   from every act/scene boundary; flags underfilled/empty right columns):
     cd ~/utono/linux-lit && cargo build
-    ./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz-all-works.sh --secs-each 70
+    ./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz-all-works.sh --secs-each 70
     → summary: /tmp/fuzz-all-works-summary.txt ; flagged logs: /tmp/fuzz-<ABBR>.log
   FULL SWEEP, ONE WORK (~10 min, all 1400 steps):
-    ./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh \
+    ./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz.sh \
       --secs 600 --start-work AWW --start-pos 50
   Quick run while iterating (~200 steps, start of the prelude only):
-    ./scripts/e2e-env.sh .claude/skills/headless-test/run-fuzz.sh --secs 90
+    ./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz.sh --secs 90
 
     A deterministic coverage prelude (every nav action from every structural
     anchor) + a seeded-random body, with per-step invariant checks (on-page
