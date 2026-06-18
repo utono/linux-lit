@@ -199,6 +199,18 @@ Pipeline (`~/utono/ws-book-of-common-prayer-references/scripts/`):
 - `tei_to_rows.py` — TEI → lit.db `canonical_text` rows (source of truth).
 - `tei_to_text.py` — TEI(s) → display `.txt` (`convert` / `convert_many`).
 - `reimport_bcp1549_tei.py` — per-rite DB rebuild from the TEI.
+- `bcp_modernize.py` / `bcp_modern_table.py` / `verify_modern.py` /
+  `bootstrap_modern_table.py` / `ingest_bcp_modern.py` — the deterministic
+  modern-spelling pipeline + drift guard (read-aloud Step A, route 1).
+
+Read-aloud / audio (lit.db + `~/utono/litdb/scripts/`):
+- `media_manager.py` — register an mp3 (`media_files`) + `work_media_associations`.
+- `align_monotonic.py` / `build_phrase_timestamps.py` — post-hoc timestamp
+  alignment (alternative to ElevenLabs with-timestamps).
+- Reader audio sync: `media_files`, `line_timestamps`, MPV integration in
+  linux-lit `src/mpv/`, `src/main.rs`.
+- Voice setup: `docs/guides/elevenlabs-v3-custom-voices.md`; lit.db
+  `author_default_voice` / `voice_catalog`.
 
 Reader (`~/utono/linux-lit/src/`):
 - `db/line_types.rs` — `is_bcp_work`, `is_bcp_heading`, `is_rubric`,
@@ -220,6 +232,155 @@ Related specs (`docs/superpowers/specs/`): `2026-06-17-tei-to-text-render.md`,
 `2026-06-18-whole-1549-tei-kindle-design.md`,
 `2026-06-16-bcp-decorative-typography-design.md`.
 
+## Read-aloud: LLM modern-spelling + ElevenLabs mp3, synced to original text
+
+A work like `BCP1549` is displayed in **original Tudor spelling** ("OURE father,
+whiche arte in heaven"). To read it aloud, you do **not** want a TTS engine
+sounding out Tudor orthography — you want it to *pronounce the modern equivalent*
+("Our father, which art in heaven") while the reader highlights the original
+line. The mechanism: store a **parallel modern-spelling line** for each canonical
+line, synthesize one mp3 from the modern text, and attach per-line timestamps so
+the reader's existing audio-sync highlights the original line as its modern audio
+plays.
+
+This reuses linux-lit's standard audio-sync path (`media_files` +
+`line_timestamps`, the same one used for human-recorded audiobooks) — nothing
+reader-side is new; only the *text fed to TTS* and the *timestamp source* differ.
+
+### The data model
+
+- **Modern text** lives in a parallel work `<ABBREV>M` (e.g. `BCP1549M`),
+  **line-for-line aligned** with the original: identical `(div1, line_in_div)`,
+  same row count, modern `canonical_text`. (This mirrors the existing
+  `ingest_bcp_modern.py` / `BCP1559M` convention — but see the alignment note
+  below now that the original is paragraph-level.)
+- **The mp3** is one `media_files` row (`work_abbrev = <ABBREV>`,
+  `source_text_path` = the modern `.txt` it was synthesized from), associated to
+  the work via `work_media_associations`.
+- **Timing** is one `line_timestamps` row per original `line_mapping_id`
+  (`media_id`, `start_time`, `end_time`). The reader keys sync off the ORIGINAL
+  line's id, so the highlight tracks the original-spelling text while the
+  modern-pronunciation audio plays.
+
+> **Alignment caveat (current state).** The legacy `ingest_bcp_modern.py` assumes
+> the modern work is line-for-line with the *source rows*. Since `BCP1549` was
+> re-imported to **paragraph-level** (this guide's Phase A), the modern work must
+> be built against those same paragraph rows — one modern row per original
+> canonical line — not the old fragment numbering. Generate the modern rows from
+> the current `line_mapping`, preserving `(div1, line_in_div)` exactly.
+
+### Step A — produce the modern spelling with an LLM (Claude API)
+
+Two routes; pick by fidelity needs:
+
+1. **Deterministic table (existing, cheap, drift-guarded).**
+   `bcp_modernize.modernize_line` + `bcp_modern_table` (spelling/punctuation
+   only, word-count-parity preserved, `verify_modern.check_line` drift guard).
+   The table is bootstrapped *once* via Claude over residual Tudor tokens
+   (`bootstrap_modern_table.py`, needs `ANTHROPIC_API_KEY`). Best when you want
+   guaranteed structural parity and reproducibility.
+2. **Direct LLM per canonical line (what this section adds).** Send each original
+   `canonical_text` to the Claude API and ask for the **modern-spelling
+   equivalent only** — same words, same order, only orthography/punctuation
+   modernized. Better for irregular text the table misses; the cost is one API
+   call per line (batch them).
+
+LLM contract (keep it strict so the audio matches the page):
+- **Modernize spelling and punctuation ONLY.** Never change vocabulary, grammar,
+  or word order ("there be not three incomprehensibles" stays).
+- **Preserve markers verbatim**: a leading `## `, a `[...]` rubric wrapper (and a
+  leading `¶`), and the `@ ` speaker marker pass through unchanged — modernize
+  only the inner words. (`modernize_line` is already marker-aware; an LLM prompt
+  must be told the same.)
+- **One line in, one line out.** Do not split or merge; the modern row must map
+  1:1 to its original by `(div1, line_in_div)`.
+- **Latin stays Latin.** Rubric tags like "Venite exultemus" / "Te Deum
+  Laudamus" are not English; leave them.
+
+Sketch (Claude Messages API; batch ~20 lines/call, low temperature):
+
+```python
+import os, anthropic, sqlite3
+client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+db = sqlite3.connect(LIT_DB)
+rows = db.execute(
+    "SELECT div1, line_in_div, canonical_text FROM line_mapping "
+    "WHERE work_abbrev='BCP1549' ORDER BY div1, line_in_div").fetchall()
+
+SYSTEM = (
+  "Modernize the SPELLING and PUNCTUATION ONLY of each numbered Tudor English "
+  "line. Keep every word, its meaning, and word order. Preserve a leading "
+  "'## ', '[' ... ']' brackets, a leading '¶', and a leading '@ ' exactly. "
+  "Leave Latin unchanged. Return the same count of lines, numbered identically, "
+  "one modern line each — no commentary.")
+
+# For each batch: send numbered originals, parse numbered modern lines back,
+# assert count parity, then write modern rows preserving (div1, line_in_div).
+```
+
+Validate every batch: **count parity** (modern lines == originals) and a
+**word-count-per-line** check (a modern line should have the same word count as
+its original — the drift guard's core invariant). Reject and retry any batch that
+drifts; never let a split/merge through (it breaks the 1:1 timing map).
+
+Write the modern rows as work `<ABBREV>M` with the SAME `(div1, line_in_div)` as
+the originals (back up lit.db first).
+
+### Step B — render the modern read-aloud text
+
+Produce a plain modern `.txt` in `(div1, line_in_div)` order — one physical line
+per modern canonical line, markers stripped (TTS should not speak `## ` / `[` /
+`@ `; for a *reading* you typically also skip rubric lines, or speak them in a
+quieter aside — decide per use). This is the text handed to ElevenLabs and stored
+as `media_files.source_text_path`.
+
+### Step C — synthesize the mp3 with ElevenLabs (with timestamps)
+
+Use the ElevenLabs **`/v1/text-to-speech/{voice_id}/with-timestamps`** HTTP
+endpoint (model `eleven_v3` for quality, or a v2.5 model for speed). Unlike the
+plain MCP `text_to_speech` tool, the with-timestamps endpoint returns the mp3
+**plus per-character alignment** (`characters`, `character_start_times_seconds`,
+`character_end_times_seconds`) — exact timings derived from the synthesis itself,
+so no transcription/whisperX pass is needed.
+
+- Voice: resolve via the work's author voice (`author_default_voice` /
+  `voice_catalog`); see `docs/guides/elevenlabs-v3-custom-voices.md` for the v3
+  voice setup. One narration voice for the whole work is the simplest start.
+- Synthesize per chunk that stays within the model's character limit (e.g. one
+  rite, or N lines), keeping a running offset so timings are continuous across
+  chunks; concatenate the mp3 parts. Record which output character index begins
+  each input line so you can map alignment → lines.
+- ⚠️ Paid API. Synthesize once; the mp3 + timestamps are then cached in lit.db.
+
+### Step D — attach mp3 + per-line timestamps to lit.db
+
+1. Register the mp3 with `litdb/scripts/media_manager.py` (`associate`): inserts
+   the `media_files` row (`work_abbrev`, `source_text_path`) and a
+   `work_media_associations` row.
+2. Convert the with-timestamps alignment into one `line_timestamps` row per
+   ORIGINAL `line_mapping_id`: for each modern line, take the char-range that
+   produced it, read its first char `start_time` and last char `end_time`, and
+   write `(line_mapping_id = the ORIGINAL row's id, media_id, start_time,
+   end_time)`. Because the modern work is `(div1, line_in_div)`-aligned to the
+   original, mapping modern-line → original-id is a lookup, not a transcription.
+   (If you instead synthesized per chunk and want post-hoc alignment, the litdb
+   `align_monotonic.py` / `build_phrase_timestamps.py` path also works, but the
+   with-timestamps response is exact and preferred.)
+
+### Step E — read aloud
+
+With `media_files` + `line_timestamps` populated, the reader's existing MPV-driven
+sync plays the modern-audio mp3 and advances the highlight line-by-line over the
+**original-spelling** display. No reader change is required — this is the same
+mechanism as a human audiobook, with the audio sourced from modern-spelling TTS.
+
+### Why this works
+
+The original spelling is what the eye reads (faithful to the page images); the
+modern spelling is only ever the *input to pronunciation*, never displayed. The
+1:1 `(div1, line_in_div)` alignment is the hinge: it lets a modern-text mp3's
+timings address original-text rows, so display and audio stay in lockstep.
+
 ## Known limitations / refinement backlog
 
 - **Bootstrap misses verse structure.** `<lg>`/`<l>` psalm/canticle markup and
@@ -236,3 +397,10 @@ Related specs (`docs/superpowers/specs/`): `2026-06-17-tei-to-text-render.md`,
   TextTags cannot inject glyphs; deferred.
 - **Echo embeddings** are keyed by line range; after a re-import they are stale
   and must be rebuilt (`embed_bcp.py <ABBREV> --reembed`, needs `VOYAGE_API_KEY`).
+- **Modern read-aloud work not yet built for BCP1549.** The read-aloud pipeline
+  above is documented but not yet run for the paragraph-level `BCP1549` (the old
+  `BCP1549M` was line-for-line with the *fragment* rows and was abandoned). It
+  must be regenerated against the current paragraph rows.
+- **Rubric/Latin in read-aloud.** Decide per work whether to speak `[...]`
+  rubrics (instructions) and Latin canticle tags at all, or skip/aside them; the
+  modern `.txt` for TTS (Step B) is where that choice is applied.
