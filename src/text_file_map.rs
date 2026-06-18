@@ -41,6 +41,17 @@ pub struct LineMap {
     pub section_starts: Vec<bool>,
 }
 
+/// How `build_line_map` matches buffer lines to DB rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchMode {
+    /// Whole-line normalized equality: one buffer line == one DB row (plays/verse).
+    WholeLine,
+    /// Accumulate consecutive buffer lines until their concatenated normalized
+    /// text equals a DB row, mapping the whole run to that row (first line
+    /// canonical). Sentence-split prose (BCP from text_file).
+    ParagraphAccumulate,
+}
+
 /// Normalize a line of text to match the DB's `normalized_text` column:
 /// strip bracketed stage directions, trim, lowercase, strip non-alphanumeric
 /// chars (keep spaces), collapse whitespace.
@@ -231,6 +242,17 @@ pub fn build_line_map_bcp(
 ///   also matches the next DB row. If the confirmation check fails, skip it.
 /// - Log match percentage; warn if < 80%.
 pub fn build_line_map(file_lines: &[String], work_lines: &[Line], is_prose: bool) -> LineMap {
+    build_line_map_mode(file_lines, work_lines, is_prose, MatchMode::WholeLine)
+}
+
+/// Build a LineMap with an explicit `MatchMode` (see `MatchMode`). `build_line_map`
+/// is the thin `WholeLine` wrapper.
+pub fn build_line_map_mode(
+    file_lines: &[String],
+    work_lines: &[Line],
+    is_prose: bool,
+    mode: MatchMode,
+) -> LineMap {
     let norm_file: Vec<String> = file_lines.iter().map(|l| normalize(l)).collect();
     // Re-normalize DB text through the same pipeline (strip_brackets + diacritics)
     // so stage directions like "[Flourish...]" become empty on both sides.
@@ -243,79 +265,184 @@ pub fn build_line_map(file_lines: &[String], work_lines: &[Line], is_prose: bool
     // Default: each work line maps to buffer line 0 (will be overwritten for matched lines)
     let mut work_to_buffer: Vec<usize> = vec![0; n_work];
 
-    let mut db_cursor: usize = 0; // current position in work_lines
     let mut matched: usize = 0;
 
-    for buf_idx in 0..n_buf {
-        let nf = &norm_file[buf_idx];
-        if nf.is_empty() {
-            continue;
-        }
+    match mode {
+        MatchMode::WholeLine => {
+            let mut db_cursor: usize = 0; // current position in work_lines
 
-        // Search forward in work_lines within the window
-        let window_end = (db_cursor + WINDOW).min(n_work);
-        let mut found: Option<usize> = None;
+            for buf_idx in 0..n_buf {
+                let nf = &norm_file[buf_idx];
+                if nf.is_empty() {
+                    continue;
+                }
 
-        'outer: for wi in db_cursor..window_end {
-            let db_norm = &norm_db[wi];
-            if db_norm.is_empty() {
-                continue;
-            }
-            if db_norm == nf {
-                // If this match is beyond the current cursor, do a confirmation check:
-                // the next non-empty file line should match the next DB row after wi.
-                if wi > db_cursor {
-                    // Find the next non-empty DB row after wi
-                    let mut next_db_norm: Option<&String> = None;
-                    for wi2 in (wi + 1)..n_work {
-                        if !norm_db[wi2].is_empty() {
-                            next_db_norm = Some(&norm_db[wi2]);
-                            break;
-                        }
+                // Search forward in work_lines within the window
+                let window_end = (db_cursor + WINDOW).min(n_work);
+                let mut found: Option<usize> = None;
+
+                'outer: for wi in db_cursor..window_end {
+                    let db_norm = &norm_db[wi];
+                    if db_norm.is_empty() {
+                        continue;
                     }
-                    // Check whether any of the next few non-empty file lines
-                    // matches the next DB row. Speaker names, stage directions,
-                    // act/scene markers, and separators in the file have no DB
-                    // counterpart, so skip them and only count dialogue-like
-                    // lines toward the lookahead limit.
-                    if let Some(nd) = next_db_norm {
-                        let mut confirmed = false;
-                        let mut seen = 0;
-                        for bi2 in (buf_idx + 1)..n_buf {
-                            if norm_file[bi2].is_empty() {
-                                continue;
+                    if db_norm == nf {
+                        // If this match is beyond the current cursor, do a confirmation check:
+                        // the next non-empty file line should match the next DB row after wi.
+                        if wi > db_cursor {
+                            // Find the next non-empty DB row after wi
+                            let mut next_db_norm: Option<&String> = None;
+                            for wi2 in (wi + 1)..n_work {
+                                if !norm_db[wi2].is_empty() {
+                                    next_db_norm = Some(&norm_db[wi2]);
+                                    break;
+                                }
                             }
-                            if &norm_file[bi2] == nd {
-                                confirmed = true;
-                                break;
-                            }
-                            let raw = &file_lines[bi2];
-                            if line_types::is_speaker(raw)
-                                || line_types::is_act_scene_marker(raw)
-                                || line_types::is_separator(raw)
-                            {
-                                continue;
-                            }
-                            seen += 1;
-                            if seen >= 3 {
-                                break;
+                            // Check whether any of the next few non-empty file lines
+                            // matches the next DB row. Speaker names, stage directions,
+                            // act/scene markers, and separators in the file have no DB
+                            // counterpart, so skip them and only count dialogue-like
+                            // lines toward the lookahead limit.
+                            if let Some(nd) = next_db_norm {
+                                let mut confirmed = false;
+                                let mut seen = 0;
+                                for bi2 in (buf_idx + 1)..n_buf {
+                                    if norm_file[bi2].is_empty() {
+                                        continue;
+                                    }
+                                    if &norm_file[bi2] == nd {
+                                        confirmed = true;
+                                        break;
+                                    }
+                                    let raw = &file_lines[bi2];
+                                    if line_types::is_speaker(raw)
+                                        || line_types::is_act_scene_marker(raw)
+                                        || line_types::is_separator(raw)
+                                    {
+                                        continue;
+                                    }
+                                    seen += 1;
+                                    if seen >= 3 {
+                                        break;
+                                    }
+                                }
+                                if !confirmed {
+                                    continue 'outer;
+                                }
                             }
                         }
-                        if !confirmed {
-                            continue 'outer;
-                        }
+                        found = Some(wi);
+                        break;
                     }
                 }
-                found = Some(wi);
-                break;
+
+                if let Some(wi) = found {
+                    buffer_to_work[buf_idx] = Some(wi);
+                    work_to_buffer[wi] = buf_idx;
+                    db_cursor = wi + 1;
+                    matched += 1;
+                }
             }
         }
+        MatchMode::ParagraphAccumulate => {
+            // Walk non-empty buffer lines, accumulating their normalized text
+            // (joined by single spaces) until the running `acc` equals the
+            // current DB row `norm_db[wi]`; then map the whole run [run_start..=bi]
+            // to `wi` and advance. Lines that never join into a matching row stay
+            // None (chrome). A single .txt line covering >=2 consecutive title
+            // rows is peeled by `consume_merged_rows`.
+            let mut wi: usize = 0; // current DB row
+            let mut acc = String::new(); // running concatenation of the current run
+            let mut run_start: Option<usize> = None; // first buffer line of the run
 
-        if let Some(wi) = found {
-            buffer_to_work[buf_idx] = Some(wi);
-            work_to_buffer[wi] = buf_idx;
-            db_cursor = wi + 1;
-            matched += 1;
+            for bi in 0..n_buf {
+                let nf = &norm_file[bi];
+                if nf.is_empty() {
+                    continue;
+                }
+                // Skip past empty DB rows (rubrics normalize to empty etc.).
+                while wi < n_work && norm_db[wi].is_empty() {
+                    wi += 1;
+                }
+                if wi >= n_work {
+                    break;
+                }
+
+                // Try to extend the current run with this line.
+                let candidate = if acc.is_empty() {
+                    nf.clone()
+                } else {
+                    format!("{} {}", acc, nf)
+                };
+
+                if candidate == norm_db[wi] {
+                    // Run complete: map every line of the run to wi.
+                    let start = run_start.unwrap_or(bi);
+                    for b in start..=bi {
+                        if !norm_file[b].is_empty() {
+                            buffer_to_work[b] = Some(wi);
+                        }
+                    }
+                    work_to_buffer[wi] = start;
+                    matched += 1;
+                    wi += 1;
+                    acc.clear();
+                    run_start = None;
+                } else if norm_db[wi].starts_with(&candidate)
+                    && norm_db[wi].as_bytes().get(candidate.len()) == Some(&b' ')
+                {
+                    // The row continues past this line: keep accumulating.
+                    acc = candidate;
+                    if run_start.is_none() {
+                        run_start = Some(bi);
+                    }
+                } else if run_start.is_none() {
+                    // Not mid-run; try a merged-title peel: ONE buffer line
+                    // covering >=2 consecutive rows that are successive prefixes.
+                    let first = wi;
+                    if consume_merged_rows(nf, &norm_db, &mut wi, &mut work_to_buffer, &mut matched, bi) {
+                        buffer_to_work[bi] = Some(first);
+                    } else if let Some(target) =
+                        find_skip_target(nf, &norm_db, wi, n_work)
+                    {
+                        // The current DB row(s) are unmatchable heads/chrome with no
+                        // buffer counterpart (e.g. a "St. Luke i. 68." reference the
+                        // .txt merges into the canticle head). Skip forward to the
+                        // row this buffer line actually starts, leaving the skipped
+                        // rows unmapped, then map/begin-run against `target`.
+                        wi = target;
+                        if *nf == norm_db[wi] {
+                            buffer_to_work[bi] = Some(wi);
+                            work_to_buffer[wi] = bi;
+                            matched += 1;
+                            wi += 1;
+                        } else {
+                            // prefix start (guaranteed by find_skip_target)
+                            acc = nf.clone();
+                            run_start = Some(bi);
+                        }
+                    }
+                    // else: genuine chrome — leave None, stay on the same wi.
+                } else {
+                    // Mid-run resync: the partial run failed to complete. Abandon
+                    // it (those lines stay None) and retry THIS line fresh against
+                    // the current row.
+                    acc.clear();
+                    run_start = None;
+                    if *nf == norm_db[wi] {
+                        buffer_to_work[bi] = Some(wi);
+                        work_to_buffer[wi] = bi;
+                        matched += 1;
+                        wi += 1;
+                    } else if norm_db[wi].starts_with(nf.as_str())
+                        && norm_db[wi].as_bytes().get(nf.len()) == Some(&b' ')
+                    {
+                        acc = nf.clone();
+                        run_start = Some(bi);
+                    }
+                    // else: leave None as genuine chrome, stay on the same wi.
+                }
+            }
         }
     }
 
@@ -377,6 +504,82 @@ pub fn build_line_map(file_lines: &[String], work_lines: &[Line], is_prose: bool
         chapter_breaks,
         section_starts,
     }
+}
+
+/// When one buffer line `nf` (normalized) covers several consecutive DB rows
+/// (a TEI <head> merged what lit.db keeps as separate title rows), peel each row
+/// that is a successive leading prefix of `nf`. Accept ONLY if >= 2 rows are
+/// consumed AND they exactly cover the whole line. On accept: set
+/// work_to_buffer[w]=bi for each consumed row, advance *wi, add to *matched,
+/// return true. On reject: roll back fully (mutate locals, commit on accept).
+fn consume_merged_rows(
+    nf: &str,
+    norm_db: &[String],
+    wi: &mut usize,
+    work_to_buffer: &mut [usize],
+    matched: &mut usize,
+    bi: usize,
+) -> bool {
+    let mut rest: &str = nf;
+    let mut cur = *wi;
+    let mut consumed: Vec<usize> = Vec::new();
+    while cur < norm_db.len() && !norm_db[cur].is_empty() {
+        let row = norm_db[cur].as_str();
+        if rest == row {
+            consumed.push(cur);
+            cur += 1;
+            rest = "";
+            break;
+        } else if let Some(tail) = rest.strip_prefix(row) {
+            let tail = tail.strip_prefix(' ').unwrap_or(tail);
+            consumed.push(cur);
+            cur += 1;
+            rest = tail;
+        } else {
+            break;
+        }
+    }
+    if consumed.len() >= 2 && rest.is_empty() {
+        for w in &consumed {
+            work_to_buffer[*w] = bi;
+        }
+        *matched += consumed.len();
+        *wi = cur;
+        true
+    } else {
+        false
+    }
+}
+
+/// Maximum number of consecutive unmatchable DB rows the accumulator will skip
+/// when re-syncing a buffer line onto a later row. Keeps the skip local so a
+/// genuinely-unmatched buffer line (chrome) does not chew through real rows.
+const ACC_SKIP_WINDOW: usize = 8;
+
+/// When the current DB row at `wi` cannot be matched or prefix-extended by the
+/// buffer line `nf` (e.g. it is a head/reference row the .txt merged away), look
+/// ahead up to `ACC_SKIP_WINDOW` non-empty rows for the first row that `nf`
+/// either equals or begins (`row.starts_with(nf + ' ')`). Returns that row index
+/// so the caller can advance past the intervening unmatchable rows. Returns
+/// `None` when no nearby row resyncs (the line is genuine buffer chrome).
+fn find_skip_target(nf: &str, norm_db: &[String], wi: usize, n_work: usize) -> Option<usize> {
+    let mut seen = 0usize;
+    let mut cur = wi + 1; // wi itself already failed
+    while cur < n_work && seen < ACC_SKIP_WINDOW {
+        let row = norm_db[cur].as_str();
+        if row.is_empty() {
+            cur += 1;
+            continue;
+        }
+        if row == nf
+            || (row.starts_with(nf) && row.as_bytes().get(nf.len()) == Some(&b' '))
+        {
+            return Some(cur);
+        }
+        seen += 1;
+        cur += 1;
+    }
+    None
 }
 
 /// Compute the authoritative scene/section-boundary bitmap from the DB's
@@ -1421,6 +1624,149 @@ mod tests {
         assert!(map.dialogue_buffer_lines.contains(&1));
         assert!(map.dialogue_buffer_lines.contains(&2));
         assert!(map.dialogue_buffer_lines.contains(&3));
+    }
+
+    // Helper for ParagraphAccumulate tests: builds a Line with explicit
+    // (div1,div2,line_in_div) and `normalized` derived via the real normalize().
+    // Named distinctly from the existing 4-arg `make_line` to avoid a signature
+    // clash.
+    fn make_acc_line(id: i64, text: &str, div1: i64, div2: i64, line_in_div: i64) -> Line {
+        Line {
+            id,
+            citation: format!("T.{}.{}.{}", div1, div2, line_in_div),
+            is_dialogue: true,
+            text: text.to_string(),
+            normalized: normalize(text),
+            speaker: None,
+            timestamp: None,
+            div1,
+            div2,
+            line_in_div,
+            is_chapter: false,
+            is_spoken: None,
+        }
+    }
+
+    #[test]
+    fn test_build_line_map_accumulates_sentences_into_paragraph_row() {
+        let work_lines = vec![
+            make_acc_line(10, "Lord have mercy upon us. Christ have mercy upon us.", 0, 0, 1),
+        ];
+        let file_lines = vec![
+            "Lord have mercy upon us.".to_string(),
+            "Christ have mercy upon us.".to_string(),
+        ];
+        let map = build_line_map_mode(&file_lines, &work_lines, false, MatchMode::ParagraphAccumulate);
+        assert_eq!(map.buffer_to_work, vec![Some(0), Some(0)]);
+        assert_eq!(map.work_to_buffer[0], 0);
+    }
+
+    #[test]
+    fn test_build_line_map_accumulate_skips_chrome_between_rows() {
+        let work_lines = vec![
+            make_acc_line(10, "First prayer here.", 0, 0, 1),
+            make_acc_line(11, "Second prayer here.", 0, 0, 2),
+        ];
+        let file_lines = vec![
+            "First prayer here.".to_string(),
+            "        A Centered Head".to_string(),
+            "Second prayer here.".to_string(),
+        ];
+        let map = build_line_map_mode(&file_lines, &work_lines, false, MatchMode::ParagraphAccumulate);
+        assert_eq!(map.buffer_to_work, vec![Some(0), None, Some(1)]);
+    }
+
+    #[test]
+    fn test_build_line_map_accumulate_merged_head_covers_two_rows() {
+        // lit.db keeps a split title as TWO rows; the TEI <head> merges them into ONE
+        // .txt line. The merged line maps to the first row; the matcher advances past
+        // BOTH so the following prayer maps. work_to_buffer for both title rows = the
+        // merged buffer line.
+        let work_lines = vec![
+            make_acc_line(10, "The Order for Morning Prayer,", 1, 0, 1),
+            make_acc_line(11, "Daily Throughout the Year.", 1, 0, 2),
+            make_acc_line(12, "O Lord, open thou our lips.", 1, 0, 3),
+        ];
+        let file_lines = vec![
+            "      The Order for Morning Prayer, Daily Throughout the Year".to_string(),
+            "O Lord, open thou our lips.".to_string(),
+        ];
+        let map = build_line_map_mode(&file_lines, &work_lines, false, MatchMode::ParagraphAccumulate);
+        assert_eq!(map.buffer_to_work, vec![Some(0), Some(2)]);
+        assert_eq!(map.work_to_buffer[0], 0);
+        assert_eq!(map.work_to_buffer[1], 0);
+        assert_eq!(map.work_to_buffer[2], 1);
+    }
+
+    #[test]
+    fn test_build_line_map_accumulate_skips_unmatchable_head_row() {
+        // The Benedictus stall shape: lit.db keeps a scripture-reference head row
+        // ("St. Luke i. 68.") that the .txt merges into the canticle title line
+        // ("Benedictus. St. Luke i. 68.") — so the reference row matches NO buffer
+        // line. Without find_skip_target the accumulator parks on that row forever
+        // and every following verse desyncs. The matcher must skip the unmatchable
+        // head and resume on the next verse.
+        let work_lines = vec![
+            make_acc_line(10, "St. Luke i. 68.", 4, 0, 1),       // head, no buffer line
+            make_acc_line(11, "Blessed be the Lord God of Israel.", 4, 0, 2),
+            make_acc_line(12, "And hath raised up a mighty salvation.", 4, 0, 3),
+        ];
+        let file_lines = vec![
+            "                Benedictus. St. Luke i. 68.".to_string(), // merged head (chrome)
+            "Blessed be the Lord God of Israel.".to_string(),
+            "And hath raised up a mighty salvation.".to_string(),
+        ];
+        let map = build_line_map_mode(&file_lines, &work_lines, false, MatchMode::ParagraphAccumulate);
+        // The merged head line is genuine chrome (matches neither the head row nor
+        // a later verse), so it stays None — but the verses still map because the
+        // matcher skipped the unmatchable head row 0.
+        assert_eq!(map.buffer_to_work, vec![None, Some(1), Some(2)]);
+        assert_eq!(map.work_to_buffer[1], 1);
+        assert_eq!(map.work_to_buffer[2], 2);
+    }
+
+    #[test]
+    fn test_build_line_map_accumulate_mid_run_abandons_partial_then_resyncs() {
+        // A partial run that fails to complete must be abandoned (its lines stay
+        // None) and THIS line retried fresh. Here the first buffer line is a
+        // prefix of row 0's text, so a run starts — but the second buffer line is
+        // unrelated chrome that neither completes row 0 nor continues it. The run
+        // is abandoned; the chrome is then matched fresh against row 0... which it
+        // is not, so it stays None and wi holds. The third line completes row 0's
+        // real text on its own; the fourth maps row 1.
+        let work_lines = vec![
+            make_acc_line(10, "Glory be to the Father.", 0, 0, 1),
+            make_acc_line(11, "As it was in the beginning.", 0, 0, 2),
+        ];
+        let file_lines = vec![
+            "Glory be to".to_string(),            // 0 prefix of row 0 -> starts a run
+            "        A Rubric Interrupts".to_string(), // 1 chrome -> abandon run, stays None
+            "Glory be to the Father.".to_string(),// 2 completes row 0 fresh
+            "As it was in the beginning.".to_string(), // 3 row 1
+        ];
+        let map = build_line_map_mode(&file_lines, &work_lines, false, MatchMode::ParagraphAccumulate);
+        // Abandoned partial-run line (0) and the interrupting chrome (1) stay None;
+        // the matcher resyncs and maps row 0 at line 2, row 1 at line 3.
+        assert_eq!(map.buffer_to_work, vec![None, None, Some(0), Some(1)]);
+        assert_eq!(map.work_to_buffer[0], 2);
+        assert_eq!(map.work_to_buffer[1], 3);
+    }
+
+    #[test]
+    #[ignore] // needs ~/utono/litdb/data/lit.db + the regenerated .txt on disk
+    fn bcp1662_accumulate_maps_most_rows() {
+        let conn = crate::db::queries::open_db().expect("open lit.db");
+        let work = crate::db::queries::load_work(&conn, "BCP1662").expect("load BCP1662");
+        let path = work.text_file.clone().expect("BCP1662 has a text_file");
+        let contents = std::fs::read_to_string(&path).expect("read .txt");
+        let file_lines: Vec<String> = contents.lines().map(String::from).collect();
+        let map = build_line_map_mode(&file_lines, &work.lines, false, MatchMode::ParagraphAccumulate);
+        let matched = (0..work.lines.len())
+            .filter(|wi| map.buffer_to_work.iter().any(|o| *o == Some(*wi)))
+            .count();
+        let pct = 100.0 * matched as f64 / work.lines.len() as f64;
+        eprintln!("BCP1662 accumulate: {}/{} rows matched ({:.1}%)", matched, work.lines.len(), pct);
+        assert!(pct >= 95.0, "only {:.1}% matched (want >= 95%)", pct);
     }
 
     #[test]
