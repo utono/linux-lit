@@ -3442,7 +3442,11 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
         return;
     }
 
-    // BCP works are loaded straight from the DB (no text_file). Split body
+    // Fallback for BCP works that have NO text_file yet (1549/1559/1559M/…):
+    // load straight from the DB. (A BCP work WITH a text_file already returned
+    // above through the generic prose path — prepare_text_for_display keys on
+    // work.text_file and text-matches the TEI-rendered .txt back to the DB rows,
+    // so the matins layout authored in the .txt is shown verbatim.) Split body
     // prayers one sentence per buffer line for the airy, separated layout, and
     // build a LineMap so every sentence sub-line still maps to its one DB row
     // (timestamps / sync / u-. / concordance key off work_line_for_buffer, which
@@ -3569,12 +3573,17 @@ fn apply_stanza_number_centering(state: &AppState) {
 pub fn apply_dialogue_formatting(state: &mut AppState) {
     use crate::db::line_types;
 
-    // BCP works get liturgical typography instead of play dialogue formatting.
-    if state
-        .current_work
-        .as_ref()
-        .is_some_and(|w| line_types::is_bcp_work(&w.abbrev))
-    {
+    // BCP works that are loaded straight from the DB (no text_file) get
+    // liturgical typography instead of play dialogue formatting:
+    // apply_bcp_formatting styles the one-sentence-per-line DB buffer (centered
+    // headings, indented rubrics, body gaps). When a BCP work has a text_file,
+    // the TEI-rendered .txt already bakes that layout in literally (space
+    // centering, 4-space rubric indent, inline `Priest.`/`Answer.` speakers),
+    // so it renders through the generic prose path below — applying
+    // apply_bcp_formatting there would double up the gaps/centering.
+    if state.current_work.as_ref().is_some_and(|w| {
+        line_types::is_bcp_work(&w.abbrev) && w.text_file.is_none()
+    }) {
         apply_bcp_formatting(state);
         return;
     }

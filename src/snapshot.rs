@@ -10,9 +10,13 @@ use crate::text_file_map::LineMap;
 // values for Son. The serialized shape is unchanged, but stale snapshots hold
 // the old (wrong) bitmap; the version bump forces a rebuild.
 //
-// NB: BCP works are loaded straight from the DB (text_file is NULL) and never
-// hit the snapshot cache, so the sentence-per-line split needs no version bump —
-// it has no cached representation to invalidate.
+// NB: a BCP work WITH a text_file (e.g. BCP1662, the TEI-rendered .txt) renders
+// through the generic prose text_file path and IS snapshot-cached like any other
+// text_file work, keyed on its .txt path + mtime — so a change to how that .txt
+// is built/cleaned would need a version bump like any other. A BCP work with NO
+// text_file (1549/1559/1559M/…) still loads straight from the DB (the
+// sentence-per-line split in display_work) and never hits this cache, so that
+// split needs no version bump — it has no cached representation to invalidate.
 pub const SNAPSHOT_VERSION: u32 = 5;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
