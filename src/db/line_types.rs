@@ -209,6 +209,31 @@ pub fn strip_bcp_speaker_marker(text: &str) -> &str {
     t.strip_prefix(BCP_SPEAKER_MARKER).unwrap_or(text)
 }
 
+/// Inline marker the BCP TEI pipeline wraps around a small-caps span
+/// (`^Oure^ father`). Matches `tei_to_rows.SMALLCAPS_MARK` / `tei_to_text`. The
+/// reader renders the marked span in small-caps and deletes the carets for
+/// display; `^` normalizes away, so a marked line still text-matches its row.
+pub const BCP_SMALLCAPS_MARK: char = '^';
+
+/// CHAR-offset spans (start, end) of `^...^`-marked small-caps runs in `line`,
+/// EXCLUDING the carets — i.e. the offsets are into the line as it reads with the
+/// carets still present, so a caller stripping carets bottom-up (highest offset
+/// first) can both delete the markers and tag the inner span. Returns an empty
+/// vec when the line has no marked spans. Unbalanced carets are ignored.
+pub fn bcp_smallcaps_spans(line: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut open: Option<usize> = None; // char index of an open caret
+    for (ci, c) in line.chars().enumerate() {
+        if c == BCP_SMALLCAPS_MARK {
+            match open.take() {
+                None => open = Some(ci),
+                Some(start) => spans.push((start, ci)), // (open caret, close caret)
+            }
+        }
+    }
+    spans
+}
+
 /// Split a BCP body prayer into one string per sentence, for sentence-per-line
 /// display. Breaks at sentence-ending periods only; colons and semicolons (used
 /// in BCP as internal list separators) stay inline. Returns the input as a
@@ -346,6 +371,11 @@ fn next_word_after(chars: &[char], from: usize) -> String {
 /// followed by lowercase, nothing matches. Trailing all-caps divine names mid
 /// run (e.g. "O LORD our heavenly father") are picked up by `divine_name_spans`
 /// instead, so this only spans the very first emphatic word.
+///
+/// Superseded by `bcp_smallcaps_spans` (the `^...^` marker carries the exact
+/// spans from the TEI); retained — with its tests — for any all-caps-opener
+/// source that lacks the marker.
+#[allow(dead_code)]
 pub fn bcp_opening_smallcaps_span(line: &str) -> Option<(usize, usize)> {
     let mut chars = line.char_indices().peekable();
     // Skip leading whitespace.
@@ -686,6 +716,21 @@ mod tests {
         assert!(!is_bcp_body("## THE SUPPER")); // heading
         assert!(!is_bcp_body("[The Priest shall say.]")); // rubric
         assert!(!is_bcp_body("   ")); // blank
+    }
+
+    #[test]
+    fn test_bcp_smallcaps_spans() {
+        // (open_caret, close_caret) char offsets, carets included.
+        assert_eq!(bcp_smallcaps_spans("^Oure^ father."), vec![(0, 5)]);
+        // Two spans on one line (opener + a divine name).
+        assert_eq!(
+            bcp_smallcaps_spans("^O God^, ^Lord^ of all"),
+            vec![(0, 6), (9, 14)]
+        );
+        // No carets -> no spans.
+        assert_eq!(bcp_smallcaps_spans("Our father, which art"), vec![]);
+        // Unbalanced trailing caret is ignored.
+        assert_eq!(bcp_smallcaps_spans("^Oure father"), vec![]);
     }
 
     #[test]

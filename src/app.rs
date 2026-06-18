@@ -3954,6 +3954,48 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
         s_end.forward_char();
         state.buffer.delete(&mut s, &mut s_end);
     }
+
+    // Small-caps spans: the TEI pipeline wraps `<hi rend="sc">` runs in `^...^`
+    // (BCP_SMALLCAPS_MARK). Render each marked span in small-caps and delete the
+    // carets for display. Per line, process spans highest-offset-first so a
+    // deletion never shifts an earlier span's offsets; the rubric strip above
+    // already ran, so the carets sit at stable positions in the cleaned text.
+    for i in 0..line_count {
+        let Some(line_start) = state.buffer.iter_at_line(i as i32) else { continue };
+        let line_end = if i + 1 < line_count {
+            state.buffer.iter_at_line((i + 1) as i32).unwrap_or_else(|| state.buffer.end_iter())
+        } else {
+            state.buffer.end_iter()
+        };
+        let text = state.buffer.text(&line_start, &line_end, false);
+        let text = text.trim_end_matches('\n').to_string();
+        let spans = line_types::bcp_smallcaps_spans(&text);
+        // (open_caret_char, close_caret_char) offsets in `text`. Apply from the
+        // last span to the first so earlier offsets stay valid after deletes.
+        for &(open_c, close_c) in spans.iter().rev() {
+            let base = state.buffer.iter_at_line(i as i32).unwrap();
+            // Delete the close caret first (higher offset).
+            let mut ce = base;
+            ce.forward_chars(close_c as i32);
+            let mut ce_end = ce;
+            ce_end.forward_char();
+            state.buffer.delete(&mut ce, &mut ce_end);
+            // Delete the open caret.
+            let mut oc = base;
+            oc.forward_chars(open_c as i32);
+            let mut oc_end = oc;
+            oc_end.forward_char();
+            state.buffer.delete(&mut oc, &mut oc_end);
+            // Tag the inner span (now between former open and close positions,
+            // shifted left by one after deleting the open caret).
+            let mut span_start = base;
+            span_start.forward_chars(open_c as i32);
+            let mut span_end = base;
+            span_end.forward_chars((close_c - 1) as i32);
+            state.buffer.apply_tag(&opening_tag, &span_start, &span_end);
+        }
+    }
+
     for i in 0..line_count {
         let Some(line_start) = state.buffer.iter_at_line(i as i32) else { continue };
         let line_end = if i + 1 < line_count {
@@ -3990,18 +4032,9 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
             // A body prayer/petition — one sentence per line. Block-space above
             // every sentence line so prayers and their sentences read airily.
             state.buffer.apply_tag(&body_tag, &line_start, &line_end);
-            // Opening-word small-caps (LYGHTEN/WHOSOEVER/ALMIGHTY), layered over
-            // the body tag. Only fires on a prayer's first sentence line, whose
-            // first word is the emphatic all-caps opener; continuation sentences
-            // start title-case ("And...", "Grant...") so the span finds nothing.
-            // Byte span -> char span, same idiom as divine names.
-            if let Some((s, e)) = line_types::bcp_opening_smallcaps_span(&text) {
-                let Some(mut span_start) = state.buffer.iter_at_line(i as i32) else { continue };
-                span_start.forward_chars(char_offset(&text, s) as i32);
-                let mut span_end = span_start;
-                span_end.forward_chars((char_offset(&text, e) - char_offset(&text, s)) as i32);
-                state.buffer.apply_tag(&opening_tag, &span_start, &span_end);
-            }
+            // Opening-word small-caps is applied by the `^...^` marker pre-pass
+            // above (the TEI carries the exact small-caps spans), not re-derived
+            // from text here.
         }
         // Divine-name small-caps applies on ANY non-blank line (headings,
         // rubrics, body), layered over the line tag above.
