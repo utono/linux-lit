@@ -1175,13 +1175,33 @@ fn handle_page_calibration_key(
             {
                 let mut s = state.borrow_mut();
                 let n_lines = s.buffer.line_count().max(1) as usize;
+                // Step to the next/previous buffer line that HAS a work-line
+                // mapping, skipping chrome/blank/unmapped rows. This keeps the
+                // cursor on a real line so Enter can always record a
+                // line_mapping.id and the caption shows actual text (not
+                // "(cursor on an unmapped line)").
                 let cur = s.current_line;
-                let next = if key_name == "j" {
-                    (cur + 1).min(n_lines - 1)
-                } else {
-                    cur.saturating_sub(1)
-                };
-                if next != cur {
+                let forward = key_name == "j";
+                let mut probe = cur;
+                let mut landed = None;
+                loop {
+                    if forward {
+                        if probe + 1 >= n_lines {
+                            break;
+                        }
+                        probe += 1;
+                    } else {
+                        if probe == 0 {
+                            break;
+                        }
+                        probe -= 1;
+                    }
+                    if s.work_line_for_buffer(probe).is_some() {
+                        landed = Some(probe);
+                        break;
+                    }
+                }
+                if let Some(next) = landed {
                     s.current_line = next;
                     crate::input::highlight::update_highlight_and_center(&mut s);
                 }

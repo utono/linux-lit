@@ -5626,6 +5626,20 @@ pub fn enter_page_calibration(state: &std::rc::Rc<std::cell::RefCell<AppState>>)
         s.current_page_order = None;
         s.column_divider.set_visible(false);
         s.right_scrolled_overlay.set_visible(false);
+        // If the cursor is parked on an unmapped buffer line (chrome/blank), snap
+        // it forward to the first mapped line so the caption shows real text and
+        // Enter can record a line_mapping.id from the start.
+        if s.work_line_for_buffer(s.current_line).is_none() {
+            let n_lines = s.buffer.line_count().max(1) as usize;
+            let start = s.current_line;
+            for bl in start..n_lines {
+                if s.work_line_for_buffer(bl).is_some() {
+                    s.current_line = bl;
+                    crate::input::highlight::update_highlight_and_center(&mut s);
+                    break;
+                }
+            }
+        }
         s.input_mode = InputMode::PageCalibration;
     }
     calibration_show_page(state);
