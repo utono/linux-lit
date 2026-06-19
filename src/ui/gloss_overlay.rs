@@ -940,7 +940,11 @@ impl GlossOverlay {
         *self.line_numbers.borrow_mut() = Vec::new();
         *self.echo_lines.borrow_mut() = Vec::new();
 
-        self.gloss_view.set_left_margin(left);
+        // Indent the body 60px past the bar so the accent bar has the same
+        // breathing room to its right as the gloss overlay (whose prose tags sit
+        // at `bar_left + 60`). The bar stays at `left` (see `bar_x` below); only
+        // the prose shifts right.
+        self.gloss_view.set_left_margin(left + 60);
         self.gloss_view.set_right_margin(left);
         // Tighten the gap between the title rule and the first synopsis line by
         // ~one line (was 32) — the title's own margin/padding-bottom already
