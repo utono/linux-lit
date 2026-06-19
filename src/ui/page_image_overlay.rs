@@ -64,17 +64,29 @@ impl PageImageOverlay {
         picture.set_margin_start(24);
         picture.set_margin_end(24);
 
-        // Calibration caption (hidden by default). Sits above the image.
+        // Calibration caption FLOATS over the top of the image (an overlay panel,
+        // not a sibling in the layout). This keeps the image's position/size
+        // IDENTICAL whether the caption is shown (calibration) or hidden (plain
+        // Ctrl+i toggle) — so toggling between the two modes doesn't reposition
+        // the leaf. The caption sits at the top with its own opaque pill bg.
         let caption = Label::new(None);
         caption.set_halign(Align::Center);
-        caption.set_margin_top(10);
-        caption.set_margin_bottom(2);
+        caption.set_valign(Align::Start);
+        caption.set_margin_top(6);
         caption.set_wrap(true);
         caption.add_css_class("page-image-caption");
         caption.set_visible(false);
 
-        container.append(&caption);
-        container.append(&picture);
+        // Inner overlay: Picture fills the card; caption floats on top.
+        let inner = Overlay::new();
+        inner.set_hexpand(true);
+        inner.set_vexpand(true);
+        inner.set_child(Some(&picture));
+        inner.add_overlay(&caption);
+        inner.set_measure_overlay(&caption, false);
+        inner.set_clip_overlay(&caption, true);
+
+        container.append(&inner);
 
         PageImageOverlay {
             container,
