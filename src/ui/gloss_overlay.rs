@@ -1252,8 +1252,16 @@ impl GlossOverlay {
             return;
         }
         let cur = self.cursor_block.get().min(len - 1) as i64;
-        let next = (cur + delta as i64).clamp(0, len as i64 - 1) as usize;
-        self.cursor_block.set(next);
+        let next = (cur + delta as i64).clamp(0, len as i64 - 1);
+        // No movement (already at the first/last block): do nothing. Re-running
+        // scroll_cursor_into_view here would re-snap the viewport and recompute
+        // the bottom clip every press, which reads as a visible "jiggle" when j
+        // is held at the bottom (over-tall last block) — the cursor can't advance
+        // but the scroll target keeps nudging.
+        if next == cur {
+            return;
+        }
+        self.cursor_block.set(next as usize);
         self.mark_cursor_block();
         self.scroll_cursor_into_view();
     }
