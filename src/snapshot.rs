@@ -5,6 +5,11 @@ use serde::{Deserialize, Serialize};
 use crate::db::models::Work;
 use crate::text_file_map::LineMap;
 
+// Bumped to 8: text_file_map::normalize now strips an unmatched trailing `]`
+// (the tail of a DB-split multi-line stage direction, e.g. "with Hume, aloft.]")
+// to empty, so build_line_map matches more lines than a v7 snapshot cached. The
+// cached buffer_to_work differs; force a rebuild.
+//
 // Bumped to 7: WorkSnapshot gained a `db_fingerprint` field (a hash of the DB
 // lines the line_map was built against). The serialized shape changed, so old
 // snapshots can't be deserialized; the bump documents the break and forces a
@@ -27,7 +32,7 @@ use crate::text_file_map::LineMap;
 // text_file (1549/1559/1559M/…) still loads straight from the DB (the
 // sentence-per-line split in display_work) and never hits this cache, so that
 // split needs no version bump — it has no cached representation to invalidate.
-pub const SNAPSHOT_VERSION: u32 = 7;
+pub const SNAPSHOT_VERSION: u32 = 8;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct WorkSnapshot {

@@ -83,6 +83,19 @@ pub fn normalize(s: &str) -> String {
                 depth -= 1;
                 continue;
             }
+            // A `]` with no matching `[` on this line closes a bracket opened on a
+            // PREVIOUS line — this line is the tail of a multi-line stage direction
+            // (the DB splits such directions across line_mapping rows, e.g.
+            // "with Hume, aloft.]"). Everything before it is bracket content, so
+            // discard what we've emitted so far. Without this the tail leaks
+            // through as spurious dialogue ("with hume aloft") and breaks the
+            // line-map confirmation check against the folded .txt (which renders
+            // the whole direction as one bracketed, empty-normalizing line).
+            ']' => {
+                result.clear();
+                last_was_space = true;
+                continue;
+            }
             _ if depth > 0 => continue,
             _ => {}
         }
@@ -1059,6 +1072,23 @@ mod tests {
         );
         assert_eq!(normalize("circumscribèd"), "circumscribed");
         assert_eq!(normalize("damnèd"), "damned");
+    }
+
+    #[test]
+    fn normalize_strips_unmatched_closing_bracket_tail() {
+        // The DB splits a multi-line stage direction across rows; the tail row
+        // ends with `]` but has no `[` (it opened on a prior row). That tail is
+        // bracket content and must normalize to empty so it matches the folded
+        // .txt (whole direction = one empty-normalizing line). Regression for the
+        // 2H6-Amb `read you; and let us to our work.` u-bind failure.
+        assert_eq!(normalize("with Hume, aloft.]"), "");
+        assert_eq!(normalize("then the Spirit riseth.]"), "");
+        assert_eq!(normalize("Buckingham, on the other.]"), "");
+        // A complete inline bracket on one line still strips only the bracketed
+        // span, keeping the surrounding dialogue.
+        assert_eq!(normalize("He said [aside] no more."), "he said no more");
+        // Text AFTER an unmatched close (rare) is kept.
+        assert_eq!(normalize("aloft.] Well said"), "well said");
     }
 
     #[test]
