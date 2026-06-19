@@ -12,7 +12,7 @@
 //! collapses the reader layout; see the gloss/synopsis overlays).
 
 use gtk4::prelude::*;
-use gtk4::{Align, Overlay, Picture};
+use gtk4::{Align, Label, Overlay, Picture};
 
 pub struct PageImageOverlay {
     /// The panel root: a centered, fixed-size column holding the picture, sized
@@ -20,6 +20,9 @@ pub struct PageImageOverlay {
     /// overlay via `add_overlay`.
     pub container: gtk4::Box,
     picture: Picture,
+    /// Caption banner shown above the image during calibration (page N/M + the
+    /// cursor line text). Hidden in normal image-view mode.
+    caption: Label,
     /// Path currently loaded into the picture, so repeated shows of the same
     /// page don't reload the file.
     current_path: std::cell::RefCell<Option<String>>,
@@ -61,12 +64,35 @@ impl PageImageOverlay {
         picture.set_margin_start(24);
         picture.set_margin_end(24);
 
+        // Calibration caption (hidden by default). Sits above the image.
+        let caption = Label::new(None);
+        caption.set_halign(Align::Center);
+        caption.set_margin_top(10);
+        caption.set_margin_bottom(2);
+        caption.set_wrap(true);
+        caption.add_css_class("page-image-caption");
+        caption.set_visible(false);
+
+        container.append(&caption);
         container.append(&picture);
 
         PageImageOverlay {
             container,
             picture,
+            caption,
             current_path: std::cell::RefCell::new(None),
+        }
+    }
+
+    /// Show/update the calibration caption banner above the image. Pass None to
+    /// hide it (normal image-view mode).
+    pub fn set_caption(&self, text: Option<&str>) {
+        match text {
+            Some(t) => {
+                self.caption.set_text(t);
+                self.caption.set_visible(true);
+            }
+            None => self.caption.set_visible(false),
         }
     }
 

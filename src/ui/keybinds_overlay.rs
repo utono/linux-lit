@@ -70,7 +70,7 @@ const HOME_ROW: &[KeyDef] = &[
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
     key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echo turns"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echoes")]),
     key("u", "U", "start time", "U: undo ts", &[("M-u", "set end time")]),
-    key("i", "I", "2-col translation", "", &[("M-i", "scansion"), ("C-M-i", "inline translation"), ("C-i", "page image")]),
+    key("i", "I", "2-col translation", "", &[("M-i", "scansion"), ("C-M-i", "inline translation"), ("C-i", "page image"), ("S-C-i", "calibrate pages")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
     key("h", "H", "synopsis", "H: auto vocab", &[("C-h", "synopsis side")]),
     key("t", "T", "", "", &[("S-C-t", "nav test")]),
@@ -535,6 +535,11 @@ column. -> app::show_translation_overlay — src/app.rs",
 page-scan image (Ctrl+i) for the cursor's current page (BCP1549 etc.). The shown \
 leaf follows the cursor, so it tracks media playback. No-op for works without \
 page images. -> app::toggle_image_view — src/app.rs",
+        "calibrate pages" => "Enter page-image calibration (Ctrl+Shift+I): the \
+card shows each page scan with a caption; move the cursor (j/k) to the line that \
+begins the page and press Enter to record it and advance. n/p step pages, Esc \
+saves. Fills page_images start/end ranges so the leaf tracks the cursor. \
+-> app::enter_page_calibration — src/app.rs",
         "dim tog" => "Toggle dimming of lines outside the current A–B sync range \
 and refresh the highlight. -> ToggleDim arm (inline) — src/input/keymap.rs",
         "save+quit" => "Save the current reading position, tell MPV to quit, and \

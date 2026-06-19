@@ -124,6 +124,7 @@ pub fn handle_key(
             crate::app::InputMode::EchoKeybindsOverlay => handle_echo_keybinds_key(state, key_name, is_ctrl),
             crate::app::InputMode::ActionPopup => handle_action_popup_key(state, key_name, is_ctrl, tokio_handle),
             crate::app::InputMode::Visual => handle_visual_key(state, key_state, key_name, tokio_handle),
+            crate::app::InputMode::PageCalibration => handle_page_calibration_key(state, key_name),
             crate::app::InputMode::Reader => unreachable!(),
         };
     }
@@ -1139,6 +1140,46 @@ fn handle_synopsis_overlay_key(
     }
 }
 
+/// Page-image calibration keys: j/k move the cursor one line, Enter marks the
+/// cursor line as the current page's start (+advance), n/p step pages without
+/// marking, Esc finishes (recompute ranges + save). Every key refreshes the
+/// caption so the displayed "start line" tracks the cursor.
+fn handle_page_calibration_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+) -> bool {
+    match key_name {
+        "Return" => {
+            crate::app::calibration_mark(state);
+        }
+        "Escape" => {
+            crate::app::exit_page_calibration(state, true);
+        }
+        "n" => crate::app::calibration_step_page(state, 1),
+        "p" => crate::app::calibration_step_page(state, -1),
+        "j" | "k" => {
+            {
+                let mut s = state.borrow_mut();
+                let n_lines = s.buffer.line_count().max(1) as usize;
+                let cur = s.current_line;
+                let next = if key_name == "j" {
+                    (cur + 1).min(n_lines - 1)
+                } else {
+                    cur.saturating_sub(1)
+                };
+                if next != cur {
+                    s.current_line = next;
+                    crate::input::highlight::update_highlight_and_center(&mut s);
+                }
+            }
+            // Refresh the caption to show the new cursor line as the start line.
+            crate::app::calibration_show_page(state);
+        }
+        _ => {}
+    }
+    true
+}
+
 fn handle_delete_confirm_key(
     state: &Rc<RefCell<AppState>>,
     key_name: &str,
@@ -1909,6 +1950,7 @@ fn dispatch_action(
         ShowSynopsisOverlay => crate::app::show_synopsis_overlay(state),
         ShowTranslationOverlay => crate::app::show_translation_overlay(state),
         ToggleImageView => crate::app::toggle_image_view(state),
+        EnterPageCalibration => crate::app::enter_page_calibration(state),
 
         // Authorship display
         ToggleAuthorship => {

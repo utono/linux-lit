@@ -119,6 +119,7 @@ pub enum Action {
 
     // Page-scan image view (toggle the card to the leaf PNG; BCP1549 etc.)
     ToggleImageView,
+    EnterPageCalibration,
 
     // Settings (in reader)
     AdjustFontSizeUp,
@@ -243,6 +244,7 @@ impl Action {
             | Action::ShowSynopsisOverlay
             | Action::ShowTranslationOverlay
             | Action::ToggleImageView
+            | Action::EnterPageCalibration
             | Action::OpenSettingsOverlay => Category::Display,
 
             // Selection
@@ -348,6 +350,7 @@ impl Action {
             Action::ShowSynopsisOverlay => "ShowSynopsisOverlay",
             Action::ShowTranslationOverlay => "ShowTranslationOverlay",
             Action::ToggleImageView => "ToggleImageView",
+            Action::EnterPageCalibration => "EnterPageCalibration",
             Action::AdjustFontSizeUp => "AdjustFontSizeUp",
             Action::AdjustFontSizeDown => "AdjustFontSizeDown",
             Action::ResetFontSize => "ResetFontSize",

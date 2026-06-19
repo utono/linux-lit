@@ -73,6 +73,10 @@ pub enum InputMode {
     ActionPopup,
     Visual,
     DeleteConfirm,
+    /// Manual page-image calibration: the card shows a page PNG and a readout of
+    /// the cursor line; Enter marks the cursor line as that page's start and
+    /// advances to the next page.
+    PageCalibration,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -262,6 +266,9 @@ pub struct AppState {
     /// `page_order` of the page currently loaded into the image overlay, so a
     /// cursor move that stays on the same page doesn't reload the PNG.
     pub current_page_order: Option<i64>,
+    /// Index into `page_images` of the page being calibrated (PageCalibration
+    /// mode). 0-based.
+    pub calibration_index: usize,
     pub tts: crate::tts::TtsPlayer,
     /// True while a Shift+Space batch synthesis is running, so a second press is
     /// a no-op rather than launching a concurrent batch.
@@ -1717,6 +1724,7 @@ pub fn build_window(
         image_dir: None,
         image_mode: false,
         current_page_order: None,
+        calibration_index: 0,
         tts: crate::tts::TtsPlayer::new(),
         translation_overlay,
         gloss_original_text: None,
@@ -5590,6 +5598,174 @@ pub fn refresh_page_image(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
     let (cw, ch) = overlay_card_size(&s);
     s.page_image_overlay.show(&path, cw, ch);
     s.current_page_order = Some(order);
+}
+
+// ---------------------------------------------------------------------------
+// Page-image calibration: manually mark which canonical line begins each page
+// scan. Card shows the page PNG + a caption (page N/M + cursor line text); the
+// user moves the cursor (j/k) to the page's first line and presses Enter to
+// record it and advance. Esc closes ranges + persists.
+// ---------------------------------------------------------------------------
+
+/// Enter calibration mode. Shows page 1 and the caption. No-op (toast) for works
+/// without page images.
+pub fn enter_page_calibration(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+    {
+        let mut s = state.borrow_mut();
+        if s.page_images.is_empty() {
+            s.chapter_toast.set_text("No page images to calibrate");
+            s.chapter_toast.set_visible(true);
+            let toast = s.chapter_toast.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+                toast.set_visible(false);
+            });
+            return;
+        }
+        s.image_mode = true;
+        s.calibration_index = 0;
+        s.current_page_order = None;
+        s.column_divider.set_visible(false);
+        s.right_scrolled_overlay.set_visible(false);
+        s.input_mode = InputMode::PageCalibration;
+    }
+    calibration_show_page(state);
+}
+
+/// Load the page at `calibration_index` into the overlay and update the caption.
+pub fn calibration_show_page(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    let idx = s.calibration_index.min(s.page_images.len().saturating_sub(1));
+    let total = s.page_images.len();
+    let (order, filename) = match s.page_images.get(idx) {
+        Some(p) => (p.page_order, p.image_path.clone()),
+        None => return,
+    };
+    let dir = match &s.image_dir {
+        Some(d) => d.clone(),
+        None => return,
+    };
+    let path = format!("{}/{}", dir.trim_end_matches('/'), filename);
+    // Caption: page position + the cursor line's text (what Enter will record).
+    let cursor_text = s
+        .line_mapping_id_for_buffer(s.current_line)
+        .and_then(|id| {
+            s.current_work
+                .as_ref()?
+                .lines
+                .iter()
+                .find(|l| l.id == id)
+                .map(|l| l.text.clone())
+        })
+        .unwrap_or_else(|| "(cursor on an unmapped line)".to_string());
+    let caption = format!(
+        "Calibrate {} ({}/{})  ·  Enter marks start  ·  start line: {}",
+        filename, idx + 1, total, cursor_text
+    );
+    let (cw, ch) = overlay_card_size(&s);
+    s.page_image_overlay.show(&path, cw, ch);
+    s.page_image_overlay.set_caption(Some(&caption));
+    s.current_page_order = Some(order);
+}
+
+/// Enter: record the cursor's line as the current page's start, then advance to
+/// the next page (or finish on the last page).
+pub fn calibration_mark(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+    let (abbrev, page_order, line_id, last_page) = {
+        let s = state.borrow();
+        let idx = s.calibration_index;
+        let line_id = match s.line_mapping_id_for_buffer(s.current_line) {
+            Some(id) => id,
+            None => {
+                drop(s);
+                let s = state.borrow();
+                s.chapter_toast.set_text("Cursor not on a mapped line — move it first");
+                s.chapter_toast.set_visible(true);
+                let toast = s.chapter_toast.clone();
+                glib::timeout_add_local_once(std::time::Duration::from_secs(2), move || {
+                    toast.set_visible(false);
+                });
+                return;
+            }
+        };
+        let (abbrev, page_order) = match (s.current_work.as_ref(), s.page_images.get(idx)) {
+            (Some(w), Some(p)) => (w.abbrev.clone(), p.page_order),
+            _ => return,
+        };
+        (abbrev, page_order, line_id, idx + 1 >= s.page_images.len())
+    };
+
+    // Persist the start + update the in-memory copy.
+    if let Ok(conn) = crate::db::queries::open_db_rw() {
+        let _ = crate::db::queries::save_page_image_start(&conn, &abbrev, page_order, line_id);
+    }
+    {
+        let mut s = state.borrow_mut();
+        let idx = s.calibration_index;
+        if let Some(p) = s.page_images.get_mut(idx) {
+            p.start_line_id = Some(line_id);
+        }
+        if last_page {
+            drop(s);
+            exit_page_calibration(state, true);
+            return;
+        }
+        s.calibration_index += 1;
+    }
+    calibration_show_page(state);
+}
+
+/// n/p: step to the next/previous page without marking (delta = +1 / -1).
+pub fn calibration_step_page(state: &std::rc::Rc<std::cell::RefCell<AppState>>, delta: i32) {
+    {
+        let mut s = state.borrow_mut();
+        let n = s.page_images.len() as i32;
+        if n == 0 {
+            return;
+        }
+        let cur = s.calibration_index as i32;
+        s.calibration_index = (cur + delta).clamp(0, n - 1) as usize;
+    }
+    calibration_show_page(state);
+}
+
+/// Esc: finish calibration. Recompute every page's end_line_id from the marked
+/// starts, persist, hide the overlay, and return to the reader.
+pub fn exit_page_calibration(state: &std::rc::Rc<std::cell::RefCell<AppState>>, save: bool) {
+    let (abbrev, ordered_ids) = {
+        let s = state.borrow();
+        let abbrev = s.current_work.as_ref().map(|w| w.abbrev.clone());
+        let ids: Vec<i64> = s
+            .current_work
+            .as_ref()
+            .map(|w| w.lines.iter().map(|l| l.id).collect())
+            .unwrap_or_default();
+        (abbrev, ids)
+    };
+    if save {
+        if let (Some(abbrev), Ok(mut conn)) = (abbrev.clone(), crate::db::queries::open_db_rw()) {
+            let _ = crate::db::queries::recompute_page_image_ends(&mut conn, &abbrev, &ordered_ids);
+        }
+        // Reload ranges so the live view reflects the calibration immediately.
+        if let (Some(abbrev), Ok(conn)) = (abbrev, crate::db::queries::open_db()) {
+            let mut s = state.borrow_mut();
+            s.page_images = crate::db::queries::load_page_images(&conn, &abbrev);
+        }
+    }
+    let mut s = state.borrow_mut();
+    s.image_mode = false;
+    s.current_page_order = None;
+    s.page_image_overlay.set_caption(None);
+    s.page_image_overlay.hide();
+    let two_col = s.column_count() == 2;
+    s.column_divider.set_visible(two_col);
+    s.right_scrolled_overlay.set_visible(two_col);
+    s.input_mode = InputMode::Reader;
+    s.chapter_toast.set_text("Calibration saved");
+    s.chapter_toast.set_visible(true);
+    let toast = s.chapter_toast.clone();
+    glib::timeout_add_local_once(std::time::Duration::from_secs(2), move || {
+        toast.set_visible(false);
+    });
 }
 
 pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {

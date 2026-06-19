@@ -391,6 +391,8 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .tiled {{ background-color: {bg}; }} \
          .page-turn-overlay {{ background-color: {bg}; border-radius: 12px; }} \
          .page-image-overlay {{ background-color: {bg}; border-radius: 12px; }} \
+         .page-image-caption {{ color: {fg}; font-size: 12px; opacity: 0.85; \
+           padding: 4px 12px; }} \
          .card-top {{ background-color: {bg}; border-radius: 12px 12px 0 0; }} \
          .card-middle {{ background-color: {bg}; border-radius: 0; }} \
          .card-bottom {{ background-color: {bg}; border-radius: 0 0 12px 12px; }} \

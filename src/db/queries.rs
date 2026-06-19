@@ -269,6 +269,72 @@ pub fn load_page_images(conn: &Connection, abbrev: &str) -> Vec<crate::db::model
     }
 }
 
+/// Set one page's `start_line_id` during calibration (rw connection). The
+/// `end_line_id` columns are derived separately by `recompute_page_image_ends`.
+pub fn save_page_image_start(
+    conn: &Connection,
+    abbrev: &str,
+    page_order: i64,
+    start_line_id: i64,
+) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "UPDATE page_images SET start_line_id = ?3 \
+         WHERE work_abbrev = ?1 AND page_order = ?2",
+        rusqlite::params![abbrev, page_order, start_line_id],
+    )?;
+    Ok(())
+}
+
+/// Recompute every page's `end_line_id` for `abbrev` from the calibrated
+/// `start_line_id` sequence: a page ends at the line-id just before the NEXT
+/// calibrated page's start; the last calibrated page ends at `last_line_id`
+/// (the work's final line). `ordered_line_ids` is the work's line_mapping ids in
+/// reading order (id ascending == reading order, since ids are assigned that
+/// way). Pages with a NULL start are left as-is (uncalibrated).
+pub fn recompute_page_image_ends(
+    conn: &mut Connection,
+    abbrev: &str,
+    ordered_line_ids: &[i64],
+) -> Result<(), rusqlite::Error> {
+    // Collect calibrated (page_order, start_line_id) in page order.
+    let starts: Vec<(i64, i64)> = {
+        let mut stmt = conn.prepare(
+            "SELECT page_order, start_line_id FROM page_images \
+             WHERE work_abbrev = ?1 AND start_line_id IS NOT NULL \
+             ORDER BY page_order",
+        )?;
+        let rows = stmt.query_map([abbrev], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+    if starts.is_empty() {
+        return Ok(());
+    }
+    let last_line_id = *ordered_line_ids.last().unwrap_or(&0);
+    let pos = |lid: i64| ordered_line_ids.iter().position(|&x| x == lid);
+
+    let tx = conn.transaction()?;
+    for w in 0..starts.len() {
+        let (page_order, _start) = starts[w];
+        let end_line_id = if w + 1 < starts.len() {
+            // Line just before the next calibrated page's start.
+            let next_start = starts[w + 1].1;
+            match pos(next_start) {
+                Some(p) if p > 0 => ordered_line_ids[p - 1],
+                _ => next_start, // next start is the first line; degenerate, keep it
+            }
+        } else {
+            last_line_id
+        };
+        tx.execute(
+            "UPDATE page_images SET end_line_id = ?3 \
+             WHERE work_abbrev = ?1 AND page_order = ?2",
+            rusqlite::params![abbrev, page_order, end_line_id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 /// Load translations for a work, keyed by line_mapping.id.
 ///
 /// For `-Amb` (Ambrose edition) works, translations are stored against the
