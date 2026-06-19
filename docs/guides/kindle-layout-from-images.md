@@ -202,6 +202,10 @@ Pipeline (`~/utono/ws-book-of-common-prayer-references/scripts/`):
 - `bcp_modernize.py` / `bcp_modern_table.py` / `verify_modern.py` /
   `bootstrap_modern_table.py` / `ingest_bcp_modern.py` — the deterministic
   modern-spelling pipeline + drift guard (read-aloud Step A, route 1).
+- `modern_spoken_txt.py` — lit.db rows → modern-spelling speakable `.txt` for
+  TTS (read-aloud Step B, route 1): modernize + drop rubrics/glosses/markers,
+  skip non-liturgical rites. Separate from `tei_to_text.py` (which renders the
+  *display* `.txt` with markers for the reader).
 
 Read-aloud / audio (lit.db + `~/utono/litdb/scripts/`):
 - `media_manager.py` — register an mp3 (`media_files`) + `work_media_associations`.
@@ -333,6 +337,22 @@ per modern canonical line, markers stripped (TTS should not speak `## ` / `[` /
 `@ `; for a *reading* you typically also skip rubric lines, or speak them in a
 quieter aside — decide per use). This is the text handed to ElevenLabs and stored
 as `media_files.source_text_path`.
+
+`scripts/modern_spoken_txt.py` (route 1, deterministic) implements exactly this:
+it reads a work's `line_mapping` rows, runs `bcp_modernize.modernize_line` on
+each, drops whole-row rubrics, strips short inline editorial glosses (keeping the
+long bracketed liturgical additions), removes the `## ` / `@ ` / `^` / `*`
+markers, and (default) skips the non-liturgical rites (front matter, calendar,
+articles, colophons). One line per spoken row, rites blank-line separated:
+
+```bash
+PYTHONPATH=. python scripts/modern_spoken_txt.py --abbrev BCP1549 \
+    --out ~/utono/literature/BCP/cummings-brian/1549/TEI/bcp-1549-modern-spoken.txt
+```
+
+`--all-rites` keeps the apparatus rites; `--show-kept-brackets` prints the
+substantive bracketed passages retained, for review. (For route 2, send the same
+rows to the Claude API instead of the table; the rest of Steps C–E is identical.)
 
 ### Step C — synthesize the mp3 with ElevenLabs (with timestamps)
 
