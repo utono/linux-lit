@@ -1006,6 +1006,23 @@ pub fn apply_card_sizing(
     );
 }
 
+/// Authoritative card size for the full-screen overlays (synopsis, gloss,
+/// translation). Mirrors the width `apply_card_sizing` requests for the reading
+/// card so the overlays match the card instead of inheriting `content_hbox`'s
+/// *allocated* width — which can exceed the card's `width_request` (a child's
+/// natural width can stretch the hbox), making the overlay span edge to edge.
+pub(crate) fn overlay_card_size(s: &AppState) -> (i32, i32) {
+    let ww = s.window.width().max(0);
+    let target = target_card_width(
+        ww,
+        s.config.column_width,
+        s.column_count(),
+        s.translations_visible,
+    );
+    let card_w = target.min(ww.max(1));
+    (card_w, s.content_hbox.height())
+}
+
 pub fn build_window(
     app: &gtk4::Application,
     works: Vec<WorkSummary>,
@@ -5474,8 +5491,7 @@ pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) 
         }
     };
 
-    let card_width = s.content_hbox.width();
-    let card_height = s.content_hbox.height();
+    let (card_width, card_height) = overlay_card_size(&s);
     let label = synopsis_label(&s, div1, div2);
     let root_color = s.theme.root_color.clone();
     s.gloss_overlay.show_synopsis(&label, &synopsis, Some(&root_color), card_width, card_height);
@@ -5567,8 +5583,7 @@ pub fn rebuild_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppSta
         |id| s.translations.get(&id).cloned(),
     );
 
-    let card_width = s.content_hbox.width();
-    let card_height = s.content_hbox.height();
+    let (card_width, card_height) = overlay_card_size(&s);
     let text_fg = s.theme.text_fg.clone();
     let dim_fg = s.theme.dim_fg.clone();
     let body_font_size = s.config.font_size as i32;
@@ -5683,8 +5698,7 @@ pub fn cycle_synopsis(state: &std::rc::Rc<std::cell::RefCell<AppState>>, delta: 
         None => return,
     };
     let label = synopsis_label(&s, div1, div2);
-    let card_width = s.content_hbox.width();
-    let card_height = s.content_hbox.height();
+    let (card_width, card_height) = overlay_card_size(&s);
     let root_color = s.theme.root_color.clone();
     s.gloss_overlay.show_synopsis(&label, &synopsis, Some(&root_color), card_width, card_height);
     s.synopsis_overlay_scene = (div1, div2);

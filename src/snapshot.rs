@@ -5,6 +5,11 @@ use serde::{Deserialize, Serialize};
 use crate::db::models::Work;
 use crate::text_file_map::LineMap;
 
+// Bumped to 7: WorkSnapshot gained a `db_fingerprint` field (a hash of the DB
+// lines the line_map was built against). The serialized shape changed, so old
+// snapshots can't be deserialized; the bump documents the break and forces a
+// clean rebuild that records the fingerprint going forward.
+//
 // Bumped to 6: BCP text_file works now render one sentence per line and map via
 // MatchMode::ParagraphAccumulate, so the cached buffer_to_work values differ from
 // any v5 snapshot. The serialized shape is unchanged; the bump forces a rebuild
@@ -22,7 +27,7 @@ use crate::text_file_map::LineMap;
 // text_file (1549/1559/1559M/…) still loads straight from the DB (the
 // sentence-per-line split in display_work) and never hits this cache, so that
 // split needs no version bump — it has no cached representation to invalidate.
-pub const SNAPSHOT_VERSION: u32 = 6;
+pub const SNAPSHOT_VERSION: u32 = 7;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct WorkSnapshot {
@@ -30,8 +35,46 @@ pub struct WorkSnapshot {
     pub abbrev: String,
     pub text_file_path: String,
     pub text_file_mtime: u64,
+    /// Fingerprint of the DB lines this snapshot's `line_map` was built against
+    /// (see `db_fingerprint`). The `.txt` mtime alone can't catch a lit.db
+    /// re-import/migration that changes line ids/text/structure without touching
+    /// the `.txt` — that leaves the cached `buffer_to_work` indices pointing at
+    /// the wrong (or no) DB rows, which broke `u`/`.` timestamping. This makes
+    /// such a DB change invalidate the snapshot.
+    #[serde(default)]
+    pub db_fingerprint: u64,
     pub filtered_contents: String,
     pub line_map: LineMap,
+}
+
+/// Stable 64-bit fingerprint of the DB lines that drive `build_line_map` and
+/// `build_section_starts`: line count plus an FNV-1a hash over each line's
+/// `(id, normalized, div1, div2, line_in_div)`. Independent of the `.txt` file,
+/// so a lit.db re-import/migration (new ids, changed text, re-segmented scenes)
+/// produces a different value even when the `.txt` mtime is unchanged.
+///
+/// FNV-1a (not `DefaultHasher`) is used deliberately: its output is fixed by the
+/// algorithm, so a value written by one build is comparable in any later build.
+pub fn db_fingerprint(work: &Work) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut h: u64 = FNV_OFFSET;
+    let mut feed = |bytes: &[u8]| {
+        for &b in bytes {
+            h ^= b as u64;
+            h = h.wrapping_mul(FNV_PRIME);
+        }
+    };
+    feed(&(work.lines.len() as u64).to_le_bytes());
+    for line in &work.lines {
+        feed(&line.id.to_le_bytes());
+        feed(line.normalized.as_bytes());
+        feed(&[0]); // field separator so concatenations can't collide
+        feed(&line.div1.to_le_bytes());
+        feed(&line.div2.to_le_bytes());
+        feed(&line.line_in_div.to_le_bytes());
+    }
+    h
 }
 
 /// Reasons a cached snapshot is invalid for the requested work.
@@ -42,6 +85,7 @@ pub enum InvalidationReason {
     PathMismatch,
     MtimeStale,
     VersionSkew,
+    DbChanged,
 }
 
 impl InvalidationReason {
@@ -51,6 +95,7 @@ impl InvalidationReason {
             Self::PathMismatch => "path_mismatch",
             Self::MtimeStale => "mtime_stale",
             Self::VersionSkew => "version_skew",
+            Self::DbChanged => "db_changed",
         }
     }
 }
@@ -103,6 +148,9 @@ pub fn validate(snap: &WorkSnapshot, work: &Work) -> Result<(), InvalidationReas
     let actual_mtime = mtime_secs(std::path::Path::new(&work_path));
     if snap.text_file_mtime != actual_mtime {
         return Err(InvalidationReason::MtimeStale);
+    }
+    if snap.db_fingerprint != db_fingerprint(work) {
+        return Err(InvalidationReason::DbChanged);
     }
     Ok(())
 }
@@ -164,6 +212,7 @@ pub fn write(work: &Work, filtered_contents: &str, line_map: &LineMap) -> std::i
         abbrev: work.abbrev.clone(),
         text_file_path,
         text_file_mtime: mtime,
+        db_fingerprint: db_fingerprint(work),
         filtered_contents: filtered_contents.to_string(),
         line_map: line_map.clone(),
     };
@@ -202,9 +251,9 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
-    /// Build a minimal Work with the given abbrev + text_file_path. Other
-    /// fields are filled with sensible defaults for the snapshot tests
-    /// (timestamps, lines, etc. don't affect snapshot correctness).
+    /// Build a minimal Work with the given abbrev + text_file_path. Lines are
+    /// empty, so `db_fingerprint` is deterministic; the validate tests that need
+    /// a matching snapshot stamp it with `db_fingerprint(&work)`.
     fn synthetic_work(abbrev: &str, text_file: Option<String>) -> Work {
         Work {
             abbrev: abbrev.to_string(),
@@ -245,6 +294,7 @@ mod tests {
             abbrev: "abc".to_string(),
             text_file_path: text_file.to_string_lossy().to_string(),
             text_file_mtime: mtime,
+            db_fingerprint: 0,
             filtered_contents: "hello\nworld".to_string(),
             line_map: synthetic_line_map(),
         };
@@ -290,6 +340,7 @@ mod tests {
             abbrev: "xyz".to_string(),
             text_file_path: text_file.to_string_lossy().to_string(),
             text_file_mtime: mtime,
+            db_fingerprint: db_fingerprint(&work),
             filtered_contents: "content".to_string(),
             line_map: synthetic_line_map(),
         };
@@ -308,6 +359,7 @@ mod tests {
             abbrev: "stored".to_string(),
             text_file_path: text_file.to_string_lossy().to_string(),
             text_file_mtime: mtime,
+            db_fingerprint: 0,
             filtered_contents: "x".to_string(),
             line_map: synthetic_line_map(),
         };
@@ -329,6 +381,7 @@ mod tests {
             abbrev: "z".to_string(),
             text_file_path: text_file_a.to_string_lossy().to_string(),
             text_file_mtime: mtime,
+            db_fingerprint: 0,
             filtered_contents: String::new(),
             line_map: synthetic_line_map(),
         };
@@ -348,6 +401,7 @@ mod tests {
             abbrev: "z".to_string(),
             text_file_path: text_file.to_string_lossy().to_string(),
             text_file_mtime: stale_mtime,
+            db_fingerprint: 0,
             filtered_contents: String::new(),
             line_map: synthetic_line_map(),
         };
@@ -367,11 +421,56 @@ mod tests {
             abbrev: "z".to_string(),
             text_file_path: text_file.to_string_lossy().to_string(),
             text_file_mtime: mtime,
+            db_fingerprint: 0,
             filtered_contents: String::new(),
             line_map: synthetic_line_map(),
         };
         let result = validate(&snap, &work);
         assert!(matches!(result, Err(InvalidationReason::VersionSkew)));
+    }
+
+    #[test]
+    fn validate_detects_db_changed() {
+        let dir = tempdir().unwrap();
+        let text_file = dir.path().join("db.txt");
+        fs::write(&text_file, "x").unwrap();
+        let mtime = mtime_secs(&text_file);
+        let mut work = synthetic_work("z", Some(text_file.to_string_lossy().to_string()));
+
+        // Snapshot stamped with the fingerprint of the *current* (empty) work.
+        let snap = WorkSnapshot {
+            version: SNAPSHOT_VERSION,
+            abbrev: "z".to_string(),
+            text_file_path: text_file.to_string_lossy().to_string(),
+            text_file_mtime: mtime,
+            db_fingerprint: db_fingerprint(&work),
+            filtered_contents: String::new(),
+            line_map: synthetic_line_map(),
+        };
+        assert!(validate(&snap, &work).is_ok(), "matching fingerprint validates");
+
+        // Simulate a lit.db re-import: the .txt path + mtime are unchanged, but
+        // the DB lines differ. The fingerprint guard must catch it.
+        work.lines.push(crate::db::models::Line {
+            id: 1,
+            citation: String::new(),
+            text: "new line".to_string(),
+            normalized: "new line".to_string(),
+            speaker: None,
+            is_dialogue: true,
+            timestamp: None,
+            div1: 1,
+            div2: 1,
+            line_in_div: 1,
+            is_chapter: false,
+            is_spoken: None,
+        });
+        let result = validate(&snap, &work);
+        assert!(
+            matches!(result, Err(InvalidationReason::DbChanged)),
+            "changed DB lines invalidate the snapshot, got {:?}",
+            result
+        );
     }
 
     #[test]
@@ -383,6 +482,7 @@ mod tests {
             abbrev: "x".to_string(),
             text_file_path: String::new(),
             text_file_mtime: 0,
+            db_fingerprint: 0,
             filtered_contents: "hi".to_string(),
             line_map: synthetic_line_map(),
         };

@@ -70,7 +70,7 @@ const HOME_ROW: &[KeyDef] = &[
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
     key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echo turns"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echoes")]),
     key("u", "U", "start time", "U: undo ts", &[("M-u", "set end time")]),
-    key("i", "I", "scansion", "", &[("M-i", "2-col translation"), ("C-M-i", "inline translation")]),
+    key("i", "I", "2-col translation", "", &[("M-i", "scansion"), ("C-M-i", "inline translation")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
     key("h", "H", "synopsis", "H: auto vocab", &[("C-h", "synopsis side")]),
     key("t", "T", "", "", &[("S-C-t", "nav test")]),
