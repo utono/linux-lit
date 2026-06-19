@@ -389,7 +389,12 @@ fn main() {
                         if let Some(scene_before) = ov_moved {
                             drop(s);
                             crate::app::sync_translation_overlay(&state_for_events, scene_before);
+                        } else {
+                            drop(s);
                         }
+                        // Keep the page-image card following playback (cheap no-op
+                        // when image_mode is off or the page is unchanged).
+                        crate::app::refresh_page_image(&state_for_events);
                     }
                     MpvEvent::ThemeChanged => {
                         let mut s = state_for_events.borrow_mut();

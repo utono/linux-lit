@@ -67,6 +67,19 @@ pub struct Chunk {
     pub div2: Option<i64>,
 }
 
+/// A page-scan image (one leaf) and the canonical `line_mapping` rows that fall
+/// on it. `start_line_id`/`end_line_id` reference `line_mapping(id)` inclusively;
+/// they are `None` until the in-app calibration marks the page's range. The
+/// reader shows `image_path` (resolved against `works.image_dir`) for the page
+/// whose [start, end] range contains the cursor line.
+#[derive(Debug, Clone)]
+pub struct PageImage {
+    pub image_path: String,
+    pub page_order: i64,
+    pub start_line_id: Option<i64>,
+    pub end_line_id: Option<i64>,
+}
+
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct WorkSummary {

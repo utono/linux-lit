@@ -232,6 +232,43 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
     })
 }
 
+/// The directory holding a work's page-scan images (`works.image_dir`), or None
+/// if the work has no scans / the column is absent (graceful for older DBs).
+pub fn load_image_dir(conn: &Connection, abbrev: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT image_dir FROM works WHERE abbrev = ?1",
+        [abbrev],
+        |row| row.get(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
+}
+
+/// Load a work's page images in reading order (`page_order`). Empty when the
+/// work has no scans or the `page_images` table is absent (older DBs).
+pub fn load_page_images(conn: &Connection, abbrev: &str) -> Vec<crate::db::models::PageImage> {
+    let mut stmt = match conn.prepare(
+        "SELECT image_path, page_order, start_line_id, end_line_id \
+         FROM page_images WHERE work_abbrev = ?1 ORDER BY page_order",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(), // table missing -> no images
+    };
+    let rows = stmt.query_map([abbrev], |row| {
+        Ok(crate::db::models::PageImage {
+            image_path: row.get(0)?,
+            page_order: row.get(1)?,
+            start_line_id: row.get(2)?,
+            end_line_id: row.get(3)?,
+        })
+    });
+    match rows {
+        Ok(iter) => iter.filter_map(|r| r.ok()).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
 /// Load translations for a work, keyed by line_mapping.id.
 ///
 /// For `-Amb` (Ambrose edition) works, translations are stored against the

@@ -293,6 +293,7 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl_shift("A"), Action::PickAttributionSet),
         (KeyCombo::alt("f"), Action::ShowFontInfo),
         (KeyCombo::ctrl_alt("i"), Action::ToggleTranslations),
+        (KeyCombo::ctrl("i"), Action::ToggleImageView),
         (KeyCombo::alt("e"), Action::ShowEchoesBcp),
         (KeyCombo::alt("w"), Action::ShowEchoesShx),
         (KeyCombo::ctrl("w"), Action::ShowEchoTurnsShx),
@@ -375,6 +376,7 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::plain("i")), Some(&Action::ShowTranslationOverlay));
         assert_eq!(m.get(&KeyCombo::alt("i")), Some(&Action::CycleScansion));
         assert_eq!(m.get(&KeyCombo::ctrl_alt("i")), Some(&Action::ToggleTranslations));
+        assert_eq!(m.get(&KeyCombo::ctrl("i")), Some(&Action::ToggleImageView));
     }
 
     #[test]

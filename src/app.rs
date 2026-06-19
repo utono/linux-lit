@@ -249,6 +249,19 @@ pub struct AppState {
     pub keybinds_overlay: crate::ui::keybinds_overlay::KeybindsOverlay,
     pub gamepad_overlay: crate::ui::gamepad_overlay::GamepadOverlay,
     pub gloss_overlay: crate::ui::gloss_overlay::GlossOverlay,
+    /// Page-scan image surface for the main card (BCP1549 etc.). Hidden unless
+    /// `image_mode` is on.
+    pub page_image_overlay: crate::ui::page_image_overlay::PageImageOverlay,
+    /// Page images for the current work, in reading order. Empty for works with
+    /// no scans. Loaded by `display_work`.
+    pub page_images: Vec<crate::db::models::PageImage>,
+    /// Absolute directory holding the current work's page scans (`works.image_dir`).
+    pub image_dir: Option<String>,
+    /// True while the main card shows the page image instead of the text.
+    pub image_mode: bool,
+    /// `page_order` of the page currently loaded into the image overlay, so a
+    /// cursor move that stays on the same page doesn't reload the PNG.
+    pub current_page_order: Option<i64>,
     pub tts: crate::tts::TtsPlayer,
     /// True while a Shift+Space batch synthesis is running, so a second press is
     /// a no-op rather than launching a concurrent batch.
@@ -549,6 +562,21 @@ impl AppState {
     pub fn line_mapping_id_for_buffer(&self, buffer_line: usize) -> Option<i64> {
         let work_idx = self.work_line_for_buffer(buffer_line)?;
         self.current_work.as_ref()?.lines.get(work_idx).map(|l| l.id)
+    }
+
+    /// The page image whose calibrated line range contains `line_id`. Pages with
+    /// an uncalibrated (NULL) start are skipped; `end_line_id` is open-ended when
+    /// NULL (the last calibrated page covers everything after its start). Returns
+    /// None when no page matches (e.g. before calibration, or `line_id` precedes
+    /// the first marked page). line_mapping ids are assigned in reading order, so
+    /// a numeric id comparison is the page order.
+    pub fn page_image_for_line_id(&self, line_id: i64) -> Option<&crate::db::models::PageImage> {
+        self.page_images.iter().rev().find(|p| match p.start_line_id {
+            Some(start) => {
+                line_id >= start && p.end_line_id.map(|end| line_id <= end).unwrap_or(true)
+            }
+            None => false,
+        })
     }
 
     /// Check if a buffer line is within the currently highlighted sentence group.
@@ -1437,6 +1465,13 @@ pub fn build_window(
     authorship_picker.overlay.add_overlay(&concordance_works_picker.scrim);
     authorship_picker.overlay.add_overlay(&concordance_works_picker.container);
 
+    // Page-scan image overlay (toggle the BCP card to its leaf PNG). Added onto
+    // `page_turn_overlay`, which wraps `card_vbox` (the visible cream card), so it
+    // spans EXACTLY the card geometry — not the whole window (which would include
+    // the media footer below the card). Fills the card; `Contain` fits the leaf.
+    let page_image_overlay = crate::ui::page_image_overlay::PageImageOverlay::new();
+    page_image_overlay.attach_to(&page_turn_overlay);
+
     // Action popup overlay for visual mode
     let action_popup_widget = crate::ui::action_popup::ActionPopup::new();
     authorship_picker.overlay.add_overlay(&action_popup_widget.container);
@@ -1677,6 +1712,11 @@ pub fn build_window(
         keybinds_overlay,
         gamepad_overlay,
         gloss_overlay,
+        page_image_overlay,
+        page_images: Vec::new(),
+        image_dir: None,
+        image_mode: false,
+        current_page_order: None,
         tts: crate::tts::TtsPlayer::new(),
         translation_overlay,
         gloss_original_text: None,
@@ -2823,6 +2863,27 @@ pub fn display_work_at_with_prepared(
                 state.synopsis_cache.len(),
                 base_abbrev,
             ));
+        }
+    }
+    // Load page-scan images for this work (e.g. BCP1549 leaf PNGs). Reset the
+    // image-view toggle on every work switch so a new work starts in text mode.
+    state.image_mode = false;
+    state.current_page_order = None;
+    state.page_image_overlay.hide();
+    state.page_images = Vec::new();
+    state.image_dir = None;
+    if let Some(ref work) = state.current_work {
+        if let Ok(conn) = crate::db::queries::open_db() {
+            state.page_images = crate::db::queries::load_page_images(&conn, &work.abbrev);
+            state.image_dir = crate::db::queries::load_image_dir(&conn, &work.abbrev);
+            if !state.page_images.is_empty() {
+                crate::logging::log(&format!(
+                    "PAGE_IMAGES: loaded {} page images for {} (dir={:?})",
+                    state.page_images.len(),
+                    work.abbrev,
+                    state.image_dir,
+                ));
+            }
         }
     }
     state.sidebar_mode = SidebarMode::Vocab;
@@ -3990,24 +4051,29 @@ pub fn apply_bcp_formatting(state: &mut AppState) {
         // (open_caret_char, close_caret_char) offsets in `text`. Apply from the
         // last span to the first so earlier offsets stay valid after deletes.
         for &(open_c, close_c) in spans.iter().rev() {
-            let base = state.buffer.iter_at_line(i as i32).unwrap();
+            // RE-FETCH the line-start iterator after EVERY buffer mutation: a
+            // delete invalidates all outstanding iterators (GTK warns and the
+            // next delete hits a stale/foreign-buffer iter — the source of the
+            // "Invalid text buffer iterator" / gtk_text_buffer_delete CRITICAL
+            // on BCP load). Offsets stay valid because spans run highest-first.
             // Delete the close caret first (higher offset).
-            let mut ce = base;
+            let mut ce = state.buffer.iter_at_line(i as i32).unwrap();
             ce.forward_chars(close_c as i32);
             let mut ce_end = ce;
             ce_end.forward_char();
             state.buffer.delete(&mut ce, &mut ce_end);
-            // Delete the open caret.
-            let mut oc = base;
+            // Delete the open caret (re-fetch; the delete above invalidated ce).
+            let mut oc = state.buffer.iter_at_line(i as i32).unwrap();
             oc.forward_chars(open_c as i32);
             let mut oc_end = oc;
             oc_end.forward_char();
             state.buffer.delete(&mut oc, &mut oc_end);
             // Tag the inner span (now between former open and close positions,
-            // shifted left by one after deleting the open caret).
-            let mut span_start = base;
+            // shifted left by one after deleting the open caret). Re-fetch again.
+            let line_base = state.buffer.iter_at_line(i as i32).unwrap();
+            let mut span_start = line_base;
             span_start.forward_chars(open_c as i32);
-            let mut span_end = base;
+            let mut span_end = line_base;
             span_end.forward_chars((close_c - 1) as i32);
             state.buffer.apply_tag(&opening_tag, &span_start, &span_end);
         }
@@ -5455,6 +5521,75 @@ pub fn toggle_synopsis(state: &mut AppState) {
             show_synopsis(state);
         }
     }
+}
+
+/// Toggle the main card between text and the page-scan image for the current
+/// work. No-op (with a toast) for works that have no page images. When turning
+/// the image on, immediately render the page for the cursor's current line.
+pub fn toggle_image_view(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    if s.page_images.is_empty() {
+        s.chapter_toast.set_text("No page images for this work");
+        s.chapter_toast.set_visible(true);
+        let toast = s.chapter_toast.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+            toast.set_visible(false);
+        });
+        return;
+    }
+    s.image_mode = !s.image_mode;
+    if s.image_mode {
+        // Hide the two-column chrome (divider + right column) so nothing peeks
+        // around the opaque image overlay. Restored on toggle-off.
+        s.column_divider.set_visible(false);
+        s.right_scrolled_overlay.set_visible(false);
+        s.current_page_order = None; // force a load
+        drop(s);
+        refresh_page_image(state);
+    } else {
+        s.page_image_overlay.hide();
+        s.current_page_order = None;
+        // Restore the two-column chrome if this work uses two columns.
+        let two_col = s.column_count() == 2;
+        s.column_divider.set_visible(two_col);
+        s.right_scrolled_overlay.set_visible(two_col);
+    }
+}
+
+/// While `image_mode` is on, show the page image for the cursor's current line.
+/// Reloads the PNG only when the page changes. Hides the overlay if no page
+/// matches the cursor (e.g. uncalibrated region). Safe to call on every cursor
+/// move; cheap no-op when `image_mode` is off.
+pub fn refresh_page_image(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    if !s.image_mode || s.page_images.is_empty() {
+        return;
+    }
+    // Find the calibrated page for the cursor's line. FALLBACK (until calibration
+    // exists): if the line has no mapping or no page covers it, show the FIRST
+    // page so the image surface is verifiable. Once pages are calibrated this
+    // fallback only fires for lines genuinely before the first marked page.
+    let calibrated = s
+        .line_mapping_id_for_buffer(s.current_line)
+        .and_then(|id| s.page_image_for_line_id(id));
+    let (order, filename) = match calibrated {
+        Some(p) => (p.page_order, p.image_path.clone()),
+        None => match s.page_images.first() {
+            Some(p) => (p.page_order, p.image_path.clone()),
+            None => return,
+        },
+    };
+    if s.current_page_order == Some(order) {
+        return; // same page already shown
+    }
+    let dir = match &s.image_dir {
+        Some(d) => d.clone(),
+        None => return,
+    };
+    let path = format!("{}/{}", dir.trim_end_matches('/'), filename);
+    let (cw, ch) = overlay_card_size(&s);
+    s.page_image_overlay.show(&path, cw, ch);
+    s.current_page_order = Some(order);
 }
 
 pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {

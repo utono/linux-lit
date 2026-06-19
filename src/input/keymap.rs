@@ -161,6 +161,9 @@ pub fn handle_key(
     let action = state.borrow().keymap.lookup(key_name, is_ctrl, is_shift, is_alt);
     if let Some(action) = action {
         dispatch_action(state, action, key_state, tokio_handle);
+        // If the card is in page-image mode, keep the shown leaf in sync with the
+        // cursor the action just moved (cheap no-op when image_mode is off).
+        crate::app::refresh_page_image(state);
         return true;
     }
 
@@ -1905,6 +1908,7 @@ fn dispatch_action(
         ToggleSynopsis => crate::app::toggle_synopsis(&mut state.borrow_mut()),
         ShowSynopsisOverlay => crate::app::show_synopsis_overlay(state),
         ShowTranslationOverlay => crate::app::show_translation_overlay(state),
+        ToggleImageView => crate::app::toggle_image_view(state),
 
         // Authorship display
         ToggleAuthorship => {

@@ -117,6 +117,9 @@ pub enum Action {
     ShowSynopsisOverlay,
     ShowTranslationOverlay,
 
+    // Page-scan image view (toggle the card to the leaf PNG; BCP1549 etc.)
+    ToggleImageView,
+
     // Settings (in reader)
     AdjustFontSizeUp,
     AdjustFontSizeDown,
@@ -239,6 +242,7 @@ impl Action {
             | Action::ToggleSynopsis
             | Action::ShowSynopsisOverlay
             | Action::ShowTranslationOverlay
+            | Action::ToggleImageView
             | Action::OpenSettingsOverlay => Category::Display,
 
             // Selection
@@ -343,6 +347,7 @@ impl Action {
             Action::ToggleSynopsis => "ToggleSynopsis",
             Action::ShowSynopsisOverlay => "ShowSynopsisOverlay",
             Action::ShowTranslationOverlay => "ShowTranslationOverlay",
+            Action::ToggleImageView => "ToggleImageView",
             Action::AdjustFontSizeUp => "AdjustFontSizeUp",
             Action::AdjustFontSizeDown => "AdjustFontSizeDown",
             Action::ResetFontSize => "ResetFontSize",

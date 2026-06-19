@@ -70,7 +70,7 @@ const HOME_ROW: &[KeyDef] = &[
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
     key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echo turns"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echoes")]),
     key("u", "U", "start time", "U: undo ts", &[("M-u", "set end time")]),
-    key("i", "I", "2-col translation", "", &[("M-i", "scansion"), ("C-M-i", "inline translation")]),
+    key("i", "I", "2-col translation", "", &[("M-i", "scansion"), ("C-M-i", "inline translation"), ("C-i", "page image")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
     key("h", "H", "synopsis", "H: auto vocab", &[("C-h", "synopsis side")]),
     key("t", "T", "", "", &[("S-C-t", "nav test")]),
@@ -531,6 +531,10 @@ column. -> app::show_translation_overlay — src/app.rs",
         "inline translation" => "Toggle the parallel inline translation column \
 (Ctrl+Alt+i) alongside the text (pauses MPV first). \
 -> app::toggle_translations — src/app.rs",
+        "page image" => "Toggle the main card between rendered text and the \
+page-scan image (Ctrl+i) for the cursor's current page (BCP1549 etc.). The shown \
+leaf follows the cursor, so it tracks media playback. No-op for works without \
+page images. -> app::toggle_image_view — src/app.rs",
         "dim tog" => "Toggle dimming of lines outside the current A–B sync range \
 and refresh the highlight. -> ToggleDim arm (inline) — src/input/keymap.rs",
         "save+quit" => "Save the current reading position, tell MPV to quit, and \
