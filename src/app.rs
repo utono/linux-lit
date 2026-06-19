@@ -5714,6 +5714,19 @@ pub fn calibration_mark(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
     calibration_show_page(state);
 }
 
+/// gg / G: jump calibration to the first / last page without marking.
+pub fn calibration_jump_page(state: &std::rc::Rc<std::cell::RefCell<AppState>>, last: bool) {
+    {
+        let mut s = state.borrow_mut();
+        let n = s.page_images.len();
+        if n == 0 {
+            return;
+        }
+        s.calibration_index = if last { n - 1 } else { 0 };
+    }
+    calibration_show_page(state);
+}
+
 /// n/p: step to the next/previous page without marking (delta = +1 / -1).
 pub fn calibration_step_page(state: &std::rc::Rc<std::cell::RefCell<AppState>>, delta: i32) {
     {

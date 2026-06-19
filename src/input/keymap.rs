@@ -124,7 +124,7 @@ pub fn handle_key(
             crate::app::InputMode::EchoKeybindsOverlay => handle_echo_keybinds_key(state, key_name, is_ctrl),
             crate::app::InputMode::ActionPopup => handle_action_popup_key(state, key_name, is_ctrl, tokio_handle),
             crate::app::InputMode::Visual => handle_visual_key(state, key_state, key_name, tokio_handle),
-            crate::app::InputMode::PageCalibration => handle_page_calibration_key(state, key_name),
+            crate::app::InputMode::PageCalibration => handle_page_calibration_key(state, key_state, key_name),
             crate::app::InputMode::Reader => unreachable!(),
         };
     }
@@ -1142,12 +1142,22 @@ fn handle_synopsis_overlay_key(
 
 /// Page-image calibration keys: j/k move the cursor one line, Enter marks the
 /// cursor line as the current page's start (+advance), n/p step pages without
-/// marking, Esc finishes (recompute ranges + save). Every key refreshes the
-/// caption so the displayed "start line" tracks the cursor.
+/// marking, gg/G jump to the first/last page, Esc finishes (recompute ranges +
+/// save). Every key refreshes the caption so the displayed "start line" tracks
+/// the cursor.
 fn handle_page_calibration_key(
     state: &Rc<RefCell<AppState>>,
+    key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
 ) -> bool {
+    // gg: jump to the first page (mirrors the reader/overlay gg chord).
+    if key_state.borrow().chord == ChordState::PendingG {
+        key_state.borrow_mut().chord = ChordState::None;
+        if key_name == "g" {
+            crate::app::calibration_jump_page(state, false);
+        }
+        return true;
+    }
     match key_name {
         "Return" => {
             crate::app::calibration_mark(state);
@@ -1155,6 +1165,10 @@ fn handle_page_calibration_key(
         "Escape" => {
             crate::app::exit_page_calibration(state, true);
         }
+        "g" => {
+            KeyState::start_chord(key_state, ChordState::PendingG);
+        }
+        "G" => crate::app::calibration_jump_page(state, true),
         "n" => crate::app::calibration_step_page(state, 1),
         "p" => crate::app::calibration_step_page(state, -1),
         "j" | "k" => {

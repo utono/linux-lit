@@ -537,9 +537,9 @@ leaf follows the cursor, so it tracks media playback. No-op for works without \
 page images. -> app::toggle_image_view — src/app.rs",
         "calibrate pages" => "Enter page-image calibration (Ctrl+Shift+I): the \
 card shows each page scan with a caption; move the cursor (j/k) to the line that \
-begins the page and press Enter to record it and advance. n/p step pages, Esc \
-saves. Fills page_images start/end ranges so the leaf tracks the cursor. \
--> app::enter_page_calibration — src/app.rs",
+begins the page and press Enter to record it and advance. n/p step pages, gg/G \
+jump to the first/last page, Esc saves. Fills page_images start/end ranges so the \
+leaf tracks the cursor. -> app::enter_page_calibration — src/app.rs",
         "dim tog" => "Toggle dimming of lines outside the current A–B sync range \
 and refresh the highlight. -> ToggleDim arm (inline) — src/input/keymap.rs",
         "save+quit" => "Save the current reading position, tell MPV to quit, and \
