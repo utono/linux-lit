@@ -232,9 +232,10 @@ pub(crate) fn edit_synopsis(state_rc: &Rc<RefCell<AppState>>, instruction: &str)
     );
 }
 
-/// Revert the most recent `A` amendment: restore the pre-amend synopsis text in
-/// the cache and in lit.db, and redisplay it. No-op (with a toast) if there is
-/// nothing to undo. Single-level — only the last amendment can be undone.
+/// Revert the most recent revision (`A` ask or `E` edit): restore the pre-edit
+/// synopsis text in the cache and in lit.db, and redisplay it. No-op (with a
+/// toast) if there is nothing to undo. Single-level — only the last revision
+/// can be undone.
 pub(crate) fn undo_amend(state_rc: &Rc<RefCell<AppState>>) {
     let undo = state_rc.borrow().synopsis_undo.clone();
     let ((div1, div2), original) = match undo {
