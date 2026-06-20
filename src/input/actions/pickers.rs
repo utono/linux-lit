@@ -5,6 +5,33 @@ use gtk4::prelude::*;
 
 use crate::app::AppState;
 
+/// Which gloss_type the Ctrl+g picker is currently filtered to. Cycled by Ctrl+t.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) enum GlossPickerFilter {
+    #[default]
+    TeacherGeneric,
+    InnerMonologue,
+    ReaderGloss,
+}
+
+impl GlossPickerFilter {
+    pub(crate) fn gloss_type(self) -> &'static str {
+        match self {
+            GlossPickerFilter::TeacherGeneric => "teacher-generic",
+            GlossPickerFilter::InnerMonologue => "inner-monologue",
+            GlossPickerFilter::ReaderGloss => "reader-gloss",
+        }
+    }
+
+    pub(crate) fn next(self) -> Self {
+        match self {
+            GlossPickerFilter::TeacherGeneric => GlossPickerFilter::InnerMonologue,
+            GlossPickerFilter::InnerMonologue => GlossPickerFilter::ReaderGloss,
+            GlossPickerFilter::ReaderGloss => GlossPickerFilter::TeacherGeneric,
+        }
+    }
+}
+
 /// Load the selected work in the library picker, hide the picker, and
 /// display the new work. Spawns an async task to query the DB.
 pub(crate) fn load_selected_work(
@@ -835,21 +862,12 @@ pub(crate) fn open_concordance_works_picker(state: &Rc<RefCell<AppState>>) {
     state.borrow_mut().input_mode = crate::app::InputMode::ConcordanceWorksPicker;
 }
 
-/// The gloss_type the picker filters to, given the inner-monologue toggle.
-pub(crate) fn gloss_picker_type(inner_monologue: bool) -> &'static str {
-    if inner_monologue {
-        "inner-monologue"
-    } else {
-        "teacher-generic"
-    }
-}
-
 pub(crate) fn open_gloss_picker(
     state: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
 ) {
     // Opening always starts on the default type (teacher-generic).
-    state.borrow_mut().gloss_picker_inner_monologue = false;
+    state.borrow_mut().gloss_picker_filter = GlossPickerFilter::default();
     let abbrev = state
         .borrow()
         .current_work
@@ -859,7 +877,7 @@ pub(crate) fn open_gloss_picker(
         let state_clone = Rc::clone(state);
         let handle = tokio_handle.clone();
         glib::spawn_future_local(async move {
-            let gloss_type = gloss_picker_type(false);
+            let gloss_type = GlossPickerFilter::default().gloss_type();
             let items = handle
                 .spawn_blocking(move || {
                     let conn =
@@ -893,10 +911,10 @@ pub(crate) fn toggle_gloss_picker_type(
     state: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
 ) {
-    let inner_monologue = {
+    let filter = {
         let mut s = state.borrow_mut();
-        s.gloss_picker_inner_monologue = !s.gloss_picker_inner_monologue;
-        s.gloss_picker_inner_monologue
+        s.gloss_picker_filter = s.gloss_picker_filter.next();
+        s.gloss_picker_filter
     };
     let abbrev = state
         .borrow()
@@ -907,7 +925,7 @@ pub(crate) fn toggle_gloss_picker_type(
         let state_clone = Rc::clone(state);
         let handle = tokio_handle.clone();
         glib::spawn_future_local(async move {
-            let gloss_type = gloss_picker_type(inner_monologue);
+            let gloss_type = filter.gloss_type();
             let items = handle
                 .spawn_blocking(move || {
                     let conn =

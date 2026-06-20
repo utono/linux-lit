@@ -404,7 +404,7 @@ fn handle_picker_key(
                                 crate::db::queries::find_all_glosses(
                                     &conn, &passage.work_abbrev,
                                     &passage.start_citation, &passage.end_citation,
-                                    &["teacher-generic", "inner-monologue"],
+                                    &["teacher-generic", "inner-monologue", "reader-gloss"],
                                 ).ok()
                             })
                             .unwrap_or_default();
@@ -487,9 +487,9 @@ fn handle_picker_key(
                     }
                 }
                 InputMode::GlossPicker => {
-                    // Ctrl+t toggles the type filter (teacher-generic <->
-                    // inner-monologue). Ctrl combos don't type into the search
-                    // entry, so no focus guard is needed.
+                    // Ctrl+t cycles the type filter (teacher-generic ->
+                    // inner-monologue -> reader-gloss). Ctrl combos don't type
+                    // into the search entry, so no focus guard is needed.
                     if is_ctrl && key_name == "t" {
                         crate::input::actions::pickers::toggle_gloss_picker_type(state, tokio_handle);
                         return true;
@@ -709,7 +709,7 @@ fn handle_gloss_key(
                 return true;
             }
             "g" => {
-                // Same as the reader card's Alt+g: open the glosses picker, but
+                // Same as the reader card's Ctrl+g: open the glosses picker, but
                 // keep the gloss overlay open behind it. The flag tells
                 // `open_gloss_picker` not to hide the overlay and the picker's
                 // Escape handler to return to the overlay (not the reader).

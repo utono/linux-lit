@@ -34,47 +34,51 @@ IPA-templated prompts only).
 They **must keep the exact `<speaker>` / `<verse>` / `<gloss>` XML output
 format** — the gloss overlay renderer parses those tags; deviating breaks
 display. The parser (`parse_gloss_tags`, `gloss_overlay.rs:2071`) is
-**order-agnostic**, so a leading `<gloss>` lede placed *before* the first
-`<speaker>`/`<verse>` block renders correctly as the first Explication block —
+**order-agnostic**, so a `<gloss>` lede placed *after* the first
+`<speaker>`/`<verse>` block renders correctly as an Explication block —
 **no overlay change is required** for the lede. What differs from
-teacher-generic is the *content* of `<gloss>`:
+teacher-generic is the *content* and *order* of `<gloss>`:
 
-- **The first `<gloss>` paragraph is a one-sentence motivation lede.** Exactly
-  one sentence, focused on motivation — what the speaker wants in this moment.
-  - If the selected verse contains **more than one speaker**, this single lede
-    sentence uses **semicolons** to describe each character's motivation in
-    turn (one independent clause per character, in order of appearance), e.g.
-    "Suffolk flatters the Protector's pride to provoke him; Gloucester deflects
-    with feigned humility to mask his contempt." It stays one sentence — clauses
-    joined by semicolons, not multiple sentences.
-- After the lede, the remaining `<gloss>` paragraphs are terse (1–3 sentences
-  each) and explicate (a) any further motive shifts and (b) Elizabethan words,
-  allusions, metaphors, idioms, and social/political concepts a reader would miss.
+- **Each speaker gets their own one-sentence motivation lede, placed
+  immediately after that speaker's first `<verse>` block.** The speaker's
+  opening lines come first, then their lede `<gloss>`; a lede never precedes any
+  verse. A speaker appearing more than once gets a lede only after their first
+  appearance. Each lede is exactly one sentence, focused on motivation — what
+  that speaker is doing in this moment, led by a precise active verb. (There is
+  no combined/semicolon lede — an earlier draft used one sentence with
+  semicolons per speaker; that was struck in favor of a per-speaker lede.)
+- After each speaker's lede, the remaining `<gloss>` paragraphs are terse (1–3
+  sentences each) and explicate (a) any further motive shifts and (b) Elizabethan
+  words, allusions, metaphors, idioms, and social/political concepts a reader
+  would miss.
 - **Drop** the acting-pedagogy material entirely: operative words, breath,
   verse-delivery notes, Barton/Berry/Hall/Rodenburg/Linklater references.
 - No IPA anywhere.
-- **Always keep the lede.** The one-sentence motivation lede is mandatory in
-  every Reader Gloss and must survive refinement:
+- **Always keep the ledes.** Every speaker's one-sentence motivation lede is
+  mandatory and must survive refinement:
   - `READER_GLOSS_EDIT_PROMPT` regenerates the whole gloss, so it must
-    **preserve (or rewrite, but never drop) the leading one-sentence motivation
-    lede** as the first `<gloss>` paragraph — same one-sentence / semicolon
-    rules as a fresh gloss.
-  - Q&A (`-question`) and Add (`-add`) only *append* a new `<gloss>Q: …</gloss>`
-    block after the existing gloss, so the original lede is preserved by
-    construction; these prompts must not emit their own lede or restate it.
+    **preserve (or rewrite, but never drop) each speaker's motivation lede** in
+    its place (immediately after that speaker's first `<verse>` block) — same
+    one-sentence / active-verb rules as a fresh gloss.
+  - Q&A (`-question`) only *appends* a new `<gloss>Q: …</gloss>` block after the
+    existing gloss, so the existing ledes are preserved by construction; it must
+    not emit its own lede or restate one.
 
-Four dedicated prompts (full parity with teacher-generic's set), each shipped
-both as a compiled `FALLBACK` in `src/gloss.rs` AND seeded into `api_prompts`
-(`is_active=1`, descriptive `note`), matching the existing two-source pattern:
+Three dedicated prompts (full parity with teacher-generic's set, which has
+question + edit and no separate "add"), each shipped both as a compiled
+`FALLBACK` in `src/gloss.rs` AND seeded into `api_prompts` (`is_active=1`,
+descriptive `note`), matching the existing two-source pattern:
 
 - `gloss.reader-gloss` — fresh Reader Gloss (`READER_GLOSS_PROMPT`).
 - `gloss.reader-gloss-question` — follow-up Q&A (`READER_GLOSS_QUESTION_PROMPT`).
 - `gloss.reader-gloss-edit` — edit existing (`READER_GLOSS_EDIT_PROMPT`).
-- `gloss.reader-gloss-add` — add cross-work / user lines (`READER_GLOSS_ADD_PROMPT`).
 
-(The add variant mirrors teacher-generic's behavior, which currently reuses
-`USER_QUESTION_PROMPT` for "add" on non-monologue glosses; for Reader Gloss the
-"add" path gets its own terse prompt so refinements stay in voice.)
+(linux-lit's gloss "ask" flow has only two prompt modes that reach the
+handlers — `Add` and `Edit` (`submit_gloss_prompt`). For non-monologue glosses
+the `Add` mode IS the Q&A path: teacher-generic uses `USER_QUESTION_PROMPT`
+there, and reader-gloss uses `READER_GLOSS_QUESTION_PROMPT`. There is no
+separate "add" prompt — an earlier draft's `gloss.reader-gloss-add` had no call
+site and was dropped.)
 
 ## Action menu order and dispatch
 

@@ -82,7 +82,7 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
 
     if s.gloss_passages.is_empty() {
         if let Ok(conn) = crate::db::queries::open_db() {
-            s.gloss_passages = crate::db::queries::find_glossed_passages(&conn, &work_abbrev, &["teacher-generic", "inner-monologue"])
+            s.gloss_passages = crate::db::queries::find_glossed_passages(&conn, &work_abbrev, &["teacher-generic", "inner-monologue", "reader-gloss"])
                 .unwrap_or_default();
         }
         if s.gloss_passages.is_empty() {
@@ -112,7 +112,7 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
         .and_then(|conn| {
             crate::db::queries::find_all_glosses(
                 &conn, &passage.work_abbrev, &passage.start_citation, &passage.end_citation,
-                &["teacher-generic", "inner-monologue"],
+                &["teacher-generic", "inner-monologue", "reader-gloss"],
             ).ok()
         })
         .unwrap_or_default();
@@ -314,12 +314,16 @@ pub(crate) fn close_delete_confirmation(state: &Rc<RefCell<AppState>>) {
 }
 
 fn show_prompt_dialog(state_rc: &Rc<RefCell<AppState>>, mode: crate::app::GlossPromptMode) {
-    let (is_inner_monologue, is_edit) = {
+    let (is_inner_monologue, is_reader_gloss, is_edit) = {
         let s = state_rc.borrow();
-        let im = s.gloss_context.as_ref()
-            .map(|ctx| ctx.gloss_type == "inner-monologue")
-            .unwrap_or(false);
-        (im, mode == crate::app::GlossPromptMode::Edit)
+        let gloss_type = s.gloss_context.as_ref()
+            .map(|ctx| ctx.gloss_type.as_str().to_string())
+            .unwrap_or_default();
+        (
+            gloss_type == "inner-monologue",
+            gloss_type == "reader-gloss",
+            mode == crate::app::GlossPromptMode::Edit,
+        )
     };
     let is_fix_ipa = mode == crate::app::GlossPromptMode::FixIpa;
 
@@ -329,6 +333,8 @@ fn show_prompt_dialog(state_rc: &Rc<RefCell<AppState>>, mode: crate::app::GlossP
         "EDIT GLOSS — PASTE SUBTEXT LINES"
     } else if is_inner_monologue {
         "INNER MONOLOGUE PASSAGE"
+    } else if is_reader_gloss {
+        "READER GLOSS PROMPT"
     } else {
         "GLOSS PROMPT"
     };
@@ -672,12 +678,19 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
     let prompt_owned = prompt.to_string();
     let is_inner_monologue = ctx.gloss_type == "inner-monologue";
 
-    let (system_prompt, user_msg, gloss_type_str) = if is_inner_monologue {
-        let msg = crate::gloss::build_inner_monologue_add_message(&ctx, &prompt_owned);
-        (crate::gloss::INNER_MONOLOGUE_ADD_PROMPT.as_str(), msg, "inner-monologue")
-    } else {
-        let msg = crate::gloss::build_user_message(&ctx, Some(&prompt_owned), None);
-        (crate::gloss::USER_QUESTION_PROMPT.as_str(), msg, "teacher-generic")
+    let (system_prompt, user_msg, gloss_type_str) = match ctx.gloss_type.as_str() {
+        "inner-monologue" => {
+            let msg = crate::gloss::build_inner_monologue_add_message(&ctx, &prompt_owned);
+            (crate::gloss::INNER_MONOLOGUE_ADD_PROMPT.as_str(), msg, "inner-monologue")
+        }
+        "reader-gloss" => {
+            let msg = crate::gloss::build_user_message(&ctx, Some(&prompt_owned), None);
+            (crate::gloss::READER_GLOSS_QUESTION_PROMPT.as_str(), msg, "reader-gloss")
+        }
+        _ => {
+            let msg = crate::gloss::build_user_message(&ctx, Some(&prompt_owned), None);
+            (crate::gloss::USER_QUESTION_PROMPT.as_str(), msg, "teacher-generic")
+        }
     };
 
     let state_for_result = Rc::clone(state_rc);
@@ -772,12 +785,19 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
     let pasted_owned = pasted_lines.to_string();
     let is_inner_monologue = ctx.gloss_type == "inner-monologue";
 
-    let (system_prompt, user_msg, gloss_type_str) = if is_inner_monologue {
-        let msg = crate::gloss::build_edit_gloss_message(&ctx, &existing_gloss_text, &pasted_owned);
-        (crate::gloss::INNER_MONOLOGUE_EDIT_PROMPT.as_str(), msg, "inner-monologue")
-    } else {
-        let msg = crate::gloss::build_edit_gloss_message(&ctx, &existing_gloss_text, &pasted_owned);
-        (crate::gloss::EDIT_GLOSS_PROMPT.as_str(), msg, "teacher-generic")
+    let (system_prompt, user_msg, gloss_type_str) = match ctx.gloss_type.as_str() {
+        "inner-monologue" => {
+            let msg = crate::gloss::build_edit_gloss_message(&ctx, &existing_gloss_text, &pasted_owned);
+            (crate::gloss::INNER_MONOLOGUE_EDIT_PROMPT.as_str(), msg, "inner-monologue")
+        }
+        "reader-gloss" => {
+            let msg = crate::gloss::build_edit_gloss_message(&ctx, &existing_gloss_text, &pasted_owned);
+            (crate::gloss::READER_GLOSS_EDIT_PROMPT.as_str(), msg, "reader-gloss")
+        }
+        _ => {
+            let msg = crate::gloss::build_edit_gloss_message(&ctx, &existing_gloss_text, &pasted_owned);
+            (crate::gloss::EDIT_GLOSS_PROMPT.as_str(), msg, "teacher-generic")
+        }
     };
 
     let state_for_result = Rc::clone(state_rc);
@@ -1888,7 +1908,7 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         return;
     }
 
-    const GLOSS_TYPES: &[&str] = &["teacher-generic", "inner-monologue"];
+    const GLOSS_TYPES: &[&str] = &["teacher-generic", "inner-monologue", "reader-gloss"];
 
     // Resolve the cursor line -> its (work abbrev, (div1, div2, line_in_div)).
     let (work_abbrev, cur_triple) = {

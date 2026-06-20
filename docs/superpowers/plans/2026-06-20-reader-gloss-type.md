@@ -722,16 +722,24 @@ git commit -m "chore(gloss): clippy/test cleanup for reader-gloss"
 
 ### Task 7: Seed prompt masters in the claude-api-prompts repo
 
+> **Correction (applied during execution):** The `gloss.reader-gloss-add`
+> prompt was DROPPED. linux-lit's gloss ask-flow has only `Add` and `Edit`
+> modes; the `Add` mode is the Q&A path and uses the QUESTION prompt. So there
+> are only THREE reader-gloss prompts/masters: `reader-gloss`,
+> `reader-gloss-question`, `reader-gloss-edit`. Ignore every `*-add` reference
+> elsewhere in this plan (Tasks 1 & 3 code blocks predate the correction; the
+> committed code is authoritative — `commit 20184ac`).
+
 **Files (separate repo `~/utono/claude-api-prompts`):**
 - Create: `prompts/gloss.reader-gloss.md`
 - Create: `prompts/gloss.reader-gloss-question.md`
 - Create: `prompts/gloss.reader-gloss-edit.md`
-- Create: `prompts/gloss.reader-gloss-add.md`
 
-- [ ] **Step 1: Write the four master files**
+- [ ] **Step 1: Write the three master files**
 
 Create each file with the EXACT same text as the corresponding `FALLBACK` const
-from Task 1 (verbatim — the master `.md` and the compiled fallback must match).
+that is CURRENTLY in `src/gloss.rs` (read them fresh — verbatim, the master `.md`
+and the compiled fallback must match).
 Match the format of the existing `prompts/gloss.*.md` files (read
 `~/utono/claude-api-prompts/prompts/gloss.edit.md` first for the heading/style
 convention; if those files are bare prompt text, write bare prompt text).

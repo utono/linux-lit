@@ -302,7 +302,7 @@ pub(crate) fn open_work_glosses(state_rc: &Rc<RefCell<AppState>>) {
     // current scene's passages come first.
     let mut passages = match crate::db::queries::open_db() {
         Ok(conn) => crate::db::queries::find_glossed_passages(
-            &conn, &work_abbrev, &["teacher-generic", "inner-monologue"],
+            &conn, &work_abbrev, &["teacher-generic", "inner-monologue", "reader-gloss"],
         ).unwrap_or_default(),
         Err(_) => Vec::new(),
     };
@@ -330,7 +330,7 @@ pub(crate) fn open_work_glosses(state_rc: &Rc<RefCell<AppState>>) {
         .and_then(|conn| {
             crate::db::queries::find_all_glosses(
                 &conn, &first.work_abbrev, &first.start_citation, &first.end_citation,
-                &["teacher-generic", "inner-monologue"],
+                &["teacher-generic", "inner-monologue", "reader-gloss"],
             ).ok()
         })
         .unwrap_or_default();
