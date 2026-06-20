@@ -915,6 +915,9 @@ impl GlossOverlay {
         card_height: i32,
     ) {
         *self.current_synopsis.borrow_mut() = synopsis.to_string();
+        // Clear any stale visual-mode anchor: showing a (possibly different)
+        // synopsis rebuilds the block list, so an old anchor index is invalid.
+        self.synopsis_visual_anchor.set(None);
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         self.last_card_size.set((card_width, card_height));
