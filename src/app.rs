@@ -93,6 +93,15 @@ pub enum SidebarMode {
     Synopsis,
 }
 
+/// Which Claude system prompt the open synopsis input card will use on submit.
+/// `A` opens it as `Ask` (augment/explain); `E` opens it as `Edit` (structural
+/// edit). Read by `submit_amend_prompt` to dispatch to the right revision path.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SynopsisPromptKind {
+    Ask,
+    Edit,
+}
+
 #[allow(dead_code)]
 pub struct AppState {
     pub text_view: View,
@@ -356,6 +365,9 @@ pub struct AppState {
     /// from immediately before the last amendment. `U` in the synopsis overlay
     /// restores it. Cleared once consumed.
     pub synopsis_undo: Option<((i64, i64), String)>,
+    /// Which prompt the currently-open synopsis input card will run on submit
+    /// (set by `A` -> Ask / `E` -> Edit). Meaningful only while the card is open.
+    pub synopsis_prompt_kind: SynopsisPromptKind,
     pub concordance_picker: crate::ui::concordance_picker::ConcordancePicker,
     pub concordance_state: Option<crate::concordance::ConcordanceState>,
     pub concordance_origin: Option<crate::concordance::ConcordanceOrigin>,
@@ -1776,6 +1788,7 @@ pub fn build_window(
         synopsis_overlay_scene: (0, 0),
         synopsis_amend_scene: (0, 0),
         synopsis_undo: None,
+        synopsis_prompt_kind: SynopsisPromptKind::Ask,
         concordance_picker,
         concordance_state: None,
         concordance_origin: None,
