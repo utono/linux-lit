@@ -1589,8 +1589,13 @@ pub fn jump_to_prev_section(state: &mut AppState) {
 pub fn show_current_chapter(state: &mut AppState) {
     let abbrev = match &state.current_work {
         Some(w) => w.abbrev.clone(),
-        None => return,
+        None => {
+            log_fmt!("SHOW_CHAPTER (;): no current work — nothing to show");
+            return;
+        }
     };
+    log_fmt!("SHOW_CHAPTER (;): abbrev={} current_line={} is_prose={}",
+        abbrev, state.current_line, state.is_prose());
 
     // Plays/verse (anything not prose) show the authoritative act/scene label
     // derived from the line's (div1, div2) — never inferred from buffer text,
@@ -1678,12 +1683,29 @@ pub fn show_current_chapter(state: &mut AppState) {
 }
 
 /// Show `text` in the chapter toast for 3 seconds.
+///
+/// Uses a generation counter (`chapter_toast_gen`) so rapid `;` presses don't
+/// cut a later toast short: each call bumps the generation and the scheduled
+/// hide-timeout captures it; when the timeout fires it only hides the toast if
+/// its generation is still current. A stale timer (one whose toast has since
+/// been superseded) is a no-op, so the latest toast always gets its full 3s.
 fn show_chapter_toast(state: &AppState, text: &str) {
+    let gen = state.chapter_toast_gen.get().wrapping_add(1);
+    state.chapter_toast_gen.set(gen);
+    log_fmt!("CHAPTER_TOAST: show gen={} text={:?}", gen, text);
+
     state.chapter_toast.set_text(text);
     state.chapter_toast.set_visible(true);
 
     let toast = state.chapter_toast.clone();
+    let gen_cell = state.chapter_toast_gen.clone();
     glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+        if gen_cell.get() != gen {
+            log_fmt!("CHAPTER_TOAST: hide gen={} superseded (current={}), keeping visible",
+                gen, gen_cell.get());
+            return;
+        }
+        log_fmt!("CHAPTER_TOAST: hide gen={}", gen);
         toast.set_visible(false);
     });
 }

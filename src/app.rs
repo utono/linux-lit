@@ -408,6 +408,12 @@ pub struct AppState {
     pub debug_icon: gtk4::Label,
     pub word_status_label: gtk4::Label,
     pub chapter_toast: gtk4::Label,
+    /// Generation counter for the chapter toast's hide timer. Each
+    /// `show_chapter_toast` bumps this and the scheduled hide-timeout captures
+    /// the value; a stale timeout (one whose generation has since been bumped
+    /// by a newer toast) becomes a no-op, so rapid `;` presses can never have an
+    /// earlier press's timer cut a later toast short. See show_chapter_toast.
+    pub chapter_toast_gen: Rc<Cell<u64>>,
     pub speed_toast: gtk4::Label,
     /// Centered bottom toast for search boundaries ("no earlier/later
     /// occurrence"). Placed like chapter_toast (centered, 32px from the bottom)
@@ -1823,6 +1829,7 @@ pub fn build_window(
         debug_icon,
         word_status_label,
         chapter_toast,
+        chapter_toast_gen: Rc::new(Cell::new(0)),
         speed_toast,
         search_toast,
         word_cycle_line: None,
