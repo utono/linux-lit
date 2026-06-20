@@ -1582,6 +1582,52 @@ pub fn find_all_glosses(
     rows.collect()
 }
 
+/// Like `find_all_glosses` but matches on START citation only (any end/span),
+/// so glosses anchored to different-length passages that share a first line
+/// co-list and cycle together. Reader-gloss rows sort first, then by recency.
+pub fn find_glosses_by_start(
+    conn: &Connection,
+    work_abbrev: &str,
+    start_citation: &str,
+    gloss_types: &[&str],
+) -> Result<Vec<SavedGloss>, rusqlite::Error> {
+    if gloss_types.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (0..gloss_types.len())
+        .map(|i| format!("?{}", i + 3))
+        .collect();
+    let sql = format!(
+        "SELECT g.id, g.gloss_text, g.timestamp, p.id, g.gloss_type \
+         FROM glosses g \
+         JOIN passages p ON g.passage_id = p.id \
+         WHERE p.work_abbrev = ?1 \
+           AND p.start_citation = ?2 \
+           AND g.gloss_type IN ({}) \
+         ORDER BY (g.gloss_type = 'reader-gloss') DESC, g.timestamp DESC",
+        placeholders.join(", ")
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    params.push(Box::new(work_abbrev.to_string()));
+    params.push(Box::new(start_citation.to_string()));
+    for gt in gloss_types {
+        params.push(Box::new(gt.to_string()));
+    }
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+        params.iter().map(|p| p.as_ref()).collect();
+    let rows = stmt.query_map(param_refs.as_slice(), |row| {
+        Ok(SavedGloss {
+            gloss_id: row.get(0)?,
+            gloss_text: row.get(1)?,
+            timestamp: row.get(2)?,
+            passage_id: row.get(3)?,
+            gloss_type: row.get(4)?,
+        })
+    })?;
+    rows.collect()
+}
+
 #[derive(Debug, Clone)]
 pub struct GlossedPassage {
     pub passage_id: i64,
