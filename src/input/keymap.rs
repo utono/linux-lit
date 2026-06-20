@@ -1061,6 +1061,10 @@ fn handle_synopsis_overlay_key(
             crate::input::actions::synopsis::show_amend_prompt(state);
             true
         }
+        "E" => {
+            crate::input::actions::synopsis::show_edit_prompt(state);
+            true
+        }
         "U" => {
             crate::input::actions::synopsis::undo_amend(state);
             true
