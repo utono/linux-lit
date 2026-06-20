@@ -404,7 +404,7 @@ fn handle_picker_key(
                                 crate::db::queries::find_all_glosses(
                                     &conn, &passage.work_abbrev,
                                     &passage.start_citation, &passage.end_citation,
-                                    &["teacher-generic", "inner-monologue"],
+                                    &["teacher-generic", "inner-monologue", "reader-gloss"],
                                 ).ok()
                             })
                             .unwrap_or_default();

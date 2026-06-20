@@ -82,7 +82,7 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
 
     if s.gloss_passages.is_empty() {
         if let Ok(conn) = crate::db::queries::open_db() {
-            s.gloss_passages = crate::db::queries::find_glossed_passages(&conn, &work_abbrev, &["teacher-generic", "inner-monologue"])
+            s.gloss_passages = crate::db::queries::find_glossed_passages(&conn, &work_abbrev, &["teacher-generic", "inner-monologue", "reader-gloss"])
                 .unwrap_or_default();
         }
         if s.gloss_passages.is_empty() {
@@ -112,7 +112,7 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
         .and_then(|conn| {
             crate::db::queries::find_all_glosses(
                 &conn, &passage.work_abbrev, &passage.start_citation, &passage.end_citation,
-                &["teacher-generic", "inner-monologue"],
+                &["teacher-generic", "inner-monologue", "reader-gloss"],
             ).ok()
         })
         .unwrap_or_default();
@@ -1902,7 +1902,7 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         return;
     }
 
-    const GLOSS_TYPES: &[&str] = &["teacher-generic", "inner-monologue"];
+    const GLOSS_TYPES: &[&str] = &["teacher-generic", "inner-monologue", "reader-gloss"];
 
     // Resolve the cursor line -> its (work abbrev, (div1, div2, line_in_div)).
     let (work_abbrev, cur_triple) = {
