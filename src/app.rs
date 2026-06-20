@@ -314,10 +314,10 @@ pub struct AppState {
     /// closes, so Escape returns to that overlay instead of the reader. Reset to
     /// `Reader` each time the keybinds overlay opens from the reader.
     pub keybinds_return_mode: InputMode,
-    /// Gloss-picker type filter: false shows `teacher-generic` glosses (the
-    /// default), true shows `inner-monologue`. Toggled with Ctrl+t while the
-    /// picker is open; reset to false each time the picker is opened.
-    pub gloss_picker_inner_monologue: bool,
+    /// Gloss-picker type filter, cycled by Ctrl+t through teacher-generic ->
+    /// inner-monologue -> reader-gloss while the picker is open; reset to the
+    /// default (teacher-generic) each time the picker is opened.
+    pub gloss_picker_filter: crate::input::actions::pickers::GlossPickerFilter,
     /// Which add/edit prompt the stacked gloss input card will submit as.
     pub gloss_prompt_mode: GlossPromptMode,
     pub delete_confirm_container: Option<glib::WeakRef<gtk4::Box>>,
@@ -1759,7 +1759,7 @@ pub fn build_window(
         voice_picker_origin: VoicePickerOrigin::Settings,
         settings_return_mode: InputMode::Reader,
         keybinds_return_mode: InputMode::Reader,
-        gloss_picker_inner_monologue: false,
+        gloss_picker_filter: crate::input::actions::pickers::GlossPickerFilter::default(),
         gloss_prompt_mode: GlossPromptMode::Add,
         delete_confirm_container: None,
         delete_confirm_overlay: None,
