@@ -114,6 +114,7 @@ pub fn handle_key(
             crate::app::InputMode::Search => handle_search_key(state, key_name),
             crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_shift, is_alt, tokio_handle),
             crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_state, key_name, is_ctrl, is_shift),
+            crate::app::InputMode::SynopsisVisual => handle_synopsis_visual_key(state, key_state, key_name),
             crate::app::InputMode::TranslationOverlay => handle_translation_overlay_key(state, key_name),
             crate::app::InputMode::DeleteConfirm => handle_delete_confirm_key(state, key_name),
             crate::app::InputMode::EchoPicker => handle_echo_picker_key(state, key_name, tokio_handle),
@@ -1065,6 +1066,15 @@ fn handle_synopsis_overlay_key(
             crate::input::actions::synopsis::show_edit_prompt(state);
             true
         }
+        "V" => {
+            let entered = state.borrow().gloss_overlay.enter_visual();
+            if entered {
+                let mut s = state.borrow_mut();
+                s.input_mode = crate::app::InputMode::SynopsisVisual;
+                s.gloss_overlay.set_synopsis_visual_hint();
+            }
+            true
+        }
         "U" => {
             crate::input::actions::synopsis::undo_amend(state);
             true
@@ -1138,6 +1148,75 @@ fn handle_synopsis_overlay_key(
         // Tab mirrors Space (ISO_Left_Tab is Shift+Tab).
         "space" | "Tab" | "ISO_Left_Tab" => {
             crate::input::actions::gloss::read_current_synopsis_block(state);
+            true
+        }
+        _ => true,
+    }
+}
+
+/// Key handling for synopsis visual mode (Shift+V from the synopsis overlay).
+/// Mirrors the reader's `handle_visual_key`: j/k extend the block selection,
+/// gg/G jump the cursor end, y yanks the selected paragraphs and exits, Esc/V
+/// exits without copying. All other keys are consumed.
+fn handle_synopsis_visual_key(
+    state: &Rc<RefCell<AppState>>,
+    key_state: &Rc<RefCell<KeyState>>,
+    key_name: &str,
+) -> bool {
+    // gg: extend to the first block.
+    if key_state.borrow().chord == ChordState::PendingG {
+        key_state.borrow_mut().chord = ChordState::None;
+        if key_name == "g" {
+            state.borrow().gloss_overlay.visual_to_end(false);
+        }
+        return true;
+    }
+
+    match key_name {
+        "j" => {
+            state.borrow().gloss_overlay.visual_step(1);
+            true
+        }
+        "k" => {
+            state.borrow().gloss_overlay.visual_step(-1);
+            true
+        }
+        "G" => {
+            state.borrow().gloss_overlay.visual_to_end(true);
+            true
+        }
+        "g" => {
+            KeyState::start_chord(key_state, ChordState::PendingG);
+            true
+        }
+        "y" => {
+            let (text, n) = {
+                let s = state.borrow();
+                (s.gloss_overlay.visual_selection_text(), s.gloss_overlay.visual_selection_len())
+            };
+            if !text.is_empty() {
+                let _ = std::process::Command::new("wl-copy").arg(&text).spawn();
+                crate::logging::log(&format!("SYNOPSIS: copied {} blocks", n));
+            }
+            {
+                let mut s = state.borrow_mut();
+                s.gloss_overlay.exit_visual();
+                s.input_mode = crate::app::InputMode::SynopsisOverlay;
+                s.gloss_overlay.set_synopsis_hint();
+                s.chapter_toast.set_text("Copied");
+                s.chapter_toast.set_visible(true);
+                let toast = s.chapter_toast.clone();
+                glib::timeout_add_local_once(std::time::Duration::from_secs(2), move || {
+                    toast.set_visible(false);
+                });
+            }
+            true
+        }
+        "Escape" | "V" => {
+            let mut s = state.borrow_mut();
+            s.gloss_overlay.exit_visual();
+            s.input_mode = crate::app::InputMode::SynopsisOverlay;
+            s.gloss_overlay.set_synopsis_hint();
             true
         }
         _ => true,
