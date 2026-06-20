@@ -1289,6 +1289,74 @@ impl GlossOverlay {
         self.scroll_cursor_into_view();
     }
 
+    /// Enter synopsis visual mode: anchor at the current block. No-op if there
+    /// are no blocks. Returns true if mode was entered.
+    pub fn enter_visual(&self) -> bool {
+        let len = self.blocks.borrow().len();
+        if len == 0 {
+            return false;
+        }
+        let cur = self.cursor_block.get().min(len - 1);
+        self.synopsis_visual_anchor.set(Some(cur));
+        self.refresh_selection_bar();
+        true
+    }
+
+    /// Exit synopsis visual mode: clear the anchor and redraw the bar as the
+    /// single cursor block.
+    pub fn exit_visual(&self) {
+        self.synopsis_visual_anchor.set(None);
+        self.mark_cursor_block();
+    }
+
+    /// Move the cursor end of the selection by `delta` blocks (clamped) and
+    /// re-span the bar. Used by j/k while in visual mode.
+    pub fn visual_step(&self, delta: i32) {
+        let len = self.blocks.borrow().len();
+        if len == 0 {
+            return;
+        }
+        let cur = self.cursor_block.get().min(len - 1) as i64;
+        let next = (cur + delta as i64).clamp(0, len as i64 - 1) as usize;
+        self.cursor_block.set(next);
+        self.refresh_selection_bar();
+        self.scroll_cursor_into_view();
+    }
+
+    /// Move the cursor end of the selection to the first (`false`) or last
+    /// (`true`) block and re-span the bar. Used by gg/G while in visual mode.
+    pub fn visual_to_end(&self, last: bool) {
+        let len = self.blocks.borrow().len();
+        if len == 0 {
+            return;
+        }
+        self.cursor_block.set(if last { len - 1 } else { 0 });
+        self.refresh_selection_bar();
+        self.scroll_cursor_into_view();
+    }
+
+    /// The currently-selected paragraphs' text (blank-line joined), for yank.
+    pub fn visual_selection_text(&self) -> String {
+        let anchor = match self.synopsis_visual_anchor.get() {
+            Some(a) => a,
+            None => return String::new(),
+        };
+        let cursor = self.cursor_block.get();
+        let syn = self.current_synopsis.borrow();
+        selected_blocks_text(&syn, anchor, cursor)
+    }
+
+    /// Number of blocks currently selected (for the log line).
+    pub fn visual_selection_len(&self) -> usize {
+        match self.synopsis_visual_anchor.get() {
+            Some(a) => {
+                let (s, e) = visual_block_range(a, self.cursor_block.get());
+                e - s + 1
+            }
+            None => 0,
+        }
+    }
+
     /// Scroll the viewport so the selected cursor block is visible. Only scrolls
     /// when the block falls outside the current viewport: brings its top into
     /// view (with a small pad) if above, or its bottom into view if below. The
@@ -1379,6 +1447,30 @@ impl GlossOverlay {
             *self.bar_ranges.borrow_mut() = vec![BarRange { start_line, end_line }];
             self.bar_drawing.queue_draw();
         }
+    }
+
+    /// Redraw the left bar. In visual mode (anchor set) the bar spans every
+    /// selected block (`anchor..=cursor`); otherwise it marks the single cursor
+    /// block. Safe to call in both modes.
+    fn refresh_selection_bar(&self) {
+        let anchor = match self.synopsis_visual_anchor.get() {
+            Some(a) => a,
+            None => {
+                self.mark_cursor_block();
+                return;
+            }
+        };
+        let blocks = self.blocks.borrow();
+        if blocks.is_empty() {
+            return;
+        }
+        let last = blocks.len() - 1;
+        let cursor = self.cursor_block.get().min(last);
+        let (s, e) = visual_block_range(anchor.min(last), cursor);
+        let start_line = blocks[s].start_line;
+        let end_line = blocks[e].end_line;
+        *self.bar_ranges.borrow_mut() = vec![BarRange { start_line, end_line }];
+        self.bar_drawing.queue_draw();
     }
 
     /// Approximate height of one line of gloss text, derived from the view's
