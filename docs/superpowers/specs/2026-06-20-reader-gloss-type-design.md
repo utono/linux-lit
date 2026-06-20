@@ -33,11 +33,23 @@ IPA-templated prompts only).
 
 They **must keep the exact `<speaker>` / `<verse>` / `<gloss>` XML output
 format** — the gloss overlay renderer parses those tags; deviating breaks
-display. What differs from teacher-generic is the *content* of `<gloss>`:
+display. The parser (`parse_gloss_tags`, `gloss_overlay.rs:2071`) is
+**order-agnostic**, so a leading `<gloss>` lede placed *before* the first
+`<speaker>`/`<verse>` block renders correctly as the first Explication block —
+**no overlay change is required** for the lede. What differs from
+teacher-generic is the *content* of `<gloss>`:
 
-- Terse: 1–3 sentences per `<gloss>` paragraph (teacher-generic allows 3–6).
-- Focus on (a) what the character wants/means *here in the scene*, and (b)
-  Elizabethan words, allusions, metaphors, idioms, concepts a reader would miss.
+- **The first `<gloss>` paragraph is a one-sentence motivation lede.** Exactly
+  one sentence, focused on motivation — what the speaker wants in this moment.
+  - If the selected verse contains **more than one speaker**, this single lede
+    sentence uses **semicolons** to describe each character's motivation in
+    turn (one independent clause per character, in order of appearance), e.g.
+    "Suffolk flatters the Protector's pride to provoke him; Gloucester deflects
+    with feigned humility to mask his contempt." It stays one sentence — clauses
+    joined by semicolons, not multiple sentences.
+- After the lede, the remaining `<gloss>` paragraphs are terse (1–3 sentences
+  each) and explicate (a) any further motive shifts and (b) Elizabethan words,
+  allusions, metaphors, idioms, and social/political concepts a reader would miss.
 - **Drop** the acting-pedagogy material entirely: operative words, breath,
   verse-delivery notes, Barton/Berry/Hall/Rodenburg/Linklater references.
 - No IPA anywhere.
