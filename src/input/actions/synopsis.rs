@@ -1,6 +1,7 @@
-//! Synopsis amend flow: from the synopsis overlay, `A` opens a question prompt;
-//! the answer is sent to Claude which augments (not replaces) the scene synopsis
-//! with an explanation, the result is shown and persisted to scene_synopses.
+//! Synopsis revision flows: from the synopsis overlay, `A` opens a question
+//! prompt (augment/explain) and `E` opens an edit prompt (structural rewrite).
+//! Both send the instruction + current synopsis to Claude, persist the result
+//! to scene_synopses, and support single-level undo with `U`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
