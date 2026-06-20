@@ -15,6 +15,7 @@ const BINDS: &[(&str, &str)] = &[
     ("↑ / ↓", "reorder (curate)"),
     ("g g / G", "first / last echo"),
     ("j / k", "scroll list"),
+    (";", "show chapter"),
     ("Tab", "play source turn"),
     ("Enter", "open echo's work"),
     ("c", "copy echo"),

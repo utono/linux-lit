@@ -879,6 +879,12 @@ fn handle_gloss_key(
             crate::input::actions::gloss::pick_source_voice(state);
             true
         }
+        // `;` mirrors the reading card: show the chapter/scene toast for the
+        // source line the overlay was opened from (state.current_line).
+        "semicolon" => {
+            navigation::show_current_chapter(&mut state.borrow_mut());
+            true
+        }
         _ => true,
     }
 }
@@ -1148,6 +1154,12 @@ fn handle_synopsis_overlay_key(
         // Tab mirrors Space (ISO_Left_Tab is Shift+Tab).
         "space" | "Tab" | "ISO_Left_Tab" => {
             crate::input::actions::gloss::read_current_synopsis_block(state);
+            true
+        }
+        // `;` mirrors the reading card: show the chapter/scene toast for the
+        // source line the overlay was opened from (state.current_line).
+        "semicolon" => {
+            navigation::show_current_chapter(&mut state.borrow_mut());
             true
         }
         _ => true,
@@ -1484,6 +1496,12 @@ fn handle_echoes_overlay_key(
         }
         "k" => {
             state.borrow().gloss_overlay.scroll_gloss(-1);
+            true
+        }
+        // `;` mirrors the reading card: show the chapter/scene toast for the
+        // source line the overlay was opened from (state.current_line).
+        "semicolon" => {
+            navigation::show_current_chapter(&mut state.borrow_mut());
             true
         }
         "Escape" => {
