@@ -367,7 +367,8 @@ Output format — use these XML tags exactly:
 - <gloss>paragraph</gloss> for each prose paragraph
 
 Rules:
-- The FIRST <gloss> is a one-sentence motivation lede: exactly one sentence stating what the speaker is doing in this moment. Lead each clause with a PRECISE ACTIVE VERB that names the rhetorical or dramatic move itself (e.g. insinuates, feigns, fishes for, angles for, goads, needles, deflects, flatters, threatens, pleads, taunts, dissembles, parries). Do NOT use weak periphrastic wind-ups — never 'wants to', 'tries to', 'attempts to', 'is trying to', 'seeks to'; the verb must carry the meaning directly (write 'Margaret slyly insinuates…', not 'Margaret wants to flatter…'). If the passage has more than one speaker, that single sentence uses SEMICOLONS to give each character's move in turn — one independent clause per character, in order of appearance — and stays ONE sentence (clauses joined by semicolons, never multiple sentences).
+- Begin the output with the FIRST <speaker> and its <verse> line(s) — the opening quoted block — and ONLY THEN the one-sentence motivation lede <gloss>. The lede must NOT come before any verse; it appears immediately after the first quoted <speaker>/<verse> block, then the rest of the passage follows.
+- The motivation lede is exactly one sentence stating what the speaker is doing in this moment. Lead each clause with a PRECISE ACTIVE VERB that names the rhetorical or dramatic move itself (e.g. insinuates, feigns, fishes for, angles for, goads, needles, deflects, flatters, threatens, pleads, taunts, dissembles, parries). Do NOT use weak periphrastic wind-ups — never 'wants to', 'tries to', 'attempts to', 'is trying to', 'seeks to'; the verb must carry the meaning directly (write 'Margaret slyly insinuates…', not 'Margaret wants to flatter…'). If the passage has more than one speaker, that single sentence uses SEMICOLONS to give each character's move in turn — one independent clause per character, in order of appearance — and stays ONE sentence (clauses joined by semicolons, never multiple sentences).
 - After the lede, each <gloss> is terse (1-3 sentences) explicating further motive shifts and Elizabethan words, allusions, metaphors, idioms, or concepts a reader would miss.
 - Do NOT give acting direction: no operative words, no breath, no verse-delivery notes, no Barton/Berry/Hall/Rodenburg/Linklater references.
 - NEVER write IPA, phonetic symbols, or slash-wrapped pronunciations anywhere.
@@ -412,7 +413,7 @@ Output format — use these XML tags exactly:
 - <gloss>paragraph</gloss> for each paragraph
 
 Rules:
-- PRESERVE the one-sentence motivation lede as the FIRST <gloss>: exactly one sentence; if multiple speakers, semicolon-separated per character. Rewrite it if the new context warrants, but NEVER drop it. If you rewrite it, lead each clause with a precise active verb naming the rhetorical move (insinuates, feigns, goads, deflects, flatters…) — never weak wind-ups like 'wants to'/'tries to'.
+- PRESERVE the one-sentence motivation lede: exactly one sentence; if multiple speakers, semicolon-separated per character. It appears immediately AFTER the first <speaker>/<verse> block (the opening quoted lines come first, then the lede <gloss>), never before any verse. Rewrite it if the new context warrants, but NEVER drop it. If you rewrite it, lead each clause with a precise active verb naming the rhetorical move (insinuates, feigns, goads, deflects, flatters…) — never weak wind-ups like 'wants to'/'tries to'.
 - After the lede, each <gloss> is terse (1-3 sentences): character motive and Elizabethan concepts a reader would miss. No acting direction. No IPA.
 - Quote verbatim. Never use / to join verse lines.
 - ALWAYS place a <speaker> tag before EVERY group of <verse> lines.

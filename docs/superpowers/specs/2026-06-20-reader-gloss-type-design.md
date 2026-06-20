@@ -34,13 +34,16 @@ IPA-templated prompts only).
 They **must keep the exact `<speaker>` / `<verse>` / `<gloss>` XML output
 format** — the gloss overlay renderer parses those tags; deviating breaks
 display. The parser (`parse_gloss_tags`, `gloss_overlay.rs:2071`) is
-**order-agnostic**, so a leading `<gloss>` lede placed *before* the first
-`<speaker>`/`<verse>` block renders correctly as the first Explication block —
+**order-agnostic**, so a `<gloss>` lede placed *after* the first
+`<speaker>`/`<verse>` block renders correctly as an Explication block —
 **no overlay change is required** for the lede. What differs from
-teacher-generic is the *content* of `<gloss>`:
+teacher-generic is the *content* and *order* of `<gloss>`:
 
-- **The first `<gloss>` paragraph is a one-sentence motivation lede.** Exactly
-  one sentence, focused on motivation — what the speaker wants in this moment.
+- **The output opens with the first `<speaker>` + its `<verse>` line(s), then
+  the one-sentence motivation lede `<gloss>`.** The lede comes immediately
+  AFTER the first quoted block (the reader sees the opening lines first), never
+  before any verse. Exactly one sentence, focused on motivation — what the
+  speaker is doing in this moment, led by a precise active verb.
   - If the selected verse contains **more than one speaker**, this single lede
     sentence uses **semicolons** to describe each character's motivation in
     turn (one independent clause per character, in order of appearance), e.g.
@@ -56,9 +59,9 @@ teacher-generic is the *content* of `<gloss>`:
 - **Always keep the lede.** The one-sentence motivation lede is mandatory in
   every Reader Gloss and must survive refinement:
   - `READER_GLOSS_EDIT_PROMPT` regenerates the whole gloss, so it must
-    **preserve (or rewrite, but never drop) the leading one-sentence motivation
-    lede** as the first `<gloss>` paragraph — same one-sentence / semicolon
-    rules as a fresh gloss.
+    **preserve (or rewrite, but never drop) the one-sentence motivation lede**
+    in its place (immediately after the first `<speaker>`/`<verse>` block) —
+    same one-sentence / semicolon / active-verb rules as a fresh gloss.
   - Q&A (`-question`) and Add (`-add`) only *append* a new `<gloss>Q: …</gloss>`
     block after the existing gloss, so the original lede is preserved by
     construction; these prompts must not emit their own lede or restate it.
