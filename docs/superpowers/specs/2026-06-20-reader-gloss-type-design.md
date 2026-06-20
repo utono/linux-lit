@@ -63,18 +63,21 @@ teacher-generic is the *content* of `<gloss>`:
     block after the existing gloss, so the original lede is preserved by
     construction; these prompts must not emit their own lede or restate it.
 
-Four dedicated prompts (full parity with teacher-generic's set), each shipped
-both as a compiled `FALLBACK` in `src/gloss.rs` AND seeded into `api_prompts`
-(`is_active=1`, descriptive `note`), matching the existing two-source pattern:
+Three dedicated prompts (full parity with teacher-generic's set, which has
+question + edit and no separate "add"), each shipped both as a compiled
+`FALLBACK` in `src/gloss.rs` AND seeded into `api_prompts` (`is_active=1`,
+descriptive `note`), matching the existing two-source pattern:
 
 - `gloss.reader-gloss` — fresh Reader Gloss (`READER_GLOSS_PROMPT`).
 - `gloss.reader-gloss-question` — follow-up Q&A (`READER_GLOSS_QUESTION_PROMPT`).
 - `gloss.reader-gloss-edit` — edit existing (`READER_GLOSS_EDIT_PROMPT`).
-- `gloss.reader-gloss-add` — add cross-work / user lines (`READER_GLOSS_ADD_PROMPT`).
 
-(The add variant mirrors teacher-generic's behavior, which currently reuses
-`USER_QUESTION_PROMPT` for "add" on non-monologue glosses; for Reader Gloss the
-"add" path gets its own terse prompt so refinements stay in voice.)
+(linux-lit's gloss "ask" flow has only two prompt modes that reach the
+handlers — `Add` and `Edit` (`submit_gloss_prompt`). For non-monologue glosses
+the `Add` mode IS the Q&A path: teacher-generic uses `USER_QUESTION_PROMPT`
+there, and reader-gloss uses `READER_GLOSS_QUESTION_PROMPT`. There is no
+separate "add" prompt — an earlier draft's `gloss.reader-gloss-add` had no call
+site and was dropped.)
 
 ## Action menu order and dispatch
 
