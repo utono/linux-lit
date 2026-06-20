@@ -1699,7 +1699,7 @@ pub fn save_gloss(
     gloss_text: &str,
     gloss_type: &str,
     claude_model: &str,
-) -> Result<(), rusqlite::Error> {
+) -> Result<i64, rusqlite::Error> {
     conn.execute(
         "INSERT OR IGNORE INTO passages \
          (hash, work_abbrev, start_citation, end_citation, act, scene, character, source_text) \
@@ -1718,7 +1718,8 @@ pub fn save_gloss(
         rusqlite::params![passage_id, gloss_type, gloss_text, claude_model],
     )?;
 
-    Ok(())
+    let gloss_id = conn.last_insert_rowid();
+    Ok(gloss_id)
 }
 
 pub fn update_gloss(

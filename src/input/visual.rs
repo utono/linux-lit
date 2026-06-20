@@ -482,8 +482,9 @@ fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
 
         match result {
             Ok(Ok(gloss_text)) => {
+                let mut new_gloss_id: i64 = -1;
                 if let Ok(conn) = crate::db::queries::open_db_rw() {
-                    let _ = crate::db::queries::save_gloss(
+                    if let Ok(id) = crate::db::queries::save_gloss(
                         &conn,
                         &ctx.hash,
                         &ctx.work_abbrev,
@@ -496,7 +497,9 @@ fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
                         &gloss_text,
                         "reader-gloss",
                         &model_for_db,
-                    );
+                    ) {
+                        new_gloss_id = id;
+                    }
                 }
 
                 let all = crate::db::queries::open_db()
@@ -509,14 +512,16 @@ fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
                     })
                     .unwrap_or_default();
 
+                let new_idx = all.iter().position(|g| g.gloss_id == new_gloss_id).unwrap_or(0);
+
                 let mut s = state_for_result.borrow_mut();
                 let cw = s.content_hbox.width();
                 let h = s.content_hbox.height();
                 let pairs = ctx.source_line_pairs();
                 s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &gloss_text, cw, h, Some(&s.theme.root_color), &pairs);
-                s.gloss_overlay.set_position(0, all.len());
+                s.gloss_overlay.set_position(new_idx, all.len());
                 s.gloss_list = all;
-                s.gloss_index = 0;
+                s.gloss_index = new_idx;
                 s.gloss_context = Some(ctx);
                 crate::logging::log("READER-GLOSS: generated and saved new gloss");
             }
@@ -617,8 +622,9 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
 
         match result {
             Ok(Ok(gloss_text)) => {
+                let mut new_gloss_id: i64 = -1;
                 if let Ok(conn) = crate::db::queries::open_db_rw() {
-                    let _ = crate::db::queries::save_gloss(
+                    if let Ok(id) = crate::db::queries::save_gloss(
                         &conn,
                         &ctx.hash,
                         &ctx.work_abbrev,
@@ -631,7 +637,9 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
                         &gloss_text,
                         "teacher-generic",
                         &model_for_db,
-                    );
+                    ) {
+                        new_gloss_id = id;
+                    }
                 }
 
                 let all = crate::db::queries::open_db()
@@ -644,14 +652,16 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
                     })
                     .unwrap_or_default();
 
+                let new_idx = all.iter().position(|g| g.gloss_id == new_gloss_id).unwrap_or(0);
+
                 let mut s = state_for_result.borrow_mut();
                 let cw = s.content_hbox.width();
                 let h = s.content_hbox.height();
                 let pairs = ctx.source_line_pairs();
                 s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &gloss_text, cw, h, Some(&s.theme.root_color), &pairs);
-                s.gloss_overlay.set_position(0, all.len());
+                s.gloss_overlay.set_position(new_idx, all.len());
                 s.gloss_list = all;
-                s.gloss_index = 0;
+                s.gloss_index = new_idx;
                 s.gloss_context = Some(ctx);
                 crate::logging::log("GLOSS: generated and saved new gloss");
             }
@@ -876,8 +886,9 @@ fn run_pending_inner_monologue_blocking(
         match result {
             Ok(Ok(gloss_text)) => {
                 let verified_text = crate::gloss::verify_echo_citations(&gloss_text, &ctx.work_abbrev);
+                let mut new_gloss_id: i64 = -1;
                 if let Ok(conn) = crate::db::queries::open_db_rw() {
-                    let _ = crate::db::queries::save_gloss(
+                    if let Ok(id) = crate::db::queries::save_gloss(
                         &conn,
                         &ctx.hash,
                         &ctx.work_abbrev,
@@ -890,7 +901,9 @@ fn run_pending_inner_monologue_blocking(
                         &verified_text,
                         "inner-monologue",
                         &model_for_db,
-                    );
+                    ) {
+                        new_gloss_id = id;
+                    }
                 }
 
                 let all = crate::db::queries::open_db()
@@ -903,14 +916,16 @@ fn run_pending_inner_monologue_blocking(
                     })
                     .unwrap_or_default();
 
+                let new_idx = all.iter().position(|g| g.gloss_id == new_gloss_id).unwrap_or(0);
+
                 let mut s = state_for_result.borrow_mut();
                 let cw = s.content_hbox.width();
                 let h = s.content_hbox.height();
                 let pairs = ctx.source_line_pairs();
                 s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &verified_text, cw, h, Some(&s.theme.root_color), &pairs);
-                s.gloss_overlay.set_position(0, all.len());
+                s.gloss_overlay.set_position(new_idx, all.len());
                 s.gloss_list = all;
-                s.gloss_index = 0;
+                s.gloss_index = new_idx;
                 s.gloss_context = Some(ctx);
                 crate::logging::log("GLOSS: generated and saved inner monologue");
             }
