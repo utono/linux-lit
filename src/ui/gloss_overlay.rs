@@ -1768,6 +1768,26 @@ pub fn visual_block_range(anchor: usize, cursor: usize) -> (usize, usize) {
     (anchor.min(cursor), anchor.max(cursor))
 }
 
+/// Build the yank text for a synopsis visual selection: the `display` (clean,
+/// `<p>`-stripped) text of cursor-stop blocks `start..=end`, joined by a blank
+/// line. Uses `synopsis_blocks` so the indices match the on-screen cursor
+/// stops exactly (label paragraphs already excluded). Out-of-range indices are
+/// clamped; an empty synopsis yields an empty string.
+pub fn selected_blocks_text(synopsis: &str, start: usize, end: usize) -> String {
+    let blocks = synopsis_blocks(synopsis);
+    if blocks.is_empty() {
+        return String::new();
+    }
+    let last = blocks.len() - 1;
+    let (s, e) = (start.min(last), end.min(last));
+    let (s, e) = (s.min(e), s.max(e));
+    blocks[s..=e]
+        .iter()
+        .map(|b| b.display.clone())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 /// paragraphs (`is_label_paragraph`, e.g. "Shakespearean parallels:") are shown
 /// in the buffer but are NOT cursor stops, so they are skipped here — exactly
 /// the paragraphs `render_synopsis_with_labels` marks for bolding. Synopsis text
@@ -3411,5 +3431,33 @@ mod visual_range_tests {
     fn range_from_zero() {
         assert_eq!(visual_block_range(0, 4), (0, 4));
         assert_eq!(visual_block_range(4, 0), (0, 4));
+    }
+
+    #[test]
+    fn selects_paragraph_range_blank_line_joined() {
+        let syn = "<p>One.</p><p>Two.</p><p>Three.</p>";
+        // blocks 0..=1 -> first two paragraphs
+        assert_eq!(selected_blocks_text(syn, 0, 1), "One.\n\nTwo.");
+    }
+
+    #[test]
+    fn selects_single_paragraph() {
+        let syn = "<p>One.</p><p>Two.</p>";
+        assert_eq!(selected_blocks_text(syn, 1, 1), "Two.");
+    }
+
+    #[test]
+    fn selection_skips_label_paragraph_like_the_cursor() {
+        // synopsis_blocks excludes label paragraphs, so block indices count only
+        // cursor-stop paragraphs. "Shakespearean parallels:" is a label.
+        let syn = "<p>Plot.</p><p>Shakespearean parallels:</p><p>The parallel.</p>";
+        // cursor-stop blocks are [Plot., The parallel.] -> indices 0,1
+        assert_eq!(selected_blocks_text(syn, 0, 1), "Plot.\n\nThe parallel.");
+    }
+
+    #[test]
+    fn plain_untagged_synopsis_is_one_block() {
+        let syn = "Just one paragraph, no tags.";
+        assert_eq!(selected_blocks_text(syn, 0, 0), "Just one paragraph, no tags.");
     }
 }
