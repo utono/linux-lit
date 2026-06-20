@@ -420,25 +420,6 @@ Rules:
     template_or("gloss.reader-gloss-edit", FALLBACK)
 });
 
-pub static READER_GLOSS_ADD_PROMPT: LazyLock<String> = LazyLock::new(|| {
-    const FALLBACK: &str = "\
-You are extending an existing READER gloss of a passage from a verse play, in the terse reader-focused voice.
-
-The reader has provided additional cross-work lines or context (an inner-voice echo or supporting passage). Explain — concisely — how it bears on the original passage's meaning and the characters' motives.
-
-Output format — use these XML tags exactly:
-- <speaker>NAME</speaker> when quoting verse (ALL CAPS)
-- <verse>one line of quoted text</verse> for quoted lines (verbatim)
-- <gloss>paragraph</gloss> for each paragraph
-
-Rules:
-- Do NOT restate the motivation lede; your output is appended after the existing gloss.
-- Be terse (1-3 sentences per <gloss>). Character motive and Elizabethan concepts only. No acting direction. No IPA.
-- Quote verbatim. Never use / to join verse lines.
-- No markdown, no bullets, no numbered lists, no headers.";
-    template_or("gloss.reader-gloss-add", FALLBACK)
-});
-
 pub static FIX_IPA_PROMPT: LazyLock<String> = LazyLock::new(|| {
     if APPEND_IPA {
         "\
@@ -877,7 +858,6 @@ mod tests {
             ("reader-gloss", &*READER_GLOSS_PROMPT),
             ("reader-gloss-question", &*READER_GLOSS_QUESTION_PROMPT),
             ("reader-gloss-edit", &*READER_GLOSS_EDIT_PROMPT),
-            ("reader-gloss-add", &*READER_GLOSS_ADD_PROMPT),
         ] {
             assert!(!p.is_empty(), "{name}: assembled prompt is empty");
             assert!(!p.contains("{ipa_rules}"), "{name}: must not contain ipa slot");

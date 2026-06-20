@@ -679,7 +679,7 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
         }
         "reader-gloss" => {
             let msg = crate::gloss::build_user_message(&ctx, Some(&prompt_owned), None);
-            (crate::gloss::READER_GLOSS_ADD_PROMPT.as_str(), msg, "reader-gloss")
+            (crate::gloss::READER_GLOSS_QUESTION_PROMPT.as_str(), msg, "reader-gloss")
         }
         _ => {
             let msg = crate::gloss::build_user_message(&ctx, Some(&prompt_owned), None);
