@@ -68,7 +68,7 @@ const TAB_KEY: KeyDef = bare("Tab", "", "play/pause");
 const HOME_ROW: &[KeyDef] = &[
     key("a", "A", "play from ts", "", &[("C-a", "authorship"), ("S-C-a", "attr set")]),
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
-    key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echo turns"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echoes")]),
+    key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echo turns"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echoes"), ("E", "synopsis edit")]),
     key("u", "U", "start time", "U: undo ts", &[("M-u", "set end time")]),
     key("i", "I", "2-col translation", "", &[("M-i", "scansion"), ("C-M-i", "inline translation"), ("C-i", "page image"), ("S-C-i", "calibrate pages")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
@@ -509,6 +509,10 @@ gloss::read_current_synopsis_block, gloss::synth_all_synopsis_blocks \
 the side panel via app::toggle_synopsis).",
         "synopsis side" => "Toggle the persistent synopsis side panel (distinct \
 from h's transient synopsis overlay). -> app::toggle_synopsis — src/app.rs",
+        "synopsis edit" => "While the synopsis overlay is open (h), press E to open \
+the EDIT card: type an instruction (split/merge paragraphs, reword, reorder) that \
+is sent to Claude to rewrite the current scene synopsis. Ctrl+Enter submits; U \
+reverts. -> synopsis::show_edit_prompt — src/input/actions/synopsis.rs",
         "col layout" => "Toggle between one-column and two-column (spread) page \
 layout. -> navigation::toggle_column_layout — src/input/navigation.rs",
         "authorship" => "Toggle authorship formatting on/off — visually marks each \
