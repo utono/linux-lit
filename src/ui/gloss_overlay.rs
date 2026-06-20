@@ -1762,6 +1762,12 @@ pub struct GlossBlock {
 
 /// Parse a `<p>`-tagged synopsis into cursor-stop blocks, one per paragraph,
 /// each a `BlockKind::Explication` (synopses are prose, never verse). Label
+/// Inclusive block range for a visual selection given the anchor and cursor
+/// block indices. Direction-independent: the smaller index is the start.
+pub fn visual_block_range(anchor: usize, cursor: usize) -> (usize, usize) {
+    (anchor.min(cursor), anchor.max(cursor))
+}
+
 /// paragraphs (`is_label_paragraph`, e.g. "Shakespearean parallels:") are shown
 /// in the buffer but are NOT cursor stops, so they are skipped here — exactly
 /// the paragraphs `render_synopsis_with_labels` marks for bolding. Synopsis text
@@ -3383,5 +3389,27 @@ mod synopsis_blocks_tests {
     #[test]
     fn empty_yields_no_blocks() {
         assert_eq!(synopsis_blocks("").len(), 0);
+    }
+}
+
+#[cfg(test)]
+mod visual_range_tests {
+    use super::*;
+
+    #[test]
+    fn range_is_direction_independent() {
+        assert_eq!(visual_block_range(2, 5), (2, 5));
+        assert_eq!(visual_block_range(5, 2), (2, 5));
+    }
+
+    #[test]
+    fn single_block_range() {
+        assert_eq!(visual_block_range(3, 3), (3, 3));
+    }
+
+    #[test]
+    fn range_from_zero() {
+        assert_eq!(visual_block_range(0, 4), (0, 4));
+        assert_eq!(visual_block_range(4, 0), (0, 4));
     }
 }
