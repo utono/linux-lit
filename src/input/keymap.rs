@@ -401,9 +401,9 @@ fn handle_picker_key(
                         let all_glosses = crate::db::queries::open_db()
                             .ok()
                             .and_then(|conn| {
-                                crate::db::queries::find_all_glosses(
+                                crate::db::queries::find_glosses_by_start(
                                     &conn, &passage.work_abbrev,
-                                    &passage.start_citation, &passage.end_citation,
+                                    &passage.start_citation,
                                     &["teacher-generic", "inner-monologue", "reader-gloss"],
                                 ).ok()
                             })

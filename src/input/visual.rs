@@ -422,9 +422,9 @@ fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
         };
 
         let all_glosses: Vec<crate::db::queries::SavedGloss> = match crate::db::queries::open_db() {
-            Ok(conn) => crate::db::queries::find_all_glosses(
-                &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
-                &["reader-gloss"],
+            Ok(conn) => crate::db::queries::find_glosses_by_start(
+                &conn, &ctx.work_abbrev, &ctx.start_citation,
+                &["teacher-generic", "inner-monologue", "reader-gloss"],
             ).unwrap_or_default(),
             Err(_) => Vec::new(),
         };
@@ -502,9 +502,9 @@ fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
                 let all = crate::db::queries::open_db()
                     .ok()
                     .and_then(|conn| {
-                        crate::db::queries::find_all_glosses(
-                            &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
-                            &["reader-gloss"],
+                        crate::db::queries::find_glosses_by_start(
+                            &conn, &ctx.work_abbrev, &ctx.start_citation,
+                            &["teacher-generic", "inner-monologue", "reader-gloss"],
                         ).ok()
                     })
                     .unwrap_or_default();
@@ -557,9 +557,9 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
         };
 
         let all_glosses: Vec<crate::db::queries::SavedGloss> = match crate::db::queries::open_db() {
-            Ok(conn) => crate::db::queries::find_all_glosses(
-                &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
-                &["teacher-generic"],
+            Ok(conn) => crate::db::queries::find_glosses_by_start(
+                &conn, &ctx.work_abbrev, &ctx.start_citation,
+                &["teacher-generic", "inner-monologue", "reader-gloss"],
             ).unwrap_or_default(),
             Err(_) => Vec::new(),
         };
@@ -637,9 +637,9 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
                 let all = crate::db::queries::open_db()
                     .ok()
                     .and_then(|conn| {
-                        crate::db::queries::find_all_glosses(
-                            &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
-                            &["teacher-generic"],
+                        crate::db::queries::find_glosses_by_start(
+                            &conn, &ctx.work_abbrev, &ctx.start_citation,
+                            &["teacher-generic", "inner-monologue", "reader-gloss"],
                         ).ok()
                     })
                     .unwrap_or_default();
@@ -697,9 +697,9 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
             .collect();
 
         let all_glosses: Vec<crate::db::queries::SavedGloss> = match crate::db::queries::open_db() {
-            Ok(conn) => crate::db::queries::find_all_glosses(
-                &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
-                &["inner-monologue"],
+            Ok(conn) => crate::db::queries::find_glosses_by_start(
+                &conn, &ctx.work_abbrev, &ctx.start_citation,
+                &["teacher-generic", "inner-monologue", "reader-gloss"],
             ).unwrap_or_default(),
             Err(_) => Vec::new(),
         };
@@ -896,9 +896,9 @@ fn run_pending_inner_monologue_blocking(
                 let all = crate::db::queries::open_db()
                     .ok()
                     .and_then(|conn| {
-                        crate::db::queries::find_all_glosses(
-                            &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
-                            &["inner-monologue"],
+                        crate::db::queries::find_glosses_by_start(
+                            &conn, &ctx.work_abbrev, &ctx.start_citation,
+                            &["teacher-generic", "inner-monologue", "reader-gloss"],
                         ).ok()
                     })
                     .unwrap_or_default();

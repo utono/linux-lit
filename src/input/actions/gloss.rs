@@ -110,8 +110,8 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
     let all_glosses = crate::db::queries::open_db()
         .ok()
         .and_then(|conn| {
-            crate::db::queries::find_all_glosses(
-                &conn, &passage.work_abbrev, &passage.start_citation, &passage.end_citation,
+            crate::db::queries::find_glosses_by_start(
+                &conn, &passage.work_abbrev, &passage.start_citation,
                 &["teacher-generic", "inner-monologue", "reader-gloss"],
             ).ok()
         })
@@ -733,9 +733,9 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
                 let all = crate::db::queries::open_db()
                     .ok()
                     .and_then(|conn| {
-                        crate::db::queries::find_all_glosses(
-                            &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
-                            &[gloss_type_owned.as_str()],
+                        crate::db::queries::find_glosses_by_start(
+                            &conn, &ctx.work_abbrev, &ctx.start_citation,
+                            &["teacher-generic", "inner-monologue", "reader-gloss"],
                         ).ok()
                     })
                     .unwrap_or_default();
@@ -840,9 +840,9 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
                 let all = crate::db::queries::open_db()
                     .ok()
                     .and_then(|conn| {
-                        crate::db::queries::find_all_glosses(
-                            &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
-                            &[gloss_type_owned.as_str()],
+                        crate::db::queries::find_glosses_by_start(
+                            &conn, &ctx.work_abbrev, &ctx.start_citation,
+                            &["teacher-generic", "inner-monologue", "reader-gloss"],
                         ).ok()
                     })
                     .unwrap_or_default();
@@ -1978,11 +1978,10 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         }
     };
 
-    let all_glosses = crate::db::queries::find_all_glosses(
+    let all_glosses = crate::db::queries::find_glosses_by_start(
         &conn,
         &passage.work_abbrev,
         &passage.start_citation,
-        &passage.end_citation,
         GLOSS_TYPES,
     )
     .unwrap_or_default();
