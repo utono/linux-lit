@@ -668,7 +668,7 @@ impl GlossOverlay {
         self.gloss_view.set_right_margin(left);
         self.gloss_view.set_top_margin(32);
         self.gloss_view.set_pixels_below_lines(4);
-        self.hint.set_text("Esc close · Space play/pause · a play · A add · e edit · d delete · c copy id · Ctrl+n/p gloss · Alt+n/p passage");
+        self.set_gloss_hint();
         self.orig_header.set_visible(false);
         self.original_label.set_visible(false);
         self.corr_header.set_visible(false);
@@ -1368,6 +1368,48 @@ impl GlossOverlay {
     /// Set the footer hint shown while synopsis visual mode is active.
     pub fn set_synopsis_visual_hint(&self) {
         self.hint.set_text("\u{21e7}V/Esc exit · j/k extend · gg/G ends · y yank");
+    }
+
+    /// Set the gloss-overlay footer hint (normal navigation). Called by the
+    /// gloss render path and when exiting gloss visual mode, so both share one
+    /// string. `\u{21e7}V select` advertises gloss visual mode.
+    pub fn set_gloss_hint(&self) {
+        self.hint.set_text("Esc close · Space play/pause · a play · A add · e edit · d delete · c copy id · Ctrl+n/p gloss · Alt+n/p passage · \u{21e7}V select");
+    }
+
+    /// Set the footer hint shown while gloss visual mode is active.
+    pub fn set_gloss_visual_hint(&self) {
+        self.hint.set_text("\u{21e7}V/Esc exit · j/k extend · gg/G ends · y yank");
+    }
+
+    /// The currently-selected blocks' text read straight from the gloss buffer
+    /// (first selected block's start line through the last block's end line),
+    /// for yank in gloss visual mode. Unlike `visual_selection_text` (synopsis),
+    /// this does not use `current_synopsis`; it copies the full block text —
+    /// source verse plus its gloss — exactly as displayed.
+    pub fn visual_selection_buffer_text(&self) -> String {
+        let anchor = match self.synopsis_visual_anchor.get() {
+            Some(a) => a,
+            None => return String::new(),
+        };
+        let (start_idx, end_idx) = visual_block_range(anchor, self.cursor_block.get());
+        let ranges = self.blocks.borrow();
+        let (Some(first), Some(last)) = (ranges.get(start_idx), ranges.get(end_idx)) else {
+            return String::new();
+        };
+        let buffer = self.gloss_view.buffer();
+        let start = match buffer.iter_at_line(first.start_line) {
+            Some(it) => it,
+            None => return String::new(),
+        };
+        let mut end = match buffer.iter_at_line(last.end_line) {
+            Some(it) => it,
+            None => return String::new(),
+        };
+        if !end.ends_line() {
+            end.forward_to_line_end();
+        }
+        buffer.text(&start, &end, false).to_string()
     }
 
     /// Scroll the viewport so the selected cursor block is visible. Only scrolls

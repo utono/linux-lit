@@ -89,7 +89,7 @@ const BOTTOM_ROW: &[KeyDef] = &[
     bare("b", "B", ""),
     key("m", "M", "bookmark", "", &[("C-m", "media picker")]),
     key("w", "W", "copy word", "W: collect", &[("M-w", "Shx echoes"), ("C-w", "Shx echo turns"), ("S-C-w", "reopen Shx echoes")]),
-    key("v", "V", "", "V: visual mode", &[("v", "voice: add/remove"), ("V", "voice: cycle")]),
+    key("v", "V", "", "V: visual mode", &[("v", "voice: add/remove"), ("C-v", "voice: cycle")]),
     bare("z", "Z", "zt…"),
 ];
 
@@ -432,10 +432,13 @@ and copy it. -> word_copy::word_collect_copy — src/input/actions/word_copy.rs"
 i shows echoes for the selection, Return opens the action popup, Esc/V exits. \
 The synopsis overlay (h) has its own Shift+V visual mode: j/k (and gg/G) extend \
 a paragraph-block selection, y yanks the selected paragraphs to the clipboard \
-(blank-line joined) and exits, Esc/Shift+V cancels. \
+(blank-line joined) and exits, Esc/Shift+V cancels. The gloss overlay (Ctrl+g) \
+likewise has Shift+V visual mode: j/k (and gg/G) extend a block selection, y \
+yanks the selected blocks' full text (source verse + gloss, as displayed) and \
+exits, Esc/Shift+V cancels; there Ctrl+V cycles the active voice. \
 -> visual::enter_visual_mode — src/input/visual.rs; \
-handle_synopsis_visual_key / gloss_overlay::enter_visual — src/input/keymap.rs, \
-src/ui/gloss_overlay.rs",
+handle_synopsis_visual_key / handle_gloss_visual_key / gloss_overlay::enter_visual \
+— src/input/keymap.rs, src/ui/gloss_overlay.rs",
 
         // ── MPV / audio ──
         "play/pause" => "Toggle MPV playback (play or pause the synced audio). \
