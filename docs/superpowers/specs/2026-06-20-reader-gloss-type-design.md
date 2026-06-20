@@ -53,6 +53,15 @@ teacher-generic is the *content* of `<gloss>`:
 - **Drop** the acting-pedagogy material entirely: operative words, breath,
   verse-delivery notes, Barton/Berry/Hall/Rodenburg/Linklater references.
 - No IPA anywhere.
+- **Always keep the lede.** The one-sentence motivation lede is mandatory in
+  every Reader Gloss and must survive refinement:
+  - `READER_GLOSS_EDIT_PROMPT` regenerates the whole gloss, so it must
+    **preserve (or rewrite, but never drop) the leading one-sentence motivation
+    lede** as the first `<gloss>` paragraph — same one-sentence / semicolon
+    rules as a fresh gloss.
+  - Q&A (`-question`) and Add (`-add`) only *append* a new `<gloss>Q: …</gloss>`
+    block after the existing gloss, so the original lede is preserved by
+    construction; these prompts must not emit their own lede or restate it.
 
 Four dedicated prompts (full parity with teacher-generic's set), each shipped
 both as a compiled `FALLBACK` in `src/gloss.rs` AND seeded into `api_prompts`
