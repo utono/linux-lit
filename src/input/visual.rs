@@ -439,17 +439,18 @@ fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
 
     exit_visual_mode(&mut state_rc.borrow_mut());
 
-    if !all_glosses.is_empty() {
+    let own_idx = all_glosses.iter().position(|g| g.gloss_type == "reader-gloss");
+    if let Some(idx) = own_idx {
         let mut s = state_rc.borrow_mut();
         s.gloss_original_text = Some(ctx.source_text.clone());
         let pairs = ctx.source_line_pairs();
-        let gloss_text = &all_glosses[0].gloss_text;
+        let gloss_text = &all_glosses[idx].gloss_text;
         let card_width = s.content_hbox.width();
         let card_height = s.content_hbox.height();
         s.gloss_overlay.show_gloss_with_color(&ctx.source_text, gloss_text, card_width, card_height, Some(&s.theme.root_color), &pairs);
-        s.gloss_overlay.set_position(0, all_glosses.len());
+        s.gloss_overlay.set_position(idx, all_glosses.len());
         s.gloss_list = all_glosses;
-        s.gloss_index = 0;
+        s.gloss_index = idx;
         s.gloss_context = Some(ctx);
         s.input_mode = crate::app::InputMode::GlossOverlay;
         crate::logging::log("READER-GLOSS: showing cached gloss");
@@ -579,17 +580,18 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
 
     exit_visual_mode(&mut state_rc.borrow_mut());
 
-    if !all_glosses.is_empty() {
+    let own_idx = all_glosses.iter().position(|g| g.gloss_type == "teacher-generic");
+    if let Some(idx) = own_idx {
         let mut s = state_rc.borrow_mut();
         s.gloss_original_text = Some(ctx.source_text.clone());
         let pairs = ctx.source_line_pairs();
-        let gloss_text = &all_glosses[0].gloss_text;
+        let gloss_text = &all_glosses[idx].gloss_text;
         let card_width = s.content_hbox.width();
         let card_height = s.content_hbox.height();
         s.gloss_overlay.show_gloss_with_color(&ctx.source_text, gloss_text, card_width, card_height, Some(&s.theme.root_color), &pairs);
-        s.gloss_overlay.set_position(0, all_glosses.len());
+        s.gloss_overlay.set_position(idx, all_glosses.len());
         s.gloss_list = all_glosses;
-        s.gloss_index = 0;
+        s.gloss_index = idx;
         s.gloss_context = Some(ctx);
         s.input_mode = crate::app::InputMode::GlossOverlay;
         crate::logging::log("GLOSS: showing cached gloss");
@@ -719,17 +721,18 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
 
     exit_visual_mode(&mut state_rc.borrow_mut());
 
-    if !all_glosses.is_empty() {
+    let own_idx = all_glosses.iter().position(|g| g.gloss_type == "inner-monologue");
+    if let Some(idx) = own_idx {
         let mut s = state_rc.borrow_mut();
         s.gloss_original_text = Some(ctx.source_text.clone());
         let pairs = ctx.source_line_pairs();
-        let gloss_text = &all_glosses[0].gloss_text;
+        let gloss_text = &all_glosses[idx].gloss_text;
         let card_width = s.content_hbox.width();
         let card_height = s.content_hbox.height();
         s.gloss_overlay.show_gloss_with_color(&ctx.source_text, gloss_text, card_width, card_height, Some(&s.theme.root_color), &pairs);
-        s.gloss_overlay.set_position(0, all_glosses.len());
+        s.gloss_overlay.set_position(idx, all_glosses.len());
         s.gloss_list = all_glosses;
-        s.gloss_index = 0;
+        s.gloss_index = idx;
         s.gloss_context = Some(ctx);
         s.input_mode = crate::app::InputMode::GlossOverlay;
         crate::logging::log("GLOSS: showing cached inner monologue");
