@@ -43,7 +43,28 @@ pub(crate) fn show_amend_prompt(state_rc: &Rc<RefCell<AppState>>) {
     let scene = s.synopsis_overlay_scene;
     s.gloss_overlay.open_ask_card();
     drop(s);
-    state_rc.borrow_mut().synopsis_amend_scene = scene;
+    let mut s = state_rc.borrow_mut();
+    s.synopsis_amend_scene = scene;
+    s.synopsis_prompt_kind = crate::app::SynopsisPromptKind::Ask;
+}
+
+/// Open the stacked "edit" card below the synopsis card (same widget as the ask
+/// card, edit framing). On Ctrl+Enter the typed instruction is sent to Claude
+/// with the structural-editor prompt. No-op if a card is already open.
+pub(crate) fn show_edit_prompt(state_rc: &Rc<RefCell<AppState>>) {
+    let s = state_rc.borrow();
+    if s.gloss_overlay.ask_is_open() {
+        return;
+    }
+    let scene = s.synopsis_overlay_scene;
+    s.gloss_overlay.open_ask_card_with(
+        "EDIT THIS SCENE",
+        "Describe the edit (split/merge paragraphs, reword, reorder)  \u{00b7}  Tab switch  \u{00b7}  Ctrl+Enter submit  \u{00b7}  Esc cancel",
+    );
+    drop(s);
+    let mut s = state_rc.borrow_mut();
+    s.synopsis_amend_scene = scene;
+    s.synopsis_prompt_kind = crate::app::SynopsisPromptKind::Edit;
 }
 
 /// Close the ask card and return focus to the synopsis card (mode stays
@@ -53,18 +74,52 @@ pub(crate) fn close_amend_prompt(state: &Rc<RefCell<AppState>>) {
 }
 
 /// Submit the ask card: read its text, close it, and (if non-empty) kick off the
-/// async synopsis amend. Called on Ctrl+Enter.
+/// async synopsis amend or edit. Called on Ctrl+Enter.
 pub(crate) fn submit_amend_prompt(state: &Rc<RefCell<AppState>>) {
-    let question = state.borrow().gloss_overlay.take_ask_text();
+    let text = state.borrow().gloss_overlay.take_ask_text();
+    let kind = state.borrow().synopsis_prompt_kind;
     close_amend_prompt(state);
-    if !question.trim().is_empty() {
-        amend_synopsis(state, &question);
+    if text.trim().is_empty() {
+        return;
+    }
+    match kind {
+        crate::app::SynopsisPromptKind::Ask => amend_synopsis(state, &text),
+        crate::app::SynopsisPromptKind::Edit => edit_synopsis(state, &text),
     }
 }
 
-/// Send the question + current synopsis to Claude, then show and persist the
-/// augmented synopsis. Mirrors the gloss add async pattern.
-pub(crate) fn amend_synopsis(state_rc: &Rc<RefCell<AppState>>, question: &str) {
+/// System prompt for the synopsis EDIT call. Unlike the amend prompt (which
+/// answers a reader's question by weaving an explanation in), this one applies
+/// the reader's edit instruction literally — split/merge paragraphs, reword,
+/// tighten, reorder — while keeping the scene's facts accurate. It returns the
+/// FULL revised synopsis (not a diff), in the same <p>-tagged format the
+/// synopsis card renders.
+const SYNOPSIS_EDIT_PROMPT: &str = "\
+You are a careful editor revising a Shakespeare scene synopsis. You will be \
+given a play, an act and scene, the current synopsis for that scene, and an \
+edit instruction from the reader. Apply the edit instruction faithfully and \
+literally (for example: split or merge paragraphs, reword a sentence, tighten \
+or expand, reorder events). Preserve the factual accuracy of the scene — do \
+not invent events that are not already implied by the current synopsis, and do \
+not drop plot points unless the instruction tells you to. Do not add a heading, \
+preamble, or commentary about what you changed.\n\n\
+FORMAT: Return the FULL revised synopsis split into readable paragraphs, each \
+wrapped in <p>...</p> tags, like:\n\
+<p>First paragraph of the synopsis.</p>\n\
+<p>Second paragraph that continues the action.</p>\n\
+Output ONLY the <p>-tagged paragraphs, nothing else.";
+
+/// Send the instruction + current synopsis to Claude, then show and persist the
+/// revised synopsis. Shared by the `A` amend flow and the `E` edit flow; the
+/// caller supplies the prompt key / fallback prompt / log verb. Mirrors the
+/// gloss add async pattern.
+fn run_synopsis_revision(
+    state_rc: &Rc<RefCell<AppState>>,
+    instruction: &str,
+    prompt_key: &'static str,
+    fallback_prompt: &'static str,
+    log_verb: &'static str,
+) {
     let (div1, div2) = state_rc.borrow().synopsis_amend_scene;
 
     let (work_title, work_abbrev, original, model, tokio_handle, label) = {
@@ -89,14 +144,14 @@ pub(crate) fn amend_synopsis(state_rc: &Rc<RefCell<AppState>>, question: &str) {
         )
     };
     let user_msg = format!(
-        "Play: {}\n{}\n\nCurrent synopsis:\n{}\n\n---\nReader's question: {}",
-        work_title, label, original, question,
+        "Play: {}\n{}\n\nCurrent synopsis:\n{}\n\n---\nReader's request: {}",
+        work_title, label, original, instruction,
     );
 
     state_rc.borrow().gloss_overlay.show_loading();
 
-    let system_prompt = crate::db::prompts::active_prompt("synopsis.amend")
-        .unwrap_or_else(|| SYNOPSIS_AMEND_PROMPT.to_string());
+    let system_prompt = crate::db::prompts::active_prompt(prompt_key)
+        .unwrap_or_else(|| fallback_prompt.to_string());
 
     let state_for_result = Rc::clone(state_rc);
     glib::spawn_future_local(async move {
@@ -120,7 +175,7 @@ pub(crate) fn amend_synopsis(state_rc: &Rc<RefCell<AppState>>, question: &str) {
                     }
                 }
                 let mut s = state_for_result.borrow_mut();
-                // Remember the pre-amend text so `U` can revert this edit.
+                // Remember the pre-revision text so `U` can revert this edit.
                 s.synopsis_undo = Some(((div1, div2), original.clone()));
                 s.synopsis_cache.insert((div1, div2), revised.clone());
                 let cw = s.content_hbox.width();
@@ -131,8 +186,8 @@ pub(crate) fn amend_synopsis(state_rc: &Rc<RefCell<AppState>>, question: &str) {
                 crate::input::actions::gloss::recolor_cached_blocks(&s);
                 s.input_mode = crate::app::InputMode::SynopsisOverlay;
                 crate::logging::log(&format!(
-                    "SYNOPSIS: amended {} ({},{})",
-                    work_abbrev, div1, div2
+                    "SYNOPSIS: {} {} ({},{})",
+                    log_verb, work_abbrev, div1, div2
                 ));
             }
             Ok(Err(e)) => {
@@ -145,13 +200,35 @@ pub(crate) fn amend_synopsis(state_rc: &Rc<RefCell<AppState>>, question: &str) {
                 s.synopsis_overlay_scene = (div1, div2);
                 crate::input::actions::gloss::recolor_cached_blocks(&s);
                 s.input_mode = crate::app::InputMode::SynopsisOverlay;
-                crate::logging::log(&format!("SYNOPSIS: amend error: {}", e));
+                crate::logging::log(&format!("SYNOPSIS: {} error: {}", log_verb, e));
             }
             Err(e) => {
                 crate::logging::log(&format!("SYNOPSIS: tokio join error: {}", e));
             }
         }
     });
+}
+
+/// Send the question + current synopsis to Claude (augment/explain). `A` path.
+pub(crate) fn amend_synopsis(state_rc: &Rc<RefCell<AppState>>, question: &str) {
+    run_synopsis_revision(
+        state_rc,
+        question,
+        "synopsis.amend",
+        SYNOPSIS_AMEND_PROMPT,
+        "amended",
+    );
+}
+
+/// Send the instruction + current synopsis to Claude (literal edit). `E` path.
+pub(crate) fn edit_synopsis(state_rc: &Rc<RefCell<AppState>>, instruction: &str) {
+    run_synopsis_revision(
+        state_rc,
+        instruction,
+        "synopsis.edit",
+        SYNOPSIS_EDIT_PROMPT,
+        "edited",
+    );
 }
 
 /// Revert the most recent `A` amendment: restore the pre-amend synopsis text in
