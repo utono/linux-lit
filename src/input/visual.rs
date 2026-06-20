@@ -126,7 +126,7 @@ pub struct ActionPopupState {
 }
 
 /// Built-in action names, in display order.
-pub const BUILTIN_ACTIONS: &[&str] = &["Gloss with Claude", "Inner Monologue", "Copy", "Copy with metadata"];
+pub const BUILTIN_ACTIONS: &[&str] = &["Reader Gloss", "Gloss with Claude", "Inner Monologue", "Copy", "Copy with metadata"];
 
 /// Determine which built-in actions are available for the current work.
 pub fn available_builtin_actions(_state: &AppState) -> Vec<&'static str> {
@@ -171,15 +171,19 @@ pub fn execute_action(
     if index < builtin_count {
         match index {
             0 => {
-                action_gloss_with_claude(state_rc);
+                action_reader_gloss(state_rc);
                 return;
             }
             1 => {
+                action_gloss_with_claude(state_rc);
+                return;
+            }
+            2 => {
                 action_inner_monologue(state_rc);
                 return;
             }
-            2 => action_copy(&mut state_rc.borrow_mut(), false),
-            3 => action_copy(&mut state_rc.borrow_mut(), true),
+            3 => action_copy(&mut state_rc.borrow_mut(), false),
+            4 => action_copy(&mut state_rc.borrow_mut(), true),
             _ => {}
         }
     } else {
@@ -392,6 +396,141 @@ fn action_external_command(state: &mut AppState, command: &str) {
     reload_current_work(state);
 }
 
+
+fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+    let (ctx, model, tokio_handle, all_glosses, passage_doc) = {
+        let state = state_rc.borrow();
+        let (start, end) = match &state.visual_selection {
+            Some(s) => s.range(),
+            None => return,
+        };
+        let work = match &state.current_work {
+            Some(w) => w,
+            None => return,
+        };
+
+        let selected_lines: Vec<crate::db::models::Line> = (start..=end)
+            .filter_map(|buf_line| {
+                state.work_line_for_buffer(buf_line)
+                    .and_then(|wi| work.lines.get(wi).cloned())
+            })
+            .collect();
+
+        let ctx = match crate::gloss::build_context_for_type(work, &selected_lines, "reader-gloss") {
+            Some(c) => c,
+            None => return,
+        };
+
+        let all_glosses: Vec<crate::db::queries::SavedGloss> = match crate::db::queries::open_db() {
+            Ok(conn) => crate::db::queries::find_all_glosses(
+                &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
+                &["reader-gloss"],
+            ).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+
+        // `<speaker>`/`<verse>` markup for the passage being glossed, shared with
+        // the echoes source header so the "Glossing…" loading card formats it the
+        // same single-column way as the original passage in the gloss result.
+        let passage_doc = crate::input::actions::echoes::build_source_header(&selected_lines, &ctx.speaker);
+
+        (ctx, state.config.claude_model.clone(), state.tokio_handle.clone(), all_glosses, passage_doc)
+    };
+
+    exit_visual_mode(&mut state_rc.borrow_mut());
+
+    if !all_glosses.is_empty() {
+        let mut s = state_rc.borrow_mut();
+        s.gloss_original_text = Some(ctx.source_text.clone());
+        let pairs = ctx.source_line_pairs();
+        let gloss_text = &all_glosses[0].gloss_text;
+        let card_width = s.content_hbox.width();
+        let card_height = s.content_hbox.height();
+        s.gloss_overlay.show_gloss_with_color(&ctx.source_text, gloss_text, card_width, card_height, Some(&s.theme.root_color), &pairs);
+        s.gloss_overlay.set_position(0, all_glosses.len());
+        s.gloss_list = all_glosses;
+        s.gloss_index = 0;
+        s.gloss_context = Some(ctx);
+        s.input_mode = crate::app::InputMode::GlossOverlay;
+        crate::logging::log("READER-GLOSS: showing cached gloss");
+        return;
+    }
+
+    {
+        let mut s = state_rc.borrow_mut();
+        s.gloss_original_text = Some(ctx.source_text.clone());
+        // Show the passage being glossed on the loading card, formatted the same
+        // way (single-column `<speaker>`/`<verse>`) as the original passage in
+        // the gloss result, so it looks identical before and after the gloss.
+        let cw = s.content_hbox.width();
+        let h = s.content_hbox.height();
+        s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color));
+        s.input_mode = crate::app::InputMode::GlossOverlay;
+    }
+
+    let user_msg = crate::gloss::build_user_message(&ctx, None, None);
+    let state_for_result = std::rc::Rc::clone(state_rc);
+
+    glib::spawn_future_local(async move {
+        // Keep a copy for the DB stamp; `model` itself is moved into the spawn.
+        let model_for_db = model.clone();
+        let result = tokio_handle
+            .spawn(async move {
+                crate::gloss::call_claude_with_prompt(&crate::gloss::READER_GLOSS_PROMPT, &user_msg, &model).await
+            })
+            .await;
+
+        match result {
+            Ok(Ok(gloss_text)) => {
+                if let Ok(conn) = crate::db::queries::open_db_rw() {
+                    let _ = crate::db::queries::save_gloss(
+                        &conn,
+                        &ctx.hash,
+                        &ctx.work_abbrev,
+                        &ctx.start_citation,
+                        &ctx.end_citation,
+                        ctx.act,
+                        ctx.scene,
+                        &ctx.speaker,
+                        &ctx.source_text,
+                        &gloss_text,
+                        "reader-gloss",
+                        &model_for_db,
+                    );
+                }
+
+                let all = crate::db::queries::open_db()
+                    .ok()
+                    .and_then(|conn| {
+                        crate::db::queries::find_all_glosses(
+                            &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
+                            &["reader-gloss"],
+                        ).ok()
+                    })
+                    .unwrap_or_default();
+
+                let mut s = state_for_result.borrow_mut();
+                let cw = s.content_hbox.width();
+                let h = s.content_hbox.height();
+                let pairs = ctx.source_line_pairs();
+                s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &gloss_text, cw, h, Some(&s.theme.root_color), &pairs);
+                s.gloss_overlay.set_position(0, all.len());
+                s.gloss_list = all;
+                s.gloss_index = 0;
+                s.gloss_context = Some(ctx);
+                crate::logging::log("READER-GLOSS: generated and saved new gloss");
+            }
+            Ok(Err(e)) => {
+                let s = state_for_result.borrow();
+                s.gloss_overlay.show(&format!("Error: {}", e), "");
+                crate::logging::log(&format!("READER-GLOSS: API error: {}", e));
+            }
+            Err(e) => {
+                crate::logging::log(&format!("READER-GLOSS: tokio join error: {}", e));
+            }
+        }
+    });
+}
 
 fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
     let (ctx, model, tokio_handle, all_glosses, passage_doc) = {
