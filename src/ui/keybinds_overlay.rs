@@ -335,8 +335,9 @@ is active. \
 
         // ── Gloss / echo system ──
         "gloss tog" => "Show or hide the gloss overlay for the current passage. \
-A gloss is a saved AI commentary on a highlighted passage — either a \
-teacher-style Q&A note or an inner-monologue cross-reference. If a gloss is \
+A gloss is a saved AI commentary on a highlighted passage — a \
+teacher-style Q&A note, an inner-monologue cross-reference, or a terse \
+reader-focused gloss. If a gloss is \
 already loaded it reopens that one without re-querying the database. Inside the \
 overlay, Space (or Tab) reads the cursor block aloud; Shift+Space \
 batch-synthesizes every prose (explication) block to \
@@ -345,9 +346,10 @@ cached ElevenLabs MP3s (cache only, no playback), showing a \
 -> gloss::toggle_overlay — src/input/actions/gloss.rs; \
 gloss::synth_all_prose_blocks — src/input/actions/gloss.rs",
         "gloss pick" => "Open a fuzzy-filterable list of every passage in this \
-work that has a saved gloss (teacher-generic or inner-monologue). Each row \
-shows the speaker, the first source line, and the citation; confirming loads \
-that passage's glosses into the overlay and jumps the reader to it. \
+work that has a saved gloss (teacher-generic, inner-monologue, or reader-gloss). \
+Ctrl+t cycles the type filter teacher-generic -> inner-monologue -> reader-gloss. \
+Each row shows the speaker, the first source line, and the citation; confirming \
+loads that passage's glosses into the overlay and jumps the reader to it. \
 -> pickers::open_gloss_picker — src/input/actions/pickers.rs (confirm: \
 handle_gloss_picker_key in src/input/keymap.rs)",
         "BCP echo turns" => "List every speaker turn in this work that has cached \
