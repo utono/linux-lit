@@ -8,9 +8,9 @@ use crate::app::AppState;
 /// Which gloss_type the Ctrl+g picker is currently filtered to. Cycled by Ctrl+t.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(crate) enum GlossPickerFilter {
-    #[default]
     TeacherGeneric,
     InnerMonologue,
+    #[default]
     ReaderGloss,
 }
 

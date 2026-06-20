@@ -110,8 +110,8 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
     let all_glosses = crate::db::queries::open_db()
         .ok()
         .and_then(|conn| {
-            crate::db::queries::find_all_glosses(
-                &conn, &passage.work_abbrev, &passage.start_citation, &passage.end_citation,
+            crate::db::queries::find_glosses_by_start(
+                &conn, &passage.work_abbrev, &passage.start_citation,
                 &["teacher-generic", "inner-monologue", "reader-gloss"],
             ).ok()
         })
@@ -720,25 +720,30 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
                 } else {
                     format!("<gloss>Q: {}</gloss>\n\n{}", prompt_owned, verified_text)
                 };
+                let mut new_gloss_id: i64 = -1;
                 if let Ok(conn) = crate::db::queries::open_db_rw() {
-                    let _ = crate::db::queries::save_gloss(
+                    if let Ok(id) = crate::db::queries::save_gloss(
                         &conn, &ctx.hash, &ctx.work_abbrev,
                         &ctx.start_citation, &ctx.end_citation,
                         ctx.act, ctx.scene, &ctx.speaker,
                         &ctx.source_text, &full_gloss,
                         &gloss_type_owned, &model_for_db,
-                    );
+                    ) {
+                        new_gloss_id = id;
+                    }
                 }
 
                 let all = crate::db::queries::open_db()
                     .ok()
                     .and_then(|conn| {
-                        crate::db::queries::find_all_glosses(
-                            &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
-                            &[gloss_type_owned.as_str()],
+                        crate::db::queries::find_glosses_by_start(
+                            &conn, &ctx.work_abbrev, &ctx.start_citation,
+                            &["teacher-generic", "inner-monologue", "reader-gloss"],
                         ).ok()
                     })
                     .unwrap_or_default();
+
+                let new_idx = all.iter().position(|g| g.gloss_id == new_gloss_id).unwrap_or(0);
 
                 let mut s = state_for_result.borrow_mut();
                 let cw = s.content_hbox.width();
@@ -748,9 +753,9 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
                     &ctx.source_text, &full_gloss, cw, h,
                     Some(&s.theme.root_color), &pairs,
                 );
-                s.gloss_overlay.set_position(0, all.len());
+                s.gloss_overlay.set_position(new_idx, all.len());
                 s.gloss_list = all;
-                s.gloss_index = 0;
+                s.gloss_index = new_idx;
                 s.gloss_active_voice = 0;
                 recolor_cached_blocks(&s);
                 crate::logging::log(&format!("GLOSS: added new {} gloss", gloss_type_owned));
@@ -827,25 +832,30 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
                 } else {
                     format!("<gloss>Edit context:</gloss>\n\n{}\n\n{}", pasted_owned, verified_text)
                 };
+                let mut new_gloss_id: i64 = -1;
                 if let Ok(conn) = crate::db::queries::open_db_rw() {
-                    let _ = crate::db::queries::save_gloss(
+                    if let Ok(id) = crate::db::queries::save_gloss(
                         &conn, &ctx.hash, &ctx.work_abbrev,
                         &ctx.start_citation, &ctx.end_citation,
                         ctx.act, ctx.scene, &ctx.speaker,
                         &ctx.source_text, &full_gloss,
                         &gloss_type_owned, &model_for_db,
-                    );
+                    ) {
+                        new_gloss_id = id;
+                    }
                 }
 
                 let all = crate::db::queries::open_db()
                     .ok()
                     .and_then(|conn| {
-                        crate::db::queries::find_all_glosses(
-                            &conn, &ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation,
-                            &[gloss_type_owned.as_str()],
+                        crate::db::queries::find_glosses_by_start(
+                            &conn, &ctx.work_abbrev, &ctx.start_citation,
+                            &["teacher-generic", "inner-monologue", "reader-gloss"],
                         ).ok()
                     })
                     .unwrap_or_default();
+
+                let new_idx = all.iter().position(|g| g.gloss_id == new_gloss_id).unwrap_or(0);
 
                 let mut s = state_for_result.borrow_mut();
                 let cw = s.content_hbox.width();
@@ -855,9 +865,9 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
                     &ctx.source_text, &full_gloss, cw, h,
                     Some(&s.theme.root_color), &pairs,
                 );
-                s.gloss_overlay.set_position(0, all.len());
+                s.gloss_overlay.set_position(new_idx, all.len());
                 s.gloss_list = all;
-                s.gloss_index = 0;
+                s.gloss_index = new_idx;
                 s.gloss_active_voice = 0;
                 recolor_cached_blocks(&s);
                 crate::logging::log(&format!("GLOSS: edited {} gloss (added new)", gloss_type_owned));
@@ -1978,11 +1988,10 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         }
     };
 
-    let all_glosses = crate::db::queries::find_all_glosses(
+    let all_glosses = crate::db::queries::find_glosses_by_start(
         &conn,
         &passage.work_abbrev,
         &passage.start_citation,
-        &passage.end_citation,
         GLOSS_TYPES,
     )
     .unwrap_or_default();
