@@ -986,7 +986,7 @@ impl GlossOverlay {
         self.bar_drawing.queue_draw();
 
         self.gloss_scroll_overlay.set_visible(true);
-        self.hint.set_text("Esc close · j/k block · Space play · n/p scene · Shift+Space synth · Ctrl+g glosses · A ask · E edit · U undo");
+        self.set_synopsis_hint();
         self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
@@ -1355,6 +1355,16 @@ impl GlossOverlay {
             }
             None => 0,
         }
+    }
+
+    /// Set the synopsis-overlay footer hint (normal navigation).
+    pub fn set_synopsis_hint(&self) {
+        self.hint.set_text("Esc close · j/k block · Space play · n/p scene · Shift+Space synth · Ctrl+g glosses · A ask · E edit · U undo · \u{21e7}V select");
+    }
+
+    /// Set the footer hint shown while synopsis visual mode is active.
+    pub fn set_synopsis_visual_hint(&self) {
+        self.hint.set_text("\u{21e7}V/Esc exit · j/k extend · gg/G ends · y yank");
     }
 
     /// Scroll the viewport so the selected cursor block is visible. Only scrolls
