@@ -74,6 +74,14 @@ pub struct GlossOverlay {
     /// derived from scroll position (a tall card's viewport center can leave
     /// top/bottom blocks unreachable — see GLOSS-CURSOR debug logging).
     cursor_block: Cell<usize>,
+    /// `Some(block_index)` while synopsis visual mode is active — the anchor end
+    /// of the selection. The cursor end is `cursor_block`. `None` in normal
+    /// synopsis navigation. Selected range: `visual_block_range(anchor, cursor)`.
+    synopsis_visual_anchor: Cell<Option<usize>>,
+    /// The synopsis string currently shown (raw, `<p>`-tagged), retained so
+    /// visual-mode yank can rebuild the selected paragraphs via
+    /// `selected_blocks_text`. Set by `show_synopsis`.
+    current_synopsis: RefCell<String>,
     /// "Ask about this scene" card, stacked below the synopsis card (inside the
     /// same `container`, after the footer). Hidden unless the reader pressed `A`
     /// while the synopsis card is open. `ask_input` is an editable TextView that
@@ -443,6 +451,8 @@ impl GlossOverlay {
             last_card_size: Cell::new((0, 0)),
             blocks,
             cursor_block: Cell::new(0),
+            synopsis_visual_anchor: Cell::new(None),
+            current_synopsis: RefCell::new(String::new()),
             ask_container,
             ask_input,
             ask_title,
@@ -904,6 +914,7 @@ impl GlossOverlay {
         card_width: i32,
         card_height: i32,
     ) {
+        *self.current_synopsis.borrow_mut() = synopsis.to_string();
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         self.last_card_size.set((card_width, card_height));
