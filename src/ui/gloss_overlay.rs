@@ -1312,6 +1312,19 @@ impl GlossOverlay {
         self.mark_cursor_block();
     }
 
+    /// Exit visual mode collapsing the cursor to the START of the selection
+    /// (the lower of anchor/cursor), then redraw the bar as that single block.
+    /// Used by the gloss `y` yank so the cursor lands on the first selected
+    /// block rather than wherever the moving end finished.
+    pub fn exit_visual_to_start(&self) {
+        if let Some(anchor) = self.synopsis_visual_anchor.get() {
+            let (start, _) = visual_block_range(anchor, self.cursor_block.get());
+            self.cursor_block.set(start);
+        }
+        self.synopsis_visual_anchor.set(None);
+        self.mark_cursor_block();
+    }
+
     /// Move the cursor end of the selection by `delta` blocks (clamped) and
     /// re-span the bar. Used by j/k while in visual mode.
     pub fn visual_step(&self, delta: i32) {

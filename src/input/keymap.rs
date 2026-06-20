@@ -1296,7 +1296,7 @@ fn handle_gloss_visual_key(
             }
             {
                 let mut s = state.borrow_mut();
-                s.gloss_overlay.exit_visual();
+                s.gloss_overlay.exit_visual_to_start();
                 s.input_mode = crate::app::InputMode::GlossOverlay;
                 s.gloss_overlay.set_gloss_hint();
                 s.chapter_toast.set_text("Copied");
