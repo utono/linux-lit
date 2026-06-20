@@ -53,7 +53,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key(",", "<", "prev speaker", "<: prev dlg", &[("C-,", "settings")]),
     key(".", ">", "", "", &[("C-.", "bookmarks")]),
     key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("C-p", "lib picker"), ("S-C-p", "conc word"), ("C-M-p", "conc list")]),
-    key("y", "Y", "pg back", "", &[("C-y", "copy id")]),
+    key("y", "Y", "pg back", "", &[("C-y", "copy id"), ("y", "synopsis yank")]),
     key("f", "F", "next font", "F: prev font", &[("M-f", "font info")]),
     key("g", "G", "", "", &[("C-g", "gloss pick"), ("S-C-g", "gloss tog")]),
     key("c", "C", "set chapter", "C: show chapter", &[]),
@@ -89,7 +89,7 @@ const BOTTOM_ROW: &[KeyDef] = &[
     bare("b", "B", ""),
     key("m", "M", "bookmark", "", &[("C-m", "media picker")]),
     key("w", "W", "copy word", "W: collect", &[("M-w", "Shx echoes"), ("C-w", "Shx echo turns"), ("S-C-w", "reopen Shx echoes")]),
-    key("v", "V", "", "V: visual mode", &[("v", "voice: add/remove"), ("V", "voice: cycle")]),
+    key("v", "V", "", "V: visual mode", &[("v", "voice: add/remove"), ("V", "voice: cycle"), ("V", "synopsis select")]),
     bare("z", "Z", "zt…"),
 ];
 
@@ -513,6 +513,13 @@ from h's transient synopsis overlay). -> app::toggle_synopsis — src/app.rs",
 the EDIT card: type an instruction (split/merge paragraphs, reword, reorder) that \
 is sent to Claude to rewrite the current scene synopsis. Ctrl+Enter submits; U \
 reverts. -> synopsis::show_edit_prompt — src/input/actions/synopsis.rs",
+        "synopsis select" => "While the synopsis overlay is open (h), Shift+V enters \
+visual mode: j/k (and gg/G) extend a paragraph-block selection; y yanks it, Esc \
+or Shift+V exits. -> handle_synopsis_visual_key / gloss_overlay::enter_visual \
+— src/input/keymap.rs, src/ui/gloss_overlay.rs",
+        "synopsis yank" => "In synopsis visual mode, copy the selected paragraphs \
+(blank-line joined) to the clipboard via wl-copy, then exit visual mode. \
+-> handle_synopsis_visual_key (y arm) — src/input/keymap.rs",
         "col layout" => "Toggle between one-column and two-column (spread) page \
 layout. -> navigation::toggle_column_layout — src/input/navigation.rs",
         "authorship" => "Toggle authorship formatting on/off — visually marks each \
