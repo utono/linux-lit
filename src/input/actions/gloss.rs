@@ -314,12 +314,16 @@ pub(crate) fn close_delete_confirmation(state: &Rc<RefCell<AppState>>) {
 }
 
 fn show_prompt_dialog(state_rc: &Rc<RefCell<AppState>>, mode: crate::app::GlossPromptMode) {
-    let (is_inner_monologue, is_edit) = {
+    let (is_inner_monologue, is_reader_gloss, is_edit) = {
         let s = state_rc.borrow();
-        let im = s.gloss_context.as_ref()
-            .map(|ctx| ctx.gloss_type == "inner-monologue")
-            .unwrap_or(false);
-        (im, mode == crate::app::GlossPromptMode::Edit)
+        let gloss_type = s.gloss_context.as_ref()
+            .map(|ctx| ctx.gloss_type.as_str().to_string())
+            .unwrap_or_default();
+        (
+            gloss_type == "inner-monologue",
+            gloss_type == "reader-gloss",
+            mode == crate::app::GlossPromptMode::Edit,
+        )
     };
     let is_fix_ipa = mode == crate::app::GlossPromptMode::FixIpa;
 
@@ -329,6 +333,8 @@ fn show_prompt_dialog(state_rc: &Rc<RefCell<AppState>>, mode: crate::app::GlossP
         "EDIT GLOSS — PASTE SUBTEXT LINES"
     } else if is_inner_monologue {
         "INNER MONOLOGUE PASSAGE"
+    } else if is_reader_gloss {
+        "READER GLOSS PROMPT"
     } else {
         "GLOSS PROMPT"
     };

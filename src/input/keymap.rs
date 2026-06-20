@@ -487,9 +487,9 @@ fn handle_picker_key(
                     }
                 }
                 InputMode::GlossPicker => {
-                    // Ctrl+t toggles the type filter (teacher-generic <->
-                    // inner-monologue). Ctrl combos don't type into the search
-                    // entry, so no focus guard is needed.
+                    // Ctrl+t cycles the type filter (teacher-generic ->
+                    // inner-monologue -> reader-gloss). Ctrl combos don't type
+                    // into the search entry, so no focus guard is needed.
                     if is_ctrl && key_name == "t" {
                         crate::input::actions::pickers::toggle_gloss_picker_type(state, tokio_handle);
                         return true;
