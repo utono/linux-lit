@@ -221,7 +221,9 @@ fn describe(label: &str) -> Option<&'static str> {
 follows to the new page top). Aliased on x. \
 -> navigation::page_forward — src/input/navigation.rs",
         "pg back" => "Turn one page backward in the e-reader pagination. Aliased \
-on y. -> navigation::page_backward — src/input/navigation.rs",
+on y. (In the synopsis overlay's Shift+V visual mode, y instead yanks the \
+selected paragraphs to the clipboard.) \
+-> navigation::page_backward — src/input/navigation.rs",
         "page ↓" => "Page forward by one screen (Space). \
 -> navigation::page_forward — src/input/navigation.rs",
         "page ↑" => "Page backward by one screen (Shift+Space). \
@@ -428,7 +430,12 @@ present) to the clipboard via wl-copy — useful for debugging and lit.db edits.
 and copy it. -> word_copy::word_collect_copy — src/input/actions/word_copy.rs",
         "visual mode" => "Enter visual selection mode (vim-style); then y yanks, \
 i shows echoes for the selection, Return opens the action popup, Esc/V exits. \
--> visual::enter_visual_mode — src/input/visual.rs",
+The synopsis overlay (h) has its own Shift+V visual mode: j/k (and gg/G) extend \
+a paragraph-block selection, y yanks the selected paragraphs to the clipboard \
+(blank-line joined) and exits, Esc/Shift+V cancels. \
+-> visual::enter_visual_mode — src/input/visual.rs; \
+handle_synopsis_visual_key / gloss_overlay::enter_visual — src/input/keymap.rs, \
+src/ui/gloss_overlay.rs",
 
         // ── MPV / audio ──
         "play/pause" => "Toggle MPV playback (play or pause the synced audio). \

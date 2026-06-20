@@ -74,6 +74,14 @@ pub struct GlossOverlay {
     /// derived from scroll position (a tall card's viewport center can leave
     /// top/bottom blocks unreachable — see GLOSS-CURSOR debug logging).
     cursor_block: Cell<usize>,
+    /// `Some(block_index)` while synopsis visual mode is active — the anchor end
+    /// of the selection. The cursor end is `cursor_block`. `None` in normal
+    /// synopsis navigation. Selected range: `visual_block_range(anchor, cursor)`.
+    synopsis_visual_anchor: Cell<Option<usize>>,
+    /// The synopsis string currently shown (raw, `<p>`-tagged), retained so
+    /// visual-mode yank can rebuild the selected paragraphs via
+    /// `selected_blocks_text`. Set by `show_synopsis`.
+    current_synopsis: RefCell<String>,
     /// "Ask about this scene" card, stacked below the synopsis card (inside the
     /// same `container`, after the footer). Hidden unless the reader pressed `A`
     /// while the synopsis card is open. `ask_input` is an editable TextView that
@@ -443,6 +451,8 @@ impl GlossOverlay {
             last_card_size: Cell::new((0, 0)),
             blocks,
             cursor_block: Cell::new(0),
+            synopsis_visual_anchor: Cell::new(None),
+            current_synopsis: RefCell::new(String::new()),
             ask_container,
             ask_input,
             ask_title,
@@ -904,6 +914,10 @@ impl GlossOverlay {
         card_width: i32,
         card_height: i32,
     ) {
+        *self.current_synopsis.borrow_mut() = synopsis.to_string();
+        // Clear any stale visual-mode anchor: showing a (possibly different)
+        // synopsis rebuilds the block list, so an old anchor index is invalid.
+        self.synopsis_visual_anchor.set(None);
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         self.last_card_size.set((card_width, card_height));
@@ -975,7 +989,7 @@ impl GlossOverlay {
         self.bar_drawing.queue_draw();
 
         self.gloss_scroll_overlay.set_visible(true);
-        self.hint.set_text("Esc close · j/k block · Space play · n/p scene · Shift+Space synth · Ctrl+g glosses · A ask · E edit · U undo");
+        self.set_synopsis_hint();
         self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
@@ -1278,6 +1292,84 @@ impl GlossOverlay {
         self.scroll_cursor_into_view();
     }
 
+    /// Enter synopsis visual mode: anchor at the current block. No-op if there
+    /// are no blocks. Returns true if mode was entered.
+    pub fn enter_visual(&self) -> bool {
+        let len = self.blocks.borrow().len();
+        if len == 0 {
+            return false;
+        }
+        let cur = self.cursor_block.get().min(len - 1);
+        self.synopsis_visual_anchor.set(Some(cur));
+        self.refresh_selection_bar();
+        true
+    }
+
+    /// Exit synopsis visual mode: clear the anchor and redraw the bar as the
+    /// single cursor block.
+    pub fn exit_visual(&self) {
+        self.synopsis_visual_anchor.set(None);
+        self.mark_cursor_block();
+    }
+
+    /// Move the cursor end of the selection by `delta` blocks (clamped) and
+    /// re-span the bar. Used by j/k while in visual mode.
+    pub fn visual_step(&self, delta: i32) {
+        let len = self.blocks.borrow().len();
+        if len == 0 {
+            return;
+        }
+        let cur = self.cursor_block.get().min(len - 1) as i64;
+        let next = (cur + delta as i64).clamp(0, len as i64 - 1) as usize;
+        self.cursor_block.set(next);
+        self.refresh_selection_bar();
+        self.scroll_cursor_into_view();
+    }
+
+    /// Move the cursor end of the selection to the first (`false`) or last
+    /// (`true`) block and re-span the bar. Used by gg/G while in visual mode.
+    pub fn visual_to_end(&self, last: bool) {
+        let len = self.blocks.borrow().len();
+        if len == 0 {
+            return;
+        }
+        self.cursor_block.set(if last { len - 1 } else { 0 });
+        self.refresh_selection_bar();
+        self.scroll_cursor_into_view();
+    }
+
+    /// The currently-selected paragraphs' text (blank-line joined), for yank.
+    pub fn visual_selection_text(&self) -> String {
+        let anchor = match self.synopsis_visual_anchor.get() {
+            Some(a) => a,
+            None => return String::new(),
+        };
+        let cursor = self.cursor_block.get();
+        let syn = self.current_synopsis.borrow();
+        selected_blocks_text(&syn, anchor, cursor)
+    }
+
+    /// Number of blocks currently selected (for the log line).
+    pub fn visual_selection_len(&self) -> usize {
+        match self.synopsis_visual_anchor.get() {
+            Some(a) => {
+                let (s, e) = visual_block_range(a, self.cursor_block.get());
+                e - s + 1
+            }
+            None => 0,
+        }
+    }
+
+    /// Set the synopsis-overlay footer hint (normal navigation).
+    pub fn set_synopsis_hint(&self) {
+        self.hint.set_text("Esc close · j/k block · Space play · n/p scene · Shift+Space synth · Ctrl+g glosses · A ask · E edit · U undo · \u{21e7}V select");
+    }
+
+    /// Set the footer hint shown while synopsis visual mode is active.
+    pub fn set_synopsis_visual_hint(&self) {
+        self.hint.set_text("\u{21e7}V/Esc exit · j/k extend · gg/G ends · y yank");
+    }
+
     /// Scroll the viewport so the selected cursor block is visible. Only scrolls
     /// when the block falls outside the current viewport: brings its top into
     /// view (with a small pad) if above, or its bottom into view if below. The
@@ -1368,6 +1460,30 @@ impl GlossOverlay {
             *self.bar_ranges.borrow_mut() = vec![BarRange { start_line, end_line }];
             self.bar_drawing.queue_draw();
         }
+    }
+
+    /// Redraw the left bar. In visual mode (anchor set) the bar spans every
+    /// selected block (`anchor..=cursor`); otherwise it marks the single cursor
+    /// block. Safe to call in both modes.
+    fn refresh_selection_bar(&self) {
+        let anchor = match self.synopsis_visual_anchor.get() {
+            Some(a) => a,
+            None => {
+                self.mark_cursor_block();
+                return;
+            }
+        };
+        let blocks = self.blocks.borrow();
+        if blocks.is_empty() {
+            return;
+        }
+        let last = blocks.len() - 1;
+        let cursor = self.cursor_block.get().min(last);
+        let (s, e) = visual_block_range(anchor.min(last), cursor);
+        let start_line = blocks[s].start_line;
+        let end_line = blocks[e].end_line;
+        *self.bar_ranges.borrow_mut() = vec![BarRange { start_line, end_line }];
+        self.bar_drawing.queue_draw();
     }
 
     /// Approximate height of one line of gloss text, derived from the view's
@@ -1762,6 +1878,32 @@ pub struct GlossBlock {
 
 /// Parse a `<p>`-tagged synopsis into cursor-stop blocks, one per paragraph,
 /// each a `BlockKind::Explication` (synopses are prose, never verse). Label
+/// Inclusive block range for a visual selection given the anchor and cursor
+/// block indices. Direction-independent: the smaller index is the start.
+pub fn visual_block_range(anchor: usize, cursor: usize) -> (usize, usize) {
+    (anchor.min(cursor), anchor.max(cursor))
+}
+
+/// Build the yank text for a synopsis visual selection: the `display` (clean,
+/// `<p>`-stripped) text of cursor-stop blocks `start..=end`, joined by a blank
+/// line. Uses `synopsis_blocks` so the indices match the on-screen cursor
+/// stops exactly (label paragraphs already excluded). Out-of-range indices are
+/// clamped; an empty synopsis yields an empty string.
+pub fn selected_blocks_text(synopsis: &str, start: usize, end: usize) -> String {
+    let blocks = synopsis_blocks(synopsis);
+    if blocks.is_empty() {
+        return String::new();
+    }
+    let last = blocks.len() - 1;
+    let (s, e) = (start.min(last), end.min(last));
+    let (s, e) = (s.min(e), s.max(e));
+    blocks[s..=e]
+        .iter()
+        .map(|b| b.display.clone())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 /// paragraphs (`is_label_paragraph`, e.g. "Shakespearean parallels:") are shown
 /// in the buffer but are NOT cursor stops, so they are skipped here — exactly
 /// the paragraphs `render_synopsis_with_labels` marks for bolding. Synopsis text
@@ -3383,5 +3525,55 @@ mod synopsis_blocks_tests {
     #[test]
     fn empty_yields_no_blocks() {
         assert_eq!(synopsis_blocks("").len(), 0);
+    }
+}
+
+#[cfg(test)]
+mod visual_range_tests {
+    use super::*;
+
+    #[test]
+    fn range_is_direction_independent() {
+        assert_eq!(visual_block_range(2, 5), (2, 5));
+        assert_eq!(visual_block_range(5, 2), (2, 5));
+    }
+
+    #[test]
+    fn single_block_range() {
+        assert_eq!(visual_block_range(3, 3), (3, 3));
+    }
+
+    #[test]
+    fn range_from_zero() {
+        assert_eq!(visual_block_range(0, 4), (0, 4));
+        assert_eq!(visual_block_range(4, 0), (0, 4));
+    }
+
+    #[test]
+    fn selects_paragraph_range_blank_line_joined() {
+        let syn = "<p>One.</p><p>Two.</p><p>Three.</p>";
+        // blocks 0..=1 -> first two paragraphs
+        assert_eq!(selected_blocks_text(syn, 0, 1), "One.\n\nTwo.");
+    }
+
+    #[test]
+    fn selects_single_paragraph() {
+        let syn = "<p>One.</p><p>Two.</p>";
+        assert_eq!(selected_blocks_text(syn, 1, 1), "Two.");
+    }
+
+    #[test]
+    fn selection_skips_label_paragraph_like_the_cursor() {
+        // synopsis_blocks excludes label paragraphs, so block indices count only
+        // cursor-stop paragraphs. "Shakespearean parallels:" is a label.
+        let syn = "<p>Plot.</p><p>Shakespearean parallels:</p><p>The parallel.</p>";
+        // cursor-stop blocks are [Plot., The parallel.] -> indices 0,1
+        assert_eq!(selected_blocks_text(syn, 0, 1), "Plot.\n\nThe parallel.");
+    }
+
+    #[test]
+    fn plain_untagged_synopsis_is_one_block() {
+        let syn = "Just one paragraph, no tags.";
+        assert_eq!(selected_blocks_text(syn, 0, 0), "Just one paragraph, no tags.");
     }
 }
