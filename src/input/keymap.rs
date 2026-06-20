@@ -709,7 +709,7 @@ fn handle_gloss_key(
                 return true;
             }
             "g" => {
-                // Same as the reader card's Alt+g: open the glosses picker, but
+                // Same as the reader card's Ctrl+g: open the glosses picker, but
                 // keep the gloss overlay open behind it. The flag tells
                 // `open_gloss_picker` not to hide the overlay and the picker's
                 // Escape handler to return to the overlay (not the reader).
