@@ -1407,22 +1407,26 @@ impl GlossOverlay {
         };
         let (start_idx, end_idx) = visual_block_range(anchor, self.cursor_block.get());
         let ranges = self.blocks.borrow();
-        let (Some(first), Some(last)) = (ranges.get(start_idx), ranges.get(end_idx)) else {
-            return String::new();
-        };
         let buffer = self.gloss_view.buffer();
-        let start = match buffer.iter_at_line(first.start_line) {
-            Some(it) => it,
-            None => return String::new(),
-        };
-        let mut end = match buffer.iter_at_line(last.end_line) {
-            Some(it) => it,
-            None => return String::new(),
-        };
-        if !end.ends_line() {
-            end.forward_to_line_end();
+        // Read each block as its own contiguous span (internal verse-line
+        // newlines preserved) and join blocks with a blank line, matching the
+        // synopsis yank's `\n\n` paragraph separation.
+        let mut blocks: Vec<String> = Vec::new();
+        for r in ranges.iter().skip(start_idx).take(end_idx.saturating_sub(start_idx) + 1) {
+            let start = match buffer.iter_at_line(r.start_line) {
+                Some(it) => it,
+                None => continue,
+            };
+            let mut end = match buffer.iter_at_line(r.end_line) {
+                Some(it) => it,
+                None => continue,
+            };
+            if !end.ends_line() {
+                end.forward_to_line_end();
+            }
+            blocks.push(buffer.text(&start, &end, false).to_string());
         }
-        buffer.text(&start, &end, false).to_string()
+        blocks.join("\n\n")
     }
 
     /// Scroll the viewport so the selected cursor block is visible. Only scrolls
