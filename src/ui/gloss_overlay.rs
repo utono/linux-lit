@@ -350,19 +350,21 @@ impl GlossOverlay {
         footer_box.set_margin_bottom(12);
         footer_box.add_css_class("gloss-hint");
 
-        let hint = Label::new(Some("Esc close · a add · e edit · d delete · c copy id · Ctrl+n/p passage · Alt+n/p gloss"));
-        hint.set_halign(Align::Center);
-        hint.set_hexpand(true);
-        footer_box.append(&hint);
-
-        // Right-aligned citation (e.g. "2H6 1.4.7–14") for the open passage,
-        // shown only in the gloss view. Recessed style matches the picker.
+        // Centered citation (e.g. "2H6 1.4.7–14") for the open passage, shown
+        // only in the gloss view. The hexpand element holds the footer center.
+        // Recessed style matches the picker.
         let citation_label = Label::new(None);
-        citation_label.set_halign(Align::End);
-        citation_label.set_margin_end(12);
+        citation_label.set_halign(Align::Center);
+        citation_label.set_hexpand(true);
         citation_label.add_css_class("picker-item-detail");
         citation_label.set_visible(false);
         footer_box.append(&citation_label);
+
+        // Hints sit on the far right, before the N/M position counter.
+        let hint = Label::new(Some("Esc close · a add · e edit · d delete · c copy id · Ctrl+n/p passage · Alt+n/p gloss"));
+        hint.set_halign(Align::End);
+        hint.set_margin_end(12);
+        footer_box.append(&hint);
 
         let position_label = Label::new(None);
         position_label.set_halign(Align::End);
