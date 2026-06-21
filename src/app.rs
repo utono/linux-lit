@@ -338,6 +338,15 @@ pub struct AppState {
     pub vocab_matches: Vec<VocabMatch>,
     pub vocab_match_idx: Option<usize>,
     pub vocab_tag: gtk4::TextTag,
+    /// Foreground tint applied to source lines covered by a `reader-gloss`
+    /// passage — the same slate-blue (#2d5570) the gloss overlay uses to mark a
+    /// synthesized-TTS block. See `reader_gloss_lines` and
+    /// `apply_reader_gloss_highlighting`.
+    pub reader_gloss_tag: gtk4::TextTag,
+    /// Buffer line indices that fall inside a `reader-gloss` passage for the
+    /// current work. Recomputed by `display_work`; used to repaint the slate
+    /// tint after the cursor leaves a glossed line (cursor-line wins while on it).
+    pub reader_gloss_lines: std::collections::HashSet<usize>,
     pub dim_enabled: bool,
     /// Current Wright scansion overlay level (Off/StressOnly/Full).
     pub scansion_level: crate::scansion::ScanLevel,
@@ -1205,6 +1214,20 @@ pub fn build_window(
         .build();
     buffer.tag_table().add(&vocab_tag);
 
+    // Source lines covered by a reader-gloss passage are tinted with the theme's
+    // focused-window border color (dwl `focuscolor`), matching the frame around
+    // the active reader window. Added after the dim/cursor tags so this
+    // foreground wins over the dim foreground on a glossed line; the cursor-line
+    // tag paints a paragraph background (not a foreground), and `update_highlight`
+    // strips this tag from the cursor's own line so the active line reads in the
+    // normal fg. The color is refreshed on theme change in
+    // `input::actions::settings`.
+    let reader_gloss_tag = gtk4::TextTag::builder()
+        .name("reader-gloss-line")
+        .foreground(&theme.focus_color)
+        .build();
+    buffer.tag_table().add(&reader_gloss_tag);
+
     let word_bold_tag = gtk4::TextTag::builder()
         .name("word-bold")
         .underline(pango::Underline::Single)
@@ -1795,6 +1818,8 @@ pub fn build_window(
         vocab_matches: Vec::new(),
         vocab_match_idx: None,
         vocab_tag,
+        reader_gloss_tag,
+        reader_gloss_lines: std::collections::HashSet::new(),
         dim_enabled,
         scansion_level: crate::scansion::ScanLevel::Off,
         scansion_data: std::collections::HashMap::new(),
@@ -3026,6 +3051,16 @@ pub fn display_work_at_with_prepared(
         apply_vocab_highlighting(state);
         crate::logging::log(&format!("TIMING: apply_vocab_highlighting {:.0}ms", t4.elapsed().as_millis()));
     }
+
+    // Tint source lines covered by a reader-gloss passage (slate-blue, the same
+    // marker the gloss overlay uses for synthesized-TTS blocks).
+    let t_rg = std::time::Instant::now();
+    apply_reader_gloss_highlighting(state);
+    crate::logging::log(&format!(
+        "TIMING: apply_reader_gloss_highlighting {:.0}ms ({} lines)",
+        t_rg.elapsed().as_millis(),
+        state.reader_gloss_lines.len()
+    ));
 
     // Remove old gutter renderers — they'll be recreated lazily on first
     // sign column toggle (`l` key) via setup_gutter().
@@ -5348,6 +5383,98 @@ pub fn apply_vocab_highlighting(state: &AppState) {
             end.forward_chars(m.char_end as i32);
             state.buffer.apply_tag(&state.vocab_tag, &start, &end);
         }
+    }
+}
+
+/// Recompute which buffer lines fall inside a `reader-gloss` passage for the
+/// current work and tint them slate-blue (the gloss overlay's synthesized-TTS
+/// color). Stores the set in `reader_gloss_lines` so `update_highlight` can
+/// restore the tint on a line the cursor leaves. The cursor's own line is left
+/// untinted (`update_highlight` strips it) so the active line wins.
+///
+/// Buffer→work mapping is read through `work_line_for_buffer` so the split
+/// (line_map) and identity (no map) cases are handled uniformly. Glossed lines
+/// are matched by source TEXT (not citation tuple) so the tint is correct on
+/// `-Amb` editions, whose `line_in_div` numbering diverges from the
+/// base-numbered gloss citations — see the comment inside.
+pub fn apply_reader_gloss_highlighting(state: &mut AppState) {
+    state.reader_gloss_lines.clear();
+    state.buffer.remove_tag(
+        &state.reader_gloss_tag,
+        &state.buffer.start_iter(),
+        &state.buffer.end_iter(),
+    );
+
+    let work = match state.current_work.as_ref() {
+        Some(w) => w,
+        None => return,
+    };
+    let conn = match crate::db::queries::open_db() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let abbrev = base_work_abbrev(&work.abbrev).to_string();
+    let passages = crate::db::queries::find_glossed_passages(&conn, &abbrev, &["reader-gloss"])
+        .unwrap_or_default();
+    if passages.is_empty() {
+        return;
+    }
+
+    // Match glossed source lines by TEXT, not by citation tuple. A passage's
+    // citation is the BASE work's `line_in_div`, but an Ambrose (`-Amb`) edition
+    // renumbers lines (it inserts stage directions as numbered rows), so the
+    // tuple does not align with `-Amb` `work.lines`. The source TEXT is
+    // edition-identical, so collect every passage's source lines (trimmed) into a
+    // set and tint any buffer line whose mapped work line's text is in it. Same
+    // edition-robust approach as `jump_to_gloss_source_start`.
+    let glossed_texts: std::collections::HashSet<String> = passages
+        .iter()
+        .flat_map(|p| p.source_text.lines())
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+
+    let line_count = state.buffer.line_count() as usize;
+    let mut lines: Vec<usize> = Vec::new();
+    for buf_idx in 0..line_count {
+        let text = match state
+            .work_line_for_buffer(buf_idx)
+            .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+        {
+            Some(l) => l.text.trim().to_string(),
+            None => continue,
+        };
+        if !text.is_empty() && glossed_texts.contains(&text) {
+            lines.push(buf_idx);
+        }
+    }
+
+    for &buf_idx in &lines {
+        apply_reader_gloss_tag_to_line(state, buf_idx);
+        state.reader_gloss_lines.insert(buf_idx);
+    }
+}
+
+/// Apply the slate reader-gloss tint to a single buffer line.
+pub(crate) fn apply_reader_gloss_tag_to_line(state: &AppState, buf_idx: usize) {
+    if let Some(start) = state.buffer.iter_at_line(buf_idx as i32) {
+        let mut end = start;
+        if !end.ends_line() {
+            end.forward_to_line_end();
+        }
+        state.buffer.apply_tag(&state.reader_gloss_tag, &start, &end);
+    }
+}
+
+/// Remove the slate reader-gloss tint from a single buffer line (used so the
+/// cursor line reads in the normal foreground while the cursor is on it).
+pub(crate) fn remove_reader_gloss_tag_from_line(state: &AppState, buf_idx: usize) {
+    if let Some(start) = state.buffer.iter_at_line(buf_idx as i32) {
+        let mut end = start;
+        if !end.ends_line() {
+            end.forward_to_line_end();
+        }
+        state.buffer.remove_tag(&state.reader_gloss_tag, &start, &end);
     }
 }
 

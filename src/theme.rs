@@ -9,6 +9,7 @@ pub struct Theme {
     pub display_name: String,
     pub is_light: bool,
     pub root_color: String,       // outer wallpaper/padding color
+    pub focus_color: String,      // dwl focused-window border color; tints reader-gloss source lines
     pub text_bg: String,          // text area background
     pub text_fg: String,          // text foreground
     pub cursor_line_bg: String,   // current line highlight
@@ -126,6 +127,10 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
         darken_color(&text_bg, 0.6)
     });
 
+    // Focused-window border color (dwl `focuscolor`) — reused to tint source
+    // lines covered by a reader-gloss passage. Falls back to the text fg.
+    let focus_color = str_field(dwl, "focuscolor").unwrap_or_else(|| text_fg.clone());
+
     let lit = val.get("linux-lit").unwrap_or(&Value::Null);
     let cursor_line_bg = str_field(&lit, "cursor_line_bg")
         .unwrap_or_else(|| "rgba(86, 148, 100, 0.25)".to_string());
@@ -161,6 +166,7 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
         display_name,
         is_light,
         root_color,
+        focus_color,
         text_bg,
         text_fg,
         cursor_line_bg,
@@ -177,6 +183,7 @@ fn default_theme() -> Theme {
         display_name: "Default".to_string(),
         is_light: false,
         root_color: "#1a1a2e".to_string(),
+        focus_color: "#d4be98".to_string(),
         text_bg: "#282828".to_string(),
         text_fg: "#d4be98".to_string(),
         cursor_line_bg: "rgba(255, 255, 255, 0.08)".to_string(),

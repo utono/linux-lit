@@ -273,6 +273,7 @@ pub(crate) fn update_highlight(state: &mut AppState) {
         crate::input::visual::clear_selection_highlight(state);
         crate::input::visual::apply_selection_highlight(state);
         state.prev_highlight_line.set(Some(state.current_line));
+        repaint_reader_gloss_visible(state);
         crate::app::update_title_bar_scene(state);
         return;
     }
@@ -312,5 +313,26 @@ pub(crate) fn update_highlight(state: &mut AppState) {
     crate::input::visual::apply_selection_highlight(state);
     state.prev_highlight_line.set(Some(state.current_line));
 
+    repaint_reader_gloss_visible(state);
     crate::app::update_title_bar_scene(state);
+}
+
+/// Reapply the slate reader-gloss tint to every glossed buffer line EXCEPT the
+/// current cursor line (the cursor-line highlight wins on its own line). Called
+/// at the end of `update_highlight` after the dim and cursor tags are set,
+/// because the dim path repaints `dim_tag` across the whole visible range every
+/// move and would otherwise leave glossed lines un-tinted. Iterates the
+/// `reader_gloss_lines` set directly (a handful of explicitly-glossed lines) so
+/// it is correct in both single- and two-column layouts and still cheap.
+fn repaint_reader_gloss_visible(state: &AppState) {
+    if state.reader_gloss_lines.is_empty() {
+        return;
+    }
+    for &buf_idx in &state.reader_gloss_lines {
+        if buf_idx == state.current_line {
+            crate::app::remove_reader_gloss_tag_from_line(state, buf_idx);
+        } else {
+            crate::app::apply_reader_gloss_tag_to_line(state, buf_idx);
+        }
+    }
 }
