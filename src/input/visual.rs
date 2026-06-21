@@ -452,6 +452,7 @@ fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
         s.gloss_list = all_glosses;
         s.gloss_index = idx;
         s.gloss_context = Some(ctx);
+        s.record_last_gloss("reader-gloss");
         s.input_mode = crate::app::InputMode::GlossOverlay;
         crate::logging::log("READER-GLOSS: showing cached gloss");
         return;
@@ -524,6 +525,7 @@ fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
                 s.gloss_list = all;
                 s.gloss_index = new_idx;
                 s.gloss_context = Some(ctx);
+                s.record_last_gloss("reader-gloss");
                 crate::logging::log("READER-GLOSS: generated and saved new gloss");
             }
             Ok(Err(e)) => {
@@ -593,6 +595,7 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
         s.gloss_list = all_glosses;
         s.gloss_index = idx;
         s.gloss_context = Some(ctx);
+        s.record_last_gloss("teacher-generic");
         s.input_mode = crate::app::InputMode::GlossOverlay;
         crate::logging::log("GLOSS: showing cached gloss");
         return;
@@ -665,6 +668,7 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
                 s.gloss_list = all;
                 s.gloss_index = new_idx;
                 s.gloss_context = Some(ctx);
+                s.record_last_gloss("teacher-generic");
                 crate::logging::log("GLOSS: generated and saved new gloss");
             }
             Ok(Err(e)) => {
@@ -734,6 +738,7 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
         s.gloss_list = all_glosses;
         s.gloss_index = idx;
         s.gloss_context = Some(ctx);
+        s.record_last_gloss("inner-monologue");
         s.input_mode = crate::app::InputMode::GlossOverlay;
         crate::logging::log("GLOSS: showing cached inner monologue");
         return;
@@ -930,6 +935,7 @@ fn run_pending_inner_monologue_blocking(
                 s.gloss_list = all;
                 s.gloss_index = new_idx;
                 s.gloss_context = Some(ctx);
+                s.record_last_gloss("inner-monologue");
                 crate::logging::log("GLOSS: generated and saved inner monologue");
             }
             Ok(Err(e)) => {
