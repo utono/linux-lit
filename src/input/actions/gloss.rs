@@ -80,78 +80,78 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
         None => return,
     };
 
-    if s.gloss_passages.is_empty() {
-        if let Ok(conn) = crate::db::queries::open_db() {
-            s.gloss_passages = crate::db::queries::find_glossed_passages(&conn, &work_abbrev, &["teacher-generic", "inner-monologue", "reader-gloss"])
-                .unwrap_or_default();
-        }
-        if s.gloss_passages.is_empty() {
-            return;
-        }
-        if let Some(ctx) = &s.gloss_context {
-            s.gloss_passage_index = s.gloss_passages.iter()
-                .position(|p| p.start_citation == ctx.start_citation && p.end_citation == ctx.end_citation)
-                .unwrap_or(0);
-        }
-    }
+    // Navigate only between passages that have a gloss of the type currently on
+    // screen, and only show that type. The displayed type is authoritative on
+    // `gloss_list[gloss_index]` (gloss_context.gloss_type can lag after Alt+n/p
+    // within-passage cycling); fall back to gloss_context if the list is empty.
+    let cur_type = s
+        .gloss_list
+        .get(s.gloss_index)
+        .map(|g| g.gloss_type.clone())
+        .or_else(|| s.gloss_context.as_ref().map(|c| c.gloss_type.clone()));
+    let cur_type = match cur_type {
+        Some(t) => t,
+        None => return,
+    };
 
-    let len = s.gloss_passages.len();
-    // Clamp at the ends rather than wrapping: Ctrl+p stops at the work's earliest
-    // gloss (index 0), Ctrl+n stops at its last (index len-1).
-    let target = s.gloss_passage_index as i32 + delta;
-    let new_idx = target.clamp(0, len as i32 - 1) as usize;
-    if new_idx == s.gloss_passage_index {
+    // Locate where we are now (by citation) so we can step within this work.
+    let (cur_start, cur_end) = match &s.gloss_context {
+        Some(ctx) => (ctx.start_citation.clone(), ctx.end_citation.clone()),
+        None => return,
+    };
+
+    let conn = match crate::db::queries::open_db() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    // Rebuild the passage list filtered to the current type every time: the
+    // filter type can change between calls (when the user switches types via
+    // Alt+n/p), so the stored 3-type `gloss_passages` can't be reused here.
+    let passages =
+        crate::db::queries::find_glossed_passages(&conn, &work_abbrev, &[cur_type.as_str()])
+            .unwrap_or_default();
+    if passages.is_empty() {
         return;
     }
-    s.gloss_passage_index = new_idx;
 
-    let passage = s.gloss_passages[new_idx].clone();
+    let cur_idx = passages
+        .iter()
+        .position(|p| p.start_citation == cur_start && p.end_citation == cur_end)
+        .unwrap_or(0);
 
-    let all_glosses = crate::db::queries::open_db()
-        .ok()
-        .and_then(|conn| {
-            crate::db::queries::find_glosses_by_start(
-                &conn, &passage.work_abbrev, &passage.start_citation,
-                &["teacher-generic", "inner-monologue", "reader-gloss"],
-            ).ok()
-        })
-        .unwrap_or_default();
+    // Clamp at the ends rather than wrapping: Ctrl+p stops at the first passage
+    // of this type, Ctrl+n stops at the last.
+    let len = passages.len();
+    let target = cur_idx as i32 + delta;
+    let new_idx = target.clamp(0, len as i32 - 1) as usize;
+    if new_idx == cur_idx {
+        return;
+    }
 
+    let passage = passages[new_idx].clone();
+    let all_glosses = crate::db::queries::find_glosses_by_start(
+        &conn,
+        &passage.work_abbrev,
+        &passage.start_citation,
+        &[cur_type.as_str()],
+    )
+    .unwrap_or_default();
     if all_glosses.is_empty() {
         return;
     }
 
-    let source_lines: Vec<(String, i64)> = Vec::new();
-
-    let gloss_type = all_glosses[0].gloss_type.clone();
-    let work_title = s.current_work.as_ref().map(|w| w.title.clone()).unwrap_or_default();
-    let ctx = crate::gloss::GlossContext {
-        work_abbrev: passage.work_abbrev,
-        work_title,
-        start_citation: passage.start_citation,
-        end_citation: passage.end_citation,
-        act: passage.act,
-        scene: passage.scene,
-        speaker: passage.speaker,
-        source_text: passage.source_text,
-        source_line_numbers: Vec::new(),
-        hash: String::new(),
-        gloss_type,
-    };
-
-    let cw = s.content_hbox.width();
-    let h = s.content_hbox.height();
-    let gloss_text = &all_glosses[0].gloss_text;
-    s.gloss_overlay.show_gloss_with_color(
-        &ctx.source_text, gloss_text, cw, h,
-        Some(&s.theme.root_color), &source_lines,
+    // Audio is already stopped by the Ctrl+n/p handler before this is called.
+    let from_picker = s.gloss_opened_from_picker;
+    open_gloss_overlay(
+        &mut s,
+        passages,
+        new_idx,
+        passage,
+        all_glosses,
+        from_picker,
+        Some(&cur_type),
     );
-    s.gloss_overlay.set_position(0, all_glosses.len());
-    s.gloss_list = all_glosses;
-    s.gloss_index = 0;
-    s.gloss_active_voice = 0;
-    s.gloss_context = Some(ctx);
-    recolor_cached_blocks(&s);
 }
 
 pub(crate) fn navigate_gloss(state: &Rc<RefCell<AppState>>, delta: i32) {
