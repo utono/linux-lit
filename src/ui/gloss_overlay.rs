@@ -31,6 +31,7 @@ pub struct GlossOverlay {
     corr_header: Label,
     corrected_label: Label,
     hint: Label,
+    citation_label: Label,
     position_label: Label,
     gloss_scroll_overlay: Overlay,
     gloss_scrolled: gtk4::ScrolledWindow,
@@ -354,6 +355,15 @@ impl GlossOverlay {
         hint.set_hexpand(true);
         footer_box.append(&hint);
 
+        // Right-aligned citation (e.g. "2H6 1.4.7–14") for the open passage,
+        // shown only in the gloss view. Recessed style matches the picker.
+        let citation_label = Label::new(None);
+        citation_label.set_halign(Align::End);
+        citation_label.set_margin_end(12);
+        citation_label.add_css_class("picker-item-detail");
+        citation_label.set_visible(false);
+        footer_box.append(&citation_label);
+
         let position_label = Label::new(None);
         position_label.set_halign(Align::End);
         position_label.set_visible(false);
@@ -430,6 +440,7 @@ impl GlossOverlay {
             corr_header,
             corrected_label,
             hint,
+            citation_label,
             position_label,
             gloss_scroll_overlay,
             gloss_scrolled,
@@ -617,6 +628,7 @@ impl GlossOverlay {
     }
 
     pub fn show(&self, original: &str, corrected: &str) {
+        self.hide_citation();
         self.title.set_visible(true);
         self.title.set_text("Gloss");
         // Reset the top margin in case `show_glossing` widened it (shared title).
@@ -723,6 +735,7 @@ impl GlossOverlay {
     /// status sits as a header above the passage; the result simply replaces this
     /// view in place when it arrives, so the passage looks identical before/after.
     pub fn show_glossing(&self, passage_doc: &str, card_width: i32, card_height: i32, root_color: Option<&str>) {
+        self.hide_citation();
         self.synopsis_label_ranges.borrow_mut().clear();
         self.blocks.borrow_mut().clear();
         self.container.set_width_request(card_width);
@@ -804,6 +817,7 @@ impl GlossOverlay {
         selected: usize,
     ) {
         // No synopsis label bolding in echo view.
+        self.hide_citation();
         self.synopsis_label_ranges.borrow_mut().clear();
         self.blocks.borrow_mut().clear();
         self.container.set_width_request(card_width);
@@ -914,6 +928,7 @@ impl GlossOverlay {
         card_width: i32,
         card_height: i32,
     ) {
+        self.hide_citation();
         *self.current_synopsis.borrow_mut() = synopsis.to_string();
         // Clear any stale visual-mode anchor: showing a (possibly different)
         // synopsis rebuilds the block list, so an old anchor index is invalid.
@@ -1387,7 +1402,7 @@ impl GlossOverlay {
     /// gloss render path and when exiting gloss visual mode, so both share one
     /// string. `\u{21e7}V select` advertises gloss visual mode.
     pub fn set_gloss_hint(&self) {
-        self.hint.set_text("Esc close · Space play/pause · a play · A add · e edit · d delete · c copy id · Ctrl+n/p passage · Alt+n/p gloss · \u{21e7}V select");
+        self.hint.set_text("A add · e edit");
     }
 
     /// Set the footer hint shown while gloss visual mode is active.
@@ -1839,6 +1854,24 @@ impl GlossOverlay {
         } else {
             self.position_label.set_visible(false);
         }
+    }
+
+    /// Show the open passage's citation range in the footer (gloss view only),
+    /// e.g. "2H6 1.4.7–14". Pass the passage's start and end citation strings.
+    /// Hidden when no usable citation is given.
+    pub fn set_citation(&self, start_citation: &str, end_citation: &str) {
+        match format_citation_range(start_citation, end_citation) {
+            Some(text) => {
+                self.citation_label.set_text(&text);
+                self.citation_label.set_visible(true);
+            }
+            None => self.citation_label.set_visible(false),
+        }
+    }
+
+    /// Hide the footer citation (non-gloss views: synopsis, diff, echoes).
+    pub fn hide_citation(&self) {
+        self.citation_label.set_visible(false);
     }
 
     pub fn is_visible(&self) -> bool {
@@ -3634,5 +3667,97 @@ mod visual_range_tests {
     fn plain_untagged_synopsis_is_one_block() {
         let syn = "Just one paragraph, no tags.";
         assert_eq!(selected_blocks_text(syn, 0, 0), "Just one paragraph, no tags.");
+    }
+}
+
+/// Parse a citation "ABBR.div1.div2.line" into (abbrev, div1, div2, line).
+/// Returns None unless it has the full 4-part shape with numeric tail segments.
+fn parse_citation(c: &str) -> Option<(&str, &str, &str, &str)> {
+    // Split off the trailing three numeric segments; the abbrev may itself
+    // contain dots in principle, so split from the right.
+    let mut it = c.rsplitn(4, '.');
+    let line = it.next()?;
+    let div2 = it.next()?;
+    let div1 = it.next()?;
+    let abbrev = it.next()?;
+    if abbrev.is_empty() || line.is_empty() || div1.is_empty() || div2.is_empty() {
+        return None;
+    }
+    Some((abbrev, div1, div2, line))
+}
+
+/// Format a passage citation range for the footer, collapsing the shared
+/// prefix:
+/// - single line (start == end):            "2H6 1.4.7"
+/// - same act/scene, different line:         "2H6 1.4.7–14"
+/// - spans a scene/act boundary:             "2H6 1.4.7–2.1.3"
+/// Falls back to "start–end" (or "start") when a citation can't be parsed.
+/// Returns None only when there is no usable start citation.
+fn format_citation_range(start: &str, end: &str) -> Option<String> {
+    if start.is_empty() {
+        return None;
+    }
+    let s = parse_citation(start);
+    let e = parse_citation(end);
+    match (s, e) {
+        (Some((sa, s1, s2, sl)), Some((_ea, e1, e2, el))) => {
+            if start == end {
+                Some(format!("{} {}.{}.{}", sa, s1, s2, sl))
+            } else if s1 == e1 && s2 == e2 {
+                // Same act/scene: collapse the end to just its line number.
+                Some(format!("{} {}.{}.{}–{}", sa, s1, s2, sl, el))
+            } else {
+                // Spans a boundary: show the end's act.scene.line (no abbrev).
+                Some(format!("{} {}.{}.{}–{}.{}.{}", sa, s1, s2, sl, e1, e2, el))
+            }
+        }
+        // Unparseable: degrade gracefully to the raw strings.
+        _ => {
+            if end.is_empty() || start == end {
+                Some(start.to_string())
+            } else {
+                Some(format!("{}–{}", start, end))
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod citation_range_tests {
+    use super::format_citation_range;
+
+    #[test]
+    fn single_line_no_dash() {
+        assert_eq!(format_citation_range("2H6.1.4.7", "2H6.1.4.7").unwrap(), "2H6 1.4.7");
+    }
+
+    #[test]
+    fn same_scene_collapses_end_to_line() {
+        assert_eq!(format_citation_range("2H6.1.4.7", "2H6.1.4.14").unwrap(), "2H6 1.4.7–14");
+    }
+
+    #[test]
+    fn cross_scene_shows_full_end_without_abbrev() {
+        assert_eq!(
+            format_citation_range("2H6.1.4.7", "2H6.2.1.3").unwrap(),
+            "2H6 1.4.7–2.1.3"
+        );
+    }
+
+    #[test]
+    fn empty_start_is_none() {
+        assert_eq!(format_citation_range("", "2H6.1.4.7"), None);
+    }
+
+    #[test]
+    fn unparseable_degrades_to_raw_range() {
+        assert_eq!(format_citation_range("weird", "alsoweird").unwrap(), "weird–alsoweird");
+        assert_eq!(format_citation_range("weird", "weird").unwrap(), "weird");
+    }
+
+    #[test]
+    fn empty_end_uses_raw_start_only() {
+        // Empty end can't be parsed, so we degrade to the raw start string.
+        assert_eq!(format_citation_range("2H6.1.4.7", "").unwrap(), "2H6.1.4.7");
     }
 }
