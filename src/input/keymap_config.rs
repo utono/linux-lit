@@ -273,6 +273,7 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl_alt("p"), Action::OpenConcordanceListPicker),
         (KeyCombo::alt("r"), Action::OpenConcordanceWorksPicker),
         (KeyCombo::ctrl("g"), Action::OpenGlossPicker),
+        (KeyCombo::alt("g"), Action::OpenLastGloss),
         (KeyCombo::plain("H"), Action::ToggleVocabPopup),
     ]
 }
