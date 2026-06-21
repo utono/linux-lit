@@ -2027,6 +2027,85 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
     open_gloss_overlay(&mut s, passages, passage_index, passage, all_glosses, false, None);
 }
 
+/// Reopen the gloss overlay on the most-recently-viewed gloss for the current
+/// work (persisted in `config.last_gloss`), restored to the gloss type that was
+/// last shown. Toasts "No recent gloss" when there is no usable reference
+/// (none recorded, passage gone, or no glosses remain).
+pub(crate) fn open_last_gloss(state: &Rc<RefCell<AppState>>) {
+    const GLOSS_TYPES: &[&str] = &["teacher-generic", "inner-monologue", "reader-gloss"];
+
+    // Resolve current work + the stored reference, under a shared borrow.
+    let (work_abbrev, start_citation, desired_type) = {
+        let s = state.borrow();
+        let work = match s.current_work.as_ref() {
+            Some(w) => w,
+            None => {
+                drop(s);
+                show_tts_toast(state, "No recent gloss");
+                return;
+            }
+        };
+        let abbrev = crate::app::base_work_abbrev(&work.abbrev).to_string();
+        match s.config.last_gloss.get(&abbrev) {
+            Some(lg) => (abbrev, lg.start_citation.clone(), lg.gloss_type.clone()),
+            None => {
+                drop(s);
+                show_tts_toast(state, "No recent gloss");
+                return;
+            }
+        }
+    };
+
+    // Read-only DB work before any mutation (same pattern as toggle_overlay).
+    let conn = match crate::db::queries::open_db() {
+        Ok(c) => c,
+        Err(_) => {
+            show_tts_toast(state, "No recent gloss");
+            return;
+        }
+    };
+    let passages = crate::db::queries::find_glossed_passages(&conn, &work_abbrev, GLOSS_TYPES)
+        .unwrap_or_default();
+
+    let found = passages
+        .iter()
+        .enumerate()
+        .find(|(_, p)| p.start_citation == start_citation);
+    let (passage_index, passage) = match found {
+        Some((i, p)) => (i, p.clone()),
+        None => {
+            // Stale reference: passage deleted or work re-imported.
+            show_tts_toast(state, "No recent gloss");
+            return;
+        }
+    };
+
+    let all_glosses = crate::db::queries::find_glosses_by_start(
+        &conn,
+        &passage.work_abbrev,
+        &passage.start_citation,
+        GLOSS_TYPES,
+    )
+    .unwrap_or_default();
+    if all_glosses.is_empty() {
+        show_tts_toast(state, "No recent gloss");
+        return;
+    }
+
+    let mut s = state.borrow_mut();
+    // Remember the reader page so Escape returns here (from_picker = false).
+    s.gloss_return_pos = Some((s.current_line, s.page_top_line));
+    open_gloss_overlay(
+        &mut s,
+        passages,
+        passage_index,
+        passage,
+        all_glosses,
+        false,
+        Some(&desired_type),
+    );
+}
+
 /// Close the stacked gloss add/edit input card and return focus to the gloss.
 /// The reader stays in `InputMode::GlossOverlay` throughout (the card lives
 /// inside the gloss overlay, like the synopsis ask card).

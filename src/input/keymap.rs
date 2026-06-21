@@ -1960,6 +1960,7 @@ fn dispatch_action(
         }
         ToggleGlossOverlay => crate::input::actions::gloss::toggle_overlay(state),
         OpenGlossPicker => crate::input::actions::pickers::open_gloss_picker(state, tokio_handle),
+        OpenLastGloss => crate::input::actions::gloss::open_last_gloss(state),
         ShowEchoesBcp => crate::input::actions::echoes::show_echoes_for_cursor_line(state, crate::db::echo_channel::EchoChannel::Bcp, tokio_handle),
         ReopenEchoesBcp => crate::input::actions::echoes::reopen_echoes(state, crate::db::echo_channel::EchoChannel::Bcp, tokio_handle),
         ShowEchoTurnsBcp => crate::input::actions::echoes::open_echo_turns_picker(state, crate::db::echo_channel::EchoChannel::Bcp),
