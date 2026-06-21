@@ -110,9 +110,9 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
         None => return,
     };
 
-    // Locate where we are now (by citation) so we can step within this work.
-    let (cur_start, cur_end) = match &s.gloss_context {
-        Some(ctx) => (ctx.start_citation.clone(), ctx.end_citation.clone()),
+    // Locate where we are now (by start citation) so we can step within this work.
+    let cur_start = match &s.gloss_context {
+        Some(ctx) => ctx.start_citation.clone(),
         None => return,
     };
 
@@ -131,10 +131,17 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
         return;
     }
 
-    let cur_idx = passages
-        .iter()
-        .position(|p| p.start_citation == cur_start && p.end_citation == cur_end)
-        .unwrap_or(0);
+    // Locate the current passage by START citation only. The displayed gloss's
+    // own end_citation can differ from the passage's (glosses sharing a start
+    // may span to different ends — see the footer-citation note in
+    // open_gloss_overlay), so matching start AND end could miss and silently
+    // fall back to index 0 — which made Ctrl+n at the last passage "cycle" to
+    // the second. Start is the passage key in this list. If even that misses,
+    // abort rather than fall back to 0 (the spurious-jump bug).
+    let cur_idx = match passages.iter().position(|p| p.start_citation == cur_start) {
+        Some(i) => i,
+        None => return,
+    };
 
     // Clamp at the ends rather than wrapping: Ctrl+p stops at the first passage
     // of this type, Ctrl+n stops at the last.
@@ -1958,6 +1965,9 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         s.tts.stop();
         s.gloss_overlay.hide();
         s.input_mode = crate::app::InputMode::Reader;
+        // A gloss may have just been created/edited; refresh the main-card
+        // reader-gloss tint so newly-glossed lines color without a work reload.
+        crate::app::apply_reader_gloss_highlighting(&mut s);
         // Restore the page the user was on before toggling the gloss open.
         if let Some((line, top)) = s.gloss_return_pos.take() {
             s.current_line = line;

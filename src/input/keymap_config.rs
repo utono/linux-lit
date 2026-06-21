@@ -265,14 +265,16 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl("r"), Action::JumpToNextVocab),
         (KeyCombo::ctrl_shift("R"), Action::JumpToPrevVocab),
         (KeyCombo::alt("backslash"), Action::ToggleVocabHighlight),
-        (KeyCombo::ctrl_shift("G"), Action::ToggleGlossOverlay),
+        (KeyCombo::ctrl_shift("G"), Action::OpenLastGloss),
         (KeyCombo::alt("i"), Action::CycleScansion),
         (KeyCombo::plain("apostrophe"), Action::ReopenEchoesBcp),
         (KeyCombo::ctrl("backslash"), Action::OpenConcordancePicker),
         (KeyCombo::ctrl_shift("P"), Action::OpenConcordanceWordPicker),
         (KeyCombo::ctrl_alt("p"), Action::OpenConcordanceListPicker),
         (KeyCombo::alt("r"), Action::OpenConcordanceWorksPicker),
-        (KeyCombo::ctrl("g"), Action::OpenLastGloss),
+        (KeyCombo::ctrl("g"), Action::ToggleGlossOverlay),
+        // `]` (bracketright on RPD) duplicates Ctrl+g — open/close the gloss overlay.
+        (KeyCombo::plain("bracketright"), Action::ToggleGlossOverlay),
         (KeyCombo::alt("g"), Action::OpenGlossPicker),
         (KeyCombo::plain("H"), Action::ToggleVocabPopup),
     ]

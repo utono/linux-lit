@@ -843,12 +843,20 @@ fn handle_gloss_key(
             crate::input::actions::gloss::read_current_block(state);
             true
         }
-        "Escape" | "n" => {
+        // `]` closes the overlay exactly like Escape/n (jump the cursor to the
+        // glossed passage's source on close), NOT like toggle_overlay's
+        // return-to-origin. It opens the overlay from the reader via table
+        // dispatch (ToggleGlossOverlay), so `]` is a full open/close toggle.
+        "Escape" | "n" | "bracketright" => {
             let mut s = state.borrow_mut();
             s.tts.stop();
             s.gloss_overlay.hide();
             s.input_mode = crate::app::InputMode::Reader;
             s.gloss_opened_from_picker = false;
+            // A gloss may have just been created/edited in the overlay, adding a
+            // new glossed passage. Recompute the main-card reader-gloss tint so
+            // the newly-glossed lines color without needing a work reload.
+            crate::app::apply_reader_gloss_highlighting(&mut s);
             // Jump the cursor to the first dialogue line of the glossed passage's
             // source text. If that can't be resolved, fall back to the exact page
             // the user was on before the gloss opened (saved by every open path).

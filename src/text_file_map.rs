@@ -1034,6 +1034,61 @@ mod tests {
     use super::*;
     use crate::db::models::Line;
 
+    /// Regression for the reader-gloss main-card coloring on `-Amb` editions.
+    /// The gloss passages are stored against the BASE work's citations, but the
+    /// Ambrose edition (`2H6-Amb`) renumbers `line_in_div` (it inserts stage
+    /// directions as numbered rows), so a citation-tuple match left
+    /// "Mother Jourdain…" and "the earth. John Southwell," uncolored.
+    /// `apply_reader_gloss_highlighting` now matches by source TEXT instead;
+    /// this asserts those two lines (and the rest of the second passage) ARE in
+    /// the glossed-text set built from the base passages' `source_text`.
+    /// Skipped when lit.db or the `-Amb` rows are unavailable.
+    #[test]
+    fn h6_amb_glossed_lines_match_by_text() {
+        let conn = match crate::db::queries::open_db() {
+            Ok(c) => c,
+            Err(_) => {
+                eprintln!("skip: no lit.db");
+                return;
+            }
+        };
+        // Base passages provide the edition-identical source text.
+        let passages = crate::db::queries::find_glossed_passages(&conn, "2H6", &["reader-gloss"])
+            .unwrap_or_default();
+        if passages.is_empty() {
+            eprintln!("skip: no 2H6 reader-gloss passages");
+            return;
+        }
+        let glossed_texts: std::collections::HashSet<String> = passages
+            .iter()
+            .flat_map(|p| p.source_text.lines())
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect();
+
+        // The Ambrose edition's actual line texts for the reported failures.
+        let amb = match crate::db::queries::load_work(&conn, "2H6-Amb") {
+            Ok(w) => w,
+            Err(_) => {
+                eprintln!("skip: 2H6-Amb not loaded");
+                return;
+            }
+        };
+        for needle in [
+            "Mother Jourdain, be you prostrate and grovel on",
+            "the earth. John Southwell,",
+            "read you; and let us to our work.",
+        ] {
+            let found = amb.lines.iter().any(|l| l.text.trim() == needle);
+            assert!(found, "2H6-Amb is missing expected line {:?}", needle);
+            assert!(
+                glossed_texts.contains(needle),
+                "glossed-text set does not contain {:?} — -Amb line would render uncolored",
+                needle
+            );
+        }
+    }
+
     fn make_line(id: i64, text: &str, normalized: &str, is_dialogue: bool) -> Line {
         make_line_div(id, text, normalized, is_dialogue, 1, 1)
     }
