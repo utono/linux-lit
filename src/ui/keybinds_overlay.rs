@@ -347,7 +347,7 @@ cached ElevenLabs MP3s (cache only, no playback), showing a \
 gloss::synth_all_prose_blocks — src/input/actions/gloss.rs",
         "gloss pick" => "Open a fuzzy-filterable list of every passage in this \
 work that has a saved gloss (teacher-generic, inner-monologue, or reader-gloss). \
-Ctrl+t cycles the type filter teacher-generic -> inner-monologue -> reader-gloss. \
+Alt+t cycles the type filter teacher-generic -> inner-monologue -> reader-gloss. \
 Each row shows the speaker, the first source line, and the citation; confirming \
 loads that passage's glosses into the overlay and jumps the reader to it. \
 -> pickers::open_gloss_picker — src/input/actions/pickers.rs (confirm: \

@@ -1375,7 +1375,7 @@ impl GlossOverlay {
 
     /// Set the synopsis-overlay footer hint (normal navigation).
     pub fn set_synopsis_hint(&self) {
-        self.hint.set_text("Esc close · j/k block · Space play · n/p scene · Shift+Space synth · Ctrl+g glosses · A ask · E edit · U undo · \u{21e7}V select");
+        self.hint.set_text("Esc close · j/k block · Space play · n/p scene · Shift+Space synth · Alt+g glosses · A ask · E edit · U undo · \u{21e7}V select");
     }
 
     /// Set the footer hint shown while synopsis visual mode is active.

@@ -58,10 +58,10 @@ impl GlossPicker {
     }
 
     /// Update the search-entry placeholder to show which gloss_type the picker
-    /// is currently filtered to (toggled with Ctrl+t).
+    /// is currently filtered to (toggled with Alt+t).
     pub fn set_type_label(&self, gloss_type: &str) {
         self.search_entry
-            .set_placeholder_text(Some(&format!("Filter {} glosses... (Ctrl+t toggle)", gloss_type)));
+            .set_placeholder_text(Some(&format!("Filter {} glosses... (Alt+t toggle)", gloss_type)));
     }
 
     pub fn show(&self) {

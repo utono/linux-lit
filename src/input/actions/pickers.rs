@@ -5,7 +5,7 @@ use gtk4::prelude::*;
 
 use crate::app::AppState;
 
-/// Which gloss_type the Alt+g picker is currently filtered to. Cycled by Ctrl+t.
+/// Which gloss_type the Alt+g picker is currently filtered to. Cycled by Alt+t.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(crate) enum GlossPickerFilter {
     TeacherGeneric,
@@ -906,7 +906,7 @@ pub(crate) fn open_gloss_picker(
 
 /// Flip the gloss-picker type filter (teacher-generic <-> inner-monologue) and
 /// re-query the current work's glossed passages for the newly selected type.
-/// Called from the GlossPicker's Ctrl+t handler.
+/// Called from the GlossPicker's Alt+t handler.
 pub(crate) fn toggle_gloss_picker_type(
     state: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
