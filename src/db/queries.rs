@@ -1500,6 +1500,8 @@ pub struct SavedGloss {
     pub gloss_text: String,
     pub timestamp: String,
     pub gloss_type: String,
+    pub start_citation: String,
+    pub end_citation: String,
 }
 
 pub fn find_existing_gloss(
@@ -1511,7 +1513,7 @@ pub fn find_existing_gloss(
 ) -> Result<Option<SavedGloss>, rusqlite::Error> {
     let gt = gloss_type.to_string();
     conn.query_row(
-        "SELECT g.id, g.gloss_text, g.timestamp, p.id \
+        "SELECT g.id, g.gloss_text, g.timestamp, p.id, p.start_citation, p.end_citation \
          FROM glosses g \
          JOIN passages p ON g.passage_id = p.id \
          WHERE p.work_abbrev = ?1 \
@@ -1528,6 +1530,8 @@ pub fn find_existing_gloss(
                 timestamp: row.get(2)?,
                 passage_id: row.get(3)?,
                 gloss_type: gt.clone(),
+                start_citation: row.get(4)?,
+                end_citation: row.get(5)?,
             })
         },
     )
@@ -1548,7 +1552,7 @@ pub fn find_all_glosses(
         .map(|i| format!("?{}", i + 4))
         .collect();
     let sql = format!(
-        "SELECT g.id, g.gloss_text, g.timestamp, p.id, g.gloss_type \
+        "SELECT g.id, g.gloss_text, g.timestamp, p.id, g.gloss_type, p.start_citation, p.end_citation \
          FROM glosses g \
          JOIN passages p ON g.passage_id = p.id \
          WHERE p.work_abbrev = ?1 \
@@ -1576,6 +1580,8 @@ pub fn find_all_glosses(
                 timestamp: row.get(2)?,
                 passage_id: row.get(3)?,
                 gloss_type: row.get(4)?,
+                start_citation: row.get(5)?,
+                end_citation: row.get(6)?,
             })
         },
     )?;
@@ -1598,7 +1604,7 @@ pub fn find_glosses_by_start(
         .map(|i| format!("?{}", i + 3))
         .collect();
     let sql = format!(
-        "SELECT g.id, g.gloss_text, g.timestamp, p.id, g.gloss_type \
+        "SELECT g.id, g.gloss_text, g.timestamp, p.id, g.gloss_type, p.start_citation, p.end_citation \
          FROM glosses g \
          JOIN passages p ON g.passage_id = p.id \
          WHERE p.work_abbrev = ?1 \
@@ -1623,6 +1629,8 @@ pub fn find_glosses_by_start(
             timestamp: row.get(2)?,
             passage_id: row.get(3)?,
             gloss_type: row.get(4)?,
+            start_citation: row.get(5)?,
+            end_citation: row.get(6)?,
         })
     })?;
     rows.collect()
