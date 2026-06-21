@@ -656,6 +656,22 @@ impl AppState {
 
         start..end
     }
+
+    /// Record the currently-open gloss (from `self.gloss_context`) as the
+    /// most-recently-viewed gloss for its work, and persist config. Called at
+    /// every site that displays a gloss, so a freshly created gloss becomes
+    /// "most recent" the instant it is shown. No-op if no gloss_context is set.
+    pub fn record_last_gloss(&mut self, gloss_type: &str) {
+        if let Some(ctx) = &self.gloss_context {
+            let work = ctx.work_abbrev.clone();
+            let entry = crate::config::LastGloss {
+                start_citation: ctx.start_citation.clone(),
+                gloss_type: gloss_type.to_string(),
+            };
+            self.config.last_gloss.insert(work, entry);
+            crate::config::save(&self.config);
+        }
+    }
 }
 
 /// Fit the centered text card to the current window width.
