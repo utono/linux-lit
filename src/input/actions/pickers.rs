@@ -5,7 +5,7 @@ use gtk4::prelude::*;
 
 use crate::app::AppState;
 
-/// Which gloss_type the Ctrl+g picker is currently filtered to. Cycled by Ctrl+t.
+/// Which gloss_type the Alt+g picker is currently filtered to. Cycled by Ctrl+t.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(crate) enum GlossPickerFilter {
     TeacherGeneric,

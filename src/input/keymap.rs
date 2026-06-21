@@ -698,18 +698,18 @@ fn handle_gloss_key(
     if is_alt {
         match key_name {
             "n" => {
-                // Silence audio on passage nav (pause MPV + stop TTS), like j/k.
+                // Silence audio on gloss nav (pause MPV + stop TTS), like j/k.
                 crate::input::actions::gloss::stop_all_gloss_audio(state);
-                crate::input::actions::gloss::navigate_gloss_passage(state, 1);
+                crate::input::actions::gloss::navigate_gloss(state, -1);
                 return true;
             }
             "p" => {
                 crate::input::actions::gloss::stop_all_gloss_audio(state);
-                crate::input::actions::gloss::navigate_gloss_passage(state, -1);
+                crate::input::actions::gloss::navigate_gloss(state, 1);
                 return true;
             }
             "g" => {
-                // Same as the reader card's Ctrl+g: open the glosses picker, but
+                // Same as the reader card's Alt+g: open the glosses picker, but
                 // keep the gloss overlay open behind it. The flag tells
                 // `open_gloss_picker` not to hide the overlay and the picker's
                 // Escape handler to return to the overlay (not the reader).
@@ -723,14 +723,14 @@ fn handle_gloss_key(
     if is_ctrl {
         match key_name {
             "n" => {
-                // Silence audio on gloss nav (pause MPV + stop TTS), like j/k.
+                // Silence audio on passage nav (pause MPV + stop TTS), like j/k.
                 crate::input::actions::gloss::stop_all_gloss_audio(state);
-                crate::input::actions::gloss::navigate_gloss(state, -1);
+                crate::input::actions::gloss::navigate_gloss_passage(state, 1);
                 return true;
             }
             "p" => {
                 crate::input::actions::gloss::stop_all_gloss_audio(state);
-                crate::input::actions::gloss::navigate_gloss(state, 1);
+                crate::input::actions::gloss::navigate_gloss_passage(state, -1);
                 return true;
             }
             // Ctrl+V cycles the active TTS voice (moved off plain V, which now

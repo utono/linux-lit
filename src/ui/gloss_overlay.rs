@@ -349,7 +349,7 @@ impl GlossOverlay {
         footer_box.set_margin_bottom(12);
         footer_box.add_css_class("gloss-hint");
 
-        let hint = Label::new(Some("Esc close · a add · e edit · d delete · c copy id · Ctrl+n/p gloss · Alt+n/p passage"));
+        let hint = Label::new(Some("Esc close · a add · e edit · d delete · c copy id · Ctrl+n/p passage · Alt+n/p gloss"));
         hint.set_halign(Align::Center);
         hint.set_hexpand(true);
         footer_box.append(&hint);
@@ -1387,7 +1387,7 @@ impl GlossOverlay {
     /// gloss render path and when exiting gloss visual mode, so both share one
     /// string. `\u{21e7}V select` advertises gloss visual mode.
     pub fn set_gloss_hint(&self) {
-        self.hint.set_text("Esc close · Space play/pause · a play · A add · e edit · d delete · c copy id · Ctrl+n/p gloss · Alt+n/p passage · \u{21e7}V select");
+        self.hint.set_text("Esc close · Space play/pause · a play · A add · e edit · d delete · c copy id · Ctrl+n/p passage · Alt+n/p gloss · \u{21e7}V select");
     }
 
     /// Set the footer hint shown while gloss visual mode is active.
