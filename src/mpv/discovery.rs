@@ -1,5 +1,17 @@
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
+
+/// MPV launch volume (percent) for the `--volume=` arg. Set once at startup
+/// from `config.mpv_volume` (see `set_mpv_volume`); defaults to 100 if never
+/// set. A process global so `launch_mpv` need not thread config through its
+/// three call sites, which live inside spawn_blocking closures.
+static MPV_VOLUME: AtomicU32 = AtomicU32::new(100);
+
+/// Record the configured MPV launch volume. Call once after config load.
+pub fn set_mpv_volume(percent: u32) {
+    MPV_VOLUME.store(percent, Ordering::Relaxed);
+}
 
 pub fn derive_socket_path(media_path: &str) -> String {
     let home = std::env::var("HOME").unwrap_or_default();
@@ -109,7 +121,7 @@ pub fn launch_mpv(media_path: &str) -> String {
         .arg(format!("--input-ipc-server={}", socket_path))
         .arg("--pause")
         .arg("--no-terminal")
-        .arg("--volume=100")
+        .arg(format!("--volume={}", MPV_VOLUME.load(Ordering::Relaxed)))
         // Keep MPV's window: some works are videos, and the audiobook window
         // carries cover art. dwl routes `mpv-lit` to its own tag (config.h), so
         // it doesn't cover the reader.

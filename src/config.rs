@@ -96,6 +96,17 @@ pub struct Config {
     /// See docs/specs/2026-05-30-semantic-echo-search-design.md.
     #[serde(default = "default_echo_affect_weight")]
     pub echo_affect_weight: f32,
+    /// System output sink volume (percent) applied once on startup via
+    /// `pactl set-sink-volume @DEFAULT_SINK@`. Default 70 (matches the dwl
+    /// session default in ~/utono/dwl-mlj/start-dwl). Change with the
+    /// `set-startup-volume` skill.
+    #[serde(default = "default_system_volume")]
+    pub system_volume: u32,
+    /// MPV playback volume (percent) passed as `--volume=` when launching mpv.
+    /// Default 100 (i.e. 100% of the system sink). Change with the
+    /// `set-startup-volume` skill.
+    #[serde(default = "default_mpv_volume")]
+    pub mpv_volume: u32,
 }
 
 fn default_font_family() -> String {
@@ -175,6 +186,14 @@ fn default_echo_affect_weight() -> f32 {
     0.0
 }
 
+pub fn default_system_volume() -> u32 {
+    70
+}
+
+pub fn default_mpv_volume() -> u32 {
+    100
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -202,6 +221,8 @@ impl Default for Config {
             show_cursor_line: true,
             title_bar_visible: default_title_bar_visible(),
             echo_affect_weight: default_echo_affect_weight(),
+            system_volume: default_system_volume(),
+            mpv_volume: default_mpv_volume(),
         }
     }
 }
