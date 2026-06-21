@@ -55,7 +55,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("C-p", "lib picker"), ("S-C-p", "conc word"), ("C-M-p", "conc list")]),
     key("y", "Y", "pg back", "", &[("C-y", "copy id")]),
     key("f", "F", "next font", "F: prev font", &[("M-f", "font info")]),
-    key("g", "G", "", "", &[("C-g", "gloss pick"), ("S-C-g", "gloss tog")]),
+    key("g", "G", "", "", &[("C-g", "gloss pick"), ("S-C-g", "gloss tog"), ("M-g", "last gloss")]),
     key("c", "C", "set chapter", "C: show chapter", &[]),
     key("r", "R", "next conc", "R: prev conc", &[("C-r", "next vocab"), ("S-C-r", "prev vocab"), ("M-r", "conc works"), ("r", "verse audio: play/stop"), ("R", "verse audio: pick voice")]),
     key("l", "L", "toggle signs", "", &[("S-C-l", "save+quit")]),
@@ -352,6 +352,13 @@ Each row shows the speaker, the first source line, and the citation; confirming 
 loads that passage's glosses into the overlay and jumps the reader to it. \
 -> pickers::open_gloss_picker — src/input/actions/pickers.rs (confirm: \
 handle_gloss_picker_key in src/input/keymap.rs)",
+        "last gloss" => "Reopen the gloss overlay on the most recently viewed \
+gloss in this work, restored to the gloss type that was on screen. The reference \
+is remembered per work and persists across restarts; it is updated whenever a \
+gloss is viewed or freshly created. Toasts \u{201c}No recent gloss\u{201d} when \
+there is none recorded, or the remembered passage was deleted or no longer \
+resolves. \
+-> gloss::open_last_gloss — src/input/actions/gloss.rs",
         "BCP echo turns" => "List every speaker turn in this work that has cached \
 Book of Common Prayer inner-monologue echoes (echo_work_abbrev LIKE 'BCP%'). \
 Selecting a turn jumps the cursor to its first line and reopens its stored BCP \
@@ -619,6 +626,7 @@ fn expand_action(label: &str) -> String {
         "media picker" => "media picker",
         "gloss tog" => "toggle gloss overlay",
         "gloss pick" => "gloss picker",
+        "last gloss" => "reopen last gloss",
         "BCP echo turns" => "BCP echo turns picker",
         "Shx echo turns" => "Shakespeare echo turns picker",
         "vocab hi" => "toggle vocab highlight",
