@@ -167,6 +167,10 @@ pub(crate) fn navigate_gloss(state: &Rc<RefCell<AppState>>, delta: i32) {
     s.gloss_index = new_idx;
     s.gloss_active_voice = 0;
     let gloss = &s.gloss_list[new_idx];
+    // Footer cites the DISPLAYED gloss's own passage span (glosses in this list
+    // share a start_citation but may have different end_citations).
+    let gloss_start = gloss.start_citation.clone();
+    let gloss_end = gloss.end_citation.clone();
     let ctx = s.gloss_context.as_ref().unwrap();
     let cw = s.content_hbox.width();
     let h = s.content_hbox.height();
@@ -176,7 +180,7 @@ pub(crate) fn navigate_gloss(state: &Rc<RefCell<AppState>>, delta: i32) {
         Some(&s.theme.root_color), &pairs,
     );
     s.gloss_overlay.set_position(new_idx, s.gloss_list.len());
-    s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
+    s.gloss_overlay.set_citation(&gloss_start, &gloss_end);
     recolor_cached_blocks(&s);
 }
 
@@ -241,6 +245,9 @@ pub(crate) fn delete_current_gloss(state_rc: &Rc<RefCell<AppState>>) {
             s.gloss_active_voice = 0;
             let new_idx = s.gloss_index;
             let gloss = &s.gloss_list[new_idx];
+            // Footer cites the now-displayed gloss's own passage span.
+            let gloss_start = gloss.start_citation.clone();
+            let gloss_end = gloss.end_citation.clone();
             let ctx = s.gloss_context.as_ref().unwrap();
             let cw = s.content_hbox.width();
             let h = s.content_hbox.height();
@@ -250,7 +257,7 @@ pub(crate) fn delete_current_gloss(state_rc: &Rc<RefCell<AppState>>) {
                 Some(&s.theme.root_color), &pairs,
             );
             s.gloss_overlay.set_position(new_idx, s.gloss_list.len());
-            s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
+            s.gloss_overlay.set_citation(&gloss_start, &gloss_end);
             recolor_cached_blocks(&s);
         }
     }
@@ -1907,7 +1914,10 @@ pub(crate) fn open_gloss_overlay(
         &source_lines,
     );
     s.gloss_overlay.set_position(idx, all_glosses.len());
-    s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
+    // Footer cites the DISPLAYED gloss's own passage span, not the group-wide
+    // ctx (glosses sharing a start_citation may span to different end_citations).
+    s.gloss_overlay
+        .set_citation(&all_glosses[idx].start_citation, &all_glosses[idx].end_citation);
 
     let shown_type = all_glosses[idx].gloss_type.clone();
     s.gloss_passages = passages;
