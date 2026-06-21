@@ -1849,6 +1849,15 @@ fn passage_covers(start: (i64, i64, i64), end: (i64, i64, i64), cur: (i64, i64, 
 /// Caller responsibilities (done identically by both sites before this call):
 /// set `gloss_return_pos`, and hold the `&mut AppState` borrow. `all_glosses`
 /// must be non-empty. `from_picker` controls the Escape return path.
+/// Pick the starting index into a gloss list for a desired gloss type.
+/// Returns the index of the first gloss whose type matches `desired`, or 0
+/// when `desired` is None or no gloss of that type is present.
+fn start_gloss_idx(types: &[impl AsRef<str>], desired: Option<&str>) -> usize {
+    desired
+        .and_then(|d| types.iter().position(|t| t.as_ref() == d))
+        .unwrap_or(0)
+}
+
 pub(crate) fn open_gloss_overlay(
     s: &mut AppState,
     passages: Vec<crate::db::queries::GlossedPassage>,
@@ -1856,7 +1865,11 @@ pub(crate) fn open_gloss_overlay(
     passage: crate::db::queries::GlossedPassage,
     all_glosses: Vec<crate::db::queries::SavedGloss>,
     from_picker: bool,
+    desired_type: Option<&str>,
 ) {
+    let types: Vec<&str> = all_glosses.iter().map(|g| g.gloss_type.as_str()).collect();
+    let idx = start_gloss_idx(&types, desired_type);
+
     let work_title = s
         .current_work
         .as_ref()
@@ -1873,7 +1886,7 @@ pub(crate) fn open_gloss_overlay(
         source_text: passage.source_text,
         source_line_numbers: Vec::new(),
         hash: String::new(),
-        gloss_type: all_glosses[0].gloss_type.clone(),
+        gloss_type: all_glosses[idx].gloss_type.clone(),
     };
 
     let cw = s.content_hbox.width();
@@ -1881,18 +1894,19 @@ pub(crate) fn open_gloss_overlay(
     let source_lines: Vec<(String, i64)> = Vec::new();
     s.gloss_overlay.show_gloss_with_color(
         &ctx.source_text,
-        &all_glosses[0].gloss_text,
+        &all_glosses[idx].gloss_text,
         cw,
         h,
         Some(&s.theme.root_color),
         &source_lines,
     );
-    s.gloss_overlay.set_position(0, all_glosses.len());
+    s.gloss_overlay.set_position(idx, all_glosses.len());
 
+    let shown_type = all_glosses[idx].gloss_type.clone();
     s.gloss_passages = passages;
     s.gloss_passage_index = passage_index;
     s.gloss_list = all_glosses;
-    s.gloss_index = 0;
+    s.gloss_index = idx;
     s.gloss_active_voice = 0;
     s.gloss_context = Some(ctx);
     s.gloss_opened_from_picker = from_picker;
@@ -1900,6 +1914,9 @@ pub(crate) fn open_gloss_overlay(
     // gloss vs synopsis branch off it and no-ops otherwise.
     s.input_mode = crate::app::InputMode::GlossOverlay;
     recolor_cached_blocks(s);
+
+    // Stamp the most-recent reference from the gloss now displayed.
+    s.record_last_gloss(&shown_type);
 }
 
 pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
@@ -2007,7 +2024,7 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
     s.gloss_return_pos = Some((s.current_line, s.page_top_line));
     // Opened from the reader cursor, not the picker (from_picker = false): Escape
     // uses the saved reader page, not the picker return path.
-    open_gloss_overlay(&mut s, passages, passage_index, passage, all_glosses, false);
+    open_gloss_overlay(&mut s, passages, passage_index, passage, all_glosses, false, None);
 }
 
 /// Close the stacked gloss add/edit input card and return focus to the gloss.
@@ -2015,6 +2032,30 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
 /// inside the gloss overlay, like the synopsis ask card).
 pub(crate) fn close_gloss_prompt(state: &Rc<RefCell<AppState>>) {
     state.borrow().gloss_overlay.close_ask_card();
+}
+
+#[cfg(test)]
+mod start_gloss_idx_tests {
+    use super::start_gloss_idx;
+
+    #[test]
+    fn matches_requested_type() {
+        let types = ["teacher-generic", "reader-gloss", "inner-monologue"];
+        assert_eq!(start_gloss_idx(&types, Some("reader-gloss")), 1);
+        assert_eq!(start_gloss_idx(&types, Some("inner-monologue")), 2);
+    }
+
+    #[test]
+    fn falls_back_to_zero_when_type_absent() {
+        let types = ["teacher-generic"];
+        assert_eq!(start_gloss_idx(&types, Some("reader-gloss")), 0);
+    }
+
+    #[test]
+    fn falls_back_to_zero_when_none_requested() {
+        let types = ["teacher-generic", "reader-gloss"];
+        assert_eq!(start_gloss_idx(&types, None), 0);
+    }
 }
 
 /// Submit the stacked gloss input card: read its text, close it, and route to
