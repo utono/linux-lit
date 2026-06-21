@@ -108,13 +108,13 @@ pub fn handle_key(
             | crate::app::InputMode::ConcordanceListPicker
             | crate::app::InputMode::ConcordanceWorksPicker
             | crate::app::InputMode::AuthorshipPicker
-            | crate::app::InputMode::GlossPicker => handle_picker_key(state, key_name, is_ctrl, tokio_handle, mode),
+            | crate::app::InputMode::GlossPicker => handle_picker_key(state, key_name, is_ctrl, is_alt, tokio_handle, mode),
             crate::app::InputMode::Settings => handle_settings_key(state, key_name, is_ctrl),
             crate::app::InputMode::VoicePicker => handle_voice_picker_key(state, key_name, is_ctrl),
             crate::app::InputMode::Search => handle_search_key(state, key_name),
             crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_shift, is_alt, tokio_handle),
             crate::app::InputMode::GlossVisual => handle_gloss_visual_key(state, key_state, key_name),
-            crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_state, key_name, is_ctrl, is_shift),
+            crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_state, key_name, is_ctrl, is_alt, is_shift),
             crate::app::InputMode::SynopsisVisual => handle_synopsis_visual_key(state, key_state, key_name),
             crate::app::InputMode::TranslationOverlay => handle_translation_overlay_key(state, key_name),
             crate::app::InputMode::DeleteConfirm => handle_delete_confirm_key(state, key_name),
@@ -269,6 +269,7 @@ fn handle_picker_key(
     state: &Rc<RefCell<AppState>>,
     key_name: &str,
     is_ctrl: bool,
+    is_alt: bool,
     tokio_handle: &tokio::runtime::Handle,
     mode: crate::app::InputMode,
 ) -> bool {
@@ -487,10 +488,10 @@ fn handle_picker_key(
                     }
                 }
                 InputMode::GlossPicker => {
-                    // Ctrl+t cycles the type filter (teacher-generic ->
-                    // inner-monologue -> reader-gloss). Ctrl combos don't type
+                    // Alt+t cycles the type filter (teacher-generic ->
+                    // inner-monologue -> reader-gloss). Alt combos don't type
                     // into the search entry, so no focus guard is needed.
-                    if is_ctrl && key_name == "t" {
+                    if is_alt && key_name == "t" {
                         crate::input::actions::pickers::toggle_gloss_picker_type(state, tokio_handle);
                         return true;
                     }
@@ -1001,6 +1002,7 @@ fn handle_synopsis_overlay_key(
     key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
     is_ctrl: bool,
+    is_alt: bool,
     is_shift: bool,
 ) -> bool {
     use crate::ui::gloss_overlay::AskFocus;
@@ -1116,7 +1118,7 @@ fn handle_synopsis_overlay_key(
             crate::app::cycle_synopsis(state, -1);
             true
         }
-        "g" if is_ctrl => {
+        "g" if is_alt => {
             crate::input::actions::synopsis::open_work_glosses(state);
             true
         }

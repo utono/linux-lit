@@ -284,7 +284,7 @@ pub(crate) fn undo_amend(state_rc: &Rc<RefCell<AppState>>) {
 }
 
 
-/// Ctrl+g in the synopsis card: open the gloss overlay for the whole work, with
+/// Alt+g in the synopsis card: open the gloss overlay for the whole work, with
 /// the glosses for the currently-displayed scene shown first. Mirrors the state
 /// setup that `navigate_gloss_passage` relies on, so Ctrl+n/p (across passages)
 /// and Alt+n/p (within a passage) work afterwards.
