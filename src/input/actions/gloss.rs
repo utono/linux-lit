@@ -7,20 +7,25 @@ use crate::app::AppState;
 use crate::ui::gloss_overlay::BlockKind;
 
 /// Jump the reader cursor to the first dialogue line of the glossed passage's
-/// source text (the line `start_citation` points at, advanced to the first
-/// `is_dialogue` line at or after it). Returns true if it jumped.
+/// source text (located by matching the gloss's first source line, then
+/// advanced to the first `is_dialogue` line at or after it). Returns true if
+/// it jumped.
 ///
-/// Falls back to `false` if the current gloss context, work, or matching line
-/// can't be resolved, so the caller can restore the saved page instead.
+/// Matches by source TEXT first so it works on `-Amb` (Ambrose) editions, whose
+/// line numbering diverges from the base-numbered gloss citation; falls back to
+/// the citation tuple otherwise.
+///
+/// Returns `false` if the current gloss context, work, or matching line can't
+/// be resolved, so the caller can restore the saved page instead.
 pub(crate) fn jump_to_gloss_source_start(s: &mut AppState) -> bool {
-    let start_citation = match &s.gloss_context {
-        Some(ctx) => ctx.start_citation.clone(),
+    let (start_citation, source_text) = match &s.gloss_context {
+        Some(ctx) => (ctx.start_citation.clone(), ctx.source_text.clone()),
         None => return false,
     };
 
     // start_citation is `ABBR.div1.div2.line_in_div`; the gloss strips any
     // `-Amb` suffix from the abbrev, so match on the numeric tail rather than
-    // the full citation string to stay robust across Ambrose works.
+    // the full citation string.
     let cite_tail = |cite: &str| -> Option<(i64, i64, i64)> {
         let mut parts = cite.rsplitn(4, '.');
         let lid = parts.next()?.parse().ok()?;
@@ -28,22 +33,33 @@ pub(crate) fn jump_to_gloss_source_start(s: &mut AppState) -> bool {
         let d1 = parts.next()?.parse().ok()?;
         Some((d1, d2, lid))
     };
-    let target = match cite_tail(&start_citation) {
-        Some(t) => t,
-        None => return false,
-    };
+    let target = cite_tail(&start_citation);
 
     let work = match s.current_work.as_ref() {
         Some(w) => w,
         None => return false,
     };
-    // First work-line whose (div1,div2,line_in_div) matches the citation, then
-    // the first dialogue line at or after it.
-    let start_idx = match work
-        .lines
-        .iter()
-        .position(|l| (l.div1, l.div2, l.line_in_div) == target)
-    {
+
+    // Locate the gloss's first source line in the loaded work. The `(div1,div2,
+    // line_in_div)` citation tuple is built from the BASE work's numbering
+    // (`-Amb` stripped), but an Ambrose edition renumbers lines (it inserts
+    // stage directions), so the tuple does not match `-Amb` work.lines. The
+    // source TEXT is edition-identical, so match on it first and fall back to
+    // the tuple (correct for non-`-Amb` works and a tiebreaker for duplicate
+    // lines).
+    let first_src = source_text.lines().next().map(str::trim).unwrap_or("");
+    let by_text = if first_src.is_empty() {
+        None
+    } else {
+        work.lines.iter().position(|l| l.text.trim() == first_src)
+    };
+    let start_idx = match by_text.or_else(|| {
+        target.and_then(|t| {
+            work.lines
+                .iter()
+                .position(|l| (l.div1, l.div2, l.line_in_div) == t)
+        })
+    }) {
         Some(i) => i,
         None => return false,
     };
