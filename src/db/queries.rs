@@ -1652,13 +1652,19 @@ pub fn find_glossed_passages(
         .map(|i| format!("?{}", i + 2))
         .collect();
     let sql = format!(
+        // Order in true work order: act, then scene, then the line-in-div
+        // NUMERICALLY. start_citation is "ABBR.div1.div2.line" text, so sorting
+        // it as a string puts line 17 before line 7. Extract the trailing line
+        // number by stripping the non-trailing-digit prefix (rtrim removes the
+        // trailing digits, replace deletes that prefix, leaving the number).
         "SELECT DISTINCT p.id, p.work_abbrev, p.start_citation, p.end_citation, \
                 p.act, p.scene, p.character, p.source_text \
          FROM passages p \
          JOIN glosses g ON g.passage_id = p.id \
          WHERE p.work_abbrev = ?1 \
            AND g.gloss_type IN ({}) \
-         ORDER BY p.act, p.scene, p.start_citation",
+         ORDER BY p.act, p.scene, \
+                  CAST(replace(p.start_citation, rtrim(p.start_citation, '0123456789'), '') AS INTEGER)",
         placeholders.join(", ")
     );
     let mut stmt = conn.prepare(&sql)?;
