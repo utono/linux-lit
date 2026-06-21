@@ -97,6 +97,7 @@ pub enum Action {
     ToggleVocabHighlight,
     ToggleGlossOverlay,
     OpenGlossPicker,
+    OpenLastGloss,
     ShowEchoesBcp,
     ReopenEchoesBcp,
     ShowEchoTurnsBcp,
@@ -211,6 +212,7 @@ impl Action {
             | Action::ToggleVocabHighlight
             | Action::ToggleGlossOverlay
             | Action::OpenGlossPicker
+            | Action::OpenLastGloss
             | Action::ShowEchoesBcp
             | Action::ReopenEchoesBcp
             | Action::ShowEchoTurnsBcp
@@ -334,6 +336,7 @@ impl Action {
             Action::ToggleVocabHighlight => "ToggleVocabHighlight",
             Action::ToggleGlossOverlay => "ToggleGlossOverlay",
             Action::OpenGlossPicker => "OpenGlossPicker",
+            Action::OpenLastGloss => "OpenLastGloss",
             Action::ShowEchoesBcp => "ShowEchoesBcp",
             Action::ReopenEchoesBcp => "ReopenEchoesBcp",
             Action::ShowEchoTurnsBcp => "ShowEchoTurnsBcp",
