@@ -176,6 +176,7 @@ pub(crate) fn navigate_gloss(state: &Rc<RefCell<AppState>>, delta: i32) {
         Some(&s.theme.root_color), &pairs,
     );
     s.gloss_overlay.set_position(new_idx, s.gloss_list.len());
+    s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
     recolor_cached_blocks(&s);
 }
 
@@ -249,6 +250,7 @@ pub(crate) fn delete_current_gloss(state_rc: &Rc<RefCell<AppState>>) {
                 Some(&s.theme.root_color), &pairs,
             );
             s.gloss_overlay.set_position(new_idx, s.gloss_list.len());
+            s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
             recolor_cached_blocks(&s);
         }
     }
@@ -591,6 +593,8 @@ fn apply_ipa_fix(
             );
             s.gloss_overlay
                 .set_position(gloss_index_pos, s.gloss_list.len());
+            s.gloss_overlay
+                .set_citation(&ctx.start_citation, &ctx.end_citation);
             recolor_cached_blocks(&s);
         }
     }
@@ -754,6 +758,7 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
                     Some(&s.theme.root_color), &pairs,
                 );
                 s.gloss_overlay.set_position(new_idx, all.len());
+                s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
                 s.gloss_list = all;
                 s.gloss_index = new_idx;
                 s.gloss_active_voice = 0;
@@ -866,6 +871,7 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
                     Some(&s.theme.root_color), &pairs,
                 );
                 s.gloss_overlay.set_position(new_idx, all.len());
+                s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
                 s.gloss_list = all;
                 s.gloss_index = new_idx;
                 s.gloss_active_voice = 0;
@@ -1901,6 +1907,7 @@ pub(crate) fn open_gloss_overlay(
         &source_lines,
     );
     s.gloss_overlay.set_position(idx, all_glosses.len());
+    s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
 
     let shown_type = all_glosses[idx].gloss_type.clone();
     s.gloss_passages = passages;
