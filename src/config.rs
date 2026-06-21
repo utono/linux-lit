@@ -28,7 +28,7 @@ pub struct VisualModeCommand {
 }
 
 /// The most-recently-viewed gloss for one work: which passage (by its
-/// start citation) and which gloss type was on screen. Reopened by Alt+g.
+/// start citation) and which gloss type was on screen. Reopened by Ctrl+g.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LastGloss {
     pub start_citation: String,
@@ -60,7 +60,7 @@ pub struct Config {
     #[serde(default)]
     pub work_positions: HashMap<String, usize>,
     /// Per-work most-recently-viewed gloss, keyed by work_abbrev. Mirrors
-    /// `work_positions`. Written at every gloss-display site; read by Alt+g.
+    /// `work_positions`. Written at every gloss-display site; read by Ctrl+g.
     #[serde(default)]
     pub last_gloss: HashMap<String, LastGloss>,
     #[serde(default)]

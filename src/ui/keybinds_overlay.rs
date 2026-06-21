@@ -55,7 +55,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("C-p", "lib picker"), ("S-C-p", "conc word"), ("C-M-p", "conc list")]),
     key("y", "Y", "pg back", "", &[("C-y", "copy id")]),
     key("f", "F", "next font", "F: prev font", &[("M-f", "font info")]),
-    key("g", "G", "", "", &[("C-g", "gloss pick"), ("S-C-g", "gloss tog"), ("M-g", "last gloss")]),
+    key("g", "G", "", "", &[("C-g", "last gloss"), ("S-C-g", "gloss tog"), ("M-g", "gloss pick")]),
     key("c", "C", "set chapter", "C: show chapter", &[]),
     key("r", "R", "next conc", "R: prev conc", &[("C-r", "next vocab"), ("S-C-r", "prev vocab"), ("M-r", "conc works"), ("r", "verse audio: play/stop"), ("R", "verse audio: pick voice")]),
     key("l", "L", "toggle signs", "", &[("S-C-l", "save+quit")]),

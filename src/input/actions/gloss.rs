@@ -96,8 +96,8 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
     }
 
     let len = s.gloss_passages.len();
-    // Clamp at the ends rather than wrapping: Alt+p stops at the work's earliest
-    // gloss (index 0), Alt+n stops at its last (index len-1).
+    // Clamp at the ends rather than wrapping: Ctrl+p stops at the work's earliest
+    // gloss (index 0), Ctrl+n stops at its last (index len-1).
     let target = s.gloss_passage_index as i32 + delta;
     let new_idx = target.clamp(0, len as i32 - 1) as usize;
     if new_idx == s.gloss_passage_index {
