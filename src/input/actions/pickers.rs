@@ -868,11 +868,13 @@ pub(crate) fn open_gloss_picker(
 ) {
     // Opening always starts on the default type (teacher-generic).
     state.borrow_mut().gloss_picker_filter = GlossPickerFilter::default();
+    // Glosses are stored under the base abbrev (`-Amb` stripped), so normalize
+    // here to match — otherwise the picker is empty for `-Amb` variants.
     let abbrev = state
         .borrow()
         .current_work
         .as_ref()
-        .map(|w| w.abbrev.clone());
+        .map(|w| crate::gloss::normalize_abbrev(&w.abbrev).to_string());
     if let Some(abbrev) = abbrev {
         let state_clone = Rc::clone(state);
         let handle = tokio_handle.clone();
@@ -916,11 +918,12 @@ pub(crate) fn toggle_gloss_picker_type(
         s.gloss_picker_filter = s.gloss_picker_filter.next();
         s.gloss_picker_filter
     };
+    // Normalize `-Amb` so the picker shares gloss rows with the base work.
     let abbrev = state
         .borrow()
         .current_work
         .as_ref()
-        .map(|w| w.abbrev.clone());
+        .map(|w| crate::gloss::normalize_abbrev(&w.abbrev).to_string());
     if let Some(abbrev) = abbrev {
         let state_clone = Rc::clone(state);
         let handle = tokio_handle.clone();

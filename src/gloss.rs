@@ -501,7 +501,10 @@ impl GlossContext {
     }
 }
 
-fn normalize_abbrev(abbrev: &str) -> &str {
+/// Normalize a work abbrev for gloss storage/lookup by stripping the `-Amb`
+/// (Ambrose-edition) suffix, so a base work and its `-Amb` companion share the
+/// same gloss rows. See `docs/superpowers/specs/2026-04-29-glossing-design.md`.
+pub fn normalize_abbrev(abbrev: &str) -> &str {
     abbrev.strip_suffix("-Amb").unwrap_or(abbrev)
 }
 
