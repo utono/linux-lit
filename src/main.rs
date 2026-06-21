@@ -42,19 +42,6 @@ fn main() {
     logging::init(&log_path);
     crate::logging::log("STARTUP: main entry");
 
-    // Set the system volume to 70% on launch (matches the dwl session default in
-    // ~/utono/dwl-mlj/start-dwl). Skipped under LIT_HEADLESS_TEST so isolated UI
-    // test runs never touch the live session's audio sink.
-    if std::env::var("LIT_HEADLESS_TEST").is_err() {
-        match std::process::Command::new("pactl")
-            .args(["set-sink-volume", "@DEFAULT_SINK@", "70%"])
-            .spawn()
-        {
-            Ok(_) => crate::logging::log("STARTUP: set system volume to 70%"),
-            Err(e) => crate::logging::log(&format!("STARTUP: failed to set volume: {}", e)),
-        }
-    }
-
     // Handle --clear-cache: delete all snapshot files and exit immediately.
     // Maintenance command; doesn't proceed to launch the window.
     if std::env::args().any(|a| a == "--clear-cache") {
@@ -122,6 +109,23 @@ fn main() {
 
         // Load config
         let config = config::load();
+
+        // Apply the configured startup volumes. The system sink is set once via
+        // pactl (skipped under LIT_HEADLESS_TEST so isolated UI test runs never
+        // touch the live session's audio sink); MPV's launch volume is recorded
+        // for launch_mpv to read. Both default to the historical 70/100; change
+        // them with the `set-startup-volume` skill (edits config JSON).
+        if std::env::var("LIT_HEADLESS_TEST").is_err() {
+            let pct = format!("{}%", config.system_volume);
+            match std::process::Command::new("pactl")
+                .args(["set-sink-volume", "@DEFAULT_SINK@", &pct])
+                .spawn()
+            {
+                Ok(_) => crate::logging::log(&format!("STARTUP: set system volume to {}", pct)),
+                Err(e) => crate::logging::log(&format!("STARTUP: failed to set volume: {}", e)),
+            }
+        }
+        crate::mpv::discovery::set_mpv_volume(config.mpv_volume);
 
         // Build the window with works list, Tokio handle, and config
         let state = app::build_window(gtk_app, works, tokio_handle, config, cmd_tx);
