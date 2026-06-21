@@ -27,6 +27,14 @@ pub struct VisualModeCommand {
     pub command: String,
 }
 
+/// The most-recently-viewed gloss for one work: which passage (by its
+/// start citation) and which gloss type was on screen. Reopened by Alt+g.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LastGloss {
+    pub start_citation: String,
+    pub gloss_type: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default = "default_font_family")]
@@ -51,6 +59,10 @@ pub struct Config {
     pub recent_works: Vec<String>,
     #[serde(default)]
     pub work_positions: HashMap<String, usize>,
+    /// Per-work most-recently-viewed gloss, keyed by work_abbrev. Mirrors
+    /// `work_positions`. Written at every gloss-display site; read by Alt+g.
+    #[serde(default)]
+    pub last_gloss: HashMap<String, LastGloss>,
     #[serde(default)]
     pub column_overrides: HashMap<String, u8>,
     /// Column count (1 or 2) the LAST session resolved for `last_work`. Used as
@@ -177,6 +189,7 @@ impl Default for Config {
             previous_work: default_previous_work(),
             recent_works: Vec::new(),
             work_positions: HashMap::new(),
+            last_gloss: HashMap::new(),
             column_overrides: HashMap::new(),
             last_column_count: None,
             visual_mode_commands: Vec::new(),
@@ -264,5 +277,31 @@ pub fn save(config: &Config) {
         if fs::write(&tmp, &json).is_ok() {
             let _ = fs::rename(&tmp, &path);
         }
+    }
+}
+
+#[cfg(test)]
+mod last_gloss_tests {
+    use super::*;
+
+    #[test]
+    fn last_gloss_round_trips_through_json() {
+        let mut cfg: Config = serde_json::from_str("{}").unwrap();
+        cfg.last_gloss.insert(
+            "Ham".to_string(),
+            LastGloss { start_citation: "Ham.1.2.93".to_string(),
+                        gloss_type: "reader-gloss".to_string() },
+        );
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: Config = serde_json::from_str(&json).unwrap();
+        let lg = back.last_gloss.get("Ham").unwrap();
+        assert_eq!(lg.start_citation, "Ham.1.2.93");
+        assert_eq!(lg.gloss_type, "reader-gloss");
+    }
+
+    #[test]
+    fn config_without_last_gloss_key_loads_empty() {
+        let cfg: Config = serde_json::from_str("{}").unwrap();
+        assert!(cfg.last_gloss.is_empty());
     }
 }
