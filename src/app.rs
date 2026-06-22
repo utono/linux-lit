@@ -5806,12 +5806,7 @@ pub fn toggle_synopsis(state: &mut AppState) {
 pub fn toggle_image_view(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
     let mut s = state.borrow_mut();
     if s.page_images.is_empty() {
-        s.chapter_toast.set_text("No page images for this work");
-        s.chapter_toast.set_visible(true);
-        let toast = s.chapter_toast.clone();
-        glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-            toast.set_visible(false);
-        });
+        crate::ui::toast::show_transient(&s.chapter_toast, "No page images for this work", 3);
         return;
     }
     s.image_mode = !s.image_mode;
@@ -5882,12 +5877,7 @@ pub fn enter_page_calibration(state: &std::rc::Rc<std::cell::RefCell<AppState>>)
     {
         let mut s = state.borrow_mut();
         if s.page_images.is_empty() {
-            s.chapter_toast.set_text("No page images to calibrate");
-            s.chapter_toast.set_visible(true);
-            let toast = s.chapter_toast.clone();
-            glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-                toast.set_visible(false);
-            });
+            crate::ui::toast::show_transient(&s.chapter_toast, "No page images to calibrate", 3);
             return;
         }
         s.image_mode = true;
@@ -5961,12 +5951,7 @@ pub fn calibration_mark(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
             None => {
                 drop(s);
                 let s = state.borrow();
-                s.chapter_toast.set_text("Cursor not on a mapped line — move it first");
-                s.chapter_toast.set_visible(true);
-                let toast = s.chapter_toast.clone();
-                glib::timeout_add_local_once(std::time::Duration::from_secs(2), move || {
-                    toast.set_visible(false);
-                });
+                crate::ui::toast::show_transient(&s.chapter_toast, "Cursor not on a mapped line — move it first", 2);
                 return;
             }
         };
@@ -6056,12 +6041,7 @@ pub fn exit_page_calibration(state: &std::rc::Rc<std::cell::RefCell<AppState>>, 
     s.column_divider.set_visible(two_col);
     s.right_scrolled_overlay.set_visible(two_col);
     s.input_mode = InputMode::Reader;
-    s.chapter_toast.set_text("Calibration saved");
-    s.chapter_toast.set_visible(true);
-    let toast = s.chapter_toast.clone();
-    glib::timeout_add_local_once(std::time::Duration::from_secs(2), move || {
-        toast.set_visible(false);
-    });
+    crate::ui::toast::show_transient(&s.chapter_toast, "Calibration saved", 2);
 }
 
 pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
@@ -6075,12 +6055,7 @@ pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) 
     }
 
     if s.synopsis_cache.is_empty() {
-        s.chapter_toast.set_text("No synopsis for this section");
-        s.chapter_toast.set_visible(true);
-        let toast = s.chapter_toast.clone();
-        glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-            toast.set_visible(false);
-        });
+        crate::ui::toast::show_transient(&s.chapter_toast, "No synopsis for this section", 3);
         return;
     }
 
@@ -6088,12 +6063,7 @@ pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) 
     let synopsis = match s.synopsis_cache.get(&(div1, div2)) {
         Some(text) => text.clone(),
         None => {
-            s.chapter_toast.set_text("No synopsis for this section");
-            s.chapter_toast.set_visible(true);
-            let toast = s.chapter_toast.clone();
-            glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-                toast.set_visible(false);
-            });
+            crate::ui::toast::show_transient(&s.chapter_toast, "No synopsis for this section", 3);
             return;
         }
     };

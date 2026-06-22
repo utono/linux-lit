@@ -1568,12 +1568,7 @@ pub(crate) fn open_echo_turns_picker(state_rc: &Rc<RefCell<AppState>>, channel: 
 
 fn show_no_echo_turns_toast(state_rc: &Rc<RefCell<AppState>>) {
     let s = state_rc.borrow();
-    s.chapter_toast.set_text("No echoes in this work");
-    s.chapter_toast.set_visible(true);
-    let toast = s.chapter_toast.clone();
-    glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-        toast.set_visible(false);
-    });
+    crate::ui::toast::show_transient(&s.chapter_toast, "No echoes in this work", 3);
 }
 
 /// Confirm the echo-turns picker selection: jump the cursor to the turn's

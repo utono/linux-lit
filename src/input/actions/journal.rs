@@ -331,12 +331,7 @@ pub(crate) fn open_picker(state: &Rc<RefCell<AppState>>) {
         .unwrap_or_default();
 
     if pages.is_empty() {
-        s.chapter_toast.set_text("No journal pages yet — press A to ask");
-        s.chapter_toast.set_visible(true);
-        let toast = s.chapter_toast.clone();
-        gtk4::glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-            toast.set_visible(false);
-        });
+        crate::ui::toast::show_transient(&s.chapter_toast, "No journal pages yet — press A to ask", 3);
         return;
     }
 

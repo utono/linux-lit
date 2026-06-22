@@ -364,12 +364,7 @@ fn edge_toast(state: &AppState, side: Side, query: &str) {
         Side::Left => format!("No earlier occurrence of \u{201c}{}\u{201d}", p),
         Side::Right => format!("No later occurrence of \u{201c}{}\u{201d}", p),
     };
-    state.search_toast.set_text(&text);
-    state.search_toast.set_visible(true);
-    let toast = state.search_toast.clone();
-    gtk4::glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-        toast.set_visible(false);
-    });
+    crate::ui::toast::show_transient(&state.search_toast, &text, 3);
 }
 
 /// Select match `new_idx`, highlight it, and land on its CANONICAL spread —

@@ -642,10 +642,5 @@ pub(crate) fn restore_sync_after_concordance(state: &mut AppState) {
 
 fn show_no_concordance_toast(state: &Rc<RefCell<AppState>>) {
     let s = state.borrow();
-    s.chapter_toast.set_text("No concordance active — press Ctrl+\\ to pick a word");
-    s.chapter_toast.set_visible(true);
-    let toast = s.chapter_toast.clone();
-    glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-        toast.set_visible(false);
-    });
+    crate::ui::toast::show_transient(&s.chapter_toast, "No concordance active — press Ctrl+\\ to pick a word", 3);
 }

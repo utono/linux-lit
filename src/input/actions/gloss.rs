@@ -1797,13 +1797,7 @@ pub(crate) fn voice_picker_toast(state_rc: &Rc<RefCell<AppState>>, verb: &str, n
 }
 
 fn show_tts_toast(state_rc: &Rc<RefCell<AppState>>, msg: &str) {
-    let s = state_rc.borrow();
-    s.chapter_toast.set_text(msg);
-    s.chapter_toast.set_visible(true);
-    let toast = s.chapter_toast.clone();
-    glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-        toast.set_visible(false);
-    });
+    crate::ui::toast::show_transient(&state_rc.borrow().chapter_toast, msg, 3);
 }
 
 /// Show a toast that stays up until something explicitly replaces it (another

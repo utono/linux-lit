@@ -53,6 +53,26 @@ are tracked separately at the bottom under "## Larger projects (not safe-scope)"
 - **Identical part (extracted):** named constants for the sentinels.
 - **Safe-scope:** yes — literal → named constant, greppable.
 
+## #9 — transient-toast-helper — DONE (commit pending)
+
+- **Status:** DONE
+- **Signal:** 30 `timeout_add_local_once` auto-hide closures + ~9 ad-hoc named
+  toast wrappers across app.rs / keymap.rs / search.rs / actions/* repeat the
+  identical show + clone + 3s/2s hide tail.
+- **Identical part (extracted):** `show_transient(&Label, &str, u64)` in
+  `src/ui/toast.rs`; named wrappers keep message construction and delegate the tail.
+- **Variants (stayed at call sites):** which label (chapter/speed/search) and
+  duration (2s confirmations vs 3s).
+- **EXCLUDED:** `show_chapter_toast` (navigation.rs, generation-guarded);
+  `show_persistent_tts_toast`/`hide_tts_toast` (gloss.rs, no auto-hide); the
+  5s startup-reveal / 6s nav-fuzz timers; the 500ms chord-reset; vocab-fade and
+  word-bold gen-guarded closures.
+- **Safe-scope:** yes — pure widget show+schedule extraction, ~107 net code lines
+  removed; build + 413 bin tests green, headless launch verified.
+- **Follow-on candidate:** the `debug_icon` flash (keymap.rs:2240, app.rs:1595,
+  nav_test) is the same primitive on a different Label — out of #9's toast scope;
+  consider as a future #N.
+
 ---
 
 ## Larger projects (not safe-scope)
