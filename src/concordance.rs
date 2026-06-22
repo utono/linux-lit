@@ -115,7 +115,7 @@ impl ConcordanceState {
     }
 }
 
-fn shorten_author(author: &str) -> &str {
+pub(crate) fn shorten_author(author: &str) -> &str {
     if let Some(idx) = author.find(',') {
         &author[..idx]
     } else {
