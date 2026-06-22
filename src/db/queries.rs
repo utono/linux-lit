@@ -114,7 +114,7 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
             let div1: i64 = row.get::<_, Option<i64>>(4)?.unwrap_or(0);
             let div2: i64 = row.get::<_, Option<i64>>(5)?.unwrap_or(0);
             let line_in_div: i64 = row.get(6)?;
-            let citation = format!("{}.{}.{}.{}", abbrev, div1, div2, line_in_div);
+            let citation = crate::db::models::citation(abbrev, div1, div2, line_in_div);
             Ok(Line {
                 id: row.get(0)?,
                 citation,
@@ -1290,7 +1290,7 @@ pub fn load_bookmarks_with_details(
         let div1: i64 = row.get(3)?;
         let div2: i64 = row.get(4)?;
         let line_in_div: i64 = row.get(5)?;
-        let citation = format!("{}.{}.{}.{}", work_abbrev, div1, div2, line_in_div);
+        let citation = crate::db::models::citation(work_abbrev, div1, div2, line_in_div);
         Ok(super::models::BookmarkItem {
             line_mapping_id: row.get(0)?,
             line_text: row.get(1)?,

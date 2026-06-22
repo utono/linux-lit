@@ -1,3 +1,9 @@
+/// Format the canonical citation address `abbrev.div1.div2.line_in_div`.
+/// The single source of truth for how a line citation string is built.
+pub fn citation(abbrev: &str, div1: i64, div2: i64, line_in_div: i64) -> String {
+    format!("{}.{}.{}.{}", abbrev, div1, div2, line_in_div)
+}
+
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct Work {

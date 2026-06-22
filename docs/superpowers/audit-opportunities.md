@@ -140,14 +140,18 @@ are tracked separately at the bottom under "## Larger projects (not safe-scope)"
 - **Safe-scope:** yes — pure widget-construction extraction; build + 413 bin tests
   green; headless cage launch renders (overlay wiring confirmed).
 
-## #14 — citation-format-helper — OPEN
+## #14 — citation-format-helper — DONE (commit pending)
 
+- **Status:** DONE
 - **Signal:** `format!("{}.{}.{}.{}", abbrev, div1, div2, line_in_div)` at 6 sites
   (gloss.rs ×4, queries.rs ×2).
-- **Identical part (extracts):** `fn citation(abbrev, div1, div2, line_in_div) -> String`.
-- **Variants:** source of the fields (`first./last.` structs vs row columns) —
-  stays at call site (just the 4 args differ).
-- **Safe-scope:** yes — literal template → helper fn.
+- **Identical part (extracted):** `pub fn citation(abbrev, div1, div2, line_in_div)
+  -> String` in `src/db/models.rs` (the module owning `Line.citation`).
+- **Variants:** field source (`first./last.` structs vs row-derived locals) — stays
+  at call site (just the 4 args differ).
+- **EXCLUDED:** `parse_citation` / `format_citation_range` (gloss_overlay.rs) — the
+  inverse + a range formatter, different concern.
+- **Safe-scope:** yes — literal template → helper fn; build + 413 bin tests green.
 
 ---
 
