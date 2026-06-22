@@ -187,42 +187,42 @@ fn handle_library_picker_key(
 ) -> bool {
     match key_name {
         "n" if is_ctrl => {
-            state.borrow().picker.move_selection(1);
+            state.borrow().library_picker.move_selection(1);
             true
         }
         "p" if is_ctrl => {
-            state.borrow().picker.move_selection(-1);
+            state.borrow().library_picker.move_selection(-1);
             true
         }
         "Escape" => {
-            let level = state.borrow().picker.level().clone();
+            let level = state.borrow().library_picker.level().clone();
             match level {
                 crate::ui::library_picker::PickerLevel::Works(_) => {
-                    state.borrow_mut().picker.go_back_to_authors();
-                    state.borrow().picker.refresh_after_level_change();
+                    state.borrow_mut().library_picker.go_back_to_authors();
+                    state.borrow().library_picker.refresh_after_level_change();
                 }
                 crate::ui::library_picker::PickerLevel::Authors => {
-                    state.borrow().picker.hide();
+                    state.borrow().library_picker.hide();
                     state.borrow_mut().input_mode = crate::app::InputMode::Reader;
                 }
             }
             true
         }
         "Return" => {
-            let level = state.borrow().picker.level().clone();
+            let level = state.borrow().library_picker.level().clone();
             match level {
                 crate::ui::library_picker::PickerLevel::Authors => {
                     let selected_name = state
                         .borrow()
-                        .picker
+                        .library_picker
                         .list_box()
                         .selected_row()
                         .map(|r| r.widget_name().to_string());
                     if let Some(name) = selected_name {
                         if name.starts_with("author:") {
                             let author = name.trim_start_matches("author:").to_string();
-                            state.borrow_mut().picker.enter_author(&author);
-                            state.borrow().picker.refresh_after_level_change();
+                            state.borrow_mut().library_picker.enter_author(&author);
+                            state.borrow().library_picker.refresh_after_level_change();
                         } else {
                             crate::input::actions::pickers::load_selected_work(state, tokio_handle);
                         }
@@ -236,23 +236,23 @@ fn handle_library_picker_key(
             }
         }
         "BackSpace" => {
-            let level = state.borrow().picker.level().clone();
+            let level = state.borrow().library_picker.level().clone();
             if let crate::ui::library_picker::PickerLevel::Works(_) = level {
-                let text = state.borrow().picker.search_entry().text().to_string();
+                let text = state.borrow().library_picker.search_entry().text().to_string();
                 if text.is_empty() {
-                    state.borrow_mut().picker.go_back_to_authors();
-                    state.borrow().picker.refresh_after_level_change();
+                    state.borrow_mut().library_picker.go_back_to_authors();
+                    state.borrow().library_picker.refresh_after_level_change();
                     return true;
                 }
             }
             false
         }
         "Down" => {
-            state.borrow().picker.move_selection(1);
+            state.borrow().library_picker.move_selection(1);
             true
         }
         "Up" => {
-            state.borrow().picker.move_selection(-1);
+            state.borrow().library_picker.move_selection(-1);
             true
         }
         _ => {
