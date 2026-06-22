@@ -64,7 +64,7 @@ impl ConcordanceListPicker {
             row_box.set_margin_bottom(4);
 
             // Top line: author, title
-            let author = shorten_author(&hit.author);
+            let author = crate::concordance::shorten_author(&hit.author);
             let title = shorten_title(&hit.work_title);
             let header = Label::new(Some(&format!(
                 "{}, {} [{}.{}]",
@@ -113,14 +113,6 @@ impl ConcordanceListPicker {
         let current = self.list_box.selected_row().map(|r| r.index()).unwrap_or(-1);
         let next = current + delta;
         crate::ui::picker_nav::select_row_at(&self.list_box, next);
-    }
-}
-
-fn shorten_author(author: &str) -> &str {
-    if let Some(idx) = author.find(',') {
-        &author[..idx]
-    } else {
-        author.rsplit_once(' ').map(|(_, last)| last).unwrap_or(author)
     }
 }
 

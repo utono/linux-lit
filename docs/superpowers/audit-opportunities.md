@@ -89,6 +89,24 @@ are tracked separately at the bottom under "## Larger projects (not safe-scope)"
 - **Safe-scope:** yes — pure fn extraction; build + 413 bin tests green
   (incl. 5 library_picker subsequence tests via the delegated path).
 
+## #11 — shorten-author-helper — DONE (commit pending, narrowed)
+
+- **Status:** DONE (narrowed from the original "shorten_author + shorten_title"
+  entry after verification).
+- **Signal:** `shorten_author` byte-identical in `concordance.rs` and
+  `ui/concordance_list_picker.rs`.
+- **Identical part (extracted):** promoted `concordance::shorten_author` to
+  `pub(crate)`; deleted the UI copy, repointed its call site.
+- **EXCLUDED — and why the original #11 was wrong:** the two `shorten_title`
+  functions are NOT identical — `concordance.rs` truncates titles >25 chars at a
+  word boundary; the picker does only the prefix strip (it truncates downstream
+  via `truncate_around_center`). Merging them would change one site's output, so
+  `shorten_title` stays split. `truncate_around_center` is single-copy.
+- **Safe-scope:** yes — pure fn move; build + 413 bin tests green.
+- **Lesson:** the "confirm bodies match before merging" caution earned its keep —
+  a same-named pair was behaviorally different. The audit skill's "verify the
+  byte-identical part" step is what caught it.
+
 ---
 
 ## Larger projects (not safe-scope)
