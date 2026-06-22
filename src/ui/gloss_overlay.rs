@@ -350,12 +350,14 @@ impl GlossOverlay {
         footer_box.set_margin_bottom(12);
         footer_box.add_css_class("gloss-hint");
 
-        // Centered citation (e.g. "2H6 1.4.7–14") for the open passage, shown
-        // only in the gloss view. The hexpand element holds the footer center.
-        // No own CSS class: it inherits the .gloss-hint box's 14px/dim/opacity
-        // so it renders identically to the hint text.
+        // Left-anchored citation (e.g. "2H6 1.4.7–14") for the open passage,
+        // shown only in the gloss view — matches the journal overlay footer,
+        // which puts the work abbrev + location on the far left. The hexpand
+        // pushes the right-aligned hint to the far right. No own CSS class: it
+        // inherits the .gloss-hint box's 14px/dim/opacity so it renders
+        // identically to the hint text.
         let citation_label = Label::new(None);
-        citation_label.set_halign(Align::Center);
+        citation_label.set_halign(Align::Start);
         citation_label.set_hexpand(true);
         citation_label.set_visible(false);
         footer_box.append(&citation_label);
