@@ -34,11 +34,21 @@ free** (see below); no new edit code.
   `s.synopsis_overlay_scene`; `save_synopsis` is an **upsert** on
   `(work_abbrev, div1, div2)` (`queries.rs:421` `ON CONFLICT ... DO UPDATE`).
 
-## Why `(0,0)` is the whole-work key
+## Why `(-2, 0)` is the whole-work key
 
-Real scenes are 1-indexed (`div1 >= 1`); chapter works use `(n, 0)` with
-`n >= 1`. So `(0, 0)` is unused for every work and sorts before all real scenes.
-The whole-work synopsis is stored at `(0, 0)`.
+**Correction (2026-06-22, after final review):** an earlier draft used `(0, 0)`,
+on the assumption it was unused. It is NOT: `(0, 0)` is the **Prologue/Chorus**
+slot — real `line_mapping` lines AND existing Prologue scene synopses — for H5,
+H8, Luc, Rom, TNK, Tro. `(-1, *)` is likewise taken (the Induction for 2H4 and
+Shr). Using `(0,0)` would overwrite those Prologue synopses on generation and
+mislabel "Prologue" as "Whole work".
+
+The minimum `div1` anywhere in `line_mapping` is `-1`, and no `scene_synopses`
+row has `div1 < -1`. So **`(-2, 0)`** is below all real data and unused for every
+work. The whole-work synopsis is stored at `(-2, 0)`, sorts before all real
+scenes (including Prologues at `(0,0)` and Inductions at `(-1,*)`), and collides
+with nothing. **Every `(0, 0)` / `(0,0)` reference elsewhere in this spec should
+be read as `(-2, 0)`.**
 
 ---
 
