@@ -359,9 +359,13 @@ scene under the reading cursor; if that scene has no pages yet it shows an empty
 card prompting you to press a to ask. Inside the overlay: a asks a new question \
 (Claude answers, drawing on its knowledge of the whole play), e edits the current \
 page's question, d deletes the current page, j/k scroll the answer, gg/G jump to \
-top/bottom, Ctrl+n / Ctrl+p flip pages within the scene, Alt+n / Alt+p jump to the \
-next/prev scene that has pages, and Escape (or Ctrl+j) closes and returns the \
-cursor to where you were reading. \
+top/bottom, Ctrl+n / Ctrl+p flip pages within the band, Alt+n / Alt+p jump to the \
+next/prev scene that has pages, Alt+w switches to the Work band \u{2014} \
+whole-work pages about the play as a whole (Claude is sent only the title and \
+author, not a scene) \u{2014} and Ctrl+\\ opens a picker of every Q&A page in the \
+work (whole-work pages first, then scene pages in scene order) to jump straight \
+to one. Escape (or Ctrl+j) closes and returns the cursor to where \
+you were reading. \
 -> journal::toggle_overlay — src/input/actions/journal.rs (overlay keys: \
 handle_journal_key in src/input/keymap.rs)",
         "last gloss" => "Reopen the gloss overlay on the most recently viewed \
