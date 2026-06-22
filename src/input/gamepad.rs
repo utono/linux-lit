@@ -178,9 +178,8 @@ fn dispatch(state: &Rc<RefCell<AppState>>, action: GamepadAction) {
             let _ = s
                 .cmd_tx
                 .try_send(crate::mpv::MpvCommand::SeekRelative(-3.5));
-            s.suppress_sync_until = Some(
-                std::time::Instant::now() + std::time::Duration::from_millis(500),
-            );
+            s.suppress_sync_until =
+                Some(std::time::Instant::now() + crate::input::navigation::SYNC_SUPPRESS_SEEK);
         }
         GamepadAction::PrevChapter => {
             navigation::jump_to_prev_chapter(&mut state.borrow_mut());

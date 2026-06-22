@@ -2340,9 +2340,8 @@ fn dispatch_action(
 fn do_mpv_seek(state: &Rc<RefCell<AppState>>, offset: f64) {
     let mut s = state.borrow_mut();
     let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SeekRelative(offset));
-    s.suppress_sync_until = Some(
-        std::time::Instant::now() + std::time::Duration::from_millis(500),
-    );
+    s.suppress_sync_until =
+        Some(std::time::Instant::now() + crate::input::navigation::SYNC_SUPPRESS_SEEK);
 }
 
 /// Vocab popup key handler with auto-hide timer reset.

@@ -207,9 +207,8 @@ pub fn play_current_line(state: &mut AppState) -> bool {
     let seek_time = (start - crate::input::navigation::SEEK_PREROLL).max(0.0);
     let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::ResumeAndSeek(seek_time));
     // Suppress cursor sync so cursor stays on this line
-    state.suppress_sync_until = Some(
-        std::time::Instant::now() + std::time::Duration::from_millis(500),
-    );
+    state.suppress_sync_until =
+        Some(std::time::Instant::now() + crate::input::navigation::SYNC_SUPPRESS_SEEK);
     true
 }
 
