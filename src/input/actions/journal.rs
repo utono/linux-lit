@@ -224,7 +224,7 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
                         )
                     } else {
                         crate::db::journal::save_journal_page(
-                            &conn, &work_abbrev, scene.0, scene.1, &question_owned, &answer, &model_for_db,
+                            &conn, &work_abbrev, scene.0, scene.1, &question_owned, &answer, &model_for_db, "scene",
                         )
                         .map(|_| ())
                     };
