@@ -1,23 +1,42 @@
-use crate::app::{AppState, InputMode, JournalPromptMode};
+use crate::app::{AppState, InputMode, JournalBand, JournalPromptMode};
 use gtk4::glib;
 use gtk4::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-/// Load the pages for `state.journal_scene` from the DB into `journal_pages`,
-/// clamp the index, and render the current page (or the empty-scene card).
+/// Load the current band's pages from the DB into `journal_pages`, clamp the
+/// index, and render the current page (or the empty-band card).
 fn render_current(s: &mut AppState) {
-    let (d1, d2) = s.journal_scene;
     let work_abbrev = s
         .current_work
         .as_ref()
         .map(|w| crate::app::base_work_abbrev(&w.abbrev).to_string())
         .unwrap_or_default();
 
-    let pages = crate::db::queries::open_db()
-        .ok()
-        .and_then(|conn| crate::db::journal::find_journal_pages(&conn, &work_abbrev, d1, d2).ok())
-        .unwrap_or_default();
+    let conn = crate::db::queries::open_db().ok();
+    let (pages, scene_title) = match s.journal_band {
+        JournalBand::Work => {
+            let pages = conn
+                .and_then(|c| crate::db::journal::find_work_pages(&c, &work_abbrev).ok())
+                .unwrap_or_default();
+            let title = format!(
+                "{} — whole work",
+                s.current_work.as_ref().map(|w| w.title.as_str()).unwrap_or(""),
+            );
+            (pages, title)
+        }
+        JournalBand::Scene(d1, d2) => {
+            let pages = conn
+                .and_then(|c| crate::db::journal::find_journal_pages(&c, &work_abbrev, d1, d2).ok())
+                .unwrap_or_default();
+            let title = format!(
+                "{} — {}",
+                s.current_work.as_ref().map(|w| w.title.as_str()).unwrap_or(""),
+                crate::app::synopsis_label(s, d1, d2),
+            );
+            (pages, title)
+        }
+    };
 
     let count = pages.len();
     if count == 0 {
@@ -25,11 +44,6 @@ fn render_current(s: &mut AppState) {
     } else if s.journal_page_index >= count {
         s.journal_page_index = count - 1;
     }
-    let scene_title = format!(
-        "{} — {}",
-        s.current_work.as_ref().map(|w| w.title.as_str()).unwrap_or(""),
-        crate::app::synopsis_label(s, d1, d2),
-    );
 
     let cw = s.content_hbox.width();
     let h = s.content_hbox.height();
@@ -63,7 +77,8 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         return;
     }
     s.journal_return_pos = Some((s.current_line, s.page_top_line));
-    s.journal_scene = crate::app::current_scene_divs(&s);
+    let (d1, d2) = crate::app::current_scene_divs(&s);
+    s.journal_band = JournalBand::Scene(d1, d2);
     s.journal_page_index = 0;
     s.input_mode = InputMode::JournalOverlay;
     render_current(&mut s);
@@ -91,7 +106,8 @@ pub(crate) fn nav_page(state: &Rc<RefCell<AppState>>, delta: i32) {
 }
 
 /// Jump to the next/prev scene that has pages (skips empty scenes). Lands on
-/// that scene's first page.
+/// that scene's first page. From the Work band, delta>0 lands on the first
+/// scene with pages, delta<0 on the last (the Work band sorts before scenes).
 pub(crate) fn nav_scene(state: &Rc<RefCell<AppState>>, delta: i32) {
     let mut s = state.borrow_mut();
     let work_abbrev = s
@@ -106,27 +122,50 @@ pub(crate) fn nav_scene(state: &Rc<RefCell<AppState>>, delta: i32) {
     if scenes.is_empty() {
         return;
     }
-    let cur = s.journal_scene;
-    let cur_pos = scenes.iter().position(|&sc| sc == cur);
-    let target_idx: i64 = match cur_pos {
-        Some(i) => (i as i64 + delta as i64).clamp(0, scenes.len() as i64 - 1),
-        None => {
+
+    let target_idx: i64 = match s.journal_band {
+        // From the Work band, enter the scene list at the appropriate end.
+        JournalBand::Work => {
             if delta > 0 { 0 } else { scenes.len() as i64 - 1 }
         }
+        JournalBand::Scene(d1, d2) => {
+            match scenes.iter().position(|&sc| sc == (d1, d2)) {
+                Some(i) => (i as i64 + delta as i64).clamp(0, scenes.len() as i64 - 1),
+                None => {
+                    if delta > 0 { 0 } else { scenes.len() as i64 - 1 }
+                }
+            }
+        }
     };
-    let target = scenes[target_idx as usize];
-    if target != s.journal_scene || cur_pos.is_none() {
-        s.journal_scene = target;
+
+    let target = JournalBand::Scene(scenes[target_idx as usize].0, scenes[target_idx as usize].1);
+    if target != s.journal_band {
+        s.journal_band = target;
         s.journal_page_index = 0;
         render_current(&mut s);
     }
 }
 
+/// Switch to the Work band (whole-work pages) and render it.
+pub(crate) fn nav_to_work_band(state: &Rc<RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    if s.journal_band == JournalBand::Work {
+        return;
+    }
+    s.journal_band = JournalBand::Work;
+    s.journal_page_index = 0;
+    render_current(&mut s);
+}
+
 pub(crate) fn begin_ask(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
     s.journal_prompt_mode = JournalPromptMode::Ask;
+    let title = match s.journal_band {
+        JournalBand::Work => "Ask a question about the whole work",
+        JournalBand::Scene(_, _) => "Ask a question about this scene",
+    };
     s.journal_overlay
-        .open_ask_card("Ask a question about this scene", "Ctrl+Enter to ask · Esc to cancel");
+        .open_ask_card(title, "Ctrl+Enter to ask · Esc to cancel");
 }
 
 pub(crate) fn begin_edit(state: &Rc<RefCell<AppState>>) {
@@ -156,9 +195,9 @@ pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
 }
 
 fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPromptMode) {
-    let (work_title, work_author, work_abbrev, scene, scene_text, model, tokio_handle) = {
+    let (work_title, work_author, work_abbrev, band, scene_text, model, tokio_handle) = {
         let s = state_rc.borrow();
-        let (d1, d2) = s.journal_scene;
+        let band = s.journal_band;
         let (title, author, abbrev) = match s.current_work.as_ref() {
             Some(w) => (
                 w.title.clone(),
@@ -167,12 +206,15 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
             ),
             None => return,
         };
-        let scene_text = crate::app::scene_text_for(&s, d1, d2);
+        let scene_text = match band {
+            JournalBand::Work => String::new(),
+            JournalBand::Scene(d1, d2) => crate::app::scene_text_for(&s, d1, d2),
+        };
         (
             title,
             author,
             abbrev,
-            (d1, d2),
+            band,
             scene_text,
             s.config.claude_model.clone(),
             s.tokio_handle.clone(),
@@ -191,14 +233,20 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
         -1
     };
 
-    let user_msg = format!(
-        "Work: {} by {}\nScene: {}\n\nScene text:\n{}\n\nReader's question:\n{}",
-        work_title,
-        work_author,
-        crate::app::scene_label(scene.0, scene.1),
-        scene_text,
-        question,
-    );
+    let user_msg = match band {
+        JournalBand::Work => format!(
+            "Work: {} by {}\n\nReader's question about the play as a whole:\n{}",
+            work_title, work_author, question,
+        ),
+        JournalBand::Scene(d1, d2) => format!(
+            "Work: {} by {}\nScene: {}\n\nScene text:\n{}\n\nReader's question:\n{}",
+            work_title,
+            work_author,
+            crate::app::scene_label(d1, d2),
+            scene_text,
+            question,
+        ),
+    };
     let question_owned = question.to_string();
     let state_for_result = Rc::clone(state_rc);
 
@@ -217,6 +265,11 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
 
         match result {
             Ok(Ok(answer)) => {
+                // For a save, the scope and (div1,div2) come from the band.
+                let (scope, sdiv1, sdiv2) = match band {
+                    JournalBand::Work => ("work", -1_i64, -1_i64),
+                    JournalBand::Scene(d1, d2) => ("scene", d1, d2),
+                };
                 if let Ok(conn) = crate::db::queries::open_db_rw() {
                     let write_result = if mode == JournalPromptMode::Edit && edit_id >= 0 {
                         crate::db::journal::update_journal_page(
@@ -224,7 +277,8 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
                         )
                     } else {
                         crate::db::journal::save_journal_page(
-                            &conn, &work_abbrev, scene.0, scene.1, &question_owned, &answer, &model_for_db, "scene",
+                            &conn, &work_abbrev, sdiv1, sdiv2, &question_owned, &answer,
+                            &model_for_db, scope,
                         )
                         .map(|_| ())
                     };
@@ -234,8 +288,13 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
                 }
                 let pages = crate::db::queries::open_db()
                     .ok()
-                    .and_then(|conn| {
-                        crate::db::journal::find_journal_pages(&conn, &work_abbrev, scene.0, scene.1).ok()
+                    .and_then(|conn| match band {
+                        JournalBand::Work => {
+                            crate::db::journal::find_work_pages(&conn, &work_abbrev).ok()
+                        }
+                        JournalBand::Scene(d1, d2) => {
+                            crate::db::journal::find_journal_pages(&conn, &work_abbrev, d1, d2).ok()
+                        }
                     })
                     .unwrap_or_default();
                 let new_index = if mode == JournalPromptMode::Edit && edit_id >= 0 {
@@ -244,7 +303,7 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
                     pages.len().saturating_sub(1)
                 };
                 let mut s = state_for_result.borrow_mut();
-                s.journal_scene = scene;
+                s.journal_band = band;
                 s.journal_page_index = new_index;
                 render_current(&mut s);
                 crate::logging::log("JOURNAL: saved page");

@@ -96,6 +96,14 @@ pub enum JournalPromptMode {
     Edit,
 }
 
+/// Which "band" of the journal is currently shown. The Work band holds
+/// whole-work pages (scope='work'); a Scene band holds one (div1,div2)'s pages.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JournalBand {
+    Work,
+    Scene(i64, i64),
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum SidebarMode {
     Vocab,
@@ -272,7 +280,7 @@ pub struct AppState {
     pub gamepad_overlay: crate::ui::gamepad_overlay::GamepadOverlay,
     pub gloss_overlay: crate::ui::gloss_overlay::GlossOverlay,
     pub journal_overlay: crate::ui::journal_overlay::JournalOverlay,
-    pub journal_scene: (i64, i64),
+    pub journal_band: JournalBand,
     pub journal_pages: Vec<crate::db::journal::JournalPage>,
     pub journal_page_index: usize,
     pub journal_return_pos: Option<(usize, usize)>,
@@ -1797,7 +1805,7 @@ pub fn build_window(
         gamepad_overlay,
         gloss_overlay,
         journal_overlay,
-        journal_scene: (0, 0),
+        journal_band: JournalBand::Scene(0, 0),
         journal_pages: Vec::new(),
         journal_page_index: 0,
         journal_return_pos: None,
