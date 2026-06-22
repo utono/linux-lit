@@ -268,7 +268,7 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
         move |st, answer| {
             // For a save, the scope and (div1,div2) come from the band.
             let (scope, sdiv1, sdiv2) = match band {
-                JournalBand::Work => ("work", -1_i64, -1_i64),
+                JournalBand::Work => ("work", crate::app::JOURNAL_WORK_DIV.0, crate::app::JOURNAL_WORK_DIV.1),
                 JournalBand::Scene(d1, d2) => ("scene", d1, d2),
             };
             if let Ok(conn) = crate::db::queries::open_db_rw() {
