@@ -800,20 +800,514 @@ Claude-Session: https://claude.ai/code/session_014UYTmcaAHC2SDypMpKJvNs"
 
 ---
 
-### Task 6: Update the Ctrl+/ keybinds overlay + user hand-off
+### Task 6: Journal Q&A picker (Ctrl+\\)
+
+Added mid-execution at the user's request: a picker, opened with `Ctrl+\` while
+the journal overlay is open, that lists every Q&A page in the work and jumps to
+the chosen one. Order: **work pages first (by creation time), then scene pages
+grouped by scene, each by creation time.** Each row shows the start of the
+question. Selecting jumps the overlay to that page's band + index. Opening with
+no pages shows a toast and stays in the journal overlay.
+
+This mirrors the existing `GlossPicker`, which is also opened from inside an
+overlay and returns to it (`gloss_picker_from_overlay`). The journal picker
+*always* returns to `InputMode::JournalOverlay`.
+
+**Files:**
+- Create: `src/ui/journal_picker.rs`
+- Modify: `src/ui/mod.rs` (add `pub mod journal_picker;`)
+- Modify: `src/db/journal.rs` (add `find_all_pages_ordered` + a test)
+- Modify: `src/app.rs` (AppState field, attach in chain, initializer, search-entry filter wiring, `InputMode::JournalPicker` variant)
+- Modify: `src/input/keymap.rs` (`Ctrl+\` open in `handle_journal_key`; route + Hide/Confirm/move arms for `JournalPicker`)
+- Modify: `src/input/actions/journal.rs` (`open_picker` + `confirm_picker`)
+
+**Interfaces:**
+- Consumes: `JournalBand` (Task 3), `base_work_abbrev`, `chapter_toast` (existing toast widget).
+- Produces:
+  - `find_all_pages_ordered(conn, work_abbrev: &str) -> Result<Vec<JournalPage>, rusqlite::Error>` — all pages, ordered `(scope='work') DESC, div1, div2, timestamp ASC, id ASC` (work pages first, then scene pages grouped by scene, each chronological).
+  - `JournalQaPicker` widget (overlay + filterable list), public methods mirroring `BookmarkPicker`: `new`, `attach`, `set_items(Vec<JournalRow>)`, `show`, `hide`, `is_visible`, `search_entry`, `populate_list(filter)`, `move_selection(delta)`, `selected_index() -> Option<usize>`, `has_items`, `items: Vec<JournalRow>` (pub), plus `pub overlay`.
+  - `struct JournalRow { id: i64, band: JournalBand, question_prefix: String, scene_label: String }` (the `id` lets confirm land on the exact page within its band without re-querying).
+  - `InputMode::JournalPicker`.
+  - `journal::open_picker(state)`, `journal::confirm_picker(state)`.
+
+- [ ] **Step 1: Write the failing DB test**
+
+Add to `src/db/journal.rs` test module:
+
+```rust
+    #[test]
+    fn all_pages_ordered_work_first_then_scenes() {
+        let conn = mem();
+        // Insert out of order; expect: work pages (by time), then scene pages
+        // grouped by (div1,div2) then by time.
+        save_journal_page(&conn, "Ham", 3, 1, "S31a?", "a", "m", "scene").unwrap();
+        save_journal_page(&conn, "Ham", -1, -1, "W1?", "a", "m", "work").unwrap();
+        save_journal_page(&conn, "Ham", 1, 2, "S12a?", "a", "m", "scene").unwrap();
+        save_journal_page(&conn, "Ham", -1, -1, "W2?", "a", "m", "work").unwrap();
+        save_journal_page(&conn, "Ham", 1, 2, "S12b?", "a", "m", "scene").unwrap();
+
+        let ordered = find_all_pages_ordered(&conn, "Ham").unwrap();
+        let qs: Vec<&str> = ordered.iter().map(|p| p.question.as_str()).collect();
+        assert_eq!(qs, vec!["W1?", "W2?", "S12a?", "S12b?", "S31a?"]);
+    }
+```
+
+- [ ] **Step 2: Run it to confirm it fails**
+
+Run: `cargo test --bins journal::tests::all_pages_ordered_work_first_then_scenes`
+Expected: FAIL to compile — `find_all_pages_ordered` not defined.
+
+- [ ] **Step 3: Add `find_all_pages_ordered`**
+
+Insert after `find_work_pages` in `src/db/journal.rs`:
+
+```rust
+/// All pages for a work, ordered for the picker: whole-work pages first (by
+/// creation time), then scene pages grouped by scene (div1, div2), each scene's
+/// pages by creation time. `(scope = 'work')` sorts true(1) before false(0) via
+/// DESC so work rows lead.
+pub fn find_all_pages_ordered(
+    conn: &Connection,
+    work_abbrev: &str,
+) -> Result<Vec<JournalPage>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT id, div1, div2, question, answer, COALESCE(claude_model, ''), timestamp
+         FROM journal_entries
+         WHERE work_abbrev = ?1
+         ORDER BY (scope = 'work') DESC, div1 ASC, div2 ASC, timestamp ASC, id ASC",
+    )?;
+    let rows = stmt.query_map([work_abbrev], |row| {
+        Ok(JournalPage {
+            id: row.get(0)?,
+            div1: row.get(1)?,
+            div2: row.get(2)?,
+            question: row.get(3)?,
+            answer: row.get(4)?,
+            claude_model: row.get(5)?,
+            timestamp: row.get(6)?,
+        })
+    })?;
+    rows.collect()
+}
+```
+
+- [ ] **Step 4: Run it to confirm it passes**
+
+Run: `cargo test --bins journal::tests::all_pages_ordered_work_first_then_scenes`
+Expected: PASS.
+
+- [ ] **Step 5: Create the picker widget**
+
+Create `src/ui/journal_picker.rs` (modeled on `bookmark_picker.rs`; the row's
+`widget_name` carries the row index, so selection maps back to an `items` entry):
+
+```rust
+use gtk4::prelude::*;
+use gtk4::{
+    Box as GtkBox, Entry, Label, ListBox, ListBoxRow, Orientation, Overlay, ScrolledWindow,
+};
+
+use crate::app::JournalBand;
+
+#[derive(Clone)]
+pub struct JournalRow {
+    pub id: i64,
+    pub band: JournalBand,
+    pub question_prefix: String,
+    pub scene_label: String,
+}
+
+pub struct JournalQaPicker {
+    pub overlay: Overlay,
+    picker_box: GtkBox,
+    search_entry: Entry,
+    list_box: ListBox,
+    pub items: Vec<JournalRow>,
+}
+
+impl JournalQaPicker {
+    pub fn new() -> Self {
+        let overlay = Overlay::new();
+
+        let picker_box = GtkBox::builder()
+            .orientation(Orientation::Vertical)
+            .spacing(4)
+            .halign(gtk4::Align::Center)
+            .valign(gtk4::Align::Center)
+            .width_request(600)
+            .height_request(400)
+            .build();
+        picker_box.add_css_class("library-picker");
+
+        let search_entry = Entry::builder()
+            .placeholder_text("Filter Q&A pages...")
+            .build();
+
+        let list_box = ListBox::builder()
+            .selection_mode(gtk4::SelectionMode::Single)
+            .build();
+
+        let scrolled = ScrolledWindow::builder()
+            .child(&list_box)
+            .vexpand(true)
+            .build();
+
+        picker_box.append(&search_entry);
+        picker_box.append(&scrolled);
+
+        JournalQaPicker {
+            overlay,
+            picker_box,
+            search_entry,
+            list_box,
+            items: Vec::new(),
+        }
+    }
+
+    pub fn attach(&self, base: &impl IsA<gtk4::Widget>) {
+        self.overlay.set_child(Some(base));
+        self.overlay.add_overlay(&self.picker_box);
+        self.picker_box.set_visible(false);
+    }
+
+    pub fn set_items(&mut self, items: Vec<JournalRow>) {
+        self.items = items;
+        self.populate_list("");
+    }
+
+    pub fn show(&self) {
+        self.picker_box.set_visible(true);
+        self.search_entry.set_text("");
+        self.search_entry.grab_focus();
+        self.populate_list("");
+    }
+
+    pub fn hide(&self) {
+        self.picker_box.set_visible(false);
+    }
+
+    pub fn is_visible(&self) -> bool {
+        self.picker_box.is_visible()
+    }
+
+    pub fn search_entry(&self) -> &Entry {
+        &self.search_entry
+    }
+
+    pub fn has_items(&self) -> bool {
+        !self.items.is_empty()
+    }
+
+    pub fn populate_list(&self, filter: &str) {
+        while let Some(child) = self.list_box.first_child() {
+            self.list_box.remove(&child);
+        }
+        let filter_lower = filter.to_lowercase();
+
+        for (idx, item) in self.items.iter().enumerate() {
+            if !filter.is_empty() {
+                let target = format!("{} {}", item.scene_label, item.question_prefix).to_lowercase();
+                if !subsequence_match(&filter_lower, &target) {
+                    continue;
+                }
+            }
+
+            let q_label = Label::builder()
+                .label(&item.question_prefix)
+                .halign(gtk4::Align::Start)
+                .hexpand(true)
+                .ellipsize(gtk4::pango::EllipsizeMode::End)
+                .build();
+
+            let scene_label = Label::builder()
+                .label(&item.scene_label)
+                .halign(gtk4::Align::End)
+                .build();
+            scene_label.add_css_class("picker-item-detail");
+
+            let hbox = GtkBox::builder()
+                .orientation(Orientation::Horizontal)
+                .spacing(8)
+                .build();
+            hbox.append(&q_label);
+            hbox.append(&scene_label);
+
+            let row = ListBoxRow::builder().child(&hbox).build();
+            row.set_widget_name(&idx.to_string());
+            self.list_box.append(&row);
+        }
+
+        if let Some(first) = self.list_box.row_at_index(0) {
+            self.list_box.select_row(Some(&first));
+        }
+    }
+
+    pub fn move_selection(&self, delta: i32) {
+        if let Some(current) = self.list_box.selected_row() {
+            let idx = current.index();
+            let new_idx = (idx + delta).max(0);
+            if let Some(row) = self.list_box.row_at_index(new_idx) {
+                self.list_box.select_row(Some(&row));
+            }
+        }
+    }
+
+    /// Index into `items` of the selected row (the row's widget_name).
+    pub fn selected_index(&self) -> Option<usize> {
+        self.list_box
+            .selected_row()
+            .and_then(|row| row.widget_name().to_string().parse().ok())
+    }
+}
+
+fn subsequence_match(filter: &str, target: &str) -> bool {
+    let mut target_chars = target.chars();
+    for fc in filter.chars() {
+        if !target_chars.any(|tc| tc == fc) {
+            return false;
+        }
+    }
+    true
+}
+```
+
+- [ ] **Step 6: Register the module**
+
+In `src/ui/mod.rs`, add alongside the other `pub mod` lines:
+
+```rust
+pub mod journal_picker;
+```
+
+- [ ] **Step 7: Add the `InputMode` variant**
+
+In `src/app.rs`, add `JournalPicker` to the `InputMode` enum (next to the other picker variants, e.g. after `GlossPicker`):
+
+```rust
+    JournalPicker,
+```
+
+- [ ] **Step 8: Add the AppState field + attach in the overlay chain**
+
+In `src/app.rs`:
+
+Add the import near the other picker imports:
+
+```rust
+use crate::ui::journal_picker::JournalQaPicker;
+```
+
+Add the field to `AppState` (near `journal_overlay`):
+
+```rust
+    pub journal_picker: JournalQaPicker,
+```
+
+In `build_window`, construct and attach it in the chain **immediately after the journal overlay** (so it layers above the journal overlay and below translation/pickers). Find the line `translation_overlay.attach(&journal_overlay.overlay);` and replace it with:
+
+```rust
+    let journal_picker = JournalQaPicker::new();
+    journal_picker.attach(&journal_overlay.overlay);
+    journal_picker.overlay.set_vexpand(true);
+    translation_overlay.attach(&journal_picker.overlay);
+```
+
+Add `journal_picker,` to the `AppState { ... }` initializer (near `journal_overlay,`).
+
+- [ ] **Step 9: Wire the search-entry live filter**
+
+In `src/app.rs`, near the other `*.search_entry().connect_changed(...)` blocks (e.g. the bookmark one ~line 2261), add:
+
+```rust
+    {
+        let state_filter = Rc::clone(&state);
+        s.journal_picker.search_entry().connect_changed(move |entry| {
+            let filter = entry.text().to_string();
+            state_filter.borrow().journal_picker.populate_list(&filter);
+        });
+    }
+```
+
+(Match the exact surrounding idiom — if the existing blocks use a differently named state handle, mirror it. The key behavior: on each keystroke, repopulate the list with the filter.)
+
+- [ ] **Step 10: Add `open_picker` and `confirm_picker` actions**
+
+In `src/input/actions/journal.rs`, add:
+
+```rust
+/// Open the Q&A picker over the journal overlay. Lists every page in the work
+/// (work pages first, then scene pages by scene), each by creation time. Empty
+/// journal -> toast, stay in the overlay.
+pub(crate) fn open_picker(state: &Rc<RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    let work_abbrev = s
+        .current_work
+        .as_ref()
+        .map(|w| crate::app::base_work_abbrev(&w.abbrev).to_string())
+        .unwrap_or_default();
+    let pages = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| crate::db::journal::find_all_pages_ordered(&conn, &work_abbrev).ok())
+        .unwrap_or_default();
+
+    if pages.is_empty() {
+        s.chapter_toast.set_text("No journal pages yet — press a to ask");
+        s.chapter_toast.set_visible(true);
+        let toast = s.chapter_toast.clone();
+        gtk4::glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+            toast.set_visible(false);
+        });
+        return;
+    }
+
+    let rows: Vec<crate::ui::journal_picker::JournalRow> = pages
+        .iter()
+        .map(|p| {
+            let band = if p.div1 < 0 {
+                JournalBand::Work
+            } else {
+                JournalBand::Scene(p.div1, p.div2)
+            };
+            let scene_label = match band {
+                JournalBand::Work => "whole work".to_string(),
+                JournalBand::Scene(d1, d2) => crate::app::synopsis_label(&s, d1, d2),
+            };
+            let prefix: String = p.question.chars().take(80).collect();
+            crate::ui::journal_picker::JournalRow {
+                id: p.id,
+                band,
+                question_prefix: prefix,
+                scene_label,
+            }
+        })
+        .collect();
+
+    s.journal_picker.set_items(rows);
+    s.journal_picker.show();
+    s.input_mode = InputMode::JournalPicker;
+}
+
+/// Confirm the picker selection: switch the journal overlay to the chosen page's
+/// band, land on that exact page (matched by id within the band), hide the
+/// picker, return to the journal overlay.
+pub(crate) fn confirm_picker(state: &Rc<RefCell<AppState>>) {
+    let selected = state.borrow().journal_picker.selected_index();
+    let mut s = state.borrow_mut();
+    s.journal_picker.hide();
+    s.input_mode = InputMode::JournalOverlay;
+
+    let Some(idx) = selected else {
+        // Nothing selected — just return to the overlay, re-render current band.
+        render_current(&mut s);
+        return;
+    };
+    let (band, target_id) = {
+        let row = &s.journal_picker.items[idx];
+        (row.band, row.id)
+    };
+
+    s.journal_band = band;
+    s.journal_page_index = 0;
+    render_current(&mut s); // loads the band's pages into s.journal_pages
+    if let Some(pos) = s.journal_pages.iter().position(|p| p.id == target_id) {
+        s.journal_page_index = pos;
+        render_current(&mut s);
+    }
+}
+```
+
+Note: `render_current` is private to the module (defined in this file), so
+`confirm_picker` calls it directly. `JournalBand` is already imported at the top
+of this file (Task 4). The two-step render (index 0, then by id) is intentional:
+the first `render_current` populates `s.journal_pages` for the band so the
+position lookup has data; the second lands on the chosen page.
+
+- [ ] **Step 11: Route the picker key + Ctrl+\\ open in keymap**
+
+In `src/input/keymap.rs`:
+
+(a) Add `JournalPicker` to the `handle_picker_key` routing group (the match at ~line 103-111):
+
+```rust
+            crate::app::InputMode::BookmarkPicker
+            | crate::app::InputMode::MediaPicker
+            | crate::app::InputMode::ConcordancePicker
+            | crate::app::InputMode::ConcordanceWordPicker
+            | crate::app::InputMode::EchoLinePicker
+            | crate::app::InputMode::ConcordanceListPicker
+            | crate::app::InputMode::ConcordanceWorksPicker
+            | crate::app::InputMode::AuthorshipPicker
+            | crate::app::InputMode::JournalPicker
+            | crate::app::InputMode::GlossPicker => handle_picker_key(state, key_name, is_ctrl, is_alt, tokio_handle, mode),
+```
+
+(b) In `handle_picker_key`'s `PickerAction::Hide` match, add (returns to the journal overlay, not the reader):
+
+```rust
+                InputMode::JournalPicker => { s.journal_picker.hide(); s.input_mode = InputMode::JournalOverlay; }
+```
+
+(c) In `handle_picker_key`'s `PickerAction::Confirm` match, add:
+
+```rust
+                InputMode::JournalPicker => {
+                    crate::input::actions::journal::confirm_picker(state);
+                    true
+                }
+```
+
+(d) In the two `move_selection` arms (down ~line 445, up ~line 460), add:
+
+```rust
+                InputMode::JournalPicker => state.borrow().journal_picker.move_selection(1),
+```
+
+and
+
+```rust
+                InputMode::JournalPicker => state.borrow().journal_picker.move_selection(-1),
+```
+
+(e) In `handle_journal_key`'s `is_ctrl` match (alongside `"n"`/`"p"`/`"j"`), add the `Ctrl+\` open. The backslash key arrives as `"backslash"`:
+
+```rust
+            "backslash" => {
+                crate::input::actions::journal::open_picker(state);
+                return true;
+            }
+```
+
+- [ ] **Step 12: Build + test**
+
+Run: `cargo build && cargo test --bins`
+Expected: clean build, all tests pass (including the new ordering test).
+
+- [ ] **Step 13: Commit**
+
+```bash
+git add src/ui/journal_picker.rs src/ui/mod.rs src/db/journal.rs src/app.rs src/input/keymap.rs src/input/actions/journal.rs
+git commit -m "feat(journal): Ctrl+\\ Q&A picker — jump to any page (work first, then scenes)
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014UYTmcaAHC2SDypMpKJvNs"
+```
+
+---
+
+### Task 7: Update the Ctrl+/ keybinds overlay + user hand-off
 
 **Files:**
 - Modify: `src/ui/keybinds_overlay.rs` (the `"journal tog"` describe arm, ~line 355-366)
 
 **Interfaces:**
 - Consumes: nothing (descriptive text only).
-- Produces: the journal detail panel documents `Alt+w`.
+- Produces: the journal detail panel documents `Alt+w` and `Ctrl+\`.
 
-The journal's in-overlay keys (`a/e/d/j/k/gg/G/Ctrl+n/Ctrl+p/Alt+n/Alt+p/Alt+w/Escape`) are handled in `handle_journal_key`, not as reader binds, so **`keymap.json` and `keymap_config.rs` are NOT touched** — only this descriptive overlay. The cap `("C-j", "journal tog")` (`src/ui/keybinds_overlay.rs:86`) is unchanged; only the description blurb adds `Alt+w`.
+The journal's in-overlay keys (`a/e/d/j/k/gg/G/Ctrl+n/Ctrl+p/Ctrl+\/Alt+n/Alt+p/Alt+w/Escape`) are handled in `handle_journal_key` (and `handle_picker_key` for the picker), not as reader binds, so **`keymap.json` and `keymap_config.rs` are NOT touched** — only this descriptive overlay. The cap `("C-j", "journal tog")` (`src/ui/keybinds_overlay.rs:86`) is unchanged; only the description blurb adds `Alt+w` and `Ctrl+\`.
 
-- [ ] **Step 1: Add `Alt+w` to the journal description**
+- [ ] **Step 1: Add `Alt+w` and `Ctrl+\\` to the journal description**
 
-Replace the `"journal tog"` arm (`src/ui/keybinds_overlay.rs:355-366`) with (adds the Work-band sentence; rest unchanged):
+Replace the `"journal tog"` arm (`src/ui/keybinds_overlay.rs:355-366`) with (adds the Work-band and picker sentences; rest unchanged):
 
 ```rust
         "journal tog" => "Open or close the Q&A journal for the current scene. \
@@ -824,9 +1318,11 @@ card prompting you to press a to ask. Inside the overlay: a asks a new question 
 (Claude answers, drawing on its knowledge of the whole play), e edits the current \
 page's question, d deletes the current page, j/k scroll the answer, gg/G jump to \
 top/bottom, Ctrl+n / Ctrl+p flip pages within the band, Alt+n / Alt+p jump to the \
-next/prev scene that has pages, and Alt+w switches to the Work band \u{2014} \
+next/prev scene that has pages, Alt+w switches to the Work band \u{2014} \
 whole-work pages about the play as a whole (Claude is sent only the title and \
-author, not a scene). Escape (or Ctrl+j) closes and returns the cursor to where \
+author, not a scene) \u{2014} and Ctrl+\\ opens a picker of every Q&A page in the \
+work (whole-work pages first, then scene pages in scene order) to jump straight \
+to one. Escape (or Ctrl+j) closes and returns the cursor to where \
 you were reading. \
 -> journal::toggle_overlay — src/input/actions/journal.rs (overlay keys: \
 handle_journal_key in src/input/keymap.rs)",
@@ -834,7 +1330,7 @@ handle_journal_key in src/input/keymap.rs)",
 
 - [ ] **Step 2: Run the overlay cross-reference skill**
 
-Invoke the `update-cairo-keybinds-overlay` skill and run its three-pass cross-reference for the journal key (`C-j` cap → `"journal tog"` describe arm). Confirm: no blank detail slot, the label names the right action, and the describe arm exists and mentions every in-overlay key including `Alt+w`.
+Invoke the `update-cairo-keybinds-overlay` skill and run its three-pass cross-reference for the journal key (`C-j` cap → `"journal tog"` describe arm). Confirm: no blank detail slot, the label names the right action, and the describe arm exists and mentions every in-overlay key including `Alt+w` and `Ctrl+\`.
 
 - [ ] **Step 3: Build + full check**
 
@@ -845,7 +1341,7 @@ Expected: build clean, all tests pass, no journal-specific clippy warnings.
 
 ```bash
 git add src/ui/keybinds_overlay.rs
-git commit -m "feat(journal): document Alt+w Work band in Ctrl+/ overlay
+git commit -m "feat(journal): document Alt+w + Ctrl+backslash in Ctrl+/ overlay
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_014UYTmcaAHC2SDypMpKJvNs"
@@ -865,6 +1361,7 @@ Then a manual headless launch (from CLAUDE.md "Headless Verification") to eyebal
 - `Alt+w` switches to the **Work band** ("… — whole work" title); `a` there asks a whole-work question (title+author only, no scene text).
 - `Alt+n`/`Alt+p` return from the Work band to a scene with pages and move between scenes; `Ctrl+n`/`Ctrl+p` flip pages within the band.
 - Scene pages and work pages do **not** appear in each other's band.
+- `Ctrl+\` opens the Q&A picker: work pages listed first (chronological), then scene pages grouped by scene; each row shows the question's start; selecting one jumps the overlay to that page. With an empty journal, `Ctrl+\` shows a toast and stays put.
 - `e` edits within the same band, `d` deletes, `Escape` closes and restores the cursor.
 
 ---
@@ -878,7 +1375,8 @@ Then a manual headless launch (from CLAUDE.md "Headless Verification") to eyebal
 - Item 2 navigation + ask (`Alt+w`, band-following `a`, work prompt title+author only, scene/work isolation) → Tasks 4 + 5. ✓
 - Item 2 overlay header (work title vs scene label) → Task 4 `render_current`. ✓
 - Item 3 (shared `-Amb`, documenting test) → Task 2 `shared_base_abbrev_contract`. ✓
-- Ctrl+/ overlay sync → Task 6. ✓
+- Q&A picker (Ctrl+\, work-first ordering, question prefix, jump-to-page, empty-toast) → Task 6 (added mid-execution). ✓
+- Ctrl+/ overlay sync (Alt+w + Ctrl+\) → Task 7. ✓
 
 **Placeholder scan:** No TBD/TODO; every code step shows full code; every command has expected output. ✓
 
