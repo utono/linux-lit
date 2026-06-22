@@ -645,6 +645,56 @@ fn handle_search_key(
     }
 }
 
+/// Outcome of the shared ask-card key intercept.
+enum AskIntercept {
+    /// The helper consumed the key (Tab / Ctrl+Enter / Esc-while-open) — the
+    /// calling handler must `return true`.
+    Consumed,
+    /// The ask card holds focus and the key is a plain character — the calling
+    /// handler must `return false` so GTK delivers it to the editable input.
+    FallThrough,
+    /// Not an ask-card key, or the card is closed — the calling handler
+    /// continues its own routing.
+    NotHandled,
+}
+
+/// Intercept the ask-card chord keys when `ask_open`. `toggle` / `submit` /
+/// `close` are the calling overlay's own actions. Esc-when-closed is
+/// intentionally NOT handled here; the helper returns `NotHandled` so the
+/// caller's existing overlay-close path runs unchanged.
+#[allow(clippy::too_many_arguments)]
+fn ask_card_intercept(
+    ask_open: bool,
+    ask_focus: crate::ui::ask_card::AskFocus,
+    key_name: &str,
+    is_ctrl: bool,
+    state: &Rc<RefCell<AppState>>,
+    toggle: impl Fn(&Rc<RefCell<AppState>>),
+    submit: impl Fn(&Rc<RefCell<AppState>>),
+    close: impl Fn(&Rc<RefCell<AppState>>),
+) -> AskIntercept {
+    use crate::ui::ask_card::AskFocus;
+    if !ask_open {
+        return AskIntercept::NotHandled;
+    }
+    if key_name == "Tab" || key_name == "ISO_Left_Tab" {
+        toggle(state);
+        return AskIntercept::Consumed;
+    }
+    if is_ctrl && key_name == "Return" {
+        submit(state);
+        return AskIntercept::Consumed;
+    }
+    if key_name == "Escape" {
+        close(state);
+        return AskIntercept::Consumed;
+    }
+    if ask_focus == AskFocus::Ask {
+        return AskIntercept::FallThrough;
+    }
+    AskIntercept::NotHandled
+}
+
 fn handle_journal_key(
     state: &Rc<RefCell<AppState>>,
     key_state: &Rc<RefCell<KeyState>>,
@@ -652,29 +702,24 @@ fn handle_journal_key(
     is_ctrl: bool,
     is_alt: bool,
 ) -> bool {
-    use crate::ui::ask_card::AskFocus;
-
     // ---- Ask/edit input card intercepts Tab / Ctrl+Enter / Escape first ----
     let (ask_open, ask_focus) = {
         let s = state.borrow();
         (s.journal_overlay.ask_is_open(), s.journal_overlay.ask_focus())
     };
-    if ask_open {
-        if key_name == "Tab" || key_name == "ISO_Left_Tab" {
-            state.borrow().journal_overlay.toggle_ask_focus();
-            return true;
-        }
-        if is_ctrl && key_name == "Return" {
-            crate::input::actions::journal::submit_prompt(state);
-            return true;
-        }
-        if key_name == "Escape" {
-            crate::input::actions::journal::close_prompt(state);
-            return true;
-        }
-        if ask_focus == AskFocus::Ask {
-            return false;
-        }
+    match ask_card_intercept(
+        ask_open,
+        ask_focus,
+        key_name,
+        is_ctrl,
+        state,
+        |st| st.borrow().journal_overlay.toggle_ask_focus(),
+        crate::input::actions::journal::submit_prompt,
+        crate::input::actions::journal::close_prompt,
+    ) {
+        AskIntercept::Consumed => return true,
+        AskIntercept::FallThrough => return false,
+        AskIntercept::NotHandled => {}
     }
 
     // gg chord -> top
@@ -777,34 +822,27 @@ fn handle_gloss_key(
     is_alt: bool,
     tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
-    use crate::ui::ask_card::AskFocus;
-
-    // ---- Stacked add/edit input card (a / e) ------------------------------
+    // ---- Stacked add/edit input card (A / E) ------------------------------
     // When open it behaves like the synopsis ask card: Tab toggles focus,
-    // Ctrl+Enter submits, Esc is two-stage (close card, then close overlay),
-    // and typed characters fall through to the editable input while it holds
-    // focus. These must be handled before the gloss navigation keys below.
+    // Ctrl+Enter submits, Esc closes the card; typed characters fall through to
+    // the editable input while it holds focus. Handled before gloss nav keys.
     let (ask_open, ask_focus) = {
         let s = state.borrow();
         (s.gloss_overlay.ask_is_open(), s.gloss_overlay.ask_focus())
     };
-    if ask_open {
-        if key_name == "Tab" || key_name == "ISO_Left_Tab" {
-            state.borrow().gloss_overlay.toggle_ask_focus();
-            return true;
-        }
-        if is_ctrl && key_name == "Return" {
-            crate::input::actions::gloss::submit_gloss_prompt(state);
-            return true;
-        }
-        if key_name == "Escape" {
-            crate::input::actions::gloss::close_gloss_prompt(state);
-            return true;
-        }
-        // Let typed characters through to the input while it holds focus.
-        if ask_focus == AskFocus::Ask {
-            return false;
-        }
+    match ask_card_intercept(
+        ask_open,
+        ask_focus,
+        key_name,
+        is_ctrl,
+        state,
+        |st| st.borrow().gloss_overlay.toggle_ask_focus(),
+        crate::input::actions::gloss::submit_gloss_prompt,
+        crate::input::actions::gloss::close_gloss_prompt,
+    ) {
+        AskIntercept::Consumed => return true,
+        AskIntercept::FallThrough => return false,
+        AskIntercept::NotHandled => {}
     }
 
     // Shift+Space: batch-synthesize all prose blocks (cache-only).
@@ -1145,49 +1183,39 @@ fn handle_synopsis_overlay_key(
     is_alt: bool,
     is_shift: bool,
 ) -> bool {
-    use crate::ui::ask_card::AskFocus;
-
     let (ask_open, ask_focus) = {
         let s = state.borrow();
         (s.gloss_overlay.ask_is_open(), s.gloss_overlay.ask_focus())
     };
 
-    // ---- Keys that apply whether or not the ask card is open --------------
+    // Open-card chord keys go through the shared helper (Tab toggles focus,
+    // Ctrl+Enter submits, Esc closes the card, Ask-focus falls through).
+    match ask_card_intercept(
+        ask_open,
+        ask_focus,
+        key_name,
+        is_ctrl,
+        state,
+        |st| st.borrow().gloss_overlay.toggle_ask_focus(),
+        crate::input::actions::synopsis::submit_amend_prompt,
+        crate::input::actions::synopsis::close_amend_prompt,
+    ) {
+        AskIntercept::Consumed => return true,
+        AskIntercept::FallThrough => return false,
+        AskIntercept::NotHandled => {}
+    }
 
-    // Tab toggles focus between the synopsis and ask cards (only meaningful
-    // while the ask card is open). Consume so it never reaches playback toggle
-    // or the editable input.
+    // Closed-card overlay-level semantics (preserved verbatim):
+    // Tab is always consumed so it never reaches playback toggle.
     if key_name == "Tab" || key_name == "ISO_Left_Tab" {
-        if ask_open {
-            state.borrow().gloss_overlay.toggle_ask_focus();
-        }
         return true;
     }
-
-    // Ctrl+Enter submits the question when the ask card is open.
-    if ask_open && is_ctrl && key_name == "Return" {
-        crate::input::actions::synopsis::submit_amend_prompt(state);
-        return true;
-    }
-
-    // Escape is two-stage: close the ask card first (back to full synopsis),
-    // then close the whole overlay on a second press.
+    // Escape with the card closed hides the overlay and returns to Reader.
     if key_name == "Escape" {
-        if ask_open {
-            crate::input::actions::synopsis::close_amend_prompt(state);
-        } else {
-            let mut s = state.borrow_mut();
-            s.gloss_overlay.hide();
-            s.input_mode = crate::app::InputMode::Reader;
-        }
+        let mut s = state.borrow_mut();
+        s.gloss_overlay.hide();
+        s.input_mode = crate::app::InputMode::Reader;
         return true;
-    }
-
-    // While the ask card holds focus, let typed characters through to the
-    // editable input. Only the explicit shortcuts above (Tab/Ctrl+Enter/Esc)
-    // are intercepted; everything else falls through to GTK so the field works.
-    if ask_open && ask_focus == AskFocus::Ask {
-        return false;
     }
 
     // gg: jump to the first block.
