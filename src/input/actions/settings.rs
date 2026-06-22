@@ -345,7 +345,7 @@ pub(crate) fn revert_to_snapshot(state: &Rc<RefCell<crate::app::AppState>>) {
 /// to the overlay's show() method. Called from the OpenSettingsOverlay action.
 pub(crate) fn open_settings(state: &Rc<RefCell<crate::app::AppState>>) {
     let s = state.borrow();
-    if !s.settings_overlay.is_visible() && !s.picker.is_visible() {
+    if !s.settings_overlay.is_visible() && !s.library_picker.is_visible() {
         s.gloss_overlay.hide();
         let ls = s.config.line_spacing;
         let cw = s.config.column_width;
@@ -372,7 +372,7 @@ pub(crate) fn open_settings_from_overlay(
     return_mode: crate::app::InputMode,
 ) {
     let s = state.borrow();
-    if s.settings_overlay.is_visible() || s.picker.is_visible() {
+    if s.settings_overlay.is_visible() || s.library_picker.is_visible() {
         return;
     }
     // The gloss overlay stays VISIBLE behind the settings overlay: the settings

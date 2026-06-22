@@ -125,7 +125,7 @@ pub enum SynopsisPromptKind {
 pub struct AppState {
     pub text_view: View,
     pub buffer: sourceview5::Buffer,
-    pub picker: LibraryPicker,
+    pub library_picker: LibraryPicker,
     pub current_work: Option<Work>,
     pub current_line: usize,
     pub prev_highlight_line: std::cell::Cell<Option<usize>>,
@@ -1722,7 +1722,7 @@ pub fn build_window(
     let state = Rc::new(RefCell::new(AppState {
         text_view,
         buffer,
-        picker,
+        library_picker: picker,
         current_work: None,
         current_line: 0,
         prev_highlight_line: std::cell::Cell::new(None),
@@ -2244,9 +2244,9 @@ pub fn build_window(
     let state_for_filter = Rc::clone(&state);
     {
         let s = state.borrow();
-        s.picker.search_entry().connect_changed(move |entry| {
+        s.library_picker.search_entry().connect_changed(move |entry| {
             let text = entry.text();
-            state_for_filter.borrow().picker.populate_list(&text);
+            state_for_filter.borrow().library_picker.populate_list(&text);
         });
     }
 
@@ -2533,8 +2533,8 @@ pub fn build_window(
             }
         });
     } else {
-        state.borrow_mut().picker.show_prepare();
-        state.borrow().picker.show_finish();
+        state.borrow_mut().library_picker.show_prepare();
+        state.borrow().library_picker.show_finish();
     }
 
     crate::logging::log(&format!(

@@ -204,6 +204,22 @@ fn run_synopsis_revision(
                 crate::logging::log(&format!("SYNOPSIS: {} error: {}", log_verb, e));
             }
             Err(e) => {
+                // Recover the UI so the overlay isn't stuck on the loading card
+                // if the spawned task panicked (mirrors the Ok(Err) arm).
+                let mut s = state_for_result.borrow_mut();
+                let cw = s.content_hbox.width();
+                let h = s.content_hbox.height();
+                let root_color = s.theme.root_color.clone();
+                s.gloss_overlay.show_synopsis(
+                    &label,
+                    "Internal error \u{2014} try again.",
+                    Some(&root_color),
+                    cw,
+                    h,
+                );
+                s.synopsis_overlay_scene = (div1, div2);
+                crate::input::actions::gloss::recolor_cached_blocks(&s);
+                s.input_mode = crate::app::InputMode::SynopsisOverlay;
                 crate::logging::log(&format!("SYNOPSIS: tokio join error: {}", e));
             }
         }

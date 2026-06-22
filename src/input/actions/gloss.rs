@@ -801,6 +801,9 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
                 crate::logging::log(&format!("GLOSS: add error: {}", e));
             }
             Err(e) => {
+                // Recover the UI so the overlay isn't stuck on the loading card.
+                let s = state_for_result.borrow();
+                s.gloss_overlay.show("Internal error \u{2014} try again.", "");
                 crate::logging::log(&format!("GLOSS: tokio join error: {}", e));
             }
         }
@@ -914,6 +917,9 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
                 crate::logging::log(&format!("GLOSS: edit error: {}", e));
             }
             Err(e) => {
+                // Recover the UI so the overlay isn't stuck on the loading card.
+                let s = state_for_result.borrow();
+                s.gloss_overlay.show("Internal error \u{2014} try again.", "");
                 crate::logging::log(&format!("GLOSS: tokio join error: {}", e));
             }
         }
@@ -1144,13 +1150,13 @@ pub(crate) fn recolor_cached_blocks(s: &AppState) {
         return;
     }
 
-    // Synopsis mode. Key by the work's plain abbrev — matching
-    // `play_synopsis_block` / `synth_all_synopsis_blocks`, which write/read
-    // synopsis audio under `w.abbrev` (NOT base-normalized) — so the existence
-    // check finds the same files those synth paths wrote.
+    // Synopsis mode. Key by the BASE abbrev (matching `play_synopsis_block` /
+    // `synth_all_synopsis_blocks`) so synopsis audio is shared across editions
+    // (`2H6`/`2H6-Amb`) the same way the synopsis TEXT is — `synopsis_cache` is
+    // itself loaded under the base abbrev, so the audio key must match it.
     let (div1, div2) = s.synopsis_overlay_scene;
     let work_abbrev = match s.current_work.as_ref() {
-        Some(w) => w.abbrev.clone(),
+        Some(w) => crate::app::base_work_abbrev(&w.abbrev).to_string(),
         None => return,
     };
     let (voice_id, _mid) =
@@ -1451,7 +1457,7 @@ pub(crate) fn synth_all_synopsis_blocks(state_rc: &Rc<RefCell<AppState>>) {
             None => return,
         };
         let work_abbrev = match s.current_work.as_ref() {
-            Some(w) => w.abbrev.clone(),
+            Some(w) => crate::app::base_work_abbrev(&w.abbrev).to_string(),
             None => return,
         };
         let prose: Vec<(i32, String)> = crate::ui::gloss_overlay::synopsis_blocks(&synopsis)
@@ -1535,7 +1541,7 @@ fn play_synopsis_block(state_rc: &Rc<RefCell<AppState>>, index: i32) {
             None => return,
         };
         let work_abbrev = match s.current_work.as_ref() {
-            Some(w) => w.abbrev.clone(),
+            Some(w) => crate::app::base_work_abbrev(&w.abbrev).to_string(),
             None => return,
         };
         let text = match crate::ui::gloss_overlay::synopsis_blocks(&synopsis)

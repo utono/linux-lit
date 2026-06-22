@@ -38,13 +38,13 @@ pub(crate) fn load_selected_work(
     state: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
 ) {
-    let abbrev = state.borrow().picker.selected_abbrev();
+    let abbrev = state.borrow().library_picker.selected_abbrev();
     if let Some(abbrev) = abbrev {
         crate::logging::log(&format!("PICKER: selected work '{}'", abbrev));
         {
             let s = state.borrow();
             let _ = s.cmd_tx.try_send(crate::mpv::commands::MpvCommand::Pause);
-            s.picker.hide();
+            s.library_picker.hide();
             s.gloss_overlay.show_loading_message("Loading...");
         }
         state.borrow_mut().input_mode = crate::app::InputMode::Reader;
@@ -702,7 +702,7 @@ pub(crate) fn set_media_default(
 /// (previous_work, toggled via minus key) is always included.
 pub(crate) fn open_recent_picker(state: &Rc<RefCell<AppState>>) {
     let s = state.borrow();
-    if !s.picker.is_visible()
+    if !s.library_picker.is_visible()
         && !s.bookmark_picker.is_visible()
         && !s.media_picker.is_visible()
         && !s.settings_overlay.is_visible()
@@ -720,8 +720,8 @@ pub(crate) fn open_recent_picker(state: &Rc<RefCell<AppState>>) {
         crate::input::actions::concordance::restore_sync_after_concordance(&mut sm);
         drop(sm);
         state.borrow().gloss_overlay.hide();
-        state.borrow_mut().picker.show_prepare_recent(&recent);
-        state.borrow().picker.show_finish();
+        state.borrow_mut().library_picker.show_prepare_recent(&recent);
+        state.borrow().library_picker.show_finish();
         state.borrow_mut().input_mode = crate::app::InputMode::LibraryPicker;
     }
 }
@@ -730,7 +730,7 @@ pub(crate) fn open_recent_picker(state: &Rc<RefCell<AppState>>) {
 /// concordance state, and switch to LibraryPicker input mode.
 pub(crate) fn open_library_picker_from_reader(state: &Rc<RefCell<AppState>>) {
     let s = state.borrow();
-    if !s.picker.is_visible()
+    if !s.library_picker.is_visible()
         && !s.bookmark_picker.is_visible()
         && !s.media_picker.is_visible()
         && !s.settings_overlay.is_visible()
@@ -742,8 +742,8 @@ pub(crate) fn open_library_picker_from_reader(state: &Rc<RefCell<AppState>>) {
         crate::input::actions::concordance::restore_sync_after_concordance(&mut sm);
         drop(sm);
         state.borrow().gloss_overlay.hide();
-        state.borrow_mut().picker.show_prepare();
-        state.borrow().picker.show_finish();
+        state.borrow_mut().library_picker.show_prepare();
+        state.borrow().library_picker.show_finish();
         state.borrow_mut().input_mode = crate::app::InputMode::LibraryPicker;
     }
 }
@@ -774,7 +774,7 @@ pub(crate) fn open_keybinds_from_mode(
         drop(s);
         restore_mode_after_keybinds(state, back);
     } else {
-        s.picker.hide();
+        s.library_picker.hide();
         s.media_picker.hide();
         s.settings_overlay.hide();
         s.search_bar.hide();
