@@ -6230,10 +6230,25 @@ pub fn scene_label_for(state: &AppState, div1: i64, div2: i64) -> String {
     scene_label(div1, div2)
 }
 
+/// Put the whole-work synopsis key `(0,0)` first when it exists, otherwise
+/// return `rest` unchanged. Pure seam for `ordered_synopsis_scenes`.
+fn prepend_whole_work(has_whole_work: bool, rest: Vec<(i64, i64)>) -> Vec<(i64, i64)> {
+    if has_whole_work {
+        let mut out = Vec::with_capacity(rest.len() + 1);
+        out.push((0, 0));
+        out.extend(rest);
+        out
+    } else {
+        rest
+    }
+}
+
 /// Ordered list of the work's scene keys (div1, div2) that have a synopsis, in
 /// reading order. `work.lines` is already sorted by (div1, div2, line_in_div),
 /// so collecting unique pairs in encounter order gives reading order.
 fn ordered_synopsis_scenes(s: &AppState) -> Vec<(i64, i64)> {
+    let has_whole_work = s.synopsis_cache.contains_key(&(0, 0));
+
     if is_chapter_work(s) {
         let work = match s.current_work.as_ref() {
             Some(w) => w,
@@ -6247,8 +6262,9 @@ fn ordered_synopsis_scenes(s: &AppState) -> Vec<(i64, i64)> {
                 keys.push(k);
             }
         }
-        return keys;
+        return prepend_whole_work(has_whole_work, keys);
     }
+
     let work = match s.current_work.as_ref() {
         Some(w) => w,
         None => return Vec::new(),
@@ -6257,11 +6273,14 @@ fn ordered_synopsis_scenes(s: &AppState) -> Vec<(i64, i64)> {
     let mut keys = Vec::new();
     for line in &work.lines {
         let k = (line.div1, line.div2);
-        if seen.insert(k) && s.synopsis_cache.contains_key(&k) {
+        // Never list (0,0) as a scene from the line loop — it's the whole-work
+        // key, prepended separately. (Lines always have div1 >= 1, but guard
+        // anyway so a stray (0,0) line can't double it.)
+        if k != (0, 0) && seen.insert(k) && s.synopsis_cache.contains_key(&k) {
             keys.push(k);
         }
     }
-    keys
+    prepend_whole_work(has_whole_work, keys)
 }
 
 /// Step the synopsis overlay to the next (+1) or previous (-1) scene that has a
@@ -6651,5 +6670,31 @@ mod scansion_vocab_tests {
         // "músic" (acute after u) is still one word run.
         let marked = "If m\u{0075}\u{0301}sic be";
         assert_eq!(word_run_count(marked), 3); // If, músic, be
+    }
+}
+
+#[cfg(test)]
+mod synopsis_tests {
+    use super::prepend_whole_work;
+
+    #[test]
+    fn prepend_whole_work_puts_zero_zero_first() {
+        let rest = vec![(1, 1), (1, 2), (2, 1)];
+        assert_eq!(
+            prepend_whole_work(true, rest.clone()),
+            vec![(0, 0), (1, 1), (1, 2), (2, 1)]
+        );
+    }
+
+    #[test]
+    fn prepend_whole_work_absent_is_unchanged() {
+        let rest = vec![(1, 1), (1, 2)];
+        assert_eq!(prepend_whole_work(false, rest.clone()), rest);
+    }
+
+    #[test]
+    fn prepend_whole_work_empty_rest() {
+        assert_eq!(prepend_whole_work(true, vec![]), vec![(0, 0)]);
+        assert_eq!(prepend_whole_work(false, vec![]), Vec::<(i64, i64)>::new());
     }
 }
