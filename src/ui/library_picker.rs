@@ -270,10 +270,7 @@ impl LibraryPicker {
     }
 
     pub fn attach(&self, base: &impl IsA<gtk4::Widget>) {
-        self.overlay.set_child(Some(base));
-        self.overlay.add_overlay(&self.scrim);
-        self.overlay.add_overlay(&self.picker_box);
-        self.picker_box.set_visible(false);
+        crate::ui::picker_attach::attach_panel(&self.overlay, base, Some(&self.scrim), &self.picker_box);
 
         // Responsive sizing: track the toplevel window's allocated size and
         // update the picker_box size_request on every resize. We use a tick

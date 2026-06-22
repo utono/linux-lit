@@ -123,20 +123,22 @@ are tracked separately at the bottom under "## Larger projects (not safe-scope)"
   into a helper would add a guard at the plain sites = behavior change).
 - **Safe-scope:** yes — literal → named const, #8-style. Highest copy count.
 
-## #13 — picker-attach-helper — OPEN
+## #13 — picker-attach-helper — DONE (commit pending)
 
-- **Signal:** `attach(&self, base)` body
+- **Status:** DONE
+- **Signal:** picker `attach(&self, base)` body
   (`overlay.set_child(Some(base)); overlay.add_overlay(&picker_box); picker_box.set_visible(false)`)
-  byte-identical in 11 pickers.
-- **Variants:** scrim pickers add an `add_overlay(&self.scrim)` line
-  (echo_picker, library_picker, concordance_works); authorship_picker uses field
-  `container` not `picker_box`.
-- **Identical part (extracts):** a free
-  `attach_picker(&Overlay, base, scrim: Option<&Widget>, panel: &Widget)`.
-- **EXCLUDED:** evaluate whether the scrim/field-name variants are clean enough to
-  fold (pass scrim Option, pass the panel widget) or whether authorship's
-  `container` is structurally different enough to leave out.
-- **Safe-scope:** yes — pure widget-construction extraction.
+  byte-identical in 10 pickers (scanner said 11; voice/echo_line/echo_turns/
+  concordance_works have no attach).
+- **Identical part (extracted):** `attach_panel(&Overlay, base, Option<&Box> scrim,
+  &Box panel)` in new `src/ui/picker_attach.rs`.
+- **Variants (folded via params):** scrim pickers pass `Some(&scrim)` (echo_picker,
+  library_picker); authorship_picker passes `&container` as the panel;
+  library_picker calls the helper then keeps its responsive-resize block.
+- **EXCLUDED:** all `*_overlay.rs` attach/attach_to (different signatures/bodies);
+  library_picker's resize block (stays inline after the helper call).
+- **Safe-scope:** yes — pure widget-construction extraction; build + 413 bin tests
+  green; headless cage launch renders (overlay wiring confirmed).
 
 ## #14 — citation-format-helper — OPEN
 
