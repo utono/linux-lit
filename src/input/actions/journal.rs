@@ -322,6 +322,86 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
     });
 }
 
+/// Open the Q&A picker over the journal overlay. Lists every page in the work
+/// (work pages first, then scene pages by scene), each by creation time. Empty
+/// journal -> toast, stay in the overlay.
+pub(crate) fn open_picker(state: &Rc<RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    let work_abbrev = s
+        .current_work
+        .as_ref()
+        .map(|w| crate::app::base_work_abbrev(&w.abbrev).to_string())
+        .unwrap_or_default();
+    let pages = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| crate::db::journal::find_all_pages_ordered(&conn, &work_abbrev).ok())
+        .unwrap_or_default();
+
+    if pages.is_empty() {
+        s.chapter_toast.set_text("No journal pages yet — press a to ask");
+        s.chapter_toast.set_visible(true);
+        let toast = s.chapter_toast.clone();
+        gtk4::glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+            toast.set_visible(false);
+        });
+        return;
+    }
+
+    let rows: Vec<crate::ui::journal_picker::JournalRow> = pages
+        .iter()
+        .map(|p| {
+            let band = if p.div1 < 0 {
+                JournalBand::Work
+            } else {
+                JournalBand::Scene(p.div1, p.div2)
+            };
+            let scene_label = match band {
+                JournalBand::Work => "whole work".to_string(),
+                JournalBand::Scene(d1, d2) => crate::app::synopsis_label(&s, d1, d2),
+            };
+            let prefix: String = p.question.chars().take(80).collect();
+            crate::ui::journal_picker::JournalRow {
+                id: p.id,
+                band,
+                question_prefix: prefix,
+                scene_label,
+            }
+        })
+        .collect();
+
+    s.journal_picker.set_items(rows);
+    s.journal_picker.show();
+    s.input_mode = InputMode::JournalPicker;
+}
+
+/// Confirm the picker selection: switch the journal overlay to the chosen page's
+/// band, land on that exact page (matched by id within the band), hide the
+/// picker, return to the journal overlay.
+pub(crate) fn confirm_picker(state: &Rc<RefCell<AppState>>) {
+    let selected = state.borrow().journal_picker.selected_index();
+    let mut s = state.borrow_mut();
+    s.journal_picker.hide();
+    s.input_mode = InputMode::JournalOverlay;
+
+    let Some(idx) = selected else {
+        // Nothing selected — just return to the overlay, re-render current band.
+        render_current(&mut s);
+        return;
+    };
+    let (band, target_id) = {
+        let row = &s.journal_picker.items[idx];
+        (row.band, row.id)
+    };
+
+    s.journal_band = band;
+    s.journal_page_index = 0;
+    render_current(&mut s); // loads the band's pages into s.journal_pages
+    if let Some(pos) = s.journal_pages.iter().position(|p| p.id == target_id) {
+        s.journal_page_index = pos;
+        render_current(&mut s);
+    }
+}
+
 pub(crate) fn delete_current(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
     if s.journal_pages.is_empty() {

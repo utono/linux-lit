@@ -7,6 +7,7 @@ pub mod concordance_picker;
 pub mod concordance_word_picker;
 pub mod gloss_overlay;
 pub mod journal_overlay;
+pub mod journal_picker;
 pub mod gloss_picker;
 pub mod echo_picker;
 pub mod echo_line_picker;

@@ -108,6 +108,34 @@ pub fn find_work_pages(
     rows.collect()
 }
 
+/// All pages for a work, ordered for the picker: whole-work pages first (by
+/// creation time), then scene pages grouped by scene (div1, div2), each scene's
+/// pages by creation time. `(scope = 'work')` sorts true(1) before false(0) via
+/// DESC so work rows lead.
+pub fn find_all_pages_ordered(
+    conn: &Connection,
+    work_abbrev: &str,
+) -> Result<Vec<JournalPage>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT id, div1, div2, question, answer, COALESCE(claude_model, ''), timestamp
+         FROM journal_entries
+         WHERE work_abbrev = ?1
+         ORDER BY (scope = 'work') DESC, div1 ASC, div2 ASC, timestamp ASC, id ASC",
+    )?;
+    let rows = stmt.query_map([work_abbrev], |row| {
+        Ok(JournalPage {
+            id: row.get(0)?,
+            div1: row.get(1)?,
+            div2: row.get(2)?,
+            question: row.get(3)?,
+            answer: row.get(4)?,
+            claude_model: row.get(5)?,
+            timestamp: row.get(6)?,
+        })
+    })?;
+    rows.collect()
+}
+
 pub fn find_journal_scenes(
     conn: &Connection,
     work_abbrev: &str,
@@ -213,6 +241,22 @@ mod tests {
         let pages = find_journal_pages(&conn, "2H6", 4, 8).unwrap();
         assert_eq!(pages.len(), 1);
         assert_eq!(pages[0].question, "Q?");
+    }
+
+    #[test]
+    fn all_pages_ordered_work_first_then_scenes() {
+        let conn = mem();
+        // Insert out of order; expect: work pages (by time), then scene pages
+        // grouped by (div1,div2) then by time.
+        save_journal_page(&conn, "Ham", 3, 1, "S31a?", "a", "m", "scene").unwrap();
+        save_journal_page(&conn, "Ham", -1, -1, "W1?", "a", "m", "work").unwrap();
+        save_journal_page(&conn, "Ham", 1, 2, "S12a?", "a", "m", "scene").unwrap();
+        save_journal_page(&conn, "Ham", -1, -1, "W2?", "a", "m", "work").unwrap();
+        save_journal_page(&conn, "Ham", 1, 2, "S12b?", "a", "m", "scene").unwrap();
+
+        let ordered = find_all_pages_ordered(&conn, "Ham").unwrap();
+        let qs: Vec<&str> = ordered.iter().map(|p| p.question.as_str()).collect();
+        assert_eq!(qs, vec!["W1?", "W2?", "S12a?", "S12b?", "S31a?"]);
     }
 
     #[test]

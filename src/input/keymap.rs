@@ -108,6 +108,7 @@ pub fn handle_key(
             | crate::app::InputMode::ConcordanceListPicker
             | crate::app::InputMode::ConcordanceWorksPicker
             | crate::app::InputMode::AuthorshipPicker
+            | crate::app::InputMode::JournalPicker
             | crate::app::InputMode::GlossPicker => handle_picker_key(state, key_name, is_ctrl, is_alt, tokio_handle, mode),
             crate::app::InputMode::Settings => handle_settings_key(state, key_name, is_ctrl),
             crate::app::InputMode::VoicePicker => handle_voice_picker_key(state, key_name, is_ctrl),
@@ -300,6 +301,7 @@ fn handle_picker_key(
                     }
                 }
                 InputMode::AuthorshipPicker => { s.authorship_picker.hide(); s.input_mode = InputMode::Reader; }
+                InputMode::JournalPicker => { s.journal_picker.hide(); s.input_mode = InputMode::JournalOverlay; }
                 InputMode::EchoLinePicker => { drop(s); crate::input::actions::echoes::cancel_add_echo(state); }
                 _ => {}
             }
@@ -433,6 +435,10 @@ fn handle_picker_key(
                     crate::input::actions::authorship::confirm_attribution_selection(state);
                     true
                 }
+                InputMode::JournalPicker => {
+                    crate::input::actions::journal::confirm_picker(state);
+                    true
+                }
                 InputMode::EchoLinePicker => {
                     crate::input::actions::echoes::confirm_add_echo(state);
                     true
@@ -450,6 +456,7 @@ fn handle_picker_key(
                 InputMode::ConcordanceWorksPicker => state.borrow().concordance_works_picker.move_selection(1),
                 InputMode::GlossPicker => state.borrow().gloss_picker.move_selection(1),
                 InputMode::AuthorshipPicker => state.borrow().authorship_picker.move_selection(1),
+                InputMode::JournalPicker => state.borrow().journal_picker.move_selection(1),
                 InputMode::EchoLinePicker => state.borrow().echo_line_picker.move_selection(1),
                 _ => {}
             }
@@ -465,6 +472,7 @@ fn handle_picker_key(
                 InputMode::ConcordanceWorksPicker => state.borrow().concordance_works_picker.move_selection(-1),
                 InputMode::GlossPicker => state.borrow().gloss_picker.move_selection(-1),
                 InputMode::AuthorshipPicker => state.borrow().authorship_picker.move_selection(-1),
+                InputMode::JournalPicker => state.borrow().journal_picker.move_selection(-1),
                 InputMode::EchoLinePicker => state.borrow().echo_line_picker.move_selection(-1),
                 _ => {}
             }
@@ -708,6 +716,10 @@ fn handle_journal_key(
             }
             "j" => {
                 crate::input::actions::journal::close_overlay(state);
+                return true;
+            }
+            "backslash" => {
+                crate::input::actions::journal::open_picker(state);
                 return true;
             }
             _ => {}
