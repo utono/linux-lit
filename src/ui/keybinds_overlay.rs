@@ -356,9 +356,9 @@ handle_gloss_picker_key in src/input/keymap.rs)",
 The journal is a per-work notebook: each scene holds zero or more \u{201c}pages,\u{201d} \
 where a page is one question you asked and the answer Claude gave. It opens on the \
 scene under the reading cursor; if that scene has no pages yet it shows an empty \
-card prompting you to press a to ask. Inside the overlay: a asks a new question \
-(Claude answers, drawing on its knowledge of the whole play), e edits the current \
-page's question, d deletes the current page, j/k scroll the answer, gg/G jump to \
+card prompting you to press A to ask. Inside the overlay: A asks a new question \
+(Claude answers, drawing on its knowledge of the whole play), E edits the current \
+page's question, D deletes the current page, j/k scroll the answer, gg/G jump to \
 top/bottom, Ctrl+n / Ctrl+p flip pages within the band, Alt+n / Alt+p jump to the \
 next/prev scene that has pages, Alt+w switches to the Work band \u{2014} \
 whole-work pages about the play as a whole (Claude is sent only the title and \

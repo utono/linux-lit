@@ -98,7 +98,7 @@ impl JournalOverlay {
         footer_box.append(&footer_left);
 
         let footer_hint = Label::new(Some(
-            "Alt+w work \u{00b7} Ctrl+\\ pick \u{00b7} a add \u{00b7} e edit",
+            "Alt+w work \u{00b7} Ctrl+\\ pick \u{00b7} A add \u{00b7} E edit \u{00b7} D delete",
         ));
         footer_hint.set_halign(gtk4::Align::End);
         footer_hint.set_margin_end(12);
@@ -172,7 +172,7 @@ impl JournalOverlay {
             ));
         }
         let body = if page_count == 0 {
-            "No pages yet \u{2014} press a to ask.".to_string()
+            "No pages yet \u{2014} press A to ask.".to_string()
         } else {
             format!("{}\n\n{}", question, answer)
         };

@@ -175,7 +175,7 @@ pub(crate) fn begin_ask(state: &Rc<RefCell<AppState>>) {
         JournalBand::Scene(_, _) => "Ask a question about this scene",
     };
     s.journal_overlay
-        .open_ask_card(title, "Tab switch  \u{00b7}  Ctrl+Enter submit  \u{00b7}  Esc cancel");
+        .open_ask_card(title, "Tab switch  \u{00b7}  Ctrl+Enter submit");
 }
 
 pub(crate) fn begin_edit(state: &Rc<RefCell<AppState>>) {
@@ -187,7 +187,7 @@ pub(crate) fn begin_edit(state: &Rc<RefCell<AppState>>) {
     s.journal_overlay
         .open_ask_card(
             "Edit: ask a new question for this page",
-            "Tab switch  \u{00b7}  Ctrl+Enter submit  \u{00b7}  Esc cancel",
+            "Tab switch  \u{00b7}  Ctrl+Enter submit",
         );
 }
 
@@ -351,7 +351,7 @@ pub(crate) fn open_picker(state: &Rc<RefCell<AppState>>) {
         .unwrap_or_default();
 
     if pages.is_empty() {
-        s.chapter_toast.set_text("No journal pages yet — press a to ask");
+        s.chapter_toast.set_text("No journal pages yet — press A to ask");
         s.chapter_toast.set_visible(true);
         let toast = s.chapter_toast.clone();
         gtk4::glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {

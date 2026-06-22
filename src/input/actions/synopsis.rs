@@ -60,7 +60,7 @@ pub(crate) fn show_edit_prompt(state_rc: &Rc<RefCell<AppState>>) {
     let scene = s.synopsis_overlay_scene;
     s.gloss_overlay.open_ask_card_with(
         "EDIT THIS SCENE",
-        "Describe the edit (split/merge paragraphs, reword, reorder)  \u{00b7}  Tab switch  \u{00b7}  Ctrl+Enter submit  \u{00b7}  Esc cancel",
+        "Describe the edit (split/merge paragraphs, reword, reorder)  \u{00b7}  Tab switch  \u{00b7}  Ctrl+Enter submit",
     );
     drop(s);
     let mut s = state_rc.borrow_mut();

@@ -347,7 +347,7 @@ impl GlossOverlay {
         footer_box.append(&citation_label);
 
         // Hints sit on the far right, before the N/M position counter.
-        let hint = Label::new(Some("Esc close · a add · e edit · d delete · c copy id · Ctrl+n/p passage · Alt+n/p gloss"));
+        let hint = Label::new(Some("Esc close · A add · E edit · D delete · c copy id · Ctrl+n/p passage · Alt+n/p gloss"));
         hint.set_halign(Align::End);
         hint.set_margin_end(12);
         footer_box.append(&hint);
@@ -1561,7 +1561,7 @@ impl GlossOverlay {
     pub fn open_ask_card(&self) {
         self.open_ask_card_with(
             "ASK ABOUT THIS SCENE",
-            "Ask a question; the synopsis will be expanded to answer it  ·  Tab switch  ·  Ctrl+Enter submit  ·  Esc cancel",
+            "Ask a question; the synopsis will be expanded to answer it  ·  Tab switch  ·  Ctrl+Enter submit",
         );
     }
 

@@ -371,13 +371,13 @@ fn show_prompt_dialog(state_rc: &Rc<RefCell<AppState>>, mode: crate::app::GlossP
         "GLOSS PROMPT"
     };
     let hint_text = if is_fix_ipa {
-        "e.g. `daily /\u{02c8}de\u{026a}li/` or `daily hard a`  \u{00b7}  Ctrl+Enter submit  \u{00b7}  Esc cancel"
+        "e.g. `daily /\u{02c8}de\u{026a}li/` or `daily hard a`  \u{00b7}  Ctrl+Enter submit"
     } else if is_edit {
-        "Paste lines for subtext  \u{00b7}  Tab switch  \u{00b7}  Ctrl+Enter submit  \u{00b7}  Esc cancel"
+        "Paste lines for subtext  \u{00b7}  Tab switch  \u{00b7}  Ctrl+Enter submit"
     } else if is_inner_monologue {
-        "Paste lines from another work  \u{00b7}  Tab switch  \u{00b7}  Ctrl+Enter submit  \u{00b7}  Esc cancel"
+        "Paste lines from another work  \u{00b7}  Tab switch  \u{00b7}  Ctrl+Enter submit"
     } else {
-        "Tab switch  \u{00b7}  Ctrl+Enter submit  \u{00b7}  Esc cancel"
+        "Tab switch  \u{00b7}  Ctrl+Enter submit"
     };
 
     // Stack the input as a card below the open gloss (same widget the synopsis

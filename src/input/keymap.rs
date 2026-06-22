@@ -727,15 +727,20 @@ fn handle_journal_key(
     }
 
     match key_name {
-        "a" => {
+        // `A` (uppercase) opens the ask card, matching the gloss/synopsis
+        // overlays where uppercase `A` is the ask/amend feature.
+        // Ask/edit/delete are uppercase (A/E/D) across all overlays with an
+        // ask feature, so the destructive/editing keys are shift-guarded and
+        // consistent. Lowercase letters stay free for navigation.
+        "A" => {
             crate::input::actions::journal::begin_ask(state);
             true
         }
-        "e" => {
+        "E" => {
             crate::input::actions::journal::begin_edit(state);
             true
         }
-        "d" => {
+        "D" => {
             crate::input::actions::journal::delete_current(state);
             true
         }
@@ -912,11 +917,11 @@ fn handle_gloss_key(
             crate::input::actions::gloss::copy_gloss_id(state);
             true
         }
-        "d" => {
+        "D" => {
             crate::input::actions::gloss::show_delete_confirmation(state);
             true
         }
-        "e" => {
+        "E" => {
             crate::input::actions::gloss::show_edit_dialog(state);
             true
         }
