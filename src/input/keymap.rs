@@ -652,7 +652,7 @@ fn handle_journal_key(
     is_ctrl: bool,
     is_alt: bool,
 ) -> bool {
-    use crate::ui::journal_overlay::AskFocus;
+    use crate::ui::ask_card::AskFocus;
 
     // ---- Ask/edit input card intercepts Tab / Ctrl+Enter / Escape first ----
     let (ask_open, ask_focus) = {
@@ -772,7 +772,7 @@ fn handle_gloss_key(
     is_alt: bool,
     tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
-    use crate::ui::gloss_overlay::AskFocus;
+    use crate::ui::ask_card::AskFocus;
 
     // ---- Stacked add/edit input card (a / e) ------------------------------
     // When open it behaves like the synopsis ask card: Tab toggles focus,
@@ -1140,7 +1140,7 @@ fn handle_synopsis_overlay_key(
     is_alt: bool,
     is_shift: bool,
 ) -> bool {
-    use crate::ui::gloss_overlay::AskFocus;
+    use crate::ui::ask_card::AskFocus;
 
     let (ask_open, ask_focus) = {
         let s = state.borrow();

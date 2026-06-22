@@ -1,12 +1,7 @@
+use crate::ui::ask_card::{AskCard, AskFocus};
 use gtk4::prelude::*;
 use gtk4::{Label, Overlay};
 use std::cell::{Cell, RefCell};
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum AskFocus {
-    Page,
-    Ask,
-}
 
 pub struct JournalOverlay {
     pub overlay: Overlay,
@@ -23,11 +18,7 @@ pub struct JournalOverlay {
     font_family: RefCell<String>,
     font_size: Cell<i32>,
     last_card_size: Cell<(i32, i32)>,
-    ask_container: gtk4::Box,
-    ask_input: gtk4::TextView,
-    ask_title: Label,
-    ask_hint: Label,
-    ask_focus: Cell<AskFocus>,
+    ask: AskCard,
 }
 
 impl JournalOverlay {
@@ -115,36 +106,10 @@ impl JournalOverlay {
 
         container.append(&footer_box);
 
-        let ask_container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-        ask_container.add_css_class("ask-card");
-        ask_container.set_visible(false);
-        let ask_title = Label::new(Some("Ask a question"));
-        ask_title.add_css_class("gloss-header");
-        ask_title.set_halign(gtk4::Align::Start);
-        ask_container.append(&ask_title);
-        let ask_scrolled = gtk4::ScrolledWindow::new();
-        ask_scrolled.set_min_content_height(72);
-        ask_scrolled.set_max_content_height(160);
-        ask_scrolled.set_hscrollbar_policy(gtk4::PolicyType::Never);
-        ask_scrolled.set_vscrollbar_policy(gtk4::PolicyType::Automatic);
-        let ask_input = gtk4::TextView::new();
-        ask_input.set_editable(true);
-        ask_input.set_cursor_visible(true);
-        ask_input.set_wrap_mode(gtk4::WrapMode::Word);
-        ask_input.add_css_class("gloss-text");
-        ask_input.add_css_class("ask-input");
-        ask_input.set_vexpand(true);
-        ask_input.set_left_margin(12);
-        ask_input.set_right_margin(12);
-        ask_input.set_top_margin(8);
-        ask_input.set_bottom_margin(8);
-        ask_scrolled.set_child(Some(&ask_input));
-        ask_container.append(&ask_scrolled);
-        let ask_hint = Label::new(Some("Ctrl+Enter to ask \u{00b7} Esc to cancel"));
-        ask_hint.add_css_class("ask-hint");
-        ask_hint.set_halign(gtk4::Align::Start);
-        ask_container.append(&ask_hint);
-        container.append(&ask_container);
+        // Shared "ask" input card (canonical synopsis values), stacked last in
+        // the column. Focus returns to the page view when leaving the input.
+        let ask = AskCard::new(text_margins as i32, &view);
+        container.append(ask.container());
 
         Self {
             overlay,
@@ -161,11 +126,7 @@ impl JournalOverlay {
             font_family: RefCell::new(String::new()),
             font_size: Cell::new(16),
             last_card_size: Cell::new((0, 0)),
-            ask_container,
-            ask_input,
-            ask_title,
-            ask_hint,
-            ask_focus: Cell::new(AskFocus::Page),
+            ask,
         }
     }
 
@@ -217,7 +178,7 @@ impl JournalOverlay {
         };
         self.view.buffer().set_text(&body);
         self.apply_font();
-        self.ask_container.set_visible(false);
+        self.ask.close();
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         let adj = self.scrolled.vadjustment();
@@ -233,7 +194,7 @@ impl JournalOverlay {
         self.position_label.set_text("");
         self.view.buffer().set_text("Asking\u{2026}");
         self.apply_font();
-        self.ask_container.set_visible(false);
+        self.ask.close();
         self.scrim.set_visible(true);
         self.container.set_visible(true);
     }
@@ -245,7 +206,7 @@ impl JournalOverlay {
         }
         self.view.buffer().set_text(text);
         self.apply_font();
-        self.ask_container.set_visible(false);
+        self.ask.close();
         self.scrim.set_visible(true);
         self.container.set_visible(true);
     }
@@ -253,8 +214,7 @@ impl JournalOverlay {
     pub fn hide(&self) {
         self.container.set_visible(false);
         self.scrim.set_visible(false);
-        self.ask_container.set_visible(false);
-        self.ask_focus.set(AskFocus::Page);
+        self.ask.close();
     }
 
     pub fn is_visible(&self) -> bool {
@@ -328,7 +288,7 @@ impl JournalOverlay {
             return;
         }
         let font_str = format!("{} {}", family, self.font_size.get());
-        for view in [&self.view, &self.ask_input] {
+        for view in [&self.view, self.ask.input()] {
             let buffer = view.buffer();
             let table = buffer.tag_table();
             if let Some(old) = table.lookup("journal-font") {
@@ -345,45 +305,28 @@ impl JournalOverlay {
     }
 
     pub fn ask_is_open(&self) -> bool {
-        self.ask_container.is_visible()
+        self.ask.is_open()
     }
 
     pub fn ask_focus(&self) -> AskFocus {
-        self.ask_focus.get()
+        self.ask.focus()
     }
 
     pub fn open_ask_card(&self, title: &str, hint: &str) {
-        self.ask_title.set_text(title);
-        self.ask_hint.set_text(hint);
-        self.ask_input.buffer().set_text("");
-        self.ask_container.set_visible(true);
+        let (card_width, _) = self.last_card_size.get();
+        self.ask.open(title, hint, card_width);
         self.apply_font();
-        self.ask_focus.set(AskFocus::Ask);
-        self.ask_input.grab_focus();
     }
 
     pub fn close_ask_card(&self) {
-        self.ask_container.set_visible(false);
-        self.ask_focus.set(AskFocus::Page);
+        self.ask.close();
     }
 
     pub fn toggle_ask_focus(&self) {
-        let next = match self.ask_focus.get() {
-            AskFocus::Page => AskFocus::Ask,
-            AskFocus::Ask => AskFocus::Page,
-        };
-        self.ask_focus.set(next);
-        if next == AskFocus::Ask {
-            self.ask_input.grab_focus();
-        }
+        self.ask.toggle_focus();
     }
 
     pub fn take_ask_text(&self) -> String {
-        let buffer = self.ask_input.buffer();
-        let text = buffer
-            .text(&buffer.start_iter(), &buffer.end_iter(), false)
-            .to_string();
-        buffer.set_text("");
-        text
+        self.ask.take_text()
     }
 }
