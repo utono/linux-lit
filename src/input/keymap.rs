@@ -1245,6 +1245,14 @@ fn handle_synopsis_overlay_key(
             state.borrow().gloss_overlay.adjust_font_size(-1);
             true
         }
+        "n" if is_ctrl => {
+            crate::app::cycle_synopsis(state, 1);
+            true
+        }
+        "p" if is_ctrl => {
+            crate::app::cycle_synopsis(state, -1);
+            true
+        }
         "n" => {
             crate::app::cycle_synopsis(state, 1);
             true
