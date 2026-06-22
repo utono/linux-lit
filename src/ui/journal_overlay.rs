@@ -17,6 +17,7 @@ pub struct JournalOverlay {
     scrolled: gtk4::ScrolledWindow,
     view: gtk4::TextView,
     bottom_clip: gtk4::Box,
+    footer_left: Label,
     text_margins: i32,
     column_width: i32,
     font_family: RefCell<String>,
@@ -87,6 +88,30 @@ impl JournalOverlay {
         scrolled.set_child(Some(&scroll_overlay));
         container.append(&scrolled);
 
+        // Footer rule mirroring the gloss overlay (gloss_overlay.rs footer_box):
+        // current page's work/act/scene on the left, fixed keybind hints on the
+        // right.
+        let footer_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        footer_box.set_margin_start(text_margins as i32);
+        footer_box.set_margin_end(text_margins as i32);
+        footer_box.set_margin_top(12);
+        footer_box.set_margin_bottom(12);
+        footer_box.add_css_class("gloss-hint");
+
+        let footer_left = Label::new(None);
+        footer_left.set_halign(gtk4::Align::Start);
+        footer_left.set_hexpand(true);
+        footer_box.append(&footer_left);
+
+        let footer_hint = Label::new(Some(
+            "Alt+w work \u{00b7} Ctrl+\\ pick \u{00b7} a add \u{00b7} e edit",
+        ));
+        footer_hint.set_halign(gtk4::Align::End);
+        footer_hint.set_margin_end(12);
+        footer_box.append(&footer_hint);
+
+        container.append(&footer_box);
+
         let ask_container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
         ask_container.add_css_class("ask-card");
         ask_container.set_visible(false);
@@ -123,6 +148,7 @@ impl JournalOverlay {
             scrolled,
             view,
             bottom_clip,
+            footer_left,
             text_margins: text_margins as i32,
             column_width: column_width as i32,
             font_family: RefCell::new(String::new()),
@@ -157,6 +183,7 @@ impl JournalOverlay {
     pub fn show_page(
         &self,
         scene_title: &str,
+        footer_left: &str,
         page_index: usize,
         page_count: usize,
         question: &str,
@@ -166,6 +193,7 @@ impl JournalOverlay {
     ) {
         self.size_card(card_width, card_height);
         self.title.set_text(scene_title);
+        self.footer_left.set_text(footer_left);
         if page_count == 0 {
             self.position_label.set_text("page 0 of 0 in this scene");
         } else {

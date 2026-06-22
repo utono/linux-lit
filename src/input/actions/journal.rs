@@ -4,6 +4,15 @@ use gtk4::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// Footer-left text identifying the current page: `<abbrev> <act>.<scene>` for a
+/// scene page, `<abbrev> · whole work` for a whole-work page.
+fn footer_left_text(abbrev: &str, band: JournalBand) -> String {
+    match band {
+        JournalBand::Work => format!("{} \u{00b7} whole work", abbrev),
+        JournalBand::Scene(d1, d2) => format!("{} {}.{}", abbrev, d1, d2),
+    }
+}
+
 /// Load the current band's pages from the DB into `journal_pages`, clamp the
 /// index, and render the current page (or the empty-band card).
 fn render_current(s: &mut AppState) {
@@ -53,8 +62,9 @@ fn render_current(s: &mut AppState) {
         let p = &pages[s.journal_page_index];
         (p.question.clone(), p.answer.clone())
     };
+    let footer_left = footer_left_text(&work_abbrev, s.journal_band);
     s.journal_overlay
-        .show_page(&scene_title, s.journal_page_index, count, &q, &a, cw, h);
+        .show_page(&scene_title, &footer_left, s.journal_page_index, count, &q, &a, cw, h);
     s.journal_pages = pages;
 }
 
@@ -415,4 +425,19 @@ pub(crate) fn delete_current(state: &Rc<RefCell<AppState>>) {
         s.journal_page_index -= 1;
     }
     render_current(&mut s);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn footer_left_scene_shows_abbrev_act_scene() {
+        assert_eq!(footer_left_text("2H6", JournalBand::Scene(1, 4)), "2H6 1.4");
+    }
+
+    #[test]
+    fn footer_left_work_shows_whole_work() {
+        assert_eq!(footer_left_text("2H6", JournalBand::Work), "2H6 \u{00b7} whole work");
+    }
 }
