@@ -1253,14 +1253,6 @@ fn handle_synopsis_overlay_key(
             crate::app::cycle_synopsis(state, -1);
             true
         }
-        "n" => {
-            crate::app::cycle_synopsis(state, 1);
-            true
-        }
-        "p" => {
-            crate::app::cycle_synopsis(state, -1);
-            true
-        }
         "g" if is_alt => {
             crate::input::actions::synopsis::open_work_glosses(state);
             true
