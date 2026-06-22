@@ -218,14 +218,18 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
         match result {
             Ok(Ok(answer)) => {
                 if let Ok(conn) = crate::db::queries::open_db_rw() {
-                    if mode == JournalPromptMode::Edit && edit_id >= 0 {
-                        let _ = crate::db::journal::update_journal_page(
+                    let write_result = if mode == JournalPromptMode::Edit && edit_id >= 0 {
+                        crate::db::journal::update_journal_page(
                             &conn, edit_id, &question_owned, &answer, &model_for_db,
-                        );
+                        )
                     } else {
-                        let _ = crate::db::journal::save_journal_page(
+                        crate::db::journal::save_journal_page(
                             &conn, &work_abbrev, scene.0, scene.1, &question_owned, &answer, &model_for_db,
-                        );
+                        )
+                        .map(|_| ())
+                    };
+                    if let Err(e) = write_result {
+                        crate::logging::log(&format!("JOURNAL: db write failed: {}", e));
                     }
                 }
                 let pages = crate::db::queries::open_db()
@@ -251,6 +255,8 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
                 crate::logging::log(&format!("JOURNAL: claude error: {}", e));
             }
             Err(e) => {
+                let s = state_for_result.borrow();
+                s.journal_overlay.show_message("Internal error — try again.");
                 crate::logging::log(&format!("JOURNAL: tokio join error: {}", e));
             }
         }
