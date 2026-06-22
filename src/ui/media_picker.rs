@@ -111,7 +111,7 @@ impl MediaPicker {
             let display = format_media_label(item, is_default);
             if !filter.is_empty() {
                 let target = display.to_lowercase();
-                if !subsequence_match(&filter_lower, &target) {
+                if !crate::ui::picker_filter::subsequence_match(&filter_lower, &target) {
                     continue;
                 }
             }
@@ -197,14 +197,4 @@ fn format_path(path: &str) -> String {
     } else {
         format!("{}/{}", parent, filename)
     }
-}
-
-fn subsequence_match(filter: &str, target: &str) -> bool {
-    let mut target_chars = target.chars();
-    for fc in filter.chars() {
-        if !target_chars.any(|tc| tc == fc) {
-            return false;
-        }
-    }
-    true
 }

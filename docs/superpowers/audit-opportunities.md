@@ -73,6 +73,22 @@ are tracked separately at the bottom under "## Larger projects (not safe-scope)"
   nav_test) is the same primitive on a different Label — out of #9's toast scope;
   consider as a future #N.
 
+## #10 — subsequence-match-helper — DONE (commit pending)
+
+- **Status:** DONE
+- **Signal:** byte-identical char-level `subsequence_match` (named
+  `subsequence_chars` in library_picker) copied into 5 pickers.
+- **Identical part (extracted):** `subsequence_match(&str, &str) -> bool` in new
+  `src/ui/picker_filter.rs` (pure, no GTK). All call sites already lowercase both
+  sides, so the shared fn stays case-sensitive.
+- **Variants (stayed at call sites):** how each picker builds its `target`
+  (display string vs `format!` of speaker+text vs work title+author+abbrev).
+- **EXCLUDED:** `subsequence_match_work` (work-typed) and `author_name_matches`
+  (pub) — kept as wrappers that delegate their tail; the `#[cfg(test)]`
+  `subsequence_match` alias in library_picker.
+- **Safe-scope:** yes — pure fn extraction; build + 413 bin tests green
+  (incl. 5 library_picker subsequence tests via the delegated path).
+
 ---
 
 ## Larger projects (not safe-scope)
