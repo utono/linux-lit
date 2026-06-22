@@ -5593,10 +5593,10 @@ pub fn current_synopsis_key(state: &AppState) -> (i64, i64) {
     current_scene_divs(state)
 }
 
-/// The fixed label for the whole-work synopsis position `(0,0)`, or `None` for
+/// The fixed label for the whole-work synopsis position `(-2,0)`, or `None` for
 /// any real scene/chapter key. Pure seam for `synopsis_label`.
 fn whole_work_label(div1: i64, div2: i64) -> Option<&'static str> {
-    if (div1, div2) == (0, 0) {
+    if (div1, div2) == (-2, 0) {
         Some("Whole work")
     } else {
         None
@@ -6243,12 +6243,12 @@ pub fn scene_label_for(state: &AppState, div1: i64, div2: i64) -> String {
     scene_label(div1, div2)
 }
 
-/// Put the whole-work synopsis key `(0,0)` first when it exists, otherwise
+/// Put the whole-work synopsis key `(-2,0)` first when it exists, otherwise
 /// return `rest` unchanged. Pure seam for `ordered_synopsis_scenes`.
 fn prepend_whole_work(has_whole_work: bool, rest: Vec<(i64, i64)>) -> Vec<(i64, i64)> {
     if has_whole_work {
         let mut out = Vec::with_capacity(rest.len() + 1);
-        out.push((0, 0));
+        out.push((-2, 0));
         out.extend(rest);
         out
     } else {
@@ -6260,7 +6260,7 @@ fn prepend_whole_work(has_whole_work: bool, rest: Vec<(i64, i64)>) -> Vec<(i64, 
 /// reading order. `work.lines` is already sorted by (div1, div2, line_in_div),
 /// so collecting unique pairs in encounter order gives reading order.
 fn ordered_synopsis_scenes(s: &AppState) -> Vec<(i64, i64)> {
-    let has_whole_work = s.synopsis_cache.contains_key(&(0, 0));
+    let has_whole_work = s.synopsis_cache.contains_key(&(-2, 0));
 
     if is_chapter_work(s) {
         let work = match s.current_work.as_ref() {
@@ -6286,10 +6286,10 @@ fn ordered_synopsis_scenes(s: &AppState) -> Vec<(i64, i64)> {
     let mut keys = Vec::new();
     for line in &work.lines {
         let k = (line.div1, line.div2);
-        // Never list (0,0) as a scene from the line loop — it's the whole-work
-        // key, prepended separately. (Lines always have div1 >= 1, but guard
-        // anyway so a stray (0,0) line can't double it.)
-        if k != (0, 0) && seen.insert(k) && s.synopsis_cache.contains_key(&k) {
+        // Never list (-2,0) as a scene from the line loop — it's the whole-work
+        // key, prepended separately. (Lines always have div1 >= -1, but guard
+        // anyway so a stray (-2,0) line can't double it.)
+        if k != (-2, 0) && seen.insert(k) && s.synopsis_cache.contains_key(&k) {
             keys.push(k);
         }
     }
@@ -6691,18 +6691,19 @@ mod synopsis_tests {
     use super::prepend_whole_work;
 
     #[test]
-    fn whole_work_label_only_for_zero_zero() {
-        assert_eq!(super::whole_work_label(0, 0), Some("Whole work"));
+    fn whole_work_label_only_for_minus_two() {
+        assert_eq!(super::whole_work_label(-2, 0), Some("Whole work"));
+        assert_eq!(super::whole_work_label(0, 0), None); // (0,0) is the Prologue slot, not whole-work
         assert_eq!(super::whole_work_label(1, 1), None);
         assert_eq!(super::whole_work_label(2, 0), None);
     }
 
     #[test]
-    fn prepend_whole_work_puts_zero_zero_first() {
+    fn prepend_whole_work_puts_minus_two_zero_first() {
         let rest = vec![(1, 1), (1, 2), (2, 1)];
         assert_eq!(
             prepend_whole_work(true, rest.clone()),
-            vec![(0, 0), (1, 1), (1, 2), (2, 1)]
+            vec![(-2, 0), (1, 1), (1, 2), (2, 1)]
         );
     }
 
@@ -6714,7 +6715,7 @@ mod synopsis_tests {
 
     #[test]
     fn prepend_whole_work_empty_rest() {
-        assert_eq!(prepend_whole_work(true, vec![]), vec![(0, 0)]);
+        assert_eq!(prepend_whole_work(true, vec![]), vec![(-2, 0)]);
         assert_eq!(prepend_whole_work(false, vec![]), Vec::<(i64, i64)>::new());
     }
 }
