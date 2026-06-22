@@ -94,6 +94,11 @@ impl JournalOverlay {
         ask_title.add_css_class("gloss-header");
         ask_title.set_halign(gtk4::Align::Start);
         ask_container.append(&ask_title);
+        let ask_scrolled = gtk4::ScrolledWindow::new();
+        ask_scrolled.set_min_content_height(72);
+        ask_scrolled.set_max_content_height(160);
+        ask_scrolled.set_hscrollbar_policy(gtk4::PolicyType::Never);
+        ask_scrolled.set_vscrollbar_policy(gtk4::PolicyType::Automatic);
         let ask_input = gtk4::TextView::new();
         ask_input.set_editable(true);
         ask_input.set_cursor_visible(true);
@@ -101,7 +106,8 @@ impl JournalOverlay {
         ask_input.add_css_class("gloss-text");
         ask_input.add_css_class("ask-input");
         ask_input.set_vexpand(true);
-        ask_container.append(&ask_input);
+        ask_scrolled.set_child(Some(&ask_input));
+        ask_container.append(&ask_scrolled);
         let ask_hint = Label::new(Some("Ctrl+Enter to ask \u{00b7} Esc to cancel"));
         ask_hint.add_css_class("ask-hint");
         ask_hint.set_halign(gtk4::Align::Start);
@@ -200,6 +206,10 @@ impl JournalOverlay {
     }
 
     pub fn show_message(&self, text: &str) {
+        let (w, h) = self.last_card_size.get();
+        if w > 0 {
+            self.container.set_size_request(w, h);
+        }
         self.view.buffer().set_text(text);
         self.apply_font();
         self.ask_container.set_visible(false);
