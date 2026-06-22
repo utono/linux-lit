@@ -35,8 +35,13 @@ For each question:
 - **System prompt** — a new `JOURNAL_QA_PROMPT` (`LazyLock<String>` in
   `src/gloss.rs`), loaded from the lit.db `prompts` table via the existing
   `template_or` / `active_prompt` mechanism with a compiled fallback. Frames
-  Claude as answering a reader's question about a specific scene, grounded in
-  the provided scene text, concise and reader-focused.
+  Claude as a literary interlocutor answering a reader's question about a
+  specific scene. Crucially, the prompt **encourages situating the scene within
+  the whole play** — drawing on Claude's knowledge of the complete work to trace
+  foreshadowing, echoes, and thematic arcs both backward and forward (e.g.
+  connecting Hamlet's "what dreams may come" ruminations in 3.1 to his "the
+  readiness is all" / "undiscovered country" resolve in 5.2). Reader-focused,
+  substantive.
 - **User message** — assembled from:
   - the work's **title and author**,
   - the **full current scene text** (all lines for the current `(div1, div2)`,
@@ -45,8 +50,21 @@ For each question:
 - **Model** — `state.config.claude_model` (currently `claude-opus-4-8`), same as
   glosses.
 
-Answers are grounded in the current scene only (plus title/author for
-orientation) — not the whole work.
+**Whole-play awareness comes from Claude's training knowledge**, not from
+sending the full work. The verbatim scene text grounds the answer in *this*
+moment; Claude's deep familiarity with the canonical play supplies the
+cross-scene connections. This is cheapest and works well for the canonical
+Shakespeare corpus Claude knows thoroughly. (Known limitation: for lesser-known
+or heavily-edited works Claude knows less well, whole-play connections will be
+weaker; sending per-scene `scene_synopses` as a play map, or the full work text,
+are possible future enhancements if this proves insufficient — see Future
+phases.)
+
+**No spoiler/progress gating.** Unlike Kindle "Ask This Book" / Google Play
+Books "Book Insights" (which restrict answers to the reader's current position),
+this journal is a study tool for a reader engaging the whole work — it
+deliberately permits and encourages forward-looking connections across the
+play.
 
 ## Data model
 
@@ -205,14 +223,53 @@ and delete-confirm).
 - `src/input/keymap.rs` — `handle_journal_key`, dispatch arm.
 - `src/input/keymap_config.rs` + `keymap.json` + `keybinds_overlay.rs` — binds.
 
+## Future phase: tagging (theme / mood / character)
+
+Not built in the first version, but sketched here so the data model doesn't
+paint us into a corner. Reading-app precedent: StoryGraph's fixed mood
+vocabulary, Glasp's per-highlight tags, Ryan Holiday's theme-per-notecard, and
+Obsidian per-character backlinks; Marvin's "Deep View" per-character
+concordance is the closest analogue and dovetails with linux-lit's existing
+concordance system.
+
+Design sketch:
+
+- **Storage** — a `journal_tags(entry_id, tag)` side table (many-to-many),
+  rather than a column on `journal_entries`, so a page can carry multiple tags
+  and tags can be queried independently. `entry_id` FK → `journal_entries.id`.
+- **Tag kinds** — free-form tags, with optional convention prefixes the UI can
+  group on: `theme:mortality`, `mood:foreboding`, `char:Hamlet`. Character tags
+  could be auto-suggested from the scene's speakers (already on `Line.speaker`)
+  and reconciled with the concordance's character list.
+- **Keyboard tagging** — a `t` key in the journal overlay opens a small tag
+  input/picker on the current page (mirrors the gloss add-card pattern).
+- **Filtering / cross-scene grouping** — a tag filter (e.g. in a future journal
+  picker) collects every page across the work carrying a tag — a per-character
+  or per-theme reading thread that cuts across scenes, the journal analogue of
+  the concordance's cross-work word navigation.
+- **Export** — tags travel with each entry in any future export.
+
+This stays out of the first implementation; the only forward-compatible
+requirement is that `journal_entries.id` be a stable primary key a `journal_tags`
+table can reference later (already the case).
+
 ## Out of scope (deferred)
 
 - TTS / audio for journal answers (glosses have it; journal does not, initially).
 - Cross-work journal navigation (journal is per-work).
 - Multi-turn threaded conversations on a page (each page is one independent Q&A).
-- Whole-work or cross-scene context for answers (scene-scoped only).
 - A journal picker (analogous to the gloss picker) — could be added later if
-  flipping pages by keyboard proves insufficient.
+  flipping pages by keyboard proves insufficient. (A tag filter, per the tagging
+  future phase, would likely live here.)
+- Sending full work text or per-scene synopses as Claude context — whole-play
+  awareness comes from training knowledge in v1 (see Q&A scope); these are
+  fallbacks only if that proves insufficient.
+- Tagging by theme/mood/character — designed as a future phase (see above), not
+  built initially.
+- Spoiler/progress gating — deliberately omitted (see Q&A scope).
+- Clickable line-ID citations, preset question prompts, journal export, and
+  spaced review/resurfacing — researched but not selected for this design;
+  candidates for later iterations.
 
 ## Verification
 
