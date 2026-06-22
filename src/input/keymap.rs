@@ -282,12 +282,6 @@ fn handle_picker_key(
         PickerAction::Hide => {
             let mut s = state.borrow_mut();
             match mode {
-                InputMode::BookmarkPicker => { s.bookmark_picker.hide(); s.input_mode = InputMode::Reader; }
-                InputMode::MediaPicker => { s.media_picker.hide(); s.input_mode = InputMode::Reader; }
-                InputMode::ConcordancePicker => { s.concordance_picker.hide(); s.input_mode = InputMode::Reader; }
-                InputMode::ConcordanceWordPicker => { s.concordance_word_picker.hide(); s.input_mode = InputMode::Reader; }
-                InputMode::ConcordanceListPicker => { s.concordance_list_picker.hide(); s.input_mode = InputMode::Reader; }
-                InputMode::ConcordanceWorksPicker => { s.concordance_works_picker.hide(); s.input_mode = InputMode::Reader; }
                 InputMode::GlossPicker => {
                     s.gloss_picker.hide();
                     // If the picker was opened from within the gloss overlay
@@ -300,10 +294,14 @@ fn handle_picker_key(
                         s.input_mode = InputMode::Reader;
                     }
                 }
-                InputMode::AuthorshipPicker => { s.authorship_picker.hide(); s.input_mode = InputMode::Reader; }
                 InputMode::JournalPicker => { s.journal_picker.hide(); s.input_mode = InputMode::JournalOverlay; }
                 InputMode::EchoLinePicker => { drop(s); crate::input::actions::echoes::cancel_add_echo(state); }
-                _ => {}
+                _ => {
+                    if let Some(p) = crate::input::picker_dispatch::picker_for_mode(&s, mode) {
+                        p.hide();
+                        s.input_mode = InputMode::Reader;
+                    }
+                }
             }
             true
         }
