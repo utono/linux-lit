@@ -1971,6 +1971,7 @@ fn dispatch_action(
             crate::logging::log(&format!("VOCAB: highlighting {}", if s.vocab_highlight_visible { "on" } else { "off" }));
         }
         ToggleGlossOverlay => crate::input::actions::gloss::toggle_overlay(state),
+        ToggleJournalOverlay => crate::input::actions::journal::toggle_overlay(state),
         OpenGlossPicker => crate::input::actions::pickers::open_gloss_picker(state, tokio_handle),
         OpenLastGloss => crate::input::actions::gloss::open_last_gloss(state),
         ShowEchoesBcp => crate::input::actions::echoes::show_echoes_for_cursor_line(state, crate::db::echo_channel::EchoChannel::Bcp, tokio_handle),
