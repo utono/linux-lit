@@ -1,4 +1,3 @@
-use gtk4::prelude::*;
 use gtk4::ListBox;
 
 /// Select the row at `index` in `list_box` if it exists; no-op otherwise.
