@@ -801,6 +801,9 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
                 crate::logging::log(&format!("GLOSS: add error: {}", e));
             }
             Err(e) => {
+                // Recover the UI so the overlay isn't stuck on the loading card.
+                let s = state_for_result.borrow();
+                s.gloss_overlay.show("Internal error \u{2014} try again.", "");
                 crate::logging::log(&format!("GLOSS: tokio join error: {}", e));
             }
         }
@@ -914,6 +917,9 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
                 crate::logging::log(&format!("GLOSS: edit error: {}", e));
             }
             Err(e) => {
+                // Recover the UI so the overlay isn't stuck on the loading card.
+                let s = state_for_result.borrow();
+                s.gloss_overlay.show("Internal error \u{2014} try again.", "");
                 crate::logging::log(&format!("GLOSS: tokio join error: {}", e));
             }
         }

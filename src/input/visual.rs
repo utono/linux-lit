@@ -536,6 +536,9 @@ fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
                 crate::logging::log(&format!("READER-GLOSS: API error: {}", e));
             }
             Err(e) => {
+                // Recover the UI so the overlay isn't stuck on the loading card.
+                let s = state_for_result.borrow();
+                s.gloss_overlay.show("Internal error \u{2014} try again.", "");
                 crate::logging::log(&format!("READER-GLOSS: tokio join error: {}", e));
             }
         }
@@ -681,6 +684,9 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
                 crate::logging::log(&format!("GLOSS: API error: {}", e));
             }
             Err(e) => {
+                // Recover the UI so the overlay isn't stuck on the loading card.
+                let s = state_for_result.borrow();
+                s.gloss_overlay.show("Internal error \u{2014} try again.", "");
                 crate::logging::log(&format!("GLOSS: tokio join error: {}", e));
             }
         }
@@ -950,6 +956,9 @@ fn run_pending_inner_monologue_blocking(
                 crate::logging::log(&format!("GLOSS: inner monologue API error: {}", e));
             }
             Err(e) => {
+                // Recover the UI so the overlay isn't stuck on the loading card.
+                let s = state_for_result.borrow();
+                s.gloss_overlay.show("Internal error \u{2014} try again.", "");
                 crate::logging::log(&format!("GLOSS: inner monologue tokio join error: {}", e));
             }
         }
