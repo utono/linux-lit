@@ -1,5 +1,4 @@
-use crate::ui::ask_card::AskCard;
-pub use crate::ui::ask_card::AskFocus;
+use crate::ui::ask_card::{AskCard, AskFocus};
 use gtk4::prelude::*;
 use gtk4::{self, Align, Label, Overlay};
 use std::cell::{Cell, RefCell};

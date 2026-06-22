@@ -1,13 +1,7 @@
-use crate::ui::ask_card::AskCard;
+use crate::ui::ask_card::{AskCard, AskFocus};
 use gtk4::prelude::*;
 use gtk4::{Label, Overlay};
 use std::cell::{Cell, RefCell};
-
-// `AskFocus` is named in this file's method signatures AND imported by keymap.rs
-// as `crate::ui::journal_overlay::AskFocus`. A single `pub use` both brings the
-// type into local scope and re-exports it, so this task builds clean on its own.
-// Task 4 repoints keymap and removes this re-export.
-pub use crate::ui::ask_card::AskFocus;
 
 pub struct JournalOverlay {
     pub overlay: Overlay,
