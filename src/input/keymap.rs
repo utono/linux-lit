@@ -114,8 +114,7 @@ pub fn handle_key(
             crate::app::InputMode::Search => handle_search_key(state, key_name),
             crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_shift, is_alt, tokio_handle),
             crate::app::InputMode::GlossVisual => handle_gloss_visual_key(state, key_state, key_name),
-            // Real handler wired in a later task; for now consume keys in this mode.
-            crate::app::InputMode::JournalOverlay => true,
+            crate::app::InputMode::JournalOverlay => handle_journal_key(state, key_state, key_name, is_ctrl, is_alt),
             crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_state, key_name, is_ctrl, is_alt, is_shift),
             crate::app::InputMode::SynopsisVisual => handle_synopsis_visual_key(state, key_state, key_name),
             crate::app::InputMode::TranslationOverlay => handle_translation_overlay_key(state, key_name),
@@ -635,6 +634,116 @@ fn handle_search_key(
         // so it neither triggers playback nor moves focus out of the Entry.
         "Tab" | "ISO_Left_Tab" => true,
         _ => false, // let GTK route to the Entry (including Space)
+    }
+}
+
+fn handle_journal_key(
+    state: &Rc<RefCell<AppState>>,
+    key_state: &Rc<RefCell<KeyState>>,
+    key_name: &str,
+    is_ctrl: bool,
+    is_alt: bool,
+) -> bool {
+    use crate::ui::journal_overlay::AskFocus;
+
+    // ---- Ask/edit input card intercepts Tab / Ctrl+Enter / Escape first ----
+    let (ask_open, ask_focus) = {
+        let s = state.borrow();
+        (s.journal_overlay.ask_is_open(), s.journal_overlay.ask_focus())
+    };
+    if ask_open {
+        if key_name == "Tab" || key_name == "ISO_Left_Tab" {
+            state.borrow().journal_overlay.toggle_ask_focus();
+            return true;
+        }
+        if is_ctrl && key_name == "Return" {
+            crate::input::actions::journal::submit_prompt(state);
+            return true;
+        }
+        if key_name == "Escape" {
+            crate::input::actions::journal::close_prompt(state);
+            return true;
+        }
+        if ask_focus == AskFocus::Ask {
+            return false;
+        }
+    }
+
+    // gg chord -> top
+    if key_state.borrow().chord == ChordState::PendingG {
+        key_state.borrow_mut().chord = ChordState::None;
+        if key_name == "g" {
+            state.borrow().journal_overlay.scroll_to_top();
+        }
+        return true;
+    }
+
+    if is_alt {
+        match key_name {
+            "n" => {
+                crate::input::actions::journal::nav_scene(state, 1);
+                return true;
+            }
+            "p" => {
+                crate::input::actions::journal::nav_scene(state, -1);
+                return true;
+            }
+            _ => {}
+        }
+    }
+
+    if is_ctrl {
+        match key_name {
+            "n" => {
+                crate::input::actions::journal::nav_page(state, 1);
+                return true;
+            }
+            "p" => {
+                crate::input::actions::journal::nav_page(state, -1);
+                return true;
+            }
+            "j" => {
+                crate::input::actions::journal::close_overlay(state);
+                return true;
+            }
+            _ => {}
+        }
+    }
+
+    match key_name {
+        "a" => {
+            crate::input::actions::journal::begin_ask(state);
+            true
+        }
+        "e" => {
+            crate::input::actions::journal::begin_edit(state);
+            true
+        }
+        "d" => {
+            crate::input::actions::journal::delete_current(state);
+            true
+        }
+        "g" => {
+            KeyState::start_chord(key_state, ChordState::PendingG);
+            true
+        }
+        "G" => {
+            state.borrow().journal_overlay.scroll_to_bottom();
+            true
+        }
+        "j" => {
+            state.borrow().journal_overlay.scroll(1);
+            true
+        }
+        "k" => {
+            state.borrow().journal_overlay.scroll(-1);
+            true
+        }
+        "Escape" => {
+            crate::input::actions::journal::close_overlay(state);
+            true
+        }
+        _ => false,
     }
 }
 
