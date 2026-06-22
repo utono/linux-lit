@@ -449,6 +449,7 @@ fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
         let card_height = s.content_hbox.height();
         s.gloss_overlay.show_gloss_with_color(&ctx.source_text, gloss_text, card_width, card_height, Some(&s.theme.root_color), &pairs);
         s.gloss_overlay.set_position(idx, all_glosses.len());
+        s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
         s.gloss_list = all_glosses;
         s.gloss_index = idx;
         s.gloss_context = Some(ctx);
@@ -522,6 +523,7 @@ fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
                 let pairs = ctx.source_line_pairs();
                 s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &gloss_text, cw, h, Some(&s.theme.root_color), &pairs);
                 s.gloss_overlay.set_position(new_idx, all.len());
+                s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
                 s.gloss_list = all;
                 s.gloss_index = new_idx;
                 s.gloss_context = Some(ctx);
@@ -592,6 +594,7 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
         let card_height = s.content_hbox.height();
         s.gloss_overlay.show_gloss_with_color(&ctx.source_text, gloss_text, card_width, card_height, Some(&s.theme.root_color), &pairs);
         s.gloss_overlay.set_position(idx, all_glosses.len());
+        s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
         s.gloss_list = all_glosses;
         s.gloss_index = idx;
         s.gloss_context = Some(ctx);
@@ -665,6 +668,7 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
                 let pairs = ctx.source_line_pairs();
                 s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &gloss_text, cw, h, Some(&s.theme.root_color), &pairs);
                 s.gloss_overlay.set_position(new_idx, all.len());
+                s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
                 s.gloss_list = all;
                 s.gloss_index = new_idx;
                 s.gloss_context = Some(ctx);
@@ -735,6 +739,7 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
         let card_height = s.content_hbox.height();
         s.gloss_overlay.show_gloss_with_color(&ctx.source_text, gloss_text, card_width, card_height, Some(&s.theme.root_color), &pairs);
         s.gloss_overlay.set_position(idx, all_glosses.len());
+        s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
         s.gloss_list = all_glosses;
         s.gloss_index = idx;
         s.gloss_context = Some(ctx);
@@ -932,6 +937,7 @@ fn run_pending_inner_monologue_blocking(
                 let pairs = ctx.source_line_pairs();
                 s.gloss_overlay.show_gloss_with_color(&ctx.source_text, &verified_text, cw, h, Some(&s.theme.root_color), &pairs);
                 s.gloss_overlay.set_position(new_idx, all.len());
+                s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
                 s.gloss_list = all;
                 s.gloss_index = new_idx;
                 s.gloss_context = Some(ctx);

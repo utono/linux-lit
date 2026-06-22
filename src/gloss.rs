@@ -131,6 +131,7 @@ Rules:
 - When quoting verse from the text, use <speaker> and <verse> tags — never embed verse lines inside <gloss> tags
 - Quote verbatim — exact words, exact spelling, exact line breaks from the source
 - Never use / to join verse lines
+- Never use the = sign. Write paraphrases as prose (write 'X means Y' or 'X, i.e. Y', not 'X = Y').
 - {}
 - Each <verse> tag contains exactly one line of the original
 - Each <gloss> tag contains one flowing prose paragraph (3-6 sentences)
@@ -340,6 +341,7 @@ Use the same output format as the original gloss — use these XML tags:
 Rules:
 - Quote verbatim — exact words, exact spelling, exact line breaks
 - Never use / to join verse lines
+- Never use the = sign. Write paraphrases as prose (write 'X means Y' or 'X, i.e. Y', not 'X = Y').
 - {}
 - Each <verse> tag contains exactly one line of the original
 - Each <gloss> tag contains one flowing prose paragraph (3-6 sentences)
@@ -374,6 +376,7 @@ Rules:
 - NEVER write IPA, phonetic symbols, or slash-wrapped pronunciations anywhere.
 - Quote verbatim — exact words, exact spelling, exact line breaks from the source.
 - Never use / to join verse lines. Never truncate with ...
+- Never use the = sign. Write paraphrases as prose (write 'X means Y' or 'X, i.e. Y', not 'X = Y').
 - Each <verse> tag contains exactly one line of the original.
 - ALWAYS place a <speaker> tag before EVERY group of <verse> lines, even when the speaker has not changed.
 - No markdown, no bullets, no numbered lists, no headers.";
@@ -395,6 +398,7 @@ Rules:
 - Answer the reader's question directly; do NOT restate or duplicate the motivation lede.
 - When quoting verse, use <speaker>/<verse> tags — never embed verse inside <gloss>.
 - Quote verbatim. Never use / to join verse lines.
+- Never use the = sign. Write paraphrases as prose (write 'X means Y' or 'X, i.e. Y', not 'X = Y').
 - No acting direction, no IPA, no phonetic symbols.
 - Each <gloss> is terse (1-3 sentences).
 - No markdown, no bullets, no numbered lists, no headers.";
@@ -416,6 +420,7 @@ Rules:
 - PRESERVE each speaker's one-sentence motivation lede: every distinct speaker has exactly one, placed immediately AFTER that speaker's first <verse> block (the speaker's opening lines come first, then their lede <gloss>), never before any verse. Rewrite a lede if the new context warrants, but NEVER drop it. Each lede leads with a precise active verb naming the rhetorical move (insinuates, feigns, goads, deflects, flatters…) — never weak wind-ups like 'wants to'/'tries to'.
 - After each speaker's lede, the remaining <gloss> blocks are terse (1-3 sentences): character motive and Elizabethan concepts a reader would miss. No acting direction. No IPA.
 - Quote verbatim. Never use / to join verse lines.
+- Never use the = sign. Write paraphrases as prose (write 'X means Y' or 'X, i.e. Y', not 'X = Y').
 - ALWAYS place a <speaker> tag before EVERY group of <verse> lines.
 - No markdown, no bullets, no numbered lists, no headers.";
     template_or("gloss.reader-gloss-edit", FALLBACK)
@@ -462,6 +467,7 @@ Rules:
 - NEVER write IPA, phonetic symbols, or slash-wrapped pronunciations anywhere in <gloss> prose — do not mention how a word is pronounced using symbols. Explain meaning and delivery in plain words only.
 - Never use / to join verse lines
 - Never truncate with ...
+- Never use the = sign. Write paraphrases as prose (write 'X means Y' or 'X, i.e. Y', not 'X = Y').
 - Each <verse> tag contains exactly one line of the original
 - Each <gloss> tag contains one flowing prose paragraph (3-4 sentences preferred, never exceed 6)
 - For long speeches (over 8 lines), break into 4-8 line chunks with analysis between each chunk
