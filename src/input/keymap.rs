@@ -688,6 +688,10 @@ fn handle_journal_key(
                 crate::input::actions::journal::nav_scene(state, -1);
                 return true;
             }
+            "w" => {
+                crate::input::actions::journal::nav_to_work_band(state);
+                return true;
+            }
             _ => {}
         }
     }
