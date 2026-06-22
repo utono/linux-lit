@@ -1,0 +1,32 @@
+# Audit-opportunity ledger entry format
+
+Each opportunity in `docs/superpowers/audit-opportunities.md` is one entry.
+Copy this shape. Keep numbering monotonic; never reuse a merged number.
+
+```markdown
+## #N — <short-name> — STATUS
+
+- **Status:** OPEN | SPEC | PLAN | DONE (commit <sha>)
+- **Signal:** <duplication count + where, e.g. "13 ListBox pickers repeat an
+  identical move_selection tail">
+- **Identical part (extracts):** <the byte-identical code that becomes the helper>
+- **Variants (stay at call sites):** A — <…>; B — <…>; C — <…>
+- **EXCLUDED:** <file> (<why — structurally different>); <file> (<why>)
+- **Safe-scope:** yes — behavior-preserving <kind: widget-construction / tail /
+  literal> extraction, zero behavior change.
+- **Rank inputs:** copies=<n>, drift_risk=<low/med/high>, scope=<tiny/small/med>
+```
+
+The header of the ledger file itself:
+
+```markdown
+# linux-lit audit opportunities
+
+Numbered, safe-scope, behavior-preserving refactoring opportunities. Produced by
+the `assess-maintainability` skill; consumed by the spec→plan→refactor→merge
+pipeline. DONE entries stay for numbering continuity — never reuse a number.
+
+Larger, behavior-CHANGING projects (god-struct split, app.rs module carve-up)
+are tracked separately at the bottom under "## Larger projects (not safe-scope)"
+— they are NOT numbered opportunities.
+```
