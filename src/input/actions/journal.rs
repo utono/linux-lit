@@ -90,7 +90,7 @@ pub(crate) fn close_overlay(state: &Rc<RefCell<AppState>>) {
     }
 }
 
-/// Flip pages within the current scene (clamped, no wrap).
+/// Flip pages within the current band (clamped, no wrap).
 pub(crate) fn nav_page(state: &Rc<RefCell<AppState>>, delta: i32) {
     let mut s = state.borrow_mut();
     let count = s.journal_pages.len();
