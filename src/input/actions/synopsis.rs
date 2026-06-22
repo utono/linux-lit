@@ -230,13 +230,7 @@ pub(crate) fn undo_amend(state_rc: &Rc<RefCell<AppState>>) {
     let ((div1, div2), original) = match undo {
         Some(u) => u,
         None => {
-            let s = state_rc.borrow();
-            s.chapter_toast.set_text("Nothing to undo");
-            s.chapter_toast.set_visible(true);
-            let toast = s.chapter_toast.clone();
-            glib::timeout_add_local_once(std::time::Duration::from_secs(2), move || {
-                toast.set_visible(false);
-            });
+            crate::ui::toast::show_transient(&state_rc.borrow().chapter_toast, "Nothing to undo", 2);
             return;
         }
     };
@@ -297,13 +291,7 @@ pub(crate) fn open_work_glosses(state_rc: &Rc<RefCell<AppState>>) {
         Err(_) => Vec::new(),
     };
     if passages.is_empty() {
-        let s = state_rc.borrow();
-        s.chapter_toast.set_text("No glosses for this work");
-        s.chapter_toast.set_visible(true);
-        let toast = s.chapter_toast.clone();
-        glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-            toast.set_visible(false);
-        });
+        crate::ui::toast::show_transient(&state_rc.borrow().chapter_toast, "No glosses for this work", 3);
         return;
     }
     // Stable partition: current-scene passages first, the rest after, each group

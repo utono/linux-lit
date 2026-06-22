@@ -1148,23 +1148,13 @@ fn toggle_playback_sync(s: &mut AppState) {
     s.speed_toast.set_halign(gtk4::Align::Center);
     s.speed_toast.set_margin_start(0);
     s.speed_toast.set_margin_end(0);
-    s.speed_toast.set_text(label);
-    s.speed_toast.set_visible(true);
-    let toast = s.speed_toast.clone();
-    glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-        toast.set_visible(false);
-    });
+    crate::ui::toast::show_transient(&s.speed_toast, label, 3);
 }
 
 /// Show a transient bottom-center toast (reuses `chapter_toast`, 3s auto-hide).
 /// Used when a play attempt is a no-op because the line has no timestamp.
 fn show_no_timestamp_toast(s: &AppState) {
-    s.chapter_toast.set_text("No timestamp on this line");
-    s.chapter_toast.set_visible(true);
-    let toast = s.chapter_toast.clone();
-    glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-        toast.set_visible(false);
-    });
+    crate::ui::toast::show_transient(&s.chapter_toast, "No timestamp on this line", 3);
 }
 
 /// Run a main-card navigation function (moves `current_line` + seeks MPV via
@@ -1400,12 +1390,7 @@ fn handle_synopsis_visual_key(
                 s.gloss_overlay.exit_visual();
                 s.input_mode = crate::app::InputMode::SynopsisOverlay;
                 s.gloss_overlay.set_synopsis_hint();
-                s.chapter_toast.set_text("Copied");
-                s.chapter_toast.set_visible(true);
-                let toast = s.chapter_toast.clone();
-                glib::timeout_add_local_once(std::time::Duration::from_secs(2), move || {
-                    toast.set_visible(false);
-                });
+                crate::ui::toast::show_transient(&s.chapter_toast, "Copied", 2);
             }
             true
         }
@@ -1469,12 +1454,7 @@ fn handle_gloss_visual_key(
                 s.gloss_overlay.exit_visual_to_start();
                 s.input_mode = crate::app::InputMode::GlossOverlay;
                 s.gloss_overlay.set_gloss_hint();
-                s.chapter_toast.set_text("Copied");
-                s.chapter_toast.set_visible(true);
-                let toast = s.chapter_toast.clone();
-                glib::timeout_add_local_once(std::time::Duration::from_secs(2), move || {
-                    toast.set_visible(false);
-                });
+                crate::ui::toast::show_transient(&s.chapter_toast, "Copied", 2);
             }
             true
         }
@@ -2086,12 +2066,7 @@ fn dispatch_action(
             s.speed_toast.set_halign(gtk4::Align::Center);
             s.speed_toast.set_margin_start(0);
             s.speed_toast.set_margin_end(0);
-            s.speed_toast.set_text(&label);
-            s.speed_toast.set_visible(true);
-            let toast = s.speed_toast.clone();
-            glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-                toast.set_visible(false);
-            });
+            crate::ui::toast::show_transient(&s.speed_toast, &label, 3);
         }
 
         // Vocab / glossing
@@ -2193,12 +2168,7 @@ fn dispatch_action(
                 s.scansion_level = crate::scansion::ScanLevel::Off;
                 // Reuse the chapter-toast widget for a transient reader message
                 // (same pattern as show_chapter_toast in navigation.rs:1670).
-                s.chapter_toast.set_text("No scansion for this work");
-                s.chapter_toast.set_visible(true);
-                let toast = s.chapter_toast.clone();
-                glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-                    toast.set_visible(false);
-                });
+                crate::ui::toast::show_transient(&s.chapter_toast, "No scansion for this work", 3);
                 crate::logging::log("SCANSION: no scansion for this work");
                 return;
             }
@@ -2302,12 +2272,7 @@ fn dispatch_action(
             s.speed_toast.set_halign(gtk4::Align::Center);
             s.speed_toast.set_margin_start(0);
             s.speed_toast.set_margin_end(0);
-            s.speed_toast.set_text(&format!("Copied {}", clip));
-            s.speed_toast.set_visible(true);
-            let toast = s.speed_toast.clone();
-            glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-                toast.set_visible(false);
-            });
+            crate::ui::toast::show_transient(&s.speed_toast, &format!("Copied {}", clip), 3);
         }
 
         // Multi-key chord entry
@@ -2347,42 +2312,22 @@ fn dispatch_action(
         ToggleAuthorship => {
             let mut s = state.borrow_mut();
             if s.authorship_sets.is_empty() {
-                s.chapter_toast.set_text("No authorship data for this work");
-                s.chapter_toast.set_visible(true);
-                let toast = s.chapter_toast.clone();
-                glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-                    toast.set_visible(false);
-                });
+                crate::ui::toast::show_transient(&s.chapter_toast, "No authorship data for this work", 3);
                 return;
             }
             s.authorship_enabled = !s.authorship_enabled;
             crate::app::apply_authorship_formatting(&mut s);
             let label = if s.authorship_enabled { "Authorship: on" } else { "Authorship: off" };
-            s.chapter_toast.set_text(label);
-            s.chapter_toast.set_visible(true);
-            let toast = s.chapter_toast.clone();
-            glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-                toast.set_visible(false);
-            });
+            crate::ui::toast::show_transient(&s.chapter_toast, label, 3);
         }
         PickAttributionSet => {
             let s = state.borrow();
             if s.authorship_sets.is_empty() {
-                s.chapter_toast.set_text("No authorship data for this work");
-                s.chapter_toast.set_visible(true);
-                let toast = s.chapter_toast.clone();
-                glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-                    toast.set_visible(false);
-                });
+                crate::ui::toast::show_transient(&s.chapter_toast, "No authorship data for this work", 3);
                 return;
             }
             if s.authorship_sets.len() == 1 {
-                s.chapter_toast.set_text("Only one attribution set available");
-                s.chapter_toast.set_visible(true);
-                let toast = s.chapter_toast.clone();
-                glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-                    toast.set_visible(false);
-                });
+                crate::ui::toast::show_transient(&s.chapter_toast, "Only one attribution set available", 3);
                 return;
             }
             drop(s);

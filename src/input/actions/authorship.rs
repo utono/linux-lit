@@ -1,4 +1,3 @@
-use gtk4::prelude::WidgetExt;
 use std::cell::RefCell;
 use std::rc::Rc;
 use crate::app::AppState;
@@ -32,11 +31,6 @@ pub fn confirm_attribution_selection(state: &Rc<RefCell<AppState>>) {
         crate::app::apply_authorship_formatting(&mut s);
 
         let msg = format!("Authorship: {}", set.display_name);
-        s.chapter_toast.set_text(&msg);
-        s.chapter_toast.set_visible(true);
-        let toast = s.chapter_toast.clone();
-        glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-            toast.set_visible(false);
-        });
+        crate::ui::toast::show_transient(&s.chapter_toast, &msg, 3);
     }
 }

@@ -25,5 +25,6 @@ pub mod page_image_overlay;
 pub mod picker_nav;
 pub mod search_bar;
 pub mod settings_overlay;
+pub mod toast;
 pub mod translation_overlay;
 pub mod voice_picker;
