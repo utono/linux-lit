@@ -6,5 +6,6 @@ pub mod echo_channel;
 pub mod line_types;
 pub mod models;
 pub mod prompts;
+pub mod journal;
 pub mod queries;
 pub mod stopwords;

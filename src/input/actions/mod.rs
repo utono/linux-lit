@@ -8,6 +8,7 @@ pub mod concordance;
 pub mod echoes;
 pub mod escape;
 pub mod gloss;
+pub mod journal;
 pub mod pickers;
 pub mod settings;
 pub mod synopsis;
@@ -96,6 +97,7 @@ pub enum Action {
     ConcordancePrev,
     ToggleVocabHighlight,
     ToggleGlossOverlay,
+    ToggleJournalOverlay,
     OpenGlossPicker,
     OpenLastGloss,
     ShowEchoesBcp,
@@ -211,6 +213,7 @@ impl Action {
             | Action::JumpToPrevVocab
             | Action::ToggleVocabHighlight
             | Action::ToggleGlossOverlay
+            | Action::ToggleJournalOverlay
             | Action::OpenGlossPicker
             | Action::OpenLastGloss
             | Action::ShowEchoesBcp
@@ -335,6 +338,7 @@ impl Action {
             Action::JumpToPrevVocab => "JumpToPrevVocab",
             Action::ToggleVocabHighlight => "ToggleVocabHighlight",
             Action::ToggleGlossOverlay => "ToggleGlossOverlay",
+            Action::ToggleJournalOverlay => "ToggleJournalOverlay",
             Action::OpenGlossPicker => "OpenGlossPicker",
             Action::OpenLastGloss => "OpenLastGloss",
             Action::ShowEchoesBcp => "ShowEchoesBcp",

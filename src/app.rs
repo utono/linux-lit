@@ -15,6 +15,7 @@ use crate::db::models::{Work, WorkSummary};
 use crate::ui::library_picker::LibraryPicker;
 use crate::ui::bookmark_picker::BookmarkPicker;
 use crate::ui::gloss_picker::GlossPicker;
+use crate::ui::journal_picker::JournalQaPicker;
 use crate::ui::media_picker::MediaPicker;
 use crate::ui::search_bar::SearchBar;
 
@@ -55,10 +56,12 @@ pub enum InputMode {
     Search,
     GlossOverlay,
     GlossVisual,
+    JournalOverlay,
     SynopsisOverlay,
     SynopsisVisual,
     TranslationOverlay,
     GlossPicker,
+    JournalPicker,
     EchoPicker,
     EchoTurnsPicker,
     EchoesOverlay,
@@ -87,6 +90,20 @@ pub enum GlossPromptMode {
     Edit,
     /// Gloss-overlay `i`: correct one word's /IPA/ in the cursor's source verse.
     FixIpa,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JournalPromptMode {
+    Ask,
+    Edit,
+}
+
+/// Which "band" of the journal is currently shown. The Work band holds
+/// whole-work pages (scope='work'); a Scene band holds one (div1,div2)'s pages.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JournalBand {
+    Work,
+    Scene(i64, i64),
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -264,6 +281,13 @@ pub struct AppState {
     pub keybinds_overlay: crate::ui::keybinds_overlay::KeybindsOverlay,
     pub gamepad_overlay: crate::ui::gamepad_overlay::GamepadOverlay,
     pub gloss_overlay: crate::ui::gloss_overlay::GlossOverlay,
+    pub journal_overlay: crate::ui::journal_overlay::JournalOverlay,
+    pub journal_picker: JournalQaPicker,
+    pub journal_band: JournalBand,
+    pub journal_pages: Vec<crate::db::journal::JournalPage>,
+    pub journal_page_index: usize,
+    pub journal_return_pos: Option<(usize, usize)>,
+    pub journal_prompt_mode: JournalPromptMode,
     /// Page-scan image surface for the main card (BCP1549 etc.). Hidden unless
     /// `image_mode` is on.
     pub page_image_overlay: crate::ui::page_image_overlay::PageImageOverlay,
@@ -1455,9 +1479,19 @@ pub fn build_window(
     gloss_overlay.attach(&gamepad_overlay.overlay);
     gloss_overlay.overlay.set_vexpand(true);
 
-    // Translation overlay wraps the gloss overlay (above gloss, below pickers)
+    // Journal overlay wraps the gloss overlay
+    let journal_overlay = crate::ui::journal_overlay::JournalOverlay::new(config.column_width, config.text_margins);
+    journal_overlay.attach(&gloss_overlay.overlay);
+    journal_overlay.overlay.set_vexpand(true);
+
+    // Journal picker overlays the journal overlay (above journal, below translation)
+    let journal_picker = JournalQaPicker::new();
+    journal_picker.attach(&journal_overlay.overlay);
+    journal_picker.overlay.set_vexpand(true);
+
+    // Translation overlay wraps the journal picker overlay
     let translation_overlay = crate::ui::translation_overlay::TranslationOverlay::new();
-    translation_overlay.attach(&gloss_overlay.overlay);
+    translation_overlay.attach(&journal_picker.overlay);
     translation_overlay.overlay.set_vexpand(true);
 
     // Gloss picker wraps the translation overlay
@@ -1778,6 +1812,13 @@ pub fn build_window(
         keybinds_overlay,
         gamepad_overlay,
         gloss_overlay,
+        journal_overlay,
+        journal_picker,
+        journal_band: JournalBand::Scene(0, 0),
+        journal_pages: Vec::new(),
+        journal_page_index: 0,
+        journal_return_pos: None,
+        journal_prompt_mode: JournalPromptMode::Ask,
         page_image_overlay,
         page_images: Vec::new(),
         image_dir: None,
@@ -2248,6 +2289,16 @@ pub fn build_window(
         });
     }
 
+    // Connect journal Q&A picker search entry filter
+    let state_for_journal_filter = Rc::clone(&state);
+    {
+        let s = state.borrow();
+        s.journal_picker.search_entry().connect_changed(move |entry| {
+            let filter = entry.text().to_string();
+            state_for_journal_filter.borrow().journal_picker.populate_list(&filter);
+        });
+    }
+
     // Connect concordance picker search entry filter
     let state_for_concordance_filter = Rc::clone(&state);
     {
@@ -2675,6 +2726,7 @@ pub fn display_work_at_with_prepared(
             let _ = crate::db::queries::ensure_gloss_voices_table(&conn);
             let _ = crate::db::queries::ensure_voice_catalog_table(&conn);
             let _ = crate::db::queries::ensure_claude_model_columns(&conn);
+            let _ = crate::db::journal::ensure_journal_table(&conn);
         }
     });
 
@@ -5541,8 +5593,21 @@ pub fn current_synopsis_key(state: &AppState) -> (i64, i64) {
     current_scene_divs(state)
 }
 
+/// The fixed label for the whole-work synopsis position `(-2,0)`, or `None` for
+/// any real scene/chapter key. Pure seam for `synopsis_label`.
+fn whole_work_label(div1: i64, div2: i64) -> Option<&'static str> {
+    if (div1, div2) == (-2, 0) {
+        Some("Whole work")
+    } else {
+        None
+    }
+}
+
 /// Human-readable overlay label for a synopsis key, branching on work type.
 pub fn synopsis_label(state: &AppState, div1: i64, div2: i64) -> String {
+    if let Some(label) = whole_work_label(div1, div2) {
+        return label.to_string();
+    }
     if is_chapter_work(state) {
         format!("Chapter {}", div1)
     } else {
@@ -5610,6 +5675,34 @@ pub fn divs_at_buffer_line(state: &AppState, buffer_line: usize) -> (i64, i64) {
         }
     }
     (0, 0)
+}
+
+/// Assemble the verbatim text of one scene `(div1, div2)` for the current work,
+/// with speaker attributions, in reading order. Empty string if no current work
+/// or no matching lines.
+pub fn scene_text_for(state: &AppState, div1: i64, div2: i64) -> String {
+    let work = match state.current_work.as_ref() {
+        Some(w) => w,
+        None => return String::new(),
+    };
+    let mut out = String::new();
+    let mut last_speaker: Option<&str> = None;
+    for line in work.lines.iter().filter(|l| l.div1 == div1 && l.div2 == div2) {
+        match line.speaker.as_deref() {
+            Some(sp) if last_speaker != Some(sp) => {
+                if !out.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str(sp);
+                out.push('\n');
+                last_speaker = Some(sp);
+            }
+            _ => {}
+        }
+        out.push_str(&line.text);
+        out.push('\n');
+    }
+    out
 }
 
 /// Check if the current line is the first line of a new scene.
@@ -6150,10 +6243,25 @@ pub fn scene_label_for(state: &AppState, div1: i64, div2: i64) -> String {
     scene_label(div1, div2)
 }
 
+/// Put the whole-work synopsis key `(-2,0)` first when it exists, otherwise
+/// return `rest` unchanged. Pure seam for `ordered_synopsis_scenes`.
+fn prepend_whole_work(has_whole_work: bool, rest: Vec<(i64, i64)>) -> Vec<(i64, i64)> {
+    if has_whole_work {
+        let mut out = Vec::with_capacity(rest.len() + 1);
+        out.push((-2, 0));
+        out.extend(rest);
+        out
+    } else {
+        rest
+    }
+}
+
 /// Ordered list of the work's scene keys (div1, div2) that have a synopsis, in
 /// reading order. `work.lines` is already sorted by (div1, div2, line_in_div),
 /// so collecting unique pairs in encounter order gives reading order.
 fn ordered_synopsis_scenes(s: &AppState) -> Vec<(i64, i64)> {
+    let has_whole_work = s.synopsis_cache.contains_key(&(-2, 0));
+
     if is_chapter_work(s) {
         let work = match s.current_work.as_ref() {
             Some(w) => w,
@@ -6167,8 +6275,9 @@ fn ordered_synopsis_scenes(s: &AppState) -> Vec<(i64, i64)> {
                 keys.push(k);
             }
         }
-        return keys;
+        return prepend_whole_work(has_whole_work, keys);
     }
+
     let work = match s.current_work.as_ref() {
         Some(w) => w,
         None => return Vec::new(),
@@ -6177,15 +6286,34 @@ fn ordered_synopsis_scenes(s: &AppState) -> Vec<(i64, i64)> {
     let mut keys = Vec::new();
     for line in &work.lines {
         let k = (line.div1, line.div2);
-        if seen.insert(k) && s.synopsis_cache.contains_key(&k) {
+        // Never list (-2,0) as a scene from the line loop — it's the whole-work
+        // key, prepended separately. (Lines always have div1 >= -1, but guard
+        // anyway so a stray (-2,0) line can't double it.)
+        if k != (-2, 0) && seen.insert(k) && s.synopsis_cache.contains_key(&k) {
             keys.push(k);
         }
     }
-    keys
+    prepend_whole_work(has_whole_work, keys)
+}
+
+/// Clamp the next synopsis index to `[0, len-1]` (no wraparound). Returns `None`
+/// when the step would run off either end (already at first/last), so the caller
+/// can no-op rather than re-render the same scene. Pure seam for `cycle_synopsis`.
+fn clamp_synopsis_index(idx: usize, delta: i32, len: usize) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    let next = idx as i32 + delta;
+    if next < 0 || next >= len as i32 {
+        None
+    } else {
+        Some(next as usize)
+    }
 }
 
 /// Step the synopsis overlay to the next (+1) or previous (-1) scene that has a
-/// synopsis, wrapping around. No-op if the overlay isn't showing a known scene.
+/// synopsis, clamping at the first/last (no wraparound). No-op if the overlay
+/// isn't showing a known scene or is already at the boundary being stepped past.
 pub fn cycle_synopsis(state: &std::rc::Rc<std::cell::RefCell<AppState>>, delta: i32) {
     let mut s = state.borrow_mut();
     let scenes = ordered_synopsis_scenes(&s);
@@ -6194,7 +6322,10 @@ pub fn cycle_synopsis(state: &std::rc::Rc<std::cell::RefCell<AppState>>, delta: 
     }
     let cur = s.synopsis_overlay_scene;
     let idx = scenes.iter().position(|&k| k == cur).unwrap_or(0);
-    let new_idx = ((idx as i32 + delta).rem_euclid(scenes.len() as i32)) as usize;
+    let new_idx = match clamp_synopsis_index(idx, delta, scenes.len()) {
+        Some(i) => i,
+        None => return,
+    };
     let (div1, div2) = scenes[new_idx];
     let synopsis = match s.synopsis_cache.get(&(div1, div2)) {
         Some(t) => t.clone(),
@@ -6571,5 +6702,53 @@ mod scansion_vocab_tests {
         // "músic" (acute after u) is still one word run.
         let marked = "If m\u{0075}\u{0301}sic be";
         assert_eq!(word_run_count(marked), 3); // If, músic, be
+    }
+}
+
+#[cfg(test)]
+mod synopsis_tests {
+    use super::prepend_whole_work;
+
+    #[test]
+    fn whole_work_label_only_for_minus_two() {
+        assert_eq!(super::whole_work_label(-2, 0), Some("Whole work"));
+        assert_eq!(super::whole_work_label(0, 0), None); // (0,0) is the Prologue slot, not whole-work
+        assert_eq!(super::whole_work_label(1, 1), None);
+        assert_eq!(super::whole_work_label(2, 0), None);
+    }
+
+    #[test]
+    fn prepend_whole_work_puts_minus_two_zero_first() {
+        let rest = vec![(1, 1), (1, 2), (2, 1)];
+        assert_eq!(
+            prepend_whole_work(true, rest.clone()),
+            vec![(-2, 0), (1, 1), (1, 2), (2, 1)]
+        );
+    }
+
+    #[test]
+    fn prepend_whole_work_absent_is_unchanged() {
+        let rest = vec![(1, 1), (1, 2)];
+        assert_eq!(prepend_whole_work(false, rest.clone()), rest);
+    }
+
+    #[test]
+    fn prepend_whole_work_empty_rest() {
+        assert_eq!(prepend_whole_work(true, vec![]), vec![(-2, 0)]);
+        assert_eq!(prepend_whole_work(false, vec![]), Vec::<(i64, i64)>::new());
+    }
+
+    #[test]
+    fn clamp_synopsis_index_clamps_no_wrap() {
+        use super::clamp_synopsis_index;
+        // Mid-list steps move by one.
+        assert_eq!(clamp_synopsis_index(1, 1, 4), Some(2));
+        assert_eq!(clamp_synopsis_index(2, -1, 4), Some(1));
+        // At the last index, +1 is a no-op (None) — no wrap to 0.
+        assert_eq!(clamp_synopsis_index(3, 1, 4), None);
+        // At index 0, -1 is a no-op (None) — no wrap to last.
+        assert_eq!(clamp_synopsis_index(0, -1, 4), None);
+        // Empty list is always None.
+        assert_eq!(clamp_synopsis_index(0, 1, 0), None);
     }
 }

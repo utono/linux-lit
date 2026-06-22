@@ -276,6 +276,7 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         // `]` (bracketright on RPD) duplicates Ctrl+g — open/close the gloss overlay.
         (KeyCombo::plain("bracketright"), Action::ToggleGlossOverlay),
         (KeyCombo::alt("g"), Action::OpenGlossPicker),
+        (KeyCombo::ctrl("j"), Action::ToggleJournalOverlay),
         (KeyCombo::plain("H"), Action::ToggleVocabPopup),
     ]
 }

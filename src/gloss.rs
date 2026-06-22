@@ -145,6 +145,16 @@ Rules:
     }
 });
 
+pub static JOURNAL_QA_PROMPT: LazyLock<String> = LazyLock::new(|| {
+    const FALLBACK: &str = "\
+You are a literary interlocutor in conversation with a reader who is working through a play, one scene at a time. The reader has asked a question while reading a specific scene. The verbatim text of that scene is provided.
+
+Answer the question substantively and in plain prose. Ground your answer in the scene text provided, but DO situate the scene within the whole play: trace how this moment echoes earlier scenes and foreshadows or is answered by later ones, and how it participates in the work's larger arcs of character, theme, and image. Drawing such connections across the full play is encouraged — this is a study companion for a reader engaging the entire work, not a spoiler-free first-read assistant, so do not withhold connections to later scenes.
+
+Write for a thoughtful reader: clear, specific, and concrete. Quote sparingly from the scene where it helps. No markdown, no bullet lists, no numbered lists, no headers — flowing prose paragraphs only. Do not use the = sign; write paraphrases as prose. Be substantive but not padded.";
+    template_or("journal.qa", FALLBACK)
+});
+
 pub static INNER_MONOLOGUE_PROMPT: LazyLock<String> = LazyLock::new(|| {
     const FALLBACK: &str = "\
 You are a director using the actioning technique to discover the inner \
