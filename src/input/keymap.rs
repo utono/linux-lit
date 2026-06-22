@@ -114,6 +114,8 @@ pub fn handle_key(
             crate::app::InputMode::Search => handle_search_key(state, key_name),
             crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_shift, is_alt, tokio_handle),
             crate::app::InputMode::GlossVisual => handle_gloss_visual_key(state, key_state, key_name),
+            // Real handler wired in a later task; for now consume keys in this mode.
+            crate::app::InputMode::JournalOverlay => true,
             crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_state, key_name, is_ctrl, is_alt, is_shift),
             crate::app::InputMode::SynopsisVisual => handle_synopsis_visual_key(state, key_state, key_name),
             crate::app::InputMode::TranslationOverlay => handle_translation_overlay_key(state, key_name),

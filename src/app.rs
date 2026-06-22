@@ -55,6 +55,7 @@ pub enum InputMode {
     Search,
     GlossOverlay,
     GlossVisual,
+    JournalOverlay,
     SynopsisOverlay,
     SynopsisVisual,
     TranslationOverlay,
@@ -87,6 +88,12 @@ pub enum GlossPromptMode {
     Edit,
     /// Gloss-overlay `i`: correct one word's /IPA/ in the cursor's source verse.
     FixIpa,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JournalPromptMode {
+    Ask,
+    Edit,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -264,6 +271,12 @@ pub struct AppState {
     pub keybinds_overlay: crate::ui::keybinds_overlay::KeybindsOverlay,
     pub gamepad_overlay: crate::ui::gamepad_overlay::GamepadOverlay,
     pub gloss_overlay: crate::ui::gloss_overlay::GlossOverlay,
+    pub journal_overlay: crate::ui::journal_overlay::JournalOverlay,
+    pub journal_scene: (i64, i64),
+    pub journal_pages: Vec<crate::db::journal::JournalPage>,
+    pub journal_page_index: usize,
+    pub journal_return_pos: Option<(usize, usize)>,
+    pub journal_prompt_mode: JournalPromptMode,
     /// Page-scan image surface for the main card (BCP1549 etc.). Hidden unless
     /// `image_mode` is on.
     pub page_image_overlay: crate::ui::page_image_overlay::PageImageOverlay,
@@ -1455,9 +1468,14 @@ pub fn build_window(
     gloss_overlay.attach(&gamepad_overlay.overlay);
     gloss_overlay.overlay.set_vexpand(true);
 
-    // Translation overlay wraps the gloss overlay (above gloss, below pickers)
+    // Journal overlay wraps the gloss overlay
+    let journal_overlay = crate::ui::journal_overlay::JournalOverlay::new(config.column_width, config.text_margins);
+    journal_overlay.attach(&gloss_overlay.overlay);
+    journal_overlay.overlay.set_vexpand(true);
+
+    // Translation overlay wraps the journal overlay (above journal, below pickers)
     let translation_overlay = crate::ui::translation_overlay::TranslationOverlay::new();
-    translation_overlay.attach(&gloss_overlay.overlay);
+    translation_overlay.attach(&journal_overlay.overlay);
     translation_overlay.overlay.set_vexpand(true);
 
     // Gloss picker wraps the translation overlay
@@ -1778,6 +1796,12 @@ pub fn build_window(
         keybinds_overlay,
         gamepad_overlay,
         gloss_overlay,
+        journal_overlay,
+        journal_scene: (0, 0),
+        journal_pages: Vec::new(),
+        journal_page_index: 0,
+        journal_return_pos: None,
+        journal_prompt_mode: JournalPromptMode::Ask,
         page_image_overlay,
         page_images: Vec::new(),
         image_dir: None,
@@ -2675,6 +2699,7 @@ pub fn display_work_at_with_prepared(
             let _ = crate::db::queries::ensure_gloss_voices_table(&conn);
             let _ = crate::db::queries::ensure_voice_catalog_table(&conn);
             let _ = crate::db::queries::ensure_claude_model_columns(&conn);
+            let _ = crate::db::journal::ensure_journal_table(&conn);
         }
     });
 
