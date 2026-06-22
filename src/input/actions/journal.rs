@@ -175,7 +175,7 @@ pub(crate) fn begin_ask(state: &Rc<RefCell<AppState>>) {
         JournalBand::Scene(_, _) => "Ask a question about this scene",
     };
     s.journal_overlay
-        .open_ask_card(title, "Ctrl+Enter to ask · Esc to cancel");
+        .open_ask_card(title, "Tab switch  \u{00b7}  Ctrl+Enter submit  \u{00b7}  Esc cancel");
 }
 
 pub(crate) fn begin_edit(state: &Rc<RefCell<AppState>>) {
@@ -185,7 +185,10 @@ pub(crate) fn begin_edit(state: &Rc<RefCell<AppState>>) {
     }
     s.journal_prompt_mode = JournalPromptMode::Edit;
     s.journal_overlay
-        .open_ask_card("Edit: ask a new question for this page", "Ctrl+Enter · Esc");
+        .open_ask_card(
+            "Edit: ask a new question for this page",
+            "Tab switch  \u{00b7}  Ctrl+Enter submit  \u{00b7}  Esc cancel",
+        );
 }
 
 pub(crate) fn close_prompt(state: &Rc<RefCell<AppState>>) {
