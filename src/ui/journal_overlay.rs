@@ -134,6 +134,10 @@ impl JournalOverlay {
         ask_input.add_css_class("gloss-text");
         ask_input.add_css_class("ask-input");
         ask_input.set_vexpand(true);
+        ask_input.set_left_margin(12);
+        ask_input.set_right_margin(12);
+        ask_input.set_top_margin(8);
+        ask_input.set_bottom_margin(8);
         ask_scrolled.set_child(Some(&ask_input));
         ask_container.append(&ask_scrolled);
         let ask_hint = Label::new(Some("Ctrl+Enter to ask \u{00b7} Esc to cancel"));

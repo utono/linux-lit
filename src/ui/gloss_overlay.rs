@@ -1870,8 +1870,16 @@ impl GlossOverlay {
     }
 
     /// Hide the footer citation (non-gloss views: synopsis, diff, echoes).
+    ///
+    /// Blank the text but keep the label *visible* so its `hexpand` still holds
+    /// the footer row's stretch. If it were `set_visible(false)`, the only
+    /// hexpand child would vanish and the right-aligned `hint` would collapse to
+    /// the left edge — the synopsis footer would then sit bottom-left instead of
+    /// far-right like the gloss/journal overlays. (Journal keeps its empty
+    /// `footer_left` visible for the same reason.)
     pub fn hide_citation(&self) {
-        self.citation_label.set_visible(false);
+        self.citation_label.set_text("");
+        self.citation_label.set_visible(true);
     }
 
     pub fn is_visible(&self) -> bool {
