@@ -1,5 +1,4 @@
 use crate::app::{AppState, InputMode, JournalBand, JournalPromptMode};
-use gtk4::glib;
 use gtk4::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -208,7 +207,7 @@ pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
 }
 
 fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPromptMode) {
-    let (work_title, work_author, work_abbrev, band, scene_text, model, tokio_handle) = {
+    let (work_title, work_author, work_abbrev, band, scene_text, model) = {
         let s = state_rc.borrow();
         let band = s.journal_band;
         let (title, author, abbrev) = match s.current_work.as_ref() {
@@ -230,7 +229,6 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
             band,
             scene_text,
             s.config.claude_model.clone(),
-            s.tokio_handle.clone(),
         )
     };
 
@@ -261,78 +259,60 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
         ),
     };
     let question_owned = question.to_string();
-    let state_for_result = Rc::clone(state_rc);
-
-    glib::spawn_future_local(async move {
-        let model_for_db = model.clone();
-        let result = tokio_handle
-            .spawn(async move {
-                crate::gloss::call_claude_with_prompt(
-                    &crate::gloss::JOURNAL_QA_PROMPT,
-                    &user_msg,
-                    &model,
-                )
-                .await
-            })
-            .await;
-
-        match result {
-            Ok(Ok(answer)) => {
-                // For a save, the scope and (div1,div2) come from the band.
-                let (scope, sdiv1, sdiv2) = match band {
-                    JournalBand::Work => ("work", -1_i64, -1_i64),
-                    JournalBand::Scene(d1, d2) => ("scene", d1, d2),
-                };
-                if let Ok(conn) = crate::db::queries::open_db_rw() {
-                    let write_result = if mode == JournalPromptMode::Edit && edit_id >= 0 {
-                        crate::db::journal::update_journal_page(
-                            &conn, edit_id, &question_owned, &answer, &model_for_db,
-                        )
-                    } else {
-                        crate::db::journal::save_journal_page(
-                            &conn, &work_abbrev, sdiv1, sdiv2, &question_owned, &answer,
-                            &model_for_db, scope,
-                        )
-                        .map(|_| ())
-                    };
-                    if let Err(e) = write_result {
-                        crate::logging::log(&format!("JOURNAL: db write failed: {}", e));
-                    }
-                }
-                let pages = crate::db::queries::open_db()
-                    .ok()
-                    .and_then(|conn| match band {
-                        JournalBand::Work => {
-                            crate::db::journal::find_work_pages(&conn, &work_abbrev).ok()
-                        }
-                        JournalBand::Scene(d1, d2) => {
-                            crate::db::journal::find_journal_pages(&conn, &work_abbrev, d1, d2).ok()
-                        }
-                    })
-                    .unwrap_or_default();
-                let new_index = if mode == JournalPromptMode::Edit && edit_id >= 0 {
-                    pages.iter().position(|p| p.id == edit_id).unwrap_or(0)
+    let model_for_db = model.clone();
+    crate::input::actions::claude_bridge::run_claude_request(
+        state_rc,
+        crate::gloss::JOURNAL_QA_PROMPT.to_string(),
+        user_msg,
+        model,
+        move |st, answer| {
+            // For a save, the scope and (div1,div2) come from the band.
+            let (scope, sdiv1, sdiv2) = match band {
+                JournalBand::Work => ("work", -1_i64, -1_i64),
+                JournalBand::Scene(d1, d2) => ("scene", d1, d2),
+            };
+            if let Ok(conn) = crate::db::queries::open_db_rw() {
+                let write_result = if mode == JournalPromptMode::Edit && edit_id >= 0 {
+                    crate::db::journal::update_journal_page(
+                        &conn, edit_id, &question_owned, &answer, &model_for_db,
+                    )
                 } else {
-                    pages.len().saturating_sub(1)
+                    crate::db::journal::save_journal_page(
+                        &conn, &work_abbrev, sdiv1, sdiv2, &question_owned, &answer,
+                        &model_for_db, scope,
+                    )
+                    .map(|_| ())
                 };
-                let mut s = state_for_result.borrow_mut();
-                s.journal_band = band;
-                s.journal_page_index = new_index;
-                render_current(&mut s);
-                crate::logging::log("JOURNAL: saved page");
+                if let Err(e) = write_result {
+                    crate::logging::log(&format!("JOURNAL: db write failed: {}", e));
+                }
             }
-            Ok(Err(e)) => {
-                let s = state_for_result.borrow();
-                s.journal_overlay.show_message(&format!("Error: {}", e));
-                crate::logging::log(&format!("JOURNAL: claude error: {}", e));
-            }
-            Err(e) => {
-                let s = state_for_result.borrow();
-                s.journal_overlay.show_message("Internal error — try again.");
-                crate::logging::log(&format!("JOURNAL: tokio join error: {}", e));
-            }
-        }
-    });
+            let pages = crate::db::queries::open_db()
+                .ok()
+                .and_then(|conn| match band {
+                    JournalBand::Work => {
+                        crate::db::journal::find_work_pages(&conn, &work_abbrev).ok()
+                    }
+                    JournalBand::Scene(d1, d2) => {
+                        crate::db::journal::find_journal_pages(&conn, &work_abbrev, d1, d2).ok()
+                    }
+                })
+                .unwrap_or_default();
+            let new_index = if mode == JournalPromptMode::Edit && edit_id >= 0 {
+                pages.iter().position(|p| p.id == edit_id).unwrap_or(0)
+            } else {
+                pages.len().saturating_sub(1)
+            };
+            let mut s = st.borrow_mut();
+            s.journal_band = band;
+            s.journal_page_index = new_index;
+            render_current(&mut s);
+            crate::logging::log("JOURNAL: saved page");
+        },
+        move |st, msg| {
+            st.borrow().journal_overlay.show_message(msg);
+        },
+    );
 }
 
 /// Open the Q&A picker over the journal overlay. Lists every page in the work

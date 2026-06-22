@@ -123,7 +123,7 @@ fn run_synopsis_revision(
 ) {
     let (div1, div2) = state_rc.borrow().synopsis_amend_scene;
 
-    let (work_title, work_abbrev, original, model, tokio_handle, label) = {
+    let (work_title, work_abbrev, original, model, label) = {
         let s = state_rc.borrow();
         let work = match s.current_work.as_ref() {
             Some(w) => w,
@@ -140,7 +140,6 @@ fn run_synopsis_revision(
             abbrev,
             original,
             s.config.claude_model.clone(),
-            s.tokio_handle.clone(),
             label,
         )
     };
@@ -154,76 +153,50 @@ fn run_synopsis_revision(
     let system_prompt = crate::db::prompts::active_prompt(prompt_key)
         .unwrap_or_else(|| fallback_prompt.to_string());
 
-    let state_for_result = Rc::clone(state_rc);
-    glib::spawn_future_local(async move {
-        // Keep a copy for the DB stamp; `model` itself is moved into the spawn.
-        let model_for_db = model.clone();
-        let result = tokio_handle
-            .spawn(async move {
-                crate::claude::send_message(&system_prompt, &user_msg, &model).await
-            })
-            .await;
-
-        match result {
-            Ok(Ok(revised)) => {
-                let revised = revised.trim().to_string();
-                // Persist (upsert) to lit.db, stamping the authoring model.
-                if let Ok(conn) = crate::db::queries::open_db_rw() {
-                    if let Err(e) = crate::db::queries::save_synopsis(
-                        &conn, &work_abbrev, div1, div2, &revised, &model_for_db,
-                    ) {
-                        crate::logging::log(&format!("SYNOPSIS: save error: {}", e));
-                    }
+    let model_for_db = model.clone();
+    let label_err = label.clone();
+    crate::input::actions::claude_bridge::run_claude_request(
+        state_rc,
+        system_prompt,
+        user_msg,
+        model,
+        move |st, revised| {
+            let revised = revised.trim().to_string();
+            // Persist (upsert) to lit.db, stamping the authoring model.
+            if let Ok(conn) = crate::db::queries::open_db_rw() {
+                if let Err(e) = crate::db::queries::save_synopsis(
+                    &conn, &work_abbrev, div1, div2, &revised, &model_for_db,
+                ) {
+                    crate::logging::log(&format!("SYNOPSIS: save error: {}", e));
                 }
-                let mut s = state_for_result.borrow_mut();
-                // Remember the pre-revision text so `U` can revert this edit.
-                s.synopsis_undo = Some(((div1, div2), original.clone()));
-                s.synopsis_cache.insert((div1, div2), revised.clone());
-                let cw = s.content_hbox.width();
-                let h = s.content_hbox.height();
-                let root_color = s.theme.root_color.clone();
-                s.gloss_overlay.show_synopsis(&label, &revised, Some(&root_color), cw, h);
-                s.synopsis_overlay_scene = (div1, div2);
-                crate::input::actions::gloss::recolor_cached_blocks(&s);
-                s.input_mode = crate::app::InputMode::SynopsisOverlay;
-                crate::logging::log(&format!(
-                    "SYNOPSIS: {} {} ({},{})",
-                    log_verb, work_abbrev, div1, div2
-                ));
             }
-            Ok(Err(e)) => {
-                let mut s = state_for_result.borrow_mut();
-                let cw = s.content_hbox.width();
-                let h = s.content_hbox.height();
-                let root_color = s.theme.root_color.clone();
-                s.gloss_overlay
-                    .show_synopsis(&label, &format!("Error: {}", e), Some(&root_color), cw, h);
-                s.synopsis_overlay_scene = (div1, div2);
-                crate::input::actions::gloss::recolor_cached_blocks(&s);
-                s.input_mode = crate::app::InputMode::SynopsisOverlay;
-                crate::logging::log(&format!("SYNOPSIS: {} error: {}", log_verb, e));
-            }
-            Err(e) => {
-                // Recover the UI so the overlay isn't stuck on the loading card
-                // if the spawned task panicked (mirrors the Ok(Err) arm).
-                let mut s = state_for_result.borrow_mut();
-                let cw = s.content_hbox.width();
-                let h = s.content_hbox.height();
-                let root_color = s.theme.root_color.clone();
-                s.gloss_overlay.show_synopsis(
-                    &label,
-                    "Internal error \u{2014} try again.",
-                    Some(&root_color),
-                    cw,
-                    h,
-                );
-                s.synopsis_overlay_scene = (div1, div2);
-                crate::input::actions::gloss::recolor_cached_blocks(&s);
-                s.input_mode = crate::app::InputMode::SynopsisOverlay;
-                crate::logging::log(&format!("SYNOPSIS: tokio join error: {}", e));
-            }
-        }
-    });
+            let mut s = st.borrow_mut();
+            // Remember the pre-revision text so `U` can revert this edit.
+            s.synopsis_undo = Some(((div1, div2), original.clone()));
+            s.synopsis_cache.insert((div1, div2), revised.clone());
+            let cw = s.content_hbox.width();
+            let h = s.content_hbox.height();
+            let root_color = s.theme.root_color.clone();
+            s.gloss_overlay.show_synopsis(&label, &revised, Some(&root_color), cw, h);
+            s.synopsis_overlay_scene = (div1, div2);
+            crate::input::actions::gloss::recolor_cached_blocks(&s);
+            s.input_mode = crate::app::InputMode::SynopsisOverlay;
+            crate::logging::log(&format!(
+                "SYNOPSIS: {} {} ({},{})",
+                log_verb, work_abbrev, div1, div2
+            ));
+        },
+        move |st, msg| {
+            let mut s = st.borrow_mut();
+            let cw = s.content_hbox.width();
+            let h = s.content_hbox.height();
+            let root_color = s.theme.root_color.clone();
+            s.gloss_overlay.show_synopsis(&label_err, msg, Some(&root_color), cw, h);
+            s.synopsis_overlay_scene = (div1, div2);
+            crate::input::actions::gloss::recolor_cached_blocks(&s);
+            s.input_mode = crate::app::InputMode::SynopsisOverlay;
+        },
+    );
 }
 
 /// Send the question + current synopsis to Claude (augment/explain). `A` path.
