@@ -5593,8 +5593,21 @@ pub fn current_synopsis_key(state: &AppState) -> (i64, i64) {
     current_scene_divs(state)
 }
 
+/// The fixed label for the whole-work synopsis position `(0,0)`, or `None` for
+/// any real scene/chapter key. Pure seam for `synopsis_label`.
+fn whole_work_label(div1: i64, div2: i64) -> Option<&'static str> {
+    if (div1, div2) == (0, 0) {
+        Some("Whole work")
+    } else {
+        None
+    }
+}
+
 /// Human-readable overlay label for a synopsis key, branching on work type.
 pub fn synopsis_label(state: &AppState, div1: i64, div2: i64) -> String {
+    if let Some(label) = whole_work_label(div1, div2) {
+        return label.to_string();
+    }
     if is_chapter_work(state) {
         format!("Chapter {}", div1)
     } else {
@@ -6676,6 +6689,13 @@ mod scansion_vocab_tests {
 #[cfg(test)]
 mod synopsis_tests {
     use super::prepend_whole_work;
+
+    #[test]
+    fn whole_work_label_only_for_zero_zero() {
+        assert_eq!(super::whole_work_label(0, 0), Some("Whole work"));
+        assert_eq!(super::whole_work_label(1, 1), None);
+        assert_eq!(super::whole_work_label(2, 0), None);
+    }
 
     #[test]
     fn prepend_whole_work_puts_zero_zero_first() {
