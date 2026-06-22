@@ -157,14 +157,18 @@ are tracked separately at the bottom under "## Larger projects (not safe-scope)"
 
 ## Larger projects (not safe-scope)
 
-- **`InputMode → picker` dispatch accessor.** The handler audit found ~18
-  `move_selection` dispatch arms, 7 Escape `hide(); input_mode = Reader` arms, and
-  ~5 picker-open `show(); set input_mode` pairs that all hand-write
-  `state.<specific_picker>.<op>()`. A `picker_for_mode(mode) -> &dyn Picker`
-  accessor (or a `dyn Picker` trait) would collapse all three — but it touches
-  control flow and would have to unify `move_selection`'s empty-start variants,
-  which #6 DELIBERATELY preserved. Behavior-risky, multi-PR → not a numbered
-  safe-scope opportunity. Revisit only with a dedicated spec.
+- **`InputMode → picker` dispatch accessor — DONE (nav + plain-hide scope).**
+  Shipped via the `Picker` trait + `picker_for_mode(&AppState, mode) -> Option<&dyn
+  Picker>` accessor in `src/input/picker_dispatch.rs`. Collapsed the nav
+  `MoveDown`/`MoveUp` arms (Ctrl+n/p, ~20 arms) and the 7 plain Escape
+  `hide(); → Reader` arms in `handle_picker_key`. The parked concern (unifying #6's
+  preserved `move_selection` variants) did NOT apply: those variants live inside
+  each picker's `move_selection` body, not the dispatch arms, so routing through
+  the trait left them untouched. Gloss/Journal/EchoLine Escape arms kept explicit;
+  settings/voice/library handlers untouched. Spec/plan under docs/superpowers/;
+  user-verified (Ctrl+n/p moves selection, Escape closes). See merge commit.
+  **Follow-on still deferred:** the Confirm dispatch and the `show()`/open pairs —
+  they carry bespoke-confirm and borrow-juggle risk; own spec required.
 
 These are real maintainability issues but are behavior-CHANGING and multi-PR.
 They are NOT numbered opportunities; do not run them through the safe-scope
