@@ -537,24 +537,14 @@ impl LibraryPicker {
 /// Case-insensitive subsequence match against title, author, and abbrev.
 fn subsequence_match_work(filter: &str, work: &WorkSummary) -> bool {
     let target = format!("{} {} {}", work.title, work.author, work.abbrev).to_lowercase();
-    subsequence_chars(filter, &target)
+    crate::ui::picker_filter::subsequence_match(filter, &target)
 }
 
 /// Case-insensitive subsequence match against an author name.
 pub fn author_name_matches(filter: &str, author: &str) -> bool {
     let filter_lower = filter.to_lowercase();
     let author_lower = author.to_lowercase();
-    subsequence_chars(&filter_lower, &author_lower)
-}
-
-fn subsequence_chars(filter: &str, target: &str) -> bool {
-    let mut target_chars = target.chars();
-    for fc in filter.chars() {
-        if !target_chars.any(|tc| tc == fc) {
-            return false;
-        }
-    }
-    true
+    crate::ui::picker_filter::subsequence_match(&filter_lower, &author_lower)
 }
 
 /// Compute the (title, crumb) header text pair for the given picker level.

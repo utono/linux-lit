@@ -22,6 +22,7 @@ pub mod library_picker;
 pub mod bookmark_picker;
 pub mod media_picker;
 pub mod page_image_overlay;
+pub mod picker_filter;
 pub mod picker_nav;
 pub mod search_bar;
 pub mod settings_overlay;

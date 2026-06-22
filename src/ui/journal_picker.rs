@@ -103,7 +103,7 @@ impl JournalQaPicker {
         for (idx, item) in self.items.iter().enumerate() {
             if !filter.is_empty() {
                 let target = format!("{} {}", item.scene_label, item.question_prefix).to_lowercase();
-                if !subsequence_match(&filter_lower, &target) {
+                if !crate::ui::picker_filter::subsequence_match(&filter_lower, &target) {
                     continue;
                 }
             }
@@ -152,14 +152,4 @@ impl JournalQaPicker {
             .selected_row()
             .and_then(|row| row.widget_name().to_string().parse().ok())
     }
-}
-
-fn subsequence_match(filter: &str, target: &str) -> bool {
-    let mut target_chars = target.chars();
-    for fc in filter.chars() {
-        if !target_chars.any(|tc| tc == fc) {
-            return false;
-        }
-    }
-    true
 }

@@ -95,7 +95,7 @@ impl GlossPicker {
         for (idx, item) in self.items.iter().enumerate() {
             if !filter.is_empty() {
                 let target = format!("{} {}", item.speaker, item.source_text).to_lowercase();
-                if !subsequence_match(&filter_lower, &target) {
+                if !crate::ui::picker_filter::subsequence_match(&filter_lower, &target) {
                     continue;
                 }
             }
@@ -150,14 +150,4 @@ impl GlossPicker {
             crate::ui::picker_nav::select_row_at(&self.list_box, new_idx);
         }
     }
-}
-
-fn subsequence_match(filter: &str, target: &str) -> bool {
-    let mut target_chars = target.chars();
-    for fc in filter.chars() {
-        if !target_chars.any(|tc| tc == fc) {
-            return false;
-        }
-    }
-    true
 }
