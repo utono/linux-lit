@@ -150,8 +150,6 @@ impl EchoTurnsPicker {
     pub fn move_selection(&self, delta: i32) {
         let current = self.list_box.selected_row().map(|r| r.index()).unwrap_or(-1);
         let next = (current + delta).max(0);
-        if let Some(row) = self.list_box.row_at_index(next) {
-            self.list_box.select_row(Some(&row));
-        }
+        crate::ui::picker_nav::select_row_at(&self.list_box, next);
     }
 }
