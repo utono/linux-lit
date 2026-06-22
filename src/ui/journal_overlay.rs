@@ -98,6 +98,9 @@ impl JournalOverlay {
         footer_box.set_margin_bottom(12);
         footer_box.add_css_class("gloss-hint");
 
+        // Layout mirrors the gloss overlay footer exactly: the left label takes
+        // hexpand (holding the row's stretch) and the hint sits halign End after
+        // it, so the hint renders at the far right just as it does in glosses.
         let footer_left = Label::new(None);
         footer_left.set_halign(gtk4::Align::Start);
         footer_left.set_hexpand(true);
