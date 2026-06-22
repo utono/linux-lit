@@ -54,10 +54,6 @@ impl EchoLinePicker {
         self.picker_box.set_visible(false);
     }
 
-    pub fn is_visible(&self) -> bool {
-        self.picker_box.is_visible()
-    }
-
     pub fn entry(&self) -> &Entry {
         &self.search_entry
     }

@@ -76,10 +76,6 @@ impl ConcordancePicker {
         self.picker_box.set_visible(false);
     }
 
-    pub fn is_visible(&self) -> bool {
-        self.picker_box.is_visible()
-    }
-
     pub fn attach(&self, base: &impl IsA<gtk4::Widget>) {
         self.overlay.set_child(Some(base));
         self.overlay.add_overlay(&self.picker_box);

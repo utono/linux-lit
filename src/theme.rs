@@ -268,12 +268,6 @@ fn contrast_on(bg_hex: &str) -> &'static str {
     }
 }
 
-/// Parse a hex color string to (r, g, b) as f32 for GDK RGBA.
-pub fn root_color_rgb(hex: &str) -> (f32, f32, f32) {
-    let (r, g, b) = hex_to_rgb(hex);
-    (r as f32, g as f32, b as f32)
-}
-
 /// Parse the RGB channels (0.0–1.0) from an `rgba(r, g, b, a)` CSS string where
 /// r/g/b are 0–255. The alpha is ignored — the caller drives alpha via the fade
 /// animation. Falls back to mid-gray on a malformed string. Used so the

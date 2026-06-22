@@ -117,10 +117,6 @@ impl PageImageOverlay {
         overlay.set_clip_overlay(&self.container, true);
     }
 
-    pub fn is_visible(&self) -> bool {
-        self.container.is_visible()
-    }
-
     /// Show `path` (an absolute file path). The container fills the card via
     /// expand, so the leaf is fit-to-card by `Contain`; no explicit sizing is
     /// needed. Reloads the file only when the path changes. `_card_width` /

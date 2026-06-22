@@ -62,10 +62,6 @@ impl ConcordanceWordPicker {
         self.picker_box.set_visible(false);
     }
 
-    pub fn is_visible(&self) -> bool {
-        self.picker_box.is_visible()
-    }
-
     pub fn set_words(&mut self, words: Vec<(String, usize)>) {
         self.words = words;
     }

@@ -1144,28 +1144,6 @@ fn snap_value_to_line_top(state: &AppState, target_y: f64) -> f64 {
     }
 }
 
-/// Scroll the viewport by a fixed step without moving the cursor or seeking audio.
-/// `delta` is +1 for down, -1 for up.  Scrolls by ~3 line heights per step,
-/// similar to browser-style scrolling.
-pub fn scroll_viewport(state: &mut AppState, delta: i32) {
-    let adj = state.scrolled_window.vadjustment();
-    let max_scroll = adj.upper() - adj.page_size();
-    if max_scroll <= 0.0 {
-        return;
-    }
-    // Scroll by 3 line heights per keypress
-    let line_height = state.buffer.iter_at_line(state.current_line as i32)
-        .map(|iter| {
-            let rect = state.text_view.iter_location(&iter);
-            rect.height() as f64
-        })
-        .unwrap_or(30.0)
-        .max(20.0);
-    let step = line_height * 3.0;
-    let new_val = (adj.value() + step * delta as f64).max(0.0).min(max_scroll);
-    adj.set_value(new_val);
-}
-
 /// Get the vadjustment value that places the given line at the top of the viewport.
 /// Uses `line_yrange` which includes `pixels_above_lines` in the y coordinate,
 /// so the line's full visual extent (including top spacing) is visible.

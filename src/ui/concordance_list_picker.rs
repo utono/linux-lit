@@ -103,10 +103,6 @@ impl ConcordanceListPicker {
         self.picker_box.set_visible(false);
     }
 
-    pub fn is_visible(&self) -> bool {
-        self.picker_box.is_visible()
-    }
-
     pub fn selected_index(&self) -> Option<usize> {
         self.list_box
             .selected_row()

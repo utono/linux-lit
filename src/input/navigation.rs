@@ -34,7 +34,7 @@ use super::viewport::{
     last_fully_visible_line, next_page_top, prev_page_top, NextPage,
     back_up_for_speaker_state, page_turn_top_state,
     scene_header_top_state,
-    is_dialogue_line, is_blank_buffer_line,
+    is_dialogue_line,
     next_dialogue_line, prev_dialogue_line, buffer_line_text,
     next_dialogue_from, is_line_fully_visible, lines_per_page,
     clamp_page_top_to_scroll_ceiling, column_split, would_empty_right_column,
@@ -98,8 +98,6 @@ pub(crate) enum PageChangeReason {
     Dialogue,
     /// User pressed k/K for cursor-only movement (no audio seek).
     Cursor,
-    /// User pressed [ or { for paragraph navigation.
-    Paragraph,
     /// MPV CursorSync drove the cursor to a new line; do NOT re-seek MPV.
     MpvSync,
     /// Layout refresh after font/size/translation change. Not a navigation.
@@ -946,84 +944,6 @@ pub fn cursor_next_dialogue(state: &mut AppState) {
     }
 }
 
-/// Previous paragraph (`[` key).
-/// Jump to the first non-blank line of the previous paragraph.
-pub fn jump_to_prev_paragraph(state: &mut AppState) {
-    let line_count = state.buffer.line_count() as usize;
-    if state.current_line == 0 || line_count == 0 {
-        return;
-    }
-
-    let buffer = &state.buffer;
-    let mut i = state.current_line.saturating_sub(1);
-
-    // Skip blank lines immediately above
-    while i > 0 && is_blank_buffer_line(buffer, i) {
-        i -= 1;
-    }
-    // Skip non-blank lines (current paragraph body)
-    while i > 0 && !is_blank_buffer_line(buffer, i) {
-        i -= 1;
-    }
-    // Now i is on a blank line (or 0). Find the first non-blank line of the paragraph above.
-    let target = if is_blank_buffer_line(buffer, i) {
-        let mut start = i + 1;
-        while start < line_count && is_blank_buffer_line(buffer, start) {
-            start += 1;
-        }
-        if start < line_count && start < state.current_line {
-            Some(start)
-        } else {
-            Some(0)
-        }
-    } else {
-        Some(0)
-    };
-
-    if let Some(line_idx) = target {
-        state.current_line = line_idx;
-        state.page_back_stack.clear();
-        state.page_back_stack.push(state.page_top_line);
-        match state.config.navigation_mode {
-            crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
-            crate::config::NavigationMode::EReader => {
-                set_page_instant(state, line_idx);
-            }
-        }
-        after_page_change(state, PageChangeReason::Paragraph);
-    }
-}
-
-/// Next paragraph (`{` key).
-/// Jump to the first non-blank line of the next paragraph.
-pub fn jump_to_next_paragraph(state: &mut AppState) {
-    let line_count = state.buffer.line_count() as usize;
-    if line_count == 0 {
-        return;
-    }
-
-    let buffer = &state.buffer;
-    let mut i = state.current_line + 1;
-
-    // Skip remaining lines of current paragraph
-    while i < line_count && !is_blank_buffer_line(buffer, i) {
-        i += 1;
-    }
-    // Skip blank lines between paragraphs
-    while i < line_count && is_blank_buffer_line(buffer, i) {
-        i += 1;
-    }
-
-    if i < line_count {
-        let prev_line = state.current_line;
-        state.current_line = i;
-        state.page_back_stack.clear();
-        state.page_back_stack.push(state.page_top_line);
-        scroll_after_jump_forward(state, prev_line);
-        after_page_change(state, PageChangeReason::Paragraph);
-    }
-}
-
 /// Previous chapter line (`[` key).
 pub fn jump_to_prev_chapter(state: &mut AppState) {
     crate::app::hide_translations_for_navigation(state);
@@ -1815,16 +1735,6 @@ pub fn seek_to_current_line(state: &mut AppState) {
         log_fmt!("SEEK: line={} work_idx={} NO_TIMESTAMP suppress=86400s", state.current_line, work_idx);
         state.suppress_sync_until =
             Some(std::time::Instant::now() + std::time::Duration::from_secs(86400));
-    }
-}
-
-/// Position chunk's first line ~5 lines from top, move cursor there, update highlight.
-pub fn position_chunk(state: &mut AppState) {
-    if let Some(a_line) = state.ab_repeat.a_line {
-        state.current_line = a_line;
-        update_highlight(state);
-        let new_top = a_line.saturating_sub(5);
-        set_page_instant(state, new_top);
     }
 }
 

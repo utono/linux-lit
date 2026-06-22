@@ -638,12 +638,6 @@ pub(crate) fn buffer_line_text(buffer: &sourceview5::Buffer, line: usize) -> Str
     buffer.text(&start, &end, false).to_string()
 }
 
-/// Check if a buffer line is blank (empty or whitespace only).
-pub(crate) fn is_blank_buffer_line(buffer: &sourceview5::Buffer, line: usize) -> bool {
-    let text = buffer_line_text(buffer, line);
-    text.trim().is_empty()
-}
-
 /// Check if a buffer line is inside a multi-line stage direction `[...]` block.
 /// Scans backward (up to 10 lines) looking for an unclosed `[` opener.
 pub(crate) fn is_inside_stage_direction(buffer: &sourceview5::Buffer, line: usize) -> bool {

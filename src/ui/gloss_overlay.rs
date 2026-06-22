@@ -652,10 +652,6 @@ impl GlossOverlay {
         self.apply_font();
     }
 
-    pub fn show_gloss(&self, _original: &str, gloss: &str, card_width: i32, card_height: i32) {
-        self.show_gloss_with_color(_original, gloss, card_width, card_height, None, &[]);
-    }
-
     pub fn show_gloss_with_color(&self, _original: &str, gloss: &str, card_width: i32, card_height: i32, root_color: Option<&str>, source_line_numbers: &[(String, i64)]) {
         // No synopsis label bolding in gloss view.
         self.synopsis_label_ranges.borrow_mut().clear();
@@ -1889,16 +1885,6 @@ enum GlossElement {
     Pron(String),
 }
 
-/// Render a synopsis for display, honoring paragraph markup. Synopses may be
-/// stored either as plain text (one paragraph) or as one or more `<p>...</p>`
-/// tags (one per paragraph, mirroring how glosses use `<gloss>` per paragraph).
-/// `<p>` paragraphs are joined with a blank line so the text view shows visible
-/// paragraph breaks. Plain text with no `<p>` tags is returned trimmed, so
-/// legacy single-paragraph synopses keep working.
-pub fn render_synopsis_paragraphs(synopsis: &str) -> String {
-    render_synopsis_with_labels(synopsis).0
-}
-
 /// True when a paragraph is a short standalone heading label — e.g.
 /// `Shakespearean parallels:`. Such paragraphs are stored on their own `<p>`
 /// and rendered in bold by `show_synopsis`. The rule is deliberately generic:
@@ -1909,9 +1895,14 @@ fn is_label_paragraph(p: &str) -> bool {
     t.ends_with(':') && t.chars().count() <= 60 && !t[..t.len() - 1].contains('.')
 }
 
-/// Like [`render_synopsis_paragraphs`], but also returns the character ranges
-/// (start, end) — in GTK `TextBuffer` char offsets into the joined string — of
-/// any standalone label paragraphs, so the caller can bold them.
+/// Render a synopsis for display, honoring paragraph markup, and also return the
+/// character ranges (start, end) — in GTK `TextBuffer` char offsets into the
+/// joined string — of any standalone label paragraphs, so the caller can bold
+/// them. Synopses may be stored either as plain text (one paragraph) or as one
+/// or more `<p>...</p>` tags (one per paragraph, mirroring how glosses use
+/// `<gloss>` per paragraph). `<p>` paragraphs are joined with a blank line so the
+/// text view shows visible paragraph breaks; plain text with no `<p>` tags is
+/// returned trimmed, so legacy single-paragraph synopses keep working.
 pub fn render_synopsis_with_labels(synopsis: &str) -> (String, Vec<(usize, usize)>) {
     let mut paras: Vec<String> = Vec::new();
     let mut remaining = synopsis;

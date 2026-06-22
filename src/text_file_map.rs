@@ -138,21 +138,6 @@ fn is_inside_stage_direction_text(lines: &[String], line: usize) -> bool {
     false
 }
 
-/// Remove all `[...]` bracketed text from a string.
-fn strip_brackets(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut depth = 0usize;
-    for ch in s.chars() {
-        match ch {
-            '[' => depth += 1,
-            ']' if depth > 0 => depth -= 1,
-            _ if depth == 0 => result.push(ch),
-            _ => {}
-        }
-    }
-    result
-}
-
 const WINDOW: usize = 50;
 
 /// Build a LineMap for a BCP work whose body prayers were split one sentence
