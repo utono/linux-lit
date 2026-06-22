@@ -77,9 +77,7 @@ impl ConcordancePicker {
     }
 
     pub fn attach(&self, base: &impl IsA<gtk4::Widget>) {
-        self.overlay.set_child(Some(base));
-        self.overlay.add_overlay(&self.picker_box);
-        self.picker_box.set_visible(false);
+        crate::ui::picker_attach::attach_panel(&self.overlay, base, None, &self.picker_box);
     }
 
     pub fn search_entry(&self) -> &Entry {

@@ -39,9 +39,7 @@ impl AuthorshipPicker {
     }
 
     pub fn attach(&self, base: &impl IsA<gtk4::Widget>) {
-        self.overlay.set_child(Some(base));
-        self.overlay.add_overlay(&self.container);
-        self.container.set_visible(false);
+        crate::ui::picker_attach::attach_panel(&self.overlay, base, None, &self.container);
     }
 
     pub fn set_items(&mut self, items: Vec<AttributionSet>) {
