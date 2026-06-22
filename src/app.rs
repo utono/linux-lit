@@ -5612,6 +5612,34 @@ pub fn divs_at_buffer_line(state: &AppState, buffer_line: usize) -> (i64, i64) {
     (0, 0)
 }
 
+/// Assemble the verbatim text of one scene `(div1, div2)` for the current work,
+/// with speaker attributions, in reading order. Empty string if no current work
+/// or no matching lines.
+pub fn scene_text_for(state: &AppState, div1: i64, div2: i64) -> String {
+    let work = match state.current_work.as_ref() {
+        Some(w) => w,
+        None => return String::new(),
+    };
+    let mut out = String::new();
+    let mut last_speaker: Option<&str> = None;
+    for line in work.lines.iter().filter(|l| l.div1 == div1 && l.div2 == div2) {
+        match line.speaker.as_deref() {
+            Some(sp) if last_speaker != Some(sp) => {
+                if !out.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str(sp);
+                out.push('\n');
+                last_speaker = Some(sp);
+            }
+            _ => {}
+        }
+        out.push_str(&line.text);
+        out.push('\n');
+    }
+    out
+}
+
 /// Check if the current line is the first line of a new scene.
 pub fn is_first_line_of_scene(state: &AppState) -> bool {
     if state.current_line == 0 {
