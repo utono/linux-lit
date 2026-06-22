@@ -42,8 +42,8 @@ impl AskCard {
         container.append(&title);
 
         let scrolled = ScrolledWindow::new();
-        scrolled.set_min_content_height(72);
-        scrolled.set_max_content_height(160);
+        scrolled.set_min_content_height(160);
+        scrolled.set_max_content_height(320);
         scrolled.set_hscrollbar_policy(gtk4::PolicyType::Never);
         scrolled.set_margin_start(16);
         scrolled.set_margin_end(16);
