@@ -4,6 +4,7 @@
 
 pub mod authorship;
 pub mod bookmarks;
+pub(crate) mod claude_bridge;
 pub mod concordance;
 pub mod echoes;
 pub mod escape;

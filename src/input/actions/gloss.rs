@@ -697,14 +697,67 @@ fn request_ipa_then_apply(
     });
 }
 
+/// Persist a freshly composed gloss, reload the start-citation gloss list,
+/// select the new row, and render it into the gloss overlay. Shared by
+/// `add_gloss` and `edit_gloss` (their success bodies were byte-identical here).
+fn persist_and_render_gloss(
+    state_rc: &Rc<RefCell<AppState>>,
+    ctx: &crate::gloss::GlossContext,
+    full_gloss: &str,
+    gloss_type: &str,
+    model_for_db: &str,
+    log_msg: &str,
+) {
+    let mut new_gloss_id: i64 = -1;
+    if let Ok(conn) = crate::db::queries::open_db_rw() {
+        if let Ok(id) = crate::db::queries::save_gloss(
+            &conn, &ctx.hash, &ctx.work_abbrev,
+            &ctx.start_citation, &ctx.end_citation,
+            ctx.act, ctx.scene, &ctx.speaker,
+            &ctx.source_text, full_gloss,
+            gloss_type, model_for_db,
+        ) {
+            new_gloss_id = id;
+        }
+    }
+
+    let all = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| {
+            crate::db::queries::find_glosses_by_start(
+                &conn, &ctx.work_abbrev, &ctx.start_citation,
+                &["teacher-generic", "inner-monologue", "reader-gloss"],
+            ).ok()
+        })
+        .unwrap_or_default();
+
+    let new_idx = all.iter().position(|g| g.gloss_id == new_gloss_id).unwrap_or(0);
+
+    let mut s = state_rc.borrow_mut();
+    let cw = s.content_hbox.width();
+    let h = s.content_hbox.height();
+    let pairs = ctx.source_line_pairs();
+    s.gloss_overlay.show_gloss_with_color(
+        &ctx.source_text, full_gloss, cw, h,
+        Some(&s.theme.root_color), &pairs,
+    );
+    s.gloss_overlay.set_position(new_idx, all.len());
+    s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
+    s.gloss_list = all;
+    s.gloss_index = new_idx;
+    s.gloss_active_voice = 0;
+    recolor_cached_blocks(&s);
+    crate::logging::log(log_msg);
+}
+
 pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
-    let (ctx, model, tokio_handle) = {
+    let (ctx, model) = {
         let state = state_rc.borrow();
         let ctx = match &state.gloss_context {
             Some(c) => c.clone(),
             None => return,
         };
-        (ctx, state.config.claude_model.clone(), state.tokio_handle.clone())
+        (ctx, state.config.claude_model.clone())
     };
 
     state_rc.borrow().gloss_overlay.show_loading();
@@ -727,91 +780,38 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
         }
     };
 
-    let state_for_result = Rc::clone(state_rc);
     let gloss_type_owned = gloss_type_str.to_string();
 
-    glib::spawn_future_local(async move {
-        let system_prompt = system_prompt.to_string();
-        // Keep a copy for the DB stamp; `model` itself is moved into the spawn.
-        let model_for_db = model.clone();
-        let result = tokio_handle
-            .spawn(async move {
-                crate::gloss::call_claude_with_prompt(
-                    &system_prompt, &user_msg, &model,
-                ).await
-            })
-            .await;
-
-        match result {
-            Ok(Ok(gloss_text)) => {
-                let verified_text = if is_inner_monologue {
-                    crate::gloss::verify_echo_citations(&gloss_text, &ctx.work_abbrev)
-                } else {
-                    gloss_text.clone()
-                };
-                let full_gloss = if is_inner_monologue {
-                    format!("<gloss>Inner voice from:</gloss>\n\n{}\n\n{}", prompt_owned, verified_text)
-                } else {
-                    format!("<gloss>Q: {}</gloss>\n\n{}", prompt_owned, verified_text)
-                };
-                let mut new_gloss_id: i64 = -1;
-                if let Ok(conn) = crate::db::queries::open_db_rw() {
-                    if let Ok(id) = crate::db::queries::save_gloss(
-                        &conn, &ctx.hash, &ctx.work_abbrev,
-                        &ctx.start_citation, &ctx.end_citation,
-                        ctx.act, ctx.scene, &ctx.speaker,
-                        &ctx.source_text, &full_gloss,
-                        &gloss_type_owned, &model_for_db,
-                    ) {
-                        new_gloss_id = id;
-                    }
-                }
-
-                let all = crate::db::queries::open_db()
-                    .ok()
-                    .and_then(|conn| {
-                        crate::db::queries::find_glosses_by_start(
-                            &conn, &ctx.work_abbrev, &ctx.start_citation,
-                            &["teacher-generic", "inner-monologue", "reader-gloss"],
-                        ).ok()
-                    })
-                    .unwrap_or_default();
-
-                let new_idx = all.iter().position(|g| g.gloss_id == new_gloss_id).unwrap_or(0);
-
-                let mut s = state_for_result.borrow_mut();
-                let cw = s.content_hbox.width();
-                let h = s.content_hbox.height();
-                let pairs = ctx.source_line_pairs();
-                s.gloss_overlay.show_gloss_with_color(
-                    &ctx.source_text, &full_gloss, cw, h,
-                    Some(&s.theme.root_color), &pairs,
-                );
-                s.gloss_overlay.set_position(new_idx, all.len());
-                s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
-                s.gloss_list = all;
-                s.gloss_index = new_idx;
-                s.gloss_active_voice = 0;
-                recolor_cached_blocks(&s);
-                crate::logging::log(&format!("GLOSS: added new {} gloss", gloss_type_owned));
-            }
-            Ok(Err(e)) => {
-                let s = state_for_result.borrow();
-                s.gloss_overlay.show(&format!("Error: {}", e), "");
-                crate::logging::log(&format!("GLOSS: add error: {}", e));
-            }
-            Err(e) => {
-                // Recover the UI so the overlay isn't stuck on the loading card.
-                let s = state_for_result.borrow();
-                s.gloss_overlay.show("Internal error \u{2014} try again.", "");
-                crate::logging::log(&format!("GLOSS: tokio join error: {}", e));
-            }
-        }
-    });
+    let model_for_db = model.clone();
+    crate::input::actions::claude_bridge::run_claude_request(
+        state_rc,
+        system_prompt.to_string(),
+        user_msg,
+        model,
+        move |st, gloss_text| {
+            let verified_text = if is_inner_monologue {
+                crate::gloss::verify_echo_citations(&gloss_text, &ctx.work_abbrev)
+            } else {
+                gloss_text.clone()
+            };
+            let full_gloss = if is_inner_monologue {
+                format!("<gloss>Inner voice from:</gloss>\n\n{}\n\n{}", prompt_owned, verified_text)
+            } else {
+                format!("<gloss>Q: {}</gloss>\n\n{}", prompt_owned, verified_text)
+            };
+            persist_and_render_gloss(
+                st, &ctx, &full_gloss, &gloss_type_owned, &model_for_db,
+                &format!("GLOSS: added new {} gloss", gloss_type_owned),
+            );
+        },
+        |st, msg| {
+            st.borrow().gloss_overlay.show(msg, "");
+        },
+    );
 }
 
 pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
-    let (ctx, existing_gloss_text, model, tokio_handle) = {
+    let (ctx, existing_gloss_text, model) = {
         let state = state_rc.borrow();
         let ctx = match &state.gloss_context {
             Some(c) => c.clone(),
@@ -820,7 +820,7 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
         let existing = state.gloss_list.get(state.gloss_index)
             .map(|g| g.gloss_text.clone())
             .unwrap_or_default();
-        (ctx, existing, state.config.claude_model.clone(), state.tokio_handle.clone())
+        (ctx, existing, state.config.claude_model.clone())
     };
 
     state_rc.borrow().gloss_overlay.show_loading();
@@ -843,87 +843,34 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
         }
     };
 
-    let state_for_result = Rc::clone(state_rc);
     let gloss_type_owned = gloss_type_str.to_string();
 
-    glib::spawn_future_local(async move {
-        let system_prompt = system_prompt.to_string();
-        // Keep a copy for the DB stamp; `model` itself is moved into the spawn.
-        let model_for_db = model.clone();
-        let result = tokio_handle
-            .spawn(async move {
-                crate::gloss::call_claude_with_prompt(
-                    &system_prompt, &user_msg, &model,
-                ).await
-            })
-            .await;
-
-        match result {
-            Ok(Ok(gloss_text)) => {
-                let verified_text = if is_inner_monologue {
-                    crate::gloss::verify_echo_citations(&gloss_text, &ctx.work_abbrev)
-                } else {
-                    gloss_text.clone()
-                };
-                let full_gloss = if is_inner_monologue {
-                    format!("<gloss>Re-glossed with:</gloss>\n\n{}\n\n{}", pasted_owned, verified_text)
-                } else {
-                    format!("<gloss>Edit context:</gloss>\n\n{}\n\n{}", pasted_owned, verified_text)
-                };
-                let mut new_gloss_id: i64 = -1;
-                if let Ok(conn) = crate::db::queries::open_db_rw() {
-                    if let Ok(id) = crate::db::queries::save_gloss(
-                        &conn, &ctx.hash, &ctx.work_abbrev,
-                        &ctx.start_citation, &ctx.end_citation,
-                        ctx.act, ctx.scene, &ctx.speaker,
-                        &ctx.source_text, &full_gloss,
-                        &gloss_type_owned, &model_for_db,
-                    ) {
-                        new_gloss_id = id;
-                    }
-                }
-
-                let all = crate::db::queries::open_db()
-                    .ok()
-                    .and_then(|conn| {
-                        crate::db::queries::find_glosses_by_start(
-                            &conn, &ctx.work_abbrev, &ctx.start_citation,
-                            &["teacher-generic", "inner-monologue", "reader-gloss"],
-                        ).ok()
-                    })
-                    .unwrap_or_default();
-
-                let new_idx = all.iter().position(|g| g.gloss_id == new_gloss_id).unwrap_or(0);
-
-                let mut s = state_for_result.borrow_mut();
-                let cw = s.content_hbox.width();
-                let h = s.content_hbox.height();
-                let pairs = ctx.source_line_pairs();
-                s.gloss_overlay.show_gloss_with_color(
-                    &ctx.source_text, &full_gloss, cw, h,
-                    Some(&s.theme.root_color), &pairs,
-                );
-                s.gloss_overlay.set_position(new_idx, all.len());
-                s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
-                s.gloss_list = all;
-                s.gloss_index = new_idx;
-                s.gloss_active_voice = 0;
-                recolor_cached_blocks(&s);
-                crate::logging::log(&format!("GLOSS: edited {} gloss (added new)", gloss_type_owned));
-            }
-            Ok(Err(e)) => {
-                let s = state_for_result.borrow();
-                s.gloss_overlay.show(&format!("Error: {}", e), "");
-                crate::logging::log(&format!("GLOSS: edit error: {}", e));
-            }
-            Err(e) => {
-                // Recover the UI so the overlay isn't stuck on the loading card.
-                let s = state_for_result.borrow();
-                s.gloss_overlay.show("Internal error \u{2014} try again.", "");
-                crate::logging::log(&format!("GLOSS: tokio join error: {}", e));
-            }
-        }
-    });
+    let model_for_db = model.clone();
+    crate::input::actions::claude_bridge::run_claude_request(
+        state_rc,
+        system_prompt.to_string(),
+        user_msg,
+        model,
+        move |st, gloss_text| {
+            let verified_text = if is_inner_monologue {
+                crate::gloss::verify_echo_citations(&gloss_text, &ctx.work_abbrev)
+            } else {
+                gloss_text.clone()
+            };
+            let full_gloss = if is_inner_monologue {
+                format!("<gloss>Re-glossed with:</gloss>\n\n{}\n\n{}", pasted_owned, verified_text)
+            } else {
+                format!("<gloss>Edit context:</gloss>\n\n{}\n\n{}", pasted_owned, verified_text)
+            };
+            persist_and_render_gloss(
+                st, &ctx, &full_gloss, &gloss_type_owned, &model_for_db,
+                &format!("GLOSS: edited {} gloss (added new)", gloss_type_owned),
+            );
+        },
+        |st, msg| {
+            st.borrow().gloss_overlay.show(msg, "");
+        },
+    );
 }
 
 /// Stop all gloss audio so only one source can ever play: pause MPV media and
