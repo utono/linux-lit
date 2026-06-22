@@ -83,7 +83,7 @@ const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 const BOTTOM_ROW: &[KeyDef] = &[
     bare("'", "\"", "reopen BCP echoes"),
     key("q", "Q", "next speaker", "Q: next dlg", &[]),
-    key("j", "J", "cursor \u{2193}", "J: next speaker", &[]),
+    key("j", "J", "cursor \u{2193}", "J: next speaker", &[("C-j", "journal tog")]),
     key("k", "K", "cursor \u{2191}", "K: prev speaker", &[]),
     bare("x", "X", "pg fwd"),
     bare("b", "B", ""),
@@ -352,6 +352,18 @@ Each row shows the speaker, the first source line, and the citation; confirming 
 loads that passage's glosses into the overlay and jumps the reader to it. \
 -> pickers::open_gloss_picker — src/input/actions/pickers.rs (confirm: \
 handle_gloss_picker_key in src/input/keymap.rs)",
+        "journal tog" => "Open or close the Q&A journal for the current scene. \
+The journal is a per-work notebook: each scene holds zero or more \u{201c}pages,\u{201d} \
+where a page is one question you asked and the answer Claude gave. It opens on the \
+scene under the reading cursor; if that scene has no pages yet it shows an empty \
+card prompting you to press a to ask. Inside the overlay: a asks a new question \
+(Claude answers, drawing on its knowledge of the whole play), e edits the current \
+page's question, d deletes the current page, j/k scroll the answer, gg/G jump to \
+top/bottom, Ctrl+n / Ctrl+p flip pages within the scene, Alt+n / Alt+p jump to the \
+next/prev scene that has pages, and Escape (or Ctrl+j) closes and returns the \
+cursor to where you were reading. \
+-> journal::toggle_overlay — src/input/actions/journal.rs (overlay keys: \
+handle_journal_key in src/input/keymap.rs)",
         "last gloss" => "Reopen the gloss overlay on the most recently viewed \
 gloss in this work, restored to the gloss type that was on screen. The reference \
 is remembered per work and persists across restarts; it is updated whenever a \
