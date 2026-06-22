@@ -147,9 +147,7 @@ impl GlossPicker {
         if let Some(current) = self.list_box.selected_row() {
             let idx = current.index();
             let new_idx = (idx + delta).max(0);
-            if let Some(row) = self.list_box.row_at_index(new_idx) {
-                self.list_box.select_row(Some(&row));
-            }
+            crate::ui::picker_nav::select_row_at(&self.list_box, new_idx);
         }
     }
 }

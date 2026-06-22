@@ -182,9 +182,7 @@ impl VoicePicker {
             .map(|r| r.index())
             .unwrap_or(-1);
         let next = current + delta;
-        if let Some(row) = self.list_box.row_at_index(next) {
-            self.list_box.select_row(Some(&row));
-        }
+        crate::ui::picker_nav::select_row_at(&self.list_box, next);
     }
 
     pub fn entry(&self) -> &Entry {
