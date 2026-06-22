@@ -82,29 +82,12 @@ impl JournalOverlay {
         // Footer rule mirroring the gloss overlay (gloss_overlay.rs footer_box):
         // current page's work/act/scene on the left, fixed keybind hints on the
         // right.
-        let footer_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-        footer_box.set_margin_start(text_margins as i32);
-        footer_box.set_margin_end(text_margins as i32);
-        footer_box.set_margin_top(12);
-        footer_box.set_margin_bottom(12);
-        footer_box.add_css_class("gloss-hint");
-
-        // Layout mirrors the gloss overlay footer exactly: the left label takes
-        // hexpand (holding the row's stretch) and the hint sits halign End after
-        // it, so the hint renders at the far right just as it does in glosses.
-        let footer_left = Label::new(None);
-        footer_left.set_halign(gtk4::Align::Start);
-        footer_left.set_hexpand(true);
-        footer_box.append(&footer_left);
-
-        let footer_hint = Label::new(Some(
+        let footer = crate::ui::footer::build_footer_row(
+            text_margins as i32,
             "Alt+w work \u{00b7} Ctrl+\\ pick \u{00b7} A add \u{00b7} E edit \u{00b7} D delete",
-        ));
-        footer_hint.set_halign(gtk4::Align::End);
-        footer_hint.set_margin_end(12);
-        footer_box.append(&footer_hint);
-
-        container.append(&footer_box);
+        );
+        let footer_left = footer.left;
+        container.append(&footer.container);
 
         // Shared "ask" input card (canonical synopsis values), stacked last in
         // the column. Focus returns to the page view when leaving the input.

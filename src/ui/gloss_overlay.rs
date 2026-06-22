@@ -327,30 +327,14 @@ impl GlossOverlay {
 
         container.append(&gloss_scroll_overlay);
 
-        let footer_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-        footer_box.set_margin_start(text_margins as i32);
-        footer_box.set_margin_end(text_margins as i32);
-        footer_box.set_margin_top(12);
-        footer_box.set_margin_bottom(12);
-        footer_box.add_css_class("gloss-hint");
-
-        // Left-anchored citation (e.g. "2H6 1.4.7–14") for the open passage,
-        // shown only in the gloss view — matches the journal overlay footer,
-        // which puts the work abbrev + location on the far left. The hexpand
-        // pushes the right-aligned hint to the far right. No own CSS class: it
-        // inherits the .gloss-hint box's 14px/dim/opacity so it renders
-        // identically to the hint text.
-        let citation_label = Label::new(None);
-        citation_label.set_halign(Align::Start);
-        citation_label.set_hexpand(true);
+        let footer = crate::ui::footer::build_footer_row(
+            text_margins as i32,
+            "Esc close · A add · E edit · D delete · c copy id · Ctrl+n/p passage · Alt+n/p gloss",
+        );
+        let footer_box = footer.container;
+        let citation_label = footer.left;
         citation_label.set_visible(false);
-        footer_box.append(&citation_label);
-
-        // Hints sit on the far right, before the N/M position counter.
-        let hint = Label::new(Some("Esc close · A add · E edit · D delete · c copy id · Ctrl+n/p passage · Alt+n/p gloss"));
-        hint.set_halign(Align::End);
-        hint.set_margin_end(12);
-        footer_box.append(&hint);
+        let hint = footer.hint;
 
         let position_label = Label::new(None);
         position_label.set_halign(Align::End);

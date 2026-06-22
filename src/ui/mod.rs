@@ -1,6 +1,7 @@
 pub mod authorship_picker;
 pub mod action_popup;
 pub mod ask_card;
+pub mod footer;
 pub mod concordance_bar;
 pub mod concordance_list_picker;
 pub mod concordance_works_picker;
