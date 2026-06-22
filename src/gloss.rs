@@ -531,8 +531,8 @@ pub fn build_context(work: &Work, lines: &[Line]) -> Option<GlossContext> {
     let base_abbrev = normalize_abbrev(&work.abbrev);
     let first = lines.first().unwrap();
     let last = lines.last().unwrap();
-    let start_citation = format!("{}.{}.{}.{}", base_abbrev, first.div1, first.div2, first.line_in_div);
-    let end_citation = format!("{}.{}.{}.{}", base_abbrev, last.div1, last.div2, last.line_in_div);
+    let start_citation = crate::db::models::citation(base_abbrev, first.div1, first.div2, first.line_in_div);
+    let end_citation = crate::db::models::citation(base_abbrev, last.div1, last.div2, last.line_in_div);
 
     let mut speakers: Vec<&str> = Vec::new();
     for line in lines {
@@ -576,8 +576,8 @@ pub fn build_context_for_type(work: &Work, lines: &[Line], gloss_type: &str) -> 
     let base_abbrev = normalize_abbrev(&work.abbrev);
     let first = lines.first().unwrap();
     let last = lines.last().unwrap();
-    let start_citation = format!("{}.{}.{}.{}", base_abbrev, first.div1, first.div2, first.line_in_div);
-    let end_citation = format!("{}.{}.{}.{}", base_abbrev, last.div1, last.div2, last.line_in_div);
+    let start_citation = crate::db::models::citation(base_abbrev, first.div1, first.div2, first.line_in_div);
+    let end_citation = crate::db::models::citation(base_abbrev, last.div1, last.div2, last.line_in_div);
 
     let mut speakers: Vec<&str> = Vec::new();
     for line in lines {
