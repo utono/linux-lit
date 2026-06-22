@@ -538,8 +538,8 @@ it, j/k move the cursor block (left accent bar) and gg/G jump first/last, like \
 the gloss overlay; Space (or Tab) plays/stops the cursor paragraph's TTS \
 (synthesizing on a cache miss); Shift+Space batch-synthesizes every synopsis paragraph to \
 cached ElevenLabs MP3s (cache only, no playback), showing a \u{201c}Synthesizing\u{2026}\u{201d} \
-toast. Ctrl+p / Ctrl+n cycle to the previous / next scene's synopsis, \
-wrapping through a whole-work synopsis that sorts first (before Act 1) \u{2014} so \
+toast. Ctrl+p / Ctrl+n step to the previous / next scene's synopsis, clamping at \
+the ends (no wraparound); a whole-work synopsis sorts first (before Act 1), so \
 from Act 1 Scene 1, Ctrl+p shows the whole-work overview. A amends and E edits the \
 current synopsis (including the whole-work one); U undoes the last amend. \
 -> app::show_synopsis_overlay — src/app.rs; \

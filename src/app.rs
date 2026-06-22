@@ -6296,8 +6296,24 @@ fn ordered_synopsis_scenes(s: &AppState) -> Vec<(i64, i64)> {
     prepend_whole_work(has_whole_work, keys)
 }
 
+/// Clamp the next synopsis index to `[0, len-1]` (no wraparound). Returns `None`
+/// when the step would run off either end (already at first/last), so the caller
+/// can no-op rather than re-render the same scene. Pure seam for `cycle_synopsis`.
+fn clamp_synopsis_index(idx: usize, delta: i32, len: usize) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    let next = idx as i32 + delta;
+    if next < 0 || next >= len as i32 {
+        None
+    } else {
+        Some(next as usize)
+    }
+}
+
 /// Step the synopsis overlay to the next (+1) or previous (-1) scene that has a
-/// synopsis, wrapping around. No-op if the overlay isn't showing a known scene.
+/// synopsis, clamping at the first/last (no wraparound). No-op if the overlay
+/// isn't showing a known scene or is already at the boundary being stepped past.
 pub fn cycle_synopsis(state: &std::rc::Rc<std::cell::RefCell<AppState>>, delta: i32) {
     let mut s = state.borrow_mut();
     let scenes = ordered_synopsis_scenes(&s);
@@ -6306,7 +6322,10 @@ pub fn cycle_synopsis(state: &std::rc::Rc<std::cell::RefCell<AppState>>, delta: 
     }
     let cur = s.synopsis_overlay_scene;
     let idx = scenes.iter().position(|&k| k == cur).unwrap_or(0);
-    let new_idx = ((idx as i32 + delta).rem_euclid(scenes.len() as i32)) as usize;
+    let new_idx = match clamp_synopsis_index(idx, delta, scenes.len()) {
+        Some(i) => i,
+        None => return,
+    };
     let (div1, div2) = scenes[new_idx];
     let synopsis = match s.synopsis_cache.get(&(div1, div2)) {
         Some(t) => t.clone(),
@@ -6717,5 +6736,19 @@ mod synopsis_tests {
     fn prepend_whole_work_empty_rest() {
         assert_eq!(prepend_whole_work(true, vec![]), vec![(-2, 0)]);
         assert_eq!(prepend_whole_work(false, vec![]), Vec::<(i64, i64)>::new());
+    }
+
+    #[test]
+    fn clamp_synopsis_index_clamps_no_wrap() {
+        use super::clamp_synopsis_index;
+        // Mid-list steps move by one.
+        assert_eq!(clamp_synopsis_index(1, 1, 4), Some(2));
+        assert_eq!(clamp_synopsis_index(2, -1, 4), Some(1));
+        // At the last index, +1 is a no-op (None) — no wrap to 0.
+        assert_eq!(clamp_synopsis_index(3, 1, 4), None);
+        // At index 0, -1 is a no-op (None) — no wrap to last.
+        assert_eq!(clamp_synopsis_index(0, -1, 4), None);
+        // Empty list is always None.
+        assert_eq!(clamp_synopsis_index(0, 1, 0), None);
     }
 }
