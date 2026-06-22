@@ -5593,10 +5593,21 @@ pub fn current_synopsis_key(state: &AppState) -> (i64, i64) {
     current_scene_divs(state)
 }
 
-/// The fixed label for the whole-work synopsis position `(-2,0)`, or `None` for
+/// Scene-key sentinel for the whole-work synopsis (not a real (div1,div2)
+/// scene). Sorts before all real scenes in the synopsis picker; `whole_work_label`
+/// maps it to "Whole work". Distinct from the journal whole-work key, which lives
+/// in a separate table and disambiguates by its `scope` column.
+pub(crate) const SYNOPSIS_WHOLE_WORK: (i64, i64) = (-2, 0);
+
+/// (div1, div2) stored for a journal page scoped to the whole work (vs a scene).
+/// The journal_entries table ALSO carries a `scope` TEXT column ('work'/'scene'),
+/// so this pair is not unique on its own — it is always paired with scope='work'.
+pub(crate) const JOURNAL_WORK_DIV: (i64, i64) = (-1, -1);
+
+/// The fixed label for the whole-work synopsis position (SYNOPSIS_WHOLE_WORK), or `None` for
 /// any real scene/chapter key. Pure seam for `synopsis_label`.
 fn whole_work_label(div1: i64, div2: i64) -> Option<&'static str> {
-    if (div1, div2) == (-2, 0) {
+    if (div1, div2) == SYNOPSIS_WHOLE_WORK {
         Some("Whole work")
     } else {
         None
@@ -6243,12 +6254,12 @@ pub fn scene_label_for(state: &AppState, div1: i64, div2: i64) -> String {
     scene_label(div1, div2)
 }
 
-/// Put the whole-work synopsis key `(-2,0)` first when it exists, otherwise
+/// Put the whole-work synopsis key (SYNOPSIS_WHOLE_WORK) first when it exists, otherwise
 /// return `rest` unchanged. Pure seam for `ordered_synopsis_scenes`.
 fn prepend_whole_work(has_whole_work: bool, rest: Vec<(i64, i64)>) -> Vec<(i64, i64)> {
     if has_whole_work {
         let mut out = Vec::with_capacity(rest.len() + 1);
-        out.push((-2, 0));
+        out.push(SYNOPSIS_WHOLE_WORK);
         out.extend(rest);
         out
     } else {
@@ -6260,7 +6271,7 @@ fn prepend_whole_work(has_whole_work: bool, rest: Vec<(i64, i64)>) -> Vec<(i64, 
 /// reading order. `work.lines` is already sorted by (div1, div2, line_in_div),
 /// so collecting unique pairs in encounter order gives reading order.
 fn ordered_synopsis_scenes(s: &AppState) -> Vec<(i64, i64)> {
-    let has_whole_work = s.synopsis_cache.contains_key(&(-2, 0));
+    let has_whole_work = s.synopsis_cache.contains_key(&SYNOPSIS_WHOLE_WORK);
 
     if is_chapter_work(s) {
         let work = match s.current_work.as_ref() {
@@ -6286,10 +6297,10 @@ fn ordered_synopsis_scenes(s: &AppState) -> Vec<(i64, i64)> {
     let mut keys = Vec::new();
     for line in &work.lines {
         let k = (line.div1, line.div2);
-        // Never list (-2,0) as a scene from the line loop — it's the whole-work
+        // Never list SYNOPSIS_WHOLE_WORK as a scene from the line loop — it's the whole-work
         // key, prepended separately. (Lines always have div1 >= -1, but guard
-        // anyway so a stray (-2,0) line can't double it.)
-        if k != (-2, 0) && seen.insert(k) && s.synopsis_cache.contains_key(&k) {
+        // anyway so a stray SYNOPSIS_WHOLE_WORK line can't double it.)
+        if k != SYNOPSIS_WHOLE_WORK && seen.insert(k) && s.synopsis_cache.contains_key(&k) {
             keys.push(k);
         }
     }
@@ -6711,7 +6722,7 @@ mod synopsis_tests {
 
     #[test]
     fn whole_work_label_only_for_minus_two() {
-        assert_eq!(super::whole_work_label(-2, 0), Some("Whole work"));
+        assert_eq!(super::whole_work_label(super::SYNOPSIS_WHOLE_WORK.0, super::SYNOPSIS_WHOLE_WORK.1), Some("Whole work"));
         assert_eq!(super::whole_work_label(0, 0), None); // (0,0) is the Prologue slot, not whole-work
         assert_eq!(super::whole_work_label(1, 1), None);
         assert_eq!(super::whole_work_label(2, 0), None);
@@ -6722,7 +6733,7 @@ mod synopsis_tests {
         let rest = vec![(1, 1), (1, 2), (2, 1)];
         assert_eq!(
             prepend_whole_work(true, rest.clone()),
-            vec![(-2, 0), (1, 1), (1, 2), (2, 1)]
+            vec![super::SYNOPSIS_WHOLE_WORK, (1, 1), (1, 2), (2, 1)]
         );
     }
 
@@ -6734,7 +6745,7 @@ mod synopsis_tests {
 
     #[test]
     fn prepend_whole_work_empty_rest() {
-        assert_eq!(prepend_whole_work(true, vec![]), vec![(-2, 0)]);
+        assert_eq!(prepend_whole_work(true, vec![]), vec![super::SYNOPSIS_WHOLE_WORK]);
         assert_eq!(prepend_whole_work(false, vec![]), Vec::<(i64, i64)>::new());
     }
 
