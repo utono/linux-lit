@@ -447,34 +447,16 @@ fn handle_picker_key(
             }
         }
         PickerAction::MoveDown => {
-            match mode {
-                InputMode::BookmarkPicker => state.borrow().bookmark_picker.move_selection(1),
-                InputMode::MediaPicker => state.borrow().media_picker.move_selection(1),
-                InputMode::ConcordancePicker => state.borrow().concordance_picker.move_selection(1),
-                InputMode::ConcordanceWordPicker => state.borrow().concordance_word_picker.move_selection(1),
-                InputMode::ConcordanceListPicker => state.borrow().concordance_list_picker.move_selection(1),
-                InputMode::ConcordanceWorksPicker => state.borrow().concordance_works_picker.move_selection(1),
-                InputMode::GlossPicker => state.borrow().gloss_picker.move_selection(1),
-                InputMode::AuthorshipPicker => state.borrow().authorship_picker.move_selection(1),
-                InputMode::JournalPicker => state.borrow().journal_picker.move_selection(1),
-                InputMode::EchoLinePicker => state.borrow().echo_line_picker.move_selection(1),
-                _ => {}
+            let s = state.borrow();
+            if let Some(p) = crate::input::picker_dispatch::picker_for_mode(&s, mode) {
+                p.move_selection(1);
             }
             true
         }
         PickerAction::MoveUp => {
-            match mode {
-                InputMode::BookmarkPicker => state.borrow().bookmark_picker.move_selection(-1),
-                InputMode::MediaPicker => state.borrow().media_picker.move_selection(-1),
-                InputMode::ConcordancePicker => state.borrow().concordance_picker.move_selection(-1),
-                InputMode::ConcordanceWordPicker => state.borrow().concordance_word_picker.move_selection(-1),
-                InputMode::ConcordanceListPicker => state.borrow().concordance_list_picker.move_selection(-1),
-                InputMode::ConcordanceWorksPicker => state.borrow().concordance_works_picker.move_selection(-1),
-                InputMode::GlossPicker => state.borrow().gloss_picker.move_selection(-1),
-                InputMode::AuthorshipPicker => state.borrow().authorship_picker.move_selection(-1),
-                InputMode::JournalPicker => state.borrow().journal_picker.move_selection(-1),
-                InputMode::EchoLinePicker => state.borrow().echo_line_picker.move_selection(-1),
-                _ => {}
+            let s = state.borrow();
+            if let Some(p) = crate::input::picker_dispatch::picker_for_mode(&s, mode) {
+                p.move_selection(-1);
             }
             true
         }
