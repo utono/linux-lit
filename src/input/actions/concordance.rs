@@ -541,7 +541,7 @@ fn concordance_seek(state: &mut AppState, line_mapping_id: i64) {
         if let Some(line) = work.lines.iter().find(|l| l.id == line_mapping_id) {
             if let Some(ts) = line.timestamp.as_ref() {
                 state.suppress_sync_until =
-                    Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
+                    Some(std::time::Instant::now() + crate::input::navigation::SYNC_SUPPRESS_SEEK);
                 let seek_time = (ts.start - SEEK_PREROLL).max(0.0);
                 let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::Seek(seek_time));
             }

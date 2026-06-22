@@ -71,6 +71,15 @@ pub const SYNC_GAP_THRESHOLD: f64 = 1.5;
 /// even when the previous line's end_time overshoots the actual speech.
 pub const SYNC_GAP_PREROLL: f64 = 1.5;
 
+/// Brief window during which playback-sync is suppressed while MPV processes a
+/// seek, so the highlight doesn't fight the in-flight seek. Used at every
+/// manual-seek site (search, timestamp set, gamepad, echo/concordance jumps).
+pub const SYNC_SUPPRESS_SEEK: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// "Suppress sync indefinitely" sentinel (24h) — set when there is no active
+/// timestamp to sync against, cleared by the next real sync event.
+pub const SYNC_SUPPRESS_INDEFINITE: std::time::Duration = std::time::Duration::from_secs(86400);
+
 // ---------------------------------------------------------------------------
 // PageChangeReason
 // ---------------------------------------------------------------------------
@@ -1721,7 +1730,7 @@ pub fn seek_to_current_line(state: &mut AppState) {
     if let Some(ts) = &work.lines[work_idx].timestamp {
         // Exact timestamp — brief suppression while MPV processes the seek.
         // Don't shorten an existing longer suppression (e.g. from display_work).
-        let new_until = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        let new_until = std::time::Instant::now() + SYNC_SUPPRESS_SEEK;
         if state.suppress_sync_until.map_or(true, |existing| new_until > existing) {
             state.suppress_sync_until = Some(new_until);
         }
@@ -1734,7 +1743,7 @@ pub fn seek_to_current_line(state: &mut AppState) {
         // No timestamp — suppress indefinitely so cursor stays put
         log_fmt!("SEEK: line={} work_idx={} NO_TIMESTAMP suppress=86400s", state.current_line, work_idx);
         state.suppress_sync_until =
-            Some(std::time::Instant::now() + std::time::Duration::from_secs(86400));
+            Some(std::time::Instant::now() + SYNC_SUPPRESS_INDEFINITE);
     }
 }
 

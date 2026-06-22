@@ -894,7 +894,7 @@ pub(crate) fn play_source_turn(state_rc: &Rc<RefCell<AppState>>) {
     s.ab_repeat.b_time = Some(b);
     s.ab_repeat.loop_active = true;
     s.suppress_sync_until =
-        Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
+        Some(std::time::Instant::now() + crate::input::navigation::SYNC_SUPPRESS_SEEK);
     crate::logging::log(&format!("ECHOES: re-armed source turn loop [{:.1}, {:.1}]", loop_a, b));
 }
 
@@ -1362,7 +1362,7 @@ pub(crate) fn play_selected_echo(
     let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::LoadFileAndSeek(media.path.clone(), seek));
     s.ab_repeat.loop_active = false;
     s.suppress_sync_until =
-        Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
+        Some(std::time::Instant::now() + crate::input::navigation::SYNC_SUPPRESS_SEEK);
     crate::logging::log(&format!(
         "ECHOES: playing echo {} line_id={} @{:.1}", link.echo_work_abbrev, line_id, seek
     ));

@@ -101,9 +101,8 @@ pub fn toggle_playback(state: &mut AppState) {
                 let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::Seek(seek_time));
                 // Suppress sync briefly so the preroll seek doesn't pull
                 // the cursor back to the previous line
-                state.suppress_sync_until = Some(
-                    std::time::Instant::now() + std::time::Duration::from_millis(500),
-                );
+                state.suppress_sync_until =
+                    Some(std::time::Instant::now() + crate::input::navigation::SYNC_SUPPRESS_SEEK);
             } else {
                 // Current line has no timestamp — clear any indefinite suppression
                 // (e.g. from navigate-while-paused) so sync resumes on playback.
@@ -245,7 +244,7 @@ fn seek_and_resume(state: &mut AppState) {
     }
     state.prev_highlight_line.set(None);
     state.suppress_sync_until =
-        Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
+        Some(std::time::Instant::now() + crate::input::navigation::SYNC_SUPPRESS_SEEK);
 }
 
 /// Clear all search state: highlights and matches.

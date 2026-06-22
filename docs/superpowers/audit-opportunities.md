@@ -107,9 +107,58 @@ are tracked separately at the bottom under "## Larger projects (not safe-scope)"
   a same-named pair was behaviorally different. The audit skill's "verify the
   byte-identical part" step is what caught it.
 
+## #12 — sync-suppress-window-const — DONE (commit pending)
+
+- **Signal:** `Some(Instant::now() + Duration::from_millis(500))` repeated at 8
+  sites (search.rs ×2, timestamps.rs, keymap.rs, gamepad.rs, echoes.rs ×2,
+  concordance.rs) as the "brief suppression while MPV seeks" window.
+- **Identical part (extracts):** a named `const SYNC_SUPPRESS_SEEK: Duration` (500ms).
+  Sites become `Some(Instant::now() + SYNC_SUPPRESS_SEEK)`.
+- **Variant — name separately, do NOT merge:** navigation.rs:1736 uses
+  `from_secs(86400)` — a distinct "suppress indefinitely" sentinel; give it its
+  own `SYNC_SUPPRESS_INDEFINITE` const.
+- **EXCLUDED:** the two unrelated `from_millis(500)` GTK `timeout_add_local_once`
+  (app.rs:1972, keymap.rs:28) — same number, different meaning (a UI timer, not a
+  sync window). The navigation.rs:1725 max-guard logic stays inline (folding it
+  into a helper would add a guard at the plain sites = behavior change).
+- **Safe-scope:** yes — literal → named const, #8-style. Highest copy count.
+
+## #13 — picker-attach-helper — OPEN
+
+- **Signal:** `attach(&self, base)` body
+  (`overlay.set_child(Some(base)); overlay.add_overlay(&picker_box); picker_box.set_visible(false)`)
+  byte-identical in 11 pickers.
+- **Variants:** scrim pickers add an `add_overlay(&self.scrim)` line
+  (echo_picker, library_picker, concordance_works); authorship_picker uses field
+  `container` not `picker_box`.
+- **Identical part (extracts):** a free
+  `attach_picker(&Overlay, base, scrim: Option<&Widget>, panel: &Widget)`.
+- **EXCLUDED:** evaluate whether the scrim/field-name variants are clean enough to
+  fold (pass scrim Option, pass the panel widget) or whether authorship's
+  `container` is structurally different enough to leave out.
+- **Safe-scope:** yes — pure widget-construction extraction.
+
+## #14 — citation-format-helper — OPEN
+
+- **Signal:** `format!("{}.{}.{}.{}", abbrev, div1, div2, line_in_div)` at 6 sites
+  (gloss.rs ×4, queries.rs ×2).
+- **Identical part (extracts):** `fn citation(abbrev, div1, div2, line_in_div) -> String`.
+- **Variants:** source of the fields (`first./last.` structs vs row columns) —
+  stays at call site (just the 4 args differ).
+- **Safe-scope:** yes — literal template → helper fn.
+
 ---
 
 ## Larger projects (not safe-scope)
+
+- **`InputMode → picker` dispatch accessor.** The handler audit found ~18
+  `move_selection` dispatch arms, 7 Escape `hide(); input_mode = Reader` arms, and
+  ~5 picker-open `show(); set input_mode` pairs that all hand-write
+  `state.<specific_picker>.<op>()`. A `picker_for_mode(mode) -> &dyn Picker`
+  accessor (or a `dyn Picker` trait) would collapse all three — but it touches
+  control flow and would have to unify `move_selection`'s empty-start variants,
+  which #6 DELIBERATELY preserved. Behavior-risky, multi-PR → not a numbered
+  safe-scope opportunity. Revisit only with a dedicated spec.
 
 These are real maintainability issues but are behavior-CHANGING and multi-PR.
 They are NOT numbered opportunities; do not run them through the safe-scope
