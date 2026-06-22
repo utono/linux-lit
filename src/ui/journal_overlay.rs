@@ -147,10 +147,8 @@ impl JournalOverlay {
     }
 
     fn size_card(&self, card_width: i32, card_height: i32) {
-        let w = (card_width as f64 * 0.8) as i32;
-        let h = (card_height as f64 * 0.8) as i32;
-        self.container.set_size_request(w, h);
-        self.last_card_size.set((w, h));
+        self.container.set_size_request(card_width, card_height);
+        self.last_card_size.set((card_width, card_height));
         self.view.set_left_margin(self.text_margins);
         self.view.set_right_margin(self.text_margins);
         let _ = self.column_width;
