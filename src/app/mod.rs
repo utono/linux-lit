@@ -457,13 +457,9 @@ pub struct AppState {
     /// so it stays fully visible below the card; separate widget so search
     /// messages never clobber the chapter/speed toast text.
     pub search_toast: gtk4::Label,
-    pub word_cycle_line: Option<usize>,
-    pub word_cycle_index: usize,
+    pub word_cycle: crate::input::actions::word_copy::WordCycleState,
     pub word_status_timer: Rc<Cell<u64>>,
     pub word_bold_tag: gtk4::TextTag,
-    pub word_bold_gen: Rc<Cell<u64>>,
-    pub word_collect_words: Vec<String>,
-    pub word_collect_ranges: Vec<(usize, usize)>,
     /// True while display_work is replacing the buffer. CursorSync and other
     /// layout-dependent callbacks must skip when this is set because GTK
     /// hasn't laid out the new content yet. Cleared in an idle callback after
@@ -1579,13 +1575,9 @@ pub fn build_window(
         chapter_toast_gen: Rc::new(Cell::new(0)),
         speed_toast,
         search_toast,
-        word_cycle_line: None,
-        word_cycle_index: 0,
+        word_cycle: crate::input::actions::word_copy::WordCycleState::default(),
         word_status_timer: Rc::new(Cell::new(0)),
         word_bold_tag,
-        word_bold_gen: Rc::new(Cell::new(0)),
-        word_collect_words: Vec::new(),
-        word_collect_ranges: Vec::new(),
         // If we have an MRU work to load, mark loading_work=true now so the
         // 500ms reveal grace doesn't fire before display_work runs and
         // expose an empty vbox. Cleared by update_highlight_and_show.

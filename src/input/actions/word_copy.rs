@@ -3,6 +3,20 @@ use gtk4::prelude::*;
 use crate::app::AppState;
 use crate::log_fmt;
 
+/// Grouped state for the word-copy / word-cycle feature (cursor-word cycling,
+/// multi-word phrase collection, and the bold-highlight generation counter).
+/// Was five flat `word_cycle_*` / `word_collect_*` / `word_bold_gen` fields on
+/// AppState; grouped per the AppState god-struct decomposition (pure-tier
+/// cluster).
+#[derive(Default)]
+pub struct WordCycleState {
+    pub cycle_line: Option<usize>,
+    pub cycle_index: usize,
+    pub bold_gen: std::rc::Rc<std::cell::Cell<u64>>,
+    pub collect_words: Vec<String>,
+    pub collect_ranges: Vec<(usize, usize)>,
+}
+
 /// Cycle through words on the current line, copying each to the system clipboard.
 /// Each press advances to the next word; wraps after the last word.
 /// Briefly bolds the word in the buffer for 2 seconds.
@@ -17,8 +31,8 @@ pub fn word_cycle_copy(state: &mut AppState) {
     }
 
     // Reset index if we moved to a different line
-    let idx = if state.word_cycle_line == Some(state.current_line) {
-        state.word_cycle_index % words.len()
+    let idx = if state.word_cycle.cycle_line == Some(state.current_line) {
+        state.word_cycle.cycle_index % words.len()
     } else {
         0
     };
@@ -44,12 +58,12 @@ pub fn word_cycle_copy(state: &mut AppState) {
     log_fmt!("WORD_COPY: copied '{}' (word {}/{})", word, idx + 1, words.len());
 
     // Update cycle state
-    state.word_cycle_line = Some(state.current_line);
-    state.word_cycle_index = idx + 1;
+    state.word_cycle.cycle_line = Some(state.current_line);
+    state.word_cycle.cycle_index = idx + 1;
 
     // Clear multi-word collect state (w is single-word mode)
-    state.word_collect_words.clear();
-    state.word_collect_ranges.clear();
+    state.word_cycle.collect_words.clear();
+    state.word_cycle.collect_ranges.clear();
 
     // Remove any previous underline tag, then apply to the current word
     apply_word_underline(state, &[(char_start, char_end)]);
@@ -70,22 +84,22 @@ pub fn word_collect_copy(state: &mut AppState) {
     }
 
     // Reset if we moved to a different line
-    let idx = if state.word_cycle_line == Some(state.current_line) {
-        state.word_cycle_index % words.len()
+    let idx = if state.word_cycle.cycle_line == Some(state.current_line) {
+        state.word_cycle.cycle_index % words.len()
     } else {
-        state.word_collect_words.clear();
-        state.word_collect_ranges.clear();
+        state.word_cycle.collect_words.clear();
+        state.word_cycle.collect_ranges.clear();
         0
     };
 
     let (ref word, char_start, char_end) = words[idx];
 
     // Append to collection
-    state.word_collect_words.push(word.clone());
-    state.word_collect_ranges.push((char_start, char_end));
+    state.word_cycle.collect_words.push(word.clone());
+    state.word_cycle.collect_ranges.push((char_start, char_end));
 
     // Copy all collected words to clipboard
-    let phrase = state.word_collect_words.join(" ");
+    let phrase = state.word_cycle.collect_words.join(" ");
     use std::io::Write;
     use std::process::{Command, Stdio};
     match Command::new("wl-copy").stdin(Stdio::piped()).spawn() {
@@ -101,14 +115,14 @@ pub fn word_collect_copy(state: &mut AppState) {
         }
     }
 
-    log_fmt!("WORD_COLLECT: copied '{}' ({} words)", phrase, state.word_collect_words.len());
+    log_fmt!("WORD_COLLECT: copied '{}' ({} words)", phrase, state.word_cycle.collect_words.len());
 
     // Update cycle state
-    state.word_cycle_line = Some(state.current_line);
-    state.word_cycle_index = idx + 1;
+    state.word_cycle.cycle_line = Some(state.current_line);
+    state.word_cycle.cycle_index = idx + 1;
 
     // Underline all collected words
-    let ranges: Vec<(usize, usize)> = state.word_collect_ranges.clone();
+    let ranges: Vec<(usize, usize)> = state.word_cycle.collect_ranges.clone();
     apply_word_underline(state, &ranges);
 }
 
@@ -156,9 +170,9 @@ fn apply_word_underline(state: &mut AppState, ranges: &[(usize, usize)]) {
     }
 
     // Auto-remove underline after 2 seconds
-    let gen = state.word_bold_gen.get() + 1;
-    state.word_bold_gen.set(gen);
-    let gen_rc = state.word_bold_gen.clone();
+    let gen = state.word_cycle.bold_gen.get() + 1;
+    state.word_cycle.bold_gen.set(gen);
+    let gen_rc = state.word_cycle.bold_gen.clone();
     let buf_clone = buf.clone();
     let tag_clone = tag.clone();
     glib::timeout_add_local_once(std::time::Duration::from_secs(2), move || {
