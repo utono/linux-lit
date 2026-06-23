@@ -220,6 +220,16 @@ pipeline as a single refactor.
   scansion marks / the vocab Popover widget), so they need a **user nav-fuzz gate
   before merge** (the agent can't launch cage). vocab_popup is the hardest (8
   access files, holds a real widget, not `Default`-derivable) — do it last.
+  **Phase F — `scansion` → `ScansionState`** (3 fields, 21 sites across mod.rs/
+  keymap/navigation, merge ace9857) — DONE: the **first render-tier cluster**.
+  Explicit-nested-literal init (`ScanLevel::Off`, no `Default`). Both boundary
+  traps held — `scansion_label_tag` (TextTag) and `s.config.scansion_level`
+  (Config) stay flat. Zero-drift. Verified by the **two-part user render gate**:
+  nav-fuzz on `Son` (scansion-off nav) PLUS a manual scansion-ON eyeball on `TN`
+  (`Alt+i` cycles Off→StressOnly→Full→Off) — marks render correctly post-grouping.
+  413+clippy 115. **Only `vocab_popup` now remains** (the last contained cluster;
+  render-tier, hardest — 8 access files, holds the vocab Popover widget, not
+  `Default`-derivable).
   **Out of scope:** grouping the core fields (stays flat, likely permanently);
   medium-spread clusters (search, mpv/sync, translations, gloss-state, toasts,
   gutter) — re-evaluate after the contained set ships.
