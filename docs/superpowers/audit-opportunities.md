@@ -304,10 +304,15 @@ pipeline as a single refactor.
   both clean**. Spec/plan under docs/superpowers/ (2026-06-23). **Still parked:**
   `build_window`'s body + `display_work_at_with_prepared` (the remaining tier-b,
   higher e2e burden), and the **AppState god-struct** grouping (~217 fields) —
-  which is the prerequisite for any real `build_window` split. Pre-existing flake
-  (not a carve-up defect): `db::queries::tests::test_bookmark_toggle` flakes
-  ~1-in-5 full-suite runs on shared read-write lit.db parallelism (passes in
-  isolation); candidate future cleanup to isolate its DB.
+  which is the prerequisite for any real `build_window` split. ~~Pre-existing
+  flake: `db::queries::tests::test_bookmark_toggle`.~~ **FIXED (merge e172779).**
+  Root cause: it and `test_load_bookmarks_with_details` toggled the same Ham row
+  on the shared real lit.db in parallel with no serialization (the only 2 of 34
+  tests using `open_db_rw`), reading each other's writes — the other test's
+  INSERT landed between this test's toggle-off DELETE and its `!contains` assert.
+  Fixed by isolating both in a fresh in-memory DB via a shared `bookmark_fixture()`
+  (stub `works` + `line_mapping` + the real bookmarks schema), matching the
+  32-test in-memory majority. Verified across 6 consecutive clean full-suite runs.
 - **gloss_overlay.rs — DONE (merge 81acba8).** The ~1100 lines of pure helpers
   (block model, OP-IPA markup, geometry/citation) + their ~750 lines of tests
   were extracted into three sibling modules: `gloss_block.rs` (707),
