@@ -80,7 +80,7 @@ pub(crate) fn load_selected_work(
                             bytes
                         ));
                         let work_type = work.work_type.clone();
-                        let prep = crate::app::PreparedText {
+                        let prep = crate::app::text_prep::PreparedText {
                             abbrev: snap.abbrev,
                             work_type: work_type.clone(),
                             file_lines_count: snap.filtered_contents.lines().count(),
@@ -99,7 +99,7 @@ pub(crate) fn load_selected_work(
                                 work.abbrev
                             ));
                         }
-                        (crate::app::prepare_text_for_display(&work), true)
+                        (crate::app::text_prep::prepare_text_for_display(&work), true)
                     };
                     Ok::<_, rusqlite::Error>((work, prepared, was_miss))
                 })
@@ -259,7 +259,7 @@ fn load_work_at(
                         bytes
                     ));
                     let work_type = work.work_type.clone();
-                    let prep = crate::app::PreparedText {
+                    let prep = crate::app::text_prep::PreparedText {
                         abbrev: snap.abbrev,
                         work_type: work_type.clone(),
                         file_lines_count: snap.filtered_contents.lines().count(),
@@ -278,7 +278,7 @@ fn load_work_at(
                             work.abbrev
                         ));
                     }
-                    (crate::app::prepare_text_for_display(&work), true)
+                    (crate::app::text_prep::prepare_text_for_display(&work), true)
                 };
                 Ok::<_, rusqlite::Error>((work, prepared, was_miss))
             })

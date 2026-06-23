@@ -1454,7 +1454,7 @@ fn load_work_at_line_then(
             .spawn_blocking(move || {
                 let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
                 let work = crate::db::queries::load_work(&conn, &abbrev)?;
-                let prepared = crate::app::prepare_text_for_display(&work);
+                let prepared = crate::app::text_prep::prepare_text_for_display(&work);
                 Ok::<_, rusqlite::Error>((work, prepared))
             })
             .await;
