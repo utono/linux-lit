@@ -196,12 +196,30 @@ pipeline as a single refactor.
   `font::rebuild_line_number_gutter` → `pub(crate)`) because non-group `mod.rs`
   fns call them. The three modules are genuine independent leaves (no
   cross-edges; only inbound reverse-deps from `mod.rs`). 413 tests + clippy 115
-  unchanged throughout. Spec/plan under docs/superpowers/ (2026-06-22). **Still
-  parked:** the behavior-risky tier-b targets the audit originally named —
-  `build_window` (~1419 lines), `display_work`, layout — need e2e verification
-  and are a separate effort; and the other tier-a leaf families
-  (`scene_synopsis`, `translations`, `formatting`) remain as same-style
-  safe-scope follow-on phases.
+  unchanged throughout. Spec/plan under docs/superpowers/ (2026-06-22).
+- **app.rs module carve-up — Phase 2 (tier-a families) DONE (merge 42e126c).**
+  The three remaining tier-a topical families were extracted into sibling
+  modules via pure code motion, in dependency order: `formatting.rs` (610, the
+  per-line reader-buffer typographers — dialogue/BCP/scansion/stanza/authorship),
+  `scene_synopsis.rs` (508, scene-boundary derivation + synopsis keys/labels/
+  overlay + scene title bar), `translations.rs` (635, the inline-gloss interleave
+  path + two-column translation overlay). `mod.rs` dropped 6105 → 4360 lines. No
+  facade. Visibility bumps, all real + minimal: `apply_dialogue_formatting`,
+  `apply_authorship_formatting`, `apply_scansion_marks`, `apply_bcp_formatting`,
+  `scene_heading_start` → `pub(crate)`, and `vocab_popup::update_vocab_popup_margin`
+  `pub(super)` → `pub(crate)` (a sibling can't see a `pub(super)` item). The only
+  new inter-module edge is `translations → scene_synopsis` (overlay cluster needs
+  `current_scene_divs`/`synopsis_label`), which is why scene_synopsis extracted
+  first; the graph stays an acyclic DAG. 413 tests + clippy 115 unchanged. Spec/
+  plan under docs/superpowers/ (2026-06-23). **The entire tier-a (safe-scope)
+  carve-up is now complete** — across Phases 1+2, `mod.rs` went 6735 → 4360 with
+  six focused sibling modules. **Still parked:** the behavior-risky **tier-b**
+  targets — `build_window` (~1419 lines), `display_work`, layout — which need
+  e2e/nav-fuzz verification and are a separate effort; and the **AppState
+  god-struct** grouping (~217 fields). Pre-existing flake surfaced during Phase 2
+  (not a carve-up defect): `db::queries::tests::test_bookmark_toggle` flakes
+  ~1-in-5 full-suite runs on shared read-write lit.db parallelism (passes in
+  isolation); candidate future cleanup to isolate its DB.
 - **gloss_overlay.rs — DONE (merge 81acba8).** The ~1100 lines of pure helpers
   (block model, OP-IPA markup, geometry/citation) + their ~750 lines of tests
   were extracted into three sibling modules: `gloss_block.rs` (707),
