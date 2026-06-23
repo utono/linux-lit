@@ -487,7 +487,7 @@ pub(crate) fn fix_word_ipa(state_rc: &Rc<RefCell<AppState>>, input: &str) {
     };
 
     // 3. Literal `/IPA/` -> apply directly; plain hint -> ask the LLM first.
-    if crate::ui::gloss_overlay::contains_ipa_span(&rest) {
+    if crate::ui::gloss_ipa::contains_ipa_span(&rest) {
         let new_ipa = first_ipa_span(&rest);
         apply_ipa_fix(
             state_rc,
@@ -555,7 +555,7 @@ fn apply_ipa_fix(
     // multi-line verse: block.text joins verse lines with '\n' (tags stripped),
     // but gloss_text separates them with `</verse>\n<verse>`, so block.text is
     // not a substring of gloss_text for any 2+ line block.
-    let new_gloss_text = match crate::ui::gloss_overlay::replace_word_ipa_in_source_block(
+    let new_gloss_text = match crate::ui::gloss_ipa::replace_word_ipa_in_source_block(
         gloss_text,
         block_index,
         word,
@@ -675,7 +675,7 @@ fn request_ipa_then_apply(
 
         match result {
             Ok(Ok(reply)) => {
-                if !crate::ui::gloss_overlay::contains_ipa_span(&reply) {
+                if !crate::ui::gloss_ipa::contains_ipa_span(&reply) {
                     show_tts_toast(&state_for_result, "Could not get IPA");
                     return;
                 }
@@ -1187,7 +1187,7 @@ fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32)
     // (`take /tɛːk/`); ElevenLabs v3 would otherwise voice BOTH the word and the
     // IPA (the doubling). Replace each `word /IPA/` pair with just `/IPA/` so the
     // word is spoken once, in OP. Display/storage keep the word (see strip_ipa).
-    let text = crate::ui::gloss_overlay::ipa_for_tts(&text);
+    let text = crate::ui::gloss_ipa::ipa_for_tts(&text);
 
     // Filename stem includes a short voice tag so each voice's audio for a block
     // is a distinct file (voice ids are alphanumeric, filesystem-safe).
@@ -1349,7 +1349,7 @@ pub(crate) fn synth_all_prose_blocks(state_rc: &Rc<RefCell<AppState>>) {
                     }
                 }
             }
-            let tts_text = crate::ui::gloss_overlay::ipa_for_tts(raw);
+            let tts_text = crate::ui::gloss_ipa::ipa_for_tts(raw);
             let bytes = match synth_via(&tokio_handle, &tts_text, &voice_id, &model_id).await {
                 Ok(b) => b,
                 Err(e) => {
@@ -1432,7 +1432,7 @@ pub(crate) fn synth_all_synopsis_blocks(state_rc: &Rc<RefCell<AppState>>) {
                     }
                 }
             }
-            let tts_text = crate::ui::gloss_overlay::ipa_for_tts(raw);
+            let tts_text = crate::ui::gloss_ipa::ipa_for_tts(raw);
             let bytes = match synth_via(&tokio_handle, &tts_text, &voice_id, &model_id).await {
                 Ok(b) => b,
                 Err(e) => {
@@ -1533,7 +1533,7 @@ fn play_synopsis_block(state_rc: &Rc<RefCell<AppState>>, index: i32) {
 
     // TTS form: rewrite `word /IPA/` pairs to just `/IPA/` (no-op on synopsis
     // text, which carries no IPA, but applied for consistency with other paths).
-    let tts_text = crate::ui::gloss_overlay::ipa_for_tts(&text);
+    let tts_text = crate::ui::gloss_ipa::ipa_for_tts(&text);
 
     // Miss: synthesize asynchronously. Keep the pill up until playback begins.
     show_persistent_tts_toast(state_rc, "Synthesizing\u{2026}");
