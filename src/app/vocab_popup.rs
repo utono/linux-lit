@@ -1,6 +1,23 @@
 use gtk4::prelude::{Cast, WidgetExt};
 use super::AppState;
 
+/// Grouped state for the vocab popup (the Popover widget itself plus its
+/// per-open data list, navigation index, view mode, auto-show flag, anchor
+/// line, and fade generation counter). Was seven flat `vocab_popup*` fields on
+/// AppState; grouped per the AppState god-struct decomposition (render-tier).
+/// NOTE: the separate vocab-HIGHLIGHT fields (vocab_words, vocab_matches,
+/// vocab_match_idx, vocab_tag, vocab_highlight_visible) are a different
+/// subsystem and stay flat on AppState.
+pub struct VocabPopupState {
+    pub popup: crate::ui::vocab_popup::VocabPopup,
+    pub data: Vec<crate::ui::vocab_popup::VocabWordData>,
+    pub index: usize,
+    pub view: crate::ui::vocab_popup::VocabView,
+    pub auto: bool,
+    pub line: Option<usize>,
+    pub fade_gen: std::rc::Rc<std::cell::Cell<u64>>,
+}
+
 /// Load vocab data for all words on the current line into state, show popup with first word.
 pub fn open_vocab_popup(state: &mut AppState) {
     use crate::ui::vocab_popup::{VocabWordData, VocabView};
@@ -37,7 +54,7 @@ pub fn open_vocab_popup(state: &mut AppState) {
     }
     crate::logging::log(&format!("VOCAB POPUP: {} words: {:?}", words.len(), words));
 
-    state.vocab_popup_data = words
+    state.vocab_popup.data = words
         .into_iter()
         .map(|w| {
             let definition = crate::db::queries::load_vocab_definition(&conn, &w)
@@ -54,9 +71,9 @@ pub fn open_vocab_popup(state: &mut AppState) {
         })
         .collect();
 
-    state.vocab_popup_index = 0;
-    state.vocab_popup_view = VocabView::Definition;
-    state.vocab_popup_line = Some(current_line);
+    state.vocab_popup.index = 0;
+    state.vocab_popup.view = VocabView::Definition;
+    state.vocab_popup.line = Some(current_line);
 
     update_vocab_popup_margin(state);
     show_vocab_popup(state);
@@ -76,41 +93,41 @@ pub(crate) fn update_vocab_popup_margin(state: &AppState) {
     );
     if let Some(pt) = state.scrolled_window.compute_point(&window, &sw_right) {
         let margin = (pt.x() as i32 + 12).max(0);
-        state.vocab_popup.set_margin_start(margin);
+        state.vocab_popup.popup.set_margin_start(margin);
     }
 }
 
 /// Hide the vocab popup.
 pub fn close_vocab_popup(state: &mut AppState) {
-    state.vocab_popup.hide();
+    state.vocab_popup.popup.hide();
 }
 
 /// Render the current vocab popup entry.
 pub fn show_vocab_popup(state: &AppState) {
-    if state.vocab_popup_data.is_empty() {
-        state.vocab_popup.hide();
+    if state.vocab_popup.data.is_empty() {
+        state.vocab_popup.popup.hide();
         return;
     }
-    let idx = state.vocab_popup_index;
-    let total = state.vocab_popup_data.len();
+    let idx = state.vocab_popup.index;
+    let total = state.vocab_popup.data.len();
     let work_abbrev = state.current_work.as_ref()
         .map(|w| w.abbrev.as_str())
         .unwrap_or("");
-    state.vocab_popup.update(
-        &state.vocab_popup_data[idx],
+    state.vocab_popup.popup.update(
+        &state.vocab_popup.data[idx],
         idx,
         total,
-        state.vocab_popup_view,
+        state.vocab_popup.view,
         work_abbrev,
     );
-    state.vocab_popup.show();
+    state.vocab_popup.popup.show();
 }
 
 /// Refresh the vocab popup for the current line during playback sync.
 /// If the new line has vocab words, update the popup content and position.
 /// If it has none, close the popup.
 pub fn refresh_vocab_popup(state: &mut AppState) {
-    if !state.vocab_popup.is_visible() {
+    if !state.vocab_popup.popup.is_visible() {
         return;
     }
 
@@ -139,13 +156,13 @@ pub fn refresh_vocab_popup(state: &mut AppState) {
         .collect();
 
     if words.is_empty() {
-        state.vocab_popup_data.clear();
-        state.vocab_popup.hide();
-        state.vocab_popup_line = Some(current_line);
+        state.vocab_popup.data.clear();
+        state.vocab_popup.popup.hide();
+        state.vocab_popup.line = Some(current_line);
         return;
     }
 
-    state.vocab_popup_data = words
+    state.vocab_popup.data = words
         .into_iter()
         .map(|w| {
             let definition = crate::db::queries::load_vocab_definition(&conn, &w)
@@ -162,29 +179,29 @@ pub fn refresh_vocab_popup(state: &mut AppState) {
         })
         .collect();
 
-    state.vocab_popup_index = 0;
-    state.vocab_popup_view = VocabView::Definition;
-    state.vocab_popup_line = Some(current_line);
+    state.vocab_popup.index = 0;
+    state.vocab_popup.view = VocabView::Definition;
+    state.vocab_popup.line = Some(current_line);
     show_vocab_popup(state);
 }
 
 /// Cycle to the next vocab word in the popup.
 pub fn vocab_popup_next(state: &mut AppState) {
-    if state.vocab_popup_data.is_empty() {
+    if state.vocab_popup.data.is_empty() {
         return;
     }
-    state.vocab_popup_index = (state.vocab_popup_index + 1) % state.vocab_popup_data.len();
+    state.vocab_popup.index = (state.vocab_popup.index + 1) % state.vocab_popup.data.len();
     show_vocab_popup(state);
 }
 
 pub fn vocab_popup_prev(state: &mut AppState) {
-    if state.vocab_popup_data.is_empty() {
+    if state.vocab_popup.data.is_empty() {
         return;
     }
-    if state.vocab_popup_index == 0 {
-        state.vocab_popup_index = state.vocab_popup_data.len() - 1;
+    if state.vocab_popup.index == 0 {
+        state.vocab_popup.index = state.vocab_popup.data.len() - 1;
     } else {
-        state.vocab_popup_index -= 1;
+        state.vocab_popup.index -= 1;
     }
     show_vocab_popup(state);
 }
@@ -192,7 +209,7 @@ pub fn vocab_popup_prev(state: &mut AppState) {
 /// Toggle between definition and gloss view.
 pub fn vocab_popup_toggle_view(state: &mut AppState) {
     use crate::ui::vocab_popup::VocabView;
-    state.vocab_popup_view = match state.vocab_popup_view {
+    state.vocab_popup.view = match state.vocab_popup.view {
         VocabView::Definition => VocabView::Gloss,
         VocabView::Gloss => VocabView::Definition,
     };

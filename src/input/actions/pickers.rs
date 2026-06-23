@@ -788,7 +788,7 @@ pub(crate) fn open_keybinds_from_mode(
         s.settings_overlay.hide();
         s.search_bar.hide();
         s.gloss_overlay.hide();
-        s.vocab_popup.hide();
+        s.vocab_popup.popup.hide();
         s.keybinds_overlay.show();
         drop(s);
         let mut s = state.borrow_mut();
