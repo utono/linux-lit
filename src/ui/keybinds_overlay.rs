@@ -462,7 +462,7 @@ likewise has Shift+V visual mode: j/k (and gg/G) extend a block selection, y \
 yanks the selected blocks' full text (source verse + gloss, as displayed) and \
 exits, Esc/Shift+V cancels; there Ctrl+V cycles the active voice. \
 -> visual::enter_visual_mode — src/input/visual.rs; \
-handle_synopsis_visual_key / handle_gloss_visual_key / gloss_overlay::enter_visual \
+handle_block_visual_key / gloss_overlay::enter_visual \
 — src/input/keymap.rs, src/ui/gloss_overlay.rs",
 
         // ── MPV / audio ──

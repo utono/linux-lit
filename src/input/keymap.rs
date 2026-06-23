@@ -114,10 +114,10 @@ pub fn handle_key(
             crate::app::InputMode::VoicePicker => handle_voice_picker_key(state, key_name, is_ctrl),
             crate::app::InputMode::Search => handle_search_key(state, key_name),
             crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_shift, is_alt, tokio_handle),
-            crate::app::InputMode::GlossVisual => handle_gloss_visual_key(state, key_state, key_name),
+            crate::app::InputMode::GlossVisual => handle_block_visual_key(state, key_state, key_name, &GLOSS_VISUAL_CFG),
             crate::app::InputMode::JournalOverlay => handle_journal_key(state, key_state, key_name, is_ctrl, is_alt),
             crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_state, key_name, is_ctrl, is_alt, is_shift),
-            crate::app::InputMode::SynopsisVisual => handle_synopsis_visual_key(state, key_state, key_name),
+            crate::app::InputMode::SynopsisVisual => handle_block_visual_key(state, key_state, key_name, &SYNOPSIS_VISUAL_CFG),
             crate::app::InputMode::TranslationOverlay => handle_translation_overlay_key(state, key_name),
             crate::app::InputMode::DeleteConfirm => handle_delete_confirm_key(state, key_name),
             crate::app::InputMode::EchoPicker => handle_echo_picker_key(state, key_name, tokio_handle),
@@ -1323,76 +1323,56 @@ fn handle_synopsis_overlay_key(
 
 /// Key handling for synopsis visual mode (Shift+V from the synopsis overlay).
 /// Mirrors the reader's `handle_visual_key`: j/k extend the block selection,
-/// gg/G jump the cursor end, y yanks the selected paragraphs and exits, Esc/V
-/// exits without copying. All other keys are consumed.
-fn handle_synopsis_visual_key(
-    state: &Rc<RefCell<AppState>>,
-    key_state: &Rc<RefCell<KeyState>>,
-    key_name: &str,
-) -> bool {
-    // gg: extend to the first block.
-    if key_state.borrow().chord == ChordState::PendingG {
-        key_state.borrow_mut().chord = ChordState::None;
-        if key_name == "g" {
-            state.borrow().gloss_overlay.visual_to_end(false);
-        }
-        return true;
-    }
-
-    match key_name {
-        "j" => {
-            state.borrow().gloss_overlay.visual_step(1);
-            true
-        }
-        "k" => {
-            state.borrow().gloss_overlay.visual_step(-1);
-            true
-        }
-        "G" => {
-            state.borrow().gloss_overlay.visual_to_end(true);
-            true
-        }
-        "g" => {
-            KeyState::start_chord(key_state, ChordState::PendingG);
-            true
-        }
-        "y" => {
-            let (text, n) = {
-                let s = state.borrow();
-                (s.gloss_overlay.visual_selection_text(), s.gloss_overlay.visual_selection_len())
-            };
-            if !text.is_empty() {
-                let _ = std::process::Command::new("wl-copy").arg(&text).spawn();
-                crate::logging::log(&format!("SYNOPSIS: copied {} blocks", n));
-            }
-            {
-                let mut s = state.borrow_mut();
-                s.gloss_overlay.exit_visual();
-                s.input_mode = crate::app::InputMode::SynopsisOverlay;
-                s.gloss_overlay.set_synopsis_hint();
-                crate::ui::toast::show_transient(&s.chapter_toast, "Copied", 2);
-            }
-            true
-        }
-        "Escape" | "V" => {
-            let mut s = state.borrow_mut();
-            s.gloss_overlay.exit_visual();
-            s.input_mode = crate::app::InputMode::SynopsisOverlay;
-            s.gloss_overlay.set_synopsis_hint();
-            true
-        }
-        _ => true,
-    }
+/// Per-mode variance for the unified visual-block key handler. Plain `fn`
+/// pointers over `&GlossOverlay` (both the synopsis and gloss overlays use the
+/// GlossOverlay widget) — no trait, no generic. See `handle_block_visual_key`.
+struct BlockVisualCfg {
+    /// Yank text source: synopsis reads the rendered selection text; gloss reads
+    /// the raw buffer block text (source verse + gloss as displayed).
+    yank_text: fn(&crate::ui::gloss_overlay::GlossOverlay) -> String,
+    /// Log prefix ("SYNOPSIS" / "GLOSS").
+    log_tag: &'static str,
+    /// Exit on yank (synopsis: exit_visual; gloss: exit_visual_to_start).
+    yank_exit: fn(&crate::ui::gloss_overlay::GlossOverlay),
+    /// Exit on Escape/V (both: exit_visual — kept separate from yank_exit to
+    /// preserve the gloss yank/escape asymmetry).
+    escape_exit: fn(&crate::ui::gloss_overlay::GlossOverlay),
+    /// InputMode to return to on exit.
+    return_mode: crate::app::InputMode,
+    /// Hint setter for the returned-to overlay.
+    set_hint: fn(&crate::ui::gloss_overlay::GlossOverlay),
 }
 
-/// Gloss-overlay visual block selection (entered with Shift+V). Mirrors
-/// `handle_synopsis_visual_key` but returns to the GLOSS overlay on exit and
-/// yanks the full block text (source verse + gloss, as displayed) read from the
-/// gloss buffer — not `current_synopsis`, which is empty in a gloss.
-fn handle_gloss_visual_key(
+const SYNOPSIS_VISUAL_CFG: BlockVisualCfg = BlockVisualCfg {
+    yank_text: crate::ui::gloss_overlay::GlossOverlay::visual_selection_text,
+    log_tag: "SYNOPSIS",
+    yank_exit: crate::ui::gloss_overlay::GlossOverlay::exit_visual,
+    escape_exit: crate::ui::gloss_overlay::GlossOverlay::exit_visual,
+    return_mode: crate::app::InputMode::SynopsisOverlay,
+    set_hint: crate::ui::gloss_overlay::GlossOverlay::set_synopsis_hint,
+};
+
+const GLOSS_VISUAL_CFG: BlockVisualCfg = BlockVisualCfg {
+    yank_text: crate::ui::gloss_overlay::GlossOverlay::visual_selection_buffer_text,
+    log_tag: "GLOSS",
+    yank_exit: crate::ui::gloss_overlay::GlossOverlay::exit_visual_to_start,
+    escape_exit: crate::ui::gloss_overlay::GlossOverlay::exit_visual,
+    return_mode: crate::app::InputMode::GlossOverlay,
+    set_hint: crate::ui::gloss_overlay::GlossOverlay::set_gloss_hint,
+};
+
+/// Visual block selection in the synopsis/gloss overlays (entered with Shift+V).
+/// gg/G jump the cursor end, j/k extend the selection, y yanks the selected
+/// blocks and exits, Esc/V exits without copying. All other keys are consumed.
+/// `cfg` carries the per-mode variance (yank text source, log tag, exit fn,
+/// return mode, hint fn) — see `SYNOPSIS_VISUAL_CFG` / `GLOSS_VISUAL_CFG`. The
+/// gloss yank exits to block start (`exit_visual_to_start`) while its Escape
+/// exits in place (`exit_visual`); the two `*_exit` slots preserve that.
+fn handle_block_visual_key(
     state: &Rc<RefCell<AppState>>,
     key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
+    cfg: &BlockVisualCfg,
 ) -> bool {
     // gg: extend to the first block.
     if key_state.borrow().chord == ChordState::PendingG {
@@ -1423,26 +1403,26 @@ fn handle_gloss_visual_key(
         "y" => {
             let (text, n) = {
                 let s = state.borrow();
-                (s.gloss_overlay.visual_selection_buffer_text(), s.gloss_overlay.visual_selection_len())
+                ((cfg.yank_text)(&s.gloss_overlay), s.gloss_overlay.visual_selection_len())
             };
             if !text.is_empty() {
                 let _ = std::process::Command::new("wl-copy").arg(&text).spawn();
-                crate::logging::log(&format!("GLOSS: copied {} blocks", n));
+                crate::logging::log(&format!("{}: copied {} blocks", cfg.log_tag, n));
             }
             {
                 let mut s = state.borrow_mut();
-                s.gloss_overlay.exit_visual_to_start();
-                s.input_mode = crate::app::InputMode::GlossOverlay;
-                s.gloss_overlay.set_gloss_hint();
+                (cfg.yank_exit)(&s.gloss_overlay);
+                s.input_mode = cfg.return_mode;
+                (cfg.set_hint)(&s.gloss_overlay);
                 crate::ui::toast::show_transient(&s.chapter_toast, "Copied", 2);
             }
             true
         }
         "Escape" | "V" => {
             let mut s = state.borrow_mut();
-            s.gloss_overlay.exit_visual();
-            s.input_mode = crate::app::InputMode::GlossOverlay;
-            s.gloss_overlay.set_gloss_hint();
+            (cfg.escape_exit)(&s.gloss_overlay);
+            s.input_mode = cfg.return_mode;
+            (cfg.set_hint)(&s.gloss_overlay);
             true
         }
         _ => true,
