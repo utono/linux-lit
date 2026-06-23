@@ -167,8 +167,15 @@ are tracked separately at the bottom under "## Larger projects (not safe-scope)"
   the trait left them untouched. Gloss/Journal/EchoLine Escape arms kept explicit;
   settings/voice/library handlers untouched. Spec/plan under docs/superpowers/;
   user-verified (Ctrl+n/p moves selection, Escape closes). See merge commit.
-  **Follow-on still deferred:** the Confirm dispatch and the `show()`/open pairs —
-  they carry bespoke-confirm and borrow-juggle risk; own spec required.
+  **Open-pairs follow-on — DONE.** The `show()`/open mode-set pairs were unified
+  via `open_picker_mode(&mut AppState, mode)` in `src/input/actions/pickers.rs`
+  (8 sites, 7 pickers), which also normalized 4 redundant double-RefCell-borrows
+  to one `borrow_mut`. `show()` itself varies per picker (no-arg / args /
+  prepare-finish) so only the mode-set is shared; library_picker excluded. Spec/
+  plan under docs/superpowers/; headless boot smoke + 413 tests green.
+  **Only the Confirm dispatch remains deferred** — its arms are genuinely bespoke
+  (different `selected_X()` return types + post-selection handlers); abstracting it
+  would add complexity, not remove it. Left as honest duplication by design.
 
 These are real maintainability issues but are behavior-CHANGING and multi-PR.
 They are NOT numbered opportunities; do not run them through the safe-scope

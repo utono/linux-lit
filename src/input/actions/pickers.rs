@@ -5,6 +5,13 @@ use gtk4::prelude::*;
 
 use crate::app::AppState;
 
+/// Enter the given picker `mode`. The uniform tail of every picker-open path;
+/// the caller does its own `show(...)` first (the show signature varies per
+/// picker, so only the mode-set is shared).
+pub(crate) fn open_picker_mode(s: &mut AppState, mode: crate::app::InputMode) {
+    s.input_mode = mode;
+}
+
 /// Which gloss_type the Alt+g picker is currently filtered to. Cycled by Alt+t.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(crate) enum GlossPickerFilter {
@@ -339,8 +346,9 @@ pub(crate) fn open_bookmark_picker(
                 s.gloss_overlay.hide();
                 s.bookmark_picker.set_items(items);
             }
-            state_clone.borrow().bookmark_picker.show();
-            state_clone.borrow_mut().input_mode = crate::app::InputMode::BookmarkPicker;
+            let mut s = state_clone.borrow_mut();
+            s.bookmark_picker.show();
+            open_picker_mode(&mut s, crate::app::InputMode::BookmarkPicker);
         });
     }
 }
@@ -444,8 +452,9 @@ pub(crate) fn open_media_picker(
                 s.gloss_overlay.hide();
                 s.media_picker.set_items(items);
             }
-            state_clone.borrow().media_picker.show();
-            state_clone.borrow_mut().input_mode = crate::app::InputMode::MediaPicker;
+            let mut s = state_clone.borrow_mut();
+            s.media_picker.show();
+            open_picker_mode(&mut s, crate::app::InputMode::MediaPicker);
         });
     }
 }
@@ -826,8 +835,9 @@ pub(crate) fn open_concordance_word_picker(state: &Rc<RefCell<AppState>>) {
         seen.into_iter().map(|w| (w, 0)).collect()
     };
     state.borrow_mut().concordance_word_picker.set_words(words);
-    state.borrow().concordance_word_picker.show();
-    state.borrow_mut().input_mode = crate::app::InputMode::ConcordanceWordPicker;
+    let mut s = state.borrow_mut();
+    s.concordance_word_picker.show();
+    open_picker_mode(&mut s, crate::app::InputMode::ConcordanceWordPicker);
 }
 
 /// Open the concordance occurrence list picker for the current concordance state.
@@ -837,7 +847,7 @@ pub(crate) fn open_concordance_list_picker(state: &Rc<RefCell<AppState>>) {
         s.concordance_list_picker.show(&conc.occurrences, conc.current_index);
     }
     drop(s);
-    state.borrow_mut().input_mode = crate::app::InputMode::ConcordanceListPicker;
+    open_picker_mode(&mut state.borrow_mut(), crate::app::InputMode::ConcordanceListPicker);
 }
 
 pub(crate) fn open_concordance_works_picker(state: &Rc<RefCell<AppState>>) {
@@ -859,7 +869,7 @@ pub(crate) fn open_concordance_works_picker(state: &Rc<RefCell<AppState>>) {
     }
     s.concordance_works_picker.show(&works);
     drop(s);
-    state.borrow_mut().input_mode = crate::app::InputMode::ConcordanceWorksPicker;
+    open_picker_mode(&mut state.borrow_mut(), crate::app::InputMode::ConcordanceWorksPicker);
 }
 
 pub(crate) fn open_gloss_picker(
@@ -900,8 +910,9 @@ pub(crate) fn open_gloss_picker(
                 s.gloss_picker.set_items(items);
                 s.gloss_picker.set_type_label(gloss_type);
             }
-            state_clone.borrow().gloss_picker.show();
-            state_clone.borrow_mut().input_mode = crate::app::InputMode::GlossPicker;
+            let mut s = state_clone.borrow_mut();
+            s.gloss_picker.show();
+            open_picker_mode(&mut s, crate::app::InputMode::GlossPicker);
         });
     }
 }
