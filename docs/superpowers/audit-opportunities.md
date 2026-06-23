@@ -222,7 +222,7 @@ scope_size. Each verified by direct grep, not agent word alone.
   loader (`load_echo_links`, embeddings) — not this family.
 - **Safe-scope:** yes — pure fn wrapping an existing query; zero behavior change.
 
-## #18 — open-db-rw-or-log-helper — OPEN
+## #18 — open-db-rw-or-log-helper — DONE (merge e5bf8ec)
 
 - **Status:** OPEN (file-local, 5 byte-identical)
 - **Signal:** `let conn = match crate::db::queries::open_db_rw() { Ok(c) => c,
@@ -254,7 +254,7 @@ scope_size. Each verified by direct grep, not agent word alone.
   `.ok().and_then(...)` form (#17) — different error policies, not this literal.
 - **Safe-scope:** yes — literal → const, #8-style. Prevents the panic text drifting.
 
-## #20 — picker-list-scaffold-helper — OPEN (narrowed)
+## #20 — picker-list-scaffold-helper — DONE (merge e5bf8ec)
 
 - **Status:** OPEN (narrow it to the byte-identical pair, per the variant analysis)
 - **Signal:** picker `new()` bodies repeat the `list_box` + `scrolled` construction
@@ -277,7 +277,7 @@ scope_size. Each verified by direct grep, not agent word alone.
   (hand-rolled). Extract ONLY the byte-identical list_box+scrolled pair.
 - **Safe-scope:** yes for the narrowed pair — no per-site inputs.
 
-## #21 — picker-header-scrim-helpers — OPEN (lower priority)
+## #21 — picker-header-scrim-helpers — DONE (merge e5bf8ec)
 
 - **Status:** OPEN (clean but small — 3–4 sites each)
 - **Signal:** the scrim block (`GtkBox::builder().hexpand.vexpand.build();
