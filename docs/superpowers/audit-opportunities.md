@@ -181,8 +181,27 @@ These are real maintainability issues but are behavior-CHANGING and multi-PR.
 They are NOT numbered opportunities; do not run them through the safe-scope
 pipeline as a single refactor.
 
-- **AppState god-struct** (`src/app.rs`) — ~217 fields, de-facto global. Grouping
-  into domain sub-structs touches nearly every `&mut AppState` signature.
+- **AppState god-struct** (`src/app/mod.rs`) — ~217 fields, de-facto global.
+  **STARTED (Phase A DONE, merge ddf20c2).** A blast-radius inventory scoped the
+  project to the **contained single-file clusters only** — `nav_test`, `journal`,
+  `page_image`, `word_cycle`, `echo_overlay`, `scansion`, `vocab_popup` — each its
+  own sub-project sequenced lowest-risk-first. The **core fields stay flat
+  deliberately** (`buffer` 291 hits/20 files, `current_line` 263/22,
+  `current_work` 196/23, `config` 167/21, `text_view`, `input_mode`): grouping them
+  is huge churn for ~no readability gain. Idiomatic per the existing
+  `ab_repeat: AbRepeatState`; sub-structs init via a nested literal/`::default()`
+  in `build_window` (the only build_window touch). Verification is per-cluster
+  risk-tiered: pure-state clusters use 413+clippy (tier-a), render-touching ones
+  (`vocab_popup`, `scansion`) add a user nav-fuzz before merge (tier-b).
+  **Phase A — `nav_test` → `NavTestState`** (6 fields, 28 access sites in one file,
+  pure-tier) — DONE: first behavior-changing slice (access shape only), exhaustive
+  drift check confirmed zero behavioral mutations; 413+clippy 115 unchanged. Spec/
+  plan under docs/superpowers/ (2026-06-23). **Remaining contained clusters:**
+  journal, page_image, word_cycle, echo_overlay (pure-tier), scansion, vocab_popup
+  (render-tier) — each its own spec when reached. **Out of scope:** grouping the
+  core fields (stays flat, likely permanently); medium-spread clusters (search,
+  mpv/sync, translations, gloss-state, toasts, gutter) — re-evaluate after the
+  contained set ships.
 - **app.rs module carve-up — Phase 1 (leaf modules) DONE (merge 1bd1df3).**
   `src/app.rs` was converted to a directory module (`src/app/mod.rs`) and three
   self-contained leaf families were extracted into sibling modules via pure
