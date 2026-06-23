@@ -1,6 +1,6 @@
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Label, ListBox, ListBoxRow, Orientation, Overlay, ScrolledWindow,
+    Box as GtkBox, Label, ListBox, ListBoxRow, Orientation, Overlay,
 };
 
 use crate::theme::Theme;
@@ -39,12 +39,7 @@ impl SettingsOverlay {
     pub fn new(themes: Vec<Theme>, current_theme_name: &str) -> Self {
         let overlay = Overlay::new();
 
-        let scrim = GtkBox::builder()
-            .hexpand(true)
-            .vexpand(true)
-            .build();
-        scrim.add_css_class("library-picker-scrim");
-        scrim.set_visible(false);
+        let scrim = crate::ui::picker_nav::build_picker_scrim();
 
         let picker_box = GtkBox::builder()
             .orientation(Orientation::Vertical)
@@ -83,14 +78,7 @@ impl SettingsOverlay {
         header_box.append(&header_title);
         header_box.append(&header_count);
 
-        let list_box = ListBox::builder()
-            .selection_mode(gtk4::SelectionMode::Single)
-            .build();
-
-        let scrolled = ScrolledWindow::builder()
-            .child(&list_box)
-            .vexpand(true)
-            .build();
+        let (list_box, scrolled) = crate::ui::picker_nav::new_picker_list();
 
         let footer = Label::builder()
             .label("↑↓ MOVE · ←→ ADJUST · r RESET · ↵ CONFIRM · ESC REVERT")

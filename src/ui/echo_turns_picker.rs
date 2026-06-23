@@ -1,5 +1,5 @@
 use gtk4::prelude::*;
-use gtk4::{Align, Box as GtkBox, Label, ListBox, ListBoxRow, Orientation, ScrolledWindow};
+use gtk4::{Align, Box as GtkBox, Label, ListBox, ListBoxRow, Orientation};
 
 use crate::db::queries::EchoTurnSummary;
 
@@ -29,28 +29,9 @@ impl EchoTurnsPicker {
             .build();
         picker_box.add_css_class("library-picker");
 
-        let header_box = GtkBox::builder()
-            .orientation(Orientation::Horizontal)
-            .hexpand(true)
-            .build();
-        header_box.add_css_class("library-picker-header");
+        let (header_box, _header_title) = crate::ui::picker_nav::build_picker_header("ECHOES IN THIS WORK");
 
-        let header_title = Label::builder()
-            .label("ECHOES IN THIS WORK")
-            .halign(Align::Start)
-            .hexpand(true)
-            .build();
-        header_title.add_css_class("library-picker-title");
-        header_box.append(&header_title);
-
-        let list_box = ListBox::builder()
-            .selection_mode(gtk4::SelectionMode::Single)
-            .build();
-
-        let scrolled = ScrolledWindow::builder()
-            .child(&list_box)
-            .vexpand(true)
-            .build();
+        let (list_box, scrolled) = crate::ui::picker_nav::new_picker_list();
 
         let footer_label = Label::builder()
             .label("j/k navigate  ·  Enter select  ·  Esc cancel")

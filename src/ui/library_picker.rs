@@ -1,7 +1,7 @@
 use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Entry, Label, ListBox, ListBoxRow, Orientation, Overlay, ScrolledWindow,
+    Box as GtkBox, Entry, Label, ListBox, ListBoxRow, Orientation, Overlay,
 };
 
 use crate::db::models::WorkSummary;
@@ -135,12 +135,7 @@ impl LibraryPicker {
         let overlay = Overlay::new();
 
         // Scrim — sits between base content and the picker box.
-        let scrim = GtkBox::builder()
-            .hexpand(true)
-            .vexpand(true)
-            .build();
-        scrim.add_css_class("library-picker-scrim");
-        scrim.set_visible(false);
+        let scrim = crate::ui::picker_nav::build_picker_scrim();
 
         let picker_box = GtkBox::builder()
             .orientation(Orientation::Vertical)
@@ -179,14 +174,7 @@ impl LibraryPicker {
             .placeholder_text("Filter authors...")
             .build();
 
-        let list_box = ListBox::builder()
-            .selection_mode(gtk4::SelectionMode::Single)
-            .build();
-
-        let scrolled = ScrolledWindow::builder()
-            .child(&list_box)
-            .vexpand(true)
-            .build();
+        let (list_box, scrolled) = crate::ui::picker_nav::new_picker_list();
 
         // Footer: single label, hint text rebuilt on level change.
         let footer_label = Label::builder()

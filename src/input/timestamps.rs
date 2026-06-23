@@ -21,6 +21,20 @@ pub struct TimestampUndoState {
 
 const NUDGE_STEP: f64 = 0.2;
 
+/// Open the read-write db, logging the `TS: open_db_rw failed` message on
+/// failure and returning `None`. The shared head of the timestamp-write fns;
+/// callers do `let Some(conn) = open_db_rw_or_log() else { return false; };`,
+/// keeping their own early-return (the helper can't own the caller's `return`).
+fn open_db_rw_or_log() -> Option<rusqlite::Connection> {
+    match crate::db::queries::open_db_rw() {
+        Ok(c) => Some(c),
+        Err(e) => {
+            crate::logging::log(&format!("TS: open_db_rw failed: {}", e));
+            None
+        }
+    }
+}
+
 /// Re-send timestamps to MPV client after a write, built from Line.timestamp (single source of truth).
 fn resync_mpv_timestamps(state: &AppState) {
     let work = match &state.current_work {
@@ -121,13 +135,7 @@ pub fn set_start_time(state: &mut AppState) -> bool {
         };
         let line = &mut work.lines[line_idx];
 
-        let conn = match crate::db::queries::open_db_rw() {
-            Ok(c) => c,
-            Err(e) => {
-                crate::logging::log(&format!("TS: open_db_rw failed: {}", e));
-                return false;
-            }
-        };
+        let Some(conn) = open_db_rw_or_log() else { return false; };
         if let Err(e) = crate::db::queries::upsert_start_time(&conn, line.id, media_id, &line.citation, time_pos) {
             crate::logging::log(&format!("TS: upsert_start_time failed: {}", e));
             return false;
@@ -266,13 +274,7 @@ pub fn set_chapter(state: &mut AppState) -> bool {
         };
         let line = &mut work.lines[line_idx];
 
-        let conn = match crate::db::queries::open_db_rw() {
-            Ok(c) => c,
-            Err(e) => {
-                crate::logging::log(&format!("TS: open_db_rw failed: {}", e));
-                return false;
-            }
-        };
+        let Some(conn) = open_db_rw_or_log() else { return false; };
         let new_val = match crate::db::queries::upsert_chapter(&conn, line.id, media_id, &line.citation, time_pos) {
             Ok(v) => v,
             Err(e) => {
@@ -350,13 +352,7 @@ pub fn set_end_time(state: &mut AppState) -> bool {
             None => return false,
         };
 
-        let conn = match crate::db::queries::open_db_rw() {
-            Ok(c) => c,
-            Err(e) => {
-                crate::logging::log(&format!("TS: open_db_rw failed: {}", e));
-                return false;
-            }
-        };
+        let Some(conn) = open_db_rw_or_log() else { return false; };
         if let Err(e) = crate::db::queries::update_end_time(&conn, line.id, media_id, time_pos) {
             crate::logging::log(&format!("TS: update_end_time failed: {}", e));
             return false;
@@ -421,13 +417,7 @@ pub fn delete_timestamp(state: &mut AppState) -> bool {
             return false;
         }
 
-        let conn = match crate::db::queries::open_db_rw() {
-            Ok(c) => c,
-            Err(e) => {
-                crate::logging::log(&format!("TS: open_db_rw failed: {}", e));
-                return false;
-            }
-        };
+        let Some(conn) = open_db_rw_or_log() else { return false; };
         if let Err(e) = crate::db::queries::delete_timestamp(&conn, line.id, media_id) {
             crate::logging::log(&format!("TS: delete_timestamp failed: {}", e));
             return false;
@@ -498,13 +488,7 @@ pub fn nudge_start_time(state: &mut AppState, delta: f64) -> bool {
 
         let new_start = (current_start + delta).max(0.0);
 
-        let conn = match crate::db::queries::open_db_rw() {
-            Ok(c) => c,
-            Err(e) => {
-                crate::logging::log(&format!("TS: open_db_rw failed: {}", e));
-                return false;
-            }
-        };
+        let Some(conn) = open_db_rw_or_log() else { return false; };
         if let Err(e) = crate::db::queries::upsert_start_time(&conn, line.id, media_id, &line.citation, new_start) {
             crate::logging::log(&format!("TS: nudge upsert failed: {}", e));
             return false;

@@ -1,5 +1,5 @@
 use gtk4::prelude::*;
-use gtk4::{Align, Box as GtkBox, Label, ListBox, ListBoxRow, Orientation, ScrolledWindow};
+use gtk4::{Align, Box as GtkBox, Label, ListBox, ListBoxRow, Orientation};
 
 pub struct ConcordanceWorksPicker {
     pub container: GtkBox,
@@ -10,12 +10,7 @@ pub struct ConcordanceWorksPicker {
 
 impl ConcordanceWorksPicker {
     pub fn new() -> Self {
-        let scrim = GtkBox::builder()
-            .hexpand(true)
-            .vexpand(true)
-            .build();
-        scrim.add_css_class("library-picker-scrim");
-        scrim.set_visible(false);
+        let scrim = crate::ui::picker_nav::build_picker_scrim();
 
         let container = GtkBox::builder()
             .orientation(Orientation::Vertical)
@@ -28,28 +23,9 @@ impl ConcordanceWorksPicker {
         container.add_css_class("library-picker");
         container.set_visible(false);
 
-        let header_box = GtkBox::builder()
-            .orientation(Orientation::Horizontal)
-            .hexpand(true)
-            .build();
-        header_box.add_css_class("library-picker-header");
+        let (header_box, header_title) = crate::ui::picker_nav::build_picker_header("JUMP TO WORK");
 
-        let header_title = Label::builder()
-            .label("JUMP TO WORK")
-            .halign(Align::Start)
-            .hexpand(true)
-            .build();
-        header_title.add_css_class("library-picker-title");
-        header_box.append(&header_title);
-
-        let list_box = ListBox::builder()
-            .selection_mode(gtk4::SelectionMode::Single)
-            .build();
-
-        let scrolled = ScrolledWindow::builder()
-            .child(&list_box)
-            .vexpand(true)
-            .build();
+        let (list_box, scrolled) = crate::ui::picker_nav::new_picker_list();
 
         let footer_label = Label::builder()
             .label("ENTER: jump  ESC: cancel")
