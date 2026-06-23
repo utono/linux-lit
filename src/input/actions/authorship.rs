@@ -28,7 +28,7 @@ pub fn confirm_attribution_selection(state: &Rc<RefCell<AppState>>) {
             ).unwrap_or_default();
         }
         s.authorship_enabled = true;
-        crate::app::apply_authorship_formatting(&mut s);
+        crate::app::formatting::apply_authorship_formatting(&mut s);
 
         let msg = format!("Authorship: {}", set.display_name);
         crate::ui::toast::show_transient(&s.chapter_toast, &msg, 3);

@@ -2296,7 +2296,7 @@ fn dispatch_action(
                 return;
             }
             s.authorship_enabled = !s.authorship_enabled;
-            crate::app::apply_authorship_formatting(&mut s);
+            crate::app::formatting::apply_authorship_formatting(&mut s);
             let label = if s.authorship_enabled { "Authorship: on" } else { "Authorship: off" };
             crate::ui::toast::show_transient(&s.chapter_toast, label, 3);
         }

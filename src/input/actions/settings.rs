@@ -37,7 +37,7 @@ pub(crate) fn apply_settings_change(
             s.text_view.set_right_margin(val as i32 + crate::config::EXTRA_RIGHT_MARGIN);
             s.config.text_margins = val;
             if s.dialogue_formatting_active {
-                crate::app::apply_dialogue_formatting(&mut s);
+                crate::app::formatting::apply_dialogue_formatting(&mut s);
             }
         }
         SettingsChange::Theme(theme) => {
@@ -326,7 +326,7 @@ pub(crate) fn revert_to_snapshot(state: &Rc<RefCell<crate::app::AppState>>) {
     s.config.transition_style = snap_ts;
     s.config.show_cursor_line = snap_cl;
     if s.dialogue_formatting_active {
-        crate::app::apply_dialogue_formatting(&mut s);
+        crate::app::formatting::apply_dialogue_formatting(&mut s);
     }
     crate::input::navigation::update_highlight_only(&mut s);
     // Revert theme if changed
@@ -444,7 +444,7 @@ pub(crate) fn reset_to_defaults(state: &Rc<RefCell<crate::app::AppState>>) {
     s.config.transition_style = ts;
     s.config.show_cursor_line = false;
     if s.dialogue_formatting_active {
-        crate::app::apply_dialogue_formatting(&mut s);
+        crate::app::formatting::apply_dialogue_formatting(&mut s);
     }
     crate::input::navigation::update_highlight_only(&mut s);
     // Reset does not touch the preferred voice; keep the row showing it.
