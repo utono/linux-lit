@@ -47,6 +47,20 @@ pub struct VocabMatch {
     pub char_end: usize,
 }
 
+/// Grouped state for the page-scan image view + calibration mode. Was five flat
+/// fields on AppState (`page_images`/`image_dir`/`image_mode`/`current_page_order`/
+/// `calibration_index`); grouped per the AppState god-struct decomposition
+/// (pure-tier cluster). All accesses are mod.rs-internal (the image/calibration
+/// free functions).
+#[derive(Default)]
+pub struct PageImageState {
+    pub images: Vec<crate::db::models::PageImage>,
+    pub dir: Option<String>,
+    pub mode: bool,
+    pub page_order: Option<i64>,
+    pub calibration_index: usize,
+}
+
 /// Where the voice picker was opened from, so confirm/cancel route back
 /// correctly and write the right target.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -301,19 +315,9 @@ pub struct AppState {
     /// Page-scan image surface for the main card (BCP1549 etc.). Hidden unless
     /// `image_mode` is on.
     pub page_image_overlay: crate::ui::page_image_overlay::PageImageOverlay,
-    /// Page images for the current work, in reading order. Empty for works with
-    /// no scans. Loaded by `display_work`.
-    pub page_images: Vec<crate::db::models::PageImage>,
-    /// Absolute directory holding the current work's page scans (`works.image_dir`).
-    pub image_dir: Option<String>,
-    /// True while the main card shows the page image instead of the text.
-    pub image_mode: bool,
-    /// `page_order` of the page currently loaded into the image overlay, so a
-    /// cursor move that stays on the same page doesn't reload the PNG.
-    pub current_page_order: Option<i64>,
-    /// Index into `page_images` of the page being calibrated (PageCalibration
-    /// mode). 0-based.
-    pub calibration_index: usize,
+    /// Grouped page-scan image view + calibration state (images, dir, mode,
+    /// page_order, calibration_index). See `PageImageState`.
+    pub page_image: PageImageState,
     pub tts: crate::tts::TtsPlayer,
     /// True while a Shift+Space batch synthesis is running, so a second press is
     /// a no-op rather than launching a concurrent batch.
@@ -625,7 +629,7 @@ impl AppState {
     /// the first marked page). line_mapping ids are assigned in reading order, so
     /// a numeric id comparison is the page order.
     pub fn page_image_for_line_id(&self, line_id: i64) -> Option<&crate::db::models::PageImage> {
-        self.page_images.iter().rev().find(|p| match p.start_line_id {
+        self.page_image.images.iter().rev().find(|p| match p.start_line_id {
             Some(start) => {
                 line_id >= start && p.end_line_id.map(|end| line_id <= end).unwrap_or(true)
             }
@@ -1480,11 +1484,7 @@ pub fn build_window(
             prompt_mode: JournalPromptMode::Ask,
         },
         page_image_overlay,
-        page_images: Vec::new(),
-        image_dir: None,
-        image_mode: false,
-        current_page_order: None,
-        calibration_index: 0,
+        page_image: PageImageState::default(),
         tts: crate::tts::TtsPlayer::new(),
         translation_overlay,
         gloss_original_text: None,
@@ -2636,21 +2636,21 @@ pub fn display_work_at_with_prepared(
     }
     // Load page-scan images for this work (e.g. BCP1549 leaf PNGs). Reset the
     // image-view toggle on every work switch so a new work starts in text mode.
-    state.image_mode = false;
-    state.current_page_order = None;
+    state.page_image.mode = false;
+    state.page_image.page_order = None;
     state.page_image_overlay.hide();
-    state.page_images = Vec::new();
-    state.image_dir = None;
+    state.page_image.images = Vec::new();
+    state.page_image.dir = None;
     if let Some(ref work) = state.current_work {
         if let Ok(conn) = crate::db::queries::open_db() {
-            state.page_images = crate::db::queries::load_page_images(&conn, &work.abbrev);
-            state.image_dir = crate::db::queries::load_image_dir(&conn, &work.abbrev);
-            if !state.page_images.is_empty() {
+            state.page_image.images = crate::db::queries::load_page_images(&conn, &work.abbrev);
+            state.page_image.dir = crate::db::queries::load_image_dir(&conn, &work.abbrev);
+            if !state.page_image.images.is_empty() {
                 crate::logging::log(&format!(
                     "PAGE_IMAGES: loaded {} page images for {} (dir={:?})",
-                    state.page_images.len(),
+                    state.page_image.images.len(),
                     work.abbrev,
-                    state.image_dir,
+                    state.page_image.dir,
                 ));
             }
         }
@@ -3660,22 +3660,22 @@ pub(crate) const JOURNAL_WORK_DIV: (i64, i64) = (-1, -1);
 /// the image on, immediately render the page for the cursor's current line.
 pub fn toggle_image_view(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
     let mut s = state.borrow_mut();
-    if s.page_images.is_empty() {
+    if s.page_image.images.is_empty() {
         crate::ui::toast::show_transient(&s.chapter_toast, "No page images for this work", 3);
         return;
     }
-    s.image_mode = !s.image_mode;
-    if s.image_mode {
+    s.page_image.mode = !s.page_image.mode;
+    if s.page_image.mode {
         // Hide the two-column chrome (divider + right column) so nothing peeks
         // around the opaque image overlay. Restored on toggle-off.
         s.column_divider.set_visible(false);
         s.right_scrolled_overlay.set_visible(false);
-        s.current_page_order = None; // force a load
+        s.page_image.page_order = None; // force a load
         drop(s);
         refresh_page_image(state);
     } else {
         s.page_image_overlay.hide();
-        s.current_page_order = None;
+        s.page_image.page_order = None;
         // Restore the two-column chrome if this work uses two columns.
         let two_col = s.column_count() == 2;
         s.column_divider.set_visible(two_col);
@@ -3689,7 +3689,7 @@ pub fn toggle_image_view(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
 /// move; cheap no-op when `image_mode` is off.
 pub fn refresh_page_image(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
     let mut s = state.borrow_mut();
-    if !s.image_mode || s.page_images.is_empty() {
+    if !s.page_image.mode || s.page_image.images.is_empty() {
         return;
     }
     // Find the calibrated page for the cursor's line. FALLBACK (until calibration
@@ -3701,22 +3701,22 @@ pub fn refresh_page_image(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
         .and_then(|id| s.page_image_for_line_id(id));
     let (order, filename) = match calibrated {
         Some(p) => (p.page_order, p.image_path.clone()),
-        None => match s.page_images.first() {
+        None => match s.page_image.images.first() {
             Some(p) => (p.page_order, p.image_path.clone()),
             None => return,
         },
     };
-    if s.current_page_order == Some(order) {
+    if s.page_image.page_order == Some(order) {
         return; // same page already shown
     }
-    let dir = match &s.image_dir {
+    let dir = match &s.page_image.dir {
         Some(d) => d.clone(),
         None => return,
     };
     let path = format!("{}/{}", dir.trim_end_matches('/'), filename);
     let (cw, ch) = overlay_card_size(&s);
     s.page_image_overlay.show(&path, cw, ch);
-    s.current_page_order = Some(order);
+    s.page_image.page_order = Some(order);
 }
 
 // ---------------------------------------------------------------------------
@@ -3731,13 +3731,13 @@ pub fn refresh_page_image(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
 pub fn enter_page_calibration(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
     {
         let mut s = state.borrow_mut();
-        if s.page_images.is_empty() {
+        if s.page_image.images.is_empty() {
             crate::ui::toast::show_transient(&s.chapter_toast, "No page images to calibrate", 3);
             return;
         }
-        s.image_mode = true;
-        s.calibration_index = 0;
-        s.current_page_order = None;
+        s.page_image.mode = true;
+        s.page_image.calibration_index = 0;
+        s.page_image.page_order = None;
         s.column_divider.set_visible(false);
         s.right_scrolled_overlay.set_visible(false);
         // If the cursor is parked on an unmapped buffer line (chrome/blank), snap
@@ -3762,13 +3762,13 @@ pub fn enter_page_calibration(state: &std::rc::Rc<std::cell::RefCell<AppState>>)
 /// Load the page at `calibration_index` into the overlay and update the caption.
 pub fn calibration_show_page(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
     let mut s = state.borrow_mut();
-    let idx = s.calibration_index.min(s.page_images.len().saturating_sub(1));
-    let total = s.page_images.len();
-    let (order, filename) = match s.page_images.get(idx) {
+    let idx = s.page_image.calibration_index.min(s.page_image.images.len().saturating_sub(1));
+    let total = s.page_image.images.len();
+    let (order, filename) = match s.page_image.images.get(idx) {
         Some(p) => (p.page_order, p.image_path.clone()),
         None => return,
     };
-    let dir = match &s.image_dir {
+    let dir = match &s.page_image.dir {
         Some(d) => d.clone(),
         None => return,
     };
@@ -3792,7 +3792,7 @@ pub fn calibration_show_page(state: &std::rc::Rc<std::cell::RefCell<AppState>>) 
     let (cw, ch) = overlay_card_size(&s);
     s.page_image_overlay.show(&path, cw, ch);
     s.page_image_overlay.set_caption(Some(&caption));
-    s.current_page_order = Some(order);
+    s.page_image.page_order = Some(order);
 }
 
 /// Enter: record the cursor's line as the current page's start, then advance to
@@ -3800,7 +3800,7 @@ pub fn calibration_show_page(state: &std::rc::Rc<std::cell::RefCell<AppState>>) 
 pub fn calibration_mark(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
     let (abbrev, page_order, line_id, last_page) = {
         let s = state.borrow();
-        let idx = s.calibration_index;
+        let idx = s.page_image.calibration_index;
         let line_id = match s.line_mapping_id_for_buffer(s.current_line) {
             Some(id) => id,
             None => {
@@ -3810,11 +3810,11 @@ pub fn calibration_mark(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
                 return;
             }
         };
-        let (abbrev, page_order) = match (s.current_work.as_ref(), s.page_images.get(idx)) {
+        let (abbrev, page_order) = match (s.current_work.as_ref(), s.page_image.images.get(idx)) {
             (Some(w), Some(p)) => (w.abbrev.clone(), p.page_order),
             _ => return,
         };
-        (abbrev, page_order, line_id, idx + 1 >= s.page_images.len())
+        (abbrev, page_order, line_id, idx + 1 >= s.page_image.images.len())
     };
 
     // Persist the start + update the in-memory copy.
@@ -3823,8 +3823,8 @@ pub fn calibration_mark(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
     }
     {
         let mut s = state.borrow_mut();
-        let idx = s.calibration_index;
-        if let Some(p) = s.page_images.get_mut(idx) {
+        let idx = s.page_image.calibration_index;
+        if let Some(p) = s.page_image.images.get_mut(idx) {
             p.start_line_id = Some(line_id);
         }
         if last_page {
@@ -3832,7 +3832,7 @@ pub fn calibration_mark(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
             exit_page_calibration(state, true);
             return;
         }
-        s.calibration_index += 1;
+        s.page_image.calibration_index += 1;
     }
     calibration_show_page(state);
 }
@@ -3841,11 +3841,11 @@ pub fn calibration_mark(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
 pub fn calibration_jump_page(state: &std::rc::Rc<std::cell::RefCell<AppState>>, last: bool) {
     {
         let mut s = state.borrow_mut();
-        let n = s.page_images.len();
+        let n = s.page_image.images.len();
         if n == 0 {
             return;
         }
-        s.calibration_index = if last { n - 1 } else { 0 };
+        s.page_image.calibration_index = if last { n - 1 } else { 0 };
     }
     calibration_show_page(state);
 }
@@ -3854,12 +3854,12 @@ pub fn calibration_jump_page(state: &std::rc::Rc<std::cell::RefCell<AppState>>, 
 pub fn calibration_step_page(state: &std::rc::Rc<std::cell::RefCell<AppState>>, delta: i32) {
     {
         let mut s = state.borrow_mut();
-        let n = s.page_images.len() as i32;
+        let n = s.page_image.images.len() as i32;
         if n == 0 {
             return;
         }
-        let cur = s.calibration_index as i32;
-        s.calibration_index = (cur + delta).clamp(0, n - 1) as usize;
+        let cur = s.page_image.calibration_index as i32;
+        s.page_image.calibration_index = (cur + delta).clamp(0, n - 1) as usize;
     }
     calibration_show_page(state);
 }
@@ -3884,12 +3884,12 @@ pub fn exit_page_calibration(state: &std::rc::Rc<std::cell::RefCell<AppState>>, 
         // Reload ranges so the live view reflects the calibration immediately.
         if let (Some(abbrev), Ok(conn)) = (abbrev, crate::db::queries::open_db()) {
             let mut s = state.borrow_mut();
-            s.page_images = crate::db::queries::load_page_images(&conn, &abbrev);
+            s.page_image.images = crate::db::queries::load_page_images(&conn, &abbrev);
         }
     }
     let mut s = state.borrow_mut();
-    s.image_mode = false;
-    s.current_page_order = None;
+    s.page_image.mode = false;
+    s.page_image.page_order = None;
     s.page_image_overlay.set_caption(None);
     s.page_image_overlay.hide();
     let two_col = s.column_count() == 2;
