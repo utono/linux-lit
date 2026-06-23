@@ -312,7 +312,7 @@ fn main() {
                             );
 
                             if paragraph_changed {
-                                crate::app::refresh_vocab_popup(&mut s);
+                                crate::app::vocab_popup::refresh_vocab_popup(&mut s);
                             }
                         }
                         // Schedule a pending_advance when the current line's

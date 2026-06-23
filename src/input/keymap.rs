@@ -2054,9 +2054,9 @@ fn dispatch_action(
             let mut s = state.borrow_mut();
             s.vocab_popup_auto = !s.vocab_popup_auto;
             if s.vocab_popup_auto {
-                crate::app::open_vocab_popup(&mut s);
+                crate::app::vocab_popup::open_vocab_popup(&mut s);
             } else {
-                crate::app::close_vocab_popup(&mut s);
+                crate::app::vocab_popup::close_vocab_popup(&mut s);
             }
         }
         VocabPopupNext => {
@@ -2258,7 +2258,7 @@ fn dispatch_action(
         // Multi-key chord entry
         PendingG => {
             if state.borrow().vocab_popup.is_visible() {
-                crate::app::vocab_popup_toggle_view(&mut state.borrow_mut());
+                crate::app::vocab_popup::vocab_popup_toggle_view(&mut state.borrow_mut());
             } else {
                 KeyState::start_chord(key_state, ChordState::PendingG);
             }
@@ -2329,12 +2329,12 @@ fn handle_vocab_popup_key(state: &Rc<RefCell<AppState>>, forward: bool) {
     let popup_visible = state.borrow().vocab_popup.is_visible();
     if popup_visible {
         if forward {
-            crate::app::vocab_popup_next(&mut state.borrow_mut());
+            crate::app::vocab_popup::vocab_popup_next(&mut state.borrow_mut());
         } else {
-            crate::app::vocab_popup_prev(&mut state.borrow_mut());
+            crate::app::vocab_popup::vocab_popup_prev(&mut state.borrow_mut());
         }
     } else {
-        crate::app::open_vocab_popup(&mut state.borrow_mut());
+        crate::app::vocab_popup::open_vocab_popup(&mut state.borrow_mut());
     }
     let gen = {
         let s = state.borrow();
