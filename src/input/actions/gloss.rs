@@ -4,7 +4,7 @@ use std::rc::Rc;
 use gtk4::prelude::*;
 
 use crate::app::AppState;
-use crate::ui::gloss_overlay::BlockKind;
+use crate::ui::gloss_block::BlockKind;
 
 /// Jump the reader cursor to the first dialogue line of the glossed passage's
 /// source text (located by matching the gloss's first source line, then
@@ -447,7 +447,7 @@ pub(crate) fn fix_word_ipa(state_rc: &Rc<RefCell<AppState>>, input: &str) {
                 match s.gloss_list.get(gloss_index_pos) {
                     Some(g) => {
                         let gloss_text = g.gloss_text.clone();
-                        let blocks = crate::ui::gloss_overlay::gloss_blocks(&gloss_text);
+                        let blocks = crate::ui::gloss_block::gloss_blocks(&gloss_text);
                         if blocks
                             .iter()
                             .any(|b| b.kind == BlockKind::Source && b.index == block_index)
@@ -487,7 +487,7 @@ pub(crate) fn fix_word_ipa(state_rc: &Rc<RefCell<AppState>>, input: &str) {
     };
 
     // 3. Literal `/IPA/` -> apply directly; plain hint -> ask the LLM first.
-    if crate::ui::gloss_overlay::contains_ipa_span(&rest) {
+    if crate::ui::gloss_ipa::contains_ipa_span(&rest) {
         let new_ipa = first_ipa_span(&rest);
         apply_ipa_fix(
             state_rc,
@@ -555,7 +555,7 @@ fn apply_ipa_fix(
     // multi-line verse: block.text joins verse lines with '\n' (tags stripped),
     // but gloss_text separates them with `</verse>\n<verse>`, so block.text is
     // not a substring of gloss_text for any 2+ line block.
-    let new_gloss_text = match crate::ui::gloss_overlay::replace_word_ipa_in_source_block(
+    let new_gloss_text = match crate::ui::gloss_block::replace_word_ipa_in_source_block(
         gloss_text,
         block_index,
         word,
@@ -675,7 +675,7 @@ fn request_ipa_then_apply(
 
         match result {
             Ok(Ok(reply)) => {
-                if !crate::ui::gloss_overlay::contains_ipa_span(&reply) {
+                if !crate::ui::gloss_ipa::contains_ipa_span(&reply) {
                     show_tts_toast(&state_for_result, "Could not get IPA");
                     return;
                 }
@@ -1150,7 +1150,7 @@ fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32)
             Some(ctx) => (ctx.work_abbrev.clone(), ctx.speaker.clone()),
             None => return,
         };
-        let blocks = crate::ui::gloss_overlay::gloss_blocks(&gloss.gloss_text);
+        let blocks = crate::ui::gloss_block::gloss_blocks(&gloss.gloss_text);
         let text = match blocks.iter().find(|b| b.kind == kind && b.index == index) {
             Some(b) => b.text.clone(),
             None => return,
@@ -1187,7 +1187,7 @@ fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32)
     // (`take /tɛːk/`); ElevenLabs v3 would otherwise voice BOTH the word and the
     // IPA (the doubling). Replace each `word /IPA/` pair with just `/IPA/` so the
     // word is spoken once, in OP. Display/storage keep the word (see strip_ipa).
-    let text = crate::ui::gloss_overlay::ipa_for_tts(&text);
+    let text = crate::ui::gloss_ipa::ipa_for_tts(&text);
 
     // Filename stem includes a short voice tag so each voice's audio for a block
     // is a distinct file (voice ids are alphanumeric, filesystem-safe).
@@ -1313,7 +1313,7 @@ pub(crate) fn synth_all_prose_blocks(state_rc: &Rc<RefCell<AppState>>) {
             None => return,
         };
         let prose: Vec<(i32, String)> =
-            crate::ui::gloss_overlay::gloss_blocks(&gloss.gloss_text)
+            crate::ui::gloss_block::gloss_blocks(&gloss.gloss_text)
                 .into_iter()
                 .filter(|b| b.kind == BlockKind::Explication)
                 .map(|b| (b.index, b.text))
@@ -1349,7 +1349,7 @@ pub(crate) fn synth_all_prose_blocks(state_rc: &Rc<RefCell<AppState>>) {
                     }
                 }
             }
-            let tts_text = crate::ui::gloss_overlay::ipa_for_tts(raw);
+            let tts_text = crate::ui::gloss_ipa::ipa_for_tts(raw);
             let bytes = match synth_via(&tokio_handle, &tts_text, &voice_id, &model_id).await {
                 Ok(b) => b,
                 Err(e) => {
@@ -1407,7 +1407,7 @@ pub(crate) fn synth_all_synopsis_blocks(state_rc: &Rc<RefCell<AppState>>) {
             Some(w) => crate::app::base_work_abbrev(&w.abbrev).to_string(),
             None => return,
         };
-        let prose: Vec<(i32, String)> = crate::ui::gloss_overlay::synopsis_blocks(&synopsis)
+        let prose: Vec<(i32, String)> = crate::ui::gloss_block::synopsis_blocks(&synopsis)
             .into_iter()
             .map(|b| (b.index, b.text))
             .collect();
@@ -1432,7 +1432,7 @@ pub(crate) fn synth_all_synopsis_blocks(state_rc: &Rc<RefCell<AppState>>) {
                     }
                 }
             }
-            let tts_text = crate::ui::gloss_overlay::ipa_for_tts(raw);
+            let tts_text = crate::ui::gloss_ipa::ipa_for_tts(raw);
             let bytes = match synth_via(&tokio_handle, &tts_text, &voice_id, &model_id).await {
                 Ok(b) => b,
                 Err(e) => {
@@ -1491,7 +1491,7 @@ fn play_synopsis_block(state_rc: &Rc<RefCell<AppState>>, index: i32) {
             Some(w) => crate::app::base_work_abbrev(&w.abbrev).to_string(),
             None => return,
         };
-        let text = match crate::ui::gloss_overlay::synopsis_blocks(&synopsis)
+        let text = match crate::ui::gloss_block::synopsis_blocks(&synopsis)
             .into_iter()
             .find(|b| b.index == index)
         {
@@ -1533,7 +1533,7 @@ fn play_synopsis_block(state_rc: &Rc<RefCell<AppState>>, index: i32) {
 
     // TTS form: rewrite `word /IPA/` pairs to just `/IPA/` (no-op on synopsis
     // text, which carries no IPA, but applied for consistency with other paths).
-    let tts_text = crate::ui::gloss_overlay::ipa_for_tts(&text);
+    let tts_text = crate::ui::gloss_ipa::ipa_for_tts(&text);
 
     // Miss: synthesize asynchronously. Keep the pill up until playback begins.
     show_persistent_tts_toast(state_rc, "Synthesizing\u{2026}");
@@ -1751,7 +1751,7 @@ async fn synth_via(
 /// matched verse line carries a timestamp.
 fn source_block_seek_time(s: &AppState, index: i32) -> Option<f64> {
     let gloss = s.gloss_list.get(s.gloss_index)?;
-    let blocks = crate::ui::gloss_overlay::gloss_blocks(&gloss.gloss_text);
+    let blocks = crate::ui::gloss_block::gloss_blocks(&gloss.gloss_text);
     let block = blocks
         .iter()
         .find(|b| b.kind == BlockKind::Source && b.index == index)?;

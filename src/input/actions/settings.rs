@@ -192,7 +192,7 @@ pub(crate) fn confirm_voice_picker(state: &Rc<RefCell<crate::app::AppState>>) {
             let source_index = {
                 let s = state.borrow();
                 match s.gloss_overlay.current_block() {
-                    Some((crate::ui::gloss_overlay::BlockKind::Source, idx)) => Some(idx),
+                    Some((crate::ui::gloss_block::BlockKind::Source, idx)) => Some(idx),
                     _ => None,
                 }
             };
