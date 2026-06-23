@@ -1,6 +1,6 @@
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Entry, Label, ListBox, ListBoxRow, Orientation, Overlay, ScrolledWindow,
+    Box as GtkBox, Entry, Label, ListBox, ListBoxRow, Orientation, Overlay,
 };
 
 use crate::app::JournalBand;
@@ -39,14 +39,7 @@ impl JournalQaPicker {
             .placeholder_text("Filter Q&A pages...")
             .build();
 
-        let list_box = ListBox::builder()
-            .selection_mode(gtk4::SelectionMode::Single)
-            .build();
-
-        let scrolled = ScrolledWindow::builder()
-            .child(&list_box)
-            .vexpand(true)
-            .build();
+        let (list_box, scrolled) = crate::ui::picker_nav::new_picker_list();
 
         picker_box.append(&search_entry);
         picker_box.append(&scrolled);
