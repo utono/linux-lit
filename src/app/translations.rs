@@ -1,4 +1,5 @@
-use super::{AppState, apply_column_layout, overlay_card_size};
+use super::AppState;
+use crate::app::layout::{apply_column_layout, overlay_card_size};
 use crate::app::scene_synopsis::{current_scene_divs, synopsis_label};
 use crate::app::font::{reapply_font, rebuild_line_number_gutter};
 use gtk4::prelude::*;

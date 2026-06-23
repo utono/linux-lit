@@ -26,13 +26,13 @@ pub(crate) fn apply_settings_change(
         }
         SettingsChange::ColumnWidth(val) => {
             let cc = s.column_count();
-            crate::app::apply_card_sizing(&s.content_hbox, s.window.width(), val, cc, s.translations_visible);
+            crate::app::layout::apply_card_sizing(&s.content_hbox, s.window.width(), val, cc, s.translations_visible);
             s.config.column_width = val;
         }
         SettingsChange::TextMargins(val) => {
             let work_type = s.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("");
             let is_verse = !crate::db::line_types::is_prose_work(work_type);
-            let verse_bump = if is_verse { crate::app::verse_left_offset(s.window.width(), s.config.column_width) } else { 0 };
+            let verse_bump = if is_verse { crate::app::layout::verse_left_offset(s.window.width(), s.config.column_width) } else { 0 };
             s.text_view.set_left_margin(val as i32 + verse_bump);
             s.text_view.set_right_margin(val as i32 + crate::config::EXTRA_RIGHT_MARGIN);
             s.config.text_margins = val;
@@ -313,10 +313,10 @@ pub(crate) fn revert_to_snapshot(state: &Rc<RefCell<crate::app::AppState>>) {
         s.text_view.set_pixels_below_lines((snap_ls as i32).max(0));
     }
     let cc = s.column_count();
-    crate::app::apply_card_sizing(&s.content_hbox, s.window.width(), snap_cw, cc, s.translations_visible);
+    crate::app::layout::apply_card_sizing(&s.content_hbox, s.window.width(), snap_cw, cc, s.translations_visible);
     let work_type = s.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("");
     let is_verse = !crate::db::line_types::is_prose_work(work_type);
-    let verse_bump = if is_verse { crate::app::verse_left_offset(s.window.width(), snap_cw) } else { 0 };
+    let verse_bump = if is_verse { crate::app::layout::verse_left_offset(s.window.width(), snap_cw) } else { 0 };
     s.text_view.set_left_margin(snap_tm as i32 + verse_bump);
     s.text_view.set_right_margin(snap_tm as i32 + crate::config::EXTRA_RIGHT_MARGIN);
     s.config.line_spacing = snap_ls;
@@ -431,10 +431,10 @@ pub(crate) fn reset_to_defaults(state: &Rc<RefCell<crate::app::AppState>>) {
         s.text_view.set_pixels_below_lines((ls as i32).max(0));
     }
     let cc = s.column_count();
-    crate::app::apply_card_sizing(&s.content_hbox, s.window.width(), cw, cc, s.translations_visible);
+    crate::app::layout::apply_card_sizing(&s.content_hbox, s.window.width(), cw, cc, s.translations_visible);
     let work_type = s.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("");
     let is_verse = !crate::db::line_types::is_prose_work(work_type);
-    let verse_bump = if is_verse { crate::app::verse_left_offset(s.window.width(), cw) } else { 0 };
+    let verse_bump = if is_verse { crate::app::layout::verse_left_offset(s.window.width(), cw) } else { 0 };
     s.text_view.set_left_margin(tm as i32 + verse_bump);
     s.text_view.set_right_margin(tm as i32 + crate::config::EXTRA_RIGHT_MARGIN);
     s.config.line_spacing = ls;
