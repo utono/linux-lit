@@ -5,6 +5,13 @@ use gtk4::prelude::*;
 
 use crate::app::AppState;
 
+/// Enter the given picker `mode`. The uniform tail of every picker-open path;
+/// the caller does its own `show(...)` first (the show signature varies per
+/// picker, so only the mode-set is shared).
+pub(crate) fn open_picker_mode(s: &mut AppState, mode: crate::app::InputMode) {
+    s.input_mode = mode;
+}
+
 /// Which gloss_type the Alt+g picker is currently filtered to. Cycled by Alt+t.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(crate) enum GlossPickerFilter {
