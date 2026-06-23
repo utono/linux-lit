@@ -174,9 +174,25 @@ scope_size. Each verified by direct grep, not agent word alone.
   extra per-child logic (none found that mixed in work — but exclude on sight).
 - **Safe-scope:** yes — a 3-line GTK loop → one call; no inputs but the list_box.
 
-## #16 — block-visual-key-twin — OPEN
+## #16 — block-visual-key-twin — DONE (merge fe8a563, render check OWED)
 
-- **Status:** OPEN (most concentrated single duplication found)
+- **Status:** DONE — merged. **⚠ Runtime render check still OWED** (user was away
+  at merge time; merged on unit gates + a diff-level behavioral-equivalence
+  review as a compensating control, NOT a visual check). To close the loop next
+  time at the machine: enter visual mode in BOTH a synopsis overlay (`h` →
+  Shift+V) and a gloss overlay (`Ctrl+g` → Shift+V); run `j`/`k`/`G`/`gg`/`y`/
+  `Escape`; confirm identical behavior to before AND the gloss yank/escape
+  asymmetry (gloss `y` exits to block start via `exit_visual_to_start`; gloss
+  `Escape` exits in place via `exit_visual`). If anything differs, `git revert`
+  merge fe8a563 is clean.
+- **Shipped:** `handle_synopsis_visual_key` + `handle_gloss_visual_key` →
+  one `handle_block_visual_key(state, key_state, key_name, cfg)` +
+  `SYNOPSIS_VISUAL_CFG`/`GLOSS_VISUAL_CFG` consts of plain `fn` pointers (no
+  trait). The yank/escape exit asymmetry is captured via separate
+  `yank_exit`/`escape_exit` config slots. Log output byte-equivalent; net -20
+  lines; 413 + clippy 115. Spec under docs/superpowers/ (2026-06-24).
+
+- **Status (orig):** OPEN (most concentrated single duplication found)
 - **Signal:** `handle_synopsis_visual_key` (keymap.rs:1328) and
   `handle_gloss_visual_key` (keymap.rs:1392) are near-identical whole functions —
   the second's own comment says "Mirrors `handle_synopsis_visual_key`". The
