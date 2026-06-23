@@ -1261,6 +1261,19 @@ impl GlossOverlay {
         self.mark_cursor_block();
     }
 
+    /// Exit visual mode returning the cursor to the ANCHOR block — the block the
+    /// cursor was on when visual mode was entered (Shift+V). Used by Escape/V so
+    /// cancelling a selection lands the cursor back where it started, rather than
+    /// at the moving (j/k) end. Unlike `exit_visual_to_start`, the anchor may be
+    /// the HIGHER of anchor/cursor (when the selection was extended upward).
+    pub fn exit_visual_to_anchor(&self) {
+        if let Some(anchor) = self.synopsis_visual_anchor.get() {
+            self.cursor_block.set(anchor);
+        }
+        self.synopsis_visual_anchor.set(None);
+        self.mark_cursor_block();
+    }
+
     /// Move the cursor end of the selection by `delta` blocks (clamped) and
     /// re-span the bar. Used by j/k while in visual mode.
     pub fn visual_step(&self, delta: i32) {
