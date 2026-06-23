@@ -134,7 +134,7 @@ fn run_synopsis_revision(
             Some(t) => t.clone(),
             None => return,
         };
-        let label = crate::app::synopsis_label(&s, div1, div2);
+        let label = crate::app::scene_synopsis::synopsis_label(&s, div1, div2);
         (
             work.title.clone(),
             abbrev,
@@ -258,7 +258,7 @@ pub(crate) fn undo_amend(state_rc: &Rc<RefCell<AppState>>) {
     s.synopsis_undo = None;
     let cw = s.content_hbox.width();
     let h = s.content_hbox.height();
-    let label = crate::app::synopsis_label(&s, div1, div2);
+    let label = crate::app::scene_synopsis::synopsis_label(&s, div1, div2);
     let root_color = s.theme.root_color.clone();
     s.gloss_overlay.show_synopsis(&label, &original, Some(&root_color), cw, h);
     s.synopsis_overlay_scene = (div1, div2);

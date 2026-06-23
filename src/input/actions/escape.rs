@@ -11,7 +11,7 @@ pub(crate) fn escape_reader_mode(state: &Rc<RefCell<AppState>>) {
     {
         let visible = state.borrow().translations_visible;
         if visible {
-            crate::app::toggle_translations(&mut state.borrow_mut());
+            crate::app::translations::toggle_translations(&mut state.borrow_mut());
             return;
         }
     }

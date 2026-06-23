@@ -1140,9 +1140,9 @@ fn show_no_timestamp_toast(s: &AppState) {
 /// Run a main-card navigation function (moves `current_line` + seeks MPV via
 /// `after_page_change`), then re-highlight and follow in the translation overlay.
 fn overlay_nav(state: &Rc<RefCell<AppState>>, nav_fn: fn(&mut AppState)) {
-    let scene_before = crate::app::current_scene_divs(&state.borrow());
+    let scene_before = crate::app::scene_synopsis::current_scene_divs(&state.borrow());
     nav_fn(&mut state.borrow_mut());
-    crate::app::sync_translation_overlay(state, scene_before);
+    crate::app::translations::sync_translation_overlay(state, scene_before);
 }
 
 fn handle_synopsis_overlay_key(
@@ -1249,11 +1249,11 @@ fn handle_synopsis_overlay_key(
             true
         }
         "n" if is_ctrl => {
-            crate::app::cycle_synopsis(state, 1);
+            crate::app::scene_synopsis::cycle_synopsis(state, 1);
             true
         }
         "p" if is_ctrl => {
-            crate::app::cycle_synopsis(state, -1);
+            crate::app::scene_synopsis::cycle_synopsis(state, -1);
             true
         }
         "g" if is_alt => {
@@ -2104,7 +2104,7 @@ fn dispatch_action(
             let s = state.borrow();
             let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
             drop(s);
-            crate::app::toggle_translations(&mut state.borrow_mut());
+            crate::app::translations::toggle_translations(&mut state.borrow_mut());
         }
 
         // Settings (in reader)
@@ -2186,7 +2186,7 @@ fn dispatch_action(
             s.title_bar.set_visible(!visible);
             s.config.title_bar_visible = !visible;
             if !visible {
-                crate::app::update_title_bar_scene(&s);
+                crate::app::scene_synopsis::update_title_bar_scene(&s);
             }
             crate::config::save(&s.config);
         }
@@ -2282,9 +2282,9 @@ fn dispatch_action(
                 crate::input::search::reactivate_and_step(state, false);
             }
         }
-        ToggleSynopsis => crate::app::toggle_synopsis(&mut state.borrow_mut()),
-        ShowSynopsisOverlay => crate::app::show_synopsis_overlay(state),
-        ShowTranslationOverlay => crate::app::show_translation_overlay(state),
+        ToggleSynopsis => crate::app::scene_synopsis::toggle_synopsis(&mut state.borrow_mut()),
+        ShowSynopsisOverlay => crate::app::scene_synopsis::show_synopsis_overlay(state),
+        ShowTranslationOverlay => crate::app::translations::show_translation_overlay(state),
         ToggleImageView => crate::app::toggle_image_view(state),
         EnterPageCalibration => crate::app::enter_page_calibration(state),
 
@@ -2296,7 +2296,7 @@ fn dispatch_action(
                 return;
             }
             s.authorship_enabled = !s.authorship_enabled;
-            crate::app::apply_authorship_formatting(&mut s);
+            crate::app::formatting::apply_authorship_formatting(&mut s);
             let label = if s.authorship_enabled { "Authorship: on" } else { "Authorship: off" };
             crate::ui::toast::show_transient(&s.chapter_toast, label, 3);
         }

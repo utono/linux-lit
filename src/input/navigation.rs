@@ -955,7 +955,7 @@ pub fn cursor_next_dialogue(state: &mut AppState) {
 
 /// Previous chapter line (`[` key).
 pub fn jump_to_prev_chapter(state: &mut AppState) {
-    crate::app::hide_translations_for_navigation(state);
+    crate::app::translations::hide_translations_for_navigation(state);
     let target = {
         let work = match &state.current_work {
             Some(w) => w,
@@ -1014,7 +1014,7 @@ pub fn jump_to_prev_chapter(state: &mut AppState) {
 
 /// Next chapter line.
 pub fn jump_to_next_chapter(state: &mut AppState) {
-    crate::app::hide_translations_for_navigation(state);
+    crate::app::translations::hide_translations_for_navigation(state);
     let line_count = state.effective_line_count();
     let target = {
         let work = match &state.current_work {
@@ -1532,8 +1532,8 @@ pub fn show_current_chapter(state: &mut AppState) {
     // chapter_breaks. Prose-vs-verse is decided by work_type, not by whether
     // chapter markers exist. See CLAUDE.md → authoritative-boundary principle.
     if !state.is_prose() {
-        let (div1, div2) = crate::app::current_scene_divs(state);
-        let label = crate::app::scene_label_for(state, div1, div2);
+        let (div1, div2) = crate::app::scene_synopsis::current_scene_divs(state);
+        let label = crate::app::scene_synopsis::scene_label_for(state, div1, div2);
         let text = format!("{} — {}", abbrev, label);
         show_chapter_toast(state, &text);
         return;
@@ -1558,8 +1558,8 @@ pub fn show_current_chapter(state: &mut AppState) {
     // Prose work with no chapter markers: fall back to the scene label so the
     // toast still shows something meaningful rather than nothing.
     if chapter_lines.is_empty() {
-        let (div1, div2) = crate::app::current_scene_divs(state);
-        let label = crate::app::scene_label_for(state, div1, div2);
+        let (div1, div2) = crate::app::scene_synopsis::current_scene_divs(state);
+        let label = crate::app::scene_synopsis::scene_label_for(state, div1, div2);
         let text = format!("{} — {}", abbrev, label);
         show_chapter_toast(state, &text);
         return;

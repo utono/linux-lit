@@ -40,7 +40,7 @@ fn render_current(s: &mut AppState) {
             let title = format!(
                 "{} — {}",
                 s.current_work.as_ref().map(|w| w.title.as_str()).unwrap_or(""),
-                crate::app::synopsis_label(s, d1, d2),
+                crate::app::scene_synopsis::synopsis_label(s, d1, d2),
             );
             (pages, title)
         }
@@ -86,7 +86,7 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         return;
     }
     s.journal_return_pos = Some((s.current_line, s.page_top_line));
-    let (d1, d2) = crate::app::current_scene_divs(&s);
+    let (d1, d2) = crate::app::scene_synopsis::current_scene_divs(&s);
     s.journal_band = JournalBand::Scene(d1, d2);
     s.journal_page_index = 0;
     s.input_mode = InputMode::JournalOverlay;
@@ -220,7 +220,7 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
         };
         let scene_text = match band {
             JournalBand::Work => String::new(),
-            JournalBand::Scene(d1, d2) => crate::app::scene_text_for(&s, d1, d2),
+            JournalBand::Scene(d1, d2) => crate::app::scene_synopsis::scene_text_for(&s, d1, d2),
         };
         (
             title,
@@ -253,7 +253,7 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
             "Work: {} by {}\nScene: {}\n\nScene text:\n{}\n\nReader's question:\n{}",
             work_title,
             work_author,
-            crate::app::scene_label(d1, d2),
+            crate::app::scene_synopsis::scene_label(d1, d2),
             scene_text,
             question,
         ),
@@ -345,7 +345,7 @@ pub(crate) fn open_picker(state: &Rc<RefCell<AppState>>) {
             };
             let scene_label = match band {
                 JournalBand::Work => "whole work".to_string(),
-                JournalBand::Scene(d1, d2) => crate::app::synopsis_label(&s, d1, d2),
+                JournalBand::Scene(d1, d2) => crate::app::scene_synopsis::synopsis_label(&s, d1, d2),
             };
             let prefix: String = p.question.chars().take(80).collect();
             crate::ui::journal_picker::JournalRow {

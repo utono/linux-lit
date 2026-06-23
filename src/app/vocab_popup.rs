@@ -63,7 +63,7 @@ pub fn open_vocab_popup(state: &mut AppState) {
 }
 
 /// Set the vocab popup's left margin so it starts just right of the text card.
-pub(super) fn update_vocab_popup_margin(state: &AppState) {
+pub(crate) fn update_vocab_popup_margin(state: &AppState) {
     let window = state.text_view.root()
         .and_then(|r| r.downcast::<gtk4::Window>().ok());
     let window = match window {
