@@ -2,9 +2,6 @@
 //! Pure string transforms. `pub(crate)` items are consumed by
 //! `input::actions::gloss`; `strip_ipa` is also called by `gloss_block`.
 
-use crate::ui::gloss_overlay::{GlossElement, parse_gloss_tags};
-use crate::ui::gloss_util::split_echo;
-
 pub(crate) fn strip_brackets(text: &str) -> String {
     let mut result = String::new();
     let mut in_bracket = false;
@@ -265,104 +262,6 @@ pub(crate) fn replace_word_ipa(text: &str, word: &str, new_ipa: &str) -> Option<
     }
 }
 
-/// Rewrite the `/IPA/` after `word` (whole-word, all occurrences) within ONLY
-/// the source block at `source_index`, operating on the TAGGED `gloss_text`
-/// (each verse line is wrapped in `<verse>…</verse>`). Returns the full updated
-/// gloss_text, or None if that block has no `word /IPA/` pair. Other blocks are
-/// untouched even if they contain the same word.
-///
-/// Scoped by POSITION, not text: each `<verse>` is identified by its
-/// document-order ordinal, and only verses belonging to the target source run
-/// (per `gloss_blocks`' exact flush rule) are rewritten. This distinguishes
-/// byte-identical verse lines that appear in different source blocks (e.g. a
-/// repeated refrain) — a text-membership match would wrongly rewrite both.
-pub(crate) fn replace_word_ipa_in_source_block(
-    gloss_text: &str,
-    source_index: i32,
-    word: &str,
-    new_ipa: &str,
-) -> Option<String> {
-    // Phase 1: which verse ORDINALS (0-based, document order) belong to the
-    // target source block? Mirror gloss_blocks' flush rule exactly: a non-echo
-    // <gloss> flushes the pending source run, and the source index advances
-    // ONLY when that pending run is non-empty (matching flush_source).
-    let mut target_ordinals: std::collections::HashSet<usize> = std::collections::HashSet::new();
-    {
-        let mut cur_source = 0i32;
-        let mut verse_ord = 0usize;
-        let mut pending_ords: Vec<usize> = Vec::new();
-        for el in parse_gloss_tags(gloss_text) {
-            match el {
-                GlossElement::Verse(_) => {
-                    pending_ords.push(verse_ord);
-                    verse_ord += 1;
-                }
-                GlossElement::Gloss(text) => {
-                    if split_echo(&text).is_some() {
-                        continue; // echo bracket: does not flush
-                    }
-                    // non-echo gloss flushes the current source run (if non-empty)
-                    if !pending_ords.is_empty() {
-                        if cur_source == source_index {
-                            target_ordinals.extend(pending_ords.iter().copied());
-                        }
-                        cur_source += 1;
-                        pending_ords.clear();
-                    }
-                }
-                GlossElement::Speaker(_) | GlossElement::Pron(_) => {}
-            }
-        }
-        // trailing run (gloss that ends on verse)
-        if !pending_ords.is_empty() && cur_source == source_index {
-            target_ordinals.extend(pending_ords.iter().copied());
-        }
-    }
-    if target_ordinals.is_empty() {
-        return None; // no such source block / no verses
-    }
-
-    // Phase 2: walk raw <verse>…</verse> spans by ordinal (same document order
-    // as Phase 1, since parse_gloss_tags emits one Verse per tag in order);
-    // rewrite only target ones, copy everything else verbatim.
-    let mut out = String::with_capacity(gloss_text.len());
-    let mut rest = gloss_text;
-    let mut ord = 0usize;
-    let mut any = false;
-    while let Some(open) = rest.find("<verse>") {
-        let after_open = open + "<verse>".len();
-        out.push_str(&rest[..after_open]);
-        let tail = &rest[after_open..];
-        if let Some(close_rel) = tail.find("</verse>") {
-            let inner = &tail[..close_rel];
-            if target_ordinals.contains(&ord) {
-                if let Some(fixed) = replace_word_ipa(inner, word, new_ipa) {
-                    out.push_str(&fixed);
-                    any = true;
-                } else {
-                    out.push_str(inner);
-                }
-            } else {
-                out.push_str(inner);
-            }
-            out.push_str("</verse>");
-            rest = &tail[close_rel + "</verse>".len()..];
-            ord += 1;
-        } else {
-            // malformed: no closing tag — copy the remainder and stop
-            out.push_str(tail);
-            rest = "";
-            break;
-        }
-    }
-    out.push_str(rest);
-    if any {
-        Some(out)
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod ipa_tests {
     use super::*;
@@ -578,42 +477,4 @@ mod ipa_tests {
         );
     }
 
-    #[test]
-    fn replace_in_source_block_rewrites_multiline_verse() {
-        let g = "<speaker>GARDINER</speaker>\n<verse>In daily /ˈdɛːli/ thanks</verse>\n<verse>that gave /gɛːv/ us</verse>\n<gloss>note</gloss>";
-        let out = replace_word_ipa_in_source_block(g, 0, "daily", "/ˈdeɪli/").unwrap();
-        assert!(out.contains("daily /ˈdeɪli/"));
-        assert!(out.contains("gave /gɛːv/")); // other word untouched
-        assert!(out.contains("<gloss>note</gloss>")); // tags intact
-        assert!(out.contains("<verse>"));
-    }
-
-    #[test]
-    fn replace_in_source_block_none_when_word_absent() {
-        let g = "<verse>In daily /ˈdɛːli/ thanks</verse>";
-        assert!(replace_word_ipa_in_source_block(g, 0, "missing", "/x/").is_none());
-    }
-
-    #[test]
-    fn replace_in_source_block_scopes_to_the_block() {
-        // 'good' appears in TWO source blocks; fixing block 1 must not touch block 0.
-        let g = "<verse>good /gʊd/ first</verse>\n<gloss>a</gloss>\n<verse>good /gʊd/ second</verse>\n<gloss>b</gloss>";
-        let out = replace_word_ipa_in_source_block(g, 1, "good", "/guːd/").unwrap();
-        // block 0 (index 0) keeps old IPA; block 1 (index 1) gets new.
-        let first = out.find("first").unwrap();
-        let second = out.find("second").unwrap();
-        assert!(out[..first].contains("good /gʊd/")); // block 0 unchanged
-        assert!(out[..second].contains("good /guːd/")); // block 1 changed
-    }
-
-    #[test]
-    fn replace_in_source_block_distinguishes_identical_lines_across_blocks() {
-        // Same verse line text in TWO source blocks; fixing block 1 must leave
-        // block 0's identical line untouched (position-scoped, not text-scoped).
-        let g = "<verse>good /gʊd/ same</verse>\n<gloss>a</gloss>\n<verse>good /gʊd/ same</verse>\n<gloss>b</gloss>";
-        let out = replace_word_ipa_in_source_block(g, 1, "good", "/guːd/").unwrap();
-        // exactly ONE rewrite: block 1's. Block 0 keeps /gʊd/.
-        assert_eq!(out.matches("good /guːd/ same").count(), 1);
-        assert_eq!(out.matches("good /gʊd/ same").count(), 1);
-    }
 }
