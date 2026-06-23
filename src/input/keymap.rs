@@ -2052,8 +2052,8 @@ fn dispatch_action(
         // Vocab / glossing
         ToggleVocabPopup => {
             let mut s = state.borrow_mut();
-            s.vocab_popup_auto = !s.vocab_popup_auto;
-            if s.vocab_popup_auto {
+            s.vocab_popup.auto = !s.vocab_popup.auto;
+            if s.vocab_popup.auto {
                 crate::app::vocab_popup::open_vocab_popup(&mut s);
             } else {
                 crate::app::vocab_popup::close_vocab_popup(&mut s);
@@ -2257,7 +2257,7 @@ fn dispatch_action(
 
         // Multi-key chord entry
         PendingG => {
-            if state.borrow().vocab_popup.is_visible() {
+            if state.borrow().vocab_popup.popup.is_visible() {
                 crate::app::vocab_popup::vocab_popup_toggle_view(&mut state.borrow_mut());
             } else {
                 KeyState::start_chord(key_state, ChordState::PendingG);
@@ -2326,7 +2326,7 @@ fn do_mpv_seek(state: &Rc<RefCell<AppState>>, offset: f64) {
 
 /// Vocab popup key handler with auto-hide timer reset.
 fn handle_vocab_popup_key(state: &Rc<RefCell<AppState>>, forward: bool) {
-    let popup_visible = state.borrow().vocab_popup.is_visible();
+    let popup_visible = state.borrow().vocab_popup.popup.is_visible();
     if popup_visible {
         if forward {
             crate::app::vocab_popup::vocab_popup_next(&mut state.borrow_mut());
@@ -2338,20 +2338,20 @@ fn handle_vocab_popup_key(state: &Rc<RefCell<AppState>>, forward: bool) {
     }
     let gen = {
         let s = state.borrow();
-        let next = s.vocab_popup_fade_gen.get() + 1;
-        s.vocab_popup_fade_gen.set(next);
+        let next = s.vocab_popup.fade_gen.get() + 1;
+        s.vocab_popup.fade_gen.set(next);
         next
     };
     let state_clone = Rc::clone(state);
     glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
         let s = state_clone.borrow();
-        if s.vocab_popup_fade_gen.get() != gen {
+        if s.vocab_popup.fade_gen.get() != gen {
             return;
         }
-        if !s.vocab_popup.is_visible() {
+        if !s.vocab_popup.popup.is_visible() {
             return;
         }
-        let widget = s.vocab_popup.widget().clone();
+        let widget = s.vocab_popup.popup.widget().clone();
         let target = adw::CallbackAnimationTarget::new(move |value| {
             widget.set_opacity(value as f64);
             if value <= 0.0 {
@@ -2360,7 +2360,7 @@ fn handle_vocab_popup_key(state: &Rc<RefCell<AppState>>, forward: bool) {
             }
         });
         let anim = adw::TimedAnimation::new(
-            s.vocab_popup.widget(),
+            s.vocab_popup.popup.widget(),
             1.0, 0.0, 500, target,
         );
         anim.set_easing(adw::Easing::EaseOutQuad);

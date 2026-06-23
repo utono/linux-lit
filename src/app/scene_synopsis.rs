@@ -228,8 +228,8 @@ pub fn show_synopsis(state: &mut AppState) {
     ));
     if let Some(synopsis) = state.synopsis_cache.get(&(div1, div2)) {
         let scene_label = synopsis_label(state, div1, div2);
-        state.vocab_popup.update_synopsis(&scene_label, synopsis);
-        state.vocab_popup.show();
+        state.vocab_popup.popup.update_synopsis(&scene_label, synopsis);
+        state.vocab_popup.popup.show();
         update_vocab_popup_margin(state);
         state.sidebar_mode = SidebarMode::Synopsis;
         state.synopsis_visible = true;
@@ -242,11 +242,11 @@ pub fn toggle_synopsis(state: &mut AppState) {
         return;
     }
     // Cancel any pending auto-fade timer
-    state.vocab_popup_fade_gen.set(state.vocab_popup_fade_gen.get() + 1);
+    state.vocab_popup.fade_gen.set(state.vocab_popup.fade_gen.get() + 1);
     if state.sidebar_mode == SidebarMode::Synopsis && state.synopsis_visible {
         state.sidebar_mode = SidebarMode::Vocab;
         state.synopsis_visible = false;
-        if state.vocab_popup_auto {
+        if state.vocab_popup.auto {
             open_vocab_popup(state);
         } else {
             close_vocab_popup(state);

@@ -156,13 +156,13 @@ pub(crate) fn auto_show_vocab_popup(state: &mut AppState) {
         return;
     }
 
-    if !state.vocab_popup_auto {
+    if !state.vocab_popup.auto {
         return;
     }
     // Refresh whenever the current line changes; the refresh function
     // decides whether to show (line has vocab words) or hide (line has none).
-    if state.vocab_popup_line != Some(state.current_line) {
-        if state.vocab_popup.is_visible() {
+    if state.vocab_popup.line != Some(state.current_line) {
+        if state.vocab_popup.popup.is_visible() {
             crate::app::vocab_popup::refresh_vocab_popup(state);
         } else {
             crate::app::vocab_popup::open_vocab_popup(state);
