@@ -174,17 +174,15 @@ scope_size. Each verified by direct grep, not agent word alone.
   extra per-child logic (none found that mixed in work — but exclude on sight).
 - **Safe-scope:** yes — a 3-line GTK loop → one call; no inputs but the list_box.
 
-## #16 — block-visual-key-twin — DONE (merge fe8a563, render check OWED)
+## #16 — block-visual-key-twin — DONE (merge fe8a563, render-verified 2026-06-24)
 
-- **Status:** DONE — merged. **⚠ Runtime render check still OWED** (user was away
-  at merge time; merged on unit gates + a diff-level behavioral-equivalence
-  review as a compensating control, NOT a visual check). To close the loop next
-  time at the machine: enter visual mode in BOTH a synopsis overlay (`h` →
-  Shift+V) and a gloss overlay (`Ctrl+g` → Shift+V); run `j`/`k`/`G`/`gg`/`y`/
-  `Escape`; confirm identical behavior to before AND the gloss yank/escape
-  asymmetry (gloss `y` exits to block start via `exit_visual_to_start`; gloss
-  `Escape` exits in place via `exit_visual`). If anything differs, `git revert`
-  merge fe8a563 is clean.
+- **Status:** DONE — merged AND render-verified. The owed runtime check was run
+  by the user in the synopsis overlay (`h` → Shift+V → j/k/gg/G/y/Escape): all
+  behaviors correct, the unification is confirmed behavior-preserving. (The check
+  surfaced a pre-existing UX wish — Escape leaves the cursor at the moving end
+  rather than the entry block — but that is the ORIGINAL pre-refactor behavior,
+  not a #16 regression; it became the separate `escape-restores-anchor`
+  enhancement, see below.)
 - **Shipped:** `handle_synopsis_visual_key` + `handle_gloss_visual_key` →
   one `handle_block_visual_key(state, key_state, key_name, cfg)` +
   `SYNOPSIS_VISUAL_CFG`/`GLOSS_VISUAL_CFG` consts of plain `fn` pointers (no
