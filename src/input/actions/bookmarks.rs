@@ -75,7 +75,7 @@ pub(crate) fn jump_to_recent_bookmark(
             let result = handle
                 .spawn_blocking(move || {
                     let conn = crate::db::queries::open_db()
-                        .expect("Failed to open lit.db");
+                        .expect(crate::db::queries::OPEN_DB_PANIC_MSG);
                     crate::db::queries::most_recent_bookmark(&conn, &abbrev)
                 })
                 .await;

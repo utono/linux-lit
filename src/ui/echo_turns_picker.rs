@@ -98,9 +98,7 @@ impl EchoTurnsPicker {
     }
 
     fn populate_list(&self) {
-        while let Some(row) = self.list_box.first_child() {
-            self.list_box.remove(&row);
-        }
+        crate::ui::picker_nav::clear_list(&self.list_box);
 
         let title = self
             .titles

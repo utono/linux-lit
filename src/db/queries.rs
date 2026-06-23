@@ -18,6 +18,11 @@ fn db_path() -> String {
     format!("{}/utono/litdb/data/lit.db", home)
 }
 
+/// Panic message for the `open_db().expect(...)` sites that treat a missing
+/// lit.db as unrecoverable (startup, pickers, concordance). Named so the
+/// message can't drift between the ~14 call sites.
+pub const OPEN_DB_PANIC_MSG: &str = "Failed to open lit.db";
+
 pub fn open_db() -> Result<Connection, rusqlite::Error> {
     Connection::open_with_flags(db_path(), OpenFlags::SQLITE_OPEN_READ_ONLY)
 }
@@ -1768,6 +1773,17 @@ pub fn load_work_titles(conn: &Connection) -> Result<HashMap<String, String>, ru
     Ok(map)
 }
 
+/// Open the db and load the abbrev→title map, defaulting to an empty map on any
+/// failure (db open or query). The byte-identical
+/// `open_db().ok().and_then(|c| load_work_titles(&c).ok()).unwrap_or_default()`
+/// chain repeated at every cross-work title lookup (echoes, visual selection).
+pub fn load_work_titles_or_default() -> HashMap<String, String> {
+    open_db()
+        .ok()
+        .and_then(|conn| load_work_titles(&conn).ok())
+        .unwrap_or_default()
+}
+
 /// A candidate cross-work echo found by semantic search.
 #[derive(Debug, Clone)]
 pub struct EchoCandidate {
@@ -2499,7 +2515,7 @@ mod tests {
 
     #[test]
     fn test_open_db() {
-        let conn = open_db().expect("Failed to open lit.db");
+        let conn = open_db().expect(OPEN_DB_PANIC_MSG);
         let count: i64 = conn
             .query_row("SELECT count(*) FROM works", [], |row| row.get(0))
             .unwrap();

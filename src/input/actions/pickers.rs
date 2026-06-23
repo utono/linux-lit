@@ -64,7 +64,7 @@ pub(crate) fn load_selected_work(
             let result = handle
                 .spawn_blocking(move || {
                     let conn =
-                        crate::db::queries::open_db().expect("Failed to open lit.db");
+                        crate::db::queries::open_db().expect(crate::db::queries::OPEN_DB_PANIC_MSG);
                     let work = crate::db::queries::load_work(&conn, &abbrev)?;
                     // Cache check — same pattern as build_window's MRU branch.
                     let t_read = std::time::Instant::now();
@@ -245,7 +245,7 @@ fn load_work_at(
         let abbrev_for_log = abbrev.clone();
         let result = handle
             .spawn_blocking(move || {
-                let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
+                let conn = crate::db::queries::open_db().expect(crate::db::queries::OPEN_DB_PANIC_MSG);
                 let work = crate::db::queries::load_work(&conn, &abbrev)?;
                 let t_read = std::time::Instant::now();
                 let (prepared, was_miss) = if let Some(snap) = crate::snapshot::read(&work) {
@@ -335,7 +335,7 @@ pub(crate) fn open_bookmark_picker(
             let items = handle
                 .spawn_blocking(move || {
                     let conn =
-                        crate::db::queries::open_db().expect("Failed to open lit.db");
+                        crate::db::queries::open_db().expect(crate::db::queries::OPEN_DB_PANIC_MSG);
                     crate::db::queries::load_bookmarks_with_details(&conn, &abbrev)
                         .unwrap_or_default()
                 })
@@ -376,7 +376,7 @@ pub(crate) fn open_media_picker(
             let items = handle
                 .spawn_blocking(move || {
                     let conn =
-                        crate::db::queries::open_db().expect("Failed to open lit.db");
+                        crate::db::queries::open_db().expect(crate::db::queries::OPEN_DB_PANIC_MSG);
                     crate::db::queries::list_media_for_work(&conn, &abbrev)
                         .unwrap_or_default()
                 })
@@ -893,7 +893,7 @@ pub(crate) fn open_gloss_picker(
             let items = handle
                 .spawn_blocking(move || {
                     let conn =
-                        crate::db::queries::open_db().expect("Failed to open lit.db");
+                        crate::db::queries::open_db().expect(crate::db::queries::OPEN_DB_PANIC_MSG);
                     crate::db::queries::find_glossed_passages(&conn, &abbrev, &[gloss_type])
                         .unwrap_or_default()
                 })
@@ -943,7 +943,7 @@ pub(crate) fn toggle_gloss_picker_type(
             let items = handle
                 .spawn_blocking(move || {
                     let conn =
-                        crate::db::queries::open_db().expect("Failed to open lit.db");
+                        crate::db::queries::open_db().expect(crate::db::queries::OPEN_DB_PANIC_MSG);
                     crate::db::queries::find_glossed_passages(&conn, &abbrev, &[gloss_type])
                         .unwrap_or_default()
                 })

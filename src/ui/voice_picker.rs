@@ -90,9 +90,7 @@ impl VoicePicker {
 
     /// Show a transient one-row message (e.g. "Loading voices…", "No voices").
     pub fn set_status(&self, msg: &str) {
-        while let Some(row) = self.list_box.first_child() {
-            self.list_box.remove(&row);
-        }
+        crate::ui::picker_nav::clear_list(&self.list_box);
         let label = Label::new(Some(msg));
         label.set_halign(Align::Start);
         label.add_css_class("picker-item-title");
@@ -108,9 +106,7 @@ impl VoicePicker {
     }
 
     fn populate_list(&self, filter: &str) {
-        while let Some(row) = self.list_box.first_child() {
-            self.list_box.remove(&row);
-        }
+        crate::ui::picker_nav::clear_list(&self.list_box);
 
         let filter_lower = filter.to_lowercase();
         for voice in &self.voices {

@@ -2039,7 +2039,7 @@ pub fn build_window(
             // because the LineMap was serialized at last save.
             let phase1 = handle
                 .spawn_blocking(move || {
-                    let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
+                    let conn = crate::db::queries::open_db().expect(crate::db::queries::OPEN_DB_PANIC_MSG);
                     let work = crate::db::queries::load_work(&conn, &abbrev)?;
                     let t_read = std::time::Instant::now();
                     let result = if let Some(snap) = crate::snapshot::read(&work) {

@@ -71,9 +71,7 @@ impl ConcordanceWordPicker {
 
     fn populate_list(&self, filter: &str) {
         // Remove existing rows
-        while let Some(row) = self.list_box.first_child() {
-            self.list_box.remove(&row);
-        }
+        crate::ui::picker_nav::clear_list(&self.list_box);
 
         let filter_lower = filter.to_lowercase();
         for (word, _count) in &self.words {

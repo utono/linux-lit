@@ -26,7 +26,7 @@ pub(crate) fn handle_word_selection(
     glib::spawn_future_local(async move {
         let hits = handle
             .spawn_blocking(move || {
-                let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
+                let conn = crate::db::queries::open_db().expect(crate::db::queries::OPEN_DB_PANIC_MSG);
                 crate::db::concordance::find_word_occurrences(&conn, &word_clone, &author_clone)
                     .unwrap_or_default()
             })
@@ -323,7 +323,7 @@ pub(crate) fn open_picker(
         glib::spawn_future_local(async move {
             let words = handle
                 .spawn_blocking(move || {
-                    let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
+                    let conn = crate::db::queries::open_db().expect(crate::db::queries::OPEN_DB_PANIC_MSG);
                     crate::db::concordance::load_concordance_words(&conn, &author_clone)
                         .unwrap_or_default()
                 })
@@ -397,7 +397,7 @@ pub fn concordance_jump_to_current(
             ));
             let result = handle
                 .spawn_blocking(move || {
-                    let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
+                    let conn = crate::db::queries::open_db().expect(crate::db::queries::OPEN_DB_PANIC_MSG);
                     let work = crate::db::queries::load_work(&conn, &abbrev_for_load)?;
                     let prepared = crate::app::text_prep::prepare_text_for_display(&work);
                     Ok::<_, rusqlite::Error>((work, prepared))

@@ -808,10 +808,7 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
             return;
         }
 
-        let titles = crate::db::queries::open_db()
-            .ok()
-            .and_then(|conn| crate::db::queries::load_work_titles(&conn).ok())
-            .unwrap_or_default();
+        let titles = crate::db::queries::load_work_titles_or_default();
 
         let mut s = state_for_echo.borrow_mut();
         s.gloss_overlay.hide();
@@ -872,10 +869,7 @@ fn run_pending_inner_monologue_blocking(
         let scene_lines = std::mem::take(&mut s.pending_echo_scene_lines);
         s.gloss_overlay.show_loading();
         s.input_mode = crate::app::InputMode::GlossOverlay;
-        let titles = crate::db::queries::open_db()
-            .ok()
-            .and_then(|conn| crate::db::queries::load_work_titles(&conn).ok())
-            .unwrap_or_default();
+        let titles = crate::db::queries::load_work_titles_or_default();
         (ctx, scene_lines, s.config.claude_model.clone(), titles)
     };
 

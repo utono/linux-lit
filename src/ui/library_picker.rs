@@ -351,9 +351,7 @@ impl LibraryPicker {
     }
 
     pub fn populate_list(&self, filter: &str) {
-        while let Some(child) = self.list_box.first_child() {
-            self.list_box.remove(&child);
-        }
+        crate::ui::picker_nav::clear_list(&self.list_box);
 
         match &self.level {
             PickerLevel::Authors => {

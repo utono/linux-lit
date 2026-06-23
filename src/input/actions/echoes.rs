@@ -289,10 +289,7 @@ pub(crate) fn show_echoes_for_cursor_line(
     let origin_line_id = turn.first().map(|l| l.id).unwrap_or(0);
 
     if let Some((turn_id, links)) = cached {
-        let titles = crate::db::queries::open_db()
-            .ok()
-            .and_then(|conn| crate::db::queries::load_work_titles(&conn).ok())
-            .unwrap_or_default();
+        let titles = crate::db::queries::load_work_titles_or_default();
         let source_doc = build_source_header(&turn, &speaker);
         let mut s = state_rc.borrow_mut();
         s.echo_overlay.source = source_doc.clone();
@@ -393,10 +390,7 @@ pub(crate) fn show_echoes_for_cursor_line(
             return;
         }
 
-        let titles = crate::db::queries::open_db()
-            .ok()
-            .and_then(|conn| crate::db::queries::load_work_titles(&conn).ok())
-            .unwrap_or_default();
+        let titles = crate::db::queries::load_work_titles_or_default();
 
         // Order by work title, then act.scene — group echoes from the same work.
         candidates.sort_by(|a, b| {
@@ -486,10 +480,7 @@ pub(crate) fn show_echoes_for_selection(
     });
 
     if let Some((turn_id, links)) = cached {
-        let titles = crate::db::queries::open_db()
-            .ok()
-            .and_then(|conn| crate::db::queries::load_work_titles(&conn).ok())
-            .unwrap_or_default();
+        let titles = crate::db::queries::load_work_titles_or_default();
         let source_doc = build_source_header(&turn, &speaker);
         let mut s = state_rc.borrow_mut();
         s.echo_overlay.source = source_doc.clone();
@@ -586,10 +577,7 @@ pub(crate) fn show_echoes_for_selection(
             return;
         }
 
-        let titles = crate::db::queries::open_db()
-            .ok()
-            .and_then(|conn| crate::db::queries::load_work_titles(&conn).ok())
-            .unwrap_or_default();
+        let titles = crate::db::queries::load_work_titles_or_default();
 
         candidates.sort_by(|a, b| {
             let ta = titles.get(&a.work_abbrev).map(|s| s.as_str()).unwrap_or(a.work_abbrev.as_str());
@@ -1467,7 +1455,7 @@ fn load_work_at_line_then(
     glib::spawn_future_local(async move {
         let result = handle
             .spawn_blocking(move || {
-                let conn = crate::db::queries::open_db().expect("Failed to open lit.db");
+                let conn = crate::db::queries::open_db().expect(crate::db::queries::OPEN_DB_PANIC_MSG);
                 let work = crate::db::queries::load_work(&conn, &abbrev)?;
                 let prepared = crate::app::text_prep::prepare_text_for_display(&work);
                 Ok::<_, rusqlite::Error>((work, prepared))
