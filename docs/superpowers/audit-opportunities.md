@@ -496,6 +496,38 @@ pipeline as a single refactor.
   Fixed by isolating both in a fresh in-memory DB via a shared `bookmark_fixture()`
   (stub `works` + `line_mapping` + the real bookmarks schema), matching the
   32-test in-memory majority. Verified across 6 consecutive clean full-suite runs.
+
+- **DECISION (2026-06-24): the two still-parked larger projects are NOT worth
+  doing — leave them parked, do not re-litigate.** The "larger projects" section
+  is otherwise complete (picker-dispatch accessor, the entire god-struct
+  *contained-cluster* grouping Phases A–G, all three app.rs carve-up phases, and
+  gloss_overlay — all merged). What remains is exactly two coupled items, and the
+  blast-radius data gathered when scoping the god-struct project shows the cost
+  exceeds the benefit:
+  - **Grouping the AppState *core* fields** (`buffer` 291 hits/20 files,
+    `current_line` 263/22, `current_work` 196/23, `config` 167/21, `text_view`,
+    `input_mode`). Each is a 90–290-site rewrite, all **render-tier** (drives the
+    reading view → needs a user nav-fuzz/eyeball per slice, not just
+    `cargo test`), for **~zero readability gain** — `state.buffer` /
+    `state.current_line` are already perfectly clear as flat fields. Worst
+    churn:value ratio in the entire backlog. (Contained clusters like `nav_test_*`
+    / `vocab_popup_*` were worth grouping because they're a genuine *cluster* that
+    reads better named; the core fields are the irreducible reader state and are
+    not.) This is why Phase A–G's scope note said the core fields "stay flat,
+    likely permanently" — a judgment, not a deferral.
+  - **The `build_window` body + `display_work` split** is **blocked on the core
+    split** (build_window's body is the ~203-field `AppState` struct literal +
+    closures capturing `state` built mid-fn; no *worthwhile* grouping unblocks
+    it). Its only payoff is a smaller `build_window` — real, but `mod.rs` is
+    already 6735 → ~3,950 and navigable, so the unblock isn't worth its
+    prerequisite.
+  - **When this changes:** only a *specific* concrete pain re-opens a slice — e.g.
+    `build_window` becomes genuinely unworkable to edit, or a particular core
+    field's flatness causes an actual bug. "Finish the section for completeness"
+    is the wrong reason; it would be the most expensive, least rewarding work in
+    the repo. The valuable structural work (everything with a good churn:value
+    ratio) is done.
+
 - **gloss_overlay.rs — DONE (merge 81acba8).** The ~1100 lines of pure helpers
   (block model, OP-IPA markup, geometry/citation) + their ~750 lines of tests
   were extracted into three sibling modules: `gloss_block.rs` (707),
