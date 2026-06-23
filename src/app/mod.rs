@@ -61,6 +61,16 @@ pub struct PageImageState {
     pub calibration_index: usize,
 }
 
+/// Grouped state for the scansion-marks feature (the per-line scansion data,
+/// the current display level, and the buffer-line→label-start map). Was three
+/// flat `scansion_*` fields on AppState; grouped per the AppState god-struct
+/// decomposition (render-tier cluster).
+pub struct ScansionState {
+    pub label_starts: std::collections::HashMap<usize, usize>,
+    pub level: crate::scansion::ScanLevel,
+    pub data: std::collections::HashMap<i64, crate::scansion::LineScansion>,
+}
+
 /// Where the voice picker was opened from, so confirm/cancel route back
 /// correctly and write the right target.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -287,10 +297,7 @@ pub struct AppState {
     pub translation_dim_tag: gtk4::TextTag,
     pub translation_text_tag: gtk4::TextTag,
     pub scansion_label_tag: gtk4::TextTag,
-    /// For each buffer line that carries a scansion line-type label, the char
-    /// offset (into that line) where the label text begins. Empty when the overlay
-    /// is off. Used to dim-tag the label and exclude it from vocab highlighting.
-    pub scansion_label_starts: std::collections::HashMap<usize, usize>,
+    pub scansion: ScansionState,
     /// When set, CursorSync events are suppressed until this instant passes.
     /// Prevents playback sync from overriding manual navigation.
     pub suppress_sync_until: Option<std::time::Instant>,
@@ -381,11 +388,6 @@ pub struct AppState {
     /// tint after the cursor leaves a glossed line (cursor-line wins while on it).
     pub reader_gloss_lines: std::collections::HashSet<usize>,
     pub dim_enabled: bool,
-    /// Current Wright scansion overlay level (Off/StressOnly/Full).
-    pub scansion_level: crate::scansion::ScanLevel,
-    /// Cached scansion for the current work, keyed by line_mapping.id. Empty
-    /// until first toggle-on (or for works with no scansion).
-    pub scansion_data: std::collections::HashMap<i64, crate::scansion::LineScansion>,
     pub vocab_highlight_visible: bool,
     pub vocab_popup: crate::ui::vocab_popup::VocabPopup,
     pub vocab_popup_data: Vec<crate::ui::vocab_popup::VocabWordData>,
@@ -1463,7 +1465,11 @@ pub fn build_window(
         translation_dim_tag,
         translation_text_tag,
         scansion_label_tag,
-        scansion_label_starts: std::collections::HashMap::new(),
+        scansion: ScansionState {
+            label_starts: std::collections::HashMap::new(),
+            level: crate::scansion::ScanLevel::Off,
+            data: std::collections::HashMap::new(),
+        },
         suppress_sync_until: None,
         pending_advance: None,
         pending_advance_ignore_bl: None,
@@ -1517,8 +1523,6 @@ pub fn build_window(
         reader_gloss_tag,
         reader_gloss_lines: std::collections::HashSet::new(),
         dim_enabled,
-        scansion_level: crate::scansion::ScanLevel::Off,
-        scansion_data: std::collections::HashMap::new(),
         vocab_highlight_visible,
         vocab_popup,
         vocab_popup_data: Vec::new(),
@@ -2663,15 +2667,15 @@ pub fn display_work_at_with_prepared(
     // marks, so when the overlay is on we must route through
     // rebuild_buffer_text; we do that by short-circuiting the prepared
     // fast-path for this case.
-    state.scansion_level =
+    state.scansion.level =
         crate::scansion::ScanLevel::from_config_str(&state.config.scansion_level);
-    state.scansion_data.clear(); // force reload for the new work
-    if state.scansion_level != crate::scansion::ScanLevel::Off {
+    state.scansion.data.clear(); // force reload for the new work
+    if state.scansion.level != crate::scansion::ScanLevel::Off {
         if let Some(work) = state.current_work.as_ref() {
             let abbrev = work.abbrev.clone();
             if let Ok(conn) = crate::db::queries::open_db() {
                 match crate::db::queries::load_scansion_for_work(&conn, &abbrev) {
-                    Ok(map) => state.scansion_data = map,
+                    Ok(map) => state.scansion.data = map,
                     Err(e) => crate::logging::log(&format!("SCANSION: load failed: {}", e)),
                 }
             }
@@ -2681,8 +2685,8 @@ pub fn display_work_at_with_prepared(
     // The off-thread set_text path renders PLAIN (no combining marks). When the
     // overlay is on and we have scansion for this work, skip that fast-path and
     // render through rebuild_buffer_text, which bakes the marks in.
-    let overlay_on = state.scansion_level != crate::scansion::ScanLevel::Off
-        && !state.scansion_data.is_empty();
+    let overlay_on = state.scansion.level != crate::scansion::ScanLevel::Off
+        && !state.scansion.data.is_empty();
     if let (Some(prep), false) = (prepared, overlay_on) {
         // Heavy work was done off-thread; just apply the result.
         let mapped = prep.line_map.buffer_to_work.iter().filter(|o| o.is_some()).count();
@@ -3054,8 +3058,8 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
         let mapped = prep.line_map.buffer_to_work.iter().filter(|o| o.is_some()).count();
         let first_mapped = prep.line_map.buffer_to_work.iter().position(|o| o.is_some());
 
-        let (display_text, label_starts) = if state.scansion_level == crate::scansion::ScanLevel::Off
-            || state.scansion_data.is_empty()
+        let (display_text, label_starts) = if state.scansion.level == crate::scansion::ScanLevel::Off
+            || state.scansion.data.is_empty()
         {
             (prep.filtered_contents.clone(), std::collections::HashMap::new())
         } else {
@@ -3063,8 +3067,8 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
                 &prep.filtered_contents,
                 &prep.line_map,
                 &work.lines,
-                &state.scansion_data,
-                state.scansion_level,
+                &state.scansion.data,
+                state.scansion.level,
                 two_col,
             )
         };
@@ -3075,11 +3079,11 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
         // smaller CSS-default size (the scansion-toggle "small font" bug). Restore
         // it so scansion mode inherits the main card's font size.
         reapply_font(state);
-        state.scansion_label_starts = label_starts;
+        state.scansion.label_starts = label_starts;
         // Dim-tag each scansion line-type label span (from its start char to the
         // line end). Clone the small map so iterating it doesn't hold an immutable
         // borrow of `state` across the `state.buffer.apply_tag` call.
-        let label_starts = state.scansion_label_starts.clone();
+        let label_starts = state.scansion.label_starts.clone();
         for (&buf_idx, &label_start) in &label_starts {
             if let Some(mut start_iter) = state.buffer.iter_at_line(buf_idx as i32) {
                 start_iter.forward_chars(label_start as i32);
@@ -3485,7 +3489,7 @@ fn build_vocab_matches(state: &mut AppState) {
         }
         // If this line carries a scansion label, only scan the text BEFORE it so
         // the line-type label isn't vocab-highlighted.
-        let scan_text: &str = match state.scansion_label_starts.get(&line_idx) {
+        let scan_text: &str = match state.scansion.label_starts.get(&line_idx) {
             Some(&label_start) => {
                 // label_start is a CHAR offset; convert to a byte index for slicing.
                 match line_text.char_indices().nth(label_start) {

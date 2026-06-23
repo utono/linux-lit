@@ -2133,29 +2133,29 @@ fn dispatch_action(
         CycleScansion => {
             let mut s = state.borrow_mut();
             // Populate the cache on first use (or for a freshly loaded work).
-            if s.scansion_data.is_empty() {
+            if s.scansion.data.is_empty() {
                 if let Some(work) = s.current_work.as_ref() {
                     let abbrev = work.abbrev.clone();
                     if let Ok(conn) = crate::db::queries::open_db() {
                         match crate::db::queries::load_scansion_for_work(&conn, &abbrev) {
-                            Ok(map) => s.scansion_data = map,
+                            Ok(map) => s.scansion.data = map,
                             Err(e) => crate::logging::log(&format!("SCANSION: load failed: {}", e)),
                         }
                     }
                 }
             }
-            if s.scansion_data.is_empty() {
-                s.scansion_level = crate::scansion::ScanLevel::Off;
+            if s.scansion.data.is_empty() {
+                s.scansion.level = crate::scansion::ScanLevel::Off;
                 // Reuse the chapter-toast widget for a transient reader message
                 // (same pattern as show_chapter_toast in navigation.rs:1670).
                 crate::ui::toast::show_transient(&s.chapter_toast, "No scansion for this work", 3);
                 crate::logging::log("SCANSION: no scansion for this work");
                 return;
             }
-            s.scansion_level = s.scansion_level.next();
-            s.config.scansion_level = s.scansion_level.as_str().to_string();
+            s.scansion.level = s.scansion.level.next();
+            s.config.scansion_level = s.scansion.level.as_str().to_string();
             crate::config::save(&s.config);
-            crate::logging::log(&format!("SCANSION: level -> {:?}", s.scansion_level));
+            crate::logging::log(&format!("SCANSION: level -> {:?}", s.scansion.level));
             crate::app::rebuild_buffer_text(&mut s);
             // Scansion marks change every verse line's content and height, so the
             // cached page-tops and the left/right column split are now stale.

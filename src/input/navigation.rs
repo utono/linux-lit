@@ -533,7 +533,7 @@ pub fn toggle_column_layout(state: &mut AppState) {
     // either overflow (1→2) or vanish (2→1) until the next full reformat.
     // column_overrides was already updated above, so column_count() inside
     // rebuild_buffer_text now reflects new_count.
-    if state.scansion_level != crate::scansion::ScanLevel::Off {
+    if state.scansion.level != crate::scansion::ScanLevel::Off {
         crate::app::rebuild_buffer_text(state);
     }
 
