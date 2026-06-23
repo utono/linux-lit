@@ -160,7 +160,7 @@ are tracked separately at the bottom under "## Larger projects (not safe-scope)"
 Fresh scan over the post-refactor tree. Ranked by (duplication × drift_risk) ÷
 scope_size. Each verified by direct grep, not agent word alone.
 
-## #15 — listbox-clear-helper — OPEN
+## #15 — listbox-clear-helper — DONE (merge 017fe18)
 
 - **Status:** OPEN (highest-value remaining; pure win)
 - **Signal:** `while let Some(row) = self.list_box.first_child() { self.list_box.remove(&row); }`
@@ -209,7 +209,7 @@ scope_size. Each verified by direct grep, not agent word alone.
 - **Safe-scope:** yes — plain `fn`-pointer config struct, NO trait/generic. The
   one place this audit found a near-whole-function clone.
 
-## #17 — load-work-titles-helper — OPEN
+## #17 — load-work-titles-helper — DONE (merge 017fe18)
 
 - **Status:** OPEN (cleanest db-side cut: 6× byte-identical)
 - **Signal:** the 4-line chain `let titles = crate::db::queries::open_db().ok()
@@ -239,7 +239,7 @@ scope_size. Each verified by direct grep, not agent word alone.
 - **Safe-scope:** yes for the 5 pure-A sites — scoped to one file. Confirm the
   helper's early-return shape preserves the exact `return false` control flow.
 
-## #19 — open-db-message-const — OPEN
+## #19 — open-db-message-const — DONE (merge 017fe18)
 
 - **Status:** OPEN (literal de-dup; lowest risk, modest payoff)
 - **Signal:** `crate::db::queries::open_db().expect("Failed to open lit.db")` — the
