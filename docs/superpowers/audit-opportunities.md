@@ -227,10 +227,24 @@ pipeline as a single refactor.
   (Config) stay flat. Zero-drift. Verified by the **two-part user render gate**:
   nav-fuzz on `Son` (scansion-off nav) PLUS a manual scansion-ON eyeball on `TN`
   (`Alt+i` cycles Off→StressOnly→Full→Off) — marks render correctly post-grouping.
-  413+clippy 115. **Only `vocab_popup` now remains** (the last contained cluster;
-  render-tier, hardest — 8 access files, holds the vocab Popover widget, not
-  `Default`-derivable).
-  **Out of scope:** grouping the core fields (stays flat, likely permanently);
+  413+clippy 115.
+  **Phase G — `vocab_popup` → `VocabPopupState`** (7 fields incl. the VocabPopup
+  widget, 45 sites / 5 files, merge — see git log) — DONE: the **final and hardest
+  contained cluster**. It holds the Popover widget, so a widget/state name-collision
+  forced a **two-way rewrite** — state fields `s.vocab_popup_x` → `s.vocab_popup.x`
+  AND bare-widget calls `s.vocab_popup.m()` → `s.vocab_popup.popup.m()` (16 sites;
+  the cargo-build-as-checklist strategy surfaced 2 beyond the planned 14).
+  Explicit-nested-literal init captures the widget local + `VocabView::Definition`
+  (non-default). The separate vocab-HIGHLIGHT fields (`vocab_words`/`vocab_matches`/
+  `vocab_match_idx`/`vocab_tag`/`vocab_highlight_visible`) stayed flat. Zero-drift;
+  verified by the user render gate (nav-fuzz + manual popup open/update/view-toggle/
+  hide eyeball). 413+clippy 115.
+  **✅ AppState god-struct grouping — COMMITTED SCOPE COMPLETE.** All seven contained
+  clusters are grouped into sub-structs (nav_test, journal, word_cycle, echo_overlay,
+  page_image, scansion, vocab_popup), across Phases A–G. Both init variants
+  (`::default()` / explicit nested literal) and both verification tiers (pure /
+  render) are proven.
+  **Out of scope (unchanged):** grouping the core fields (stays flat, likely permanently);
   medium-spread clusters (search, mpv/sync, translations, gloss-state, toasts,
   gutter) — re-evaluate after the contained set ships.
 - **app.rs module carve-up — Phase 1 (leaf modules) DONE (merge 1bd1df3).**
