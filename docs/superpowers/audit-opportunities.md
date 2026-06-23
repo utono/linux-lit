@@ -204,12 +204,25 @@ pipeline as a single refactor.
   `_band`) correctly untouched. Exhaustive drift check: zero mutations; 413+clippy
   115 unchanged. Spec/plan (2026-06-24). The two init variants are now both proven:
   all-`Default` cluster → `::default()` (nav_test); any non-default field →
-  explicit nested literal (journal). **Remaining contained clusters:** page_image,
-  word_cycle, echo_overlay (pure-tier), scansion, vocab_popup (render-tier) — each
-  its own spec when reached. **Out of scope:** grouping the core fields (stays
-  flat, likely permanently); medium-spread clusters (search, mpv/sync,
-  translations, gloss-state, toasts, gutter) — re-evaluate after the contained set
-  ships.
+  explicit nested literal (journal). **Phases C/D/E — the remaining pure-tier
+  clusters — DONE (batched, merges c9039bf / 149a23b / 8451759):**
+  `word_cycle` → `WordCycleState` (5 fields, 20 sites in word_copy.rs, merge
+  c9039bf); `echo_overlay` → `EchoOverlayState` (6 fields, 91 sites across
+  echoes.rs + keymap.rs, merge 149a23b); `page_image` → `PageImageState` (5
+  fields, ~43 sites all internal to mod.rs's image/calibration fns, merge
+  8451759). All three are the all-`Default` `::default()` variant. Drift-checked:
+  zero behavioral mutations; substring boundaries held (`word_bold_tag`,
+  `page_image_overlay`/`page_image_for_line_id`/`refresh_page_image`,
+  echo_session/pickers). 413 + clippy 115 unchanged; verified on merged master.
+  Spec/plans (2026-06-24). **All five contained PURE-TIER clusters are now done**
+  (nav_test, journal, word_cycle, echo_overlay, page_image). **Remaining contained
+  clusters:** `scansion`, `vocab_popup` — both **render-tier** (touch displayed
+  scansion marks / the vocab Popover widget), so they need a **user nav-fuzz gate
+  before merge** (the agent can't launch cage). vocab_popup is the hardest (8
+  access files, holds a real widget, not `Default`-derivable) — do it last.
+  **Out of scope:** grouping the core fields (stays flat, likely permanently);
+  medium-spread clusters (search, mpv/sync, translations, gloss-state, toasts,
+  gutter) — re-evaluate after the contained set ships.
 - **app.rs module carve-up — Phase 1 (leaf modules) DONE (merge 1bd1df3).**
   `src/app.rs` was converted to a directory module (`src/app/mod.rs`) and three
   self-contained leaf families were extracted into sibling modules via pure
