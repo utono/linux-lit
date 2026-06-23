@@ -395,17 +395,39 @@ pub(crate) fn last_page_top(state: &AppState) -> usize {
             if next >= line_count || next <= top {
                 break; // reached the end of the forward chain
             }
-            // Advancing a full page to `next` would land on the lone-EPILOGUE page
-            // (empty right column). But the natural page boundary SKIPS a better
-            // final spread: a top a few lines past `top` whose left column holds
-            // the dialogue tail and whose right column absorbs the trailing
-            // section (the EPILOGUE), reaching the work's end. At 1112px the walk
-            // gives top=4296 (page_end=4336, EPILOGUE cut off) while top=4303
-            // reaches page_end=4347 (full EPILOGUE in the right column). Search
-            // [top+1, next) for the SMALLEST top whose spread leaves no dialogue
-            // below it and still has a non-empty right column — that is the
-            // canonical last spread.
-            if we_next {
+            // Advancing a full page to `next` would land on a page with an empty
+            // right column. There are TWO reasons a page empties its right column,
+            // and they need opposite handling:
+            //
+            //  (a) The work's TRUE END — a short trailing section (a lone EPILOGUE)
+            //      whose tail sits alone. Here the natural page boundary SKIPS a
+            //      better final spread: a top a few lines past `top` whose left
+            //      column holds the dialogue tail and whose right column absorbs
+            //      the trailing section, reaching the work's end. At 1112px the
+            //      walk gives top=4296 (page_end=4336, EPILOGUE cut off) while
+            //      top=4303 reaches page_end=4347 (full EPILOGUE in the right
+            //      column). We pull forward to that spread and STOP — it is the end.
+            //
+            //  (b) A MID-WORK SCENE-OPENING boundary — in a play, a scene whose
+            //      header + stage direction + entrance fills the spread, pushing
+            //      the first spoken line off the page (`next_page_top`'s documented
+            //      H8 case). This ALSO empties the right column, but it is NOT the
+            //      end: thousands of lines of dialogue remain below. Breaking here
+            //      strands G hundreds of pages early (H8 landed ~1701 of ~4324).
+            //      We must keep walking PAST this boundary.
+            //
+            // The discriminator is whether any dialogue remains at/below `next`.
+            // If none remains, we are at the tail (case a): pull forward and break.
+            // If dialogue remains, this is a mid-work scene break (case b): fall
+            // through and advance `top = next` to keep walking. (`next` itself has
+            // an empty right column, so it does NOT update `last_full` — the next
+            // full-right-column spread the walk reaches will.)
+            let dialogue_at_or_below_next =
+                (next..line_count).any(|i| is_dialogue_line(&state.buffer, i));
+            if we_next && !dialogue_at_or_below_next {
+                // Case (a): the true end. Search [top+1, next) for the SMALLEST top
+                // whose spread leaves no dialogue below it and still has a non-empty
+                // right column — that is the canonical last spread.
                 let mut pulled = None;
                 for t in (top + 1)..next.min(line_count) {
                     let tcs = super::viewport::column_split(state, t);
