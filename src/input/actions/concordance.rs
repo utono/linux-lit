@@ -313,7 +313,7 @@ pub(crate) fn open_picker(
         let mut s = state.borrow_mut();
         s.concordance_picker.set_words(words);
         s.concordance_picker.show();
-        s.input_mode = crate::app::InputMode::ConcordancePicker;
+        crate::input::actions::pickers::open_picker_mode(&mut s, crate::app::InputMode::ConcordancePicker);
         drop(s);
         state.borrow().concordance_picker.search_entry().set_text("");
     } else {
@@ -334,7 +334,7 @@ pub(crate) fn open_picker(
                 s.concordance_word_cache = Some((author.clone(), words.clone()));
                 s.concordance_picker.set_words(words);
                 s.concordance_picker.show();
-                s.input_mode = crate::app::InputMode::ConcordancePicker;
+                crate::input::actions::pickers::open_picker_mode(&mut s, crate::app::InputMode::ConcordancePicker);
             }
             state_clone.borrow().concordance_picker.search_entry().set_text("");
         });
