@@ -1532,8 +1532,8 @@ pub fn show_current_chapter(state: &mut AppState) {
     // chapter_breaks. Prose-vs-verse is decided by work_type, not by whether
     // chapter markers exist. See CLAUDE.md → authoritative-boundary principle.
     if !state.is_prose() {
-        let (div1, div2) = crate::app::current_scene_divs(state);
-        let label = crate::app::scene_label_for(state, div1, div2);
+        let (div1, div2) = crate::app::scene_synopsis::current_scene_divs(state);
+        let label = crate::app::scene_synopsis::scene_label_for(state, div1, div2);
         let text = format!("{} — {}", abbrev, label);
         show_chapter_toast(state, &text);
         return;
@@ -1558,8 +1558,8 @@ pub fn show_current_chapter(state: &mut AppState) {
     // Prose work with no chapter markers: fall back to the scene label so the
     // toast still shows something meaningful rather than nothing.
     if chapter_lines.is_empty() {
-        let (div1, div2) = crate::app::current_scene_divs(state);
-        let label = crate::app::scene_label_for(state, div1, div2);
+        let (div1, div2) = crate::app::scene_synopsis::current_scene_divs(state);
+        let label = crate::app::scene_synopsis::scene_label_for(state, div1, div2);
         let text = format!("{} — {}", abbrev, label);
         show_chapter_toast(state, &text);
         return;

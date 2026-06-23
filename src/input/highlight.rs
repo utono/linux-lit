@@ -274,7 +274,7 @@ pub(crate) fn update_highlight(state: &mut AppState) {
         crate::input::visual::apply_selection_highlight(state);
         state.prev_highlight_line.set(Some(state.current_line));
         repaint_reader_gloss_visible(state);
-        crate::app::update_title_bar_scene(state);
+        crate::app::scene_synopsis::update_title_bar_scene(state);
         return;
     }
 
@@ -314,7 +314,7 @@ pub(crate) fn update_highlight(state: &mut AppState) {
     state.prev_highlight_line.set(Some(state.current_line));
 
     repaint_reader_gloss_visible(state);
-    crate::app::update_title_bar_scene(state);
+    crate::app::scene_synopsis::update_title_bar_scene(state);
 }
 
 /// Reapply the slate reader-gloss tint to every glossed buffer line EXCEPT the

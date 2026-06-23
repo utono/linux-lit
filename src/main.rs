@@ -217,7 +217,7 @@ fn main() {
                         // Capture the overlay's scene BEFORE the cursor moves so
                         // sync_translation_overlay (end of arm) can detect a
                         // cross-scene move and rebuild rather than just re-highlight.
-                        let ov_scene_before = crate::app::current_scene_divs(&s);
+                        let ov_scene_before = crate::app::scene_synopsis::current_scene_divs(&s);
 
                         if s.current_line != buffer_line {
                             crate::logging::log_always(&format!(
@@ -378,7 +378,7 @@ fn main() {
                                     s.pending_advance_ignore_bl = Some(s.current_line);
                                     s.pending_advance = None;
                                     if s.current_line != next_bl {
-                                        ov_moved = Some(crate::app::current_scene_divs(&s));
+                                        ov_moved = Some(crate::app::scene_synopsis::current_scene_divs(&s));
                                         s.current_line = next_bl;
                                         crate::input::navigation::update_highlight_and_advance_page(
                                             &mut s,
