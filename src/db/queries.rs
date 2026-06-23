@@ -2570,24 +2570,36 @@ mod tests {
         }
     }
 
+    /// Isolated in-memory DB for the bookmark tests: a stub `line_mapping` (only
+    /// the columns `load_bookmarks_with_details` JOINs) with one Hamlet line at
+    /// id 100, plus the real `bookmarks` schema. Using a fresh connection per
+    /// test removes the shared-fixture race that made `test_bookmark_toggle`
+    /// flake — the two bookmark tests previously toggled the SAME (Ham, LIMIT-1)
+    /// row on the shared real lit.db in parallel, reading each other's writes.
+    fn bookmark_fixture() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            // `works` is the FK target of `bookmarks` (work_abbrev REFERENCES
+            // works(abbrev)); SQLite resolves the FK table at insert time even
+            // with enforcement off, so the stub must include it.
+            "CREATE TABLE works (abbrev TEXT PRIMARY KEY);
+             INSERT INTO works (abbrev) VALUES ('Ham');
+             CREATE TABLE line_mapping (id INTEGER PRIMARY KEY, work_abbrev TEXT,
+               div1 INTEGER, div2 INTEGER, line_in_div INTEGER, canonical_text TEXT,
+               speaker TEXT);
+             INSERT INTO line_mapping
+               VALUES (100,'Ham',1,1,1,'Who''s there?','BARNARDO');",
+        )
+        .unwrap();
+        ensure_bookmarks_table(&conn).expect("Failed to create bookmarks table");
+        conn
+    }
+
     #[test]
     fn test_bookmark_toggle() {
-        let conn = open_db_rw().expect("Failed to open lit.db rw");
-        ensure_bookmarks_table(&conn).expect("Failed to create bookmarks table");
-
-        // Use a known work and line
+        let conn = bookmark_fixture();
         let work_abbrev = "Ham";
-        let line_id: i64 = conn.query_row(
-            "SELECT id FROM line_mapping WHERE work_abbrev = ?1 LIMIT 1",
-            [work_abbrev],
-            |row| row.get(0),
-        ).expect("Hamlet should have lines");
-
-        // Clean up any leftover test bookmark
-        let _ = conn.execute(
-            "DELETE FROM bookmarks WHERE work_abbrev = ?1 AND line_mapping_id = ?2",
-            rusqlite::params![work_abbrev, line_id],
-        );
+        let line_id: i64 = 100;
 
         // Toggle on
         let added = toggle_bookmark(&conn, work_abbrev, line_id).unwrap();
@@ -2612,21 +2624,9 @@ mod tests {
 
     #[test]
     fn test_load_bookmarks_with_details() {
-        let conn = open_db_rw().expect("Failed to open lit.db rw");
-        ensure_bookmarks_table(&conn).expect("Failed to create bookmarks table");
-
+        let conn = bookmark_fixture();
         let work_abbrev = "Ham";
-        let line_id: i64 = conn.query_row(
-            "SELECT id FROM line_mapping WHERE work_abbrev = ?1 LIMIT 1",
-            [work_abbrev],
-            |row| row.get(0),
-        ).expect("Hamlet should have lines");
-
-        // Clean up
-        let _ = conn.execute(
-            "DELETE FROM bookmarks WHERE work_abbrev = ?1 AND line_mapping_id = ?2",
-            rusqlite::params![work_abbrev, line_id],
-        );
+        let line_id: i64 = 100;
 
         // Add a bookmark
         toggle_bookmark(&conn, work_abbrev, line_id).unwrap();
