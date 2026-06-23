@@ -196,12 +196,20 @@ pipeline as a single refactor.
   **Phase A — `nav_test` → `NavTestState`** (6 fields, 28 access sites in one file,
   pure-tier) — DONE: first behavior-changing slice (access shape only), exhaustive
   drift check confirmed zero behavioral mutations; 413+clippy 115 unchanged. Spec/
-  plan under docs/superpowers/ (2026-06-23). **Remaining contained clusters:**
-  journal, page_image, word_cycle, echo_overlay (pure-tier), scansion, vocab_popup
-  (render-tier) — each its own spec when reached. **Out of scope:** grouping the
-  core fields (stays flat, likely permanently); medium-spread clusters (search,
-  mpv/sync, translations, gloss-state, toasts, gutter) — re-evaluate after the
-  contained set ships.
+  plan under docs/superpowers/ (2026-06-23). **Phase B — `journal` → `JournalState`**
+  (4 fields, 33 access sites in one file, pure-tier) — DONE: established the
+  **non-default-init variant** — `build_window` uses an explicit nested literal
+  (not `::default()`) to preserve `journal_prompt_mode: JournalPromptMode::Ask`,
+  since the enum has no `Default`. Boundary fields (`journal_overlay`/`_picker`/
+  `_band`) correctly untouched. Exhaustive drift check: zero mutations; 413+clippy
+  115 unchanged. Spec/plan (2026-06-24). The two init variants are now both proven:
+  all-`Default` cluster → `::default()` (nav_test); any non-default field →
+  explicit nested literal (journal). **Remaining contained clusters:** page_image,
+  word_cycle, echo_overlay (pure-tier), scansion, vocab_popup (render-tier) — each
+  its own spec when reached. **Out of scope:** grouping the core fields (stays
+  flat, likely permanently); medium-spread clusters (search, mpv/sync,
+  translations, gloss-state, toasts, gutter) — re-evaluate after the contained set
+  ships.
 - **app.rs module carve-up — Phase 1 (leaf modules) DONE (merge 1bd1df3).**
   `src/app.rs` was converted to a directory module (`src/app/mod.rs`) and three
   self-contained leaf families were extracted into sibling modules via pure
