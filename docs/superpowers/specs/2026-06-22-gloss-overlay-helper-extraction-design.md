@@ -82,7 +82,9 @@ strips for display). Pure string transforms.
   - `contains_ipa_span` (`pub(crate)`)
   - `replace_word_ipa` (`pub(crate)`)
   - `replace_word_ipa_in_source_block` (`pub(crate)`)
-  - `strip_ipa` (private or `pub(super)` as callers require)
+  - `strip_ipa` (**`pub(crate)`** — see cross-module note below; called by
+    both `gloss_overlay`'s `populate_gloss_buffer_ex` and `gloss_block`'s
+    `gloss_blocks`)
   - `strip_brackets` (private)
   - `normalize_ipa_whitespace` (private)
   - `is_ipa_span` (private)
@@ -104,6 +106,21 @@ split into two ~150-line files that would not earn the indirection.
 - **Visibility:** `pub(super)` (only `gloss_overlay`'s impl calls them)
 - **Tests moved whole:** `snap_up_tests`, `cursor_scroll_tests`,
   `citation_range_tests`
+
+## Module dependency note
+
+The three new modules are *not* fully independent: `gloss_block::gloss_blocks`
+calls `gloss_ipa::strip_ipa` (to compute a Source block's `display` text). So
+there is one directed edge `gloss_block → gloss_ipa`, and `strip_ipa` must be
+`pub(crate)` (siblings can't reach a `pub(super)` item). This is the only
+cross-module helper edge; `gloss_util` has none, and nothing depends on
+`gloss_block`/`gloss_overlay` in the reverse direction. After extraction:
+
+- `gloss_ipa` — leaf (no deps on the other two)
+- `gloss_block` — depends on `gloss_ipa::strip_ipa`
+- `gloss_util` — leaf
+- `gloss_overlay` — depends on all three (`strip_ipa`, the block model, the
+  util helpers) via `use` imports
 
 ## What stays in `gloss_overlay.rs`
 
