@@ -2108,11 +2108,11 @@ fn dispatch_action(
         }
 
         // Settings (in reader)
-        AdjustFontSizeUp => { crate::app::adjust_font_size(&mut state.borrow_mut(), 1); crate::app::show_font_info(&state.borrow()); }
-        AdjustFontSizeDown => { crate::app::adjust_font_size(&mut state.borrow_mut(), -1); crate::app::show_font_info(&state.borrow()); }
-        ResetFontSize => crate::app::reset_font_size(&mut state.borrow_mut()),
-        CycleFontForward => crate::app::cycle_font(&mut state.borrow_mut(), true),
-        CycleFontBackward => crate::app::cycle_font(&mut state.borrow_mut(), false),
+        AdjustFontSizeUp => { crate::app::font::adjust_font_size(&mut state.borrow_mut(), 1); crate::app::font::show_font_info(&state.borrow()); }
+        AdjustFontSizeDown => { crate::app::font::adjust_font_size(&mut state.borrow_mut(), -1); crate::app::font::show_font_info(&state.borrow()); }
+        ResetFontSize => crate::app::font::reset_font_size(&mut state.borrow_mut()),
+        CycleFontForward => crate::app::font::cycle_font(&mut state.borrow_mut(), true),
+        CycleFontBackward => crate::app::font::cycle_font(&mut state.borrow_mut(), false),
         ToggleSignColumn => crate::app::toggle_sign_column(&mut state.borrow_mut()),
         ToggleColumnLayout => navigation::toggle_column_layout(&mut state.borrow_mut()),
         TogglePreviousWork => {
@@ -2190,7 +2190,7 @@ fn dispatch_action(
             }
             crate::config::save(&s.config);
         }
-        ShowFontInfo => crate::app::show_font_info(&state.borrow()),
+        ShowFontInfo => crate::app::font::show_font_info(&state.borrow()),
         ShowCurrentChapter => navigation::show_current_chapter(&mut state.borrow_mut()),
 
         // Timestamps
