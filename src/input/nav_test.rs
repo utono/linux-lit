@@ -10,6 +10,19 @@ use crate::input::navigation;
 use crate::input::viewport::{buffer_line_text, is_dialogue_line, last_fully_visible_line,
                               next_dialogue_line};
 
+/// Grouped state for the in-app navigation test harness (Ctrl+Shift+T /
+/// LIT_NAV_FUZZ). Was six flat `nav_test_*` fields on AppState; grouped per
+/// the AppState god-struct decomposition (pure-tier cluster).
+#[derive(Default)]
+pub struct NavTestState {
+    pub active: bool,
+    pub step: usize,
+    pub failures: usize,
+    pub prev_top: usize,
+    pub expect_return: Option<usize>,
+    pub fuzz: bool,
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Step {
     PageForward,
@@ -279,10 +292,10 @@ fn seed_fuzz_bookmarks(s: &mut AppState) {
 
 pub fn toggle(state_rc: &Rc<RefCell<AppState>>) {
     let mut s = state_rc.borrow_mut();
-    if s.nav_test_active {
-        let steps = s.nav_test_step;
-        let failures = s.nav_test_failures;
-        s.nav_test_active = false;
+    if s.nav_test.active {
+        let steps = s.nav_test.step;
+        let failures = s.nav_test.failures;
+        s.nav_test.active = false;
         crate::log_fmt!("NAV_TEST: stopped after {} steps, {} failures", steps, failures);
         let icon = s.debug_icon.clone();
         icon.set_label(&format!("NAV TEST: done ({} steps, {} fail)", steps, failures));
@@ -294,19 +307,19 @@ pub fn toggle(state_rc: &Rc<RefCell<AppState>>) {
         return;
     }
 
-    s.nav_test_active = true;
-    s.nav_test_step = 0;
-    s.nav_test_failures = 0;
-    s.nav_test_prev_top = s.page_top_line;
-    s.nav_test_expect_return = None;
+    s.nav_test.active = true;
+    s.nav_test.step = 0;
+    s.nav_test.failures = 0;
+    s.nav_test.prev_top = s.page_top_line;
+    s.nav_test.expect_return = None;
     // Opt into the long random fuzz script via env (for headless 5-min runs).
-    s.nav_test_fuzz = std::env::var("LIT_NAV_FUZZ").map(|v| v == "1").unwrap_or(false);
+    s.nav_test.fuzz = std::env::var("LIT_NAV_FUZZ").map(|v| v == "1").unwrap_or(false);
     crate::log_fmt!(
         "NAV_TEST: started ({}) at page_top={} current_line={}",
-        if s.nav_test_fuzz { "fuzz" } else { "jumps-only" },
+        if s.nav_test.fuzz { "fuzz" } else { "jumps-only" },
         s.page_top_line, s.current_line,
     );
-    if s.nav_test_fuzz {
+    if s.nav_test.fuzz {
         // Print the resolved seed so a FAIL can be replayed exactly with
         // `LIT_NAV_SEED=0x...` (set it to this value to reproduce the same run).
         crate::log_fmt!("NAV_TEST: seed=0x{:016X} (override with LIT_NAV_SEED)", fuzz_seed());
@@ -328,29 +341,29 @@ pub fn toggle(state_rc: &Rc<RefCell<AppState>>) {
 }
 
 fn current_script(s: &AppState) -> Vec<Step> {
-    if s.nav_test_fuzz { build_fuzz_script() } else { build_script() }
+    if s.nav_test.fuzz { build_fuzz_script() } else { build_script() }
 }
 
 fn schedule_next(state: Rc<RefCell<AppState>>) {
     let script = current_script(&state.borrow());
     let delay = {
         let s = state.borrow();
-        if !s.nav_test_active || s.nav_test_step >= MAX_STEPS {
+        if !s.nav_test.active || s.nav_test.step >= MAX_STEPS {
             return;
         }
-        let idx = s.nav_test_step % script.len();
+        let idx = s.nav_test.step % script.len();
         script[idx].delay_ms()
     };
 
     glib::timeout_add_local_once(std::time::Duration::from_millis(delay), move || {
         let mut s = state.borrow_mut();
-        if !s.nav_test_active {
+        if !s.nav_test.active {
             return;
         }
-        if s.nav_test_step >= MAX_STEPS {
-            let steps = s.nav_test_step;
-            let failures = s.nav_test_failures;
-            s.nav_test_active = false;
+        if s.nav_test.step >= MAX_STEPS {
+            let steps = s.nav_test.step;
+            let failures = s.nav_test.failures;
+            s.nav_test.active = false;
             crate::log_fmt!("NAV_TEST: completed {} steps, {} failures", steps, failures);
             let icon = s.debug_icon.clone();
             icon.set_label(&format!("NAV TEST: done ({} steps, {} fail)", steps, failures));
@@ -370,12 +383,12 @@ fn schedule_next(state: Rc<RefCell<AppState>>) {
 
 fn run_step(s: &mut AppState) {
     let script = current_script(s);
-    let script_idx = s.nav_test_step % script.len();
+    let script_idx = s.nav_test.step % script.len();
     let step = script[script_idx];
-    let step_num = s.nav_test_step;
+    let step_num = s.nav_test.step;
     let pre_top = s.page_top_line;
     let pre_line = s.current_line;
-    s.nav_test_prev_top = pre_top;
+    s.nav_test.prev_top = pre_top;
 
     // Record an expected `y` return ONLY when the very next step is PageBackward,
     // for moves that push the origin (x, chapter jumps, search). An immediate
@@ -391,10 +404,10 @@ fn run_step(s: &mut AppState) {
             Step::PageForward | Step::NextChapter | Step::PrevChapter | Step::SearchJump
         )
     {
-        s.nav_test_expect_return = Some(pre_top);
+        s.nav_test.expect_return = Some(pre_top);
     } else {
         // Any non-round-trip move invalidates a pending expectation.
-        s.nav_test_expect_return = None;
+        s.nav_test.expect_return = None;
     }
 
     // Execute
@@ -445,7 +458,7 @@ fn run_step(s: &mut AppState) {
     // If a navigation was a no-op (no target found, or at end of work),
     // clear the return expectation — the stack wasn't touched.
     if post_top == pre_top && post_line == pre_line {
-        s.nav_test_expect_return = None;
+        s.nav_test.expect_return = None;
     }
 
     crate::log_fmt!(
@@ -466,7 +479,7 @@ fn run_step(s: &mut AppState) {
 
     // 2. y return check (round-trip x or structural jump return)
     if matches!(step, Step::PageBackward) {
-        if let Some(expected) = s.nav_test_expect_return.take() {
+        if let Some(expected) = s.nav_test.expect_return.take() {
             if post_top != expected {
                 // Soft: the immediate-return heuristic is approximate (the stack
                 // legitimately changes across the new dialogue-nav semantics). The
@@ -858,7 +871,7 @@ fn run_step(s: &mut AppState) {
         }
     }
 
-    s.nav_test_step += 1;
+    s.nav_test.step += 1;
 }
 
 /// In-app clipping check for one column: do the `top` and `bottom` visible lines
@@ -910,7 +923,7 @@ fn clip_violation(
 }
 
 fn fail(state: &mut AppState, step: usize, action: Step, msg: &str) {
-    state.nav_test_failures += 1;
+    state.nav_test.failures += 1;
     crate::log_fmt!("NAV_TEST: FAIL step={} {:?} {}", step, action, msg);
 }
 
