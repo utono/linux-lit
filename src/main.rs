@@ -103,7 +103,7 @@ fn main() {
 
         // Load works list from database (blocking is OK during startup — 133 works, sub-ms)
         let works = {
-            let conn = db::queries::open_db().expect("Failed to open lit.db");
+            let conn = db::queries::open_db().expect(crate::db::queries::OPEN_DB_PANIC_MSG);
             db::queries::list_works(&conn).expect("Failed to list works")
         };
 

@@ -87,9 +87,7 @@ impl ConcordancePicker {
     pub fn populate_list(&self, filter: &str) {
         const MAX_VISIBLE: usize = 200;
 
-        while let Some(child) = self.list_box.first_child() {
-            self.list_box.remove(&child);
-        }
+        crate::ui::picker_nav::clear_list(&self.list_box);
 
         if filter.is_empty() {
             if let Some(first) = self.list_box.row_at_index(0) {

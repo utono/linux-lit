@@ -43,9 +43,7 @@ impl AuthorshipPicker {
     }
 
     pub fn set_items(&mut self, items: Vec<AttributionSet>) {
-        while let Some(child) = self.list_box.first_child() {
-            self.list_box.remove(&child);
-        }
+        crate::ui::picker_nav::clear_list(&self.list_box);
         for set in &items {
             let label = gtk4::Label::new(Some(&set.display_name));
             label.set_halign(gtk4::Align::Start);

@@ -62,9 +62,7 @@ impl EchoLinePicker {
     /// the "text — Title div1.div2" row label.
     pub fn set_results(&mut self, results: Vec<LineHit>, titles: &HashMap<String, String>) {
         self.results = results;
-        while let Some(row) = self.list_box.first_child() {
-            self.list_box.remove(&row);
-        }
+        crate::ui::picker_nav::clear_list(&self.list_box);
         for (work, div1, div2, _line, text) in &self.results {
             let title = titles.get(work).cloned().unwrap_or_else(|| work.clone());
             let label = Label::new(Some(&format!("{} — {} {}.{}", text, title, div1, div2)));

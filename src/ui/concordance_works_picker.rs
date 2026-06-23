@@ -66,9 +66,7 @@ impl ConcordanceWorksPicker {
     }
 
     pub fn show(&self, works: &[(String, String, usize)]) {
-        while let Some(row) = self.list_box.first_child() {
-            self.list_box.remove(&row);
-        }
+        crate::ui::picker_nav::clear_list(&self.list_box);
 
         self.header_title.set_text(&format!("JUMP TO WORK  ({})", works.len()));
 

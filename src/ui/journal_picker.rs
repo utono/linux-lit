@@ -93,9 +93,7 @@ impl JournalQaPicker {
     }
 
     pub fn populate_list(&self, filter: &str) {
-        while let Some(child) = self.list_box.first_child() {
-            self.list_box.remove(&child);
-        }
+        crate::ui::picker_nav::clear_list(&self.list_box);
         let filter_lower = filter.to_lowercase();
 
         for (idx, item) in self.items.iter().enumerate() {
