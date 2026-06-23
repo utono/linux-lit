@@ -155,6 +155,173 @@ are tracked separately at the bottom under "## Larger projects (not safe-scope)"
 
 ---
 
+## Batch 2 (audited 2026-06-24, after the carve-up + grouping + flake-fix work)
+
+Fresh scan over the post-refactor tree. Ranked by (duplication × drift_risk) ÷
+scope_size. Each verified by direct grep, not agent word alone.
+
+## #15 — listbox-clear-helper — OPEN
+
+- **Status:** OPEN (highest-value remaining; pure win)
+- **Signal:** `while let Some(row) = self.list_box.first_child() { self.list_box.remove(&row); }`
+  — the "remove all children" loop — at ~15 sites across 11 picker/overlay files
+  (`*_picker.rs`, `vocab_popup.rs`, `translation_overlay.rs`).
+- **Identical part (extract):** `pub fn clear_list(list_box: &gtk4::ListBox)` in
+  `src/ui/picker_nav.rs` (the module that already owns `select_row_at`).
+- **Variants:** binds `row` vs `child` — cosmetic, disappears inside the helper.
+  Receiver is always a `ListBox` reference.
+- **EXCLUDED:** any `first_child`/`remove` loop over a non-`ListBox` container with
+  extra per-child logic (none found that mixed in work — but exclude on sight).
+- **Safe-scope:** yes — a 3-line GTK loop → one call; no inputs but the list_box.
+
+## #16 — block-visual-key-twin — OPEN
+
+- **Status:** OPEN (most concentrated single duplication found)
+- **Signal:** `handle_synopsis_visual_key` (keymap.rs:1328) and
+  `handle_gloss_visual_key` (keymap.rs:1392) are near-identical whole functions —
+  the second's own comment says "Mirrors `handle_synopsis_visual_key`". The
+  `gg`-chord preamble + `j/k/G/g` visual-step match arms are byte-identical.
+- **Identical part (extract):** one `fn handle_block_visual_key(state, key_state,
+  key_name, cfg: BlockVisualCfg)` taking a 4-field config of plain `fn` pointers /
+  enum values (text-getter, log tag, exit fn, return mode + hint fn).
+- **Variants:** ONLY the `y` (yank) and `Escape|V` (exit) arms differ, by 4
+  substitutions: `visual_selection_text` vs `visual_selection_buffer_text`;
+  `"SYNOPSIS:"` vs `"GLOSS:"` log; `exit_visual` vs `exit_visual_to_start`;
+  `SynopsisOverlay`/`set_synopsis_hint` vs `GlossOverlay`/`set_gloss_hint`.
+- **EXCLUDED:** the central `handle_picker_key` dispatcher (picker-dispatch
+  territory); any other `handle_*_visual_key` would need its own variant check.
+- **Safe-scope:** yes — plain `fn`-pointer config struct, NO trait/generic. The
+  one place this audit found a near-whole-function clone.
+
+## #17 — load-work-titles-helper — OPEN
+
+- **Status:** OPEN (cleanest db-side cut: 6× byte-identical)
+- **Signal:** the 4-line chain `let titles = crate::db::queries::open_db().ok()
+  .and_then(|conn| crate::db::queries::load_work_titles(&conn).ok())
+  .unwrap_or_default();` — byte-identical at 6 sites (`visual.rs` ×2, `echoes.rs` ×4).
+- **Identical part (extract):** `pub fn load_work_titles_or_default() -> <its type>`
+  in `src/db/queries.rs` (beside `load_work_titles`).
+- **Variants:** none — all 6 are byte-identical (variant A only).
+- **EXCLUDED:** other `open_db().ok().and_then(...)` chains that call a *different*
+  loader (`load_echo_links`, embeddings) — not this family.
+- **Safe-scope:** yes — pure fn wrapping an existing query; zero behavior change.
+
+## #18 — open-db-rw-or-log-helper — OPEN
+
+- **Status:** OPEN (file-local, 5 byte-identical)
+- **Signal:** `let conn = match crate::db::queries::open_db_rw() { Ok(c) => c,
+  Err(e) => { crate::logging::log(&format!("TS: open_db_rw failed: {}", e));
+  return false; } };` — 5 byte-identical occurrences in `src/input/timestamps.rs`.
+- **Identical part (extract):** a file-local helper `fn open_db_rw_or_log() ->
+  Option<Connection>` (call sites become `let Some(conn) = open_db_rw_or_log()
+  else { return false; };`) — OR keep the early-return shape via a small macro.
+- **Variants:** B — `timestamps.rs:533` logs `"TS: undo open_db_rw failed"`
+  (different prefix → either parameterize the tag or leave B out). C —
+  `timestamps.rs:52` is silent + returns `()` not `false` → EXCLUDE.
+- **EXCLUDED:** the C silent/unit-return form; the `open_db().expect(...)` panic
+  form (different error policy — that's #19); other files' `if let Ok(conn)` shape.
+- **Safe-scope:** yes for the 5 pure-A sites — scoped to one file. Confirm the
+  helper's early-return shape preserves the exact `return false` control flow.
+
+## #19 — open-db-message-const — OPEN
+
+- **Status:** OPEN (literal de-dup; lowest risk, modest payoff)
+- **Signal:** `crate::db::queries::open_db().expect("Failed to open lit.db")` — the
+  identical panic message at 14 sites (action files: `pickers.rs` ×6,
+  `concordance.rs` ×3, `echoes.rs`, `bookmarks.rs`; plus main/app/queries).
+- **Identical part (extract):** hoist the message to a `pub const
+  OPEN_DB_PANIC_MSG: &str` in `src/db/queries.rs`, OR a `fn open_db_or_panic() ->
+  Connection` wrapper. (Const is the more conservative cut — no call-shape change.)
+- **Variants:** none in the message; binding context (`let conn =` vs inline) varies
+  but the literal is identical.
+- **EXCLUDED:** the graceful `open_db_rw()`-match form (#18) and the
+  `.ok().and_then(...)` form (#17) — different error policies, not this literal.
+- **Safe-scope:** yes — literal → const, #8-style. Prevents the panic text drifting.
+
+## #20 — picker-list-scaffold-helper — OPEN (narrowed)
+
+- **Status:** OPEN (narrow it to the byte-identical pair, per the variant analysis)
+- **Signal:** picker `new()` bodies repeat the `list_box` + `scrolled` construction
+  after #5/#13 already took the footer/attach. The byte-identical pair
+  `let list_box = ListBox::builder().selection_mode(Single).build(); let scrolled
+  = ScrolledWindow::builder().child(&list_box).vexpand(true).build();` recurs at
+  ~6 Variant-A picker `new()`s (bookmark/gloss/journal/media + others).
+- **Identical part (extract):** `fn new_picker_list() -> (gtk4::ListBox,
+  gtk4::ScrolledWindow)` in `src/ui/picker_nav.rs`. (A separate 4-line
+  `ScrolledWindow::new(); set_vexpand; set_max_content_height(400);
+  set_propagate_natural_height(true)` block recurs at 4 imperative-style pickers —
+  a SECOND narrow helper, not unified with the builder one.)
+- **Variants:** A = builder-style 600×400 card (extract the list_box+scrolled pair);
+  C = imperative `ScrolledWindow::new()` + `max_content_height` (its own 4-site
+  helper). Do NOT unify A and C — builder vs imperative + different CSS classes;
+  merging would change literals = not behavior-preserving.
+- **EXCLUDED:** the `picker_box` builder block itself (media_picker inserts a
+  title; concordance uses 400×400/different class — too variant to share cleanly);
+  scrim/header pickers (library/echo — those are the #21 family); authorship
+  (hand-rolled). Extract ONLY the byte-identical list_box+scrolled pair.
+- **Safe-scope:** yes for the narrowed pair — no per-site inputs.
+
+## #21 — picker-header-scrim-helpers — OPEN (lower priority)
+
+- **Status:** OPEN (clean but small — 3–4 sites each)
+- **Signal:** the scrim block (`GtkBox::builder().hexpand.vexpand.build();
+  add_css_class("library-picker-scrim"); set_visible(false)`) and the header_box +
+  title block (`add_css_class("library-picker-header"/"-title")`) recur across the
+  scrim-style pickers/overlays.
+- **Identical part (extract):** `fn build_picker_scrim() -> gtk4::Box` (4 sites:
+  echo_picker, concordance_works_picker, library_picker, settings_overlay) and
+  `fn build_picker_header(title: &str) -> (gtk4::Box, gtk4::Label)` (3 sites: echo,
+  echo_turns, concordance_works — byte-identical but the label string).
+- **Variants:** header B — `library_picker` appends a second `header_crumb` after
+  the title; it can call the helper then append (still behavior-preserving).
+- **EXCLUDED:** any overlay whose scrim composes differently with an ask-card.
+- **Safe-scope:** yes — two tiny widget-construction helpers; lower payoff than
+  #15–#19, list last.
+
+### Examined and EXCLUDED in Batch 2 (no clean cut — do NOT number)
+
+- **`move_selection` preamble family** (picker): #6 took the `select_row_at` tail;
+  the preamble splits into 3 byte-identical sub-variants (unwrap_or(-1) plain /
+  +`.max(0)` / `if let Some` guard) of 2–5 sites each. Each is only 3–5 lines and
+  the variance is real — if ever extracted, per-variant only; NOT one helper.
+  Left unnumbered: payoff is marginal and forcing a single signature would be
+  mis-scoped. (library/keybinds/settings move_selection genuinely differ — wrap +
+  scroll, rem_euclid, skip-disabled — hard-excluded.)
+- **seek-then-suppress sequence** (handler, ~7 sites): the bare
+  `suppress_sync_until = Some(Instant::now() + SYNC_SUPPRESS_SEEK)` statement
+  recurs, but the surrounding Seek ops reorder per site and `do_mpv_seek` already
+  centralizes the reader binds. A `fn suppress_sync_for_seek(s)` would dedup only
+  one statement; the `navigation.rs` "don't-shorten-existing" max-form variant
+  differs. Marginal — note, don't number. (A `fn preroll_seek_time(start) -> f64`
+  for `(start - SEEK_PREROLL).max(0.0)` ~7 sites is the better latent cut here if
+  revisited.)
+- **restore-return-position 4-liner** (handler): `s.current_line=line;
+  s.page_top_line=top; resnap_page; update_highlight` after a `<field>.take()` —
+  2 pure byte-identical (journal/gloss) + 2 variant (search else-arm, gloss
+  jump-guard). Only 2 clean sites; borderline. Note, don't number.
+- **wl-copy stdin-pipe block** (handler, 3 sites): `Command::new("wl-copy").stdin
+  (piped).spawn()…write_all…wait` at word_copy.rs ×2 + visual.rs. A
+  `fn copy_to_clipboard(text, log_tag)` would dedup 3 sites — but the 4
+  fire-and-forget `wl-copy` arg-form sites (keymap/gloss/echoes) are a DIFFERENT,
+  smaller pattern and can't merge without an arg→stdin behavior change. 3 sites is
+  at the floor; note, don't number unless the clipboard path is touched anyway.
+- **standalone picker j/k arms** (handler, 3 handlers): echo_picker /
+  echo_turns_picker / library_picker still hand-roll `move_selection(±1)` instead
+  of routing through the existing `picker_keys::resolve_picker_key`/`PickerAction`
+  path that voice_picker uses. The clean fix is *routing through the shipped
+  helper*, not a new extraction — a follow-on to the picker-dispatch project, not
+  a Batch-2 numbered cut.
+- **db families with no byte-identical unit:** `ensure_*_table` bodies (distinct
+  columns/FKs; the one shared body is already the `GLOSS_AUDIO_COLUMNS` const),
+  the `prepare/query_map/collect` skeleton (distinct SQL + row-closure every time),
+  FK fragments (singletons or already in a const), the `div1,div2,line_in_div`
+  column list (always a different leading set). Forcing any of these needs a
+  generic/trait — explicitly out of scope. The `created_at strftime` SQL DEFAULT
+  (2 sites) and `has_column` pragma-probe (4 sites, normalizing `=` spacing) are
+  weak/borderline named-const/helper candidates — flag only, not numbered.
+
+---
+
 ## Larger projects (not safe-scope)
 
 - **`InputMode → picker` dispatch accessor — DONE (nav + plain-hide scope).**
