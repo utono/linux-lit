@@ -1334,8 +1334,10 @@ struct BlockVisualCfg {
     log_tag: &'static str,
     /// Exit on yank (synopsis: exit_visual; gloss: exit_visual_to_start).
     yank_exit: fn(&crate::ui::gloss_overlay::GlossOverlay),
-    /// Exit on Escape/V (both: exit_visual — kept separate from yank_exit to
-    /// preserve the gloss yank/escape asymmetry).
+    /// Exit on Escape/V — returns the cursor to the anchor block (where Shift+V
+    /// was entered) via `exit_visual_to_anchor`, so cancelling lands back where
+    /// the selection started. Separate from `yank_exit` (gloss yank uses
+    /// `exit_visual_to_start`).
     escape_exit: fn(&crate::ui::gloss_overlay::GlossOverlay),
     /// InputMode to return to on exit.
     return_mode: crate::app::InputMode,
@@ -1347,7 +1349,7 @@ const SYNOPSIS_VISUAL_CFG: BlockVisualCfg = BlockVisualCfg {
     yank_text: crate::ui::gloss_overlay::GlossOverlay::visual_selection_text,
     log_tag: "SYNOPSIS",
     yank_exit: crate::ui::gloss_overlay::GlossOverlay::exit_visual,
-    escape_exit: crate::ui::gloss_overlay::GlossOverlay::exit_visual,
+    escape_exit: crate::ui::gloss_overlay::GlossOverlay::exit_visual_to_anchor,
     return_mode: crate::app::InputMode::SynopsisOverlay,
     set_hint: crate::ui::gloss_overlay::GlossOverlay::set_synopsis_hint,
 };
@@ -1356,7 +1358,7 @@ const GLOSS_VISUAL_CFG: BlockVisualCfg = BlockVisualCfg {
     yank_text: crate::ui::gloss_overlay::GlossOverlay::visual_selection_buffer_text,
     log_tag: "GLOSS",
     yank_exit: crate::ui::gloss_overlay::GlossOverlay::exit_visual_to_start,
-    escape_exit: crate::ui::gloss_overlay::GlossOverlay::exit_visual,
+    escape_exit: crate::ui::gloss_overlay::GlossOverlay::exit_visual_to_anchor,
     return_mode: crate::app::InputMode::GlossOverlay,
     set_hint: crate::ui::gloss_overlay::GlossOverlay::set_gloss_hint,
 };
@@ -1365,9 +1367,10 @@ const GLOSS_VISUAL_CFG: BlockVisualCfg = BlockVisualCfg {
 /// gg/G jump the cursor end, j/k extend the selection, y yanks the selected
 /// blocks and exits, Esc/V exits without copying. All other keys are consumed.
 /// `cfg` carries the per-mode variance (yank text source, log tag, exit fn,
-/// return mode, hint fn) — see `SYNOPSIS_VISUAL_CFG` / `GLOSS_VISUAL_CFG`. The
-/// gloss yank exits to block start (`exit_visual_to_start`) while its Escape
-/// exits in place (`exit_visual`); the two `*_exit` slots preserve that.
+/// return mode, hint fn) — see `SYNOPSIS_VISUAL_CFG` / `GLOSS_VISUAL_CFG`. Escape
+/// returns the cursor to the anchor block (`exit_visual_to_anchor`, both modes),
+/// while the gloss yank collapses to the selection start (`exit_visual_to_start`);
+/// the two separate `*_exit` slots carry that difference.
 fn handle_block_visual_key(
     state: &Rc<RefCell<AppState>>,
     key_state: &Rc<RefCell<KeyState>>,
