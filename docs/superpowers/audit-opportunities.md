@@ -213,10 +213,34 @@ pipeline as a single refactor.
   first; the graph stays an acyclic DAG. 413 tests + clippy 115 unchanged. Spec/
   plan under docs/superpowers/ (2026-06-23). **The entire tier-a (safe-scope)
   carve-up is now complete** — across Phases 1+2, `mod.rs` went 6735 → 4360 with
-  six focused sibling modules. **Still parked:** the behavior-risky **tier-b**
-  targets — `build_window` (~1419 lines), `display_work`, layout — which need
-  e2e/nav-fuzz verification and are a separate effort; and the **AppState
-  god-struct** grouping (~217 fields). Pre-existing flake surfaced during Phase 2
+  six focused sibling modules.
+- **app.rs module carve-up — Phase 3 (layout module, tier-b start) DONE (merge
+  8eab5aa).** The first **tier-b** slice. The structural inventory established
+  that the audit's three tier-b targets are NOT equally tractable:
+  `build_window`'s body is dominated by the ~218-field `AppState` struct literal
+  + closures that capture `state` built mid-function, so it **cannot** be split
+  by pure code motion without first grouping the god-struct (a separate
+  behavior-changing project — build_window is *blocked on* the god-struct, not
+  merely adjacent to it). But the **layout free functions are callable**
+  (`&mut AppState`-in / widgets-out), so they move like tier-a. Phase 3 extracted
+  the layout cluster into `layout.rs` (406): `apply_tiled_mode`,
+  `apply_card_sizing`, `apply_column_layout`, `target_card_width`,
+  `is_tiled_layout`, `current_block_text_width`, `verse_left_offset`,
+  `overlay_card_size`, `line_number_gutter_geometry` + `SONNET_BLOCK_SAMPLE` +
+  the `card_width`/`column_default` test modules. `mod.rs` 4360 → 3959. Bumps:
+  `apply_tiled_mode`/`apply_card_sizing`/`apply_column_layout` → `pub(crate)`,
+  and `setup_gutter` (stays in mod.rs) `fn` → `pub(super)` (a child-module
+  reverse-call). Two-column/spacer consts stayed in mod.rs (shared with
+  build_window/display_work). No facade; sibling + external call sites repathed.
+  **Verification was tier-b, not tier-a:** `cargo test --bins` (413) covers only
+  the pure sizing math (the moved unit tests); the widget-bound fns
+  (`apply_tiled_mode`/`apply_card_sizing`/`apply_column_layout`/
+  `current_block_text_width`) render to screen, so the real proof was a
+  **user-run nav-fuzz on `H8-Amb` (two-column play) + `Son` (sonnet sequence),
+  both clean**. Spec/plan under docs/superpowers/ (2026-06-23). **Still parked:**
+  `build_window`'s body + `display_work_at_with_prepared` (the remaining tier-b,
+  higher e2e burden), and the **AppState god-struct** grouping (~217 fields) —
+  which is the prerequisite for any real `build_window` split. Pre-existing flake
   (not a carve-up defect): `db::queries::tests::test_bookmark_toggle` flakes
   ~1-in-5 full-suite runs on shared read-write lit.db parallelism (passes in
   isolation); candidate future cleanup to isolate its DB.
