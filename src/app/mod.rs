@@ -297,10 +297,7 @@ pub struct AppState {
     pub journal_overlay: crate::ui::journal_overlay::JournalOverlay,
     pub journal_picker: JournalQaPicker,
     pub journal_band: JournalBand,
-    pub journal_pages: Vec<crate::db::journal::JournalPage>,
-    pub journal_page_index: usize,
-    pub journal_return_pos: Option<(usize, usize)>,
-    pub journal_prompt_mode: JournalPromptMode,
+    pub journal: crate::input::actions::journal::JournalState,
     /// Page-scan image surface for the main card (BCP1549 etc.). Hidden unless
     /// `image_mode` is on.
     pub page_image_overlay: crate::ui::page_image_overlay::PageImageOverlay,
@@ -1485,10 +1482,12 @@ pub fn build_window(
         journal_overlay,
         journal_picker,
         journal_band: JournalBand::Scene(0, 0),
-        journal_pages: Vec::new(),
-        journal_page_index: 0,
-        journal_return_pos: None,
-        journal_prompt_mode: JournalPromptMode::Ask,
+        journal: crate::input::actions::journal::JournalState {
+            pages: Vec::new(),
+            page_index: 0,
+            return_pos: None,
+            prompt_mode: JournalPromptMode::Ask,
+        },
         page_image_overlay,
         page_images: Vec::new(),
         image_dir: None,
