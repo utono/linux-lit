@@ -185,6 +185,14 @@ pipeline as a single refactor.
   into domain sub-structs touches nearly every `&mut AppState` signature.
 - **app.rs module carve-up** — 6765 lines, 13 concerns; `build_window` ~1419
   lines. Extracting window_builder / layout / work_loader is behavior-risky.
-- **gloss_overlay.rs** — 3606 lines; the ~1100 lines of pure buffer helpers
-  (no GlossOverlay coupling) MAY qualify as a safe-scope move — evaluate as a
-  numbered opportunity if the block is genuinely self-contained.
+- **gloss_overlay.rs — DONE (merge 81acba8).** The ~1100 lines of pure helpers
+  (block model, OP-IPA markup, geometry/citation) + their ~750 lines of tests
+  were extracted into three sibling modules: `gloss_block.rs` (707),
+  `gloss_ipa.rs` (480, leaf), `gloss_util.rs` (404, leaf). gloss_overlay.rs is
+  now 2043 lines (the GlossOverlay widget + GTK buffer-population code that
+  intentionally stayed). Clean acyclic graph (a cross-task fix moved
+  `replace_word_ipa_in_source_block` into gloss_block to keep gloss_ipa a leaf);
+  call sites repathed, no facade. 413 tests unchanged. Spec/plan under
+  docs/superpowers/. Confirms the "MAY qualify as safe-scope" hypothesis was
+  correct for the pure tail; the GTK buffer-population code was correctly left
+  as behavior-risky.
