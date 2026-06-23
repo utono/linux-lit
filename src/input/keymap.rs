@@ -1721,9 +1721,9 @@ fn handle_echoes_overlay_key(
         "Escape" => {
             let mut s = state.borrow_mut();
             s.gloss_overlay.hide();
-            s.echo_overlay_links.clear();
-            s.echo_overlay_turn_id = None;
-            s.echo_overlay_turn_key = None;
+            s.echo_overlay.links.clear();
+            s.echo_overlay.turn_id = None;
+            s.echo_overlay.turn_key = None;
             // Clear any turn AB-loop so normal reading isn't stuck looping.
             if s.ab_repeat.loop_active {
                 let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::ClearAbLoop);
