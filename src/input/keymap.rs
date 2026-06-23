@@ -1142,7 +1142,7 @@ fn show_no_timestamp_toast(s: &AppState) {
 fn overlay_nav(state: &Rc<RefCell<AppState>>, nav_fn: fn(&mut AppState)) {
     let scene_before = crate::app::scene_synopsis::current_scene_divs(&state.borrow());
     nav_fn(&mut state.borrow_mut());
-    crate::app::sync_translation_overlay(state, scene_before);
+    crate::app::translations::sync_translation_overlay(state, scene_before);
 }
 
 fn handle_synopsis_overlay_key(
@@ -2104,7 +2104,7 @@ fn dispatch_action(
             let s = state.borrow();
             let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
             drop(s);
-            crate::app::toggle_translations(&mut state.borrow_mut());
+            crate::app::translations::toggle_translations(&mut state.borrow_mut());
         }
 
         // Settings (in reader)
@@ -2284,7 +2284,7 @@ fn dispatch_action(
         }
         ToggleSynopsis => crate::app::scene_synopsis::toggle_synopsis(&mut state.borrow_mut()),
         ShowSynopsisOverlay => crate::app::scene_synopsis::show_synopsis_overlay(state),
-        ShowTranslationOverlay => crate::app::show_translation_overlay(state),
+        ShowTranslationOverlay => crate::app::translations::show_translation_overlay(state),
         ToggleImageView => crate::app::toggle_image_view(state),
         EnterPageCalibration => crate::app::enter_page_calibration(state),
 

@@ -350,7 +350,7 @@ fn main() {
                         // overlay so its highlight follows audio playback. Drop the
                         // borrow first — sync_translation_overlay re-borrows.
                         drop(s);
-                        crate::app::sync_translation_overlay(&state_for_events, ov_scene_before);
+                        crate::app::translations::sync_translation_overlay(&state_for_events, ov_scene_before);
                     }
                     MpvEvent::ConnectionStatus(connected) => {
                         state_for_events.borrow_mut().mpv_connected = connected;
@@ -392,7 +392,7 @@ fn main() {
                         // Only when pending_advance moved it; drop the borrow first.
                         if let Some(scene_before) = ov_moved {
                             drop(s);
-                            crate::app::sync_translation_overlay(&state_for_events, scene_before);
+                            crate::app::translations::sync_translation_overlay(&state_for_events, scene_before);
                         } else {
                             drop(s);
                         }

@@ -171,7 +171,7 @@ fn dispatch(state: &Rc<RefCell<AppState>>, action: GamepadAction) {
             crate::logging::log(&format!("SPEED: toggled to {}x", new_speed));
         }
         GamepadAction::ToggleTranslations => {
-            crate::app::toggle_translations(&mut state.borrow_mut());
+            crate::app::translations::toggle_translations(&mut state.borrow_mut());
         }
         GamepadAction::SeekBackwardShort => {
             let mut s = state.borrow_mut();

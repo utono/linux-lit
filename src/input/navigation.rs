@@ -955,7 +955,7 @@ pub fn cursor_next_dialogue(state: &mut AppState) {
 
 /// Previous chapter line (`[` key).
 pub fn jump_to_prev_chapter(state: &mut AppState) {
-    crate::app::hide_translations_for_navigation(state);
+    crate::app::translations::hide_translations_for_navigation(state);
     let target = {
         let work = match &state.current_work {
             Some(w) => w,
@@ -1014,7 +1014,7 @@ pub fn jump_to_prev_chapter(state: &mut AppState) {
 
 /// Next chapter line.
 pub fn jump_to_next_chapter(state: &mut AppState) {
-    crate::app::hide_translations_for_navigation(state);
+    crate::app::translations::hide_translations_for_navigation(state);
     let line_count = state.effective_line_count();
     let target = {
         let work = match &state.current_work {
