@@ -183,8 +183,25 @@ pipeline as a single refactor.
 
 - **AppState god-struct** (`src/app.rs`) — ~217 fields, de-facto global. Grouping
   into domain sub-structs touches nearly every `&mut AppState` signature.
-- **app.rs module carve-up** — 6765 lines, 13 concerns; `build_window` ~1419
-  lines. Extracting window_builder / layout / work_loader is behavior-risky.
+- **app.rs module carve-up — Phase 1 (leaf modules) DONE (merge 1bd1df3).**
+  `src/app.rs` was converted to a directory module (`src/app/mod.rs`) and three
+  self-contained leaf families were extracted into sibling modules via pure
+  behavior-preserving code motion: `vocab_popup.rs` (239, the vocab-popup widget
+  fns), `font.rs` (194, font-size / line-number-gutter rebuild), `text_prep.rs`
+  (205, GTK-free text preparation). `mod.rs` dropped from 6735 → 6105 lines. No
+  facade — every external call site repathed directly (`crate::app::X` →
+  `crate::app::<mod>::X`). Four visibility bumps, all real + minimal: two planned
+  (`font::reapply_font`, `text_prep::SnapshotOrPrep` → `pub(crate)`) and two
+  compiler-forced (`vocab_popup::update_vocab_popup_margin` → `pub(super)`,
+  `font::rebuild_line_number_gutter` → `pub(crate)`) because non-group `mod.rs`
+  fns call them. The three modules are genuine independent leaves (no
+  cross-edges; only inbound reverse-deps from `mod.rs`). 413 tests + clippy 115
+  unchanged throughout. Spec/plan under docs/superpowers/ (2026-06-22). **Still
+  parked:** the behavior-risky tier-b targets the audit originally named —
+  `build_window` (~1419 lines), `display_work`, layout — need e2e verification
+  and are a separate effort; and the other tier-a leaf families
+  (`scene_synopsis`, `translations`, `formatting`) remain as same-style
+  safe-scope follow-on phases.
 - **gloss_overlay.rs — DONE (merge 81acba8).** The ~1100 lines of pure helpers
   (block model, OP-IPA markup, geometry/citation) + their ~750 lines of tests
   were extracted into three sibling modules: `gloss_block.rs` (707),
