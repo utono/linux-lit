@@ -1,4 +1,5 @@
-use super::{AppState, line_number_gutter_geometry, TOP_SPACER_HEIGHT, SHOW_LINE_NUMBERS_TWO_COL};
+use super::{AppState, TOP_SPACER_HEIGHT, SHOW_LINE_NUMBERS_TWO_COL};
+use crate::app::layout::line_number_gutter_geometry;
 use crate::logging::log;
 use gtk4::prelude::{TextBufferExt, TextTagExt, TextViewExt, WidgetExt};
 

@@ -539,7 +539,7 @@ pub fn toggle_column_layout(state: &mut AppState) {
 
     // Card width depends on column count (two columns fill more of the window),
     // so resize the card to match the new layout before recomputing pages.
-    crate::app::apply_card_sizing(
+    crate::app::layout::apply_card_sizing(
         &state.content_hbox,
         state.window.width(),
         state.config.column_width,

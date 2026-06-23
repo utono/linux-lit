@@ -1,5 +1,6 @@
 use gtk4::prelude::*;
-use super::{AppState, InputMode, SidebarMode, overlay_card_size};
+use super::{AppState, InputMode, SidebarMode};
+use crate::app::layout::overlay_card_size;
 use crate::app::vocab_popup::{open_vocab_popup, close_vocab_popup, update_vocab_popup_margin};
 use crate::logging::log;
 
