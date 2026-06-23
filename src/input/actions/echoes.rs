@@ -11,6 +11,21 @@ use crate::app::AppState;
 use crate::db::models::Line;
 use crate::db::queries::{EchoTurnKey, StoredEchoLink};
 
+/// Grouped state for the echo overlay (the stored echo links for the current
+/// turn, the navigation index into them, the work-id→title map, the source
+/// label, and the current turn id/key). Was six flat `echo_overlay_*` fields on
+/// AppState; grouped per the AppState god-struct decomposition (pure-tier
+/// cluster).
+#[derive(Default)]
+pub struct EchoOverlayState {
+    pub links: Vec<StoredEchoLink>,
+    pub index: usize,
+    pub titles: std::collections::HashMap<String, String>,
+    pub source: String,
+    pub turn_id: Option<i64>,
+    pub turn_key: Option<EchoTurnKey>,
+}
+
 /// A sticky echo session, retained so `alt+i` can return to the turn's work
 /// and reopen the overlay after the user jumps into an echo's work. Replaced
 /// only when the user presses `I` on a new line.
@@ -188,12 +203,12 @@ fn show_bcp_reading_echoes(
                 turn_text: turn_text.clone(),
             };
             let source_doc = format!("{} {}.{}", work_abbrev, div1, start_line);
-            s.echo_overlay_source = source_doc.clone();
-            s.echo_overlay_links = links.clone();
-            s.echo_overlay_index = 0;
-            s.echo_overlay_titles = titles.clone();
-            s.echo_overlay_turn_id = Some(turn_id);
-            s.echo_overlay_turn_key = Some(key.clone());
+            s.echo_overlay.source = source_doc.clone();
+            s.echo_overlay.links = links.clone();
+            s.echo_overlay.index = 0;
+            s.echo_overlay.titles = titles.clone();
+            s.echo_overlay.turn_id = Some(turn_id);
+            s.echo_overlay.turn_key = Some(key.clone());
             s.echo_session = Some(EchoSession {
                 channel,
                 turn_key: key,
@@ -280,12 +295,12 @@ pub(crate) fn show_echoes_for_cursor_line(
             .unwrap_or_default();
         let source_doc = build_source_header(&turn, &speaker);
         let mut s = state_rc.borrow_mut();
-        s.echo_overlay_source = source_doc.clone();
-        s.echo_overlay_links = links.clone();
-        s.echo_overlay_index = 0;
-        s.echo_overlay_titles = titles.clone();
-        s.echo_overlay_turn_id = Some(turn_id);
-        s.echo_overlay_turn_key = Some(key.clone());
+        s.echo_overlay.source = source_doc.clone();
+        s.echo_overlay.links = links.clone();
+        s.echo_overlay.index = 0;
+        s.echo_overlay.titles = titles.clone();
+        s.echo_overlay.turn_id = Some(turn_id);
+        s.echo_overlay.turn_key = Some(key.clone());
         s.echo_session = Some(EchoSession {
             channel,
             turn_key: key,
@@ -306,7 +321,7 @@ pub(crate) fn show_echoes_for_cursor_line(
     // BCP echoes are cache-only: never trigger the Voyage search fallback.
     if channel == crate::db::echo_channel::EchoChannel::Bcp {
         let mut s = state_rc.borrow_mut();
-        s.echo_overlay_turn_key = Some(key);
+        s.echo_overlay.turn_key = Some(key);
         s.gloss_overlay.show("No echoes found for this line.", "");
         s.input_mode = crate::app::InputMode::EchoesOverlay;
         crate::logging::log("ECHOES: BCP cache miss, no search fallback");
@@ -320,7 +335,7 @@ pub(crate) fn show_echoes_for_cursor_line(
     {
         let mut s = state_rc.borrow_mut();
         affect_weight = s.config.echo_affect_weight;
-        s.echo_overlay_turn_key = Some(key);
+        s.echo_overlay.turn_key = Some(key);
         s.gloss_overlay.show_loading_message("Searching for echoes...");
         s.input_mode = crate::app::InputMode::EchoesOverlay;
     }
@@ -398,11 +413,11 @@ pub(crate) fn show_echoes_for_cursor_line(
 
         let mut s = state_for_result.borrow_mut();
         let source_doc = build_source_header(&turn, &speaker);
-        s.echo_overlay_links = links.clone();
-        s.echo_overlay_index = 0;
-        s.echo_overlay_titles = titles.clone();
-        s.echo_overlay_source = source_doc.clone();
-        s.echo_overlay_turn_id = turn_id;
+        s.echo_overlay.links = links.clone();
+        s.echo_overlay.index = 0;
+        s.echo_overlay.titles = titles.clone();
+        s.echo_overlay.source = source_doc.clone();
+        s.echo_overlay.turn_id = turn_id;
         s.echo_session = Some(EchoSession {
             channel,
             turn_key: key_for_async.clone(),
@@ -477,12 +492,12 @@ pub(crate) fn show_echoes_for_selection(
             .unwrap_or_default();
         let source_doc = build_source_header(&turn, &speaker);
         let mut s = state_rc.borrow_mut();
-        s.echo_overlay_source = source_doc.clone();
-        s.echo_overlay_links = links.clone();
-        s.echo_overlay_index = 0;
-        s.echo_overlay_titles = titles.clone();
-        s.echo_overlay_turn_id = Some(turn_id);
-        s.echo_overlay_turn_key = Some(key.clone());
+        s.echo_overlay.source = source_doc.clone();
+        s.echo_overlay.links = links.clone();
+        s.echo_overlay.index = 0;
+        s.echo_overlay.titles = titles.clone();
+        s.echo_overlay.turn_id = Some(turn_id);
+        s.echo_overlay.turn_key = Some(key.clone());
         s.echo_session = Some(EchoSession {
             channel,
             turn_key: key,
@@ -503,7 +518,7 @@ pub(crate) fn show_echoes_for_selection(
     // BCP echoes are cache-only: never trigger the Voyage search fallback.
     if channel == crate::db::echo_channel::EchoChannel::Bcp {
         let mut s = state_rc.borrow_mut();
-        s.echo_overlay_turn_key = Some(key);
+        s.echo_overlay.turn_key = Some(key);
         s.gloss_overlay.show("No echoes found for this line.", "");
         s.input_mode = crate::app::InputMode::EchoesOverlay;
         crate::logging::log("ECHOES: BCP cache miss, no search fallback (selection)");
@@ -517,7 +532,7 @@ pub(crate) fn show_echoes_for_selection(
     {
         let mut s = state_rc.borrow_mut();
         affect_weight = s.config.echo_affect_weight;
-        s.echo_overlay_turn_key = Some(key);
+        s.echo_overlay.turn_key = Some(key);
         s.gloss_overlay.show_loading_message("Searching for echoes...");
         s.input_mode = crate::app::InputMode::EchoesOverlay;
     }
@@ -588,11 +603,11 @@ pub(crate) fn show_echoes_for_selection(
 
         let mut s = state_for_result.borrow_mut();
         let source_doc = build_source_header(&turn, &speaker);
-        s.echo_overlay_links = links.clone();
-        s.echo_overlay_index = 0;
-        s.echo_overlay_titles = titles.clone();
-        s.echo_overlay_source = source_doc.clone();
-        s.echo_overlay_turn_id = turn_id;
+        s.echo_overlay.links = links.clone();
+        s.echo_overlay.index = 0;
+        s.echo_overlay.titles = titles.clone();
+        s.echo_overlay.source = source_doc.clone();
+        s.echo_overlay.turn_id = turn_id;
         s.echo_session = Some(EchoSession {
             channel,
             turn_key: key_for_async.clone(),
@@ -672,10 +687,10 @@ pub(crate) fn build_source_header(turn: &[Line], speaker: &str) -> String {
 /// Render the echoes document (source header + echo list) into the gloss
 /// overlay, highlighting the selected echo. Curated echoes get a ★ marker.
 fn render_echoes(s: &mut AppState) {
-    let source_doc = s.echo_overlay_source.clone();
+    let source_doc = s.echo_overlay.source.clone();
     let mut echo_doc = String::new();
-    for link in &s.echo_overlay_links {
-        let title = s.echo_overlay_titles.get(&link.echo_work_abbrev)
+    for link in &s.echo_overlay.links {
+        let title = s.echo_overlay.titles.get(&link.echo_work_abbrev)
             .cloned()
             .unwrap_or_else(|| link.echo_work_abbrev.clone());
         let star = if link.curated { "★ " } else { "" };
@@ -700,7 +715,7 @@ fn render_echoes(s: &mut AppState) {
     };
     let root = s.theme.root_color.clone();
     let dim = s.theme.dim_fg.clone();
-    s.gloss_overlay.show_echoes(&source_doc, &echo_doc, cw, h, Some(&root), Some(&dim), s.echo_overlay_index);
+    s.gloss_overlay.show_echoes(&source_doc, &echo_doc, cw, h, Some(&root), Some(&dim), s.echo_overlay.index);
 }
 
 /// Persist the search candidates as echo links for the turn, then read them
@@ -742,11 +757,11 @@ fn persist_and_load(
 /// restores the current links/selection.
 fn sync_session(s: &mut AppState) {
     if let Some(sess) = s.echo_session.as_mut() {
-        sess.links = s.echo_overlay_links.clone();
-        sess.selected = s.echo_overlay_index;
-        sess.titles = s.echo_overlay_titles.clone();
-        sess.source_doc = s.echo_overlay_source.clone();
-        sess.turn_id = s.echo_overlay_turn_id;
+        sess.links = s.echo_overlay.links.clone();
+        sess.selected = s.echo_overlay.index;
+        sess.titles = s.echo_overlay.titles.clone();
+        sess.source_doc = s.echo_overlay.source.clone();
+        sess.turn_id = s.echo_overlay.turn_id;
     }
 }
 
@@ -757,15 +772,15 @@ pub(crate) fn move_echo_selection(
 ) {
     {
         let mut s = state_rc.borrow_mut();
-        let len = s.echo_overlay_links.len();
+        let len = s.echo_overlay.links.len();
         if len == 0 {
             return;
         }
-        let new_idx = ((s.echo_overlay_index as i32 + delta).rem_euclid(len as i32)) as usize;
-        if new_idx == s.echo_overlay_index {
+        let new_idx = ((s.echo_overlay.index as i32 + delta).rem_euclid(len as i32)) as usize;
+        if new_idx == s.echo_overlay.index {
             return;
         }
-        s.echo_overlay_index = new_idx;
+        s.echo_overlay.index = new_idx;
         render_echoes(&mut s);
         s.gloss_overlay.scroll_echo_into_view(new_idx);
         sync_session(&mut s);
@@ -779,10 +794,10 @@ pub(crate) fn move_echo_selection(
 /// list to its top. The source turn is a fixed header, so it stays visible.
 pub(crate) fn select_first_echo(state_rc: &Rc<RefCell<AppState>>) {
     let mut s = state_rc.borrow_mut();
-    if s.echo_overlay_links.is_empty() {
+    if s.echo_overlay.links.is_empty() {
         return;
     }
-    s.echo_overlay_index = 0;
+    s.echo_overlay.index = 0;
     render_echoes(&mut s);
     s.gloss_overlay.scroll_gloss_to_top();
     sync_session(&mut s);
@@ -792,19 +807,19 @@ pub(crate) fn select_first_echo(state_rc: &Rc<RefCell<AppState>>) {
 pub(crate) fn select_last_echo(state_rc: &Rc<RefCell<AppState>>) {
     let last = {
         let s = state_rc.borrow();
-        s.echo_overlay_links.len().saturating_sub(1)
+        s.echo_overlay.links.len().saturating_sub(1)
     };
     select_echo_index(state_rc, last);
 }
 
 fn select_echo_index(state_rc: &Rc<RefCell<AppState>>, idx: usize) {
     let mut s = state_rc.borrow_mut();
-    let len = s.echo_overlay_links.len();
+    let len = s.echo_overlay.links.len();
     if len == 0 {
         return;
     }
     let new_idx = idx.min(len - 1);
-    s.echo_overlay_index = new_idx;
+    s.echo_overlay.index = new_idx;
     render_echoes(&mut s);
     s.gloss_overlay.scroll_echo_into_view(new_idx);
     sync_session(&mut s);
@@ -812,8 +827,8 @@ fn select_echo_index(state_rc: &Rc<RefCell<AppState>>, idx: usize) {
 
 pub(crate) fn copy_selected_echo(state_rc: &Rc<RefCell<AppState>>) {
     let s = state_rc.borrow();
-    if let Some(link) = s.echo_overlay_links.get(s.echo_overlay_index) {
-        let title = s.echo_overlay_titles.get(&link.echo_work_abbrev)
+    if let Some(link) = s.echo_overlay.links.get(s.echo_overlay.index) {
+        let title = s.echo_overlay.titles.get(&link.echo_work_abbrev)
             .cloned()
             .unwrap_or_else(|| link.echo_work_abbrev.clone());
         let sentence = link.echo_text.lines().map(|l| l.trim()).collect::<Vec<_>>().join(" ");
@@ -903,12 +918,12 @@ pub(crate) fn play_source_turn(state_rc: &Rc<RefCell<AppState>>) {
 pub(crate) fn toggle_curated(state_rc: &Rc<RefCell<AppState>>) {
     let (turn_id, link_id, channel) = {
         let s = state_rc.borrow();
-        let link = match s.echo_overlay_links.get(s.echo_overlay_index) {
+        let link = match s.echo_overlay.links.get(s.echo_overlay.index) {
             Some(l) => l,
             None => return,
         };
         let channel = s.echo_session.as_ref().map(|x| x.channel).unwrap_or(crate::db::echo_channel::EchoChannel::Shakespeare);
-        (s.echo_overlay_turn_id, link.link_id, channel)
+        (s.echo_overlay.turn_id, link.link_id, channel)
     };
     let turn_id = match turn_id {
         Some(id) => id,
@@ -928,8 +943,8 @@ pub(crate) fn toggle_curated(state_rc: &Rc<RefCell<AppState>>) {
     let mut s = state_rc.borrow_mut();
     // Keep selection on the same link after re-sort.
     let new_idx = links.iter().position(|l| l.link_id == link_id).unwrap_or(0);
-    s.echo_overlay_links = links;
-    s.echo_overlay_index = new_idx;
+    s.echo_overlay.links = links;
+    s.echo_overlay.index = new_idx;
     render_echoes(&mut s);
     s.gloss_overlay.scroll_echo_into_view(new_idx);
     sync_session(&mut s);
@@ -941,13 +956,13 @@ pub(crate) fn toggle_curated(state_rc: &Rc<RefCell<AppState>>) {
 pub(crate) fn delete_selected_echo(state_rc: &Rc<RefCell<AppState>>) {
     let (turn_id, link_id, old_idx, channel) = {
         let s = state_rc.borrow();
-        let link = match s.echo_overlay_links.get(s.echo_overlay_index) {
+        let link = match s.echo_overlay.links.get(s.echo_overlay.index) {
             Some(l) => l,
             None => return,
         };
         let channel = s.echo_session.as_ref().map(|x| x.channel).unwrap_or(crate::db::echo_channel::EchoChannel::Shakespeare);
-        match s.echo_overlay_turn_id {
-            Some(id) => (id, link.link_id, s.echo_overlay_index, channel),
+        match s.echo_overlay.turn_id {
+            Some(id) => (id, link.link_id, s.echo_overlay.index, channel),
             None => return,
         }
     };
@@ -965,8 +980,8 @@ pub(crate) fn delete_selected_echo(state_rc: &Rc<RefCell<AppState>>) {
     // Clamp the selection to the (now shorter) list, keeping the cursor roughly
     // in place rather than jumping to the top.
     let new_idx = old_idx.min(links.len().saturating_sub(1));
-    s.echo_overlay_links = links;
-    s.echo_overlay_index = new_idx;
+    s.echo_overlay.links = links;
+    s.echo_overlay.index = new_idx;
     render_echoes(&mut s);
     s.gloss_overlay.scroll_echo_into_view(new_idx);
     sync_session(&mut s);
@@ -976,7 +991,7 @@ pub(crate) fn delete_selected_echo(state_rc: &Rc<RefCell<AppState>>) {
 /// `D`: delete ALL echo links (curated and non-curated) for the current source
 /// turn, leaving the list empty.
 pub(crate) fn delete_all_echoes(state_rc: &Rc<RefCell<AppState>>) {
-    let turn_id = match state_rc.borrow().echo_overlay_turn_id {
+    let turn_id = match state_rc.borrow().echo_overlay.turn_id {
         Some(id) => id,
         None => return,
     };
@@ -986,8 +1001,8 @@ pub(crate) fn delete_all_echoes(state_rc: &Rc<RefCell<AppState>>) {
     }
 
     let mut s = state_rc.borrow_mut();
-    s.echo_overlay_links = Vec::new();
-    s.echo_overlay_index = 0;
+    s.echo_overlay.links = Vec::new();
+    s.echo_overlay.index = 0;
     render_echoes(&mut s);
     sync_session(&mut s);
     crate::logging::log("ECHOES: deleted all echoes for turn");
@@ -1000,13 +1015,13 @@ pub(crate) fn delete_all_echoes(state_rc: &Rc<RefCell<AppState>>) {
 pub(crate) fn reorder_selected_echo(state_rc: &Rc<RefCell<AppState>>, delta: i32) {
     let (turn_id, sel_link_id, links, channel) = {
         let s = state_rc.borrow();
-        let link = match s.echo_overlay_links.get(s.echo_overlay_index) {
+        let link = match s.echo_overlay.links.get(s.echo_overlay.index) {
             Some(l) => l.clone(),
             None => return,
         };
         let channel = s.echo_session.as_ref().map(|x| x.channel).unwrap_or(crate::db::echo_channel::EchoChannel::Shakespeare);
-        match s.echo_overlay_turn_id {
-            Some(id) => (id, link.link_id, s.echo_overlay_links.clone(), channel),
+        match s.echo_overlay.turn_id {
+            Some(id) => (id, link.link_id, s.echo_overlay.links.clone(), channel),
             None => return,
         }
     };
@@ -1048,8 +1063,8 @@ pub(crate) fn reorder_selected_echo(state_rc: &Rc<RefCell<AppState>>, delta: i32
         .unwrap_or_default();
     let mut s = state_rc.borrow_mut();
     let new_idx = links.iter().position(|l| l.link_id == sel_link_id).unwrap_or(0);
-    s.echo_overlay_links = links;
-    s.echo_overlay_index = new_idx;
+    s.echo_overlay.links = links;
+    s.echo_overlay.index = new_idx;
     render_echoes(&mut s);
     s.gloss_overlay.scroll_echo_into_view(new_idx);
     sync_session(&mut s);
@@ -1059,7 +1074,7 @@ pub(crate) fn reorder_selected_echo(state_rc: &Rc<RefCell<AppState>>, delta: i32
 /// `A` in the echoes overlay: open the line-search picker to add an echo to the
 /// current turn. Stashes the turn_id for the deferred add.
 pub(crate) fn open_add_echo_picker(state_rc: &Rc<RefCell<AppState>>) {
-    let turn_id = state_rc.borrow().echo_overlay_turn_id;
+    let turn_id = state_rc.borrow().echo_overlay.turn_id;
     if turn_id.is_none() {
         return;
     }
@@ -1067,7 +1082,7 @@ pub(crate) fn open_add_echo_picker(state_rc: &Rc<RefCell<AppState>>) {
     {
         let mut s = state_rc.borrow_mut();
         s.echo_add_turn_id = turn_id;
-        let titles = s.echo_overlay_titles.clone();
+        let titles = s.echo_overlay.titles.clone();
         s.echo_line_picker.set_results(Vec::new(), &titles);
         s.input_mode = crate::app::InputMode::EchoLinePicker;
     }
@@ -1100,7 +1115,7 @@ pub(crate) fn refresh_add_echo_search(state_rc: &Rc<RefCell<AppState>>) {
             .unwrap_or_default()
     };
     if let Ok(mut s) = state_rc.try_borrow_mut() {
-        let titles = s.echo_overlay_titles.clone();
+        let titles = s.echo_overlay.titles.clone();
         s.echo_line_picker.set_results(results, &titles);
     }
 }
@@ -1127,7 +1142,7 @@ pub(crate) fn confirm_add_echo(state_rc: &Rc<RefCell<AppState>>) {
     };
     let (work, div1, div2, line_in_div, text) = hit;
 
-    let existing_id = state_rc.borrow().echo_overlay_links.iter()
+    let existing_id = state_rc.borrow().echo_overlay.links.iter()
         .find(|l| l.echo_work_abbrev == work && l.echo_div1 == div1
                   && l.echo_div2 == div2 && l.echo_start_line == line_in_div)
         .map(|l| l.link_id);
@@ -1159,8 +1174,8 @@ pub(crate) fn confirm_add_echo(state_rc: &Rc<RefCell<AppState>>) {
     let new_idx = new_link_id
         .and_then(|id| links.iter().position(|l| l.link_id == id))
         .unwrap_or(0);
-    s.echo_overlay_links = links;
-    s.echo_overlay_index = new_idx;
+    s.echo_overlay.links = links;
+    s.echo_overlay.index = new_idx;
     s.input_mode = crate::app::InputMode::EchoesOverlay;
     render_echoes(&mut s);
     s.gloss_overlay.scroll_echo_into_view(new_idx);
@@ -1185,7 +1200,7 @@ pub(crate) fn refresh_echoes(
     let (key, turn_id, channel) = {
         let s = state_rc.borrow();
         let channel = s.echo_session.as_ref().map(|x| x.channel).unwrap_or(crate::db::echo_channel::EchoChannel::Shakespeare);
-        match (&s.echo_overlay_turn_key, s.echo_overlay_turn_id) {
+        match (&s.echo_overlay.turn_key, s.echo_overlay.turn_id) {
             (Some(k), Some(id)) => (k.clone(), id, channel),
             _ => return,
         }
@@ -1251,8 +1266,8 @@ pub(crate) fn refresh_echoes(
             .unwrap_or_default();
 
         let mut s = state_for_result.borrow_mut();
-        s.echo_overlay_links = links;
-        s.echo_overlay_index = 0;
+        s.echo_overlay.links = links;
+        s.echo_overlay.index = 0;
         render_echoes(&mut s);
         sync_session(&mut s);
         crate::logging::log("ECHOES: refreshed echoes");
@@ -1267,7 +1282,7 @@ pub(crate) fn jump_to_selected_echo(
 ) {
     let (work, div1, div2, line_in_div) = {
         let s = state_rc.borrow();
-        match s.echo_overlay_links.get(s.echo_overlay_index) {
+        match s.echo_overlay.links.get(s.echo_overlay.index) {
             Some(l) => (l.echo_work_abbrev.clone(), l.echo_div1, l.echo_div2, l.echo_start_line),
             None => return,
         }
@@ -1292,7 +1307,7 @@ pub(crate) fn jump_to_selected_echo(
     {
         let mut s = state_rc.borrow_mut();
         s.gloss_overlay.hide();
-        s.echo_overlay_links.clear();
+        s.echo_overlay.links.clear();
         s.input_mode = crate::app::InputMode::Reader;
     }
 
@@ -1311,7 +1326,7 @@ pub(crate) fn play_selected_echo(
 ) {
     let link = {
         let s = state_rc.borrow();
-        match s.echo_overlay_links.get(s.echo_overlay_index) {
+        match s.echo_overlay.links.get(s.echo_overlay.index) {
             Some(l) => l.clone(),
             None => return,
         }
@@ -1386,14 +1401,14 @@ pub(crate) fn reopen_echoes(
     let sess_for_restore = session.clone();
     let reopen = move |state_rc: &Rc<RefCell<AppState>>| {
         let mut s = state_rc.borrow_mut();
-        s.echo_overlay_source = sess_for_restore.source_doc.clone();
-        s.echo_overlay_links = sess_for_restore.links.clone();
-        s.echo_overlay_index = sess_for_restore.selected.min(sess_for_restore.links.len().saturating_sub(1));
-        s.echo_overlay_titles = sess_for_restore.titles.clone();
-        s.echo_overlay_turn_id = sess_for_restore.turn_id;
-        s.echo_overlay_turn_key = Some(sess_for_restore.turn_key.clone());
+        s.echo_overlay.source = sess_for_restore.source_doc.clone();
+        s.echo_overlay.links = sess_for_restore.links.clone();
+        s.echo_overlay.index = sess_for_restore.selected.min(sess_for_restore.links.len().saturating_sub(1));
+        s.echo_overlay.titles = sess_for_restore.titles.clone();
+        s.echo_overlay.turn_id = sess_for_restore.turn_id;
+        s.echo_overlay.turn_key = Some(sess_for_restore.turn_key.clone());
         s.input_mode = crate::app::InputMode::EchoesOverlay;
-        let idx = s.echo_overlay_index;
+        let idx = s.echo_overlay.index;
         render_echoes(&mut s);
         s.gloss_overlay.scroll_echo_into_view(idx);
     };
