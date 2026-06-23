@@ -1,4 +1,9 @@
 use crate::ui::ask_card::{AskCard, AskFocus};
+use crate::ui::gloss_block::{
+    gloss_blocks, parse_gloss_tags, render_synopsis_with_labels, selected_blocks_text,
+    synopsis_blocks, visual_block_range, BlockKind, GlossBlock, GlossElement,
+};
+use crate::ui::gloss_ipa::{strip_brackets, strip_ipa};
 use crate::ui::gloss_util::{
     build_diff_markup, cursor_scroll_target, format_citation_range, parse_hex_color,
     snap_up_to_row, split_echo, CursorScrollGeom,
@@ -2035,10 +2040,4 @@ fn apply_bracket_styling(buffer: &gtk4::TextBuffer, base_offset: i32, bracket_ta
         }
     }
 }
-
-use crate::ui::gloss_ipa::{strip_brackets, strip_ipa};
-use crate::ui::gloss_block::{
-    gloss_blocks, parse_gloss_tags, render_synopsis_with_labels, selected_blocks_text,
-    synopsis_blocks, visual_block_range, BlockKind, GlossBlock, GlossElement,
-};
 
