@@ -126,7 +126,7 @@ pub struct ActionPopupState {
 }
 
 /// Built-in action names, in display order.
-pub const BUILTIN_ACTIONS: &[&str] = &["Reader Gloss", "Gloss with Claude", "Inner Monologue", "Copy", "Copy with metadata"];
+pub const BUILTIN_ACTIONS: &[&str] = &["Reader Gloss", "Gloss with Claude", "Inner Monologue", "Journal Q&A", "Copy", "Copy with metadata"];
 
 /// Determine which built-in actions are available for the current work.
 pub fn available_builtin_actions(_state: &AppState) -> Vec<&'static str> {
@@ -182,8 +182,12 @@ pub fn execute_action(
                 action_inner_monologue(state_rc);
                 return;
             }
-            3 => action_copy(&mut state_rc.borrow_mut(), false),
-            4 => action_copy(&mut state_rc.borrow_mut(), true),
+            3 => {
+                action_journal_qa(state_rc);
+                return;
+            }
+            4 => action_copy(&mut state_rc.borrow_mut(), false),
+            5 => action_copy(&mut state_rc.borrow_mut(), true),
             _ => {}
         }
     } else {
@@ -396,6 +400,59 @@ fn action_external_command(state: &mut AppState, command: &str) {
     reload_current_work(state);
 }
 
+
+fn action_journal_qa(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+    // Phase 1 — build context while holding borrow.
+    let (div1, div2, start, end, source_text) = {
+        let state = state_rc.borrow();
+        let (start_buf, end_buf) = match &state.visual_selection {
+            Some(s) => s.range(),
+            None => return,
+        };
+        let work = match &state.current_work {
+            Some(w) => w,
+            None => return,
+        };
+
+        let selected_lines: Vec<crate::db::models::Line> = (start_buf..=end_buf)
+            .filter_map(|buf_line| {
+                state.work_line_for_buffer(buf_line)
+                    .and_then(|wi| work.lines.get(wi).cloned())
+            })
+            .collect();
+
+        // Reuse build_context_for_type just to get citations, div1/div2, speaker.
+        let ctx = match crate::gloss::build_context_for_type(work, &selected_lines, "reader-gloss") {
+            Some(c) => c,
+            None => return,
+        };
+
+        // <speaker>/<verse> markup for the passage.
+        let passage_doc = crate::input::actions::echoes::build_source_header(&selected_lines, &ctx.speaker);
+
+        (ctx.act, ctx.scene, ctx.start_citation, ctx.end_citation, passage_doc)
+    };
+
+    // Phase 2 — exit visual mode, set journal band, open ask card.
+    exit_visual_mode(&mut state_rc.borrow_mut());
+
+    {
+        let mut s = state_rc.borrow_mut();
+        s.journal.return_pos = Some((s.current_line, s.page_top_line));
+        s.journal.prompt_mode = crate::app::JournalPromptMode::Ask;
+        s.journal.pending_passage = Some(crate::input::actions::journal::PendingPassage {
+            source_text,
+        });
+        s.journal_band = crate::app::JournalBand::Passage { div1, div2, start, end };
+        s.journal.page_index = 0;
+        s.input_mode = crate::app::InputMode::JournalOverlay;
+        crate::input::actions::journal::render_current(&mut s);
+        s.journal_overlay
+            .open_ask_card("Ask about this passage", "Tab switch  \u{00b7}  Ctrl+Enter submit");
+    }
+
+    crate::logging::log("JOURNAL-QA: opened ask card for visual passage");
+}
 
 fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
     let (ctx, model, tokio_handle, all_glosses, passage_doc) = {

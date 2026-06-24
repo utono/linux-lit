@@ -1480,6 +1480,7 @@ pub fn build_window(
             page_index: 0,
             return_pos: None,
             prompt_mode: JournalPromptMode::Ask,
+            pending_passage: None,
         },
         page_image_overlay,
         page_image: PageImageState::default(),

@@ -3,6 +3,14 @@ use gtk4::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// Passage context captured from a visual selection, held until the ask-card
+/// submit fires (at which point `ask_claude` reads it and clears it).
+/// The passage coordinates (div1/div2/start/end) live in `JournalBand::Passage`;
+/// only `source_text` (the `<speaker>/<verse>` markup) needs separate storage.
+pub struct PendingPassage {
+    pub source_text: String,
+}
+
 /// Grouped state for the journal feature (band pages + viewer index + the
 /// return-to-reader position + the add/edit prompt mode). Was four flat
 /// `journal_*` fields on AppState; grouped per the AppState god-struct
@@ -12,6 +20,9 @@ pub struct JournalState {
     pub page_index: usize,
     pub return_pos: Option<(usize, usize)>,
     pub prompt_mode: JournalPromptMode,
+    /// Set by `action_journal_qa` before opening the ask card; read and
+    /// consumed by `ask_claude` when the band is `Passage`.
+    pub pending_passage: Option<PendingPassage>,
 }
 
 /// Footer-left text identifying the current page: `<abbrev> <act>.<scene>` for a
@@ -26,7 +37,7 @@ fn footer_left_text(abbrev: &str, band: JournalBand) -> String {
 
 /// Load the current band's pages from the DB into `journal.pages`, clamp the
 /// index, and render the current page (or the empty-band card).
-fn render_current(s: &mut AppState) {
+pub(crate) fn render_current(s: &mut AppState) {
     let work_abbrev = s
         .current_work
         .as_ref()
@@ -88,7 +99,7 @@ fn render_current(s: &mut AppState) {
     };
 
     let is_passage_with_source = matches!(s.journal_band, JournalBand::Passage { .. })
-        && current_page.map_or(false, |p| p.source_text.is_some());
+        && current_page.is_some_and(|p| p.source_text.is_some());
 
     if is_passage_with_source {
         let p = current_page.unwrap();
@@ -272,7 +283,9 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
         let scene_text = match band {
             JournalBand::Work => String::new(),
             JournalBand::Scene(d1, d2) => crate::app::scene_synopsis::scene_text_for(&s, d1, d2),
-            JournalBand::Passage { .. } => String::new(), // TODO(task-5): supply passage source_text
+            JournalBand::Passage { div1, div2, .. } => {
+                crate::app::scene_synopsis::scene_text_for(&s, div1, div2)
+            }
         };
         (
             title,
@@ -296,6 +309,20 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
         -1
     };
 
+    // For a Passage band, capture the source_text before entering the async
+    // closure (pending_passage is on AppState which is not Send).
+    let passage_source_text: String = if matches!(band, JournalBand::Passage { .. }) {
+        state_rc
+            .borrow()
+            .journal
+            .pending_passage
+            .as_ref()
+            .map(|pp| pp.source_text.clone())
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
     let user_msg = match band {
         JournalBand::Work => format!(
             "Work: {} by {}\n\nReader's question about the play as a whole:\n{}",
@@ -309,10 +336,15 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
             scene_text,
             question,
         ),
-        JournalBand::Passage { .. } => {
-            // TODO(task-5): build passage-scoped user_msg with source_text
-            unreachable!("passage ask_claude is Task 5")
-        }
+        JournalBand::Passage { div1, div2, .. } => format!(
+            "Work: {} by {}\nScene: {}\n\nScene text:\n{}\n\nPassage:\n{}\n\nReader's question:\n{}",
+            work_title,
+            work_author,
+            crate::app::scene_synopsis::scene_label(div1, div2),
+            scene_text,
+            passage_source_text,
+            question,
+        ),
     };
     let question_owned = question.to_string();
     let model_for_db = model.clone();
@@ -322,26 +354,35 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
         user_msg,
         model,
         move |st, answer| {
-            // For a save, the scope and (div1,div2) come from the band.
-            let (scope, sdiv1, sdiv2) = match &band {
-                JournalBand::Work => ("work", crate::app::JOURNAL_WORK_DIV.0, crate::app::JOURNAL_WORK_DIV.1),
-                JournalBand::Scene(d1, d2) => ("scene", *d1, *d2),
-                JournalBand::Passage { .. } => {
-                    // TODO(task-5): passage save
-                    unreachable!("passage save is Task 5")
-                }
-            };
             if let Ok(conn) = crate::db::queries::open_db_rw() {
-                let write_result = if mode == JournalPromptMode::Edit && edit_id >= 0 {
-                    crate::db::journal::update_journal_page(
-                        &conn, edit_id, &question_owned, &answer, &model_for_db,
-                    )
-                } else {
-                    crate::db::journal::save_journal_page(
-                        &conn, &work_abbrev, sdiv1, sdiv2, &question_owned, &answer,
-                        &model_for_db, scope,
-                    )
-                    .map(|_| ())
+                let write_result = match (&band, mode == JournalPromptMode::Edit && edit_id >= 0) {
+                    (_, true) => {
+                        crate::db::journal::update_journal_page(
+                            &conn, edit_id, &question_owned, &answer, &model_for_db,
+                        )
+                    }
+                    (JournalBand::Work, false) => {
+                        crate::db::journal::save_journal_page(
+                            &conn, &work_abbrev,
+                            crate::app::JOURNAL_WORK_DIV.0, crate::app::JOURNAL_WORK_DIV.1,
+                            &question_owned, &answer, &model_for_db, "work",
+                        )
+                        .map(|_| ())
+                    }
+                    (JournalBand::Scene(d1, d2), false) => {
+                        crate::db::journal::save_journal_page(
+                            &conn, &work_abbrev, *d1, *d2,
+                            &question_owned, &answer, &model_for_db, "scene",
+                        )
+                        .map(|_| ())
+                    }
+                    (JournalBand::Passage { div1, div2, start, end }, false) => {
+                        crate::db::journal::save_passage_page(
+                            &conn, &work_abbrev, *div1, *div2, start, end,
+                            &passage_source_text, &question_owned, &answer, &model_for_db,
+                        )
+                        .map(|_| ())
+                    }
                 };
                 if let Err(e) = write_result {
                     crate::logging::log(&format!("JOURNAL: db write failed: {}", e));
