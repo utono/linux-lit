@@ -343,9 +343,9 @@ auth-error display). Ranked by (duplication × drift_risk) ÷ scope_size. Each
 verified by direct grep, not agent word alone (the #11 lesson). All six are
 byte-identical-modulo-one-token; none needs a trait/generic.
 
-## #22 — select-first-row-helper
+## #22 — select-first-row-helper — DONE (merge pending, commit bc5e612)
 
-- **Status:** OPEN (highest-value remaining; 15 sites, pure win)
+- **Status:** DONE — 15 sites collapsed to picker_nav::select_first_row; build + 413 tests green.
 - **Signal:** the "select the first row after populate" block
   `if let Some(row) = self.list_box.row_at_index(0) { self.list_box.select_row(Some(&row)); }`
   — byte-identical except the binding name (`row` vs `first`) — at **15 sites**
@@ -365,9 +365,9 @@ byte-identical-modulo-one-token; none needs a trait/generic.
   outer conditional — the inner select block is still byte-identical, extracts).
 - **Safe-scope:** yes — a 3-line GTK block → one call; only input is the list_box.
 
-## #23 — selected-index-helper
+## #23 — selected-index-helper — DONE (commit bc5e612)
 
-- **Status:** OPEN (5 sites, byte-identical body)
+- **Status:** DONE — 5 picker bodies delegate to picker_nav::selected_index.
 - **Signal:** `pub fn selected_index(&self) -> Option<usize>` whole-body identical
   across 5 pickers: concordance_list_picker:102, echo_turns_picker:123,
   echo_picker:121, journal_picker:129, gloss_picker:129. Body is
@@ -383,9 +383,9 @@ byte-identical-modulo-one-token; none needs a trait/generic.
 - **Safe-scope:** yes — pure fn over the list_box; method becomes a one-line
   delegate.
 
-## #24 — preroll-seek-time-helper
+## #24 — preroll-seek-time-helper — DONE (commit d06ddb8)
 
-- **Status:** OPEN (9 sites, single arithmetic idiom)
+- **Status:** DONE — 9 sites use navigation::preroll_seek_time; A-B-loop prerolls excluded as planned.
 - **Signal:** `(start - SEEK_PREROLL).max(0.0)` — the "seek this many seconds
   before the line's start, clamped at 0" computation — at **9 sites**:
   timestamps.rs:215, echoes.rs:1359 & :1504, concordance.rs:531 & :545 & :580,
@@ -400,9 +400,9 @@ byte-identical-modulo-one-token; none needs a trait/generic.
 - **Safe-scope:** yes — one-expression helper; #12-sibling (that named the const,
   this names the computation that uses it).
 
-## #25 — mpv-set-property-cmd-helper
+## #25 — mpv-set-property-cmd-helper — DONE (commit 681db30)
 
-- **Status:** OPEN (6 sites, file-local IPC envelope)
+- **Status:** DONE — 6 sends use set_property_cmd; static pause strings excluded.
 - **Signal:** `format!(r#"{{"command":["set_property","<PROP>",{}]}}"#, val)` —
   byte-identical envelope, varying only the property-name literal + value — at 6
   sites in `src/mpv/client.rs`: :44 (ab-loop-a), :45 (ab-loop-b), :50 (pause),
@@ -414,9 +414,9 @@ byte-identical-modulo-one-token; none needs a trait/generic.
 - **Safe-scope:** yes — file-local format-template helper; protects the JSON
   envelope from drifting between commands.
 
-## #26 — mpv-seek-absolute-cmd-helper
+## #26 — mpv-seek-absolute-cmd-helper — DONE (commit 681db30)
 
-- **Status:** OPEN (4 sites, file-local IPC envelope)
+- **Status:** DONE — 4 sends use seek_absolute_cmd; relative-exact seek excluded.
 - **Signal:** `format!(r#"{{"command":["seek",{},"absolute"]}}"#, time)` —
   byte-identical except the time-var name — at 4 sites in `src/mpv/client.rs`:
   :47, :118, :132, :160.
@@ -427,9 +427,9 @@ byte-identical-modulo-one-token; none needs a trait/generic.
   `seek_relative_exact_cmd` only if it ever gains a second site (currently 1×).
 - **Safe-scope:** yes — file-local template helper.
 
-## #27 — card-side-margin-helper
+## #27 — card-side-margin-helper — DONE (commit f8e9459)
 
-- **Status:** OPEN (8 sites; the family this audit was triggered by)
+- **Status:** DONE — 9 sites (audit undercounted; layout.rs:189 included) use crate::ui::card_side_margin; the column_width/8 echo sites stayed untouched (the critical exclusion).
 - **Signal:** `card_width / 4` — the gloss/synopsis/ask card "side margin = a
   quarter of the live card width" — at 8 computation sites: gloss_overlay.rs:582
   (`show`), :622 (`show_gloss_with_color`), :642 (`bar_left`), :704
