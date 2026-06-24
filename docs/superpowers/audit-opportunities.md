@@ -681,3 +681,115 @@ pipeline as a single refactor.
   docs/superpowers/. Confirms the "MAY qualify as safe-scope" hypothesis was
   correct for the pure tail; the GTK buffer-population code was correctly left
   as behavior-risky.
+
+## #28 — parse-citation-reuse (collapse cite_tail closures) — OPEN
+
+- **Status:** OPEN. Rank #1 of this batch — highest (4 dup sites × real drift) ÷
+  (tiny cut: the helper already exists and is tested).
+- **Signal:** the citation-tail parse `rsplitn(4,'.') -> (div1,div2,line)` is
+  inlined as a `cite_tail` closure at **4 sites**, byte-identical except a `: i64`
+  annotation and indentation:
+  gloss.rs:29 (jump_to_gloss_source_start), gloss.rs:1972 (toggle_overlay),
+  journal.rs:588 (action_gloss_from_journal_passage), keymap.rs:1076 (J handler).
+- **Identical part (extract → ALREADY EXISTS):** `crate::app::parse_citation(cite)
+  -> Option<(i64,i64,i64)>` (app/mod.rs:3583) is byte-identical to all four and is
+  already `pub(crate)` and unit-tested (`parse_citation_extracts_div_and_line`).
+  So this is NOT a new helper — each `cite_tail` closure is deleted and its call
+  sites call `crate::app::parse_citation(...)`.
+- **Variants:** `: i64` annotation present at 2 sites, absent at 2 — disappears
+  when calling the typed free fn. journal.rs:588 parses BOTH start and end
+  citations with the same closure — both calls map to parse_citation.
+- **EXCLUDED on sight:** the `cite_tail` name is reused but any site whose closure
+  body differs from the bare 3-field tail (none found — all 4 are the bare form).
+  Do NOT touch `GlossContext`-building citation construction (`models::citation`,
+  the forward direction, audit #14) — this is the parse direction only.
+- **Safe-scope:** yes — delete 4 closures, repoint to an existing tested fn. Zero
+  new code; pure dedup. The strongest cut in the ledger since #22.
+
+## #29 — journal-page-row-mapper — OPEN
+
+- **Status:** OPEN. Rank #2 — 4 sites, single file, clean fn extraction.
+- **Signal:** the `|row| Ok(JournalPage { id: row.get(0)?, … source_text:
+  row.get(9)? })` 10-field row-builder closure is byte-identical at **4 sites** in
+  src/db/journal.rs: find_journal_pages:90, find_work_pages:118,
+  find_all_pages_ordered:150, find_passage_pages:206. The SELECT column list
+  string `"id, div1, div2, question, answer, COALESCE(claude_model,''), timestamp,
+  start_citation, end_citation, source_text"` is also byte-identical across the 4
+  queries (a two-part family: column-list const + row mapper).
+- **Identical part (extract):** a file-local `fn map_journal_page_row(row:
+  &rusqlite::Row) -> Result<JournalPage, rusqlite::Error>`; each `query_map(params,
+  |row| Ok(...))` becomes `query_map(params, map_journal_page_row)`. Optionally a
+  `const JOURNAL_PAGE_COLUMNS: &str` for the SELECT list.
+- **Variants:** only the WHERE/ORDER BY and the `params!` binding differ — left at
+  each call site. find_passage_pages reformats the closure to one-per-line but is
+  structurally identical.
+- **EXCLUDED:** find_journal_scenes:218 maps to `(i64,i64)` tuples, not JournalPage
+  — different return type, hard exclude. No JournalPage row-builder in queries.rs.
+- **Safe-scope:** yes — pure data-mapping extraction; query bodies unchanged.
+
+## #30 — overlay-attach-body — OPEN
+
+- **Status:** OPEN. Rank #3 — 3 sites, cross-file, genuine drift risk.
+- **Signal:** the 7-line overlay-attach wiring is byte-identical at **3 sites**:
+  GlossOverlay::attach (gloss_overlay.rs:566), JournalOverlay::attach
+  (journal_overlay.rs:117), TranslationOverlay::attach (translation_overlay.rs:131).
+  Body: `set_child(Some(child)); add_overlay(&scrim); add_overlay(&container);
+  set_measure_overlay(&scrim,false); set_measure_overlay(&container,false);
+  set_clip_overlay(&scrim,true); set_clip_overlay(&container,true);` — all three
+  types have identically-named `overlay`/`scrim`/`container` fields.
+- **Identical part (extract):** `fn attach_overlay_panel(overlay: &gtk4::Overlay,
+  child: &impl IsA<Widget>, scrim: &gtk4::Box, container: &gtk4::Box)` in
+  src/ui/picker_attach.rs (the existing home for this class, audit #13). Each
+  `attach` becomes one call.
+- **EXCLUDED (named, why):** picker `attach_panel` (#13) — omits the
+  measure/clip overlay calls, different contract. settings_overlay::attach — adds
+  scrim+container separately via `panels()`. gamepad_overlay — adds a drawing_area
+  not a scrim/container pair. echo_keybinds_overlay::attach_to / page_image_overlay
+  — take an external `&Overlay`, no `set_child`, different signature.
+- **Safe-scope:** yes — pure widget wiring; only inputs are the 4 widget refs.
+
+## #31 — reassert-italic-tags — OPEN (low priority)
+
+- **Status:** OPEN. Rank #4 — only 2 sites, but a comment cross-reference proves
+  the two are EXPECTED to stay in sync (drift risk is documented, not theoretical).
+- **Signal:** the 7-line italic-priority re-assertion inside each overlay's
+  `apply_font` per-view loop is byte-identical at **2 sites**:
+  gloss_overlay.rs:436, journal_overlay.rs:360. Body: `let top = table.size(); for
+  italic in ["gloss-stage","gloss-bracket"] { if let Some(t)=table.lookup(italic){
+  if top>0 { t.set_priority(top-1); } } }`. journal_overlay.rs's comment literally
+  says "Mirror the same fix used in gloss_overlay.rs" — so a third italic tag added
+  to one must be added to the other.
+- **Identical part (extract):** `fn reassert_italic_tags(table:
+  &gtk4::TextTagTable)` (a new src/ui/overlay_util.rs or inline in ui/mod.rs). Each
+  per-view loop body collapses to one call.
+- **EXCLUDED:** the rest of each `apply_font` is NOT identical — gloss iterates 3
+  views + uses tag name "gloss-font" + calls apply_synopsis_label_bold after;
+  journal iterates 2 views + "journal-font" + has an early-return guard. Only the
+  7-line italic loop extracts; the surrounding apply_font stays per-overlay.
+- **Safe-scope:** yes, narrowly. At the 2-site floor — but the explicit "mirror
+  this fix" comment is exactly the drift signal the house bar wants.
+
+## Noted but NOT numbered (below the safe-scope floor or behavior-risky)
+
+These came up in the post-journal-Q&A audit but do not qualify as numbered
+safe-scope opportunities:
+
+- **close-gloss-overlay + restore-pos block (2 sites: journal.rs:930, keymap.rs:1124)
+  and close-journal-overlay-restore (2 pure sites: journal.rs:648, :859).** Each is
+  a real 5-line byte-identical block (the gloss one even shares a verbatim comment),
+  but each family is only 2 sites at the floor, and the close-and-restore tails have
+  sibling variants (toggle_overlay adds resnap+update_highlight; view_gloss sets
+  gloss_return_pos after) that complicate a clean cut. Flag; number if a 3rd site
+  appears.
+- **journal_overlay show_* reveal tail (2 sites: show_page:163, show_passage_page:230).**
+  7 identical lines (apply_font; ask.close; scrim/container visible; scroll-to-top;
+  update_bottom_clip), but only 2 sites in one file; show_loading/show_message are
+  4-line variants. Single-file `fn reveal_page(&self)` — low payoff, flag only.
+- **async reader-gloss spawn+save+render tail (2 sites: visual.rs:519,
+  journal.rs:698) and the cache-hit show-gloss block (2 sites: visual.rs:484,
+  journal.rs:661).** Byte-identical save/render bodies (log string aside), BUT
+  extracting them cleanly needs ~6 params or folding into claude_bridge
+  (audit #7) which changes the callback shape — a small API change, NOT pure
+  behavior-preserving extraction. The `action_gloss_with_claude`/`inner_monologue`
+  siblings differ by gloss_type literal. Larger near-identical family; not a
+  safe-scope byte-identical cut. Note for a future broader pass, do not number.
