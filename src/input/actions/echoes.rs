@@ -662,6 +662,12 @@ pub(crate) fn build_source_header(turn: &[Line], speaker: &str) -> String {
     let mut doc = String::new();
     let mut current: Option<String> = None;
     for line in turn {
+        // Stage directions render as their own italic line in the overlay; they
+        // carry no speaker and must not reset the current speaker run.
+        if crate::db::line_types::is_stage_direction(&line.text) {
+            doc.push_str(&format!("<stage>{}</stage>\n", line.text));
+            continue;
+        }
         let label = line.speaker.as_deref().unwrap_or(speaker).to_uppercase();
         if current.as_deref() != Some(label.as_str()) {
             doc.push_str(&format!("<speaker>{}</speaker>\n", label));
@@ -1758,5 +1764,26 @@ mod tests {
              <verse>A stage direction perhaps</verse>\n\
              <verse>still no speaker</verse>\n"
         );
+    }
+
+    #[test]
+    fn build_source_header_emits_stage_for_directions() {
+        let turn = vec![
+            line(20, Some("YORK"), 1, 4, 43, "Lay hands upon these traitors and their trash."),
+            line(21, Some("YORK"), 1, 4, 44, "[To Jourdain.]"),
+            line(22, Some("YORK"), 1, 4, 45, "Beldam, I think we watched you at an"),
+        ];
+        let doc = build_source_header(&turn, "YORK");
+        // The stage direction is a <stage> tag, not a <verse> tag.
+        assert!(doc.contains("<stage>[To Jourdain.]</stage>"),
+            "stage line must be tagged <stage>, got:\n{doc}");
+        assert!(!doc.contains("<verse>[To Jourdain.]</verse>"),
+            "stage line must NOT be a <verse>, got:\n{doc}");
+        // The speaker is emitted once for the whole same-speaker turn; the stage
+        // line does not re-trigger a <speaker>.
+        assert_eq!(doc.matches("<speaker>YORK</speaker>").count(), 1,
+            "stage line must not re-emit the speaker, got:\n{doc}");
+        // Real verse lines remain <verse>.
+        assert!(doc.contains("<verse>Beldam, I think we watched you at an</verse>"));
     }
 }
