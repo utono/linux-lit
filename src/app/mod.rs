@@ -137,10 +137,11 @@ pub enum JournalPromptMode {
 
 /// Which "band" of the journal is currently shown. The Work band holds
 /// whole-work pages (scope='work'); a Scene band holds one (div1,div2)'s pages.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum JournalBand {
     Work,
     Scene(i64, i64),
+    Passage { div1: i64, div2: i64, start: String, end: String },
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -1479,6 +1480,7 @@ pub fn build_window(
             page_index: 0,
             return_pos: None,
             prompt_mode: JournalPromptMode::Ask,
+            pending_passage: None,
         },
         page_image_overlay,
         page_image: PageImageState::default(),

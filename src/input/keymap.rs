@@ -725,6 +725,13 @@ fn handle_journal_key(
                 crate::input::actions::journal::nav_to_work_band(state);
                 return true;
             }
+            // Alt+g: create a reader-gloss for the current journal passage
+            // page's source text. Toasts "Not a passage page" if the current
+            // page has no source text (work/scene band or empty).
+            "g" => {
+                crate::input::actions::journal::action_gloss_from_journal_passage(state);
+                return true;
+            }
             _ => {}
         }
     }
@@ -745,6 +752,14 @@ fn handle_journal_key(
             }
             "backslash" => {
                 crate::input::actions::journal::open_picker(state);
+                return true;
+            }
+            // Ctrl+g: view the gloss for the current journal passage page.
+            // Requires the current page to be a passage page (has source_text
+            // + start_citation). Toasts "Not a passage page" if not, or "No
+            // gloss for this passage" if no gloss is found.
+            "g" => {
+                crate::input::actions::journal::view_gloss_from_journal(state);
                 return true;
             }
             _ => {}
@@ -900,6 +915,14 @@ fn handle_gloss_key(
                 );
                 return true;
             }
+            // Ctrl+j: view the journal passage pages for the current gloss's
+            // passage (if any exist). Closes the gloss overlay and opens the
+            // journal overlay in the Passage band. Toasts "No journal page for
+            // this passage" when none are found.
+            "j" => {
+                crate::input::actions::journal::view_journal_from_gloss(state);
+                return true;
+            }
             // Ctrl+/ opens the keybinds overlay, returning to the gloss overlay
             // on close (same overlay-return pattern as Ctrl+, settings).
             "slash" => {
@@ -1031,6 +1054,88 @@ fn handle_gloss_key(
                 let mut s = state.borrow_mut();
                 s.input_mode = crate::app::InputMode::GlossVisual;
                 s.gloss_overlay.set_gloss_visual_hint();
+            }
+            true
+        }
+        // J (Shift+j): create a journal Q&A page for the gloss's current
+        // source passage. Reads gloss_context for citations/speaker, resolves
+        // the line range from current_work, and builds <speaker>/<verse>/<stage>
+        // markup via build_source_header — the same markup the journal overlay
+        // feeds to populate_verse_buffer. Plain ctx.source_text is NOT used as
+        // source_text (it lacks verse/stage tags and renders without formatting).
+        "J" => {
+            // Collect what we need from gloss_context before dropping the borrow.
+            // Build the <speaker>/<verse>/<stage> markup here while we still hold
+            // the borrow that gives access to ctx and current_work.
+            let passage_args = {
+                let s = state.borrow();
+                s.gloss_context.as_ref().and_then(|ctx| {
+                    let work = s.current_work.as_ref()?;
+
+                    // Parse "ABBR.div1.div2.line_in_div" → (d1, d2, lid).
+                    let cite_tail = |cite: &str| -> Option<(i64, i64, i64)> {
+                        let mut parts = cite.rsplitn(4, '.');
+                        let lid: i64 = parts.next()?.parse().ok()?;
+                        let d2: i64 = parts.next()?.parse().ok()?;
+                        let d1: i64 = parts.next()?.parse().ok()?;
+                        Some((d1, d2, lid))
+                    };
+
+                    let selected_lines: Vec<crate::db::models::Line> =
+                        match (cite_tail(&ctx.start_citation), cite_tail(&ctx.end_citation)) {
+                            (Some((sd1, sd2, s_lid)), Some((_, _, e_lid))) => work
+                                .lines
+                                .iter()
+                                .filter(|l| {
+                                    l.div1 == sd1
+                                        && l.div2 == sd2
+                                        && l.line_in_div >= s_lid
+                                        && l.line_in_div <= e_lid
+                                })
+                                .cloned()
+                                .collect(),
+                            _ => work
+                                .lines
+                                .iter()
+                                .filter(|l| l.div1 == ctx.act && l.div2 == ctx.scene)
+                                .cloned()
+                                .collect(),
+                        };
+
+                    // Build <speaker>/<verse>/<stage> markup — same as the visual
+                    // selection path in visual.rs and action_gloss_from_journal_passage.
+                    let markup = crate::input::actions::echoes::build_source_header(
+                        &selected_lines,
+                        &ctx.speaker,
+                    );
+
+                    Some((
+                        ctx.act,
+                        ctx.scene,
+                        ctx.start_citation.clone(),
+                        ctx.end_citation.clone(),
+                        markup,
+                    ))
+                })
+            };
+            if let Some((div1, div2, start, end, source_text)) = passage_args {
+                // Close the gloss overlay first, restoring reader position,
+                // then open the journal passage ask.
+                {
+                    let mut s = state.borrow_mut();
+                    s.tts.stop();
+                    s.gloss_overlay.hide();
+                    // Restore the saved position so journal return_pos is coherent.
+                    if let Some((line, top)) = s.gloss_return_pos.take() {
+                        s.current_line = line;
+                        s.page_top_line = top;
+                    }
+                    s.input_mode = crate::app::InputMode::Reader;
+                }
+                crate::input::actions::journal::begin_passage_ask(
+                    state, div1, div2, start, end, source_text,
+                );
+                crate::logging::log("JOURNAL-FROM-GLOSS: opened passage ask from gloss overlay");
             }
             true
         }

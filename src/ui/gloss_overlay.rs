@@ -1,27 +1,20 @@
 use crate::ui::ask_card::{AskCard, AskFocus};
 use crate::ui::gloss_block::{
-    gloss_blocks, parse_gloss_tags, render_synopsis_with_labels, selected_blocks_text,
-    synopsis_blocks, visual_block_range, BlockKind, GlossBlock, GlossElement,
+    gloss_blocks, render_synopsis_with_labels, selected_blocks_text,
+    synopsis_blocks, visual_block_range, BlockKind, GlossBlock,
 };
-use crate::ui::gloss_ipa::{strip_brackets, strip_ipa};
+use crate::ui::gloss_render::{
+    populate_gloss_buffer, populate_verse_buffer, BarRange, LineNumber,
+};
 use crate::ui::gloss_util::{
     build_diff_markup, cursor_scroll_target, format_citation_range, parse_hex_color,
-    snap_up_to_row, split_echo, CursorScrollGeom,
+    snap_up_to_row, CursorScrollGeom,
 };
+use gtk4::pango;
 use gtk4::prelude::*;
 use gtk4::{self, Align, Label, Overlay};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-
-struct BarRange {
-    start_line: i32,
-    end_line: i32,
-}
-
-struct LineNumber {
-    buffer_line: i32,
-    number: i64,
-}
 
 /// Buffer-line span of one cursor-stop block (source or explication).
 struct BlockRange {
@@ -808,16 +801,16 @@ impl GlossOverlay {
         *self.bar_x.borrow_mut() = bar_left;
 
         // Fixed header: render the source turn into the non-scrolling view.
-        // Reuse populate_gloss_buffer_ex (it builds the speaker/verse tags and
+        // Reuse populate_verse_buffer (it builds the speaker/verse tags and
         // returns empty bar data for a source-only doc).
-        let _ = populate_gloss_buffer_ex(
+        let _ = populate_verse_buffer(
             &self.echo_header_view, source_doc, self.text_margins, bar_left, &[], None, dim_color, None);
         self.echo_header_view.set_visible(true);
         self.echo_rule.set_visible(true);
 
         // Scrolling list: only the echoes. echo_lines/bar_ranges are now indexed
         // from the first echo (no source lines to offset past).
-        let (ranges, nums, echo_lines) = populate_gloss_buffer_ex(
+        let (ranges, nums, echo_lines) = populate_verse_buffer(
             &self.gloss_view, echo_doc, self.text_margins, bar_left, &[], Some(selected), dim_color, None);
         *self.bar_ranges.borrow_mut() = ranges;
         *self.line_numbers.borrow_mut() = nums;
@@ -1799,312 +1792,6 @@ fn line_is_speaker(buffer: &gtk4::TextBuffer, line: i32) -> bool {
             Some("gloss-speaker") | Some("gloss-speaker-first") | Some("gloss-speaker-source")
         )
     })
-}
-
-/// Populate the gloss buffer (no echo highlight); delegates to populate_gloss_buffer_ex.
-fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32, bar_left: i32, source_line_numbers: &[(String, i64)], gloss_dim: Option<&str>, speaker_accent: Option<&str>) -> (Vec<BarRange>, Vec<LineNumber>) {
-    let (ranges, nums, _) = populate_gloss_buffer_ex(view, gloss, _text_margins, bar_left, source_line_numbers, None, gloss_dim, speaker_accent);
-    (ranges, nums)
-}
-
-/// Extended populate that supports highlighting a selected echo (the Nth
-/// `<gloss>` echo element). Returns the buffer line of each echo's quote.
-fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i32, bar_left: i32, source_line_numbers: &[(String, i64)], selected_echo: Option<usize>, dim_color: Option<&str>, speaker_accent: Option<&str>) -> (Vec<BarRange>, Vec<LineNumber>, Vec<i32>) {
-    let buffer = view.buffer();
-    buffer.set_text("");
-
-    let tag_table = buffer.tag_table();
-    for name in &["gloss-speaker", "gloss-speaker-first", "gloss-speaker-source", "gloss-verse", "gloss-stage", "gloss-para", "gloss-bracket", "gloss-quote", "gloss-quote-cont", "gloss-citation", "gloss-pron"] {
-        if let Some(old) = tag_table.lookup(name) {
-            tag_table.remove(&old);
-        }
-    }
-
-    let quote_speaker = bar_left + 60;
-    let quote_verse = quote_speaker + 60;
-
-    // Speaker headings: small-caps, tinted with the accent (root) color so they
-    // read as structural labels rather than body text. Falls back to inherited
-    // fg when no accent is supplied.
-    let apply_accent = |b: gtk4::builders::TextTagBuilder| -> gtk4::builders::TextTagBuilder {
-        match speaker_accent {
-            Some(c) => b.foreground(c),
-            None => b,
-        }
-    };
-
-    let speaker_tag = apply_accent(gtk4::TextTag::builder()
-        .name("gloss-speaker")
-        .variant(pango::Variant::SmallCaps)
-        .weight(400)
-        .scale(0.75)
-        .left_margin(quote_speaker)
-        .pixels_above_lines(36))
-        .build();
-
-    let verse_tag = gtk4::TextTag::builder()
-        .name("gloss-verse")
-        .left_margin(quote_verse)
-        .build();
-
-    // Stage direction inside the quoted source turn: same indent as verse, but
-    // italic — matching the main reading card. Not a cursor stop, not TTS.
-    let stage_tag = gtk4::TextTag::builder()
-        .name("gloss-stage")
-        .left_margin(quote_verse)
-        .style(pango::Style::Italic)
-        .build();
-
-    // Prose gloss recedes behind the verse it explains: dimmer color, slightly
-    // smaller, looser line spacing for the dense commentary. The verse stays the
-    // full-ink "hero".
-    let para_builder = gtk4::TextTag::builder()
-        .name("gloss-para")
-        .left_margin(quote_speaker)
-        .pixels_above_lines(24)
-        .pixels_below_lines(6)
-        .scale(0.92);
-    let para_tag = match dim_color {
-        Some(c) => para_builder.foreground(c).build(),
-        None => para_builder.build(),
-    };
-
-    let speaker_first_tag = apply_accent(gtk4::TextTag::builder()
-        .name("gloss-speaker-first")
-        .variant(pango::Variant::SmallCaps)
-        .weight(400)
-        .scale(0.75)
-        .left_margin(quote_speaker))
-        .build();
-
-    // Speaker label inside the quoted source turn (before the echo list). The
-    // turn may span several speakers; keep them tightly spaced to match the
-    // reader's 8px speaker rhythm rather than the 36px echo-section gap.
-    let speaker_source_tag = apply_accent(gtk4::TextTag::builder()
-        .name("gloss-speaker-source")
-        .variant(pango::Variant::SmallCaps)
-        .weight(400)
-        .scale(0.75)
-        .left_margin(quote_speaker)
-        .pixels_above_lines(8))
-        .build();
-
-    let bracket_tag = gtk4::TextTag::builder()
-        .name("gloss-bracket")
-        .style(pango::Style::Italic)
-        .scale(0.9)
-        .build();
-
-    // Echo quote line: same indent as the paragraph, italic.
-    let quote_tag = gtk4::TextTag::builder()
-        .name("gloss-quote")
-        .left_margin(quote_speaker)
-        .pixels_above_lines(24)
-        .style(pango::Style::Italic)
-        .build();
-
-    // Continuation line of a multi-line verse echo: no top spacing.
-    let quote_cont_tag = gtk4::TextTag::builder()
-        .name("gloss-quote-cont")
-        .left_margin(quote_speaker)
-        .style(pango::Style::Italic)
-        .build();
-
-    // Citation line: indented further, smaller and dimmer. Use the theme's
-    // dim foreground when provided so the source citations recede behind the
-    // echo quotes.
-    let citation_builder = gtk4::TextTag::builder()
-        .name("gloss-citation")
-        .left_margin(quote_verse)
-        .scale(0.85);
-    let citation_tag = match dim_color {
-        Some(c) => citation_builder.foreground(c).build(),
-        None => citation_builder.build(),
-    };
-
-    // Pronunciation teaching note beneath its verse block: italic and slightly
-    // smaller (like the bracket tag), dimmed with the theme's dim foreground
-    // (like the citation/para tags) so it reads as a recessed teaching aside.
-    let pron_builder = gtk4::TextTag::builder()
-        .name("gloss-pron")
-        .left_margin(quote_verse)
-        .style(pango::Style::Italic)
-        .scale(0.92);
-    let pron_tag = match dim_color {
-        Some(c) => pron_builder.foreground(c).build(),
-        None => pron_builder.build(),
-    };
-
-    tag_table.add(&speaker_tag);
-    tag_table.add(&speaker_first_tag);
-    tag_table.add(&speaker_source_tag);
-    tag_table.add(&verse_tag);
-    tag_table.add(&stage_tag);
-    tag_table.add(&para_tag);
-    tag_table.add(&bracket_tag);
-    tag_table.add(&quote_tag);
-    tag_table.add(&quote_cont_tag);
-    tag_table.add(&citation_tag);
-    tag_table.add(&pron_tag);
-
-    let elements = parse_gloss_tags(gloss);
-    let mut first = true;
-    let mut only_speakers_so_far = true;
-    // Whether we have reached the echo list (`<gloss>` elements). Speaker
-    // labels before this belong to the quoted source turn and stay tight.
-    let mut in_echoes = false;
-    let mut bar_ranges: Vec<BarRange> = Vec::new();
-    let mut line_nums: Vec<LineNumber> = Vec::new();
-    let mut echo_lines: Vec<i32> = Vec::new();
-    let mut echo_idx: usize = 0;
-
-    // Build lookup: trimmed verse text → line_in_div
-    let line_lookup: std::collections::HashMap<&str, i64> = source_line_numbers
-        .iter()
-        .map(|(text, num)| (text.trim(), *num))
-        .collect();
-
-    for el in &elements {
-        if !first {
-            let mut end = buffer.end_iter();
-            buffer.insert(&mut end, "\n");
-        }
-        first = false;
-
-        let line = buffer.end_iter().line();
-        let offset = buffer.end_iter().offset();
-        match el {
-            GlossElement::Speaker(name) => {
-                let mut end = buffer.end_iter();
-                buffer.insert(&mut end, name);
-                let start = buffer.iter_at_offset(offset);
-                let tag = if only_speakers_so_far {
-                    &speaker_first_tag
-                } else if in_echoes {
-                    &speaker_tag
-                } else {
-                    // Subsequent speaker within the quoted source turn: tight.
-                    &speaker_source_tag
-                };
-                buffer.apply_tag(tag, &start, &buffer.end_iter());
-            }
-            GlossElement::Verse(text) => {
-                only_speakers_so_far = false;
-                let shown = strip_ipa(text);
-                let mut end = buffer.end_iter();
-                buffer.insert(&mut end, &shown);
-                let start = buffer.iter_at_offset(offset);
-                buffer.apply_tag(&verse_tag, &start, &buffer.end_iter());
-                apply_bracket_styling(&buffer, offset, &bracket_tag);
-
-                // line-number gutter: match on bracket+IPA-stripped, trimmed text
-                let stripped = strip_brackets(&shown);
-                if let Some(&num) = line_lookup.get(stripped.trim()) {
-                    line_nums.push(LineNumber { buffer_line: line, number: num });
-                }
-            }
-            GlossElement::Gloss(text) => {
-                only_speakers_so_far = false;
-                in_echoes = true;
-
-                if let Some((quote, citation)) = split_echo(text) {
-                    let quote = strip_ipa(&quote);
-                    let citation = strip_ipa(&citation);
-                    // Echo: quote on one line, citation indented below it.
-                    let quote_line = buffer.end_iter().line();
-                    echo_lines.push(quote_line);
-                    let is_selected = selected_echo == Some(echo_idx);
-                    echo_idx += 1;
-
-                    let mut end = buffer.end_iter();
-                    buffer.insert(&mut end, &quote);
-                    let qstart = buffer.iter_at_offset(offset);
-                    let quote_end_offset = buffer.end_iter().offset();
-                    let quote_end_iter = buffer.iter_at_offset(quote_end_offset);
-
-                    // Apply quote_tag (with top spacing) to the first visual
-                    // line, quote_cont_tag (no spacing) to continuation lines.
-                    let first_line_end = {
-                        let mut it = qstart.clone();
-                        if !it.ends_line() {
-                            it.forward_to_line_end();
-                        }
-                        if it.offset() > quote_end_offset { quote_end_iter.clone() } else { it }
-                    };
-                    buffer.apply_tag(&quote_tag, &qstart, &first_line_end);
-                    if first_line_end.offset() < quote_end_offset {
-                        buffer.apply_tag(&quote_cont_tag, &first_line_end, &quote_end_iter);
-                    }
-
-                    // The left accent bar (bar_ranges, below) marks the
-                    // selected echo; no background highlight needed.
-
-                    let mut end = buffer.end_iter();
-                    buffer.insert(&mut end, "\n");
-                    let cit_offset = buffer.end_iter().offset();
-                    let mut end = buffer.end_iter();
-                    buffer.insert(&mut end, &citation);
-                    let cstart = buffer.iter_at_offset(cit_offset);
-                    buffer.apply_tag(&citation_tag, &cstart, &buffer.end_iter());
-
-                    // Accent bar beside the selected echo: span the quote's
-                    // first line through the citation line.
-                    if is_selected {
-                        bar_ranges.push(BarRange {
-                            start_line: quote_line,
-                            end_line: buffer.end_iter().line(),
-                        });
-                    }
-                } else {
-                    let shown = strip_ipa(text);
-                    let mut end = buffer.end_iter();
-                    buffer.insert(&mut end, &shown);
-                    let start = buffer.iter_at_offset(offset);
-                    buffer.apply_tag(&para_tag, &start, &buffer.end_iter());
-                }
-            }
-            GlossElement::Pron(_) => {
-                only_speakers_so_far = false;
-                // <pron> notes are no longer shown to the reader: IPA is not
-                // helpful pedagogy and is TTS-only. Already-stored notes are
-                // silently dropped from display. (The tag stays defined; just
-                // unused now.)
-            }
-            GlossElement::Stage(text) => {
-                only_speakers_so_far = false;
-                let mut end = buffer.end_iter();
-                buffer.insert(&mut end, text);
-                let start = buffer.iter_at_offset(offset);
-                buffer.apply_tag(&stage_tag, &start, &buffer.end_iter());
-                // No line-number gutter entry: stage directions are not numbered
-                // verse lines.
-            }
-        }
-    }
-
-    (bar_ranges, line_nums, echo_lines)
-}
-
-fn apply_bracket_styling(buffer: &gtk4::TextBuffer, base_offset: i32, bracket_tag: &gtk4::TextTag) {
-    let text = buffer.text(&buffer.iter_at_offset(base_offset), &buffer.end_iter(), false);
-    let text_str = text.as_str();
-    let mut pos = 0;
-    while pos < text_str.len() {
-        if let Some(open) = text_str[pos..].find('[') {
-            let abs_open = pos + open;
-            if let Some(close) = text_str[abs_open..].find(']') {
-                let abs_close = abs_open + close + 1;
-                let start = buffer.iter_at_offset(base_offset + abs_open as i32);
-                let end = buffer.iter_at_offset(base_offset + abs_close as i32);
-                buffer.apply_tag(bracket_tag, &start, &end);
-                pos = abs_close;
-            } else {
-                break;
-            }
-        } else {
-            break;
-        }
-    }
 }
 
 #[cfg(test)]
