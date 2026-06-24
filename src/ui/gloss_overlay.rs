@@ -334,7 +334,7 @@ impl GlossOverlay {
 
         let footer = crate::ui::footer::build_footer_row(
             text_margins as i32,
-            "Esc close · A add · E edit · D delete · c copy id · Ctrl+n/p passage · Alt+n/p gloss",
+            "J journal · Ctrl+j view jrnl",
         );
         let footer_box = footer.container;
         let citation_label = footer.left;
@@ -1345,7 +1345,7 @@ impl GlossOverlay {
     /// gloss render path and when exiting gloss visual mode, so both share one
     /// string. `\u{21e7}V select` advertises gloss visual mode.
     pub fn set_gloss_hint(&self) {
-        self.hint.set_text("A add · e edit");
+        self.hint.set_text("J journal · Ctrl+j view jrnl");
     }
 
     /// Set the footer hint shown while gloss visual mode is active.
