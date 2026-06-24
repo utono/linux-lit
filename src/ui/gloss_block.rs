@@ -10,6 +10,7 @@ pub(crate) enum GlossElement {
     Verse(String),
     Gloss(String),
     Pron(String),
+    Stage(String),
 }
 
 /// True when a paragraph is a short standalone heading label — e.g.
@@ -195,6 +196,7 @@ pub fn gloss_blocks(gloss: &str) -> Vec<GlossBlock> {
         match el {
             GlossElement::Speaker(_) => { /* drop speaker labels from source text */ }
             GlossElement::Verse(text) => pending_verses.push(text.trim().to_string()),
+            GlossElement::Stage(text) => pending_verses.push(text.trim().to_string()),
             GlossElement::Gloss(text) => {
                 if split_echo(&text).is_some() {
                     continue; // echo bracket: not a cursor stop
@@ -232,6 +234,9 @@ pub(crate) fn parse_gloss_tags(gloss: &str) -> Vec<GlossElement> {
                 remaining = el.1;
             } else if let Some(el) = try_extract(after_open, "verse") {
                 elements.push(GlossElement::Verse(el.0.to_string()));
+                remaining = el.1;
+            } else if let Some(el) = try_extract(after_open, "stage") {
+                elements.push(GlossElement::Stage(el.0.to_string()));
                 remaining = el.1;
             } else if let Some(el) = try_extract(after_open, "gloss") {
                 elements.push(GlossElement::Gloss(el.0.to_string()));
@@ -284,6 +289,7 @@ fn carry_forward_block_speakers(elements: Vec<GlossElement>) -> Vec<GlossElement
             }
             GlossElement::Gloss(_) => prev_was_gloss = true,
             GlossElement::Pron(_) => {}
+            GlossElement::Stage(_) => {}
         }
         out.push(el);
     }
@@ -351,7 +357,7 @@ pub(crate) fn replace_word_ipa_in_source_block(
                         pending_ords.clear();
                     }
                 }
-                GlossElement::Speaker(_) | GlossElement::Pron(_) => {}
+                GlossElement::Speaker(_) | GlossElement::Pron(_) | GlossElement::Stage(_) => {}
             }
         }
         // trailing run (gloss that ends on verse)
@@ -539,6 +545,44 @@ mod block_tests {
         assert_eq!(blocks[0].kind, BlockKind::Explication);
         assert_eq!(blocks[0].text, "The operative word /ˈsʊfər/ carries the line.");
         assert_eq!(blocks[0].display, "The operative word carries the line.");
+    }
+
+    #[test]
+    fn parse_extracts_stage_element() {
+        let g = "<verse>Lay hands upon these traitors and their trash.</verse>\n\
+                 <stage>[To Jourdain.]</stage>\n\
+                 <verse>Beldam, I think we watched you at an</verse>";
+        let els = parse_gloss_tags(g);
+        assert!(matches!(&els[0], GlossElement::Verse(_)));
+        assert!(
+            matches!(&els[1], GlossElement::Stage(t) if t == "[To Jourdain.]"),
+            "expected a Stage element carrying the direction, got {:?}", els.get(1)
+        );
+        assert!(matches!(&els[2], GlossElement::Verse(_)));
+    }
+
+    #[test]
+    fn stage_line_stays_in_source_block() {
+        // A stage direction between two verses by the same speaker must not split
+        // the source block or create an extra cursor stop.
+        let gloss = "<speaker>YORK</speaker>\n\
+                     <verse>Lay hands upon these traitors and their trash.</verse>\n\
+                     <stage>[To Jourdain.]</stage>\n\
+                     <verse>Beldam, I think we watched you at an</verse>\n\
+                     <gloss>York gloatingly arrests the conjurers.</gloss>";
+        let blocks = gloss_blocks(gloss);
+        // Exactly one Source block + one Explication block.
+        let sources: Vec<_> = blocks.iter()
+            .filter(|b| b.kind == BlockKind::Source).collect();
+        assert_eq!(sources.len(), 1, "stage line must not split the source block");
+        // The source block's text includes the stage line.
+        assert!(
+            sources[0].text.contains("[To Jourdain.]"),
+            "source block text should carry the stage line, got {:?}", sources[0].text
+        );
+        // And both verses.
+        assert!(sources[0].text.contains("Lay hands"));
+        assert!(sources[0].text.contains("Beldam"));
     }
 }
 

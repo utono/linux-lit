@@ -2044,6 +2044,7 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
                 // silently dropped from display. (The tag stays defined; just
                 // unused now.)
             }
+            GlossElement::Stage(_) => {} // TODO(task-3): render stage italic
         }
     }
 
