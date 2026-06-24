@@ -398,6 +398,7 @@ pub(crate) fn block_start_for_line(
     page_top: usize,
     last_fit: usize,
     is_prose: bool,
+    lookup: StageLookup,
 ) -> usize {
     use crate::db::line_types;
     let line_text = |i: usize| -> String {
@@ -408,8 +409,8 @@ pub(crate) fn block_start_for_line(
     };
     let is_blank = |i: usize| line_types::is_blank(&line_text(i));
     let is_speaker = |i: usize| line_types::is_speaker(&line_text(i));
-    let is_stage = |i: usize| line_types::is_stage_direction(&line_text(i));
-    let is_dialogue = |i: usize| line_types::is_dialogue(&line_text(i), is_prose);
+    let is_stage = |i: usize| is_stage_db_first(i, &line_text(i), lookup);
+    let is_dialogue = |i: usize| is_dialogue_db_first(i, &line_text(i), is_prose, lookup);
     let is_stanza_number = |i: usize| line_types::is_stanza_number(&line_text(i));
     block_start_for_line_pure(page_top, last_fit, is_prose,
         &is_blank, &is_speaker, &is_stage, &is_dialogue, &is_stanza_number)
@@ -426,6 +427,7 @@ pub(crate) fn trim_block_atoms(
     text_view: &sourceview5::View,
     buffer: &sourceview5::Buffer,
     is_prose: bool,
+    lookup: StageLookup,
 ) -> VisibleRange {
     use crate::db::line_types;
     let line_text = |i: usize| -> String {
@@ -436,8 +438,8 @@ pub(crate) fn trim_block_atoms(
     };
     let is_blank = |i: usize| line_types::is_blank(&line_text(i));
     let is_speaker = |i: usize| line_types::is_speaker(&line_text(i));
-    let is_stage = |i: usize| line_types::is_stage_direction(&line_text(i));
-    let is_dialogue = |i: usize| line_types::is_dialogue(&line_text(i), is_prose);
+    let is_stage = |i: usize| is_stage_db_first(i, &line_text(i), lookup);
+    let is_dialogue = |i: usize| is_dialogue_db_first(i, &line_text(i), is_prose, lookup);
     let is_stanza_number = |i: usize| line_types::is_stanza_number(&line_text(i));
     let line_height = |i: usize| -> i32 {
         let Some(iter) = buffer.iter_at_line(i as i32) else { return 0 };
@@ -602,7 +604,7 @@ pub(crate) fn trim_visible_range(
     is_prose: bool,
     is_break: Option<&dyn Fn(usize) -> bool>,
 ) -> VisibleRange {
-    trim_visible_range_opts(range, page_top, text_view, buffer, is_prose, false, is_break)
+    trim_visible_range_opts(range, page_top, text_view, buffer, is_prose, false, is_break, no_stage_lookup())
 }
 
 /// Like `trim_visible_range`, but `relax_underfill` raises the fill-guard
@@ -622,11 +624,12 @@ pub(crate) fn trim_visible_range_opts(
     is_prose: bool,
     relax_underfill: bool,
     is_break: Option<&dyn Fn(usize) -> bool>,
+    lookup: StageLookup,
 ) -> VisibleRange {
     let r = clamp_at_section_break(range, page_top, text_view, buffer, is_break);
     let r = trim_trailing_speakers(r, page_top, text_view, buffer);
     let r2 = r;
-    let r = trim_block_atoms(r, page_top, text_view, buffer, is_prose);
+    let r = trim_block_atoms(r, page_top, text_view, buffer, is_prose, lookup);
     let r = trim_trailing_speakers(r, page_top, text_view, buffer);
     // Viewport fill guard: if block-atom trim + speaker trim left the column
     // under-full, the removed block was too large relative to the remaining
@@ -1309,7 +1312,7 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
         // Right column is the bottom of the spread: relax the underfill guard
         // so a too-tall block splits across the boundary to fill the column
         // rather than leaving a mid-spread gap.
-        trim_visible_range_opts(r, split, &state.right_view, &state.buffer, is_prose, true, is_break)
+        trim_visible_range_opts(r, split, &state.right_view, &state.buffer, is_prose, true, is_break, no_stage_lookup())
     } else {
         visible_range(&state.right_view, &state.buffer, split, line_count, 1)
     };
