@@ -602,12 +602,7 @@ impl GlossOverlay {
         self.apply_font();
     }
 
-    pub fn show_gloss_with_color(&self, original: &str, gloss: &str, card_width: i32, card_height: i32, root_color: Option<&str>, source_line_numbers: &[(String, i64)]) {
-        // Splice in any stage directions the stored gloss omitted, so the source
-        // block matches the main reading card. `original` is the real passage
-        // (every caller passes ctx.source_text).
-        let gloss_injected = inject_stage_directions(gloss, original);
-        let gloss = gloss_injected.as_str();
+    pub fn show_gloss_with_color(&self, _original: &str, gloss: &str, card_width: i32, card_height: i32, root_color: Option<&str>, source_line_numbers: &[(String, i64)]) {
         // No synopsis label bolding in gloss view.
         self.synopsis_label_ranges.borrow_mut().clear();
         self.container.set_width_request(card_width);
@@ -1802,85 +1797,6 @@ fn line_is_speaker(buffer: &gtk4::TextBuffer, line: i32) -> bool {
 /// `<gloss>` blocks, line numbers, cursor stops, and audio coloring are
 /// untouched. If a stored verse never matches a real line, the cursor does not
 /// advance for it, so we only ever inject unambiguously-positioned stage lines.
-fn inject_stage_directions(gloss_text: &str, source_text: &str) -> String {
-    use crate::db::line_types::is_stage_direction;
-    use crate::ui::gloss_ipa::{strip_brackets, strip_ipa};
-
-    let source_lines: Vec<&str> = source_text.lines().collect();
-    // Fast exit: nothing to inject.
-    if !source_lines.iter().any(|l| is_stage_direction(l)) {
-        return gloss_text.to_string();
-    }
-
-    // Normalize a verse/source line for matching: drop inline IPA and brackets,
-    // trim. Mirrors the line-number gutter match in populate_gloss_buffer_ex.
-    let norm = |s: &str| -> String { strip_brackets(&strip_ipa(s)).trim().to_string() };
-
-    let mut out = String::with_capacity(gloss_text.len() + 64);
-    let mut src_cursor = 0usize; // next unconsumed real source line
-    let mut rest = gloss_text;
-
-    while let Some(open) = rest.find("<verse>") {
-        let after_open = open + "<verse>".len();
-        let close = match rest[after_open..].find("</verse>") {
-            Some(c) => after_open + c,
-            None => break, // malformed; bail, leaving remainder intact below
-        };
-        let verse_inner = &rest[after_open..close];
-        let want = norm(verse_inner);
-
-        // Find this verse in the real source from the cursor; collect any stage
-        // lines passed on the way.
-        let mut pending_stage: Vec<&str> = Vec::new();
-        let mut matched_at: Option<usize> = None;
-        let mut i = src_cursor;
-        while i < source_lines.len() {
-            let line = source_lines[i];
-            if is_stage_direction(line) {
-                pending_stage.push(line);
-                i += 1;
-                continue;
-            }
-            if norm(line) == want {
-                matched_at = Some(i);
-                break;
-            }
-            // A real verse line that doesn't match this stored verse: stop
-            // scanning so we don't swallow stage lines belonging to a later
-            // verse. Leave the cursor; this stored verse simply isn't matched.
-            break;
-        }
-
-        // Emit everything up to and including this </verse>, with any stage
-        // lines spliced in immediately before the <verse> open tag.
-        out.push_str(&rest[..open]);
-        if matched_at.is_some() {
-            for sd in &pending_stage {
-                out.push_str(&format!("<stage>{}</stage>\n", sd));
-            }
-        }
-        let verse_end = close + "</verse>".len();
-        out.push_str(&rest[open..verse_end]);
-
-        if let Some(m) = matched_at {
-            src_cursor = m + 1;
-        }
-        rest = &rest[verse_end..];
-    }
-    // Flush trailing stage directions: a turn that ends on a stage direction
-    // (after its last verse) must show it in the result card too, matching the
-    // loading card. Stop at the first non-stage line so we don't pull in stray
-    // directions from beyond this turn.
-    for line in source_lines.get(src_cursor..).unwrap_or(&[]) {
-        if !is_stage_direction(line) {
-            break;
-        }
-        out.push_str(&format!("<stage>{}</stage>\n", line));
-    }
-    out.push_str(rest);
-    out
-}
-
 fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32, bar_left: i32, source_line_numbers: &[(String, i64)], gloss_dim: Option<&str>, speaker_accent: Option<&str>) -> (Vec<BarRange>, Vec<LineNumber>) {
     let (ranges, nums, _) = populate_gloss_buffer_ex(view, gloss, _text_margins, bar_left, source_line_numbers, None, gloss_dim, speaker_accent);
     (ranges, nums)
@@ -2186,56 +2102,3 @@ fn apply_bracket_styling(buffer: &gtk4::TextBuffer, base_offset: i32, bracket_ta
     }
 }
 
-#[cfg(test)]
-mod stage_inject_tests {
-    use super::inject_stage_directions;
-
-    #[test]
-    fn injects_stage_between_verses() {
-        // Stored gloss: verse only, with an explication lede between blocks.
-        let gloss = "<speaker>YORK</speaker>\n\
-                     <verse>Lay hands upon these traitors and their trash.</verse>\n\
-                     <verse>Beldam, I think we watched you at an</verse>\n\
-                     <gloss>York gloatingly arrests the conjurers.</gloss>";
-        // Real source: same lines with a stage direction interleaved.
-        let source = "Lay hands upon these traitors and their trash.\n\
-                      [To Jourdain.]\n\
-                      Beldam, I think we watched you at an";
-        let out = inject_stage_directions(gloss, source);
-        // The stage line is injected, before the verse that follows it.
-        assert!(out.contains("<stage>[To Jourdain.]</stage>"),
-            "expected injected stage line, got:\n{out}");
-        let stage_at = out.find("[To Jourdain.]").unwrap();
-        let beldam_at = out.find("Beldam").unwrap();
-        assert!(stage_at < beldam_at,
-            "stage must precede the following verse, got:\n{out}");
-        // Explication is untouched.
-        assert!(out.contains("<gloss>York gloatingly arrests the conjurers.</gloss>"));
-    }
-
-    #[test]
-    fn no_stage_in_source_is_identity() {
-        let gloss = "<speaker>YORK</speaker>\n<verse>Lay hands.</verse>";
-        let source = "Lay hands.";
-        assert_eq!(inject_stage_directions(gloss, source), gloss);
-    }
-
-    #[test]
-    fn injects_trailing_stage_after_last_verse() {
-        // A turn ending on a stage direction must still show it in the result card.
-        let gloss = "<speaker>STAFFORD</speaker>\n\
-                     <verse>We'll see your trinkets here all forthcoming.</verse>\n\
-                     <verse>All away!</verse>\n\
-                     <gloss>Stafford clears the scene.</gloss>";
-        let source = "We'll see your trinkets here all forthcoming.\n\
-                      All away!\n\
-                      [Stafford exits.]";
-        let out = inject_stage_directions(gloss, source);
-        assert!(out.contains("<stage>[Stafford exits.]</stage>"),
-            "trailing stage direction must be injected, got:\n{out}");
-        // It comes after the last verse.
-        let away_at = out.find("All away!").unwrap();
-        let stage_at = out.find("[Stafford exits.]").unwrap();
-        assert!(stage_at > away_at, "trailing stage must follow the last verse, got:\n{out}");
-    }
-}
