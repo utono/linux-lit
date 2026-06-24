@@ -32,7 +32,7 @@ pub fn find_word_occurrences(
          JOIN works w ON w.abbrev = lm.work_abbrev
          WHERE w.author = ?1
            AND lm.normalized_text LIKE ?2
-         ORDER BY lm.work_abbrev, lm.div1, COALESCE(lm.div2, 0), lm.line_in_div",
+         ORDER BY lm.work_abbrev, lm.div1, COALESCE(lm.div2, 0), lm.line_in_div, lm.sub_line",
     )?;
     let rows = stmt.query_map(rusqlite::params![author, &pattern], |row| {
         Ok(ConcordanceRow {

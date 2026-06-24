@@ -388,10 +388,15 @@ fn update_next_scene_watermark(state: &AppState, cs: &super::viewport::ColumnSpl
     // `next_page_top < line_count`, which also excludes END-OF-WORK (there
     // `next_page_top == line_count`) and the empty-LEFT first-spread mirror
     // (`split == 0`, where the right column is non-empty and has dialogue).
+    let stage_lookup = |bi: usize| -> Option<i64> {
+        state.work_line_for_buffer(bi)
+            .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+            .map(|l| l.sub_line)
+    };
     let next_opens_scene =
         cs.next_page_top < line_count && state.is_section_start(cs.next_page_top);
     let right_has_dialogue = (cs.split..=cs.page_end.min(line_count.saturating_sub(1)))
-        .any(|l| super::viewport::is_dialogue_line(&state.buffer, l));
+        .any(|l| super::viewport::is_dialogue_line(&state.buffer, l, &stage_lookup));
     let empty_right = (cs.page_end < cs.split || (next_opens_scene && !right_has_dialogue))
         && cs.next_page_top < line_count;
     if !empty_right {
@@ -901,11 +906,18 @@ pub(crate) fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize)
                 // last fully-visible dialogue line so a line is always highlighted.
                 let visible_end = super::viewport::last_fully_visible_line(state, state.page_top_line);
                 if state.current_line > visible_end {
-                    let capped = super::viewport::prev_dialogue_line(
-                        &state.buffer, &state.translation_lines, visible_end + 1,
-                    )
-                    .filter(|&d| d >= state.page_top_line && d <= visible_end)
-                    .unwrap_or(visible_end);
+                    let capped = {
+                        let stage_lookup = |bi: usize| -> Option<i64> {
+                            state.work_line_for_buffer(bi)
+                                .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+                                .map(|l| l.sub_line)
+                        };
+                        super::viewport::prev_dialogue_line(
+                            &state.buffer, &state.translation_lines, visible_end + 1, &stage_lookup,
+                        )
+                        .filter(|&d| d >= state.page_top_line && d <= visible_end)
+                        .unwrap_or(visible_end)
+                    };
                     log_fmt!("NAV_FWD_LASTPAGE: cursor {} off-screen, capped to last visible {}",
                              state.current_line, capped);
                     state.current_line = capped;
@@ -976,8 +988,13 @@ pub(crate) fn scroll_after_jump_backward(state: &mut AppState) {
                     target
                 } else {
                     let last_vis = super::viewport::last_fully_visible_line(state, new_top);
+                    let stage_lookup = |bi: usize| -> Option<i64> {
+                        state.work_line_for_buffer(bi)
+                            .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+                            .map(|l| l.sub_line)
+                    };
                     super::viewport::prev_dialogue_line(
-                        &state.buffer, &state.translation_lines, last_vis + 1,
+                        &state.buffer, &state.translation_lines, last_vis + 1, &stage_lookup,
                     )
                     .filter(|&d| d >= new_top)
                     .unwrap_or(last_vis)

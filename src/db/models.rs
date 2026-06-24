@@ -33,6 +33,10 @@ pub struct Line {
     pub div1: i64,
     pub div2: i64,
     pub line_in_div: i64,
+    /// Sub-line within a spoken line: 0 = the spoken line itself; 1..N = stage
+    /// directions sharing that line's `line_in_div` (document order). Stage rows
+    /// have `speaker=None` and `is_dialogue=false`.
+    pub sub_line: i64,
     /// Whether this line is a chapter marker.
     pub is_chapter: bool,
     /// Whether this line is spoken in the active media file.

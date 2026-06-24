@@ -8,7 +8,7 @@ use crate::db::line_types;
 use crate::input::highlight::update_highlight_and_advance_page;
 use crate::input::navigation;
 use crate::input::viewport::{buffer_line_text, is_dialogue_line, last_fully_visible_line,
-                              next_dialogue_line};
+                              next_dialogue_line, no_stage_lookup};
 
 /// Grouped state for the in-app navigation test harness (Ctrl+Shift+T /
 /// LIT_NAV_FUZZ). Was six flat `nav_test_*` fields on AppState; grouped per
@@ -276,7 +276,7 @@ fn seed_fuzz_bookmarks(s: &mut AppState) {
     let mut marks = vec![false; line_count];
     let mut n = 0;
     for i in 0..line_count {
-        if is_dialogue_line(&s.buffer, i) {
+        if is_dialogue_line(&s.buffer, i, no_stage_lookup()) {
             // Every 40th dialogue line → bookmarks land far enough apart that most
             // jumps turn the page rather than staying on the current spread.
             if n % 40 == 0 {
@@ -430,7 +430,7 @@ fn run_step(s: &mut AppState) {
             // be dialogue — an arbitrary +50 could land on a speaker/stage line).
             let line_count = s.effective_line_count();
             let raw = (s.current_line + 50).min(line_count.saturating_sub(1));
-            let target = next_dialogue_line(&s.buffer, &s.translation_lines, raw, line_count)
+            let target = next_dialogue_line(&s.buffer, &s.translation_lines, raw, line_count, no_stage_lookup())
                 .filter(|&d| d < line_count)
                 .unwrap_or(raw);
             s.current_line = target;
@@ -443,7 +443,7 @@ fn run_step(s: &mut AppState) {
         Step::SyncAdvance => {
             let line_count = s.effective_line_count();
             if let Some(target) = next_dialogue_line(
-                &s.buffer, &s.translation_lines, s.current_line, line_count,
+                &s.buffer, &s.translation_lines, s.current_line, line_count, no_stage_lookup(),
             ) {
                 s.current_line = target;
                 update_highlight_and_advance_page(s);
@@ -518,7 +518,7 @@ fn run_step(s: &mut AppState) {
     let pre_is_final = {
         let cs_pre = crate::input::viewport::column_split(s, pre_top);
         cs_pre.next_page_top >= line_count
-            || !(cs_pre.next_page_top..line_count).any(|i| is_dialogue_line(&s.buffer, i))
+            || !(cs_pre.next_page_top..line_count).any(|i| is_dialogue_line(&s.buffer, i, no_stage_lookup()))
     };
     // Two-column only; skip the no-op, the first-spread guard (pre_top==0), and
     // the forward-pulled final spread.
@@ -532,7 +532,7 @@ fn run_step(s: &mut AppState) {
         let fwd = crate::input::viewport::column_split(s, post_top).next_page_top;
         if fwd > pre_top {
             // Overlap is only a bug if the doubled lines contain DIALOGUE.
-            if (pre_top..fwd).any(|i| is_dialogue_line(&s.buffer, i)) {
+            if (pre_top..fwd).any(|i| is_dialogue_line(&s.buffer, i, no_stage_lookup())) {
                 fail(s, step_num, step, &format!(
                     "y OVERLAP: back-page top={} runs to next_page_top={} PAST old top={} ({} lines shown twice)",
                     post_top, fwd, pre_top, fwd - pre_top
@@ -546,7 +546,7 @@ fn run_step(s: &mut AppState) {
             // and the ACT/SCENE heading — not skipped reading content. Confirmed
             // by diagnostics on 1H4 (gap lines 124-126 = blank / '[They exit.]' /
             // blank). Exempt non-dialogue gaps.
-            if (fwd..pre_top).any(|i| is_dialogue_line(&s.buffer, i)) {
+            if (fwd..pre_top).any(|i| is_dialogue_line(&s.buffer, i, no_stage_lookup())) {
                 fail(s, step_num, step, &format!(
                     "y GAP: back-page top={} ends at next_page_top={} before old top={} ({} dialogue lines skipped)",
                     post_top, fwd, pre_top, pre_top - fwd
@@ -589,7 +589,7 @@ fn run_step(s: &mut AppState) {
         let left_lines = cs.split.saturating_sub(post_top);
         let right_lines = (cs.page_end + 1).saturating_sub(cs.split);
         let more_below = cs.next_page_top < line_count
-            && (cs.next_page_top..line_count).any(|i| is_dialogue_line(&s.buffer, i));
+            && (cs.next_page_top..line_count).any(|i| is_dialogue_line(&s.buffer, i, no_stage_lookup()));
         // A short right column is EXPECTED when it clamped at a section break:
         // the next scene legitimately starts the following spread (the chosen
         // "stop at scene break" reading model), so the content "below" is a new
@@ -627,7 +627,7 @@ fn run_step(s: &mut AppState) {
     let on_final_spread = {
         let lv = last_fully_visible_line(s, post_top);
         lv + 1 >= line_count
-            || next_dialogue_line(&s.buffer, &s.translation_lines, lv, line_count)
+            || next_dialogue_line(&s.buffer, &s.translation_lines, lv, line_count, no_stage_lookup())
                 .map(|d| d >= line_count)
                 .unwrap_or(true)
     };
@@ -759,7 +759,7 @@ fn run_step(s: &mut AppState) {
     // simulation artifact, not a bug — warn instead of fail.
     if s.current_work.as_ref().map(|w| w.work_type == "play").unwrap_or(false)
         && post_line < line_count
-        && !is_dialogue_line(&s.buffer, post_line)
+        && !is_dialogue_line(&s.buffer, post_line, no_stage_lookup())
     {
         let text = buffer_line_text(&s.buffer, post_line);
         let msg = format!(
@@ -809,7 +809,7 @@ fn run_step(s: &mut AppState) {
             // worth showing (not just trailing blanks/exit markers).
             let mut remaining_content = false;
             for i in cs.next_page_top..line_count {
-                if is_dialogue_line(&s.buffer, i) { remaining_content = true; break; }
+                if is_dialogue_line(&s.buffer, i, no_stage_lookup()) { remaining_content = true; break; }
             }
             if remaining_content {
                 fail(s, step_num, step, &format!(

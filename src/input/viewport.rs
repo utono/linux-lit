@@ -398,6 +398,7 @@ pub(crate) fn block_start_for_line(
     page_top: usize,
     last_fit: usize,
     is_prose: bool,
+    lookup: StageLookup,
 ) -> usize {
     use crate::db::line_types;
     let line_text = |i: usize| -> String {
@@ -408,8 +409,8 @@ pub(crate) fn block_start_for_line(
     };
     let is_blank = |i: usize| line_types::is_blank(&line_text(i));
     let is_speaker = |i: usize| line_types::is_speaker(&line_text(i));
-    let is_stage = |i: usize| line_types::is_stage_direction(&line_text(i));
-    let is_dialogue = |i: usize| line_types::is_dialogue(&line_text(i), is_prose);
+    let is_stage = |i: usize| is_stage_db_first(i, &line_text(i), lookup);
+    let is_dialogue = |i: usize| is_dialogue_db_first(i, &line_text(i), is_prose, lookup);
     let is_stanza_number = |i: usize| line_types::is_stanza_number(&line_text(i));
     block_start_for_line_pure(page_top, last_fit, is_prose,
         &is_blank, &is_speaker, &is_stage, &is_dialogue, &is_stanza_number)
@@ -426,6 +427,7 @@ pub(crate) fn trim_block_atoms(
     text_view: &sourceview5::View,
     buffer: &sourceview5::Buffer,
     is_prose: bool,
+    lookup: StageLookup,
 ) -> VisibleRange {
     use crate::db::line_types;
     let line_text = |i: usize| -> String {
@@ -436,8 +438,8 @@ pub(crate) fn trim_block_atoms(
     };
     let is_blank = |i: usize| line_types::is_blank(&line_text(i));
     let is_speaker = |i: usize| line_types::is_speaker(&line_text(i));
-    let is_stage = |i: usize| line_types::is_stage_direction(&line_text(i));
-    let is_dialogue = |i: usize| line_types::is_dialogue(&line_text(i), is_prose);
+    let is_stage = |i: usize| is_stage_db_first(i, &line_text(i), lookup);
+    let is_dialogue = |i: usize| is_dialogue_db_first(i, &line_text(i), is_prose, lookup);
     let is_stanza_number = |i: usize| line_types::is_stanza_number(&line_text(i));
     let line_height = |i: usize| -> i32 {
         let Some(iter) = buffer.iter_at_line(i as i32) else { return 0 };
@@ -446,6 +448,43 @@ pub(crate) fn trim_block_atoms(
     };
     trim_block_atoms_pure(range, page_top, is_prose,
         &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height, &is_stanza_number)
+}
+
+/// Maps a buffer line index to its mapped DB `sub_line` (0 = spoken, >0 = stage
+/// direction), or `None` when the buffer line has no mapped work line.
+pub(crate) type StageLookup<'a> = &'a dyn Fn(usize) -> Option<i64>;
+
+/// The always-`None` lookup: forces pure regex classification. Used by callers
+/// with no `AppState`/`LineMap` in scope (tests, mid-load, no-coverage works).
+pub(crate) fn no_stage_lookup() -> StageLookup<'static> {
+    &|_| None
+}
+
+/// Stage-direction check: prefer the mapped DB row (`sub_line > 0`), else regex.
+pub(crate) fn is_stage_db_first(line_index: usize, text: &str, lookup: StageLookup) -> bool {
+    use crate::db::line_types;
+    match lookup(line_index) {
+        Some(sub_line) => sub_line > 0,
+        None => line_types::is_stage_direction(text),
+    }
+}
+
+/// Dialogue check: a mapped stage row (`sub_line > 0`) is never dialogue; a
+/// mapped spoken row falls through to the text heuristic (it still distinguishes
+/// speaker/separator/blank); an unmapped line uses the text heuristic entirely.
+pub(crate) fn is_dialogue_db_first(
+    line_index: usize,
+    text: &str,
+    is_prose: bool,
+    lookup: StageLookup,
+) -> bool {
+    use crate::db::line_types;
+    if let Some(sub_line) = lookup(line_index) {
+        if sub_line > 0 {
+            return false; // stage direction: never dialogue
+        }
+    }
+    line_types::is_dialogue(text, is_prose)
 }
 
 /// Scan (page_top, last_fit] for a line that STARTS a new scene/section and, if
@@ -565,7 +604,7 @@ pub(crate) fn trim_visible_range(
     is_prose: bool,
     is_break: Option<&dyn Fn(usize) -> bool>,
 ) -> VisibleRange {
-    trim_visible_range_opts(range, page_top, text_view, buffer, is_prose, false, is_break)
+    trim_visible_range_opts(range, page_top, text_view, buffer, is_prose, false, is_break, no_stage_lookup())
 }
 
 /// Like `trim_visible_range`, but `relax_underfill` raises the fill-guard
@@ -585,11 +624,12 @@ pub(crate) fn trim_visible_range_opts(
     is_prose: bool,
     relax_underfill: bool,
     is_break: Option<&dyn Fn(usize) -> bool>,
+    lookup: StageLookup,
 ) -> VisibleRange {
     let r = clamp_at_section_break(range, page_top, text_view, buffer, is_break);
     let r = trim_trailing_speakers(r, page_top, text_view, buffer);
     let r2 = r;
-    let r = trim_block_atoms(r, page_top, text_view, buffer, is_prose);
+    let r = trim_block_atoms(r, page_top, text_view, buffer, is_prose, lookup);
     let r = trim_trailing_speakers(r, page_top, text_view, buffer);
     // Viewport fill guard: if block-atom trim + speaker trim left the column
     // under-full, the removed block was too large relative to the remaining
@@ -661,8 +701,14 @@ pub(crate) fn is_inside_stage_direction(buffer: &sourceview5::Buffer, line: usiz
 }
 
 /// Check if a buffer line is a dialogue line (not blank, speaker, stage direction, or marker).
-pub(crate) fn is_dialogue_line(buffer: &sourceview5::Buffer, line: usize) -> bool {
+pub(crate) fn is_dialogue_line(buffer: &sourceview5::Buffer, line: usize, lookup: StageLookup) -> bool {
     use crate::db::line_types;
+    // DB-first: a mapped stage row (sub_line > 0) is never dialogue.
+    if let Some(sub_line) = lookup(line) {
+        if sub_line > 0 {
+            return false;
+        }
+    }
     let text = buffer_line_text(buffer, line);
     let trimmed = text.trim();
     let next = buffer_line_text(buffer, line + 1);
@@ -682,11 +728,12 @@ pub(crate) fn next_dialogue_line(
     translation_lines: &[bool],
     current: usize,
     line_count: usize,
+    lookup: StageLookup,
 ) -> Option<usize> {
     let mut i = current + 1;
     while i < line_count {
         if !translation_lines.get(i).copied().unwrap_or(false)
-            && is_dialogue_line(buffer, i)
+            && is_dialogue_line(buffer, i, lookup)
         {
             return Some(i);
         }
@@ -700,6 +747,7 @@ pub(crate) fn prev_dialogue_line(
     buffer: &sourceview5::Buffer,
     translation_lines: &[bool],
     current: usize,
+    lookup: StageLookup,
 ) -> Option<usize> {
     if current == 0 {
         return None;
@@ -707,7 +755,7 @@ pub(crate) fn prev_dialogue_line(
     let mut i = current - 1;
     loop {
         if !translation_lines.get(i).copied().unwrap_or(false)
-            && is_dialogue_line(buffer, i)
+            && is_dialogue_line(buffer, i, lookup)
         {
             return Some(i);
         }
@@ -720,9 +768,9 @@ pub(crate) fn prev_dialogue_line(
 }
 
 /// Find the next dialogue line at or after `from`.
-pub(crate) fn next_dialogue_from(buffer: &sourceview5::Buffer, from: usize, line_count: usize) -> usize {
+pub(crate) fn next_dialogue_from(buffer: &sourceview5::Buffer, from: usize, line_count: usize, lookup: StageLookup) -> usize {
     for i in from..line_count {
-        if is_dialogue_line(buffer, i) {
+        if is_dialogue_line(buffer, i, lookup) {
             return i;
         }
     }
@@ -730,11 +778,11 @@ pub(crate) fn next_dialogue_from(buffer: &sourceview5::Buffer, from: usize, line
 }
 
 /// Find the last dialogue line in the range [from, from+count).
-pub(crate) fn last_dialogue_in_page(buffer: &sourceview5::Buffer, from: usize, count: usize, line_count: usize) -> usize {
+pub(crate) fn last_dialogue_in_page(buffer: &sourceview5::Buffer, from: usize, count: usize, line_count: usize, lookup: StageLookup) -> usize {
     let end = (from + count).min(line_count);
     let mut last = from;
     for i in from..end {
-        if is_dialogue_line(buffer, i) {
+        if is_dialogue_line(buffer, i, lookup) {
             last = i;
         }
     }
@@ -1071,8 +1119,13 @@ pub(crate) fn last_fully_visible_line(state: &AppState, top: usize) -> usize {
     let sec = state.section_starts();
     let bf = sec.map(section_break_fn);
     let is_break = bf.as_ref().map(|f| f as &dyn Fn(usize) -> bool);
-    let trimmed = trim_visible_range(
-        range, top, &state.text_view, &state.buffer, is_prose, is_break,
+    let stage_lookup = |bi: usize| {
+        state.work_line_for_buffer(bi)
+            .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+            .map(|l| l.sub_line)
+    };
+    let trimmed = trim_visible_range_opts(
+        range, top, &state.text_view, &state.buffer, is_prose, false, is_break, &stage_lookup,
     );
     trimmed.last_fit
 }
@@ -1087,6 +1140,11 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
     if line_count == 0 || page_top >= line_count {
         return ColumnSplit { split: page_top, page_end: page_top, next_page_top: line_count };
     }
+    let stage_lookup = |bi: usize| -> Option<i64> {
+        state.work_line_for_buffer(bi)
+            .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+            .map(|l| l.sub_line)
+    };
     let is_prose = state.is_prose();
     // Authoritative section-boundary predicate (DB div columns), shared by both
     // columns and the "right column begins a new scene" check below.
@@ -1264,7 +1322,7 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
         // Right column is the bottom of the spread: relax the underfill guard
         // so a too-tall block splits across the boundary to fill the column
         // rather than leaving a mid-spread gap.
-        trim_visible_range_opts(r, split, &state.right_view, &state.buffer, is_prose, true, is_break)
+        trim_visible_range_opts(r, split, &state.right_view, &state.buffer, is_prose, true, is_break, &stage_lookup)
     } else {
         visible_range(&state.right_view, &state.buffer, split, line_count, 1)
     };
@@ -1277,10 +1335,10 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
     // (the AWW Scene-1→2 underfill). Only skip when everything between is
     // non-dialogue; otherwise advance one line as before.
     let raw_next = (right.last_fit + 1).min(line_count);
-    let next_dlg = next_dialogue_from(&state.buffer, raw_next, line_count);
+    let next_dlg = next_dialogue_from(&state.buffer, raw_next, line_count, &stage_lookup);
     let next_top = if next_dlg > raw_next
         && next_dlg < line_count
-        && (raw_next..next_dlg).all(|l| !is_dialogue_line(&state.buffer, l))
+        && (raw_next..next_dlg).all(|l| !is_dialogue_line(&state.buffer, l, &stage_lookup))
     {
         // Back the next page's top up to the next dialogue's scene heading so the
         // page tiles at the boundary instead of mid-tail. BUT this back-up must
@@ -1339,14 +1397,20 @@ pub(crate) fn next_page_top(state: &AppState, top: usize) -> NextPage {
     if line_count == 0 || top >= line_count {
         return NextPage { new_top: line_count, next_dialogue: line_count };
     }
+    let stage_lookup = |bi: usize| -> Option<i64> {
+        state.work_line_for_buffer(bi)
+            .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+            .map(|l| l.sub_line)
+    };
     let last_visible = last_fully_visible_line(state, top);
     let last = last_dialogue_in_page(
         &state.buffer,
         top,
         last_visible.saturating_sub(top) + 1,
         line_count,
+        &stage_lookup,
     );
-    let next_dialogue = next_dialogue_from(&state.buffer, last + 1, line_count);
+    let next_dialogue = next_dialogue_from(&state.buffer, last + 1, line_count, &stage_lookup);
     if next_dialogue >= line_count {
         return NextPage { new_top: line_count, next_dialogue: line_count };
     }
@@ -1384,6 +1448,11 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
     if current_top == 0 || line_count == 0 {
         return NextPage { new_top: 0, next_dialogue: 0 };
     }
+    let stage_lookup = |bi: usize| -> Option<i64> {
+        state.work_line_for_buffer(bi)
+            .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+            .map(|l| l.sub_line)
+    };
 
     // Tier 1: F8 cache fast path.
     {
@@ -1394,7 +1463,7 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
                     // Return the cached boundary VERBATIM (it tiles); don't re-derive
                     // via back_up_for_speaker (the y-GAP shift). See Tier 2 below.
                     let prev_top = tops[idx - 1];
-                    let next_dialogue = next_dialogue_from(&state.buffer, prev_top, line_count);
+                    let next_dialogue = next_dialogue_from(&state.buffer, prev_top, line_count, &stage_lookup);
                     return NextPage { new_top: prev_top, next_dialogue };
                 }
             }
@@ -1440,7 +1509,7 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
         let next = fwd_boundary(probe);
         if next == current_top {
             // Exact tile — `probe` is the page directly before current_top.
-            let next_dialogue = next_dialogue_from(&state.buffer, probe, line_count);
+            let next_dialogue = next_dialogue_from(&state.buffer, probe, line_count, &stage_lookup);
             return NextPage { new_top: probe, next_dialogue };
         }
         if next > current_top || next <= probe {
@@ -1459,7 +1528,7 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
     }
     // `top` is the latest boundary whose page does not overshoot current_top
     // (worst case 0), and showing it skips no dialogue.
-    let next_dialogue = next_dialogue_from(&state.buffer, top, line_count);
+    let next_dialogue = next_dialogue_from(&state.buffer, top, line_count, &stage_lookup);
     NextPage { new_top: top, next_dialogue }
 }
 
@@ -2778,6 +2847,27 @@ mod headless_pagination_tests {
     #[test]
     fn chaucer_pagination_45lpp() {
         run_author_pagination("chaucer-geoffrey", 45);
+    }
+
+    #[test]
+    fn db_first_classifiers_prefer_db_then_regex() {
+        let stage = |_: usize| Some(2i64);   // mapped stage row
+        let spoken = |_: usize| Some(0i64);  // mapped spoken row
+        let unmapped = |_: usize| None;
+
+        // is_stage: mapped sub_line>0 => stage regardless of text.
+        assert!(super::is_stage_db_first(0, "anything", &stage));
+        assert!(!super::is_stage_db_first(0, "[looks bracketed]", &spoken));
+        // unmapped => regex fallback.
+        assert!(super::is_stage_db_first(0, "[To Jourdain.]", &unmapped));
+        assert!(!super::is_stage_db_first(0, "Lay hands.", &unmapped));
+
+        // is_dialogue: mapped stage row => NOT dialogue; mapped spoken => regex on text.
+        assert!(!super::is_dialogue_db_first(0, "[To Jourdain.]", false, &stage));
+        assert!(super::is_dialogue_db_first(0, "Lay hands.", false, &spoken));
+        // unmapped => regex fallback.
+        assert!(super::is_dialogue_db_first(0, "Lay hands.", false, &unmapped));
+        assert!(!super::is_dialogue_db_first(0, "[To Jourdain.]", false, &unmapped));
     }
 
     /// Pure two-column split over a slice of line texts. `col_lines` is how many

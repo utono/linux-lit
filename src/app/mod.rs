@@ -2262,8 +2262,15 @@ fn snap_near_end_to_canonical(s: &mut AppState) {
         while top > 0 && !s.is_section_start(top) {
             top -= 1;
         }
-        let first = crate::input::viewport::next_dialogue_from(&s.buffer, top, line_count)
-            .min(line_count.saturating_sub(1));
+        let first = {
+            let stage_lookup = |bi: usize| -> Option<i64> {
+                s.work_line_for_buffer(bi)
+                    .and_then(|wi| s.current_work.as_ref()?.lines.get(wi))
+                    .map(|l| l.sub_line)
+            };
+            crate::input::viewport::next_dialogue_from(&s.buffer, top, line_count, &stage_lookup)
+                .min(line_count.saturating_sub(1))
+        };
         if top != s.page_top_line || first != s.current_line {
             crate::logging::log(&format!(
                 "STARTUP: snap one-section page_top {} -> {} (cursor {} -> {})",
@@ -2309,11 +2316,18 @@ fn snap_near_end_to_canonical(s: &mut AppState) {
             return;
         }
         let cs = crate::input::viewport::column_split(s, canonical);
-        let cursor = crate::input::viewport::prev_dialogue_line(
-            &s.buffer, &s.translation_lines, cs.page_end + 1,
-        )
-        .filter(|&d| d >= canonical && d <= cs.page_end)
-        .unwrap_or(s.current_line.min(cs.page_end));
+        let cursor = {
+            let stage_lookup = |bi: usize| -> Option<i64> {
+                s.work_line_for_buffer(bi)
+                    .and_then(|wi| s.current_work.as_ref()?.lines.get(wi))
+                    .map(|l| l.sub_line)
+            };
+            crate::input::viewport::prev_dialogue_line(
+                &s.buffer, &s.translation_lines, cs.page_end + 1, &stage_lookup,
+            )
+            .filter(|&d| d >= canonical && d <= cs.page_end)
+            .unwrap_or(s.current_line.min(cs.page_end))
+        };
         crate::logging::log(&format!(
             "STARTUP: snap near-end page_top {} -> canonical {} (cursor {})",
             s.page_top_line, canonical, cursor
@@ -2944,21 +2958,33 @@ pub fn display_work_at_with_prepared(
         // Snap saved cursor to nearest dialogue line if it landed on
         // non-dialogue (speaker, stage direction, blank, marker).
         let line_count = state.effective_line_count();
-        if state.current_line < line_count
-            && !crate::input::viewport::is_dialogue_line(&state.buffer, state.current_line)
-        {
-            let forward = crate::input::viewport::next_dialogue_line(
-                &state.buffer, &state.translation_lines,
-                state.current_line, line_count,
-            );
-            let backward = if state.current_line > 0 {
-                (0..state.current_line).rev().find(|&i| {
-                    crate::input::viewport::is_dialogue_line(&state.buffer, i)
-                })
+        let snapped = {
+            let stage_lookup = |bi: usize| -> Option<i64> {
+                state.work_line_for_buffer(bi)
+                    .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+                    .map(|l| l.sub_line)
+            };
+            if state.current_line < line_count
+                && !crate::input::viewport::is_dialogue_line(&state.buffer, state.current_line, &stage_lookup)
+            {
+                let forward = crate::input::viewport::next_dialogue_line(
+                    &state.buffer, &state.translation_lines,
+                    state.current_line, line_count, &stage_lookup,
+                );
+                let backward = if state.current_line > 0 {
+                    (0..state.current_line).rev().find(|&i| {
+                        crate::input::viewport::is_dialogue_line(&state.buffer, i, &stage_lookup)
+                    })
+                } else {
+                    None
+                };
+                forward.or(backward)
             } else {
                 None
-            };
-            state.current_line = forward.or(backward).unwrap_or(state.current_line);
+            }
+        };
+        if let Some(snapped_line) = snapped {
+            state.current_line = snapped_line;
         }
 
         // Saved position path: anchor page_top so the cursor is visible.
@@ -3582,13 +3608,12 @@ pub fn apply_reader_gloss_highlighting(state: &mut AppState) {
         return;
     }
 
-    // Match glossed source lines by TEXT, not by citation tuple. A passage's
-    // citation is the BASE work's `line_in_div`, but an Ambrose (`-Amb`) edition
-    // renumbers lines (it inserts stage directions as numbered rows), so the
-    // tuple does not align with `-Amb` `work.lines`. The source TEXT is
-    // edition-identical, so collect every passage's source lines (trimmed) into a
-    // set and tint any buffer line whose mapped work line's text is in it. Same
-    // edition-robust approach as `jump_to_gloss_source_start`.
+    // Match glossed source lines by TEXT (not citation tuple). Base and the
+    // production editions (-Amb/-BBC/-DC) are now byte-identical in line_mapping
+    // (same div/line/sub_line/text — litdb folger-stage-directions), so a tuple
+    // match would also work; text-matching is retained as the edition-robust,
+    // harmless choice (it never mismatches identical text). Same approach as
+    // jump_to_gloss_source_start.
     let glossed_texts: std::collections::HashSet<String> = passages
         .iter()
         .flat_map(|p| p.source_text.lines())
