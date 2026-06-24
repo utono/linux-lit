@@ -602,11 +602,11 @@ impl GlossOverlay {
         self.apply_font();
     }
 
-    pub fn show_gloss_with_color(&self, _original: &str, gloss: &str, card_width: i32, card_height: i32, root_color: Option<&str>, source_line_numbers: &[(String, i64)]) {
+    pub fn show_gloss_with_color(&self, original: &str, gloss: &str, card_width: i32, card_height: i32, root_color: Option<&str>, source_line_numbers: &[(String, i64)]) {
         // Splice in any stage directions the stored gloss omitted, so the source
-        // block matches the main reading card. `_original` is the real passage
+        // block matches the main reading card. `original` is the real passage
         // (every caller passes ctx.source_text).
-        let gloss_injected = inject_stage_directions(gloss, _original);
+        let gloss_injected = inject_stage_directions(gloss, original);
         let gloss = gloss_injected.as_str();
         // No synopsis label bolding in gloss view.
         self.synopsis_label_ranges.borrow_mut().clear();
@@ -1867,6 +1867,16 @@ fn inject_stage_directions(gloss_text: &str, source_text: &str) -> String {
         }
         rest = &rest[verse_end..];
     }
+    // Flush trailing stage directions: a turn that ends on a stage direction
+    // (after its last verse) must show it in the result card too, matching the
+    // loading card. Stop at the first non-stage line so we don't pull in stray
+    // directions from beyond this turn.
+    for line in source_lines.get(src_cursor..).unwrap_or(&[]) {
+        if !is_stage_direction(line) {
+            break;
+        }
+        out.push_str(&format!("<stage>{}</stage>\n", line));
+    }
     out.push_str(rest);
     out
 }
@@ -2208,5 +2218,24 @@ mod stage_inject_tests {
         let gloss = "<speaker>YORK</speaker>\n<verse>Lay hands.</verse>";
         let source = "Lay hands.";
         assert_eq!(inject_stage_directions(gloss, source), gloss);
+    }
+
+    #[test]
+    fn injects_trailing_stage_after_last_verse() {
+        // A turn ending on a stage direction must still show it in the result card.
+        let gloss = "<speaker>STAFFORD</speaker>\n\
+                     <verse>We'll see your trinkets here all forthcoming.</verse>\n\
+                     <verse>All away!</verse>\n\
+                     <gloss>Stafford clears the scene.</gloss>";
+        let source = "We'll see your trinkets here all forthcoming.\n\
+                      All away!\n\
+                      [Stafford exits.]";
+        let out = inject_stage_directions(gloss, source);
+        assert!(out.contains("<stage>[Stafford exits.]</stage>"),
+            "trailing stage direction must be injected, got:\n{out}");
+        // It comes after the last verse.
+        let away_at = out.find("All away!").unwrap();
+        let stage_at = out.find("[Stafford exits.]").unwrap();
+        assert!(stage_at > away_at, "trailing stage must follow the last verse, got:\n{out}");
     }
 }
