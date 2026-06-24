@@ -6,7 +6,6 @@ use gtk4::prelude::{EditableExt, WidgetExt};
 use crate::app::AppState;
 use crate::input::highlight::update_highlight_and_center;
 use crate::input::navigation;
-use crate::input::navigation::SEEK_PREROLL;
 
 /// Handle concordance word selection: query all hits across the author's works,
 /// store them in ConcordanceState, and jump to the first hit in the current work.

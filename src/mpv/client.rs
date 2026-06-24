@@ -41,13 +41,12 @@ pub async fn run(
                                             "MPV: file-loaded, seeking to {:.1} resume={} loop={:?}", seek_time, resume, ab_loop
                                         ));
                                         if let Some((la, lb)) = ab_loop {
-                                            let _ = send_command(w, &format!(r#"{{"command":["set_property","ab-loop-a",{}]}}"#, la)).await;
-                                            let _ = send_command(w, &format!(r#"{{"command":["set_property","ab-loop-b",{}]}}"#, lb)).await;
+                                            let _ = send_command(w, &set_property_cmd("ab-loop-a", la)).await;
+                                            let _ = send_command(w, &set_property_cmd("ab-loop-b", lb)).await;
                                         }
-                                        let cmd = format!(r#"{{"command":["seek",{},"absolute"]}}"#, seek_time);
-                                        let _ = send_command(w, &cmd).await;
+                                        let _ = send_command(w, &seek_absolute_cmd(seek_time)).await;
                                         let pause_val = if resume { "false" } else { "true" };
-                                        let _ = send_command(w, &format!(r#"{{"command":["set_property","pause",{}]}}"#, pause_val)).await;
+                                        let _ = send_command(w, &set_property_cmd("pause", pause_val)).await;
                                     }
                                 }
                             }
@@ -115,22 +114,19 @@ async fn handle_command(
         MpvCommand::ResumeAndSeek(time) => {
             if let Some(w) = writer.as_mut() {
                 crate::logging::log(&format!("MPV: ResumeAndSeek time={:.1}", time));
-                let cmd = format!(r#"{{"command":["seek",{},"absolute"]}}"#, time);
-                let _ = send_command(w, &cmd).await;
+                let _ = send_command(w, &seek_absolute_cmd(time)).await;
                 let _ = send_command(w, r#"{"command":["set_property","pause",false]}"#).await;
             }
         }
         MpvCommand::SetSpeed(speed) => {
             if let Some(w) = writer.as_mut() {
-                let cmd = format!(r#"{{"command":["set_property","speed",{}]}}"#, speed);
-                let _ = send_command(w, &cmd).await;
+                let _ = send_command(w, &set_property_cmd("speed", speed)).await;
             }
         }
         MpvCommand::Seek(time) => {
             if let Some(w) = writer.as_mut() {
                 crate::logging::log(&format!("MPV: Seek time={:.1}", time));
-                let cmd = format!(r#"{{"command":["seek",{},"absolute"]}}"#, time);
-                let _ = send_command(w, &cmd).await;
+                let _ = send_command(w, &seek_absolute_cmd(time)).await;
             }
         }
         MpvCommand::SeekRelative(offset) => {
@@ -155,12 +151,9 @@ async fn handle_command(
         }
         MpvCommand::SetAbLoop { a, b } => {
             if let Some(w) = writer.as_mut() {
-                let cmd_a = format!(r#"{{"command":["set_property","ab-loop-a",{}]}}"#, a);
-                let cmd_b = format!(r#"{{"command":["set_property","ab-loop-b",{}]}}"#, b);
-                let seek = format!(r#"{{"command":["seek",{},"absolute"]}}"#, a);
-                let _ = send_command(w, &cmd_a).await;
-                let _ = send_command(w, &cmd_b).await;
-                let _ = send_command(w, &seek).await;
+                let _ = send_command(w, &set_property_cmd("ab-loop-a", a)).await;
+                let _ = send_command(w, &set_property_cmd("ab-loop-b", b)).await;
+                let _ = send_command(w, &seek_absolute_cmd(a)).await;
             }
         }
         MpvCommand::ClearAbLoop => {
@@ -243,6 +236,20 @@ async fn connect_and_observe(
     )
     .await?;
     Ok((BufReader::new(read_half), write_half))
+}
+
+/// Build a `set_property` IPC command for `prop` with `val` rendered via Display
+/// (f64 for speed/ab-loop, `&str` for the pause "true"/"false" sentinels). The
+/// byte-identical JSON envelope every dynamic-value set_property send repeats.
+fn set_property_cmd(prop: &str, val: impl std::fmt::Display) -> String {
+    format!(r#"{{"command":["set_property","{}",{}]}}"#, prop, val)
+}
+
+/// Build an absolute-seek IPC command to `time` seconds. The byte-identical
+/// envelope shared by ResumeAndSeek / Seek / SetAbLoop / the file-loaded path.
+/// (The `["seek", _, "relative","exact"]` form is a distinct command, not this.)
+fn seek_absolute_cmd(time: f64) -> String {
+    format!(r#"{{"command":["seek",{},"absolute"]}}"#, time)
 }
 
 async fn send_command(
