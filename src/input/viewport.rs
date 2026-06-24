@@ -1135,6 +1135,11 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
     if line_count == 0 || page_top >= line_count {
         return ColumnSplit { split: page_top, page_end: page_top, next_page_top: line_count };
     }
+    let stage_lookup = |bi: usize| -> Option<i64> {
+        state.work_line_for_buffer(bi)
+            .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+            .map(|l| l.sub_line)
+    };
     let is_prose = state.is_prose();
     // Authoritative section-boundary predicate (DB div columns), shared by both
     // columns and the "right column begins a new scene" check below.
@@ -1312,7 +1317,7 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
         // Right column is the bottom of the spread: relax the underfill guard
         // so a too-tall block splits across the boundary to fill the column
         // rather than leaving a mid-spread gap.
-        trim_visible_range_opts(r, split, &state.right_view, &state.buffer, is_prose, true, is_break, no_stage_lookup())
+        trim_visible_range_opts(r, split, &state.right_view, &state.buffer, is_prose, true, is_break, &stage_lookup)
     } else {
         visible_range(&state.right_view, &state.buffer, split, line_count, 1)
     };
@@ -1325,10 +1330,10 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
     // (the AWW Scene-1→2 underfill). Only skip when everything between is
     // non-dialogue; otherwise advance one line as before.
     let raw_next = (right.last_fit + 1).min(line_count);
-    let next_dlg = next_dialogue_from(&state.buffer, raw_next, line_count, no_stage_lookup());
+    let next_dlg = next_dialogue_from(&state.buffer, raw_next, line_count, &stage_lookup);
     let next_top = if next_dlg > raw_next
         && next_dlg < line_count
-        && (raw_next..next_dlg).all(|l| !is_dialogue_line(&state.buffer, l, no_stage_lookup()))
+        && (raw_next..next_dlg).all(|l| !is_dialogue_line(&state.buffer, l, &stage_lookup))
     {
         // Back the next page's top up to the next dialogue's scene heading so the
         // page tiles at the boundary instead of mid-tail. BUT this back-up must
@@ -1387,15 +1392,20 @@ pub(crate) fn next_page_top(state: &AppState, top: usize) -> NextPage {
     if line_count == 0 || top >= line_count {
         return NextPage { new_top: line_count, next_dialogue: line_count };
     }
+    let stage_lookup = |bi: usize| -> Option<i64> {
+        state.work_line_for_buffer(bi)
+            .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+            .map(|l| l.sub_line)
+    };
     let last_visible = last_fully_visible_line(state, top);
     let last = last_dialogue_in_page(
         &state.buffer,
         top,
         last_visible.saturating_sub(top) + 1,
         line_count,
-        no_stage_lookup(),
+        &stage_lookup,
     );
-    let next_dialogue = next_dialogue_from(&state.buffer, last + 1, line_count, no_stage_lookup());
+    let next_dialogue = next_dialogue_from(&state.buffer, last + 1, line_count, &stage_lookup);
     if next_dialogue >= line_count {
         return NextPage { new_top: line_count, next_dialogue: line_count };
     }
@@ -1433,6 +1443,11 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
     if current_top == 0 || line_count == 0 {
         return NextPage { new_top: 0, next_dialogue: 0 };
     }
+    let stage_lookup = |bi: usize| -> Option<i64> {
+        state.work_line_for_buffer(bi)
+            .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+            .map(|l| l.sub_line)
+    };
 
     // Tier 1: F8 cache fast path.
     {
@@ -1443,7 +1458,7 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
                     // Return the cached boundary VERBATIM (it tiles); don't re-derive
                     // via back_up_for_speaker (the y-GAP shift). See Tier 2 below.
                     let prev_top = tops[idx - 1];
-                    let next_dialogue = next_dialogue_from(&state.buffer, prev_top, line_count, no_stage_lookup());
+                    let next_dialogue = next_dialogue_from(&state.buffer, prev_top, line_count, &stage_lookup);
                     return NextPage { new_top: prev_top, next_dialogue };
                 }
             }
@@ -1489,7 +1504,7 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
         let next = fwd_boundary(probe);
         if next == current_top {
             // Exact tile — `probe` is the page directly before current_top.
-            let next_dialogue = next_dialogue_from(&state.buffer, probe, line_count, no_stage_lookup());
+            let next_dialogue = next_dialogue_from(&state.buffer, probe, line_count, &stage_lookup);
             return NextPage { new_top: probe, next_dialogue };
         }
         if next > current_top || next <= probe {
@@ -1508,7 +1523,7 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
     }
     // `top` is the latest boundary whose page does not overshoot current_top
     // (worst case 0), and showing it skips no dialogue.
-    let next_dialogue = next_dialogue_from(&state.buffer, top, line_count, no_stage_lookup());
+    let next_dialogue = next_dialogue_from(&state.buffer, top, line_count, &stage_lookup);
     NextPage { new_top: top, next_dialogue }
 }
 
