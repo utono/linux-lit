@@ -1042,20 +1042,64 @@ fn handle_gloss_key(
             true
         }
         // J (Shift+j): create a journal Q&A page for the gloss's current
-        // source passage. Reads gloss_context for citations/source_text and
-        // opens the journal overlay in Passage band with the ask card ready.
+        // source passage. Reads gloss_context for citations/speaker, resolves
+        // the line range from current_work, and builds <speaker>/<verse>/<stage>
+        // markup via build_source_header — the same markup the journal overlay
+        // feeds to populate_verse_buffer. Plain ctx.source_text is NOT used as
+        // source_text (it lacks verse/stage tags and renders without formatting).
         "J" => {
             // Collect what we need from gloss_context before dropping the borrow.
+            // Build the <speaker>/<verse>/<stage> markup here while we still hold
+            // the borrow that gives access to ctx and current_work.
             let passage_args = {
                 let s = state.borrow();
-                s.gloss_context.as_ref().map(|ctx| {
-                    (
+                s.gloss_context.as_ref().and_then(|ctx| {
+                    let work = s.current_work.as_ref()?;
+
+                    // Parse "ABBR.div1.div2.line_in_div" → (d1, d2, lid).
+                    let cite_tail = |cite: &str| -> Option<(i64, i64, i64)> {
+                        let mut parts = cite.rsplitn(4, '.');
+                        let lid: i64 = parts.next()?.parse().ok()?;
+                        let d2: i64 = parts.next()?.parse().ok()?;
+                        let d1: i64 = parts.next()?.parse().ok()?;
+                        Some((d1, d2, lid))
+                    };
+
+                    let selected_lines: Vec<crate::db::models::Line> =
+                        match (cite_tail(&ctx.start_citation), cite_tail(&ctx.end_citation)) {
+                            (Some((sd1, sd2, s_lid)), Some((_, _, e_lid))) => work
+                                .lines
+                                .iter()
+                                .filter(|l| {
+                                    l.div1 == sd1
+                                        && l.div2 == sd2
+                                        && l.line_in_div >= s_lid
+                                        && l.line_in_div <= e_lid
+                                })
+                                .cloned()
+                                .collect(),
+                            _ => work
+                                .lines
+                                .iter()
+                                .filter(|l| l.div1 == ctx.act && l.div2 == ctx.scene)
+                                .cloned()
+                                .collect(),
+                        };
+
+                    // Build <speaker>/<verse>/<stage> markup — same as the visual
+                    // selection path in visual.rs and action_gloss_from_journal_passage.
+                    let markup = crate::input::actions::echoes::build_source_header(
+                        &selected_lines,
+                        &ctx.speaker,
+                    );
+
+                    Some((
                         ctx.act,
                         ctx.scene,
                         ctx.start_citation.clone(),
                         ctx.end_citation.clone(),
-                        ctx.source_text.clone(),
-                    )
+                        markup,
+                    ))
                 })
             };
             if let Some((div1, div2, start, end, source_text)) = passage_args {
