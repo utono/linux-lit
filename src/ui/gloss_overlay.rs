@@ -432,6 +432,22 @@ impl GlossOverlay {
             table.add(&tag);
             let (start, end) = buffer.bounds();
             buffer.apply_tag(&tag, &start, &end);
+            // The buffer-wide `gloss-font` tag is built with `.font("Family Size")`,
+            // whose Pango description carries a regular (upright) STYLE attribute,
+            // and it is added last — so by add-order priority it overrides the
+            // italic tags' `style(Italic)`, flattening stage directions and inline
+            // bracket directions to upright (the "not italic in the overlay" bug).
+            // Re-assert the italic tags above the font tag, the same way the main
+            // reader re-prioritizes its italic translation tag (src/app/font.rs)
+            // and the synopsis-label bold / audio-cached color are re-asserted below.
+            let top = table.size();
+            for italic in ["gloss-stage", "gloss-bracket"] {
+                if let Some(t) = table.lookup(italic) {
+                    if top > 0 {
+                        t.set_priority(top - 1);
+                    }
+                }
+            }
         }
         // The buffer-wide font tag carries the family's regular weight, so it
         // overrides any earlier bold tag. Re-assert the synopsis label bold so
@@ -2091,3 +2107,44 @@ fn apply_bracket_styling(buffer: &gtk4::TextBuffer, base_offset: i32, bracket_ta
     }
 }
 
+#[cfg(test)]
+mod apply_font_priority_tests {
+    use super::*;
+    use gtk4::prelude::*;
+
+    /// After `show_glossing` (which renders a stage line then calls `apply_font`),
+    /// the italic `gloss-stage` tag must outrank the buffer-wide `gloss-font` tag,
+    /// or the font tag's regular (upright) style flattens the stage italic — the
+    /// "stage directions not italic in the overlay" bug. Mirrors the priority
+    /// dance the main reader does for its italic translation tag (src/app/font.rs)
+    /// and the overlay already does for synopsis-label bold / audio-cached color.
+    #[test]
+    fn stage_tag_outranks_font_tag_after_apply_font() {
+        if gtk4::init().is_err() {
+            eprintln!("skip: no GTK display");
+            return;
+        }
+        let overlay = GlossOverlay::new(1050, 80);
+        // A source turn with a stage direction (build_source_header form).
+        let doc = "<speaker>YORK</speaker>\n\
+                   <verse>Lay hands upon these traitors and their trash.</verse>\n\
+                   <stage>[To Jourdain.]</stage>\n\
+                   <verse>Beldam, I think we watched you at an</verse>";
+        overlay.show_glossing(doc, 1660, 1000, Some("#88aabb"));
+
+        let table = overlay.gloss_view.buffer().tag_table();
+        let stage = table
+            .lookup("gloss-stage")
+            .expect("gloss-stage tag should exist after rendering a <stage> line");
+        let font = table
+            .lookup("gloss-font")
+            .expect("gloss-font tag should exist after apply_font");
+        assert!(
+            stage.priority() > font.priority(),
+            "gloss-stage (prio {}) must outrank gloss-font (prio {}) so its italic \
+             survives the buffer-wide font tag",
+            stage.priority(),
+            font.priority(),
+        );
+    }
+}
