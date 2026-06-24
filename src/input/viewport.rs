@@ -448,6 +448,43 @@ pub(crate) fn trim_block_atoms(
         &is_blank, &is_speaker, &is_stage, &is_dialogue, &line_height, &is_stanza_number)
 }
 
+/// Maps a buffer line index to its mapped DB `sub_line` (0 = spoken, >0 = stage
+/// direction), or `None` when the buffer line has no mapped work line.
+pub(crate) type StageLookup<'a> = &'a dyn Fn(usize) -> Option<i64>;
+
+/// The always-`None` lookup: forces pure regex classification. Used by callers
+/// with no `AppState`/`LineMap` in scope (tests, mid-load, no-coverage works).
+pub(crate) fn no_stage_lookup() -> StageLookup<'static> {
+    &|_| None
+}
+
+/// Stage-direction check: prefer the mapped DB row (`sub_line > 0`), else regex.
+pub(crate) fn is_stage_db_first(line_index: usize, text: &str, lookup: StageLookup) -> bool {
+    use crate::db::line_types;
+    match lookup(line_index) {
+        Some(sub_line) => sub_line > 0,
+        None => line_types::is_stage_direction(text),
+    }
+}
+
+/// Dialogue check: a mapped stage row (`sub_line > 0`) is never dialogue; a
+/// mapped spoken row falls through to the text heuristic (it still distinguishes
+/// speaker/separator/blank); an unmapped line uses the text heuristic entirely.
+pub(crate) fn is_dialogue_db_first(
+    line_index: usize,
+    text: &str,
+    is_prose: bool,
+    lookup: StageLookup,
+) -> bool {
+    use crate::db::line_types;
+    if let Some(sub_line) = lookup(line_index) {
+        if sub_line > 0 {
+            return false; // stage direction: never dialogue
+        }
+    }
+    line_types::is_dialogue(text, is_prose)
+}
+
 /// Scan (page_top, last_fit] for a line that STARTS a new scene/section and, if
 /// found, clamp last_fit to the line before it so the new section opens the next
 /// page.
@@ -2778,6 +2815,27 @@ mod headless_pagination_tests {
     #[test]
     fn chaucer_pagination_45lpp() {
         run_author_pagination("chaucer-geoffrey", 45);
+    }
+
+    #[test]
+    fn db_first_classifiers_prefer_db_then_regex() {
+        let stage = |_: usize| Some(2i64);   // mapped stage row
+        let spoken = |_: usize| Some(0i64);  // mapped spoken row
+        let unmapped = |_: usize| None;
+
+        // is_stage: mapped sub_line>0 => stage regardless of text.
+        assert!(super::is_stage_db_first(0, "anything", &stage));
+        assert!(!super::is_stage_db_first(0, "[looks bracketed]", &spoken));
+        // unmapped => regex fallback.
+        assert!(super::is_stage_db_first(0, "[To Jourdain.]", &unmapped));
+        assert!(!super::is_stage_db_first(0, "Lay hands.", &unmapped));
+
+        // is_dialogue: mapped stage row => NOT dialogue; mapped spoken => regex on text.
+        assert!(!super::is_dialogue_db_first(0, "[To Jourdain.]", false, &stage));
+        assert!(super::is_dialogue_db_first(0, "Lay hands.", false, &spoken));
+        // unmapped => regex fallback.
+        assert!(super::is_dialogue_db_first(0, "Lay hands.", false, &unmapped));
+        assert!(!super::is_dialogue_db_first(0, "[To Jourdain.]", false, &unmapped));
     }
 
     /// Pure two-column split over a slice of line texts. `col_lines` is how many
