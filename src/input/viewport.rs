@@ -698,8 +698,14 @@ pub(crate) fn is_inside_stage_direction(buffer: &sourceview5::Buffer, line: usiz
 }
 
 /// Check if a buffer line is a dialogue line (not blank, speaker, stage direction, or marker).
-pub(crate) fn is_dialogue_line(buffer: &sourceview5::Buffer, line: usize) -> bool {
+pub(crate) fn is_dialogue_line(buffer: &sourceview5::Buffer, line: usize, lookup: StageLookup) -> bool {
     use crate::db::line_types;
+    // DB-first: a mapped stage row (sub_line > 0) is never dialogue.
+    if let Some(sub_line) = lookup(line) {
+        if sub_line > 0 {
+            return false;
+        }
+    }
     let text = buffer_line_text(buffer, line);
     let trimmed = text.trim();
     let next = buffer_line_text(buffer, line + 1);
@@ -719,11 +725,12 @@ pub(crate) fn next_dialogue_line(
     translation_lines: &[bool],
     current: usize,
     line_count: usize,
+    lookup: StageLookup,
 ) -> Option<usize> {
     let mut i = current + 1;
     while i < line_count {
         if !translation_lines.get(i).copied().unwrap_or(false)
-            && is_dialogue_line(buffer, i)
+            && is_dialogue_line(buffer, i, lookup)
         {
             return Some(i);
         }
@@ -737,6 +744,7 @@ pub(crate) fn prev_dialogue_line(
     buffer: &sourceview5::Buffer,
     translation_lines: &[bool],
     current: usize,
+    lookup: StageLookup,
 ) -> Option<usize> {
     if current == 0 {
         return None;
@@ -744,7 +752,7 @@ pub(crate) fn prev_dialogue_line(
     let mut i = current - 1;
     loop {
         if !translation_lines.get(i).copied().unwrap_or(false)
-            && is_dialogue_line(buffer, i)
+            && is_dialogue_line(buffer, i, lookup)
         {
             return Some(i);
         }
@@ -757,9 +765,9 @@ pub(crate) fn prev_dialogue_line(
 }
 
 /// Find the next dialogue line at or after `from`.
-pub(crate) fn next_dialogue_from(buffer: &sourceview5::Buffer, from: usize, line_count: usize) -> usize {
+pub(crate) fn next_dialogue_from(buffer: &sourceview5::Buffer, from: usize, line_count: usize, lookup: StageLookup) -> usize {
     for i in from..line_count {
-        if is_dialogue_line(buffer, i) {
+        if is_dialogue_line(buffer, i, lookup) {
             return i;
         }
     }
@@ -767,11 +775,11 @@ pub(crate) fn next_dialogue_from(buffer: &sourceview5::Buffer, from: usize, line
 }
 
 /// Find the last dialogue line in the range [from, from+count).
-pub(crate) fn last_dialogue_in_page(buffer: &sourceview5::Buffer, from: usize, count: usize, line_count: usize) -> usize {
+pub(crate) fn last_dialogue_in_page(buffer: &sourceview5::Buffer, from: usize, count: usize, line_count: usize, lookup: StageLookup) -> usize {
     let end = (from + count).min(line_count);
     let mut last = from;
     for i in from..end {
-        if is_dialogue_line(buffer, i) {
+        if is_dialogue_line(buffer, i, lookup) {
             last = i;
         }
     }
@@ -1314,10 +1322,10 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
     // (the AWW Scene-1→2 underfill). Only skip when everything between is
     // non-dialogue; otherwise advance one line as before.
     let raw_next = (right.last_fit + 1).min(line_count);
-    let next_dlg = next_dialogue_from(&state.buffer, raw_next, line_count);
+    let next_dlg = next_dialogue_from(&state.buffer, raw_next, line_count, no_stage_lookup());
     let next_top = if next_dlg > raw_next
         && next_dlg < line_count
-        && (raw_next..next_dlg).all(|l| !is_dialogue_line(&state.buffer, l))
+        && (raw_next..next_dlg).all(|l| !is_dialogue_line(&state.buffer, l, no_stage_lookup()))
     {
         // Back the next page's top up to the next dialogue's scene heading so the
         // page tiles at the boundary instead of mid-tail. BUT this back-up must
@@ -1382,8 +1390,9 @@ pub(crate) fn next_page_top(state: &AppState, top: usize) -> NextPage {
         top,
         last_visible.saturating_sub(top) + 1,
         line_count,
+        no_stage_lookup(),
     );
-    let next_dialogue = next_dialogue_from(&state.buffer, last + 1, line_count);
+    let next_dialogue = next_dialogue_from(&state.buffer, last + 1, line_count, no_stage_lookup());
     if next_dialogue >= line_count {
         return NextPage { new_top: line_count, next_dialogue: line_count };
     }
@@ -1431,7 +1440,7 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
                     // Return the cached boundary VERBATIM (it tiles); don't re-derive
                     // via back_up_for_speaker (the y-GAP shift). See Tier 2 below.
                     let prev_top = tops[idx - 1];
-                    let next_dialogue = next_dialogue_from(&state.buffer, prev_top, line_count);
+                    let next_dialogue = next_dialogue_from(&state.buffer, prev_top, line_count, no_stage_lookup());
                     return NextPage { new_top: prev_top, next_dialogue };
                 }
             }
@@ -1477,7 +1486,7 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
         let next = fwd_boundary(probe);
         if next == current_top {
             // Exact tile — `probe` is the page directly before current_top.
-            let next_dialogue = next_dialogue_from(&state.buffer, probe, line_count);
+            let next_dialogue = next_dialogue_from(&state.buffer, probe, line_count, no_stage_lookup());
             return NextPage { new_top: probe, next_dialogue };
         }
         if next > current_top || next <= probe {
@@ -1496,7 +1505,7 @@ pub(crate) fn prev_page_top(state: &AppState, current_top: usize) -> NextPage {
     }
     // `top` is the latest boundary whose page does not overshoot current_top
     // (worst case 0), and showing it skips no dialogue.
-    let next_dialogue = next_dialogue_from(&state.buffer, top, line_count);
+    let next_dialogue = next_dialogue_from(&state.buffer, top, line_count, no_stage_lookup());
     NextPage { new_top: top, next_dialogue }
 }
 

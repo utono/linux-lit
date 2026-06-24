@@ -2262,7 +2262,7 @@ fn snap_near_end_to_canonical(s: &mut AppState) {
         while top > 0 && !s.is_section_start(top) {
             top -= 1;
         }
-        let first = crate::input::viewport::next_dialogue_from(&s.buffer, top, line_count)
+        let first = crate::input::viewport::next_dialogue_from(&s.buffer, top, line_count, crate::input::viewport::no_stage_lookup())
             .min(line_count.saturating_sub(1));
         if top != s.page_top_line || first != s.current_line {
             crate::logging::log(&format!(
@@ -2310,7 +2310,7 @@ fn snap_near_end_to_canonical(s: &mut AppState) {
         }
         let cs = crate::input::viewport::column_split(s, canonical);
         let cursor = crate::input::viewport::prev_dialogue_line(
-            &s.buffer, &s.translation_lines, cs.page_end + 1,
+            &s.buffer, &s.translation_lines, cs.page_end + 1, crate::input::viewport::no_stage_lookup(),
         )
         .filter(|&d| d >= canonical && d <= cs.page_end)
         .unwrap_or(s.current_line.min(cs.page_end));
@@ -2945,15 +2945,15 @@ pub fn display_work_at_with_prepared(
         // non-dialogue (speaker, stage direction, blank, marker).
         let line_count = state.effective_line_count();
         if state.current_line < line_count
-            && !crate::input::viewport::is_dialogue_line(&state.buffer, state.current_line)
+            && !crate::input::viewport::is_dialogue_line(&state.buffer, state.current_line, crate::input::viewport::no_stage_lookup())
         {
             let forward = crate::input::viewport::next_dialogue_line(
                 &state.buffer, &state.translation_lines,
-                state.current_line, line_count,
+                state.current_line, line_count, crate::input::viewport::no_stage_lookup(),
             );
             let backward = if state.current_line > 0 {
                 (0..state.current_line).rev().find(|&i| {
-                    crate::input::viewport::is_dialogue_line(&state.buffer, i)
+                    crate::input::viewport::is_dialogue_line(&state.buffer, i, crate::input::viewport::no_stage_lookup())
                 })
             } else {
                 None
