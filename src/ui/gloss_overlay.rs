@@ -425,22 +425,8 @@ impl GlossOverlay {
             table.add(&tag);
             let (start, end) = buffer.bounds();
             buffer.apply_tag(&tag, &start, &end);
-            // The buffer-wide `gloss-font` tag is built with `.font("Family Size")`,
-            // whose Pango description carries a regular (upright) STYLE attribute,
-            // and it is added last — so by add-order priority it overrides the
-            // italic tags' `style(Italic)`, flattening stage directions and inline
-            // bracket directions to upright (the "not italic in the overlay" bug).
-            // Re-assert the italic tags above the font tag, the same way the main
-            // reader re-prioritizes its italic translation tag (src/app/font.rs)
-            // and the synopsis-label bold / audio-cached color are re-asserted below.
-            let top = table.size();
-            for italic in ["gloss-stage", "gloss-bracket"] {
-                if let Some(t) = table.lookup(italic) {
-                    if top > 0 {
-                        t.set_priority(top - 1);
-                    }
-                }
-            }
+            // Keep stage/bracket directions italic above the upright font tag.
+            crate::ui::reassert_italic_tags(&table);
         }
         // The buffer-wide font tag carries the family's regular weight, so it
         // overrides any earlier bold tag. Re-assert the synopsis label bold so

@@ -47,3 +47,23 @@ pub mod voice_picker;
 pub(crate) fn card_side_margin(card_width: i32) -> i32 {
     card_width / 4
 }
+
+/// Re-assert the italic verse tags (`gloss-stage`, `gloss-bracket`) to the top
+/// of `table`'s priority order. An overlay's buffer-wide font tag is built with
+/// `.font("Family Size")`, whose Pango description carries a regular (upright)
+/// STYLE attribute; added last, it would override the italic tags by add-order
+/// priority and flatten stage/bracket directions to upright. Call this AFTER
+/// applying the font tag in each overlay's `apply_font`. The gloss and journal
+/// overlays both render verse via `gloss_render::populate_verse_buffer`, so both
+/// own these tag names and must stay in sync — hence one shared helper.
+pub(crate) fn reassert_italic_tags(table: &gtk4::TextTagTable) {
+    use gtk4::prelude::*;
+    let top = table.size();
+    for italic in ["gloss-stage", "gloss-bracket"] {
+        if let Some(t) = table.lookup(italic) {
+            if top > 0 {
+                t.set_priority(top - 1);
+            }
+        }
+    }
+}
