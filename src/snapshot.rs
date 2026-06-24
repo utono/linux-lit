@@ -25,6 +25,10 @@ use crate::text_file_map::LineMap;
 // values for Son. The serialized shape is unchanged, but stale snapshots hold
 // the old (wrong) bitmap; the version bump forces a rebuild.
 //
+// Bumped to 9: lit.db gained line_mapping.sub_line stage-direction rows; LineMap now
+// references stage lines (build_line_map maps them), so the serialized shape and
+// buffer_to_work indices changed. Bump forces every work's snapshot to rebuild.
+//
 // NB: a BCP work WITH a text_file (e.g. BCP1662, the TEI-rendered .txt) renders
 // through the generic prose text_file path and IS snapshot-cached like any other
 // text_file work, keyed on its .txt path + mtime — so a change to how that .txt
@@ -32,7 +36,7 @@ use crate::text_file_map::LineMap;
 // text_file (1549/1559/1559M/…) still loads straight from the DB (the
 // sentence-per-line split in display_work) and never hits this cache, so that
 // split needs no version bump — it has no cached representation to invalidate.
-pub const SNAPSHOT_VERSION: u32 = 8;
+pub const SNAPSHOT_VERSION: u32 = 9;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct WorkSnapshot {
