@@ -120,6 +120,9 @@ impl GlossOverlay {
         title.set_margin_top(24);
         container.append(&title);
 
+        // Left margin for these diff/error labels is set per-display in `show()`
+        // (card_width/4), so the error/diff card lines up with the loading and
+        // result cards rather than hugging the container's left edge.
         let orig_header = Label::new(Some("ORIGINAL"));
         orig_header.add_css_class("gloss-header");
         orig_header.set_halign(Align::Start);
@@ -567,6 +570,21 @@ impl GlossOverlay {
         self.title.set_text("Gloss");
         // Reset the top margin in case `show_glossing` widened it (shared title).
         self.title.set_margin_top(24);
+        // Indent the title and the diff/error labels to the same card_width/4
+        // the loading ("Glossing…") and result cards use, so the error/diff card
+        // lines up with them instead of hugging the left edge. Reuse the last
+        // rendered card width (an error/toast always follows a card render); fall
+        // back to the container's own width if a card was never shown.
+        let card_width = match self.last_card_size.get().0 {
+            w if w > 0 => w,
+            _ => self.container.width().max(self.container.width_request()),
+        };
+        let left = card_width / 4;
+        self.title.set_margin_start(left);
+        self.orig_header.set_margin_start(left);
+        self.original_label.set_margin_start(left);
+        self.corr_header.set_margin_start(left);
+        self.corrected_label.set_margin_start(left);
         let orig_markup = build_diff_markup(original, corrected, true);
         let corr_markup = build_diff_markup(original, corrected, false);
         self.original_label.set_markup(&orig_markup);

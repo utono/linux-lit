@@ -3,6 +3,7 @@ use std::fmt;
 #[derive(Debug)]
 pub enum ClaudeError {
     MissingApiKey,
+    Unauthorized,
     Timeout,
     RateLimited,
     ApiError(String),
@@ -12,9 +13,33 @@ impl fmt::Display for ClaudeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ClaudeError::MissingApiKey => write!(f, "Set ANTHROPIC_API_KEY environment variable"),
+            ClaudeError::Unauthorized => write!(
+                f,
+                "Invalid ANTHROPIC_API_KEY — check the key and relaunch"
+            ),
             ClaudeError::Timeout => write!(f, "Request timed out — try selecting fewer lines"),
             ClaudeError::RateLimited => write!(f, "Rate limited — try again in a moment"),
             ClaudeError::ApiError(msg) => write!(f, "API error: {}", msg),
+        }
+    }
+}
+
+/// Pull the human-readable `error.message` out of an Anthropic error body,
+/// falling back to a truncated raw body if it isn't the expected shape.
+fn extract_api_error(status: reqwest::StatusCode, text: &str) -> String {
+    let message = serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|v| {
+            v.get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+                .map(|s| s.to_string())
+        });
+    match message {
+        Some(msg) => format!("HTTP {} — {}", status.as_u16(), msg),
+        None => {
+            let snippet: String = text.chars().take(200).collect();
+            format!("HTTP {}: {}", status, snippet)
         }
     }
 }
@@ -64,8 +89,12 @@ pub async fn send_message(
         return Err(ClaudeError::RateLimited);
     }
 
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err(ClaudeError::Unauthorized);
+    }
+
     if !status.is_success() {
-        return Err(ClaudeError::ApiError(format!("HTTP {}: {}", status, text)));
+        return Err(ClaudeError::ApiError(extract_api_error(status, &text)));
     }
 
     let json: serde_json::Value =
