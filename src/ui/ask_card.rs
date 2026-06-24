@@ -98,7 +98,7 @@ impl AskCard {
         self.hint.set_text(hint);
         self.input.buffer().set_text("");
         if card_width > 0 {
-            let margin = card_width / 4;
+            let margin = crate::ui::card_side_margin(card_width);
             self.container.set_margin_start(margin);
             self.container.set_margin_end(margin);
         }

@@ -336,6 +336,150 @@ scope_size. Each verified by direct grep, not agent word alone.
 
 ---
 
+## Batch 3 (audited 2026-06-23, after the gloss API-error + error-card padding fix)
+
+Fresh scan over the post-Batch-2 tree (triggered while fixing the gloss overlay
+auth-error display). Ranked by (duplication × drift_risk) ÷ scope_size. Each
+verified by direct grep, not agent word alone (the #11 lesson). All six are
+byte-identical-modulo-one-token; none needs a trait/generic.
+
+## #22 — select-first-row-helper — DONE (merge pending, commit bc5e612)
+
+- **Status:** DONE — 15 sites collapsed to picker_nav::select_first_row; build + 413 tests green.
+- **Signal:** the "select the first row after populate" block
+  `if let Some(row) = self.list_box.row_at_index(0) { self.list_box.select_row(Some(&row)); }`
+  — byte-identical except the binding name (`row` vs `first`) — at **15 sites**
+  across 12 picker files: echo_picker:116, library_picker:393, voice_picker:154,
+  echo_line_picker:77, journal_picker:125, concordance_works_picker:78,
+  concordance_word_picker:102, gloss_picker:124, bookmark_picker:121,
+  media_picker:118, echo_turns_picker:118, concordance_picker:86 & :131,
+  authorship_picker:57 & :64.
+- **Identical part (extract):** `pub fn select_first_row(list_box: &gtk4::ListBox)`
+  in `src/ui/picker_nav.rs` (already owns `select_row_at`). Call sites become
+  `select_first_row(&self.list_box);`.
+- **Variants:** binding `row` vs `first` — cosmetic, disappears in the helper.
+- **EXCLUDED on sight:** any `row_at_index(0)` followed by extra per-row logic
+  (not just the bare select). The two doubled sites (authorship_picker,
+  concordance_picker) each have two independent bare-select copies — both qualify,
+  but verify the second copy is unconditional (concordance_picker:86 is inside an
+  outer conditional — the inner select block is still byte-identical, extracts).
+- **Safe-scope:** yes — a 3-line GTK block → one call; only input is the list_box.
+
+## #23 — selected-index-helper — DONE (commit bc5e612)
+
+- **Status:** DONE — 5 picker bodies delegate to picker_nav::selected_index.
+- **Signal:** `pub fn selected_index(&self) -> Option<usize>` whole-body identical
+  across 5 pickers: concordance_list_picker:102, echo_turns_picker:123,
+  echo_picker:121, journal_picker:129, gloss_picker:129. Body is
+  `self.list_box.selected_row().and_then(|row| row.widget_name()<parse>.ok())`.
+- **Identical part (extract):** `pub fn selected_index(list_box: &gtk4::ListBox)
+  -> Option<usize>` in `src/ui/picker_nav.rs`; each picker's method delegates.
+- **Variants:** A `.parse::<usize>().ok()` (concordance_list/echo_turns/echo);
+  B `.to_string().parse().ok()` (journal/gloss) — trivially equivalent
+  (`widget_name()` derefs to `&str`); the helper picks one (`.parse::<usize>()`).
+- **EXCLUDED:** pickers that derive the index from `selected_row().index()`
+  (echo_line_picker:90, echo_picker:128) — that's the *row position*, not the
+  widget-name-encoded `items` index; different value, do NOT merge.
+- **Safe-scope:** yes — pure fn over the list_box; method becomes a one-line
+  delegate.
+
+## #24 — preroll-seek-time-helper — DONE (commit d06ddb8)
+
+- **Status:** DONE — 9 sites use navigation::preroll_seek_time; A-B-loop prerolls excluded as planned.
+- **Signal:** `(start - SEEK_PREROLL).max(0.0)` — the "seek this many seconds
+  before the line's start, clamped at 0" computation — at **9 sites**:
+  timestamps.rs:215, echoes.rs:1359 & :1504, concordance.rs:531 & :545 & :580,
+  search.rs:100 & :228, navigation.rs:1759, gloss.rs:1770. `SEEK_PREROLL` is
+  already `pub const SEEK_PREROLL: f64 = 0.2` (navigation.rs:57).
+- **Identical part (extract):** `pub fn preroll_seek_time(start: f64) -> f64`
+  beside the const in `src/input/navigation.rs`. Sites become
+  `preroll_seek_time(ts.start)`.
+- **EXCLUDED — different preroll consts, do NOT merge:** keymap.rs:2360
+  `(a - CHUNK_PREROLL).max(0.0)` and echoes.rs:885 `(a - TURN_PREROLL).max(0.0)`
+  — A-B-loop start prerolls with their own constants, a distinct concept.
+- **Safe-scope:** yes — one-expression helper; #12-sibling (that named the const,
+  this names the computation that uses it).
+
+## #25 — mpv-set-property-cmd-helper — DONE (commit 681db30)
+
+- **Status:** DONE — 6 sends use set_property_cmd; static pause strings excluded.
+- **Signal:** `format!(r#"{{"command":["set_property","<PROP>",{}]}}"#, val)` —
+  byte-identical envelope, varying only the property-name literal + value — at 6
+  sites in `src/mpv/client.rs`: :44 (ab-loop-a), :45 (ab-loop-b), :50 (pause),
+  :125 (speed), :158 (ab-loop-a), :159 (ab-loop-b).
+- **Identical part (extract):** file-local `fn set_property_cmd(prop: &str, val:
+  impl Display) -> String` in `src/mpv/client.rs`.
+- **EXCLUDED:** the two static-string `pause` sends (:112 true, :120 false) — no
+  format args; converting them adds a call where a `&'static str` literal works.
+- **Safe-scope:** yes — file-local format-template helper; protects the JSON
+  envelope from drifting between commands.
+
+## #26 — mpv-seek-absolute-cmd-helper — DONE (commit 681db30)
+
+- **Status:** DONE — 4 sends use seek_absolute_cmd; relative-exact seek excluded.
+- **Signal:** `format!(r#"{{"command":["seek",{},"absolute"]}}"#, time)` —
+  byte-identical except the time-var name — at 4 sites in `src/mpv/client.rs`:
+  :47, :118, :132, :160.
+- **Identical part (extract):** file-local `fn seek_absolute_cmd(time: f64) ->
+  String`.
+- **EXCLUDED — distinct second template:** client.rs:138
+  `["seek",{},"relative","exact"]` is a different seek mode; give it its own
+  `seek_relative_exact_cmd` only if it ever gains a second site (currently 1×).
+- **Safe-scope:** yes — file-local template helper.
+
+## #27 — card-side-margin-helper — DONE (commit f8e9459)
+
+- **Status:** DONE — 9 sites (audit undercounted; layout.rs:189 included) use crate::ui::card_side_margin; the column_width/8 echo sites stayed untouched (the critical exclusion).
+- **Signal:** `card_width / 4` — the gloss/synopsis/ask card "side margin = a
+  quarter of the live card width" — at 8 computation sites: gloss_overlay.rs:582
+  (`show`), :622 (`show_gloss_with_color`), :642 (`bar_left`), :704
+  (`show_glossing`), :727 (`bar_left`), :888 (`show_synopsis`); ask_card.rs:101;
+  layout.rs:109 (`card_w / 4 - text_margins`, the translation-view variant).
+- **Identical part (extract):** `const CARD_SIDE_MARGIN_DIVISOR: i32 = 4` (or
+  `fn card_side_margin(card_width: i32) -> i32 { card_width / 4 }`), shared by the
+  overlay + ask_card; layout.rs calls it then subtracts `text_margins` (variant).
+- **Variants:** the 6 gloss_overlay sites are plain `card_width / 4`; ask_card
+  applies it to both start+end; layout.rs:109 subtracts `text_margins` (keeps that
+  inline after the helper).
+- **EXCLUDED — CRITICAL, different value & concept:** the echo view's
+  `self.column_width / 8` (gloss_overlay.rs:770/775/791) and `right_margin =
+  column_width / 8` (:175). These are anchored to the FIXED column_width (1050/8),
+  NOT the live card_width, and the code comment (lines 773-774) pins the echo list
+  to `column_width/8`. The past "tiny margin on a wide card" bug (commented at
+  618-621) is exactly what conflating `/8` with `/4` would reintroduce — do NOT
+  unify the two divisor families.
+- **Safe-scope:** yes — literal → named const/helper, #8/#12-style. Lowest copy
+  count of Batch 3 but the one with a documented drift-hazard, so worth naming.
+
+### Examined and EXCLUDED in Batch 3 (no clean cut — do NOT number)
+
+- **settings_overlay arrow-label template** (`format!("\u{25C0} {} \u{25B6}", v)`
+  + the `{}px` variant) — ~14 sites but ALL in one file (settings_overlay.rs:272–
+  426). A file-local `fn arrow_label(&str)` / `fn arrow_px_label(i32)` is a fine
+  tidy, but it's a single-file cosmetic spinner-value format with no cross-file
+  drift risk — low payoff. Flag only; do as a drive-by if settings_overlay is
+  touched, not as its own numbered PR.
+- **echo-picker row-construction block** (meta label + ellipsized first-line
+  label, ~14 lines) — byte-identical at exactly 2 sites (echo_picker.rs:86–113,
+  echo_turns_picker.rs:91–115), differing only by the field name (`passage_text`
+  vs `turn_text`). Meets the 2-site/5-line floor but is borderline; the field-name
+  difference would force a closure/getter param. Note, don't number unless a 3rd
+  echo-style picker appears.
+- **`"Error: {}"` prefix** (5 sites: visual.rs ×3, claude_bridge.rs, settings.rs)
+  — the literal is shared but each routes to a DIFFERENT sink (gloss_overlay.show
+  vs on_error callback vs voice_picker.set_status). No single helper fits; the
+  only shared token is the 7-char prefix. Marginal; do not number.
+- **`format!("%{}%", x)` LIKE-wildcard** (4 sites: queries.rs:2215,
+  concordance.rs:24, gloss.rs:787, viewport.rs:2701) — same template, different
+  modules + inputs (some lowercase first). A `fn like_contains(&str) -> String`
+  would dedup 4 trivial sites across 4 modules — payoff below the floor. Note only.
+- **`set_widget_name(&idx.to_string())` row tail** (4 sites) — overlaps the
+  already-handled picker-list-scaffold / widget-name territory (#20); the other 6
+  `ListBoxRow::builder().child` sites use non-index widget-names. Not a clean new
+  family on its own.
+
+---
+
 ## Larger projects (not safe-scope)
 
 - **`InputMode → picker` dispatch accessor — DONE (nav + plain-hide scope).**

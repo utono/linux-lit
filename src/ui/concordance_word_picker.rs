@@ -99,9 +99,7 @@ impl ConcordanceWordPicker {
         }
 
         // Select first row
-        if let Some(row) = self.list_box.row_at_index(0) {
-            self.list_box.select_row(Some(&row));
-        }
+        crate::ui::picker_nav::select_first_row(&self.list_box);
     }
 
     pub fn selected_word(&self) -> Option<String> {

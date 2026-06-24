@@ -579,7 +579,7 @@ impl GlossOverlay {
             w if w > 0 => w,
             _ => self.container.width().max(self.container.width_request()),
         };
-        let left = card_width / 4;
+        let left = crate::ui::card_side_margin(card_width);
         self.title.set_margin_start(left);
         self.orig_header.set_margin_start(left);
         self.original_label.set_margin_start(left);
@@ -619,7 +619,7 @@ impl GlossOverlay {
         // optimum. Anchor to the actual card width (the overlay is full-screen,
         // ~1660px), NOT the fixed column_width (1050) — otherwise on a wide card
         // the margin stays tiny and the text runs nearly edge to edge.
-        let left = card_width / 4;
+        let left = crate::ui::card_side_margin(card_width);
         self.title.set_margin_start(left);
         self.gloss_view.set_left_margin(left);
         self.gloss_view.set_right_margin(left);
@@ -639,7 +639,7 @@ impl GlossOverlay {
             }
         }
 
-        let bar_left = card_width / 4;
+        let bar_left = crate::ui::card_side_margin(card_width);
         *self.bar_x.borrow_mut() = bar_left;
 
         // Gloss prose and speaker headings both keep the normal foreground.
@@ -701,7 +701,7 @@ impl GlossOverlay {
         // Same passage geometry the gloss result uses (`show_gloss_with_color`):
         // wide side margins anchored to the actual card width, accent bar at
         // card_width/4.
-        let left = card_width / 4;
+        let left = crate::ui::card_side_margin(card_width);
         self.title.set_margin_start(left);
         self.gloss_view.set_left_margin(left);
         self.gloss_view.set_right_margin(left);
@@ -724,7 +724,7 @@ impl GlossOverlay {
             }
         }
 
-        let bar_left = card_width / 4;
+        let bar_left = crate::ui::card_side_margin(card_width);
         *self.bar_x.borrow_mut() = bar_left;
 
         // Render the passage through the SAME path as the gloss result's original
@@ -885,7 +885,7 @@ impl GlossOverlay {
         // width, not the fixed column_width, so the synopsis prose sits at the
         // same ~65-char measure as the gloss instead of running nearly edge to
         // edge.
-        let left = card_width / 4;
+        let left = crate::ui::card_side_margin(card_width);
         self.title.set_text(title);
         self.title.set_visible(true);
         self.title.set_vexpand(false);

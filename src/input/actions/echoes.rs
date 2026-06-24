@@ -1356,7 +1356,7 @@ pub(crate) fn play_selected_echo(
             return;
         }
     };
-    let seek = (start - crate::input::navigation::SEEK_PREROLL).max(0.0);
+    let seek = crate::input::navigation::preroll_seek_time(start);
 
     let mut s = state_rc.borrow_mut();
     // Don't loop the source turn while auditioning the echo; keep the remembered
@@ -1501,7 +1501,7 @@ fn switch_mpv_to_current_line(state_rc: &Rc<RefCell<AppState>>, line_id: i64, wa
         s.current_work.as_ref()
             .and_then(|w| w.lines.iter().find(|l| l.id == line_id))
             .and_then(|l| l.timestamp.as_ref())
-            .map(|ts| (ts.start - crate::input::navigation::SEEK_PREROLL).max(0.0))
+            .map(|ts| crate::input::navigation::preroll_seek_time(ts.start))
     };
 
     if let Some((path, media_id)) = auto_media {

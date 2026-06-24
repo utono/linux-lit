@@ -6,7 +6,6 @@ use gtk4::prelude::{EditableExt, WidgetExt};
 use crate::app::AppState;
 use crate::input::highlight::update_highlight_and_center;
 use crate::input::navigation;
-use crate::input::navigation::SEEK_PREROLL;
 
 /// Handle concordance word selection: query all hits across the author's works,
 /// store them in ConcordanceState, and jump to the first hit in the current work.
@@ -528,7 +527,7 @@ pub(crate) fn concordance_current_seek_time(state: &AppState) -> Option<f64> {
     let work = state.current_work.as_ref()?;
     let line = work.lines.iter().find(|l| l.id == line_id)?;
     let ts = line.timestamp.as_ref()?;
-    Some((ts.start - SEEK_PREROLL).max(0.0))
+    Some(crate::input::navigation::preroll_seek_time(ts.start))
 }
 
 
@@ -542,7 +541,7 @@ fn concordance_seek(state: &mut AppState, line_mapping_id: i64) {
             if let Some(ts) = line.timestamp.as_ref() {
                 state.suppress_sync_until =
                     Some(std::time::Instant::now() + crate::input::navigation::SYNC_SUPPRESS_SEEK);
-                let seek_time = (ts.start - SEEK_PREROLL).max(0.0);
+                let seek_time = crate::input::navigation::preroll_seek_time(ts.start);
                 let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::Seek(seek_time));
             }
         }
@@ -577,7 +576,7 @@ fn concordance_position_cursor(state: &mut AppState, line_mapping_id: i64) {
     let hit_seek_time = state.current_work.as_ref()
         .and_then(|w| w.lines.iter().find(|l| l.id == line_mapping_id))
         .and_then(|l| l.timestamp.as_ref())
-        .map(|ts| (ts.start - SEEK_PREROLL).max(0.0));
+        .map(|ts| crate::input::navigation::preroll_seek_time(ts.start));
 
     let lpp = crate::input::viewport::lines_per_page(state);
     let cursor_offset = state.current_line.saturating_sub(state.page_top_line);

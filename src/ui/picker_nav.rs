@@ -76,3 +76,23 @@ pub(crate) fn select_row_at(list_box: &ListBox, index: i32) {
         list_box.select_row(Some(&row));
     }
 }
+
+/// Select the first row of `list_box` if any (the "select row 0 after populate"
+/// block every picker repeats). Thin wrapper over `select_row_at(list_box, 0)`;
+/// no-op on an empty list. EXCLUDED at call sites: any `row_at_index(0)` followed
+/// by extra per-row logic — only the bare select extracts here.
+pub(crate) fn select_first_row(list_box: &ListBox) {
+    select_row_at(list_box, 0);
+}
+
+/// The `items`-index encoded in the selected row's widget name, or None if no
+/// row is selected (or its name doesn't parse). Every picker that stamps each
+/// row's `widget_name` with its `items` index reads it back through this exact
+/// body. NOTE: this is the widget-name-encoded index, NOT `selected_row().index()`
+/// (the row's visual position) — those pickers compute a different value and are
+/// excluded.
+pub(crate) fn selected_index(list_box: &ListBox) -> Option<usize> {
+    list_box
+        .selected_row()
+        .and_then(|row| row.widget_name().parse::<usize>().ok())
+}

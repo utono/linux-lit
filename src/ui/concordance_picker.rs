@@ -83,9 +83,7 @@ impl ConcordancePicker {
         crate::ui::picker_nav::clear_list(&self.list_box);
 
         if filter.is_empty() {
-            if let Some(first) = self.list_box.row_at_index(0) {
-                self.list_box.select_row(Some(&first));
-            }
+            crate::ui::picker_nav::select_first_row(&self.list_box);
             return;
         }
 
@@ -128,9 +126,7 @@ impl ConcordancePicker {
             }
         }
 
-        if let Some(first) = self.list_box.row_at_index(0) {
-            self.list_box.select_row(Some(&first));
-        }
+        crate::ui::picker_nav::select_first_row(&self.list_box);
     }
 
     pub fn selected_word(&self) -> Option<String> {
