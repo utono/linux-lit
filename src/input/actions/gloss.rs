@@ -26,14 +26,7 @@ pub(crate) fn jump_to_gloss_source_start(s: &mut AppState) -> bool {
     // start_citation is `ABBR.div1.div2.line_in_div`; the gloss strips any
     // `-Amb` suffix from the abbrev, so match on the numeric tail rather than
     // the full citation string.
-    let cite_tail = |cite: &str| -> Option<(i64, i64, i64)> {
-        let mut parts = cite.rsplitn(4, '.');
-        let lid = parts.next()?.parse().ok()?;
-        let d2 = parts.next()?.parse().ok()?;
-        let d1 = parts.next()?.parse().ok()?;
-        Some((d1, d2, lid))
-    };
-    let target = cite_tail(&start_citation);
+    let target = crate::app::parse_citation(&start_citation);
 
     let work = match s.current_work.as_ref() {
         Some(w) => w,
@@ -1968,15 +1961,6 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         )
     };
 
-    // Decode the tail of a citation (`ABBR.div1.div2.line_in_div`) into a triple.
-    let cite_tail = |cite: &str| -> Option<(i64, i64, i64)> {
-        let mut parts = cite.rsplitn(4, '.');
-        let lid = parts.next()?.parse().ok()?;
-        let d2 = parts.next()?.parse().ok()?;
-        let d1 = parts.next()?.parse().ok()?;
-        Some((d1, d2, lid))
-    };
-
     // Load every glossed passage for this work and find the one covering the
     // cursor line. All read-only DB work happens before any state mutation.
     let conn = match crate::db::queries::open_db() {
@@ -1990,7 +1974,7 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         .unwrap_or_default();
 
     let covering = passages.iter().enumerate().find(|(_, p)| {
-        match (cite_tail(&p.start_citation), cite_tail(&p.end_citation)) {
+        match (crate::app::parse_citation(&p.start_citation), crate::app::parse_citation(&p.end_citation)) {
             (Some(start), Some(end)) => passage_covers(start, end, cur_triple),
             _ => false,
         }

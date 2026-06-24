@@ -1072,17 +1072,8 @@ fn handle_gloss_key(
                 s.gloss_context.as_ref().and_then(|ctx| {
                     let work = s.current_work.as_ref()?;
 
-                    // Parse "ABBR.div1.div2.line_in_div" → (d1, d2, lid).
-                    let cite_tail = |cite: &str| -> Option<(i64, i64, i64)> {
-                        let mut parts = cite.rsplitn(4, '.');
-                        let lid: i64 = parts.next()?.parse().ok()?;
-                        let d2: i64 = parts.next()?.parse().ok()?;
-                        let d1: i64 = parts.next()?.parse().ok()?;
-                        Some((d1, d2, lid))
-                    };
-
                     let selected_lines: Vec<crate::db::models::Line> =
-                        match (cite_tail(&ctx.start_citation), cite_tail(&ctx.end_citation)) {
+                        match (crate::app::parse_citation(&ctx.start_citation), crate::app::parse_citation(&ctx.end_citation)) {
                             (Some((sd1, sd2, s_lid)), Some((_, _, e_lid))) => work
                                 .lines
                                 .iter()

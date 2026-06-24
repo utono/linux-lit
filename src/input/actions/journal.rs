@@ -584,17 +584,8 @@ pub(crate) fn action_gloss_from_journal_passage(state: &Rc<RefCell<AppState>>) {
             None => return,
         };
 
-        // Parse a citation string "ABBR.div1.div2.line_in_div" → (d1, d2, lid).
-        let cite_tail = |cite: &str| -> Option<(i64, i64, i64)> {
-            let mut parts = cite.rsplitn(4, '.');
-            let lid: i64 = parts.next()?.parse().ok()?;
-            let d2: i64 = parts.next()?.parse().ok()?;
-            let d1: i64 = parts.next()?.parse().ok()?;
-            Some((d1, d2, lid))
-        };
-
-        let start_triple = cite_tail(&start_cit);
-        let end_triple = cite_tail(&end_cit);
+        let start_triple = crate::app::parse_citation(&start_cit);
+        let end_triple = crate::app::parse_citation(&end_cit);
 
         // Filter the work lines to those in [start_citation, end_citation].
         // Match primarily on (div1, div2, line_in_div) tuples; fall back to
