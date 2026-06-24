@@ -107,9 +107,9 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
 
     // 2. Load all lines
     let mut line_stmt = conn.prepare(
-        "SELECT id, canonical_text, normalized_text, speaker, div1, div2, line_in_div \
+        "SELECT id, canonical_text, normalized_text, speaker, div1, div2, line_in_div, sub_line \
          FROM line_mapping WHERE work_abbrev = ?1 \
-         ORDER BY div1, div2, line_in_div",
+         ORDER BY div1, div2, line_in_div, sub_line",
     )?;
     let lines: Vec<Line> = line_stmt
         .query_map([abbrev], |row| {
@@ -119,11 +119,13 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
             let div1: i64 = row.get::<_, Option<i64>>(4)?.unwrap_or(0);
             let div2: i64 = row.get::<_, Option<i64>>(5)?.unwrap_or(0);
             let line_in_div: i64 = row.get(6)?;
+            let sub_line: i64 = row.get(7)?;
             let citation = crate::db::models::citation(abbrev, div1, div2, line_in_div);
             Ok(Line {
                 id: row.get(0)?,
                 citation,
-                is_dialogue: line_types::is_dialogue(&text, is_prose),
+                // A stage direction (sub_line > 0) is never spoken dialogue.
+                is_dialogue: sub_line == 0 && line_types::is_dialogue(&text, is_prose),
                 text,
                 normalized,
                 speaker,
@@ -131,6 +133,7 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
                 div1,
                 div2,
                 line_in_div,
+                sub_line,
                 is_chapter: false,
                 is_spoken: None,
             })
@@ -2541,22 +2544,55 @@ mod tests {
 
     #[test]
     fn test_load_translations_ambrose_fallback() {
-        let conn = open_db().unwrap();
+        // Use an in-memory DB fixture: the live lit.db no longer has translations
+        // for any work that has an -Amb variant, so we construct the scenario
+        // directly. The fallback joins -Amb lines to their base-work counterparts
+        // by (div1, div2, normalized_text) and maps the translation to the -Amb id.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE line_mapping (
+                id INTEGER PRIMARY KEY,
+                work_abbrev TEXT NOT NULL,
+                div1 INTEGER,
+                div2 INTEGER,
+                line_in_div INTEGER NOT NULL,
+                sub_line INTEGER NOT NULL DEFAULT 0,
+                canonical_text TEXT NOT NULL,
+                normalized_text TEXT NOT NULL,
+                speaker TEXT
+             );
+             CREATE TABLE line_translations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                line_mapping_id INTEGER NOT NULL REFERENCES line_mapping(id),
+                translation TEXT NOT NULL,
+                UNIQUE(line_mapping_id)
+             );
+             -- Base work (Err) line
+             INSERT INTO line_mapping VALUES (1,'Err',1,1,1,0,'What is your will?','what is your will',NULL);
+             -- -Amb counterpart: same (div1, div2, normalized_text), different id
+             INSERT INTO line_mapping VALUES (2,'Err-Amb',1,1,1,0,'What is your will?','what is your will',NULL);
+             -- Translation attached to the base-work line
+             INSERT INTO line_translations (line_mapping_id, translation) VALUES (1,'Quid vis?');",
+        ).unwrap();
+
         let translations = load_translations(&conn, "Err-Amb").unwrap();
         assert!(
             !translations.is_empty(),
             "Err-Amb should get translations via -Amb fallback to Err"
         );
-        let amb_ids: std::collections::HashSet<i64> = conn
-            .prepare("SELECT id FROM line_mapping WHERE work_abbrev='Err-Amb'")
-            .unwrap()
-            .query_map([], |row| row.get::<_, i64>(0))
-            .unwrap()
-            .filter_map(|r| r.ok())
-            .collect();
+        // The key must be the Err-Amb line_mapping.id (2), not Err's (1)
         assert!(
-            translations.keys().all(|k| amb_ids.contains(k)),
+            translations.contains_key(&2),
             "Keys must be Err-Amb line_mapping.id, not Err's"
+        );
+        assert_eq!(
+            translations.get(&2).map(|s| s.as_str()),
+            Some("Quid vis?"),
+            "Translation text must match what was stored on the base-work row"
+        );
+        assert!(
+            !translations.contains_key(&1),
+            "Err's id must not appear as a key"
         );
     }
 
@@ -2868,8 +2904,18 @@ mod tests {
         assert_eq!(work.title, "Hamlet");
         assert_eq!(work.work_type, "play");
         assert!(work.lines.len() > 4000, "Hamlet should have 4000+ lines");
-        assert_eq!(work.lines[0].text, "Who\u{2019}s there?");
-        assert!(work.lines[0].is_dialogue);
+        // With sub_line ordering, line[0] is now the opening stage direction
+        // "[Enter Barnardo and Francisco, two sentinels.]"
+        assert!(
+            work.lines[0].text.starts_with("[Enter Barnardo"),
+            "First line should be the opening stage direction, got: {:?}",
+            work.lines[0].text,
+        );
+        assert!(work.lines[0].sub_line > 0, "Opening stage direction should have sub_line > 0");
+        assert!(!work.lines[0].is_dialogue, "Stage direction must not be dialogue");
+        // The first spoken dialogue line is "Who's there?"
+        let first_dialogue = work.lines.iter().find(|l| l.is_dialogue).unwrap();
+        assert_eq!(first_dialogue.text, "Who\u{2019}s there?");
         assert!(!work.timestamps.is_empty(), "Work should have timestamps loaded");
     }
 

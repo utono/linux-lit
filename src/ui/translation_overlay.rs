@@ -409,6 +409,7 @@ mod tests {
             div1: 1,
             div2: 1,
             line_in_div: 0,
+            sub_line: 0,
             is_chapter: false,
             is_spoken: None,
         }
