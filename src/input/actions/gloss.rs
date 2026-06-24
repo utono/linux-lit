@@ -283,6 +283,14 @@ pub(crate) fn delete_current_gloss(state_rc: &Rc<RefCell<AppState>>) {
             s.gloss_overlay.set_citation(&gloss_start, &gloss_end);
             recolor_cached_blocks(&s);
         }
+
+        // The gloss row was deleted from the DB above, so the glossed-passage set
+        // changed. Recompute the main-card reader-gloss tint from the REMAINING
+        // glossed passages — otherwise the just-deleted passage's lines stay
+        // tinted (the "coloring persists after delete" bug). This clears the tag
+        // buffer-wide and re-derives, so it also corrects the now-fully-unglossed
+        // case when the last gloss on a passage is removed.
+        crate::app::apply_reader_gloss_highlighting(&mut s);
     }
     // Phase 2: verification pill (borrow released above). Shown whether or not
     // the overlay closed, so the user always gets confirmation.
