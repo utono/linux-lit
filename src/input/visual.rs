@@ -433,24 +433,9 @@ fn action_journal_qa(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
         (ctx.act, ctx.scene, ctx.start_citation, ctx.end_citation, passage_doc)
     };
 
-    // Phase 2 — exit visual mode, set journal band, open ask card.
+    // Phase 2 — exit visual mode, then open the passage ask via the shared fn.
     exit_visual_mode(&mut state_rc.borrow_mut());
-
-    {
-        let mut s = state_rc.borrow_mut();
-        s.journal.return_pos = Some((s.current_line, s.page_top_line));
-        s.journal.prompt_mode = crate::app::JournalPromptMode::Ask;
-        s.journal.pending_passage = Some(crate::input::actions::journal::PendingPassage {
-            source_text,
-        });
-        s.journal_band = crate::app::JournalBand::Passage { div1, div2, start, end };
-        s.journal.page_index = 0;
-        s.input_mode = crate::app::InputMode::JournalOverlay;
-        crate::input::actions::journal::render_current(&mut s);
-        s.journal_overlay
-            .open_ask_card("Ask about this passage", "Tab switch  \u{00b7}  Ctrl+Enter submit");
-    }
-
+    crate::input::actions::journal::begin_passage_ask(state_rc, div1, div2, start, end, source_text);
     crate::logging::log("JOURNAL-QA: opened ask card for visual passage");
 }
 

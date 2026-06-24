@@ -227,6 +227,36 @@ pub(crate) fn nav_to_work_band(state: &Rc<RefCell<AppState>>) {
     render_current(&mut s);
 }
 
+/// Set up the journal overlay for a passage Q&A and open the ask card.
+///
+/// Called both from `action_journal_qa` (visual selection path) and from the
+/// gloss overlay's `J` key (gloss-context path). The caller has already
+/// exited visual mode / closed any conflicting overlay and set `return_pos`.
+///
+/// - Sets `journal.pending_passage` with the `<speaker>/<verse>` markup.
+/// - Sets `journal_band` to `Passage { div1, div2, start, end }`.
+/// - Sets `input_mode` to `JournalOverlay` and renders the current page list.
+/// - Opens the ask card titled "Ask about this passage".
+pub(crate) fn begin_passage_ask(
+    state: &Rc<RefCell<AppState>>,
+    div1: i64,
+    div2: i64,
+    start: String,
+    end: String,
+    source_text: String,
+) {
+    let mut s = state.borrow_mut();
+    s.journal.return_pos = Some((s.current_line, s.page_top_line));
+    s.journal.prompt_mode = JournalPromptMode::Ask;
+    s.journal.pending_passage = Some(PendingPassage { source_text });
+    s.journal_band = JournalBand::Passage { div1, div2, start, end };
+    s.journal.page_index = 0;
+    s.input_mode = crate::app::InputMode::JournalOverlay;
+    render_current(&mut s);
+    s.journal_overlay
+        .open_ask_card("Ask about this passage", "Tab switch  \u{00b7}  Ctrl+Enter submit");
+}
+
 pub(crate) fn begin_ask(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
     s.journal.prompt_mode = JournalPromptMode::Ask;
@@ -309,15 +339,16 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
         -1
     };
 
-    // For a Passage band, capture the source_text before entering the async
-    // closure (pending_passage is on AppState which is not Send).
+    // For a Passage band, consume pending_passage (take it so the Option is
+    // cleared after use — defensive hygiene; the guard above makes it
+    // harmless but the field should not linger after it is read).
     let passage_source_text: String = if matches!(band, JournalBand::Passage { .. }) {
         state_rc
-            .borrow()
+            .borrow_mut()
             .journal
             .pending_passage
-            .as_ref()
-            .map(|pp| pp.source_text.clone())
+            .take()
+            .map(|pp| pp.source_text)
             .unwrap_or_default()
     } else {
         String::new()
@@ -510,6 +541,232 @@ pub(crate) fn delete_current(state: &Rc<RefCell<AppState>>) {
         s.journal.page_index -= 1;
     }
     render_current(&mut s);
+}
+
+/// Alt+g in the journal overlay: create a reader-gloss for the current passage
+/// page's source text.
+///
+/// Requires the current page to be a passage page (JournalBand::Passage with a
+/// stored source_text). If the current page is not a passage page, shows a toast
+/// and returns. Otherwise looks up the work lines for the citation range, builds
+/// a GlossContext, and triggers the reader-gloss creation flow (same as
+/// action_reader_gloss from a visual selection: cache-hit shows the gloss
+/// immediately; cache-miss calls Claude and saves).
+pub(crate) fn action_gloss_from_journal_passage(state: &Rc<RefCell<AppState>>) {
+    // Phase 1: check we are on a passage page and gather what we need.
+    let (ctx, model, tokio_handle, all_glosses, passage_doc) = {
+        let s = state.borrow();
+
+        // Must be in a Passage band.
+        let (div1, div2, start_cit, end_cit) = match &s.journal_band {
+            JournalBand::Passage { div1, div2, start, end } => {
+                (*div1, *div2, start.clone(), end.clone())
+            }
+            _ => {
+                crate::ui::toast::show_transient(&s.chapter_toast, "Not a passage page", 2);
+                return;
+            }
+        };
+
+        // Must have a source_text on the current page.
+        match s.journal.pages.get(s.journal.page_index) {
+            Some(p) if p.source_text.is_some() => {}
+            _ => {
+                crate::ui::toast::show_transient(&s.chapter_toast, "Not a passage page", 2);
+                return;
+            }
+        }
+
+        // Look up the actual work lines for the citation range so we can build a
+        // proper GlossContext (with plain-text source_text and line numbers).
+        let work = match s.current_work.as_ref() {
+            Some(w) => w,
+            None => return,
+        };
+
+        // Parse a citation string "ABBR.div1.div2.line_in_div" → (d1, d2, lid).
+        let cite_tail = |cite: &str| -> Option<(i64, i64, i64)> {
+            let mut parts = cite.rsplitn(4, '.');
+            let lid: i64 = parts.next()?.parse().ok()?;
+            let d2: i64 = parts.next()?.parse().ok()?;
+            let d1: i64 = parts.next()?.parse().ok()?;
+            Some((d1, d2, lid))
+        };
+
+        let start_triple = cite_tail(&start_cit);
+        let end_triple = cite_tail(&end_cit);
+
+        // Filter the work lines to those in [start_citation, end_citation].
+        // Match primarily on (div1, div2, line_in_div) tuples; fall back to
+        // the full set of lines in the passage's (div1, div2) if parsing fails.
+        let selected_lines: Vec<crate::db::models::Line> = match (start_triple, end_triple) {
+            (Some((sd1, sd2, s_lid)), Some((ed1, ed2, e_lid))) => {
+                work.lines
+                    .iter()
+                    .filter(|l| {
+                        let t = (l.div1, l.div2, l.line_in_div);
+                        t >= (sd1, sd2, s_lid) && t <= (ed1, ed2, e_lid)
+                    })
+                    .cloned()
+                    .collect()
+            }
+            _ => {
+                // Citation parse failed; collect all lines in (div1, div2).
+                work.lines
+                    .iter()
+                    .filter(|l| l.div1 == div1 && l.div2 == div2)
+                    .cloned()
+                    .collect()
+            }
+        };
+
+        if selected_lines.is_empty() {
+            crate::ui::toast::show_transient(&s.chapter_toast, "Could not locate passage lines", 2);
+            return;
+        }
+
+        let ctx = match crate::gloss::build_context_for_type(work, &selected_lines, "reader-gloss") {
+            Some(c) => c,
+            None => return,
+        };
+
+        let all_glosses: Vec<crate::db::queries::SavedGloss> = match crate::db::queries::open_db() {
+            Ok(conn) => crate::db::queries::find_glosses_by_start(
+                &conn, &ctx.work_abbrev, &ctx.start_citation,
+                &["teacher-generic", "inner-monologue", "reader-gloss"],
+            ).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+
+        let passage_doc = crate::input::actions::echoes::build_source_header(&selected_lines, &ctx.speaker);
+
+        (ctx, s.config.claude_model.clone(), s.tokio_handle.clone(), all_glosses, passage_doc)
+    };
+
+    // Phase 2: transition from journal overlay to gloss overlay.
+    {
+        let mut s = state.borrow_mut();
+        // Close the journal overlay and restore reader mode so the gloss overlay
+        // opens cleanly (gloss overlay saves/restores its own return position).
+        s.journal_overlay.hide();
+        s.input_mode = crate::app::InputMode::Reader;
+        if let Some((line, top)) = s.journal.return_pos.take() {
+            s.current_line = line;
+            s.page_top_line = top;
+        }
+    }
+
+    // Phase 3: cache hit — show existing gloss immediately.
+    let own_idx = all_glosses.iter().position(|g| g.gloss_type == "reader-gloss");
+    if let Some(idx) = own_idx {
+        let mut s = state.borrow_mut();
+        s.gloss_return_pos = Some((s.current_line, s.page_top_line));
+        s.gloss_original_text = Some(ctx.source_text.clone());
+        let pairs = ctx.source_line_pairs();
+        let gloss_text = &all_glosses[idx].gloss_text;
+        let card_width = s.content_hbox.width();
+        let card_height = s.content_hbox.height();
+        s.gloss_overlay.show_gloss_with_color(
+            &ctx.source_text, gloss_text, card_width, card_height,
+            Some(&s.theme.root_color), &pairs,
+        );
+        s.gloss_overlay.set_position(idx, all_glosses.len());
+        s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
+        s.gloss_list = all_glosses;
+        s.gloss_index = idx;
+        s.gloss_context = Some(ctx);
+        s.record_last_gloss("reader-gloss");
+        s.input_mode = crate::app::InputMode::GlossOverlay;
+        crate::logging::log("GLOSS-FROM-JOURNAL: showing cached reader-gloss");
+        return;
+    }
+
+    // Phase 4: cache miss — show loading card and call Claude.
+    {
+        let mut s = state.borrow_mut();
+        s.gloss_return_pos = Some((s.current_line, s.page_top_line));
+        s.gloss_original_text = Some(ctx.source_text.clone());
+        let cw = s.content_hbox.width();
+        let h = s.content_hbox.height();
+        s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color));
+        s.input_mode = crate::app::InputMode::GlossOverlay;
+    }
+
+    let user_msg = crate::gloss::build_user_message(&ctx, None, None);
+    let state_for_result = std::rc::Rc::clone(state);
+
+    gtk4::glib::spawn_future_local(async move {
+        let model_for_db = model.clone();
+        let result = tokio_handle
+            .spawn(async move {
+                crate::gloss::call_claude_with_prompt(
+                    &crate::gloss::READER_GLOSS_PROMPT, &user_msg, &model,
+                ).await
+            })
+            .await;
+
+        match result {
+            Ok(Ok(gloss_text)) => {
+                let mut new_gloss_id: i64 = -1;
+                if let Ok(conn) = crate::db::queries::open_db_rw() {
+                    if let Ok(id) = crate::db::queries::save_gloss(
+                        &conn,
+                        &ctx.hash,
+                        &ctx.work_abbrev,
+                        &ctx.start_citation,
+                        &ctx.end_citation,
+                        ctx.act,
+                        ctx.scene,
+                        &ctx.speaker,
+                        &ctx.source_text,
+                        &gloss_text,
+                        "reader-gloss",
+                        &model_for_db,
+                    ) {
+                        new_gloss_id = id;
+                    }
+                }
+
+                let all = crate::db::queries::open_db()
+                    .ok()
+                    .and_then(|conn| {
+                        crate::db::queries::find_glosses_by_start(
+                            &conn, &ctx.work_abbrev, &ctx.start_citation,
+                            &["teacher-generic", "inner-monologue", "reader-gloss"],
+                        ).ok()
+                    })
+                    .unwrap_or_default();
+
+                let new_idx = all.iter().position(|g| g.gloss_id == new_gloss_id).unwrap_or(0);
+
+                let mut s = state_for_result.borrow_mut();
+                let cw = s.content_hbox.width();
+                let h = s.content_hbox.height();
+                let pairs = ctx.source_line_pairs();
+                s.gloss_overlay.show_gloss_with_color(
+                    &ctx.source_text, &gloss_text, cw, h,
+                    Some(&s.theme.root_color), &pairs,
+                );
+                s.gloss_overlay.set_position(new_idx, all.len());
+                s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
+                s.gloss_list = all;
+                s.gloss_index = new_idx;
+                s.gloss_context = Some(ctx);
+                s.record_last_gloss("reader-gloss");
+                crate::logging::log("GLOSS-FROM-JOURNAL: generated and saved new reader-gloss");
+            }
+            Ok(Err(e)) => {
+                let s = state_for_result.borrow();
+                s.gloss_overlay.show(&format!("Error: {}", e), "");
+                crate::logging::log(&format!("GLOSS-FROM-JOURNAL: API error: {}", e));
+            }
+            Err(e) => {
+                let s = state_for_result.borrow();
+                s.gloss_overlay.show("Internal error \u{2014} try again.", "");
+                crate::logging::log(&format!("GLOSS-FROM-JOURNAL: tokio join error: {}", e));
+            }
+        }
+    });
 }
 
 #[cfg(test)]

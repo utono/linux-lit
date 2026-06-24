@@ -725,6 +725,13 @@ fn handle_journal_key(
                 crate::input::actions::journal::nav_to_work_band(state);
                 return true;
             }
+            // Alt+g: create a reader-gloss for the current journal passage
+            // page's source text. Toasts "Not a passage page" if the current
+            // page has no source text (work/scene band or empty).
+            "g" => {
+                crate::input::actions::journal::action_gloss_from_journal_passage(state);
+                return true;
+            }
             _ => {}
         }
     }
@@ -1031,6 +1038,44 @@ fn handle_gloss_key(
                 let mut s = state.borrow_mut();
                 s.input_mode = crate::app::InputMode::GlossVisual;
                 s.gloss_overlay.set_gloss_visual_hint();
+            }
+            true
+        }
+        // J (Shift+j): create a journal Q&A page for the gloss's current
+        // source passage. Reads gloss_context for citations/source_text and
+        // opens the journal overlay in Passage band with the ask card ready.
+        "J" => {
+            // Collect what we need from gloss_context before dropping the borrow.
+            let passage_args = {
+                let s = state.borrow();
+                s.gloss_context.as_ref().map(|ctx| {
+                    (
+                        ctx.act,
+                        ctx.scene,
+                        ctx.start_citation.clone(),
+                        ctx.end_citation.clone(),
+                        ctx.source_text.clone(),
+                    )
+                })
+            };
+            if let Some((div1, div2, start, end, source_text)) = passage_args {
+                // Close the gloss overlay first, restoring reader position,
+                // then open the journal passage ask.
+                {
+                    let mut s = state.borrow_mut();
+                    s.tts.stop();
+                    s.gloss_overlay.hide();
+                    // Restore the saved position so journal return_pos is coherent.
+                    if let Some((line, top)) = s.gloss_return_pos.take() {
+                        s.current_line = line;
+                        s.page_top_line = top;
+                    }
+                    s.input_mode = crate::app::InputMode::Reader;
+                }
+                crate::input::actions::journal::begin_passage_ask(
+                    state, div1, div2, start, end, source_text,
+                );
+                crate::logging::log("JOURNAL-FROM-GLOSS: opened passage ask from gloss overlay");
             }
             true
         }
