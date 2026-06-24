@@ -20,6 +20,7 @@ fn footer_left_text(abbrev: &str, band: JournalBand) -> String {
     match band {
         JournalBand::Work => format!("{} \u{00b7} whole work", abbrev),
         JournalBand::Scene(d1, d2) => format!("{} {}.{}", abbrev, d1, d2),
+        JournalBand::Passage { div1, div2, .. } => format!("{} {}.{} passage", abbrev, div1, div2),
     }
 }
 
@@ -33,7 +34,7 @@ fn render_current(s: &mut AppState) {
         .unwrap_or_default();
 
     let conn = crate::db::queries::open_db().ok();
-    let (pages, scene_title) = match s.journal_band {
+    let (pages, scene_title) = match s.journal_band.clone() {
         JournalBand::Work => {
             let pages = conn
                 .and_then(|c| crate::db::journal::find_work_pages(&c, &work_abbrev).ok())
@@ -55,6 +56,16 @@ fn render_current(s: &mut AppState) {
             );
             (pages, title)
         }
+        JournalBand::Passage { start, end, .. } => {
+            let pages = conn
+                .and_then(|c| crate::db::journal::find_passage_pages(&c, &work_abbrev, &start, &end).ok())
+                .unwrap_or_default();
+            let title = format!(
+                "{} — passage",
+                s.current_work.as_ref().map(|w| w.title.as_str()).unwrap_or(""),
+            );
+            (pages, title)
+        }
     };
 
     let count = pages.len();
@@ -72,7 +83,7 @@ fn render_current(s: &mut AppState) {
         let p = &pages[s.journal.page_index];
         (p.question.clone(), p.answer.clone())
     };
-    let footer_left = footer_left_text(&work_abbrev, s.journal_band);
+    let footer_left = footer_left_text(&work_abbrev, s.journal_band.clone());
     s.journal_overlay
         .show_page(&scene_title, &footer_left, s.journal.page_index, count, &q, &a, cw, h);
     s.journal.pages = pages;
@@ -143,7 +154,7 @@ pub(crate) fn nav_scene(state: &Rc<RefCell<AppState>>, delta: i32) {
         return;
     }
 
-    let target_idx: i64 = match s.journal_band {
+    let target_idx: i64 = match s.journal_band.clone() {
         // From the Work band, enter the scene list at the appropriate end.
         JournalBand::Work => {
             if delta > 0 { 0 } else { scenes.len() as i64 - 1 }
@@ -156,6 +167,7 @@ pub(crate) fn nav_scene(state: &Rc<RefCell<AppState>>, delta: i32) {
                 }
             }
         }
+        JournalBand::Passage { .. } => return, // passage band nav is out of scope
     };
 
     let target = JournalBand::Scene(scenes[target_idx as usize].0, scenes[target_idx as usize].1);
@@ -183,6 +195,7 @@ pub(crate) fn begin_ask(state: &Rc<RefCell<AppState>>) {
     let title = match s.journal_band {
         JournalBand::Work => "Ask a question about the whole work",
         JournalBand::Scene(_, _) => "Ask a question about this scene",
+        JournalBand::Passage { .. } => "Ask a question about this passage",
     };
     s.journal_overlay
         .open_ask_card(title, "Tab switch  \u{00b7}  Ctrl+Enter submit");
@@ -220,7 +233,7 @@ pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
 fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPromptMode) {
     let (work_title, work_author, work_abbrev, band, scene_text, model) = {
         let s = state_rc.borrow();
-        let band = s.journal_band;
+        let band = s.journal_band.clone();
         let (title, author, abbrev) = match s.current_work.as_ref() {
             Some(w) => (
                 w.title.clone(),
@@ -232,6 +245,7 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
         let scene_text = match band {
             JournalBand::Work => String::new(),
             JournalBand::Scene(d1, d2) => crate::app::scene_synopsis::scene_text_for(&s, d1, d2),
+            JournalBand::Passage { .. } => String::new(), // TODO(task-5): supply passage source_text
         };
         (
             title,
@@ -268,6 +282,10 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
             scene_text,
             question,
         ),
+        JournalBand::Passage { .. } => {
+            // TODO(task-5): build passage-scoped user_msg with source_text
+            unreachable!("passage ask_claude is Task 5")
+        }
     };
     let question_owned = question.to_string();
     let model_for_db = model.clone();
@@ -278,9 +296,13 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
         model,
         move |st, answer| {
             // For a save, the scope and (div1,div2) come from the band.
-            let (scope, sdiv1, sdiv2) = match band {
+            let (scope, sdiv1, sdiv2) = match &band {
                 JournalBand::Work => ("work", crate::app::JOURNAL_WORK_DIV.0, crate::app::JOURNAL_WORK_DIV.1),
-                JournalBand::Scene(d1, d2) => ("scene", d1, d2),
+                JournalBand::Scene(d1, d2) => ("scene", *d1, *d2),
+                JournalBand::Passage { .. } => {
+                    // TODO(task-5): passage save
+                    unreachable!("passage save is Task 5")
+                }
             };
             if let Ok(conn) = crate::db::queries::open_db_rw() {
                 let write_result = if mode == JournalPromptMode::Edit && edit_id >= 0 {
@@ -300,12 +322,15 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
             }
             let pages = crate::db::queries::open_db()
                 .ok()
-                .and_then(|conn| match band {
+                .and_then(|conn| match &band {
                     JournalBand::Work => {
                         crate::db::journal::find_work_pages(&conn, &work_abbrev).ok()
                     }
                     JournalBand::Scene(d1, d2) => {
-                        crate::db::journal::find_journal_pages(&conn, &work_abbrev, d1, d2).ok()
+                        crate::db::journal::find_journal_pages(&conn, &work_abbrev, *d1, *d2).ok()
+                    }
+                    JournalBand::Passage { start, end, .. } => {
+                        crate::db::journal::find_passage_pages(&conn, &work_abbrev, start, end).ok()
                     }
                 })
                 .unwrap_or_default();
@@ -315,7 +340,7 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
                 pages.len().saturating_sub(1)
             };
             let mut s = st.borrow_mut();
-            s.journal_band = band;
+            s.journal_band = band.clone();
             s.journal.page_index = new_index;
             render_current(&mut s);
             crate::logging::log("JOURNAL: saved page");
@@ -354,9 +379,12 @@ pub(crate) fn open_picker(state: &Rc<RefCell<AppState>>) {
             } else {
                 JournalBand::Scene(p.div1, p.div2)
             };
-            let scene_label = match band {
+            let scene_label = match &band {
                 JournalBand::Work => "whole work".to_string(),
-                JournalBand::Scene(d1, d2) => crate::app::scene_synopsis::synopsis_label(&s, d1, d2),
+                JournalBand::Scene(d1, d2) => crate::app::scene_synopsis::synopsis_label(&s, *d1, *d2),
+                JournalBand::Passage { div1, div2, .. } => {
+                    format!("{}.{} passage", div1, div2)
+                }
             };
             let prefix: String = p.question.chars().take(80).collect();
             crate::ui::journal_picker::JournalRow {
@@ -389,7 +417,7 @@ pub(crate) fn confirm_picker(state: &Rc<RefCell<AppState>>) {
     };
     let (band, target_id) = {
         let row = &s.journal_picker.items[idx];
-        (row.band, row.id)
+        (row.band.clone(), row.id)
     };
 
     s.journal_band = band;

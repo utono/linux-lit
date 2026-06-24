@@ -137,10 +137,11 @@ pub enum JournalPromptMode {
 
 /// Which "band" of the journal is currently shown. The Work band holds
 /// whole-work pages (scope='work'); a Scene band holds one (div1,div2)'s pages.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum JournalBand {
     Work,
     Scene(i64, i64),
+    Passage { div1: i64, div2: i64, start: String, end: String },
 }
 
 #[derive(Clone, Copy, PartialEq)]
