@@ -1767,7 +1767,7 @@ fn source_block_seek_time(s: &AppState, index: i32) -> Option<f64> {
     // line-seek in the app (search / concordance / echoes), so `a`/`space` begin
     // just ahead of the first word rather than clipping its onset.
     let start = first_source_start_time(&block.display, &work_pairs)?;
-    Some((start - crate::input::navigation::SEEK_PREROLL).max(0.0))
+    Some(crate::input::navigation::preroll_seek_time(start))
 }
 
 /// `~/Music/glosses/<work-abbrev>/<gloss-id>/`

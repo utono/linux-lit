@@ -56,6 +56,15 @@ use super::highlight::{
 /// Provides audio context so playback doesn't start at a hard cut.
 pub const SEEK_PREROLL: f64 = 0.2;
 
+/// The seek target for a line whose audio begins at `start`: back up by
+/// `SEEK_PREROLL` for context, clamped at 0 so we never seek negative. The
+/// single idiom every nav/search/concordance/echo seek repeats.
+/// NOTE: distinct from the A-B-loop `CHUNK_PREROLL`/`TURN_PREROLL` computations,
+/// which back up by their own constants.
+pub fn preroll_seek_time(start: f64) -> f64 {
+    (start - SEEK_PREROLL).max(0.0)
+}
+
 /// Seconds to highlight a line before playback actually reaches it.
 /// Used by the MPV client's time-pos sync.
 pub const SYNC_PREROLL: f64 = 0.0;
@@ -1756,7 +1765,7 @@ pub fn seek_to_current_line(state: &mut AppState) {
         if state.suppress_sync_until.map_or(true, |existing| new_until > existing) {
             state.suppress_sync_until = Some(new_until);
         }
-        let seek_time = (ts.start - SEEK_PREROLL).max(0.0);
+        let seek_time = preroll_seek_time(ts.start);
         log_fmt!("SEEK: line={} work_idx={} start={:.2} seek={:.2} suppress=500ms", state.current_line, work_idx, ts.start, seek_time);
         let _ = state
             .cmd_tx

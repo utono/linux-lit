@@ -97,7 +97,7 @@ pub fn toggle_playback(state: &mut AppState) {
     if let Some(ref work) = state.current_work {
         if let Some(work_idx) = state.work_line_for_buffer(state.current_line) {
             if let Some(ts) = &work.lines[work_idx].timestamp {
-                let seek_time = (ts.start - crate::input::navigation::SEEK_PREROLL).max(0.0);
+                let seek_time = crate::input::navigation::preroll_seek_time(ts.start);
                 let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::Seek(seek_time));
                 // Suppress sync briefly so the preroll seek doesn't pull
                 // the cursor back to the previous line
@@ -225,7 +225,7 @@ fn seek_and_resume(state: &mut AppState) {
         Some(start) => start,
         None => return,
     };
-    let seek_time = (start - crate::input::navigation::SEEK_PREROLL).max(0.0);
+    let seek_time = crate::input::navigation::preroll_seek_time(start);
 
     let cmd = if state.mpv_playing {
         crate::mpv::MpvCommand::ResumeAndSeek(seek_time)
