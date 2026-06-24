@@ -3574,6 +3574,50 @@ pub fn apply_vocab_highlighting(state: &AppState) {
     }
 }
 
+/// Parse a citation `"ABBR.div1.div2.line_in_div"` into `(div1, div2, line)`.
+/// Only the trailing three dot-separated numbers matter, so an `-Amb`-suffixed
+/// abbrev (or any abbrev with dots) parses the same. Returns `None` if the tail
+/// is not three integers.
+pub(crate) fn parse_citation(cite: &str) -> Option<(i64, i64, i64)> {
+    let mut parts = cite.rsplitn(4, '.');
+    let line = parts.next()?.parse().ok()?;
+    let div2 = parts.next()?.parse().ok()?;
+    let div1 = parts.next()?.parse().ok()?;
+    Some((div1, div2, line))
+}
+
+/// True if the line `(div1, div2, line_in_div)` falls within any glossed
+/// passage's `[start_citation, end_citation]` range. Passages never cross a
+/// scene (verified: start and end share `(div1, div2)`), so a match requires the
+/// SAME `(div1, div2)` and `line_in_div` within the inclusive line range.
+///
+/// This is identity-based, NOT text-based: two different lines that happen to
+/// share text are distinguished by their citation, fixing the over-coloring bug
+/// where any line matching a glossed line's TEXT was tinted.
+pub(crate) fn line_in_any_passage(
+    div1: i64,
+    div2: i64,
+    line_in_div: i64,
+    passages: &[(String, String)],
+) -> bool {
+    for (start, end) in passages {
+        let (Some((sd1, sd2, sl)), Some((ed1, ed2, el))) =
+            (parse_citation(start), parse_citation(end))
+        else {
+            continue;
+        };
+        // A passage stays within one scene; guard anyway by requiring the line's
+        // scene to equal the passage's start scene.
+        if div1 == sd1 && div2 == sd2 && ed1 == sd1 && ed2 == sd2 {
+            let (lo, hi) = if sl <= el { (sl, el) } else { (el, sl) };
+            if (lo..=hi).contains(&line_in_div) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Recompute which buffer lines fall inside a `reader-gloss` passage for the
 /// current work and tint them slate-blue (the gloss overlay's synthesized-TTS
 /// color). Stores the set in `reader_gloss_lines` so `update_highlight` can
@@ -3582,9 +3626,10 @@ pub fn apply_vocab_highlighting(state: &AppState) {
 ///
 /// Buffer→work mapping is read through `work_line_for_buffer` so the split
 /// (line_map) and identity (no map) cases are handled uniformly. Glossed lines
-/// are matched by source TEXT (not citation tuple) so the tint is correct on
-/// `-Amb` editions, whose `line_in_div` numbering diverges from the
-/// base-numbered gloss citations — see the comment inside.
+/// are matched by CITATION/LINE IDENTITY (`line_in_any_passage`), not by source
+/// text — so two lines sharing text are distinguished, fixing the over-coloring
+/// bug. Clears all tint first, so this is also the recompute path after a gloss
+/// is created or deleted.
 pub fn apply_reader_gloss_highlighting(state: &mut AppState) {
     state.reader_gloss_lines.clear();
     state.buffer.remove_tag(
@@ -3608,30 +3653,31 @@ pub fn apply_reader_gloss_highlighting(state: &mut AppState) {
         return;
     }
 
-    // Match glossed source lines by TEXT (not citation tuple). Base and the
-    // production editions (-Amb/-BBC/-DC) are now byte-identical in line_mapping
-    // (same div/line/sub_line/text — litdb folger-stage-directions), so a tuple
-    // match would also work; text-matching is retained as the edition-robust,
-    // harmless choice (it never mismatches identical text). Same approach as
-    // jump_to_gloss_source_start.
-    let glossed_texts: std::collections::HashSet<String> = passages
+    // Match glossed lines by CITATION/LINE IDENTITY, not by text. Each passage
+    // covers an inclusive `[start_citation, end_citation]` line range within one
+    // scene; a buffer line is glossed iff its `(div1, div2, line_in_div)` falls
+    // in some passage's range. Text-matching (the old approach) tinted ANY line
+    // whose text matched a glossed line's text — so unglossed lines that merely
+    // shared text got colored (the over-coloring bug). Base and the production
+    // editions (-Amb/-BBC/-DC) are now byte-identical in line_mapping numbering
+    // (litdb folger-stage-directions), so the citation tuple resolves correctly
+    // on every edition — the reason text-matching was introduced is gone.
+    let ranges: Vec<(String, String)> = passages
         .iter()
-        .flat_map(|p| p.source_text.lines())
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty())
+        .map(|p| (p.start_citation.clone(), p.end_citation.clone()))
         .collect();
 
     let line_count = state.buffer.line_count() as usize;
     let mut lines: Vec<usize> = Vec::new();
     for buf_idx in 0..line_count {
-        let text = match state
+        let (d1, d2, lid) = match state
             .work_line_for_buffer(buf_idx)
             .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
         {
-            Some(l) => l.text.trim().to_string(),
+            Some(l) => (l.div1, l.div2, l.line_in_div),
             None => continue,
         };
-        if !text.is_empty() && glossed_texts.contains(&text) {
+        if line_in_any_passage(d1, d2, lid, &ranges) {
             lines.push(buf_idx);
         }
     }
@@ -3935,6 +3981,50 @@ fn word_run_count(line: &str) -> usize {
         in_word = is_word;
     }
     runs
+}
+
+#[cfg(test)]
+mod reader_gloss_range_tests {
+    use super::{parse_citation, line_in_any_passage};
+
+    #[test]
+    fn parse_citation_extracts_div_and_line() {
+        assert_eq!(parse_citation("2H6.1.4.43"), Some((1, 4, 43)));
+        assert_eq!(parse_citation("Ham.3.1.56"), Some((3, 1, 56)));
+        // -Amb suffix on the abbrev is irrelevant — only the trailing 3 numbers matter.
+        assert_eq!(parse_citation("2H6-Amb.1.4.43"), Some((1, 4, 43)));
+        assert_eq!(parse_citation("garbage"), None);
+    }
+
+    #[test]
+    fn line_matches_only_inside_a_passage_range_in_same_scene() {
+        // One glossed passage: 2H6 1.4.43–50.
+        let passages = [("2H6.1.4.43".to_string(), "2H6.1.4.50".to_string())];
+
+        // In range (same scene, line within [43,50]) -> glossed.
+        assert!(line_in_any_passage(1, 4, 43, &passages), "start of range");
+        assert!(line_in_any_passage(1, 4, 50, &passages), "end of range (inclusive)");
+        assert!(line_in_any_passage(1, 4, 47, &passages), "mid range");
+
+        // Out of range by line number -> NOT glossed (the over-coloring bug:
+        // a line with line 52 must not tint just because it shares text).
+        assert!(!line_in_any_passage(1, 4, 42, &passages), "before range");
+        assert!(!line_in_any_passage(1, 4, 51, &passages), "after range");
+
+        // Same line number, DIFFERENT scene -> NOT glossed (identity, not text).
+        assert!(!line_in_any_passage(1, 3, 47, &passages), "different div2");
+        assert!(!line_in_any_passage(2, 4, 47, &passages), "different div1");
+    }
+
+    #[test]
+    fn stage_sub_lines_within_range_are_covered() {
+        // A passage range 1.4.43–50 covers line_in_div 43..=50; stage directions
+        // share their host line's line_in_div (e.g. 43), so they fall in range
+        // and get tinted as part of the glossed passage. (sub_line is not part of
+        // the citation; the host line number is what the range checks.)
+        let passages = [("2H6.1.4.43".to_string(), "2H6.1.4.50".to_string())];
+        assert!(line_in_any_passage(1, 4, 43, &passages));
+    }
 }
 
 #[cfg(test)]

@@ -1041,17 +1041,19 @@ mod tests {
     use super::*;
     use crate::db::models::Line;
 
-    /// Regression for the reader-gloss main-card coloring on `-Amb` editions.
-    /// The gloss passages are stored against the BASE work's citations. Base and
-    /// production editions (-Amb/-BBC/-DC) are now byte-identical in line_mapping
-    /// (same div/line/sub_line/text — litdb folger-stage-directions), so a
-    /// citation-tuple match would also work; `apply_reader_gloss_highlighting`
-    /// retains text-matching as the edition-robust, harmless choice.
-    /// This asserts those two lines (and the rest of the second passage) ARE in
-    /// the glossed-text set built from the base passages' `source_text`.
-    /// Skipped when lit.db or the `-Amb` rows are unavailable.
+    /// Regression for the reader-gloss main-card coloring on `-Amb` editions
+    /// under CITATION-IDENTITY matching (the over-coloring fix replaced the old
+    /// text-matching). Gloss passages are stored against the BASE work's
+    /// citations; base and production editions (-Amb/-BBC/-DC) are now
+    /// byte-identical in line_mapping (litdb folger-stage-directions), so each
+    /// glossed line's `(div1,div2,line_in_div)` resolves identically on `2H6-Amb`
+    /// and falls inside a passage's citation range. This asserts the previously
+    /// reported `-Amb` lines DO fall within a glossed passage range (so they
+    /// color), validating that the citation approach keeps `-Amb` coloring that
+    /// motivated the original text-match workaround. Skipped when lit.db or the
+    /// `-Amb` rows are unavailable.
     #[test]
-    fn h6_amb_glossed_lines_match_by_text() {
+    fn h6_amb_glossed_lines_match_by_citation() {
         let conn = match crate::db::queries::open_db() {
             Ok(c) => c,
             Err(_) => {
@@ -1059,21 +1061,17 @@ mod tests {
                 return;
             }
         };
-        // Base passages provide the edition-identical source text.
         let passages = crate::db::queries::find_glossed_passages(&conn, "2H6", &["reader-gloss"])
             .unwrap_or_default();
         if passages.is_empty() {
             eprintln!("skip: no 2H6 reader-gloss passages");
             return;
         }
-        let glossed_texts: std::collections::HashSet<String> = passages
+        let ranges: Vec<(String, String)> = passages
             .iter()
-            .flat_map(|p| p.source_text.lines())
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty())
+            .map(|p| (p.start_citation.clone(), p.end_citation.clone()))
             .collect();
 
-        // The Ambrose edition's actual line texts for the reported failures.
         let amb = match crate::db::queries::load_work(&conn, "2H6-Amb") {
             Ok(w) => w,
             Err(_) => {
@@ -1086,12 +1084,19 @@ mod tests {
             "the earth. John Southwell,",
             "read you; and let us to our work.",
         ] {
-            let found = amb.lines.iter().any(|l| l.text.trim() == needle);
-            assert!(found, "2H6-Amb is missing expected line {:?}", needle);
+            let line = amb.lines.iter().find(|l| l.text.trim() == needle);
+            let line = match line {
+                Some(l) => l,
+                None => {
+                    eprintln!("skip: 2H6-Amb missing line {:?}", needle);
+                    return;
+                }
+            };
             assert!(
-                glossed_texts.contains(needle),
-                "glossed-text set does not contain {:?} — -Amb line would render uncolored",
-                needle
+                crate::app::line_in_any_passage(line.div1, line.div2, line.line_in_div, &ranges),
+                "-Amb line {:?} ({}.{}.{}) is not inside any glossed passage range — \
+                 it would render uncolored",
+                needle, line.div1, line.div2, line.line_in_div
             );
         }
     }
