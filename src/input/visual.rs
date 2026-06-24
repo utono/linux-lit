@@ -126,7 +126,7 @@ pub struct ActionPopupState {
 }
 
 /// Built-in action names, in display order.
-pub const BUILTIN_ACTIONS: &[&str] = &["Reader Gloss", "Gloss with Claude", "Inner Monologue", "Journal Q&A", "Copy", "Copy with metadata"];
+pub const BUILTIN_ACTIONS: &[&str] = &["Journal Q&A", "Reader Gloss", "Gloss with Claude", "Inner Monologue", "Copy", "Copy with metadata"];
 
 /// Determine which built-in actions are available for the current work.
 pub fn available_builtin_actions(_state: &AppState) -> Vec<&'static str> {
@@ -171,19 +171,19 @@ pub fn execute_action(
     if index < builtin_count {
         match index {
             0 => {
-                action_reader_gloss(state_rc);
+                action_journal_qa(state_rc);
                 return;
             }
             1 => {
-                action_gloss_with_claude(state_rc);
+                action_reader_gloss(state_rc);
                 return;
             }
             2 => {
-                action_inner_monologue(state_rc);
+                action_gloss_with_claude(state_rc);
                 return;
             }
             3 => {
-                action_journal_qa(state_rc);
+                action_inner_monologue(state_rc);
                 return;
             }
             4 => action_copy(&mut state_rc.borrow_mut(), false),

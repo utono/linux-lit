@@ -85,7 +85,7 @@ impl JournalOverlay {
         // right.
         let footer = crate::ui::footer::build_footer_row(
             text_margins as i32,
-            "Alt+w work \u{00b7} Ctrl+\\ pick \u{00b7} A add \u{00b7} E edit \u{00b7} D delete",
+            "Alt+w work \u{00b7} Ctrl+\\ pick \u{00b7} Alt+g gloss \u{00b7} Ctrl+g view gloss",
         );
         let footer_left = footer.left;
         container.append(&footer.container);
