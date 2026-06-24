@@ -573,7 +573,7 @@ pub fn load_vocab_word_list(
 ) -> Result<Vec<(String, usize)>, rusqlite::Error> {
     let mut stmt = conn.prepare(
         "SELECT canonical_text FROM line_mapping \
-         ORDER BY div1, div2, line_in_div"
+         ORDER BY div1, div2, line_in_div, sub_line"
     )?;
     let lines: Vec<String> = stmt.query_map([], |row| {
         row.get::<_, String>(0)
@@ -1292,7 +1292,7 @@ pub fn load_bookmarks_with_details(
          FROM bookmarks b \
          JOIN line_mapping lm ON b.line_mapping_id = lm.id \
          WHERE b.work_abbrev = ?1 \
-         ORDER BY lm.div1, lm.div2, lm.line_in_div"
+         ORDER BY lm.div1, lm.div2, lm.line_in_div, lm.sub_line"
     )?;
     let rows = stmt.query_map([work_abbrev], |row| {
         let div1: i64 = row.get(3)?;
@@ -2220,7 +2220,7 @@ pub fn search_lines(conn: &Connection, query: &str, limit: i64)
         "SELECT work_abbrev, div1, div2, line_in_div, canonical_text \
          FROM line_mapping \
          WHERE canonical_text LIKE ?1 COLLATE NOCASE \
-         ORDER BY work_abbrev, div1, div2, line_in_div \
+         ORDER BY work_abbrev, div1, div2, line_in_div, sub_line \
          LIMIT ?2",
     )?;
     let rows = stmt.query_map(rusqlite::params![pattern, limit], |row| {
@@ -2258,12 +2258,12 @@ mod tests {
         conn.execute_batch(
             "CREATE TABLE line_mapping (
                 id INTEGER PRIMARY KEY, work_abbrev TEXT, canonical_text TEXT,
-                div1 INTEGER, div2 INTEGER, line_in_div INTEGER
+                div1 INTEGER, div2 INTEGER, line_in_div INTEGER, sub_line INTEGER
              );
-             INSERT INTO line_mapping (id, work_abbrev, canonical_text, div1, div2, line_in_div) VALUES
-                (1, 'Ham', 'To be, or not to be', 3, 1, 56),
-                (2, 'Mac', 'Tomorrow and tomorrow', 5, 5, 19),
-                (3, 'Lr',  'Nothing will come of nothing', 1, 1, 92);",
+             INSERT INTO line_mapping (id, work_abbrev, canonical_text, div1, div2, line_in_div, sub_line) VALUES
+                (1, 'Ham', 'To be, or not to be', 3, 1, 56, 0),
+                (2, 'Mac', 'Tomorrow and tomorrow', 5, 5, 19, 0),
+                (3, 'Lr',  'Nothing will come of nothing', 1, 1, 92, 0);",
         ).unwrap();
         let hits = search_lines(&conn, "TOMORROW", 10).unwrap();
         assert_eq!(hits.len(), 1);
@@ -2638,9 +2638,9 @@ mod tests {
              INSERT INTO works (abbrev) VALUES ('Ham');
              CREATE TABLE line_mapping (id INTEGER PRIMARY KEY, work_abbrev TEXT,
                div1 INTEGER, div2 INTEGER, line_in_div INTEGER, canonical_text TEXT,
-               speaker TEXT);
+               speaker TEXT, sub_line INTEGER);
              INSERT INTO line_mapping
-               VALUES (100,'Ham',1,1,1,'Who''s there?','BARNARDO');",
+               VALUES (100,'Ham',1,1,1,'Who''s there?','BARNARDO',0);",
         )
         .unwrap();
         ensure_bookmarks_table(&conn).expect("Failed to create bookmarks table");
