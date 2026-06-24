@@ -564,13 +564,9 @@ impl GlossOverlay {
     }
 
     pub fn attach(&self, child: &impl IsA<gtk4::Widget>) {
-        self.overlay.set_child(Some(child));
-        self.overlay.add_overlay(&self.scrim);
-        self.overlay.add_overlay(&self.container);
-        self.overlay.set_measure_overlay(&self.scrim, false);
-        self.overlay.set_measure_overlay(&self.container, false);
-        self.overlay.set_clip_overlay(&self.scrim, true);
-        self.overlay.set_clip_overlay(&self.container, true);
+        crate::ui::picker_attach::attach_overlay_panel(
+            &self.overlay, child, &self.scrim, &self.container,
+        );
     }
 
     pub fn show(&self, original: &str, corrected: &str) {
