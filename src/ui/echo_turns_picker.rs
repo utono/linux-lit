@@ -115,15 +115,11 @@ impl EchoTurnsPicker {
             self.list_box.append(&row);
         }
 
-        if let Some(row) = self.list_box.row_at_index(0) {
-            self.list_box.select_row(Some(&row));
-        }
+        crate::ui::picker_nav::select_first_row(&self.list_box);
     }
 
     pub fn selected_index(&self) -> Option<usize> {
-        self.list_box
-            .selected_row()
-            .and_then(|row| row.widget_name().parse::<usize>().ok())
+        crate::ui::picker_nav::selected_index(&self.list_box)
     }
 
     pub fn move_selection(&self, delta: i32) {

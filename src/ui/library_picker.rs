@@ -390,9 +390,7 @@ impl LibraryPicker {
             }
         }
 
-        if let Some(first) = self.list_box.row_at_index(0) {
-            self.list_box.select_row(Some(&first));
-        }
+        crate::ui::picker_nav::select_first_row(&self.list_box);
     }
 
     fn add_author_row(&self, author: &str, count: usize) {

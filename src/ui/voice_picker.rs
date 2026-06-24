@@ -151,9 +151,7 @@ impl VoicePicker {
             self.list_box.append(&row);
         }
 
-        if let Some(row) = self.list_box.row_at_index(0) {
-            self.list_box.select_row(Some(&row));
-        }
+        crate::ui::picker_nav::select_first_row(&self.list_box);
     }
 
     /// The selected voice: (id, display name, is_free_tier_safe).

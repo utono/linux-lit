@@ -54,16 +54,12 @@ impl AuthorshipPicker {
             self.list_box.append(&label);
         }
         self.items = items;
-        if let Some(row) = self.list_box.row_at_index(0) {
-            self.list_box.select_row(Some(&row));
-        }
+        crate::ui::picker_nav::select_first_row(&self.list_box);
     }
 
     pub fn show(&self) {
         self.container.set_visible(true);
-        if let Some(row) = self.list_box.row_at_index(0) {
-            self.list_box.select_row(Some(&row));
-        }
+        crate::ui::picker_nav::select_first_row(&self.list_box);
     }
 
     pub fn hide(&self) {

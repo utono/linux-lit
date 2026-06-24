@@ -100,9 +100,7 @@ impl ConcordanceListPicker {
     }
 
     pub fn selected_index(&self) -> Option<usize> {
-        self.list_box
-            .selected_row()
-            .and_then(|row| row.widget_name().parse::<usize>().ok())
+        crate::ui::picker_nav::selected_index(&self.list_box)
     }
 
     pub fn move_selection(&self, delta: i32) {
