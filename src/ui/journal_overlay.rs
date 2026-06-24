@@ -1,4 +1,5 @@
 use crate::ui::ask_card::{AskCard, AskFocus};
+use crate::ui::gloss_render::populate_verse_buffer;
 use gtk4::prelude::*;
 use gtk4::{Label, Overlay};
 use std::cell::{Cell, RefCell};
@@ -169,6 +170,74 @@ impl JournalOverlay {
         self.update_bottom_clip();
     }
 
+    /// Render a passage page: source verse (with italic stage directions) above a
+    /// separator rule, then the Q&A. Reuses `populate_verse_buffer` (the shared
+    /// renderer from Task 2). Call `apply_font` after so the italic re-assertion
+    /// fires over the freshly-built buffer.
+    pub fn show_passage_page(
+        &self,
+        footer_left: &str,
+        page_index: usize,
+        page_count: usize,
+        start_citation: Option<&str>,
+        end_citation: Option<&str>,
+        source_text: &str,
+        question: &str,
+        answer: &str,
+        card_width: i32,
+        card_height: i32,
+    ) {
+        self.size_card(card_width, card_height);
+        self.title.set_text("Passage");
+        self.footer_left.set_text(footer_left);
+
+        // Position label: use the citation span when available, else a plain count.
+        let pos_text = match (start_citation, end_citation) {
+            (Some(s), Some(e)) => format!("passage {} \u{2013} {}", s, e),
+            (Some(s), None) => format!("passage {}", s),
+            _ => {
+                if page_count == 0 {
+                    "page 0 of 0 in this passage".to_string()
+                } else {
+                    format!("page {} of {} in this passage", page_index + 1, page_count)
+                }
+            }
+        };
+        self.position_label.set_text(&pos_text);
+
+        // Render source verse into the buffer. bar_left mirrors the gloss overlay
+        // (card_side_margin), accent omitted since passage pages are not speaker-
+        // specific.
+        let bar_left = crate::ui::card_side_margin(card_width);
+        populate_verse_buffer(
+            &self.view,
+            source_text,
+            self.text_margins,
+            bar_left,
+            &[],
+            None,
+            None,
+            None,
+        );
+
+        // Append separator + Q&A after the verse.
+        let qa_text = if page_count == 0 {
+            "\n\n\u{2014}\u{2014}\u{2014}\n\nNo pages yet \u{2014} press A to ask.".to_string()
+        } else {
+            format!("\n\n\u{2014}\u{2014}\u{2014}\n\n{}\n\n{}", question, answer)
+        };
+        let mut end_iter = self.view.buffer().end_iter();
+        self.view.buffer().insert(&mut end_iter, &qa_text);
+
+        self.apply_font();
+        self.ask.close();
+        self.scrim.set_visible(true);
+        self.container.set_visible(true);
+        let adj = self.scrolled.vadjustment();
+        adj.set_value(adj.lower());
+        self.update_bottom_clip();
+    }
+
     pub fn show_loading(&self) {
         let (w, h) = self.last_card_size.get();
         if w > 0 {
@@ -284,6 +353,19 @@ impl JournalOverlay {
             table.add(&tag);
             let (start, end) = buffer.bounds();
             buffer.apply_tag(&tag, &start, &end);
+            // Re-assert italic tags above the buffer-wide font tag. The
+            // `.font("Family Size")` Pango description carries an upright STYLE
+            // attribute that overrides the `gloss-stage`/`gloss-bracket` italic
+            // tags when `journal-font` is added last. Mirror the same fix used
+            // in `gloss_overlay.rs apply_font`.
+            let top = table.size();
+            for italic in ["gloss-stage", "gloss-bracket"] {
+                if let Some(t) = table.lookup(italic) {
+                    if top > 0 {
+                        t.set_priority(top - 1);
+                    }
+                }
+            }
         }
     }
 

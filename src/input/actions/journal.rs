@@ -77,15 +77,42 @@ fn render_current(s: &mut AppState) {
 
     let cw = s.content_hbox.width();
     let h = s.content_hbox.height();
-    let (q, a) = if count == 0 {
-        (String::new(), String::new())
-    } else {
-        let p = &pages[s.journal.page_index];
-        (p.question.clone(), p.answer.clone())
-    };
     let footer_left = footer_left_text(&work_abbrev, s.journal_band.clone());
-    s.journal_overlay
-        .show_page(&scene_title, &footer_left, s.journal.page_index, count, &q, &a, cw, h);
+
+    // Passage pages with source_text use the verse renderer; everything else
+    // uses the plain show_page path.
+    let current_page = if count == 0 {
+        None
+    } else {
+        Some(&pages[s.journal.page_index])
+    };
+
+    let is_passage_with_source = matches!(s.journal_band, JournalBand::Passage { .. })
+        && current_page.map_or(false, |p| p.source_text.is_some());
+
+    if is_passage_with_source {
+        let p = current_page.unwrap();
+        let source_text = p.source_text.as_deref().unwrap_or("");
+        s.journal_overlay.show_passage_page(
+            &footer_left,
+            s.journal.page_index,
+            count,
+            p.start_citation.as_deref(),
+            p.end_citation.as_deref(),
+            source_text,
+            &p.question,
+            &p.answer,
+            cw,
+            h,
+        );
+    } else {
+        let (q, a) = current_page
+            .map(|p| (p.question.clone(), p.answer.clone()))
+            .unwrap_or_default();
+        s.journal_overlay
+            .show_page(&scene_title, &footer_left, s.journal.page_index, count, &q, &a, cw, h);
+    }
+
     s.journal.pages = pages;
 }
 
