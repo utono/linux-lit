@@ -682,9 +682,9 @@ pipeline as a single refactor.
   correct for the pure tail; the GTK buffer-population code was correctly left
   as behavior-risky.
 
-## #28 — parse-citation-reuse (collapse cite_tail closures) — OPEN
+## #28 — parse-citation-reuse (collapse cite_tail closures) — DONE (commit 95c7343)
 
-- **Status:** OPEN. Rank #1 of this batch — highest (4 dup sites × real drift) ÷
+- **Status:** DONE (commit 95c7343) — 4 cite_tail closures deleted, repointed to app::parse_citation. Rank #1 of this batch — highest (4 dup sites × real drift) ÷
   (tiny cut: the helper already exists and is tested).
 - **Signal:** the citation-tail parse `rsplitn(4,'.') -> (div1,div2,line)` is
   inlined as a `cite_tail` closure at **4 sites**, byte-identical except a `: i64`
@@ -706,9 +706,9 @@ pipeline as a single refactor.
 - **Safe-scope:** yes — delete 4 closures, repoint to an existing tested fn. Zero
   new code; pure dedup. The strongest cut in the ledger since #22.
 
-## #29 — journal-page-row-mapper — OPEN
+## #29 — journal-page-row-mapper — DONE (commit 5900e79)
 
-- **Status:** OPEN. Rank #2 — 4 sites, single file, clean fn extraction.
+- **Status:** DONE (commit 5900e79) — 4 row builders -> map_journal_page_row + JOURNAL_PAGE_COLUMNS const. Rank #2 — 4 sites, single file, clean fn extraction.
 - **Signal:** the `|row| Ok(JournalPage { id: row.get(0)?, … source_text:
   row.get(9)? })` 10-field row-builder closure is byte-identical at **4 sites** in
   src/db/journal.rs: find_journal_pages:90, find_work_pages:118,
@@ -727,9 +727,9 @@ pipeline as a single refactor.
   — different return type, hard exclude. No JournalPage row-builder in queries.rs.
 - **Safe-scope:** yes — pure data-mapping extraction; query bodies unchanged.
 
-## #30 — overlay-attach-body — OPEN
+## #30 — overlay-attach-body — DONE (commit 694ac40)
 
-- **Status:** OPEN. Rank #3 — 3 sites, cross-file, genuine drift risk.
+- **Status:** DONE (commit 694ac40) — 3 attach() -> picker_attach::attach_overlay_panel. Rank #3 — 3 sites, cross-file, genuine drift risk.
 - **Signal:** the 7-line overlay-attach wiring is byte-identical at **3 sites**:
   GlossOverlay::attach (gloss_overlay.rs:566), JournalOverlay::attach
   (journal_overlay.rs:117), TranslationOverlay::attach (translation_overlay.rs:131).
@@ -748,9 +748,9 @@ pipeline as a single refactor.
   — take an external `&Overlay`, no `set_child`, different signature.
 - **Safe-scope:** yes — pure widget wiring; only inputs are the 4 widget refs.
 
-## #31 — reassert-italic-tags — OPEN (low priority)
+## #31 — reassert-italic-tags — DONE (commit 43a5f71)
 
-- **Status:** OPEN. Rank #4 — only 2 sites, but a comment cross-reference proves
+- **Status:** DONE (commit 43a5f71) — 2 italic loops -> ui::reassert_italic_tags; guard test passes. Rank #4 — only 2 sites, but a comment cross-reference proves
   the two are EXPECTED to stay in sync (drift risk is documented, not theoretical).
 - **Signal:** the 7-line italic-priority re-assertion inside each overlay's
   `apply_font` per-view loop is byte-identical at **2 sites**:

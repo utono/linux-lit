@@ -14,6 +14,29 @@ pub struct JournalPage {
     pub source_text: Option<String>,
 }
 
+/// The SELECT column list every `find_*` query uses, in the order
+/// `map_journal_page_row` reads. Kept as one const so the column list and the
+/// row mapper cannot drift apart.
+const JOURNAL_PAGE_COLUMNS: &str =
+    "id, div1, div2, question, answer, COALESCE(claude_model, ''), timestamp, \
+     start_citation, end_citation, source_text";
+
+/// Build a `JournalPage` from a row selected with `JOURNAL_PAGE_COLUMNS`.
+fn map_journal_page_row(row: &rusqlite::Row<'_>) -> Result<JournalPage, rusqlite::Error> {
+    Ok(JournalPage {
+        id: row.get(0)?,
+        div1: row.get(1)?,
+        div2: row.get(2)?,
+        question: row.get(3)?,
+        answer: row.get(4)?,
+        claude_model: row.get(5)?,
+        timestamp: row.get(6)?,
+        start_citation: row.get(7)?,
+        end_citation: row.get(8)?,
+        source_text: row.get(9)?,
+    })
+}
+
 pub fn ensure_journal_table(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS journal_entries (
@@ -81,26 +104,12 @@ pub fn find_journal_pages(
     div2: i64,
 ) -> Result<Vec<JournalPage>, rusqlite::Error> {
     let mut stmt = conn.prepare(
-        "SELECT id, div1, div2, question, answer, COALESCE(claude_model, ''), timestamp, \
-                start_citation, end_citation, source_text \
+        &format!("SELECT {JOURNAL_PAGE_COLUMNS} \
          FROM journal_entries
          WHERE work_abbrev = ?1 AND div1 = ?2 AND div2 = ?3 AND scope = 'scene'
          ORDER BY timestamp ASC, id ASC",
-    )?;
-    let rows = stmt.query_map(rusqlite::params![work_abbrev, div1, div2], |row| {
-        Ok(JournalPage {
-            id: row.get(0)?,
-            div1: row.get(1)?,
-            div2: row.get(2)?,
-            question: row.get(3)?,
-            answer: row.get(4)?,
-            claude_model: row.get(5)?,
-            timestamp: row.get(6)?,
-            start_citation: row.get(7)?,
-            end_citation: row.get(8)?,
-            source_text: row.get(9)?,
-        })
-    })?;
+    ))?;
+    let rows = stmt.query_map(rusqlite::params![work_abbrev, div1, div2], map_journal_page_row)?;
     rows.collect()
 }
 
@@ -109,26 +118,12 @@ pub fn find_work_pages(
     work_abbrev: &str,
 ) -> Result<Vec<JournalPage>, rusqlite::Error> {
     let mut stmt = conn.prepare(
-        "SELECT id, div1, div2, question, answer, COALESCE(claude_model, ''), timestamp, \
-                start_citation, end_citation, source_text \
+        &format!("SELECT {JOURNAL_PAGE_COLUMNS} \
          FROM journal_entries
          WHERE work_abbrev = ?1 AND scope = 'work'
          ORDER BY timestamp ASC, id ASC",
-    )?;
-    let rows = stmt.query_map([work_abbrev], |row| {
-        Ok(JournalPage {
-            id: row.get(0)?,
-            div1: row.get(1)?,
-            div2: row.get(2)?,
-            question: row.get(3)?,
-            answer: row.get(4)?,
-            claude_model: row.get(5)?,
-            timestamp: row.get(6)?,
-            start_citation: row.get(7)?,
-            end_citation: row.get(8)?,
-            source_text: row.get(9)?,
-        })
-    })?;
+    ))?;
+    let rows = stmt.query_map([work_abbrev], map_journal_page_row)?;
     rows.collect()
 }
 
@@ -141,26 +136,12 @@ pub fn find_all_pages_ordered(
     work_abbrev: &str,
 ) -> Result<Vec<JournalPage>, rusqlite::Error> {
     let mut stmt = conn.prepare(
-        "SELECT id, div1, div2, question, answer, COALESCE(claude_model, ''), timestamp, \
-                start_citation, end_citation, source_text \
+        &format!("SELECT {JOURNAL_PAGE_COLUMNS} \
          FROM journal_entries
          WHERE work_abbrev = ?1
          ORDER BY (scope = 'work') DESC, div1 ASC, div2 ASC, timestamp ASC, id ASC",
-    )?;
-    let rows = stmt.query_map([work_abbrev], |row| {
-        Ok(JournalPage {
-            id: row.get(0)?,
-            div1: row.get(1)?,
-            div2: row.get(2)?,
-            question: row.get(3)?,
-            answer: row.get(4)?,
-            claude_model: row.get(5)?,
-            timestamp: row.get(6)?,
-            start_citation: row.get(7)?,
-            end_citation: row.get(8)?,
-            source_text: row.get(9)?,
-        })
-    })?;
+    ))?;
+    let rows = stmt.query_map([work_abbrev], map_journal_page_row)?;
     rows.collect()
 }
 
@@ -196,21 +177,15 @@ pub fn find_passage_pages(
     end_citation: &str,
 ) -> Result<Vec<JournalPage>, rusqlite::Error> {
     let mut stmt = conn.prepare(
-        "SELECT id, div1, div2, question, answer, COALESCE(claude_model, ''), timestamp, \
-                start_citation, end_citation, source_text \
+        &format!("SELECT {JOURNAL_PAGE_COLUMNS} \
          FROM journal_entries \
          WHERE work_abbrev = ?1 AND scope = 'passage' \
            AND start_citation = ?2 AND end_citation = ?3 \
          ORDER BY timestamp ASC, id ASC",
-    )?;
+    ))?;
     let rows = stmt.query_map(
         rusqlite::params![work_abbrev, start_citation, end_citation],
-        |row| Ok(JournalPage {
-            id: row.get(0)?, div1: row.get(1)?, div2: row.get(2)?,
-            question: row.get(3)?, answer: row.get(4)?, claude_model: row.get(5)?,
-            timestamp: row.get(6)?, start_citation: row.get(7)?,
-            end_citation: row.get(8)?, source_text: row.get(9)?,
-        }),
+        map_journal_page_row,
     )?;
     rows.collect()
 }

@@ -115,13 +115,9 @@ impl JournalOverlay {
     }
 
     pub fn attach(&self, child: &impl IsA<gtk4::Widget>) {
-        self.overlay.set_child(Some(child));
-        self.overlay.add_overlay(&self.scrim);
-        self.overlay.add_overlay(&self.container);
-        self.overlay.set_measure_overlay(&self.scrim, false);
-        self.overlay.set_measure_overlay(&self.container, false);
-        self.overlay.set_clip_overlay(&self.scrim, true);
-        self.overlay.set_clip_overlay(&self.container, true);
+        crate::ui::picker_attach::attach_overlay_panel(
+            &self.overlay, child, &self.scrim, &self.container,
+        );
     }
 
     fn size_card(&self, card_width: i32, card_height: i32) {
@@ -353,19 +349,8 @@ impl JournalOverlay {
             table.add(&tag);
             let (start, end) = buffer.bounds();
             buffer.apply_tag(&tag, &start, &end);
-            // Re-assert italic tags above the buffer-wide font tag. The
-            // `.font("Family Size")` Pango description carries an upright STYLE
-            // attribute that overrides the `gloss-stage`/`gloss-bracket` italic
-            // tags when `journal-font` is added last. Mirror the same fix used
-            // in `gloss_overlay.rs apply_font`.
-            let top = table.size();
-            for italic in ["gloss-stage", "gloss-bracket"] {
-                if let Some(t) = table.lookup(italic) {
-                    if top > 0 {
-                        t.set_priority(top - 1);
-                    }
-                }
-            }
+            // Keep stage/bracket directions italic above the upright font tag.
+            crate::ui::reassert_italic_tags(&table);
         }
     }
 

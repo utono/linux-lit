@@ -18,3 +18,23 @@ pub(crate) fn attach_panel(
     overlay.add_overlay(panel);
     panel.set_visible(false);
 }
+
+/// Attach a full-screen overlay panel (scrim + container): set `child` as the
+/// overlay's child, add `scrim` then `container` as overlays, and mark both
+/// non-measuring + clipping. The shared body of the gloss/journal/translation
+/// `attach` methods. Distinct from `attach_panel` (which omits the
+/// measure/clip calls and hides its panel) — those are different contracts.
+pub(crate) fn attach_overlay_panel(
+    overlay: &Overlay,
+    child: &impl IsA<Widget>,
+    scrim: &GtkBox,
+    container: &GtkBox,
+) {
+    overlay.set_child(Some(child));
+    overlay.add_overlay(scrim);
+    overlay.add_overlay(container);
+    overlay.set_measure_overlay(scrim, false);
+    overlay.set_measure_overlay(container, false);
+    overlay.set_clip_overlay(scrim, true);
+    overlay.set_clip_overlay(container, true);
+}
