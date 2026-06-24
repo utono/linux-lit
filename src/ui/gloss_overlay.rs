@@ -1785,18 +1785,7 @@ fn line_is_speaker(buffer: &gtk4::TextBuffer, line: i32) -> bool {
     })
 }
 
-/// Insert `<stage>…</stage>` lines into a stored gloss's source verse so the
-/// result card shows stage directions the model omitted. `source_text` is the
-/// real selected passage (one line per `\n`, verbatim from `line.text`),
-/// `gloss_text` is the stored gloss whose `<verse>` tags carry only verse.
-///
-/// We walk the stored `<verse>` spans in document order, advancing a cursor
-/// through the real source lines. Each real stage-direction line the cursor
-/// passes (before the line that matches the next stored verse) is spliced in as
-/// a `<stage>` line immediately before that verse. Purely additive: explication
-/// `<gloss>` blocks, line numbers, cursor stops, and audio coloring are
-/// untouched. If a stored verse never matches a real line, the cursor does not
-/// advance for it, so we only ever inject unambiguously-positioned stage lines.
+/// Populate the gloss buffer (no echo highlight); delegates to populate_gloss_buffer_ex.
 fn populate_gloss_buffer(view: &gtk4::TextView, gloss: &str, _text_margins: i32, bar_left: i32, source_line_numbers: &[(String, i64)], gloss_dim: Option<&str>, speaker_accent: Option<&str>) -> (Vec<BarRange>, Vec<LineNumber>) {
     let (ranges, nums, _) = populate_gloss_buffer_ex(view, gloss, _text_margins, bar_left, source_line_numbers, None, gloss_dim, speaker_accent);
     (ranges, nums)

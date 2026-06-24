@@ -1119,8 +1119,13 @@ pub(crate) fn last_fully_visible_line(state: &AppState, top: usize) -> usize {
     let sec = state.section_starts();
     let bf = sec.map(section_break_fn);
     let is_break = bf.as_ref().map(|f| f as &dyn Fn(usize) -> bool);
-    let trimmed = trim_visible_range(
-        range, top, &state.text_view, &state.buffer, is_prose, is_break,
+    let stage_lookup = |bi: usize| {
+        state.work_line_for_buffer(bi)
+            .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+            .map(|l| l.sub_line)
+    };
+    let trimmed = trim_visible_range_opts(
+        range, top, &state.text_view, &state.buffer, is_prose, false, is_break, &stage_lookup,
     );
     trimmed.last_fit
 }
