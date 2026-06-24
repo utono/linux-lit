@@ -123,9 +123,18 @@ impl JournalOverlay {
     fn size_card(&self, card_width: i32, card_height: i32) {
         self.container.set_size_request(card_width, card_height);
         self.last_card_size.set((card_width, card_height));
-        self.view.set_left_margin(self.text_margins);
-        self.view.set_right_margin(self.text_margins);
-        let _ = self.column_width;
+        // Anchor the text + headers to the card's side margin (card_width/4, the
+        // ~65-char readability optimum the gloss overlay uses) rather than the
+        // small fixed `text_margins` — otherwise the Q&A prose runs nearly edge
+        // to edge on a wide card. Card SIZE is unchanged; only the inner padding
+        // grows. The title and position label indent to match so the left edge
+        // of the header and the body line up. See ui::card_side_margin (audit #27).
+        let side = crate::ui::card_side_margin(card_width);
+        self.view.set_left_margin(side);
+        self.view.set_right_margin(side);
+        self.title.set_margin_start(side);
+        self.position_label.set_margin_start(side);
+        let _ = (self.text_margins, self.column_width);
     }
 
     pub fn show_page(
