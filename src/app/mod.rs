@@ -3608,13 +3608,12 @@ pub fn apply_reader_gloss_highlighting(state: &mut AppState) {
         return;
     }
 
-    // Match glossed source lines by TEXT, not by citation tuple. A passage's
-    // citation is the BASE work's `line_in_div`, but an Ambrose (`-Amb`) edition
-    // renumbers lines (it inserts stage directions as numbered rows), so the
-    // tuple does not align with `-Amb` `work.lines`. The source TEXT is
-    // edition-identical, so collect every passage's source lines (trimmed) into a
-    // set and tint any buffer line whose mapped work line's text is in it. Same
-    // edition-robust approach as `jump_to_gloss_source_start`.
+    // Match glossed source lines by TEXT (not citation tuple). Base and the
+    // production editions (-Amb/-BBC/-DC) are now byte-identical in line_mapping
+    // (same div/line/sub_line/text — litdb folger-stage-directions), so a tuple
+    // match would also work; text-matching is retained as the edition-robust,
+    // harmless choice (it never mismatches identical text). Same approach as
+    // jump_to_gloss_source_start.
     let glossed_texts: std::collections::HashSet<String> = passages
         .iter()
         .flat_map(|p| p.source_text.lines())

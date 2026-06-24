@@ -1042,12 +1042,12 @@ mod tests {
     use crate::db::models::Line;
 
     /// Regression for the reader-gloss main-card coloring on `-Amb` editions.
-    /// The gloss passages are stored against the BASE work's citations, but the
-    /// Ambrose edition (`2H6-Amb`) renumbers `line_in_div` (it inserts stage
-    /// directions as numbered rows), so a citation-tuple match left
-    /// "Mother Jourdain…" and "the earth. John Southwell," uncolored.
-    /// `apply_reader_gloss_highlighting` now matches by source TEXT instead;
-    /// this asserts those two lines (and the rest of the second passage) ARE in
+    /// The gloss passages are stored against the BASE work's citations. Base and
+    /// production editions (-Amb/-BBC/-DC) are now byte-identical in line_mapping
+    /// (same div/line/sub_line/text — litdb folger-stage-directions), so a
+    /// citation-tuple match would also work; `apply_reader_gloss_highlighting`
+    /// retains text-matching as the edition-robust, harmless choice.
+    /// This asserts those two lines (and the rest of the second passage) ARE in
     /// the glossed-text set built from the base passages' `source_text`.
     /// Skipped when lit.db or the `-Amb` rows are unavailable.
     #[test]
@@ -1094,6 +1094,41 @@ mod tests {
                 needle
             );
         }
+    }
+
+    /// Regression guard: litdb folger-stage-directions made `2H6` and `2H6-Amb`
+    /// byte-identical in `line_mapping`. Assert they stay in sync so a future
+    /// litdb import cannot silently diverge and break the text-match coloring.
+    /// Skipped when lit.db or the rows for either work are unavailable.
+    #[test]
+    fn base_and_amb_line_mapping_are_parity() {
+        let conn = match crate::db::queries::open_db() {
+            Ok(c) => c,
+            Err(_) => {
+                eprintln!("skip: no lit.db");
+                return;
+            }
+        };
+        let q = "SELECT div1,div2,line_in_div,sub_line,canonical_text \
+                 FROM line_mapping \
+                 WHERE work_abbrev=?1 \
+                 ORDER BY div1,div2,line_in_div,sub_line";
+        let rows = |abbrev: &str| -> Vec<(i64, i64, i64, i64, String)> {
+            let mut st = conn.prepare(q).unwrap();
+            st.query_map([abbrev], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            })
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect()
+        };
+        let base = rows("2H6");
+        let amb = rows("2H6-Amb");
+        if base.is_empty() || amb.is_empty() {
+            eprintln!("skip: 2H6 or 2H6-Amb rows unavailable");
+            return;
+        }
+        assert_eq!(base, amb, "2H6 and 2H6-Amb line_mapping must be byte-identical");
     }
 
     fn make_line(id: i64, text: &str, normalized: &str, is_dialogue: bool) -> Line {
