@@ -1797,7 +1797,7 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
     buffer.set_text("");
 
     let tag_table = buffer.tag_table();
-    for name in &["gloss-speaker", "gloss-speaker-first", "gloss-speaker-source", "gloss-verse", "gloss-para", "gloss-bracket", "gloss-quote", "gloss-quote-cont", "gloss-citation", "gloss-pron"] {
+    for name in &["gloss-speaker", "gloss-speaker-first", "gloss-speaker-source", "gloss-verse", "gloss-stage", "gloss-para", "gloss-bracket", "gloss-quote", "gloss-quote-cont", "gloss-citation", "gloss-pron"] {
         if let Some(old) = tag_table.lookup(name) {
             tag_table.remove(&old);
         }
@@ -1828,6 +1828,14 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
     let verse_tag = gtk4::TextTag::builder()
         .name("gloss-verse")
         .left_margin(quote_verse)
+        .build();
+
+    // Stage direction inside the quoted source turn: same indent as verse, but
+    // italic — matching the main reading card. Not a cursor stop, not TTS.
+    let stage_tag = gtk4::TextTag::builder()
+        .name("gloss-stage")
+        .left_margin(quote_verse)
+        .style(pango::Style::Italic)
         .build();
 
     // Prose gloss recedes behind the verse it explains: dimmer color, slightly
@@ -1914,6 +1922,7 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
     tag_table.add(&speaker_first_tag);
     tag_table.add(&speaker_source_tag);
     tag_table.add(&verse_tag);
+    tag_table.add(&stage_tag);
     tag_table.add(&para_tag);
     tag_table.add(&bracket_tag);
     tag_table.add(&quote_tag);
@@ -2044,7 +2053,15 @@ fn populate_gloss_buffer_ex(view: &gtk4::TextView, gloss: &str, _text_margins: i
                 // silently dropped from display. (The tag stays defined; just
                 // unused now.)
             }
-            GlossElement::Stage(_) => {} // TODO(task-3): render stage italic
+            GlossElement::Stage(text) => {
+                only_speakers_so_far = false;
+                let mut end = buffer.end_iter();
+                buffer.insert(&mut end, text);
+                let start = buffer.iter_at_offset(offset);
+                buffer.apply_tag(&stage_tag, &start, &buffer.end_iter());
+                // No line-number gutter entry: stage directions are not numbered
+                // verse lines.
+            }
         }
     }
 
