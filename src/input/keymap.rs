@@ -754,6 +754,14 @@ fn handle_journal_key(
                 crate::input::actions::journal::open_picker(state);
                 return true;
             }
+            // Ctrl+g: view the gloss for the current journal passage page.
+            // Requires the current page to be a passage page (has source_text
+            // + start_citation). Toasts "Not a passage page" if not, or "No
+            // gloss for this passage" if no gloss is found.
+            "g" => {
+                crate::input::actions::journal::view_gloss_from_journal(state);
+                return true;
+            }
             _ => {}
         }
     }
@@ -905,6 +913,14 @@ fn handle_gloss_key(
                     state,
                     crate::app::InputMode::GlossOverlay,
                 );
+                return true;
+            }
+            // Ctrl+j: view the journal passage pages for the current gloss's
+            // passage (if any exist). Closes the gloss overlay and opens the
+            // journal overlay in the Passage band. Toasts "No journal page for
+            // this passage" when none are found.
+            "j" => {
+                crate::input::actions::journal::view_journal_from_gloss(state);
                 return true;
             }
             // Ctrl+/ opens the keybinds overlay, returning to the gloss overlay

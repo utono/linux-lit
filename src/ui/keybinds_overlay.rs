@@ -55,7 +55,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("C-p", "lib picker"), ("S-C-p", "conc word"), ("C-M-p", "conc list")]),
     key("y", "Y", "pg back", "", &[("C-y", "copy id")]),
     key("f", "F", "next font", "F: prev font", &[("M-f", "font info")]),
-    key("g", "G", "", "", &[("C-g", "gloss tog"), ("S-C-g", "last gloss"), ("M-g", "gloss pick")]),
+    key("g", "G", "", "", &[("C-g", "gloss tog"), ("S-C-g", "last gloss"), ("M-g", "gloss pick"), ("M-g", "gloss from jrnl"), ("C-g", "view gloss")]),
     key("c", "C", "set chapter", "C: show chapter", &[]),
     key("r", "R", "next conc", "R: prev conc", &[("C-r", "next vocab"), ("S-C-r", "prev vocab"), ("M-r", "conc works"), ("r", "verse audio: play/stop"), ("R", "verse audio: pick voice")]),
     key("l", "L", "toggle signs", "", &[("S-C-l", "save+quit")]),
@@ -83,7 +83,7 @@ const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 const BOTTOM_ROW: &[KeyDef] = &[
     bare("'", "\"", "reopen BCP echoes"),
     key("q", "Q", "next speaker", "Q: next dlg", &[]),
-    key("j", "J", "cursor \u{2193}", "J: next speaker", &[("C-j", "journal tog")]),
+    key("j", "J", "cursor \u{2193}", "J: next speaker", &[("C-j", "journal tog"), ("J", "jrnl from gloss"), ("C-j", "view jrnl")]),
     key("k", "K", "cursor \u{2191}", "K: prev speaker", &[]),
     bare("x", "X", "pg fwd"),
     bare("b", "B", ""),
@@ -375,6 +375,34 @@ gloss is viewed or freshly created. Toasts \u{201c}No recent gloss\u{201d} when 
 there is none recorded, or the remembered passage was deleted or no longer \
 resolves. \
 -> gloss::open_last_gloss — src/input/actions/gloss.rs",
+        // ── Gloss ↔ journal cross-view (Task 7) ──
+        "jrnl from gloss" => "While the gloss overlay is open (J = Shift+j): create a \
+journal Q&A page for the gloss\u{2019}s current source passage. Closes the gloss overlay, \
+opens the journal overlay in the Passage band, and presents the ask card so you can \
+pose a question. Uses the same passage markup (speaker/verse/stage) the journal \
+passage renderer displays. \
+-> journal::begin_passage_ask — src/input/actions/journal.rs \
+(handler: handle_gloss_key \u{2018}J\u{2019} arm \u{2014} src/input/keymap.rs)",
+        "gloss from jrnl" => "While the journal overlay is open on a passage page (Alt+g): \
+create (or show cached) a reader-gloss for the passage cited by the current journal page. \
+If the passage already has a reader-gloss it opens instantly; otherwise calls Claude and \
+saves. Toasts \u{201c}Not a passage page\u{201d} when the current band is Work or Scene. \
+-> journal::action_gloss_from_journal_passage \
+\u{2014} src/input/actions/journal.rs",
+        "view jrnl" => "While the gloss overlay is open (Ctrl+j): view the journal passage \
+pages for the gloss\u{2019}s current source passage. Looks up journal entries whose \
+start/end citations match the open gloss; if found, closes the gloss overlay and opens the \
+journal overlay in the Passage band on the first page. Toasts \u{201c}No journal page for \
+this passage\u{201d} when none exist. \
+-> journal::view_journal_from_gloss \
+\u{2014} src/input/actions/journal.rs",
+        "view gloss" => "While the journal overlay is open on a passage page (Ctrl+g): view \
+the gloss for the passage cited by the current journal page. Looks up glosses by the \
+page\u{2019}s start_citation; if found, closes the journal overlay and opens the gloss \
+overlay on that passage (reader-gloss preferred). Toasts \u{201c}Not a passage page\u{201d} \
+or \u{201c}No gloss for this passage\u{201d} as appropriate. \
+-> journal::view_gloss_from_journal \
+\u{2014} src/input/actions/journal.rs",
         "BCP echo turns" => "List every speaker turn in this work that has cached \
 Book of Common Prayer inner-monologue echoes (echo_work_abbrev LIKE 'BCP%'). \
 Selecting a turn jumps the cursor to its first line and reopens its stored BCP \
