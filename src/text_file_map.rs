@@ -286,6 +286,28 @@ pub fn build_line_map_mode(
             let mut db_cursor: usize = 0; // current position in work_lines
 
             for buf_idx in 0..n_buf {
+                // Stage directions normalize to empty (brackets stripped), so the
+                // spoken-line matcher below skips them. Match a stage .txt line to
+                // the next DB stage row (sub_line > 0) by RAW trimmed text — the
+                // litdb parser derived stage text from this same folger-cleaned
+                // .txt, so it is byte-identical 1:1 (incl. multi-line stage dirs).
+                if line_types::is_stage_direction(file_lines[buf_idx].trim()) {
+                    let want = file_lines[buf_idx].trim();
+                    let window_end = (db_cursor + WINDOW).min(n_work);
+                    for wi in db_cursor..window_end {
+                        if work_lines[wi].sub_line > 0
+                            && work_lines[wi].text.trim() == want
+                        {
+                            buffer_to_work[buf_idx] = Some(wi);
+                            work_to_buffer[wi] = buf_idx;
+                            db_cursor = wi + 1;
+                            matched += 1;
+                            break;
+                        }
+                    }
+                    continue;
+                }
+
                 let nf = &norm_file[buf_idx];
                 if nf.is_empty() {
                     continue;
@@ -1862,6 +1884,41 @@ mod tests {
         let pct = 100.0 * matched as f64 / work.lines.len() as f64;
         eprintln!("BCP1662 accumulate: {}/{} rows matched ({:.1}%)", matched, work.lines.len(), pct);
         assert!(pct >= 95.0, "only {:.1}% matched (want >= 95%)", pct);
+    }
+
+    #[test]
+    fn stage_lines_map_to_their_db_rows() {
+        // .txt has a spoken line, a multi-line stage direction, another stage line,
+        // then a spoken line — mirroring 2H6 1.4.43.
+        let file_lines: Vec<String> = vec![
+            "Lay hands upon these traitors and their trash.".into(),
+            "[The Guard arrest Margery Jourdain and her".into(),
+            "accomplices and seize their papers.]".into(),
+            "[To Jourdain.]".into(),
+            "Beldam, I think we watched you at an".into(),
+        ];
+        // DB rows in (line_in_div, sub_line) order. sub_line>0 are stage rows.
+        let mk = |id: i64, text: &str, sub: i64, dialogue: bool| crate::db::models::Line {
+            id, citation: String::new(), text: text.into(),
+            normalized: super::normalize(text), speaker: None,
+            is_dialogue: dialogue, timestamp: None, div1: 1, div2: 4,
+            line_in_div: if id < 4 { 43 } else { 44 }, sub_line: sub,
+            is_chapter: false, is_spoken: None,
+        };
+        let work_lines = vec![
+            mk(1, "Lay hands upon these traitors and their trash.", 0, true),
+            mk(2, "[The Guard arrest Margery Jourdain and her", 1, false),
+            mk(3, "accomplices and seize their papers.]", 2, false),
+            mk(3, "[To Jourdain.]", 3, false), // id reused only for line_in_div branch; fine for test
+            mk(4, "Beldam, I think we watched you at an", 0, true),
+        ];
+        let lm = super::build_line_map(&file_lines, &work_lines, false);
+        // Every buffer line, including the three stage lines, maps to a work row.
+        assert_eq!(lm.buffer_to_work[0], Some(0), "spoken line maps");
+        assert_eq!(lm.buffer_to_work[1], Some(1), "stage line 1 (multi-line open) maps");
+        assert_eq!(lm.buffer_to_work[2], Some(2), "stage line 2 (multi-line close) maps");
+        assert_eq!(lm.buffer_to_work[3], Some(3), "[To Jourdain.] maps");
+        assert_eq!(lm.buffer_to_work[4], Some(4), "next spoken line maps");
     }
 
     #[test]
