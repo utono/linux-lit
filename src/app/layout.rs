@@ -106,7 +106,7 @@ pub(crate) fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, windo
             window_width, state.config.column_width, state.column_count(), true,
         );
         let card_w = target.min(window_width.max(1));
-        (card_w / 4 - state.config.text_margins as i32).max(0)
+        (crate::ui::card_side_margin(card_w) - state.config.text_margins as i32).max(0)
     } else if state.one_section_per_page() {
         // One section per page (sonnet_sequence): center the sonnet BLOCK in the
         // card — verse lines stay left-aligned to a common edge, but that edge is
@@ -186,7 +186,7 @@ pub(crate) fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, windo
             window_width, state.config.column_width, state.column_count(), true,
         );
         let card_w = target.min(window_width.max(1));
-        state.text_view.set_right_margin((card_w / 4).max(crate::gutter::LINE_NUMBER_TEXT_GAP_TWO_COL));
+        state.text_view.set_right_margin(crate::ui::card_side_margin(card_w).max(crate::gutter::LINE_NUMBER_TEXT_GAP_TWO_COL));
     } else {
         let logical_right = state.config.text_margins as i32
             + crate::config::EXTRA_RIGHT_MARGIN;
