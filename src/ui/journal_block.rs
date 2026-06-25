@@ -1,12 +1,6 @@
 //! Pure paragraph-block splitter for the journal Q&A overlay. A journal page
 //! buffer is plain text (`question\n\nanswer`, or verse + `———` + Q&A); blocks
 //! are maximal runs of non-blank lines, separated by one-or-more blank lines.
-//!
-//! `journal_blocks` is currently exercised only by this module's `#[cfg(test)]`
-//! tests; clippy excludes test-only usage from its dead-code analysis, so the
-//! allow below silences the transient warning until `JournalOverlay` consumes
-//! it (next task). Remove the allow once it has a production caller.
-#![allow(dead_code)]
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct JournalBlock {
