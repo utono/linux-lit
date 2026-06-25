@@ -2946,6 +2946,9 @@ pub fn display_work_at_with_prepared(
                         let bi = *lm.work_to_buffer.get(work_idx).unwrap_or(&state.current_line);
                         if lm.buffer_to_work.get(bi) == Some(&Some(work_idx)) { bi } else { state.current_line }
                     } else {
+                        // No line_map: the buffer is 1:1 with work lines (same
+                        // assumption as work_line_for_buffer), so work_idx is the
+                        // buffer index.
                         work_idx
                     };
                     state.current_line = buf_idx.min(state.effective_line_count().saturating_sub(1));
@@ -2956,8 +2959,9 @@ pub fn display_work_at_with_prepared(
 
     // If no saved position and no concordance target, start at first
     // dialogue line with viewport showing the line above (usually a
-    // speaker name). When current_line > 0 here it came from
-    // config.work_positions — honor the user's saved place.
+    // speaker name). When current_line > 0 here it came from the resume
+    // remap above (work_position_ids, or the legacy work_positions index) —
+    // honor the user's saved place.
     if target_line_id.is_none() && state.current_line == 0 {
         let first_dialogue = if let Some(ref lm) = state.line_map {
             lm.dialogue_buffer_lines.first().copied()
