@@ -317,16 +317,10 @@ impl JournalOverlay {
     }
 
     fn update_bottom_clip(&self) {
-        let adj = self.scrolled.vadjustment();
-        let step = self.row_step();
-        if step <= 0.0 {
-            self.bottom_clip.set_size_request(-1, 0);
-            return;
-        }
-        let page = adj.page_size();
-        let remainder = page - (page / step).floor() * step;
-        let clip_h = remainder.round().max(0.0) as i32;
-        self.bottom_clip.set_size_request(-1, clip_h);
+        // Use the descender-correct per-row clip shared with the gloss overlay,
+        // NOT a uniform row-step estimate (which clipped the last line's
+        // descenders — see docs/troubleshooting/page-turning-mechanics.md).
+        crate::ui::recompute_overlay_bottom_clip(&self.view, &self.bottom_clip, &self.scrolled);
     }
 
     pub fn set_font(&self, family: &str, size: i32) {
