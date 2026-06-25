@@ -1895,7 +1895,7 @@ pub fn find_similar_passages(
     top_n: usize,
     affect_weight: f32,
 ) -> Result<Vec<EchoCandidate>, rusqlite::Error> {
-    let base_exclude = exclude_work.strip_suffix("-Amb").unwrap_or(exclude_work);
+    let base_exclude = crate::gloss::normalize_abbrev(exclude_work);
 
     // Only engage the affect axis when it's both requested and possible.
     let affect_on = affect_weight > 0.0 && crate::db::affect::lexicon_available();
