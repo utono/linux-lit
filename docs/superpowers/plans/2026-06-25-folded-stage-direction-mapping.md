@@ -357,4 +357,106 @@ Expected: all pass; `generated 118 warnings`.
 - [ ] **Step 2: Hand the user the visual confirm.** Report: no manual cache clear is needed (the SNAPSHOT_VERSION bump rebuilds on next open). Ask the user to:
   1. `cargo run`, open **2H6-Amb**, go to Act 1 Scene 4, to the spread with `[The Guard arrest Margery Jourdain... ]`.
   2. Confirm that SD is now rose-tinted like the surrounding glossed lines (the bug was: it stayed blue).
-  3. As a bonus check that the SD is now addressable: put the cursor on it and confirm `u`/`.` / bookmark act on it (previously it was unmapped, so they'd no-op).
+  3. Addressability per the policy (Task 5): with the cursor on that SD, confirm `.` (set chapter) and bookmark act on it (it's mapped now), and that `u` (set start time) NO-OPs with a toast (the SD is not spoken). On a SPOKEN SD (a line marked `is_spoken=1`), `u` should succeed.
+
+---
+
+### Task 5: Gate `u` (set start time) to spoken stage directions
+
+**Files:**
+- Modify: `src/input/timestamps.rs` — `set_start_time` (early guard, after the `work_line_for_buffer` resolution ~:98).
+- Modify: `src/input/navigation.rs` — make `show_chapter_toast` callable from timestamps (visibility), OR add a small toast call.
+- Test: `src/input/timestamps.rs` — pure gate-decision helper test.
+
+**Interfaces:**
+- Consumes: `work.lines[line_idx]` with `.sub_line: i64` and `.is_spoken: Option<bool>`.
+- Produces: `set_start_time` returns `false` (no write) when the cursor line is a stage direction (`sub_line > 0`) that is NOT spoken (`is_spoken != Some(true)`), surfacing a toast. Dialogue lines and spoken SDs are unaffected.
+
+**Policy (decided with the user mid-flight):** `u` (audio start time) is meaningful only on a line that is actually spoken in the media. Stage directions are spoken only in specific works (data-driven, NOT a hardcoded `abbrev == "H8"` — the SDs currently marked `is_spoken=1` are in 1H4-Amb/2H6-Amb, so the work-hardcode would be wrong). `.` (chapter) and bookmark are position references, NOT audio — they stay allowed on any mapped line (do NOT gate them). `set_end_time` is part of the same audio-timestamp family — apply the SAME gate to it for consistency (an end time on an unspoken SD is equally meaningless).
+
+- [ ] **Step 1: Write the failing pure test.** Extract the gate decision into a pure predicate and test it. Add to `src/input/timestamps.rs`:
+
+```rust
+/// `u`/end-time are audio timestamps — meaningful only on a SPOKEN line. A stage
+/// direction (`sub_line > 0`) that is not marked spoken (`is_spoken != Some(true)`)
+/// must be rejected; dialogue lines (`sub_line == 0`) and spoken SDs pass.
+fn timestamp_allowed(sub_line: i64, is_spoken: Option<bool>) -> bool {
+    sub_line == 0 || is_spoken == Some(true)
+}
+
+#[cfg(test)]
+mod timestamp_gate_tests {
+    use super::timestamp_allowed;
+    #[test]
+    fn dialogue_line_allowed() {
+        assert!(timestamp_allowed(0, None));
+        assert!(timestamp_allowed(0, Some(false)));
+    }
+    #[test]
+    fn unspoken_stage_direction_rejected() {
+        assert!(!timestamp_allowed(1, None));
+        assert!(!timestamp_allowed(2, Some(false)));
+    }
+    #[test]
+    fn spoken_stage_direction_allowed() {
+        assert!(timestamp_allowed(1, Some(true)));
+    }
+}
+```
+
+- [ ] **Step 2: Run to verify it fails.**
+
+Run: `cargo test --bins timestamp_gate_tests`
+Expected: FAIL — `timestamp_allowed` not defined (compile error).
+
+- [ ] **Step 3: Implement the gate in `set_start_time` and `set_end_time`.** After the `line_idx` is resolved via `work_line_for_buffer` (in `set_start_time` ~:98, and the matching point in `set_end_time`), before any DB write, add:
+
+```rust
+    {
+        let work = match &state.current_work {
+            Some(w) => w,
+            None => return false,
+        };
+        let l = &work.lines[line_idx];
+        if !timestamp_allowed(l.sub_line, l.is_spoken) {
+            crate::logging::log(&format!(
+                "TS: refused start/end time on unspoken stage direction (line {}, sub_line {})",
+                line_idx, l.sub_line
+            ));
+            crate::input::navigation::show_chapter_toast(
+                state, "Not a spoken line — no timestamp set",
+            );
+            return false;
+        }
+    }
+```
+
+(Place the same guard in `set_end_time` after its `line_idx` resolution.) The `timestamp_allowed` helper is defined once (Step 1) and used by both.
+
+- [ ] **Step 4: Make `show_chapter_toast` callable.** In `src/input/navigation.rs`, change `fn show_chapter_toast` to `pub(crate) fn show_chapter_toast`. (It's the existing transient-toast helper; reuse it rather than adding a parallel toast.)
+
+- [ ] **Step 5: Run tests + build.**
+
+Run: `cargo test --bins timestamp_gate_tests && cargo build`
+Expected: the 3 gate tests PASS; build clean.
+
+- [ ] **Step 6: Full suite + clippy.**
+
+Run: `cargo test --bins && cargo clippy --bins 2>&1 | grep -oE "generated [0-9]+ warnings"`
+Expected: all pass; `generated 118 warnings`.
+
+- [ ] **Step 7: Commit.**
+
+```bash
+git add src/input/timestamps.rs src/input/navigation.rs
+git commit -m "feat(timestamps): gate u/end-time to spoken lines only
+
+Now that stage directions map (and are cursor-addressable), u (set start time)
+and set_end_time must NOT set a meaningless audio timestamp on an UNSPOKEN stage
+direction. Gate on is_spoken: a dialogue line (sub_line==0) or a spoken SD
+(is_spoken==Some(true)) passes; an unspoken SD no-ops with a toast. Data-driven
+(is_spoken), not a hardcoded work. Chapter/bookmark stay allowed on any line.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014UYTmcaAHC2SDypMpKJvNs"
+```
