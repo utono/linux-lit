@@ -1101,41 +1101,12 @@ pub(crate) fn scrolloff_bottom_clip_widgets(
         }
         return;
     }
-    let bottom_y = top_val + viewport_h;
-    let content_h = adj.upper();
-
-    // Last line whose bottom is fully at/above the viewport bottom.
-    let mut last_full_bottom = top_val;
-    let mut any_full = false;
-    let (mut iter, _) = text_view.line_at_y(top_val.max(0.0) as i32);
-    loop {
-        let (ly, lh) = text_view.line_yrange(&iter);
-        let row_top = ly as f64;
-        let row_bottom = (ly + lh) as f64;
-        if row_top >= bottom_y {
-            break;
-        }
-        if row_bottom <= bottom_y + 0.5 && row_bottom > top_val {
-            last_full_bottom = row_bottom;
-            any_full = true;
-        }
-        if !iter.forward_line() {
-            break;
-        }
-    }
-
-    // Document ends within the viewport → only slack below the content.
-    let effective_bottom = if content_h <= bottom_y + 0.5 {
-        content_h
-    } else {
-        last_full_bottom
-    };
-    // A single row taller than the viewport: don't blank it.
-    let clip_h = if !any_full && content_h > bottom_y + 0.5 {
-        0
-    } else {
-        (bottom_y - effective_bottom).max(0.0).round() as i32
-    };
+    // Share the overlays' single covering algorithm: logical-line rows fed to the
+    // pure bottom_clip_height. (Scroll-mode uses line_yrange rows, not the wrapped
+    // display_rows the overlays use — same algorithm, different row source.)
+    let tv = text_view.upcast_ref::<gtk4::TextView>();
+    let rows = crate::ui::line_yrange_rows(tv, top_val, viewport_h);
+    let clip_h = crate::ui::bottom_clip_height(&rows, top_val, viewport_h, adj.upper());
     if bottom_clip.height_request() != clip_h {
         bottom_clip.set_height_request(clip_h);
     }
