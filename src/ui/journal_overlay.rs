@@ -66,8 +66,17 @@ impl JournalOverlay {
         view.set_wrap_mode(gtk4::WrapMode::Word);
         view.add_css_class("gloss-text");
 
+        // The ScrolledWindow's child MUST be the TextView DIRECTLY so GTK uses
+        // the view's native scroll adjustments (a TextView is `Scrollable`).
+        // Wrapping it in an Overlay made GTK insert a GtkViewport, which gave the
+        // vadjustment no real scroll range — j/k/G/gg did nothing and overflow
+        // content stayed clipped. The bottom_clip therefore overlays an OUTER
+        // Overlay that wraps the scrolled window, exactly like the gloss overlay
+        // (Overlay(ScrolledWindow(TextView) + bottom_clip)).
+        scrolled.set_child(Some(&view));
+
         let scroll_overlay = Overlay::new();
-        scroll_overlay.set_child(Some(&view));
+        scroll_overlay.set_child(Some(&scrolled));
         let bottom_clip = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
         bottom_clip.add_css_class("gloss-bottom-clip");
         bottom_clip.set_valign(gtk4::Align::End);
@@ -77,8 +86,7 @@ impl JournalOverlay {
         scroll_overlay.add_overlay(&bottom_clip);
         scroll_overlay.set_measure_overlay(&bottom_clip, false);
         scroll_overlay.set_clip_overlay(&bottom_clip, true);
-        scrolled.set_child(Some(&scroll_overlay));
-        container.append(&scrolled);
+        container.append(&scroll_overlay);
 
         // Footer rule mirroring the gloss overlay (gloss_overlay.rs footer_box):
         // current page's work/act/scene on the left, fixed keybind hints on the
@@ -381,5 +389,40 @@ impl JournalOverlay {
 
     pub fn take_ask_text(&self) -> String {
         self.ask.take_text()
+    }
+}
+
+#[cfg(test)]
+mod scroll_structure_tests {
+    use super::*;
+
+    /// The ScrolledWindow's child MUST be the TextView directly. If it is an
+    /// Overlay (or anything else), GTK can't use the TextView's native scroll
+    /// adjustments, so the vadjustment has no scroll range and j/k/G/gg do
+    /// nothing (and overflowing content stays clipped). The gloss overlay nests
+    /// it correctly; this guards the journal overlay against re-introducing the
+    /// ScrolledWindow→Overlay→TextView inversion.
+    ///
+    /// #[ignore]: needs gtk4::init(), which panics if a second GTK-init test runs
+    /// in the same process. Run serially:
+    /// `cargo test --bins -- --ignored scrolled_window_child`.
+    #[test]
+    #[ignore]
+    fn scrolled_window_child_is_the_text_view() {
+        if gtk4::init().is_err() {
+            eprintln!("skip: no GTK display");
+            return;
+        }
+        let overlay = JournalOverlay::new(1050, 80);
+        let child = overlay
+            .scrolled
+            .child()
+            .expect("ScrolledWindow should have a child");
+        assert!(
+            child.downcast_ref::<gtk4::TextView>().is_some(),
+            "ScrolledWindow child must be the TextView directly (for native scroll \
+             adjustments), not a {:?}",
+            child.type_(),
+        );
     }
 }
