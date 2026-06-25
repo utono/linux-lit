@@ -952,3 +952,21 @@ safe-scope opportunities:
   unmatched/default-0 work line resolves to buffer 0 instead of being rejected.
   This is a latent correctness divergence, not duplication — route to /code-review
   if it ever manifests; out of scope for maintainability numbering.
+
+### Clip-prevention pass (2026-06-25, see specs/2026-06-25-clip-prevention-design.md)
+
+- **Free-scroll covering math is now unified.** `scrolloff_bottom_clip_widgets`
+  (scroll.rs) was a verbatim copy of `bottom_clip_height`; it now feeds
+  `ui::line_yrange_rows` into the pure `bottom_clip_height`, so scroll-mode shares
+  the overlays' single tested covering algorithm. The translation overlay gained a
+  bottom-clip guard (`recompute_overlay_bottom_clip_box`, a box-content variant —
+  its scrolled child is a widget Box, not a TextView). An overlay clip-invariant
+  test (`tests/overlay_clipping.rs`) now enforces no-clip on the synopsis overlay.
+- **Deliberately NOT unified (do not re-propose as safe-scope dedup):** (1) the
+  MAIN reading card's `update_bottom_clip` (scroll.rs) is a PAGINATED clip
+  (boundary-line `line_yrange` sums from page_top + descender-guard/column-split/
+  section logic), a fundamentally different strategy from the free-scroll
+  partial-row mask — merging would change behavior. (2) The gloss vs journal
+  overlay `snap_value_to_line` are DIFFERENT algorithms (per-`display_rows`-row
+  snap vs uniform `row_step` rounding), not duplicates. Both are behavior-changing
+  to "unify", so they are out of scope for maintainability dedup.
