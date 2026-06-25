@@ -1757,17 +1757,27 @@ fn source_block_seek_time(s: &AppState, index: i32) -> Option<f64> {
         .iter()
         .find(|b| b.kind == BlockKind::Source && b.index == index)?;
     let work = s.current_work.as_ref()?;
-    let work_pairs: Vec<(String, Option<f64>)> = work
-        .lines
-        .iter()
-        .map(|l| (l.text.clone(), l.timestamp.map(|t| t.start)))
-        .collect();
-    // Match on `display` (IPA-stripped) text: work line text has no `/IPA/`,
-    // so the raw `block.text` would never match an IPA-bearing verse line.
-    // Seek a `SEEK_PREROLL` (0.2s) before the line start, matching every other
-    // line-seek in the app (search / concordance / echoes), so `a`/`space` begin
-    // just ahead of the first word rather than clipping its onset.
-    let start = first_source_start_time(&block.display, &work_pairs)?;
+
+    // Citation-first (authoritative; -Amb editions are parity-numbered now).
+    let start = crate::app::parse_citation(&gloss.start_citation)
+        .and_then(|cit| {
+            let lines: Vec<(i64, i64, i64, Option<f64>)> = work.lines.iter()
+                .map(|l| (l.div1, l.div2, l.line_in_div, l.timestamp.map(|t| t.start)))
+                .collect();
+            start_time_for_citation(cit, &lines)
+        })
+        // Fallback: citationless/.txt-only works — match the verse text.
+        // Match on `display` (IPA-stripped) text: work line text has no `/IPA/`,
+        // so the raw `block.text` would never match an IPA-bearing verse line.
+        // Seek a `SEEK_PREROLL` (0.2s) before the line start, matching every other
+        // line-seek in the app (search / concordance / echoes), so `a`/`space` begin
+        // just ahead of the first word rather than clipping its onset.
+        .or_else(|| {
+            let work_pairs: Vec<(String, Option<f64>)> = work.lines.iter()
+                .map(|l| (l.text.clone(), l.timestamp.map(|t| t.start)))
+                .collect();
+            first_source_start_time(&block.display, &work_pairs)
+        })?;
     Some(crate::input::navigation::preroll_seek_time(start))
 }
 
@@ -2137,10 +2147,21 @@ pub(crate) fn submit_gloss_prompt(state: &Rc<RefCell<AppState>>) {
     }
 }
 
+/// Start time of the work line whose citation == `cit`. Pure + testable.
+fn start_time_for_citation(
+    cit: (i64, i64, i64),
+    lines: &[(i64, i64, i64, Option<f64>)], // (div1, div2, line_in_div, start)
+) -> Option<f64> {
+    lines.iter()
+        .find(|(d1, d2, l, _)| (*d1, *d2, *l) == cit)
+        .and_then(|(_, _, _, start)| *start)
+}
+
 /// Given a source block's verse text (one quoted line per `\n`) and the work's
 /// lines as `(text, Option<start_seconds>)`, return the start time of the FIRST
 /// verse line (in block order) that matches a work line carrying a timestamp.
 /// Matching is exact on trimmed text. None if no matched line has timing.
+/// Citationless fallback — use `start_time_for_citation` as the primary path.
 fn first_source_start_time(verses: &str, work: &[(String, Option<f64>)]) -> Option<f64> {
     for verse in verses.lines() {
         let needle = verse.trim();
@@ -2220,6 +2241,18 @@ mod source_timing_tests {
         let work: Vec<(String, Option<f64>)> = vec![("Unrelated line.".into(), Some(1.0))];
         let verses = "Ah, my good Lord of Winchester, I thank you.";
         assert_eq!(first_source_start_time(verses, &work), None);
+    }
+
+    #[test]
+    fn seek_resolves_by_citation_not_first_text_match() {
+        // verse "Let him shun castles" appears twice; citation points at the 2nd.
+        // helper signature defined in Step 3.
+        let lines = vec![
+            (1i64,4i64,37i64, Some(2484.0)), // first occurrence
+            (1,4,71, Some(2620.0)),          // re-read (citation target)
+        ];
+        let got = start_time_for_citation((1,4,71), &lines);
+        assert_eq!(got, Some(2620.0));
     }
 
     /// Regression: an IPA-bearing source block must still resolve a seek time.
