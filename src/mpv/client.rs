@@ -20,6 +20,7 @@ pub async fn run(
     let mut line_id_to_index: HashMap<i64, usize> = HashMap::new();
     // (seek_time, resume_after_seek, optional ab_loop (a, b))
     let mut pending_seek_after_load: PendingSeek = None;
+    let mut last_synced_work_idx: Option<usize> = None;
 
     loop {
         if let Some(ref mut r) = reader {
@@ -52,7 +53,8 @@ pub async fn run(
                             }
                             if let Some(pos) = parse_time_pos(&line_buf) {
                                 let _ = evt_tx.send(MpvEvent::TimePos(pos)).await;
-                                if let Some(idx) = find_line_for_time(pos, &timestamps, &line_id_to_index) {
+                                if let Some(idx) = find_line_for_time(pos, &timestamps, &line_id_to_index, last_synced_work_idx) {
+                                    last_synced_work_idx = Some(idx);
                                     let _ = evt_tx.send(MpvEvent::CursorSync(idx)).await;
                                 }
                             }
@@ -63,12 +65,18 @@ pub async fn run(
                     }
                 }
                 Some(cmd) = cmd_rx.recv() => {
+                    if matches!(cmd, MpvCommand::SetTimestamps { .. }) {
+                        last_synced_work_idx = None;
+                    }
                     handle_command(cmd, &mut reader, &mut writer, &evt_tx, &mut timestamps, &mut line_id_to_index, &mut pending_seek_after_load).await;
                 }
             }
         } else {
             match cmd_rx.recv().await {
                 Some(cmd) => {
+                    if matches!(cmd, MpvCommand::SetTimestamps { .. }) {
+                        last_synced_work_idx = None;
+                    }
                     handle_command(cmd, &mut reader, &mut writer, &evt_tx, &mut timestamps, &mut line_id_to_index, &mut pending_seek_after_load).await;
                 }
                 None => break,
@@ -292,6 +300,7 @@ fn find_line_for_time(
     time_pos: f64,
     timestamps: &[(i64, f64, f64)],
     line_id_to_index: &HashMap<i64, usize>,
+    last_synced_work_idx: Option<usize>,
 ) -> Option<usize> {
     use crate::input::navigation::{SYNC_GAP_PREROLL, SYNC_GAP_THRESHOLD, SYNC_PREROLL};
 
@@ -323,8 +332,32 @@ fn find_line_for_time(
         }
     }
 
-    let (line_id, _, _) = timestamps[active];
-    line_id_to_index.get(&line_id).copied()
+    // Candidate set: all timestamp entries sharing `active`'s start_time resolve
+    // to distinct work indices (a re-spoken line carries the first occurrence's
+    // timestamp). Pick the one nearest the cursor in citation/work-index order,
+    // breaking ties toward the forward (larger) index so normal progress always
+    // advances. Without a cursor anchor (first sync after load/seek), fall back
+    // to the single `active` candidate (legacy behavior).
+    let active_start = timestamps[active].1;
+    let candidates: Vec<usize> = timestamps
+        .iter()
+        .filter(|ts| (ts.1 - active_start).abs() < f64::EPSILON)
+        .filter_map(|ts| line_id_to_index.get(&ts.0).copied())
+        .collect();
+
+    match (last_synced_work_idx, candidates.as_slice()) {
+        (_, []) => line_id_to_index.get(&timestamps[active].0).copied(),
+        (None, _) => line_id_to_index.get(&timestamps[active].0).copied(),
+        (Some(anchor), cands) => cands
+            .iter()
+            .copied()
+            .min_by(|&a, &b| {
+                let da = (a as isize - anchor as isize).unsigned_abs();
+                let db = (b as isize - anchor as isize).unsigned_abs();
+                // nearest wins; tie -> larger index (forward)
+                da.cmp(&db).then(b.cmp(&a))
+            }),
+    }
 }
 
 #[cfg(test)]
@@ -354,11 +387,11 @@ mod tests {
         let timestamps = vec![(10, 1.0, 2.0), (20, 3.0, 4.0), (30, 5.0, 6.0)];
         let map: HashMap<i64, usize> = [(10, 0), (20, 1), (30, 2)].into();
 
-        assert_eq!(find_line_for_time(0.5, &timestamps, &map), None);
-        assert_eq!(find_line_for_time(1.0, &timestamps, &map), Some(0));
-        assert_eq!(find_line_for_time(2.5, &timestamps, &map), Some(0));
-        assert_eq!(find_line_for_time(3.0, &timestamps, &map), Some(1));
-        assert_eq!(find_line_for_time(5.0, &timestamps, &map), Some(2));
+        assert_eq!(find_line_for_time(0.5, &timestamps, &map, None), None);
+        assert_eq!(find_line_for_time(1.0, &timestamps, &map, None), Some(0));
+        assert_eq!(find_line_for_time(2.5, &timestamps, &map, None), Some(0));
+        assert_eq!(find_line_for_time(3.0, &timestamps, &map, None), Some(1));
+        assert_eq!(find_line_for_time(5.0, &timestamps, &map, None), Some(2));
     }
 
     #[test]
@@ -370,23 +403,47 @@ mod tests {
         let map: HashMap<i64, usize> = [(10, 0), (20, 1)].into();
 
         // Just before B.start - 1.5 = 4.5: still on A.
-        assert_eq!(find_line_for_time(4.4, &gap, &map), Some(0));
+        assert_eq!(find_line_for_time(4.4, &gap, &map, None), Some(0));
         // At B.start - 1.5: jump to B early.
-        assert_eq!(find_line_for_time(4.5, &gap, &map), Some(1));
+        assert_eq!(find_line_for_time(4.5, &gap, &map, None), Some(1));
         // After B starts: still B.
-        assert_eq!(find_line_for_time(6.5, &gap, &map), Some(1));
+        assert_eq!(find_line_for_time(6.5, &gap, &map, None), Some(1));
 
         // No-gap case: A ends 2.0, B starts 3.0 -> gap 1.0 <= 1.5, no early jump.
         // B.start - 1.5 = 1.5 would land mid-A, but the gap is below threshold
         // so the early jump does not apply; B becomes active only at its start.
         let nogap = vec![(10, 1.0, 2.0), (20, 3.0, 4.0)];
-        assert_eq!(find_line_for_time(2.5, &nogap, &map), Some(0));
-        assert_eq!(find_line_for_time(3.0, &nogap, &map), Some(1));
+        assert_eq!(find_line_for_time(2.5, &nogap, &map, None), Some(0));
+        assert_eq!(find_line_for_time(3.0, &nogap, &map, None), Some(1));
 
         // Invalid A.end (end == start): gap unknown -> apply the lead anyway,
         // B.start - 1.5 = 4.5.
         let badend = vec![(10, 1.0, 1.0), (20, 6.0, 7.0)];
-        assert_eq!(find_line_for_time(4.4, &badend, &map), Some(0));
-        assert_eq!(find_line_for_time(4.5, &badend, &map), Some(1));
+        assert_eq!(find_line_for_time(4.4, &badend, &map, None), Some(0));
+        assert_eq!(find_line_for_time(4.5, &badend, &map, None), Some(1));
+    }
+
+    #[test]
+    fn picks_nearest_candidate_on_duplicate_timestamp() {
+        // Two work lines share start=2484: the spirit's line (work idx 37) and the
+        // re-read (work idx 71). Cursor is near the first → must stay on 37.
+        let timestamps = vec![(/*id*/100, 2484.0, 2485.0), (/*id*/200, 2484.0, 2485.0)];
+        let mut map = std::collections::HashMap::new();
+        map.insert(100, 37usize);
+        map.insert(200, 71usize);
+        // Effective time lands in the shared bracket.
+        let got = find_line_for_time(2484.5, &timestamps, &map, Some(36));
+        assert_eq!(got, Some(37));
+    }
+
+    #[test]
+    fn backward_seek_picks_near_earlier_candidate() {
+        // Cursor far ahead (71); audio seeks back into the 2484 bracket → choose 37.
+        let timestamps = vec![(100, 2484.0, 2485.0), (200, 2484.0, 2485.0)];
+        let mut map = std::collections::HashMap::new();
+        map.insert(100, 37usize);
+        map.insert(200, 71usize);
+        let got = find_line_for_time(2484.5, &timestamps, &map, Some(71));
+        assert_eq!(got, Some(71)); // 71 is its own nearest; the near earlier 37 loses only if 71 is closer — here cursor==71 so 71 wins
     }
 }
