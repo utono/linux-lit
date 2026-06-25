@@ -3052,7 +3052,7 @@ pub fn display_work_at_with_prepared(
         if let Some(work) = &state.current_work {
             if let Some(work_idx) = work.lines.iter().position(|l| l.id == target_id) {
                 let buf_idx = if let Some(ref lm) = state.line_map {
-                    let bi = lm.work_to_buffer[work_idx];
+                    let bi = *lm.work_to_buffer.get(work_idx).unwrap_or(&state.current_line);
                     if lm.buffer_to_work.get(bi) == Some(&Some(work_idx)) {
                         bi
                     } else {

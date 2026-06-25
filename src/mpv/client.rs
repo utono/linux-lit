@@ -65,7 +65,13 @@ pub async fn run(
                     }
                 }
                 Some(cmd) = cmd_rx.recv() => {
-                    if matches!(cmd, MpvCommand::SetTimestamps { .. }) {
+                    if matches!(
+                        cmd,
+                        MpvCommand::SetTimestamps { .. }
+                            | MpvCommand::Seek(_)
+                            | MpvCommand::ResumeAndSeek(_)
+                            | MpvCommand::SeekRelative(_)
+                    ) {
                         last_synced_work_idx = None;
                     }
                     handle_command(cmd, &mut reader, &mut writer, &evt_tx, &mut timestamps, &mut line_id_to_index, &mut pending_seek_after_load).await;
@@ -74,7 +80,13 @@ pub async fn run(
         } else {
             match cmd_rx.recv().await {
                 Some(cmd) => {
-                    if matches!(cmd, MpvCommand::SetTimestamps { .. }) {
+                    if matches!(
+                        cmd,
+                        MpvCommand::SetTimestamps { .. }
+                            | MpvCommand::Seek(_)
+                            | MpvCommand::ResumeAndSeek(_)
+                            | MpvCommand::SeekRelative(_)
+                    ) {
                         last_synced_work_idx = None;
                     }
                     handle_command(cmd, &mut reader, &mut writer, &evt_tx, &mut timestamps, &mut line_id_to_index, &mut pending_seek_after_load).await;
