@@ -901,6 +901,38 @@ output is in vadjustment space. (The main reading card avoids this entirely by
 using `line_yrange`, whose y already includes the relevant offsets — but the
 overlay can't, because its multi-row paragraphs need per-visual-row rects.)
 
+### The journal overlay shares this clip (and once didn't — descender bug)
+
+The **journal Q&A overlay** (`src/ui/journal_overlay.rs`) renders prose with the
+same non-uniform rows as the gloss overlay (paragraph gaps, a larger title row,
+descenders), so it needs the same per-row bottom clip. It originally used a
+**uniform row-step estimate** instead: `update_bottom_clip` took the first
+line's `line_yrange` as a fixed `step` and clipped `page_size − floor(page/step)
+× step`. That assumes every row is `step` tall, so on overflowing prose the last
+visible line's **descenders were cut by the footer rule** — the exact failure
+this section warns `line_yrange` causes. (It was masked until the journal text
+padding was widened to `card_side_margin`, which changed the wrap and pushed a
+descender-bearing line to the bottom edge.)
+
+The fix made both overlays share one implementation. The descender-correct logic
+now lives as free helpers in `src/ui/mod.rs`:
+
+- `display_rows(view)` — the per-visual-row walk (`forward_display_line` +
+  `iter_location`, `top_margin` added), shared.
+- `bottom_clip_height(rows, top_y, viewport_h, content_h)` — the **pure** clip
+  math (last-full-row bottom → viewport bottom, with the empty-viewport,
+  document-ends-inside, and single-tall-row guards). Unit-tested in
+  `ui::bottom_clip_tests`, including a non-uniform-row case that a uniform-step
+  estimate gets wrong.
+- `recompute_overlay_bottom_clip(view, clip, scrolled)` — the GTK wrapper.
+
+The journal overlay's `update_bottom_clip` now calls
+`recompute_overlay_bottom_clip`. The gloss overlay still has its own
+`recompute_bottom_clip`/`display_rows` copy (behaviourally identical); converging
+it onto the shared helpers is a safe follow-up. **Lesson: any overlay clipping a
+multi-row prose buffer must use per-row geometry — never a uniform row-step — or
+the last line's descenders clip.**
+
 ### Margins (cosmetic, separate from clipping)
 
 `gloss_scroll_overlay` carries `set_margin_top(24)` and `set_margin_bottom(20)`

@@ -1787,7 +1787,11 @@ mod apply_font_priority_tests {
     /// "stage directions not italic in the overlay" bug. Mirrors the priority
     /// dance the main reader does for its italic translation tag (src/app/font.rs)
     /// and the overlay already does for synopsis-label bold / audio-cached color.
+    // #[ignore]: needs gtk4::init(), which panics if a second GTK-init test runs
+    // in the same process ("init from two different threads"). Run the GTK-init
+    // tests one at a time, e.g. `cargo test --bins -- --ignored stage_tag`.
     #[test]
+    #[ignore]
     fn stage_tag_outranks_font_tag_after_apply_font() {
         if gtk4::init().is_err() {
             eprintln!("skip: no GTK display");
