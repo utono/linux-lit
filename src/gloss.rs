@@ -762,41 +762,62 @@ fn extract_echo_quote(line: &str) -> String {
     raw.trim().to_string()
 }
 
+/// Resolve a free-text echo quote (emitted by the LLM, with no id/citation) to
+/// an authoritative `Title act.scene` citation.
+///
+/// Hardened: the quote is matched against `normalized_text` (the same
+/// normalization the DB column is built with — `text_file_map::normalize`), so a
+/// quote that differs only in punctuation/case/diacritics still matches. The old
+/// `canonical_text =` exact match was punctuation-sensitive (so it usually
+/// missed and fell through to a fuzzy `LIKE '%quote%'` that returned an
+/// ARBITRARY first row — the wrong-line bug).
+///
+/// Ambiguity guard: a citation is only returned when the quote resolves to a
+/// SINGLE distinct `(work_abbrev, div1, div2)` (excluding the source work and
+/// any `-Amb` edition). If the phrase appears in more than one distinct
+/// work/scene — a reused line, or a short quote — the citation would be a guess,
+/// so we return `None` and the caller flags the gloss `(unverified)`. The fuzzy
+/// substring branch is gone entirely.
 fn lookup_citation(
     conn: &rusqlite::Connection,
     quote: &str,
     source_work: &str,
 ) -> Option<String> {
     let base_source = source_work.strip_suffix("-Amb").unwrap_or(source_work);
-
-    let exact: Option<(String, i64, i64)> = conn
-        .query_row(
-            "SELECT work_abbrev, div1, div2 FROM line_mapping \
-             WHERE canonical_text = ?1 AND work_abbrev != ?2 AND work_abbrev NOT LIKE '%-Amb' \
-             LIMIT 1",
-            rusqlite::params![quote, base_source],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .ok();
-
-    if let Some((abbrev, act, scene)) = exact {
-        let title = abbrev_to_title(conn, &abbrev);
-        return Some(format!("{} {}.{}", title, act, scene));
+    let normalized = crate::text_file_map::normalize(quote);
+    if normalized.is_empty() {
+        return None;
     }
 
-    let like_pattern = format!("%{}%", quote);
-    let fuzzy: Option<(String, i64, i64)> = conn
-        .query_row(
-            "SELECT work_abbrev, div1, div2 FROM line_mapping \
-             WHERE canonical_text LIKE ?1 AND work_abbrev != ?2 AND work_abbrev NOT LIKE '%-Amb' \
-             LIMIT 1",
-            rusqlite::params![like_pattern, base_source],
+    // Collect the DISTINCT (work, scene) tuples this normalized quote matches,
+    // excluding the source work and its -Amb companion. More than one ⇒
+    // ambiguous ⇒ no authoritative citation.
+    //   ?2 = base abbrev; ?3 = the raw source_work in case it is already the
+    //   -Amb form (so both the base and -Amb editions of the source are excluded).
+    let mut stmt = conn
+        .prepare(
+            "SELECT DISTINCT work_abbrev, div1, div2 FROM line_mapping \
+             WHERE normalized_text = ?1 \
+               AND work_abbrev != ?2 AND work_abbrev != ?3 \
+               AND work_abbrev NOT LIKE '%-Amb'",
+        )
+        .ok()?;
+    // Propagate any row-deserialization error as None rather than silently
+    // dropping a row: a dropped row could collapse an AMBIGUOUS multi-match into
+    // an apparent unique match and emit a wrong citation — the exact failure
+    // this hardening prevents.
+    let matches: Vec<(String, i64, i64)> = stmt
+        .query_map(
+            rusqlite::params![normalized, base_source, source_work],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
-        .ok();
+        .ok()?
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
 
-    if let Some((abbrev, act, scene)) = fuzzy {
-        let title = abbrev_to_title(conn, &abbrev);
+    // Unambiguous match only.
+    if let [(abbrev, act, scene)] = matches.as_slice() {
+        let title = abbrev_to_title(conn, abbrev);
         return Some(format!("{} {}.{}", title, act, scene));
     }
 
@@ -882,6 +903,112 @@ mod tests {
             assert!(!p.is_empty(), "{name}: assembled prompt is empty");
             assert!(!p.contains("{ipa_rules}"), "{name}: must not contain ipa slot");
             assert!(!p.contains("{}"), "{name}: must not contain positional slot");
+        }
+    }
+
+    // ---- lookup_citation hardening ----
+
+    /// Build a tiny in-memory lit.db subset: `works(abbrev,title)` +
+    /// `line_mapping(work_abbrev,div1,div2,normalized_text)`.
+    fn citation_test_db(rows: &[(&str, &str, i64, i64, &str)]) -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE works (abbrev TEXT, title TEXT);
+             CREATE TABLE line_mapping (work_abbrev TEXT, div1 INTEGER, div2 INTEGER, \
+                 canonical_text TEXT, normalized_text TEXT);",
+        )
+        .unwrap();
+        let mut seen = std::collections::HashSet::new();
+        for (abbrev, title, div1, div2, text) in rows {
+            if seen.insert(*abbrev) {
+                conn.execute(
+                    "INSERT INTO works (abbrev, title) VALUES (?1, ?2)",
+                    rusqlite::params![abbrev, title],
+                )
+                .unwrap();
+            }
+            conn.execute(
+                "INSERT INTO line_mapping (work_abbrev, div1, div2, canonical_text, normalized_text) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![abbrev, div1, div2, text, crate::text_file_map::normalize(text)],
+            )
+            .unwrap();
+        }
+        conn
+    }
+
+    #[test]
+    fn lookup_citation_unique_match_returns_title_and_scene() {
+        let conn = citation_test_db(&[
+            ("Ham", "Hamlet", 3, 1, "To be, or not to be"),
+        ]);
+        // Quote differs in punctuation/case — normalized_text match must still hit.
+        let got = lookup_citation(&conn, "to be or not to be", "Mac");
+        assert_eq!(got, Some("Hamlet 3.1".to_string()));
+    }
+
+    #[test]
+    fn lookup_citation_ambiguous_across_works_returns_none() {
+        // Same phrase in two distinct works → the citation is a guess → None.
+        let conn = citation_test_db(&[
+            ("Ham", "Hamlet", 1, 2, "O, that this too too solid flesh"),
+            ("Mac", "Macbeth", 5, 5, "O, that this too too solid flesh"),
+        ]);
+        let got = lookup_citation(&conn, "O that this too too solid flesh", "Lr");
+        assert_eq!(got, None);
+    }
+
+    #[test]
+    fn lookup_citation_excludes_source_work_and_amb() {
+        // Only the source work (and its -Amb) carry the line → nothing to verify
+        // against → None (not a self-citation).
+        let conn = citation_test_db(&[
+            ("Mac", "Macbeth", 1, 1, "When shall we three meet again"),
+            ("Mac-Amb", "Macbeth", 1, 1, "When shall we three meet again"),
+        ]);
+        let got = lookup_citation(&conn, "When shall we three meet again", "Mac");
+        assert_eq!(got, None);
+    }
+
+    #[test]
+    fn lookup_citation_no_match_returns_none() {
+        let conn = citation_test_db(&[("Ham", "Hamlet", 3, 1, "To be, or not to be")]);
+        assert_eq!(lookup_citation(&conn, "a phrase not in any work", "Mac"), None);
+    }
+
+    #[test]
+    fn lookup_citation_same_work_multiple_scenes_is_ambiguous() {
+        // One work, two different scenes carry the line → which scene is a guess
+        // → None. (Distinct (work,div1,div2) tuples, even within a work.)
+        let conn = citation_test_db(&[
+            ("Ham", "Hamlet", 1, 1, "Who's there"),
+            ("Ham", "Hamlet", 4, 2, "Who's there"),
+        ]);
+        assert_eq!(lookup_citation(&conn, "Who's there", "Mac"), None);
+    }
+}
+
+#[cfg(test)]
+mod normalize_parity_check {
+    /// `lookup_citation` matches an echo quote against the DB's `normalized_text`
+    /// by running `text_file_map::normalize` on the quote. That only works if the
+    /// Rust normalizer reproduces how the DB column was built. Echo quotes are
+    /// spoken verse lines (never bracketed stage directions), so guard parity on
+    /// representative spoken lines sampled from lit.db `normalized_text`.
+    #[test]
+    fn rust_normalize_matches_db_samples() {
+        let cases = [
+            (
+                "Enter King Henry, Duke Humphrey of Gloucester,",
+                "enter king henry duke humphrey of gloucester",
+            ),
+            (
+                "Salisbury, Warwick, and Cardinal Beaufort, on the one",
+                "salisbury warwick and cardinal beaufort on the one",
+            ),
+        ];
+        for (raw, expected_db) in cases {
+            assert_eq!(crate::text_file_map::normalize(raw), expected_db, "raw={raw:?}");
         }
     }
 }
