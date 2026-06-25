@@ -292,6 +292,38 @@ Reproduction for the user to eyeball:
   (`jump_to_gloss_source_start` citation-ranked selection).
 - `src/app/mod.rs` + `src/config.rs` — Part F (id-keyed resume:
   `work_position_ids`, save both sites, restore via the post-line-map id remap).
+- `src/db/queries.rs` — Part G (translations `-Amb`→base join by `line_in_div`
+  instead of `normalized_text`).
+
+## Part G — Translations fallback `-Amb`→base join (now citation-joinable)
+
+`db/queries.rs:373` (translations lookup) has an `-Amb`→base fallback that joins
+`line_mapping a` (the `-Amb` work) to `line_mapping b` (base) on
+`div1 = div1 AND div2 = div2 AND normalized_text = normalized_text` — a **text
+join**, written when `-Amb` numbering differed from base. Now that base and
+`-Amb` are line-parity (verified), this can join on
+`line_in_div` (citation) instead of `normalized_text`, removing the text
+dependency. Low priority (translations, not a wrong-line *navigation* hazard),
+but it's the same dead-workaround class — fold the citation join in while we're
+here, or note it for a follow-up. **Decision: include as a small, low-risk Part
+G; it's a one-clause SQL change guarded by the same parity guarantee.**
+
+### Dead `-Amb` workaround sweep (2026-06-25)
+
+Swept all `-Amb` references in `src/`. Findings:
+
+- **Replaceable (old aberrant-numbering workarounds):** `jump_to_gloss_source_start`
+  (Part E), `first_source_start_time` (Part D), translations fallback (Part G).
+- **Legitimate, keep:** `gloss::normalize_abbrev` (shared gloss rows),
+  `strip variant suffixes` for synopses, `parse_citation` `-Amb`-tolerance,
+  `find_similar_passages` base-exclude, `lookup_citation`'s `NOT LIKE '%-Amb'`
+  (deferred finding #4 — free-text input, no id).
+- **Already migrated (confirms the pattern):** reader-gloss main-card coloring
+  (`app/mod.rs:3664`) moved from text-matching to citation-range membership; its
+  parity tests (`text_file_map.rs::base_and_amb_line_mapping_are_parity`,
+  `h6_amb_glossed_lines_match_by_citation`) assert and guard the byte-identity
+  this whole spec relies on. **Keep those tests — they are the regression guard
+  for the parity guarantee.**
 
 ## Related citation-fragility findings (audit, 2026-06-25)
 
