@@ -9,7 +9,6 @@ pub struct JournalOverlay {
     scrim: gtk4::Box,
     container: gtk4::Box,
     title: Label,
-    position_label: Label,
     scrolled: gtk4::ScrolledWindow,
     view: gtk4::TextView,
     bottom_clip: gtk4::Box,
@@ -45,13 +44,6 @@ impl JournalOverlay {
         title.set_margin_end(text_margins as i32);
         title.set_margin_top(24);
         container.append(&title);
-
-        let position_label = Label::new(Some(""));
-        position_label.add_css_class("gloss-header");
-        position_label.set_halign(gtk4::Align::Start);
-        position_label.set_margin_start(text_margins as i32);
-        position_label.set_margin_end(text_margins as i32);
-        container.append(&position_label);
 
         let scrolled = gtk4::ScrolledWindow::new();
         scrolled.set_hscrollbar_policy(gtk4::PolicyType::Never);
@@ -108,7 +100,6 @@ impl JournalOverlay {
             scrim,
             container,
             title,
-            position_label,
             scrolled,
             view,
             bottom_clip,
@@ -141,7 +132,6 @@ impl JournalOverlay {
         self.view.set_left_margin(side);
         self.view.set_right_margin(side);
         self.title.set_margin_start(side);
-        self.position_label.set_margin_start(side);
         let _ = (self.text_margins, self.column_width);
     }
 
@@ -158,16 +148,12 @@ impl JournalOverlay {
     ) {
         self.size_card(card_width, card_height);
         self.title.set_text(scene_title);
-        self.footer_left.set_text(footer_left);
-        if page_count == 0 {
-            self.position_label.set_text("page 0 of 0 in this scene");
+        let pos_text = if page_count == 0 {
+            "page 0 of 0 in this scene".to_string()
         } else {
-            self.position_label.set_text(&format!(
-                "page {} of {} in this scene",
-                page_index + 1,
-                page_count
-            ));
-        }
+            format!("page {} of {} in this scene", page_index + 1, page_count)
+        };
+        self.set_footer_left(footer_left, &pos_text);
         let body = if page_count == 0 {
             "No pages yet \u{2014} press A to ask.".to_string()
         } else {
@@ -181,6 +167,7 @@ impl JournalOverlay {
         let adj = self.scrolled.vadjustment();
         adj.set_value(adj.lower());
         self.update_bottom_clip();
+        self.schedule_bottom_clip_recompute();
     }
 
     /// Render a passage page: source verse (with italic stage directions) above a
@@ -202,9 +189,8 @@ impl JournalOverlay {
     ) {
         self.size_card(card_width, card_height);
         self.title.set_text("Passage");
-        self.footer_left.set_text(footer_left);
 
-        // Position label: use the citation span when available, else a plain count.
+        // Position text: use the citation span when available, else a plain count.
         let pos_text = match (start_citation, end_citation) {
             (Some(s), Some(e)) => format!("passage {} \u{2013} {}", s, e),
             (Some(s), None) => format!("passage {}", s),
@@ -216,7 +202,7 @@ impl JournalOverlay {
                 }
             }
         };
-        self.position_label.set_text(&pos_text);
+        self.set_footer_left(footer_left, &pos_text);
 
         // Render source verse into the buffer. bar_left mirrors the gloss overlay
         // (card_side_margin), accent omitted since passage pages are not speaker-
@@ -249,6 +235,7 @@ impl JournalOverlay {
         let adj = self.scrolled.vadjustment();
         adj.set_value(adj.lower());
         self.update_bottom_clip();
+        self.schedule_bottom_clip_recompute();
     }
 
     pub fn show_loading(&self) {
@@ -256,7 +243,6 @@ impl JournalOverlay {
         if w > 0 {
             self.container.set_size_request(w, h);
         }
-        self.position_label.set_text("");
         self.view.buffer().set_text("Asking\u{2026}");
         self.apply_font();
         self.ask.close();
@@ -324,11 +310,40 @@ impl JournalOverlay {
         self.update_bottom_clip();
     }
 
+    /// Set the footer-left label to the band identity (`<abbrev> <act>.<scene>`)
+    /// followed by the page position, joined with a `·`, e.g.
+    /// `Cromwell 1.0 · page 1 of 1 in this scene`. The position used to live in a
+    /// standalone row above the body; it now rides in the footer.
+    fn set_footer_left(&self, band: &str, position: &str) {
+        if position.is_empty() {
+            self.footer_left.set_text(band);
+        } else {
+            self.footer_left
+                .set_text(&format!("{} \u{00b7} {}", band, position));
+        }
+    }
+
     fn update_bottom_clip(&self) {
         // Use the descender-correct per-row clip shared with the gloss overlay,
         // NOT a uniform row-step estimate (which clipped the last line's
         // descenders — see docs/troubleshooting/page-turning-mechanics.md).
         crate::ui::recompute_overlay_bottom_clip(&self.view, &self.bottom_clip, &self.scrolled);
+    }
+
+    /// Re-run the bottom clip once on the next main-loop tick, after the freshly
+    /// shown overlay has been laid out. The synchronous `update_bottom_clip` in
+    /// `show_page`/`show_passage_page` runs against unsettled geometry (the
+    /// ScrolledWindow viewport is still 0-height at `set_visible`), so it
+    /// over-clips and hides the whole body until the first j/k/g/G forces a
+    /// recompute. This idle pass sizes the clip correctly on open — mirroring the
+    /// gloss overlay's deferred recompute (gloss_overlay.rs).
+    fn schedule_bottom_clip_recompute(&self) {
+        let view = self.view.clone();
+        let clip = self.bottom_clip.clone();
+        let scrolled = self.scrolled.clone();
+        glib::idle_add_local_once(move || {
+            crate::ui::recompute_overlay_bottom_clip(&view, &clip, &scrolled);
+        });
     }
 
     pub fn set_font(&self, family: &str, size: i32) {
