@@ -116,6 +116,7 @@ pub fn handle_key(
             crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_shift, is_alt, tokio_handle),
             crate::app::InputMode::GlossVisual => handle_block_visual_key(state, key_state, key_name, &GLOSS_VISUAL_CFG),
             crate::app::InputMode::JournalOverlay => handle_journal_key(state, key_state, key_name, is_ctrl, is_alt),
+            crate::app::InputMode::JournalVisual => handle_journal_visual_key(state, key_state, key_name),
             crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_state, key_name, is_ctrl, is_alt, is_shift),
             crate::app::InputMode::SynopsisVisual => handle_block_visual_key(state, key_state, key_name, &SYNOPSIS_VISUAL_CFG),
             crate::app::InputMode::TranslationOverlay => handle_translation_overlay_key(state, key_name),
@@ -782,6 +783,15 @@ fn handle_journal_key(
         }
         "D" => {
             crate::input::actions::journal::delete_current(state);
+            true
+        }
+        "V" => {
+            let entered = state.borrow().journal_overlay.enter_visual();
+            if entered {
+                let mut s = state.borrow_mut();
+                s.input_mode = crate::app::InputMode::JournalVisual;
+                s.journal_overlay.set_journal_visual_hint();
+            }
             true
         }
         "g" => {
@@ -1522,6 +1532,69 @@ fn handle_block_visual_key(
             (cfg.escape_exit)(&s.gloss_overlay);
             s.input_mode = cfg.return_mode;
             (cfg.set_hint)(&s.gloss_overlay);
+            true
+        }
+        _ => true,
+    }
+}
+
+/// Visual block selection in the journal Q&A overlay (entered with Shift+V).
+/// gg/G jump the cursor end, j/k extend, y yanks the selected blocks to the
+/// clipboard and exits, Esc/V cancel. All other keys are consumed. Parallel to
+/// `handle_block_visual_key` but calls `JournalOverlay` (a different type, so it
+/// cannot share `BlockVisualCfg`, which is fixed to `GlossOverlay`).
+fn handle_journal_visual_key(
+    state: &Rc<RefCell<AppState>>,
+    key_state: &Rc<RefCell<KeyState>>,
+    key_name: &str,
+) -> bool {
+    if key_state.borrow().chord == ChordState::PendingG {
+        key_state.borrow_mut().chord = ChordState::None;
+        if key_name == "g" {
+            state.borrow().journal_overlay.visual_to_end(false);
+        }
+        return true;
+    }
+    match key_name {
+        "j" => {
+            state.borrow().journal_overlay.visual_step(1);
+            true
+        }
+        "k" => {
+            state.borrow().journal_overlay.visual_step(-1);
+            true
+        }
+        "G" => {
+            state.borrow().journal_overlay.visual_to_end(true);
+            true
+        }
+        "g" => {
+            KeyState::start_chord(key_state, ChordState::PendingG);
+            true
+        }
+        "y" => {
+            let (text, n) = {
+                let s = state.borrow();
+                (s.journal_overlay.visual_selection_text(), s.journal_overlay.visual_selection_len())
+            };
+            if !text.is_empty() {
+                let _ = std::process::Command::new("wl-copy").arg(&text).spawn();
+                crate::logging::log(&format!("JOURNAL: copied {} blocks", n));
+            }
+            {
+                let mut s = state.borrow_mut();
+                s.journal_overlay.exit_visual();
+                s.input_mode = crate::app::InputMode::JournalOverlay;
+                s.journal_overlay.set_journal_hint();
+                crate::ui::toast::show_transient(&s.chapter_toast, "Copied", 2);
+            }
+            true
+        }
+        "Escape" | "V" => {
+            let mut s = state.borrow_mut();
+            s.journal_overlay.exit_visual_to_anchor();
+            s.input_mode = crate::app::InputMode::JournalOverlay;
+            s.journal_overlay.set_journal_hint();
             true
         }
         _ => true,

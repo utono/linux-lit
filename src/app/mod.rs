@@ -94,6 +94,7 @@ pub enum InputMode {
     GlossOverlay,
     GlossVisual,
     JournalOverlay,
+    JournalVisual,
     SynopsisOverlay,
     SynopsisVisual,
     TranslationOverlay,
