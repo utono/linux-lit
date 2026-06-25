@@ -2406,6 +2406,11 @@ pub fn display_work_at_with_prepared(
     // Save position of the outgoing work before switching
     if let Some(ref old_work) = state.current_work {
         state.config.work_positions.insert(old_work.abbrev.clone(), state.current_line);
+        if let Some(id) = state.work_line_for_buffer(state.current_line)
+            .and_then(|wi| old_work.lines.get(wi)).map(|l| l.id)
+        {
+            state.config.work_position_ids.insert(old_work.abbrev.clone(), id);
+        }
     }
 
     crate::input::search::clear_search(state);
@@ -2930,6 +2935,25 @@ pub fn display_work_at_with_prepared(
         state.effective_line_count().saturating_sub(1),
     );
 
+    // Part F: when resuming (no explicit concordance target), prefer the
+    // citation-stable line_mapping_id over the legacy raw buffer index, so a
+    // lit.db re-import / repagination doesn't land on the wrong speech.
+    if target_line_id.is_none() && std::env::var("LIT_START_POS").is_err() {
+        if let Some(work) = &state.current_work {
+            if let Some(&saved_id) = state.config.work_position_ids.get(&work.abbrev) {
+                if let Some(work_idx) = work.lines.iter().position(|l| l.id == saved_id) {
+                    let buf_idx = if let Some(ref lm) = state.line_map {
+                        let bi = *lm.work_to_buffer.get(work_idx).unwrap_or(&state.current_line);
+                        if lm.buffer_to_work.get(bi) == Some(&Some(work_idx)) { bi } else { state.current_line }
+                    } else {
+                        work_idx
+                    };
+                    state.current_line = buf_idx.min(state.effective_line_count().saturating_sub(1));
+                }
+            }
+        }
+    }
+
     // If no saved position and no concordance target, start at first
     // dialogue line with viewport showing the line above (usually a
     // speaker name). When current_line > 0 here it came from
@@ -3028,7 +3052,7 @@ pub fn display_work_at_with_prepared(
         if let Some(work) = &state.current_work {
             if let Some(work_idx) = work.lines.iter().position(|l| l.id == target_id) {
                 let buf_idx = if let Some(ref lm) = state.line_map {
-                    let bi = lm.work_to_buffer[work_idx];
+                    let bi = *lm.work_to_buffer.get(work_idx).unwrap_or(&state.current_line);
                     if lm.buffer_to_work.get(bi) == Some(&Some(work_idx)) {
                         bi
                     } else {
@@ -3473,8 +3497,15 @@ pub fn save_position(state: &mut AppState) {
         // Record the resolved column count so the NEXT launch can size the first
         // card pass correctly and avoid the startup 1→2-column reflow.
         let cc = state.column_count();
+        // Resolve the cursor's line_mapping_id (citation-stable).
+        let id = state.work_line_for_buffer(state.current_line)
+            .and_then(|wi| work.lines.get(wi))
+            .map(|l| l.id);
         state.config.last_work = Some(abbrev.clone());
-        state.config.work_positions.insert(abbrev, state.current_line);
+        state.config.work_positions.insert(abbrev.clone(), state.current_line); // legacy fallback
+        if let Some(id) = id {
+            state.config.work_position_ids.insert(abbrev, id);
+        }
         state.config.last_column_count = Some(cc);
         crate::config::save(&state.config);
     }

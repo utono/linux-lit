@@ -59,6 +59,10 @@ pub struct Config {
     pub recent_works: Vec<String>,
     #[serde(default)]
     pub work_positions: HashMap<String, usize>,
+    /// Resume position keyed by line_mapping_id (citation-stable across
+    /// re-imports). Preferred over `work_positions` (legacy raw buffer index).
+    #[serde(default)]
+    pub work_position_ids: HashMap<String, i64>,
     /// Per-work most-recently-viewed gloss, keyed by work_abbrev. Mirrors
     /// `work_positions`. Written at every gloss-display site; read by Ctrl+g.
     #[serde(default)]
@@ -208,6 +212,7 @@ impl Default for Config {
             previous_work: default_previous_work(),
             recent_works: Vec::new(),
             work_positions: HashMap::new(),
+            work_position_ids: HashMap::new(),
             last_gloss: HashMap::new(),
             column_overrides: HashMap::new(),
             last_column_count: None,
