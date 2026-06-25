@@ -462,6 +462,14 @@ Two layers: headless tests verify the page-turn algorithm across many works
 cheaply (no display server needed); the in-app test harness verifies
 integration with real GTK pixel layout on the current work.
 
+**Clip invariant (pixel-level, e2e under cage):** `tests/line_clipping.rs` asserts
+the MAIN reading card never clips its first/last line (top/mid/end), driven by
+the `TEST_VIEWPORT_RECT` the app logs on reveal. `tests/overlay_clipping.rs`
+extends the same invariant to the synopsis OVERLAY (opens it with `h`, scrolls to
+the bottom with `j`), driven by `TEST_OVERLAY_VIEWPORT_RECT`. Both are `#[ignore]`d;
+run via `./scripts/e2e-env.sh cargo test --test line_clipping --test overlay_clipping
+-- --ignored --nocapture`.
+
 ### Headless tests
 
 `src/input/navigation.rs` has headless tests that simulate page turning
@@ -848,25 +856,29 @@ the greatest line-top `y` at or below the target — found by walking lines via
 overlay's local analogue of `snap_scroll_to_line` in `scroll.rs`: the viewport
 top always aligns to a whole line.
 
-### Bottom edge — invisible clip box (`recompute_bottom_clip`)
+### Bottom edge — invisible clip box (`recompute_overlay_bottom_clip`)
 
 `bottom_clip` is a `gtk4::Box` overlaid on `gloss_scroll_overlay` (valign=End,
 halign=Fill, `can_target=false`, `add_css_class("gloss-bottom-clip")` so it
 paints the card background and hides — rather than recolors — whatever is beneath
 it).
 
-`recompute_bottom_clip` walks **real per-visual-row rects** (`display_rows`,
-which steps `forward_display_line` and reads each row's `iter_location` rect),
-**not** `line_yrange`. This is deliberate: the synopsis/gloss buffers join
-paragraphs into single multi-row buffer lines and apply per-tag
-`pixels_above_lines`/`scale`, so rows are not uniform and `line_yrange`
-(logical-line granular) would collapse a wrapped paragraph to one paragraph-tall
-"row" and clip the wrong amount. It finds the bottom of the last visual row that
-fits **entirely** above the viewport bottom (`top_y + page_size`), then sets the
-clip height to `viewport_bottom − last_full_bottom` so the leftover partial row
-at the bottom is covered. Two guards: if the document ends inside the viewport it
-covers only the slack below `content_h`; if a single row is taller than the
-viewport (nothing fits) the clip stays at 0 so that row is not blanked.
+The clip math walks **real per-visual-row rects** (`display_rows`, which steps
+`forward_display_line` and reads each row's `iter_location` rect), **not**
+`line_yrange`. This is deliberate: the synopsis/gloss buffers join paragraphs
+into single multi-row buffer lines and apply per-tag `pixels_above_lines`/`scale`,
+so rows are not uniform and `line_yrange` (logical-line granular) would collapse a
+wrapped paragraph to one paragraph-tall "row" and clip the wrong amount. It finds
+the bottom of the last visual row that fits **entirely** above the viewport bottom
+(`top_y + page_size`), then sets the clip height to
+`viewport_bottom − last_full_bottom` so the leftover partial row at the bottom is
+covered. Two guards: if the document ends inside the viewport it covers only the
+slack below `content_h`; if a single row is taller than the viewport (nothing
+fits) the clip stays at 0 so that row is not blanked.
+
+The gloss overlay's `&self` entry point `update_bottom_clip` is a one-line call to
+the shared `crate::ui::recompute_overlay_bottom_clip(view, clip, scrolled)` (see
+"shared helpers" below); it no longer carries its own copy of the algorithm.
 
 **Recompute on EVERY scroll, not just on the named scroll methods.** The clip is
 recomputed from (a) `reset_scroll_top`'s `changed`-signal handler + idle backstop
@@ -915,23 +927,46 @@ padding was widened to `card_side_margin`, which changed the wrap and pushed a
 descender-bearing line to the bottom edge.)
 
 The fix made both overlays share one implementation. The descender-correct logic
-now lives as free helpers in `src/ui/mod.rs`:
+lives as free helpers in `src/ui/mod.rs`:
 
 - `display_rows(view)` — the per-visual-row walk (`forward_display_line` +
-  `iter_location`, `top_margin` added), shared.
+  `iter_location`, `top_margin` added), for TextView-content overlays.
 - `bottom_clip_height(rows, top_y, viewport_h, content_h)` — the **pure** clip
   math (last-full-row bottom → viewport bottom, with the empty-viewport,
   document-ends-inside, and single-tall-row guards). Unit-tested in
   `ui::bottom_clip_tests`, including a non-uniform-row case that a uniform-step
-  estimate gets wrong.
-- `recompute_overlay_bottom_clip(view, clip, scrolled)` — the GTK wrapper.
+  estimate gets wrong. **This is now the single covering algorithm for every
+  free-scroll surface** (overlays AND scroll-mode).
+- `recompute_overlay_bottom_clip(view, clip, scrolled)` — the GTK wrapper for a
+  TextView-content scrolled window (uses `display_rows`).
+- `line_yrange_rows(view, top_val, viewport_h)` — the logical-line analog of
+  `display_rows`, for scroll-mode (j/k) which clips on whole-line `line_yrange`
+  geometry, not wrapped rows. `scroll.rs::scrolloff_bottom_clip_widgets` builds
+  these rows and feeds them to `bottom_clip_height` (it was a verbatim copy of
+  that algorithm — now it shares it).
+- `recompute_overlay_bottom_clip_box(clip, scrolled)` — the variant for an
+  overlay whose scrolled child is a widget **Box**, not a TextView (the
+  translation overlay's column stack). A Box lays out whole child widgets that
+  GTK never splits across the edge, so there is no wrapped partial row to mask —
+  it covers only trailing slack below the content when the content ends inside
+  the viewport (else clips 0). The translation overlay had **no** bottom clip
+  before; this guard is what keeps a short translation's trailing slack from
+  reading as a clipped edge.
 
-The journal overlay's `update_bottom_clip` now calls
-`recompute_overlay_bottom_clip`. The gloss overlay still has its own
-`recompute_bottom_clip`/`display_rows` copy (behaviourally identical); converging
-it onto the shared helpers is a safe follow-up. **Lesson: any overlay clipping a
-multi-row prose buffer must use per-row geometry — never a uniform row-step — or
-the last line's descenders clip.**
+Both the gloss `update_bottom_clip` and the journal `update_bottom_clip` are now
+one-line calls to `recompute_overlay_bottom_clip` — neither carries its own copy.
+
+**Not unified (deliberately, do NOT "dedup"):** the main reading card's
+`scroll.rs::update_bottom_clip` is a *paginated* clip — it sums `line_yrange`
+heights from a known `page_top` to a column-split/section boundary, with
+`descender_guard`/`BASE_BOTTOM_MARGIN`/`exact_end` logic. That is a different
+strategy from the free-scroll partial-row mask above; merging them would change
+behavior. Likewise the gloss vs journal `snap_value_to_line` are different
+algorithms (per-`display_rows`-row snap vs uniform `row_step` rounding), not
+duplicates. See `docs/superpowers/specs/2026-06-25-clip-prevention-design.md`.
+
+**Lesson: any overlay clipping a multi-row prose buffer must use per-row geometry
+— never a uniform row-step — or the last line's descenders clip.**
 
 ### Margins (cosmetic, separate from clipping)
 
