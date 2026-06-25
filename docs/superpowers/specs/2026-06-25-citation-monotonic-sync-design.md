@@ -34,8 +34,22 @@ event rather than choosing the correct line.
 2. **Repair the data:** remove the impossible timestamps on the 2H6-Amb
    re-read lines so they stop acting as false sync anchors.
 
+Additional goals (folded in after a codebase-wide citation audit — see
+"Related citation-fragility findings" below):
+
+3. **Gloss audio seek** must seek to the correct occurrence of a re-read verse
+   line, not the first textual match (Part D).
+4. **Jump-to-gloss-source** cursor must land on the in-passage occurrence, not a
+   far duplicate (Part E).
+5. **Resume/startup position** must survive a `lit.db` re-import without silently
+   landing on the wrong speech (Part F).
+
 Non-goals: re-measuring the re-read's true audio times (a later litdb pass);
-`[`/`{` bookmark navigation (already monotonic, unaffected — out of scope).
+`[`/`{` bookmark navigation (already monotonic, unaffected — out of scope);
+`lookup_citation`/`verify_echo_citations` (finding #4 — input is free LLM text
+with no authoritative id, structurally hard, deferred); the scene-jump
+text-classifier fallback and vocab `line_index` (in-load-only / never persisted,
+low risk, deferred).
 
 ## Part A — Citation-monotonic line selection (robust fix)
 
@@ -119,6 +133,114 @@ This must be applied to the live `~/utono/litdb/data/lit.db`. The snapshot cache
 is `.txt`-mtime + db-fingerprint guarded, so it invalidates automatically on the
 next launch.
 
+## Part D — Gloss audio seek (`first_source_start_time`)
+
+### The bug
+
+`source_block_seek_time` → `first_source_start_time`
+(`src/input/actions/gloss.rs:2144`) resolves a gloss source verse to an audio
+time by scanning all work lines for `text.trim() == needle` and returning the
+**first** match's `start_time`. A re-read/refrain line returns the wrong
+occurrence's timestamp, so `a`/`space` on a glossed passage seeks audio to the
+wrong place — the same bug class as Part A.
+
+### The `-Amb` exception is now obsolete (verified 2026-06-25)
+
+The existing text-first code was written because `-Amb` editions used to render
+an aberrant, renumbered `.txt` whose `(div1,div2,line_in_div)` did not match the
+base-numbered citation. **That is no longer true.** `-Amb` editions now render
+the canonical folger-cleaned `.txt` — verified: `2H6` and `2H6-Amb` share the
+same `works.text_file` AND identical `(div1,div2,line_in_div)` tuples for every
+line (base_lid == amb_lid), and every `-Amb`/`-BBC`/`-DC` work has a
+`text_file`. So a gloss's citation resolves **directly** in `-Amb` `work.lines`.
+
+### The fix — resolve by citation/id, drop text matching
+
+`source_block_seek_time` has the `gloss` in scope, which carries
+`start_citation`. Resolve it to `(div1, div2, line_in_div)` and find the work
+line by `position(|l| (l.div1,l.div2,l.line_in_div) == start)` (or by line
+`id`). Read that line's `timestamp.start`. No text comparison — unambiguous, no
+duplicate-occurrence hazard.
+
+Keep a single, clearly-labelled text fallback ONLY for the genuinely citationless
+case (a parsed `.txt`-only work with no `line_map`/citation, or a malformed
+citation), so the function never silently returns nothing where it used to work.
+Remove the `-Amb` rationale from the comment; cite the verification above.
+
+Implementation: `source_block_seek_time` resolves the line by citation and reads
+its start time directly; `first_source_start_time`'s text scan is retained only
+as the citationless fallback (or deleted if no such path remains). Keep pure
+helpers unit-testable.
+
+## Part E — Jump-to-gloss-source cursor (`jump_to_gloss_source_start`)
+
+### The bug
+
+`jump_to_gloss_source_start` (`src/input/actions/gloss.rs:47`) finds the first
+work line with `l.text.trim() == first_src`, falling back to the citation tuple
+only if the text lookup fails entirely. A repeated first source line lands the
+cursor on the wrong occurrence.
+
+### The fix — resolve by citation first (the `-Amb` caveat is gone)
+
+The function already receives `target` (the citation tuple). Since `-Amb`
+editions now render the canonical `.txt` with matching citations (see Part D
+verification), **invert the lookup order: resolve by the citation tuple first**
+(`position(|l| (l.div1,l.div2,l.line_in_div) == t)`), using the text match only
+as the citationless fallback. This removes the duplicate-occurrence hazard
+entirely — the citation is unique.
+
+Rewrite the comment at lines 36–42: the `-Amb` renumbering rationale no longer
+holds; citation is now authoritative and primary, text is the
+`.txt`-only/citationless fallback.
+
+## Part F — Resume / startup position keyed on `line_mapping_id`
+
+### The bug
+
+`save_position` (`src/app/mod.rs:3470`) and the work-switch save
+(`src/app/mod.rs:2408`) persist `state.current_line` — a **raw buffer-line
+index** — into `config.work_positions[abbrev]`. On restore
+(`src/app/mod.rs:2430` → applied at `:2581`) the raw index is used directly. If a
+`lit.db` re-import or snapshot rebuild shifts buffer lines, the stored integer
+now points at a **different citation line**, and the nearest-dialogue snap
+(`:2960`) hides the drift by landing on the wrong speech.
+
+Contrast: the `target_line_id` branch (`src/app/mod.rs:3027`) already does the
+correct `id → position(|l| l.id == id) → work_to_buffer` remap. Resume is the
+one path not using it.
+
+### The fix — store and restore by id
+
+- **Config schema:** change `work_positions` from `HashMap<String, usize>` to
+  store a `line_mapping_id` (i64) instead of a buffer index. To stay
+  backward-compatible with existing config files (which hold raw indices),
+  either (a) add a new field `work_position_ids: HashMap<String, i64>` and read
+  it preferentially, falling back to the legacy `work_positions` index when the
+  id map has no entry; or (b) migrate on load. **Recommended: (a)** — additive,
+  no destructive migration, legacy entries degrade to today's behavior.
+- **Save:** at both save sites, resolve `current_line → buffer_to_work →
+  work.lines[wi].id` and store that id under `work_position_ids[abbrev]`.
+  (Keep writing the legacy index too during a transition window so a downgrade
+  doesn't lose place.)
+- **Restore:** in `display_work_at_with_prepared`, after `line_map` is built
+  (i.e. alongside / reusing the `target_line_id` remap at `:3027`), if no
+  explicit `target_line_id` was given, look up `work_position_ids[abbrev]` and
+  remap it through the SAME `position(|l| l.id == saved_id) → work_to_buffer`
+  path. Only fall back to the legacy raw `work_positions` index when the id is
+  absent. `LIT_START_POS` continues to override (raw line, test-only).
+
+This makes resume survive re-imports/repagination exactly as concordance jumps
+already do.
+
+### Note on ordering
+
+The current code sets `state.current_line = saved_line` at `:2581` *before*
+`line_map` exists. The id remap must run *after* the line map is built. Move the
+resume application to the post-line-map point (near `:3027`) so both the
+explicit-target and resume paths share one id→buffer resolution. Preserve the
+existing `page_top_line`/canonical-spread behavior.
+
 ## Testing
 
 ### Unit (pure logic, `cargo test --bins`)
@@ -132,6 +254,18 @@ In `src/mpv/client.rs` tests for `find_line_for_time`:
   earlier line → asserts the near earlier candidate is chosen.
 - **No-duplicate regression:** existing `test_find_line_for_time*` cases must
   still pass unchanged (single-candidate path).
+
+For Part D (`first_source_start_time` / citation-range filter): a case where the
+verse text appears twice, with a citation range covering the SECOND occurrence,
+asserts the second occurrence's `start_time` is returned (not the first).
+
+For Part E (`jump_to_gloss_source_start`): unit-test the pure citation-ranked
+selection helper (duplicate first-source line, range covering the later one →
+later work index chosen).
+
+For Part F: the config id↔index round-trip and the "legacy index when id absent"
+fallback are pure and unit-testable in `src/config.rs` / the save/restore
+helper; the full restore-after-reimport path is integration-level (user-run).
 
 ### Visual (user-run, per CLAUDE.md "do not run the app")
 
@@ -153,3 +287,19 @@ Reproduction for the user to eyeball:
   sanity clamp.
 - `~/utono/litdb` — SQL migration nulling the 6 re-read timestamps (separate
   repo, separate commit).
+- `src/input/actions/gloss.rs` — Part D (`first_source_start_time` /
+  `source_block_seek_time` citation-range filter) + Part E
+  (`jump_to_gloss_source_start` citation-ranked selection).
+- `src/app/mod.rs` + `src/config.rs` — Part F (id-keyed resume:
+  `work_position_ids`, save both sites, restore via the post-line-map id remap).
+
+## Related citation-fragility findings (audit, 2026-06-25)
+
+A codebase-wide audit (sync/seek, text-matching, keybind nav) found the app is
+mostly citation-correct. The fragile surface folded into this spec: Part A
+(sync, finding #1), Part D (gloss audio seek, finding #3 HIGH), Part E
+(jump-to-gloss-source, finding #2 MEDIUM), Part F (resume restore, the one
+persisted raw-buffer-line signal). Deferred (documented, not in this spec):
+`lookup_citation`/`verify_echo_citations` (free LLM text, no id — finding #4),
+scene-jump text-classifier fallback (in-load only), vocab `line_index` (rebuilt
+each load, never persisted).
