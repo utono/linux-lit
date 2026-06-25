@@ -11,9 +11,9 @@ use crate::ui::gloss_block::BlockKind;
 /// advanced to the first `is_dialogue` line at or after it). Returns true if
 /// it jumped.
 ///
-/// Matches by source TEXT first so it works on `-Amb` (Ambrose) editions, whose
-/// line numbering diverges from the base-numbered gloss citation; falls back to
-/// the citation tuple otherwise.
+/// Resolves by citation tuple `(div1,div2,line_in_div)` first (unique, avoids
+/// landing on the wrong occurrence of a repeated source line); falls back to
+/// text match for citationless (`.txt`-only) glosses.
 ///
 /// Returns `false` if the current gloss context, work, or matching line can't
 /// be resolved, so the caller can restore the saved page instead.
@@ -33,25 +33,21 @@ pub(crate) fn jump_to_gloss_source_start(s: &mut AppState) -> bool {
         None => return false,
     };
 
-    // Locate the gloss's first source line in the loaded work. The `(div1,div2,
-    // line_in_div)` citation tuple is built from the BASE work's numbering
-    // (`-Amb` stripped), but an Ambrose edition renumbers lines (it inserts
-    // stage directions), so the tuple does not match `-Amb` work.lines. The
-    // source TEXT is edition-identical, so match on it first and fall back to
-    // the tuple (correct for non-`-Amb` works and a tiebreaker for duplicate
-    // lines).
+    // -Amb editions now render the canonical parity-numbered .txt (verified
+    // 2026-06-25; base and -Amb share text_file and (div1,div2,line_in_div)).
+    // Resolve by the citation tuple first — it is unique, so a repeated source
+    // line can't land on the wrong occurrence. Text match is the citationless
+    // (.txt-only) fallback.
+    let by_citation = target.and_then(|t| {
+        work.lines.iter().position(|l| (l.div1, l.div2, l.line_in_div) == t)
+    });
     let first_src = source_text.lines().next().map(str::trim).unwrap_or("");
-    let by_text = if first_src.is_empty() {
-        None
-    } else {
-        work.lines.iter().position(|l| l.text.trim() == first_src)
-    };
-    let start_idx = match by_text.or_else(|| {
-        target.and_then(|t| {
-            work.lines
-                .iter()
-                .position(|l| (l.div1, l.div2, l.line_in_div) == t)
-        })
+    let start_idx = match by_citation.or_else(|| {
+        if first_src.is_empty() {
+            None
+        } else {
+            work.lines.iter().position(|l| l.text.trim() == first_src)
+        }
     }) {
         Some(i) => i,
         None => return false,
