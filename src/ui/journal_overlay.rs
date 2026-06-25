@@ -106,7 +106,12 @@ impl JournalOverlay {
                 cr.set_source_rgb(0.53, 0.62, 0.71);
                 cr.set_line_width(2.0);
                 let buffer = view_clone.buffer();
-                let x = 4.0; // left inset; the card side margin already pads the text
+                // Draw the bar in the left gutter just inside the text margin so
+                // it sits beside the selected paragraph. The card sets the view's
+                // left_margin to card_side_margin (card_width/4); a fixed x=4 put
+                // the bar far out in the empty gutter, looking like nothing was
+                // selected. 12px left of the text edge mirrors the gloss bar.
+                let x = (view_clone.left_margin() as f64 - 12.0).max(2.0);
                 for (start_line, end_line) in ranges.iter() {
                     if let (Some(si), Some(ei)) =
                         (buffer.iter_at_line(*start_line), buffer.iter_at_line(*end_line))
@@ -556,13 +561,19 @@ impl JournalOverlay {
     /// Enter visual mode: anchor at the topmost visible block. Returns false
     /// (no-op) when there are no blocks.
     pub fn enter_visual(&self) -> bool {
-        if self.blocks.borrow().is_empty() {
+        let n = self.blocks.borrow().len();
+        if n == 0 {
+            crate::logging::log("JOURNAL-VISUAL: enter_visual no-op (0 blocks)");
             return false;
         }
         let seed = self.topmost_visible_block();
         self.visual_anchor.set(Some(seed));
         self.cursor_block.set(seed);
         self.refresh_bar();
+        crate::logging::log(&format!(
+            "JOURNAL-VISUAL: entered, {} blocks, anchor {}",
+            n, seed
+        ));
         true
     }
 
