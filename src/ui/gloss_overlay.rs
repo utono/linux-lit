@@ -940,6 +940,26 @@ impl GlossOverlay {
         self.container.set_visible(true);
         self.apply_font();
         self.reset_scroll_top();
+
+        // Headless test: emit the overlay viewport rect once layout settles, so
+        // tests/overlay_clipping.rs can target the synopsis card's region.
+        // GlossOverlay is not Clone, so capture the scrolled window and inline.
+        if std::env::var_os("LIT_HEADLESS_TEST").is_some() {
+            let sc = self.gloss_scrolled.clone();
+            glib::idle_add_local_once(move || {
+                if let Some(root) = sc.root() {
+                    if let Some(r) = sc.compute_bounds(&root) {
+                        crate::logging::log(&format!(
+                            "TEST_OVERLAY_VIEWPORT_RECT {} {} {} {}",
+                            r.x().round() as i32,
+                            r.y().round() as i32,
+                            r.width().round() as i32,
+                            r.height().round() as i32
+                        ));
+                    }
+                }
+            });
+        }
     }
 
     /// Snap the overlay's scroll position to the very top, reliably.
