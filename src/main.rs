@@ -186,17 +186,18 @@ fn main() {
                         } else {
                             line_idx
                         };
-                        // Guard against aberrant timestamps: if the sync target
-                        // is far from the current position, skip it. Also skip
-                        // if current_line has no work mapping (e.g. on a stage
-                        // direction after a bad resume).
                         let cur_wi = s.work_line_for_buffer(s.current_line);
                         if let Some(cwi) = cur_wi {
+                            // Task 1 makes CursorSync monotonic in citation order, so the old
+                            // dist>50 magic guard is no longer load-bearing. Keep only a defensive
+                            // clamp against a single event jumping more than the whole work (corrupt
+                            // index), which should never happen.
+                            let work_len = s.current_work.as_ref().map(|w| w.lines.len()).unwrap_or(usize::MAX);
                             let dist = (line_idx as isize - cwi as isize).unsigned_abs();
-                            if dist > 50 {
+                            if dist >= work_len {
                                 crate::logging::log(&format!(
-                                    "CURSOR_SYNC: ABERRANT line_idx={} cur_work={} dist={} — skipped",
-                                    line_idx, cwi, dist,
+                                    "CURSOR_SYNC: INSANE line_idx={} cur_work={} dist={} work_len={} — skipped",
+                                    line_idx, cwi, dist, work_len,
                                 ));
                                 continue;
                             }
