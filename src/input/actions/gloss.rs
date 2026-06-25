@@ -2251,6 +2251,19 @@ mod source_timing_tests {
         assert_eq!(got, Some(2620.0));
     }
 
+    #[test]
+    fn start_time_for_citation_none_when_unresolved() {
+        // Two None paths both fall through to the text fallback in the caller:
+        let lines = vec![
+            (1i64, 4i64, 37i64, Some(2484.0)),
+            (1, 4, 71, None), // citation found, but no timestamp
+        ];
+        // citation not present in the work
+        assert_eq!(start_time_for_citation((9, 9, 9), &lines), None);
+        // citation present but its line carries no start time
+        assert_eq!(start_time_for_citation((1, 4, 71), &lines), None);
+    }
+
     /// Regression: an IPA-bearing source block must still resolve a seek time.
     /// The work line text (from the DB) has NO `/IPA/`, so the seek matcher
     /// must compare the STRIPPED (`display`) verse text — the raw `text` (with
