@@ -289,7 +289,7 @@ impl GlossOverlay {
             let clip = bottom_clip.clone();
             let scrolled = gloss_scrolled.clone();
             gloss_scrolled.vadjustment().connect_value_changed(move |_| {
-                Self::recompute_bottom_clip(&view, &clip, &scrolled);
+                crate::ui::recompute_overlay_bottom_clip(&view, &clip, &scrolled);
             });
         }
 
@@ -983,7 +983,7 @@ impl GlossOverlay {
                 if pinning.get() && a.value() != a.lower() {
                     a.set_value(a.lower());
                 }
-                Self::recompute_bottom_clip(&view, &clip, &scrolled);
+                crate::ui::recompute_overlay_bottom_clip(&view, &clip, &scrolled);
             }
         });
         *handler.borrow_mut() = Some(id);
@@ -1003,113 +1003,17 @@ impl GlossOverlay {
         // Size the clip on first open even if `changed` never fires (range
         // unchanged across show).
         glib::idle_add_local_once(move || {
-            Self::recompute_bottom_clip(&view, &clip, &scrolled);
+            crate::ui::recompute_overlay_bottom_clip(&view, &clip, &scrolled);
         });
-    }
-
-    /// Recompute the bottom clip from cloned widgets. Static so it can run from
-    /// signal/idle closures that can't capture `&self`. Mirrors the main card's
-    /// `update_bottom_clip`: find the bottom of the last visual row that fits
-    /// entirely within the viewport, then size the clip box to cover from there
-    /// to the viewport bottom — hiding any partial row straddling the edge.
-    ///
-    /// Row geometry comes from `display_rows` (real per-visual-row rects via
-    /// `iter_location`), never a fixed font estimate — the gloss/synopsis
-    /// buffers join paragraphs into single multi-row buffer lines and apply
-    /// per-tag `pixels_above_lines`/`scale`, so rows are not uniform and
-    /// `line_yrange` (logical-line granular) would be wrong here.
-    fn recompute_bottom_clip(
-        view: &gtk4::TextView,
-        clip: &gtk4::Box,
-        scrolled: &gtk4::ScrolledWindow,
-    ) {
-        let adj = scrolled.vadjustment();
-        let viewport_h = adj.page_size();
-        if viewport_h <= 0.0 {
-            if clip.height_request() != 0 {
-                clip.set_height_request(0);
-            }
-            return;
-        }
-        let top_y = adj.value();
-        let bottom_y = top_y + viewport_h; // viewport bottom in content space
-        let content_h = adj.upper();
-
-        // Find the bottom of the last visual row that fits ENTIRELY above the
-        // viewport bottom. The clip then covers from there to the viewport
-        // bottom, hiding any partial row straddling the bottom edge.
-        let rows = Self::display_rows(view);
-        let mut last_full_bottom = top_y; // worst case: nothing fits
-        let mut any_full = false;
-        for (row_top, row_bottom) in &rows {
-            if *row_bottom <= bottom_y + 0.5 && *row_bottom > top_y {
-                last_full_bottom = *row_bottom;
-                any_full = true;
-            }
-            if *row_top >= bottom_y {
-                break;
-            }
-        }
-
-        // If the document ends within the viewport, there is no partial row at
-        // the bottom — only slack below the content; cover just that.
-        let effective_bottom = if content_h <= bottom_y + 0.5 {
-            content_h
-        } else {
-            last_full_bottom
-        };
-
-        // Guard against blanking: if no full row fit (a single row taller than
-        // the viewport), leave the clip at 0 so that row stays visible.
-        let clip_h = if !any_full && content_h > bottom_y + 0.5 {
-            0
-        } else {
-            (bottom_y - effective_bottom).max(0.0).round() as i32
-        };
-
-        if clip.height_request() != clip_h {
-            clip.set_height_request(clip_h);
-        }
-    }
-
-    /// Yield `(row_top, row_bottom)` for each visual (wrapped) row from the start
-    /// of the buffer, in **vadjustment / scroll coordinate space**. Steps display
-    /// line by display line with `forward_display_line` and reads each row's rect
-    /// via `iter_location`, so wrapped paragraphs contribute one entry per real
-    /// visual row at its true height — `line_yrange` would collapse them to one
-    /// paragraph-tall row.
-    ///
-    /// CRITICAL: `iter_location` returns **buffer** coordinates (y = 0 at the
-    /// first line of text, the view's `top_margin` NOT included), but the
-    /// vadjustment scrolls over `top_margin + text + bottom_margin`, so its
-    /// `value`/`upper` are `top_margin` larger. Comparing the two directly (the
-    /// old code did) shifted every row up by `top_margin`, so the bottom-clip
-    /// under-counted the partial last row (it poked through under the footer)
-    /// and `snap_value_to_line` snapped the viewport top `top_margin` px above
-    /// the real row top (the first line clipped under the title after a scroll).
-    /// We add `top_margin` here so callers can compare against `adj.value()`.
-    fn display_rows(view: &gtk4::TextView) -> Vec<(f64, f64)> {
-        let mut rows: Vec<(f64, f64)> = Vec::new();
-        let top_margin = view.top_margin() as f64;
-        let buffer = view.buffer();
-        let mut iter = buffer.start_iter();
-        let end = buffer.end_iter();
-        for _ in 0..8192 {
-            let rect = view.iter_location(&iter);
-            if rect.height() > 0 {
-                let top = rect.y() as f64 + top_margin;
-                rows.push((top, top + rect.height() as f64));
-            }
-            if iter == end || !view.forward_display_line(&mut iter) {
-                break;
-            }
-        }
-        rows
     }
 
     /// `&self` entry point for recomputing the bottom clip after a scroll.
     fn update_bottom_clip(&self) {
-        Self::recompute_bottom_clip(&self.gloss_view, &self.bottom_clip, &self.gloss_scrolled);
+        crate::ui::recompute_overlay_bottom_clip(
+            &self.gloss_view,
+            &self.bottom_clip,
+            &self.gloss_scrolled,
+        );
     }
 
     /// Recompute `blocks` line spans from the current buffer + gloss text. Each
@@ -1541,7 +1445,7 @@ impl GlossOverlay {
         let target = target_y.clamp(lower, max_value);
         // Greatest real row top <= target.
         let mut best = lower;
-        for (row_top, _row_bottom) in Self::display_rows(&self.gloss_view) {
+        for (row_top, _row_bottom) in crate::ui::display_rows(&self.gloss_view) {
             if row_top <= target + 0.5 {
                 best = best.max(row_top);
             } else {
@@ -1563,7 +1467,7 @@ impl GlossOverlay {
         let adj = self.gloss_scrolled.vadjustment();
         let lower = adj.lower();
         let max_value = (adj.upper() - adj.page_size()).max(lower);
-        let row_tops: Vec<f64> = Self::display_rows(&self.gloss_view)
+        let row_tops: Vec<f64> = crate::ui::display_rows(&self.gloss_view)
             .into_iter()
             .map(|(t, _)| t)
             .collect();
