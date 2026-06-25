@@ -136,11 +136,10 @@ impl TranslationOverlay {
         // Recompute on EVERY value change (not just named scroll calls) so the
         // clip can't keep a stale open-time height.
         {
-            let child = content_vbox.clone();
             let clip = bottom_clip.clone();
             let sc = scrolled.clone();
             scrolled.vadjustment().connect_value_changed(move |_| {
-                crate::ui::recompute_overlay_bottom_clip_box(&child, &clip, &sc);
+                crate::ui::recompute_overlay_bottom_clip_box(&clip, &sc);
             });
         }
         container.append(&scroll_overlay);
@@ -282,11 +281,10 @@ impl TranslationOverlay {
         // Recompute the bottom clip once layout settles (size/scroll range are
         // not final synchronously after set_visible).
         {
-            let child = self.content_vbox.clone();
             let clip = self.bottom_clip.clone();
             let sc = self.scrolled.clone();
             glib::idle_add_local_once(move || {
-                crate::ui::recompute_overlay_bottom_clip_box(&child, &clip, &sc);
+                crate::ui::recompute_overlay_bottom_clip_box(&clip, &sc);
             });
         }
     }

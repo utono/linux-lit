@@ -191,14 +191,13 @@ pub(crate) fn recompute_overlay_bottom_clip(
 }
 
 /// Bottom-clip recompute for an overlay whose scrolled child is a widget BOX
-/// (e.g. the translation overlay's column stack), not a TextView. Without real
-/// per-row geometry the safe, behavior-additive guard is: cover only the slack
-/// BELOW the content when the document ends inside the viewport (so trailing
-/// whitespace doesn't read as a clipped half-row); when content overflows, clip
-/// 0 (the box rows are whole widgets — GTK does not split one across the edge,
-/// so there is no partial-row to mask, unlike a TextView's wrapped lines).
+/// (e.g. the translation overlay's column stack), not a TextView. Reads only the
+/// scrolled window's adjustment — no per-row geometry. The safe, behavior-additive
+/// guard: cover only the slack BELOW the content when the document ends inside the
+/// viewport (so trailing whitespace doesn't read as a clipped half-row); when
+/// content overflows, clip 0 (the box rows are whole widgets — GTK does not split
+/// one across the edge, so there is no partial-row to mask, unlike a TextView).
 pub(crate) fn recompute_overlay_bottom_clip_box(
-    _child: &gtk4::Box,
     clip: &gtk4::Box,
     scrolled: &gtk4::ScrolledWindow,
 ) {

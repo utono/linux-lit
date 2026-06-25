@@ -947,16 +947,18 @@ impl GlossOverlay {
         if std::env::var_os("LIT_HEADLESS_TEST").is_some() {
             let sc = self.gloss_scrolled.clone();
             glib::idle_add_local_once(move || {
-                if let Some(root) = sc.root() {
-                    if let Some(r) = sc.compute_bounds(&root) {
-                        crate::logging::log(&format!(
-                            "TEST_OVERLAY_VIEWPORT_RECT {} {} {} {}",
-                            r.x().round() as i32,
-                            r.y().round() as i32,
-                            r.width().round() as i32,
-                            r.height().round() as i32
-                        ));
-                    }
+                if let Some(r) = sc.root().and_then(|root| sc.compute_bounds(&root)) {
+                    crate::logging::log(&format!(
+                        "TEST_OVERLAY_VIEWPORT_RECT {} {} {} {}",
+                        r.x().round() as i32,
+                        r.y().round() as i32,
+                        r.width().round() as i32,
+                        r.height().round() as i32
+                    ));
+                } else {
+                    crate::logging::log(
+                        "TEST_OVERLAY_VIEWPORT_RECT unavailable (root/compute_bounds returned None)",
+                    );
                 }
             });
         }
