@@ -792,6 +792,8 @@ fn lookup_citation(
     // Collect the DISTINCT (work, scene) tuples this normalized quote matches,
     // excluding the source work and its -Amb companion. More than one ⇒
     // ambiguous ⇒ no authoritative citation.
+    //   ?2 = base abbrev; ?3 = the raw source_work in case it is already the
+    //   -Amb form (so both the base and -Amb editions of the source are excluded).
     let mut stmt = conn
         .prepare(
             "SELECT DISTINCT work_abbrev, div1, div2 FROM line_mapping \
@@ -800,14 +802,18 @@ fn lookup_citation(
                AND work_abbrev NOT LIKE '%-Amb'",
         )
         .ok()?;
+    // Propagate any row-deserialization error as None rather than silently
+    // dropping a row: a dropped row could collapse an AMBIGUOUS multi-match into
+    // an apparent unique match and emit a wrong citation — the exact failure
+    // this hardening prevents.
     let matches: Vec<(String, i64, i64)> = stmt
         .query_map(
             rusqlite::params![normalized, base_source, source_work],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .ok()?
-        .filter_map(Result::ok)
-        .collect();
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
 
     // Unambiguous match only.
     if let [(abbrev, act, scene)] = matches.as_slice() {
