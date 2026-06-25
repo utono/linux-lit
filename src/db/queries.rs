@@ -378,7 +378,7 @@ pub fn load_translations(
                    ON b.work_abbrev = ?2 \
                   AND b.div1 = a.div1 \
                   AND b.div2 = a.div2 \
-                  AND b.normalized_text = a.normalized_text \
+                  AND b.line_in_div = a.line_in_div \
                  JOIN line_translations lt ON lt.line_mapping_id = b.id \
                  WHERE a.work_abbrev = ?1 \
                  GROUP BY a.id",
