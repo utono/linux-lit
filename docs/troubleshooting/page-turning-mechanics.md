@@ -985,9 +985,13 @@ pixel-exact edge alignment. Confirm on the real display: open a long synopsis
 (`h`), scroll with `j`/`k`, and check both edges show only whole lines.
 
 Key files: `src/ui/gloss_overlay.rs` (`reset_scroll_top`, `scroll_gloss`,
-`snap_value_to_line`, `recompute_bottom_clip`, `update_bottom_clip`),
+`snap_value_to_line`, `update_bottom_clip`), `src/ui/mod.rs` (`display_rows`,
+`bottom_clip_height`, `recompute_overlay_bottom_clip`, `line_yrange_rows`,
+`recompute_overlay_bottom_clip_box` — the shared free-scroll helpers),
 `src/input/scroll.rs` (`snap_scroll_to_line`, `update_bottom_clip` — the main
-card originals this emulates), `src/input/viewport.rs` (`visible_range`)
+card's *paginated* clip, NOT the same algorithm; `scrolloff_bottom_clip_widgets`
+— scroll-mode, now routed through the shared helper), `src/input/viewport.rs`
+(`visible_range`)
 
 ## Translations overlay (`i`)
 
@@ -1056,12 +1060,12 @@ landing between line boundaries (top clip). It now:
 - snaps that target down to a whole-line top via `snap_value_to_line_top` (which
   uses `TextView::line_at_y` for O(1) y→line mapping), and
 - covers the partial bottom line with `update_scrolloff_bottom_clip` — a
-  **scroll-position-aware** clip modeled on the gloss overlay's
-  `recompute_bottom_clip`: from the current `adj.value()`, walk display rows via
-  `line_at_y` + `forward_line`, find the last row fully above the viewport bottom,
-  and set `bottom_clip` to cover from there down. Its widget-level core
-  (`scrolloff_bottom_clip_widgets`) is shared with the toggle-on idle in (a),
-  which holds the widgets but not `AppState`.
+  **scroll-position-aware** clip. Its widget-level core
+  (`scrolloff_bottom_clip_widgets`) builds whole-line rows from the current
+  `adj.value()` via `line_yrange_rows` (`line_at_y` + `forward_line`) and feeds
+  them to the shared pure `bottom_clip_height`, so scroll-mode runs the SAME
+  covering algorithm as the overlays (it used to inline a verbatim copy). Shared
+  with the toggle-on idle in (a), which holds the widgets but not `AppState`.
 
 The paged `update_bottom_clip` (`scroll.rs`) is **page_top-relative** and assumes
 the scroll is snapped to `page_top` (offset 0); it is the wrong tool for the
