@@ -141,6 +141,37 @@ pub(crate) fn display_rows(view: &gtk4::TextView) -> Vec<(f64, f64)> {
     rows
 }
 
+/// Logical-line `(row_top, row_bottom)` pairs in vadjustment/scroll coordinate
+/// space, from the line at `top_val` down to the first line whose top reaches
+/// `top_val + viewport_h`. The logical-line analog of `display_rows` (which
+/// walks visual/wrapped rows): scroll-mode and the translation-follow path size
+/// their bottom clip from whole-line `line_yrange` geometry, NOT wrapped rows.
+/// Feed the result to `bottom_clip_height` so scroll-mode shares the overlays'
+/// single covering algorithm instead of re-implementing it.
+pub(crate) fn line_yrange_rows(
+    view: &gtk4::TextView,
+    top_val: f64,
+    viewport_h: f64,
+) -> Vec<(f64, f64)> {
+    use gtk4::prelude::*;
+    let bottom_y = top_val + viewport_h;
+    let mut rows: Vec<(f64, f64)> = Vec::new();
+    let (mut iter, _) = view.line_at_y(top_val.max(0.0) as i32);
+    loop {
+        let (ly, lh) = view.line_yrange(&iter);
+        let row_top = ly as f64;
+        let row_bottom = (ly + lh) as f64;
+        if row_top >= bottom_y {
+            break;
+        }
+        rows.push((row_top, row_bottom));
+        if !iter.forward_line() {
+            break;
+        }
+    }
+    rows
+}
+
 /// Set `clip`'s height to hide any partial last row straddling the bottom of
 /// `scrolled`'s viewport in `view` — the descender-correct bottom clip both the
 /// gloss and journal overlays use. Reads real row geometry via `display_rows`
