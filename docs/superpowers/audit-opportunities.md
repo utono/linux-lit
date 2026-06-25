@@ -769,6 +769,145 @@ pipeline as a single refactor.
 - **Safe-scope:** yes, narrowly. At the 2-site floor — but the explicit "mirror
   this fix" comment is exactly the drift signal the house bar wants.
 
+## #32 — gloss-overlay-clip-helpers-route-to-shared — OPEN
+
+- **Status:** OPEN (highest-value of the 2026-06-25 post-citation-work audit —
+  removes ~85 lines AND kills a lockstep-fragile duplicate of tested clip math).
+- **Signal:** the bottom-clip refactor extracted `display_rows`,
+  `bottom_clip_height` (pure, tested), and `recompute_overlay_bottom_clip` into
+  `src/ui/mod.rs:84-160`. **journal_overlay routes through them**
+  (journal_overlay.rs:427,442). **gloss_overlay never got converted** — it still
+  carries private copies: `gloss_overlay.rs:1091-1108` `fn display_rows` is
+  **byte-identical** to `ui::mod::display_rows` (mod.rs:124-142, verified — only
+  the helper's leading `use gtk4::prelude::*;` + indentation differ); and
+  `gloss_overlay.rs:1021-1073` `fn recompute_bottom_clip` reimplements the tested
+  `bottom_clip_height` + `recompute_overlay_bottom_clip` pair
+  (last_full_bottom/any_full/effective_bottom/guard logic matches mod.rs:84-115).
+- **Identical part (extract / route):** delete both private fns;
+  `gloss_overlay.rs:1111-1113` `update_bottom_clip` becomes the same one-line
+  shared call journal already uses:
+  `crate::ui::recompute_overlay_bottom_clip(&self.gloss_view, &self.bottom_clip,
+  &self.gloss_scrolled)`. Field names line up.
+- **EXCLUDED (named, why):** gloss's `row_step` (gloss_overlay.rs:1513) and
+  `snap_value_to_line` (:1537) — they intentionally use `display_rows`-based
+  geometry and differ from journal's `line_yrange`-based versions; not part of
+  this cut.
+- **Safe-scope:** yes — routes to the already-running tested superset journal
+  uses. The drift risk (two clip implementations that must stay in lockstep) is
+  exactly the bug class the shared helper was created to kill.
+
+## #33 — two-label-picker-row-builder — OPEN
+
+- **Status:** OPEN (cleanest NEW mid-size widget cut; 3 row-builders + 2
+  display-computations, blocks already differ only by var name).
+- **Signal:** inside `populate_list`, three card pickers build the identical row
+  — an ellipsizing start-aligned `text_label` (hexpand) + an end-aligned
+  secondary label with css `picker-item-detail` + an hbox (Horizontal, spacing 8)
+  appending both: gloss_picker.rs:99-117, bookmark_picker.rs:96-114
+  (character-identical to gloss's block), journal_picker.rs:100-119 (same shape,
+  only local var names differ). The preceding `speaker.is_empty()` display
+  computation is byte-identical between two: gloss_picker.rs:92-97 and
+  bookmark_picker.rs:89-94.
+- **Identical part (extract):** a helper `(primary: &str, detail: &str) ->
+  gtk4::Box` returning the configured spacing-8 hbox with the two aligned labels.
+  Caller wraps in `ListBoxRow` and stamps `widget_name` (varies: `idx` vs
+  `item.line_mapping_id`) — that stays out of the helper.
+- **EXCLUDED (named, why):** echo_picker.rs:86-113 / echo_turns_picker use a
+  **Vertical** row_box (meta-over-text), a structurally different row.
+  concordance_works_picker / concordance_list_picker use a single primary + count
+  detail with explicit `set_margin_*`, a different builder style. The
+  `speaker.is_empty()` display-compute is a separate optional 2-site sub-cut.
+- **Safe-scope:** yes — pure widget construction, identical CSS/align/spacing.
+
+## #34 — picker-move-selection-two-families — OPEN
+
+- **Status:** OPEN (highest raw count — 9 clean byte-identical sites — and pins
+  the latent clamp-vs-no-clamp contract; trivial scope).
+- **Signal:** `picker_nav` has `select_row_at`/`select_first_row`/`selected_index`
+  but NOT `move_selection`; every picker hand-rolls it in exactly TWO shapes.
+  **Family A (clamp-from-current):** `if let Some(current) =
+  list_box.selected_row() { let idx = current.index(); let new_idx = (idx +
+  delta).max(0); select_row_at(...) }` — **5 byte-identical bodies**:
+  bookmark_picker.rs:130-136, gloss_picker.rs:131-137, journal_picker.rs:128-134,
+  media_picker.rs:148-154, concordance_picker.rs:138-144.
+  **Family B (unwrap_or(-1), no clamp):** `let current =
+  ...selected_row().map(|r| r.index()).unwrap_or(-1); let next = current + delta;
+  select_row_at(...)` — 4 identical: concordance_word_picker.rs:111-115,
+  concordance_list_picker.rs:106-110, concordance_works_picker.rs:96-100,
+  echo_line_picker.rs:80-84.
+- **Identical part (extract):** TWO free fns in `picker_nav` —
+  `move_selection_clamped(list_box, delta)` (Family A: requires a current
+  selection, clamps ≥0) and `move_selection_from(list_box, delta)` (Family B:
+  −1 start, no clamp). Each is the exact existing body with `self.list_box` →
+  `list_box`.
+- **EXCLUDED (named, why):** the `-1`-vs-`0` sentinel and the presence of
+  `.max(0)` are what distinguish A from B — that is why this is two helpers, not
+  one (folding them would change behavior). Near-variants with `.max(0)` added
+  (echo_picker.rs:123-127, echo_turns_picker.rs:125-128,
+  authorship_picker.rs:69-72) are a THIRD shape — flag only, don't fold.
+  voice_picker.rs:172 and library_picker.rs:483 carry extra logic beyond the
+  pattern — verify before routing, likely exclude.
+- **Safe-scope:** yes per family — identical bodies, mechanical `self.` → param.
+
+## #35 — picker-card-builder-600x400 — OPEN
+
+- **Status:** OPEN (lower — 4 sites, near-zero drift risk on fixed magic numbers;
+  bundle with #33 since both touch the same four picker `new()` bodies).
+- **Signal:** the `picker_box = GtkBox::builder()...width_request(600)
+  .height_request(400)...add_css_class("library-picker")` block is byte-identical
+  at **4 sites**: gloss_picker.rs:20-28, journal_picker.rs:28-36,
+  media_picker.rs:23-31, bookmark_picker.rs:20-28.
+- **Identical part (extract):** `picker_nav::build_picker_card() -> gtk4::Box`
+  returning the configured 600×400 `library-picker` box.
+- **EXCLUDED (named, why):** concordance_picker.rs:18-26 (width 400, css
+  `concordance-picker`), echo_picker.rs:24-32 (640×520, spacing 0),
+  concordance_word_picker.rs:17-22 (uses `GtkBox::new` + setters, not the
+  builder). Genuinely a 4-site family, not 12.
+- **Safe-scope:** yes — fixed-config widget construction.
+
+## #36 — gloss-normalize-abbrev-reuse — OPEN
+
+- **Status:** OPEN (smallest scope, highest safety — 2 inline sites byte-identical
+  to an EXISTING helper's body; cross-file `-Amb` drift risk).
+- **Signal:** `gloss::normalize_abbrev` (gloss.rs:524) IS
+  `abbrev.strip_suffix("-Amb").unwrap_or(abbrev)`. Two sites re-inline that exact
+  expression instead of calling it: gloss.rs:786
+  (`source_work.strip_suffix("-Amb").unwrap_or(source_work)`) and queries.rs:1898
+  (`exclude_work.strip_suffix("-Amb").unwrap_or(exclude_work)`). Both return
+  `&str` and feed a SQL bind / comparison.
+- **Identical part (route):** replace the two inline expressions with
+  `crate::gloss::normalize_abbrev(...)` (or bare `normalize_abbrev(...)` inside
+  gloss.rs). Centralizes the `-Amb` literal behind the one helper that owns it.
+- **EXCLUDED (named, why):** queries.rs:373 `if let Some(base) =
+  abbrev.strip_suffix("-Amb")` is a control-flow GUARD (the fallback branch only
+  runs when the suffix is present), NOT `unwrap_or` — routing it would change
+  behavior. app/mod.rs:2227 `base_work_abbrev` strips at the FIRST `-`
+  (`-Amb`/`-BBC`/`-Ep-N`), a SUPERSET with ~15 call sites — not interchangeable
+  with `normalize_abbrev` (which keeps `-BBC`/`-Ep-N`). The SQL `NOT LIKE
+  '%-Amb'` (gloss.rs:802) is a SQL pattern, not a Rust suffix — no shared const.
+  Do NOT add a new `const AMB_SUFFIX` or `base_abbrev()` — the helper exists.
+- **Safe-scope:** yes — identical semantics, both `&str`.
+
+## #37 — column-exists-pragma-helper — OPEN (borderline)
+
+- **Status:** OPEN but BORDERLINE — verges on the "no new abstraction" line; the
+  SQL strings are NOT byte-identical (table/column interpolated). Number for the
+  record; do NOT auto-merge under safe-scope without confirming the cut stays
+  mechanical.
+- **Signal:** the `pragma_table_info` column-exists migration guard recurs at **4
+  sites**: queries.rs:670, :725, :800, :903, each running `SELECT 1 FROM
+  pragma_table_info('<table>') WHERE name = '<col>'`. The comment at :657 already
+  says it "mirrors `ensure_characters_table`'s `pragma_table_info` pattern."
+- **Identical part (extract):** `fn column_exists(conn, table: &str, col: &str)
+  -> bool` centralizing the SQL skeleton.
+- **EXCLUDED / caveat:** :670 uses `format!` while others are static strings, and
+  table/column vary — so this is "parameterize a SQL template," closer to an
+  abstraction than a byte-identical block extraction. The house bar leans against
+  it; included only because the drift count (4) and the existing "mirrors…"
+  comment are real signals.
+- **Safe-scope:** marginal — behavior-preserving, but it is a new helper with
+  interpolated args, not a literal-naming or byte-identical cut.
+
 ## Noted but NOT numbered (below the safe-scope floor or behavior-risky)
 
 These came up in the post-journal-Q&A audit but do not qualify as numbered
@@ -793,3 +932,25 @@ safe-scope opportunities:
   behavior-preserving extraction. The `action_gloss_with_claude`/`inner_monologue`
   siblings differ by gloss_type literal. Larger near-identical family; not a
   safe-scope byte-identical cut. Note for a future broader pass, do not number.
+
+### From the 2026-06-25 post-citation-work audit
+
+- **citation/id → buffer-line resolution family (~12 sites).** Thematically real
+  (`work.lines.position(|l| l.id == x or (div1,div2,line_in_div) == t)` →
+  `lm.work_to_buffer[work_idx]`), but NOT a safe-scope cut: the only
+  byte-identical pair is concordance.rs:495 ↔ db/concordance.rs:187, and the
+  latter is a `#[test]`-module helper that DELIBERATELY duplicates prod to verify
+  it (its own comment: "Replicate concordance_resolve_indices logic") — folding it
+  defeats the test. Every other site differs in a load-bearing token: id-vs-tuple
+  key, presence/absence of the `buffer_to_work.get(bi) == Some(&Some(work_idx))`
+  round-trip check, panic-`[idx]` vs `.get().unwrap_or(state.current_line)` vs
+  `.get()→None` access, and a site-specific failure path
+  (`None`/`current_line`/`continue`). Unifying would CHANGE behavior. Not numbered.
+- **Behavior-difference flag (not a refactor — for /code-review, not this audit):**
+  the round-trip validity check (`buffer_to_work.get(bi) == Some(&Some(work_idx))`)
+  is PRESENT in concordance.rs:495, app/mod.rs resume (~2944) + concordance-target
+  (~3057), and main.rs sync (~175), but SILENTLY ABSENT in pickers.rs:215,
+  pickers.rs:985, bookmarks.rs:84, keymap.rs:320, timestamps.rs:599. Without it, an
+  unmatched/default-0 work line resolves to buffer 0 instead of being rejected.
+  This is a latent correctness divergence, not duplication — route to /code-review
+  if it ever manifests; out of scope for maintainability numbering.
