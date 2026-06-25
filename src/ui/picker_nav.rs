@@ -97,6 +97,24 @@ pub(crate) fn selected_index(list_box: &ListBox) -> Option<usize> {
         .and_then(|row| row.widget_name().parse::<usize>().ok())
 }
 
+/// Build the centered 600×400 `library-picker` card box (Vertical, spacing 4)
+/// that the card pickers use as their root `picker_box`. Byte-identical at the
+/// gloss/journal/media/bookmark pickers. EXCLUDED: concordance_picker (400-wide,
+/// `concordance-picker` css), echo_picker (640×520, spacing 0), and
+/// concordance_word_picker (built via `GtkBox::new` + setters, not the builder).
+pub(crate) fn build_picker_card() -> GtkBox {
+    let picker_box = GtkBox::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(4)
+        .halign(Align::Center)
+        .valign(Align::Center)
+        .width_request(600)
+        .height_request(400)
+        .build();
+    picker_box.add_css_class("library-picker");
+    picker_box
+}
+
 /// Build the two-label picker row: a start-aligned, hexpanding, end-ellipsizing
 /// `primary` label + an end-aligned `detail` label with the `picker-item-detail`
 /// css class, packed into a Horizontal spacing-8 `GtkBox`. The byte-identical row

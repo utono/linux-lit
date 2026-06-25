@@ -2,7 +2,7 @@ use std::path::Path;
 
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Entry, Label, ListBox, ListBoxRow, Orientation, Overlay,
+    Box as GtkBox, Entry, Label, ListBox, ListBoxRow, Overlay,
 };
 
 use crate::db::models::MediaItem;
@@ -20,15 +20,7 @@ impl MediaPicker {
     pub fn new() -> Self {
         let overlay = Overlay::new();
 
-        let picker_box = GtkBox::builder()
-            .orientation(Orientation::Vertical)
-            .spacing(4)
-            .halign(gtk4::Align::Center)
-            .valign(gtk4::Align::Center)
-            .width_request(600)
-            .height_request(400)
-            .build();
-        picker_box.add_css_class("library-picker");
+        let picker_box = crate::ui::picker_nav::build_picker_card();
 
         let title_label = Label::builder()
             .halign(gtk4::Align::Center)

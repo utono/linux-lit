@@ -1,6 +1,6 @@
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Entry, ListBox, ListBoxRow, Orientation, Overlay,
+    Box as GtkBox, Entry, ListBox, ListBoxRow, Overlay,
 };
 
 use crate::app::JournalBand;
@@ -25,15 +25,7 @@ impl JournalQaPicker {
     pub fn new() -> Self {
         let overlay = Overlay::new();
 
-        let picker_box = GtkBox::builder()
-            .orientation(Orientation::Vertical)
-            .spacing(4)
-            .halign(gtk4::Align::Center)
-            .valign(gtk4::Align::Center)
-            .width_request(600)
-            .height_request(400)
-            .build();
-        picker_box.add_css_class("library-picker");
+        let picker_box = crate::ui::picker_nav::build_picker_card();
 
         let search_entry = Entry::builder()
             .placeholder_text("Filter Q&A pages...")
