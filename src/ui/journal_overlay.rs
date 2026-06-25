@@ -289,11 +289,35 @@ impl JournalOverlay {
         (value / step).round() * step
     }
 
+    /// Scroll by exactly ONE real visual row per `delta` step, landing the
+    /// viewport top on the next (delta>0) or previous (delta<0) wrapped-row top.
+    /// Uses real per-row geometry (`display_rows`) rather than a uniform
+    /// `row_step` grid so no line is skipped on non-uniform wrapped prose — the
+    /// earlier `step * 3.0` jumped three rows and scrolled lines off before they
+    /// could be read.
     pub fn scroll(&self, delta: i32) {
         let adj = self.scrolled.vadjustment();
-        let step = self.row_step();
-        let raw = adj.value() + step * 3.0 * delta as f64;
-        adj.set_value(self.snap_value_to_line(raw));
+        let rows = crate::ui::display_rows(&self.view);
+        let cur = adj.value();
+        let lower = adj.lower();
+        let max_value = (adj.upper() - adj.page_size()).max(lower);
+        let target = if delta > 0 {
+            // First row top strictly below the current top.
+            rows.iter()
+                .map(|(top, _)| *top)
+                .find(|top| *top > cur + 0.5)
+                .unwrap_or(max_value)
+        } else if delta < 0 {
+            // Last row top strictly above the current top.
+            rows.iter()
+                .map(|(top, _)| *top)
+                .filter(|top| *top < cur - 0.5)
+                .next_back()
+                .unwrap_or(lower)
+        } else {
+            cur
+        };
+        adj.set_value(target.clamp(lower, max_value));
         self.update_bottom_clip();
     }
 
