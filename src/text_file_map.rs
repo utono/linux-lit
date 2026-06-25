@@ -2107,4 +2107,40 @@ mod tests {
         assert_eq!(map.buffer_to_work[5], Some(4), "prayer's 2nd sentence shares its row");
         assert_eq!(map.work_to_buffer[4], 4, "prayer canonical = first sentence line");
     }
+
+    /// Regression for the folded-SD coloring bug: build the map through the SAME
+    /// clean_file_lines fold the app uses (NOT raw .txt — that was the misleading
+    /// repro), and assert the folded `[The Guard arrest...]` SD in 2H6-Amb 1.4 maps
+    /// to (1,4,43) instead of staying UNMAPPED. Skipped when lit.db is unavailable.
+    #[test]
+    fn h6_amb_folded_guard_sd_maps_through_clean_path() {
+        let conn = match crate::db::queries::open_db() {
+            Ok(c) => c,
+            Err(_) => { eprintln!("skip: no lit.db"); return; }
+        };
+        let work = match crate::db::queries::load_work(&conn, "2H6-Amb") {
+            Ok(w) => w,
+            Err(_) => { eprintln!("skip: 2H6-Amb not loaded"); return; }
+        };
+        let prepared = match crate::app::text_prep::prepare_text_only(&work) {
+            Some(p) => p,
+            None => { eprintln!("skip: no text_file"); return; }
+        };
+        let is_prose = crate::db::line_types::is_prose_work(&work.work_type);
+        let lm = build_line_map(&prepared.cleaned_lines, &work.lines, is_prose);
+
+        // The folded SD renders as one cleaned buffer line containing "Guard arrest".
+        let sd_buf = prepared.cleaned_lines.iter()
+            .position(|l| l.contains("Guard arrest"));
+        let sd_buf = match sd_buf {
+            Some(b) => b,
+            None => { eprintln!("skip: SD not in cleaned text"); return; }
+        };
+        let wi = lm.buffer_to_work[sd_buf];
+        assert!(wi.is_some(),
+            "folded SD buffer line {sd_buf} must map (was the bug: UNMAPPED -> uncolored)");
+        let l = &work.lines[wi.unwrap()];
+        assert_eq!((l.div1, l.div2, l.line_in_div), (1, 4, 43),
+            "folded SD must map to citation 1.4.43");
+    }
 }
