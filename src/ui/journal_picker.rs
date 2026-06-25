@@ -1,6 +1,6 @@
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Entry, Label, ListBox, ListBoxRow, Orientation, Overlay,
+    Box as GtkBox, Entry, ListBox, ListBoxRow, Overlay,
 };
 
 use crate::app::JournalBand;
@@ -25,15 +25,7 @@ impl JournalQaPicker {
     pub fn new() -> Self {
         let overlay = Overlay::new();
 
-        let picker_box = GtkBox::builder()
-            .orientation(Orientation::Vertical)
-            .spacing(4)
-            .halign(gtk4::Align::Center)
-            .valign(gtk4::Align::Center)
-            .width_request(600)
-            .height_request(400)
-            .build();
-        picker_box.add_css_class("library-picker");
+        let picker_box = crate::ui::picker_nav::build_picker_card();
 
         let search_entry = Entry::builder()
             .placeholder_text("Filter Q&A pages...")
@@ -97,25 +89,10 @@ impl JournalQaPicker {
                 }
             }
 
-            let q_label = Label::builder()
-                .label(&item.question_prefix)
-                .halign(gtk4::Align::Start)
-                .hexpand(true)
-                .ellipsize(gtk4::pango::EllipsizeMode::End)
-                .build();
-
-            let scene_label = Label::builder()
-                .label(&item.scene_label)
-                .halign(gtk4::Align::End)
-                .build();
-            scene_label.add_css_class("picker-item-detail");
-
-            let hbox = GtkBox::builder()
-                .orientation(Orientation::Horizontal)
-                .spacing(8)
-                .build();
-            hbox.append(&q_label);
-            hbox.append(&scene_label);
+            let hbox = crate::ui::picker_nav::two_label_row(
+                &item.question_prefix,
+                &item.scene_label,
+            );
 
             let row = ListBoxRow::builder().child(&hbox).build();
             row.set_widget_name(&idx.to_string());
@@ -126,11 +103,7 @@ impl JournalQaPicker {
     }
 
     pub fn move_selection(&self, delta: i32) {
-        if let Some(current) = self.list_box.selected_row() {
-            let idx = current.index();
-            let new_idx = (idx + delta).max(0);
-            crate::ui::picker_nav::select_row_at(&self.list_box, new_idx);
-        }
+        crate::ui::picker_nav::move_selection_clamped(&self.list_box, delta);
     }
 
     /// Index into `items` of the selected row (the row's widget_name).

@@ -783,7 +783,7 @@ fn lookup_citation(
     quote: &str,
     source_work: &str,
 ) -> Option<String> {
-    let base_source = source_work.strip_suffix("-Amb").unwrap_or(source_work);
+    let base_source = normalize_abbrev(source_work);
     let normalized = crate::text_file_map::normalize(quote);
     if normalized.is_empty() {
         return None;

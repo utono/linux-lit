@@ -1,6 +1,6 @@
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Entry, Label, ListBox, ListBoxRow, Orientation, Overlay,
+    Box as GtkBox, Entry, ListBox, ListBoxRow, Overlay,
 };
 
 use crate::db::queries::GlossedPassage;
@@ -17,15 +17,7 @@ impl GlossPicker {
     pub fn new() -> Self {
         let overlay = Overlay::new();
 
-        let picker_box = GtkBox::builder()
-            .orientation(Orientation::Vertical)
-            .spacing(4)
-            .halign(gtk4::Align::Center)
-            .valign(gtk4::Align::Center)
-            .width_request(600)
-            .height_request(400)
-            .build();
-        picker_box.add_css_class("library-picker");
+        let picker_box = crate::ui::picker_nav::build_picker_card();
 
         let search_entry = Entry::builder()
             .placeholder_text("Filter glosses...")
@@ -89,32 +81,11 @@ impl GlossPicker {
                 }
             }
 
-            let first_line = item.source_text.lines().next().unwrap_or("");
-            let display = if item.speaker.is_empty() {
-                first_line.to_string()
-            } else {
-                format!("{}: {}", item.speaker, first_line)
-            };
-
-            let text_label = Label::builder()
-                .label(&display)
-                .halign(gtk4::Align::Start)
-                .hexpand(true)
-                .ellipsize(gtk4::pango::EllipsizeMode::End)
-                .build();
-
-            let citation_label = Label::builder()
-                .label(&item.start_citation)
-                .halign(gtk4::Align::End)
-                .build();
-            citation_label.add_css_class("picker-item-detail");
-
-            let hbox = GtkBox::builder()
-                .orientation(Orientation::Horizontal)
-                .spacing(8)
-                .build();
-            hbox.append(&text_label);
-            hbox.append(&citation_label);
+            let display = crate::ui::picker_nav::speaker_prefixed_first_line(
+                &item.speaker,
+                &item.source_text,
+            );
+            let hbox = crate::ui::picker_nav::two_label_row(&display, &item.start_citation);
 
             let row = ListBoxRow::builder().child(&hbox).build();
             row.set_widget_name(&idx.to_string());
@@ -129,10 +100,6 @@ impl GlossPicker {
     }
 
     pub fn move_selection(&self, delta: i32) {
-        if let Some(current) = self.list_box.selected_row() {
-            let idx = current.index();
-            let new_idx = (idx + delta).max(0);
-            crate::ui::picker_nav::select_row_at(&self.list_box, new_idx);
-        }
+        crate::ui::picker_nav::move_selection_clamped(&self.list_box, delta);
     }
 }

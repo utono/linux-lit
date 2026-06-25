@@ -78,9 +78,7 @@ impl EchoLinePicker {
     }
 
     pub fn move_selection(&self, delta: i32) {
-        let current = self.list_box.selected_row().map(|r| r.index()).unwrap_or(-1);
-        let next = current + delta;
-        crate::ui::picker_nav::select_row_at(&self.list_box, next);
+        crate::ui::picker_nav::move_selection_from(&self.list_box, delta);
     }
 
     /// The currently selected line hit, if any.

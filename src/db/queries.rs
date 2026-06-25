@@ -650,6 +650,18 @@ pub fn open_db_rw() -> Result<Connection, rusqlite::Error> {
     Ok(conn)
 }
 
+/// Does `table` have a column named `col`? The `pragma_table_info` probe the
+/// idempotent `ensure_*` migrations share before an `ALTER TABLE ... ADD COLUMN`
+/// (SQLite has no `ADD COLUMN IF NOT EXISTS`). EXCLUDED: the `works.default_voice_id`
+/// probe deliberately SWALLOWS its error (the table may not exist on a fresh/test
+/// DB) instead of propagating with `?`, so it keeps its own non-`?` form.
+fn column_exists(conn: &Connection, table: &str, col: &str) -> Result<bool, rusqlite::Error> {
+    conn.prepare(&format!(
+        "SELECT 1 FROM pragma_table_info('{table}') WHERE name = '{col}'"
+    ))?
+    .exists([])
+}
+
 /// Ensure the `glosses` and `scene_synopses` tables carry a `claude_model`
 /// column recording which Claude model authored each row. These two tables are
 /// part of the external lit.db core schema (not created by the app), so this is
@@ -665,11 +677,7 @@ pub fn ensure_claude_model_columns(conn: &Connection) -> Result<(), rusqlite::Er
     const BACKFILL_MODEL: &str = "claude-opus-4-7";
 
     for table in ["glosses", "scene_synopses"] {
-        let has_col: bool = conn
-            .prepare(&format!(
-                "SELECT 1 FROM pragma_table_info('{table}') WHERE name = 'claude_model'"
-            ))?
-            .exists([])?;
+        let has_col = column_exists(conn, table, "claude_model")?;
         if !has_col {
             conn.execute_batch(&format!(
                 "ALTER TABLE {table} ADD COLUMN claude_model TEXT;"
@@ -721,9 +729,7 @@ pub fn ensure_characters_table(conn: &Connection) -> Result<(), rusqlite::Error>
     )?;
     // Legacy migration: a pre-age table lacks the `age` column. ADD it (the
     // pragma probe mirrors ensure_gloss_audio_table's column-existence check).
-    let has_age: bool = conn
-        .prepare("SELECT 1 FROM pragma_table_info('characters') WHERE name = 'age'")?
-        .exists([])?;
+    let has_age = column_exists(conn, "characters", "age")?;
     if !has_age {
         conn.execute_batch("ALTER TABLE characters ADD COLUMN age INTEGER;")?;
     }
@@ -899,9 +905,7 @@ pub fn ensure_gloss_audio_table(conn: &Connection) -> Result<(), rusqlite::Error
     ))?;
 
     // Upgrade a legacy table (no `kind` column) by rebuilding to the new shape.
-    let has_kind: bool = conn
-        .prepare("SELECT 1 FROM pragma_table_info('gloss_audio') WHERE name = 'kind'")?
-        .exists([])?;
+    let has_kind = column_exists(conn, "gloss_audio", "kind")?;
     if !has_kind {
         conn.execute_batch(&format!(
             "BEGIN;
@@ -1895,7 +1899,7 @@ pub fn find_similar_passages(
     top_n: usize,
     affect_weight: f32,
 ) -> Result<Vec<EchoCandidate>, rusqlite::Error> {
-    let base_exclude = exclude_work.strip_suffix("-Amb").unwrap_or(exclude_work);
+    let base_exclude = crate::gloss::normalize_abbrev(exclude_work);
 
     // Only engage the affect axis when it's both requested and possible.
     let affect_on = affect_weight > 0.0 && crate::db::affect::lexicon_available();

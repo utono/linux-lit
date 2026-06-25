@@ -769,9 +769,10 @@ pipeline as a single refactor.
 - **Safe-scope:** yes, narrowly. At the 2-site floor — but the explicit "mirror
   this fix" comment is exactly the drift signal the house bar wants.
 
-## #32 — gloss-overlay-clip-helpers-route-to-shared — OPEN
+## #32 — gloss-overlay-clip-helpers-route-to-shared — DONE (commit b9c7d26)
 
-- **Status:** OPEN (highest-value of the 2026-06-25 post-citation-work audit —
+- **Status:** DONE (commit b9c7d26) — gloss_overlay private display_rows + recompute_bottom_clip deleted, all callers route to ui::mod shared helpers; ~85 lines removed; 445 tests, clippy parity.
+  (was: highest-value of the 2026-06-25 post-citation-work audit —
   removes ~85 lines AND kills a lockstep-fragile duplicate of tested clip math).
 - **Signal:** the bottom-clip refactor extracted `display_rows`,
   `bottom_clip_height` (pure, tested), and `recompute_overlay_bottom_clip` into
@@ -796,10 +797,9 @@ pipeline as a single refactor.
   uses. The drift risk (two clip implementations that must stay in lockstep) is
   exactly the bug class the shared helper was created to kill.
 
-## #33 — two-label-picker-row-builder — OPEN
+## #33 — two-label-picker-row-builder — DONE (commit 66c844a)
 
-- **Status:** OPEN (cleanest NEW mid-size widget cut; 3 row-builders + 2
-  display-computations, blocks already differ only by var name).
+- **Status:** DONE (commit 66c844a) — gloss/bookmark/journal row builders -> picker_nav::two_label_row + speaker_prefixed_first_line; 445 tests, clippy parity..
 - **Signal:** inside `populate_list`, three card pickers build the identical row
   — an ellipsizing start-aligned `text_label` (hexpand) + an end-aligned
   secondary label with css `picker-item-detail` + an hbox (Horizontal, spacing 8)
@@ -819,10 +819,9 @@ pipeline as a single refactor.
   `speaker.is_empty()` display-compute is a separate optional 2-site sub-cut.
 - **Safe-scope:** yes — pure widget construction, identical CSS/align/spacing.
 
-## #34 — picker-move-selection-two-families — OPEN
+## #34 — picker-move-selection-two-families — DONE (commit 6d7dc7f)
 
-- **Status:** OPEN (highest raw count — 9 clean byte-identical sites — and pins
-  the latent clamp-vs-no-clamp contract; trivial scope).
+- **Status:** DONE (commit 6d7dc7f) — 9 sites -> picker_nav::move_selection_clamped (5) / move_selection_from (4); two helpers preserve the clamp-vs-no-clamp contract..
 - **Signal:** `picker_nav` has `select_row_at`/`select_first_row`/`selected_index`
   but NOT `move_selection`; every picker hand-rolls it in exactly TWO shapes.
   **Family A (clamp-from-current):** `if let Some(current) =
@@ -849,10 +848,9 @@ pipeline as a single refactor.
   pattern — verify before routing, likely exclude.
 - **Safe-scope:** yes per family — identical bodies, mechanical `self.` → param.
 
-## #35 — picker-card-builder-600x400 — OPEN
+## #35 — picker-card-builder-600x400 — DONE (commit a2a7f54)
 
-- **Status:** OPEN (lower — 4 sites, near-zero drift risk on fixed magic numbers;
-  bundle with #33 since both touch the same four picker `new()` bodies).
+- **Status:** DONE (commit a2a7f54) — 4 card boxes -> picker_nav::build_picker_card; unused Orientation imports removed.
 - **Signal:** the `picker_box = GtkBox::builder()...width_request(600)
   .height_request(400)...add_css_class("library-picker")` block is byte-identical
   at **4 sites**: gloss_picker.rs:20-28, journal_picker.rs:28-36,
@@ -865,10 +863,9 @@ pipeline as a single refactor.
   builder). Genuinely a 4-site family, not 12.
 - **Safe-scope:** yes — fixed-config widget construction.
 
-## #36 — gloss-normalize-abbrev-reuse — OPEN
+## #36 — gloss-normalize-abbrev-reuse — DONE (commit 8abc18a)
 
-- **Status:** OPEN (smallest scope, highest safety — 2 inline sites byte-identical
-  to an EXISTING helper's body; cross-file `-Amb` drift risk).
+- **Status:** DONE (commit 8abc18a) — gloss.rs:786 + queries.rs:1898 route through gloss::normalize_abbrev; guard/superset sites excluded as planned..
 - **Signal:** `gloss::normalize_abbrev` (gloss.rs:524) IS
   `abbrev.strip_suffix("-Amb").unwrap_or(abbrev)`. Two sites re-inline that exact
   expression instead of calling it: gloss.rs:786
@@ -888,12 +885,13 @@ pipeline as a single refactor.
   Do NOT add a new `const AMB_SUFFIX` or `base_abbrev()` — the helper exists.
 - **Safe-scope:** yes — identical semantics, both `&str`.
 
-## #37 — column-exists-pragma-helper — OPEN (borderline)
+## #37 — column-exists-pragma-helper — DONE (commit 3b560fc)
 
-- **Status:** OPEN but BORDERLINE — verges on the "no new abstraction" line; the
-  SQL strings are NOT byte-identical (table/column interpolated). Number for the
-  record; do NOT auto-merge under safe-scope without confirming the cut stays
-  mechanical.
+- **Status:** DONE (commit 3b560fc) — 3 `.exists([])?` probes
+  (ensure_claude_model_columns/characters/gloss_audio) -> `column_exists(conn,
+  table, col)`; the error-swallowing `works.default_voice_id` probe was EXCLUDED
+  (it deliberately doesn't propagate with `?`), keeping the cut behavior-preserving.
+  The borderline concern resolved cleanly: only the 3 same-shape sites collapsed.
 - **Signal:** the `pragma_table_info` column-exists migration guard recurs at **4
   sites**: queries.rs:670, :725, :800, :903, each running `SELECT 1 FROM
   pragma_table_info('<table>') WHERE name = '<col>'`. The comment at :657 already
