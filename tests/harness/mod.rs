@@ -299,6 +299,39 @@ impl Harness {
         ))
     }
 
+    /// Like `wait_for_viewport_rect` but for the synopsis/gloss OVERLAY's scrolled
+    /// viewport (`TEST_OVERLAY_VIEWPORT_RECT`, emitted on overlay reveal). The
+    /// distinct prefix means this never collides with the main-card rect line.
+    pub fn wait_for_overlay_viewport_rect(
+        &self,
+        timeout: Duration,
+    ) -> io::Result<(i32, i32, i32, i32)> {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if let Ok(text) = fs::read_to_string(Self::dev_log_path()) {
+                if let Some(rect) = text
+                    .lines()
+                    .rev()
+                    .find_map(|l| l.split("TEST_OVERLAY_VIEWPORT_RECT ").nth(1))
+                {
+                    let nums: Vec<i32> = rect
+                        .split_whitespace()
+                        .take(4)
+                        .filter_map(|n| n.parse().ok())
+                        .collect();
+                    if let [x, y, w, h] = nums[..] {
+                        return Ok((x, y, w, h));
+                    }
+                }
+            }
+            sleep(Duration::from_millis(100));
+        }
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "TEST_OVERLAY_VIEWPORT_RECT never appeared (did the synopsis overlay open under LIT_HEADLESS_TEST?)",
+        ))
+    }
+
     /// Read the full dev log the app writes under `LIT_DEV`. Empty string if the
     /// log doesn't exist yet. For tests that assert on logged pagination
     /// decisions (e.g. `saved_position_resume` checks the canonical snap did NOT

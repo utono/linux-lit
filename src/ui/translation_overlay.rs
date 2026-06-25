@@ -81,6 +81,9 @@ pub struct TranslationOverlay {
     /// Per rendered speech/interlude block: source range and the original/
     /// translation views, so we can highlight and scroll to the cursor line.
     block_widgets: RefCell<Vec<BlockEntry>>,
+    /// Bottom clip box masking trailing slack below short content (mirrors the
+    /// gloss/journal overlays' free-scroll clip).
+    bottom_clip: gtk4::Box,
 }
 
 impl TranslationOverlay {
@@ -115,7 +118,31 @@ impl TranslationOverlay {
         scrolled.set_hexpand(true);
         scrolled.set_margin_bottom(20);
         scrolled.set_child(Some(&content_vbox));
-        container.append(&scrolled);
+
+        // Free-scroll bottom clip: mask trailing slack below short content
+        // (mirrors gloss/journal). The clip box overlays an OUTER Overlay
+        // wrapping the ScrolledWindow so it stays pinned to the viewport bottom.
+        let scroll_overlay = Overlay::new();
+        scroll_overlay.set_child(Some(&scrolled));
+        let bottom_clip = gtk4::Box::new(Orientation::Vertical, 0);
+        bottom_clip.add_css_class("gloss-bottom-clip");
+        bottom_clip.set_valign(Align::End);
+        bottom_clip.set_halign(Align::Fill);
+        bottom_clip.set_vexpand(false);
+        bottom_clip.set_can_target(false);
+        scroll_overlay.add_overlay(&bottom_clip);
+        scroll_overlay.set_measure_overlay(&bottom_clip, false);
+        scroll_overlay.set_clip_overlay(&bottom_clip, true);
+        // Recompute on EVERY value change (not just named scroll calls) so the
+        // clip can't keep a stale open-time height.
+        {
+            let clip = bottom_clip.clone();
+            let sc = scrolled.clone();
+            scrolled.vadjustment().connect_value_changed(move |_| {
+                crate::ui::recompute_overlay_bottom_clip_box(&clip, &sc);
+            });
+        }
+        container.append(&scroll_overlay);
 
         Self {
             overlay,
@@ -125,6 +152,7 @@ impl TranslationOverlay {
             scrolled,
             content_vbox,
             block_widgets: RefCell::new(Vec::new()),
+            bottom_clip,
         }
     }
 
@@ -249,6 +277,16 @@ impl TranslationOverlay {
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         self.scroll_to_top();
+
+        // Recompute the bottom clip once layout settles (size/scroll range are
+        // not final synchronously after set_visible).
+        {
+            let clip = self.bottom_clip.clone();
+            let sc = self.scrolled.clone();
+            glib::idle_add_local_once(move || {
+                crate::ui::recompute_overlay_bottom_clip_box(&clip, &sc);
+            });
+        }
     }
 
     pub fn scroll_to_top(&self) {
