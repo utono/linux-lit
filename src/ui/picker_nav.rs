@@ -96,3 +96,27 @@ pub(crate) fn selected_index(list_box: &ListBox) -> Option<usize> {
         .selected_row()
         .and_then(|row| row.widget_name().parse::<usize>().ok())
 }
+
+/// Move the selection by `delta` rows, FAMILY A: requires a current selection and
+/// clamps the new index at ≥ 0 (so up-arrow at the top stays on row 0). No-op if
+/// nothing is selected. The byte-identical body of the card pickers
+/// (bookmark/gloss/journal/media/concordance). The sibling FAMILY B
+/// (`move_selection_from`) starts from −1 and does NOT clamp — kept separate
+/// because that behavior difference (clamp vs no-clamp) is load-bearing.
+pub(crate) fn move_selection_clamped(list_box: &ListBox, delta: i32) {
+    if let Some(current) = list_box.selected_row() {
+        let idx = current.index();
+        let new_idx = (idx + delta).max(0);
+        select_row_at(list_box, new_idx);
+    }
+}
+
+/// Move the selection by `delta` rows, FAMILY B: treats "no selection" as index
+/// −1 and adds `delta` with NO lower clamp (an out-of-range index is a no-op in
+/// `select_row_at`). The byte-identical body of the concordance-word/list/works
+/// and echo-line pickers. See `move_selection_clamped` for FAMILY A; the −1-start
+/// and absent `.max(0)` are exactly why these are two helpers, not one.
+pub(crate) fn move_selection_from(list_box: &ListBox, delta: i32) {
+    let current = list_box.selected_row().map(|r| r.index()).unwrap_or(-1);
+    select_row_at(list_box, current + delta);
+}

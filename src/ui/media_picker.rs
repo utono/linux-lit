@@ -146,11 +146,7 @@ impl MediaPicker {
     }
 
     pub fn move_selection(&self, delta: i32) {
-        if let Some(current) = self.list_box.selected_row() {
-            let idx = current.index();
-            let new_idx = (idx + delta).max(0);
-            crate::ui::picker_nav::select_row_at(&self.list_box, new_idx);
-        }
+        crate::ui::picker_nav::move_selection_clamped(&self.list_box, delta);
     }
 }
 
