@@ -21,6 +21,32 @@ pub struct TimestampUndoState {
 
 const NUDGE_STEP: f64 = 0.2;
 
+/// `u`/end-time are audio timestamps — meaningful only on a SPOKEN line. A stage
+/// direction (`sub_line > 0`) that is not marked spoken (`is_spoken != Some(true)`)
+/// must be rejected; dialogue lines (`sub_line == 0`) and spoken SDs pass.
+fn timestamp_allowed(sub_line: i64, is_spoken: Option<bool>) -> bool {
+    sub_line == 0 || is_spoken == Some(true)
+}
+
+#[cfg(test)]
+mod timestamp_gate_tests {
+    use super::timestamp_allowed;
+    #[test]
+    fn dialogue_line_allowed() {
+        assert!(timestamp_allowed(0, None));
+        assert!(timestamp_allowed(0, Some(false)));
+    }
+    #[test]
+    fn unspoken_stage_direction_rejected() {
+        assert!(!timestamp_allowed(1, None));
+        assert!(!timestamp_allowed(2, Some(false)));
+    }
+    #[test]
+    fn spoken_stage_direction_allowed() {
+        assert!(timestamp_allowed(1, Some(true)));
+    }
+}
+
 /// Open the read-write db, logging the `TS: open_db_rw failed` message on
 /// failure and returning `None`. The shared head of the timestamp-write fns;
 /// callers do `let Some(conn) = open_db_rw_or_log() else { return false; };`,
@@ -96,6 +122,24 @@ pub fn set_start_time(state: &mut AppState) -> bool {
             return false;
         }
     };
+
+    {
+        let work = match &state.current_work {
+            Some(w) => w,
+            None => return false,
+        };
+        let l = &work.lines[line_idx];
+        if !timestamp_allowed(l.sub_line, l.is_spoken) {
+            crate::logging::log(&format!(
+                "TS: refused start/end time on unspoken stage direction (line {}, sub_line {})",
+                line_idx, l.sub_line
+            ));
+            crate::input::navigation::show_chapter_toast(
+                state, "Not a spoken line — no timestamp set",
+            );
+            return false;
+        }
+    }
 
     let line_id = {
         let work = match &state.current_work {
@@ -328,6 +372,24 @@ pub fn set_end_time(state: &mut AppState) -> bool {
         Some(i) => i,
         None => return false,
     };
+
+    {
+        let work = match &state.current_work {
+            Some(w) => w,
+            None => return false,
+        };
+        let l = &work.lines[line_idx];
+        if !timestamp_allowed(l.sub_line, l.is_spoken) {
+            crate::logging::log(&format!(
+                "TS: refused start/end time on unspoken stage direction (line {}, sub_line {})",
+                line_idx, l.sub_line
+            ));
+            crate::input::navigation::show_chapter_toast(
+                state, "Not a spoken line — no timestamp set",
+            );
+            return false;
+        }
+    }
 
     let line_id = {
         let work = match &state.current_work {

@@ -25,6 +25,11 @@ use crate::text_file_map::LineMap;
 // values for Son. The serialized shape is unchanged, but stale snapshots hold
 // the old (wrong) bitmap; the version bump forces a rebuild.
 //
+// Bumped to 10: build_line_map now maps a FOLDED multi-line stage direction to
+// its sub_line>0 DB rows (previously UNMAPPED). A snapshot built before this fix
+// cached the SD as None; its db_fingerprint and .txt mtime are unchanged, so only
+// a version bump invalidates it. Serialized shape is unchanged (same Vec types).
+//
 // Bumped to 9: lit.db gained line_mapping.sub_line stage-direction rows; LineMap now
 // references stage lines (build_line_map maps them), so the serialized shape and
 // buffer_to_work indices changed. Bump forces every work's snapshot to rebuild.
@@ -36,7 +41,7 @@ use crate::text_file_map::LineMap;
 // text_file (1549/1559/1559M/…) still loads straight from the DB (the
 // sentence-per-line split in display_work) and never hits this cache, so that
 // split needs no version bump — it has no cached representation to invalidate.
-pub const SNAPSHOT_VERSION: u32 = 9;
+pub const SNAPSHOT_VERSION: u32 = 10;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct WorkSnapshot {

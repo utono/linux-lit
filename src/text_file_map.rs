@@ -287,21 +287,60 @@ pub fn build_line_map_mode(
 
             for buf_idx in 0..n_buf {
                 // Stage directions normalize to empty (brackets stripped), so the
-                // spoken-line matcher below skips them. Match a stage .txt line to
-                // the next DB stage row (sub_line > 0) by RAW trimmed text — the
-                // litdb parser derived stage text from this same folger-cleaned
-                // .txt, so it is byte-identical 1:1 (incl. multi-line stage dirs).
+                // spoken-line matcher below skips them. Match a stage buffer line
+                // to its DB stage row(s) (sub_line > 0) by RAW trimmed text. A
+                // single-line SD matches one row 1:1. A multi-line SD that
+                // `clean_file_lines` FOLDED into one space-joined buffer line
+                // matches a RUN of consecutive sub_line>0 rows joined the same way
+                // — see the fallback below (the old "byte-identical 1:1" assumption
+                // breaks for folded directions now that lit.db has sub_line rows).
                 if line_types::is_stage_direction(file_lines[buf_idx].trim()) {
                     let want = file_lines[buf_idx].trim();
                     let window_end = (db_cursor + WINDOW).min(n_work);
-                    for wi in db_cursor..window_end {
-                        if work_lines[wi].sub_line > 0
-                            && work_lines[wi].text.trim() == want
-                        {
-                            buffer_to_work[buf_idx] = Some(wi);
-                            work_to_buffer[wi] = buf_idx;
-                            db_cursor = wi + 1;
-                            matched += 1;
+
+                    // Fast path: a single DB stage row equals the buffer line
+                    // (single-line SDs and unfolded directions).
+                    let single_hit = (db_cursor..window_end).find(|&wi| {
+                        work_lines[wi].sub_line > 0 && work_lines[wi].text.trim() == want
+                    });
+                    if let Some(wi) = single_hit {
+                        buffer_to_work[buf_idx] = Some(wi);
+                        work_to_buffer[wi] = buf_idx;
+                        db_cursor = wi + 1;
+                        matched += 1;
+                        continue;
+                    }
+
+                    // Fallback: `clean_file_lines` folds a multi-line stage
+                    // direction into ONE buffer line (space-joined). It then
+                    // matches NO single DB row, but DOES match a run of
+                    // consecutive `sub_line > 0` rows joined the same way. Find
+                    // that run, map the folded line to its FIRST row, and point
+                    // every consumed row's reverse lookup at the folded line.
+                    for start in db_cursor..window_end {
+                        if work_lines[start].sub_line == 0 {
+                            continue; // runs begin on a stage row
+                        }
+                        let mut joined = String::new();
+                        let mut end = start;
+                        while end < window_end && work_lines[end].sub_line > 0 {
+                            if !joined.is_empty() {
+                                joined.push(' ');
+                            }
+                            joined.push_str(work_lines[end].text.trim());
+                            if joined.len() > want.len() {
+                                break; // overshot — this run can't equal `want`
+                            }
+                            if joined == want {
+                                work_to_buffer[start..=end].fill(buf_idx);
+                                buffer_to_work[buf_idx] = Some(start);
+                                db_cursor = end + 1;
+                                matched += 1;
+                                break;
+                            }
+                            end += 1;
+                        }
+                        if buffer_to_work[buf_idx].is_some() {
                             break;
                         }
                     }
@@ -1160,6 +1199,76 @@ mod tests {
         }
     }
 
+    /// A stage-direction work line (sub_line > 0). normalize() of stage text is
+    /// empty, so pass "" as normalized (matches how the spoken-line matcher skips it).
+    fn make_stage_line(id: i64, text: &str, div1: i64, div2: i64, line_in_div: i64, sub_line: i64) -> Line {
+        Line {
+            id,
+            citation: String::new(),
+            text: text.to_string(),
+            normalized: String::new(),
+            speaker: None,
+            is_dialogue: false,
+            timestamp: None,
+            div1,
+            div2,
+            line_in_div,
+            sub_line,
+            is_chapter: false,
+            is_spoken: None,
+        }
+    }
+
+    #[test]
+    fn folded_multiline_stage_direction_maps_to_its_rows() {
+        // Buffer: dialogue, then a FOLDED SD (clean_file_lines joined two source
+        // lines with a space), then more dialogue.
+        let file_lines: Vec<String> = vec![
+            "Lay hands upon these traitors and their trash.".into(),
+            "[The Guard arrest Margery Jourdain and her accomplices and seize their papers.]".into(),
+            "Beldam, I think we watched you at an".into(),
+        ];
+        // DB: the dialogue rows + the SD split across TWO sub_line>0 rows.
+        let work_lines = vec![
+            make_line_div(1, "Lay hands upon these traitors and their trash.",
+                "lay hands upon these traitors and their trash", true, 1, 4),
+            make_stage_line(2, "[The Guard arrest Margery Jourdain and her", 1, 4, 43, 1),
+            make_stage_line(3, "accomplices and seize their papers.]", 1, 4, 43, 2),
+            make_line_div(4, "Beldam, I think we watched you at an",
+                "beldam i think we watched you at an", true, 1, 4),
+        ];
+        let lm = build_line_map(&file_lines, &work_lines, false);
+        // Folded buffer line 1 -> first SD row (work idx 1).
+        assert_eq!(lm.buffer_to_work[1], Some(1), "folded SD must map to its first DB row");
+        // BOTH SD rows' reverse lookup point at the folded buffer line 1.
+        assert_eq!(lm.work_to_buffer[1], 1);
+        assert_eq!(lm.work_to_buffer[2], 1);
+        // Surrounding dialogue unaffected.
+        assert_eq!(lm.buffer_to_work[0], Some(0));
+        assert_eq!(lm.buffer_to_work[2], Some(3));
+    }
+
+    #[test]
+    fn single_line_stage_direction_still_maps_1to1() {
+        let file_lines: Vec<String> = vec!["[To Jourdain.]".into()];
+        let work_lines = vec![make_stage_line(1, "[To Jourdain.]", 1, 4, 43, 3)];
+        let lm = build_line_map(&file_lines, &work_lines, false);
+        assert_eq!(lm.buffer_to_work[0], Some(0));
+        assert_eq!(lm.work_to_buffer[0], 0);
+    }
+
+    #[test]
+    fn unmatched_folded_stage_direction_stays_none() {
+        // A folded SD whose join matches no DB run leaves buffer_to_work None.
+        let file_lines: Vec<String> = vec!["[Nobody arrests anyone at all here.]".into()];
+        let work_lines = vec![
+            make_stage_line(1, "[The Guard arrest Margery Jourdain and her", 1, 4, 43, 1),
+            make_stage_line(2, "accomplices and seize their papers.]", 1, 4, 43, 2),
+        ];
+        let lm = build_line_map(&file_lines, &work_lines, false);
+        assert_eq!(lm.buffer_to_work[0], None);
+    }
+
     #[test]
     fn test_normalize() {
         assert_eq!(normalize("Who's there?"), "whos there");
@@ -1997,5 +2106,41 @@ mod tests {
         assert_eq!(map.buffer_to_work[4], Some(4));
         assert_eq!(map.buffer_to_work[5], Some(4), "prayer's 2nd sentence shares its row");
         assert_eq!(map.work_to_buffer[4], 4, "prayer canonical = first sentence line");
+    }
+
+    /// Regression for the folded-SD coloring bug: build the map through the SAME
+    /// clean_file_lines fold the app uses (NOT raw .txt — that was the misleading
+    /// repro), and assert the folded `[The Guard arrest...]` SD in 2H6-Amb 1.4 maps
+    /// to (1,4,43) instead of staying UNMAPPED. Skipped when lit.db is unavailable.
+    #[test]
+    fn h6_amb_folded_guard_sd_maps_through_clean_path() {
+        let conn = match crate::db::queries::open_db() {
+            Ok(c) => c,
+            Err(_) => { eprintln!("skip: no lit.db"); return; }
+        };
+        let work = match crate::db::queries::load_work(&conn, "2H6-Amb") {
+            Ok(w) => w,
+            Err(_) => { eprintln!("skip: 2H6-Amb not loaded"); return; }
+        };
+        let prepared = match crate::app::text_prep::prepare_text_only(&work) {
+            Some(p) => p,
+            None => { eprintln!("skip: no text_file"); return; }
+        };
+        let is_prose = crate::db::line_types::is_prose_work(&work.work_type);
+        let lm = build_line_map(&prepared.cleaned_lines, &work.lines, is_prose);
+
+        // The folded SD renders as one cleaned buffer line containing "Guard arrest".
+        let sd_buf = prepared.cleaned_lines.iter()
+            .position(|l| l.contains("Guard arrest"));
+        let sd_buf = match sd_buf {
+            Some(b) => b,
+            None => { eprintln!("skip: SD not in cleaned text"); return; }
+        };
+        let wi = lm.buffer_to_work[sd_buf];
+        assert!(wi.is_some(),
+            "folded SD buffer line {sd_buf} must map (was the bug: UNMAPPED -> uncolored)");
+        let l = &work.lines[wi.unwrap()];
+        assert_eq!((l.div1, l.div2, l.line_in_div), (1, 4, 43),
+            "folded SD must map to citation 1.4.43");
     }
 }

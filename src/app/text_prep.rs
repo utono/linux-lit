@@ -80,8 +80,10 @@ fn clean_file_lines(file_lines: &[String]) -> Vec<String> {
         // bracketed direction across several lines (opens with `[`, no closing
         // `]`). Fold those source lines into one buffer line so GTK soft-wraps
         // the direction naturally instead of preserving the mid-sentence breaks.
-        // Stage directions normalize to empty in the line map, so folding them
-        // doesn't disturb work-line mapping.
+        // The folded line no longer matches a single DB stage row 1:1, so
+        // build_line_map's stage matcher re-joins consecutive sub_line>0 rows to
+        // map it (see src/text_file_map.rs); keep the single-space join here in
+        // sync with that matcher's join.
         let trimmed = line.trim();
         if trimmed.starts_with('[') && !trimmed.ends_with(']') {
             let mut joined = line.clone();

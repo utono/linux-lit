@@ -1758,7 +1758,7 @@ pub fn show_current_chapter(state: &mut AppState) {
 /// hide-timeout captures it; when the timeout fires it only hides the toast if
 /// its generation is still current. A stale timer (one whose toast has since
 /// been superseded) is a no-op, so the latest toast always gets its full 3s.
-fn show_chapter_toast(state: &AppState, text: &str) {
+pub(crate) fn show_chapter_toast(state: &AppState, text: &str) {
     let gen = state.chapter_toast_gen.get().wrapping_add(1);
     state.chapter_toast_gen.set(gen);
     log_fmt!("CHAPTER_TOAST: show gen={} text={:?}", gen, text);
