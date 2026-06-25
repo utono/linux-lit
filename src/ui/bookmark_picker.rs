@@ -1,6 +1,6 @@
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Entry, Label, ListBox, ListBoxRow, Orientation, Overlay,
+    Box as GtkBox, Entry, ListBox, ListBoxRow, Orientation, Overlay,
 };
 
 use crate::db::models::BookmarkItem;
@@ -86,32 +86,11 @@ impl BookmarkPicker {
                 }
             }
 
-            let first_line = item.line_text.lines().next().unwrap_or("");
-            let display = if item.speaker.is_empty() {
-                first_line.to_string()
-            } else {
-                format!("{}: {}", item.speaker, first_line)
-            };
-
-            let text_label = Label::builder()
-                .label(&display)
-                .halign(gtk4::Align::Start)
-                .hexpand(true)
-                .ellipsize(gtk4::pango::EllipsizeMode::End)
-                .build();
-
-            let citation_label = Label::builder()
-                .label(&item.citation)
-                .halign(gtk4::Align::End)
-                .build();
-            citation_label.add_css_class("picker-item-detail");
-
-            let hbox = GtkBox::builder()
-                .orientation(Orientation::Horizontal)
-                .spacing(8)
-                .build();
-            hbox.append(&text_label);
-            hbox.append(&citation_label);
+            let display = crate::ui::picker_nav::speaker_prefixed_first_line(
+                &item.speaker,
+                &item.line_text,
+            );
+            let hbox = crate::ui::picker_nav::two_label_row(&display, &item.citation);
 
             let row = ListBoxRow::builder().child(&hbox).build();
             row.set_widget_name(&item.line_mapping_id.to_string());

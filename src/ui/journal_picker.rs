@@ -1,6 +1,6 @@
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Entry, Label, ListBox, ListBoxRow, Orientation, Overlay,
+    Box as GtkBox, Entry, ListBox, ListBoxRow, Orientation, Overlay,
 };
 
 use crate::app::JournalBand;
@@ -97,25 +97,10 @@ impl JournalQaPicker {
                 }
             }
 
-            let q_label = Label::builder()
-                .label(&item.question_prefix)
-                .halign(gtk4::Align::Start)
-                .hexpand(true)
-                .ellipsize(gtk4::pango::EllipsizeMode::End)
-                .build();
-
-            let scene_label = Label::builder()
-                .label(&item.scene_label)
-                .halign(gtk4::Align::End)
-                .build();
-            scene_label.add_css_class("picker-item-detail");
-
-            let hbox = GtkBox::builder()
-                .orientation(Orientation::Horizontal)
-                .spacing(8)
-                .build();
-            hbox.append(&q_label);
-            hbox.append(&scene_label);
+            let hbox = crate::ui::picker_nav::two_label_row(
+                &item.question_prefix,
+                &item.scene_label,
+            );
 
             let row = ListBoxRow::builder().child(&hbox).build();
             row.set_widget_name(&idx.to_string());

@@ -97,6 +97,49 @@ pub(crate) fn selected_index(list_box: &ListBox) -> Option<usize> {
         .and_then(|row| row.widget_name().parse::<usize>().ok())
 }
 
+/// Build the two-label picker row: a start-aligned, hexpanding, end-ellipsizing
+/// `primary` label + an end-aligned `detail` label with the `picker-item-detail`
+/// css class, packed into a Horizontal spacing-8 `GtkBox`. The byte-identical row
+/// body of the card pickers (gloss/bookmark/journal). The caller wraps the
+/// returned box in a `ListBoxRow` and stamps the (varying) `widget_name`, which
+/// stays out of this helper. EXCLUDED: echo pickers (Vertical meta-over-text row)
+/// and concordance works/list pickers (explicit per-label margins).
+pub(crate) fn two_label_row(primary: &str, detail: &str) -> GtkBox {
+    let text_label = Label::builder()
+        .label(primary)
+        .halign(Align::Start)
+        .hexpand(true)
+        .ellipsize(gtk4::pango::EllipsizeMode::End)
+        .build();
+
+    let detail_label = Label::builder()
+        .label(detail)
+        .halign(Align::End)
+        .build();
+    detail_label.add_css_class("picker-item-detail");
+
+    let hbox = GtkBox::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(8)
+        .build();
+    hbox.append(&text_label);
+    hbox.append(&detail_label);
+    hbox
+}
+
+/// `"SPEAKER: first line"` (or just the first line when `speaker` is empty) — the
+/// byte-identical display-text computation the gloss and bookmark pickers share
+/// for their primary label. EXCLUDED: journal_picker uses a precomputed
+/// `question_prefix`, not this speaker form.
+pub(crate) fn speaker_prefixed_first_line(speaker: &str, source_text: &str) -> String {
+    let first_line = source_text.lines().next().unwrap_or("");
+    if speaker.is_empty() {
+        first_line.to_string()
+    } else {
+        format!("{}: {}", speaker, first_line)
+    }
+}
+
 /// Move the selection by `delta` rows, FAMILY A: requires a current selection and
 /// clamps the new index at ≥ 0 (so up-arrow at the top stays on row 0). No-op if
 /// nothing is selected. The byte-identical body of the card pickers
