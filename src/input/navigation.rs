@@ -1556,12 +1556,45 @@ pub(crate) fn current_block_first_line(
     Some(first)
 }
 
+/// Pure scan: the next/prev non-blank buffer line from `from` in `dir`, or None
+/// at the buffer edge. The prose analog of a speaker turn — prose has no speaker
+/// metadata, so `q`/`,` step paragraph-to-paragraph instead. For
+/// paragraph-granularity prose (e.g. BH) every buffer line is a paragraph, so
+/// this is just the adjacent line; blank-separated prose skips the blanks.
+pub(crate) fn adjacent_paragraph(
+    line_count: usize,
+    from: usize,
+    dir: Direction,
+    is_blank_at: impl Fn(usize) -> bool,
+) -> Option<usize> {
+    match dir {
+        Direction::Next => ((from + 1)..line_count).find(|&i| !is_blank_at(i)),
+        Direction::Prev => (0..from).rev().find(|&i| !is_blank_at(i)),
+    }
+}
+
 /// Jump to the first dialogue line of the NEXT speaker turn (`J`). Seeks audio.
+/// On prose (no speaker metadata) jumps to the NEXT paragraph instead.
 pub fn jump_to_next_speaker(state: &mut AppState) {
     if state.current_work.is_none() {
         return;
     }
     let line_count = state.effective_line_count();
+    if state.is_prose() {
+        let target = adjacent_paragraph(line_count, state.current_line, Direction::Next, |i| {
+            crate::db::line_types::is_blank(buffer_line_text(&state.buffer, i).trim())
+        });
+        if let Some(target) = target {
+            let prev_line = state.current_line;
+            state.current_line = target;
+            state.pending_advance = None;
+            state.pending_advance_ignore_bl = None;
+            log_fmt!("PARAGRAPH_NEXT: {} -> {}", prev_line, target);
+            scroll_after_jump_forward(state, prev_line);
+            after_page_change(state, PageChangeReason::Dialogue);
+        }
+        return;
+    }
     let target = {
         let work = state.current_work.as_ref().unwrap();
         speaker_turn_target(
@@ -1596,6 +1629,22 @@ pub fn jump_to_prev_speaker(state: &mut AppState) {
         return;
     }
     let line_count = state.effective_line_count();
+    if state.is_prose() {
+        let target = adjacent_paragraph(line_count, state.current_line, Direction::Prev, |i| {
+            crate::db::line_types::is_blank(buffer_line_text(&state.buffer, i).trim())
+        });
+        if let Some(target) = target {
+            let prev_line = state.current_line;
+            state.current_line = target;
+            state.pending_advance = None;
+            state.pending_advance_ignore_bl = None;
+            state.prev_highlight_line.set(None);
+            log_fmt!("PARAGRAPH_PREV: {} -> {}", prev_line, target);
+            scroll_after_jump_backward(state);
+            after_page_change(state, PageChangeReason::Dialogue);
+        }
+        return;
+    }
     let speaker_at = |i: usize| {
         let work = state.current_work.as_ref().unwrap();
         state.work_line_for_buffer(i).and_then(|wi| work.lines.get(wi)).and_then(|l| l.speaker.clone())
@@ -3344,7 +3393,7 @@ mod after_page_change_tests {
 
 #[cfg(test)]
 mod speaker_turn_tests {
-    use super::{current_block_first_line, speaker_turn_target, Direction};
+    use super::{adjacent_paragraph, current_block_first_line, speaker_turn_target, Direction};
 
     /// Build a fixture from compact tuples: (speaker, is_dialogue).
     /// `""` speaker means None (unmapped/chrome line).
@@ -3424,6 +3473,25 @@ mod speaker_turn_tests {
         let v = fixture(&[("", true), ("", true), ("", true)]);
         assert_eq!(target(&v, 1, Direction::Next), None);
         assert_eq!(target(&v, 1, Direction::Prev), None);
+    }
+
+    #[test]
+    fn adjacent_paragraph_steps_and_skips_blanks() {
+        // false = non-blank paragraph, true = blank separator.
+        // lines: 0=para 1=blank 2=para 3=para 4=blank 5=para
+        let blank = [false, true, false, false, true, false];
+        let is_blank = |i: usize| blank[i];
+        // Next from a paragraph skips the following blank.
+        assert_eq!(adjacent_paragraph(6, 0, Direction::Next, is_blank), Some(2));
+        // Next from an adjacent-paragraph pair is just the next line.
+        assert_eq!(adjacent_paragraph(6, 2, Direction::Next, is_blank), Some(3));
+        // Next skips the trailing blank to the last paragraph.
+        assert_eq!(adjacent_paragraph(6, 3, Direction::Next, is_blank), Some(5));
+        // Prev skips a preceding blank.
+        assert_eq!(adjacent_paragraph(6, 5, Direction::Prev, is_blank), Some(3));
+        // Edges: no paragraph after the last / before the first.
+        assert_eq!(adjacent_paragraph(6, 5, Direction::Next, is_blank), None);
+        assert_eq!(adjacent_paragraph(6, 0, Direction::Prev, is_blank), None);
     }
 
     #[test]
