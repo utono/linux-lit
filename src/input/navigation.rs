@@ -1070,9 +1070,58 @@ pub fn cursor_next_dialogue(state: &mut AppState) {
     }
 }
 
+/// Buffer-line index of the first DIALOGUE line of each act (`div1` run) in a
+/// play, in document order. An "act boundary" is the first mapped buffer line
+/// whose work-line carries a new `div1`; from there we advance with
+/// `next_dialogue_line` so the returned line is the act's first *spoken* line —
+/// never the entrance stage direction or speaker name that opens the act. This
+/// reads the authoritative `(div1)` metadata on `Work.lines` directly (the same
+/// source the dropped `is_chapter` flag was derived from), so it needs no
+/// chapter marking. Returns empty when there's no current work / no line_map.
+fn act_dialogue_lines(state: &AppState) -> Vec<usize> {
+    let work = match state.current_work.as_ref() {
+        Some(w) => w,
+        None => return Vec::new(),
+    };
+    let line_count = state.effective_line_count();
+    let stage_lookup = |bi: usize| -> Option<i64> {
+        state.work_line_for_buffer(bi)
+            .and_then(|wi| work.lines.get(wi))
+            .map(|l| l.sub_line)
+    };
+    let mut out = Vec::new();
+    let mut prev_div1: Option<i64> = None;
+    for bl in 0..line_count {
+        let Some(wi) = state.work_line_for_buffer(bl) else { continue };
+        let Some(line) = work.lines.get(wi) else { continue };
+        if Some(line.div1) == prev_div1 {
+            continue;
+        }
+        prev_div1 = Some(line.div1);
+        // First dialogue AT OR AFTER this act boundary (skips the entrance stage
+        // direction / speaker chrome). `next_dialogue_from` is inclusive of `bl`,
+        // so an act that opens directly on a dialogue line is handled too.
+        let d = next_dialogue_from(&state.buffer, bl, line_count, &stage_lookup);
+        if d < line_count {
+            // Dedup: consecutive acts resolve to the same first dialogue only if a
+            // div1 has no dialogue of its own; keep entries strictly increasing.
+            if out.last() != Some(&d) {
+                out.push(d);
+            }
+        }
+    }
+    out
+}
+
 /// Previous chapter line (`[` key).
 pub fn jump_to_prev_chapter(state: &mut AppState) {
     crate::app::translations::hide_translations_for_navigation(state);
+    // Plays jump between ACTS, landing on each act's first dialogue line
+    // (never a stage direction). Prose uses the is_chapter-based path below.
+    if state.current_work.as_ref().map(|w| w.work_type == "play").unwrap_or(false) {
+        jump_to_prev_act(state);
+        return;
+    }
     let target = {
         let work = match &state.current_work {
             Some(w) => w,
@@ -1132,6 +1181,11 @@ pub fn jump_to_prev_chapter(state: &mut AppState) {
 /// Next chapter line.
 pub fn jump_to_next_chapter(state: &mut AppState) {
     crate::app::translations::hide_translations_for_navigation(state);
+    // Plays jump between ACTS (see jump_to_prev_chapter).
+    if state.current_work.as_ref().map(|w| w.work_type == "play").unwrap_or(false) {
+        jump_to_next_act(state);
+        return;
+    }
     let line_count = state.effective_line_count();
     let target = {
         let work = match &state.current_work {
@@ -1187,6 +1241,49 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
             }
         }
         after_page_change(state, PageChangeReason::Chapter);
+    }
+}
+
+/// Land the cursor on `line_idx` for an act/chapter jump: same page/scroll
+/// handling as the chapter jump (canonical spread + degenerate-spread guard),
+/// reported as a `Chapter` page change. Shared by the play act-jumps.
+fn land_on_chapter_target(state: &mut AppState, line_idx: usize) {
+    state.current_line = line_idx;
+    state.page_back_stack.clear();
+    state.page_back_stack.push(state.page_top_line);
+    match state.config.navigation_mode {
+        crate::config::NavigationMode::Scroll => center_cursor(state),
+        crate::config::NavigationMode::EReader => {
+            if is_line_fully_visible(state, line_idx) {
+                update_highlight_only(state);
+            } else {
+                let top = canonical_page_top_for(state, line_idx);
+                set_page_instant(state, top);
+                ensure_cursor_visible_ereader(state, line_idx);
+            }
+        }
+    }
+    after_page_change(state, PageChangeReason::Chapter);
+}
+
+/// Plays only: jump to the first dialogue line of the previous act (`(` key).
+/// Acts come from authoritative `(div1)` metadata; the cursor lands on the
+/// act's first spoken line, never an entrance stage direction.
+pub fn jump_to_prev_act(state: &mut AppState) {
+    let acts = act_dialogue_lines(state);
+    // The previous act is the last act-dialogue line strictly before the cursor.
+    let target = acts.iter().rev().find(|&&d| d < state.current_line).copied();
+    if let Some(line_idx) = target {
+        land_on_chapter_target(state, line_idx);
+    }
+}
+
+/// Plays only: jump to the first dialogue line of the next act (`&` key).
+pub fn jump_to_next_act(state: &mut AppState) {
+    let acts = act_dialogue_lines(state);
+    let target = acts.iter().find(|&&d| d > state.current_line).copied();
+    if let Some(line_idx) = target {
+        land_on_chapter_target(state, line_idx);
     }
 }
 

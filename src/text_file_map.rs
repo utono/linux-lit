@@ -679,21 +679,27 @@ fn find_skip_target(nf: &str, norm_db: &[String], wi: usize, n_work: usize) -> O
 /// elsewhere (idempotent — safe to re-call on already-flagged lines).
 ///
 /// Prose: each `div1 > 0` (front matter `div1 == 0` is not a chapter).
-/// Non-prose: each change of `div1` from the previous line (the first mapped
-/// line always counts, as a change from "no previous").
+/// Non-prose (plays/verse): no line is marked. Plays use the authoritative
+/// `(div1,div2)` section bitmap for `[`/`{` scene navigation; `is_chapter` is a
+/// prose-only concept (it drives the chapter synopsis path and the `▸` gutter
+/// marker, both of which are gated to prose). Marking act starts here only put a
+/// stray `▸` on each act's first line — usually an entrance stage direction —
+/// and powered the `(`/`&` act-jump, which plays don't use.
 ///
 /// `lines` MUST be in canonical (div1, div2, line_in_div, sub_line) order — the
 /// same order `load_work` SELECTs them in.
 pub(crate) fn mark_chapter_starts(lines: &mut [crate::db::models::Line], is_prose: bool) {
+    if !is_prose {
+        // Plays/verse: clear any (possibly stale) flags and mark nothing.
+        for line in lines.iter_mut() {
+            line.is_chapter = false;
+        }
+        return;
+    }
     let mut prev_div1: Option<i64> = None;
     for line in lines.iter_mut() {
-        let is_start = if is_prose {
-            // A new div1 boundary where div1 > 0; front matter (0) never counts.
-            line.div1 > 0 && Some(line.div1) != prev_div1
-        } else {
-            // Any change of div1 (including the first mapped line).
-            Some(line.div1) != prev_div1
-        };
+        // A new div1 boundary where div1 > 0; front matter (0) never counts.
+        let is_start = line.div1 > 0 && Some(line.div1) != prev_div1;
         line.is_chapter = is_start;
         prev_div1 = Some(line.div1);
     }
@@ -2206,12 +2212,12 @@ mod mark_chapter_starts_tests {
     }
 
     #[test]
-    fn play_marks_each_div1_change_including_first() {
-        // div1: 1,1,2,2 -> chapter at first 1 and first 2 (non-prose: any change,
-        // and the first mapped line is a change from "no previous").
+    fn play_marks_nothing() {
+        // Plays/verse never get chapter flags: navigation uses the (div1,div2)
+        // section bitmap, and is_chapter is a prose-only concept.
         let mut lines = vec![line(1), line(1), line(2), line(2)];
         mark_chapter_starts(&mut lines, false);
-        assert_eq!(flags(&lines), vec![true, false, true, false]);
+        assert_eq!(flags(&lines), vec![false, false, false, false]);
     }
 
     #[test]
@@ -2237,11 +2243,21 @@ mod mark_chapter_starts_tests {
     }
 
     #[test]
-    fn single_div1_zero_nonprose_is_chapter() {
-        // Non-prose treats the first mapped line as a div1 boundary regardless of value.
+    fn single_div1_zero_nonprose_no_chapter() {
+        // Non-prose never marks chapters, regardless of div1 value.
         let mut lines = vec![line(0)];
         mark_chapter_starts(&mut lines, false);
-        assert_eq!(flags(&lines), vec![true]);
+        assert_eq!(flags(&lines), vec![false]);
+    }
+
+    #[test]
+    fn nonprose_clears_stale_flags() {
+        // Reload path may call on lines with stale true flags; non-prose resets all.
+        let mut lines = vec![line(1), line(2)];
+        lines[0].is_chapter = true; // stale
+        lines[1].is_chapter = true; // stale
+        mark_chapter_starts(&mut lines, false);
+        assert_eq!(flags(&lines), vec![false, false]);
     }
 
     #[test]
