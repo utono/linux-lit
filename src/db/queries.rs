@@ -1687,12 +1687,12 @@ pub fn find_glossed_passages(
         // number by stripping the non-trailing-digit prefix (rtrim removes the
         // trailing digits, replace deletes that prefix, leaving the number).
         "SELECT DISTINCT p.id, p.work_abbrev, p.start_citation, p.end_citation, \
-                p.act, p.scene, p.character, p.source_text \
+                p.div1, p.div2, p.character, p.source_text \
          FROM passages p \
          JOIN glosses g ON g.passage_id = p.id \
          WHERE p.work_abbrev = ?1 \
            AND g.gloss_type IN ({}) \
-         ORDER BY p.act, p.scene, \
+         ORDER BY p.div1, p.div2, \
                   CAST(replace(p.start_citation, rtrim(p.start_citation, '0123456789'), '') AS INTEGER)",
         placeholders.join(", ")
     );
@@ -1724,7 +1724,7 @@ pub fn find_glossed_passage_by_start(
         .collect();
     let sql = format!(
         "SELECT DISTINCT p.id, p.work_abbrev, p.start_citation, p.end_citation, \
-                p.act, p.scene, p.character, p.source_text \
+                p.div1, p.div2, p.character, p.source_text \
          FROM passages p \
          JOIN glosses g ON g.passage_id = p.id \
          WHERE p.work_abbrev = ?1 AND p.start_citation = ?2 \
@@ -1761,7 +1761,7 @@ pub fn save_gloss(
 ) -> Result<i64, rusqlite::Error> {
     conn.execute(
         "INSERT OR IGNORE INTO passages \
-         (hash, work_abbrev, start_citation, end_citation, act, scene, character, source_text) \
+         (hash, work_abbrev, start_citation, end_citation, div1, div2, character, source_text) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         rusqlite::params![hash, work_abbrev, start_citation, end_citation, act, scene, character, source_text],
     )?;
@@ -3409,5 +3409,36 @@ mod chapter_start_tests {
         let c = mk();
         c.execute("UPDATE line_mapping SET chapter_start = NULL WHERE id = 7", []).unwrap();
         assert_eq!(toggle_chapter_start(&c, 7).unwrap(), true);
+    }
+}
+
+#[cfg(test)]
+mod passages_div1_div2_tests {
+    use super::*;
+
+    #[test]
+    fn glossed_passages_read_div1_div2_columns() {
+        use rusqlite::Connection;
+        let conn = Connection::open_in_memory().unwrap();
+        // Schema mirrors the MIGRATED lit.db: columns are div1/div2 (was act/scene).
+        conn.execute_batch(
+            "CREATE TABLE passages (
+                id INTEGER PRIMARY KEY, hash TEXT, work_abbrev TEXT,
+                start_citation TEXT, end_citation TEXT, div1 INTEGER, div2 INTEGER,
+                character TEXT, source_text TEXT
+             );
+             CREATE TABLE glosses (
+                id INTEGER PRIMARY KEY, passage_id INTEGER, gloss_type TEXT,
+                gloss_text TEXT, status TEXT, word_id INTEGER
+             );
+             INSERT INTO passages (id, hash, work_abbrev, start_citation, end_citation, div1, div2, character, source_text)
+                VALUES (1, 'h', 'Err', 'Err.2.2.1', 'Err.2.2.12', 2, 2, 'Antipholus', 'text');
+             INSERT INTO glosses (id, passage_id, gloss_type, gloss_text, status, word_id)
+                VALUES (1, 1, 'reader-gloss', 'g', 'complete', NULL);",
+        ).unwrap();
+        let ps = find_glossed_passages(&conn, "Err", &["reader-gloss"]).unwrap();
+        assert_eq!(ps.len(), 1);
+        assert_eq!(ps[0].act, 2);   // field name unchanged; value comes from div1 column
+        assert_eq!(ps[0].scene, 2); // from div2 column
     }
 }
