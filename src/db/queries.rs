@@ -190,16 +190,6 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
         }
     }
 
-    // 5b. Build chapter lookup from already-loaded timestamps (no extra DB query)
-    let mut chapter_map: HashMap<i64, bool> = HashMap::new();
-    if let Some(mid) = media_id {
-        for ts in &timestamps {
-            if ts.media_id == mid && ts.is_chapter {
-                chapter_map.insert(ts.line_id, true);
-            }
-        }
-    }
-
     // 5c. Load spoken status for the active media
     let mut spoken_map: HashMap<i64, bool> = HashMap::new();
     if let Some(mid) = media_id {
@@ -216,15 +206,17 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
     }
 
     // 6. Attach timestamps and spoken status to lines
-    let lines: Vec<Line> = lines
+    let mut lines: Vec<Line> = lines
         .into_iter()
         .map(|mut line| {
             line.timestamp = ts_map.get(&line.id).copied();
-            line.is_chapter = chapter_map.contains_key(&line.id);
             line.is_spoken = spoken_map.get(&line.id).copied();
             line
         })
         .collect();
+
+    // 6b. Mark structural chapter starts from div1 boundaries (media-independent).
+    crate::text_file_map::mark_chapter_starts(&mut lines, is_prose);
 
     Ok(Work {
         abbrev: abbrev.to_string(),
