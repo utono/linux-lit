@@ -906,6 +906,163 @@ pipeline as a single refactor.
 - **Safe-scope:** marginal — behavior-preserving, but it is a new helper with
   interpolated args, not a literal-naming or byte-identical cut.
 
+## #38 — claude-bridge-async-render-tail — OPEN
+
+- **Status:** OPEN (HIGHEST of the 2026-06-25 post-gloss-fixes audit — the
+  deferred family audit #7 flagged; ~240 lines across 4 sites, and each NEW
+  gloss-type path copies the whole tail, so drift is structural).
+- **Signal:** the async Claude-call render tail — the
+  `match result { Ok(Ok(gloss_text)) => { save_gloss → find_glosses_by_start
+  reload → render overlay → reinstall gloss_context }, Ok(Err)/Err => log }` body
+  — is byte-identical (verified: the `Ok(Ok)` `save_gloss` arm matches
+  token-for-token between visual.rs and journal.rs) at **4 sites**:
+  visual.rs:528-586 (`action_reader_gloss`), visual.rs:676-734
+  (`action_gloss_with_claude`), visual.rs:941-1000
+  (`run_pending_inner_monologue_blocking`), journal.rs:702-762 (`ask_claude`,
+  gloss-from-journal). The arms differ in **3 tokens** — the gloss_type literal
+  (the `save_gloss` arg + `record_last_gloss` arg) and the log-prefix strings.
+- **Identical part (extract):** a NEW sibling helper (e.g.
+  `persist_render_install_gloss(s, ctx, text, gloss_type, log_prefix)`) — it
+  moves `ctx` in, persists, reloads, renders, AND reinstalls
+  `s.gloss_context = Some(ctx)` + calls `record_last_gloss`. Each `match` arm
+  collapses to one call.
+- **EXCLUDED (named, why):** the existing `persist_and_render_gloss` (gloss.rs)
+  does NOT cover these — it takes `&str`, does NOT reinstall gloss_context, and
+  does NOT `record_last_gloss` (add/edit keep context live); the async sites move
+  `ctx` in and must reinstall it. The inner-monologue site adds one line
+  (`verify_echo_citations`) and renders the verified text — pass the to-persist
+  text in so the body stays shared. The `spawn_future_local` + `call_claude`
+  PROLOGUE differs per site (different prompt const / `call_claude` vs
+  `_with_prompt`) — only the post-await `match result` body extracts.
+- **Safe-scope:** yes — same concrete types, no trait/generic; a parameterized
+  block move.
+
+## #39 — overlay-close-position-restore-helpers — OPEN
+
+- **Status:** OPEN (pairs with this session's `return_to_reader_mode`: that
+  centralized mode+tint, this centralizes the still-duplicated position-restore;
+  7 of 8 sites collapse).
+- **Signal:** the take-and-restore tail
+  `if let Some((line, top)) = <FIELD>.take() { s.current_line = line;
+  s.page_top_line = top; [resnap_page; update_highlight] }` recurs in two
+  byte-identical variants. **No-tail (TRANSITION) variant — 4 sites:**
+  journal.rs:647, journal.rs:856, journal.rs:929, keymap.rs:1130 (each is exactly
+  the 3-line restore, nothing else inside). **Resnap (return-to-CARD) variant —
+  3 sites:** journal.rs:138, gloss.rs:1934, keymap.rs:1050 (inner) — the same
+  body plus `resnap_page` + `update_highlight`.
+- **Identical part (extract):** two free fns —
+  `restore_saved_position(s, pos)` (the bare 3-line restore, collapses the 4
+  transition sites) and `restore_saved_position_resnap(s, pos)` (restore +
+  resnap + update_highlight, collapses the 3 card sites). Two fns, not one
+  bool-flag fn, keeps each call site byte-identical. Caller still passes
+  `s.journal.return_pos.take()` / `s.gloss_return_pos.take()`.
+- **EXCLUDED (named, why):** keymap.rs:596 (search Escape) has an
+  `else { page_top_line = current_line }` branch AND runs `resnap`/`update_highlight`
+  UNCONDITIONALLY outside the `if` — folding it changes control flow. The
+  `return_to_reader_mode`/`input_mode = Reader` line stays at the call site (mode
+  ordering differs per site; already centralized).
+- **Safe-scope:** yes — pure cut-and-lift, no abstraction.
+
+## #40 — timestamps-line-id-extraction — OPEN
+
+- **Status:** OPEN (5 byte-identical sites in one file; cleanest cut in
+  timestamps.rs).
+- **Signal:** the `let line_id = { let work = match &state.current_work { Some(w)
+  => w, None => return false }; work.lines[line_idx].id };` block is byte-identical
+  (incl. whitespace) at **5 sites**: timestamps.rs:144-150 (set_start_time),
+  :304-310 (set_chapter), :394-400 (set_end_time), :456-462 (delete_timestamp),
+  :528-534 (nudge_start_time).
+- **Identical part (extract):** `fn work_line_id(state, line_idx) -> Option<i64>`;
+  each caller writes `let Some(line_id) = work_line_id(state, line_idx) else {
+  return false };` (the `return false` can't live in the helper).
+- **EXCLUDED (named, why):** `undo_timestamp` resolves the line by id lookup, not
+  `line_idx` — different shape.
+- **Safe-scope:** yes — byte-identical, helper returns Option.
+
+## #41 — timestamps-sign-column-setter — OPEN
+
+- **Status:** OPEN (4+3 sites, ~40 lines collapse to one 4-arg setter).
+- **Signal:** the sign-column borrow-and-set block
+  `{ let mut ht = state.has_timestamp.borrow_mut(); if bl < ht.len() { ht[bl] = V; }
+  let mut manual = state.is_manual.borrow_mut(); if bl < manual.len() { manual[bl]
+  = V; } }` is byte-identical (given the value V) at **4 sites**:
+  timestamps.rs:218-228 (set_start, V=true), :342-352 (set_chapter, true),
+  :495-505 (delete, false), :683-700 (undo). The adjacent `is_chapter_line`
+  sub-block is byte-identical at **3** of those.
+- **Identical part (extract):** `fn set_sign_columns(state, buffer_line, has_ts:
+  bool, is_manual: bool, is_chapter: bool)` covering all 4 (incl. undo, whose
+  values are computed). Each site becomes one call.
+- **EXCLUDED (named, why):** none material — undo's values come from computed
+  `has_ts`/`is_man`/`is_ch` rather than constants, but the setter takes them as
+  args so it still covers undo.
+- **Safe-scope:** yes — self-contained block move.
+
+## #42 — unspoken-stage-direction-refusal-block — OPEN
+
+- **Status:** OPEN (only 2 sites, but FRESHLY TOUCHED — the two copies must stay
+  in lockstep, the exact drift signal the house bar wants).
+- **Signal:** the `u`/end-time spoken-line gate body is byte-identical at **2
+  sites**: timestamps.rs:131-141 (set_start_time) and :381-391 (set_end_time) —
+  `let l = &work.lines[line_idx]; if !timestamp_allowed(l.sub_line, l.is_spoken) {
+  log("TS: refused start/end time …"); show_chapter_toast(state, "Not a spoken
+  line — no timestamp set"); return false; }` — identical incl. the log string and
+  the toast literal.
+- **Identical part (extract):** a helper returning `bool` (the `return false`
+  stays at the call site: `if !timestamp_writable(state, line_idx) { return false }`).
+  The toast string `"Not a spoken line — no timestamp set"` is a load-bearing
+  literal worth a `const`.
+- **EXCLUDED (named, why):** nudge/delete intentionally ungated (operate on
+  existing timestamps) — do not add the gate there.
+- **Safe-scope:** yes — byte-identical block + named literal.
+
+## #43 — word-prefix-boundary-predicate — OPEN
+
+- **Status:** OPEN (best cut in text_file_map.rs — a subtle byte-boundary check
+  that's exactly the kind that drifts).
+- **Signal:** the "needle is a prefix of haystack at a WORD boundary" test —
+  `X.starts_with(needle) && X.as_bytes().get(needle.len()) == Some(&b' ')` —
+  recurs at **3 sites**: text_file_map.rs:466-467 (`candidate`), :512-513
+  (`nf`), :649-650 (`find_skip_target`, `nf`). Same off-by-one-prone boundary
+  semantics, receiver/needle vary.
+- **Identical part (extract):** `fn is_word_prefix(haystack: &str, needle: &str)
+  -> bool`. All 3 sites collapse byte-identically.
+- **EXCLUDED (named, why):** none — all three are the exact same boundary check.
+- **Safe-scope:** yes — pure predicate.
+
+## #44 — gloss-render-current-row-block — OPEN
+
+- **Status:** OPEN (low — 2 strict byte-identical sites, low drift).
+- **Signal:** the 13-line "render the current gloss row" block (`gloss_start`/
+  `gloss_end` clone, `ctx`, `cw`, `h`, `pairs`, `show_gloss_with_color`,
+  `set_position`, `set_citation`, `recolor_cached_blocks`) is byte-identical
+  (modulo indent) at **2 sites**: gloss.rs:184-196 (`cycle_gloss`) and
+  gloss.rs:261-273 (`delete_current_gloss` re-render).
+- **Identical part (extract):** `fn render_gloss_row(s, gloss, new_idx)`.
+- **EXCLUDED (named, why):** `persist_and_render_gloss` tail (renders `full_gloss`
+  over `all.len()`, mutates list after, citation from `ctx`), `apply_ipa_fix`
+  (owned clones, citation from ctx), `open_gloss_overlay` (empty source_lines) —
+  all near-but-not-byte-identical.
+- **Safe-scope:** yes.
+
+## #45 — gloss-row-map-closures — OPEN (low)
+
+- **Status:** OPEN but LOW (2 sites per closure, a `|row|` lambda is already
+  near-minimal; named for completeness).
+- **Signal:** two byte-identical (modulo indent) row-map closures — the SavedGloss
+  7-field map at queries.rs:1588-1599 (`find_all_glosses`) and 1637-1647
+  (`find_glosses_by_start`); the GlossedPassage 8-field map at 1700-1709
+  (`find_glossed_passages`) and 1750-1759 (`find_glossed_passage_by_start`),
+  incl. the `row.get::<_, Option<String>>(6)?.unwrap_or_default()` speaker line.
+- **Identical part (extract):** `fn row_to_saved_gloss(row) ->
+  rusqlite::Result<SavedGloss>` and `fn row_to_glossed_passage(row)`, passed as
+  `|row| row_to_*(row)`.
+- **EXCLUDED (named, why):** `find_existing_gloss` SavedGloss map has shifted
+  column indices + `gloss_type` from a captured `gt.clone()` — not foldable. The
+  dynamic-IN `placeholders`/`params`/`param_refs` boilerplate differs by
+  placeholder offset (+4/+3/+2/+3) — only the trailing line is identical, needs
+  generics, skip.
+- **Safe-scope:** yes, but lowest priority.
+
 ## Noted but NOT numbered (below the safe-scope floor or behavior-risky)
 
 These came up in the post-journal-Q&A audit but do not qualify as numbered
@@ -970,3 +1127,29 @@ safe-scope opportunities:
   overlay `snap_value_to_line` are DIFFERENT algorithms (per-`display_rows`-row
   snap vs uniform `row_step` rounding), not duplicates. Both are behavior-changing
   to "unify", so they are out of scope for maintainability dedup.
+
+### From the 2026-06-25 post-gloss-fixes audit
+
+- **`work_line_for_buffer -> None => return false` guard (timestamps.rs, 6 sites).**
+  Real, but splits into 2 variants: 4 bare `None => return false` and 2 that LOG
+  before returning. A helper can only return `Option<usize>` (the `return false`
+  is the caller's), so the bare 4 collapse to `let-else` but the 2 logged sites
+  keep a custom else — partial. Lower value than #40/#41; fold opportunistically
+  when touching the file, don't number separately.
+- **timestamp upsert family** (`upsert_start_time`/`upsert_spoken_status`/
+  `upsert_chapter`/`update_end_time`/`restore_timestamp`, queries.rs): structurally
+  similar but each has a DIFFERENT SQL string + param list — folding needs
+  parameterizing SQL, not a byte-identical cut. Not numbered.
+- **map-commit triple** (`buffer_to_work[..]=Some; work_to_buffer[..]=..;
+  db_cursor=..; matched+=1`, text_file_map): too many micro-variants (range-fill
+  fallback, ParagraphAccumulate `wi+=1`, trailing `continue`) — only 2 sites
+  truly identical, would need a parameterized abstraction. Not numbered.
+- **`window_end = (db_cursor+WINDOW).min(n_work)` (2 sites, 57 lines apart in one
+  fn) and `is_stage_row = sub_line>0` (3 trivial comparisons):** both
+  behavior-preserving but marginal (tiny, low drift). Name them only if touching
+  the matcher anyway.
+- **picker/overlay show()/hide() tails:** the remaining `set_visible` reveal/hide
+  tails reach PRIVATE fields on different structs, so a clean free-function cut is
+  impossible without a trait/inherent method (out of scope). `hide_pair(&a,&b)`
+  for the 5 scrim+container hides saves ~1 line/site across 4 structs — marginal,
+  skip.
