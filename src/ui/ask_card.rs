@@ -307,8 +307,4 @@ impl AskCardHost {
     pub fn input(&self) -> &TextView {
         self.ask.input()
     }
-
-    pub fn container(&self) -> &gtk4::Box {
-        self.ask.container()
-    }
 }
