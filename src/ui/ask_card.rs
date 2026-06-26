@@ -261,13 +261,34 @@ impl AskCardHost {
         self.fixed_chrome_h.set(fixed_chrome_h);
         let scroll_h = (card_height - fixed_chrome_h - footer_h).max(80);
         self.closed_scroll_h.set(scroll_h);
-        self.scrolled.set_height_request(scroll_h);
+        self.pin_scroll_height(scroll_h);
+    }
+
+    /// Pin the scroll viewport to EXACTLY `h` — both a floor (`height_request`)
+    /// AND a cap (`max_content_height`). `height_request` alone is only a
+    /// *minimum*: GTK is free to allocate the scroll TALLER when the
+    /// `valign=Center` container has room (which it does once the box re-lays-out
+    /// on a re-open), so the shrink was silently reverted to full height (proven:
+    /// first ask-open held 817, a later one read 1025). `max_content_height` is a
+    /// real cap on the viewport's natural height, so the box cannot over-allocate
+    /// it. `propagate_natural_height(false)` is already set on both scrolls.
+    fn pin_scroll_height(&self, h: i32) {
+        self.scrolled.set_height_request(h);
+        self.scrolled.set_max_content_height(h);
+        self.scrolled.set_min_content_height(h);
+        // Force a re-allocation NOW. `set_*_content_height` only updates the
+        // widget's requested size; without an explicit invalidation GTK may not
+        // re-run layout (the height "stuck" at the old value on a later open —
+        // page_size never updated, so the viewport never shrank). queue_resize
+        // schedules the relayout; the BottomClipGuard's page_size-notify handler
+        // then recomputes the clip against the settled viewport.
+        self.scrolled.queue_resize();
     }
 
     /// Reveal the ask card and SHRINK the scroll so the reading text ends above
-    /// it (the occlusion fix). Open height = pane − title − ask-natural; the
-    /// footer is hidden (it frees its slot, the ask card takes one). Recomputes
-    /// the clip now and on the idle tick after the height lands.
+    /// it (the occlusion fix). Open height = pane − fixed chrome − ask-natural;
+    /// the toggled footer (if any) is hidden, freeing its slot. Recomputes the
+    /// clip now and on the idle tick after the height lands.
     pub fn open(&self, title: &str, hint: &str) {
         self.ask.open(title, hint, self.card_width.get());
         if let Some(f) = &self.footer {
@@ -276,7 +297,7 @@ impl AskCardHost {
         let (_, ask_size) = self.ask.container().preferred_size();
         let scroll_h =
             (self.card_height.get() - self.fixed_chrome_h.get() - ask_size.height()).max(80);
-        self.scrolled.set_height_request(scroll_h);
+        self.pin_scroll_height(scroll_h);
         self.recompute_now_and_idle();
     }
 
@@ -287,8 +308,7 @@ impl AskCardHost {
         if let Some(f) = &self.footer {
             f.set_visible(true);
         }
-        self.scrolled
-            .set_height_request(self.closed_scroll_h.get().max(80));
+        self.pin_scroll_height(self.closed_scroll_h.get().max(80));
         self.recompute_now_and_idle();
     }
 

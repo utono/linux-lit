@@ -352,8 +352,9 @@ impl GlossOverlay {
 
         // The host owns the ask-card lifecycle: the fixed-scroll-height
         // viewport-shrink, the clip recompute (driving this overlay's
-        // BottomClipGuard clip box), and open/close. Gloss has no footer to toggle
-        // (its hint row stays visible), so `None`.
+        // BottomClipGuard clip box), and open/close. The footer (hr + keybind
+        // hints) is HIDDEN while the ask card is open, mirroring the journal Q&A —
+        // so it is registered as the host's toggled footer.
         let recompute = {
             let clip = clip_guard.clip().clone();
             let view = gloss_view.clone();
@@ -362,7 +363,8 @@ impl GlossOverlay {
                 crate::ui::recompute_overlay_bottom_clip(&view, &clip, &scrolled);
             }) as Rc<dyn Fn()>
         };
-        let ask_host = AskCardHost::new(ask, &gloss_scrolled, None, recompute);
+        let ask_host =
+            AskCardHost::new(ask, &gloss_scrolled, Some(footer_box.clone()), recompute);
 
         container.set_visible(false);
 
@@ -662,10 +664,11 @@ impl GlossOverlay {
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         self.apply_font();
-        // Fixed-scroll-height: the gloss result hides the title; only the hint
-        // footer sits below the scroll. Record the closed scroll height so the
-        // add/edit ask card shrinks the viewport (no occlusion of the gloss text).
-        self.size_scroll(card_height, self.title_pref_h() + self.footer_pref_h());
+        // Fixed-scroll-height: the gloss result hides the title; only the footer
+        // sits below the scroll (hidden when the ask card opens). Record the closed
+        // scroll height so the add/edit ask card shrinks the viewport (no occlusion
+        // of the gloss text).
+        self.size_scroll(card_height, self.title_pref_h());
         self.reset_scroll_top();
         self.mark_cursor_block();
         // mark_cursor_block sets bar_ranges, but the bar DRAW reads per-line
@@ -825,11 +828,11 @@ impl GlossOverlay {
         self.container.set_visible(true);
         self.apply_font();
         // Fixed-scroll-height: echoes mode hides the title but shows the source
-        // header + rule ABOVE the scroll and the hint footer below. All stay put
-        // while the "A add" ask card is open, so they are the fixed chrome.
+        // header + rule ABOVE the scroll (they stay put while the "A add" ask card
+        // is open). The footer below is hidden on open (handled by size_scroll).
         let echo_chrome = self.echo_header_view.preferred_size().1.height()
             + self.echo_rule.preferred_size().1.height();
-        self.size_scroll(card_height, echo_chrome + self.footer_pref_h());
+        self.size_scroll(card_height, echo_chrome);
         self.reset_scroll_top();
     }
 
@@ -962,11 +965,11 @@ impl GlossOverlay {
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         self.apply_font();
-        // Fixed-scroll-height: synopsis mode shows the title + the hint footer
-        // (which stays put while the ask card is open), nothing else above the
-        // scroll. Record the closed scroll height so opening the ask card shrinks
-        // the viewport (no occlusion of the synopsis text).
-        self.size_scroll(card_height, self.title_pref_h() + self.footer_pref_h());
+        // Fixed-scroll-height: synopsis mode shows the title above the scroll and
+        // the footer below (the footer is hidden when the ask card opens). Record
+        // the closed scroll height so opening the ask card shrinks the viewport
+        // (no occlusion of the synopsis text).
+        self.size_scroll(card_height, self.title_pref_h());
         self.reset_scroll_top();
 
         // Headless test: emit the overlay viewport rect once layout settles, so
@@ -1006,16 +1009,17 @@ impl GlossOverlay {
     }
 
     /// Record the card geometry on the ask-card host and set the scroll's CLOSED
-    /// height (fixed-scroll-height). `fixed_chrome_h` is the total height of the
-    /// non-scroll chrome that stays visible while the ask card is open — it varies
-    /// by show mode (synopsis/gloss: title + footer; echoes: footer + source
-    /// header + rule; gloss-result: footer only, title hidden). Gloss has no
-    /// toggled footer (its hint row stays put), so the host's toggled-`footer_h`
-    /// is 0. Call from every show path that makes the scroll visible, AFTER the
-    /// chrome visibility is set, so the preferred sizes are accurate.
-    fn size_scroll(&self, card_height: i32, fixed_chrome_h: i32) {
+    /// height (fixed-scroll-height). `above_chrome_h` is the non-scroll chrome
+    /// ABOVE the scroll that stays visible while the ask card is open — it varies
+    /// by show mode (synopsis/gloss-result: just the title; echoes: the source
+    /// header and rule). The footer (hr and hints) is the host's TOGGLED footer,
+    /// hidden on open, so the helper passes it separately as `footer_h` (not folded
+    /// into the fixed chrome). Call from every show path that makes the scroll
+    /// visible, AFTER the chrome visibility is set, so preferred sizes are accurate.
+    fn size_scroll(&self, card_height: i32, above_chrome_h: i32) {
         let (card_width, _) = self.last_card_size.get();
-        self.ask_host.size(card_width, card_height, fixed_chrome_h, 0);
+        self.ask_host
+            .size(card_width, card_height, above_chrome_h, self.footer_pref_h());
     }
 
     /// Preferred height of the title row (0 when hidden). Used for the
@@ -1028,8 +1032,8 @@ impl GlossOverlay {
         }
     }
 
-    /// Preferred height of the footer/hint row. It stays visible while the ask
-    /// card is open (gloss has no toggled footer), so it counts as fixed chrome.
+    /// Preferred height of the footer/hint row (hr + keybind hints). It is the
+    /// host's TOGGLED footer — hidden while the ask card is open.
     fn footer_pref_h(&self) -> i32 {
         self.footer_box.preferred_size().1.height()
     }

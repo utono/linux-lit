@@ -43,16 +43,7 @@ impl BottomClipGuard {
             clip: clip.clone(),
             scrolled: scrolled.clone(),
         };
-        // path (c): recompute on EVERY value change (scroll OR layout-driven
-        // page_size change, e.g. an ask card resizing the viewport).
-        {
-            let kind = guard.kind.clone();
-            let clip = clip.clone();
-            let scrolled = scrolled.clone();
-            scrolled.vadjustment().connect_value_changed(move |_| {
-                recompute(&kind, &clip, &scrolled);
-            });
-        }
+        guard.wire_recompute_signals();
         guard
     }
 
@@ -73,15 +64,38 @@ impl BottomClipGuard {
             clip: clip.clone(),
             scrolled: scrolled.clone(),
         };
+        guard.wire_recompute_signals();
+        guard
+    }
+
+    /// Path (c): recompute the clip on EVERY change that can move the partial
+    /// bottom row relative to the viewport — both a scroll (`value_changed`) AND
+    /// a viewport-height change (`page_size` notify). The page_size hook is
+    /// essential: when the ask card opens and the scroll's height is re-pinned,
+    /// the viewport shrinks but the scroll VALUE often does not change, so
+    /// `value_changed` alone never fires and the clip stays stale (computed
+    /// against the old, taller viewport) — the half-line then pokes out behind the
+    /// ask card. `page_size` notify fires precisely when GTK finishes the
+    /// relayout to the new height, so the clip is recomputed against the settled
+    /// viewport (no fixed-idle race).
+    fn wire_recompute_signals(&self) {
+        let adj = self.scrolled.vadjustment();
         {
-            let kind = guard.kind.clone();
-            let clip = clip.clone();
-            let scrolled = scrolled.clone();
-            scrolled.vadjustment().connect_value_changed(move |_| {
+            let kind = self.kind.clone();
+            let clip = self.clip.clone();
+            let scrolled = self.scrolled.clone();
+            adj.connect_value_changed(move |_| {
                 recompute(&kind, &clip, &scrolled);
             });
         }
-        guard
+        {
+            let kind = self.kind.clone();
+            let clip = self.clip.clone();
+            let scrolled = self.scrolled.clone();
+            adj.connect_page_size_notify(move |_| {
+                recompute(&kind, &clip, &scrolled);
+            });
+        }
     }
 
     /// The clip Box, e.g. so the caller can stack a selection-bar overlay after it.
