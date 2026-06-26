@@ -223,20 +223,23 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("G"), Action::JumpToEnd),
         (KeyCombo::plain("z"), Action::PendingZ),
         // Chapter / scene
+        // RPD: the 2/3 number-row keys emit bracketleft/braceleft unshifted and
+        // 2/3 shifted. Scene jumps sit on the UNSHIFTED glyph; bookmarks on the
+        // SHIFTED digit (see Bookmarks below).
         (KeyCombo::plain("parenleft"), Action::JumpToPrevChapter),
         (KeyCombo::plain("ampersand"), Action::JumpToNextChapter),
-        (KeyCombo::plain("2"), Action::JumpToPrevScene),
-        (KeyCombo::shift("2"), Action::JumpToPrevScene),
-        (KeyCombo::plain("3"), Action::JumpToNextScene),
-        (KeyCombo::shift("3"), Action::JumpToNextScene),
+        (KeyCombo::plain("bracketleft"), Action::JumpToPrevScene),
+        (KeyCombo::plain("braceleft"), Action::JumpToNextScene),
         (KeyCombo::plain("C"), Action::ShowCurrentChapter),
         (KeyCombo::plain("semicolon"), Action::ShowCurrentChapter),
-        // Bookmarks
+        // Bookmarks (the SHIFTED 2/3 glyphs on the bracketleft/braceleft keys)
         (KeyCombo::plain("m"), Action::ToggleBookmark),
         (KeyCombo::ctrl("c"), Action::SetChapter),
         (KeyCombo::ctrl("e"), Action::ShowEchoesBcp),
-        (KeyCombo::plain("bracketleft"), Action::PrevBookmark),
-        (KeyCombo::plain("braceleft"), Action::NextBookmark),
+        (KeyCombo::plain("2"), Action::PrevBookmark),
+        (KeyCombo::shift("2"), Action::PrevBookmark),
+        (KeyCombo::plain("3"), Action::NextBookmark),
+        (KeyCombo::shift("3"), Action::NextBookmark),
         (KeyCombo::ctrl("period"), Action::OpenBookmarkPicker),
     ]
 }
@@ -429,10 +432,15 @@ mod tests {
             km.lookup("bracketleft", false, false, true),
             Some(Action::ToggleColumnLayout),
         );
+        // Plain [ (unshifted on the RPD 2-key) jumps to the previous scene;
+        // the shifted 2 glyph is the bookmark jump (see bracket/2 swap).
         assert_eq!(
             km.lookup("bracketleft", false, false, false),
-            Some(Action::PrevBookmark),
+            Some(Action::JumpToPrevScene),
         );
+        assert_eq!(km.lookup("2", false, false, false), Some(Action::PrevBookmark));
+        assert_eq!(km.lookup("3", false, false, false), Some(Action::NextBookmark));
+        assert_eq!(km.lookup("braceleft", false, false, false), Some(Action::JumpToNextScene));
     }
 
     #[test]
