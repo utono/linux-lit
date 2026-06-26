@@ -13,7 +13,6 @@ pub enum ChordState {
     #[default]
     None,
     PendingG,
-    PendingZ,
 }
 
 #[derive(Default)]
@@ -149,15 +148,6 @@ pub fn handle_key(
         } else if key_name == "semicolon" {
             // g; — jump to most recently created bookmark
             crate::input::actions::bookmarks::jump_to_recent_bookmark(state, tokio_handle);
-            return true;
-        }
-    }
-
-    // zt sequence check
-    if key_state.borrow().chord == ChordState::PendingZ {
-        key_state.borrow_mut().chord = ChordState::None;
-        if key_name == "t" {
-            navigation::scroll_cursor_top(&mut state.borrow_mut());
             return true;
         }
     }
@@ -1026,11 +1016,10 @@ fn handle_gloss_key(
             crate::input::actions::gloss::read_current_block(state);
             true
         }
-        // `]` closes the overlay exactly like Escape/n (jump the cursor to the
-        // glossed passage's source on close), NOT like toggle_overlay's
-        // return-to-origin. It opens the overlay from the reader via table
-        // dispatch (ToggleGlossOverlay), so `]` is a full open/close toggle.
-        "Escape" | "n" | "bracketright" => {
+        // Escape/n close the overlay by jumping the cursor to the glossed
+        // passage's source on close, NOT like toggle_overlay's
+        // return-to-origin.
+        "Escape" | "n" => {
             let mut s = state.borrow_mut();
             s.tts.stop();
             s.gloss_overlay.hide();
@@ -2409,10 +2398,6 @@ fn dispatch_action(
                 KeyState::start_chord(key_state, ChordState::PendingG);
             }
         }
-        PendingZ => {
-            KeyState::start_chord(key_state, ChordState::PendingZ);
-        }
-
         // Search / concordance-in-work (n/p)
         SearchNextMatch => {
             if state.borrow().concordance_state.is_some() {

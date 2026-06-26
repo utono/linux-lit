@@ -901,21 +901,6 @@ pub fn cursor_to_page_bottom(state: &mut AppState) {
     }
 }
 
-/// Scroll viewport so current_line is at the top (zt). If the line immediately
-/// above is a speaker/stage-direction/blank, backs up to include that context.
-pub fn scroll_cursor_top(state: &mut AppState) {
-    if state.current_work.is_none() {
-        return;
-    }
-    state.page_back_stack.clear();
-    state.page_back_stack.push(state.page_top_line);
-    let top = back_up_for_speaker_state(state, state.current_line);
-    crate::logging::log(&format!(
-        "ZT: current_line={} effective_top={}", state.current_line, top
-    ));
-    set_page_instant(state, top);
-}
-
 /// Go to previous page and place cursor on its last visible line (shift+comma).
 pub fn page_backward_bottom(state: &mut AppState) {
     if state.current_work.is_none() {

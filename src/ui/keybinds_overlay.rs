@@ -40,11 +40,11 @@ const NUMBER_ROW: &[KeyDef] = &[
     bare("&", "5", "next ch"),
     ub("=", "6"),
     ub(")", "7"),
-    ub("}", "8"),
-    bare("]", "9", "gloss tog"),
+    bare("}", "8", "prev ch"),
+    bare("]", "9", "next ch"),
     key("*", "0", "", "reset font", &[]),
-    bare("!", "%", "font \u{2212}"),
-    bare("|", "`", "font +"),
+    key("!", "%", "", "", &[("C-!", "font \u{2212}")]),
+    key("|", "`", "", "", &[("C-|", "font +")]),
 ];
 const BACKSPACE: KeyDef = bare("\u{232b}", "", "delete ts");
 
@@ -61,7 +61,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key("l", "L", "toggle signs", "", &[("S-C-l", "save+quit")]),
     key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
     ub("@", "^"),
-    key("\\", "#", "vocab ▶", "◀ vocab", &[("C-\\", "conc picker"), ("M-\\", "vocab hi")]),
+    key("\\", "#", "gloss tog", "◀ vocab", &[("C-\\", "conc picker"), ("M-\\", "vocab hi")]),
 ];
 const TAB_KEY: KeyDef = bare("Tab", "", "play/pause");
 
@@ -90,7 +90,7 @@ const BOTTOM_ROW: &[KeyDef] = &[
     key("m", "M", "bookmark", "", &[("C-m", "media picker")]),
     key("w", "W", "copy word", "W: collect", &[("M-w", "Shx echoes"), ("C-w", "Shx echo turns"), ("S-C-w", "reopen Shx echoes")]),
     key("v", "V", "", "V: visual mode", &[("v", "voice: add/remove"), ("C-v", "voice: cycle")]),
-    bare("z", "Z", "zt…"),
+    bare("z", "Z", "vocab ▶"),
 ];
 
 const SHIFT_KEY: KeyDef = ub("Shift", "");
@@ -101,7 +101,6 @@ const MOD_SEQ_ROW: &[KeyDef] = &[
     bare("gg", "", "go to start"),
     key("G", "", "", "go to end", &[]),
     bare("g;", "", "latest bookmark"),
-    bare("zt", "", "scroll cursor top"),
     key("\u{2191}", "", "cursor up", "pg back btm", &[("C-\u{2191}", "volume +")]),
     key("\u{2193}", "", "cursor down", "", &[("C-\u{2193}", "volume \u{2212}")]),
     bare("\u{2190}", "", "seek \u{2212}3.5"),
@@ -251,9 +250,6 @@ line of the previous speaker turn. Seeks audio to the landing line. \
 -> navigation::jump_to_start — src/input/navigation.rs",
         "go to end" => "Jump to the very last line of the work (G). \
 -> navigation::jump_to_end — src/input/navigation.rs",
-        "scroll cursor top" | "zt…" => "Scroll the viewport so the cursor line \
-sits at the top of the page (vim zt). \
--> navigation::scroll_cursor_top — src/input/navigation.rs",
         "pg back btm" => "Turn one page backward and land the cursor on the bottom \
 line of the new page (Shift+Up). \
 -> navigation::page_backward_bottom — src/input/navigation.rs",

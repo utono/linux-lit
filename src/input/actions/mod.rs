@@ -164,7 +164,6 @@ pub enum Action {
 
     // Multi-key chords (entry — completion handled by KeyState)
     PendingG,
-    PendingZ,
 
     // Search (in reader, when matches present)
     SearchNextMatch,
@@ -279,7 +278,6 @@ impl Action {
             | Action::CopyLineMappingId
             | Action::EscapeReaderMode
             | Action::PendingG
-            | Action::PendingZ
             | Action::SearchNextMatch
             | Action::SearchPrevMatch
             | Action::OpenLibraryPicker
@@ -393,7 +391,6 @@ impl Action {
             Action::CopyLineMappingId => "CopyLineMappingId",
             Action::EscapeReaderMode => "EscapeReaderMode",
             Action::PendingG => "PendingG",
-            Action::PendingZ => "PendingZ",
             Action::SearchNextMatch => "SearchNextMatch",
             Action::SearchPrevMatch => "SearchPrevMatch",
         }
@@ -433,7 +430,6 @@ mod tests {
         assert_eq!(Action::SetStartTime.category(), Category::Timestamps);
         assert_eq!(Action::SaveAndQuit.category(), Category::App);
         assert_eq!(Action::PendingG.category(), Category::App);
-        assert_eq!(Action::PendingZ.category(), Category::App);
         assert_eq!(Action::OpenSearch.category(), Category::App);
     }
 

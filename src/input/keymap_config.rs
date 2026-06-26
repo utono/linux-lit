@@ -218,16 +218,21 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("q"), Action::JumpToNextSpeaker),
         (KeyCombo::plain("J"), Action::JumpToNextSpeaker),
         (KeyCombo::plain("K"), Action::JumpToPrevSpeaker),
-        // Multi-key chord entry (gg → JumpToStart, zt → ScrollCursorTop)
+        // Multi-key chord entry (gg → JumpToStart)
         (KeyCombo::plain("g"), Action::PendingG),
         (KeyCombo::plain("G"), Action::JumpToEnd),
-        (KeyCombo::plain("z"), Action::PendingZ),
+        // `z` steps forward through the vocab popup's words (swapped with `\`).
+        (KeyCombo::plain("z"), Action::VocabPopupNext),
         // Chapter / scene
         // RPD: the 2/3 number-row keys emit bracketleft/braceleft unshifted and
         // 2/3 shifted. Scene jumps sit on the UNSHIFTED glyph; bookmarks on the
         // SHIFTED digit (see Bookmarks below).
         (KeyCombo::plain("parenleft"), Action::JumpToPrevChapter),
         (KeyCombo::plain("ampersand"), Action::JumpToNextChapter),
+        // `}` (braceright on RPD) duplicates `(` — jump to the previous chapter.
+        (KeyCombo::plain("braceright"), Action::JumpToPrevChapter),
+        // `]` (bracketright on RPD) duplicates `&` — jump to the next chapter.
+        (KeyCombo::plain("bracketright"), Action::JumpToNextChapter),
         (KeyCombo::plain("bracketleft"), Action::JumpToPrevScene),
         (KeyCombo::plain("braceleft"), Action::JumpToNextScene),
         (KeyCombo::plain("C"), Action::ShowCurrentChapter),
@@ -262,7 +267,8 @@ fn media_bindings() -> Vec<(KeyCombo, Action)> {
 fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
         (KeyCombo::plain("h"), Action::ShowSynopsisOverlay),
-        (KeyCombo::plain("backslash"), Action::VocabPopupNext),
+        // `\` duplicates Ctrl+g — open/close the gloss overlay (swapped with `z`).
+        (KeyCombo::plain("backslash"), Action::ToggleGlossOverlay),
         (KeyCombo::plain("numbersign"), Action::VocabPopupPrev),
         (KeyCombo::plain("r"), Action::ConcordanceNext),
         (KeyCombo::plain("R"), Action::ConcordancePrev),
@@ -277,8 +283,6 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl_alt("p"), Action::OpenConcordanceListPicker),
         (KeyCombo::alt("r"), Action::OpenConcordanceWorksPicker),
         (KeyCombo::ctrl("g"), Action::ToggleGlossOverlay),
-        // `]` (bracketright on RPD) duplicates Ctrl+g — open/close the gloss overlay.
-        (KeyCombo::plain("bracketright"), Action::ToggleGlossOverlay),
         (KeyCombo::alt("g"), Action::OpenGlossPicker),
         (KeyCombo::ctrl("j"), Action::ToggleJournalOverlay),
         (KeyCombo::plain("H"), Action::ToggleVocabPopup),
@@ -287,8 +291,8 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
 
 fn display_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
-        (KeyCombo::plain("exclam"), Action::AdjustFontSizeDown),
-        (KeyCombo::plain("bar"), Action::AdjustFontSizeUp),
+        (KeyCombo::ctrl("exclam"), Action::AdjustFontSizeDown),
+        (KeyCombo::ctrl("bar"), Action::AdjustFontSizeUp),
         (KeyCombo::plain("0"), Action::ResetFontSize),
         (KeyCombo::plain("f"), Action::CycleFontForward),
         (KeyCombo::plain("F"), Action::CycleFontBackward),
