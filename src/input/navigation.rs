@@ -187,7 +187,7 @@ pub fn jump_to_start(state: &mut AppState) {
             .map(|l| l.sub_line)
     };
     let target = (0..line_count)
-        .find(|&i| is_dialogue_line(&state.buffer, i, &stage_lookup))
+        .find(|&i| is_dialogue_line(&state.buffer, i, state.is_prose(), &stage_lookup))
         .unwrap_or(0);
 
     state.current_line = target;
@@ -220,7 +220,7 @@ pub fn jump_to_end(state: &mut AppState) {
         let mut t = line_count - 1;
         loop {
             if !state.translation_lines.get(t).copied().unwrap_or(false)
-                && is_dialogue_line(&state.buffer, t, &stage_lookup)
+                && is_dialogue_line(&state.buffer, t, state.is_prose(), &stage_lookup)
             {
                 break;
             }
@@ -261,7 +261,7 @@ pub fn jump_to_end(state: &mut AppState) {
         // The last page is the final sonnet; land the cursor on its first verse
         // line (the first dialogue at/after the section heading), matching the
         // gg/x landing for every other sonnet.
-        let first = next_dialogue_from(&state.buffer, new_top, line_count, &stage_lookup)
+        let first = next_dialogue_from(&state.buffer, new_top, line_count, state.is_prose(), &stage_lookup)
             .min(line_count.saturating_sub(1));
         state.current_line = first;
         after_page_change(state, PageChangeReason::JumpToLine);
@@ -269,7 +269,7 @@ pub fn jump_to_end(state: &mut AppState) {
     }
 
     let cs = column_split(state, new_top);
-    let on_page = prev_dialogue_line(&state.buffer, &state.translation_lines, cs.page_end + 1, &stage_lookup)
+    let on_page = prev_dialogue_line(&state.buffer, &state.translation_lines, cs.page_end + 1, state.is_prose(), &stage_lookup)
         .filter(|&d| d >= new_top && d <= cs.page_end)
         .unwrap_or(target.min(cs.page_end));
     state.current_line = on_page;
@@ -458,7 +458,7 @@ pub(crate) fn last_page_top(state: &AppState) -> usize {
             // an empty right column, so it does NOT update `last_full` — the next
             // full-right-column spread the walk reaches will.)
             let dialogue_at_or_below_next =
-                (next..line_count).any(|i| is_dialogue_line(&state.buffer, i, &stage_lookup));
+                (next..line_count).any(|i| is_dialogue_line(&state.buffer, i, state.is_prose(), &stage_lookup));
             if we_next && !dialogue_at_or_below_next {
                 // Case (a): the true end. Search [top+1, next) for the SMALLEST top
                 // whose spread leaves no dialogue below it and still has a non-empty
@@ -467,7 +467,7 @@ pub(crate) fn last_page_top(state: &AppState) -> usize {
                 for t in (top + 1)..next.min(line_count) {
                     let tcs = super::viewport::column_split(state, t);
                     let dialogue_below = (tcs.next_page_top..line_count)
-                        .any(|i| is_dialogue_line(&state.buffer, i, &stage_lookup));
+                        .any(|i| is_dialogue_line(&state.buffer, i, state.is_prose(), &stage_lookup));
                     if !dialogue_below && !would_empty_right_column(state, t) {
                         pulled = Some(t);
                         break;
@@ -630,7 +630,7 @@ fn scene_snap_top(state: &AppState, line_count: usize) -> Option<usize> {
         return None;
     }
     // First dialogue line at/after the right column's start.
-    let rc_first_dlg = next_dialogue_from(&state.buffer, split, line_count, &stage_lookup);
+    let rc_first_dlg = next_dialogue_from(&state.buffer, split, line_count, state.is_prose(), &stage_lookup);
     if rc_first_dlg >= line_count {
         return None;
     }
@@ -669,7 +669,7 @@ fn scene_snap_top(state: &AppState, line_count: usize) -> Option<usize> {
             }
             return None;
         }
-        if is_dialogue_line(&state.buffer, i, &stage_lookup) {
+        if is_dialogue_line(&state.buffer, i, state.is_prose(), &stage_lookup) {
             return None;
         }
     }
@@ -713,7 +713,7 @@ pub fn page_forward(state: &mut AppState) {
             // highlight. `last_fully_visible_line` reflects the clamped viewport.
             let visible_end = super::viewport::last_fully_visible_line(state, state.page_top_line)
                 .min(cs.page_end);
-            let last_dlg = prev_dialogue_line(&state.buffer, &state.translation_lines, visible_end + 1, &stage_lookup)
+            let last_dlg = prev_dialogue_line(&state.buffer, &state.translation_lines, visible_end + 1, state.is_prose(), &stage_lookup)
                 .filter(|&d| d >= state.page_top_line)
                 .unwrap_or(visible_end);
             if last_dlg > state.current_line {
@@ -737,7 +737,7 @@ pub fn page_forward(state: &mut AppState) {
         // Only take the scene-snap when it yields real forward progress.
         let clamped = clamp_page_top_to_scroll_ceiling(state, snap_top);
         if clamped > state.page_top_line {
-            let next_dialogue = next_dialogue_from(&state.buffer, clamped, line_count, &stage_lookup);
+            let next_dialogue = next_dialogue_from(&state.buffer, clamped, line_count, state.is_prose(), &stage_lookup);
             log_fmt!("PAGE_FWD: scene-snap page_top={} -> new_top={} next_dialogue={}",
                      state.page_top_line, clamped, next_dialogue);
             state.page_back_stack.push(state.page_top_line);
@@ -837,7 +837,7 @@ pub fn page_backward(state: &mut AppState) {
                     .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
                     .map(|l| l.sub_line)
             };
-            next_dialogue_from(&state.buffer, prev_top, line_count, &stage_lookup)
+            next_dialogue_from(&state.buffer, prev_top, line_count, state.is_prose(), &stage_lookup)
         };
         log_fmt!("PAGE_BWD: stack pop new_top={} next_dialogue={} from page_top={}",
                  prev_top, nd, state.page_top_line);
@@ -869,16 +869,16 @@ pub fn page_backward(state: &mut AppState) {
     let cursor = if state.one_section_per_page() {
         // One section per page (sonnet_sequence): paging back lands on the
         // sonnet's FIRST verse line, the same landing as gg/x — not the last.
-        next_dialogue_from(&state.buffer, new_top, state.effective_line_count(), &stage_lookup)
+        next_dialogue_from(&state.buffer, new_top, state.effective_line_count(), state.is_prose(), &stage_lookup)
             .min(state.effective_line_count().saturating_sub(1))
     } else if state.column_count() == 2 {
         let cs = super::viewport::column_split(state, new_top);
-        prev_dialogue_line(&state.buffer, &state.translation_lines, cs.page_end + 1, &stage_lookup)
+        prev_dialogue_line(&state.buffer, &state.translation_lines, cs.page_end + 1, state.is_prose(), &stage_lookup)
             .filter(|&d| d >= new_top && d <= cs.page_end)
             .unwrap_or(next_dialogue)
     } else {
         let last_vis = last_fully_visible_line(state, new_top);
-        prev_dialogue_line(&state.buffer, &state.translation_lines, last_vis + 1, &stage_lookup)
+        prev_dialogue_line(&state.buffer, &state.translation_lines, last_vis + 1, state.is_prose(), &stage_lookup)
             .filter(|&d| d >= new_top && d <= last_vis)
             .unwrap_or(next_dialogue)
     };
@@ -922,7 +922,7 @@ pub fn page_backward_bottom(state: &mut AppState) {
                     .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
                     .map(|l| l.sub_line)
             };
-            next_dialogue_from(&state.buffer, prev, line_count, &stage_lookup)
+            next_dialogue_from(&state.buffer, prev, line_count, state.is_prose(), &stage_lookup)
         };
         let top = back_up_for_speaker_state(state, nd);
         log_fmt!("NAV_BACK_BOTTOM: stack pop prev={} new_top={} from page_top={}",
@@ -957,7 +957,7 @@ pub fn jump_to_prev_dialogue(state: &mut AppState) {
                 .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
                 .map(|l| l.sub_line)
         };
-        prev_dialogue_line(&state.buffer, &state.translation_lines, state.current_line, &stage_lookup)
+        prev_dialogue_line(&state.buffer, &state.translation_lines, state.current_line, state.is_prose(), &stage_lookup)
     };
     if let Some(target) = target {
         state.current_line = target;
@@ -981,7 +981,7 @@ pub fn jump_to_next_dialogue(state: &mut AppState) {
                 .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
                 .map(|l| l.sub_line)
         };
-        next_dialogue_line(&state.buffer, &state.translation_lines, state.current_line, line_count, &stage_lookup)
+        next_dialogue_line(&state.buffer, &state.translation_lines, state.current_line, line_count, state.is_prose(), &stage_lookup)
     };
     if let Some(target) = target {
         let prev_line = state.current_line;
@@ -998,13 +998,18 @@ pub fn cursor_prev_line(state: &mut AppState) {
     if state.current_line == 0 {
         return;
     }
-    let target = {
+    let target = if state.is_prose() {
+        // Prose works (.txt or DB) have no play-style dialogue structure and
+        // few/no DB-mapped buffer lines, so dialogue-stepping skips headings
+        // ("CHAPTER I") and behaves erratically. Step one plain buffer line.
+        Some(state.current_line - 1)
+    } else {
         let stage_lookup = |bi: usize| -> Option<i64> {
             state.work_line_for_buffer(bi)
                 .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
                 .map(|l| l.sub_line)
         };
-        prev_dialogue_line(&state.buffer, &state.translation_lines, state.current_line, &stage_lookup)
+        prev_dialogue_line(&state.buffer, &state.translation_lines, state.current_line, state.is_prose(), &stage_lookup)
     };
     let Some(target) = target else {
         return;
@@ -1030,13 +1035,17 @@ pub fn cursor_next_dialogue(state: &mut AppState) {
     if line_count == 0 {
         return;
     }
-    let target = {
+    let target = if state.is_prose() {
+        // Prose: step one plain buffer line (see cursor_prev_line). Lands on
+        // every line incl. headings; plays keep dialogue-skipping below.
+        (state.current_line + 1 < line_count).then(|| state.current_line + 1)
+    } else {
         let stage_lookup = |bi: usize| -> Option<i64> {
             state.work_line_for_buffer(bi)
                 .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
                 .map(|l| l.sub_line)
         };
-        next_dialogue_line(&state.buffer, &state.translation_lines, state.current_line, line_count, &stage_lookup)
+        next_dialogue_line(&state.buffer, &state.translation_lines, state.current_line, line_count, state.is_prose(), &stage_lookup)
     };
     if let Some(target) = target {
         let prev_line = state.current_line;
@@ -1086,7 +1095,7 @@ fn act_dialogue_lines(state: &AppState) -> Vec<usize> {
         // First dialogue AT OR AFTER this act boundary (skips the entrance stage
         // direction / speaker chrome). `next_dialogue_from` is inclusive of `bl`,
         // so an act that opens directly on a dialogue line is handled too.
-        let d = next_dialogue_from(&state.buffer, bl, line_count, &stage_lookup);
+        let d = next_dialogue_from(&state.buffer, bl, line_count, state.is_prose(), &stage_lookup);
         if d < line_count {
             // Dedup: consecutive acts resolve to the same first dialogue only if a
             // div1 has no dialogue of its own; keep entries strictly increasing.
@@ -1321,6 +1330,7 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
                 &state.translation_lines,
                 bl,
                 line_count,
+                state.is_prose(),
                 &stage_lookup,
             );
             if let Some(d) = first {
@@ -1559,7 +1569,7 @@ pub fn jump_to_next_speaker(state: &mut AppState) {
             state.current_line,
             Direction::Next,
             |i| state.work_line_for_buffer(i).and_then(|wi| work.lines.get(wi)).and_then(|l| l.speaker.clone()),
-            |i| is_dialogue_line(&state.buffer, i, &|bi: usize| -> Option<i64> {
+            |i| is_dialogue_line(&state.buffer, i, state.is_prose(), &|bi: usize| -> Option<i64> {
                 state.work_line_for_buffer(bi)
                     .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
                     .map(|l| l.sub_line)
@@ -1596,7 +1606,7 @@ pub fn jump_to_prev_speaker(state: &mut AppState) {
     let block_top = current_block_first_line(
         state.current_line,
         speaker_at,
-        |i| is_dialogue_line(&state.buffer, i, &|bi: usize| -> Option<i64> {
+        |i| is_dialogue_line(&state.buffer, i, state.is_prose(), &|bi: usize| -> Option<i64> {
             state.work_line_for_buffer(bi)
                 .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
                 .map(|l| l.sub_line)
@@ -1621,7 +1631,7 @@ pub fn jump_to_prev_speaker(state: &mut AppState) {
         state.current_line,
         Direction::Prev,
         speaker_at,
-        |i| is_dialogue_line(&state.buffer, i, &|bi: usize| -> Option<i64> {
+        |i| is_dialogue_line(&state.buffer, i, state.is_prose(), &|bi: usize| -> Option<i64> {
             state.work_line_for_buffer(bi)
                 .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
                 .map(|l| l.sub_line)
@@ -1670,7 +1680,7 @@ pub fn jump_to_next_scene(state: &mut AppState) {
                 .map(|l| l.sub_line)
         };
         let cursor = marker.and_then(|m| {
-            next_dialogue_line(&state.buffer, &state.translation_lines, m, line_count, &stage_lookup)
+            next_dialogue_line(&state.buffer, &state.translation_lines, m, line_count, state.is_prose(), &stage_lookup)
         });
         (marker, cursor)
     };
