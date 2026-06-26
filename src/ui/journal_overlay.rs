@@ -344,9 +344,8 @@ impl JournalOverlay {
         self.view.buffer().set_text(&body);
         self.apply_font();
         self.ask.close();
-        // Keep the navigation footer hidden during the Asking state (the ask card
-        // already hid it; ask.close() here does not restore it). They return when
-        // the answer page renders via close_ask_card / show_page's own footer set.
+        // Keep the navigation footer hidden during the Asking state. The result
+        // render (show_page/show_passage_page/show_message) restores it.
         self.footer_container.set_visible(false);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
