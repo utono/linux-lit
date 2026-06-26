@@ -10,7 +10,7 @@ the litdb `is_chapter`→`is_track_mark` rename
 
 ## Problem
 
-The reader's chapter machinery — the `(`/`)` chapter-jump nav, the gutter chapter
+The reader's chapter machinery — the `(`/`&` chapter-jump nav, the gutter chapter
 sign, the synopsis card's "which chapter am I in" — all read `Line.is_chapter`,
 which is **sourced from the active media's `line_timestamps.is_track_mark`** flag:
 
@@ -105,20 +105,86 @@ divisions once the source flips:
 - `src/gutter.rs:55`, `src/app/mod.rs` `is_chapter_line` map — the gutter sign.
 - `src/text_file_map.rs:216,569` — chapter-start buffer indices.
 
-### The `c` key stays the track-mark setter
+### The `(` / `&` chapter-jump keys — behavior unchanged, meaning changes
 
-`Action::SetChapter` / the `c` key still SETS `is_track_mark` (the export marker)
-via `timestamps::set_chapter`. It no longer affects nav/sign (those follow
-divisions). **Relabel for clarity** so its purpose is unambiguous:
+These are the chapter-jump nav keys. On the RPD layout they are unshifted glyphs
+on the number row: `(` is `parenleft` (the `4` key) and `&` is `ampersand` (the
+`5` key).
 
-- `set_chapter` → keep behavior; the function may be renamed `set_track_mark`
-  (optional, planner's call) since it writes `is_track_mark`.
-- Keybinds overlay (`src/ui/keybinds_overlay.rs:59,526,691`): "set chapter" →
-  "set track mark"; its long help should say "set an audio track mark on this
-  line (export metadata for ffmpeg chapter embedding), distinct from the
-  structural chapter that `Ctrl+c` creates."
-- The `Ctrl+c` `ToggleChapterStart` (structural chapter) is unchanged and is now
-  the ONLY thing that affects chapter nav/sign.
+Current bindings (`keymap_config.rs:226-227`, mirrored in `keymap.json:86-87`):
+
+- **`(` (`parenleft`)** → `Action::JumpToPrevChapter` — cursor to the previous
+  chapter start.
+- **`&` (`ampersand`)** → `Action::JumpToNextChapter` — cursor to the next
+  chapter start.
+
+The *handlers* (`navigation.rs::jump_to_prev_chapter` /
+`jump_to_next_chapter`) read `Line.is_chapter` and need **no code change** — they
+are in the "consumers that work unchanged" list above. But because the SOURCE of
+`is_chapter` flips, their **effect** changes for the user:
+
+- Before: jump between track-marked lines of the loaded recording (nothing to
+  jump to with no media).
+- After: jump between `div1` boundaries (chapters in prose, acts in plays),
+  media-independent.
+
+So **do not rebind `(`/`&`**, but **do update their labels/help** to match the
+new meaning, in lockstep with the `c`/`Ctrl+c` relabel:
+
+- Keybinds overlay (`src/ui/keybinds_overlay.rs`): wherever `parenleft` /
+  `ampersand` are described, the help should say "jump to previous/next chapter
+  (a `div1` boundary — chapter in prose, act in a play), independent of any
+  loaded audio" rather than anything implying it follows the recording's track
+  marks. Update via the `update-cairo-keybinds-overlay` skill alongside the
+  `c`/`Ctrl+c` changes.
+
+### Swap `c` and `Ctrl+c` — structural chapter gets the easy key
+
+Today the bindings are backwards relative to the new model:
+
+- **plain `c`** = `Action::SetChapter` → writes the rare audio `is_track_mark`
+  (export-only) via `timestamps::set_chapter`.
+- **`Ctrl+c`** = `Action::ToggleChapterStart` → edits the structural
+  `chapter_start` / `(div1,div2)` boundary — the thing that (after this repoint)
+  drives ALL reader chapter nav and the gutter sign.
+
+So the everyday, nav-affecting editor sits on the harder chord while the rare
+export marker sits on the easy plain key. **Swap them**, so the easy key matches
+the now-important concept:
+
+- **plain `c`** → `Action::ToggleChapterStart` (structural chapter; the ONLY
+  thing that affects chapter nav/sign).
+- **`Ctrl+c`** → `Action::SetChapter` (audio track mark; export-only, affects
+  nothing in the reader).
+
+Update **both** binding sources in lockstep (per CLAUDE.md, the JSON silently
+overrides the compiled defaults):
+
+- `src/input/keymap_config.rs` — `timestamp_bindings()` line ~325
+  (`KeyCombo::plain("c") => SetChapter`) and the `Ctrl+c` entry at line ~236
+  (`KeyCombo::ctrl("c") => ToggleChapterStart`): swap the two `Action`s.
+- `~/tty-dotfiles/linux-lit/.config/linux-lit/keymap.json` (stow source; deployed
+  copy at `~/.config/linux-lit/keymap.json` lines 17–18): swap the same two.
+
+**Relabel for clarity** so each purpose is unambiguous after the swap:
+
+- `Action::SetChapter`'s handler `set_chapter` → keep behavior; the function may
+  be renamed `set_track_mark` (optional, planner's call) since it writes
+  `is_track_mark`.
+- Keybinds overlay (`src/ui/keybinds_overlay.rs:59,526,691`):
+  - **plain `c`** label "set chapter" → "toggle ch start" (structural); its long
+    help should say "toggle whether this line begins a structural chapter
+    (a `(div1,div2)` division boundary) — this is what `(`/`&` jump between and
+    what the gutter chapter sign marks."
+  - **`Ctrl+c`** ("toggle ch start") → "set track mark"; its long help should say
+    "set an audio track mark on this line (export metadata for ffmpeg chapter
+    embedding), distinct from the structural chapter that plain `c` toggles."
+  - The overlay is hand-maintained with no compile-time enforcement — run the
+    `update-cairo-keybinds-overlay` skill so the cap strip AND the detail-panel
+    `describe()` arms for both `c` and `Ctrl+c` are updated together (the skill's
+    three-pass cross-reference is what catches a swapped pair drifting).
+- After the swap, **plain `c` (`ToggleChapterStart`, structural chapter) is the
+  ONLY thing that affects chapter nav/sign.**
 
 ### Gutter-sign label cleanup (deferred Minor, fold in here)
 
@@ -162,8 +228,8 @@ per sign:
 - **Build/clippy:** `cargo build`, `cargo test --bins`, `cargo clippy` green;
   clippy warning count not above baseline (currently 119).
 - **Headless visual (per CLAUDE.md):** open Cromwell with no audio, confirm the
-  gutter chapter signs render at chapter boundaries and `(`/`)` jumps between
-  them; open a play, confirm `(`/`)` jumps act-to-act. The user does the final
+  gutter chapter signs render at chapter boundaries and `(`/`&` jumps between
+  them; open a play, confirm `(`/`&` jumps act-to-act. The user does the final
   live-session check.
 
 ## Files (for the eventual plan)
@@ -175,7 +241,15 @@ per sign:
   + its tests (or place beside `build_section_starts`, which already does the
   div-boundary walk).
 - `src/input/actions/pickers.rs` — reload path: same source change.
-- `src/ui/keybinds_overlay.rs` — relabel "set chapter" → "set track mark" + help.
+- `src/input/keymap_config.rs` — swap plain `c` (`SetChapter`) ↔ `Ctrl+c`
+  (`ToggleChapterStart`).
+- `~/tty-dotfiles/linux-lit/.config/linux-lit/keymap.json` — swap the same two
+  binds (stow source; deployed at `~/.config/linux-lit/keymap.json`). Re-stow
+  after editing.
+- `src/ui/keybinds_overlay.rs` — relabel via `update-cairo-keybinds-overlay`:
+  plain `c` → "toggle ch start" (structural) + help; `Ctrl+c` → "set track mark"
+  + help; `(`/`&` help → "jump prev/next chapter (div1 boundary), media-
+  independent". Update both the cap strip and the `describe()` detail arms.
 - `src/input/timestamps.rs` — optional `set_chapter`→`set_track_mark` rename;
   gutter sign-name audit.
 - `~/utono/litdb/.claude/commands/litdb/timestamps-signs.md` — sign-name doc
