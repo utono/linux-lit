@@ -1265,9 +1265,9 @@ pub fn build_window(
     authorship_picker.overlay.add_overlay(&word_status_label);
 
     let chapter_toast = gtk4::Label::new(None);
-    chapter_toast.set_valign(gtk4::Align::End);
+    chapter_toast.set_valign(gtk4::Align::Start);
     chapter_toast.set_halign(gtk4::Align::Center);
-    chapter_toast.set_margin_bottom(32);
+    chapter_toast.set_margin_top(32);
     chapter_toast.add_css_class("chapter-toast");
     chapter_toast.set_visible(false);
     authorship_picker.overlay.add_overlay(&chapter_toast);

@@ -6,6 +6,26 @@ use gtk4::prelude::WidgetExt;
 use crate::app::AppState;
 
 pub(crate) fn escape_reader_mode(state: &Rc<RefCell<AppState>>) {
+    // Toasts take top priority: if any transient toast pill is on screen,
+    // Escape just dismisses it and does nothing else (no tearing down
+    // concordance / AB-loop / search state). `chapter_toast` is shared by the
+    // chapter/scene, scansion, and TTS (incl. persistent "Synthesizing…")
+    // toasts; `speed_toast` and `search_toast` are the other two. Bumping
+    // `chapter_toast_gen` makes any pending auto-hide timer a stale no-op.
+    {
+        let s = state.borrow();
+        let any_visible = s.chapter_toast.is_visible()
+            || s.speed_toast.is_visible()
+            || s.search_toast.is_visible();
+        if any_visible {
+            s.chapter_toast_gen.set(s.chapter_toast_gen.get().wrapping_add(1));
+            s.chapter_toast.set_visible(false);
+            s.speed_toast.set_visible(false);
+            s.search_toast.set_visible(false);
+            crate::logging::log("ESCAPE: cleared visible toast(s)");
+            return;
+        }
+    }
     // Translations: Escape toggles them off, same as `i`, restoring the
     // pre-translation two-column page.
     {
