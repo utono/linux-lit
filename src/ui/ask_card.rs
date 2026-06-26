@@ -205,11 +205,19 @@ pub struct AskCardHost {
     /// after the footer is re-shown, which would leave the scroll stuck shrunk.
     closed_scroll_h: Cell<i32>,
     /// Pane height (the card_height the surface was last sized to), recorded by
-    /// `size`. With the title height it yields the OPEN scroll height on open.
+    /// `size`. With the fixed-chrome height it yields the OPEN scroll height.
     card_height: Cell<i32>,
-    /// The title slot height, recorded by `size` (measured once when the card is
-    /// sized, not per open — more stable than a per-open `preferred_size`).
-    title_h: Cell<i32>,
+    /// Total height of the chrome that stays put in BOTH the closed and open
+    /// states — everything in the card column except the scroll, the ask card,
+    /// and the toggled `footer` (which is hidden on open). For the journal that is
+    /// the title (its nav footer IS the toggled `footer`, so it is NOT counted
+    /// here). For gloss — which has no toggled footer — it is the title PLUS the
+    /// always-visible hint row PLUS, in echoes mode, the source header + rule.
+    /// Recorded by `size` (measured once when the card is sized — more stable than
+    /// a per-open `preferred_size`). Open scroll height = `card_height −
+    /// fixed_chrome_h − ask`; the toggled footer (if any) has already dropped out
+    /// because it is hidden, so it is not in this sum.
+    fixed_chrome_h: Cell<i32>,
     card_width: Cell<i32>,
 }
 
@@ -227,7 +235,7 @@ impl AskCardHost {
             recompute,
             closed_scroll_h: Cell::new(0),
             card_height: Cell::new(0),
-            title_h: Cell::new(0),
+            fixed_chrome_h: Cell::new(0),
             card_width: Cell::new(0),
         }
     }
@@ -239,14 +247,19 @@ impl AskCardHost {
     }
 
     /// Record the card geometry and set the scroll's CLOSED height. Call from the
-    /// surface's size/show paths (once per (re)size) BEFORE any open/close. Stores
-    /// `closed_scroll_h = card_height − title_h − footer_h` and sets the scroll to
-    /// it. `footer_h` should be 0 for a footerless surface.
-    pub fn size(&self, card_width: i32, card_height: i32, title_h: i32, footer_h: i32) {
+    /// surface's size/show paths (once per (re)size) BEFORE any open/close.
+    ///
+    /// `fixed_chrome_h` is the total height of every non-scroll, non-ask widget
+    /// that STAYS visible when the ask card opens (journal: just the title; gloss:
+    /// title + hint row, plus echoes' header + rule). `footer_h` is the height of
+    /// the TOGGLED `footer` that is hidden on open (journal's nav footer; 0 for a
+    /// surface whose footer is `None`). Stores `closed_scroll_h = card_height −
+    /// fixed_chrome_h − footer_h` and sets the scroll to it.
+    pub fn size(&self, card_width: i32, card_height: i32, fixed_chrome_h: i32, footer_h: i32) {
         self.card_width.set(card_width);
         self.card_height.set(card_height);
-        self.title_h.set(title_h);
-        let scroll_h = (card_height - title_h - footer_h).max(80);
+        self.fixed_chrome_h.set(fixed_chrome_h);
+        let scroll_h = (card_height - fixed_chrome_h - footer_h).max(80);
         self.closed_scroll_h.set(scroll_h);
         self.scrolled.set_height_request(scroll_h);
     }
@@ -261,7 +274,8 @@ impl AskCardHost {
             f.set_visible(false);
         }
         let (_, ask_size) = self.ask.container().preferred_size();
-        let scroll_h = (self.card_height.get() - self.title_h.get() - ask_size.height()).max(80);
+        let scroll_h =
+            (self.card_height.get() - self.fixed_chrome_h.get() - ask_size.height()).max(80);
         self.scrolled.set_height_request(scroll_h);
         self.recompute_now_and_idle();
     }
