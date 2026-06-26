@@ -747,8 +747,11 @@ fn persist_and_render_gloss(
     // Refresh the MAIN-CARD reader-gloss tint from the now-saved passages, so a
     // newly created reader-gloss colors its lines immediately — mirrors the
     // delete path (delete_current_gloss). Without this the tint only appeared
-    // after the overlay was closed and reopened (which re-ran this). A non
-    // reader-gloss type adds no reader-gloss passage, so this is a no-op for it.
+    // after the overlay was closed (whose close path runs the same recompute).
+    // The overlay STAYS OPEN here, so we recompute directly rather than via
+    // return_to_reader_mode (which would wrongly switch to Reader mode). A non
+    // reader-gloss type adds no reader-gloss passage, so the re-derive is a no-op
+    // (the buffer-wide tag clear at the top still runs, harmlessly).
     crate::app::apply_reader_gloss_highlighting(&mut s);
     crate::logging::log(log_msg);
 }
