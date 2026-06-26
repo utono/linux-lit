@@ -2297,7 +2297,7 @@ mod tests {
             "CREATE TABLE line_timestamps (
                 id INTEGER PRIMARY KEY, citation TEXT, line_mapping_id INTEGER,
                 media_id INTEGER, start_time REAL, end_time REAL, source TEXT,
-                is_track_mark INTEGER DEFAULT 0, is_scene_start INTEGER DEFAULT 0,
+                is_track_mark INTEGER DEFAULT 0,
                 sentence_start_time REAL, sentence_end_time REAL,
                 created_at TEXT, updated_at TEXT,
                 UNIQUE(line_mapping_id, media_id)
