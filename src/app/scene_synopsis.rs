@@ -196,6 +196,10 @@ pub(crate) fn prose_window_text(
     if idxs.is_empty() {
         return String::new();
     }
+    // Anchor's position WITHIN this division. If `anchor_work_line` isn't in the
+    // division (e.g. the band's div differs from the reader's cursor div, or the
+    // reader had no saved position), fall back to the division's first paragraph
+    // — the window is then the division opening ±radius.
     let anchor_pos = idxs.iter().position(|&i| i == anchor_work_line).unwrap_or(0);
     let (lo, hi) = window_range(anchor_pos, radius, idxs.len());
 
