@@ -396,7 +396,7 @@ fn update_next_scene_watermark(state: &AppState, cs: &super::viewport::ColumnSpl
     let next_opens_scene =
         cs.next_page_top < line_count && state.is_section_start(cs.next_page_top);
     let right_has_dialogue = (cs.split..=cs.page_end.min(line_count.saturating_sub(1)))
-        .any(|l| super::viewport::is_dialogue_line(&state.buffer, l, &stage_lookup));
+        .any(|l| super::viewport::is_dialogue_line(&state.buffer, l, state.is_prose(), &stage_lookup));
     let empty_right = (cs.page_end < cs.split || (next_opens_scene && !right_has_dialogue))
         && cs.next_page_top < line_count;
     if !empty_right {
@@ -913,7 +913,7 @@ pub(crate) fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize)
                                 .map(|l| l.sub_line)
                         };
                         super::viewport::prev_dialogue_line(
-                            &state.buffer, &state.translation_lines, visible_end + 1, &stage_lookup,
+                            &state.buffer, &state.translation_lines, visible_end + 1, state.is_prose(), &stage_lookup,
                         )
                         .filter(|&d| d >= state.page_top_line && d <= visible_end)
                         .unwrap_or(visible_end)
@@ -994,7 +994,7 @@ pub(crate) fn scroll_after_jump_backward(state: &mut AppState) {
                             .map(|l| l.sub_line)
                     };
                     super::viewport::prev_dialogue_line(
-                        &state.buffer, &state.translation_lines, last_vis + 1, &stage_lookup,
+                        &state.buffer, &state.translation_lines, last_vis + 1, state.is_prose(), &stage_lookup,
                     )
                     .filter(|&d| d >= new_top)
                     .unwrap_or(last_vis)

@@ -2271,7 +2271,7 @@ fn snap_near_end_to_canonical(s: &mut AppState) {
                     .and_then(|wi| s.current_work.as_ref()?.lines.get(wi))
                     .map(|l| l.sub_line)
             };
-            crate::input::viewport::next_dialogue_from(&s.buffer, top, line_count, &stage_lookup)
+            crate::input::viewport::next_dialogue_from(&s.buffer, top, line_count, s.is_prose(), &stage_lookup)
                 .min(line_count.saturating_sub(1))
         };
         if top != s.page_top_line || first != s.current_line {
@@ -2326,7 +2326,7 @@ fn snap_near_end_to_canonical(s: &mut AppState) {
                     .map(|l| l.sub_line)
             };
             crate::input::viewport::prev_dialogue_line(
-                &s.buffer, &s.translation_lines, cs.page_end + 1, &stage_lookup,
+                &s.buffer, &s.translation_lines, cs.page_end + 1, s.is_prose(), &stage_lookup,
             )
             .filter(|&d| d >= canonical && d <= cs.page_end)
             .unwrap_or(s.current_line.min(cs.page_end))
@@ -2996,15 +2996,15 @@ pub fn display_work_at_with_prepared(
                     .map(|l| l.sub_line)
             };
             if state.current_line < line_count
-                && !crate::input::viewport::is_dialogue_line(&state.buffer, state.current_line, &stage_lookup)
+                && !crate::input::viewport::is_dialogue_line(&state.buffer, state.current_line, state.is_prose(), &stage_lookup)
             {
                 let forward = crate::input::viewport::next_dialogue_line(
                     &state.buffer, &state.translation_lines,
-                    state.current_line, line_count, &stage_lookup,
+                    state.current_line, line_count, state.is_prose(), &stage_lookup,
                 );
                 let backward = if state.current_line > 0 {
                     (0..state.current_line).rev().find(|&i| {
-                        crate::input::viewport::is_dialogue_line(&state.buffer, i, &stage_lookup)
+                        crate::input::viewport::is_dialogue_line(&state.buffer, i, state.is_prose(), &stage_lookup)
                     })
                 } else {
                     None
