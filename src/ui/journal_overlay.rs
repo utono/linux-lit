@@ -14,7 +14,7 @@ pub struct JournalOverlay {
     title: Label,
     scrolled: gtk4::ScrolledWindow,
     view: gtk4::TextView,
-    bottom_clip: gtk4::Box,
+    clip_guard: crate::ui::bottom_clip_guard::BottomClipGuard,
     footer_container: gtk4::Box,
     footer_left: Label,
     hint: Label,
@@ -90,15 +90,11 @@ impl JournalOverlay {
 
         let scroll_overlay = Overlay::new();
         scroll_overlay.set_child(Some(&scrolled));
-        let bottom_clip = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-        bottom_clip.add_css_class("gloss-bottom-clip");
-        bottom_clip.set_valign(gtk4::Align::End);
-        bottom_clip.set_halign(gtk4::Align::Fill);
-        bottom_clip.set_vexpand(false);
-        bottom_clip.set_can_target(false);
-        scroll_overlay.add_overlay(&bottom_clip);
-        scroll_overlay.set_measure_overlay(&bottom_clip, false);
-        scroll_overlay.set_clip_overlay(&bottom_clip, true);
+        let clip_guard = crate::ui::bottom_clip_guard::BottomClipGuard::attach(
+            &scroll_overlay,
+            &view,
+            &scrolled,
+        );
 
         // Selection bar: a DrawingArea overlay over the same scroll_overlay that
         // hosts bottom_clip, drawing a 2px vertical accent line over selected
@@ -178,7 +174,7 @@ impl JournalOverlay {
             title,
             scrolled,
             view,
-            bottom_clip,
+            clip_guard,
             footer_container,
             footer_left,
             hint,
@@ -249,10 +245,7 @@ impl JournalOverlay {
         self.footer_container.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
-        let adj = self.scrolled.vadjustment();
-        adj.set_value(adj.lower());
-        self.update_bottom_clip();
-        self.schedule_bottom_clip_recompute();
+        self.clip_guard.on_open();
         self.rebuild_blocks();
         self.clear_bar();
     }
@@ -321,10 +314,7 @@ impl JournalOverlay {
         self.footer_container.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
-        let adj = self.scrolled.vadjustment();
-        adj.set_value(adj.lower());
-        self.update_bottom_clip();
-        self.schedule_bottom_clip_recompute();
+        self.clip_guard.on_open();
         self.rebuild_blocks();
         self.clear_bar();
     }
@@ -451,26 +441,7 @@ impl JournalOverlay {
     }
 
     fn update_bottom_clip(&self) {
-        // Use the descender-correct per-row clip shared with the gloss overlay,
-        // NOT a uniform row-step estimate (which clipped the last line's
-        // descenders — see docs/troubleshooting/page-turning-mechanics.md).
-        crate::ui::recompute_overlay_bottom_clip(&self.view, &self.bottom_clip, &self.scrolled);
-    }
-
-    /// Re-run the bottom clip once on the next main-loop tick, after the freshly
-    /// shown overlay has been laid out. The synchronous `update_bottom_clip` in
-    /// `show_page`/`show_passage_page` runs against unsettled geometry (the
-    /// ScrolledWindow viewport is still 0-height at `set_visible`), so it
-    /// over-clips and hides the whole body until the first j/k/g/G forces a
-    /// recompute. This idle pass sizes the clip correctly on open — mirroring the
-    /// gloss overlay's deferred recompute (gloss_overlay.rs).
-    fn schedule_bottom_clip_recompute(&self) {
-        let view = self.view.clone();
-        let clip = self.bottom_clip.clone();
-        let scrolled = self.scrolled.clone();
-        glib::idle_add_local_once(move || {
-            crate::ui::recompute_overlay_bottom_clip(&view, &clip, &scrolled);
-        });
+        self.clip_guard.recompute();
     }
 
     pub fn set_font(&self, family: &str, size: i32) {
@@ -525,9 +496,8 @@ impl JournalOverlay {
         self.apply_font();
         // Revealing the ask card shrinks the scrolled viewport, so the bottom
         // clip must be recomputed for the new (smaller) height — otherwise the
-        // answer's last row pokes out behind the ask card. The size change isn't
-        // synchronous, so defer to the next tick (same as the open path).
-        self.schedule_bottom_clip_recompute();
+        // answer's last row pokes out behind the ask card.
+        self.clip_guard.recompute();
     }
 
     pub fn close_ask_card(&self) {
@@ -536,7 +506,7 @@ impl JournalOverlay {
         self.footer_container.set_visible(true);
         // Hiding the ask card grows the viewport back — recompute the clip for
         // the restored height.
-        self.schedule_bottom_clip_recompute();
+        self.clip_guard.recompute();
     }
 
     pub fn toggle_ask_focus(&self) {
