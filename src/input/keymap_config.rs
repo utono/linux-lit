@@ -233,7 +233,7 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("semicolon"), Action::ShowCurrentChapter),
         // Bookmarks
         (KeyCombo::plain("m"), Action::ToggleBookmark),
-        (KeyCombo::ctrl("c"), Action::ToggleChapterStart),
+        (KeyCombo::ctrl("c"), Action::SetChapter),
         (KeyCombo::ctrl("e"), Action::ShowEchoesBcp),
         (KeyCombo::plain("bracketleft"), Action::PrevBookmark),
         (KeyCombo::plain("braceleft"), Action::NextBookmark),
@@ -322,7 +322,7 @@ fn timestamp_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("u"), Action::SetStartTime),
         (KeyCombo::plain("Right"), Action::SetStartTime),
         (KeyCombo::alt("u"), Action::SetEndTime),
-        (KeyCombo::plain("c"), Action::SetChapter),
+        (KeyCombo::plain("c"), Action::ToggleChapterStart),
         (KeyCombo::plain("BackSpace"), Action::DeleteTimestamp),
         (KeyCombo::plain("p"), Action::NudgeStartBackward),
         (KeyCombo::plain("P"), Action::NudgeStartForward),
