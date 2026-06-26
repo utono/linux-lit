@@ -1447,14 +1447,14 @@ pub fn restore_timestamp(
     citation: &str,
     start_time: Option<f64>,
     end_time: Option<f64>,
-    is_chapter: bool,
+    is_track_mark: bool,
 ) -> Result<(), rusqlite::Error> {
     conn.execute(
         "INSERT INTO line_timestamps (citation, line_mapping_id, media_id, start_time, end_time, source, is_track_mark) \
          VALUES (?1, ?2, ?3, ?4, ?5, 'manual', ?6) \
          ON CONFLICT(line_mapping_id, media_id) \
          DO UPDATE SET start_time = ?4, end_time = ?5, is_track_mark = ?6, updated_at = CURRENT_TIMESTAMP",
-        rusqlite::params![citation, line_mapping_id, media_id, start_time, end_time, is_chapter],
+        rusqlite::params![citation, line_mapping_id, media_id, start_time, end_time, is_track_mark],
     )?;
     Ok(())
 }

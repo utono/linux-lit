@@ -350,8 +350,7 @@ pub fn set_chapter(state: &mut AppState) -> bool {
         }
         new_val
     };
-    let is_tm = new_val;
-    crate::logging::log(&format!("TS: toggle track mark is_track_mark={} start_time={:.2} line={}", is_tm, time_pos, line_idx));
+    crate::logging::log(&format!("TS: toggle track mark is_track_mark={} start_time={:.2} line={}", new_val, time_pos, line_idx));
 
     resync_mpv_timestamps(state);
 
@@ -611,6 +610,8 @@ pub fn undo_timestamp(state: &mut AppState) -> bool {
 
         let has_ts = line.timestamp.is_some();
         let is_man = line.timestamp.as_ref().map_or(false, |t| t.is_manual);
+        // Log-only: the structural is_chapter sign follows divisions, so the
+        // sign update below passes None — this value is not written to any sign.
         let is_tm = match &undo.previous {
             Some(snap) => snap.is_track_mark,
             None => false,
