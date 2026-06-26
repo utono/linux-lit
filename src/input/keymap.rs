@@ -2138,6 +2138,7 @@ fn dispatch_action(
 
         // Bookmarks
         ToggleBookmark => crate::input::actions::bookmarks::toggle_bookmark(state, tokio_handle),
+        ToggleChapterStart => crate::input::actions::chapters::toggle_chapter_start(state, tokio_handle),
         NextBookmark => navigation::next_bookmark(&mut state.borrow_mut()),
         PrevBookmark => navigation::prev_bookmark(&mut state.borrow_mut()),
         JumpToRecentBookmark => crate::input::actions::bookmarks::jump_to_recent_bookmark(state, tokio_handle),
