@@ -115,128 +115,90 @@ checklist item #1 below becomes "confirm the surface attaches a BottomClipGuard.
 The bottom-clip masks a **partial row straddling the viewport edge**. It does
 NOT help when a fully-laid-out row is **occluded by a widget drawn on top of an
 UNCHANGED viewport**. The journal Q&A "ask card" bug was exactly this: opening
-the ask card does **not** shrink the scrolled viewport (proven by runtime diag:
+the ask card did **not** shrink the scrolled viewport (proven by runtime diag:
 `page_size` stays constant across the open, sync and idle) — the ask card
-overflows the fixed-height card container and overlaps the bottom of the scroll
-area, so the lower text rows render *behind* it, fully visible-but-occluded.
-There is no viewport resize to react to and no partial edge row to mask, so NO
-clip recompute (path a/b/c) can fix it. **If text shows behind a card whose
-opening did not change `page_size`, the bug is layout/occlusion, not clipping —
-the fix is to make the overlapping widget claim real layout space so the scroll
-viewport shrinks to end above it.**
+overflowed the fixed-height card container and overlapped the bottom of the
+scroll area, so the lower text rows rendered *behind* it, fully
+visible-but-occluded. There is no viewport resize to react to and no partial
+edge row to mask, so NO clip recompute (path a/b/c) can fix it. **If text shows
+behind a card whose opening did not change `page_size`, the bug is
+layout/occlusion, not clipping — the fix is to make the overlapping widget claim
+real layout space so the scroll viewport shrinks to end above it.**
 
-### Investigation log: the journal/gloss ask-card occlusion (UNFINISHED — for a fresh session)
+### The fix (DONE): `AskCardHost` + fixed-scroll-height
 
-Status as of 2026-06-26: a WORKING mechanism for the OPEN path is found and
-proven by runtime numbers; the CLOSE path and the generalization to a shared
-`AskCardHost` + gloss are NOT done. Branch: `fix/ask-card-host` (off master).
-Specs/plans: `docs/superpowers/specs/2026-06-26-ask-card-host-and-shrink-fix-design.md`,
-`docs/superpowers/plans/2026-06-26-ask-card-host.md`.
+Status: **fixed** on `fix/ask-card-host` (Tasks 1-5). Both the journal Q&A and
+gloss synopsis/add-edit ask cards now shrink the scroll viewport on open so the
+reading text ends ABOVE the card. The mechanism and the shared host:
 
-**The widget tree (journal_overlay.rs `new`).** `overlay` →
-`attach_overlay_panel` adds `scrim` + `container` as overlays with
-`set_measure_overlay(container, false)`. `container` (`valign=Center`,
-`set_size_request(card_width, card_height)` where `card_height =
-content_hbox.height()` ≈ 1075, a *minimum*) is a vertical box: `title →
-scroll_overlay(ScrolledWindow, vexpand=true) → footer → ask.container()`. The
-gloss overlay is structurally identical (same shared `AskCard`, same
-`card_height` source, `set_height_request` instead of `set_size_request` — same
-effect), so gloss has the SAME latent bug.
+**Fixed-scroll-height.** Turn the scroll's `vexpand` **OFF** and set its height
+EXPLICITLY. With vexpand off there is no vexpand-vs-container fight to race
+(the earlier `set_height_request(cur - ask_nat)` attempts raced and were
+rejected). The closed height is `card_height − fixed_chrome − footer`; on open
+it becomes `card_height − fixed_chrome − ask`, so the scroll deterministically
+yields the ask card's slot. Proven on hardware: ask-open `page_size` (~817) is
+smaller than ask-closed (~1025), consistently across repeated open/close.
 
-**Why it occludes (root cause, proven).** Because the container is added
-**non-measured**, the Overlay hands it the full window height; the `vexpand`
-scroll fills it (`page_size` ≈ 1025). When `ask.open()` sets the ask card
-visible, the box would need ~258px more; the container grows past its *minimum*
-and (being `valign=Center`) the extra extends off-pane rather than shrinking the
-scroll. **The scroll never yields — the ask card draws over the bottom ~258px of
-unchanged text.** Diagnostic that proves it: log
-`scrolled.vadjustment().page_size()` synchronously AND on `idle_add_local_once`
-in `open_ask_card`; if both stay equal to the closed value, the viewport did not
-shrink.
+**`AskCardHost` (`src/ui/ask_card.rs`)** owns the lifecycle so neither overlay
+hand-wires it: `size(card_width, card_height, fixed_chrome_h, footer_h)` records
+the geometry and sets the closed scroll height; `open(title, hint)` shrinks the
+scroll + hides the toggled footer (if any) + recomputes the clip (sync + idle);
+`close()` restores the STORED closed height (not a re-measure — the footer's
+`preferred_size()` reads 0 right after it is re-shown) + shows the footer +
+recomputes. It composes the existing `BottomClipGuard` via a boxed recompute
+closure (the guard isn't `Clone`).
 
-**Attempts (all run on real hardware; numbers are `page_size`):**
+- `fixed_chrome_h` = all non-scroll, non-ask chrome that STAYS visible while the
+  ask card is open. Journal: just the title (its nav footer IS the toggled
+  `footer`, so not counted here). Gloss has NO toggled footer (its hint row
+  stays put), so it folds the footer into `fixed_chrome_h` and passes
+  `footer_h = 0`; the chrome varies by gloss show mode (synopsis/result =
+  title + footer; echoes = source header + rule + footer; glossing-loading =
+  title only).
+- **Precondition:** the hosted `ScrolledWindow` must be `vexpand(false)`, and
+  EVERY show path that makes the scroll visible must call `ask_host.size(...)`
+  (after the chrome visibility is set) or the explicit height keeps its last
+  value.
 
-- **(c) value_changed clip recompute / the whole BottomClipGuard refactor.**
-  WRONG TARGET — there is no resize to react to, so no clip recompute helps. (The
-  BottomClipGuard work is independently good and merged as a refactor, but it does
-  NOT fix this.) Confirmed: pressing A produced NO `value_changed` and `page_size`
-  stayed 1025.
-- **(2b) cap the scroll on open via `set_height_request(cur - ask_nat)`,
-  `vexpand` left ON.** Shrank to 767 on FIRST open, but RACED: a later open
-  logged `idle=1025` (cap lost the race against the overlay allocation). Reading
-  `cur` from the live `scrolled.height()` is also stale on re-open. Intermittent
-  clip on both open and close. REJECTED (timing-fragile).
-- **(2c) `set_measure_overlay(container, true)` + `min_content_height(80)`.**
-  INVERTED: with the container measured, the CLOSED state shrank
-  (`close idle=817`) and the OPEN state stayed 1025 (still occluded). Broke the
-  closed state. REJECTED.
-- **(FIXED-SCROLL-HEIGHT — the one that WORKS on open).** Turn the scroll's
-  `vexpand` OFF and set its height EXPLICITLY, so there is no vexpand-vs-container
-  fight to race. In `size_card`: `scroll_h = card_height - title_pref - footer_pref`
-  (closed reading height). In `open_ask_card`: `scroll_h = card_height -
-  title_pref - ask_pref` (footer is hidden while asking, ask card takes its slot).
-  Recompute the clip on open AND on an idle tick after the height lands. RESULT
-  (proven): `open sync page_size=1025 set=817`, `open idle page_size=817` — the
-  viewport shrinks deterministically and the on-screen text ends with a WHOLE line
-  above the ask card (verified by screenshot, repeated open cycles consistent).
-  **This is the mechanism to build on.**
+### Root cause (proven) and the rejected attempts — DON'T re-try these
 
-**What's STILL BROKEN / TODO for the next session (higher effort):**
+Keep this so the dead-ends aren't re-explored. Branch `fix/ask-card-host`;
+specs/plans `docs/superpowers/{specs,plans}/2026-06-26-ask-card-host*`.
 
-1. **Close path restores the wrong height.** After Escape the diag shows
-   `close idle page_size=817` (should be ~1025) — the scroll stays shrunk, wasting
-   ~200px of reading area until the next `show_page`. The close handler recomputes
-   `scroll_h = card_height - title_pref - footer_pref`, but at that instant the
-   footer was just re-shown and its `preferred_size()` may read 0 (or the restore
-   races the relayout). Fix the close restore to deterministically return to the
-   full closed height (consider: store the closed `scroll_h` in `size_card` and
-   reuse the stored value on close, rather than re-measuring chrome that was just
-   toggled).
-2. **`vexpand=false` side effects unverified.** Confirm a SHORT journal answer
-   (content < scroll_h) still fills/positions correctly with vexpand off and an
-   explicit height — no gap below the text, no mis-centering of the card.
-3. **Generalize into the shared `AskCardHost`** (per the plan) so GLOSS gets the
-   same fix — gloss has the identical latent occlusion. The host should own:
-   `open`/`close` doing the explicit scroll-height set + clip recompute (+ footer
-   hide/show if a footer is registered), composing the existing `BottomClipGuard`.
-   Then route journal AND gloss through it and delete the per-overlay copies.
-4. **Re-derive `ask_pref`/`title_pref`/`footer_pref` robustly.** `preferred_size()`
-   on a just-toggled widget is timing-sensitive; prefer a stable reserved slot
-   height (a const or a measured-once value) over per-call `preferred_size()`.
-5. The e2e guard `tests/journal_clipping.rs` (already in tree, `#[ignore]`d)
-   asserts no occluded row with the ask card open — it should PASS once the fix is
-   complete; use it (via `./scripts/e2e-env.sh`) as the regression gate.
+**Why it occluded.** Both overlay containers are added **non-measured**
+(`attach_overlay_panel` → `set_measure_overlay(container, false)`), so the
+Overlay handed them the full window height and the `vexpand` scroll filled it
+(`page_size` ≈ 1025, a *minimum* that can grow). When `ask.open()` revealed the
+ask card the box needed ~258px more; being `valign=Center` the extra extended
+off-pane rather than shrinking the scroll. The scroll never yielded → the ask
+card drew over the bottom ~258px of unchanged text. The proof diagnostic: log
+`scrolled.vadjustment().page_size()` sync AND on idle in `open_ask_card`; if both
+equal the closed value, the viewport did not shrink (that equality WAS the bug).
 
-**The diagnostic to re-add when continuing** (it is the only reliable signal,
-since the agent cannot run the GUI — have the user run `cargo run` and paste it):
+**Rejected attempts (all run on real hardware; numbers are `page_size`):**
 
-```rust
-// in open_ask_card / close_ask_card, after the height set:
-let sc = self.scrolled.clone();
-crate::logging::log(&format!("ASKFIX open sync: page_size={:.0} set={}",
-    sc.vadjustment().page_size(), scroll_h));
-glib::idle_add_local_once(move || {
-    crate::logging::log(&format!("ASKFIX open idle: page_size={:.0} scrolled_h={}",
-        sc.vadjustment().page_size(), sc.height()));
-});
-```
+- **(c) value_changed clip recompute / the BottomClipGuard refactor.** WRONG
+  TARGET — no resize to react to, so no clip recompute helps. (The guard work is
+  independently good and merged, but does NOT fix occlusion.) Pressing A produced
+  NO `value_changed`; `page_size` stayed 1025.
+- **Cap the scroll on open via `set_height_request(cur - ask_nat)`, vexpand left
+  ON.** Shrank on first open but RACED (a later open logged idle=1025); reading
+  `cur` from the live `scrolled.height()` is stale on re-open. REJECTED.
+- **`set_measure_overlay(container, true)` + `min_content_height(80)`.** INVERTED:
+  the CLOSED state shrank and the OPEN state stayed 1025. REJECTED.
 
-SUCCESS = ask-OPEN idle `page_size` is SMALLER than ask-CLOSED, CONSISTENTLY
-across repeated open/close cycles (the earlier attempts passed once then raced).
-
-(Contrast for the value_changed catch-all below: the gloss overlay sizes its card
-with `container.set_height_request` (a minimum that can grow); the journal used
-`set_size_request` — same minimum semantics, not the differentiator. The real
-differentiator is the non-measured container + vexpand scroll, addressed by the
-fixed-scroll-height mechanism above.)
+The accepted mechanism is the **fixed-scroll-height** one described above (vexpand
+OFF + explicit height, owned by `AskCardHost`). SUCCESS criterion: ask-OPEN
+`page_size` SMALLER than ask-CLOSED, consistently across repeated open/close.
 
   **The gloss overlay has (c)** (`gloss_overlay.rs`, connected in `new()` right
   after `bottom_clip` is created, calling `recompute_overlay_bottom_clip`). A
   surface that copies only (a) and (b) but not (c) WILL clip the moment its
-  viewport changes outside a named method. (This was the journal Q&A bug: its
-  `value_changed` handler only redrew the selection bar and never recomputed the
-  clip, so opening the ask card — which shrinks the viewport — left a stale clip
-  and a half-line showed behind the ask card.)
+  viewport changes outside a named method. (Note: the journal Q&A "text behind
+  the ask card" bug was NOT this — it was occlusion, fixed by the
+  fixed-scroll-height host above, not by a clip path. Once the host shrinks the
+  viewport, (c) keeps the clip honest for the new height — but (c) alone never
+  fixed it, because without the shrink there was no partial edge row to mask.)
 
 ## Coordinate-space gotcha — `display_rows` must add `top_margin`
 
@@ -297,11 +259,13 @@ When a half line clips at the bottom edge of a scrolled surface:
 4. **Recompute runs against unsettled geometry on open** (0-height viewport) and
    there is no `changed`-signal handler / idle backstop (path a) → whole body
    over-clipped until the first scroll.
-5. **A new surface reserves no real layout space for an element below it.** If a
-   card opens below the scroll area (ask card, footer) and the scroll area is
-   `vexpand` with no recompute on the resize, the overflow renders behind it.
-   Path (c) covers this; if it still clips, confirm the resize actually fires a
-   `value_changed`/`changed` the handler is connected to.
+5. **A new surface reserves no real layout space for an element below it
+   (OCCLUSION, not clipping).** If a card opens below a `vexpand` scroll and the
+   scroll keeps full height, the overflow renders *behind* the card — there is no
+   partial edge row, so NO clip path (a/b/c) helps. This was the ask-card bug.
+   Fix: make the scroll YIELD the space — vexpand OFF + explicit height via
+   `AskCardHost` (see "occlusion is not clipping" above). The tell: opening the
+   card does not change `page_size`.
 
 ## Verifying
 
@@ -322,8 +286,11 @@ overlay_clipping -- --ignored --nocapture`.
 - `src/ui/gloss_overlay.rs` — the reference surface: `reset_scroll_top` (path a),
   `scroll_gloss`/`snap_value_to_line` (top snap + path b), the `value_changed`
   handler (path c), `update_bottom_clip` (one-line call to the shared helper).
-- `src/ui/journal_overlay.rs` — the journal Q&A overlay (must mirror all three
-  paths; its `value_changed` historically redrew only the selection bar).
+- `src/ui/journal_overlay.rs` — the journal Q&A overlay (mirrors all three clip
+  paths; routes the ask card through `AskCardHost`).
+- `src/ui/ask_card.rs` — `AskCard` (the shared input widget) + `AskCardHost` (the
+  fixed-scroll-height ask-card lifecycle: the occlusion fix). Used by both the
+  journal and gloss overlays.
 - `src/ui/translation_overlay.rs` — the Box-child variant.
 - `src/input/scroll.rs` — `update_bottom_clip` (the MAIN card's *paginated*
   clip, NOT this algorithm), `scrolloff_bottom_clip_widgets` (scroll-mode, routed
