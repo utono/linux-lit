@@ -174,6 +174,12 @@ pub(crate) fn auto_show_vocab_popup(state: &mut AppState) {
 /// to the visible range (page_top_line +/- margin) for performance.
 /// When dim is off, fades out the old cursor highlight smoothly.
 pub(crate) fn update_highlight(state: &mut AppState) {
+    // Prose marks the current (and, under sync, the spoken) paragraph by DIMMING
+    // every OTHER visible paragraph — the current one stays at full strength
+    // while the rest recede. Plays/verse instead tint the current line's
+    // background. Computed before the buffer borrow below.
+    let prose_dim = state.is_prose() && state.config.show_cursor_line;
+
     let buffer = &state.buffer;
     let tag = &state.dim_tag;
     let cl_tag = &state.cursor_line_tag;
@@ -200,8 +206,9 @@ pub(crate) fn update_highlight(state: &mut AppState) {
         // Remove dimming in visible range
         buffer.remove_tag(tag, &vis_start_iter, &vis_end_iter);
 
-        // Apply fade-out to the old cursor line (if it changed)
-        if state.config.show_cursor_line {
+        // Apply fade-out to the old cursor line (if it changed). Prose uses a
+        // bold line (no bg tint), so there is no fade for it.
+        if state.config.show_cursor_line && !prose_dim {
         if let Some(old_line) = state.prev_highlight_line.get() {
             if old_line != state.current_line {
                 // Cancel any in-flight cursor fade
@@ -253,14 +260,26 @@ pub(crate) fn update_highlight(state: &mut AppState) {
         }
         } // show_cursor_line
 
-        // Apply cursor line background to new line (if enabled)
+        // Mark the current paragraph. PROSE: dim every OTHER visible paragraph
+        // (apply `dim_tag` across the visible range, then undim the current
+        // paragraph), so the current/spoken paragraph reads at full strength
+        // while the rest recede — the inverse of a highlight. PLAYS/VERSE: tint
+        // the current line's background.
+        if prose_dim {
+            // dim the whole visible range, then clear it from the current line.
+            buffer.apply_tag(tag, &vis_start_iter, &vis_end_iter);
+        }
         if state.config.show_cursor_line {
             if let Some(line_start) = buffer.iter_at_line(state.current_line as i32) {
                 let mut line_end = line_start;
                 if !line_end.ends_line() {
                     line_end.forward_to_line_end();
                 }
-                buffer.apply_tag(cl_tag, &line_start, &line_end);
+                if prose_dim {
+                    buffer.remove_tag(tag, &line_start, &line_end);
+                } else {
+                    buffer.apply_tag(cl_tag, &line_start, &line_end);
+                }
                 // Intentional observability hook (NOT stale per-keystroke trace):
                 // the saved-position-resume regression test asserts the highlight
                 // lands on the restored cursor line. Keep this log — removing it
