@@ -179,7 +179,6 @@ pub fn scene_text_for(state: &AppState, div1: i64, div2: i64) -> String {
 /// division, finds `anchor_work_line`'s position within it (fallback 0), slices
 /// ±`radius` via `window_range`, and renders the selected paragraphs with the
 /// same speaker-interleave logic as `scene_text_for`.
-#[allow(dead_code)]
 pub(crate) fn prose_window_text(
     work: &crate::db::models::Work,
     div1: i64,
@@ -225,7 +224,6 @@ pub(crate) fn prose_window_text(
 /// `anchor_work_line` (±`radius`, clamped to the division). Non-prose works
 /// (plays) return the full `scene_text_for` — a real scene is small and the
 /// whole scene is the intended context. Up to `2*radius + 1` paragraphs.
-#[allow(dead_code)]
 pub fn scene_text_windowed(
     state: &AppState,
     div1: i64,
