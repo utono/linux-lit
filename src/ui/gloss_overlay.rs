@@ -1513,11 +1513,26 @@ impl GlossOverlay {
         let (card_width, _) = self.last_card_size.get();
         self.ask.open(title, hint, card_width);
         self.apply_font();
+        self.schedule_ask_clip_recompute();
     }
 
     /// Hide the ask card and return focus + highlight to the synopsis.
     pub fn close_ask_card(&self) {
         self.ask.close();
+        self.schedule_ask_clip_recompute();
+    }
+
+    /// Recompute the bottom clip on the next tick after the ask card opens/closes:
+    /// revealing/hiding it resizes the scrolled viewport, so the clip must be
+    /// recomputed for the new height — otherwise the body's last row pokes out
+    /// behind the ask card. The resize isn't synchronous, hence the deferral.
+    fn schedule_ask_clip_recompute(&self) {
+        let view = self.gloss_view.clone();
+        let clip = self.bottom_clip.clone();
+        let scrolled = self.gloss_scrolled.clone();
+        glib::idle_add_local_once(move || {
+            crate::ui::recompute_overlay_bottom_clip(&view, &clip, &scrolled);
+        });
     }
 
     /// Read and clear the ask input's text.
