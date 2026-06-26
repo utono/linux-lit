@@ -438,6 +438,47 @@ pub fn update_title_bar_scene(state: &AppState) {
     }
 }
 
+/// Inclusive paragraph index range `anchor_pos ± radius`, clamped to `[0, n)`.
+/// Returns `(lo, hi)` with `lo <= hi`. When `n == 0` returns `(0, 0)` — callers
+/// must check `n == 0` separately and not index.
+fn window_range(anchor_pos: usize, radius: usize, n: usize) -> (usize, usize) {
+    if n == 0 {
+        return (0, 0);
+    }
+    let lo = anchor_pos.saturating_sub(radius);
+    let hi = (anchor_pos + radius).min(n - 1);
+    (lo, hi)
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::window_range;
+
+    #[test]
+    fn middle_anchor_full_window() {
+        // anchor 50, radius 10, n 100 -> [40, 60] inclusive = 21 paragraphs
+        assert_eq!(window_range(50, 10, 100), (40, 60));
+    }
+    #[test]
+    fn clamps_low_near_start() {
+        assert_eq!(window_range(2, 10, 100), (0, 12));
+    }
+    #[test]
+    fn clamps_high_near_end() {
+        assert_eq!(window_range(98, 10, 100), (88, 99));
+    }
+    #[test]
+    fn whole_division_when_smaller_than_window() {
+        // n=5, any anchor -> the whole [0,4]
+        assert_eq!(window_range(2, 10, 5), (0, 4));
+    }
+    #[test]
+    fn empty_division_is_safe() {
+        // n=0 -> (0,0); caller must treat n==0 as "no paragraphs" and not index.
+        assert_eq!(window_range(0, 10, 0), (0, 0));
+    }
+}
+
 #[cfg(test)]
 mod chapter_synopsis_tests {
     #[test]
