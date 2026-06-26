@@ -20,6 +20,7 @@ pub struct TimestampUndoState {
 }
 
 const NUDGE_STEP: f64 = 0.2;
+const NOT_SPOKEN_TOAST: &str = "Not a spoken line — no timestamp set";
 
 /// `u`/end-time are audio timestamps — meaningful only on a SPOKEN line. A stage
 /// direction (`sub_line > 0`) that is not marked spoken (`is_spoken != Some(true)`)
@@ -45,6 +46,26 @@ mod timestamp_gate_tests {
     fn spoken_stage_direction_allowed() {
         assert!(timestamp_allowed(1, Some(true)));
     }
+}
+
+/// Check whether a timestamp can be written on the given line. Returns true if
+/// the line is writable (dialogue or spoken stage direction); returns false and
+/// logs + toasts if the line is an unspoken stage direction.
+fn timestamp_writable(state: &AppState, line_idx: usize) -> bool {
+    let work = match &state.current_work {
+        Some(w) => w,
+        None => return false,
+    };
+    let l = &work.lines[line_idx];
+    if !timestamp_allowed(l.sub_line, l.is_spoken) {
+        crate::logging::log(&format!(
+            "TS: refused start/end time on unspoken stage direction (line {}, sub_line {})",
+            line_idx, l.sub_line
+        ));
+        crate::input::navigation::show_chapter_toast(state, NOT_SPOKEN_TOAST);
+        return false;
+    }
+    true
 }
 
 /// Open the read-write db, logging the `TS: open_db_rw failed` message on
@@ -128,22 +149,8 @@ pub fn set_start_time(state: &mut AppState) -> bool {
         }
     };
 
-    {
-        let work = match &state.current_work {
-            Some(w) => w,
-            None => return false,
-        };
-        let l = &work.lines[line_idx];
-        if !timestamp_allowed(l.sub_line, l.is_spoken) {
-            crate::logging::log(&format!(
-                "TS: refused start/end time on unspoken stage direction (line {}, sub_line {})",
-                line_idx, l.sub_line
-            ));
-            crate::input::navigation::show_chapter_toast(
-                state, "Not a spoken line — no timestamp set",
-            );
-            return false;
-        }
+    if !timestamp_writable(state, line_idx) {
+        return false;
     }
 
     let Some(line_id) = work_line_id(state, line_idx) else { return false; };
@@ -364,22 +371,8 @@ pub fn set_end_time(state: &mut AppState) -> bool {
         None => return false,
     };
 
-    {
-        let work = match &state.current_work {
-            Some(w) => w,
-            None => return false,
-        };
-        let l = &work.lines[line_idx];
-        if !timestamp_allowed(l.sub_line, l.is_spoken) {
-            crate::logging::log(&format!(
-                "TS: refused start/end time on unspoken stage direction (line {}, sub_line {})",
-                line_idx, l.sub_line
-            ));
-            crate::input::navigation::show_chapter_toast(
-                state, "Not a spoken line — no timestamp set",
-            );
-            return false;
-        }
+    if !timestamp_writable(state, line_idx) {
+        return false;
     }
 
     let Some(line_id) = work_line_id(state, line_idx) else { return false; };
