@@ -131,7 +131,10 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
     if state.borrow().input_mode == InputMode::JournalOverlay {
         let mut s = state.borrow_mut();
         s.journal_overlay.hide();
-        s.input_mode = InputMode::Reader;
+        // Recolor the main card BEFORE update_highlight (which re-applies the tint
+        // for reader_gloss_lines), so a reader-gloss created/edited in the overlay
+        // colors immediately on return.
+        crate::app::return_to_reader_mode(&mut s);
         if let Some((line, top)) = s.journal.return_pos.take() {
             s.current_line = line;
             s.page_top_line = top;
