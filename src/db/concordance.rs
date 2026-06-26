@@ -92,8 +92,12 @@ mod tests {
     use std::collections::HashMap;
 
     fn test_conn() -> Connection {
-        let home = std::env::var("HOME").unwrap_or_default();
-        let db_path = format!("{}/utono/litdb/data/lit.db", home);
+        // Honor LIT_DB_PATH so the suite can run against a copy of the DB
+        // (e.g. a migrated copy), matching queries::db_path()'s convention.
+        let db_path = std::env::var("LIT_DB_PATH").unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_default();
+            format!("{}/utono/litdb/data/lit.db", home)
+        });
         Connection::open(&db_path).expect("Failed to open lit.db for tests")
     }
 
