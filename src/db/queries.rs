@@ -143,7 +143,7 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
     // 3. Load timestamps
     let mut ts_stmt = conn.prepare(
         "SELECT lt.line_mapping_id, lt.start_time, lt.end_time, lt.media_id, \
-         lt.sentence_start_time, lt.source, lt.is_chapter \
+         lt.sentence_start_time, lt.source, lt.is_track_mark \
          FROM line_timestamps lt \
          JOIN line_mapping lm ON lt.line_mapping_id = lm.id \
          WHERE lm.work_abbrev = ?1",
@@ -1368,14 +1368,14 @@ pub fn upsert_chapter(
     start_time: f64,
 ) -> Result<bool, rusqlite::Error> {
     conn.execute(
-        "INSERT INTO line_timestamps (citation, line_mapping_id, media_id, start_time, source, is_chapter) \
+        "INSERT INTO line_timestamps (citation, line_mapping_id, media_id, start_time, source, is_track_mark) \
          VALUES (?1, ?2, ?3, ?4, 'manual', 1) \
          ON CONFLICT(line_mapping_id, media_id) \
-         DO UPDATE SET is_chapter = CASE WHEN is_chapter = 1 THEN 0 ELSE 1 END, source = 'manual', updated_at = CURRENT_TIMESTAMP",
+         DO UPDATE SET is_track_mark = CASE WHEN is_track_mark = 1 THEN 0 ELSE 1 END, source = 'manual', updated_at = CURRENT_TIMESTAMP",
         rusqlite::params![citation, line_mapping_id, media_id, start_time],
     )?;
     let new_val: bool = conn.query_row(
-        "SELECT is_chapter FROM line_timestamps WHERE line_mapping_id = ?1 AND media_id = ?2",
+        "SELECT is_track_mark FROM line_timestamps WHERE line_mapping_id = ?1 AND media_id = ?2",
         rusqlite::params![line_mapping_id, media_id],
         |row| row.get(0),
     )?;
@@ -1429,7 +1429,7 @@ pub fn get_timestamp_snapshot(
     media_id: i64,
 ) -> Result<Option<crate::input::timestamps::TimestampSnapshot>, rusqlite::Error> {
     let mut stmt = conn.prepare(
-        "SELECT citation, start_time, end_time, is_chapter \
+        "SELECT citation, start_time, end_time, is_track_mark \
          FROM line_timestamps \
          WHERE line_mapping_id = ?1 AND media_id = ?2",
     )?;
@@ -1458,10 +1458,10 @@ pub fn restore_timestamp(
     is_chapter: bool,
 ) -> Result<(), rusqlite::Error> {
     conn.execute(
-        "INSERT INTO line_timestamps (citation, line_mapping_id, media_id, start_time, end_time, source, is_chapter) \
+        "INSERT INTO line_timestamps (citation, line_mapping_id, media_id, start_time, end_time, source, is_track_mark) \
          VALUES (?1, ?2, ?3, ?4, ?5, 'manual', ?6) \
          ON CONFLICT(line_mapping_id, media_id) \
-         DO UPDATE SET start_time = ?4, end_time = ?5, is_chapter = ?6, updated_at = CURRENT_TIMESTAMP",
+         DO UPDATE SET start_time = ?4, end_time = ?5, is_track_mark = ?6, updated_at = CURRENT_TIMESTAMP",
         rusqlite::params![citation, line_mapping_id, media_id, start_time, end_time, is_chapter],
     )?;
     Ok(())
@@ -2296,6 +2296,34 @@ pub fn line_start_time(conn: &Connection, line_id: i64, media_id: i64) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn track_mark_column_roundtrips() {
+        // Schema mirrors the MIGRATED lit.db: the column is is_track_mark.
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE line_timestamps (
+                id INTEGER PRIMARY KEY, citation TEXT, line_mapping_id INTEGER,
+                media_id INTEGER, start_time REAL, end_time REAL, source TEXT,
+                is_track_mark INTEGER DEFAULT 0, is_scene_start INTEGER DEFAULT 0,
+                sentence_start_time REAL, sentence_end_time REAL,
+                created_at TEXT, updated_at TEXT,
+                UNIQUE(line_mapping_id, media_id)
+            );",
+        ).unwrap();
+
+        // First toggle: inserts with is_track_mark=1 -> returns true.
+        let on = upsert_chapter(&conn, 7, 100, "W.1.0.1", 1.5).unwrap();
+        assert!(on);
+        let v: i64 = conn.query_row(
+            "SELECT is_track_mark FROM line_timestamps WHERE line_mapping_id=7 AND media_id=100",
+            [], |r| r.get(0)).unwrap();
+        assert_eq!(v, 1);
+
+        // Second toggle: flips back to 0 -> returns false.
+        let off = upsert_chapter(&conn, 7, 100, "W.1.0.1", 1.5).unwrap();
+        assert!(!off);
+    }
 
     #[test]
     fn search_lines_matches_substring_case_insensitive_with_limit() {
