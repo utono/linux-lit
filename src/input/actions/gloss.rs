@@ -178,22 +178,9 @@ pub(crate) fn navigate_gloss(state: &Rc<RefCell<AppState>>, delta: i32) {
     }
     s.gloss_index = new_idx;
     s.gloss_active_voice = 0;
-    let gloss = &s.gloss_list[new_idx];
     // Footer cites the DISPLAYED gloss's own passage span (glosses in this list
     // share a start_citation but may have different end_citations).
-    let gloss_start = gloss.start_citation.clone();
-    let gloss_end = gloss.end_citation.clone();
-    let ctx = s.gloss_context.as_ref().unwrap();
-    let cw = s.content_hbox.width();
-    let h = s.content_hbox.height();
-    let pairs = ctx.source_line_pairs();
-    s.gloss_overlay.show_gloss_with_color(
-        &ctx.source_text, &gloss.gloss_text, cw, h,
-        Some(&s.theme.root_color), &pairs,
-    );
-    s.gloss_overlay.set_position(new_idx, s.gloss_list.len());
-    s.gloss_overlay.set_citation(&gloss_start, &gloss_end);
-    recolor_cached_blocks(&s);
+    render_gloss_row(&mut s, new_idx);
 }
 
 pub(crate) fn copy_gloss_id(state: &Rc<RefCell<AppState>>) {
@@ -256,21 +243,8 @@ pub(crate) fn delete_current_gloss(state_rc: &Rc<RefCell<AppState>>) {
             s.gloss_index = idx.min(s.gloss_list.len() - 1);
             s.gloss_active_voice = 0;
             let new_idx = s.gloss_index;
-            let gloss = &s.gloss_list[new_idx];
             // Footer cites the now-displayed gloss's own passage span.
-            let gloss_start = gloss.start_citation.clone();
-            let gloss_end = gloss.end_citation.clone();
-            let ctx = s.gloss_context.as_ref().unwrap();
-            let cw = s.content_hbox.width();
-            let h = s.content_hbox.height();
-            let pairs = ctx.source_line_pairs();
-            s.gloss_overlay.show_gloss_with_color(
-                &ctx.source_text, &gloss.gloss_text, cw, h,
-                Some(&s.theme.root_color), &pairs,
-            );
-            s.gloss_overlay.set_position(new_idx, s.gloss_list.len());
-            s.gloss_overlay.set_citation(&gloss_start, &gloss_end);
-            recolor_cached_blocks(&s);
+            render_gloss_row(&mut s, new_idx);
         }
 
         // The gloss row was deleted from the DB above, so the glossed-passage set
@@ -692,6 +666,29 @@ fn request_ipa_then_apply(
             }
         }
     });
+}
+
+/// Render the gloss row at `new_idx` into the overlay. Shared by
+/// `navigate_gloss` and `delete_current_gloss` (their render blocks were
+/// byte-identical). Clones the strings that must outlive the `gloss_list`
+/// borrow so `gloss_overlay` can be mutably borrowed in the same call.
+fn render_gloss_row(s: &mut AppState, new_idx: usize) {
+    let gloss = &s.gloss_list[new_idx];
+    let gloss_start = gloss.start_citation.clone();
+    let gloss_end = gloss.end_citation.clone();
+    let gloss_text = gloss.gloss_text.clone();
+    let ctx = s.gloss_context.as_ref().unwrap();
+    let source_text = ctx.source_text.clone();
+    let cw = s.content_hbox.width();
+    let h = s.content_hbox.height();
+    let pairs = ctx.source_line_pairs();
+    s.gloss_overlay.show_gloss_with_color(
+        &source_text, &gloss_text, cw, h,
+        Some(&s.theme.root_color), &pairs,
+    );
+    s.gloss_overlay.set_position(new_idx, s.gloss_list.len());
+    s.gloss_overlay.set_citation(&gloss_start, &gloss_end);
+    recolor_cached_blocks(s);
 }
 
 /// Persist a freshly composed gloss, reload the start-citation gloss list,
