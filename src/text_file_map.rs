@@ -138,6 +138,12 @@ fn is_inside_stage_direction_text(lines: &[String], line: usize) -> bool {
     false
 }
 
+/// True when `needle` is a prefix of `haystack` followed by a space — i.e. a
+/// whole-word prefix match (so "the" matches "the cat" but not "theory").
+fn is_word_prefix(haystack: &str, needle: &str) -> bool {
+    haystack.starts_with(needle) && haystack.as_bytes().get(needle.len()) == Some(&b' ')
+}
+
 const WINDOW: usize = 50;
 
 /// Build a LineMap for a BCP work whose body prayers were split one sentence
@@ -463,9 +469,7 @@ pub fn build_line_map_mode(
                     wi += 1;
                     acc.clear();
                     run_start = None;
-                } else if norm_db[wi].starts_with(&candidate)
-                    && norm_db[wi].as_bytes().get(candidate.len()) == Some(&b' ')
-                {
+                } else if is_word_prefix(&norm_db[wi], &candidate) {
                     // The row continues past this line: keep accumulating.
                     acc = candidate;
                     if run_start.is_none() {
@@ -509,9 +513,7 @@ pub fn build_line_map_mode(
                         work_to_buffer[wi] = bi;
                         matched += 1;
                         wi += 1;
-                    } else if norm_db[wi].starts_with(nf.as_str())
-                        && norm_db[wi].as_bytes().get(nf.len()) == Some(&b' ')
-                    {
+                    } else if is_word_prefix(&norm_db[wi], nf.as_str()) {
                         acc = nf.clone();
                         run_start = Some(bi);
                     }
@@ -646,9 +648,7 @@ fn find_skip_target(nf: &str, norm_db: &[String], wi: usize, n_work: usize) -> O
             cur += 1;
             continue;
         }
-        if row == nf
-            || (row.starts_with(nf) && row.as_bytes().get(nf.len()) == Some(&b' '))
-        {
+        if row == nf || is_word_prefix(row, nf) {
             return Some(cur);
         }
         seen += 1;
