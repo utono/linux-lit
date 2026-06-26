@@ -175,6 +175,74 @@ pub fn scene_text_for(state: &AppState, div1: i64, div2: i64) -> String {
     out
 }
 
+/// Pure prose-window renderer: collects the work-line indices for the given
+/// division, finds `anchor_work_line`'s position within it (fallback 0), slices
+/// ±`radius` via `window_range`, and renders the selected paragraphs with the
+/// same speaker-interleave logic as `scene_text_for`.
+#[allow(dead_code)]
+pub(crate) fn prose_window_text(
+    work: &crate::db::models::Work,
+    div1: i64,
+    div2: i64,
+    anchor_work_line: usize,
+    radius: usize,
+) -> String {
+    let idxs: Vec<usize> = work
+        .lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.div1 == div1 && l.div2 == div2)
+        .map(|(i, _)| i)
+        .collect();
+    if idxs.is_empty() {
+        return String::new();
+    }
+    let anchor_pos = idxs.iter().position(|&i| i == anchor_work_line).unwrap_or(0);
+    let (lo, hi) = window_range(anchor_pos, radius, idxs.len());
+
+    let mut out = String::new();
+    let mut last_speaker: Option<&str> = None;
+    for &wi in &idxs[lo..=hi] {
+        let line = &work.lines[wi];
+        match line.speaker.as_deref() {
+            Some(sp) if last_speaker != Some(sp) => {
+                if !out.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str(sp);
+                out.push('\n');
+                last_speaker = Some(sp);
+            }
+            _ => {}
+        }
+        out.push_str(&line.text);
+        out.push('\n');
+    }
+    out
+}
+
+/// Like `scene_text_for`, but for PROSE works returns only the paragraphs around
+/// `anchor_work_line` (±`radius`, clamped to the division). Non-prose works
+/// (plays) return the full `scene_text_for` — a real scene is small and the
+/// whole scene is the intended context. Up to `2*radius + 1` paragraphs.
+#[allow(dead_code)]
+pub fn scene_text_windowed(
+    state: &AppState,
+    div1: i64,
+    div2: i64,
+    anchor_work_line: usize,
+    radius: usize,
+) -> String {
+    let work = match state.current_work.as_ref() {
+        Some(w) => w,
+        None => return String::new(),
+    };
+    if !crate::db::line_types::is_prose_work(&work.work_type) {
+        return scene_text_for(state, div1, div2);
+    }
+    prose_window_text(work, div1, div2, anchor_work_line, radius)
+}
+
 /// Check if the current line is the first line of a new scene.
 pub fn is_first_line_of_scene(state: &AppState) -> bool {
     if state.current_line == 0 {
