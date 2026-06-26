@@ -8,7 +8,7 @@ pub struct TimestampSnapshot {
     pub citation: String,
     pub start_time: Option<f64>,
     pub end_time: Option<f64>,
-    pub is_chapter: bool,
+    pub is_track_mark: bool,
 }
 
 #[derive(Debug, Clone)]
