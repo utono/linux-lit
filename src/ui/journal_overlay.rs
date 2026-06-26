@@ -248,6 +248,40 @@ impl JournalOverlay {
         self.clip_guard.on_open();
         self.rebuild_blocks();
         self.clear_bar();
+
+        // Headless test: emit the journal overlay viewport rect once layout
+        // settles, so tests/journal_clipping.rs can target the card's region.
+        // Connect to the vadjustment's `changed` signal, which fires when GTK
+        // first assigns a scroll range (i.e. after the first layout pass) — the
+        // same event BottomClipGuard uses to detect settled geometry. Disconnect
+        // after the first emission with a non-zero rect.
+        if std::env::var_os("LIT_HEADLESS_TEST").is_some() {
+            let sc = self.scrolled.clone();
+            let adj = sc.vadjustment();
+            let id_cell: Rc<std::cell::Cell<Option<glib::SignalHandlerId>>> =
+                Rc::new(std::cell::Cell::new(None));
+            let id_cell_clone = id_cell.clone();
+            let id = adj.connect_changed(move |adj| {
+                if let Some(r) = sc.root().and_then(|root| sc.compute_bounds(&root)) {
+                    if r.width() > 0.0 && r.height() > 0.0 {
+                        crate::logging::log(&format!(
+                            "TEST_JOURNAL_VIEWPORT_RECT {} {} {} {}",
+                            r.x().round() as i32,
+                            r.y().round() as i32,
+                            r.width().round() as i32,
+                            r.height().round() as i32
+                        ));
+                        if let Some(hid) = id_cell_clone.take() {
+                            // Disconnect so we only emit once per show_page open.
+                            // The adjustment fires again on every scroll, so without
+                            // this guard we would spam the log with updates.
+                            adj.disconnect(hid);
+                        }
+                    }
+                }
+            });
+            id_cell.set(Some(id));
+        }
     }
 
     /// Render a passage page: source verse (with italic stage directions) above a
@@ -498,6 +532,30 @@ impl JournalOverlay {
         // clip must be recomputed for the new (smaller) height — otherwise the
         // answer's last row pokes out behind the ask card.
         self.clip_guard.recompute();
+
+        // Headless test: emit the scrolled viewport rect WITH the ask card open
+        // (the exact regression from Tasks 1-5). The card open shrinks the
+        // scrolled window's height; this idle fires after that layout pass, so
+        // the rect reflects the reduced viewport. Tests/journal_clipping.rs reads
+        // TEST_JOURNAL_ASK_VIEWPORT_RECT for the ask-open assertion.
+        if std::env::var_os("LIT_HEADLESS_TEST").is_some() {
+            let sc = self.scrolled.clone();
+            glib::idle_add_local_once(move || {
+                if let Some(r) = sc.root().and_then(|root| sc.compute_bounds(&root)) {
+                    crate::logging::log(&format!(
+                        "TEST_JOURNAL_ASK_VIEWPORT_RECT {} {} {} {}",
+                        r.x().round() as i32,
+                        r.y().round() as i32,
+                        r.width().round() as i32,
+                        r.height().round() as i32
+                    ));
+                } else {
+                    crate::logging::log(
+                        "TEST_JOURNAL_ASK_VIEWPORT_RECT unavailable (root/compute_bounds returned None)",
+                    );
+                }
+            });
+        }
     }
 
     pub fn close_ask_card(&self) {
