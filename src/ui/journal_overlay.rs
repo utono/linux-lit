@@ -28,6 +28,11 @@ pub struct JournalOverlay {
     font_family: RefCell<String>,
     font_size: Cell<i32>,
     last_card_size: Cell<(i32, i32)>,
+    /// The scroll's explicit height while the ask card is CLOSED (pane − title −
+    /// footer), stored by `size_card`. The close path reuses this stored value
+    /// rather than re-measuring the footer's `preferred_size()` — which reads 0
+    /// right after `set_visible(true)` re-shows it, leaving the scroll shrunk.
+    closed_scroll_h: Cell<i32>,
     ask: AskCard,
 }
 
@@ -195,6 +200,7 @@ impl JournalOverlay {
             font_family: RefCell::new(String::new()),
             font_size: Cell::new(16),
             last_card_size: Cell::new((0, 0)),
+            closed_scroll_h: Cell::new(0),
             ask,
         }
     }
@@ -216,6 +222,10 @@ impl JournalOverlay {
         let (_, footer_h) = self.footer_container.preferred_size();
         let scroll_h = (card_height - title_h.height() - footer_h.height()).max(80);
         self.scrolled.set_height_request(scroll_h);
+        // Remember the closed height so close_ask_card restores it WITHOUT
+        // re-measuring the footer (its preferred_size reads 0 right after it is
+        // re-shown, which left the scroll stuck at the open/shrunk height).
+        self.closed_scroll_h.set(scroll_h);
         // Anchor the text + headers to the card's side margin (card_width/4, the
         // ~65-char readability optimum the gloss overlay uses) rather than the
         // small fixed `text_margins` — otherwise the Q&A prose runs nearly edge
@@ -564,17 +574,6 @@ impl JournalOverlay {
                 crate::ui::recompute_overlay_bottom_clip(&view, &clip, &sc);
             });
         }
-        {
-            let sc = self.scrolled.clone();
-            crate::logging::log(&format!(
-                "ASKFIX3 open sync: page_size={:.0} scrolled_h={} set={}",
-                sc.vadjustment().page_size(), sc.height(), scroll_h));
-            glib::idle_add_local_once(move || {
-                crate::logging::log(&format!(
-                    "ASKFIX3 open idle: page_size={:.0} scrolled_h={}",
-                    sc.vadjustment().page_size(), sc.height()));
-            });
-        }
 
         // Headless test: emit the scrolled viewport rect WITH the ask card open
         // (the exact regression from Tasks 1-5). The card open shrinks the
@@ -605,12 +604,11 @@ impl JournalOverlay {
         self.ask.close();
         // Restore the footer hints when the question is submitted or canceled.
         self.footer_container.set_visible(true);
-        // SPIKE (fixed-scroll-height): restore the scroll's closed height
-        // (pane - title - footer; the footer is back, the ask slot is freed).
-        let (_, card_height) = self.last_card_size.get();
-        let (_, title_h) = self.title.preferred_size();
-        let (_, footer_h) = self.footer_container.preferred_size();
-        let scroll_h = (card_height - title_h.height() - footer_h.height()).max(80);
+        // Restore the scroll's CLOSED height from the value stored by size_card.
+        // Re-measuring (pane - title - footer) here read footer_h as 0 — the
+        // footer was just re-shown and hadn't relaid out — so the scroll stayed
+        // shrunk at the open height. The stored value is deterministic.
+        let scroll_h = self.closed_scroll_h.get().max(80);
         self.scrolled.set_height_request(scroll_h);
 
         self.clip_guard.recompute();
@@ -620,14 +618,6 @@ impl JournalOverlay {
             let sc = self.scrolled.clone();
             glib::idle_add_local_once(move || {
                 crate::ui::recompute_overlay_bottom_clip(&view, &clip, &sc);
-            });
-        }
-        {
-            let sc = self.scrolled.clone();
-            glib::idle_add_local_once(move || {
-                crate::logging::log(&format!(
-                    "ASKFIX3 close idle: page_size={:.0} scrolled_h={}",
-                    sc.vadjustment().page_size(), sc.height()));
             });
         }
     }
