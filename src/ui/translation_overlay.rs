@@ -81,9 +81,9 @@ pub struct TranslationOverlay {
     /// Per rendered speech/interlude block: source range and the original/
     /// translation views, so we can highlight and scroll to the cursor line.
     block_widgets: RefCell<Vec<BlockEntry>>,
-    /// Bottom clip box masking trailing slack below short content (mirrors the
+    /// Bottom clip guard masking trailing slack below short content (mirrors the
     /// gloss/journal overlays' free-scroll clip).
-    bottom_clip: gtk4::Box,
+    clip_guard: crate::ui::bottom_clip_guard::BottomClipGuard,
 }
 
 impl TranslationOverlay {
@@ -120,28 +120,14 @@ impl TranslationOverlay {
         scrolled.set_child(Some(&content_vbox));
 
         // Free-scroll bottom clip: mask trailing slack below short content
-        // (mirrors gloss/journal). The clip box overlays an OUTER Overlay
-        // wrapping the ScrolledWindow so it stays pinned to the viewport bottom.
+        // (mirrors gloss/journal). The guard owns the clip Box, the overlay
+        // wiring, and the persistent value_changed catch-all (path c).
         let scroll_overlay = Overlay::new();
         scroll_overlay.set_child(Some(&scrolled));
-        let bottom_clip = gtk4::Box::new(Orientation::Vertical, 0);
-        bottom_clip.add_css_class("gloss-bottom-clip");
-        bottom_clip.set_valign(Align::End);
-        bottom_clip.set_halign(Align::Fill);
-        bottom_clip.set_vexpand(false);
-        bottom_clip.set_can_target(false);
-        scroll_overlay.add_overlay(&bottom_clip);
-        scroll_overlay.set_measure_overlay(&bottom_clip, false);
-        scroll_overlay.set_clip_overlay(&bottom_clip, true);
-        // Recompute on EVERY value change (not just named scroll calls) so the
-        // clip can't keep a stale open-time height.
-        {
-            let clip = bottom_clip.clone();
-            let sc = scrolled.clone();
-            scrolled.vadjustment().connect_value_changed(move |_| {
-                crate::ui::recompute_overlay_bottom_clip_box(&clip, &sc);
-            });
-        }
+        let clip_guard = crate::ui::bottom_clip_guard::BottomClipGuard::attach_box(
+            &scroll_overlay,
+            &scrolled,
+        );
         container.append(&scroll_overlay);
 
         Self {
@@ -152,7 +138,7 @@ impl TranslationOverlay {
             scrolled,
             content_vbox,
             block_widgets: RefCell::new(Vec::new()),
-            bottom_clip,
+            clip_guard,
         }
     }
 
@@ -276,22 +262,8 @@ impl TranslationOverlay {
 
         self.scrim.set_visible(true);
         self.container.set_visible(true);
-        self.scroll_to_top();
-
-        // Recompute the bottom clip once layout settles (size/scroll range are
-        // not final synchronously after set_visible).
-        {
-            let clip = self.bottom_clip.clone();
-            let sc = self.scrolled.clone();
-            glib::idle_add_local_once(move || {
-                crate::ui::recompute_overlay_bottom_clip_box(&clip, &sc);
-            });
-        }
-    }
-
-    pub fn scroll_to_top(&self) {
-        let adj = self.scrolled.vadjustment();
-        adj.set_value(adj.lower());
+        // on_open: snaps to top, pins across layout passes, fires idle backstop.
+        self.clip_guard.on_open();
     }
 
     /// Scroll so the highlighted ORIGINAL line for `work_idx` is vertically
