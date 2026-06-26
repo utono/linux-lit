@@ -68,7 +68,7 @@ const TAB_KEY: KeyDef = bare("Tab", "", "play/pause");
 const HOME_ROW: &[KeyDef] = &[
     key("a", "A", "play from ts", "", &[("C-a", "authorship"), ("S-C-a", "attr set")]),
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
-    key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echo turns"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echoes"), ("E", "synopsis edit")]),
+    key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echoes"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echo turns"), ("E", "synopsis edit")]),
     key("u", "U", "start time", "U: undo ts", &[("M-u", "set end time")]),
     key("i", "I", "2-col translation", "", &[("M-i", "scansion"), ("C-M-i", "inline translation"), ("C-i", "page image"), ("S-C-i", "calibrate pages")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),

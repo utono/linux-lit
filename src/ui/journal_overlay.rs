@@ -1,4 +1,4 @@
-use crate::ui::ask_card::{AskCard, AskFocus};
+use crate::ui::ask_card::{AskCard, AskCardHost, AskFocus};
 use crate::ui::gloss_block::visual_block_range;
 use crate::ui::gloss_render::populate_verse_buffer;
 use crate::ui::journal_block::{journal_blocks, JournalBlock};
@@ -28,7 +28,10 @@ pub struct JournalOverlay {
     font_family: RefCell<String>,
     font_size: Cell<i32>,
     last_card_size: Cell<(i32, i32)>,
-    ask: AskCard,
+    /// Owns the ask-card lifecycle + the fixed-scroll-height viewport-shrink (the
+    /// occlusion fix) + the footer hide/show + the clip recompute. Shared with the
+    /// gloss overlay so the mechanism can't drift. See `AskCardHost`.
+    ask_host: AskCardHost,
 }
 
 /// Prefix a journal Q&A question with `Q: ` for display (the answer follows
@@ -70,7 +73,14 @@ impl JournalOverlay {
         scrolled.set_hscrollbar_policy(gtk4::PolicyType::Never);
         scrolled.set_vscrollbar_policy(gtk4::PolicyType::External);
         scrolled.set_propagate_natural_height(false);
-        scrolled.set_vexpand(true);
+        // SPIKE (fixed-scroll-height architecture): vexpand is OFF. The earlier
+        // races came from the vexpand scroll fighting the container's unbounded
+        // height non-deterministically when the ask card appeared/vanished. With
+        // vexpand off, the scroll's height is EXACTLY what size_card sets it to —
+        // deterministic, no fight, no resize-on-open race. size_card sets it to
+        // the pane height minus the title+footer; open/close adjust it by the ask
+        // card's reserved height.
+        scrolled.set_vexpand(false);
 
         let view = gtk4::TextView::new();
         view.set_editable(false);
@@ -167,6 +177,20 @@ impl JournalOverlay {
         let ask = AskCard::new(text_margins as i32, &view);
         container.append(ask.container());
 
+        // The host owns the ask-card lifecycle: the fixed-scroll-height
+        // viewport-shrink, the footer hide/show, and the clip recompute. The
+        // recompute closure drives this overlay's BottomClipGuard's clip box.
+        let recompute = {
+            let clip = clip_guard.clip().clone();
+            let view = view.clone();
+            let scrolled = scrolled.clone();
+            Rc::new(move || {
+                crate::ui::recompute_overlay_bottom_clip(&view, &clip, &scrolled);
+            }) as Rc<dyn Fn()>
+        };
+        let ask_host =
+            AskCardHost::new(ask, &scrolled, Some(footer_container.clone()), recompute);
+
         Self {
             overlay,
             scrim,
@@ -188,7 +212,7 @@ impl JournalOverlay {
             font_family: RefCell::new(String::new()),
             font_size: Cell::new(16),
             last_card_size: Cell::new((0, 0)),
-            ask,
+            ask_host,
         }
     }
 
@@ -201,6 +225,14 @@ impl JournalOverlay {
     fn size_card(&self, card_width: i32, card_height: i32) {
         self.container.set_size_request(card_width, card_height);
         self.last_card_size.set((card_width, card_height));
+        // Fixed-scroll-height (the host owns it): the scroll (vexpand off) gets an
+        // EXPLICIT height = pane minus the title + footer chrome — its height while
+        // the ask card is CLOSED. `ask_host.open` subtracts the ask slot, `close`
+        // restores this stored closed height. Deterministic — no auto-resize race.
+        let (_, title_h) = self.title.preferred_size();
+        let (_, footer_h) = self.footer_container.preferred_size();
+        self.ask_host
+            .size(card_width, card_height, title_h.height(), footer_h.height());
         // Anchor the text + headers to the card's side margin (card_width/4, the
         // ~65-char readability optimum the gloss overlay uses) rather than the
         // small fixed `text_margins` — otherwise the Q&A prose runs nearly edge
@@ -240,7 +272,7 @@ impl JournalOverlay {
         };
         self.view.buffer().set_text(&body);
         self.apply_font();
-        self.ask.close();
+        self.ask_host.card().close();
         // Restore the navigation footer (show_loading may have hidden it).
         self.footer_container.set_visible(true);
         self.scrim.set_visible(true);
@@ -343,7 +375,7 @@ impl JournalOverlay {
         self.view.buffer().insert(&mut end_iter, &qa_text);
 
         self.apply_font();
-        self.ask.close();
+        self.ask_host.card().close();
         // Restore the navigation footer (show_loading may have hidden it).
         self.footer_container.set_visible(true);
         self.scrim.set_visible(true);
@@ -367,7 +399,7 @@ impl JournalOverlay {
         };
         self.view.buffer().set_text(&body);
         self.apply_font();
-        self.ask.close();
+        self.ask_host.card().close();
         // Keep the navigation footer hidden during the Asking state. The result
         // render (show_page/show_passage_page/show_message) restores it.
         self.footer_container.set_visible(false);
@@ -382,7 +414,7 @@ impl JournalOverlay {
         }
         self.view.buffer().set_text(text);
         self.apply_font();
-        self.ask.close();
+        self.ask_host.card().close();
         // Restore the navigation footer (show_loading may have hidden it).
         self.footer_container.set_visible(true);
         self.scrim.set_visible(true);
@@ -392,7 +424,7 @@ impl JournalOverlay {
     pub fn hide(&self) {
         self.container.set_visible(false);
         self.scrim.set_visible(false);
-        self.ask.close();
+        self.ask_host.card().close();
     }
 
     pub fn is_visible(&self) -> bool {
@@ -494,7 +526,7 @@ impl JournalOverlay {
             return;
         }
         let font_str = format!("{} {}", family, self.font_size.get());
-        for view in [&self.view, self.ask.input()] {
+        for view in [&self.view, self.ask_host.input()] {
             let buffer = view.buffer();
             let table = buffer.tag_table();
             if let Some(old) = table.lookup("journal-font") {
@@ -513,25 +545,20 @@ impl JournalOverlay {
     }
 
     pub fn ask_is_open(&self) -> bool {
-        self.ask.is_open()
+        self.ask_host.is_open()
     }
 
     pub fn ask_focus(&self) -> AskFocus {
-        self.ask.focus()
+        self.ask_host.focus()
     }
 
     pub fn open_ask_card(&self, title: &str, hint: &str) {
-        let (card_width, _) = self.last_card_size.get();
-        self.ask.open(title, hint, card_width);
-        // Hide the normal-navigation footer hints while the ask card is open —
-        // the ask card has its own "Tab switch · Ctrl+Enter submit" hint, and the
-        // Alt+w/Ctrl+\/Alt+g navigation binds don't apply mid-question.
-        self.footer_container.set_visible(false);
+        // The host reveals the ask card, hides the navigation footer (the ask
+        // card carries its own "Tab switch · Ctrl+Enter submit" hint), shrinks the
+        // scroll viewport to pane − title − ask (the occlusion fix), and recomputes
+        // the clip. apply_font re-fonts the now-visible input.
+        self.ask_host.open(title, hint);
         self.apply_font();
-        // Revealing the ask card shrinks the scrolled viewport, so the bottom
-        // clip must be recomputed for the new (smaller) height — otherwise the
-        // answer's last row pokes out behind the ask card.
-        self.clip_guard.recompute();
 
         // Headless test: emit the scrolled viewport rect WITH the ask card open
         // (the exact regression from Tasks 1-5). The card open shrinks the
@@ -559,20 +586,17 @@ impl JournalOverlay {
     }
 
     pub fn close_ask_card(&self) {
-        self.ask.close();
-        // Restore the footer hints when the question is submitted or canceled.
-        self.footer_container.set_visible(true);
-        // Hiding the ask card grows the viewport back — recompute the clip for
-        // the restored height.
-        self.clip_guard.recompute();
+        // The host hides the ask card, re-shows the footer, restores the scroll's
+        // stored CLOSED height, and recomputes the clip.
+        self.ask_host.close();
     }
 
     pub fn toggle_ask_focus(&self) {
-        self.ask.toggle_focus();
+        self.ask_host.toggle_focus();
     }
 
     pub fn take_ask_text(&self) -> String {
-        self.ask.take_text()
+        self.ask_host.take_text()
     }
 
     /// Rebuild `self.blocks` from the current buffer text (paragraph runs).

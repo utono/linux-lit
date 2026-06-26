@@ -1,4 +1,4 @@
-use crate::ui::ask_card::{AskCard, AskFocus};
+use crate::ui::ask_card::{AskCard, AskCardHost, AskFocus};
 use crate::ui::gloss_block::{
     gloss_blocks, render_synopsis_with_labels, selected_blocks_text,
     synopsis_blocks, visual_block_range, BlockKind, GlossBlock,
@@ -34,6 +34,12 @@ pub struct GlossOverlay {
     corr_header: Label,
     corrected_label: Label,
     hint: Label,
+    /// The footer/hint row container (holds `hint` + `citation_label` +
+    /// `position_label`). Stored so the show paths can measure its height for the
+    /// fixed-scroll-height accounting (it stays visible while the ask card is open
+    /// — gloss has no toggled footer — so it counts as fixed chrome below the
+    /// scroll).
+    footer_box: gtk4::Box,
     citation_label: Label,
     position_label: Label,
     gloss_scroll_overlay: Overlay,
@@ -86,10 +92,12 @@ pub struct GlossOverlay {
     /// visual-mode yank can rebuild the selected paragraphs via
     /// `selected_blocks_text`. Set by `show_synopsis`.
     current_synopsis: RefCell<String>,
-    /// Shared "ask" input card, stacked below the synopsis/gloss card inside the
-    /// same `container` (after the footer). Serves both the synopsis "ask" flow
-    /// and the gloss add/edit prompts. See `crate::ui::ask_card::AskCard`.
-    ask: AskCard,
+    /// Hosts the shared "ask" input card (stacked below the synopsis/gloss card)
+    /// and owns the fixed-scroll-height viewport-shrink (the occlusion fix), the
+    /// clip recompute, and the open/close lifecycle. Shared with the journal
+    /// overlay so the mechanism can't drift. Serves both the synopsis "ask" flow
+    /// and the gloss add/edit prompts. See `crate::ui::ask_card::AskCardHost`.
+    ask_host: AskCardHost,
 }
 
 /// Default font for the synopsis/gloss/echoes overlay cards.
@@ -149,15 +157,19 @@ impl GlossOverlay {
         let gloss_scroll_overlay = Overlay::new();
 
         let gloss_scrolled = gtk4::ScrolledWindow::new();
-        gloss_scrolled.set_vexpand(true);
+        // Fixed-scroll-height (AskCardHost precondition): vexpand is OFF. The
+        // viewport height is set EXPLICITLY by `ask_host.size` (in each show path)
+        // and adjusted on ask open/close. This is what makes the scroll yield room
+        // to the ask card deterministically — a vexpand scroll keeps full height
+        // and the ask card draws over the bottom rows (the occlusion bug). Mirrors
+        // the journal overlay. Every show path that makes the scroll visible MUST
+        // call `ask_host.size(...)` or the explicit height stays at its last value.
+        gloss_scrolled.set_vexpand(false);
         gloss_scrolled.set_hscrollbar_policy(gtk4::PolicyType::Never);
         gloss_scrolled.set_vscrollbar_policy(gtk4::PolicyType::External);
         // Report a small natural height (not the full text height) so the
         // fixed-height card honors its `height_request` instead of growing to
-        // fit the whole synopsis. The vexpand then distributes the card's
-        // remaining space to this viewport AFTER the title/footer/ask card take
-        // theirs — which is what keeps the stacked ask card inside the card
-        // rather than spilling past the reader's rounded frame.
+        // fit the whole synopsis.
         gloss_scrolled.set_propagate_natural_height(false);
 
         let gloss_view = gtk4::TextView::new();
@@ -338,6 +350,22 @@ impl GlossOverlay {
         let ask = AskCard::new(text_margins as i32, &gloss_scrolled);
         container.append(ask.container());
 
+        // The host owns the ask-card lifecycle: the fixed-scroll-height
+        // viewport-shrink, the clip recompute (driving this overlay's
+        // BottomClipGuard clip box), and open/close. The footer (hr + keybind
+        // hints) is HIDDEN while the ask card is open, mirroring the journal Q&A —
+        // so it is registered as the host's toggled footer.
+        let recompute = {
+            let clip = clip_guard.clip().clone();
+            let view = gloss_view.clone();
+            let scrolled = gloss_scrolled.clone();
+            Rc::new(move || {
+                crate::ui::recompute_overlay_bottom_clip(&view, &clip, &scrolled);
+            }) as Rc<dyn Fn()>
+        };
+        let ask_host =
+            AskCardHost::new(ask, &gloss_scrolled, Some(footer_box.clone()), recompute);
+
         container.set_visible(false);
 
         let scrim = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
@@ -356,6 +384,7 @@ impl GlossOverlay {
             corr_header,
             corrected_label,
             hint,
+            footer_box,
             citation_label,
             position_label,
             gloss_scroll_overlay,
@@ -380,7 +409,7 @@ impl GlossOverlay {
             cursor_block: Cell::new(0),
             synopsis_visual_anchor: Cell::new(None),
             current_synopsis: RefCell::new(String::new()),
-            ask,
+            ask_host,
         }
     }
 
@@ -397,7 +426,7 @@ impl GlossOverlay {
     /// after each populate so a rebuilt buffer keeps the chosen size.
     pub fn apply_font(&self) {
         let font_str = format!("{} {}", self.font_family.borrow(), self.font_size.get());
-        for view in [&self.gloss_view, &self.echo_header_view, self.ask.input()] {
+        for view in [&self.gloss_view, &self.echo_header_view, self.ask_host.input()] {
             let buffer = view.buffer();
             let table = buffer.tag_table();
             if let Some(old) = table.lookup("gloss-font") {
@@ -583,7 +612,7 @@ impl GlossOverlay {
         self.last_card_size.set((card_width, card_height));
         // A fresh gloss render closes any open add/edit ask card and clears its
         // focus highlight (e.g. after an add/edit completes or n/p navigates).
-        self.ask.close();
+        self.ask_host.card().close();
         self.title.set_visible(false);
         self.title.set_vexpand(false);
         self.title.set_valign(Align::Start);
@@ -635,6 +664,11 @@ impl GlossOverlay {
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         self.apply_font();
+        // Fixed-scroll-height: the gloss result hides the title; only the footer
+        // sits below the scroll (hidden when the ask card opens). Record the closed
+        // scroll height so the add/edit ask card shrinks the viewport (no occlusion
+        // of the gloss text).
+        self.size_scroll(card_height, self.title_pref_h());
         self.reset_scroll_top();
         self.mark_cursor_block();
         // mark_cursor_block sets bar_ranges, but the bar DRAW reads per-line
@@ -659,7 +693,7 @@ impl GlossOverlay {
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         self.last_card_size.set((card_width, card_height));
-        self.ask.close();
+        self.ask_host.card().close();
 
         // "Glossing…" as a top header (not the centered label of
         // `show_loading_message`), matching the gloss result's title placement.
@@ -715,6 +749,10 @@ impl GlossOverlay {
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         self.apply_font();
+        // Fixed-scroll-height: the "Glossing…" loading card shows the title but
+        // hides the hint footer, and has no ask card. With vexpand off the scroll
+        // still needs an explicit height — title only above it.
+        self.size_scroll(card_height, self.title_pref_h());
         self.reset_scroll_top();
     }
 
@@ -738,7 +776,7 @@ impl GlossOverlay {
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         self.last_card_size.set((card_width, card_height));
-        self.ask.close();
+        self.ask_host.card().close();
         self.title.set_visible(false);
         let left = self.column_width / 8;
         self.title.set_margin_start(left);
@@ -789,6 +827,12 @@ impl GlossOverlay {
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         self.apply_font();
+        // Fixed-scroll-height: echoes mode hides the title but shows the source
+        // header + rule ABOVE the scroll (they stay put while the "A add" ask card
+        // is open). The footer below is hidden on open (handled by size_scroll).
+        let echo_chrome = self.echo_header_view.preferred_size().1.height()
+            + self.echo_rule.preferred_size().1.height();
+        self.size_scroll(card_height, echo_chrome);
         self.reset_scroll_top();
     }
 
@@ -853,7 +897,7 @@ impl GlossOverlay {
         self.last_card_size.set((card_width, card_height));
         // A fresh synopsis render closes any open ask card and returns focus to
         // the synopsis (e.g. after an amend completes, or n/p moves scenes).
-        self.ask.close();
+        self.ask_host.card().close();
         // Match the gloss margins: anchor to the actual (full-screen) card
         // width, not the fixed column_width, so the synopsis prose sits at the
         // same ~65-char measure as the gloss instead of running nearly edge to
@@ -921,6 +965,11 @@ impl GlossOverlay {
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         self.apply_font();
+        // Fixed-scroll-height: synopsis mode shows the title above the scroll and
+        // the footer below (the footer is hidden when the ask card opens). Record
+        // the closed scroll height so opening the ask card shrinks the viewport
+        // (no occlusion of the synopsis text).
+        self.size_scroll(card_height, self.title_pref_h());
         self.reset_scroll_top();
 
         // Headless test: emit the overlay viewport rect once layout settles, so
@@ -957,6 +1006,36 @@ impl GlossOverlay {
     /// `&self` entry point for recomputing the bottom clip after a scroll.
     fn update_bottom_clip(&self) {
         self.clip_guard.recompute();
+    }
+
+    /// Record the card geometry on the ask-card host and set the scroll's CLOSED
+    /// height (fixed-scroll-height). `above_chrome_h` is the non-scroll chrome
+    /// ABOVE the scroll that stays visible while the ask card is open — it varies
+    /// by show mode (synopsis/gloss-result: just the title; echoes: the source
+    /// header and rule). The footer (hr and hints) is the host's TOGGLED footer,
+    /// hidden on open, so the helper passes it separately as `footer_h` (not folded
+    /// into the fixed chrome). Call from every show path that makes the scroll
+    /// visible, AFTER the chrome visibility is set, so preferred sizes are accurate.
+    fn size_scroll(&self, card_height: i32, above_chrome_h: i32) {
+        let (card_width, _) = self.last_card_size.get();
+        self.ask_host
+            .size(card_width, card_height, above_chrome_h, self.footer_pref_h());
+    }
+
+    /// Preferred height of the title row (0 when hidden). Used for the
+    /// fixed-scroll-height accounting.
+    fn title_pref_h(&self) -> i32 {
+        if self.title.is_visible() {
+            self.title.preferred_size().1.height()
+        } else {
+            0
+        }
+    }
+
+    /// Preferred height of the footer/hint row (hr + keybind hints). It is the
+    /// host's TOGGLED footer — hidden while the ask card is open.
+    fn footer_pref_h(&self) -> i32 {
+        self.footer_box.preferred_size().1.height()
     }
 
     /// Recompute `blocks` line spans from the current buffer + gloss text. Each
@@ -1429,49 +1508,36 @@ impl GlossOverlay {
 
     /// Reveal the stacked input card below the open synopsis/gloss card with the
     /// given heading and footer hint. Shared by the synopsis "ask" flow and the
-    /// gloss add/edit prompts.
+    /// gloss add/edit prompts. The host shrinks the scroll viewport so the
+    /// synopsis/gloss text ends ABOVE the ask card (the occlusion fix) and
+    /// recomputes the clip; apply_font re-fonts the now-visible input.
     pub fn open_ask_card_with(&self, title: &str, hint: &str) {
-        let (card_width, _) = self.last_card_size.get();
-        self.ask.open(title, hint, card_width);
+        self.ask_host.open(title, hint);
         self.apply_font();
-        self.schedule_ask_clip_recompute();
     }
 
-    /// Hide the ask card and return focus + highlight to the synopsis.
+    /// Hide the ask card and return focus + highlight to the synopsis. The host
+    /// restores the scroll's stored closed height and recomputes the clip.
     pub fn close_ask_card(&self) {
-        self.ask.close();
-        self.schedule_ask_clip_recompute();
-    }
-
-    /// Recompute the bottom clip on the next tick after the ask card opens/closes:
-    /// revealing/hiding it resizes the scrolled viewport, so the clip must be
-    /// recomputed for the new height — otherwise the body's last row pokes out
-    /// behind the ask card. The resize isn't synchronous, hence the deferral.
-    fn schedule_ask_clip_recompute(&self) {
-        let clip = self.clip_guard.clip().clone();
-        let view = self.gloss_view.clone();
-        let scrolled = self.gloss_scrolled.clone();
-        glib::idle_add_local_once(move || {
-            crate::ui::recompute_overlay_bottom_clip(&view, &clip, &scrolled);
-        });
+        self.ask_host.close();
     }
 
     /// Read and clear the ask input's text.
     pub fn take_ask_text(&self) -> String {
-        self.ask.take_text()
+        self.ask_host.take_text()
     }
 
     /// Flip focus between the synopsis and the ask card. No-op if closed.
     pub fn toggle_ask_focus(&self) {
-        self.ask.toggle_focus();
+        self.ask_host.toggle_focus();
     }
 
     pub fn ask_is_open(&self) -> bool {
-        self.ask.is_open()
+        self.ask_host.is_open()
     }
 
     pub fn ask_focus(&self) -> AskFocus {
-        self.ask.focus()
+        self.ask_host.focus()
     }
 
     pub fn show_loading(&self) {
@@ -1506,7 +1572,7 @@ impl GlossOverlay {
         self.echo_header_view.set_visible(false);
         self.echo_rule.set_visible(false);
         self.position_label.set_visible(false);
-        self.ask.close();
+        self.ask_host.card().close();
         self.hint.set_visible(false);
         // Show the dim scrim so the loading state reads as a modal card over the
         // page, consistent with the synopsis/gloss cards (was hidden, which made
@@ -1577,7 +1643,7 @@ impl GlossOverlay {
         self.container.set_visible(false);
         self.scrim.set_visible(false);
         // Reset the ask card so it never re-shows stale when the overlay reopens.
-        self.ask.close();
+        self.ask_host.card().close();
     }
 
     pub fn set_position(&self, index: usize, total: usize) {
