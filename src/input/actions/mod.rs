@@ -56,6 +56,8 @@ pub enum Action {
 
     // Bookmarks
     ToggleBookmark,
+    /// Toggle whether the cursor's paragraph begins a chapter (prose only).
+    ToggleChapterStart,
     NextBookmark,
     PrevBookmark,
     JumpToRecentBookmark,
@@ -189,6 +191,7 @@ impl Action {
             | Action::JumpToNextScene
             | Action::JumpToPrevScene
             | Action::ToggleBookmark
+            | Action::ToggleChapterStart
             | Action::NextBookmark
             | Action::PrevBookmark
             | Action::JumpToRecentBookmark
@@ -307,6 +310,7 @@ impl Action {
             Action::JumpToNextScene => "JumpToNextScene",
             Action::JumpToPrevScene => "JumpToPrevScene",
             Action::ToggleBookmark => "ToggleBookmark",
+            Action::ToggleChapterStart => "ToggleChapterStart",
             Action::NextBookmark => "NextBookmark",
             Action::PrevBookmark => "PrevBookmark",
             Action::JumpToRecentBookmark => "JumpToRecentBookmark",
