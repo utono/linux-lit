@@ -228,7 +228,7 @@ fn jump_to_line_mapping_id(state: &Rc<RefCell<AppState>>, line_mapping_id: i64) 
     }
 }
 
-fn load_work_at(
+pub(crate) fn load_work_at(
     state: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
     abbrev: String,

@@ -56,7 +56,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key("y", "Y", "pg back", "", &[("C-y", "copy id")]),
     key("f", "F", "next font", "F: prev font", &[("M-f", "font info")]),
     key("g", "G", "", "", &[("C-g", "gloss tog"), ("S-C-g", "last gloss"), ("M-g", "gloss pick"), ("M-g", "gloss from jrnl"), ("C-g", "view gloss")]),
-    key("c", "C", "set chapter", "C: show chapter", &[]),
+    key("c", "C", "set chapter", "C: show chapter", &[("C-c", "toggle ch start")]),
     key("r", "R", "next conc", "R: prev conc", &[("C-r", "next vocab"), ("S-C-r", "prev vocab"), ("M-r", "conc works"), ("r", "verse audio: play/stop"), ("R", "verse audio: pick voice")]),
     key("l", "L", "toggle signs", "", &[("S-C-l", "save+quit")]),
     key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
@@ -526,6 +526,11 @@ MPV's current playback position. \
         "set chapter" => "Mark the current line as a chapter/scene boundary at \
 MPV's current playback position. \
 -> timestamps::set_chapter — src/input/timestamps.rs",
+        "toggle ch start" => "Toggle whether the cursor's paragraph begins a \
+structural prose chapter: flips line_mapping.chapter_start in lit.db, re-derives \
+the work's chapter divisions, and reloads in place with the cursor preserved. \
+Distinct from 'set chapter' (c), which sets an audio chapter timestamp. \
+-> chapters::toggle_chapter_start — src/input/actions/chapters.rs",
         "show chapter" => "Show the current act/scene (plays) or chapter (prose) \
 for the line the cursor is on, as a transient toast. \
 -> navigation::show_current_chapter — src/input/navigation.rs",
