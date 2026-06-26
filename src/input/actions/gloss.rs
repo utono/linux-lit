@@ -756,6 +756,67 @@ fn persist_and_render_gloss(
     crate::logging::log(log_msg);
 }
 
+/// Persist a freshly composed async-Claude gloss, reload the start-citation
+/// gloss list, select the new row, render it into the gloss overlay, reinstall
+/// `gloss_context`, and call `record_last_gloss`. Shared by the four async
+/// Claude-call render tails (action_reader_gloss, action_gloss_with_claude,
+/// run_pending_inner_monologue_blocking, ask_claude/gloss-from-journal).
+///
+/// `text` is the text to persist and render (callers that pre-process the raw
+/// Claude response, e.g. `verify_echo_citations`, pass the processed form here).
+pub(crate) fn persist_render_install_gloss(
+    s: &mut AppState,
+    ctx: crate::gloss::GlossContext,
+    text: &str,
+    gloss_type: &str,
+    model_for_db: &str,
+    log_msg: &str,
+) {
+    let mut new_gloss_id: i64 = -1;
+    if let Ok(conn) = crate::db::queries::open_db_rw() {
+        if let Ok(id) = crate::db::queries::save_gloss(
+            &conn,
+            &ctx.hash,
+            &ctx.work_abbrev,
+            &ctx.start_citation,
+            &ctx.end_citation,
+            ctx.act,
+            ctx.scene,
+            &ctx.speaker,
+            &ctx.source_text,
+            text,
+            gloss_type,
+            model_for_db,
+        ) {
+            new_gloss_id = id;
+        }
+    }
+
+    let all = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| {
+            crate::db::queries::find_glosses_by_start(
+                &conn, &ctx.work_abbrev, &ctx.start_citation,
+                &["teacher-generic", "inner-monologue", "reader-gloss"],
+            ).ok()
+        })
+        .unwrap_or_default();
+
+    let new_idx = all.iter().position(|g| g.gloss_id == new_gloss_id).unwrap_or(0);
+
+    let cw = s.content_hbox.width();
+    let h = s.content_hbox.height();
+    let pairs = ctx.source_line_pairs();
+    s.gloss_overlay.show_gloss_with_color(&ctx.source_text, text, cw, h, Some(&s.theme.root_color), &pairs);
+    s.gloss_overlay.set_position(new_idx, all.len());
+    s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
+    s.gloss_list = all;
+    s.gloss_index = new_idx;
+    s.gloss_context = Some(ctx);
+    s.record_last_gloss(gloss_type);
+    crate::logging::log(log_msg);
+}
+
 pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
     let (ctx, model) = {
         let state = state_rc.borrow();
