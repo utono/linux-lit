@@ -1034,12 +1034,12 @@ fn handle_gloss_key(
             let mut s = state.borrow_mut();
             s.tts.stop();
             s.gloss_overlay.hide();
-            s.input_mode = crate::app::InputMode::Reader;
             s.gloss_opened_from_picker = false;
             // A gloss may have just been created/edited in the overlay, adding a
-            // new glossed passage. Recompute the main-card reader-gloss tint so
-            // the newly-glossed lines color without needing a work reload.
-            crate::app::apply_reader_gloss_highlighting(&mut s);
+            // new glossed passage. Return to reader mode and recompute the
+            // main-card reader-gloss tint so the newly-glossed lines color
+            // without needing a work reload.
+            crate::app::return_to_reader_mode(&mut s);
             // Jump the cursor to the first dialogue line of the glossed passage's
             // source text. If that can't be resolved, fall back to the exact page
             // the user was on before the gloss opened (saved by every open path).

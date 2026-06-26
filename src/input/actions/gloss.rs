@@ -744,6 +744,12 @@ fn persist_and_render_gloss(
     s.gloss_index = new_idx;
     s.gloss_active_voice = 0;
     recolor_cached_blocks(&s);
+    // Refresh the MAIN-CARD reader-gloss tint from the now-saved passages, so a
+    // newly created reader-gloss colors its lines immediately — mirrors the
+    // delete path (delete_current_gloss). Without this the tint only appeared
+    // after the overlay was closed and reopened (which re-ran this). A non
+    // reader-gloss type adds no reader-gloss passage, so this is a no-op for it.
+    crate::app::apply_reader_gloss_highlighting(&mut s);
     crate::logging::log(log_msg);
 }
 
@@ -1918,10 +1924,9 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         let mut s = state.borrow_mut();
         s.tts.stop();
         s.gloss_overlay.hide();
-        s.input_mode = crate::app::InputMode::Reader;
-        // A gloss may have just been created/edited; refresh the main-card
-        // reader-gloss tint so newly-glossed lines color without a work reload.
-        crate::app::apply_reader_gloss_highlighting(&mut s);
+        // A gloss may have just been created/edited; return to reader mode and
+        // refresh the main-card tint so newly-glossed lines color without a reload.
+        crate::app::return_to_reader_mode(&mut s);
         // Restore the page the user was on before toggling the gloss open.
         if let Some((line, top)) = s.gloss_return_pos.take() {
             s.current_line = line;

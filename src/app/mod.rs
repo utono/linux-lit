@@ -3726,6 +3726,17 @@ pub fn apply_reader_gloss_highlighting(state: &mut AppState) {
     }
 }
 
+/// Return to reader mode from a gloss/journal overlay AND refresh the main-card
+/// reader-gloss tint. Single source of truth so the tint can't go stale when a
+/// reader-gloss was just created/edited/deleted in the overlay: every
+/// overlay-close-to-reader site routes through this rather than each remembering
+/// to recompute. Callers still own their own position-restore / re-snap; this
+/// owns only the two invariants (mode + tint).
+pub(crate) fn return_to_reader_mode(state: &mut AppState) {
+    state.input_mode = InputMode::Reader;
+    apply_reader_gloss_highlighting(state);
+}
+
 /// Apply the slate reader-gloss tint to a single buffer line.
 pub(crate) fn apply_reader_gloss_tag_to_line(state: &AppState, buf_idx: usize) {
     if let Some(start) = state.buffer.iter_at_line(buf_idx as i32) {
