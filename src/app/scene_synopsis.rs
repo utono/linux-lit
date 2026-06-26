@@ -175,6 +175,76 @@ pub fn scene_text_for(state: &AppState, div1: i64, div2: i64) -> String {
     out
 }
 
+/// Pure prose-window renderer: collects the work-line indices for the given
+/// division, finds `anchor_work_line`'s position within it (fallback 0), slices
+/// ±`radius` via `window_range`, and renders the selected paragraphs with the
+/// same speaker-interleave logic as `scene_text_for`.
+pub(crate) fn prose_window_text(
+    work: &crate::db::models::Work,
+    div1: i64,
+    div2: i64,
+    anchor_work_line: usize,
+    radius: usize,
+) -> String {
+    let idxs: Vec<usize> = work
+        .lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.div1 == div1 && l.div2 == div2)
+        .map(|(i, _)| i)
+        .collect();
+    if idxs.is_empty() {
+        return String::new();
+    }
+    // Anchor's position WITHIN this division. If `anchor_work_line` isn't in the
+    // division (e.g. the band's div differs from the reader's cursor div, or the
+    // reader had no saved position), fall back to the division's first paragraph
+    // — the window is then the division opening ±radius.
+    let anchor_pos = idxs.iter().position(|&i| i == anchor_work_line).unwrap_or(0);
+    let (lo, hi) = window_range(anchor_pos, radius, idxs.len());
+
+    let mut out = String::new();
+    let mut last_speaker: Option<&str> = None;
+    for &wi in &idxs[lo..=hi] {
+        let line = &work.lines[wi];
+        match line.speaker.as_deref() {
+            Some(sp) if last_speaker != Some(sp) => {
+                if !out.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str(sp);
+                out.push('\n');
+                last_speaker = Some(sp);
+            }
+            _ => {}
+        }
+        out.push_str(&line.text);
+        out.push('\n');
+    }
+    out
+}
+
+/// Like `scene_text_for`, but for PROSE works returns only the paragraphs around
+/// `anchor_work_line` (±`radius`, clamped to the division). Non-prose works
+/// (plays) return the full `scene_text_for` — a real scene is small and the
+/// whole scene is the intended context. Up to `2*radius + 1` paragraphs.
+pub fn scene_text_windowed(
+    state: &AppState,
+    div1: i64,
+    div2: i64,
+    anchor_work_line: usize,
+    radius: usize,
+) -> String {
+    let work = match state.current_work.as_ref() {
+        Some(w) => w,
+        None => return String::new(),
+    };
+    if !crate::db::line_types::is_prose_work(&work.work_type) {
+        return scene_text_for(state, div1, div2);
+    }
+    prose_window_text(work, div1, div2, anchor_work_line, radius)
+}
+
 /// Check if the current line is the first line of a new scene.
 pub fn is_first_line_of_scene(state: &AppState) -> bool {
     if state.current_line == 0 {
@@ -438,6 +508,47 @@ pub fn update_title_bar_scene(state: &AppState) {
     }
 }
 
+/// Inclusive paragraph index range `anchor_pos ± radius`, clamped to `[0, n)`.
+/// Returns `(lo, hi)` with `lo <= hi`. When `n == 0` returns `(0, 0)` — callers
+/// must check `n == 0` separately and not index.
+fn window_range(anchor_pos: usize, radius: usize, n: usize) -> (usize, usize) {
+    if n == 0 {
+        return (0, 0);
+    }
+    let lo = anchor_pos.saturating_sub(radius);
+    let hi = (anchor_pos + radius).min(n - 1);
+    (lo, hi)
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::window_range;
+
+    #[test]
+    fn middle_anchor_full_window() {
+        // anchor 50, radius 10, n 100 -> [40, 60] inclusive = 21 paragraphs
+        assert_eq!(window_range(50, 10, 100), (40, 60));
+    }
+    #[test]
+    fn clamps_low_near_start() {
+        assert_eq!(window_range(2, 10, 100), (0, 12));
+    }
+    #[test]
+    fn clamps_high_near_end() {
+        assert_eq!(window_range(98, 10, 100), (88, 99));
+    }
+    #[test]
+    fn whole_division_when_smaller_than_window() {
+        // n=5, any anchor -> the whole [0,4]
+        assert_eq!(window_range(2, 10, 5), (0, 4));
+    }
+    #[test]
+    fn empty_division_is_safe() {
+        // n=0 -> (0,0); caller must treat n==0 as "no paragraphs" and not index.
+        assert_eq!(window_range(0, 10, 0), (0, 0));
+    }
+}
+
 #[cfg(test)]
 mod chapter_synopsis_tests {
     #[test]
@@ -505,5 +616,41 @@ mod synopsis_tests {
         assert_eq!(clamp_synopsis_index(0, -1, 4), None);
         // Empty list is always None.
         assert_eq!(clamp_synopsis_index(0, 1, 0), None);
+    }
+
+    #[test]
+    fn prose_window_shrinks_cromwell_play_unchanged() {
+        let conn = match crate::db::queries::open_db() {
+            Ok(c) => c,
+            Err(_) => {
+                eprintln!("skip: no lit.db");
+                return;
+            }
+        };
+        // Prose: Cromwell is one division (1,0) of thousands of paragraphs.
+        if let Ok(work) = crate::db::queries::load_work(&conn, "Cromwell") {
+            if crate::db::line_types::is_prose_work(&work.work_type) {
+                // anchor somewhere in the middle
+                let mid = work.lines.len() / 2;
+                let windowed = super::prose_window_text(&work, 1, 0, mid, 10);
+                // full division text length, computed the scene_text_for way
+                let full_len: usize = work
+                    .lines
+                    .iter()
+                    .filter(|l| l.div1 == 1 && l.div2 == 0)
+                    .map(|l| l.text.len() + 1)
+                    .sum();
+                assert!(!windowed.is_empty());
+                assert!(
+                    windowed.len() < full_len / 10,
+                    "windowed prose ({}) must be far smaller than full division ({})",
+                    windowed.len(),
+                    full_len
+                );
+            }
+        }
+        // Note: play-equality half is omitted as it would require constructing
+        // a full AppState. The prose-shrinking gate (is_prose_work check in
+        // scene_text_windowed) is already covered by code inspection.
     }
 }

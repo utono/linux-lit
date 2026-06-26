@@ -3,6 +3,10 @@ use gtk4::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// Prose journal-Q&A context window radius (paragraphs each side of the
+/// reader's anchor). Prose divisions can be the whole book, so cap the context.
+const PROSE_CONTEXT_RADIUS: usize = 10;
+
 /// Passage context captured from a visual selection, held until the ask-card
 /// submit fires (at which point `ask_claude` reads it and clears it).
 /// The passage coordinates (div1/div2/start/end) live in `JournalBand::Passage`;
@@ -309,11 +313,23 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
             ),
             None => return,
         };
+        // Anchor on the reader's saved position (where the journal overlay was
+        // opened from), mapped to a work line. Falls back to 0 (the division's
+        // first paragraph) when unresolvable — scene_text_windowed clamps.
+        let anchor_work_line = s
+            .journal
+            .return_pos
+            .and_then(|(buf, _top)| s.work_line_for_buffer(buf))
+            .unwrap_or(0);
         let scene_text = match band {
             JournalBand::Work => String::new(),
-            JournalBand::Scene(d1, d2) => crate::app::scene_synopsis::scene_text_for(&s, d1, d2),
+            JournalBand::Scene(d1, d2) => crate::app::scene_synopsis::scene_text_windowed(
+                &s, d1, d2, anchor_work_line, PROSE_CONTEXT_RADIUS,
+            ),
             JournalBand::Passage { div1, div2, .. } => {
-                crate::app::scene_synopsis::scene_text_for(&s, div1, div2)
+                crate::app::scene_synopsis::scene_text_windowed(
+                    &s, div1, div2, anchor_work_line, PROSE_CONTEXT_RADIUS,
+                )
             }
         };
         (
