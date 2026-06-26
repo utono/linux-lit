@@ -175,9 +175,10 @@ fn run_synopsis_revision(
             s.synopsis_undo = Some(((div1, div2), original.clone()));
             s.synopsis_cache.insert((div1, div2), revised.clone());
             let cw = s.content_hbox.width();
-            let h = s.content_hbox.height();
+            let h = crate::app::layout::overlay_card_height(&s);
             let root_color = s.theme.root_color.clone();
-            s.gloss_overlay.show_synopsis(&label, &revised, Some(&root_color), cw, h);
+            let prose_card = crate::app::scene_synopsis::prose_synopsis_card(&s);
+            s.gloss_overlay.show_synopsis(&label, &revised, Some(&root_color), cw, h, prose_card);
             s.synopsis_overlay_scene = (div1, div2);
             crate::input::actions::gloss::recolor_cached_blocks(&s);
             s.input_mode = crate::app::InputMode::SynopsisOverlay;
@@ -189,9 +190,10 @@ fn run_synopsis_revision(
         move |st, msg| {
             let mut s = st.borrow_mut();
             let cw = s.content_hbox.width();
-            let h = s.content_hbox.height();
+            let h = crate::app::layout::overlay_card_height(&s);
             let root_color = s.theme.root_color.clone();
-            s.gloss_overlay.show_synopsis(&label_err, msg, Some(&root_color), cw, h);
+            let prose_card = crate::app::scene_synopsis::prose_synopsis_card(&s);
+            s.gloss_overlay.show_synopsis(&label_err, msg, Some(&root_color), cw, h, prose_card);
             s.synopsis_overlay_scene = (div1, div2);
             crate::input::actions::gloss::recolor_cached_blocks(&s);
             s.input_mode = crate::app::InputMode::SynopsisOverlay;
@@ -257,10 +259,11 @@ pub(crate) fn undo_amend(state_rc: &Rc<RefCell<AppState>>) {
     s.synopsis_cache.insert((div1, div2), original.clone());
     s.synopsis_undo = None;
     let cw = s.content_hbox.width();
-    let h = s.content_hbox.height();
+    let h = crate::app::layout::overlay_card_height(&s);
     let label = crate::app::scene_synopsis::synopsis_label(&s, div1, div2);
     let root_color = s.theme.root_color.clone();
-    s.gloss_overlay.show_synopsis(&label, &original, Some(&root_color), cw, h);
+    let prose_card = crate::app::scene_synopsis::prose_synopsis_card(&s);
+    s.gloss_overlay.show_synopsis(&label, &original, Some(&root_color), cw, h, prose_card);
     s.synopsis_overlay_scene = (div1, div2);
     crate::input::actions::gloss::recolor_cached_blocks(&s);
     crate::logging::log(&format!("SYNOPSIS: undid amend ({},{})", div1, div2));
@@ -334,7 +337,7 @@ pub(crate) fn open_work_glosses(state_rc: &Rc<RefCell<AppState>>) {
     };
 
     let cw = s.content_hbox.width();
-    let h = s.content_hbox.height();
+    let h = crate::app::layout::overlay_card_height(&s);
     let gloss_text = all_glosses[0].gloss_text.clone();
     s.gloss_overlay.show_gloss_with_color(
         &ctx.source_text, &gloss_text, cw, h, Some(&s.theme.root_color), &[],

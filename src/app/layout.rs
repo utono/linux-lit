@@ -35,6 +35,11 @@ pub fn verse_left_offset(window_width: i32, column_width: u32) -> i32 {
 /// configured font/size. If the source ever gains a longer line, widen this.
 const SONNET_BLOCK_SAMPLE: &str = "Then, churls, their thoughts, although their eyes were kind,";
 
+/// Outer margin between the reading card (`content_hbox`) and the window, on
+/// every side. Single source of truth for both `apply_card_sizing` (which sets
+/// it on the card) and `main_card_rect` (the pre-allocation height fallback).
+pub(crate) const CARD_OUTER_MARGIN: i32 = 24;
+
 /// Pixel width of the sonnet reading block, measured with the text_view's Pango
 /// context against `SONNET_BLOCK_SAMPLE`. Used to center the one-section-per-page
 /// block in the card. Returns 0 if measurement isn't possible.
@@ -305,13 +310,12 @@ pub(crate) fn apply_card_sizing(
     column_count: u8,
     translations: bool,
 ) {
-    const MAX_OUTER_MARGIN: i32 = 24;
     let ww = window_width.max(0);
     let target = target_card_width(ww, column_width, column_count, translations);
     // Reserve room for margins first; if that overflows, the card itself shrinks.
     let card_w = target.min(ww.max(1));
     let slack = ww - card_w;
-    let margin = (slack / 2).clamp(0, MAX_OUTER_MARGIN);
+    let margin = (slack / 2).clamp(0, CARD_OUTER_MARGIN);
     content_hbox.set_width_request(card_w);
     content_hbox.set_margin_start(margin);
     content_hbox.set_margin_end(margin);
@@ -326,7 +330,28 @@ pub(crate) fn apply_card_sizing(
 /// card so the overlays match the card instead of inheriting `content_hbox`'s
 /// *allocated* width — which can exceed the card's `width_request` (a child's
 /// natural width can stretch the hbox), making the overlay span edge to edge.
-pub(crate) fn overlay_card_size(s: &AppState) -> (i32, i32) {
+/// SINGLE SOURCE OF TRUTH for the dimensions of the VISIBLE main reading card.
+///
+/// Every full-screen overlay (gloss / journal / synopsis / echo) must match the
+/// card the reader actually sees, for every work type. Rather than each overlay
+/// re-deriving the size from a different widget with hand-tuned offsets (the bug
+/// class this consolidates), they all read THIS rect.
+///
+/// The visible cream card is `content_hbox` (transparent, no margins of its own
+/// once `apply_card_sizing` runs — its outer margins are between it and the
+/// window, NOT inside the card) wrapping `page_turn_overlay`/`card_vbox`. So the
+/// card's on-screen allocation is exactly `content_hbox`'s allocation. We read
+/// that allocation directly when it's settled (post-first-layout), and fall back
+/// to the computed width + window-minus-chrome height before first allocation.
+pub(crate) fn main_card_rect(s: &AppState) -> (i32, i32) {
+    let alloc_w = s.content_hbox.width();
+    let alloc_h = s.content_hbox.height();
+    if alloc_w > 0 && alloc_h > 0 {
+        // Settled: the card's real on-screen rectangle.
+        return (alloc_w, alloc_h);
+    }
+    // Pre-first-allocation fallback: compute width the same way apply_card_sizing
+    // does, and height from the window minus the card's top/bottom outer margins.
     let ww = s.window.width().max(0);
     let target = target_card_width(
         ww,
@@ -335,7 +360,19 @@ pub(crate) fn overlay_card_size(s: &AppState) -> (i32, i32) {
         s.translations_visible,
     );
     let card_w = target.min(ww.max(1));
-    (card_w, s.content_hbox.height())
+    let card_h = (s.window.height() - 2 * CARD_OUTER_MARGIN).max(0);
+    (card_w, card_h)
+}
+
+/// Width + height an overlay should request to match the visible main card.
+/// Thin alias over [`main_card_rect`] so existing call sites read naturally.
+pub(crate) fn overlay_card_size(s: &AppState) -> (i32, i32) {
+    main_card_rect(s)
+}
+
+/// Height an overlay should request to match the visible main card.
+pub(crate) fn overlay_card_height(s: &AppState) -> i32 {
+    main_card_rect(s).1
 }
 
 #[cfg(test)]

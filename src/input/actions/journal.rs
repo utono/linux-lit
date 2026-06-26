@@ -91,7 +91,7 @@ pub(crate) fn render_current(s: &mut AppState) {
     }
 
     let cw = s.content_hbox.width();
-    let h = s.content_hbox.height();
+    let h = crate::app::layout::overlay_card_height(&s);
     let footer_left = footer_left_text(&work_abbrev, s.journal_band.clone());
 
     // Passage pages with source_text use the verse renderer; everything else
@@ -669,7 +669,7 @@ pub(crate) fn action_gloss_from_journal_passage(state: &Rc<RefCell<AppState>>) {
         let pairs = ctx.source_line_pairs();
         let gloss_text = &all_glosses[idx].gloss_text;
         let card_width = s.content_hbox.width();
-        let card_height = s.content_hbox.height();
+        let card_height = crate::app::layout::overlay_card_height(&s);
         s.gloss_overlay.show_gloss_with_color(
             &ctx.source_text, gloss_text, card_width, card_height,
             Some(&s.theme.root_color), &pairs,
@@ -691,7 +691,7 @@ pub(crate) fn action_gloss_from_journal_passage(state: &Rc<RefCell<AppState>>) {
         s.gloss_return_pos = Some((s.current_line, s.page_top_line));
         s.gloss_original_text = Some(ctx.source_text.clone());
         let cw = s.content_hbox.width();
-        let h = s.content_hbox.height();
+        let h = crate::app::layout::overlay_card_height(&s);
         s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color));
         s.input_mode = crate::app::InputMode::GlossOverlay;
     }

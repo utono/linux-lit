@@ -704,7 +704,7 @@ fn render_echoes(s: &mut AppState) {
         if w > 0 { w } else { gtk4::prelude::WidgetExt::width(&s.window).max(1) }
     };
     let h = {
-        let sw = s.content_hbox.height();
+        let sw = crate::app::layout::overlay_card_height(&s);
         if sw > 0 { sw } else { gtk4::prelude::WidgetExt::height(&s.window).max(1) }
     };
     let root = s.theme.root_color.clone();
