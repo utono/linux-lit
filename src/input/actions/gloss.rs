@@ -178,22 +178,9 @@ pub(crate) fn navigate_gloss(state: &Rc<RefCell<AppState>>, delta: i32) {
     }
     s.gloss_index = new_idx;
     s.gloss_active_voice = 0;
-    let gloss = &s.gloss_list[new_idx];
     // Footer cites the DISPLAYED gloss's own passage span (glosses in this list
     // share a start_citation but may have different end_citations).
-    let gloss_start = gloss.start_citation.clone();
-    let gloss_end = gloss.end_citation.clone();
-    let ctx = s.gloss_context.as_ref().unwrap();
-    let cw = s.content_hbox.width();
-    let h = s.content_hbox.height();
-    let pairs = ctx.source_line_pairs();
-    s.gloss_overlay.show_gloss_with_color(
-        &ctx.source_text, &gloss.gloss_text, cw, h,
-        Some(&s.theme.root_color), &pairs,
-    );
-    s.gloss_overlay.set_position(new_idx, s.gloss_list.len());
-    s.gloss_overlay.set_citation(&gloss_start, &gloss_end);
-    recolor_cached_blocks(&s);
+    render_gloss_row(&mut s, new_idx);
 }
 
 pub(crate) fn copy_gloss_id(state: &Rc<RefCell<AppState>>) {
@@ -256,21 +243,8 @@ pub(crate) fn delete_current_gloss(state_rc: &Rc<RefCell<AppState>>) {
             s.gloss_index = idx.min(s.gloss_list.len() - 1);
             s.gloss_active_voice = 0;
             let new_idx = s.gloss_index;
-            let gloss = &s.gloss_list[new_idx];
             // Footer cites the now-displayed gloss's own passage span.
-            let gloss_start = gloss.start_citation.clone();
-            let gloss_end = gloss.end_citation.clone();
-            let ctx = s.gloss_context.as_ref().unwrap();
-            let cw = s.content_hbox.width();
-            let h = s.content_hbox.height();
-            let pairs = ctx.source_line_pairs();
-            s.gloss_overlay.show_gloss_with_color(
-                &ctx.source_text, &gloss.gloss_text, cw, h,
-                Some(&s.theme.root_color), &pairs,
-            );
-            s.gloss_overlay.set_position(new_idx, s.gloss_list.len());
-            s.gloss_overlay.set_citation(&gloss_start, &gloss_end);
-            recolor_cached_blocks(&s);
+            render_gloss_row(&mut s, new_idx);
         }
 
         // The gloss row was deleted from the DB above, so the glossed-passage set
@@ -694,6 +668,29 @@ fn request_ipa_then_apply(
     });
 }
 
+/// Render the gloss row at `new_idx` into the overlay. Shared by
+/// `navigate_gloss` and `delete_current_gloss` (their render blocks were
+/// byte-identical). Clones the strings that must outlive the `gloss_list`
+/// borrow so `gloss_overlay` can be mutably borrowed in the same call.
+fn render_gloss_row(s: &mut AppState, new_idx: usize) {
+    let gloss = &s.gloss_list[new_idx];
+    let gloss_start = gloss.start_citation.clone();
+    let gloss_end = gloss.end_citation.clone();
+    let gloss_text = gloss.gloss_text.clone();
+    let ctx = s.gloss_context.as_ref().unwrap();
+    let source_text = ctx.source_text.clone();
+    let cw = s.content_hbox.width();
+    let h = s.content_hbox.height();
+    let pairs = ctx.source_line_pairs();
+    s.gloss_overlay.show_gloss_with_color(
+        &source_text, &gloss_text, cw, h,
+        Some(&s.theme.root_color), &pairs,
+    );
+    s.gloss_overlay.set_position(new_idx, s.gloss_list.len());
+    s.gloss_overlay.set_citation(&gloss_start, &gloss_end);
+    recolor_cached_blocks(s);
+}
+
 /// Persist a freshly composed gloss, reload the start-citation gloss list,
 /// select the new row, and render it into the gloss overlay. Shared by
 /// `add_gloss` and `edit_gloss` (their success bodies were byte-identical here).
@@ -753,6 +750,67 @@ fn persist_and_render_gloss(
     // reader-gloss type adds no reader-gloss passage, so the re-derive is a no-op
     // (the buffer-wide tag clear at the top still runs, harmlessly).
     crate::app::apply_reader_gloss_highlighting(&mut s);
+    crate::logging::log(log_msg);
+}
+
+/// Persist a freshly composed async-Claude gloss, reload the start-citation
+/// gloss list, select the new row, render it into the gloss overlay, reinstall
+/// `gloss_context`, and call `record_last_gloss`. Shared by the four async
+/// Claude-call render tails (action_reader_gloss, action_gloss_with_claude,
+/// run_pending_inner_monologue_blocking, ask_claude/gloss-from-journal).
+///
+/// `text` is the text to persist and render (callers that pre-process the raw
+/// Claude response, e.g. `verify_echo_citations`, pass the processed form here).
+pub(crate) fn persist_render_install_gloss(
+    s: &mut AppState,
+    ctx: crate::gloss::GlossContext,
+    text: &str,
+    gloss_type: &str,
+    model_for_db: &str,
+    log_msg: &str,
+) {
+    let mut new_gloss_id: i64 = -1;
+    if let Ok(conn) = crate::db::queries::open_db_rw() {
+        if let Ok(id) = crate::db::queries::save_gloss(
+            &conn,
+            &ctx.hash,
+            &ctx.work_abbrev,
+            &ctx.start_citation,
+            &ctx.end_citation,
+            ctx.act,
+            ctx.scene,
+            &ctx.speaker,
+            &ctx.source_text,
+            text,
+            gloss_type,
+            model_for_db,
+        ) {
+            new_gloss_id = id;
+        }
+    }
+
+    let all = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| {
+            crate::db::queries::find_glosses_by_start(
+                &conn, &ctx.work_abbrev, &ctx.start_citation,
+                &["teacher-generic", "inner-monologue", "reader-gloss"],
+            ).ok()
+        })
+        .unwrap_or_default();
+
+    let new_idx = all.iter().position(|g| g.gloss_id == new_gloss_id).unwrap_or(0);
+
+    let cw = s.content_hbox.width();
+    let h = s.content_hbox.height();
+    let pairs = ctx.source_line_pairs();
+    s.gloss_overlay.show_gloss_with_color(&ctx.source_text, text, cw, h, Some(&s.theme.root_color), &pairs);
+    s.gloss_overlay.set_position(new_idx, all.len());
+    s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
+    s.gloss_list = all;
+    s.gloss_index = new_idx;
+    s.gloss_context = Some(ctx);
+    s.record_last_gloss(gloss_type);
     crate::logging::log(log_msg);
 }
 
@@ -1931,12 +1989,8 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         // refresh the main-card tint so newly-glossed lines color without a reload.
         crate::app::return_to_reader_mode(&mut s);
         // Restore the page the user was on before toggling the gloss open.
-        if let Some((line, top)) = s.gloss_return_pos.take() {
-            s.current_line = line;
-            s.page_top_line = top;
-            crate::input::scroll::resnap_page(&mut s);
-            crate::input::highlight::update_highlight(&mut s);
-        }
+        let pos = s.gloss_return_pos.take();
+        crate::app::restore_saved_position_resnap(&mut s, pos);
         return;
     }
 

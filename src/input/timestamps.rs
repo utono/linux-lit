@@ -20,6 +20,7 @@ pub struct TimestampUndoState {
 }
 
 const NUDGE_STEP: f64 = 0.2;
+const NOT_SPOKEN_TOAST: &str = "Not a spoken line — no timestamp set";
 
 /// `u`/end-time are audio timestamps — meaningful only on a SPOKEN line. A stage
 /// direction (`sub_line > 0`) that is not marked spoken (`is_spoken != Some(true)`)
@@ -47,6 +48,26 @@ mod timestamp_gate_tests {
     }
 }
 
+/// Check whether a timestamp can be written on the given line. Returns true if
+/// the line is writable (dialogue or spoken stage direction); returns false and
+/// logs + toasts if the line is an unspoken stage direction.
+fn timestamp_writable(state: &AppState, line_idx: usize) -> bool {
+    let work = match &state.current_work {
+        Some(w) => w,
+        None => return false,
+    };
+    let l = &work.lines[line_idx];
+    if !timestamp_allowed(l.sub_line, l.is_spoken) {
+        crate::logging::log(&format!(
+            "TS: refused start/end time on unspoken stage direction (line {}, sub_line {})",
+            line_idx, l.sub_line
+        ));
+        crate::input::navigation::show_chapter_toast(state, NOT_SPOKEN_TOAST);
+        return false;
+    }
+    true
+}
+
 /// Open the read-write db, logging the `TS: open_db_rw failed` message on
 /// failure and returning `None`. The shared head of the timestamp-write fns;
 /// callers do `let Some(conn) = open_db_rw_or_log() else { return false; };`,
@@ -59,6 +80,11 @@ fn open_db_rw_or_log() -> Option<rusqlite::Connection> {
             None
         }
     }
+}
+
+/// Extract the line id for a given work line index, or None if work not loaded or index out of bounds.
+fn work_line_id(state: &AppState, line_idx: usize) -> Option<i64> {
+    Some(state.current_work.as_ref()?.lines.get(line_idx)?.id)
 }
 
 /// Re-send timestamps to MPV client after a write, built from Line.timestamp (single source of truth).
@@ -123,31 +149,11 @@ pub fn set_start_time(state: &mut AppState) -> bool {
         }
     };
 
-    {
-        let work = match &state.current_work {
-            Some(w) => w,
-            None => return false,
-        };
-        let l = &work.lines[line_idx];
-        if !timestamp_allowed(l.sub_line, l.is_spoken) {
-            crate::logging::log(&format!(
-                "TS: refused start/end time on unspoken stage direction (line {}, sub_line {})",
-                line_idx, l.sub_line
-            ));
-            crate::input::navigation::show_chapter_toast(
-                state, "Not a spoken line — no timestamp set",
-            );
-            return false;
-        }
+    if !timestamp_writable(state, line_idx) {
+        return false;
     }
 
-    let line_id = {
-        let work = match &state.current_work {
-            Some(w) => w,
-            None => return false,
-        };
-        work.lines[line_idx].id
-    };
+    let Some(line_id) = work_line_id(state, line_idx) else { return false; };
 
     capture_undo_snapshot(state, line_id, media_id);
 
@@ -214,23 +220,36 @@ pub fn set_start_time(state: &mut AppState) -> bool {
 
     resync_mpv_timestamps(state);
 
-    // Update sign column for this line
+    // Update sign column for this line (is_chapter_line intentionally not written here)
     let buffer_line = state.current_line;
-    {
-        let mut ht = state.has_timestamp.borrow_mut();
-        if buffer_line < ht.len() {
-            ht[buffer_line] = true;
-        }
-        let mut manual = state.is_manual.borrow_mut();
-        if buffer_line < manual.len() {
-            manual[buffer_line] = true;
-        }
-    }
+    set_sign_columns(state, buffer_line, true, true, None);
     redraw_sign_gutters(state);
 
     crate::input::navigation::cursor_next_dialogue(state);
 
     true
+}
+
+/// Update the three sign-column `RefCell<Vec<bool>>` vecs for a single buffer
+/// line.  Pass `is_chapter: None` to leave `is_chapter_line` untouched (used by
+/// `set_start_time`, which never wrote that column).
+fn set_sign_columns(state: &AppState, buffer_line: usize, has_ts: bool, is_manual: bool, is_chapter: Option<bool>) {
+    {
+        let mut ht = state.has_timestamp.borrow_mut();
+        if buffer_line < ht.len() {
+            ht[buffer_line] = has_ts;
+        }
+        let mut manual = state.is_manual.borrow_mut();
+        if buffer_line < manual.len() {
+            manual[buffer_line] = is_manual;
+        }
+    }
+    if let Some(ch_val) = is_chapter {
+        let mut ch = state.is_chapter_line.borrow_mut();
+        if buffer_line < ch.len() {
+            ch[buffer_line] = ch_val;
+        }
+    }
 }
 
 /// Queue a redraw on both column gutter renderers so the sign appears
@@ -301,13 +320,7 @@ pub fn set_chapter(state: &mut AppState) -> bool {
         }
     }
 
-    let line_id = {
-        let work = match &state.current_work {
-            Some(w) => w,
-            None => return false,
-        };
-        work.lines[line_idx].id
-    };
+    let Some(line_id) = work_line_id(state, line_idx) else { return false; };
 
     capture_undo_snapshot(state, line_id, media_id);
 
@@ -340,22 +353,7 @@ pub fn set_chapter(state: &mut AppState) -> bool {
 
     // Update sign column for this line
     let buffer_line = state.current_line;
-    {
-        let mut ht = state.has_timestamp.borrow_mut();
-        if buffer_line < ht.len() {
-            ht[buffer_line] = true;
-        }
-        let mut manual = state.is_manual.borrow_mut();
-        if buffer_line < manual.len() {
-            manual[buffer_line] = true;
-        }
-    }
-    {
-        let mut ch = state.is_chapter_line.borrow_mut();
-        if buffer_line < ch.len() {
-            ch[buffer_line] = is_ch;
-        }
-    }
+    set_sign_columns(state, buffer_line, true, true, Some(is_ch));
     redraw_sign_gutters(state);
 
     true
@@ -373,31 +371,11 @@ pub fn set_end_time(state: &mut AppState) -> bool {
         None => return false,
     };
 
-    {
-        let work = match &state.current_work {
-            Some(w) => w,
-            None => return false,
-        };
-        let l = &work.lines[line_idx];
-        if !timestamp_allowed(l.sub_line, l.is_spoken) {
-            crate::logging::log(&format!(
-                "TS: refused start/end time on unspoken stage direction (line {}, sub_line {})",
-                line_idx, l.sub_line
-            ));
-            crate::input::navigation::show_chapter_toast(
-                state, "Not a spoken line — no timestamp set",
-            );
-            return false;
-        }
+    if !timestamp_writable(state, line_idx) {
+        return false;
     }
 
-    let line_id = {
-        let work = match &state.current_work {
-            Some(w) => w,
-            None => return false,
-        };
-        work.lines[line_idx].id
-    };
+    let Some(line_id) = work_line_id(state, line_idx) else { return false; };
 
     capture_undo_snapshot(state, line_id, media_id);
 
@@ -453,13 +431,7 @@ pub fn delete_timestamp(state: &mut AppState) -> bool {
         }
     };
 
-    let line_id = {
-        let work = match &state.current_work {
-            Some(w) => w,
-            None => return false,
-        };
-        work.lines[line_idx].id
-    };
+    let Some(line_id) = work_line_id(state, line_idx) else { return false; };
 
     capture_undo_snapshot(state, line_id, media_id);
 
@@ -493,22 +465,7 @@ pub fn delete_timestamp(state: &mut AppState) -> bool {
 
     // Update sign column for this line
     let buffer_line = state.current_line;
-    {
-        let mut ht = state.has_timestamp.borrow_mut();
-        if buffer_line < ht.len() {
-            ht[buffer_line] = false;
-        }
-        let mut manual = state.is_manual.borrow_mut();
-        if buffer_line < manual.len() {
-            manual[buffer_line] = false;
-        }
-    }
-    {
-        let mut ch = state.is_chapter_line.borrow_mut();
-        if buffer_line < ch.len() {
-            ch[buffer_line] = false;
-        }
-    }
+    set_sign_columns(state, buffer_line, false, false, Some(false));
     redraw_sign_gutters(state);
 
     true
@@ -525,13 +482,7 @@ pub fn nudge_start_time(state: &mut AppState, delta: f64) -> bool {
         None => return false,
     };
 
-    let line_id = {
-        let work = match &state.current_work {
-            Some(w) => w,
-            None => return false,
-        };
-        work.lines[line_idx].id
-    };
+    let Some(line_id) = work_line_id(state, line_idx) else { return false; };
 
     capture_undo_snapshot(state, line_id, media_id);
 
@@ -681,22 +632,7 @@ pub fn undo_timestamp(state: &mut AppState) -> bool {
 
     // Update sign column
     if let Some(bl) = buffer_line {
-        {
-            let mut ht = state.has_timestamp.borrow_mut();
-            if bl < ht.len() {
-                ht[bl] = has_ts;
-            }
-            let mut manual = state.is_manual.borrow_mut();
-            if bl < manual.len() {
-                manual[bl] = is_man;
-            }
-        }
-        {
-            let mut ch = state.is_chapter_line.borrow_mut();
-            if bl < ch.len() {
-                ch[bl] = is_ch;
-            }
-        }
+        set_sign_columns(state, bl, has_ts, is_man, Some(is_ch));
     }
 
     redraw_sign_gutters(state);

@@ -1046,12 +1046,7 @@ fn handle_gloss_key(
             let jumped = crate::input::actions::gloss::jump_to_gloss_source_start(&mut s);
             let saved = s.gloss_return_pos.take();
             if !jumped {
-                if let Some((line, top)) = saved {
-                    s.current_line = line;
-                    s.page_top_line = top;
-                    crate::input::scroll::resnap_page(&mut s);
-                    crate::input::highlight::update_highlight(&mut s);
-                }
+                crate::app::restore_saved_position_resnap(&mut s, saved);
             }
             true
         }
@@ -1127,10 +1122,8 @@ fn handle_gloss_key(
                     s.tts.stop();
                     s.gloss_overlay.hide();
                     // Restore the saved position so journal return_pos is coherent.
-                    if let Some((line, top)) = s.gloss_return_pos.take() {
-                        s.current_line = line;
-                        s.page_top_line = top;
-                    }
+                    let pos = s.gloss_return_pos.take();
+                    crate::app::restore_saved_position(&mut s, pos);
                     s.input_mode = crate::app::InputMode::Reader;
                 }
                 crate::input::actions::journal::begin_passage_ask(

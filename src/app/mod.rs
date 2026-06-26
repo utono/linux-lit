@@ -3737,6 +3737,29 @@ pub(crate) fn return_to_reader_mode(state: &mut AppState) {
     apply_reader_gloss_highlighting(state);
 }
 
+/// Bare 3-line position restore: set `current_line` and `page_top_line` from
+/// `pos` if `Some`. Used by handoff paths that immediately open another overlay
+/// (no resnap/highlight needed — the incoming overlay open handles layout).
+pub(crate) fn restore_saved_position(s: &mut AppState, pos: Option<(usize, usize)>) {
+    if let Some((line, top)) = pos {
+        s.current_line = line;
+        s.page_top_line = top;
+    }
+}
+
+/// Position restore + resnap + highlight: restores `current_line`/`page_top_line`
+/// from `pos` then calls `resnap_page` and `update_highlight` to re-tile the
+/// canonical spread. Used by the "final close" paths that return the user to the
+/// reader without immediately opening another overlay.
+pub(crate) fn restore_saved_position_resnap(s: &mut AppState, pos: Option<(usize, usize)>) {
+    if let Some((line, top)) = pos {
+        s.current_line = line;
+        s.page_top_line = top;
+        crate::input::scroll::resnap_page(s);
+        crate::input::highlight::update_highlight(s);
+    }
+}
+
 /// Apply the slate reader-gloss tint to a single buffer line.
 pub(crate) fn apply_reader_gloss_tag_to_line(state: &AppState, buf_idx: usize) {
     if let Some(start) = state.buffer.iter_at_line(buf_idx as i32) {

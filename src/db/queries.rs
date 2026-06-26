@@ -1516,6 +1516,31 @@ pub struct SavedGloss {
     pub end_citation: String,
 }
 
+fn row_to_saved_gloss(row: &rusqlite::Row) -> rusqlite::Result<SavedGloss> {
+    Ok(SavedGloss {
+        gloss_id: row.get(0)?,
+        gloss_text: row.get(1)?,
+        timestamp: row.get(2)?,
+        passage_id: row.get(3)?,
+        gloss_type: row.get(4)?,
+        start_citation: row.get(5)?,
+        end_citation: row.get(6)?,
+    })
+}
+
+fn row_to_glossed_passage(row: &rusqlite::Row) -> rusqlite::Result<GlossedPassage> {
+    Ok(GlossedPassage {
+        passage_id: row.get(0)?,
+        work_abbrev: row.get(1)?,
+        start_citation: row.get(2)?,
+        end_citation: row.get(3)?,
+        act: row.get(4)?,
+        scene: row.get(5)?,
+        speaker: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+        source_text: row.get(7)?,
+    })
+}
+
 pub fn find_existing_gloss(
     conn: &Connection,
     work_abbrev: &str,
@@ -1583,20 +1608,7 @@ pub fn find_all_glosses(
         params.push(Box::new(gt.to_string()));
     }
     let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-    let rows = stmt.query_map(
-        param_refs.as_slice(),
-        |row| {
-            Ok(SavedGloss {
-                gloss_id: row.get(0)?,
-                gloss_text: row.get(1)?,
-                timestamp: row.get(2)?,
-                passage_id: row.get(3)?,
-                gloss_type: row.get(4)?,
-                start_citation: row.get(5)?,
-                end_citation: row.get(6)?,
-            })
-        },
-    )?;
+    let rows = stmt.query_map(param_refs.as_slice(), row_to_saved_gloss)?;
     rows.collect()
 }
 
@@ -1634,17 +1646,7 @@ pub fn find_glosses_by_start(
     }
     let param_refs: Vec<&dyn rusqlite::types::ToSql> =
         params.iter().map(|p| p.as_ref()).collect();
-    let rows = stmt.query_map(param_refs.as_slice(), |row| {
-        Ok(SavedGloss {
-            gloss_id: row.get(0)?,
-            gloss_text: row.get(1)?,
-            timestamp: row.get(2)?,
-            passage_id: row.get(3)?,
-            gloss_type: row.get(4)?,
-            start_citation: row.get(5)?,
-            end_citation: row.get(6)?,
-        })
-    })?;
+    let rows = stmt.query_map(param_refs.as_slice(), row_to_saved_gloss)?;
     rows.collect()
 }
 
@@ -1694,21 +1696,7 @@ pub fn find_glossed_passages(
         params.push(Box::new(gt.to_string()));
     }
     let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-    let rows = stmt.query_map(
-        param_refs.as_slice(),
-        |row| {
-            Ok(GlossedPassage {
-                passage_id: row.get(0)?,
-                work_abbrev: row.get(1)?,
-                start_citation: row.get(2)?,
-                end_citation: row.get(3)?,
-                act: row.get(4)?,
-                scene: row.get(5)?,
-                speaker: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
-                source_text: row.get(7)?,
-            })
-        },
-    )?;
+    let rows = stmt.query_map(param_refs.as_slice(), row_to_glossed_passage)?;
     rows.collect()
 }
 
@@ -1746,18 +1734,7 @@ pub fn find_glossed_passage_by_start(
     }
     let param_refs: Vec<&dyn rusqlite::types::ToSql> =
         params.iter().map(|p| p.as_ref()).collect();
-    let mut rows = stmt.query_map(param_refs.as_slice(), |row| {
-        Ok(GlossedPassage {
-            passage_id: row.get(0)?,
-            work_abbrev: row.get(1)?,
-            start_citation: row.get(2)?,
-            end_citation: row.get(3)?,
-            act: row.get(4)?,
-            scene: row.get(5)?,
-            speaker: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
-            source_text: row.get(7)?,
-        })
-    })?;
+    let mut rows = stmt.query_map(param_refs.as_slice(), row_to_glossed_passage)?;
     rows.next().transpose()
 }
 

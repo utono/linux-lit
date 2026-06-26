@@ -135,12 +135,8 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         // for reader_gloss_lines), so a reader-gloss created/edited in the overlay
         // colors immediately on return.
         crate::app::return_to_reader_mode(&mut s);
-        if let Some((line, top)) = s.journal.return_pos.take() {
-            s.current_line = line;
-            s.page_top_line = top;
-            crate::input::scroll::resnap_page(&mut s);
-            crate::input::highlight::update_highlight(&mut s);
-        }
+        let pos = s.journal.return_pos.take();
+        crate::app::restore_saved_position_resnap(&mut s, pos);
         return;
     }
 
@@ -644,10 +640,8 @@ pub(crate) fn action_gloss_from_journal_passage(state: &Rc<RefCell<AppState>>) {
         // opens cleanly (gloss overlay saves/restores its own return position).
         s.journal_overlay.hide();
         s.input_mode = crate::app::InputMode::Reader;
-        if let Some((line, top)) = s.journal.return_pos.take() {
-            s.current_line = line;
-            s.page_top_line = top;
-        }
+        let pos = s.journal.return_pos.take();
+        crate::app::restore_saved_position(&mut s, pos);
     }
 
     // Phase 3: cache hit — show existing gloss immediately.
@@ -701,53 +695,11 @@ pub(crate) fn action_gloss_from_journal_passage(state: &Rc<RefCell<AppState>>) {
 
         match result {
             Ok(Ok(gloss_text)) => {
-                let mut new_gloss_id: i64 = -1;
-                if let Ok(conn) = crate::db::queries::open_db_rw() {
-                    if let Ok(id) = crate::db::queries::save_gloss(
-                        &conn,
-                        &ctx.hash,
-                        &ctx.work_abbrev,
-                        &ctx.start_citation,
-                        &ctx.end_citation,
-                        ctx.act,
-                        ctx.scene,
-                        &ctx.speaker,
-                        &ctx.source_text,
-                        &gloss_text,
-                        "reader-gloss",
-                        &model_for_db,
-                    ) {
-                        new_gloss_id = id;
-                    }
-                }
-
-                let all = crate::db::queries::open_db()
-                    .ok()
-                    .and_then(|conn| {
-                        crate::db::queries::find_glosses_by_start(
-                            &conn, &ctx.work_abbrev, &ctx.start_citation,
-                            &["teacher-generic", "inner-monologue", "reader-gloss"],
-                        ).ok()
-                    })
-                    .unwrap_or_default();
-
-                let new_idx = all.iter().position(|g| g.gloss_id == new_gloss_id).unwrap_or(0);
-
                 let mut s = state_for_result.borrow_mut();
-                let cw = s.content_hbox.width();
-                let h = s.content_hbox.height();
-                let pairs = ctx.source_line_pairs();
-                s.gloss_overlay.show_gloss_with_color(
-                    &ctx.source_text, &gloss_text, cw, h,
-                    Some(&s.theme.root_color), &pairs,
+                crate::input::actions::gloss::persist_render_install_gloss(
+                    &mut s, ctx, &gloss_text, "reader-gloss", &model_for_db,
+                    "GLOSS-FROM-JOURNAL: generated and saved new reader-gloss",
                 );
-                s.gloss_overlay.set_position(new_idx, all.len());
-                s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
-                s.gloss_list = all;
-                s.gloss_index = new_idx;
-                s.gloss_context = Some(ctx);
-                s.record_last_gloss("reader-gloss");
-                crate::logging::log("GLOSS-FROM-JOURNAL: generated and saved new reader-gloss");
             }
             Ok(Err(e)) => {
                 let s = state_for_result.borrow();
@@ -853,10 +805,8 @@ pub(crate) fn view_gloss_from_journal(state: &Rc<RefCell<AppState>>) {
         let mut s = state.borrow_mut();
         s.journal_overlay.hide();
         s.input_mode = crate::app::InputMode::Reader;
-        if let Some((line, top)) = s.journal.return_pos.take() {
-            s.current_line = line;
-            s.page_top_line = top;
-        }
+        let pos = s.journal.return_pos.take();
+        crate::app::restore_saved_position(&mut s, pos);
         // Save gloss return position so Escape in the gloss overlay returns here.
         s.gloss_return_pos = Some((s.current_line, s.page_top_line));
     }
@@ -926,10 +876,8 @@ pub(crate) fn view_journal_from_gloss(state: &Rc<RefCell<AppState>>) {
         s.tts.stop();
         s.gloss_overlay.hide();
         // Restore the saved position so journal return_pos is coherent.
-        if let Some((line, top)) = s.gloss_return_pos.take() {
-            s.current_line = line;
-            s.page_top_line = top;
-        }
+        let pos = s.gloss_return_pos.take();
+        crate::app::restore_saved_position(&mut s, pos);
         s.input_mode = crate::app::InputMode::Reader;
     }
 
