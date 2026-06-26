@@ -834,6 +834,7 @@ pub fn build_window(
         .build();
     buffer.tag_table().add(&cursor_line_tag);
 
+
     let cursor_fade_tag = gtk4::TextTag::builder()
         .name("cursor-fade")
         .paragraph_background(&theme.cursor_line_bg)
