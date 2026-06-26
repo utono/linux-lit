@@ -259,12 +259,14 @@ line of the new page (Shift+Up). \
 -> navigation::page_backward_bottom — src/input/navigation.rs",
 
         // ── Chapters / scenes ──
-        "prev ch" => "Jump to the previous chapter — a div1 boundary (chapter in \
-prose, act in a play), sourced from (div1,div2) divisions and independent of any \
-loaded audio. -> navigation::jump_to_prev_chapter — src/input/navigation.rs",
-        "next ch" => "Jump to the next chapter — a div1 boundary (chapter in \
-prose, act in a play), sourced from (div1,div2) divisions and independent of any \
-loaded audio. -> navigation::jump_to_next_chapter — src/input/navigation.rs",
+        "prev ch" => "Jump to the previous chapter (prose) or act (play) — a div1 \
+boundary sourced from (div1,div2) divisions, independent of any loaded audio. In \
+a play the cursor lands on the act's FIRST DIALOGUE line, never the entrance \
+stage direction. -> navigation::jump_to_prev_chapter — src/input/navigation.rs",
+        "next ch" => "Jump to the next chapter (prose) or act (play) — a div1 \
+boundary sourced from (div1,div2) divisions, independent of any loaded audio. In \
+a play the cursor lands on the act's FIRST DIALOGUE line, never the entrance \
+stage direction. -> navigation::jump_to_next_chapter — src/input/navigation.rs",
         "prev scene" => "Jump to the previous scene/act section heading. \
 -> navigation::jump_to_prev_section — src/input/navigation.rs",
         "next scene" => "Jump to the next scene/act section heading. \
@@ -531,12 +533,14 @@ to line_timestamps.is_track_mark in lit.db. Export-only — it does NOT affect \
 chapter nav or the gutter chapter sign, which follow structural divisions. \
 Distinct from the structural chapter that plain 'c' toggles. \
 -> timestamps::set_chapter — src/input/timestamps.rs",
-        "toggle ch start" => "Toggle whether the cursor's paragraph begins a \
-structural chapter — a (div1,div2) division boundary. Flips \
+        "toggle ch start" => "Prose only: toggle whether the cursor's paragraph \
+begins a structural chapter — a (div1,div2) division boundary. Flips \
 line_mapping.chapter_start in lit.db, re-derives the work's chapter divisions, and \
-reloads in place with the cursor preserved. This is what '(' / '&' jump between \
-and what the gutter chapter sign marks. Distinct from the audio track mark that \
-Ctrl+c sets. -> chapters::toggle_chapter_start — src/input/actions/chapters.rs",
+reloads in place with the cursor preserved. In prose this is what '(' / '&' jump \
+between and what the ▸ gutter chapter sign marks; plays carry no chapter marks (▸ \
+never shows) and '(' / '&' jump acts from (div1) metadata instead. Distinct from \
+the audio track mark that Ctrl+c sets. \
+-> chapters::toggle_chapter_start — src/input/actions/chapters.rs",
         "show chapter" => "Show the current act/scene (plays) or chapter (prose) \
 for the line the cursor is on, as a transient toast. \
 -> navigation::show_current_chapter — src/input/navigation.rs",
@@ -551,7 +555,8 @@ lit.db. -> timestamps::undo_timestamp — src/input/timestamps.rs",
 -> timestamps::nudge_start_forward — src/input/timestamps.rs",
         "play from ts" => "Seek MPV to the current line's saved start timestamp \
 and play from there. -> timestamps::play_current_line — src/input/timestamps.rs",
-        "clear AB" => "Clear the A–B repeat range / exit reader sub-modes (Esc). \
+        "clear AB" => "Dismiss any visible toast, else clear the A–B repeat range \
+/ exit reader sub-modes (Esc). \
 -> escape::escape_reader_mode — src/input/actions/escape.rs",
 
         // ── Fonts ──
