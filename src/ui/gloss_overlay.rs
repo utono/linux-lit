@@ -40,11 +40,11 @@ pub struct GlossOverlay {
     gloss_scrolled: gtk4::ScrolledWindow,
     gloss_view: gtk4::TextView,
     bar_drawing: gtk4::DrawingArea,
-    /// Invisible box pinned to the bottom edge of the scrolling viewport,
-    /// painted with the card background. Sized by `update_bottom_clip` to cover
-    /// any partially-visible last line so it doesn't read as clipped by the
-    /// footer rule. Emulates the main reading card's bottom-clip technique.
-    bottom_clip: gtk4::Box,
+    /// Owns the clip Box pinned to the bottom of the gloss viewport and all three
+    /// recompute paths (value_changed catch-all, reset_scroll_top range+idle,
+    /// update_bottom_clip). Replaces the hand-wired `bottom_clip` + inline
+    /// connect_value_changed + reset_scroll_top body.
+    clip_guard: crate::ui::bottom_clip_guard::BottomClipGuard,
     bar_ranges: Rc<RefCell<Vec<BarRange>>>,
     bar_color: Rc<RefCell<(f64, f64, f64)>>,
     bar_x: Rc<RefCell<i32>>,
@@ -265,33 +265,15 @@ impl GlossOverlay {
         gloss_scroll_overlay.set_measure_overlay(&bar_drawing, false);
         gloss_scroll_overlay.set_clip_overlay(&bar_drawing, true);
 
-        // Invisible bottom clip: pinned to the bottom of the viewport, painted
-        // with the card background so any partially-visible last line is hidden
-        // rather than bisected by the footer rule. Sized by update_bottom_clip.
-        let bottom_clip = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-        bottom_clip.set_valign(Align::End);
-        bottom_clip.set_halign(Align::Fill);
-        bottom_clip.set_can_target(false);
-        bottom_clip.add_css_class("gloss-bottom-clip");
-        bottom_clip.set_height_request(0);
-        gloss_scroll_overlay.add_overlay(&bottom_clip);
-        gloss_scroll_overlay.set_measure_overlay(&bottom_clip, false);
-        gloss_scroll_overlay.set_clip_overlay(&bottom_clip, true);
-
-        // Re-size the bottom clip on EVERY scroll, not just on the open's range
-        // changes. The `changed`-signal handler in `reset_scroll_top` fires only
-        // while the vadjustment *range* shifts during an open; once the user
-        // scrolls with j/k the clip would otherwise keep its stale open-time
-        // height and stop masking the new partial last row — so a half-line at
-        // the bottom edge reads as clipped by the footer rule.
-        {
-            let view = gloss_view.clone();
-            let clip = bottom_clip.clone();
-            let scrolled = gloss_scrolled.clone();
-            gloss_scrolled.vadjustment().connect_value_changed(move |_| {
-                crate::ui::recompute_overlay_bottom_clip(&view, &clip, &scrolled);
-            });
-        }
+        // Attach the bottom-clip guard: builds the clip Box, adds it as a
+        // non-measured, clipped overlay, and wires the persistent value_changed
+        // catch-all (path c). All three recompute paths (c / on_open / recompute)
+        // are now owned by the guard.
+        let clip_guard = crate::ui::bottom_clip_guard::BottomClipGuard::attach(
+            &gloss_scroll_overlay,
+            &gloss_view,
+            &gloss_scrolled,
+        );
 
         gloss_scroll_overlay.set_visible(false);
 
@@ -380,7 +362,7 @@ impl GlossOverlay {
             gloss_scrolled,
             gloss_view,
             bar_drawing,
-            bottom_clip,
+            clip_guard,
             bar_ranges,
             bar_color,
             bar_x,
@@ -983,59 +965,12 @@ impl GlossOverlay {
     /// clears, a stray `changed` from a later resize/font-cycle must NOT yank a
     /// user who has since scrolled back to the top.
     fn reset_scroll_top(&self) {
-        let adj = self.gloss_scrolled.vadjustment();
-        adj.set_value(adj.lower());
-
-        let view = self.gloss_view.clone();
-        let clip = self.bottom_clip.clone();
-        let scrolled = self.gloss_scrolled.clone();
-
-        // True while we should keep forcing the scroll to the top across the
-        // open's layout passes; cleared once the layout has settled so we stop
-        // fighting later user scrolls.
-        let pinning = Rc::new(Cell::new(true));
-        let handler: Rc<RefCell<Option<glib::SignalHandlerId>>> = Rc::new(RefCell::new(None));
-
-        let id = adj.connect_changed({
-            let pinning = pinning.clone();
-            let view = view.clone();
-            let clip = clip.clone();
-            let scrolled = scrolled.clone();
-            move |a| {
-                if pinning.get() && a.value() != a.lower() {
-                    a.set_value(a.lower());
-                }
-                crate::ui::recompute_overlay_bottom_clip(&view, &clip, &scrolled);
-            }
-        });
-        *handler.borrow_mut() = Some(id);
-
-        // Stop pinning + disconnect once layout has settled (well after both the
-        // set_visible and apply_font passes). This guarantees the re-snap covers
-        // every pass during the open, then releases so the handler can't leak,
-        // stack across reopens, or fight a later user scroll.
-        let adj_for_stop = adj.clone();
-        glib::timeout_add_local_once(std::time::Duration::from_millis(250), move || {
-            pinning.set(false);
-            if let Some(hid) = handler.borrow_mut().take() {
-                adj_for_stop.disconnect(hid);
-            }
-        });
-
-        // Size the clip on first open even if `changed` never fires (range
-        // unchanged across show).
-        glib::idle_add_local_once(move || {
-            crate::ui::recompute_overlay_bottom_clip(&view, &clip, &scrolled);
-        });
+        self.clip_guard.on_open();
     }
 
     /// `&self` entry point for recomputing the bottom clip after a scroll.
     fn update_bottom_clip(&self) {
-        crate::ui::recompute_overlay_bottom_clip(
-            &self.gloss_view,
-            &self.bottom_clip,
-            &self.gloss_scrolled,
-        );
+        self.clip_guard.recompute();
     }
 
     /// Recompute `blocks` line spans from the current buffer + gloss text. Each
@@ -1527,8 +1462,8 @@ impl GlossOverlay {
     /// recomputed for the new height — otherwise the body's last row pokes out
     /// behind the ask card. The resize isn't synchronous, hence the deferral.
     fn schedule_ask_clip_recompute(&self) {
+        let clip = self.clip_guard.clip().clone();
         let view = self.gloss_view.clone();
-        let clip = self.bottom_clip.clone();
         let scrolled = self.gloss_scrolled.clone();
         glib::idle_add_local_once(move || {
             crate::ui::recompute_overlay_bottom_clip(&view, &clip, &scrolled);
