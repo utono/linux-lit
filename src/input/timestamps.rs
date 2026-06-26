@@ -8,7 +8,7 @@ pub struct TimestampSnapshot {
     pub citation: String,
     pub start_time: Option<f64>,
     pub end_time: Option<f64>,
-    pub is_chapter: bool,
+    pub is_track_mark: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -295,24 +295,28 @@ pub fn set_chapter(state: &mut AppState) -> bool {
         None => return false,
     };
 
-    // If not already a chapter, check for nearby chapters within ±10 seconds
+    // If not already a track mark, reject if another track mark sits within ±10s.
     {
         let work = match &state.current_work {
             Some(w) => w,
             None => return false,
         };
-        let line = &work.lines[line_idx];
-        if !line.is_chapter {
-            let nearby = work.lines.iter().enumerate().any(|(i, other)| {
-                i != line_idx
-                    && other.is_chapter
-                    && other.timestamp.as_ref().map_or(false, |ts| {
-                        (ts.start - time_pos).abs() <= 10.0
-                    })
+        let already = work
+            .timestamps
+            .iter()
+            .any(|t| t.line_id == work.lines[line_idx].id
+                && t.media_id == media_id
+                && t.is_track_mark);
+        if !already {
+            let nearby = work.timestamps.iter().any(|t| {
+                t.media_id == media_id
+                    && t.is_track_mark
+                    && t.line_id != work.lines[line_idx].id
+                    && (t.start - time_pos).abs() <= 10.0
             });
             if nearby {
                 crate::logging::log(&format!(
-                    "TS: chapter rejected — another chapter within 10s of {:.2}",
+                    "TS: track mark rejected — another within 10s of {:.2}",
                     time_pos,
                 ));
                 return false;
@@ -324,7 +328,7 @@ pub fn set_chapter(state: &mut AppState) -> bool {
 
     capture_undo_snapshot(state, line_id, media_id);
 
-    {
+    let new_val = {
         let work = match &mut state.current_work {
             Some(w) => w,
             None => return false,
@@ -344,16 +348,16 @@ pub fn set_chapter(state: &mut AppState) -> bool {
         if line.timestamp.is_none() {
             line.timestamp = Some(TimeRange { start: time_pos, end: 0.0, sentence_start: None, is_manual: true });
         }
-        line.is_chapter = new_val;
-    }
-    let is_ch = state.current_work.as_ref().map(|w| w.lines[line_idx].is_chapter).unwrap_or(false);
-    crate::logging::log(&format!("TS: toggle chapter is_chapter={} start_time={:.2} line={}", is_ch, time_pos, line_idx));
+        new_val
+    };
+    crate::logging::log(&format!("TS: toggle track mark is_track_mark={} start_time={:.2} line={}", new_val, time_pos, line_idx));
 
     resync_mpv_timestamps(state);
 
-    // Update sign column for this line
+    // Update sign column for this line. The track-mark setter must NOT touch the
+    // structural is_chapter sign (that follows divisions now) — pass None.
     let buffer_line = state.current_line;
-    set_sign_columns(state, buffer_line, true, true, Some(is_ch));
+    set_sign_columns(state, buffer_line, true, true, None);
     redraw_sign_gutters(state);
 
     true
@@ -552,7 +556,7 @@ pub fn undo_timestamp(state: &mut AppState) -> bool {
                 &snap.citation,
                 snap.start_time,
                 snap.end_time,
-                snap.is_chapter,
+                snap.is_track_mark,
             ) {
                 crate::logging::log(&format!("TS: undo restore failed: {}", e));
                 return false;
@@ -570,7 +574,7 @@ pub fn undo_timestamp(state: &mut AppState) -> bool {
     // Update in-memory state, then extract values for sign column update.
     // Must drop the mutable borrow of current_work before accessing
     // state.line_map, state.has_timestamp, etc.
-    let (buffer_line, has_ts, is_man, is_ch) = {
+    let (buffer_line, has_ts, is_man, is_tm) = {
         let work = match &mut state.current_work {
             Some(w) => w,
             None => return false,
@@ -586,7 +590,6 @@ pub fn undo_timestamp(state: &mut AppState) -> bool {
         match &undo.previous {
             None => {
                 line.timestamp = None;
-                line.is_chapter = false;
             }
             Some(snap) => {
                 match (snap.start_time, snap.end_time) {
@@ -602,15 +605,19 @@ pub fn undo_timestamp(state: &mut AppState) -> bool {
                         line.timestamp = None;
                     }
                 }
-                line.is_chapter = snap.is_chapter;
             }
         }
 
         let has_ts = line.timestamp.is_some();
         let is_man = line.timestamp.as_ref().map_or(false, |t| t.is_manual);
-        let is_ch = line.is_chapter;
+        // Log-only: the structural is_chapter sign follows divisions, so the
+        // sign update below passes None — this value is not written to any sign.
+        let is_tm = match &undo.previous {
+            Some(snap) => snap.is_track_mark,
+            None => false,
+        };
         let work_idx = work.lines.iter().position(|l| l.id == undo.line_mapping_id);
-        (work_idx, has_ts, is_man, is_ch)
+        (work_idx, has_ts, is_man, is_tm)
     };
     // buffer_line here is the work_idx; resolve to actual buffer line
     let buffer_line = match buffer_line {
@@ -630,9 +637,12 @@ pub fn undo_timestamp(state: &mut AppState) -> bool {
 
     resync_mpv_timestamps(state);
 
-    // Update sign column
+    crate::logging::log(&format!("TS: undo is_track_mark={}", is_tm));
+
+    // Update sign column. Undo of a track-mark must NOT touch the structural
+    // is_chapter sign (that follows divisions now) — pass None.
     if let Some(bl) = buffer_line {
-        set_sign_columns(state, bl, has_ts, is_man, Some(is_ch));
+        set_sign_columns(state, bl, has_ts, is_man, None);
     }
 
     redraw_sign_gutters(state);

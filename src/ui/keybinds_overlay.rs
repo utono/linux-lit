@@ -56,7 +56,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key("y", "Y", "pg back", "", &[("C-y", "copy id")]),
     key("f", "F", "next font", "F: prev font", &[("M-f", "font info")]),
     key("g", "G", "", "", &[("C-g", "gloss tog"), ("S-C-g", "last gloss"), ("M-g", "gloss pick"), ("M-g", "gloss from jrnl"), ("C-g", "view gloss")]),
-    key("c", "C", "set chapter", "C: show chapter", &[("C-c", "toggle ch start")]),
+    key("c", "C", "toggle ch start", "C: show chapter", &[("C-c", "set track mark")]),
     key("r", "R", "next conc", "R: prev conc", &[("C-r", "next vocab"), ("S-C-r", "prev vocab"), ("M-r", "conc works"), ("r", "verse audio: play/stop"), ("R", "verse audio: pick voice")]),
     key("l", "L", "toggle signs", "", &[("S-C-l", "save+quit")]),
     key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
@@ -259,10 +259,12 @@ line of the new page (Shift+Up). \
 -> navigation::page_backward_bottom — src/input/navigation.rs",
 
         // ── Chapters / scenes ──
-        "prev ch" => "Jump to the previous chapter boundary (a line marked \
-is_chapter in lit.db). -> navigation::jump_to_prev_chapter — src/input/navigation.rs",
-        "next ch" => "Jump to the next chapter boundary (a line marked \
-is_chapter in lit.db). -> navigation::jump_to_next_chapter — src/input/navigation.rs",
+        "prev ch" => "Jump to the previous chapter — a div1 boundary (chapter in \
+prose, act in a play), sourced from (div1,div2) divisions and independent of any \
+loaded audio. -> navigation::jump_to_prev_chapter — src/input/navigation.rs",
+        "next ch" => "Jump to the next chapter — a div1 boundary (chapter in \
+prose, act in a play), sourced from (div1,div2) divisions and independent of any \
+loaded audio. -> navigation::jump_to_next_chapter — src/input/navigation.rs",
         "prev scene" => "Jump to the previous scene/act section heading. \
 -> navigation::jump_to_prev_section — src/input/navigation.rs",
         "next scene" => "Jump to the next scene/act section heading. \
@@ -523,21 +525,25 @@ current line from MPV's current playback position and write it to lit.db \
         "set end time" => "Set the audio end timestamp for the current line from \
 MPV's current playback position. \
 -> timestamps::set_end_time — src/input/timestamps.rs",
-        "set chapter" => "Mark the current line as a chapter/scene boundary at \
-MPV's current playback position. \
+        "set track mark" => "Set an audio track mark on the current line at MPV's \
+current playback position (export metadata for ffmpeg chapter embedding), written \
+to line_timestamps.is_track_mark in lit.db. Export-only — it does NOT affect \
+chapter nav or the gutter chapter sign, which follow structural divisions. \
+Distinct from the structural chapter that plain 'c' toggles. \
 -> timestamps::set_chapter — src/input/timestamps.rs",
         "toggle ch start" => "Toggle whether the cursor's paragraph begins a \
-structural prose chapter: flips line_mapping.chapter_start in lit.db, re-derives \
-the work's chapter divisions, and reloads in place with the cursor preserved. \
-Distinct from 'set chapter' (c), which sets an audio chapter timestamp. \
--> chapters::toggle_chapter_start — src/input/actions/chapters.rs",
+structural chapter — a (div1,div2) division boundary. Flips \
+line_mapping.chapter_start in lit.db, re-derives the work's chapter divisions, and \
+reloads in place with the cursor preserved. This is what '(' / '&' jump between \
+and what the gutter chapter sign marks. Distinct from the audio track mark that \
+Ctrl+c sets. -> chapters::toggle_chapter_start — src/input/actions/chapters.rs",
         "show chapter" => "Show the current act/scene (plays) or chapter (prose) \
 for the line the cursor is on, as a transient toast. \
 -> navigation::show_current_chapter — src/input/navigation.rs",
         "delete ts" => "Delete the current line's saved timestamp from lit.db \
 (undoable). -> timestamps::delete_timestamp — src/input/timestamps.rs",
         "undo ts" => "Undo the last timestamp edit (the most recent u start-time \
-set, . chapter mark, or timestamp delete), restoring the previous value in \
+set, Ctrl+c track mark, or timestamp delete), restoring the previous value in \
 lit.db. -> timestamps::undo_timestamp — src/input/timestamps.rs",
         "nudge −0.2" => "Nudge the current line's start timestamp 0.2s earlier. \
 -> timestamps::nudge_start_backward — src/input/timestamps.rs",
@@ -688,7 +694,8 @@ fn expand_action(label: &str) -> String {
         "sync tog" => "toggle playback sync",
         "dim tog" => "toggle dim",
         "debug log" => "toggle debug log",
-        "set chapter" => "set chapter",
+        "set track mark" => "set audio track mark",
+        "toggle ch start" => "toggle structural chapter",
         "show chapter" => "show current chapter",
         "bookmarks" => "bookmark picker",
         "start time" => "set start time",

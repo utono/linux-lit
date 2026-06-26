@@ -158,7 +158,7 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
                 media_id: row.get::<_, Option<i64>>(3)?.unwrap_or(0),
                 sentence_start: row.get::<_, Option<f64>>(4)?,
                 is_manual: source == "manual",
-                is_chapter: row.get::<_, Option<i64>>(6)?.unwrap_or(0) != 0,
+                is_track_mark: row.get::<_, Option<i64>>(6)?.unwrap_or(0) != 0,
             })
         })?
         .collect::<Result<_, _>>()?;
@@ -190,16 +190,6 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
         }
     }
 
-    // 5b. Build chapter lookup from already-loaded timestamps (no extra DB query)
-    let mut chapter_map: HashMap<i64, bool> = HashMap::new();
-    if let Some(mid) = media_id {
-        for ts in &timestamps {
-            if ts.media_id == mid && ts.is_chapter {
-                chapter_map.insert(ts.line_id, true);
-            }
-        }
-    }
-
     // 5c. Load spoken status for the active media
     let mut spoken_map: HashMap<i64, bool> = HashMap::new();
     if let Some(mid) = media_id {
@@ -216,15 +206,17 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
     }
 
     // 6. Attach timestamps and spoken status to lines
-    let lines: Vec<Line> = lines
+    let mut lines: Vec<Line> = lines
         .into_iter()
         .map(|mut line| {
             line.timestamp = ts_map.get(&line.id).copied();
-            line.is_chapter = chapter_map.contains_key(&line.id);
             line.is_spoken = spoken_map.get(&line.id).copied();
             line
         })
         .collect();
+
+    // 6b. Mark structural chapter starts from div1 boundaries (media-independent).
+    crate::text_file_map::mark_chapter_starts(&mut lines, is_prose);
 
     Ok(Work {
         abbrev: abbrev.to_string(),
@@ -1438,7 +1430,7 @@ pub fn get_timestamp_snapshot(
             citation: row.get(0)?,
             start_time: row.get(1)?,
             end_time: row.get(2)?,
-            is_chapter: row.get::<_, bool>(3).unwrap_or(false),
+            is_track_mark: row.get::<_, bool>(3).unwrap_or(false),
         })
     });
     match result {
@@ -1455,14 +1447,14 @@ pub fn restore_timestamp(
     citation: &str,
     start_time: Option<f64>,
     end_time: Option<f64>,
-    is_chapter: bool,
+    is_track_mark: bool,
 ) -> Result<(), rusqlite::Error> {
     conn.execute(
         "INSERT INTO line_timestamps (citation, line_mapping_id, media_id, start_time, end_time, source, is_track_mark) \
          VALUES (?1, ?2, ?3, ?4, ?5, 'manual', ?6) \
          ON CONFLICT(line_mapping_id, media_id) \
          DO UPDATE SET start_time = ?4, end_time = ?5, is_track_mark = ?6, updated_at = CURRENT_TIMESTAMP",
-        rusqlite::params![citation, line_mapping_id, media_id, start_time, end_time, is_chapter],
+        rusqlite::params![citation, line_mapping_id, media_id, start_time, end_time, is_track_mark],
     )?;
     Ok(())
 }

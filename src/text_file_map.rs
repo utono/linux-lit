@@ -675,6 +675,30 @@ fn find_skip_target(nf: &str, norm_db: &[String], wi: usize, n_work: usize) -> O
 ///
 /// Returns an all-`false` vec for single-`(div1,div2)` works (prose / single
 /// scene), which the pagination predicate treats as "no boundaries".
+/// Set `is_chapter = true` on the first line of each div1 boundary, clearing it
+/// elsewhere (idempotent — safe to re-call on already-flagged lines).
+///
+/// Prose: each `div1 > 0` (front matter `div1 == 0` is not a chapter).
+/// Non-prose: each change of `div1` from the previous line (the first mapped
+/// line always counts, as a change from "no previous").
+///
+/// `lines` MUST be in canonical (div1, div2, line_in_div, sub_line) order — the
+/// same order `load_work` SELECTs them in.
+pub(crate) fn mark_chapter_starts(lines: &mut [crate::db::models::Line], is_prose: bool) {
+    let mut prev_div1: Option<i64> = None;
+    for line in lines.iter_mut() {
+        let is_start = if is_prose {
+            // A new div1 boundary where div1 > 0; front matter (0) never counts.
+            line.div1 > 0 && Some(line.div1) != prev_div1
+        } else {
+            // Any change of div1 (including the first mapped line).
+            Some(line.div1) != prev_div1
+        };
+        line.is_chapter = is_start;
+        prev_div1 = Some(line.div1);
+    }
+}
+
 fn build_section_starts(
     file_lines: &[String],
     buffer_to_work: &[Option<usize>],
@@ -2142,5 +2166,90 @@ mod tests {
         let l = &work.lines[wi.unwrap()];
         assert_eq!((l.div1, l.div2, l.line_in_div), (1, 4, 43),
             "folded SD must map to citation 1.4.43");
+    }
+}
+
+#[cfg(test)]
+mod mark_chapter_starts_tests {
+    use super::mark_chapter_starts;
+    use crate::db::models::Line;
+
+    /// Minimal Line with only div1 set; everything else defaulted.
+    fn line(div1: i64) -> Line {
+        Line {
+            id: 0,
+            citation: String::new(),
+            text: String::new(),
+            normalized: String::new(),
+            speaker: None,
+            is_dialogue: false,
+            timestamp: None,
+            div1,
+            div2: 0,
+            line_in_div: 0,
+            sub_line: 0,
+            is_chapter: false,
+            is_spoken: None,
+        }
+    }
+
+    fn flags(lines: &[Line]) -> Vec<bool> {
+        lines.iter().map(|l| l.is_chapter).collect()
+    }
+
+    #[test]
+    fn prose_skips_front_matter_marks_each_div1() {
+        // div1: 0,0,1,1,2,2 -> chapter at first 1 and first 2, NOT front matter.
+        let mut lines = vec![line(0), line(0), line(1), line(1), line(2), line(2)];
+        mark_chapter_starts(&mut lines, true);
+        assert_eq!(flags(&lines), vec![false, false, true, false, true, false]);
+    }
+
+    #[test]
+    fn play_marks_each_div1_change_including_first() {
+        // div1: 1,1,2,2 -> chapter at first 1 and first 2 (non-prose: any change,
+        // and the first mapped line is a change from "no previous").
+        let mut lines = vec![line(1), line(1), line(2), line(2)];
+        mark_chapter_starts(&mut lines, false);
+        assert_eq!(flags(&lines), vec![true, false, true, false]);
+    }
+
+    #[test]
+    fn prose_first_div1_is_one_marks_first_line() {
+        // No front matter: div1 1,1,2 -> first 1 is a chapter.
+        let mut lines = vec![line(1), line(1), line(2)];
+        mark_chapter_starts(&mut lines, true);
+        assert_eq!(flags(&lines), vec![true, false, true]);
+    }
+
+    #[test]
+    fn empty_input_is_noop() {
+        let mut lines: Vec<Line> = vec![];
+        mark_chapter_starts(&mut lines, true);
+        assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn single_div1_zero_prose_no_chapter() {
+        let mut lines = vec![line(0)];
+        mark_chapter_starts(&mut lines, true);
+        assert_eq!(flags(&lines), vec![false]);
+    }
+
+    #[test]
+    fn single_div1_zero_nonprose_is_chapter() {
+        // Non-prose treats the first mapped line as a div1 boundary regardless of value.
+        let mut lines = vec![line(0)];
+        mark_chapter_starts(&mut lines, false);
+        assert_eq!(flags(&lines), vec![true]);
+    }
+
+    #[test]
+    fn clears_stale_flags_idempotent() {
+        // Reload path may call on lines with stale true flags; helper must reset.
+        let mut lines = vec![line(0), line(1)];
+        lines[0].is_chapter = true; // stale
+        mark_chapter_starts(&mut lines, true);
+        assert_eq!(flags(&lines), vec![false, true]);
     }
 }

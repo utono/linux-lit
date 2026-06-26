@@ -526,11 +526,9 @@ pub(crate) fn confirm_media_selection(
                 s.media_id = Some(media_id);
                 // Rebuild per-line timestamps for the new media_id
                 if let Some(ref mut work) = s.current_work {
-                    // Build timestamp + chapter lookups from work.timestamps
+                    // Build the timestamp lookup from work.timestamps for the new media.
                     let mut ts_map: std::collections::HashMap<i64, crate::db::models::TimeRange> =
                         std::collections::HashMap::new();
-                    let mut chapter_set: std::collections::HashSet<i64> =
-                        std::collections::HashSet::new();
                     for ts in &work.timestamps {
                         if ts.media_id == media_id {
                             ts_map.entry(ts.line_id).or_insert(crate::db::models::TimeRange {
@@ -539,15 +537,15 @@ pub(crate) fn confirm_media_selection(
                                 sentence_start: ts.sentence_start,
                                 is_manual: ts.is_manual,
                             });
-                            if ts.is_chapter {
-                                chapter_set.insert(ts.line_id);
-                            }
                         }
                     }
                     for line in &mut work.lines {
                         line.timestamp = ts_map.get(&line.id).copied();
-                        line.is_chapter = chapter_set.contains(&line.id);
                     }
+                    // Structural chapter flags follow div1 boundaries, NOT the new
+                    // media's track marks — re-mark so switching media never moves them.
+                    let is_prose = crate::db::line_types::is_prose_work(&work.work_type);
+                    crate::text_file_map::mark_chapter_starts(&mut work.lines, is_prose);
                     // Re-send timestamps to MPV
                     let mut ts_data: Vec<(i64, f64, f64)> = work
                         .timestamps
