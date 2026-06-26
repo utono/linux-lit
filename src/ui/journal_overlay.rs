@@ -523,12 +523,20 @@ impl JournalOverlay {
         // Alt+w/Ctrl+\/Alt+g navigation binds don't apply mid-question.
         self.footer_container.set_visible(false);
         self.apply_font();
+        // Revealing the ask card shrinks the scrolled viewport, so the bottom
+        // clip must be recomputed for the new (smaller) height — otherwise the
+        // answer's last row pokes out behind the ask card. The size change isn't
+        // synchronous, so defer to the next tick (same as the open path).
+        self.schedule_bottom_clip_recompute();
     }
 
     pub fn close_ask_card(&self) {
         self.ask.close();
         // Restore the footer hints when the question is submitted or canceled.
         self.footer_container.set_visible(true);
+        // Hiding the ask card grows the viewport back — recompute the clip for
+        // the restored height.
+        self.schedule_bottom_clip_recompute();
     }
 
     pub fn toggle_ask_focus(&self) {
