@@ -15,6 +15,7 @@ pub struct JournalOverlay {
     scrolled: gtk4::ScrolledWindow,
     view: gtk4::TextView,
     bottom_clip: gtk4::Box,
+    footer_container: gtk4::Box,
     footer_left: Label,
     hint: Label,
     bar_drawing: gtk4::DrawingArea,
@@ -28,6 +29,17 @@ pub struct JournalOverlay {
     font_size: Cell<i32>,
     last_card_size: Cell<(i32, i32)>,
     ask: AskCard,
+}
+
+/// Prefix a journal Q&A question with `Q: ` for display (the answer follows
+/// below). Idempotent: a question already starting with `Q:` is returned as-is,
+/// so a stored/re-rendered question isn't double-prefixed.
+fn prefix_question(question: &str) -> String {
+    if question.trim_start().starts_with("Q:") {
+        question.to_string()
+    } else {
+        format!("Q: {}", question)
+    }
 }
 
 impl JournalOverlay {
@@ -151,6 +163,7 @@ impl JournalOverlay {
         );
         let footer_left = footer.left;
         let hint = footer.hint;
+        let footer_container = footer.container.clone();
         container.append(&footer.container);
 
         // Shared "ask" input card (canonical synopsis values), stacked last in
@@ -166,6 +179,7 @@ impl JournalOverlay {
             scrolled,
             view,
             bottom_clip,
+            footer_container,
             footer_left,
             hint,
             bar_drawing,
@@ -226,11 +240,13 @@ impl JournalOverlay {
         let body = if page_count == 0 {
             "No pages yet \u{2014} press A to ask.".to_string()
         } else {
-            format!("{}\n\n{}", question, answer)
+            format!("{}\n\n{}", prefix_question(question), answer)
         };
         self.view.buffer().set_text(&body);
         self.apply_font();
         self.ask.close();
+        // Restore the navigation footer (show_loading may have hidden it).
+        self.footer_container.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         let adj = self.scrolled.vadjustment();
@@ -294,13 +310,15 @@ impl JournalOverlay {
         let qa_text = if page_count == 0 {
             "\n\n\u{2014}\u{2014}\u{2014}\n\nNo pages yet \u{2014} press A to ask.".to_string()
         } else {
-            format!("\n\n\u{2014}\u{2014}\u{2014}\n\n{}\n\n{}", question, answer)
+            format!("\n\n\u{2014}\u{2014}\u{2014}\n\n{}\n\n{}", prefix_question(question), answer)
         };
         let mut end_iter = self.view.buffer().end_iter();
         self.view.buffer().insert(&mut end_iter, &qa_text);
 
         self.apply_font();
         self.ask.close();
+        // Restore the navigation footer (show_loading may have hidden it).
+        self.footer_container.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         let adj = self.scrolled.vadjustment();
@@ -311,14 +329,24 @@ impl JournalOverlay {
         self.clear_bar();
     }
 
-    pub fn show_loading(&self) {
+    pub fn show_loading(&self, question: &str) {
         let (w, h) = self.last_card_size.get();
         if w > 0 {
             self.container.set_size_request(w, h);
         }
-        self.view.buffer().set_text("Asking\u{2026}");
+        // Echo the submitted question above the "Asking…" indicator so the user
+        // sees what they asked while the answer is being generated.
+        let body = if question.trim().is_empty() {
+            "Asking\u{2026}".to_string()
+        } else {
+            format!("{}\n\nAsking\u{2026}", prefix_question(question))
+        };
+        self.view.buffer().set_text(&body);
         self.apply_font();
         self.ask.close();
+        // Keep the navigation footer hidden during the Asking state. The result
+        // render (show_page/show_passage_page/show_message) restores it.
+        self.footer_container.set_visible(false);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
     }
@@ -331,6 +359,8 @@ impl JournalOverlay {
         self.view.buffer().set_text(text);
         self.apply_font();
         self.ask.close();
+        // Restore the navigation footer (show_loading may have hidden it).
+        self.footer_container.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
     }
@@ -488,11 +518,17 @@ impl JournalOverlay {
     pub fn open_ask_card(&self, title: &str, hint: &str) {
         let (card_width, _) = self.last_card_size.get();
         self.ask.open(title, hint, card_width);
+        // Hide the normal-navigation footer hints while the ask card is open —
+        // the ask card has its own "Tab switch · Ctrl+Enter submit" hint, and the
+        // Alt+w/Ctrl+\/Alt+g navigation binds don't apply mid-question.
+        self.footer_container.set_visible(false);
         self.apply_font();
     }
 
     pub fn close_ask_card(&self) {
         self.ask.close();
+        // Restore the footer hints when the question is submitted or canceled.
+        self.footer_container.set_visible(true);
     }
 
     pub fn toggle_ask_focus(&self) {
@@ -682,6 +718,25 @@ impl JournalOverlay {
     pub fn set_journal_visual_hint(&self) {
         self.hint
             .set_text("\u{21e7}V/Esc exit \u{00b7} j/k extend \u{00b7} gg/G ends \u{00b7} y yank");
+    }
+}
+
+#[cfg(test)]
+mod prefix_question_tests {
+    use super::prefix_question;
+
+    #[test]
+    fn adds_q_prefix() {
+        assert_eq!(prefix_question("What customs governed correspondence?"),
+            "Q: What customs governed correspondence?");
+    }
+
+    #[test]
+    fn is_idempotent() {
+        // A question already prefixed (e.g. re-rendered from a stored page) is
+        // not double-prefixed.
+        assert_eq!(prefix_question("Q: already asked"), "Q: already asked");
+        assert_eq!(prefix_question("  Q: leading space"), "  Q: leading space");
     }
 }
 

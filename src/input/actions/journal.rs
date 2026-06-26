@@ -330,7 +330,7 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
         )
     };
 
-    state_rc.borrow().journal_overlay.show_loading();
+    state_rc.borrow().journal_overlay.show_loading(question);
 
     let edit_id: i64 = if mode == JournalPromptMode::Edit {
         let s = state_rc.borrow();
