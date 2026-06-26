@@ -906,9 +906,9 @@ pipeline as a single refactor.
 - **Safe-scope:** marginal — behavior-preserving, but it is a new helper with
   interpolated args, not a literal-naming or byte-identical cut.
 
-## #38 — claude-bridge-async-render-tail — OPEN
+## #38 — claude-bridge-async-render-tail — DONE (commit 062ceed)
 
-- **Status:** OPEN (HIGHEST of the 2026-06-25 post-gloss-fixes audit — the
+- **Status:** DONE (commit 062ceed) — merged in refactor/audit-38-45; behavior-preserving, individually + whole-branch reviewed clean.
   deferred family audit #7 flagged; ~240 lines across 4 sites, and each NEW
   gloss-type path copies the whole tail, so drift is structural).
 - **Signal:** the async Claude-call render tail — the
@@ -937,9 +937,9 @@ pipeline as a single refactor.
 - **Safe-scope:** yes — same concrete types, no trait/generic; a parameterized
   block move.
 
-## #39 — overlay-close-position-restore-helpers — OPEN
+## #39 — overlay-close-position-restore-helpers — DONE (commit 0a37259)
 
-- **Status:** OPEN (pairs with this session's `return_to_reader_mode`: that
+- **Status:** DONE (commit 0a37259) — merged in refactor/audit-38-45; behavior-preserving, individually + whole-branch reviewed clean.
   centralized mode+tint, this centralizes the still-duplicated position-restore;
   7 of 8 sites collapse).
 - **Signal:** the take-and-restore tail
@@ -963,9 +963,9 @@ pipeline as a single refactor.
   ordering differs per site; already centralized).
 - **Safe-scope:** yes — pure cut-and-lift, no abstraction.
 
-## #40 — timestamps-line-id-extraction — OPEN
+## #40 — timestamps-line-id-extraction — DONE (commit daba8bc)
 
-- **Status:** OPEN (5 byte-identical sites in one file; cleanest cut in
+- **Status:** DONE (commit daba8bc) — merged in refactor/audit-38-45; behavior-preserving, individually + whole-branch reviewed clean.
   timestamps.rs).
 - **Signal:** the `let line_id = { let work = match &state.current_work { Some(w)
   => w, None => return false }; work.lines[line_idx].id };` block is byte-identical
@@ -979,9 +979,9 @@ pipeline as a single refactor.
   `line_idx` — different shape.
 - **Safe-scope:** yes — byte-identical, helper returns Option.
 
-## #41 — timestamps-sign-column-setter — OPEN
+## #41 — timestamps-sign-column-setter — DONE (commit c2bb5e6)
 
-- **Status:** OPEN (4+3 sites, ~40 lines collapse to one 4-arg setter).
+- **Status:** DONE (commit c2bb5e6) — merged in refactor/audit-38-45; behavior-preserving, individually + whole-branch reviewed clean.
 - **Signal:** the sign-column borrow-and-set block
   `{ let mut ht = state.has_timestamp.borrow_mut(); if bl < ht.len() { ht[bl] = V; }
   let mut manual = state.is_manual.borrow_mut(); if bl < manual.len() { manual[bl]
@@ -997,9 +997,9 @@ pipeline as a single refactor.
   args so it still covers undo.
 - **Safe-scope:** yes — self-contained block move.
 
-## #42 — unspoken-stage-direction-refusal-block — OPEN
+## #42 — unspoken-stage-direction-refusal-block — DONE (commit 47909ed)
 
-- **Status:** OPEN (only 2 sites, but FRESHLY TOUCHED — the two copies must stay
+- **Status:** DONE (commit 47909ed) — merged in refactor/audit-38-45; behavior-preserving, individually + whole-branch reviewed clean.
   in lockstep, the exact drift signal the house bar wants).
 - **Signal:** the `u`/end-time spoken-line gate body is byte-identical at **2
   sites**: timestamps.rs:131-141 (set_start_time) and :381-391 (set_end_time) —
@@ -1015,9 +1015,9 @@ pipeline as a single refactor.
   existing timestamps) — do not add the gate there.
 - **Safe-scope:** yes — byte-identical block + named literal.
 
-## #43 — word-prefix-boundary-predicate — OPEN
+## #43 — word-prefix-boundary-predicate — DONE (commit 0256fe9)
 
-- **Status:** OPEN (best cut in text_file_map.rs — a subtle byte-boundary check
+- **Status:** DONE (commit 0256fe9) — merged in refactor/audit-38-45; behavior-preserving, individually + whole-branch reviewed clean.
   that's exactly the kind that drifts).
 - **Signal:** the "needle is a prefix of haystack at a WORD boundary" test —
   `X.starts_with(needle) && X.as_bytes().get(needle.len()) == Some(&b' ')` —
@@ -1029,9 +1029,9 @@ pipeline as a single refactor.
 - **EXCLUDED (named, why):** none — all three are the exact same boundary check.
 - **Safe-scope:** yes — pure predicate.
 
-## #44 — gloss-render-current-row-block — OPEN
+## #44 — gloss-render-current-row-block — DONE (commit 959b09b)
 
-- **Status:** OPEN (low — 2 strict byte-identical sites, low drift).
+- **Status:** DONE (commit 959b09b) — merged in refactor/audit-38-45; behavior-preserving, individually + whole-branch reviewed clean.
 - **Signal:** the 13-line "render the current gloss row" block (`gloss_start`/
   `gloss_end` clone, `ctx`, `cw`, `h`, `pairs`, `show_gloss_with_color`,
   `set_position`, `set_citation`, `recolor_cached_blocks`) is byte-identical
@@ -1044,9 +1044,9 @@ pipeline as a single refactor.
   all near-but-not-byte-identical.
 - **Safe-scope:** yes.
 
-## #45 — gloss-row-map-closures — OPEN (low)
+## #45 — gloss-row-map-closures — DONE (commit 8d73eb4)
 
-- **Status:** OPEN but LOW (2 sites per closure, a `|row|` lambda is already
+- **Status:** DONE (commit 8d73eb4) — merged in refactor/audit-38-45; behavior-preserving, individually + whole-branch reviewed clean.
   near-minimal; named for completeness).
 - **Signal:** two byte-identical (modulo indent) row-map closures — the SavedGloss
   7-field map at queries.rs:1588-1599 (`find_all_glosses`) and 1637-1647
