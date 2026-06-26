@@ -1,11 +1,16 @@
-//! Journal Q&A overlay clip invariant: the journal overlay must not clip its
-//! last visible line when the ask card is open — the exact regression that
-//! Tasks 1-5 fixed. Companion to tests/overlay_clipping.rs (synopsis/gloss
-//! overlay) and tests/line_clipping.rs (main reading card).
+//! Journal Q&A overlay clip invariant: the journal overlay must not clip/occlude
+//! its last visible line when the ask card is open. Companion to
+//! tests/overlay_clipping.rs (synopsis/gloss overlay) and tests/line_clipping.rs
+//! (main reading card).
 //!
-//! The regression: opening the ask card shrank the scrolled viewport, pushing
-//! the bottom clip guard up, so the last visible answer row was clipped behind
-//! the ask card. This test reproduces that exact path and asserts it stays fixed.
+//! NOTE on what this asserts: the reported "text behind the ask card" bug is an
+//! OCCLUSION/layout bug — the ask card overflows the fixed-height container and
+//! overlaps an UNCHANGED-height scroll viewport (page_size does NOT shrink on
+//! open; proven by runtime diag, see docs/troubleshooting/clip-prevention.md
+//! "occlusion is not clipping"). The BottomClipGuard refactor does NOT fix it;
+//! the structural layout fix (make the scroll viewport shrink for the ask card)
+//! does. This test is the on-screen guard for that structural fix: once the
+//! viewport shrinks, no answer row may sit behind the ask card.
 //!
 //! Run under the env wrapper so numpy/pillow are available:
 //!     ./scripts/e2e-env.sh cargo test --test journal_clipping -- --ignored --nocapture
@@ -13,8 +18,8 @@
 //! Regions: the app emits two rects to the dev log under `LIT_HEADLESS_TEST`:
 //!   - TEST_JOURNAL_VIEWPORT_RECT — scrolled window bounds when overlay opens
 //!   - TEST_JOURNAL_ASK_VIEWPORT_RECT — same after ask card is revealed
-//! The test uses the ask-card rect for the regression assertion because the ask
-//! card shrinks the scrolled viewport from its initial height.
+//! The test asserts on the ask-card rect (the viewport with the ask card open),
+//! which is where the occluded rows would show until the structural fix lands.
 
 mod harness;
 
@@ -71,11 +76,11 @@ fn journal_overlay_ask_card_never_clips() {
         .expect("journal overlay reported its viewport rect (TEST_JOURNAL_VIEWPORT_RECT)");
     h.settle(Duration::from_millis(500));
 
-    // Type literal `A` to open the ask card. This is the exact regression path
-    // from Tasks 1-5: opening the ask card shrinks the scrolled viewport, and the
-    // bottom clip guard must recompute to keep the last row visible.
-    // The overlay emits TEST_JOURNAL_ASK_VIEWPORT_RECT from open_ask_card so the
-    // harness can read the UPDATED (smaller) rect for the clip assertion.
+    // Type literal `A` to open the ask card — the reported-bug path. Today the
+    // ask card overlaps the (unchanged-height) scroll viewport and occludes the
+    // lower rows; the structural fix must make the viewport shrink so no row sits
+    // behind the card. The overlay emits TEST_JOURNAL_ASK_VIEWPORT_RECT from
+    // open_ask_card so the harness reads the with-ask-card-open rect.
     // Using type_text (wtype text mode) rather than chord to ensure the uppercase
     // keysym (GDK_KEY_A) reaches the journal overlay — wtype's -M shift / -k a
     // leaves the keyval as lowercase `a`, which the journal keymap doesn't match.
@@ -86,7 +91,8 @@ fn journal_overlay_ask_card_never_clips() {
         .expect("journal overlay reported ask-card rect (TEST_JOURNAL_ASK_VIEWPORT_RECT)");
     h.settle(Duration::from_millis(500));
 
-    // Assert no line clipping with the ask card open (the Tasks 1-5 regression).
+    // Assert no occluded/clipped row with the ask card open (the reported bug;
+    // passes once the structural layout fix shrinks the viewport for the card).
     h.assert_no_line_clipping("journal_overlay_ask_open", ask_region)
-        .expect("no clip at journal overlay bottom WITH ask card open (Task 1-5 regression)");
+        .expect("no row behind the journal ask card WITH it open (occlusion/layout fix)");
 }
