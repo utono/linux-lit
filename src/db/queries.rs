@@ -1382,6 +1382,21 @@ pub fn upsert_chapter(
     Ok(new_val)
 }
 
+/// Toggle line_mapping.chapter_start for one paragraph. Returns the new value
+/// (true = now marks a chapter start). NULL is treated as 0.
+pub fn toggle_chapter_start(conn: &Connection, line_mapping_id: i64) -> Result<bool, rusqlite::Error> {
+    conn.execute(
+        "UPDATE line_mapping SET chapter_start = 1 - COALESCE(chapter_start, 0) WHERE id = ?1",
+        [line_mapping_id],
+    )?;
+    let v: i64 = conn.query_row(
+        "SELECT COALESCE(chapter_start, 0) FROM line_mapping WHERE id = ?1",
+        [line_mapping_id],
+        |r| r.get(0),
+    )?;
+    Ok(v == 1)
+}
+
 pub fn update_end_time(
     conn: &Connection,
     line_mapping_id: i64,
@@ -3341,5 +3356,38 @@ mod scansion_tests {
         let c = fixture();
         let map = load_scansion_for_work(&c, "TN").unwrap();
         assert!(map.get(&999).is_none());
+    }
+}
+
+#[cfg(test)]
+mod chapter_start_tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn mk() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE line_mapping (id INTEGER PRIMARY KEY, chapter_start INTEGER DEFAULT 0);
+             INSERT INTO line_mapping (id, chapter_start) VALUES (7, 0);",
+        ).unwrap();
+        c
+    }
+
+    #[test]
+    fn toggle_sets_then_clears() {
+        let c = mk();
+        assert_eq!(toggle_chapter_start(&c, 7).unwrap(), true);
+        let v: i64 = c.query_row("SELECT chapter_start FROM line_mapping WHERE id=7", [], |r| r.get(0)).unwrap();
+        assert_eq!(v, 1);
+        assert_eq!(toggle_chapter_start(&c, 7).unwrap(), false);
+        let v2: i64 = c.query_row("SELECT chapter_start FROM line_mapping WHERE id=7", [], |r| r.get(0)).unwrap();
+        assert_eq!(v2, 0);
+    }
+
+    #[test]
+    fn toggle_handles_null_as_zero() {
+        let c = mk();
+        c.execute("UPDATE line_mapping SET chapter_start = NULL WHERE id = 7", []).unwrap();
+        assert_eq!(toggle_chapter_start(&c, 7).unwrap(), true);
     }
 }
