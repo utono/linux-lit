@@ -213,23 +213,36 @@ pub fn set_start_time(state: &mut AppState) -> bool {
 
     resync_mpv_timestamps(state);
 
-    // Update sign column for this line
+    // Update sign column for this line (is_chapter_line intentionally not written here)
     let buffer_line = state.current_line;
-    {
-        let mut ht = state.has_timestamp.borrow_mut();
-        if buffer_line < ht.len() {
-            ht[buffer_line] = true;
-        }
-        let mut manual = state.is_manual.borrow_mut();
-        if buffer_line < manual.len() {
-            manual[buffer_line] = true;
-        }
-    }
+    set_sign_columns(state, buffer_line, true, true, None);
     redraw_sign_gutters(state);
 
     crate::input::navigation::cursor_next_dialogue(state);
 
     true
+}
+
+/// Update the three sign-column `RefCell<Vec<bool>>` vecs for a single buffer
+/// line.  Pass `is_chapter: None` to leave `is_chapter_line` untouched (used by
+/// `set_start_time`, which never wrote that column).
+fn set_sign_columns(state: &AppState, buffer_line: usize, has_ts: bool, is_manual: bool, is_chapter: Option<bool>) {
+    {
+        let mut ht = state.has_timestamp.borrow_mut();
+        if buffer_line < ht.len() {
+            ht[buffer_line] = has_ts;
+        }
+        let mut manual = state.is_manual.borrow_mut();
+        if buffer_line < manual.len() {
+            manual[buffer_line] = is_manual;
+        }
+    }
+    if let Some(ch_val) = is_chapter {
+        let mut ch = state.is_chapter_line.borrow_mut();
+        if buffer_line < ch.len() {
+            ch[buffer_line] = ch_val;
+        }
+    }
 }
 
 /// Queue a redraw on both column gutter renderers so the sign appears
@@ -333,22 +346,7 @@ pub fn set_chapter(state: &mut AppState) -> bool {
 
     // Update sign column for this line
     let buffer_line = state.current_line;
-    {
-        let mut ht = state.has_timestamp.borrow_mut();
-        if buffer_line < ht.len() {
-            ht[buffer_line] = true;
-        }
-        let mut manual = state.is_manual.borrow_mut();
-        if buffer_line < manual.len() {
-            manual[buffer_line] = true;
-        }
-    }
-    {
-        let mut ch = state.is_chapter_line.borrow_mut();
-        if buffer_line < ch.len() {
-            ch[buffer_line] = is_ch;
-        }
-    }
+    set_sign_columns(state, buffer_line, true, true, Some(is_ch));
     redraw_sign_gutters(state);
 
     true
@@ -474,22 +472,7 @@ pub fn delete_timestamp(state: &mut AppState) -> bool {
 
     // Update sign column for this line
     let buffer_line = state.current_line;
-    {
-        let mut ht = state.has_timestamp.borrow_mut();
-        if buffer_line < ht.len() {
-            ht[buffer_line] = false;
-        }
-        let mut manual = state.is_manual.borrow_mut();
-        if buffer_line < manual.len() {
-            manual[buffer_line] = false;
-        }
-    }
-    {
-        let mut ch = state.is_chapter_line.borrow_mut();
-        if buffer_line < ch.len() {
-            ch[buffer_line] = false;
-        }
-    }
+    set_sign_columns(state, buffer_line, false, false, Some(false));
     redraw_sign_gutters(state);
 
     true
@@ -656,22 +639,7 @@ pub fn undo_timestamp(state: &mut AppState) -> bool {
 
     // Update sign column
     if let Some(bl) = buffer_line {
-        {
-            let mut ht = state.has_timestamp.borrow_mut();
-            if bl < ht.len() {
-                ht[bl] = has_ts;
-            }
-            let mut manual = state.is_manual.borrow_mut();
-            if bl < manual.len() {
-                manual[bl] = is_man;
-            }
-        }
-        {
-            let mut ch = state.is_chapter_line.borrow_mut();
-            if bl < ch.len() {
-                ch[bl] = is_ch;
-            }
-        }
+        set_sign_columns(state, bl, has_ts, is_man, Some(is_ch));
     }
 
     redraw_sign_gutters(state);
