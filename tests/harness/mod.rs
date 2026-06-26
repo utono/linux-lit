@@ -332,6 +332,74 @@ impl Harness {
         ))
     }
 
+    /// Like `wait_for_overlay_viewport_rect` but for the JOURNAL Q&A overlay's
+    /// scrolled viewport (`TEST_JOURNAL_VIEWPORT_RECT`, emitted on `show_page`).
+    /// The distinct prefix means this never collides with the main-card or
+    /// synopsis-overlay rect lines.
+    pub fn wait_for_journal_viewport_rect(
+        &self,
+        timeout: Duration,
+    ) -> io::Result<(i32, i32, i32, i32)> {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if let Ok(text) = fs::read_to_string(Self::dev_log_path()) {
+                if let Some(rect) = text
+                    .lines()
+                    .rev()
+                    .find_map(|l| l.split("TEST_JOURNAL_VIEWPORT_RECT ").nth(1))
+                {
+                    let nums: Vec<i32> = rect
+                        .split_whitespace()
+                        .take(4)
+                        .filter_map(|n| n.parse().ok())
+                        .collect();
+                    if let [x, y, w, h] = nums[..] {
+                        return Ok((x, y, w, h));
+                    }
+                }
+            }
+            sleep(Duration::from_millis(100));
+        }
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "TEST_JOURNAL_VIEWPORT_RECT never appeared (did the journal overlay open under LIT_HEADLESS_TEST?)",
+        ))
+    }
+
+    /// Like `wait_for_journal_viewport_rect` but for the journal overlay WITH the
+    /// ask card revealed (`TEST_JOURNAL_ASK_VIEWPORT_RECT`, emitted from
+    /// `open_ask_card`). The ask card shrinks the scrolled viewport height; this
+    /// rect reflects the reduced size for the clip assertion.
+    pub fn wait_for_journal_ask_viewport_rect(
+        &self,
+        timeout: Duration,
+    ) -> io::Result<(i32, i32, i32, i32)> {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if let Ok(text) = fs::read_to_string(Self::dev_log_path()) {
+                if let Some(rect) = text
+                    .lines()
+                    .rev()
+                    .find_map(|l| l.split("TEST_JOURNAL_ASK_VIEWPORT_RECT ").nth(1))
+                {
+                    let nums: Vec<i32> = rect
+                        .split_whitespace()
+                        .take(4)
+                        .filter_map(|n| n.parse().ok())
+                        .collect();
+                    if let [x, y, w, h] = nums[..] {
+                        return Ok((x, y, w, h));
+                    }
+                }
+            }
+            sleep(Duration::from_millis(100));
+        }
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "TEST_JOURNAL_ASK_VIEWPORT_RECT never appeared (did `A` open the ask card under LIT_HEADLESS_TEST?)",
+        ))
+    }
+
     /// Read the full dev log the app writes under `LIT_DEV`. Empty string if the
     /// log doesn't exist yet. For tests that assert on logged pagination
     /// decisions (e.g. `saved_position_resume` checks the canonical snap did NOT

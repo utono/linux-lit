@@ -14,7 +14,7 @@ pub struct JournalOverlay {
     title: Label,
     scrolled: gtk4::ScrolledWindow,
     view: gtk4::TextView,
-    bottom_clip: gtk4::Box,
+    clip_guard: crate::ui::bottom_clip_guard::BottomClipGuard,
     footer_container: gtk4::Box,
     footer_left: Label,
     hint: Label,
@@ -90,15 +90,11 @@ impl JournalOverlay {
 
         let scroll_overlay = Overlay::new();
         scroll_overlay.set_child(Some(&scrolled));
-        let bottom_clip = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-        bottom_clip.add_css_class("gloss-bottom-clip");
-        bottom_clip.set_valign(gtk4::Align::End);
-        bottom_clip.set_halign(gtk4::Align::Fill);
-        bottom_clip.set_vexpand(false);
-        bottom_clip.set_can_target(false);
-        scroll_overlay.add_overlay(&bottom_clip);
-        scroll_overlay.set_measure_overlay(&bottom_clip, false);
-        scroll_overlay.set_clip_overlay(&bottom_clip, true);
+        let clip_guard = crate::ui::bottom_clip_guard::BottomClipGuard::attach(
+            &scroll_overlay,
+            &view,
+            &scrolled,
+        );
 
         // Selection bar: a DrawingArea overlay over the same scroll_overlay that
         // hosts bottom_clip, drawing a 2px vertical accent line over selected
@@ -178,7 +174,7 @@ impl JournalOverlay {
             title,
             scrolled,
             view,
-            bottom_clip,
+            clip_guard,
             footer_container,
             footer_left,
             hint,
@@ -249,12 +245,43 @@ impl JournalOverlay {
         self.footer_container.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
-        let adj = self.scrolled.vadjustment();
-        adj.set_value(adj.lower());
-        self.update_bottom_clip();
-        self.schedule_bottom_clip_recompute();
+        self.clip_guard.on_open();
         self.rebuild_blocks();
         self.clear_bar();
+
+        // Headless test: emit the journal overlay viewport rect once layout
+        // settles, so tests/journal_clipping.rs can target the card's region.
+        // Connect to the vadjustment's `changed` signal, which fires when GTK
+        // first assigns a scroll range (i.e. after the first layout pass) — the
+        // same event BottomClipGuard uses to detect settled geometry. Disconnect
+        // after the first emission with a non-zero rect.
+        if std::env::var_os("LIT_HEADLESS_TEST").is_some() {
+            let sc = self.scrolled.clone();
+            let adj = sc.vadjustment();
+            let id_cell: Rc<std::cell::Cell<Option<glib::SignalHandlerId>>> =
+                Rc::new(std::cell::Cell::new(None));
+            let id_cell_clone = id_cell.clone();
+            let id = adj.connect_changed(move |adj| {
+                if let Some(r) = sc.root().and_then(|root| sc.compute_bounds(&root)) {
+                    if r.width() > 0.0 && r.height() > 0.0 {
+                        crate::logging::log(&format!(
+                            "TEST_JOURNAL_VIEWPORT_RECT {} {} {} {}",
+                            r.x().round() as i32,
+                            r.y().round() as i32,
+                            r.width().round() as i32,
+                            r.height().round() as i32
+                        ));
+                        if let Some(hid) = id_cell_clone.take() {
+                            // Disconnect so we only emit once per show_page open.
+                            // The adjustment fires again on every scroll, so without
+                            // this guard we would spam the log with updates.
+                            adj.disconnect(hid);
+                        }
+                    }
+                }
+            });
+            id_cell.set(Some(id));
+        }
     }
 
     /// Render a passage page: source verse (with italic stage directions) above a
@@ -321,10 +348,7 @@ impl JournalOverlay {
         self.footer_container.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
-        let adj = self.scrolled.vadjustment();
-        adj.set_value(adj.lower());
-        self.update_bottom_clip();
-        self.schedule_bottom_clip_recompute();
+        self.clip_guard.on_open();
         self.rebuild_blocks();
         self.clear_bar();
     }
@@ -451,26 +475,7 @@ impl JournalOverlay {
     }
 
     fn update_bottom_clip(&self) {
-        // Use the descender-correct per-row clip shared with the gloss overlay,
-        // NOT a uniform row-step estimate (which clipped the last line's
-        // descenders — see docs/troubleshooting/page-turning-mechanics.md).
-        crate::ui::recompute_overlay_bottom_clip(&self.view, &self.bottom_clip, &self.scrolled);
-    }
-
-    /// Re-run the bottom clip once on the next main-loop tick, after the freshly
-    /// shown overlay has been laid out. The synchronous `update_bottom_clip` in
-    /// `show_page`/`show_passage_page` runs against unsettled geometry (the
-    /// ScrolledWindow viewport is still 0-height at `set_visible`), so it
-    /// over-clips and hides the whole body until the first j/k/g/G forces a
-    /// recompute. This idle pass sizes the clip correctly on open — mirroring the
-    /// gloss overlay's deferred recompute (gloss_overlay.rs).
-    fn schedule_bottom_clip_recompute(&self) {
-        let view = self.view.clone();
-        let clip = self.bottom_clip.clone();
-        let scrolled = self.scrolled.clone();
-        glib::idle_add_local_once(move || {
-            crate::ui::recompute_overlay_bottom_clip(&view, &clip, &scrolled);
-        });
+        self.clip_guard.recompute();
     }
 
     pub fn set_font(&self, family: &str, size: i32) {
@@ -525,9 +530,32 @@ impl JournalOverlay {
         self.apply_font();
         // Revealing the ask card shrinks the scrolled viewport, so the bottom
         // clip must be recomputed for the new (smaller) height — otherwise the
-        // answer's last row pokes out behind the ask card. The size change isn't
-        // synchronous, so defer to the next tick (same as the open path).
-        self.schedule_bottom_clip_recompute();
+        // answer's last row pokes out behind the ask card.
+        self.clip_guard.recompute();
+
+        // Headless test: emit the scrolled viewport rect WITH the ask card open
+        // (the exact regression from Tasks 1-5). The card open shrinks the
+        // scrolled window's height; this idle fires after that layout pass, so
+        // the rect reflects the reduced viewport. Tests/journal_clipping.rs reads
+        // TEST_JOURNAL_ASK_VIEWPORT_RECT for the ask-open assertion.
+        if std::env::var_os("LIT_HEADLESS_TEST").is_some() {
+            let sc = self.scrolled.clone();
+            glib::idle_add_local_once(move || {
+                if let Some(r) = sc.root().and_then(|root| sc.compute_bounds(&root)) {
+                    crate::logging::log(&format!(
+                        "TEST_JOURNAL_ASK_VIEWPORT_RECT {} {} {} {}",
+                        r.x().round() as i32,
+                        r.y().round() as i32,
+                        r.width().round() as i32,
+                        r.height().round() as i32
+                    ));
+                } else {
+                    crate::logging::log(
+                        "TEST_JOURNAL_ASK_VIEWPORT_RECT unavailable (root/compute_bounds returned None)",
+                    );
+                }
+            });
+        }
     }
 
     pub fn close_ask_card(&self) {
@@ -536,7 +564,7 @@ impl JournalOverlay {
         self.footer_container.set_visible(true);
         // Hiding the ask card grows the viewport back — recompute the clip for
         // the restored height.
-        self.schedule_bottom_clip_recompute();
+        self.clip_guard.recompute();
     }
 
     pub fn toggle_ask_focus(&self) {
