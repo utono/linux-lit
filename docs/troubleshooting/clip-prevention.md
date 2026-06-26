@@ -94,13 +94,38 @@ at ALL THREE or it clips:
   gloss overlay.
 - **(b) On the named scroll methods.** Explicit `update_bottom_clip()` calls
   inside `scroll_*_to_top` / `scroll_*_to_bottom` / the paged scroll fns.
-- **(c) On EVERY value change — the `value_changed` catch-all. THIS IS THE ONE
-  THAT GETS DROPPED.** A handler on the scrolled `vadjustment().connect_value_changed`
-  that calls `recompute_overlay_bottom_clip`. Path (a)'s `changed` handler fires
-  only while the *range* shifts (during an open); once the range is stable and the
-  user merely scrolls — OR the viewport is resized by something else opening
-  below it (e.g. the ask card) — only `value_changed`/`page_size` move, and
-  without (c) the clip keeps its stale height and a partial row pokes through.
+- **(c) On EVERY value change — the `value_changed` catch-all.** A handler on the
+  scrolled `vadjustment().connect_value_changed` that calls
+  `recompute_overlay_bottom_clip`. Path (a)'s `changed` handler fires only while
+  the *range* shifts (during an open); once the range is stable and the user
+  merely scrolls, only `value_changed` moves, and without (c) the clip keeps its
+  stale height and a partial row pokes through on scroll.
+
+## BottomClipGuard owns the three paths (use it for any free-scroll surface)
+
+`src/ui/bottom_clip_guard.rs` packages the lifecycle so a surface cannot drop a
+path: `attach()` (TextView) / `attach_box()` (Box child) build the clip box AND
+wire path (c) in one call; `on_open()` is path (a); `recompute()` is path (b).
+The gloss, journal, and translation overlays all attach a guard. When adding a
+new free-scroll surface, attach a guard — do not hand-wire the handlers. Failure
+checklist item #1 below becomes "confirm the surface attaches a BottomClipGuard."
+
+## What the bottom clip CANNOT fix — occlusion is not clipping
+
+The bottom-clip masks a **partial row straddling the viewport edge**. It does
+NOT help when a fully-laid-out row is **occluded by a widget drawn on top of an
+UNCHANGED viewport**. The journal Q&A "ask card" bug was exactly this: opening
+the ask card does **not** shrink the scrolled viewport (proven by runtime diag:
+`page_size` stays constant across the open, sync and idle) — the ask card
+overflows the fixed-height card container and overlaps the bottom of the scroll
+area, so the lower text rows render *behind* it, fully visible-but-occluded.
+There is no viewport resize to react to and no partial edge row to mask, so NO
+clip recompute (path a/b/c) can fix it. **If text shows behind a card whose
+opening did not change `page_size`, the bug is layout/occlusion, not clipping —
+the fix is to make the overlapping widget claim real layout space so the scroll
+viewport shrinks to end above it.** (Contrast: the gloss overlay sizes its card
+with `container.set_height_request` (a minimum that can grow); the journal used
+`set_size_request` — investigate this when fixing the layout.)
 
   **The gloss overlay has (c)** (`gloss_overlay.rs`, connected in `new()` right
   after `bottom_clip` is created, calling `recompute_overlay_bottom_clip`). A

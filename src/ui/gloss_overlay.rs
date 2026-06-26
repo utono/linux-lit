@@ -946,24 +946,10 @@ impl GlossOverlay {
         }
     }
 
-    /// Snap the overlay's scroll position to the very top, reliably.
-    ///
-    /// `set_value(0.0)` inline (or on idle) is timing-dependent: `set_visible`
-    /// and `apply_font` recompute the vadjustment range on a later layout pass,
-    /// and on a slow real display that pass can land after the idle fires —
-    /// leaving the card scrolled partway down with the first lines clipped.
-    /// Instead we react to the layout itself: a handler on the adjustment's
-    /// `changed` signal (emitted whenever the range is recomputed) re-snaps to
-    /// `lower()` and re-sizes the clip on EVERY layout pass during the open.
-    ///
-    /// Two layout passes are normal for one open (`set_visible` reflow, then a
-    /// later `apply_font` reflow), so the handler must survive past the first
-    /// `changed` — disconnecting after one fire leaves a second pass able to
-    /// displace the scroll with no handler to correct it. We instead disconnect
-    /// on a one-shot timeout after the passes have settled. The handler also
-    /// only re-snaps while the open is still "fresh" (a `pinning` flag): once it
-    /// clears, a stray `changed` from a later resize/font-cycle must NOT yank a
-    /// user who has since scrolled back to the top.
+    /// Snap the overlay's scroll position to the top and cover the open's
+    /// multi-pass layout. Delegates to `BottomClipGuard::on_open` — see that
+    /// method for the `changed`-handler + `pinning` + one-shot-disconnect + idle
+    /// backstop logic (why a single inline/idle `set_value(0.0)` is unreliable).
     fn reset_scroll_top(&self) {
         self.clip_guard.on_open();
     }
