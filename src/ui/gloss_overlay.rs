@@ -104,6 +104,17 @@ pub struct GlossOverlay {
 const GLOSS_DEFAULT_FONT_FAMILY: &str = "Charter";
 const GLOSS_DEFAULT_FONT_SIZE: i32 = 19;
 
+/// Card-matching layout for a PROSE synopsis: render it in the main reading
+/// card's font and left padding instead of the play overlay's Charter-19 +
+/// `card_width/4` inset. `None` (plays/verse) keeps the inset look. The accent
+/// bar is preserved in both cases (it marks the TTS-synthesizable region).
+pub struct SynopsisProseCard {
+    pub font_family: String,
+    pub font_size: i32,
+    pub left_margin: i32,
+    pub right_margin: i32,
+}
+
 impl GlossOverlay {
     pub fn new(column_width: u32, text_margins: u32) -> Self {
         let overlay = Overlay::new();
@@ -886,6 +897,7 @@ impl GlossOverlay {
         root_color: Option<&str>,
         card_width: i32,
         card_height: i32,
+        prose_card: Option<SynopsisProseCard>,
     ) {
         self.hide_citation();
         *self.current_synopsis.borrow_mut() = synopsis.to_string();
@@ -902,13 +914,20 @@ impl GlossOverlay {
         // width, not the fixed column_width, so the synopsis prose sits at the
         // same ~65-char measure as the gloss instead of running nearly edge to
         // edge.
-        let left = crate::ui::card_side_margin(card_width);
+        let inset = crate::ui::card_side_margin(card_width);
+        // Prose synopses use the main card's fixed pixel left padding; plays/verse
+        // use the proportional `card_width/4` inset. The accent bar sits one
+        // "breathing room" (60px) to the LEFT of the prose body so text aligns to
+        // the card while the bar is still visible.
+        let body_left = prose_card.as_ref().map(|p| p.left_margin).unwrap_or(inset + 60);
+        let bar_left = prose_card.as_ref().map(|p| (p.left_margin - 60).max(0)).unwrap_or(inset);
+        let title_left = prose_card.as_ref().map(|p| p.left_margin).unwrap_or(inset);
         self.title.set_text(title);
         self.title.set_visible(true);
         self.title.set_vexpand(false);
         self.title.set_valign(Align::Start);
         self.title.set_halign(Align::Start);
-        self.title.set_margin_start(left);
+        self.title.set_margin_start(title_left);
         // Reset the top margin in case `show_glossing` widened it (it shares this
         // title widget). The synopsis card gives the "Act N, Scene N" header
         // extra breathing room above it.
@@ -925,12 +944,13 @@ impl GlossOverlay {
         *self.line_numbers.borrow_mut() = Vec::new();
         *self.echo_lines.borrow_mut() = Vec::new();
 
-        // Indent the body 60px past the bar so the accent bar has the same
-        // breathing room to its right as the gloss overlay (whose prose tags sit
-        // at `bar_left + 60`). The bar stays at `left` (see `bar_x` below); only
-        // the prose shifts right.
-        self.gloss_view.set_left_margin(left + 60);
-        self.gloss_view.set_right_margin(left);
+        // Body sits at `body_left` (prose: the card's pixel padding; plays: the
+        // proportional inset + 60 past the bar). The bar stays at `bar_left`. The
+        // right margin matches the card too (prose: text_margins+EXTRA_RIGHT;
+        // plays keep the proportional inset for the narrower ~65-char measure).
+        let body_right = prose_card.as_ref().map(|p| p.right_margin).unwrap_or(inset);
+        self.gloss_view.set_left_margin(body_left);
+        self.gloss_view.set_right_margin(body_right);
         // Tighten the gap between the title rule and the first synopsis line by
         // ~one line (was 32) — the title's own margin/padding-bottom already
         // supplies separation, so the prose can sit closer under the rule.
@@ -954,7 +974,7 @@ impl GlossOverlay {
                 *self.bar_color.borrow_mut() = (r, g, b);
             }
         }
-        *self.bar_x.borrow_mut() = left;
+        *self.bar_x.borrow_mut() = bar_left;
         self.rebuild_block_ranges_from(synopsis_blocks(synopsis));
         self.mark_cursor_block();
         self.bar_drawing.queue_draw();
@@ -965,6 +985,24 @@ impl GlossOverlay {
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         self.apply_font();
+        // Prose: override the overlay's Charter-19 font tag on the synopsis body
+        // with the main card's font (family + size), so the synopsis reads like
+        // its reading card. Applied AFTER apply_font so it wins; scoped to
+        // gloss_view only (the shared echo/ask views aren't visible here).
+        if let Some(ref p) = prose_card {
+            let buffer = self.gloss_view.buffer();
+            let table = buffer.tag_table();
+            if let Some(old) = table.lookup("gloss-font") {
+                table.remove(&old);
+            }
+            let font_str = format!("{} {}", p.font_family, p.font_size);
+            let tag = gtk4::TextTag::builder().name("gloss-font").font(&font_str).build();
+            table.add(&tag);
+            let (start, end) = buffer.bounds();
+            buffer.apply_tag(&tag, &start, &end);
+            crate::ui::reassert_italic_tags(&table);
+            self.apply_synopsis_label_bold();
+        }
         // Fixed-scroll-height: synopsis mode shows the title above the scroll and
         // the footer below (the footer is hidden when the ask card opens). Record
         // the closed scroll height so opening the ask card shrinks the viewport
@@ -1018,8 +1056,29 @@ impl GlossOverlay {
     /// visible, AFTER the chrome visibility is set, so preferred sizes are accurate.
     fn size_scroll(&self, card_height: i32, above_chrome_h: i32) {
         let (card_width, _) = self.last_card_size.get();
+        let footer_h = self.footer_pref_h();
         self.ask_host
-            .size(card_width, card_height, above_chrome_h, self.footer_pref_h());
+            .size(card_width, card_height, above_chrome_h, footer_h);
+        // Pin the VISIBLE display scroll (`gloss_scrolled` holds the synopsis /
+        // gloss / echo text) to exactly the card's content height. Without this it
+        // is unbounded (only `propagate_natural_height(false)` + `vexpand(false)`
+        // are set), so a long synopsis sizes the scroll to its natural height and
+        // the `valign=Center` container grows PAST `card_height` — making the whole
+        // overlay taller than the main reading card. `max_content_height` is the
+        // real cap (height_request alone is only a minimum); see
+        // AskCardHost::pin_scroll_height for the same technique.
+        // The scroll's parent `gloss_scroll_overlay` carries its own top+bottom
+        // margins (24 + 20 = 44px) which `above_chrome_h`/`footer_h` (label
+        // preferred sizes only) do NOT include — without subtracting them the
+        // container overran `card_height` by exactly that 44px. Account for the
+        // scroll-overlay margins so title + (margins + scroll) + footer == card.
+        const SCROLL_OVERLAY_MARGINS: i32 = 24 + 20;
+        let scroll_h =
+            (card_height - above_chrome_h - footer_h - SCROLL_OVERLAY_MARGINS).max(80);
+        self.gloss_scrolled.set_height_request(scroll_h);
+        self.gloss_scrolled.set_max_content_height(scroll_h);
+        self.gloss_scrolled.set_min_content_height(scroll_h);
+        self.gloss_scrolled.queue_resize();
     }
 
     /// Preferred height of the title row (0 when hidden). Used for the

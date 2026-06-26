@@ -488,7 +488,7 @@ fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
         let pairs = ctx.source_line_pairs();
         let gloss_text = &all_glosses[idx].gloss_text;
         let card_width = s.content_hbox.width();
-        let card_height = s.content_hbox.height();
+        let card_height = crate::app::layout::overlay_card_height(&s);
         s.gloss_overlay.show_gloss_with_color(&ctx.source_text, gloss_text, card_width, card_height, Some(&s.theme.root_color), &pairs);
         s.gloss_overlay.set_position(idx, all_glosses.len());
         s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
@@ -508,7 +508,7 @@ fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
         // way (single-column `<speaker>`/`<verse>`) as the original passage in
         // the gloss result, so it looks identical before and after the gloss.
         let cw = s.content_hbox.width();
-        let h = s.content_hbox.height();
+        let h = crate::app::layout::overlay_card_height(&s);
         s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color));
         s.input_mode = crate::app::InputMode::GlossOverlay;
     }
@@ -597,7 +597,7 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
         let pairs = ctx.source_line_pairs();
         let gloss_text = &all_glosses[idx].gloss_text;
         let card_width = s.content_hbox.width();
-        let card_height = s.content_hbox.height();
+        let card_height = crate::app::layout::overlay_card_height(&s);
         s.gloss_overlay.show_gloss_with_color(&ctx.source_text, gloss_text, card_width, card_height, Some(&s.theme.root_color), &pairs);
         s.gloss_overlay.set_position(idx, all_glosses.len());
         s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
@@ -617,7 +617,7 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
         // way (single-column `<speaker>`/`<verse>`) as the original passage in
         // the gloss result, so it looks identical before and after the gloss.
         let cw = s.content_hbox.width();
-        let h = s.content_hbox.height();
+        let h = crate::app::layout::overlay_card_height(&s);
         s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color));
         s.input_mode = crate::app::InputMode::GlossOverlay;
     }
@@ -706,7 +706,7 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
         let pairs = ctx.source_line_pairs();
         let gloss_text = &all_glosses[idx].gloss_text;
         let card_width = s.content_hbox.width();
-        let card_height = s.content_hbox.height();
+        let card_height = crate::app::layout::overlay_card_height(&s);
         s.gloss_overlay.show_gloss_with_color(&ctx.source_text, gloss_text, card_width, card_height, Some(&s.theme.root_color), &pairs);
         s.gloss_overlay.set_position(idx, all_glosses.len());
         s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);

@@ -579,7 +579,7 @@ fn apply_ipa_fix(
             (s.gloss_context.as_ref(), s.gloss_list.get(gloss_index_pos))
         {
             let cw = s.content_hbox.width();
-            let h = s.content_hbox.height();
+            let h = crate::app::layout::overlay_card_height(&s);
             let pairs = ctx.source_line_pairs();
             let gloss_text = gloss.gloss_text.clone();
             let source_text = ctx.source_text.clone();
@@ -680,7 +680,7 @@ fn render_gloss_row(s: &mut AppState, new_idx: usize) {
     let ctx = s.gloss_context.as_ref().unwrap();
     let source_text = ctx.source_text.clone();
     let cw = s.content_hbox.width();
-    let h = s.content_hbox.height();
+    let h = crate::app::layout::overlay_card_height(&s);
     let pairs = ctx.source_line_pairs();
     s.gloss_overlay.show_gloss_with_color(
         &source_text, &gloss_text, cw, h,
@@ -729,7 +729,7 @@ fn persist_and_render_gloss(
 
     let mut s = state_rc.borrow_mut();
     let cw = s.content_hbox.width();
-    let h = s.content_hbox.height();
+    let h = crate::app::layout::overlay_card_height(&s);
     let pairs = ctx.source_line_pairs();
     s.gloss_overlay.show_gloss_with_color(
         &ctx.source_text, full_gloss, cw, h,
@@ -802,7 +802,7 @@ pub(crate) fn persist_render_install_gloss(
     let new_idx = all.iter().position(|g| g.gloss_id == new_gloss_id).unwrap_or(0);
 
     let cw = s.content_hbox.width();
-    let h = s.content_hbox.height();
+    let h = crate::app::layout::overlay_card_height(&s);
     let pairs = ctx.source_line_pairs();
     s.gloss_overlay.show_gloss_with_color(&ctx.source_text, text, cw, h, Some(&s.theme.root_color), &pairs);
     s.gloss_overlay.set_position(new_idx, all.len());
@@ -1947,7 +1947,7 @@ pub(crate) fn open_gloss_overlay(
     };
 
     let cw = s.content_hbox.width();
-    let h = s.content_hbox.height();
+    let h = crate::app::layout::overlay_card_height(&s);
     let source_lines: Vec<(String, i64)> = Vec::new();
     s.gloss_overlay.show_gloss_with_color(
         &ctx.source_text,

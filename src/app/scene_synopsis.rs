@@ -356,12 +356,34 @@ pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) 
     let (card_width, card_height) = overlay_card_size(&s);
     let label = synopsis_label(&s, div1, div2);
     let root_color = s.theme.root_color.clone();
-    s.gloss_overlay.show_synopsis(&label, &synopsis, Some(&root_color), card_width, card_height);
+    let prose_card = prose_synopsis_card(&s);
+    s.gloss_overlay.show_synopsis(&label, &synopsis, Some(&root_color), card_width, card_height, prose_card);
     drop(s);
     let mut s = state.borrow_mut();
     s.synopsis_overlay_scene = (div1, div2);
     crate::input::actions::gloss::recolor_cached_blocks(&s);
     s.input_mode = InputMode::SynopsisOverlay;
+}
+
+/// Card-matching synopsis layout for PROSE works: the main reading card's font
+/// (family + size) and fixed pixel left padding (`text_margins + PROSE_LEFT_OFFSET`),
+/// so a prose synopsis (e.g. Bleak House) reads like its reading card. Returns
+/// `None` for plays/verse, which keep the overlay's Charter-19 + `card_width/4`
+/// inset look. Shared by every `show_synopsis` call (open, amend, edit, undo) so
+/// a re-render after an edit keeps the prose layout.
+pub fn prose_synopsis_card(state: &AppState) -> Option<crate::ui::gloss_overlay::SynopsisProseCard> {
+    let is_prose = crate::db::line_types::is_prose_work(
+        state.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or(""),
+    );
+    if !is_prose {
+        return None;
+    }
+    Some(crate::ui::gloss_overlay::SynopsisProseCard {
+        font_family: state.config.font_family.clone(),
+        font_size: state.config.font_size as i32,
+        left_margin: state.config.text_margins as i32 + crate::app::PROSE_LEFT_OFFSET,
+        right_margin: state.config.text_margins as i32 + crate::config::EXTRA_RIGHT_MARGIN,
+    })
 }
 
 /// Human-readable label for a scene, shared by the synopsis overlay and the
@@ -490,7 +512,8 @@ pub fn cycle_synopsis(state: &std::rc::Rc<std::cell::RefCell<AppState>>, delta: 
     let label = synopsis_label(&s, div1, div2);
     let (card_width, card_height) = overlay_card_size(&s);
     let root_color = s.theme.root_color.clone();
-    s.gloss_overlay.show_synopsis(&label, &synopsis, Some(&root_color), card_width, card_height);
+    let prose_card = prose_synopsis_card(&s);
+    s.gloss_overlay.show_synopsis(&label, &synopsis, Some(&root_color), card_width, card_height, prose_card);
     s.synopsis_overlay_scene = (div1, div2);
     crate::input::actions::gloss::recolor_cached_blocks(&s);
 }
