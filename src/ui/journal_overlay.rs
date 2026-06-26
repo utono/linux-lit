@@ -70,7 +70,14 @@ impl JournalOverlay {
         scrolled.set_hscrollbar_policy(gtk4::PolicyType::Never);
         scrolled.set_vscrollbar_policy(gtk4::PolicyType::External);
         scrolled.set_propagate_natural_height(false);
-        scrolled.set_vexpand(true);
+        // SPIKE (fixed-scroll-height architecture): vexpand is OFF. The earlier
+        // races came from the vexpand scroll fighting the container's unbounded
+        // height non-deterministically when the ask card appeared/vanished. With
+        // vexpand off, the scroll's height is EXACTLY what size_card sets it to —
+        // deterministic, no fight, no resize-on-open race. size_card sets it to
+        // the pane height minus the title+footer; open/close adjust it by the ask
+        // card's reserved height.
+        scrolled.set_vexpand(false);
 
         let view = gtk4::TextView::new();
         view.set_editable(false);
@@ -201,6 +208,14 @@ impl JournalOverlay {
     fn size_card(&self, card_width: i32, card_height: i32) {
         self.container.set_size_request(card_width, card_height);
         self.last_card_size.set((card_width, card_height));
+        // SPIKE (fixed-scroll-height): the scroll (vexpand off) gets an EXPLICIT
+        // height = pane minus the title + footer chrome. This is its height while
+        // the ask card is CLOSED. open_ask_card subtracts the ask slot; close adds
+        // it back. Deterministic — the scroll never auto-resizes.
+        let (_, title_h) = self.title.preferred_size();
+        let (_, footer_h) = self.footer_container.preferred_size();
+        let scroll_h = (card_height - title_h.height() - footer_h.height()).max(80);
+        self.scrolled.set_height_request(scroll_h);
         // Anchor the text + headers to the card's side margin (card_width/4, the
         // ~65-char readability optimum the gloss overlay uses) rather than the
         // small fixed `text_margins` — otherwise the Q&A prose runs nearly edge
@@ -528,10 +543,38 @@ impl JournalOverlay {
         // Alt+w/Ctrl+\/Alt+g navigation binds don't apply mid-question.
         self.footer_container.set_visible(false);
         self.apply_font();
-        // Revealing the ask card shrinks the scrolled viewport, so the bottom
-        // clip must be recomputed for the new (smaller) height — otherwise the
-        // answer's last row pokes out behind the ask card.
+        // SPIKE (fixed-scroll-height): set the scroll's explicit height to
+        // pane - title - ask (the footer is hidden while asking, so it frees its
+        // slot; the ask card takes a slot). vexpand is off, so this height is
+        // honored exactly — no race. Computed from the STORED card_height.
+        let (_, card_height) = self.last_card_size.get();
+        let (_, title_h) = self.title.preferred_size();
+        let (_, ask_h) = self.ask.container().preferred_size();
+        let scroll_h = (card_height - title_h.height() - ask_h.height()).max(80);
+        self.scrolled.set_height_request(scroll_h);
+
+        // Recompute the clip now AND on the idle tick after the height takes
+        // effect (the set_height_request lands on the next layout pass).
         self.clip_guard.recompute();
+        {
+            let clip = self.clip_guard.clip().clone();
+            let view = self.view.clone();
+            let sc = self.scrolled.clone();
+            glib::idle_add_local_once(move || {
+                crate::ui::recompute_overlay_bottom_clip(&view, &clip, &sc);
+            });
+        }
+        {
+            let sc = self.scrolled.clone();
+            crate::logging::log(&format!(
+                "ASKFIX3 open sync: page_size={:.0} scrolled_h={} set={}",
+                sc.vadjustment().page_size(), sc.height(), scroll_h));
+            glib::idle_add_local_once(move || {
+                crate::logging::log(&format!(
+                    "ASKFIX3 open idle: page_size={:.0} scrolled_h={}",
+                    sc.vadjustment().page_size(), sc.height()));
+            });
+        }
 
         // Headless test: emit the scrolled viewport rect WITH the ask card open
         // (the exact regression from Tasks 1-5). The card open shrinks the
@@ -562,9 +605,31 @@ impl JournalOverlay {
         self.ask.close();
         // Restore the footer hints when the question is submitted or canceled.
         self.footer_container.set_visible(true);
-        // Hiding the ask card grows the viewport back — recompute the clip for
-        // the restored height.
+        // SPIKE (fixed-scroll-height): restore the scroll's closed height
+        // (pane - title - footer; the footer is back, the ask slot is freed).
+        let (_, card_height) = self.last_card_size.get();
+        let (_, title_h) = self.title.preferred_size();
+        let (_, footer_h) = self.footer_container.preferred_size();
+        let scroll_h = (card_height - title_h.height() - footer_h.height()).max(80);
+        self.scrolled.set_height_request(scroll_h);
+
         self.clip_guard.recompute();
+        {
+            let clip = self.clip_guard.clip().clone();
+            let view = self.view.clone();
+            let sc = self.scrolled.clone();
+            glib::idle_add_local_once(move || {
+                crate::ui::recompute_overlay_bottom_clip(&view, &clip, &sc);
+            });
+        }
+        {
+            let sc = self.scrolled.clone();
+            glib::idle_add_local_once(move || {
+                crate::logging::log(&format!(
+                    "ASKFIX3 close idle: page_size={:.0} scrolled_h={}",
+                    sc.vadjustment().page_size(), sc.height()));
+            });
+        }
     }
 
     pub fn toggle_ask_focus(&self) {
