@@ -135,12 +135,8 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         // for reader_gloss_lines), so a reader-gloss created/edited in the overlay
         // colors immediately on return.
         crate::app::return_to_reader_mode(&mut s);
-        if let Some((line, top)) = s.journal.return_pos.take() {
-            s.current_line = line;
-            s.page_top_line = top;
-            crate::input::scroll::resnap_page(&mut s);
-            crate::input::highlight::update_highlight(&mut s);
-        }
+        let pos = s.journal.return_pos.take();
+        crate::app::restore_saved_position_resnap(&mut s, pos);
         return;
     }
 
@@ -644,10 +640,8 @@ pub(crate) fn action_gloss_from_journal_passage(state: &Rc<RefCell<AppState>>) {
         // opens cleanly (gloss overlay saves/restores its own return position).
         s.journal_overlay.hide();
         s.input_mode = crate::app::InputMode::Reader;
-        if let Some((line, top)) = s.journal.return_pos.take() {
-            s.current_line = line;
-            s.page_top_line = top;
-        }
+        let pos = s.journal.return_pos.take();
+        crate::app::restore_saved_position(&mut s, pos);
     }
 
     // Phase 3: cache hit — show existing gloss immediately.
@@ -811,10 +805,8 @@ pub(crate) fn view_gloss_from_journal(state: &Rc<RefCell<AppState>>) {
         let mut s = state.borrow_mut();
         s.journal_overlay.hide();
         s.input_mode = crate::app::InputMode::Reader;
-        if let Some((line, top)) = s.journal.return_pos.take() {
-            s.current_line = line;
-            s.page_top_line = top;
-        }
+        let pos = s.journal.return_pos.take();
+        crate::app::restore_saved_position(&mut s, pos);
         // Save gloss return position so Escape in the gloss overlay returns here.
         s.gloss_return_pos = Some((s.current_line, s.page_top_line));
     }
@@ -884,10 +876,8 @@ pub(crate) fn view_journal_from_gloss(state: &Rc<RefCell<AppState>>) {
         s.tts.stop();
         s.gloss_overlay.hide();
         // Restore the saved position so journal return_pos is coherent.
-        if let Some((line, top)) = s.gloss_return_pos.take() {
-            s.current_line = line;
-            s.page_top_line = top;
-        }
+        let pos = s.gloss_return_pos.take();
+        crate::app::restore_saved_position(&mut s, pos);
         s.input_mode = crate::app::InputMode::Reader;
     }
 

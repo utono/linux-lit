@@ -1992,12 +1992,8 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         // refresh the main-card tint so newly-glossed lines color without a reload.
         crate::app::return_to_reader_mode(&mut s);
         // Restore the page the user was on before toggling the gloss open.
-        if let Some((line, top)) = s.gloss_return_pos.take() {
-            s.current_line = line;
-            s.page_top_line = top;
-            crate::input::scroll::resnap_page(&mut s);
-            crate::input::highlight::update_highlight(&mut s);
-        }
+        let pos = s.gloss_return_pos.take();
+        crate::app::restore_saved_position_resnap(&mut s, pos);
         return;
     }
 
