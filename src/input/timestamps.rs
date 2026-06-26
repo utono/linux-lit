@@ -61,6 +61,11 @@ fn open_db_rw_or_log() -> Option<rusqlite::Connection> {
     }
 }
 
+/// Extract the line id for a given work line index, or None if work not loaded or index out of bounds.
+fn work_line_id(state: &AppState, line_idx: usize) -> Option<i64> {
+    Some(state.current_work.as_ref()?.lines.get(line_idx)?.id)
+}
+
 /// Re-send timestamps to MPV client after a write, built from Line.timestamp (single source of truth).
 fn resync_mpv_timestamps(state: &AppState) {
     let work = match &state.current_work {
@@ -141,13 +146,7 @@ pub fn set_start_time(state: &mut AppState) -> bool {
         }
     }
 
-    let line_id = {
-        let work = match &state.current_work {
-            Some(w) => w,
-            None => return false,
-        };
-        work.lines[line_idx].id
-    };
+    let Some(line_id) = work_line_id(state, line_idx) else { return false; };
 
     capture_undo_snapshot(state, line_id, media_id);
 
@@ -301,13 +300,7 @@ pub fn set_chapter(state: &mut AppState) -> bool {
         }
     }
 
-    let line_id = {
-        let work = match &state.current_work {
-            Some(w) => w,
-            None => return false,
-        };
-        work.lines[line_idx].id
-    };
+    let Some(line_id) = work_line_id(state, line_idx) else { return false; };
 
     capture_undo_snapshot(state, line_id, media_id);
 
@@ -391,13 +384,7 @@ pub fn set_end_time(state: &mut AppState) -> bool {
         }
     }
 
-    let line_id = {
-        let work = match &state.current_work {
-            Some(w) => w,
-            None => return false,
-        };
-        work.lines[line_idx].id
-    };
+    let Some(line_id) = work_line_id(state, line_idx) else { return false; };
 
     capture_undo_snapshot(state, line_id, media_id);
 
@@ -453,13 +440,7 @@ pub fn delete_timestamp(state: &mut AppState) -> bool {
         }
     };
 
-    let line_id = {
-        let work = match &state.current_work {
-            Some(w) => w,
-            None => return false,
-        };
-        work.lines[line_idx].id
-    };
+    let Some(line_id) = work_line_id(state, line_idx) else { return false; };
 
     capture_undo_snapshot(state, line_id, media_id);
 
@@ -525,13 +506,7 @@ pub fn nudge_start_time(state: &mut AppState, delta: f64) -> bool {
         None => return false,
     };
 
-    let line_id = {
-        let work = match &state.current_work {
-            Some(w) => w,
-            None => return false,
-        };
-        work.lines[line_idx].id
-    };
+    let Some(line_id) = work_line_id(state, line_idx) else { return false; };
 
     capture_undo_snapshot(state, line_id, media_id);
 
