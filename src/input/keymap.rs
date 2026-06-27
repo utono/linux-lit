@@ -2215,12 +2215,14 @@ fn dispatch_action(
                 crate::app::remove_vocab_highlighting(&s);
             }
             // Persist per-work to lit.db (the column keyed by this work's abbrev),
-            // not to config. Source of truth is now per-work.
+            // not to config. Source of truth is now per-work. Log on failure so a
+            // silent revert (locked/read-only DB) is greppable, not invisible.
             if let Some(abbrev) = s.current_work.as_ref().map(|w| w.abbrev.clone()) {
-                if let Ok(conn) = crate::db::queries::open_db_rw() {
-                    let _ = crate::db::queries::set_vocab_highlight(
-                        &conn, &abbrev, s.vocab_highlight_visible,
-                    );
+                match crate::db::queries::open_db_rw().and_then(|conn| {
+                    crate::db::queries::set_vocab_highlight(&conn, &abbrev, s.vocab_highlight_visible)
+                }) {
+                    Ok(()) => {}
+                    Err(e) => crate::logging::log(&format!("VOCAB: persist failed for {}: {}", abbrev, e)),
                 }
             }
             crate::logging::log(&format!("VOCAB: highlighting {}", if s.vocab_highlight_visible { "on" } else { "off" }));
