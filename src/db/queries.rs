@@ -103,6 +103,14 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
         |row| row.get(0),
     ).unwrap_or(None);
 
+    // vocab_highlight column may be absent on older/other DBs — graceful
+    // fallback to OFF. 1 => on; 0/NULL/absent => off.
+    let vocab_highlight: bool = conn.query_row(
+        "SELECT vocab_highlight FROM works WHERE abbrev = ?1",
+        [abbrev],
+        |row| row.get::<_, Option<i64>>(0),
+    ).unwrap_or(None).unwrap_or(0) == 1;
+
     let is_prose = line_types::is_prose_work(&work_type);
 
     // 2. Load all lines
@@ -224,6 +232,7 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
         author,
         work_type,
         text_file,
+        vocab_highlight,
         lines,
         timestamps,
         media_paths,
@@ -2982,6 +2991,21 @@ mod tests {
         let first_dialogue = work.lines.iter().find(|l| l.is_dialogue).unwrap();
         assert_eq!(first_dialogue.text, "Who\u{2019}s there?");
         assert!(!work.timestamps.is_empty(), "Work should have timestamps loaded");
+    }
+
+    #[test]
+    fn load_work_vocab_highlight_matches_column() {
+        let conn = open_db().unwrap();
+        // Read the raw column for a work known to exist in lit.db.
+        let raw: Option<i64> = conn
+            .query_row("SELECT vocab_highlight FROM works WHERE abbrev = 'Ham'", [], |r| r.get(0))
+            .unwrap();
+        let expected = raw.unwrap_or(0) == 1;
+        let work = load_work(&conn, "Ham").unwrap();
+        assert_eq!(
+            work.vocab_highlight, expected,
+            "Work.vocab_highlight must mirror the works.vocab_highlight column",
+        );
     }
 
     #[test]
