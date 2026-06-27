@@ -167,7 +167,9 @@ fn default_previous_work() -> Option<String> {
 }
 
 fn default_vocab_highlight_visible() -> bool {
-    true
+    // Off by default — inline vocab-word coloring is opt-in via Alt+\\
+    // (ToggleVocabHighlight), which persists the choice.
+    false
 }
 
 fn default_dim_enabled() -> bool {
