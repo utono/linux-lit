@@ -2387,6 +2387,7 @@ pub fn display_work_at_with_prepared(
             let _ = crate::db::queries::ensure_gloss_voices_table(&conn);
             let _ = crate::db::queries::ensure_voice_catalog_table(&conn);
             let _ = crate::db::queries::ensure_claude_model_columns(&conn);
+            let _ = crate::db::queries::ensure_vocab_highlight_column(&conn);
             let _ = crate::db::journal::ensure_journal_table(&conn);
         }
     });
@@ -2590,6 +2591,10 @@ pub fn display_work_at_with_prepared(
     state.last_visible_range.set(None);
     *state.page_tops.borrow_mut() = None;
     state.visual_selection = None;
+    // Per-work vocab coloring: the loaded work's column is the source of truth.
+    // Capture before `work` is moved into current_work; the gate further down
+    // (`if state.vocab_highlight_visible { apply_vocab_highlighting }`) reads it.
+    state.vocab_highlight_visible = work.vocab_highlight;
     state.current_work = Some(work);
 
     // Build buffer text (with or without sign column)
