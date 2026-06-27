@@ -84,8 +84,6 @@ pub struct Config {
     pub elevenlabs_voice_id: String,
     #[serde(default = "default_elevenlabs_model_id")]
     pub elevenlabs_model_id: String,
-    #[serde(default = "default_vocab_highlight_visible")]
-    pub vocab_highlight_visible: bool,
     #[serde(default = "default_dim_enabled")]
     pub dim_enabled: bool,
     #[serde(default = "default_scansion_level")]
@@ -166,12 +164,6 @@ fn default_previous_work() -> Option<String> {
     Some("Dominion".to_string())
 }
 
-fn default_vocab_highlight_visible() -> bool {
-    // Off by default — inline vocab-word coloring is opt-in via Alt+\\
-    // (ToggleVocabHighlight), which persists the choice.
-    false
-}
-
 fn default_dim_enabled() -> bool {
     false
 }
@@ -222,7 +214,6 @@ impl Default for Config {
             claude_model: default_claude_model(),
             elevenlabs_voice_id: default_elevenlabs_voice_id(),
             elevenlabs_model_id: default_elevenlabs_model_id(),
-            vocab_highlight_visible: default_vocab_highlight_visible(),
             dim_enabled: default_dim_enabled(),
             scansion_level: default_scansion_level(),
             show_cursor_line: true,

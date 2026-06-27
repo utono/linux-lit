@@ -2214,8 +2214,15 @@ fn dispatch_action(
             } else {
                 crate::app::remove_vocab_highlighting(&s);
             }
-            s.config.vocab_highlight_visible = s.vocab_highlight_visible;
-            crate::config::save(&s.config);
+            // Persist per-work to lit.db (the column keyed by this work's abbrev),
+            // not to config. Source of truth is now per-work.
+            if let Some(abbrev) = s.current_work.as_ref().map(|w| w.abbrev.clone()) {
+                if let Ok(conn) = crate::db::queries::open_db_rw() {
+                    let _ = crate::db::queries::set_vocab_highlight(
+                        &conn, &abbrev, s.vocab_highlight_visible,
+                    );
+                }
+            }
             crate::logging::log(&format!("VOCAB: highlighting {}", if s.vocab_highlight_visible { "on" } else { "off" }));
         }
         ToggleGlossOverlay => crate::input::actions::gloss::toggle_overlay(state),

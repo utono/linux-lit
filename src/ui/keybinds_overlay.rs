@@ -461,7 +461,7 @@ Shows a \"no concordance active\" toast if no word is selected. \
         "prev vocab" => "Jump the cursor to the previous vocabulary word in the \
 work. -> concordance::jump_to_prev_vocab — src/input/actions/concordance.rs",
         "vocab hi" => "Toggle highlighting of vocabulary words in the text (state \
-saved to config). -> ToggleVocabHighlight arm -> app::apply_vocab_highlighting / \
+saved per-work in lit.db). -> ToggleVocabHighlight arm -> app::apply_vocab_highlighting / \
 app::remove_vocab_highlighting — src/input/keymap.rs, src/app.rs",
         "auto vocab" => "Toggle the auto vocabulary popup, which shows definitions \
 for the current line's vocab words as the cursor moves. \

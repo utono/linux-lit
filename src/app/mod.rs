@@ -1365,7 +1365,6 @@ pub fn build_window(
         config.last_work.clone()
     };
     let dim_enabled = config.dim_enabled;
-    let vocab_highlight_visible = config.vocab_highlight_visible;
     // Captured before `config` is moved into AppState; seeds the early-startup
     // column-count guess so the first card pass matches the target layout.
     // `LIT_START_COLUMNS` overrides it for hermetic test runs (config writeback is
@@ -1518,7 +1517,7 @@ pub fn build_window(
         reader_gloss_tag,
         reader_gloss_lines: std::collections::HashSet::new(),
         dim_enabled,
-        vocab_highlight_visible,
+        vocab_highlight_visible: false,
         vocab_popup: crate::app::vocab_popup::VocabPopupState {
             popup: vocab_popup,
             data: Vec::new(),
