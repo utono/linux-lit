@@ -103,6 +103,14 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
         |row| row.get(0),
     ).unwrap_or(None);
 
+    // vocab_highlight column may be absent on older/other DBs — graceful
+    // fallback to OFF. 1 => on; 0/NULL/absent => off.
+    let vocab_highlight: bool = conn.query_row(
+        "SELECT vocab_highlight FROM works WHERE abbrev = ?1",
+        [abbrev],
+        |row| row.get::<_, Option<i64>>(0),
+    ).unwrap_or(None).unwrap_or(0) == 1;
+
     let is_prose = line_types::is_prose_work(&work_type);
 
     // 2. Load all lines
@@ -224,6 +232,7 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
         author,
         work_type,
         text_file,
+        vocab_highlight,
         lines,
         timestamps,
         media_paths,
@@ -683,6 +692,38 @@ pub fn ensure_claude_model_columns(conn: &Connection) -> Result<(), rusqlite::Er
             )?;
         }
     }
+    Ok(())
+}
+
+/// Ensure `works.vocab_highlight` exists. Per-work flag: `1` colors inline vocab
+/// words in the reading card, `0` does not. The column is part of the external
+/// lit.db core schema on the user's DB (already present with curated per-work
+/// values); this migration only matters on a fresh/other DB that lacks it.
+///
+/// CRITICAL: this NEVER backfills or resets existing values — the user's
+/// 199-work DB carries an intentional split and a blanket UPDATE would destroy
+/// it. When the column is absent we ADD it with `DEFAULT 0` so genuinely-new
+/// works are off by default; when it is present we do nothing.
+pub fn ensure_vocab_highlight_column(conn: &Connection) -> Result<(), rusqlite::Error> {
+    if !column_exists(conn, "works", "vocab_highlight")? {
+        conn.execute_batch(
+            "ALTER TABLE works ADD COLUMN vocab_highlight INTEGER DEFAULT 0;",
+        )?;
+    }
+    Ok(())
+}
+
+/// Set a work's per-work vocab-highlight flag (`1` on / `0` off), keyed by the
+/// exact `abbrev` row. Call on a read-write connection (`open_db_rw`).
+pub fn set_vocab_highlight(
+    conn: &Connection,
+    abbrev: &str,
+    on: bool,
+) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "UPDATE works SET vocab_highlight = ?2 WHERE abbrev = ?1",
+        rusqlite::params![abbrev, on as i64],
+    )?;
     Ok(())
 }
 
@@ -2290,6 +2331,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn vocab_highlight_migration_and_writer() {
+        let conn = Connection::open_in_memory().unwrap();
+        // A works table WITHOUT the vocab_highlight column (legacy/fresh).
+        conn.execute_batch(
+            "CREATE TABLE works (
+                abbrev TEXT UNIQUE NOT NULL, title TEXT NOT NULL,
+                author TEXT, work_type TEXT NOT NULL);
+             INSERT INTO works (abbrev,title,work_type) VALUES ('W1','One','prose');",
+        ).unwrap();
+
+        // Migration adds the column (DEFAULT 0 => existing/new rows read off).
+        ensure_vocab_highlight_column(&conn).unwrap();
+        let v: Option<i64> = conn
+            .query_row("SELECT vocab_highlight FROM works WHERE abbrev='W1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, Some(0), "fresh-added column defaults rows to 0 (off)");
+
+        // Writer flips the per-work value.
+        set_vocab_highlight(&conn, "W1", true).unwrap();
+        let v2: Option<i64> = conn
+            .query_row("SELECT vocab_highlight FROM works WHERE abbrev='W1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v2, Some(1), "writer sets the column to 1");
+
+        // Idempotent: a second ensure is a no-op and does NOT reset the value.
+        ensure_vocab_highlight_column(&conn).unwrap();
+        let v3: Option<i64> = conn
+            .query_row("SELECT vocab_highlight FROM works WHERE abbrev='W1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v3, Some(1), "second ensure must not backfill/reset existing values");
+
+        set_vocab_highlight(&conn, "W1", false).unwrap();
+        let v4: Option<i64> = conn
+            .query_row("SELECT vocab_highlight FROM works WHERE abbrev='W1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v4, Some(0), "writer clears the column to 0");
+    }
+
+    #[test]
     fn track_mark_column_roundtrips() {
         // Schema mirrors the MIGRATED lit.db: the column is is_track_mark.
         let conn = rusqlite::Connection::open_in_memory().unwrap();
@@ -2982,6 +3062,21 @@ mod tests {
         let first_dialogue = work.lines.iter().find(|l| l.is_dialogue).unwrap();
         assert_eq!(first_dialogue.text, "Who\u{2019}s there?");
         assert!(!work.timestamps.is_empty(), "Work should have timestamps loaded");
+    }
+
+    #[test]
+    fn load_work_vocab_highlight_matches_column() {
+        let conn = open_db().unwrap();
+        // Read the raw column for a work known to exist in lit.db.
+        let raw: Option<i64> = conn
+            .query_row("SELECT vocab_highlight FROM works WHERE abbrev = 'Ham'", [], |r| r.get(0))
+            .unwrap();
+        let expected = raw.unwrap_or(0) == 1;
+        let work = load_work(&conn, "Ham").unwrap();
+        assert_eq!(
+            work.vocab_highlight, expected,
+            "Work.vocab_highlight must mirror the works.vocab_highlight column",
+        );
     }
 
     #[test]

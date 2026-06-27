@@ -275,6 +275,7 @@ mod tests {
             author: "Test Author".to_string(),
             work_type: "prose".to_string(),
             text_file,
+            vocab_highlight: false,
             lines: Vec::new(),
             timestamps: Vec::new(),
             media_paths: Vec::new(),

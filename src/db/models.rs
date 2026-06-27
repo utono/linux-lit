@@ -12,6 +12,7 @@ pub struct Work {
     pub author: String,
     pub work_type: String,
     pub text_file: Option<String>,
+    pub vocab_highlight: bool,
     pub lines: Vec<Line>,
     pub timestamps: Vec<Timestamp>,
     pub media_paths: Vec<String>,

@@ -1365,7 +1365,6 @@ pub fn build_window(
         config.last_work.clone()
     };
     let dim_enabled = config.dim_enabled;
-    let vocab_highlight_visible = config.vocab_highlight_visible;
     // Captured before `config` is moved into AppState; seeds the early-startup
     // column-count guess so the first card pass matches the target layout.
     // `LIT_START_COLUMNS` overrides it for hermetic test runs (config writeback is
@@ -1518,7 +1517,7 @@ pub fn build_window(
         reader_gloss_tag,
         reader_gloss_lines: std::collections::HashSet::new(),
         dim_enabled,
-        vocab_highlight_visible,
+        vocab_highlight_visible: false,
         vocab_popup: crate::app::vocab_popup::VocabPopupState {
             popup: vocab_popup,
             data: Vec::new(),
@@ -2387,6 +2386,7 @@ pub fn display_work_at_with_prepared(
             let _ = crate::db::queries::ensure_gloss_voices_table(&conn);
             let _ = crate::db::queries::ensure_voice_catalog_table(&conn);
             let _ = crate::db::queries::ensure_claude_model_columns(&conn);
+            let _ = crate::db::queries::ensure_vocab_highlight_column(&conn);
             let _ = crate::db::journal::ensure_journal_table(&conn);
         }
     });
@@ -2590,6 +2590,10 @@ pub fn display_work_at_with_prepared(
     state.last_visible_range.set(None);
     *state.page_tops.borrow_mut() = None;
     state.visual_selection = None;
+    // Per-work vocab coloring: the loaded work's column is the source of truth.
+    // Capture before `work` is moved into current_work; the gate further down
+    // (`if state.vocab_highlight_visible { apply_vocab_highlighting }`) reads it.
+    state.vocab_highlight_visible = work.vocab_highlight;
     state.current_work = Some(work);
 
     // Build buffer text (with or without sign column)
