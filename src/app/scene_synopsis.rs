@@ -73,13 +73,24 @@ fn whole_work_label(div1: i64, div2: i64) -> Option<&'static str> {
     }
 }
 
+/// Human-readable label for a chapter-work synopsis key. Chapter number 0 is
+/// the front matter before the first chapter — labelled "Preface", never
+/// "Chapter 0". Pure seam for `synopsis_label`.
+fn chapter_label(div1: i64) -> String {
+    if div1 <= 0 {
+        "Preface".to_string()
+    } else {
+        format!("Chapter {}", div1)
+    }
+}
+
 /// Human-readable overlay label for a synopsis key, branching on work type.
 pub fn synopsis_label(state: &AppState, div1: i64, div2: i64) -> String {
     if let Some(label) = whole_work_label(div1, div2) {
         return label.to_string();
     }
     if is_chapter_work(state) {
-        format!("Chapter {}", div1)
+        chapter_label(div1)
     } else {
         scene_label_for(state, div1, div2)
     }
@@ -591,6 +602,15 @@ mod chapter_synopsis_tests {
         assert_eq!(super::chapter_number_from_flags(&flags, 0), 0);
         assert_eq!(super::chapter_number_from_flags(&flags, 1), 0);
         assert_eq!(super::chapter_number_from_flags(&flags, 2), 1);
+    }
+
+    #[test]
+    fn chapter_label_front_matter_is_preface() {
+        // Chapter number 0 is the front matter before chapter 1, not "Chapter 0".
+        assert_eq!(super::chapter_label(0), "Preface");
+        assert_eq!(super::chapter_label(-1), "Preface");
+        assert_eq!(super::chapter_label(1), "Chapter 1");
+        assert_eq!(super::chapter_label(12), "Chapter 12");
     }
 }
 

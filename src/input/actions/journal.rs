@@ -1,5 +1,4 @@
 use crate::app::{AppState, InputMode, JournalBand, JournalPromptMode};
-use gtk4::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -90,8 +89,12 @@ pub(crate) fn render_current(s: &mut AppState) {
         s.journal.page_index = count - 1;
     }
 
-    let cw = s.content_hbox.width();
-    let h = crate::app::layout::overlay_card_height(&s);
+    // Use the authoritative main-card rect for BOTH dimensions. Reading
+    // `content_hbox.width()` directly is wrong for prose works: long wrapped Q&A
+    // paragraphs stretch the hbox past the card's `width_request`, so the journal
+    // card spanned edge-to-edge for novels while plays (already wide) looked
+    // correct. `overlay_card_size` mirrors what the reader's card actually shows.
+    let (cw, h) = crate::app::layout::overlay_card_size(&s);
     let footer_left = footer_left_text(&work_abbrev, s.journal_band.clone());
 
     // Passage pages with source_text use the verse renderer; everything else
@@ -668,8 +671,7 @@ pub(crate) fn action_gloss_from_journal_passage(state: &Rc<RefCell<AppState>>) {
         s.gloss_original_text = Some(ctx.source_text.clone());
         let pairs = ctx.source_line_pairs();
         let gloss_text = &all_glosses[idx].gloss_text;
-        let card_width = s.content_hbox.width();
-        let card_height = crate::app::layout::overlay_card_height(&s);
+        let (card_width, card_height) = crate::app::layout::overlay_card_size(&s);
         s.gloss_overlay.show_gloss_with_color(
             &ctx.source_text, gloss_text, card_width, card_height,
             Some(&s.theme.root_color), &pairs,
@@ -690,8 +692,7 @@ pub(crate) fn action_gloss_from_journal_passage(state: &Rc<RefCell<AppState>>) {
         let mut s = state.borrow_mut();
         s.gloss_return_pos = Some((s.current_line, s.page_top_line));
         s.gloss_original_text = Some(ctx.source_text.clone());
-        let cw = s.content_hbox.width();
-        let h = crate::app::layout::overlay_card_height(&s);
+        let (cw, h) = crate::app::layout::overlay_card_size(&s);
         s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color));
         s.input_mode = crate::app::InputMode::GlossOverlay;
     }
