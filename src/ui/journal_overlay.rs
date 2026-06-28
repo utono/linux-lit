@@ -53,15 +53,19 @@ fn prefix_question(question: &str) -> String {
 /// Vertical chrome margins the column needs that `preferred_size()` does NOT
 /// report (GTK's preferred-size excludes a widget's own margins). The journal
 /// card column is `title` + `scroll_overlay` + `footer` stacked; the title
-/// carries a 24px `margin_top` (journal_overlay::new) and the footer container a
-/// 12px top + 12px bottom (`ui::footer::build_footer_row`). Without reserving
-/// these, `size_card` budgets `card_height − title_h − footer_h` for the scroll,
-/// the assembled column's natural height becomes `card_height + 48`, and because
-/// the `valign=Center` container's `set_size_request` is only a FLOOR, the
-/// container grows past `card_height` and overflows the window (the "too-tall
-/// journal overlay" bug). The gloss overlay reserves the same way via its
-/// `SCROLL_OVERLAY_MARGINS`. Keep in sync with those two margin sites.
-const UNACCOUNTED_CHROME_MARGINS: i32 = 24 /* title top */ + 12 + 12 /* footer top+bottom */;
+/// carries a 24px `margin_top` (journal_overlay::new), the scroll_overlay a 24px
+/// top + 20px bottom margin (the breathing gap below the title / above the footer
+/// that keeps a scrolled block's last line off the footer rule — mirrors the
+/// gloss overlay), and the footer container a 12px top + 12px bottom
+/// (`ui::footer::build_footer_row`). Without reserving these, `size_card` budgets
+/// `card_height − title_h − footer_h` for the scroll, the assembled column's
+/// natural height becomes `card_height + 92`, and because the `valign=Center`
+/// container's `set_size_request` is only a FLOOR, the container grows past
+/// `card_height` and overflows the window (the "too-tall journal overlay" bug).
+/// The gloss overlay reserves the same way via its `SCROLL_OVERLAY_MARGINS`. Keep
+/// in sync with those three margin sites.
+const UNACCOUNTED_CHROME_MARGINS: i32 =
+    24 /* title top */ + 24 + 20 /* scroll_overlay top+bottom */ + 12 + 12 /* footer top+bottom */;
 
 impl JournalOverlay {
     pub fn new(column_width: u32, text_margins: u32) -> Self {
@@ -176,6 +180,18 @@ impl JournalOverlay {
         scroll_overlay.set_measure_overlay(&bar_drawing, false);
         scroll_overlay.set_clip_overlay(&bar_drawing, true);
 
+        // Breathing gap above the footer and below the title, mirroring the gloss
+        // overlay (gloss_overlay.rs). Without the bottom margin the viewport's
+        // bottom edge sits flush against the footer, so a block scrolled to the
+        // bottom edge by j/k has its last line bisected by the footer rule and
+        // reads as clipped — the journal block-nav clipping the user saw. The
+        // bottom-clip box masks only a PARTIAL row at the viewport edge; this gap
+        // keeps the last whole line clear at any scroll position. The top margin
+        // gives the symmetric gap below the title rule (the view's internal
+        // top_margin scrolls away with the content, so it can't keep this gap).
+        scroll_overlay.set_margin_bottom(20);
+        scroll_overlay.set_margin_top(24);
+
         container.append(&scroll_overlay);
 
         // Footer rule mirroring the gloss overlay (gloss_overlay.rs footer_box):
@@ -183,7 +199,7 @@ impl JournalOverlay {
         // right.
         let footer = crate::ui::footer::build_footer_row(
             text_margins as i32,
-            "Alt+w work \u{00b7} Ctrl+\\ pick \u{00b7} Alt+g gloss \u{00b7} Ctrl+g view gloss \u{00b7} \u{21e7}V select \u{00b7} c copy id",
+            "Space read \u{00b7} Alt+w work \u{00b7} Ctrl+\\ pick \u{00b7} Alt+g gloss \u{00b7} Ctrl+g view gloss \u{00b7} \u{21e7}V select \u{00b7} c copy id",
         );
         let footer_left = footer.left;
         let hint = footer.hint;
@@ -264,7 +280,7 @@ impl JournalOverlay {
         // the footer's top/bottom) into the fixed-chrome argument, so the host's
         // closed scroll height equals `closed_scroll_budget(card_height, title_h,
         // footer_h)`. Without this the column is `UNACCOUNTED_CHROME_MARGINS`
-        // (48px) too tall and the `valign=Center` container grows past
+        // (92px) too tall and the `valign=Center` container grows past
         // `card_height`, overflowing the window (the "too-tall journal overlay"
         // bug). `closed_scroll_budget` is the unit-tested source of truth.
         self.ask_host.size(
@@ -322,8 +338,17 @@ impl JournalOverlay {
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         self.clip_guard.on_open();
+        // rebuild_blocks resets the cursor to block 0 and marks it (the left
+        // accent bar). It used to be followed by clear_bar(), which wiped that
+        // mark so the bar only appeared after the first j/k. Keep the mark, and
+        // repaint once more after layout settles: mark_cursor_block sets
+        // bar_ranges, but the bar DRAW reads per-line geometry (line_yrange),
+        // which is 0/stale until GTK lays out the buffer just made visible — so
+        // the synchronous draw paints nothing on a fresh open. (Same fix the
+        // gloss overlay uses in show_gloss.)
         self.rebuild_blocks();
-        self.clear_bar();
+        let bar = self.bar_drawing.clone();
+        glib::idle_add_local_once(move || bar.queue_draw());
 
         // Headless test: emit the journal overlay viewport rect once layout
         // settles, so tests/journal_clipping.rs can target the card's region.
@@ -375,6 +400,11 @@ impl JournalOverlay {
         self.view.buffer().set_text(&body);
         self.apply_font();
         self.ask_host.card().close();
+        // Drop the prior page's blocks + bar: during the transient "Asking…"
+        // state there is no real Q&A page, so Space/a must not read the prior
+        // page's cursor paragraph. With no blocks, current_block_text() is None
+        // and play_journal_block is a no-op.
+        self.clear_blocks();
         // Keep the navigation footer hidden during the Asking state. The result
         // render (show_page/show_message) restores it.
         self.footer_container.set_visible(false);
@@ -390,10 +420,22 @@ impl JournalOverlay {
         self.view.buffer().set_text(text);
         self.apply_font();
         self.ask_host.card().close();
+        // A bare message (toast/empty state) has no navigable Q&A paragraphs.
+        self.clear_blocks();
         // Restore the navigation footer (show_loading may have hidden it).
         self.footer_container.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
+    }
+
+    /// Drop the current page's paragraph blocks + accent bar (used by the
+    /// transient loading / message states where there is no real Q&A page to
+    /// navigate or read aloud).
+    fn clear_blocks(&self) {
+        self.blocks.borrow_mut().clear();
+        self.cursor_block.set(0);
+        self.visual_anchor.set(None);
+        self.clear_bar();
     }
 
     pub fn hide(&self) {
@@ -404,68 +446,6 @@ impl JournalOverlay {
 
     pub fn is_visible(&self) -> bool {
         self.container.is_visible()
-    }
-
-    fn row_step(&self) -> f64 {
-        let (_, h) = self.view.line_yrange(&self.view.buffer().start_iter());
-        if h > 0 {
-            h as f64
-        } else {
-            (self.font_size.get() as f64) * 1.4
-        }
-    }
-
-    fn snap_value_to_line(&self, value: f64) -> f64 {
-        let step = self.row_step();
-        if step <= 0.0 {
-            return value;
-        }
-        (value / step).round() * step
-    }
-
-    /// Scroll by exactly ONE real visual row per `delta` step, landing the
-    /// viewport top on the next (delta>0) or previous (delta<0) wrapped-row top.
-    /// Uses real per-row geometry (`display_rows`) rather than a uniform
-    /// `row_step` grid so no line is skipped on non-uniform wrapped prose — the
-    /// earlier `step * 3.0` jumped three rows and scrolled lines off before they
-    /// could be read.
-    pub fn scroll(&self, delta: i32) {
-        let adj = self.scrolled.vadjustment();
-        let rows = crate::ui::display_rows(&self.view);
-        let cur = adj.value();
-        let lower = adj.lower();
-        let max_value = (adj.upper() - adj.page_size()).max(lower);
-        let target = if delta > 0 {
-            // First row top strictly below the current top.
-            rows.iter()
-                .map(|(top, _)| *top)
-                .find(|top| *top > cur + 0.5)
-                .unwrap_or(max_value)
-        } else if delta < 0 {
-            // Last row top strictly above the current top.
-            rows.iter()
-                .map(|(top, _)| *top)
-                .filter(|top| *top < cur - 0.5)
-                .next_back()
-                .unwrap_or(lower)
-        } else {
-            cur
-        };
-        adj.set_value(target.clamp(lower, max_value));
-        self.update_bottom_clip();
-    }
-
-    pub fn scroll_to_top(&self) {
-        let adj = self.scrolled.vadjustment();
-        adj.set_value(adj.lower());
-        self.update_bottom_clip();
-    }
-
-    pub fn scroll_to_bottom(&self) {
-        let adj = self.scrolled.vadjustment();
-        let bottom = (adj.upper() - adj.page_size()).max(adj.lower());
-        adj.set_value(self.snap_value_to_line(bottom));
-        self.update_bottom_clip();
     }
 
     /// Set the footer-left label to the band identity (`<abbrev> <act>.<scene>`)
@@ -605,7 +585,10 @@ impl JournalOverlay {
         self.ask_host.close_to_closed_height();
     }
 
-    /// Rebuild `self.blocks` from the current buffer text (paragraph runs).
+    /// Rebuild `self.blocks` from the current buffer text (paragraph runs), reset
+    /// the block cursor to the first block, and mark it so the left accent bar
+    /// shows the cursor on a freshly-rendered page (mirrors the gloss overlay's
+    /// `rebuild_blocks` + cursor reset). j/k step this cursor; Space/a read it.
     fn rebuild_blocks(&self) {
         let buffer = self.view.buffer();
         let text = buffer
@@ -615,6 +598,92 @@ impl JournalOverlay {
         *self.blocks.borrow_mut() = journal_blocks(&lines);
         self.cursor_block.set(0);
         self.visual_anchor.set(None);
+        self.mark_cursor_block();
+    }
+
+    /// The block cursor's current index (the block j/k/gg/G select), clamped to
+    /// the block list. None when the page has no blocks (the empty/loading card).
+    pub fn current_block_index(&self) -> Option<usize> {
+        let len = self.blocks.borrow().len();
+        if len == 0 {
+            None
+        } else {
+            Some(self.cursor_block.get().min(len - 1))
+        }
+    }
+
+    /// The text of the cursor's current block (for TTS). None when no blocks.
+    pub fn current_block_text(&self) -> Option<String> {
+        let blocks = self.blocks.borrow();
+        let len = blocks.len();
+        if len == 0 {
+            return None;
+        }
+        let i = self.cursor_block.get().min(len - 1);
+        blocks.get(i).map(|b| b.text.clone())
+    }
+
+    /// `j`/`k`: move the block cursor down/up one block, mark it (the left accent
+    /// bar), and scroll it into view. No-op at the ends (does not re-snap the
+    /// viewport — see the gloss overlay's `step_cursor` for why).
+    pub fn cursor_next_block(&self) {
+        self.step_block_cursor(1);
+    }
+    pub fn cursor_prev_block(&self) {
+        self.step_block_cursor(-1);
+    }
+    /// `gg`/`G`: jump the block cursor to the first/last block.
+    pub fn cursor_first_block(&self) {
+        self.block_cursor_to_end(false);
+    }
+    pub fn cursor_last_block(&self) {
+        self.block_cursor_to_end(true);
+    }
+
+    fn step_block_cursor(&self, delta: i32) {
+        let len = self.blocks.borrow().len();
+        if len == 0 {
+            return;
+        }
+        let cur = self.cursor_block.get().min(len - 1) as i64;
+        let next = (cur + delta as i64).clamp(0, len as i64 - 1);
+        if next == cur {
+            return;
+        }
+        self.cursor_block.set(next as usize);
+        self.mark_cursor_block();
+        self.scroll_cursor_into_view();
+    }
+
+    fn block_cursor_to_end(&self, last: bool) {
+        let len = self.blocks.borrow().len();
+        if len == 0 {
+            return;
+        }
+        self.cursor_block.set(if last { len - 1 } else { 0 });
+        self.mark_cursor_block();
+        self.scroll_cursor_into_view();
+    }
+
+    /// Move the left accent bar to the single cursor block and repaint. No-op
+    /// when there are no blocks. Logs the landing block so j/k/gg/G navigation
+    /// stays verifiable from the dev log (mirrors the gloss overlay).
+    fn mark_cursor_block(&self) {
+        let blocks = self.blocks.borrow();
+        if blocks.is_empty() {
+            drop(blocks);
+            self.clear_bar();
+            return;
+        }
+        let i = self.cursor_block.get().min(blocks.len() - 1);
+        let span = (blocks[i].start_line, blocks[i].end_line);
+        drop(blocks);
+        crate::logging::log(&format!(
+            "JOURNAL-CURSOR: cursor#{} bar lines [{}, {}]",
+            i, span.0, span.1
+        ));
+        *self.bar_ranges.borrow_mut() = vec![span];
+        self.bar_drawing.queue_draw();
     }
 
     /// Clear the selection bar (no ranges) and repaint.
@@ -731,52 +800,130 @@ impl JournalOverlay {
         }
     }
 
-    /// Exit visual mode: clear the anchor and the bar. (The journal has no
-    /// persistent normal-mode cursor, so yank and cancel both just clear.)
+    /// Exit visual mode: clear the anchor and return the bar to the single block
+    /// cursor (the journal now has a persistent normal-mode block cursor that
+    /// j/k drive and Space/a read).
     pub fn exit_visual(&self) {
         self.visual_anchor.set(None);
-        self.clear_bar();
+        self.mark_cursor_block();
     }
 
-    /// Exit visual mode returning the cursor to the anchor block. Equivalent to
-    /// `exit_visual` here (no persistent cursor), provided for handler symmetry.
+    /// Exit visual mode returning the cursor to the anchor block, then re-mark
+    /// the single cursor bar.
     pub fn exit_visual_to_anchor(&self) {
         if let Some(anchor) = self.visual_anchor.get() {
             self.cursor_block.set(anchor);
         }
         self.visual_anchor.set(None);
-        self.clear_bar();
+        self.mark_cursor_block();
     }
 
-    /// Scroll the viewport so the current cursor block is visible. Uses the
-    /// view's vadjustment and the cursor block's line range.
+    /// Scroll the viewport so the WHOLE current cursor block is visible, leaving
+    /// a `pad` of clearance so the block's last row never strands under the
+    /// footer (the footer overlays the bottom of the card; revealing a block's
+    /// bottom exactly at `view_bottom` left its final lines clipped behind it).
+    /// Delegates the decision to the shared pure `cursor_scroll_target` helper —
+    /// the same logic the gloss overlay uses — so an over-tall block reveals its
+    /// bottom and a fitting block shows both edges. No-op when already visible.
     fn scroll_cursor_into_view(&self) {
         let idx = self.cursor_block.get();
-        let blocks = self.blocks.borrow();
-        let Some(b) = blocks.get(idx) else { return };
+        let (start_line, end_line) = {
+            let blocks = self.blocks.borrow();
+            match blocks.get(idx) {
+                Some(b) => (b.start_line, b.end_line),
+                None => return,
+            }
+        };
         let buffer = self.view.buffer();
+        let top_margin = self.view.top_margin() as f64;
+        let Some(si) = buffer.iter_at_line(start_line) else { return };
+        let block_top = self.view.line_yrange(&si).0 as f64 + top_margin;
+        let block_bottom = match buffer.iter_at_line(end_line) {
+            Some(ei) => {
+                let (y, h) = self.view.line_yrange(&ei);
+                (y + h) as f64 + top_margin
+            }
+            None => block_top,
+        };
+
         let adj = self.scrolled.vadjustment();
-        let page = adj.page_size();
-        if let Some(si) = buffer.iter_at_line(b.start_line) {
-            let (y_top, _) = self.view.line_yrange(&si);
-            let y_top = y_top as f64;
-            if y_top < adj.value() {
-                adj.set_value(y_top);
+        let view_top = adj.value();
+        let view_bottom = view_top + adj.page_size();
+        let max_value = (adj.upper() - adj.page_size()).max(adj.lower());
+        // Clear the footer (footer container ~36px) plus a little breathing room
+        // so the last row sits above it, not under it.
+        let pad = 40.0;
+
+        let new_value = match crate::ui::gloss_util::cursor_scroll_target(
+            &crate::ui::gloss_util::CursorScrollGeom {
+                block_top,
+                block_bottom,
+                view_top,
+                view_bottom,
+                page_size: adj.page_size(),
+                lower: adj.lower(),
+                max_value,
+                pad,
+            },
+        ) {
+            Some(v) => v,
+            None => {
+                self.update_bottom_clip();
+                return; // already fully visible
+            }
+        };
+        // Snapping direction matters (see the gloss overlay): when revealing a
+        // block's BOTTOM, snap UP to the nearest whole row so we don't scroll back
+        // and re-hide it; otherwise floor so a revealed top isn't pushed under the
+        // title rule.
+        let revealing_bottom = block_bottom > view_bottom - pad && block_top >= view_top + pad;
+        let new_value = if revealing_bottom {
+            self.snap_value_to_line_up(new_value)
+        } else {
+            self.snap_value_to_line(new_value)
+        };
+        adj.set_value(new_value);
+        self.update_bottom_clip();
+        self.bar_drawing.queue_draw();
+    }
+
+    /// Greatest real visual-row top at or below `target_y` (clamped). Floors the
+    /// viewport to a whole row so the top line is not half-clipped under the
+    /// title rule. Mirrors the gloss overlay.
+    fn snap_value_to_line(&self, target_y: f64) -> f64 {
+        let adj = self.scrolled.vadjustment();
+        let lower = adj.lower();
+        let max_value = (adj.upper() - adj.page_size()).max(lower);
+        let target = target_y.clamp(lower, max_value);
+        let mut best = lower;
+        for (row_top, _row_bottom) in crate::ui::display_rows(&self.view) {
+            if row_top <= target + 0.5 {
+                best = best.max(row_top);
+            } else {
+                break;
             }
         }
-        if let Some(ei) = buffer.iter_at_line(b.end_line) {
-            let (y, h) = self.view.line_yrange(&ei);
-            let y_bottom = (y + h) as f64;
-            if y_bottom > adj.value() + page {
-                adj.set_value((y_bottom - page).max(adj.lower()));
-            }
-        }
+        best.clamp(lower, max_value)
+    }
+
+    /// Least real visual-row top at or above `target_y` (clamped). The
+    /// up-direction counterpart used when revealing a block's bottom, so flooring
+    /// doesn't scroll back and re-hide it. Mirrors the gloss overlay.
+    fn snap_value_to_line_up(&self, target_y: f64) -> f64 {
+        let adj = self.scrolled.vadjustment();
+        let lower = adj.lower();
+        let max_value = (adj.upper() - adj.page_size()).max(lower);
+        let row_tops: Vec<f64> = crate::ui::display_rows(&self.view)
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        crate::ui::gloss_util::snap_up_to_row(target_y, &row_tops, lower, max_value)
     }
 
     /// Normal-navigation footer hint (advertises Shift+V). Re-set on visual exit.
     pub fn set_journal_hint(&self) {
         self.hint.set_text(
-            "Alt+w work \u{00b7} Ctrl+\\ pick \u{00b7} Alt+g gloss \u{00b7} Ctrl+g view gloss \u{00b7} \u{21e7}V select \u{00b7} c copy id",
+            "Space read \u{00b7} Alt+w work \u{00b7} Ctrl+\\ pick \u{00b7} Alt+g gloss \u{00b7} Ctrl+g view gloss \u{00b7} \u{21e7}V select \u{00b7} c copy id",
         );
     }
 
@@ -835,9 +982,10 @@ mod scroll_budget_tests {
     }
 
     #[test]
-    fn margins_match_the_two_margin_sites() {
-        // 24 (title margin_top) + 12 + 12 (footer top+bottom) = 48.
-        assert_eq!(UNACCOUNTED_CHROME_MARGINS, 48);
+    fn margins_match_the_three_margin_sites() {
+        // 24 (title margin_top) + 24 + 20 (scroll_overlay top+bottom)
+        // + 12 + 12 (footer top+bottom) = 92.
+        assert_eq!(UNACCOUNTED_CHROME_MARGINS, 92);
     }
 }
 

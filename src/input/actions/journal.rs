@@ -3,6 +3,17 @@ use crate::ui::journal_move_picker::MoveTargetRow;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// Capitalize the first character of `s` (ASCII), leaving the rest unchanged.
+/// Used to turn a unit noun (`chapter`) into a user-message field label
+/// (`Chapter:`). Empty input returns empty.
+fn titlecase_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
 /// Prose journal-Q&A context window radius (paragraphs each side of the
 /// reader's anchor). Prose divisions can be the whole book, so cap the context.
 const PROSE_CONTEXT_RADIUS: usize = 10;
@@ -236,19 +247,65 @@ pub(crate) fn close_overlay(state: &Rc<RefCell<AppState>>) {
     }
 }
 
-/// Flip pages within the current band (clamped, no wrap).
+/// Pure step+clamp for cross-band Q&A traversal: from flat index `pos`, move by
+/// `delta`, clamped to `[0, len-1]`. Returns `None` when the list is empty or the
+/// step would not move (already at the work's first/last Q&A — no wrap).
+fn flat_step(pos: usize, delta: i32, len: usize) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    let next = (pos as i64 + delta as i64).clamp(0, len as i64 - 1) as usize;
+    if next == pos {
+        None
+    } else {
+        Some(next)
+    }
+}
+
+/// Switch to `band`, load its pages, and land the viewer on the page with
+/// `target_id` (matched by id after the band's pages load). Shared by the Q&A
+/// picker confirm and the cross-band `Ctrl+n/p` traversal so both land a page
+/// the same way.
+fn land_on_page(s: &mut AppState, band: JournalBand, target_id: i64) {
+    s.journal_band = band;
+    s.journal.page_index = 0;
+    render_current(s); // loads the band's pages into s.journal.pages
+    if let Some(pos) = s.journal.pages.iter().position(|p| p.id == target_id) {
+        s.journal.page_index = pos;
+        render_current(s);
+    }
+}
+
+/// `Ctrl+n` / `Ctrl+p`: step through EVERY Q&A in the work, across bands, in the
+/// same order the `Ctrl+\` picker uses (`find_all_pages_ordered`: whole-work
+/// pages first, then by div1/div2, then timestamp/id; passage Q&As interleave in
+/// their scene band). At the last page of a band, `Ctrl+n` rolls into the first
+/// Q&A of the next band; `Ctrl+p` symmetrically. Clamped at the work's first /
+/// last Q&A (no wrap). Was previously a within-band clamp.
 pub(crate) fn nav_page(state: &Rc<RefCell<AppState>>, delta: i32) {
     let mut s = state.borrow_mut();
-    let count = s.journal.pages.len();
-    if count == 0 {
+    let Some(cur_id) = s.journal.pages.get(s.journal.page_index).map(|p| p.id) else {
         return;
-    }
-    let cur = s.journal.page_index as i64;
-    let next = (cur + delta as i64).clamp(0, count as i64 - 1) as usize;
-    if next != s.journal.page_index {
-        s.journal.page_index = next;
-        render_current(&mut s);
-    }
+    };
+    let work_abbrev = s
+        .current_work
+        .as_ref()
+        .map(|w| crate::app::base_work_abbrev(&w.abbrev).to_string())
+        .unwrap_or_default();
+    let all = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| crate::db::journal::find_all_pages_ordered(&conn, &work_abbrev).ok())
+        .unwrap_or_default();
+    let Some(pos) = all.iter().position(|p| p.id == cur_id) else {
+        return;
+    };
+    let Some(next) = flat_step(pos, delta, all.len()) else {
+        return; // already at the work's first/last Q&A
+    };
+    let target = &all[next];
+    let band = band_for_page(target);
+    let target_id = target.id;
+    land_on_page(&mut s, band, target_id);
 }
 
 /// Jump to the next/prev scene that has pages (skips empty scenes). Lands on
@@ -368,6 +425,7 @@ fn rewrite_user_message(context: &str, question: &str, answer: &str, instruction
 fn rewrite_context(
     s: &AppState,
     band: &JournalBand,
+    work_type: &str,
     anchor_work_line: usize,
     passage_source: &str,
 ) -> String {
@@ -375,6 +433,8 @@ fn rewrite_context(
         Some(w) => (w.title.clone(), w.author.clone()),
         None => (String::new(), String::new()),
     };
+    let (_genre, unit, _units) = crate::gloss::genre_unit(work_type);
+    let unit_label = titlecase_first(unit);
     match band {
         JournalBand::Work => {
             format!("Work: {} by {}\nThis Q&A is filed under the WHOLE WORK (not a single scene).", title, author)
@@ -384,8 +444,8 @@ fn rewrite_context(
                 s, *d1, *d2, anchor_work_line, PROSE_CONTEXT_RADIUS,
             );
             format!(
-                "Work: {} by {}\nThis Q&A is filed under: {}\n\nScene text:\n{}",
-                title, author, crate::app::scene_synopsis::scene_label(*d1, *d2), scene_text,
+                "Work: {} by {}\nThis Q&A is filed under: {}\n\n{} text:\n{}",
+                title, author, crate::app::scene_synopsis::scene_label(*d1, *d2), unit_label, scene_text,
             )
         }
         JournalBand::Passage { div1, div2, .. } => {
@@ -393,9 +453,9 @@ fn rewrite_context(
                 s, *div1, *div2, anchor_work_line, PROSE_CONTEXT_RADIUS,
             );
             format!(
-                "Work: {} by {}\nThis Q&A is filed under a PASSAGE in {}\n\nScene text:\n{}\n\nPassage:\n{}",
+                "Work: {} by {}\nThis Q&A is filed under a PASSAGE in {}\n\n{} text:\n{}\n\nPassage:\n{}",
                 title, author, crate::app::scene_synopsis::scene_label(*div1, *div2),
-                scene_text, passage_source,
+                unit_label, scene_text, passage_source,
             )
         }
     }
@@ -429,6 +489,8 @@ pub(crate) fn submit_edit_save(state: &Rc<RefCell<AppState>>) {
         {
             crate::logging::log(&format!("JOURNAL: edit-save failed: {}", e));
         }
+        // The answer text changed -> the cached per-paragraph TTS is stale.
+        purge_journal_audio(&conn, id);
     }
     s.journal_overlay.close_edit_card();
     render_current(&mut s);
@@ -452,6 +514,7 @@ pub(crate) fn submit_edit_rewrite(state: &Rc<RefCell<AppState>>) {
                     let _ = crate::db::journal::update_journal_page(
                         &conn, id, question.trim(), answer.trim(), &model,
                     );
+                    purge_journal_audio(&conn, id);
                 }
             }
             s.journal_overlay.close_edit_card();
@@ -467,7 +530,7 @@ pub(crate) fn submit_edit_rewrite(state: &Rc<RefCell<AppState>>) {
     // Claude. The context (work header, the band the Q&A is filed under, the
     // windowed scene text, and any passage source) mirrors what the original ask
     // sends, so a rewrite instruction that references the band has what it needs.
-    let (edit_id, model, context) = {
+    let (edit_id, model, context, work_type) = {
         let s = state.borrow();
         let Some(p) = s.journal.pages.get(s.journal.page_index) else {
             return;
@@ -477,6 +540,11 @@ pub(crate) fn submit_edit_rewrite(state: &Rc<RefCell<AppState>>) {
         } else {
             p.claude_model.clone()
         };
+        let work_type = s
+            .current_work
+            .as_ref()
+            .map(|w| w.work_type.clone())
+            .unwrap_or_default();
         let passage_source = p.source_text.clone().unwrap_or_default();
         // Derive the rewrite band from the page ROW, not `s.journal_band`: a
         // passage page now lives inside its Scene band, so the view band is
@@ -488,8 +556,8 @@ pub(crate) fn submit_edit_rewrite(state: &Rc<RefCell<AppState>>) {
             .return_pos
             .and_then(|(buf, _top)| s.work_line_for_buffer(buf))
             .unwrap_or(0);
-        let context = rewrite_context(&s, &band, anchor_work_line, &passage_source);
-        (p.id, model, context)
+        let context = rewrite_context(&s, &band, &work_type, anchor_work_line, &passage_source);
+        (p.id, model, context, work_type)
     };
     let question_owned = question.clone();
     let model_for_db = model.clone();
@@ -506,7 +574,7 @@ pub(crate) fn submit_edit_rewrite(state: &Rc<RefCell<AppState>>) {
 
     crate::input::actions::claude_bridge::run_claude_request(
         state,
-        crate::gloss::JOURNAL_QA_PROMPT.to_string(),
+        crate::gloss::journal_qa_prompt(&work_type),
         user_msg,
         model,
         move |st, revised| {
@@ -516,6 +584,8 @@ pub(crate) fn submit_edit_rewrite(state: &Rc<RefCell<AppState>>) {
                 ) {
                     crate::logging::log(&format!("JOURNAL: edit-rewrite save failed: {}", e));
                 }
+                // The answer was rewritten -> drop the stale cached TTS.
+                purge_journal_audio(&conn, edit_id);
             }
             let mut s = st.borrow_mut();
             render_current(&mut s);
@@ -542,14 +612,15 @@ pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
 }
 
 fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
-    let (work_title, work_author, work_abbrev, band, scene_text, model) = {
+    let (work_title, work_author, work_abbrev, work_type, band, scene_text, model) = {
         let s = state_rc.borrow();
         let band = s.journal_band.clone();
-        let (title, author, abbrev) = match s.current_work.as_ref() {
+        let (title, author, abbrev, work_type) = match s.current_work.as_ref() {
             Some(w) => (
                 w.title.clone(),
                 w.author.clone(),
                 crate::app::base_work_abbrev(&w.abbrev).to_string(),
+                w.work_type.clone(),
             ),
             None => return,
         };
@@ -576,6 +647,7 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
             title,
             author,
             abbrev,
+            work_type,
             band,
             scene_text,
             s.config.claude_model.clone(),
@@ -599,24 +671,32 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
         String::new()
     };
 
+    let (genre, unit, _units) = crate::gloss::genre_unit(&work_type);
+    let unit_label = titlecase_first(unit);
     let user_msg = match band {
         JournalBand::Work => format!(
-            "Work: {} by {}\n\nReader's question about the play as a whole:\n{}",
-            work_title, work_author, question,
+            "Work type: {}\nWork: {} by {}\n\nReader's question about the {} as a whole:\n{}",
+            genre, work_title, work_author, genre, question,
         ),
         JournalBand::Scene(d1, d2) => format!(
-            "Work: {} by {}\nScene: {}\n\nScene text:\n{}\n\nReader's question:\n{}",
+            "Work type: {}\nWork: {} by {}\n{}: {}\n\n{} text:\n{}\n\nReader's question:\n{}",
+            genre,
             work_title,
             work_author,
+            unit_label,
             crate::app::scene_synopsis::scene_label(d1, d2),
+            unit_label,
             scene_text,
             question,
         ),
         JournalBand::Passage { div1, div2, .. } => format!(
-            "Work: {} by {}\nScene: {}\n\nScene text:\n{}\n\nPassage:\n{}\n\nReader's question:\n{}",
+            "Work type: {}\nWork: {} by {}\n{}: {}\n\n{} text:\n{}\n\nPassage:\n{}\n\nReader's question:\n{}",
+            genre,
             work_title,
             work_author,
+            unit_label,
             crate::app::scene_synopsis::scene_label(div1, div2),
+            unit_label,
             scene_text,
             passage_source_text,
             question,
@@ -626,7 +706,7 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
     let model_for_db = model.clone();
     crate::input::actions::claude_bridge::run_claude_request(
         state_rc,
-        crate::gloss::JOURNAL_QA_PROMPT.to_string(),
+        crate::gloss::journal_qa_prompt(&work_type),
         user_msg,
         model,
         move |st, answer| {
@@ -755,14 +835,7 @@ pub(crate) fn confirm_picker(state: &Rc<RefCell<AppState>>) {
         let row = &s.journal_picker.items[idx];
         (row.band.clone(), row.id)
     };
-
-    s.journal_band = band;
-    s.journal.page_index = 0;
-    render_current(&mut s); // loads the band's pages into s.journal.pages
-    if let Some(pos) = s.journal.pages.iter().position(|p| p.id == target_id) {
-        s.journal.page_index = pos;
-        render_current(&mut s);
-    }
+    land_on_page(&mut s, band, target_id);
 }
 
 /// Open the "move this Q&A to another band" picker over the journal overlay.
@@ -862,6 +935,18 @@ pub(crate) fn confirm_move_picker(state: &Rc<RefCell<AppState>>) {
     crate::logging::log("JOURNAL: moved page to new band");
 }
 
+/// Purge an entry's cached TTS MP3s (rows + files), since SQLite FK cascade is
+/// not enabled app-wide. Called when an entry is DELETED and also when its answer
+/// is EDITED/REWRITTEN — the cached per-paragraph audio no longer matches the new
+/// text, so it must be dropped or Space would replay the stale take.
+fn purge_journal_audio(conn: &rusqlite::Connection, id: i64) {
+    if let Ok(paths) = crate::db::queries::delete_journal_audio(conn, id) {
+        for p in paths {
+            let _ = std::fs::remove_file(&p);
+        }
+    }
+}
+
 pub(crate) fn delete_current(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
     if s.journal.pages.is_empty() {
@@ -870,6 +955,7 @@ pub(crate) fn delete_current(state: &Rc<RefCell<AppState>>) {
     let id = s.journal.pages[s.journal.page_index].id;
     if let Ok(conn) = crate::db::queries::open_db_rw() {
         let _ = crate::db::journal::delete_journal_page(&conn, id);
+        purge_journal_audio(&conn, id);
     }
     if s.journal.page_index > 0 {
         s.journal.page_index -= 1;
@@ -1244,6 +1330,30 @@ pub(crate) fn view_journal_from_gloss(state: &Rc<RefCell<AppState>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn title_case_first_letter() {
+        assert_eq!(super::titlecase_first("chapter"), "Chapter");
+        assert_eq!(super::titlecase_first("scene"), "Scene");
+        assert_eq!(super::titlecase_first(""), "");
+    }
+
+    #[test]
+    fn flat_step_clamps_and_steps() {
+        // Empty list -> no move.
+        assert_eq!(super::flat_step(0, 1, 0), None);
+        // Middle: steps forward and back.
+        assert_eq!(super::flat_step(2, 1, 5), Some(3));
+        assert_eq!(super::flat_step(2, -1, 5), Some(1));
+        // Cross-band roll is just the next flat index — same call.
+        assert_eq!(super::flat_step(0, 1, 3), Some(1));
+        // Clamp at the ends -> no move (no wrap).
+        assert_eq!(super::flat_step(4, 1, 5), None); // last + forward
+        assert_eq!(super::flat_step(0, -1, 5), None); // first + back
+        // Single-page work: never moves.
+        assert_eq!(super::flat_step(0, 1, 1), None);
+        assert_eq!(super::flat_step(0, -1, 1), None);
+    }
 
     #[test]
     fn rewrite_user_message_includes_context_and_all_three_parts() {

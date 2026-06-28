@@ -1710,6 +1710,166 @@ pub(crate) fn begin_current_synopsis_block(state_rc: &Rc<RefCell<AppState>>) {
     play_synopsis_block(state_rc, index);
 }
 
+// ── Journal Q&A overlay TTS ────────────────────────────────────────────────
+//
+// The journal Q&A overlay (src/ui/journal_overlay.rs) is plain prose, exactly
+// like the synopsis overlay, so its TTS mirrors `play_synopsis_block`: the fixed
+// plain-prose voice, the Alice paywall fallback, and a per-paragraph MP3 cache.
+// The only differences are the cache key (the `journal_entries.id` + paragraph
+// index, not work/div) and the audio dir (`~/Music/journal/`). It lives in
+// gloss.rs alongside the synopsis path so both reuse the private `synth_via` and
+// toast helpers.
+
+/// Synthesize (or play cached) the cursor paragraph of the open journal Q&A
+/// page, keyed by the page's `journal_entries.id` so the cached MP3 follows the
+/// entry. The borrow is dropped before any await; a miss synthesizes via
+/// ElevenLabs and persists the bytes + a `journal_audio` row.
+fn play_journal_block(state_rc: &Rc<RefCell<AppState>>, index: i32) {
+    let (entry_id, work_abbrev, text, voice_id, model_id, tokio_handle) = {
+        let s = state_rc.borrow();
+        let entry_id = match s.journal.pages.get(s.journal.page_index) {
+            Some(p) => p.id,
+            None => return,
+        };
+        let text = match s.journal_overlay.current_block_text() {
+            Some(t) if !t.trim().is_empty() => t,
+            _ => return,
+        };
+        let work_abbrev = match s.current_work.as_ref() {
+            Some(w) => crate::app::base_work_abbrev(&w.abbrev).to_string(),
+            None => return,
+        };
+        // Journal Q&A is plain English prose -> the fixed plain-prose voice.
+        let (vid, mid) = crate::elevenlabs::voice_for(crate::elevenlabs::Gender::Unknown, false);
+        (
+            entry_id,
+            work_abbrev,
+            text,
+            vid.to_string(),
+            mid.to_string(),
+            s.tokio_handle.clone(),
+        )
+    };
+
+    // Cache hit? Try the selected voice first; then the Alice fallback voice
+    // (a paragraph whose preferred voice 402'd was cached under Alice).
+    if let Ok(conn) = crate::db::queries::open_db() {
+        for vid_try in [voice_id.as_str(), crate::elevenlabs::ALICE_VOICE_ID] {
+            if let Ok(Some(path)) =
+                crate::db::queries::find_journal_audio(&conn, entry_id, index as i64, vid_try)
+            {
+                if std::path::Path::new(&path).exists() {
+                    state_rc.borrow().tts.play_file(std::path::Path::new(&path));
+                    return;
+                }
+            }
+        }
+    }
+
+    // TTS form: rewrite `word /IPA/` pairs to just `/IPA/` (a no-op on journal
+    // prose, which carries no IPA, but applied for consistency with other paths).
+    let tts_text = crate::ui::gloss_ipa::ipa_for_tts(&text);
+
+    // Miss: synthesize asynchronously. Keep the pill up until playback begins.
+    show_persistent_tts_toast(state_rc, "Synthesizing\u{2026}");
+    let state_for_result = Rc::clone(state_rc);
+    glib::spawn_future_local(async move {
+        // Try the preferred voice; on `paid_plan_required` fall back to Alice.
+        let result = synth_via(&tokio_handle, &tts_text, &voice_id, &model_id).await;
+        let (bytes, used_voice, used_model) = match result {
+            Ok(bytes) => (bytes, voice_id.clone(), model_id.clone()),
+            Err(crate::elevenlabs::ElevenLabsError::PaidPlanRequired)
+                if voice_id != crate::elevenlabs::ALICE_VOICE_ID =>
+            {
+                crate::log_fmt!(
+                    "JOURNAL TTS: voice {} needs a paid plan — falling back to Alice",
+                    voice_id
+                );
+                show_tts_toast(&state_for_result, "Voice needs a paid plan — using Alice");
+                let alice_voice = crate::elevenlabs::ALICE_VOICE_ID.to_string();
+                let alice_model = crate::elevenlabs::ALICE_MODEL_ID.to_string();
+                match synth_via(&tokio_handle, &tts_text, &alice_voice, &alice_model).await {
+                    Ok(bytes) => (bytes, alice_voice, alice_model),
+                    Err(e) => {
+                        crate::log_fmt!("JOURNAL TTS: Alice fallback failed: {}", e);
+                        show_tts_toast(&state_for_result, &e.to_string());
+                        return;
+                    }
+                }
+            }
+            Err(e) => {
+                crate::log_fmt!("JOURNAL TTS: synth error: {}", e);
+                show_tts_toast(&state_for_result, &e.to_string());
+                return;
+            }
+        };
+
+        // Persist the bytes and play, caching under the voice that actually
+        // produced them (Alice on a fallback, not the rejected preferred voice).
+        let used_tag: String = used_voice.chars().take(12).collect();
+        let dir = journal_audio_dir(&work_abbrev, entry_id);
+        let path = dir.join(format!("{}-{}.mp3", index, used_tag));
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            crate::log_fmt!("JOURNAL TTS: mkdir {} failed: {}", dir.display(), e);
+            show_tts_toast(&state_for_result, "Could not save audio");
+            return;
+        }
+        if let Err(e) = std::fs::write(&path, &bytes) {
+            crate::log_fmt!("JOURNAL TTS: write {} failed: {}", path.display(), e);
+            show_tts_toast(&state_for_result, "Could not save audio");
+            return;
+        }
+        if let Ok(conn) = crate::db::queries::open_db_rw() {
+            let _ = crate::db::queries::ensure_journal_audio_table(&conn);
+            let _ = crate::db::queries::save_journal_audio(
+                &conn,
+                entry_id,
+                index as i64,
+                &path.to_string_lossy(),
+                &used_voice,
+                &used_model,
+            );
+        }
+        // Playback begins now — dismiss the persistent "Synthesizing…" pill.
+        hide_tts_toast(&state_for_result);
+        state_for_result.borrow().tts.play_file(&path);
+        crate::log_fmt!(
+            "JOURNAL TTS: synthesized entry {} para {} (voice {})",
+            entry_id, index, used_voice
+        );
+    });
+}
+
+/// Space/Tab in the journal Q&A overlay: if TTS is playing, stop it; otherwise
+/// play the cursor paragraph's TTS (cache hit plays the stored MP3, miss
+/// synthesizes then plays). Mirrors `read_current_synopsis_block`.
+pub(crate) fn read_current_journal_block(state_rc: &Rc<RefCell<AppState>>) {
+    {
+        let s = state_rc.borrow();
+        if s.tts.is_playing() {
+            s.tts.stop();
+            return;
+        }
+    }
+    let index = match state_rc.borrow().journal_overlay.current_block_index() {
+        Some(i) => i as i32,
+        None => return,
+    };
+    play_journal_block(state_rc, index);
+}
+
+/// `a` in the journal Q&A overlay: ALWAYS begin playback of the cursor's
+/// paragraph from its start (no pause-toggle). Stops any current audio first,
+/// then plays the paragraph's TTS. Mirrors `begin_current_synopsis_block`.
+pub(crate) fn begin_current_journal_block(state_rc: &Rc<RefCell<AppState>>) {
+    stop_all_gloss_audio(state_rc);
+    let index = match state_rc.borrow().journal_overlay.current_block_index() {
+        Some(i) => i as i32,
+        None => return,
+    };
+    play_journal_block(state_rc, index);
+}
+
 /// Play a Source block's synthesized (ElevenLabs) MP3 in the gloss's active /
 /// default voice, FIRST pausing the MPV recording so the two audio streams do
 /// not overlap. Cache hit -> play the stored MP3; miss -> synthesize then play
@@ -1858,6 +2018,16 @@ fn synopsis_audio_dir(work_abbrev: &str, div1: i64, div2: i64) -> std::path::Pat
         .join("synopses")
         .join(work_abbrev)
         .join(format!("{}-{}", div1, div2))
+}
+
+/// `~/Music/journal/<work-abbrev>/<entry-id>/`
+fn journal_audio_dir(work_abbrev: &str, entry_id: i64) -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    std::path::PathBuf::from(home)
+        .join("Music")
+        .join("journal")
+        .join(work_abbrev)
+        .join(entry_id.to_string())
 }
 
 /// Toast helper exposed for the voice-picker confirm path (settings.rs) to

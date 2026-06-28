@@ -1237,6 +1237,86 @@ pub fn save_synopsis_audio(
     Ok(())
 }
 
+const JOURNAL_AUDIO_COLUMNS: &str = "
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    entry_id        INTEGER NOT NULL,
+    paragraph_index INTEGER NOT NULL,
+    audio_path      TEXT NOT NULL,
+    voice_id        TEXT NOT NULL,
+    model_id        TEXT NOT NULL,
+    timestamp       DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(entry_id, paragraph_index, voice_id)
+";
+
+/// Ensure the journal_audio table exists (lazy CREATE, like synopsis_audio — no
+/// user_version migration, no SNAPSHOT bump; this is not a LineMap change). Each
+/// row caches the synthesized MP3 for one paragraph block of a journal Q&A page,
+/// keyed by the `journal_entries.id` so it follows the entry (and is purged with
+/// it by `delete_journal_audio`).
+pub fn ensure_journal_audio_table(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute_batch(&format!(
+        "CREATE TABLE IF NOT EXISTS journal_audio ({JOURNAL_AUDIO_COLUMNS});
+         CREATE INDEX IF NOT EXISTS idx_journal_audio_entry
+             ON journal_audio(entry_id);"
+    ))
+}
+
+/// Cached MP3 path for a journal-page paragraph in a specific voice, if any.
+pub fn find_journal_audio(
+    conn: &Connection,
+    entry_id: i64,
+    paragraph_index: i64,
+    voice_id: &str,
+) -> Result<Option<String>, rusqlite::Error> {
+    conn.query_row(
+        "SELECT audio_path FROM journal_audio
+         WHERE entry_id = ?1 AND paragraph_index = ?2 AND voice_id = ?3",
+        rusqlite::params![entry_id, paragraph_index, voice_id],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
+}
+
+/// Upsert a cached journal-paragraph MP3 path.
+pub fn save_journal_audio(
+    conn: &Connection,
+    entry_id: i64,
+    paragraph_index: i64,
+    audio_path: &str,
+    voice_id: &str,
+    model_id: &str,
+) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "INSERT INTO journal_audio
+            (entry_id, paragraph_index, audio_path, voice_id, model_id)
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(entry_id, paragraph_index, voice_id)
+         DO UPDATE SET audio_path = excluded.audio_path,
+                       model_id   = excluded.model_id,
+                       timestamp  = CURRENT_TIMESTAMP",
+        rusqlite::params![entry_id, paragraph_index, audio_path, voice_id, model_id],
+    )?;
+    Ok(())
+}
+
+/// Delete all cached audio rows for a journal entry (call when the entry is
+/// removed, since SQLite FK cascade is not enabled app-wide). Returns the
+/// `audio_path`s removed so the caller can delete the files, mirroring
+/// `delete_gloss_audio_block`.
+pub fn delete_journal_audio(conn: &Connection, entry_id: i64) -> Result<Vec<String>, rusqlite::Error> {
+    let paths: Vec<String> = {
+        let mut stmt =
+            conn.prepare("SELECT audio_path FROM journal_audio WHERE entry_id = ?1")?;
+        let rows = stmt.query_map(rusqlite::params![entry_id], |r| r.get(0))?;
+        rows.collect::<Result<_, _>>()?
+    };
+    conn.execute(
+        "DELETE FROM journal_audio WHERE entry_id = ?1",
+        rusqlite::params![entry_id],
+    )?;
+    Ok(paths)
+}
+
 /// Delete all cached audio rows for a gloss (call when the gloss is removed,
 /// since SQLite FK cascade is not enabled app-wide). Returns the number of rows
 /// removed, so a caller can report exactly how many cached takes were purged.
@@ -3368,6 +3448,37 @@ mod tests {
         .unwrap();
         let hit = find_synopsis_audio(&conn, "KingJohn", 4, 2, 0, "voice123").unwrap();
         assert_eq!(hit.as_deref(), Some("/tmp/b.mp3"));
+    }
+
+    #[test]
+    fn journal_audio_round_trip() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        ensure_journal_audio_table(&conn).unwrap();
+
+        // Miss before save.
+        assert_eq!(find_journal_audio(&conn, 42, 1, "voice123").unwrap(), None);
+
+        save_journal_audio(&conn, 42, 1, "/tmp/a.mp3", "voice123", "eleven_v3").unwrap();
+        let hit = find_journal_audio(&conn, 42, 1, "voice123").unwrap();
+        assert_eq!(hit.as_deref(), Some("/tmp/a.mp3"));
+
+        // Different voice / paragraph are separate cache entries → miss.
+        assert_eq!(find_journal_audio(&conn, 42, 1, "voiceXYZ").unwrap(), None);
+        assert_eq!(find_journal_audio(&conn, 42, 0, "voice123").unwrap(), None);
+
+        // Upsert updates the path in place.
+        save_journal_audio(&conn, 42, 1, "/tmp/b.mp3", "voice123", "eleven_v3").unwrap();
+        assert_eq!(
+            find_journal_audio(&conn, 42, 1, "voice123").unwrap().as_deref(),
+            Some("/tmp/b.mp3")
+        );
+
+        // Delete returns the removed paths and clears the entry's rows.
+        save_journal_audio(&conn, 42, 2, "/tmp/c.mp3", "voiceXYZ", "eleven_v3").unwrap();
+        let mut removed = delete_journal_audio(&conn, 42).unwrap();
+        removed.sort();
+        assert_eq!(removed, vec!["/tmp/b.mp3".to_string(), "/tmp/c.mp3".to_string()]);
+        assert_eq!(find_journal_audio(&conn, 42, 1, "voice123").unwrap(), None);
     }
 
     #[test]
