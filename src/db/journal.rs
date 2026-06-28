@@ -113,6 +113,29 @@ pub fn find_journal_pages(
     rows.collect()
 }
 
+/// All pages that belong to a scene/chapter BAND: both scene Q&As and the
+/// passage Q&As anchored in the same `(div1, div2)`, ordered by creation time.
+/// A passage Q&A belongs to its scene band (the band the reader was in when the
+/// passage was selected), so the journal overlay pages through scene + passage
+/// Q&As together via `Ctrl+n/p`. `find_journal_pages` (scene only) is still used
+/// by the ask-save reload path; this is the band-render path.
+pub fn find_scene_band_pages(
+    conn: &Connection,
+    work_abbrev: &str,
+    div1: i64,
+    div2: i64,
+) -> Result<Vec<JournalPage>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        &format!("SELECT {JOURNAL_PAGE_COLUMNS} \
+         FROM journal_entries
+         WHERE work_abbrev = ?1 AND div1 = ?2 AND div2 = ?3 \
+           AND scope IN ('scene', 'passage')
+         ORDER BY timestamp ASC, id ASC",
+    ))?;
+    let rows = stmt.query_map(rusqlite::params![work_abbrev, div1, div2], map_journal_page_row)?;
+    rows.collect()
+}
+
 pub fn find_work_pages(
     conn: &Connection,
     work_abbrev: &str,
@@ -375,6 +398,37 @@ mod tests {
 
         // A different citation pair returns nothing.
         assert!(find_passage_pages(&conn, "2H6", "2H6.1.4.99", "2H6.1.4.99").unwrap().is_empty());
+    }
+
+    #[test]
+    fn scene_band_pages_merge_scene_and_passages_in_time_order() {
+        let conn = mem();
+        // Scene Q&A first, then two passage Q&As, all in (1, 0) — interleaved
+        // with an unrelated scene/passage and a work page that must be excluded.
+        save_journal_page(&conn, "BH", 1, 0, "SceneQ?", "SceneA.", "m", "scene").unwrap();
+        save_passage_page(
+            &conn, "BH", 1, 0, "BH.1.0.14", "BH.1.0.14",
+            "<p>chancery…</p>", "PassQ1?", "PassA1.", "m",
+        ).unwrap();
+        save_passage_page(
+            &conn, "BH", 1, 0, "BH.1.0.18", "BH.1.0.18",
+            "<p>fog…</p>", "PassQ2?", "PassA2.", "m",
+        ).unwrap();
+        // Different scene band — must NOT appear.
+        save_journal_page(&conn, "BH", 2, 0, "OtherScene?", "x", "m", "scene").unwrap();
+        save_passage_page(
+            &conn, "BH", 2, 0, "BH.2.0.1", "BH.2.0.1", "<p>x</p>", "OtherPass?", "x", "m",
+        ).unwrap();
+        // Whole-work page — must NOT appear.
+        save_journal_page(&conn, "BH", -1, -1, "WorkQ?", "x", "m", "work").unwrap();
+
+        let pages = find_scene_band_pages(&conn, "BH", 1, 0).unwrap();
+        let qs: Vec<&str> = pages.iter().map(|p| p.question.as_str()).collect();
+        assert_eq!(qs, vec!["SceneQ?", "PassQ1?", "PassQ2?"]);
+        // Passage rows carry their citations; the scene row does not.
+        assert!(pages[0].start_citation.is_none());
+        assert_eq!(pages[1].start_citation.as_deref(), Some("BH.1.0.14"));
+        assert_eq!(pages[2].start_citation.as_deref(), Some("BH.1.0.18"));
     }
 
     #[test]
