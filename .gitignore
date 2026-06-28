@@ -12,3 +12,4 @@ scripts/data/NRC-VAD-Lexicon.txt
 .claude/projects/
 # Claude Code runtime lock (per-process scheduled-tasks lock; not source)
 .claude/scheduled_tasks.lock
+CLAUDE-activeContext.md
