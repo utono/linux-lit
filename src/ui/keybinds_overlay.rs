@@ -357,7 +357,8 @@ The journal is a per-work notebook: each scene holds zero or more \u{201c}pages,
 where a page is one question you asked and the answer Claude gave. It opens on the \
 scene under the reading cursor; if that scene has no pages yet it shows an empty \
 card prompting you to press A to ask. Inside the overlay: A asks a new question \
-(Claude answers, drawing on its knowledge of the whole play), E opens an edit \
+(Claude answers, drawing on its knowledge of the whole work, in the work\u{2019}s own \
+genre \u{2014} novel/chapter, play/scene, epic/book, etc.), E opens an edit \
 card (Question + Answer pre-filled, plus a rewrite-instruction field): Ctrl+Enter \
 saves your hand-edits straight to lit.db, Alt+Enter sends the Q&A + instruction \
 to Claude and saves the revised answer. D deletes the current page, j/k move the paragraph \
@@ -366,7 +367,7 @@ cursor (the left accent bar) between blocks and gg/G jump to the first/last bloc
 MP3 on a cache miss, cached per page) and `a` restarts it from the beginning, \
 Ctrl+n / Ctrl+p flip pages within the band, Alt+n / Alt+p jump to the \
 next/prev scene that has pages, Alt+w switches to the Work band \u{2014} \
-whole-work pages about the play as a whole (Claude is sent only the title and \
+whole-work pages about the work as a whole (Claude is sent only the title and \
 author, not a scene) \u{2014} and Ctrl+\\ opens a picker of every Q&A page in the \
 work (whole-work pages first, then scene pages in scene order) to jump straight \
 to one. Escape (or Ctrl+j) closes and returns the cursor to where \
