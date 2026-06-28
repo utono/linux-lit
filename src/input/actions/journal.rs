@@ -168,39 +168,21 @@ pub(crate) fn render_current(s: &mut AppState) {
     let (cw, h) = crate::app::layout::overlay_card_size(&s);
     let footer_left = footer_left_text(&work_abbrev, s.journal_band.clone());
 
-    // Passage pages with source_text use the verse renderer; everything else
-    // uses the plain show_page path.
+    // Every Q&A — including passage pages — renders as a plain Q&A. The passage
+    // source block is intentionally NOT shown: the highlighted source stays in
+    // lit.db (`source_text` + citations) for provenance, but a Q&A's rendering
+    // never reproduces the source. (Previously passage pages used a verse
+    // renderer that printed the source above the answer.)
     let current_page = if count == 0 {
         None
     } else {
         Some(&pages[s.journal.page_index])
     };
-
-    let is_passage_with_source = matches!(s.journal_band, JournalBand::Passage { .. })
-        && current_page.is_some_and(|p| p.source_text.is_some());
-
-    if is_passage_with_source {
-        let p = current_page.unwrap();
-        let source_text = p.source_text.as_deref().unwrap_or("");
-        s.journal_overlay.show_passage_page(
-            &footer_left,
-            s.journal.page_index,
-            count,
-            p.start_citation.as_deref(),
-            p.end_citation.as_deref(),
-            source_text,
-            &p.question,
-            &p.answer,
-            cw,
-            h,
-        );
-    } else {
-        let (q, a) = current_page
-            .map(|p| (p.question.clone(), p.answer.clone()))
-            .unwrap_or_default();
-        s.journal_overlay
-            .show_page(&scene_title, &footer_left, s.journal.page_index, count, &q, &a, cw, h);
-    }
+    let (q, a) = current_page
+        .map(|p| (p.question.clone(), p.answer.clone()))
+        .unwrap_or_default();
+    s.journal_overlay
+        .show_page(&scene_title, &footer_left, s.journal.page_index, count, &q, &a, cw, h);
 
     s.journal.pages = pages;
 }

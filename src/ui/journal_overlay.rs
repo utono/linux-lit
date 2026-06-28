@@ -1,6 +1,5 @@
 use crate::ui::ask_card::{AskCard, AskCardHost, AskFocus};
 use crate::ui::gloss_block::visual_block_range;
-use crate::ui::gloss_render::populate_verse_buffer;
 use crate::ui::journal_block::{journal_blocks, JournalBlock};
 use crate::ui::journal_edit_card::JournalEditCard;
 use gtk4::prelude::*;
@@ -361,82 +360,6 @@ impl JournalOverlay {
         }
     }
 
-    /// Render a passage page: source verse (with italic stage directions) above a
-    /// separator rule, then the Q&A. Reuses `populate_verse_buffer` (the shared
-    /// renderer from Task 2). Call `apply_font` after so the italic re-assertion
-    /// fires over the freshly-built buffer.
-    pub fn show_passage_page(
-        &self,
-        footer_left: &str,
-        page_index: usize,
-        page_count: usize,
-        start_citation: Option<&str>,
-        end_citation: Option<&str>,
-        source_text: &str,
-        question: &str,
-        answer: &str,
-        card_width: i32,
-        card_height: i32,
-    ) {
-        self.size_card(card_width, card_height);
-        // Passage pages render source VERSE, not prose body — keep the verse
-        // inset (card_width/4) even inside a prose work, overriding size_card's
-        // prose inset. (bar_left + populate_verse_buffer below already use it.)
-        let verse_side = crate::ui::card_side_margin(card_width);
-        self.view.set_left_margin(verse_side);
-        self.view.set_right_margin(verse_side);
-        self.title.set_margin_start(verse_side);
-        self.title.set_text("Passage");
-
-        // Position text: use the citation span when available, else a plain count.
-        let pos_text = match (start_citation, end_citation) {
-            (Some(s), Some(e)) => format!("passage {} \u{2013} {}", s, e),
-            (Some(s), None) => format!("passage {}", s),
-            _ => {
-                if page_count == 0 {
-                    "page 0 of 0 in this passage".to_string()
-                } else {
-                    format!("page {} of {} in this passage", page_index + 1, page_count)
-                }
-            }
-        };
-        self.set_footer_left(footer_left, &pos_text);
-
-        // Render source verse into the buffer. bar_left mirrors the gloss overlay
-        // (card_side_margin), accent omitted since passage pages are not speaker-
-        // specific.
-        let bar_left = crate::ui::card_side_margin(card_width);
-        populate_verse_buffer(
-            &self.view,
-            source_text,
-            self.text_margins,
-            bar_left,
-            &[],
-            None,
-            None,
-            None,
-        );
-
-        // Append separator + Q&A after the verse.
-        let qa_text = if page_count == 0 {
-            "\n\n\u{2014}\u{2014}\u{2014}\n\nNo pages yet \u{2014} press A to ask.".to_string()
-        } else {
-            format!("\n\n\u{2014}\u{2014}\u{2014}\n\n{}\n\n{}", prefix_question(question), answer)
-        };
-        let mut end_iter = self.view.buffer().end_iter();
-        self.view.buffer().insert(&mut end_iter, &qa_text);
-
-        self.apply_font();
-        self.ask_host.card().close();
-        // Restore the navigation footer (show_loading may have hidden it).
-        self.footer_container.set_visible(true);
-        self.scrim.set_visible(true);
-        self.container.set_visible(true);
-        self.clip_guard.on_open();
-        self.rebuild_blocks();
-        self.clear_bar();
-    }
-
     pub fn show_loading(&self, question: &str) {
         let (w, h) = self.last_card_size.get();
         if w > 0 {
@@ -453,7 +376,7 @@ impl JournalOverlay {
         self.apply_font();
         self.ask_host.card().close();
         // Keep the navigation footer hidden during the Asking state. The result
-        // render (show_page/show_passage_page/show_message) restores it.
+        // render (show_page/show_message) restores it.
         self.footer_container.set_visible(false);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
