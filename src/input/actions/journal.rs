@@ -247,19 +247,65 @@ pub(crate) fn close_overlay(state: &Rc<RefCell<AppState>>) {
     }
 }
 
-/// Flip pages within the current band (clamped, no wrap).
+/// Pure step+clamp for cross-band Q&A traversal: from flat index `pos`, move by
+/// `delta`, clamped to `[0, len-1]`. Returns `None` when the list is empty or the
+/// step would not move (already at the work's first/last Q&A — no wrap).
+fn flat_step(pos: usize, delta: i32, len: usize) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    let next = (pos as i64 + delta as i64).clamp(0, len as i64 - 1) as usize;
+    if next == pos {
+        None
+    } else {
+        Some(next)
+    }
+}
+
+/// Switch to `band`, load its pages, and land the viewer on the page with
+/// `target_id` (matched by id after the band's pages load). Shared by the Q&A
+/// picker confirm and the cross-band `Ctrl+n/p` traversal so both land a page
+/// the same way.
+fn land_on_page(s: &mut AppState, band: JournalBand, target_id: i64) {
+    s.journal_band = band;
+    s.journal.page_index = 0;
+    render_current(s); // loads the band's pages into s.journal.pages
+    if let Some(pos) = s.journal.pages.iter().position(|p| p.id == target_id) {
+        s.journal.page_index = pos;
+        render_current(s);
+    }
+}
+
+/// `Ctrl+n` / `Ctrl+p`: step through EVERY Q&A in the work, across bands, in the
+/// same order the `Ctrl+\` picker uses (`find_all_pages_ordered`: whole-work
+/// pages first, then by div1/div2, then timestamp/id; passage Q&As interleave in
+/// their scene band). At the last page of a band, `Ctrl+n` rolls into the first
+/// Q&A of the next band; `Ctrl+p` symmetrically. Clamped at the work's first /
+/// last Q&A (no wrap). Was previously a within-band clamp.
 pub(crate) fn nav_page(state: &Rc<RefCell<AppState>>, delta: i32) {
     let mut s = state.borrow_mut();
-    let count = s.journal.pages.len();
-    if count == 0 {
+    let Some(cur_id) = s.journal.pages.get(s.journal.page_index).map(|p| p.id) else {
         return;
-    }
-    let cur = s.journal.page_index as i64;
-    let next = (cur + delta as i64).clamp(0, count as i64 - 1) as usize;
-    if next != s.journal.page_index {
-        s.journal.page_index = next;
-        render_current(&mut s);
-    }
+    };
+    let work_abbrev = s
+        .current_work
+        .as_ref()
+        .map(|w| crate::app::base_work_abbrev(&w.abbrev).to_string())
+        .unwrap_or_default();
+    let all = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| crate::db::journal::find_all_pages_ordered(&conn, &work_abbrev).ok())
+        .unwrap_or_default();
+    let Some(pos) = all.iter().position(|p| p.id == cur_id) else {
+        return;
+    };
+    let Some(next) = flat_step(pos, delta, all.len()) else {
+        return; // already at the work's first/last Q&A
+    };
+    let target = &all[next];
+    let band = band_for_page(target);
+    let target_id = target.id;
+    land_on_page(&mut s, band, target_id);
 }
 
 /// Jump to the next/prev scene that has pages (skips empty scenes). Lands on
@@ -788,14 +834,7 @@ pub(crate) fn confirm_picker(state: &Rc<RefCell<AppState>>) {
         let row = &s.journal_picker.items[idx];
         (row.band.clone(), row.id)
     };
-
-    s.journal_band = band;
-    s.journal.page_index = 0;
-    render_current(&mut s); // loads the band's pages into s.journal.pages
-    if let Some(pos) = s.journal.pages.iter().position(|p| p.id == target_id) {
-        s.journal.page_index = pos;
-        render_current(&mut s);
-    }
+    land_on_page(&mut s, band, target_id);
 }
 
 /// Open the "move this Q&A to another band" picker over the journal overlay.
@@ -1290,6 +1329,23 @@ mod tests {
         assert_eq!(super::titlecase_first("chapter"), "Chapter");
         assert_eq!(super::titlecase_first("scene"), "Scene");
         assert_eq!(super::titlecase_first(""), "");
+    }
+
+    #[test]
+    fn flat_step_clamps_and_steps() {
+        // Empty list -> no move.
+        assert_eq!(super::flat_step(0, 1, 0), None);
+        // Middle: steps forward and back.
+        assert_eq!(super::flat_step(2, 1, 5), Some(3));
+        assert_eq!(super::flat_step(2, -1, 5), Some(1));
+        // Cross-band roll is just the next flat index — same call.
+        assert_eq!(super::flat_step(0, 1, 3), Some(1));
+        // Clamp at the ends -> no move (no wrap).
+        assert_eq!(super::flat_step(4, 1, 5), None); // last + forward
+        assert_eq!(super::flat_step(0, -1, 5), None); // first + back
+        // Single-page work: never moves.
+        assert_eq!(super::flat_step(0, 1, 1), None);
+        assert_eq!(super::flat_step(0, -1, 1), None);
     }
 
     #[test]

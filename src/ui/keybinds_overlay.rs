@@ -365,7 +365,9 @@ to Claude and saves the revised answer. D deletes the current page, j/k move the
 cursor (the left accent bar) between blocks and gg/G jump to the first/last block; Space \
 (or Tab) plays/stops the cursor paragraph\u{2019}s TTS (synthesizing a plain-prose ElevenLabs \
 MP3 on a cache miss, cached per page) and `a` restarts it from the beginning, \
-Ctrl+n / Ctrl+p flip pages within the band, Alt+n / Alt+p jump to the \
+Ctrl+n / Ctrl+p step through every Q&A in the work across bands (at a band\u{2019}s \
+last page Ctrl+n rolls into the next chapter/scene\u{2019}s first Q&A, in the same \
+order as the Ctrl+\\ picker), Alt+n / Alt+p jump to the \
 next/prev scene that has pages, Alt+w switches to the Work band \u{2014} \
 whole-work pages about the work as a whole (Claude is sent only the title and \
 author, not a scene) \u{2014} and Ctrl+\\ opens a picker of every Q&A page in the \
