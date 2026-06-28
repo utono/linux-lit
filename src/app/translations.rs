@@ -584,8 +584,9 @@ pub fn sync_translation_overlay(
     }
     if let Some(w) = cursor_w {
         let s = state.borrow();
-        s.translation_overlay.highlight_work_line(w);
-        s.translation_overlay.scroll_to_highlight(w);
+        // Paginated overlay: turn to the page containing the cursor's block and
+        // highlight it (synchronous — no scroll-settle timing).
+        s.translation_overlay.show_for_cursor(w);
     }
 }
 
@@ -643,11 +644,8 @@ pub fn rebuild_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppSta
         body_font_size,
         &font_family,
         &cursor_line_bg,
+        cursor_idx,
     );
-    if let Some(idx) = cursor_idx {
-        s.translation_overlay.highlight_work_line(idx);
-        s.translation_overlay.scroll_to_highlight(idx);
-    }
     drop(s);
 
     true

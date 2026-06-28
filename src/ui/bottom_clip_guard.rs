@@ -5,18 +5,12 @@ use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4::{Align, Overlay};
 
-/// A caller-supplied clip recompute: sets `clip`'s height from `scrolled`'s
-/// viewport (e.g. the translation overlay's multi-column per-row mask).
-pub(crate) type ClipFn = Rc<dyn Fn(&gtk4::Box, &gtk4::ScrolledWindow)>;
-
 /// Which shared clip-math fn a guard drives: TextView surfaces mask the partial
-/// wrapped row; Box-child surfaces (the translation column stack) only cover
-/// trailing slack; Custom carries a caller-supplied recompute.
+/// wrapped row; Box-child surfaces only cover trailing slack.
 #[derive(Clone)]
 enum ClipKind {
     TextView(gtk4::TextView),
     Box,
-    Custom(ClipFn),
 }
 
 /// Owns a free-scroll surface's bottom clip box AND every recompute path, so a
@@ -52,11 +46,11 @@ impl BottomClipGuard {
         guard
     }
 
-    /// Like `attach`, but for a scrolled window whose child is a widget BOX (no
-    /// wrapped partial row — covers trailing slack only). Drives
-    /// `recompute_overlay_bottom_clip_box`. Kept as a general API even though the
-    /// translation overlay (its former only user) now uses `attach_custom` for a
-    /// per-row mask; a future Box-only surface should still use this.
+    /// Like `attach`, but for a scrolled window whose child is a widget BOX of
+    /// whole-widget rows (no wrapped partial row — covers trailing slack only).
+    /// Drives `recompute_overlay_bottom_clip_box`. Kept as a general API for a
+    /// future Box-only surface (the translation overlay, its former user, now
+    /// paginates instead of scrolling — no clip needed).
     #[allow(dead_code)]
     pub(crate) fn attach_box(
         scroll_overlay: &Overlay,
@@ -69,31 +63,6 @@ impl BottomClipGuard {
 
         let guard = Self {
             kind: ClipKind::Box,
-            clip: clip.clone(),
-            scrolled: scrolled.clone(),
-        };
-        guard.wire_recompute_signals();
-        guard
-    }
-
-    /// Like `attach_box`, but the caller supplies the recompute fn — for a
-    /// scrolled Box whose children are TextViews that DO render a partial wrapped
-    /// row at the viewport edge (the translation overlay's paired columns), so the
-    /// box-slack guard's clip-0-on-overflow would leave that row cut. The closure
-    /// (e.g. `recompute_translation_bottom_clip` bound to the current column
-    /// views) masks the partial row.
-    pub(crate) fn attach_custom(
-        scroll_overlay: &Overlay,
-        scrolled: &gtk4::ScrolledWindow,
-        recompute_fn: ClipFn,
-    ) -> Self {
-        let clip = build_clip_box();
-        scroll_overlay.add_overlay(&clip);
-        scroll_overlay.set_measure_overlay(&clip, false);
-        scroll_overlay.set_clip_overlay(&clip, true);
-
-        let guard = Self {
-            kind: ClipKind::Custom(recompute_fn),
             clip: clip.clone(),
             scrolled: scrolled.clone(),
         };
@@ -206,6 +175,5 @@ fn recompute(kind: &ClipKind, clip: &gtk4::Box, scrolled: &gtk4::ScrolledWindow)
             crate::ui::recompute_overlay_bottom_clip(view, clip, scrolled)
         }
         ClipKind::Box => crate::ui::recompute_overlay_bottom_clip_box(clip, scrolled),
-        ClipKind::Custom(f) => f(clip, scrolled),
     }
 }

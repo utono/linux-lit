@@ -1,8 +1,8 @@
 use crate::db::models::Line;
+use gtk4::pango;
 use gtk4::prelude::*;
-use gtk4::{Align, Label, Orientation, Overlay, ScrolledWindow, TextView};
-use std::cell::RefCell;
-use std::rc::Rc;
+use gtk4::{Align, Label, Orientation, Overlay, TextView};
+use std::cell::{Cell, RefCell};
 
 /// One render unit in the translation overlay: either a speaker's speech
 /// (with original + translation paired per line) or a non-spoken interlude
@@ -16,6 +16,14 @@ pub struct TranslationBlock {
     /// Inclusive range of `work.lines` indices this block covers.
     pub start_idx: usize,
     pub end_idx: usize,
+}
+
+/// A page: a contiguous run of block indices `[start, end)` that fit one card
+/// height. Blocks are never split across pages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Page {
+    pub start: usize,
+    pub end: usize,
 }
 
 /// Group a slice of scene lines into ordered blocks. Consecutive lines that
@@ -60,9 +68,43 @@ pub fn group_scene_into_blocks(
     blocks
 }
 
-/// One rendered block's views + source range, for cursor highlighting and
-/// scroll-follow. `trans` is None for a non-spoken interlude block (it has a
-/// single `orig` view).
+/// Greedily pack consecutive blocks into pages: a page accumulates blocks until
+/// the next would exceed `page_height`. A block taller than a whole page gets a
+/// page to itself (never dropped). `block_heights[i]` is block i's rendered
+/// height. Pure — unit-tested.
+pub fn paginate(block_heights: &[i32], page_height: i32) -> Vec<Page> {
+    let mut pages: Vec<Page> = Vec::new();
+    let mut start = 0usize;
+    let mut acc = 0i32;
+    let budget = page_height.max(1);
+    for (i, &h) in block_heights.iter().enumerate() {
+        // Would adding this block overflow a non-empty page? Close the page first.
+        if i > start && acc + h > budget {
+            pages.push(Page { start, end: i });
+            start = i;
+            acc = 0;
+        }
+        acc += h;
+    }
+    if start < block_heights.len() {
+        pages.push(Page { start, end: block_heights.len() });
+    }
+    pages
+}
+
+/// The page index whose `[start, end)` range contains `block_idx`. Clamps to the
+/// last page if `block_idx` is past the end; returns 0 when there are no pages.
+pub fn page_containing_block(pages: &[Page], block_idx: usize) -> usize {
+    for (i, p) in pages.iter().enumerate() {
+        if block_idx >= p.start && block_idx < p.end {
+            return i;
+        }
+    }
+    pages.len().saturating_sub(1)
+}
+
+/// One rendered block's views + source range, for cursor highlighting. `trans`
+/// is None for a non-spoken interlude block (a single `orig` view).
 struct BlockEntry {
     start_idx: usize,
     end_idx: usize,
@@ -70,24 +112,43 @@ struct BlockEntry {
     trans: Option<gtk4::TextView>,
 }
 
+/// Everything `render_page` needs to rebuild a page's widgets, captured at
+/// `show()` so a cursor-driven page turn re-renders identically without the
+/// caller re-supplying the theme/geometry.
+#[derive(Clone)]
+struct RenderCtx {
+    text_fg: String,
+    dim_fg: String,
+    cursor_line_bg: String,
+    font_family: String,
+    body_font_size: i32,
+    header_pt: i32,
+    side_margin: i32,
+    col_width: i32,
+    full_width: i32,
+    block_margin_top: i32,
+    header_margin_bottom: i32,
+}
+
 pub struct TranslationOverlay {
     pub overlay: Overlay,
     scrim: gtk4::Box,
     container: gtk4::Box,
     title: Label,
-    /// Scroll viewport shared by both columns (one scrollbar == lockstep).
-    scrolled: ScrolledWindow,
-    /// Vertical stack of header rows + paired column blocks, inside `scrolled`.
+    /// Non-scrolling vertical stack holding ONLY the current page's blocks. The
+    /// overlay paginates (whole blocks that fit), so it never overflows and never
+    /// renders a partial row — no scroll, no bottom clip.
     content_vbox: gtk4::Box,
-    /// Per rendered speech/interlude block: source range and the original/
-    /// translation views, so we can highlight and scroll to the cursor line.
+    /// The whole scene's blocks (all pages).
+    blocks: RefCell<Vec<TranslationBlock>>,
+    /// Page boundaries over `blocks`.
+    pages: RefCell<Vec<Page>>,
+    /// The currently rendered page index.
+    current_page: Cell<usize>,
+    /// The blocks rendered on the CURRENT page (for highlighting).
     block_widgets: RefCell<Vec<BlockEntry>>,
-    /// Bottom clip guard. Custom per-row mask (the columns are TextViews inside a
-    /// Box, so the box-slack guard would cut the bottom column's partial row).
-    clip_guard: crate::ui::bottom_clip_guard::BottomClipGuard,
-    /// The column TextViews currently rendered (every `orig` + `trans`), read live
-    /// by the clip closure so the per-row mask tracks each `show()`.
-    clip_views: Rc<RefCell<Vec<gtk4::TextView>>>,
+    /// Render context captured at `show()` so a page turn re-renders identically.
+    ctx: RefCell<Option<RenderCtx>>,
 }
 
 impl TranslationOverlay {
@@ -112,57 +173,26 @@ impl TranslationOverlay {
         title.set_margin_bottom(8);
         container.append(&title);
 
+        // Plain, non-scrolling page container. `vexpand` so it fills the card
+        // below the title; blocks are added top-aligned.
         let content_vbox = gtk4::Box::new(Orientation::Vertical, 0);
         content_vbox.set_hexpand(true);
-
-        let scrolled = ScrolledWindow::new();
-        scrolled.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
-        scrolled.set_propagate_natural_height(false);
-        scrolled.set_vexpand(true);
-        scrolled.set_hexpand(true);
-        scrolled.set_margin_bottom(20);
-        scrolled.set_child(Some(&content_vbox));
-
-        // Free-scroll bottom clip. The scrolled child is a Box, but its children
-        // are TextView columns that DO render a partial wrapped row at the
-        // viewport edge — so the box-slack guard (clip 0 on overflow) would leave
-        // that row cut. Use a CUSTOM per-row mask that reads the column views'
-        // visual rows. `clip_views` holds the currently-rendered column views; the
-        // closure reads them live, so it tracks each `show()`.
-        let clip_views: Rc<RefCell<Vec<gtk4::TextView>>> = Rc::new(RefCell::new(Vec::new()));
-        let scroll_overlay = Overlay::new();
-        scroll_overlay.set_child(Some(&scrolled));
-        let clip_guard = {
-            let views = clip_views.clone();
-            let content = content_vbox.clone();
-            let recompute: crate::ui::bottom_clip_guard::ClipFn =
-                Rc::new(move |clip: &gtk4::Box, sw: &ScrolledWindow| {
-                    let vs = views.borrow();
-                    crate::ui::recompute_translation_bottom_clip(
-                        clip,
-                        sw,
-                        content.upcast_ref::<gtk4::Widget>(),
-                        &vs,
-                    );
-                });
-            crate::ui::bottom_clip_guard::BottomClipGuard::attach_custom(
-                &scroll_overlay,
-                &scrolled,
-                recompute,
-            )
-        };
-        container.append(&scroll_overlay);
+        content_vbox.set_vexpand(true);
+        content_vbox.set_valign(Align::Start);
+        content_vbox.set_margin_bottom(20);
+        container.append(&content_vbox);
 
         Self {
             overlay,
             scrim,
             container,
             title,
-            scrolled,
             content_vbox,
+            blocks: RefCell::new(Vec::new()),
+            pages: RefCell::new(Vec::new()),
+            current_page: Cell::new(0),
             block_widgets: RefCell::new(Vec::new()),
-            clip_guard,
-            clip_views,
+            ctx: RefCell::new(None),
         }
     }
 
@@ -182,7 +212,7 @@ impl TranslationOverlay {
     }
 
     /// Populate and reveal the overlay. `blocks` come from
-    /// `group_scene_into_blocks`. `text_fg`/`dim_fg` are theme colors.
+    /// `group_scene_into_blocks`. `cursor_work_idx` selects the page to open on.
     #[allow(clippy::too_many_arguments)]
     pub fn show(
         &self,
@@ -195,162 +225,110 @@ impl TranslationOverlay {
         body_font_size: i32,
         font_family: &str,
         cursor_line_bg: &str,
+        cursor_work_idx: Option<usize>,
     ) {
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         self.title.set_text(title);
 
-        // Clear any previous render.
+        let side_margin = card_width / 12;
+        let col_width = ((card_width - 2 * side_margin) / 2 - 12).max(120);
+        let full_width = (card_width - 2 * side_margin).max(120);
+        // Speaker header point size: 0.75 of the body (reader) font, matching the
+        // main card's `speaker-name` tag (scale 0.75).
+        let header_pt = ((body_font_size as f64) * 0.75).round().max(8.0) as i32;
+
+        let ctx = RenderCtx {
+            text_fg: text_fg.to_string(),
+            dim_fg: dim_fg.to_string(),
+            cursor_line_bg: cursor_line_bg.to_string(),
+            font_family: font_family.to_string(),
+            body_font_size,
+            header_pt,
+            side_margin,
+            col_width,
+            full_width,
+            block_margin_top: 14,
+            header_margin_bottom: 4,
+        };
+
+        // Measure each block and paginate. Pango measurement is synchronous and
+        // deterministic — no GTK widget-allocation settle race. The context comes
+        // from a realized widget so it uses the real font map / DPI.
+        let pctx = self.content_vbox.pango_context();
+        let heights: Vec<i32> = blocks.iter().map(|b| block_height(b, &pctx, &ctx)).collect();
+        // Page budget = card height minus the title chrome and the bottom margin.
+        let title_h = self.title.preferred_size().1.height().max(48);
+        let page_height = (card_height - title_h - 20).max(120);
+        let pages = paginate(&heights, page_height);
+
+        let start_page = cursor_work_idx
+            .and_then(|w| block_for_work_idx(blocks, w))
+            .map(|bi| page_containing_block(&pages, bi))
+            .unwrap_or(0);
+
+        *self.blocks.borrow_mut() = blocks.to_vec();
+        *self.pages.borrow_mut() = pages;
+        *self.ctx.borrow_mut() = Some(ctx);
+
+        self.render_page(start_page);
+
+        self.scrim.set_visible(true);
+        self.container.set_visible(true);
+
+        if let Some(w) = cursor_work_idx {
+            self.highlight_work_line(w);
+        }
+    }
+
+    /// Render the blocks of `page_idx` into `content_vbox`, replacing whatever was
+    /// there. Sets `current_page` and rebuilds `block_widgets` for the page.
+    fn render_page(&self, page_idx: usize) {
+        // Clear the previous page.
         while let Some(child) = self.content_vbox.first_child() {
             self.content_vbox.remove(&child);
         }
         self.block_widgets.borrow_mut().clear();
-        self.clip_views.borrow_mut().clear();
 
-        let side_margin = card_width / 12;
-        let col_width = ((card_width - 2 * side_margin) / 2 - 12).max(120);
-        // Speaker header point size: 0.75 of the body (reader) font, matching
-        // the main card's `speaker-name` tag (scale 0.75). A relative `size='75%'`
-        // would resolve against the Label's tiny default UI font, so we size it
-        // absolutely against the overlay's actual body font.
-        let header_pt = ((body_font_size as f64) * 0.75).round().max(8.0) as i32;
-
-        for block in blocks {
-            let block_box = gtk4::Box::new(Orientation::Vertical, 0);
-            block_box.set_margin_start(side_margin);
-            block_box.set_margin_end(side_margin);
-            block_box.set_margin_top(14);
-
-            let (orig_view, trans_view): (gtk4::TextView, Option<gtk4::TextView>) =
-                if let Some(speaker) = &block.speaker {
-                    let header = Label::new(None);
-                    header.set_halign(Align::Start);
-                    // Match the main card's speaker-name tag: the reading-card
-                    // font family (Charter) in small-caps, so the overlay's
-                    // speaker labels read in the same typeface as the source —
-                    // not the Label's inherited default (a sans).
-                    header.set_markup(&format!(
-                        "<span face='{}' foreground='{}' font_variant='small-caps' font_weight='normal' size='{}pt'>{}</span>",
-                        glib_escape(font_family),
-                        text_fg,
-                        header_pt,
-                        glib_escape(speaker),
-                    ));
-                    header.set_margin_bottom(4);
-                    block_box.append(&header);
-
-                    let cols = gtk4::Box::new(Orientation::Horizontal, 0);
-                    let orig = make_column(col_width, text_fg, false);
-                    let trans = make_column(col_width, dim_fg, true);
-                    let mut orig_text = String::new();
-                    let mut trans_text = String::new();
-                    for (o, t) in &block.lines {
-                        orig_text.push_str(o);
-                        orig_text.push('\n');
-                        trans_text.push_str(t);
-                        trans_text.push('\n');
-                    }
-                    orig.buffer().set_text(orig_text.trim_end_matches('\n'));
-                    trans.buffer().set_text(trans_text.trim_end_matches('\n'));
-                    ensure_cursor_tag(&orig.buffer(), cursor_line_bg);
-                    ensure_cursor_tag(&trans.buffer(), cursor_line_bg);
-
-                    let divider = gtk4::Separator::new(Orientation::Vertical);
-                    divider.add_css_class("column-divider");
-                    divider.set_margin_start(12);
-                    divider.set_margin_end(12);
-
-                    cols.append(&orig);
-                    cols.append(&divider);
-                    cols.append(&trans);
-                    block_box.append(&cols);
-                    (orig, Some(trans))
-                } else {
-                    let view = TextView::new();
-                    view.set_editable(false);
-                    view.set_cursor_visible(false);
-                    view.set_focusable(false);
-                    view.set_wrap_mode(gtk4::WrapMode::WordChar);
-                    view.add_css_class("gloss-text");
-                    let mut text = String::new();
-                    for (o, _) in &block.lines {
-                        text.push_str(o);
-                        text.push('\n');
-                    }
-                    view.buffer().set_text(text.trim_end_matches('\n'));
-                    ensure_cursor_tag(&view.buffer(), cursor_line_bg);
-                    block_box.append(&view);
-                    (view, None)
-                };
-
-            self.content_vbox.append(&block_box);
-            // Register both column views for the per-row bottom-clip mask.
-            self.clip_views.borrow_mut().push(orig_view.clone());
-            if let Some(t) = &trans_view {
-                self.clip_views.borrow_mut().push(t.clone());
-            }
-            self.block_widgets.borrow_mut().push(BlockEntry {
-                start_idx: block.start_idx,
-                end_idx: block.end_idx,
-                orig: orig_view,
-                trans: trans_view,
-            });
-        }
-
-        self.scrim.set_visible(true);
-        self.container.set_visible(true);
-        // on_open: snaps to top, pins across layout passes, fires idle backstop.
-        self.clip_guard.on_open();
-    }
-
-    /// Scroll so the highlighted ORIGINAL line for `work_idx` is vertically
-    /// centered in the viewport, matching the reading card's `center_cursor`
-    /// convention (the line lands a quarter of a page down from the top, not
-    /// dead-center). Clamps at the document edges so no blank space appears.
-    /// No-op if the line isn't found.
-    pub fn scroll_to_highlight(&self, work_idx: usize) {
-        let (orig_view, off) = {
-            let entries = self.block_widgets.borrow();
-            let ranges: Vec<(usize, usize)> =
-                entries.iter().map(|e| (e.start_idx, e.end_idx)).collect();
-            let Some((bi, off)) = locate_line(&ranges, work_idx) else { return };
-            (entries[bi].orig.clone(), off as i32)
+        let pages = self.pages.borrow();
+        let blocks = self.blocks.borrow();
+        let ctx_ref = self.ctx.borrow();
+        let (Some(page), Some(ctx)) = (pages.get(page_idx), ctx_ref.as_ref()) else {
+            return;
         };
+        self.current_page.set(page_idx);
 
-        let scrolled = self.scrolled.clone();
-        let content = self.content_vbox.clone();
-        // Defer one tick so allocations/wrapping are settled before measuring.
-        glib::idle_add_local_once(move || {
-            let Some(iter) = orig_view.buffer().iter_at_line(off) else { return };
-            let (line_y, _line_h) = orig_view.line_yrange(&iter);
-            // `line_yrange` gives BUFFER coords; `compute_point` wants
-            // WIDGET-local coords. They're equal here only because each orig
-            // view is unscrolled natural-height (no inner ScrolledWindow, height
-            // request -1), so its internal scroll offset is always 0. If an orig
-            // view ever gets height-constrained / independently scrolled, this
-            // mapping must add that view's scroll offset.
-            let pt = gtk4::graphene::Point::new(0.0, line_y as f32);
-            let Some(mapped) = orig_view.compute_point(&content, &pt) else { return };
-            let line_top = mapped.y() as f64;
-
-            let adj = scrolled.vadjustment();
-            let page = adj.page_size();
-            let max = (adj.upper() - page).max(adj.lower());
-
-            // Center the line vertically. Like the card's `center_cursor`, place
-            // the line a quarter-page down from the top rather than dead-center.
-            let new_value = line_top - page * 0.25;
-            adj.set_value(new_value.clamp(adj.lower(), max));
-        });
+        for block in &blocks[page.start..page.end.min(blocks.len())] {
+            let entry = render_block(&self.content_vbox, block, ctx);
+            self.block_widgets.borrow_mut().push(entry);
+        }
     }
 
-    /// Highlight the cursor's source line `work_idx` in BOTH columns (style A):
-    /// the original line on the left and its paired translation on the right.
-    /// Clears any prior highlight first. No-op if the line is outside this scene.
+    /// Follow the reader cursor: turn to the page containing `work_idx`'s block
+    /// (re-rendering only if the page changed), then highlight that block. The
+    /// page is rendered synchronously, so the highlight paints immediately — no
+    /// scroll-settle timing (the old scroll model's "highlight only after a nav
+    /// key" bug).
+    pub fn show_for_cursor(&self, work_idx: usize) {
+        let target_page = {
+            let blocks = self.blocks.borrow();
+            let pages = self.pages.borrow();
+            block_for_work_idx(&blocks, work_idx).map(|bi| page_containing_block(&pages, bi))
+        };
+        if let Some(p) = target_page {
+            if p != self.current_page.get() {
+                self.render_page(p);
+            }
+        }
+        self.highlight_work_line(work_idx);
+    }
+
+    /// Highlight the cursor's source line `work_idx` in BOTH columns, IF its block
+    /// is on the current page. Clears any prior highlight first. Off-page → no-op
+    /// (callers page first via `show_for_cursor`).
     pub fn highlight_work_line(&self, work_idx: usize) {
         let entries = self.block_widgets.borrow();
 
-        // Clear every buffer's existing highlight (small block count per scene).
         for e in entries.iter() {
             clear_cursor_tag(&e.orig.buffer());
             if let Some(t) = &e.trans {
@@ -368,6 +346,144 @@ impl TranslationOverlay {
             apply_cursor_tag(&t.buffer(), off as i32);
         }
     }
+}
+
+/// Build one block's widget subtree, append it to `parent`, and return its
+/// `BlockEntry`. Shared by `render_page` for every block on the page.
+fn render_block(parent: &gtk4::Box, block: &TranslationBlock, ctx: &RenderCtx) -> BlockEntry {
+    let block_box = gtk4::Box::new(Orientation::Vertical, 0);
+    block_box.set_margin_start(ctx.side_margin);
+    block_box.set_margin_end(ctx.side_margin);
+    block_box.set_margin_top(ctx.block_margin_top);
+
+    let (orig_view, trans_view): (gtk4::TextView, Option<gtk4::TextView>) =
+        if let Some(speaker) = &block.speaker {
+            let header = Label::new(None);
+            header.set_halign(Align::Start);
+            // Match the main card's speaker-name tag: the reading-card font family
+            // (Charter) in small-caps.
+            header.set_markup(&format!(
+                "<span face='{}' foreground='{}' font_variant='small-caps' font_weight='normal' size='{}pt'>{}</span>",
+                glib_escape(&ctx.font_family),
+                ctx.text_fg,
+                ctx.header_pt,
+                glib_escape(speaker),
+            ));
+            header.set_margin_bottom(ctx.header_margin_bottom);
+            block_box.append(&header);
+
+            let cols = gtk4::Box::new(Orientation::Horizontal, 0);
+            let orig = make_column(ctx.col_width, &ctx.text_fg, false);
+            let trans = make_column(ctx.col_width, &ctx.dim_fg, true);
+            let (orig_text, trans_text) = block_column_texts(block);
+            orig.buffer().set_text(&orig_text);
+            trans.buffer().set_text(&trans_text);
+            ensure_cursor_tag(&orig.buffer(), &ctx.cursor_line_bg);
+            ensure_cursor_tag(&trans.buffer(), &ctx.cursor_line_bg);
+
+            let divider = gtk4::Separator::new(Orientation::Vertical);
+            divider.add_css_class("column-divider");
+            divider.set_margin_start(12);
+            divider.set_margin_end(12);
+
+            cols.append(&orig);
+            cols.append(&divider);
+            cols.append(&trans);
+            block_box.append(&cols);
+            (orig, Some(trans))
+        } else {
+            let view = TextView::new();
+            view.set_editable(false);
+            view.set_cursor_visible(false);
+            view.set_focusable(false);
+            view.set_wrap_mode(gtk4::WrapMode::WordChar);
+            view.add_css_class("gloss-text");
+            let text = interlude_text(block);
+            view.buffer().set_text(&text);
+            ensure_cursor_tag(&view.buffer(), &ctx.cursor_line_bg);
+            block_box.append(&view);
+            (view, None)
+        };
+
+    parent.append(&block_box);
+    BlockEntry {
+        start_idx: block.start_idx,
+        end_idx: block.end_idx,
+        orig: orig_view,
+        trans: trans_view,
+    }
+}
+
+/// `(orig, trans)` column text for a speech block: one source/translation line
+/// per buffer line, trailing newline trimmed.
+fn block_column_texts(block: &TranslationBlock) -> (String, String) {
+    let mut orig = String::new();
+    let mut trans = String::new();
+    for (o, t) in &block.lines {
+        orig.push_str(o);
+        orig.push('\n');
+        trans.push_str(t);
+        trans.push('\n');
+    }
+    (
+        orig.trim_end_matches('\n').to_string(),
+        trans.trim_end_matches('\n').to_string(),
+    )
+}
+
+/// Full-width text for a non-spoken interlude block (originals only).
+fn interlude_text(block: &TranslationBlock) -> String {
+    let mut text = String::new();
+    for (o, _) in &block.lines {
+        text.push_str(o);
+        text.push('\n');
+    }
+    text.trim_end_matches('\n').to_string()
+}
+
+/// Block index whose inclusive `start_idx..=end_idx` work-line range contains
+/// `work_idx`.
+fn block_for_work_idx(blocks: &[TranslationBlock], work_idx: usize) -> Option<usize> {
+    blocks
+        .iter()
+        .position(|b| work_idx >= b.start_idx && work_idx <= b.end_idx)
+}
+
+/// Rendered height of a block, measured with Pango against `pctx` (a widget's
+/// pango context — synchronous, deterministic, no GTK widget allocation). Speech
+/// block = top margin + header height + header bottom margin + max(orig, trans)
+/// column text height. Interlude = top margin + full-width text height.
+fn block_height(block: &TranslationBlock, pctx: &pango::Context, ctx: &RenderCtx) -> i32 {
+    if block.speaker.is_some() {
+        let (orig_text, trans_text) = block_column_texts(block);
+        let header_h = measure_text_height(pctx, "Mg", ctx.header_pt, &ctx.font_family, ctx.col_width);
+        let orig_h = measure_text_height(pctx, &orig_text, ctx.body_font_size, &ctx.font_family, ctx.col_width);
+        let trans_h = measure_text_height(pctx, &trans_text, ctx.body_font_size, &ctx.font_family, ctx.col_width);
+        ctx.block_margin_top + header_h + ctx.header_margin_bottom + orig_h.max(trans_h)
+    } else {
+        let text = interlude_text(block);
+        ctx.block_margin_top + measure_text_height(pctx, &text, ctx.body_font_size, &ctx.font_family, ctx.full_width)
+    }
+}
+
+/// Pixel height of `text` wrapped at `width_px` in `family` at `size_pt`, via a
+/// `pango::Layout` on `pctx` (a widget's pango context). Used only for page-fit
+/// math — no widget allocation, so no GTK settle race.
+fn measure_text_height(
+    pctx: &pango::Context,
+    text: &str,
+    size_pt: i32,
+    family: &str,
+    width_px: i32,
+) -> i32 {
+    let layout = pango::Layout::new(pctx);
+    let mut desc = pango::FontDescription::from_string(family);
+    desc.set_size(size_pt * pango::SCALE);
+    layout.set_font_description(Some(&desc));
+    layout.set_width(width_px.max(1) * pango::SCALE);
+    layout.set_wrap(pango::WrapMode::WordChar);
+    layout.set_text(text);
+    layout.pixel_size().1
 }
 
 /// Ensure the buffer has a `cursor-line` tag painting the paragraph background
@@ -413,9 +529,8 @@ fn make_column(width: i32, color: &str, italic: bool) -> TextView {
     if italic {
         view.add_css_class("translation-col");
     }
-    // Color via an inline CSS provider would be heavier; rely on the
-    // .gloss-text / .translation-col classes for base style and let the
-    // theme's text color show. `color` reserved for a future inline tag.
+    // Color comes from the .gloss-text / .translation-col CSS classes; `color`
+    // reserved for a future inline tag.
     let _ = color;
     view
 }
@@ -519,7 +634,6 @@ mod tests {
 
     #[test]
     fn locate_line_finds_block_and_offset() {
-        // Two blocks: [10..=12] and [13..=13].
         let ranges = vec![(10usize, 12usize), (13, 13)];
         assert_eq!(locate_line(&ranges, 10), Some((0, 0)));
         assert_eq!(locate_line(&ranges, 12), Some((0, 2)));
@@ -532,5 +646,70 @@ mod tests {
         assert_eq!(locate_line(&ranges, 9), None);
         assert_eq!(locate_line(&ranges, 13), None);
         assert_eq!(locate_line(&[], 0), None);
+    }
+
+    #[test]
+    fn paginate_packs_until_full() {
+        // heights 30 each, page 100 -> 3 per page.
+        let h = vec![30, 30, 30, 30, 30, 30, 30];
+        let pages = paginate(&h, 100);
+        assert_eq!(pages, vec![
+            Page { start: 0, end: 3 },
+            Page { start: 3, end: 6 },
+            Page { start: 6, end: 7 },
+        ]);
+    }
+
+    #[test]
+    fn paginate_over_tall_block_alone_on_page() {
+        // A 250-tall block can't fit a 100 page; it gets its own page, never dropped.
+        let h = vec![30, 250, 30];
+        let pages = paginate(&h, 100);
+        assert_eq!(pages, vec![
+            Page { start: 0, end: 1 },
+            Page { start: 1, end: 2 },
+            Page { start: 2, end: 3 },
+        ]);
+    }
+
+    #[test]
+    fn paginate_exact_fit_boundary() {
+        // 50 + 50 == 100 fits one page; the third 50 starts a new page.
+        let h = vec![50, 50, 50];
+        let pages = paginate(&h, 100);
+        assert_eq!(pages, vec![
+            Page { start: 0, end: 2 },
+            Page { start: 2, end: 3 },
+        ]);
+    }
+
+    #[test]
+    fn paginate_empty() {
+        assert!(paginate(&[], 100).is_empty());
+    }
+
+    #[test]
+    fn page_containing_block_finds_and_clamps() {
+        let pages = vec![Page { start: 0, end: 3 }, Page { start: 3, end: 6 }];
+        assert_eq!(page_containing_block(&pages, 0), 0);
+        assert_eq!(page_containing_block(&pages, 2), 0);
+        assert_eq!(page_containing_block(&pages, 3), 1);
+        assert_eq!(page_containing_block(&pages, 5), 1);
+        // Past the end clamps to the last page.
+        assert_eq!(page_containing_block(&pages, 99), 1);
+        // No pages -> 0.
+        assert_eq!(page_containing_block(&[], 0), 0);
+    }
+
+    #[test]
+    fn block_for_work_idx_finds_containing_block() {
+        let blocks = vec![
+            TranslationBlock { speaker: Some("A".into()), lines: vec![], start_idx: 10, end_idx: 12 },
+            TranslationBlock { speaker: Some("B".into()), lines: vec![], start_idx: 13, end_idx: 13 },
+        ];
+        assert_eq!(block_for_work_idx(&blocks, 10), Some(0));
+        assert_eq!(block_for_work_idx(&blocks, 12), Some(0));
+        assert_eq!(block_for_work_idx(&blocks, 13), Some(1));
+        assert_eq!(block_for_work_idx(&blocks, 99), None);
     }
 }

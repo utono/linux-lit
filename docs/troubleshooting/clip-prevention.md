@@ -68,21 +68,30 @@ ONE implementation (it used to be copy-pasted and drifted):
   TextView that wraps). A Box never splits such a child across the edge, so there
   is no partial wrapped row — it only covers trailing slack when the content ends
   inside the viewport. **Caveat — a Box of TextViews still wraps.** If the Box's
-  children are TextViews (the translation overlay stacks paired-column TextViews
-  in a vbox), each TextView DOES render a partial wrapped row at the viewport
-  edge, and this box-slack guard (which clips 0 on overflow) leaves that row cut.
-  That surface needs a per-row mask over ALL the column views, not the box-slack
-  guard — see `recompute_translation_bottom_clip` and the `Custom`
-  `BottomClipGuard` variant.
-- **`recompute_translation_bottom_clip(clip, scrolled, content, views)`** — the
-  translation overlay's per-row mask. Gathers every column TextView's visual rows
-  (`display_rows`), maps each into the scroll child's coordinate space via
-  `compute_point` (so rows from several stacked TextViews compare on one axis),
-  and feeds the union to the pure `bottom_clip_height`. The mask covers from the
-  last row that fits ENTIRELY *across all columns* down to the viewport bottom, so
-  neither the original nor the translation column shows a cut row. Driven by a
-  `BottomClipGuard::attach_custom` (the `Custom` kind), so it still gets all three
-  recompute paths (open, value_changed, page_size) for free.
+  children are wrapping TextViews, each renders a partial wrapped row at the
+  viewport edge, and this box-slack guard (which clips 0 on overflow) leaves that
+  row cut. **The lesson learned the hard way:** the 2-col translation overlay was
+  exactly this (paired original/translation TextViews stacked in a scrolled vbox),
+  and a per-row mask across two independently-wrapping columns proved fragile
+  (coordinate-mapping bugs, an un-snapped top row, the highlight off-screen on
+  open). The fix was to **stop scrolling and paginate** — see "Pagination instead
+  of a mask" below. A Box of wrapping TextViews is a sign you may want pagination,
+  not a clip.
+
+## Pagination instead of a mask (the translation overlay)
+
+When a surface stacks **wrapping TextViews** and you find yourself fighting the
+bottom clip across them, the robust answer is the main card's strategy:
+**paginate** — render only the whole units (here, whole speaker blocks) that fit,
+so the last unit ends above the bottom edge and **no partial row is ever
+rendered**. No mask, no scroll, no `compute_point` coordinate math, no settle
+race. The 2-col translation overlay (`src/ui/translation_overlay.rs`) does this:
+`paginate(block_heights, page_height)` (pure, unit-tested) packs whole blocks per
+page; block heights are measured with a standalone `pango::Layout` (synchronous,
+no GTK allocation); the cursor's page is rendered around the reader cursor, so the
+highlight paints immediately. The bottom-clip machinery it used to need
+(`attach_custom`/`Custom` guard, a per-row translation mask) was deleted. See
+`docs/superpowers/specs/2026-06-27-paginated-translation-overlay-design.md`.
 
 **Per-row geometry is mandatory for prose, never a uniform row-step.** The
 synopsis/gloss/journal buffers join paragraphs into single multi-row buffer
@@ -300,11 +309,11 @@ Three clip strategies coexist deliberately; merging them changes behavior:
   `j`/`k` path), NOT `refresh_bottom_clip`/`update_bottom_clip`. See
   failure-checklist #7.
 - **Box-slack guard** (`recompute_overlay_bottom_clip_box`) — for a Box of
-  whole-widget rows; covers only trailing slack. NOT for the translation column
-  stack: its Box holds wrapping TextViews, which DO render a partial row at the
-  edge, so it uses the per-row `recompute_translation_bottom_clip` instead (a
-  `Custom` `BottomClipGuard`). The box-slack guard remains for a future Box-only
-  surface.
+  whole-widget rows; covers only trailing slack. NOT for a Box of wrapping
+  TextViews (those render a partial row at the edge it can't mask). The
+  translation overlay was that case and now **paginates** instead of scrolling —
+  no clip at all (see "Pagination instead of a mask"). The box-slack guard remains
+  for a future Box-of-whole-widgets surface.
 
 Likewise the top-snap algorithms differ (`snap_value_to_line` per-`display_rows`
 row vs scroll-mode's `snap_value_to_line_top` via `line_at_y` vs uniform
@@ -378,17 +387,18 @@ When a half line clips at the bottom edge of a scrolled surface:
    exactly this — its idle already used the scroll-aware clip but a trailing
    `refresh_bottom_clip(state)` (paged) clobbered it. See "The paged clip is
    page_top-relative" above.
-8. **A Box-child overlay whose children are TextViews cuts the bottom row.** Tell:
-   the surface scrolls a `gtk4::Box` (so it attached the box-slack guard), but the
-   Box stacks TextViews (the translation overlay's paired columns), and the bottom
-   row is sliced through its glyphs once content overflows. Cause: the box-slack
-   guard (`recompute_overlay_bottom_clip_box`) clips 0 on overflow because it
-   assumes whole-widget rows — but a TextView wraps and renders a partial row at
-   the edge. Fix: a per-row mask over ALL the column views
-   (`recompute_translation_bottom_clip` via `BottomClipGuard::attach_custom`),
-   mapping each view's `display_rows` into the scroll child's coords and clipping
-   below the last row that fits across every column. Do NOT reach for the box-slack
-   guard when the Box contains wrapping TextViews.
+8. **A Box-child overlay whose children are wrapping TextViews cuts the bottom
+   row.** Tell: the surface scrolls a `gtk4::Box` (so it attached the box-slack
+   guard), the Box stacks TextViews (e.g. paired translation columns), and the
+   bottom row is sliced through its glyphs once content overflows. Cause: the
+   box-slack guard (`recompute_overlay_bottom_clip_box`) clips 0 on overflow
+   because it assumes whole-widget rows — but a TextView wraps and renders a
+   partial row at the edge. A per-row mask across multiple independently-wrapping
+   TextViews was tried for the translation overlay and proved fragile
+   (coordinate-mapping bugs, an un-snapped top row, the highlight off-screen on
+   open). **The durable fix is to paginate, not mask** — render only the whole
+   units that fit so no partial row exists (see "Pagination instead of a mask").
+   The translation overlay now does this.
 
 ## Verifying
 
