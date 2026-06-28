@@ -877,6 +877,20 @@ pub(crate) fn delete_current(state: &Rc<RefCell<AppState>>) {
     render_current(&mut s);
 }
 
+/// `c` in the journal overlay: copy the current Q&A entry's database row id to
+/// the Wayland clipboard (via `wl-copy`) and confirm with a transient toast.
+pub(crate) fn copy_current_id(state: &Rc<RefCell<AppState>>) {
+    let s = state.borrow();
+    let Some(id) = s.journal.pages.get(s.journal.page_index).map(|p| p.id) else {
+        return;
+    };
+    let _ = std::process::Command::new("wl-copy")
+        .arg(id.to_string())
+        .spawn();
+    crate::ui::toast::show_transient(&s.chapter_toast, &format!("Copied id {}", id), 2);
+    crate::logging::log(&format!("JOURNAL: copied id {}", id));
+}
+
 /// Alt+g in the journal overlay: create a reader-gloss for the current passage
 /// page's source text.
 ///

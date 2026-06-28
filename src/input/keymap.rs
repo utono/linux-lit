@@ -836,6 +836,10 @@ fn handle_journal_key(
             state.borrow().journal_overlay.scroll(-1);
             true
         }
+        "c" => {
+            crate::input::actions::journal::copy_current_id(state);
+            true
+        }
         "Escape" => {
             crate::input::actions::journal::close_overlay(state);
             true
