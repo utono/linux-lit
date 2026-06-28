@@ -17,6 +17,24 @@ When fixing bugs, **always read the log first** before proposing changes:
 cat ~/utono/linux-lit/linux-lit-dev.log
 ```
 
+## Clipping Bugs — read clip-prevention.md FIRST
+
+For ANY text-clipping or flush-to-the-edge bug — a half-cut line at the top or
+bottom of a card, text touching a card edge with no gap, a partial row poking
+under a footer, "not enough padding at the bottom", or text rendering behind an
+overlay — **always read `docs/troubleshooting/clip-prevention.md` before
+proposing or attempting a fix.** It is the consolidated reference for every
+free-scroll surface AND the main reading card's paginated clip, with a
+frequency-ordered failure checklist that names the usual culprits (missing
+`value_changed` path, uniform row-step cutting descenders, occlusion-not-clipping,
+the over-tall single prose paragraph). Skipping it leads to guess-and-check
+cycles and fixes that re-cut glyphs (e.g. a fixed-pixel reserve instead of a
+clean visual-row boundary). When the visible result contradicts the logged clip
+value, paint the clip box a visible color (`background-color: #f00`) for one run
+— that single screenshot distinguishes "clip is 0" from "clip is mis-sized."
+Clipping acceptance is pixel-level: verify on the real display (or the
+`line_clipping` / `overlay_clipping` e2e invariants), never from logs alone.
+
 ## Build & Run
 
 Verify changes compile with `cargo build` but do not run the app — the user will run `cargo run` themselves.
