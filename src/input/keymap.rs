@@ -108,6 +108,7 @@ pub fn handle_key(
             | crate::app::InputMode::ConcordanceWorksPicker
             | crate::app::InputMode::AuthorshipPicker
             | crate::app::InputMode::JournalPicker
+            | crate::app::InputMode::JournalMovePicker
             | crate::app::InputMode::GlossPicker => handle_picker_key(state, key_name, is_ctrl, is_alt, tokio_handle, mode),
             crate::app::InputMode::Settings => handle_settings_key(state, key_name, is_ctrl),
             crate::app::InputMode::VoicePicker => handle_voice_picker_key(state, key_name, is_ctrl),
@@ -286,6 +287,7 @@ fn handle_picker_key(
                     }
                 }
                 InputMode::JournalPicker => { s.journal_picker.hide(); s.input_mode = InputMode::JournalOverlay; }
+                InputMode::JournalMovePicker => { s.journal_move_picker.hide(); s.input_mode = InputMode::JournalOverlay; }
                 InputMode::EchoLinePicker => { drop(s); crate::input::actions::echoes::cancel_add_echo(state); }
                 _ => {
                     if let Some(p) = crate::input::picker_dispatch::picker_for_mode(&s, mode) {
@@ -426,6 +428,10 @@ fn handle_picker_key(
                 }
                 InputMode::JournalPicker => {
                     crate::input::actions::journal::confirm_picker(state);
+                    true
+                }
+                InputMode::JournalMovePicker => {
+                    crate::input::actions::journal::confirm_move_picker(state);
                     true
                 }
                 InputMode::EchoLinePicker => {
@@ -739,6 +745,12 @@ fn handle_journal_key(
             }
             "j" => {
                 crate::input::actions::journal::close_overlay(state);
+                return true;
+            }
+            // Ctrl+Shift+J: open the "move this Q&A to another band" picker.
+            // Arrives as key_name "J" (shifted), distinct from Ctrl+j (close).
+            "J" => {
+                crate::input::actions::journal::open_move_picker(state);
                 return true;
             }
             "backslash" => {
