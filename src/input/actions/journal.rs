@@ -662,12 +662,18 @@ pub(crate) fn confirm_move_picker(state: &Rc<RefCell<AppState>>) {
         }
     };
 
-    if let Ok(conn) = crate::db::queries::open_db_rw() {
-        if let Err(e) = crate::db::journal::move_journal_page(&conn, entry_id, scope, d1, d2) {
-            crate::logging::log(&format!("JOURNAL: move failed: {}", e));
+    let conn = match crate::db::queries::open_db_rw() {
+        Ok(c) => c,
+        Err(e) => {
+            crate::logging::log(&format!("JOURNAL: move failed (open_db_rw): {}", e));
             render_current(&mut s);
             return;
         }
+    };
+    if let Err(e) = crate::db::journal::move_journal_page(&conn, entry_id, scope, d1, d2) {
+        crate::logging::log(&format!("JOURNAL: move failed: {}", e));
+        render_current(&mut s);
+        return;
     }
 
     // Follow the entry: switch to the destination band and land on it.
