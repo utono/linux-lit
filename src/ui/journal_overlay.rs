@@ -53,15 +53,19 @@ fn prefix_question(question: &str) -> String {
 /// Vertical chrome margins the column needs that `preferred_size()` does NOT
 /// report (GTK's preferred-size excludes a widget's own margins). The journal
 /// card column is `title` + `scroll_overlay` + `footer` stacked; the title
-/// carries a 24px `margin_top` (journal_overlay::new) and the footer container a
-/// 12px top + 12px bottom (`ui::footer::build_footer_row`). Without reserving
-/// these, `size_card` budgets `card_height − title_h − footer_h` for the scroll,
-/// the assembled column's natural height becomes `card_height + 48`, and because
-/// the `valign=Center` container's `set_size_request` is only a FLOOR, the
-/// container grows past `card_height` and overflows the window (the "too-tall
-/// journal overlay" bug). The gloss overlay reserves the same way via its
-/// `SCROLL_OVERLAY_MARGINS`. Keep in sync with those two margin sites.
-const UNACCOUNTED_CHROME_MARGINS: i32 = 24 /* title top */ + 12 + 12 /* footer top+bottom */;
+/// carries a 24px `margin_top` (journal_overlay::new), the scroll_overlay a 24px
+/// top + 20px bottom margin (the breathing gap below the title / above the footer
+/// that keeps a scrolled block's last line off the footer rule — mirrors the
+/// gloss overlay), and the footer container a 12px top + 12px bottom
+/// (`ui::footer::build_footer_row`). Without reserving these, `size_card` budgets
+/// `card_height − title_h − footer_h` for the scroll, the assembled column's
+/// natural height becomes `card_height + 92`, and because the `valign=Center`
+/// container's `set_size_request` is only a FLOOR, the container grows past
+/// `card_height` and overflows the window (the "too-tall journal overlay" bug).
+/// The gloss overlay reserves the same way via its `SCROLL_OVERLAY_MARGINS`. Keep
+/// in sync with those three margin sites.
+const UNACCOUNTED_CHROME_MARGINS: i32 =
+    24 /* title top */ + 24 + 20 /* scroll_overlay top+bottom */ + 12 + 12 /* footer top+bottom */;
 
 impl JournalOverlay {
     pub fn new(column_width: u32, text_margins: u32) -> Self {
@@ -175,6 +179,18 @@ impl JournalOverlay {
         scroll_overlay.add_overlay(&bar_drawing);
         scroll_overlay.set_measure_overlay(&bar_drawing, false);
         scroll_overlay.set_clip_overlay(&bar_drawing, true);
+
+        // Breathing gap above the footer and below the title, mirroring the gloss
+        // overlay (gloss_overlay.rs). Without the bottom margin the viewport's
+        // bottom edge sits flush against the footer, so a block scrolled to the
+        // bottom edge by j/k has its last line bisected by the footer rule and
+        // reads as clipped — the journal block-nav clipping the user saw. The
+        // bottom-clip box masks only a PARTIAL row at the viewport edge; this gap
+        // keeps the last whole line clear at any scroll position. The top margin
+        // gives the symmetric gap below the title rule (the view's internal
+        // top_margin scrolls away with the content, so it can't keep this gap).
+        scroll_overlay.set_margin_bottom(20);
+        scroll_overlay.set_margin_top(24);
 
         container.append(&scroll_overlay);
 
@@ -949,9 +965,10 @@ mod scroll_budget_tests {
     }
 
     #[test]
-    fn margins_match_the_two_margin_sites() {
-        // 24 (title margin_top) + 12 + 12 (footer top+bottom) = 48.
-        assert_eq!(UNACCOUNTED_CHROME_MARGINS, 48);
+    fn margins_match_the_three_margin_sites() {
+        // 24 (title margin_top) + 24 + 20 (scroll_overlay top+bottom)
+        // + 12 + 12 (footer top+bottom) = 92.
+        assert_eq!(UNACCOUNTED_CHROME_MARGINS, 92);
     }
 }
 
