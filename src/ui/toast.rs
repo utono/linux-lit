@@ -19,3 +19,14 @@ pub(crate) fn show_transient(label: &Label, text: &str, secs: u64) {
         label.set_visible(false);
     });
 }
+
+/// Show `label` with `text` and leave it up indefinitely (NO auto-hide timer).
+/// The caller dismisses it — typically with a later `show_transient` (which
+/// sets its own hide timer) once the async work finishes. Used for in-flight
+/// indicators like the journal "Rewriting…" spinner, where the work can outlast
+/// any fixed timeout. Same pill (`label`, the chapter-toast) so the footprint
+/// matches the act/scene/chapter toast.
+pub(crate) fn show_persistent(label: &Label, text: &str) {
+    label.set_text(text);
+    label.set_visible(true);
+}

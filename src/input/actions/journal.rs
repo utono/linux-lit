@@ -422,7 +422,10 @@ pub(crate) fn submit_edit_rewrite(state: &Rc<RefCell<AppState>>) {
     {
         let s = state.borrow();
         s.journal_overlay.close_edit_card();
-        crate::ui::toast::show_transient(&s.chapter_toast, "Rewriting\u{2026}", 2);
+        // Persistent indicator: the rewrite round-trip can outlast any fixed
+        // timeout, so leave it up until a callback replaces it. Same toast pill
+        // as the act/scene/chapter toast, so it occupies no more space.
+        crate::ui::toast::show_persistent(&s.chapter_toast, "Rewriting\u{2026}");
     }
 
     crate::input::actions::claude_bridge::run_claude_request(
