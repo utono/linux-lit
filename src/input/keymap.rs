@@ -679,6 +679,30 @@ fn handle_journal_key(
     is_ctrl: bool,
     is_alt: bool,
 ) -> bool {
+    // ---- Edit card (E) intercepts Tab / Ctrl+Enter / Alt+Enter / Escape ----
+    if state.borrow().journal_overlay.edit_is_open() {
+        match key_name {
+            "Tab" | "ISO_Left_Tab" => {
+                state.borrow().journal_overlay.toggle_edit_focus();
+                return true;
+            }
+            "Return" if is_ctrl => {
+                crate::input::actions::journal::submit_edit_save(state);
+                return true;
+            }
+            "Return" if is_alt => {
+                crate::input::actions::journal::submit_edit_rewrite(state);
+                return true;
+            }
+            "Escape" => {
+                state.borrow().journal_overlay.close_edit_card();
+                return true;
+            }
+            // Any other key: let it fall through to the focused editable field.
+            _ => return false,
+        }
+    }
+
     // ---- Ask/edit input card intercepts Tab / Ctrl+Enter / Escape first ----
     let (ask_open, ask_focus) = {
         let s = state.borrow();
