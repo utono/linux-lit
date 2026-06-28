@@ -13,3 +13,5 @@ scripts/data/NRC-VAD-Lexicon.txt
 # Claude Code runtime lock (per-process scheduled-tasks lock; not source)
 .claude/scheduled_tasks.lock
 CLAUDE-activeContext.md
+# Transient plan file (per CLAUDE.md, plans go here; never source)
+PLAN.md
