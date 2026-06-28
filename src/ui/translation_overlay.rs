@@ -183,6 +183,7 @@ impl TranslationOverlay {
 
     /// Populate and reveal the overlay. `blocks` come from
     /// `group_scene_into_blocks`. `text_fg`/`dim_fg` are theme colors.
+    #[allow(clippy::too_many_arguments)]
     pub fn show(
         &self,
         title: &str,
@@ -192,6 +193,7 @@ impl TranslationOverlay {
         text_fg: &str,
         dim_fg: &str,
         body_font_size: i32,
+        font_family: &str,
         cursor_line_bg: &str,
     ) {
         self.container.set_width_request(card_width);
@@ -223,8 +225,13 @@ impl TranslationOverlay {
                 if let Some(speaker) = &block.speaker {
                     let header = Label::new(None);
                     header.set_halign(Align::Start);
+                    // Match the main card's speaker-name tag: the reading-card
+                    // font family (Charter) in small-caps, so the overlay's
+                    // speaker labels read in the same typeface as the source —
+                    // not the Label's inherited default (a sans).
                     header.set_markup(&format!(
-                        "<span foreground='{}' font_variant='small-caps' font_weight='normal' size='{}pt'>{}</span>",
+                        "<span face='{}' foreground='{}' font_variant='small-caps' font_weight='normal' size='{}pt'>{}</span>",
+                        glib_escape(font_family),
                         text_fg,
                         header_pt,
                         glib_escape(speaker),

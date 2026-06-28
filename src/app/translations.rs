@@ -626,6 +626,7 @@ pub fn rebuild_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppSta
     let text_fg = s.theme.text_fg.clone();
     let dim_fg = s.theme.dim_fg.clone();
     let body_font_size = s.config.font_size as i32;
+    let font_family = s.config.font_family.clone();
     let cursor_line_bg = s.theme.cursor_line_bg.clone();
     let label = synopsis_label(&s, div1, div2);
 
@@ -640,6 +641,7 @@ pub fn rebuild_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppSta
         &text_fg,
         &dim_fg,
         body_font_size,
+        &font_family,
         &cursor_line_bg,
     );
     if let Some(idx) = cursor_idx {
