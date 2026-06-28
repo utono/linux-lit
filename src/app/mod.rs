@@ -135,7 +135,6 @@ pub enum GlossPromptMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JournalPromptMode {
     Ask,
-    Edit,
 }
 
 /// Which "band" of the journal is currently shown. The Work band holds

@@ -454,18 +454,15 @@ pub(crate) fn close_prompt(state: &Rc<RefCell<AppState>>) {
 }
 
 pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
-    let (question, mode) = {
-        let s = state.borrow();
-        (s.journal_overlay.take_ask_text(), s.journal.prompt_mode)
-    };
+    let question = state.borrow().journal_overlay.take_ask_text();
     close_prompt(state);
     if question.trim().is_empty() {
         return;
     }
-    ask_claude(state, &question, mode);
+    ask_claude(state, &question);
 }
 
-fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPromptMode) {
+fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
     let (work_title, work_author, work_abbrev, band, scene_text, model) = {
         let s = state_rc.borrow();
         let band = s.journal_band.clone();
@@ -507,16 +504,6 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
     };
 
     state_rc.borrow().journal_overlay.show_loading(question);
-
-    let edit_id: i64 = if mode == JournalPromptMode::Edit {
-        let s = state_rc.borrow();
-        s.journal.pages
-            .get(s.journal.page_index)
-            .map(|p| p.id)
-            .unwrap_or(-1)
-    } else {
-        -1
-    };
 
     // For a Passage band, consume pending_passage (take it so the Option is
     // cleared after use — defensive hygiene; the guard above makes it
@@ -565,13 +552,8 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
         model,
         move |st, answer| {
             if let Ok(conn) = crate::db::queries::open_db_rw() {
-                let write_result = match (&band, mode == JournalPromptMode::Edit && edit_id >= 0) {
-                    (_, true) => {
-                        crate::db::journal::update_journal_page(
-                            &conn, edit_id, &question_owned, &answer, &model_for_db,
-                        )
-                    }
-                    (JournalBand::Work, false) => {
+                let write_result = match &band {
+                    JournalBand::Work => {
                         crate::db::journal::save_journal_page(
                             &conn, &work_abbrev,
                             crate::app::JOURNAL_WORK_DIV.0, crate::app::JOURNAL_WORK_DIV.1,
@@ -579,14 +561,14 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
                         )
                         .map(|_| ())
                     }
-                    (JournalBand::Scene(d1, d2), false) => {
+                    JournalBand::Scene(d1, d2) => {
                         crate::db::journal::save_journal_page(
                             &conn, &work_abbrev, *d1, *d2,
                             &question_owned, &answer, &model_for_db, "scene",
                         )
                         .map(|_| ())
                     }
-                    (JournalBand::Passage { div1, div2, start, end }, false) => {
+                    JournalBand::Passage { div1, div2, start, end } => {
                         crate::db::journal::save_passage_page(
                             &conn, &work_abbrev, *div1, *div2, start, end,
                             &passage_source_text, &question_owned, &answer, &model_for_db,
@@ -612,11 +594,7 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
                     }
                 })
                 .unwrap_or_default();
-            let new_index = if mode == JournalPromptMode::Edit && edit_id >= 0 {
-                pages.iter().position(|p| p.id == edit_id).unwrap_or(0)
-            } else {
-                pages.len().saturating_sub(1)
-            };
+            let new_index = pages.len().saturating_sub(1);
             let mut s = st.borrow_mut();
             s.journal_band = band.clone();
             s.journal.page_index = new_index;
