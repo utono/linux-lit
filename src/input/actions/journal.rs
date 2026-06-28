@@ -29,6 +29,23 @@ pub struct JournalState {
     pub pending_passage: Option<PendingPassage>,
 }
 
+/// Resolve which band a stored journal page belongs to, for the Q&A picker. A
+/// page is `Work` when its `div1 < 0` (the JOURNAL_WORK_DIV sentinel), a
+/// `Passage` when it carries citations (only passage pages set
+/// `start_citation`/`end_citation`), and a `Scene` otherwise. Getting the
+/// passage case wrong was a real bug: the picker built `Scene(div1,div2)` for a
+/// passage page, so `confirm_picker` queried the scene band, never found the
+/// page by id, and Enter did nothing. Passages must be queried by citation.
+fn band_for_page(p: &crate::db::journal::JournalPage) -> JournalBand {
+    if p.div1 < 0 {
+        JournalBand::Work
+    } else if let (Some(start), Some(end)) = (p.start_citation.clone(), p.end_citation.clone()) {
+        JournalBand::Passage { div1: p.div1, div2: p.div2, start, end }
+    } else {
+        JournalBand::Scene(p.div1, p.div2)
+    }
+}
+
 /// Footer-left text identifying the current page: `<abbrev> <act>.<scene>` for a
 /// scene page, `<abbrev> · whole work` for a whole-work page.
 fn footer_left_text(abbrev: &str, band: JournalBand) -> String {
@@ -633,11 +650,7 @@ pub(crate) fn open_picker(state: &Rc<RefCell<AppState>>) {
     let rows: Vec<crate::ui::journal_picker::JournalRow> = pages
         .iter()
         .map(|p| {
-            let band = if p.div1 < 0 {
-                JournalBand::Work
-            } else {
-                JournalBand::Scene(p.div1, p.div2)
-            };
+            let band = band_for_page(p);
             let scene_label = match &band {
                 JournalBand::Work => "whole work".to_string(),
                 JournalBand::Scene(d1, d2) => crate::app::scene_synopsis::synopsis_label(&s, *d1, *d2),
@@ -1158,6 +1171,37 @@ mod tests {
         let a_pos = msg.find("She narrates half the book.").unwrap();
         let i_pos = msg.find("Add her surname.").unwrap();
         assert!(i_pos > a_pos, "instruction should follow the current answer");
+    }
+
+    /// Build a `JournalPage` for band-classification tests.
+    fn page(div1: i64, div2: i64, start: Option<&str>, end: Option<&str>) -> crate::db::journal::JournalPage {
+        crate::db::journal::JournalPage {
+            id: 1,
+            div1,
+            div2,
+            question: "Q".into(),
+            answer: "A".into(),
+            claude_model: "m".into(),
+            timestamp: "t".into(),
+            start_citation: start.map(|s| s.to_string()),
+            end_citation: end.map(|s| s.to_string()),
+            source_text: None,
+        }
+    }
+
+    #[test]
+    fn band_for_page_classifies_work_scene_passage() {
+        // Work: div1 < 0 (the JOURNAL_WORK_DIV sentinel), no citations.
+        assert_eq!(band_for_page(&page(-1, -1, None, None)), JournalBand::Work);
+        // Scene: div1 >= 0, no citations.
+        assert_eq!(band_for_page(&page(1, 0, None, None)), JournalBand::Scene(1, 0));
+        // Passage: div1 >= 0 AND has start+end citations -> Passage band (NOT
+        // Scene). This is the bug fix: a passage page used to be mis-banded as
+        // Scene, so the picker's confirm couldn't find it by id.
+        assert_eq!(
+            band_for_page(&page(1, 0, Some("BH.1.0.18"), Some("BH.1.0.18"))),
+            JournalBand::Passage { div1: 1, div2: 0, start: "BH.1.0.18".into(), end: "BH.1.0.18".into() },
+        );
     }
 
     #[test]
