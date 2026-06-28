@@ -489,6 +489,8 @@ pub(crate) fn submit_edit_save(state: &Rc<RefCell<AppState>>) {
         {
             crate::logging::log(&format!("JOURNAL: edit-save failed: {}", e));
         }
+        // The answer text changed -> the cached per-paragraph TTS is stale.
+        purge_journal_audio(&conn, id);
     }
     s.journal_overlay.close_edit_card();
     render_current(&mut s);
@@ -512,6 +514,7 @@ pub(crate) fn submit_edit_rewrite(state: &Rc<RefCell<AppState>>) {
                     let _ = crate::db::journal::update_journal_page(
                         &conn, id, question.trim(), answer.trim(), &model,
                     );
+                    purge_journal_audio(&conn, id);
                 }
             }
             s.journal_overlay.close_edit_card();
@@ -581,6 +584,8 @@ pub(crate) fn submit_edit_rewrite(state: &Rc<RefCell<AppState>>) {
                 ) {
                     crate::logging::log(&format!("JOURNAL: edit-rewrite save failed: {}", e));
                 }
+                // The answer was rewritten -> drop the stale cached TTS.
+                purge_journal_audio(&conn, edit_id);
             }
             let mut s = st.borrow_mut();
             render_current(&mut s);
@@ -610,19 +615,15 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
     let (work_title, work_author, work_abbrev, work_type, band, scene_text, model) = {
         let s = state_rc.borrow();
         let band = s.journal_band.clone();
-        let (title, author, abbrev) = match s.current_work.as_ref() {
+        let (title, author, abbrev, work_type) = match s.current_work.as_ref() {
             Some(w) => (
                 w.title.clone(),
                 w.author.clone(),
                 crate::app::base_work_abbrev(&w.abbrev).to_string(),
+                w.work_type.clone(),
             ),
             None => return,
         };
-        let work_type = s
-            .current_work
-            .as_ref()
-            .map(|w| w.work_type.clone())
-            .unwrap_or_default();
         // Anchor on the reader's saved position (where the journal overlay was
         // opened from), mapped to a work line. Falls back to 0 (the division's
         // first paragraph) when unresolvable — scene_text_windowed clamps.
@@ -934,6 +935,18 @@ pub(crate) fn confirm_move_picker(state: &Rc<RefCell<AppState>>) {
     crate::logging::log("JOURNAL: moved page to new band");
 }
 
+/// Purge an entry's cached TTS MP3s (rows + files), since SQLite FK cascade is
+/// not enabled app-wide. Called when an entry is DELETED and also when its answer
+/// is EDITED/REWRITTEN — the cached per-paragraph audio no longer matches the new
+/// text, so it must be dropped or Space would replay the stale take.
+fn purge_journal_audio(conn: &rusqlite::Connection, id: i64) {
+    if let Ok(paths) = crate::db::queries::delete_journal_audio(conn, id) {
+        for p in paths {
+            let _ = std::fs::remove_file(&p);
+        }
+    }
+}
+
 pub(crate) fn delete_current(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
     if s.journal.pages.is_empty() {
@@ -942,13 +955,7 @@ pub(crate) fn delete_current(state: &Rc<RefCell<AppState>>) {
     let id = s.journal.pages[s.journal.page_index].id;
     if let Ok(conn) = crate::db::queries::open_db_rw() {
         let _ = crate::db::journal::delete_journal_page(&conn, id);
-        // Purge this entry's cached TTS MP3s (rows + files), since SQLite FK
-        // cascade is not enabled app-wide — mirrors the gloss/synopsis delete.
-        if let Ok(paths) = crate::db::queries::delete_journal_audio(&conn, id) {
-            for p in paths {
-                let _ = std::fs::remove_file(&p);
-            }
-        }
+        purge_journal_audio(&conn, id);
     }
     if s.journal.page_index > 0 {
         s.journal.page_index -= 1;

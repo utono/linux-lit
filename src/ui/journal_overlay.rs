@@ -280,7 +280,7 @@ impl JournalOverlay {
         // the footer's top/bottom) into the fixed-chrome argument, so the host's
         // closed scroll height equals `closed_scroll_budget(card_height, title_h,
         // footer_h)`. Without this the column is `UNACCOUNTED_CHROME_MARGINS`
-        // (48px) too tall and the `valign=Center` container grows past
+        // (92px) too tall and the `valign=Center` container grows past
         // `card_height`, overflowing the window (the "too-tall journal overlay"
         // bug). `closed_scroll_budget` is the unit-tested source of truth.
         self.ask_host.size(
@@ -400,6 +400,11 @@ impl JournalOverlay {
         self.view.buffer().set_text(&body);
         self.apply_font();
         self.ask_host.card().close();
+        // Drop the prior page's blocks + bar: during the transient "Asking…"
+        // state there is no real Q&A page, so Space/a must not read the prior
+        // page's cursor paragraph. With no blocks, current_block_text() is None
+        // and play_journal_block is a no-op.
+        self.clear_blocks();
         // Keep the navigation footer hidden during the Asking state. The result
         // render (show_page/show_message) restores it.
         self.footer_container.set_visible(false);
@@ -415,10 +420,22 @@ impl JournalOverlay {
         self.view.buffer().set_text(text);
         self.apply_font();
         self.ask_host.card().close();
+        // A bare message (toast/empty state) has no navigable Q&A paragraphs.
+        self.clear_blocks();
         // Restore the navigation footer (show_loading may have hidden it).
         self.footer_container.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
+    }
+
+    /// Drop the current page's paragraph blocks + accent bar (used by the
+    /// transient loading / message states where there is no real Q&A page to
+    /// navigate or read aloud).
+    fn clear_blocks(&self) {
+        self.blocks.borrow_mut().clear();
+        self.cursor_block.set(0);
+        self.visual_anchor.set(None);
+        self.clear_bar();
     }
 
     pub fn hide(&self) {
