@@ -272,6 +272,18 @@ Three clip strategies coexist deliberately; merging them changes behavior:
   strategies — it is the paged clip delegating its one sub-paragraph case to the
   per-row math, the same way scroll-mode already does. See the over-tall-paragraph
   entry in the failure checklist.
+  **The paged clip is page_top-relative — NEVER call it on a cursor-scrolled
+  view.** `update_bottom_clip` assumes the scroll is snapped to `page_top` and adds
+  `scroll_offset = scroll_val − expected_y(page_top)` to the clip height (correct
+  for the small offset of translation line-nav). When the view is scrolled to a
+  cursor-CENTERED position far from `page_top`'s top — the inline-translation
+  (`Ctrl+Alt+i`) reveal sets `adj.value` to a ¼-down-the-cursor target while
+  `page_top` stays put — that offset is thousands of px, the clip balloons past the
+  viewport height, and the card-colored clip covers EVERYTHING: the card goes
+  BLANK until the first scroll. Continuously-scrolled views (the inline-translation
+  interlinear) must use the scroll-aware `scrolloff_bottom_clip_widgets` (the
+  `j`/`k` path), NOT `refresh_bottom_clip`/`update_bottom_clip`. See
+  failure-checklist #7.
 - **Box-slack guard** (`recompute_overlay_bottom_clip_box`) — the translation
   column stack. No wrapped partial row; covers only trailing slack.
 
@@ -330,6 +342,23 @@ When a half line clips at the bottom edge of a scrolled surface:
    separates "clip is 0" from "clip is mis-sized." Exposed by the prose
    NYTimes-column narrowing (commit on `feat/prose-nyt-column`), but it was a
    latent edge case for any single paragraph taller than the viewport.
+7. **The whole card goes BLANK after a reveal/toggle that scrolls to a
+   cursor-centered position (paged clip on a cursor-scrolled view).** Tell: the
+   surface is blank (card background only) right after the action and the first
+   `j`/`k`/scroll fixes it; the log shows a `BOTTOM_CLIP` with `clip` SEVERAL TIMES
+   `widget_h` and a large `offset=` (e.g. `clip=2679 widget_h=1112 offset=2526`).
+   Cause: the PAGED `update_bottom_clip`/`refresh_bottom_clip` was called while the
+   scroll value is a cursor-centered target NOT equal to `page_top`'s top, so its
+   `scroll_offset = scroll_val − expected_y(page_top)` is huge and inflates the
+   clip past the viewport, covering everything. This is NOT path-(a) unsettled
+   geometry (#4) — the geometry is settled; the clip STRATEGY is wrong for the
+   view. Fix: on a continuously-scrolled view use the scroll-aware
+   `scrolloff_bottom_clip_widgets` (+ a 100ms scroll-aware backstop for the
+   post-`reapply_font` relayout) and do NOT call `refresh_bottom_clip`. The inline
+   translation (`Ctrl+Alt+i` → `ToggleTranslations`) `show_translations` reveal hit
+   exactly this — its idle already used the scroll-aware clip but a trailing
+   `refresh_bottom_clip(state)` (paged) clobbered it. See "The paged clip is
+   page_top-relative" above.
 
 ## Verifying
 
