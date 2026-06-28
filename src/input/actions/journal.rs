@@ -1,4 +1,5 @@
 use crate::app::{AppState, InputMode, JournalBand, JournalPromptMode};
+use crate::ui::journal_move_picker::MoveTargetRow;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -28,6 +29,23 @@ pub struct JournalState {
     pub pending_passage: Option<PendingPassage>,
 }
 
+/// Resolve which band a stored journal page belongs to, for the Q&A picker. A
+/// page is `Work` when its `div1 < 0` (the JOURNAL_WORK_DIV sentinel), a
+/// `Passage` when it carries citations (only passage pages set
+/// `start_citation`/`end_citation`), and a `Scene` otherwise. Getting the
+/// passage case wrong was a real bug: the picker built `Scene(div1,div2)` for a
+/// passage page, so `confirm_picker` queried the scene band, never found the
+/// page by id, and Enter did nothing. Passages must be queried by citation.
+fn band_for_page(p: &crate::db::journal::JournalPage) -> JournalBand {
+    if p.div1 < 0 {
+        JournalBand::Work
+    } else if let (Some(start), Some(end)) = (p.start_citation.clone(), p.end_citation.clone()) {
+        JournalBand::Passage { div1: p.div1, div2: p.div2, start, end }
+    } else {
+        JournalBand::Scene(p.div1, p.div2)
+    }
+}
+
 /// Footer-left text identifying the current page: `<abbrev> <act>.<scene>` for a
 /// scene page, `<abbrev> · whole work` for a whole-work page.
 fn footer_left_text(abbrev: &str, band: JournalBand) -> String {
@@ -36,6 +54,59 @@ fn footer_left_text(abbrev: &str, band: JournalBand) -> String {
         JournalBand::Scene(d1, d2) => format!("{} {}.{}", abbrev, d1, d2),
         JournalBand::Passage { div1, div2, .. } => format!("{} {}.{} passage", abbrev, div1, div2),
     }
+}
+
+/// Pure core of `move_target_rows`: given the work's unique scene keys in
+/// reading order and the entry's current band, return the ordered list of
+/// destination bands — whole work first, then each scene — with the current
+/// band omitted. Labels are applied by `move_target_rows`.
+fn target_bands(scenes: &[(i64, i64)], current: &JournalBand) -> Vec<JournalBand> {
+    let mut out = Vec::with_capacity(scenes.len() + 1);
+    if *current != JournalBand::Work {
+        out.push(JournalBand::Work);
+    }
+    for &(d1, d2) in scenes {
+        let band = JournalBand::Scene(d1, d2);
+        if band != *current {
+            out.push(band);
+        }
+    }
+    out
+}
+
+/// Build the list of move targets for the current entry: every band it could be
+/// moved to (whole work + every scene/chapter in the work), excluding its
+/// current band. Scene keys come from `work.lines` (unique (div1,div2) in
+/// reading order — the same source the synopsis picker uses), unfiltered, so
+/// every scene is offered even if it has no Q&A yet. Labels via `synopsis_label`.
+fn move_target_rows(s: &AppState, current: &JournalBand) -> Vec<MoveTargetRow> {
+    let scenes: Vec<(i64, i64)> = match s.current_work.as_ref() {
+        Some(work) => {
+            let mut seen = std::collections::HashSet::new();
+            let mut keys = Vec::new();
+            for line in &work.lines {
+                let k = (line.div1, line.div2);
+                if seen.insert(k) {
+                    keys.push(k);
+                }
+            }
+            keys
+        }
+        None => Vec::new(),
+    };
+
+    target_bands(&scenes, current)
+        .into_iter()
+        .map(|band| {
+            let label = match band {
+                JournalBand::Work => "whole work".to_string(),
+                JournalBand::Scene(d1, d2) => crate::app::scene_synopsis::synopsis_label(s, d1, d2),
+                // target_bands never yields Passage; map defensively.
+                JournalBand::Passage { div1, div2, .. } => format!("{}.{} passage", div1, div2),
+            };
+            MoveTargetRow { band, label }
+        })
+        .collect()
 }
 
 /// Load the current band's pages from the DB into `journal.pages`, clamp the
@@ -97,39 +168,21 @@ pub(crate) fn render_current(s: &mut AppState) {
     let (cw, h) = crate::app::layout::overlay_card_size(&s);
     let footer_left = footer_left_text(&work_abbrev, s.journal_band.clone());
 
-    // Passage pages with source_text use the verse renderer; everything else
-    // uses the plain show_page path.
+    // Every Q&A — including passage pages — renders as a plain Q&A. The passage
+    // source block is intentionally NOT shown: the highlighted source stays in
+    // lit.db (`source_text` + citations) for provenance, but a Q&A's rendering
+    // never reproduces the source. (Previously passage pages used a verse
+    // renderer that printed the source above the answer.)
     let current_page = if count == 0 {
         None
     } else {
         Some(&pages[s.journal.page_index])
     };
-
-    let is_passage_with_source = matches!(s.journal_band, JournalBand::Passage { .. })
-        && current_page.is_some_and(|p| p.source_text.is_some());
-
-    if is_passage_with_source {
-        let p = current_page.unwrap();
-        let source_text = p.source_text.as_deref().unwrap_or("");
-        s.journal_overlay.show_passage_page(
-            &footer_left,
-            s.journal.page_index,
-            count,
-            p.start_citation.as_deref(),
-            p.end_citation.as_deref(),
-            source_text,
-            &p.question,
-            &p.answer,
-            cw,
-            h,
-        );
-    } else {
-        let (q, a) = current_page
-            .map(|p| (p.question.clone(), p.answer.clone()))
-            .unwrap_or_default();
-        s.journal_overlay
-            .show_page(&scene_title, &footer_left, s.journal.page_index, count, &q, &a, cw, h);
-    }
+    let (q, a) = current_page
+        .map(|p| (p.question.clone(), p.answer.clone()))
+        .unwrap_or_default();
+    s.journal_overlay
+        .show_page(&scene_title, &footer_left, s.journal.page_index, count, &q, &a, cw, h);
 
     s.journal.pages = pages;
 }
@@ -275,17 +328,182 @@ pub(crate) fn begin_ask(state: &Rc<RefCell<AppState>>) {
         .open_ask_card(title, "Tab switch  \u{00b7}  Ctrl+Enter submit");
 }
 
+/// Build the user message for an Alt+Enter rewrite. `context` is the band-aware
+/// grounding block (work title/author, the band the Q&A now lives in, and the
+/// relevant scene/passage text) — the same framing the original ask sends — so a
+/// rewrite instruction that references the band (e.g. "now that this is in the
+/// work band, broaden the opening") has the context it needs. The question, the
+/// current answer, and the instruction follow in "revise this answer" shape.
+fn rewrite_user_message(context: &str, question: &str, answer: &str, instruction: &str) -> String {
+    format!(
+        "{}\n\nOriginal question:\n{}\n\nCurrent answer:\n{}\n\nRevise the answer per this instruction (return only the revised answer):\n{}",
+        context, question, answer, instruction,
+    )
+}
+
+/// Assemble the band-aware grounding context for a journal Q&A, mirroring the
+/// framing `ask_claude` sends. For Work the context is just the work header; for
+/// Scene/Passage it adds the band label and the windowed scene text (and, for a
+/// passage page, the stored source markup). `anchor_work_line` anchors the
+/// windowed slice; `passage_source` is the editing page's own `source_text`
+/// (empty for non-passage pages).
+fn rewrite_context(
+    s: &AppState,
+    band: &JournalBand,
+    anchor_work_line: usize,
+    passage_source: &str,
+) -> String {
+    let (title, author) = match s.current_work.as_ref() {
+        Some(w) => (w.title.clone(), w.author.clone()),
+        None => (String::new(), String::new()),
+    };
+    match band {
+        JournalBand::Work => {
+            format!("Work: {} by {}\nThis Q&A is filed under the WHOLE WORK (not a single scene).", title, author)
+        }
+        JournalBand::Scene(d1, d2) => {
+            let scene_text = crate::app::scene_synopsis::scene_text_windowed(
+                s, *d1, *d2, anchor_work_line, PROSE_CONTEXT_RADIUS,
+            );
+            format!(
+                "Work: {} by {}\nThis Q&A is filed under: {}\n\nScene text:\n{}",
+                title, author, crate::app::scene_synopsis::scene_label(*d1, *d2), scene_text,
+            )
+        }
+        JournalBand::Passage { div1, div2, .. } => {
+            let scene_text = crate::app::scene_synopsis::scene_text_windowed(
+                s, *div1, *div2, anchor_work_line, PROSE_CONTEXT_RADIUS,
+            );
+            format!(
+                "Work: {} by {}\nThis Q&A is filed under a PASSAGE in {}\n\nScene text:\n{}\n\nPassage:\n{}",
+                title, author, crate::app::scene_synopsis::scene_label(*div1, *div2),
+                scene_text, passage_source,
+            )
+        }
+    }
+}
+
+/// `E` in the journal overlay: open the dedicated edit card pre-filled with the
+/// current page's stored Question and Answer. No-op if the band is empty.
 pub(crate) fn begin_edit(state: &Rc<RefCell<AppState>>) {
+    let s = state.borrow();
+    let Some(page) = s.journal.pages.get(s.journal.page_index) else {
+        return;
+    };
+    let (q, a) = (page.question.clone(), page.answer.clone());
+    s.journal_overlay.open_edit_card(&q, &a);
+}
+
+/// Ctrl+Enter in the edit card: save the hand-edited Question + Answer straight
+/// to lit.db (no Claude). Preserves the page's existing claude_model. Closes the
+/// card and re-renders.
+pub(crate) fn submit_edit_save(state: &Rc<RefCell<AppState>>) {
+    let (question, answer, _instr) = state.borrow().journal_overlay.take_edit_fields();
     let mut s = state.borrow_mut();
-    if s.journal.pages.is_empty() {
+    let Some(page) = s.journal.pages.get(s.journal.page_index) else {
+        s.journal_overlay.close_edit_card();
+        return;
+    };
+    let (id, model) = (page.id, page.claude_model.clone());
+    if let Ok(conn) = crate::db::queries::open_db_rw() {
+        if let Err(e) =
+            crate::db::journal::update_journal_page(&conn, id, question.trim(), answer.trim(), &model)
+        {
+            crate::logging::log(&format!("JOURNAL: edit-save failed: {}", e));
+        }
+    }
+    s.journal_overlay.close_edit_card();
+    render_current(&mut s);
+    crate::ui::toast::show_transient(&s.chapter_toast, "Saved", 2);
+}
+
+/// Alt+Enter in the edit card: ask Claude to revise the answer per the
+/// instruction, then save the revision (with the edited question). Empty
+/// instruction -> fall back to save-as-is with a toast.
+pub(crate) fn submit_edit_rewrite(state: &Rc<RefCell<AppState>>) {
+    let (question, answer, instruction) = state.borrow().journal_overlay.take_edit_fields();
+
+    // Empty instruction -> behave like save-as-is.
+    if instruction.trim().is_empty() {
+        {
+            let mut s = state.borrow_mut();
+            let page = s.journal.pages.get(s.journal.page_index);
+            if let Some(page) = page {
+                let (id, model) = (page.id, page.claude_model.clone());
+                if let Ok(conn) = crate::db::queries::open_db_rw() {
+                    let _ = crate::db::journal::update_journal_page(
+                        &conn, id, question.trim(), answer.trim(), &model,
+                    );
+                }
+            }
+            s.journal_overlay.close_edit_card();
+            render_current(&mut s);
+            crate::ui::toast::show_transient(
+                &s.chapter_toast, "No rewrite instruction \u{2014} saved as-is", 3,
+            );
+        }
         return;
     }
-    s.journal.prompt_mode = JournalPromptMode::Edit;
-    s.journal_overlay
-        .open_ask_card(
-            "Edit: ask a new question for this page",
-            "Tab switch  \u{00b7}  Ctrl+Enter submit",
-        );
+
+    // Capture the page id + model + the band-aware grounding context, then call
+    // Claude. The context (work header, the band the Q&A is filed under, the
+    // windowed scene text, and any passage source) mirrors what the original ask
+    // sends, so a rewrite instruction that references the band has what it needs.
+    let (edit_id, model, context) = {
+        let s = state.borrow();
+        let Some(p) = s.journal.pages.get(s.journal.page_index) else {
+            return;
+        };
+        let model = if p.claude_model.is_empty() {
+            s.config.claude_model.clone()
+        } else {
+            p.claude_model.clone()
+        };
+        let passage_source = p.source_text.clone().unwrap_or_default();
+        let band = s.journal_band.clone();
+        let anchor_work_line = s
+            .journal
+            .return_pos
+            .and_then(|(buf, _top)| s.work_line_for_buffer(buf))
+            .unwrap_or(0);
+        let context = rewrite_context(&s, &band, anchor_work_line, &passage_source);
+        (p.id, model, context)
+    };
+    let question_owned = question.clone();
+    let model_for_db = model.clone();
+    let user_msg = rewrite_user_message(&context, &question, &answer, &instruction);
+
+    {
+        let s = state.borrow();
+        s.journal_overlay.close_edit_card();
+        // Persistent indicator: the rewrite round-trip can outlast any fixed
+        // timeout, so leave it up until a callback replaces it. Same toast pill
+        // as the act/scene/chapter toast, so it occupies no more space.
+        crate::ui::toast::show_persistent(&s.chapter_toast, "Rewriting\u{2026}");
+    }
+
+    crate::input::actions::claude_bridge::run_claude_request(
+        state,
+        crate::gloss::JOURNAL_QA_PROMPT.to_string(),
+        user_msg,
+        model,
+        move |st, revised| {
+            if let Ok(conn) = crate::db::queries::open_db_rw() {
+                if let Err(e) = crate::db::journal::update_journal_page(
+                    &conn, edit_id, &question_owned, &revised, &model_for_db,
+                ) {
+                    crate::logging::log(&format!("JOURNAL: edit-rewrite save failed: {}", e));
+                }
+            }
+            let mut s = st.borrow_mut();
+            render_current(&mut s);
+            crate::ui::toast::show_transient(&s.chapter_toast, "Rewritten", 2);
+        },
+        move |st, msg| {
+            let s = st.borrow();
+            crate::ui::toast::show_transient(&s.chapter_toast, msg, 4);
+        },
+    );
 }
 
 pub(crate) fn close_prompt(state: &Rc<RefCell<AppState>>) {
@@ -293,18 +511,15 @@ pub(crate) fn close_prompt(state: &Rc<RefCell<AppState>>) {
 }
 
 pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
-    let (question, mode) = {
-        let s = state.borrow();
-        (s.journal_overlay.take_ask_text(), s.journal.prompt_mode)
-    };
+    let question = state.borrow().journal_overlay.take_ask_text();
     close_prompt(state);
     if question.trim().is_empty() {
         return;
     }
-    ask_claude(state, &question, mode);
+    ask_claude(state, &question);
 }
 
-fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPromptMode) {
+fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
     let (work_title, work_author, work_abbrev, band, scene_text, model) = {
         let s = state_rc.borrow();
         let band = s.journal_band.clone();
@@ -346,16 +561,6 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
     };
 
     state_rc.borrow().journal_overlay.show_loading(question);
-
-    let edit_id: i64 = if mode == JournalPromptMode::Edit {
-        let s = state_rc.borrow();
-        s.journal.pages
-            .get(s.journal.page_index)
-            .map(|p| p.id)
-            .unwrap_or(-1)
-    } else {
-        -1
-    };
 
     // For a Passage band, consume pending_passage (take it so the Option is
     // cleared after use — defensive hygiene; the guard above makes it
@@ -404,13 +609,8 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
         model,
         move |st, answer| {
             if let Ok(conn) = crate::db::queries::open_db_rw() {
-                let write_result = match (&band, mode == JournalPromptMode::Edit && edit_id >= 0) {
-                    (_, true) => {
-                        crate::db::journal::update_journal_page(
-                            &conn, edit_id, &question_owned, &answer, &model_for_db,
-                        )
-                    }
-                    (JournalBand::Work, false) => {
+                let write_result = match &band {
+                    JournalBand::Work => {
                         crate::db::journal::save_journal_page(
                             &conn, &work_abbrev,
                             crate::app::JOURNAL_WORK_DIV.0, crate::app::JOURNAL_WORK_DIV.1,
@@ -418,14 +618,14 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
                         )
                         .map(|_| ())
                     }
-                    (JournalBand::Scene(d1, d2), false) => {
+                    JournalBand::Scene(d1, d2) => {
                         crate::db::journal::save_journal_page(
                             &conn, &work_abbrev, *d1, *d2,
                             &question_owned, &answer, &model_for_db, "scene",
                         )
                         .map(|_| ())
                     }
-                    (JournalBand::Passage { div1, div2, start, end }, false) => {
+                    JournalBand::Passage { div1, div2, start, end } => {
                         crate::db::journal::save_passage_page(
                             &conn, &work_abbrev, *div1, *div2, start, end,
                             &passage_source_text, &question_owned, &answer, &model_for_db,
@@ -451,11 +651,7 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str, mode: JournalPro
                     }
                 })
                 .unwrap_or_default();
-            let new_index = if mode == JournalPromptMode::Edit && edit_id >= 0 {
-                pages.iter().position(|p| p.id == edit_id).unwrap_or(0)
-            } else {
-                pages.len().saturating_sub(1)
-            };
+            let new_index = pages.len().saturating_sub(1);
             let mut s = st.borrow_mut();
             s.journal_band = band.clone();
             s.journal.page_index = new_index;
@@ -491,11 +687,7 @@ pub(crate) fn open_picker(state: &Rc<RefCell<AppState>>) {
     let rows: Vec<crate::ui::journal_picker::JournalRow> = pages
         .iter()
         .map(|p| {
-            let band = if p.div1 < 0 {
-                JournalBand::Work
-            } else {
-                JournalBand::Scene(p.div1, p.div2)
-            };
+            let band = band_for_page(p);
             let scene_label = match &band {
                 JournalBand::Work => "whole work".to_string(),
                 JournalBand::Scene(d1, d2) => crate::app::scene_synopsis::synopsis_label(&s, *d1, *d2),
@@ -544,6 +736,94 @@ pub(crate) fn confirm_picker(state: &Rc<RefCell<AppState>>) {
         s.journal.page_index = pos;
         render_current(&mut s);
     }
+}
+
+/// Open the "move this Q&A to another band" picker over the journal overlay.
+/// Lists every band the current entry could move to (whole work + every
+/// scene/chapter), excluding its current band. No-op with a toast if there is no
+/// current page, or if the current band is a passage (passages are
+/// citation-anchored and not movable).
+pub(crate) fn open_move_picker(state: &Rc<RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    if s.journal.pages.is_empty() {
+        crate::ui::toast::show_transient(&s.chapter_toast, "No page to move", 2);
+        return;
+    }
+    if matches!(s.journal_band, JournalBand::Passage { .. }) {
+        crate::ui::toast::show_transient(&s.chapter_toast, "Can't move a passage page", 2);
+        return;
+    }
+    let rows = move_target_rows(&s, &s.journal_band.clone());
+    if rows.is_empty() {
+        crate::ui::toast::show_transient(&s.chapter_toast, "No other band to move to", 2);
+        return;
+    }
+    s.journal_move_picker.set_items(rows);
+    s.journal_move_picker.show();
+    s.input_mode = InputMode::JournalMovePicker;
+}
+
+/// Confirm the move-picker selection: re-target the current entry to the chosen
+/// band in lit.db, then follow it — switch the overlay to the destination band
+/// and land on the moved entry (matched by id). Hides the picker and returns to
+/// the journal overlay.
+pub(crate) fn confirm_move_picker(state: &Rc<RefCell<AppState>>) {
+    let selected = state.borrow().journal_move_picker.selected_index();
+    let mut s = state.borrow_mut();
+    s.journal_move_picker.hide();
+    s.input_mode = InputMode::JournalOverlay;
+
+    let Some(idx) = selected else {
+        render_current(&mut s);
+        return;
+    };
+
+    // The destination band + label, and the current entry's id.
+    let (dest_band, label) = {
+        let row = &s.journal_move_picker.items[idx];
+        (row.band.clone(), row.label.clone())
+    };
+    let Some(entry_id) = s.journal.pages.get(s.journal.page_index).map(|p| p.id) else {
+        render_current(&mut s);
+        return;
+    };
+
+    // Map the destination band to (scope, div1, div2).
+    let (scope, d1, d2) = match &dest_band {
+        JournalBand::Work => ("work", crate::app::JOURNAL_WORK_DIV.0, crate::app::JOURNAL_WORK_DIV.1),
+        JournalBand::Scene(a, b) => ("scene", *a, *b),
+        // open_move_picker excludes the passage band from targets; unreachable
+        // in practice, but re-render-and-bail defensively rather than panic.
+        JournalBand::Passage { .. } => {
+            render_current(&mut s);
+            return;
+        }
+    };
+
+    let conn = match crate::db::queries::open_db_rw() {
+        Ok(c) => c,
+        Err(e) => {
+            crate::logging::log(&format!("JOURNAL: move failed (open_db_rw): {}", e));
+            render_current(&mut s);
+            return;
+        }
+    };
+    if let Err(e) = crate::db::journal::move_journal_page(&conn, entry_id, scope, d1, d2) {
+        crate::logging::log(&format!("JOURNAL: move failed: {}", e));
+        render_current(&mut s);
+        return;
+    }
+
+    // Follow the entry: switch to the destination band and land on it.
+    s.journal_band = dest_band;
+    s.journal.page_index = 0;
+    render_current(&mut s); // loads the destination band's pages
+    if let Some(pos) = s.journal.pages.iter().position(|p| p.id == entry_id) {
+        s.journal.page_index = pos;
+        render_current(&mut s);
+    }
+    crate::ui::toast::show_transient(&s.chapter_toast, &format!("Moved to {}", label), 2);
+    crate::logging::log("JOURNAL: moved page to new band");
 }
 
 pub(crate) fn delete_current(state: &Rc<RefCell<AppState>>) {
@@ -919,6 +1199,60 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rewrite_user_message_includes_context_and_all_three_parts() {
+        let msg = rewrite_user_message(
+            "Work: Bleak House by Charles Dickens\nThis Q&A is filed under the WHOLE WORK (not a single scene).",
+            "Who is Esther?",
+            "She narrates half the book.",
+            "Add her surname.",
+        );
+        // The band context is present and leads the message.
+        assert!(msg.contains("WHOLE WORK"));
+        assert!(msg.contains("Who is Esther?"));
+        assert!(msg.contains("She narrates half the book."));
+        assert!(msg.contains("Add her surname."));
+        // Order: context, then question, then answer, then instruction.
+        let c_pos = msg.find("WHOLE WORK").unwrap();
+        let q_pos = msg.find("Who is Esther?").unwrap();
+        let a_pos = msg.find("She narrates half the book.").unwrap();
+        let i_pos = msg.find("Add her surname.").unwrap();
+        assert!(c_pos < q_pos, "context should lead the message");
+        assert!(q_pos < a_pos, "question before answer");
+        assert!(i_pos > a_pos, "instruction should follow the current answer");
+    }
+
+    /// Build a `JournalPage` for band-classification tests.
+    fn page(div1: i64, div2: i64, start: Option<&str>, end: Option<&str>) -> crate::db::journal::JournalPage {
+        crate::db::journal::JournalPage {
+            id: 1,
+            div1,
+            div2,
+            question: "Q".into(),
+            answer: "A".into(),
+            claude_model: "m".into(),
+            timestamp: "t".into(),
+            start_citation: start.map(|s| s.to_string()),
+            end_citation: end.map(|s| s.to_string()),
+            source_text: None,
+        }
+    }
+
+    #[test]
+    fn band_for_page_classifies_work_scene_passage() {
+        // Work: div1 < 0 (the JOURNAL_WORK_DIV sentinel), no citations.
+        assert_eq!(band_for_page(&page(-1, -1, None, None)), JournalBand::Work);
+        // Scene: div1 >= 0, no citations.
+        assert_eq!(band_for_page(&page(1, 0, None, None)), JournalBand::Scene(1, 0));
+        // Passage: div1 >= 0 AND has start+end citations -> Passage band (NOT
+        // Scene). This is the bug fix: a passage page used to be mis-banded as
+        // Scene, so the picker's confirm couldn't find it by id.
+        assert_eq!(
+            band_for_page(&page(1, 0, Some("BH.1.0.18"), Some("BH.1.0.18"))),
+            JournalBand::Passage { div1: 1, div2: 0, start: "BH.1.0.18".into(), end: "BH.1.0.18".into() },
+        );
+    }
+
+    #[test]
     fn footer_left_scene_shows_abbrev_act_scene() {
         assert_eq!(footer_left_text("2H6", JournalBand::Scene(1, 4)), "2H6 1.4");
     }
@@ -926,5 +1260,27 @@ mod tests {
     #[test]
     fn footer_left_work_shows_whole_work() {
         assert_eq!(footer_left_text("2H6", JournalBand::Work), "2H6 \u{00b7} whole work");
+    }
+
+    #[test]
+    fn target_bands_exclude_current_and_lead_with_work() {
+        // Pure core: given the unique (div1,div2) scene keys in reading order and
+        // the current band, produce the ordered destination bands (work first,
+        // current band omitted). Labels are applied separately by the caller.
+        let scenes = vec![(1, 1), (1, 2), (3, 1)];
+
+        // Current = Scene(1,2): work row first, then 1.1 and 3.1 (1.2 omitted).
+        let bands = target_bands(&scenes, &JournalBand::Scene(1, 2));
+        assert_eq!(
+            bands,
+            vec![JournalBand::Work, JournalBand::Scene(1, 1), JournalBand::Scene(3, 1)]
+        );
+
+        // Current = Work: work row omitted, all scenes listed.
+        let bands = target_bands(&scenes, &JournalBand::Work);
+        assert_eq!(
+            bands,
+            vec![JournalBand::Scene(1, 1), JournalBand::Scene(1, 2), JournalBand::Scene(3, 1)]
+        );
     }
 }

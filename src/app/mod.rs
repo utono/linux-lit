@@ -28,6 +28,7 @@ use crate::db::models::{Work, WorkSummary};
 use crate::ui::library_picker::LibraryPicker;
 use crate::ui::bookmark_picker::BookmarkPicker;
 use crate::ui::gloss_picker::GlossPicker;
+use crate::ui::journal_move_picker::JournalMovePicker;
 use crate::ui::journal_picker::JournalQaPicker;
 use crate::ui::media_picker::MediaPicker;
 use crate::ui::search_bar::SearchBar;
@@ -100,6 +101,7 @@ pub enum InputMode {
     TranslationOverlay,
     GlossPicker,
     JournalPicker,
+    JournalMovePicker,
     EchoPicker,
     EchoTurnsPicker,
     EchoesOverlay,
@@ -133,7 +135,6 @@ pub enum GlossPromptMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JournalPromptMode {
     Ask,
-    Edit,
 }
 
 /// Which "band" of the journal is currently shown. The Work band holds
@@ -319,6 +320,7 @@ pub struct AppState {
     pub gloss_overlay: crate::ui::gloss_overlay::GlossOverlay,
     pub journal_overlay: crate::ui::journal_overlay::JournalOverlay,
     pub journal_picker: JournalQaPicker,
+    pub journal_move_picker: JournalMovePicker,
     pub journal_band: JournalBand,
     pub journal: crate::input::actions::journal::JournalState,
     /// Page-scan image surface for the main card (BCP1549 etc.). Hidden unless
@@ -1146,9 +1148,14 @@ pub fn build_window(
     journal_picker.attach(&journal_overlay.overlay);
     journal_picker.overlay.set_vexpand(true);
 
-    // Translation overlay wraps the journal picker overlay
+    // Journal move-to-band picker overlays the journal Q&A picker
+    let journal_move_picker = JournalMovePicker::new();
+    journal_move_picker.attach(&journal_picker.overlay);
+    journal_move_picker.overlay.set_vexpand(true);
+
+    // Translation overlay wraps the journal move picker overlay
     let translation_overlay = crate::ui::translation_overlay::TranslationOverlay::new();
-    translation_overlay.attach(&journal_picker.overlay);
+    translation_overlay.attach(&journal_move_picker.overlay);
     translation_overlay.overlay.set_vexpand(true);
 
     // Gloss picker wraps the translation overlay
@@ -1474,6 +1481,7 @@ pub fn build_window(
         gloss_overlay,
         journal_overlay,
         journal_picker,
+        journal_move_picker,
         journal_band: JournalBand::Scene(0, 0),
         journal: crate::input::actions::journal::JournalState {
             pages: Vec::new(),
@@ -1941,6 +1949,16 @@ pub fn build_window(
         s.journal_picker.search_entry().connect_changed(move |entry| {
             let filter = entry.text().to_string();
             state_for_journal_filter.borrow().journal_picker.populate_list(&filter);
+        });
+    }
+
+    // Connect journal move-picker search entry filter
+    let state_for_journal_move_filter = Rc::clone(&state);
+    {
+        let s = state.borrow();
+        s.journal_move_picker.search_entry().connect_changed(move |entry| {
+            let filter = entry.text().to_string();
+            state_for_journal_move_filter.borrow().journal_move_picker.populate_list(&filter);
         });
     }
 

@@ -83,7 +83,7 @@ const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 const BOTTOM_ROW: &[KeyDef] = &[
     bare("'", "\"", "reopen BCP echoes"),
     key("q", "Q", "next speaker", "Q: next dlg", &[]),
-    key("j", "J", "cursor \u{2193}", "J: next speaker", &[("C-j", "journal tog"), ("J", "jrnl from gloss"), ("C-j", "view jrnl")]),
+    key("j", "J", "cursor \u{2193}", "J: next speaker", &[("C-j", "journal tog"), ("J", "jrnl from gloss"), ("C-j", "view jrnl"), ("C-S-j", "move jrnl band")]),
     key("k", "K", "cursor \u{2191}", "K: prev speaker", &[]),
     bare("x", "X", "pg fwd"),
     bare("b", "B", ""),
@@ -357,8 +357,10 @@ The journal is a per-work notebook: each scene holds zero or more \u{201c}pages,
 where a page is one question you asked and the answer Claude gave. It opens on the \
 scene under the reading cursor; if that scene has no pages yet it shows an empty \
 card prompting you to press A to ask. Inside the overlay: A asks a new question \
-(Claude answers, drawing on its knowledge of the whole play), E edits the current \
-page's question, D deletes the current page, j/k scroll the answer, gg/G jump to \
+(Claude answers, drawing on its knowledge of the whole play), E opens an edit \
+card (Question + Answer pre-filled, plus a rewrite-instruction field): Ctrl+Enter \
+saves your hand-edits straight to lit.db, Alt+Enter sends the Q&A + instruction \
+to Claude and saves the revised answer. D deletes the current page, j/k scroll the answer, gg/G jump to \
 top/bottom, Ctrl+n / Ctrl+p flip pages within the band, Alt+n / Alt+p jump to the \
 next/prev scene that has pages, Alt+w switches to the Work band \u{2014} \
 whole-work pages about the play as a whole (Claude is sent only the title and \
@@ -396,6 +398,12 @@ journal overlay in the Passage band on the first page. Toasts \u{201c}No journal
 this passage\u{201d} when none exist. \
 -> journal::view_journal_from_gloss \
 \u{2014} src/input/actions/journal.rs",
+        "move jrnl band" => "While the journal overlay is open (Ctrl+Shift+J): move the \
+current Q&A page to a different band. Opens a picker listing every scene/chapter in \
+the work plus a \u{201c}whole work\u{201d} row (the current band omitted); Enter re-targets \
+the entry\u{2019}s scope + (div1,div2) in lit.db and follows it to its new band. Passage \
+pages can\u{2019}t be moved. \
+-> journal::open_move_picker / confirm_move_picker \u{2014} src/input/actions/journal.rs",
         "view gloss" => "While the journal overlay is open on a passage page (Ctrl+g): view \
 the gloss for the passage cited by the current journal page. Looks up glosses by the \
 page\u{2019}s start_citation; if found, closes the journal overlay and opens the gloss \

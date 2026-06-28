@@ -219,6 +219,27 @@ pub fn update_journal_page(
     Ok(())
 }
 
+/// Re-target an existing journal entry to a different band by updating its
+/// `scope` + `(div1, div2)` in place. Used by the journal overlay's
+/// "move to band" action (Ctrl+Shift+J). Does NOT touch question/answer.
+/// For the whole-work band pass `scope = "work"` and `div1 = div2 = -1`;
+/// for a scene/chapter pass `scope = "scene"` and the scene's `(div1, div2)`.
+pub fn move_journal_page(
+    conn: &Connection,
+    id: i64,
+    scope: &str,
+    div1: i64,
+    div2: i64,
+) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "UPDATE journal_entries
+         SET scope = ?1, div1 = ?2, div2 = ?3
+         WHERE id = ?4",
+        rusqlite::params![scope, div1, div2, id],
+    )?;
+    Ok(())
+}
+
 pub fn delete_journal_page(conn: &Connection, id: i64) -> Result<(), rusqlite::Error> {
     conn.execute("DELETE FROM journal_entries WHERE id = ?1", [id])?;
     Ok(())
@@ -366,5 +387,27 @@ mod tests {
                 .exists([col]).unwrap();
             assert!(has, "column {col} should exist after ensure_journal_table");
         }
+    }
+
+    #[test]
+    fn move_page_changes_band_scene_to_work_and_back() {
+        let conn = mem();
+        let id = save_journal_page(&conn, "Ham", 1, 2, "Q?", "A.", "m", "scene").unwrap();
+
+        // Move scene -> work.
+        move_journal_page(&conn, id, "work", -1, -1).unwrap();
+        assert!(find_journal_pages(&conn, "Ham", 1, 2).unwrap().is_empty());
+        let work = find_work_pages(&conn, "Ham").unwrap();
+        assert_eq!(work.len(), 1);
+        assert_eq!(work[0].id, id);
+        assert_eq!(work[0].div1, -1);
+        assert_eq!(work[0].div2, -1);
+
+        // Move work -> a different scene.
+        move_journal_page(&conn, id, "scene", 3, 1).unwrap();
+        assert!(find_work_pages(&conn, "Ham").unwrap().is_empty());
+        let scene = find_journal_pages(&conn, "Ham", 3, 1).unwrap();
+        assert_eq!(scene.len(), 1);
+        assert_eq!(scene[0].id, id);
     }
 }

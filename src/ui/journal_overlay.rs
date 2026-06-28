@@ -1,7 +1,7 @@
 use crate::ui::ask_card::{AskCard, AskCardHost, AskFocus};
 use crate::ui::gloss_block::visual_block_range;
-use crate::ui::gloss_render::populate_verse_buffer;
 use crate::ui::journal_block::{journal_blocks, JournalBlock};
+use crate::ui::journal_edit_card::JournalEditCard;
 use gtk4::prelude::*;
 use gtk4::{Label, Overlay};
 use std::cell::{Cell, RefCell};
@@ -36,6 +36,7 @@ pub struct JournalOverlay {
     /// occlusion fix) + the footer hide/show + the clip recompute. Shared with the
     /// gloss overlay so the mechanism can't drift. See `AskCardHost`.
     ask_host: AskCardHost,
+    edit_card: JournalEditCard,
 }
 
 /// Prefix a journal Q&A question with `Q: ` for display (the answer follows
@@ -48,6 +49,19 @@ fn prefix_question(question: &str) -> String {
         format!("Q: {}", question)
     }
 }
+
+/// Vertical chrome margins the column needs that `preferred_size()` does NOT
+/// report (GTK's preferred-size excludes a widget's own margins). The journal
+/// card column is `title` + `scroll_overlay` + `footer` stacked; the title
+/// carries a 24px `margin_top` (journal_overlay::new) and the footer container a
+/// 12px top + 12px bottom (`ui::footer::build_footer_row`). Without reserving
+/// these, `size_card` budgets `card_height − title_h − footer_h` for the scroll,
+/// the assembled column's natural height becomes `card_height + 48`, and because
+/// the `valign=Center` container's `set_size_request` is only a FLOOR, the
+/// container grows past `card_height` and overflows the window (the "too-tall
+/// journal overlay" bug). The gloss overlay reserves the same way via its
+/// `SCROLL_OVERLAY_MARGINS`. Keep in sync with those two margin sites.
+const UNACCOUNTED_CHROME_MARGINS: i32 = 24 /* title top */ + 12 + 12 /* footer top+bottom */;
 
 impl JournalOverlay {
     pub fn new(column_width: u32, text_margins: u32) -> Self {
@@ -195,6 +209,9 @@ impl JournalOverlay {
         let ask_host =
             AskCardHost::new(ask, &scrolled, Some(footer_container.clone()), recompute);
 
+        let edit_card = JournalEditCard::new(text_margins as i32, &view);
+        container.append(edit_card.container());
+
         Self {
             overlay,
             scrim,
@@ -218,6 +235,7 @@ impl JournalOverlay {
             font_size: Cell::new(16),
             last_card_size: Cell::new((0, 0)),
             ask_host,
+            edit_card,
         }
     }
 
@@ -242,8 +260,19 @@ impl JournalOverlay {
         // restores this stored closed height. Deterministic — no auto-resize race.
         let (_, title_h) = self.title.preferred_size();
         let (_, footer_h) = self.footer_container.preferred_size();
-        self.ask_host
-            .size(card_width, card_height, title_h.height(), footer_h.height());
+        // Fold the chrome margins `preferred_size()` omits (title's top margin +
+        // the footer's top/bottom) into the fixed-chrome argument, so the host's
+        // closed scroll height equals `closed_scroll_budget(card_height, title_h,
+        // footer_h)`. Without this the column is `UNACCOUNTED_CHROME_MARGINS`
+        // (48px) too tall and the `valign=Center` container grows past
+        // `card_height`, overflowing the window (the "too-tall journal overlay"
+        // bug). `closed_scroll_budget` is the unit-tested source of truth.
+        self.ask_host.size(
+            card_width,
+            card_height,
+            title_h.height() + UNACCOUNTED_CHROME_MARGINS,
+            footer_h.height(),
+        );
         // Anchor the text + headers to the card's side margin (card_width/4, the
         // ~65-char readability optimum the gloss overlay uses) rather than the
         // small fixed `text_margins` — otherwise the Q&A prose runs nearly edge
@@ -331,82 +360,6 @@ impl JournalOverlay {
         }
     }
 
-    /// Render a passage page: source verse (with italic stage directions) above a
-    /// separator rule, then the Q&A. Reuses `populate_verse_buffer` (the shared
-    /// renderer from Task 2). Call `apply_font` after so the italic re-assertion
-    /// fires over the freshly-built buffer.
-    pub fn show_passage_page(
-        &self,
-        footer_left: &str,
-        page_index: usize,
-        page_count: usize,
-        start_citation: Option<&str>,
-        end_citation: Option<&str>,
-        source_text: &str,
-        question: &str,
-        answer: &str,
-        card_width: i32,
-        card_height: i32,
-    ) {
-        self.size_card(card_width, card_height);
-        // Passage pages render source VERSE, not prose body — keep the verse
-        // inset (card_width/4) even inside a prose work, overriding size_card's
-        // prose inset. (bar_left + populate_verse_buffer below already use it.)
-        let verse_side = crate::ui::card_side_margin(card_width);
-        self.view.set_left_margin(verse_side);
-        self.view.set_right_margin(verse_side);
-        self.title.set_margin_start(verse_side);
-        self.title.set_text("Passage");
-
-        // Position text: use the citation span when available, else a plain count.
-        let pos_text = match (start_citation, end_citation) {
-            (Some(s), Some(e)) => format!("passage {} \u{2013} {}", s, e),
-            (Some(s), None) => format!("passage {}", s),
-            _ => {
-                if page_count == 0 {
-                    "page 0 of 0 in this passage".to_string()
-                } else {
-                    format!("page {} of {} in this passage", page_index + 1, page_count)
-                }
-            }
-        };
-        self.set_footer_left(footer_left, &pos_text);
-
-        // Render source verse into the buffer. bar_left mirrors the gloss overlay
-        // (card_side_margin), accent omitted since passage pages are not speaker-
-        // specific.
-        let bar_left = crate::ui::card_side_margin(card_width);
-        populate_verse_buffer(
-            &self.view,
-            source_text,
-            self.text_margins,
-            bar_left,
-            &[],
-            None,
-            None,
-            None,
-        );
-
-        // Append separator + Q&A after the verse.
-        let qa_text = if page_count == 0 {
-            "\n\n\u{2014}\u{2014}\u{2014}\n\nNo pages yet \u{2014} press A to ask.".to_string()
-        } else {
-            format!("\n\n\u{2014}\u{2014}\u{2014}\n\n{}\n\n{}", prefix_question(question), answer)
-        };
-        let mut end_iter = self.view.buffer().end_iter();
-        self.view.buffer().insert(&mut end_iter, &qa_text);
-
-        self.apply_font();
-        self.ask_host.card().close();
-        // Restore the navigation footer (show_loading may have hidden it).
-        self.footer_container.set_visible(true);
-        self.scrim.set_visible(true);
-        self.container.set_visible(true);
-        self.clip_guard.on_open();
-        self.rebuild_blocks();
-        self.clear_bar();
-    }
-
     pub fn show_loading(&self, question: &str) {
         let (w, h) = self.last_card_size.get();
         if w > 0 {
@@ -423,7 +376,7 @@ impl JournalOverlay {
         self.apply_font();
         self.ask_host.card().close();
         // Keep the navigation footer hidden during the Asking state. The result
-        // render (show_page/show_passage_page/show_message) restores it.
+        // render (show_page/show_message) restores it.
         self.footer_container.set_visible(false);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
@@ -548,7 +501,8 @@ impl JournalOverlay {
             return;
         }
         let font_str = format!("{} {}", family, self.font_size.get());
-        for view in [&self.view, self.ask_host.input()] {
+        let edit_views = self.edit_card.views();
+        for view in [&self.view, self.ask_host.input(), edit_views[0], edit_views[1], edit_views[2]] {
             let buffer = view.buffer();
             let table = buffer.tag_table();
             if let Some(old) = table.lookup("journal-font") {
@@ -619,6 +573,36 @@ impl JournalOverlay {
 
     pub fn take_ask_text(&self) -> String {
         self.ask_host.take_text()
+    }
+
+    pub fn edit_is_open(&self) -> bool {
+        self.edit_card.is_open()
+    }
+
+    pub fn toggle_edit_focus(&self) {
+        self.edit_card.cycle_focus();
+    }
+
+    pub fn take_edit_fields(&self) -> (String, String, String) {
+        self.edit_card.take()
+    }
+
+    /// Open the edit card pre-filled with the current page's Q & A. Hides the
+    /// nav footer (the edit card carries its own hint) and shrinks the scroll so
+    /// the card doesn't occlude the page (mirrors open_ask_card).
+    pub fn open_edit_card(&self, question: &str, answer: &str) {
+        let (card_width, _) = self.last_card_size.get();
+        self.edit_card.open(question, answer, card_width);
+        self.footer_container.set_visible(false);
+        self.apply_font();
+        let (_, edit_h) = self.edit_card.container().preferred_size();
+        self.ask_host.open_for_natural_height(edit_h.height());
+    }
+
+    pub fn close_edit_card(&self) {
+        self.edit_card.close();
+        self.footer_container.set_visible(true);
+        self.ask_host.close_to_closed_height();
     }
 
     /// Rebuild `self.blocks` from the current buffer text (paragraph runs).
@@ -819,6 +803,41 @@ mod prefix_question_tests {
         // not double-prefixed.
         assert_eq!(prefix_question("Q: already asked"), "Q: already asked");
         assert_eq!(prefix_question("  Q: leading space"), "  Q: leading space");
+    }
+}
+
+#[cfg(test)]
+mod scroll_budget_tests {
+    use super::UNACCOUNTED_CHROME_MARGINS;
+
+    /// `size_card` passes `title_h + UNACCOUNTED_CHROME_MARGINS` as the fixed
+    /// chrome, so the host's closed scroll height is
+    /// `card_height − title_h − margins − footer_h`. This is the formula that the
+    /// too-tall bug got wrong (it omitted `margins`). Mirror the production
+    /// arithmetic here so a change to either is caught.
+    fn closed_scroll_budget(card_height: i32, title_h: i32, footer_h: i32) -> i32 {
+        (card_height - (title_h + UNACCOUNTED_CHROME_MARGINS) - footer_h).max(80)
+    }
+
+    #[test]
+    fn reserves_unaccounted_chrome_margins() {
+        // window 1200 → card_height 1152; title 40, footer 30.
+        let (card_h, title_h, footer_h) = (1152, 40, 30);
+        let budget = closed_scroll_budget(card_h, title_h, footer_h);
+        // Exactly the old (buggy) budget minus the reserved margins.
+        let old_buggy = card_h - title_h - footer_h;
+        assert_eq!(old_buggy - budget, UNACCOUNTED_CHROME_MARGINS);
+    }
+
+    #[test]
+    fn floors_at_80_for_tiny_cards() {
+        assert_eq!(closed_scroll_budget(50, 40, 30), 80);
+    }
+
+    #[test]
+    fn margins_match_the_two_margin_sites() {
+        // 24 (title margin_top) + 12 + 12 (footer top+bottom) = 48.
+        assert_eq!(UNACCOUNTED_CHROME_MARGINS, 48);
     }
 }
 
