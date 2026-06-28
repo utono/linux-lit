@@ -16,14 +16,6 @@ git (uncommitted work, why a decision was made, what to do next); convert
 relative dates to absolute (US Central). Update it before a likely
 context break (reboot, compaction, end of a work block).
 
-**`ac` is a LIVE WORKING FILE — do NOT commit it.** It is the scratch
-session-continuity log, left uncommitted in the working tree on purpose (its
-whole job is to describe in-progress/uncommitted state, so committing it is
-circular). This is the deliberate exception to the global rule about committing
-`CLAUDE-*.md` files — that rule applies to the OTHER memory-bank files
-(`CLAUDE-patterns.md`, `CLAUDE-decisions.md`, etc.), not `ac`. When committing or
-finishing a branch, leave `CLAUDE-activeContext.md` out of the commit.
-
 ## Debug Log
 
 The app writes debug logs to:
