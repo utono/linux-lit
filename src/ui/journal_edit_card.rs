@@ -140,10 +140,6 @@ impl JournalEditCard {
         self.container.is_visible()
     }
 
-    pub fn focused_field(&self) -> EditField {
-        self.focus.get()
-    }
-
     /// Question -> Answer -> Instruction -> Question.
     pub fn cycle_focus(&self) {
         if !self.is_open() {

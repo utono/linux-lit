@@ -2,7 +2,7 @@ use crate::ui::ask_card::{AskCard, AskCardHost, AskFocus};
 use crate::ui::gloss_block::visual_block_range;
 use crate::ui::gloss_render::populate_verse_buffer;
 use crate::ui::journal_block::{journal_blocks, JournalBlock};
-use crate::ui::journal_edit_card::{EditField, JournalEditCard};
+use crate::ui::journal_edit_card::JournalEditCard;
 use gtk4::prelude::*;
 use gtk4::{Label, Overlay};
 use std::cell::{Cell, RefCell};
@@ -630,10 +630,6 @@ impl JournalOverlay {
 
     pub fn edit_is_open(&self) -> bool {
         self.edit_card.is_open()
-    }
-
-    pub fn edit_focus(&self) -> EditField {
-        self.edit_card.focused_field()
     }
 
     pub fn toggle_edit_focus(&self) {
