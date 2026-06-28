@@ -6,8 +6,7 @@ use gtk4::prelude::*;
 use gtk4::{Align, Overlay};
 
 /// Which shared clip-math fn a guard drives: TextView surfaces mask the partial
-/// wrapped row; Box-child surfaces (the translation column stack) only cover
-/// trailing slack.
+/// wrapped row; Box-child surfaces only cover trailing slack.
 #[derive(Clone)]
 enum ClipKind {
     TextView(gtk4::TextView),
@@ -47,9 +46,12 @@ impl BottomClipGuard {
         guard
     }
 
-    /// Like `attach`, but for a scrolled window whose child is a widget BOX (no
-    /// wrapped partial row — covers trailing slack only). Drives
-    /// `recompute_overlay_bottom_clip_box`.
+    /// Like `attach`, but for a scrolled window whose child is a widget BOX of
+    /// whole-widget rows (no wrapped partial row — covers trailing slack only).
+    /// Drives `recompute_overlay_bottom_clip_box`. Kept as a general API for a
+    /// future Box-only surface (the translation overlay, its former user, now
+    /// paginates instead of scrolling — no clip needed).
+    #[allow(dead_code)]
     pub(crate) fn attach_box(
         scroll_overlay: &Overlay,
         scrolled: &gtk4::ScrolledWindow,

@@ -287,11 +287,27 @@ fn show_translations(state: &mut AppState) {
             // the paged refresh_bottom_clip is page_top-relative and unreliable
             // here, so use the same scroll-aware clip the j/k path uses.
             crate::input::scroll::scrolloff_bottom_clip_widgets(&tv, &sw, &bc, val);
+            // 100ms backstop: reapply_font changed line heights, so the FIRST
+            // scroll-aware clip above can read pre-relayout metrics. Re-run it once
+            // more against the settled layout at the SAME scroll value (mirrors
+            // schedule_bottom_clip_update's idle+100ms pair, but scroll-aware — the
+            // paged path is wrong here, see below).
+            let (tv2, sw2, bc2) = (tv.clone(), sw.clone(), bc.clone());
+            gtk4::glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
+                crate::input::scroll::scrolloff_bottom_clip_widgets(&tv2, &sw2, &bc2, val);
+            });
         }
         vbox.set_opacity(1.0);
     });
 
-    crate::input::navigation::refresh_bottom_clip(state);
+    // NOTE: deliberately NOT calling refresh_bottom_clip(state) here. That is the
+    // PAGED clip (page_top-relative), which assumes the scroll is snapped to
+    // page_top. The translation reveal scrolls to a cursor-centered value that is
+    // NOT page_top's top, so the paged clip computed a huge scroll_offset
+    // (scroll_val - expected_y) and set the bottom clip to >2× the viewport height
+    // — blanking the whole card until the first j/k. The scroll-aware
+    // scrolloff_bottom_clip_widgets in the idle (and its 100ms backstop) is the
+    // correct clip for the continuously-scrolled translation view.
 
     let new_buf_lines = state.buffer.line_count() as usize;
     let lm_len_after = state
@@ -568,8 +584,9 @@ pub fn sync_translation_overlay(
     }
     if let Some(w) = cursor_w {
         let s = state.borrow();
-        s.translation_overlay.highlight_work_line(w);
-        s.translation_overlay.scroll_to_highlight(w);
+        // Paginated overlay: turn to the page containing the cursor's block and
+        // highlight it (synchronous — no scroll-settle timing).
+        s.translation_overlay.show_for_cursor(w);
     }
 }
 
@@ -610,7 +627,9 @@ pub fn rebuild_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppSta
     let text_fg = s.theme.text_fg.clone();
     let dim_fg = s.theme.dim_fg.clone();
     let body_font_size = s.config.font_size as i32;
+    let font_family = s.config.font_family.clone();
     let cursor_line_bg = s.theme.cursor_line_bg.clone();
+    let line_spacing = s.config.line_spacing as i32;
     let label = synopsis_label(&s, div1, div2);
 
     // Cursor's work index, to pick the block to anchor on.
@@ -624,12 +643,11 @@ pub fn rebuild_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppSta
         &text_fg,
         &dim_fg,
         body_font_size,
+        &font_family,
         &cursor_line_bg,
+        line_spacing,
+        cursor_idx,
     );
-    if let Some(idx) = cursor_idx {
-        s.translation_overlay.highlight_work_line(idx);
-        s.translation_overlay.scroll_to_highlight(idx);
-    }
     drop(s);
 
     true

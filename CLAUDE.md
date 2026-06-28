@@ -2,6 +2,20 @@
 
 GTK4 Rust literature reader with e-reader pagination, MPV audio sync, and vim-style navigation.
 
+## Active Context (read first)
+
+**At the start of every session, read `CLAUDE-activeContext.md` if it exists**
+(in this project root). It records the current branch, in-progress/uncommitted
+work, recent decisions, and the ordered next actions — none of which are
+recoverable from the code or git history alone. Resume from its "Next Actions".
+
+**`ac` is the alias for `CLAUDE-activeContext.md`.** When the user says "update
+ac", "read ac", "check ac", etc., it means `CLAUDE-activeContext.md`. Keep it
+current as work progresses: record only what is NOT recoverable from the code or
+git (uncommitted work, why a decision was made, what to do next); convert
+relative dates to absolute (US Central). Update it before a likely
+context break (reboot, compaction, end of a work block).
+
 ## Debug Log
 
 The app writes debug logs to:
@@ -523,3 +537,17 @@ Single-file (`transcript-tracer.js`, 20 KB) library for syncing audio/video with
 3. Read the named file end-to-end before grepping — these are small enough.
 4. Translate the **algorithm or schema**, never the code. linux-lit is Rust + GTK4 + SQLite + MPV — not JS, not curses, not WebView.
 5. If the reference disagrees with linux-lit's current approach, that's a design question — don't silently change linux-lit to match. Surface the tradeoff.
+
+## Memory Bank System
+
+This project uses a structured memory bank system. Always check these context
+files before starting work, and keep them updated as the project evolves:
+
+- **CLAUDE-activeContext.md** — current session state, goals, and progress
+- **CLAUDE-patterns.md** — established code patterns and conventions
+- **CLAUDE-decisions.md** — architecture decisions and rationale
+- **CLAUDE-troubleshooting.md** — common issues and proven solutions
+- **CLAUDE-config-variables.md** — configuration variables reference
+
+Always read **CLAUDE-activeContext.md** first to maintain session continuity.
+When you change core context, update the relevant memory bank file.

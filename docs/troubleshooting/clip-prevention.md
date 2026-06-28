@@ -11,6 +11,11 @@ clip — a different algorithm, see "Not the same as the paged clip" below.)
 > "The failure checklist" at the end — it is ordered by how often each cause is
 > the culprit.** The single most common cause is a surface that recomputes the
 > clip only at named moments and is **missing the `value_changed` catch-all**.
+>
+> **First, though, check WHICH row is cut.** If the cut row is the *highlighted*
+> cursor line (mid-page, room below it), it is NOT a viewport clip at all — it is
+> the highlight `paragraph_background` band lacking `pixels_below_lines`. See
+> "A different clip: the HIGHLIGHT band cutting descenders" and checklist #9.
 
 ## The two edges, two mechanisms
 
@@ -64,10 +69,34 @@ ONE implementation (it used to be copy-pasted and drifted):
   `display_rows`, for scroll-mode (`j`/`k`) which clips on whole-line
   `line_yrange` geometry, not wrapped rows.
 - **`recompute_overlay_bottom_clip_box(clip, scrolled)`** — the variant for an
-  overlay whose scrolled child is a widget **Box**, not a TextView (the
-  translation overlay's column stack). A Box never splits a child across the
-  edge, so there is no partial wrapped row — it only covers trailing slack when
-  the content ends inside the viewport.
+  overlay whose scrolled child is a widget **Box** of WHOLE-WIDGET rows (no inner
+  TextView that wraps). A Box never splits such a child across the edge, so there
+  is no partial wrapped row — it only covers trailing slack when the content ends
+  inside the viewport. **Caveat — a Box of TextViews still wraps.** If the Box's
+  children are wrapping TextViews, each renders a partial wrapped row at the
+  viewport edge, and this box-slack guard (which clips 0 on overflow) leaves that
+  row cut. **The lesson learned the hard way:** the 2-col translation overlay was
+  exactly this (paired original/translation TextViews stacked in a scrolled vbox),
+  and a per-row mask across two independently-wrapping columns proved fragile
+  (coordinate-mapping bugs, an un-snapped top row, the highlight off-screen on
+  open). The fix was to **stop scrolling and paginate** — see "Pagination instead
+  of a mask" below. A Box of wrapping TextViews is a sign you may want pagination,
+  not a clip.
+
+## Pagination instead of a mask (the translation overlay)
+
+When a surface stacks **wrapping TextViews** and you find yourself fighting the
+bottom clip across them, the robust answer is the main card's strategy:
+**paginate** — render only the whole units (here, whole speaker blocks) that fit,
+so the last unit ends above the bottom edge and **no partial row is ever
+rendered**. No mask, no scroll, no `compute_point` coordinate math, no settle
+race. The 2-col translation overlay (`src/ui/translation_overlay.rs`) does this:
+`paginate(block_heights, page_height)` (pure, unit-tested) packs whole blocks per
+page; block heights are measured with a standalone `pango::Layout` (synchronous,
+no GTK allocation); the cursor's page is rendered around the reader cursor, so the
+highlight paints immediately. The bottom-clip machinery it used to need
+(`attach_custom`/`Custom` guard, a per-row translation mask) was deleted. See
+`docs/superpowers/specs/2026-06-27-paginated-translation-overlay-design.md`.
 
 **Per-row geometry is mandatory for prose, never a uniform row-step.** The
 synopsis/gloss/journal buffers join paragraphs into single multi-row buffer
@@ -76,6 +105,40 @@ lines with per-tag `pixels_above_lines`/`scale`, so rows are NOT uniform.
 paragraph-tall "row" and clips the wrong amount; a uniform `step` estimate cuts
 the last line's descenders. The journal overlay's original descender bug was
 exactly this — it used a `line_yrange` row-step before the unification.
+
+## A different clip: the HIGHLIGHT band cutting descenders (not the viewport)
+
+Not every "descenders cut at the bottom" is a viewport/page-edge clip. The cursor
+line is highlighted by a `cursor-line` `TextTag` with `paragraph_background`. That
+band paints the paragraph's logical-line rectangle — which, **with no per-line
+spacing, ends flush at the line's logical bottom and slices the glyph
+descenders** of the highlighted line (`y`, `g`, `p`, a trailing comma). This is
+NOT the bottom-clip box, NOT pagination, and NOT a viewport-edge partial row — it
+happens on ANY highlighted line, mid-page, with plenty of room below it.
+
+- **Tell:** the pink/tinted highlight band's bottom edge cuts through the
+  descenders of the highlighted line, while the lines above/below are fine and the
+  page is nowhere near full. A page-edge clip instead cuts the LAST visible row;
+  this cuts whatever row is *highlighted*.
+- **Cause:** the surface's `TextView` set no `pixels_below_lines` (and/or
+  `pixels_above_lines`). GTK's `paragraph_background` covers only the logical line
+  box; the inter-line spacing is what gives the band room below the descenders.
+  The MAIN reading card never shows this because it sets
+  `pixels_above_lines`/`pixels_below_lines = config.line_spacing` (default 5px) on
+  `text_view`/`right_view` (`src/app/mod.rs`).
+- **Fix:** set `set_pixels_above_lines(line_spacing)` +
+  `set_pixels_below_lines(line_spacing)` on the overlay's TextViews, matching the
+  main card. Thread `config.line_spacing` to the surface rather than hardcoding.
+  **If the surface PAGINATES from measured block heights** (the translation
+  overlay), also add the new spacing to the height measurement
+  (`2 * line_spacing * num_paragraphs` per block — GTK adds the spacing above AND
+  below every paragraph) so pages don't over-pack now that lines are taller.
+
+The 2-col translation overlay (`src/ui/translation_overlay.rs`) hit exactly this:
+its paginated columns set no line spacing, so the cursor line's descenders were
+sliced in BOTH columns. Fixed by threading `line_spacing` through `RenderCtx` →
+`make_column`/the interlude view + correcting `block_height`. See failure
+checklist #9.
 
 ## When the clip MUST be recomputed (the three paths)
 
@@ -272,8 +335,24 @@ Three clip strategies coexist deliberately; merging them changes behavior:
   strategies — it is the paged clip delegating its one sub-paragraph case to the
   per-row math, the same way scroll-mode already does. See the over-tall-paragraph
   entry in the failure checklist.
-- **Box-slack guard** (`recompute_overlay_bottom_clip_box`) — the translation
-  column stack. No wrapped partial row; covers only trailing slack.
+  **The paged clip is page_top-relative — NEVER call it on a cursor-scrolled
+  view.** `update_bottom_clip` assumes the scroll is snapped to `page_top` and adds
+  `scroll_offset = scroll_val − expected_y(page_top)` to the clip height (correct
+  for the small offset of translation line-nav). When the view is scrolled to a
+  cursor-CENTERED position far from `page_top`'s top — the inline-translation
+  (`Ctrl+Alt+i`) reveal sets `adj.value` to a ¼-down-the-cursor target while
+  `page_top` stays put — that offset is thousands of px, the clip balloons past the
+  viewport height, and the card-colored clip covers EVERYTHING: the card goes
+  BLANK until the first scroll. Continuously-scrolled views (the inline-translation
+  interlinear) must use the scroll-aware `scrolloff_bottom_clip_widgets` (the
+  `j`/`k` path), NOT `refresh_bottom_clip`/`update_bottom_clip`. See
+  failure-checklist #7.
+- **Box-slack guard** (`recompute_overlay_bottom_clip_box`) — for a Box of
+  whole-widget rows; covers only trailing slack. NOT for a Box of wrapping
+  TextViews (those render a partial row at the edge it can't mask). The
+  translation overlay was that case and now **paginates** instead of scrolling —
+  no clip at all (see "Pagination instead of a mask"). The box-slack guard remains
+  for a future Box-of-whole-widgets surface.
 
 Likewise the top-snap algorithms differ (`snap_value_to_line` per-`display_rows`
 row vs scroll-mode's `snap_value_to_line_top` via `line_at_y` vs uniform
@@ -330,6 +409,45 @@ When a half line clips at the bottom edge of a scrolled surface:
    separates "clip is 0" from "clip is mis-sized." Exposed by the prose
    NYTimes-column narrowing (commit on `feat/prose-nyt-column`), but it was a
    latent edge case for any single paragraph taller than the viewport.
+7. **The whole card goes BLANK after a reveal/toggle that scrolls to a
+   cursor-centered position (paged clip on a cursor-scrolled view).** Tell: the
+   surface is blank (card background only) right after the action and the first
+   `j`/`k`/scroll fixes it; the log shows a `BOTTOM_CLIP` with `clip` SEVERAL TIMES
+   `widget_h` and a large `offset=` (e.g. `clip=2679 widget_h=1112 offset=2526`).
+   Cause: the PAGED `update_bottom_clip`/`refresh_bottom_clip` was called while the
+   scroll value is a cursor-centered target NOT equal to `page_top`'s top, so its
+   `scroll_offset = scroll_val − expected_y(page_top)` is huge and inflates the
+   clip past the viewport, covering everything. This is NOT path-(a) unsettled
+   geometry (#4) — the geometry is settled; the clip STRATEGY is wrong for the
+   view. Fix: on a continuously-scrolled view use the scroll-aware
+   `scrolloff_bottom_clip_widgets` (+ a 100ms scroll-aware backstop for the
+   post-`reapply_font` relayout) and do NOT call `refresh_bottom_clip`. The inline
+   translation (`Ctrl+Alt+i` → `ToggleTranslations`) `show_translations` reveal hit
+   exactly this — its idle already used the scroll-aware clip but a trailing
+   `refresh_bottom_clip(state)` (paged) clobbered it. See "The paged clip is
+   page_top-relative" above.
+8. **A Box-child overlay whose children are wrapping TextViews cuts the bottom
+   row.** Tell: the surface scrolls a `gtk4::Box` (so it attached the box-slack
+   guard), the Box stacks TextViews (e.g. paired translation columns), and the
+   bottom row is sliced through its glyphs once content overflows. Cause: the
+   box-slack guard (`recompute_overlay_bottom_clip_box`) clips 0 on overflow
+   because it assumes whole-widget rows — but a TextView wraps and renders a
+   partial row at the edge. A per-row mask across multiple independently-wrapping
+   TextViews was tried for the translation overlay and proved fragile
+   (coordinate-mapping bugs, an un-snapped top row, the highlight off-screen on
+   open). **The durable fix is to paginate, not mask** — render only the whole
+   units that fit so no partial row exists (see "Pagination instead of a mask").
+   The translation overlay now does this.
+9. **The HIGHLIGHT band cuts the highlighted line's descenders (not a viewport
+   clip).** Tell: the cursor-line `paragraph_background` band's bottom edge
+   slices the descenders of the *highlighted* line, mid-page, with room to spare —
+   not the page's last row. Cause: the surface's TextView set no
+   `pixels_below_lines`, so the band ends flush at the line's logical bottom.
+   Fix: set `pixels_above_lines`/`pixels_below_lines = config.line_spacing` on the
+   TextViews (matching the main card); if the surface paginates from measured
+   heights, add the spacing to the measurement too. See "A different clip: the
+   HIGHLIGHT band cutting descenders" above. This is NOT a bottom-clip-box bug —
+   no clip path (a/b/c) is involved.
 
 ## Verifying
 
