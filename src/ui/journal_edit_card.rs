@@ -19,7 +19,23 @@ pub struct JournalEditCard {
     answer: TextView,
     instruction: TextView,
     focus: Cell<EditField>,
+    /// Per-field "already focused since this open" flags ([Question, Answer,
+    /// Instruction]). The FIRST time Tab lands on a field its cursor is moved to
+    /// the start; later Tabs back to it leave the cursor where the user left it.
+    /// Reset to all-false on `open`.
+    visited: Cell<[bool; 3]>,
     return_focus: gtk4::Widget,
+}
+
+impl EditField {
+    /// Index into the `visited` array.
+    fn index(self) -> usize {
+        match self {
+            EditField::Question => 0,
+            EditField::Answer => 1,
+            EditField::Instruction => 2,
+        }
+    }
 }
 
 /// Build one labeled field: a header label + a scrolled, editable TextView.
@@ -98,6 +114,7 @@ impl JournalEditCard {
             answer,
             instruction,
             focus: Cell::new(EditField::Question),
+            visited: Cell::new([false; 3]),
             return_focus: return_focus.clone().upcast(),
         }
     }
@@ -123,6 +140,9 @@ impl JournalEditCard {
             self.container.set_margin_end(margin);
         }
         self.container.set_visible(true);
+        // Fresh open: no field has been focused yet, so the first Tab landing on
+        // each field will move its cursor to the start.
+        self.visited.set([false; 3]);
         self.set_focus(EditField::Question);
     }
 
@@ -163,6 +183,16 @@ impl JournalEditCard {
             EditField::Instruction => &self.instruction,
         };
         view.grab_focus();
+        // On the FIRST focus of this field since `open`, move the cursor to the
+        // start so the user reads/edits from the beginning of the pre-filled
+        // text. On later Tabs back to the field, leave the cursor where it was.
+        let mut visited = self.visited.get();
+        if !visited[field.index()] {
+            let buffer = view.buffer();
+            buffer.place_cursor(&buffer.start_iter());
+            visited[field.index()] = true;
+            self.visited.set(visited);
+        }
     }
 
     /// Read (question, answer, instruction); does NOT clear (the caller decides
