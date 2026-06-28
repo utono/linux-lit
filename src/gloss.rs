@@ -168,11 +168,18 @@ Rules:
     }
 });
 
-pub static JOURNAL_QA_PROMPT: LazyLock<String> = LazyLock::new(|| {
+/// Assemble the journal Q&A system prompt for a work of `work_type`. Reads the
+/// active DB template (`journal.qa`) or the compiled FALLBACK, then substitutes
+/// the genre vocabulary `{genre}` / `{unit}` / `{units}` from `genre_unit`. Was a
+/// `LazyLock<String>` before genre-awareness; now resolved per request because
+/// the substitution depends on the work. (DB prompt changes still need a restart
+/// — `active_prompt` is read each call, but `run_claude_request` is invoked once
+/// per ask, so per-call resolution is cheap.)
+pub fn journal_qa_prompt(work_type: &str) -> String {
     const FALLBACK: &str = "\
-You are a literary interlocutor in conversation with a reader who is working through a play, one scene at a time. The reader has asked a question while reading a specific scene. The verbatim text of that scene is provided.
+You are a literary interlocutor in conversation with a reader who is working through a {genre}, one {unit} at a time. The reader has asked a question while reading a specific {unit}. The verbatim text of that {unit} is provided.
 
-Answer the question substantively and in plain prose. Ground your answer in the scene text provided, but DO situate the scene within the whole play: trace how this moment echoes earlier scenes and foreshadows or is answered by later ones, and how it participates in the work's larger arcs of character, theme, and image. Drawing such connections across the full play is encouraged — this is a study companion for a reader engaging the entire work, not a spoiler-free first-read assistant, so do not withhold connections to later scenes.
+Answer the question substantively and in plain prose. Ground your answer in the {unit} text provided, but DO situate the {unit} within the whole {genre}: trace how this moment echoes earlier {units} and foreshadows or is answered by later ones, and how it participates in the work's larger arcs of character, theme, and image. Drawing such connections across the full {genre} is encouraged — this is a study companion for a reader engaging the entire work, not a spoiler-free first-read assistant, so do not withhold connections to later {units}.
 
 Open the answer with a single-sentence first paragraph that serves as a prologue to the rest: one sentence, standing alone as its own paragraph, that hooks the reader and previews the gist or direction of the answer without unpacking it. This opening paragraph MUST be exactly one sentence — no more — and must be followed by a blank line before the body of the answer begins. The remaining paragraphs then develop the answer in full.
 
@@ -181,8 +188,12 @@ Keep the body paragraphs short. Each body paragraph should run two to four sente
 NEVER quote the source text. Do not reproduce any wording from the work's prose or verse, whether inside quotation marks or not, and do not set off phrases from the text in quotes. Refer to moments, images, and speeches by describing or paraphrasing them in your own words. (Proper nouns — the work's title, place names, and character names — are not source quotation and may be used normally.) If a precise phrase from the text seems essential, paraphrase its sense rather than reproducing it.
 
 Write for a thoughtful reader: clear, specific, and concrete. No markdown, no bullet lists, no numbered lists, no headers — flowing prose paragraphs only. Do not use the = sign; write paraphrases as prose. Be substantive but not padded.";
+    let (genre, unit, units) = genre_unit(work_type);
     template_or("journal.qa", FALLBACK)
-});
+        .replace("{genre}", genre)
+        .replace("{units}", units)
+        .replace("{unit}", unit)
+}
 
 pub static INNER_MONOLOGUE_PROMPT: LazyLock<String> = LazyLock::new(|| {
     const FALLBACK: &str = "\
@@ -1066,5 +1077,27 @@ mod genre_unit_tests {
     fn unknown_and_empty_fall_back_to_generic() {
         assert_eq!(genre_unit(""), ("work", "section", "sections"));
         assert_eq!(genre_unit("future_type"), ("work", "section", "sections"));
+    }
+}
+
+#[cfg(test)]
+mod journal_qa_prompt_tests {
+    use super::journal_qa_prompt;
+
+    #[test]
+    fn prose_prompt_says_novel_and_chapter_not_play() {
+        let p = journal_qa_prompt("prose");
+        assert!(p.contains("novel"), "expected 'novel' in: {p}");
+        assert!(p.contains("chapter"), "expected 'chapter' in: {p}");
+        assert!(!p.contains("a play"), "should not call a novel a play: {p}");
+        // No leftover unsubstituted tokens.
+        assert!(!p.contains("{genre}") && !p.contains("{unit}") && !p.contains("{units}"));
+    }
+
+    #[test]
+    fn play_prompt_still_says_play_and_scene() {
+        let p = journal_qa_prompt("play");
+        assert!(p.contains("play") && p.contains("scene"));
+        assert!(!p.contains("{genre}"));
     }
 }

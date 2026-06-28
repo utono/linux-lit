@@ -467,7 +467,7 @@ pub(crate) fn submit_edit_rewrite(state: &Rc<RefCell<AppState>>) {
     // Claude. The context (work header, the band the Q&A is filed under, the
     // windowed scene text, and any passage source) mirrors what the original ask
     // sends, so a rewrite instruction that references the band has what it needs.
-    let (edit_id, model, context) = {
+    let (edit_id, model, context, work_type) = {
         let s = state.borrow();
         let Some(p) = s.journal.pages.get(s.journal.page_index) else {
             return;
@@ -477,6 +477,11 @@ pub(crate) fn submit_edit_rewrite(state: &Rc<RefCell<AppState>>) {
         } else {
             p.claude_model.clone()
         };
+        let work_type = s
+            .current_work
+            .as_ref()
+            .map(|w| w.work_type.clone())
+            .unwrap_or_default();
         let passage_source = p.source_text.clone().unwrap_or_default();
         // Derive the rewrite band from the page ROW, not `s.journal_band`: a
         // passage page now lives inside its Scene band, so the view band is
@@ -489,7 +494,7 @@ pub(crate) fn submit_edit_rewrite(state: &Rc<RefCell<AppState>>) {
             .and_then(|(buf, _top)| s.work_line_for_buffer(buf))
             .unwrap_or(0);
         let context = rewrite_context(&s, &band, anchor_work_line, &passage_source);
-        (p.id, model, context)
+        (p.id, model, context, work_type)
     };
     let question_owned = question.clone();
     let model_for_db = model.clone();
@@ -506,7 +511,7 @@ pub(crate) fn submit_edit_rewrite(state: &Rc<RefCell<AppState>>) {
 
     crate::input::actions::claude_bridge::run_claude_request(
         state,
-        crate::gloss::JOURNAL_QA_PROMPT.to_string(),
+        crate::gloss::journal_qa_prompt(&work_type),
         user_msg,
         model,
         move |st, revised| {
@@ -542,7 +547,7 @@ pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
 }
 
 fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
-    let (work_title, work_author, work_abbrev, band, scene_text, model) = {
+    let (work_title, work_author, work_abbrev, work_type, band, scene_text, model) = {
         let s = state_rc.borrow();
         let band = s.journal_band.clone();
         let (title, author, abbrev) = match s.current_work.as_ref() {
@@ -553,6 +558,11 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
             ),
             None => return,
         };
+        let work_type = s
+            .current_work
+            .as_ref()
+            .map(|w| w.work_type.clone())
+            .unwrap_or_default();
         // Anchor on the reader's saved position (where the journal overlay was
         // opened from), mapped to a work line. Falls back to 0 (the division's
         // first paragraph) when unresolvable — scene_text_windowed clamps.
@@ -576,6 +586,7 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
             title,
             author,
             abbrev,
+            work_type,
             band,
             scene_text,
             s.config.claude_model.clone(),
@@ -626,7 +637,7 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
     let model_for_db = model.clone();
     crate::input::actions::claude_bridge::run_claude_request(
         state_rc,
-        crate::gloss::JOURNAL_QA_PROMPT.to_string(),
+        crate::gloss::journal_qa_prompt(&work_type),
         user_msg,
         model,
         move |st, answer| {
