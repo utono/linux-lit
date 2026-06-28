@@ -594,16 +594,20 @@ impl GlossOverlay {
         self.title.set_text("Gloss");
         // Reset the top margin in case `show_glossing` widened it (shared title).
         self.title.set_margin_top(24);
-        // Indent the title and the diff/error labels to the same card_width/4
-        // the loading ("Glossing…") and result cards use, so the error/diff card
-        // lines up with them instead of hugging the left edge. Reuse the last
-        // rendered card width (an error/toast always follows a card render); fall
-        // back to the container's own width if a card was never shown.
+        // Indent the title and the diff/error labels to match the inset used by
+        // the loading ("Glossing…") and result cards for the current work type:
+        // card_width/5 for prose, card_width/4 for verse. Reuse the last rendered
+        // card width (an error/toast always follows a card render); fall back to
+        // the container's own width if a card was never shown.
         let card_width = match self.last_card_size.get().0 {
             w if w > 0 => w,
             _ => self.container.width().max(self.container.width_request()),
         };
-        let left = crate::ui::card_side_margin(card_width);
+        let left = if self.is_prose.get() {
+            crate::ui::prose_column_margin(card_width)
+        } else {
+            crate::ui::card_side_margin(card_width)
+        };
         self.title.set_margin_start(left);
         self.orig_header.set_margin_start(left);
         self.original_label.set_margin_start(left);

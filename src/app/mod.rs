@@ -713,7 +713,6 @@ impl AppState {
 /// (tiled layouts), the offset is dropped so the text stays symmetric inside
 /// the card and isn't pushed off-center.
 pub const VERSE_LEFT_OFFSET: i32 = 120;
-pub const PROSE_LEFT_OFFSET: i32 = 120;
 
 /// Left offset used in two-column mode. Small on purpose: it only needs to
 /// give the sign-column gutter enough room to put padding to the LEFT of the
