@@ -11,6 +11,11 @@ clip — a different algorithm, see "Not the same as the paged clip" below.)
 > "The failure checklist" at the end — it is ordered by how often each cause is
 > the culprit.** The single most common cause is a surface that recomputes the
 > clip only at named moments and is **missing the `value_changed` catch-all**.
+>
+> **First, though, check WHICH row is cut.** If the cut row is the *highlighted*
+> cursor line (mid-page, room below it), it is NOT a viewport clip at all — it is
+> the highlight `paragraph_background` band lacking `pixels_below_lines`. See
+> "A different clip: the HIGHLIGHT band cutting descenders" and checklist #9.
 
 ## The two edges, two mechanisms
 
@@ -100,6 +105,40 @@ lines with per-tag `pixels_above_lines`/`scale`, so rows are NOT uniform.
 paragraph-tall "row" and clips the wrong amount; a uniform `step` estimate cuts
 the last line's descenders. The journal overlay's original descender bug was
 exactly this — it used a `line_yrange` row-step before the unification.
+
+## A different clip: the HIGHLIGHT band cutting descenders (not the viewport)
+
+Not every "descenders cut at the bottom" is a viewport/page-edge clip. The cursor
+line is highlighted by a `cursor-line` `TextTag` with `paragraph_background`. That
+band paints the paragraph's logical-line rectangle — which, **with no per-line
+spacing, ends flush at the line's logical bottom and slices the glyph
+descenders** of the highlighted line (`y`, `g`, `p`, a trailing comma). This is
+NOT the bottom-clip box, NOT pagination, and NOT a viewport-edge partial row — it
+happens on ANY highlighted line, mid-page, with plenty of room below it.
+
+- **Tell:** the pink/tinted highlight band's bottom edge cuts through the
+  descenders of the highlighted line, while the lines above/below are fine and the
+  page is nowhere near full. A page-edge clip instead cuts the LAST visible row;
+  this cuts whatever row is *highlighted*.
+- **Cause:** the surface's `TextView` set no `pixels_below_lines` (and/or
+  `pixels_above_lines`). GTK's `paragraph_background` covers only the logical line
+  box; the inter-line spacing is what gives the band room below the descenders.
+  The MAIN reading card never shows this because it sets
+  `pixels_above_lines`/`pixels_below_lines = config.line_spacing` (default 5px) on
+  `text_view`/`right_view` (`src/app/mod.rs`).
+- **Fix:** set `set_pixels_above_lines(line_spacing)` +
+  `set_pixels_below_lines(line_spacing)` on the overlay's TextViews, matching the
+  main card. Thread `config.line_spacing` to the surface rather than hardcoding.
+  **If the surface PAGINATES from measured block heights** (the translation
+  overlay), also add the new spacing to the height measurement
+  (`2 * line_spacing * num_paragraphs` per block — GTK adds the spacing above AND
+  below every paragraph) so pages don't over-pack now that lines are taller.
+
+The 2-col translation overlay (`src/ui/translation_overlay.rs`) hit exactly this:
+its paginated columns set no line spacing, so the cursor line's descenders were
+sliced in BOTH columns. Fixed by threading `line_spacing` through `RenderCtx` →
+`make_column`/the interlude view + correcting `block_height`. See failure
+checklist #9.
 
 ## When the clip MUST be recomputed (the three paths)
 
@@ -399,6 +438,16 @@ When a half line clips at the bottom edge of a scrolled surface:
    open). **The durable fix is to paginate, not mask** — render only the whole
    units that fit so no partial row exists (see "Pagination instead of a mask").
    The translation overlay now does this.
+9. **The HIGHLIGHT band cuts the highlighted line's descenders (not a viewport
+   clip).** Tell: the cursor-line `paragraph_background` band's bottom edge
+   slices the descenders of the *highlighted* line, mid-page, with room to spare —
+   not the page's last row. Cause: the surface's TextView set no
+   `pixels_below_lines`, so the band ends flush at the line's logical bottom.
+   Fix: set `pixels_above_lines`/`pixels_below_lines = config.line_spacing` on the
+   TextViews (matching the main card); if the surface paginates from measured
+   heights, add the spacing to the measurement too. See "A different clip: the
+   HIGHLIGHT band cutting descenders" above. This is NOT a bottom-clip-box bug —
+   no clip path (a/b/c) is involved.
 
 ## Verifying
 

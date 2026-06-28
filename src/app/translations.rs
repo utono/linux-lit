@@ -629,6 +629,7 @@ pub fn rebuild_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppSta
     let body_font_size = s.config.font_size as i32;
     let font_family = s.config.font_family.clone();
     let cursor_line_bg = s.theme.cursor_line_bg.clone();
+    let line_spacing = s.config.line_spacing as i32;
     let label = synopsis_label(&s, div1, div2);
 
     // Cursor's work index, to pick the block to anchor on.
@@ -644,6 +645,7 @@ pub fn rebuild_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppSta
         body_font_size,
         &font_family,
         &cursor_line_bg,
+        line_spacing,
         cursor_idx,
     );
     drop(s);

@@ -2,6 +2,20 @@
 
 GTK4 Rust literature reader with e-reader pagination, MPV audio sync, and vim-style navigation.
 
+## Active Context (read first)
+
+**At the start of every session, read `CLAUDE-activeContext.md` if it exists**
+(in this project root). It records the current branch, in-progress/uncommitted
+work, recent decisions, and the ordered next actions — none of which are
+recoverable from the code or git history alone. Resume from its "Next Actions".
+
+**`ac` is the alias for `CLAUDE-activeContext.md`.** When the user says "update
+ac", "read ac", "check ac", etc., it means `CLAUDE-activeContext.md`. Keep it
+current as work progresses: record only what is NOT recoverable from the code or
+git (uncommitted work, why a decision was made, what to do next); convert
+relative dates to absolute (US Central). Update it before a likely
+context break (reboot, compaction, end of a work block).
+
 ## Debug Log
 
 The app writes debug logs to:

@@ -128,6 +128,11 @@ struct RenderCtx {
     full_width: i32,
     block_margin_top: i32,
     header_margin_bottom: i32,
+    /// Per-line above/below spacing on every overlay TextView, matching the main
+    /// card's `pixels_above_lines`/`pixels_below_lines`. Without it the cursor
+    /// line's `paragraph_background` band ends flush at the line's logical bottom
+    /// and clips the highlighted line's descenders.
+    line_spacing: i32,
 }
 
 pub struct TranslationOverlay {
@@ -135,9 +140,11 @@ pub struct TranslationOverlay {
     scrim: gtk4::Box,
     container: gtk4::Box,
     title: Label,
-    /// Non-scrolling vertical stack holding ONLY the current page's blocks. The
-    /// overlay paginates (whole blocks that fit), so it never overflows and never
-    /// renders a partial row — no scroll, no bottom clip.
+    /// Vertical stack holding ONLY the current page's blocks. The overlay
+    /// paginates (whole blocks that fit), so it never renders a partial row. It
+    /// lives inside a non-scrolling `ScrolledWindow` (built in `new()`, owned by
+    /// `container`) with `propagate_natural_height(false)` that hard-caps the card
+    /// to its `height_request` so an under-measured page can't grow it.
     content_vbox: gtk4::Box,
     /// The whole scene's blocks (all pages).
     blocks: RefCell<Vec<TranslationBlock>>,
@@ -173,14 +180,25 @@ impl TranslationOverlay {
         title.set_margin_bottom(8);
         container.append(&title);
 
-        // Plain, non-scrolling page container. `vexpand` so it fills the card
-        // below the title; blocks are added top-aligned.
+        // Page container, top-aligned. Wrapped in a non-scrolling ScrolledWindow
+        // with `propagate_natural_height(false)` so the CARD honors its
+        // `height_request` and NEVER grows to fit an over-tall page — the same
+        // technique the gloss overlay uses. (We paginate, so the scrollbar never
+        // shows; the wrapper is purely a height cap + overflow clip, a safety net
+        // against any block-height under-measurement.)
         let content_vbox = gtk4::Box::new(Orientation::Vertical, 0);
         content_vbox.set_hexpand(true);
-        content_vbox.set_vexpand(true);
         content_vbox.set_valign(Align::Start);
-        content_vbox.set_margin_bottom(20);
-        container.append(&content_vbox);
+
+        let scrolled = gtk4::ScrolledWindow::new();
+        scrolled.set_hscrollbar_policy(gtk4::PolicyType::Never);
+        scrolled.set_vscrollbar_policy(gtk4::PolicyType::Never);
+        scrolled.set_propagate_natural_height(false);
+        scrolled.set_vexpand(true);
+        scrolled.set_hexpand(true);
+        scrolled.set_margin_bottom(20);
+        scrolled.set_child(Some(&content_vbox));
+        container.append(&scrolled);
 
         Self {
             overlay,
@@ -225,6 +243,7 @@ impl TranslationOverlay {
         body_font_size: i32,
         font_family: &str,
         cursor_line_bg: &str,
+        line_spacing: i32,
         cursor_work_idx: Option<usize>,
     ) {
         self.container.set_width_request(card_width);
@@ -250,6 +269,7 @@ impl TranslationOverlay {
             full_width,
             block_margin_top: 14,
             header_margin_bottom: 4,
+            line_spacing,
         };
 
         // Measure each block and paginate. Pango measurement is synchronous and
@@ -257,9 +277,16 @@ impl TranslationOverlay {
         // from a realized widget so it uses the real font map / DPI.
         let pctx = self.content_vbox.pango_context();
         let heights: Vec<i32> = blocks.iter().map(|b| block_height(b, &pctx, &ctx)).collect();
-        // Page budget = card height minus the title chrome and the bottom margin.
+        // Page budget = card height minus the title chrome and the bottom margin,
+        // then a conservative safety factor. Standalone `pango::Layout` measurement
+        // under-shoots the rendered TextView height (the view's intrinsic line
+        // leading isn't captured), so a page measured at the raw budget renders a
+        // little taller. The `scrolled` wrapper hard-caps the card regardless, but
+        // an over-budget page would push a block's bottom under that cap (re-
+        // clipping); under-packing keeps every block fully visible.
         let title_h = self.title.preferred_size().1.height().max(48);
-        let page_height = (card_height - title_h - 20).max(120);
+        let raw_budget = (card_height - title_h - 20).max(120);
+        let page_height = raw_budget * 9 / 10;
         let pages = paginate(&heights, page_height);
 
         let start_page = cursor_work_idx
@@ -373,21 +400,20 @@ fn render_block(parent: &gtk4::Box, block: &TranslationBlock, ctx: &RenderCtx) -
             block_box.append(&header);
 
             let cols = gtk4::Box::new(Orientation::Horizontal, 0);
-            let orig = make_column(ctx.col_width, &ctx.text_fg, false);
-            let trans = make_column(ctx.col_width, &ctx.dim_fg, true);
+            let orig = make_column(ctx.col_width, &ctx.text_fg, false, ctx.line_spacing);
+            let trans = make_column(ctx.col_width, &ctx.dim_fg, true, ctx.line_spacing);
             let (orig_text, trans_text) = block_column_texts(block);
             orig.buffer().set_text(&orig_text);
             trans.buffer().set_text(&trans_text);
             ensure_cursor_tag(&orig.buffer(), &ctx.cursor_line_bg);
             ensure_cursor_tag(&trans.buffer(), &ctx.cursor_line_bg);
 
-            let divider = gtk4::Separator::new(Orientation::Vertical);
-            divider.add_css_class("column-divider");
-            divider.set_margin_start(12);
-            divider.set_margin_end(12);
+            // No visible divider between columns. Preserve the inter-column gap
+            // (formerly the divider's 12px+12px margins) as a left margin on the
+            // translation column so the two columns keep the same spacing.
+            trans.set_margin_start(24);
 
             cols.append(&orig);
-            cols.append(&divider);
             cols.append(&trans);
             block_box.append(&cols);
             (orig, Some(trans))
@@ -397,6 +423,8 @@ fn render_block(parent: &gtk4::Box, block: &TranslationBlock, ctx: &RenderCtx) -
             view.set_cursor_visible(false);
             view.set_focusable(false);
             view.set_wrap_mode(gtk4::WrapMode::WordChar);
+            view.set_pixels_above_lines(ctx.line_spacing);
+            view.set_pixels_below_lines(ctx.line_spacing);
             view.add_css_class("gloss-text");
             let text = interlude_text(block);
             view.buffer().set_text(&text);
@@ -454,15 +482,21 @@ fn block_for_work_idx(blocks: &[TranslationBlock], work_idx: usize) -> Option<us
 /// block = top margin + header height + header bottom margin + max(orig, trans)
 /// column text height. Interlude = top margin + full-width text height.
 fn block_height(block: &TranslationBlock, pctx: &pango::Context, ctx: &RenderCtx) -> i32 {
+    // The rendered TextViews add `line_spacing` above AND below every paragraph
+    // (each source line is one paragraph); the standalone `pango::Layout` does
+    // not. Add it back so pagination doesn't over-pack now that lines are taller.
+    let spacing = |paras: usize| 2 * ctx.line_spacing * paras as i32;
     if block.speaker.is_some() {
         let (orig_text, trans_text) = block_column_texts(block);
         let header_h = measure_text_height(pctx, "Mg", ctx.header_pt, &ctx.font_family, ctx.col_width);
         let orig_h = measure_text_height(pctx, &orig_text, ctx.body_font_size, &ctx.font_family, ctx.col_width);
         let trans_h = measure_text_height(pctx, &trans_text, ctx.body_font_size, &ctx.font_family, ctx.col_width);
-        ctx.block_margin_top + header_h + ctx.header_margin_bottom + orig_h.max(trans_h)
+        ctx.block_margin_top + header_h + ctx.header_margin_bottom + orig_h.max(trans_h) + spacing(block.lines.len())
     } else {
         let text = interlude_text(block);
-        ctx.block_margin_top + measure_text_height(pctx, &text, ctx.body_font_size, &ctx.font_family, ctx.full_width)
+        ctx.block_margin_top
+            + measure_text_height(pctx, &text, ctx.body_font_size, &ctx.font_family, ctx.full_width)
+            + spacing(block.lines.len())
     }
 }
 
@@ -518,12 +552,16 @@ fn apply_cursor_tag(buffer: &gtk4::TextBuffer, line: i32) {
     buffer.apply_tag(&tag, &start, &end);
 }
 
-fn make_column(width: i32, color: &str, italic: bool) -> TextView {
+fn make_column(width: i32, color: &str, italic: bool, line_spacing: i32) -> TextView {
     let view = TextView::new();
     view.set_editable(false);
     view.set_cursor_visible(false);
     view.set_focusable(false);
     view.set_wrap_mode(gtk4::WrapMode::WordChar);
+    // Per-line above/below spacing so the cursor line's `paragraph_background`
+    // band has room below the descenders (matches the main reading card).
+    view.set_pixels_above_lines(line_spacing);
+    view.set_pixels_below_lines(line_spacing);
     view.set_size_request(width, -1);
     view.add_css_class("gloss-text");
     if italic {
