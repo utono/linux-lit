@@ -2,6 +2,7 @@ use crate::db::models::Line;
 use gtk4::prelude::*;
 use gtk4::{Align, Label, Orientation, Overlay, ScrolledWindow, TextView};
 use std::cell::RefCell;
+use std::rc::Rc;
 
 /// One render unit in the translation overlay: either a speaker's speech
 /// (with original + translation paired per line) or a non-spoken interlude
@@ -81,9 +82,12 @@ pub struct TranslationOverlay {
     /// Per rendered speech/interlude block: source range and the original/
     /// translation views, so we can highlight and scroll to the cursor line.
     block_widgets: RefCell<Vec<BlockEntry>>,
-    /// Bottom clip guard masking trailing slack below short content (mirrors the
-    /// gloss/journal overlays' free-scroll clip).
+    /// Bottom clip guard. Custom per-row mask (the columns are TextViews inside a
+    /// Box, so the box-slack guard would cut the bottom column's partial row).
     clip_guard: crate::ui::bottom_clip_guard::BottomClipGuard,
+    /// The column TextViews currently rendered (every `orig` + `trans`), read live
+    /// by the clip closure so the per-row mask tracks each `show()`.
+    clip_views: Rc<RefCell<Vec<gtk4::TextView>>>,
 }
 
 impl TranslationOverlay {
@@ -119,15 +123,34 @@ impl TranslationOverlay {
         scrolled.set_margin_bottom(20);
         scrolled.set_child(Some(&content_vbox));
 
-        // Free-scroll bottom clip: mask trailing slack below short content
-        // (mirrors gloss/journal). The guard owns the clip Box, the overlay
-        // wiring, and the persistent value_changed catch-all (path c).
+        // Free-scroll bottom clip. The scrolled child is a Box, but its children
+        // are TextView columns that DO render a partial wrapped row at the
+        // viewport edge — so the box-slack guard (clip 0 on overflow) would leave
+        // that row cut. Use a CUSTOM per-row mask that reads the column views'
+        // visual rows. `clip_views` holds the currently-rendered column views; the
+        // closure reads them live, so it tracks each `show()`.
+        let clip_views: Rc<RefCell<Vec<gtk4::TextView>>> = Rc::new(RefCell::new(Vec::new()));
         let scroll_overlay = Overlay::new();
         scroll_overlay.set_child(Some(&scrolled));
-        let clip_guard = crate::ui::bottom_clip_guard::BottomClipGuard::attach_box(
-            &scroll_overlay,
-            &scrolled,
-        );
+        let clip_guard = {
+            let views = clip_views.clone();
+            let content = content_vbox.clone();
+            let recompute: crate::ui::bottom_clip_guard::ClipFn =
+                Rc::new(move |clip: &gtk4::Box, sw: &ScrolledWindow| {
+                    let vs = views.borrow();
+                    crate::ui::recompute_translation_bottom_clip(
+                        clip,
+                        sw,
+                        content.upcast_ref::<gtk4::Widget>(),
+                        &vs,
+                    );
+                });
+            crate::ui::bottom_clip_guard::BottomClipGuard::attach_custom(
+                &scroll_overlay,
+                &scrolled,
+                recompute,
+            )
+        };
         container.append(&scroll_overlay);
 
         Self {
@@ -139,6 +162,7 @@ impl TranslationOverlay {
             content_vbox,
             block_widgets: RefCell::new(Vec::new()),
             clip_guard,
+            clip_views,
         }
     }
 
@@ -179,6 +203,7 @@ impl TranslationOverlay {
             self.content_vbox.remove(&child);
         }
         self.block_widgets.borrow_mut().clear();
+        self.clip_views.borrow_mut().clear();
 
         let side_margin = card_width / 12;
         let col_width = ((card_width - 2 * side_margin) / 2 - 12).max(120);
@@ -252,6 +277,11 @@ impl TranslationOverlay {
                 };
 
             self.content_vbox.append(&block_box);
+            // Register both column views for the per-row bottom-clip mask.
+            self.clip_views.borrow_mut().push(orig_view.clone());
+            if let Some(t) = &trans_view {
+                self.clip_views.borrow_mut().push(t.clone());
+            }
             self.block_widgets.borrow_mut().push(BlockEntry {
                 start_idx: block.start_idx,
                 end_idx: block.end_idx,

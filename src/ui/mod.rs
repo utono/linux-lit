@@ -233,6 +233,70 @@ pub(crate) fn recompute_overlay_bottom_clip_box(
     }
 }
 
+/// Visual rows of `view`, mapped from the view's buffer coords into `container`'s
+/// coordinate space (the scroll child), so rows from SEVERAL stacked TextViews
+/// can be compared on one axis. `container` is the scrolled child whose
+/// `adj.value()`/`page_size()` define the viewport. Returns `(top, bottom)` per
+/// wrapped row, or empty if the view isn't laid out under `container` yet.
+fn view_rows_in_container(
+    view: &gtk4::TextView,
+    container: &gtk4::Widget,
+) -> Vec<(f64, f64)> {
+    use gtk4::prelude::*;
+    // Offset of the view's buffer origin (y=0 incl. top_margin) within container.
+    let origin = gtk4::graphene::Point::new(0.0, 0.0);
+    let Some(mapped) = view.compute_point(container, &origin) else {
+        return Vec::new();
+    };
+    let dy = mapped.y() as f64;
+    display_rows(view)
+        .into_iter()
+        .map(|(t, b)| (t + dy, b + dy))
+        .collect()
+}
+
+/// Descender-correct bottom clip for the TRANSLATION overlay: its scrolled child
+/// is a Box stacking many paired-column TextViews, so the box-slack guard (which
+/// clips 0 on overflow) leaves the bottom column's partial wrapped row cut. This
+/// gathers the visual rows of EVERY column view (`views`), maps them into the
+/// scroll child's coordinate space, and feeds the union to the shared
+/// `bottom_clip_height` — so the clip masks from the last row that fits ENTIRELY
+/// (across all columns) down to the viewport bottom. `content` is the scroll
+/// child; `views` are the column TextViews currently rendered.
+pub(crate) fn recompute_translation_bottom_clip(
+    clip: &gtk4::Box,
+    scrolled: &gtk4::ScrolledWindow,
+    content: &gtk4::Widget,
+    views: &[gtk4::TextView],
+) {
+    use gtk4::prelude::*;
+    let adj = scrolled.vadjustment();
+    let viewport_h = adj.page_size();
+    if viewport_h <= 0.0 {
+        if clip.height_request() != 0 {
+            clip.set_height_request(0);
+        }
+        return;
+    }
+    let mut rows: Vec<(f64, f64)> = Vec::new();
+    for v in views {
+        rows.extend(view_rows_in_container(v, content));
+    }
+    if rows.is_empty() {
+        // Not laid out yet — fall back to the box-slack guard (covers short
+        // content; on overflow it clips 0, same as before, until a relayout
+        // tick fires the per-row path).
+        recompute_overlay_bottom_clip_box(clip, scrolled);
+        return;
+    }
+    rows.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    let content_h = rows.last().map(|&(_, b)| b).unwrap_or(adj.upper());
+    let clip_h = bottom_clip_height(&rows, adj.value(), viewport_h, content_h);
+    if clip.height_request() != clip_h {
+        clip.set_height_request(clip_h);
+    }
+}
+
 #[cfg(test)]
 mod bottom_clip_tests {
     use super::bottom_clip_height;

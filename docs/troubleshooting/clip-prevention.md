@@ -64,10 +64,25 @@ ONE implementation (it used to be copy-pasted and drifted):
   `display_rows`, for scroll-mode (`j`/`k`) which clips on whole-line
   `line_yrange` geometry, not wrapped rows.
 - **`recompute_overlay_bottom_clip_box(clip, scrolled)`** — the variant for an
-  overlay whose scrolled child is a widget **Box**, not a TextView (the
-  translation overlay's column stack). A Box never splits a child across the
-  edge, so there is no partial wrapped row — it only covers trailing slack when
-  the content ends inside the viewport.
+  overlay whose scrolled child is a widget **Box** of WHOLE-WIDGET rows (no inner
+  TextView that wraps). A Box never splits such a child across the edge, so there
+  is no partial wrapped row — it only covers trailing slack when the content ends
+  inside the viewport. **Caveat — a Box of TextViews still wraps.** If the Box's
+  children are TextViews (the translation overlay stacks paired-column TextViews
+  in a vbox), each TextView DOES render a partial wrapped row at the viewport
+  edge, and this box-slack guard (which clips 0 on overflow) leaves that row cut.
+  That surface needs a per-row mask over ALL the column views, not the box-slack
+  guard — see `recompute_translation_bottom_clip` and the `Custom`
+  `BottomClipGuard` variant.
+- **`recompute_translation_bottom_clip(clip, scrolled, content, views)`** — the
+  translation overlay's per-row mask. Gathers every column TextView's visual rows
+  (`display_rows`), maps each into the scroll child's coordinate space via
+  `compute_point` (so rows from several stacked TextViews compare on one axis),
+  and feeds the union to the pure `bottom_clip_height`. The mask covers from the
+  last row that fits ENTIRELY *across all columns* down to the viewport bottom, so
+  neither the original nor the translation column shows a cut row. Driven by a
+  `BottomClipGuard::attach_custom` (the `Custom` kind), so it still gets all three
+  recompute paths (open, value_changed, page_size) for free.
 
 **Per-row geometry is mandatory for prose, never a uniform row-step.** The
 synopsis/gloss/journal buffers join paragraphs into single multi-row buffer
@@ -284,8 +299,12 @@ Three clip strategies coexist deliberately; merging them changes behavior:
   interlinear) must use the scroll-aware `scrolloff_bottom_clip_widgets` (the
   `j`/`k` path), NOT `refresh_bottom_clip`/`update_bottom_clip`. See
   failure-checklist #7.
-- **Box-slack guard** (`recompute_overlay_bottom_clip_box`) — the translation
-  column stack. No wrapped partial row; covers only trailing slack.
+- **Box-slack guard** (`recompute_overlay_bottom_clip_box`) — for a Box of
+  whole-widget rows; covers only trailing slack. NOT for the translation column
+  stack: its Box holds wrapping TextViews, which DO render a partial row at the
+  edge, so it uses the per-row `recompute_translation_bottom_clip` instead (a
+  `Custom` `BottomClipGuard`). The box-slack guard remains for a future Box-only
+  surface.
 
 Likewise the top-snap algorithms differ (`snap_value_to_line` per-`display_rows`
 row vs scroll-mode's `snap_value_to_line_top` via `line_at_y` vs uniform
@@ -359,6 +378,17 @@ When a half line clips at the bottom edge of a scrolled surface:
    exactly this — its idle already used the scroll-aware clip but a trailing
    `refresh_bottom_clip(state)` (paged) clobbered it. See "The paged clip is
    page_top-relative" above.
+8. **A Box-child overlay whose children are TextViews cuts the bottom row.** Tell:
+   the surface scrolls a `gtk4::Box` (so it attached the box-slack guard), but the
+   Box stacks TextViews (the translation overlay's paired columns), and the bottom
+   row is sliced through its glyphs once content overflows. Cause: the box-slack
+   guard (`recompute_overlay_bottom_clip_box`) clips 0 on overflow because it
+   assumes whole-widget rows — but a TextView wraps and renders a partial row at
+   the edge. Fix: a per-row mask over ALL the column views
+   (`recompute_translation_bottom_clip` via `BottomClipGuard::attach_custom`),
+   mapping each view's `display_rows` into the scroll child's coords and clipping
+   below the last row that fits across every column. Do NOT reach for the box-slack
+   guard when the Box contains wrapping TextViews.
 
 ## Verifying
 
