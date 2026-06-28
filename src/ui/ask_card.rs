@@ -312,6 +312,24 @@ impl AskCardHost {
         self.recompute_now_and_idle();
     }
 
+    /// Shrink the scroll viewport to make room for an EXTERNAL card of natural
+    /// height `natural_h` (the journal edit card), mirroring `open` but without
+    /// touching the internal ask card or the footer (the caller manages those).
+    /// Open height = card_height − fixed_chrome − natural_h.
+    pub fn open_for_natural_height(&self, natural_h: i32) {
+        let scroll_h =
+            (self.card_height.get() - self.fixed_chrome_h.get() - natural_h).max(80);
+        self.pin_scroll_height(scroll_h);
+        self.recompute_now_and_idle();
+    }
+
+    /// Restore the scroll's stored CLOSED height after an external card closes
+    /// (mirrors `close`'s restore, without touching the ask card or footer).
+    pub fn close_to_closed_height(&self) {
+        self.pin_scroll_height(self.closed_scroll_h.get().max(80));
+        self.recompute_now_and_idle();
+    }
+
     /// Recompute the clip synchronously AND on the next idle tick — the
     /// `set_height_request` lands on a later layout pass, so the synchronous
     /// recompute runs against the stale viewport and the idle one against the
