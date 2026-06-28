@@ -329,17 +329,124 @@ pub(crate) fn begin_ask(state: &Rc<RefCell<AppState>>) {
         .open_ask_card(title, "Tab switch  \u{00b7}  Ctrl+Enter submit");
 }
 
+/// Build the user message for an Alt+Enter rewrite: the question, the current
+/// answer, and the user's revision instruction, in "revise this answer" shape.
+fn rewrite_user_message(question: &str, answer: &str, instruction: &str) -> String {
+    format!(
+        "Original question:\n{}\n\nCurrent answer:\n{}\n\nRevise the answer per this instruction (return only the revised answer):\n{}",
+        question, answer, instruction,
+    )
+}
+
+/// `E` in the journal overlay: open the dedicated edit card pre-filled with the
+/// current page's stored Question and Answer. No-op if the band is empty.
 pub(crate) fn begin_edit(state: &Rc<RefCell<AppState>>) {
+    let s = state.borrow();
+    let Some(page) = s.journal.pages.get(s.journal.page_index) else {
+        return;
+    };
+    let (q, a) = (page.question.clone(), page.answer.clone());
+    s.journal_overlay.open_edit_card(&q, &a);
+}
+
+/// Ctrl+Enter in the edit card: save the hand-edited Question + Answer straight
+/// to lit.db (no Claude). Preserves the page's existing claude_model. Closes the
+/// card and re-renders.
+pub(crate) fn submit_edit_save(state: &Rc<RefCell<AppState>>) {
+    let (question, answer, _instr) = state.borrow().journal_overlay.take_edit_fields();
     let mut s = state.borrow_mut();
-    if s.journal.pages.is_empty() {
+    let Some(page) = s.journal.pages.get(s.journal.page_index) else {
+        s.journal_overlay.close_edit_card();
+        return;
+    };
+    let (id, model) = (page.id, page.claude_model.clone());
+    if let Ok(conn) = crate::db::queries::open_db_rw() {
+        if let Err(e) =
+            crate::db::journal::update_journal_page(&conn, id, question.trim(), answer.trim(), &model)
+        {
+            crate::logging::log(&format!("JOURNAL: edit-save failed: {}", e));
+        }
+    }
+    s.journal_overlay.close_edit_card();
+    render_current(&mut s);
+    crate::ui::toast::show_transient(&s.chapter_toast, "Saved", 2);
+}
+
+/// Alt+Enter in the edit card: ask Claude to revise the answer per the
+/// instruction, then save the revision (with the edited question). Empty
+/// instruction -> fall back to save-as-is with a toast.
+pub(crate) fn submit_edit_rewrite(state: &Rc<RefCell<AppState>>) {
+    let (question, answer, instruction) = state.borrow().journal_overlay.take_edit_fields();
+
+    // Empty instruction -> behave like save-as-is.
+    if instruction.trim().is_empty() {
+        {
+            let mut s = state.borrow_mut();
+            let page = s.journal.pages.get(s.journal.page_index);
+            if let Some(page) = page {
+                let (id, model) = (page.id, page.claude_model.clone());
+                if let Ok(conn) = crate::db::queries::open_db_rw() {
+                    let _ = crate::db::journal::update_journal_page(
+                        &conn, id, question.trim(), answer.trim(), &model,
+                    );
+                }
+            }
+            s.journal_overlay.close_edit_card();
+            render_current(&mut s);
+            crate::ui::toast::show_transient(
+                &s.chapter_toast, "No rewrite instruction \u{2014} saved as-is", 3,
+            );
+        }
         return;
     }
-    s.journal.prompt_mode = JournalPromptMode::Edit;
-    s.journal_overlay
-        .open_ask_card(
-            "Edit: ask a new question for this page",
-            "Tab switch  \u{00b7}  Ctrl+Enter submit",
-        );
+
+    // Capture the page id + model, then call Claude.
+    let (edit_id, model) = {
+        let s = state.borrow();
+        match s.journal.pages.get(s.journal.page_index) {
+            Some(p) => {
+                let model = if p.claude_model.is_empty() {
+                    s.config.claude_model.clone()
+                } else {
+                    p.claude_model.clone()
+                };
+                (p.id, model)
+            }
+            None => return,
+        }
+    };
+    let question_owned = question.clone();
+    let model_for_db = model.clone();
+    let user_msg = rewrite_user_message(&question, &answer, &instruction);
+
+    {
+        let s = state.borrow();
+        s.journal_overlay.close_edit_card();
+        crate::ui::toast::show_transient(&s.chapter_toast, "Rewriting\u{2026}", 2);
+    }
+
+    crate::input::actions::claude_bridge::run_claude_request(
+        state,
+        crate::gloss::JOURNAL_QA_PROMPT.to_string(),
+        user_msg,
+        model,
+        move |st, revised| {
+            if let Ok(conn) = crate::db::queries::open_db_rw() {
+                if let Err(e) = crate::db::journal::update_journal_page(
+                    &conn, edit_id, &question_owned, &revised, &model_for_db,
+                ) {
+                    crate::logging::log(&format!("JOURNAL: edit-rewrite save failed: {}", e));
+                }
+            }
+            let mut s = st.borrow_mut();
+            render_current(&mut s);
+            crate::ui::toast::show_transient(&s.chapter_toast, "Rewritten", 2);
+        },
+        move |st, msg| {
+            let s = st.borrow();
+            crate::ui::toast::show_transient(&s.chapter_toast, msg, 4);
+        },
+    );
 }
 
 pub(crate) fn close_prompt(state: &Rc<RefCell<AppState>>) {
@@ -1059,6 +1166,18 @@ pub(crate) fn view_journal_from_gloss(state: &Rc<RefCell<AppState>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rewrite_user_message_includes_all_three_parts() {
+        let msg = rewrite_user_message("Who is Esther?", "She narrates half the book.", "Add her surname.");
+        assert!(msg.contains("Who is Esther?"));
+        assert!(msg.contains("She narrates half the book."));
+        assert!(msg.contains("Add her surname."));
+        // The instruction must come after the current answer (revise-this shape).
+        let a_pos = msg.find("She narrates half the book.").unwrap();
+        let i_pos = msg.find("Add her surname.").unwrap();
+        assert!(i_pos > a_pos, "instruction should follow the current answer");
+    }
 
     #[test]
     fn footer_left_scene_shows_abbrev_act_scene() {
