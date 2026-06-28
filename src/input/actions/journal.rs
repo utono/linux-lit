@@ -3,6 +3,17 @@ use crate::ui::journal_move_picker::MoveTargetRow;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// Capitalize the first character of `s` (ASCII), leaving the rest unchanged.
+/// Used to turn a unit noun (`chapter`) into a user-message field label
+/// (`Chapter:`). Empty input returns empty.
+fn titlecase_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
 /// Prose journal-Q&A context window radius (paragraphs each side of the
 /// reader's anchor). Prose divisions can be the whole book, so cap the context.
 const PROSE_CONTEXT_RADIUS: usize = 10;
@@ -368,6 +379,7 @@ fn rewrite_user_message(context: &str, question: &str, answer: &str, instruction
 fn rewrite_context(
     s: &AppState,
     band: &JournalBand,
+    work_type: &str,
     anchor_work_line: usize,
     passage_source: &str,
 ) -> String {
@@ -375,6 +387,8 @@ fn rewrite_context(
         Some(w) => (w.title.clone(), w.author.clone()),
         None => (String::new(), String::new()),
     };
+    let (_genre, unit, _units) = crate::gloss::genre_unit(work_type);
+    let unit_label = titlecase_first(unit);
     match band {
         JournalBand::Work => {
             format!("Work: {} by {}\nThis Q&A is filed under the WHOLE WORK (not a single scene).", title, author)
@@ -384,8 +398,8 @@ fn rewrite_context(
                 s, *d1, *d2, anchor_work_line, PROSE_CONTEXT_RADIUS,
             );
             format!(
-                "Work: {} by {}\nThis Q&A is filed under: {}\n\nScene text:\n{}",
-                title, author, crate::app::scene_synopsis::scene_label(*d1, *d2), scene_text,
+                "Work: {} by {}\nThis Q&A is filed under: {}\n\n{} text:\n{}",
+                title, author, crate::app::scene_synopsis::scene_label(*d1, *d2), unit_label, scene_text,
             )
         }
         JournalBand::Passage { div1, div2, .. } => {
@@ -393,9 +407,9 @@ fn rewrite_context(
                 s, *div1, *div2, anchor_work_line, PROSE_CONTEXT_RADIUS,
             );
             format!(
-                "Work: {} by {}\nThis Q&A is filed under a PASSAGE in {}\n\nScene text:\n{}\n\nPassage:\n{}",
+                "Work: {} by {}\nThis Q&A is filed under a PASSAGE in {}\n\n{} text:\n{}\n\nPassage:\n{}",
                 title, author, crate::app::scene_synopsis::scene_label(*div1, *div2),
-                scene_text, passage_source,
+                unit_label, scene_text, passage_source,
             )
         }
     }
@@ -493,7 +507,7 @@ pub(crate) fn submit_edit_rewrite(state: &Rc<RefCell<AppState>>) {
             .return_pos
             .and_then(|(buf, _top)| s.work_line_for_buffer(buf))
             .unwrap_or(0);
-        let context = rewrite_context(&s, &band, anchor_work_line, &passage_source);
+        let context = rewrite_context(&s, &band, &work_type, anchor_work_line, &passage_source);
         (p.id, model, context, work_type)
     };
     let question_owned = question.clone();
@@ -610,24 +624,32 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
         String::new()
     };
 
+    let (genre, unit, _units) = crate::gloss::genre_unit(&work_type);
+    let unit_label = titlecase_first(unit);
     let user_msg = match band {
         JournalBand::Work => format!(
-            "Work: {} by {}\n\nReader's question about the play as a whole:\n{}",
-            work_title, work_author, question,
+            "Work type: {}\nWork: {} by {}\n\nReader's question about the {} as a whole:\n{}",
+            genre, work_title, work_author, genre, question,
         ),
         JournalBand::Scene(d1, d2) => format!(
-            "Work: {} by {}\nScene: {}\n\nScene text:\n{}\n\nReader's question:\n{}",
+            "Work type: {}\nWork: {} by {}\n{}: {}\n\n{} text:\n{}\n\nReader's question:\n{}",
+            genre,
             work_title,
             work_author,
+            unit_label,
             crate::app::scene_synopsis::scene_label(d1, d2),
+            unit_label,
             scene_text,
             question,
         ),
         JournalBand::Passage { div1, div2, .. } => format!(
-            "Work: {} by {}\nScene: {}\n\nScene text:\n{}\n\nPassage:\n{}\n\nReader's question:\n{}",
+            "Work type: {}\nWork: {} by {}\n{}: {}\n\n{} text:\n{}\n\nPassage:\n{}\n\nReader's question:\n{}",
+            genre,
             work_title,
             work_author,
+            unit_label,
             crate::app::scene_synopsis::scene_label(div1, div2),
+            unit_label,
             scene_text,
             passage_source_text,
             question,
@@ -1262,6 +1284,13 @@ pub(crate) fn view_journal_from_gloss(state: &Rc<RefCell<AppState>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn title_case_first_letter() {
+        assert_eq!(super::titlecase_first("chapter"), "Chapter");
+        assert_eq!(super::titlecase_first("scene"), "Scene");
+        assert_eq!(super::titlecase_first(""), "");
+    }
 
     #[test]
     fn rewrite_user_message_includes_context_and_all_three_parts() {
