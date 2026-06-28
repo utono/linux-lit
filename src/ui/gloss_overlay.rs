@@ -60,6 +60,10 @@ pub struct GlossOverlay {
     echo_rule: gtk4::Separator,
     text_margins: i32,
     column_width: i32,
+    /// True when the currently-loaded work is prose. Set once per work load via
+    /// `set_prose` (from display_work). Selects the centered prose column inset
+    /// (card_width/5) over the verse `card_width/4` inset in the gloss render.
+    is_prose: Cell<bool>,
     /// The overlay's own font (independent of the main reader). `!`/`|` adjust
     /// the size while a gloss/synopsis is open without touching the main card.
     /// Applied as a font TextTag over the gloss buffer on every show, overriding
@@ -412,6 +416,7 @@ impl GlossOverlay {
             echo_rule,
             text_margins: text_margins as i32,
             column_width: column_width as i32,
+            is_prose: Cell::new(false),
             font_family: RefCell::new(GLOSS_DEFAULT_FONT_FAMILY.to_string()),
             font_size: std::cell::Cell::new(GLOSS_DEFAULT_FONT_SIZE),
             synopsis_label_ranges: RefCell::new(Vec::new()),
@@ -422,6 +427,12 @@ impl GlossOverlay {
             current_synopsis: RefCell::new(String::new()),
             ask_host,
         }
+    }
+
+    /// Record whether the loaded work is prose, so the gloss render picks the
+    /// centered prose column inset. Called once per work load from display_work.
+    pub fn set_prose(&self, is_prose: bool) {
+        self.is_prose.set(is_prose);
     }
 
     /// Adjust the overlay's own font size by `delta` pt (clamped), then re-apply
@@ -583,16 +594,20 @@ impl GlossOverlay {
         self.title.set_text("Gloss");
         // Reset the top margin in case `show_glossing` widened it (shared title).
         self.title.set_margin_top(24);
-        // Indent the title and the diff/error labels to the same card_width/4
-        // the loading ("Glossing…") and result cards use, so the error/diff card
-        // lines up with them instead of hugging the left edge. Reuse the last
-        // rendered card width (an error/toast always follows a card render); fall
-        // back to the container's own width if a card was never shown.
+        // Indent the title and the diff/error labels to match the inset used by
+        // the loading ("Glossing…") and result cards for the current work type:
+        // card_width/5 for prose, card_width/4 for verse. Reuse the last rendered
+        // card width (an error/toast always follows a card render); fall back to
+        // the container's own width if a card was never shown.
         let card_width = match self.last_card_size.get().0 {
             w if w > 0 => w,
             _ => self.container.width().max(self.container.width_request()),
         };
-        let left = crate::ui::card_side_margin(card_width);
+        let left = if self.is_prose.get() {
+            crate::ui::prose_column_margin(card_width)
+        } else {
+            crate::ui::card_side_margin(card_width)
+        };
         self.title.set_margin_start(left);
         self.orig_header.set_margin_start(left);
         self.original_label.set_margin_start(left);
@@ -632,7 +647,11 @@ impl GlossOverlay {
         // optimum. Anchor to the actual card width (the overlay is full-screen,
         // ~1660px), NOT the fixed column_width (1050) — otherwise on a wide card
         // the margin stays tiny and the text runs nearly edge to edge.
-        let left = crate::ui::card_side_margin(card_width);
+        let left = if self.is_prose.get() {
+            crate::ui::prose_column_margin(card_width)
+        } else {
+            crate::ui::card_side_margin(card_width)
+        };
         self.title.set_margin_start(left);
         self.gloss_view.set_left_margin(left);
         self.gloss_view.set_right_margin(left);
@@ -652,7 +671,7 @@ impl GlossOverlay {
             }
         }
 
-        let bar_left = crate::ui::card_side_margin(card_width);
+        let bar_left = left;
         *self.bar_x.borrow_mut() = bar_left;
 
         // Gloss prose and speaker headings both keep the normal foreground.
@@ -718,8 +737,12 @@ impl GlossOverlay {
 
         // Same passage geometry the gloss result uses (`show_gloss_with_color`):
         // wide side margins anchored to the actual card width, accent bar at
-        // card_width/4.
-        let left = crate::ui::card_side_margin(card_width);
+        // card_width/4 for verse, card_width/5 for prose.
+        let left = if self.is_prose.get() {
+            crate::ui::prose_column_margin(card_width)
+        } else {
+            crate::ui::card_side_margin(card_width)
+        };
         self.title.set_margin_start(left);
         self.gloss_view.set_left_margin(left);
         self.gloss_view.set_right_margin(left);
@@ -742,7 +765,7 @@ impl GlossOverlay {
             }
         }
 
-        let bar_left = crate::ui::card_side_margin(card_width);
+        let bar_left = left;
         *self.bar_x.borrow_mut() = bar_left;
 
         // Render the passage through the SAME path as the gloss result's original

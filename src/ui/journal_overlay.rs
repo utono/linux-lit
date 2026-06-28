@@ -25,6 +25,10 @@ pub struct JournalOverlay {
     cursor_block: Cell<usize>,
     text_margins: i32,
     column_width: i32,
+    /// True when the loaded work is prose. Set once per work load via
+    /// `set_prose`. Selects the centered prose column inset (card_width/5) over
+    /// the verse `card_width/4` inset in `size_card`.
+    is_prose: Cell<bool>,
     font_family: RefCell<String>,
     font_size: Cell<i32>,
     last_card_size: Cell<(i32, i32)>,
@@ -209,6 +213,7 @@ impl JournalOverlay {
             cursor_block: Cell::new(0),
             text_margins: text_margins as i32,
             column_width: column_width as i32,
+            is_prose: Cell::new(false),
             font_family: RefCell::new(String::new()),
             font_size: Cell::new(16),
             last_card_size: Cell::new((0, 0)),
@@ -220,6 +225,12 @@ impl JournalOverlay {
         crate::ui::picker_attach::attach_overlay_panel(
             &self.overlay, child, &self.scrim, &self.container,
         );
+    }
+
+    /// Record whether the loaded work is prose, so `size_card` picks the
+    /// centered prose column inset. Called once per work load from display_work.
+    pub fn set_prose(&self, is_prose: bool) {
+        self.is_prose.set(is_prose);
     }
 
     fn size_card(&self, card_width: i32, card_height: i32) {
@@ -239,7 +250,11 @@ impl JournalOverlay {
         // to edge on a wide card. Card SIZE is unchanged; only the inner padding
         // grows. The title and position label indent to match so the left edge
         // of the header and the body line up. See ui::card_side_margin (audit #27).
-        let side = crate::ui::card_side_margin(card_width);
+        let side = if self.is_prose.get() {
+            crate::ui::prose_column_margin(card_width)
+        } else {
+            crate::ui::card_side_margin(card_width)
+        };
         self.view.set_left_margin(side);
         self.view.set_right_margin(side);
         self.title.set_margin_start(side);
@@ -334,6 +349,13 @@ impl JournalOverlay {
         card_height: i32,
     ) {
         self.size_card(card_width, card_height);
+        // Passage pages render source VERSE, not prose body — keep the verse
+        // inset (card_width/4) even inside a prose work, overriding size_card's
+        // prose inset. (bar_left + populate_verse_buffer below already use it.)
+        let verse_side = crate::ui::card_side_margin(card_width);
+        self.view.set_left_margin(verse_side);
+        self.view.set_right_margin(verse_side);
+        self.title.set_margin_start(verse_side);
         self.title.set_text("Passage");
 
         // Position text: use the citation span when available, else a plain count.

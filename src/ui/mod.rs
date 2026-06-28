@@ -50,6 +50,16 @@ pub(crate) fn card_side_margin(card_width: i32) -> i32 {
     card_width / 4
 }
 
+/// Symmetric inset (both sides) for the NYTimes-style centered prose column.
+/// Wider whitespace than `card_side_margin` (card_width/4): a ~⅓-margin
+/// reading measure. Used by the prose reading card and the prose overlays
+/// (synopsis/gloss/journal) so prose body text reads like a newspaper column,
+/// centered with generous left/right margins. Verse/play surfaces keep
+/// `card_side_margin`.
+pub(crate) fn prose_column_margin(card_width: i32) -> i32 {
+    card_width / 5
+}
+
 /// Re-assert the italic verse tags (`gloss-stage`, `gloss-bracket`) to the top
 /// of `table`'s priority order. An overlay's buffer-wide font tag is built with
 /// `.font("Family Size")`, whose Pango description carries a regular (upright)
@@ -298,5 +308,26 @@ mod bottom_clip_tests {
             uniform_remainder, 4,
             "uniform-step estimate must differ from the correct per-row clip"
         );
+    }
+}
+
+#[cfg(test)]
+mod prose_column_tests {
+    use super::prose_column_margin;
+
+    #[test]
+    fn fifth_of_card_each_side() {
+        // Default 1050px card -> 210px each side -> ~630px centered column.
+        assert_eq!(prose_column_margin(1050), 210);
+    }
+
+    #[test]
+    fn wide_card_scales() {
+        assert_eq!(prose_column_margin(1660), 332);
+    }
+
+    #[test]
+    fn zero_card_is_zero() {
+        assert_eq!(prose_column_margin(0), 0);
     }
 }

@@ -609,6 +609,18 @@ fn scroll_right_view_to_split(
 /// the very last buffer line can appear at the viewport top with whitespace
 /// below. We only increase, never decrease, to avoid fighting GTK's layout.
 pub(crate) const BASE_BOTTOM_MARGIN: i32 = 40;
+
+/// Final bottom-clip height for the over-tall single-paragraph case in
+/// `update_bottom_clip`: the per-visual-row clip from `bottom_clip_height`
+/// (computed against a `usable_height`-tall viewport) plus the reserved bottom
+/// band `widget_height - usable_height` (= `descender_guard + BASE_BOTTOM_MARGIN`)
+/// that the rest of the pagination keeps off a full page. Clamped to
+/// `[0, widget_height]` so the clip never goes negative or taller than the card.
+/// Pure so the arithmetic is unit-tested without GTK geometry.
+pub(crate) fn overtall_clip(row_clip: i32, widget_height: i32, usable_height: i32) -> i32 {
+    let reserve = (widget_height - usable_height).max(0);
+    (row_clip + reserve).clamp(0, widget_height)
+}
 pub(crate) fn ensure_scroll_range(state: &AppState) {
     let page_size = state.scrolled_window.vadjustment().page_size();
     if page_size <= 0.0 {
@@ -733,7 +745,47 @@ fn update_bottom_clip(
     let range = visible_range(text_view, &buf_sv, page_top, line_count, usable_height);
 
     if range.count == 0 || range.total_height == 0 {
-        bottom_clip.set_height_request(0);
+        // A single buffer line (prose paragraph) at page_top is TALLER than
+        // usable_height, so visible_range (which counts whole BUFFER lines) fit
+        // nothing. Previously this clipped to 0, letting the over-tall paragraph
+        // render flush to the card's bottom edge — exposed once the narrower
+        // prose column made long paragraphs wrap past the viewport height.
+        //
+        // Clip at a clean VISUAL-ROW boundary instead: the paragraph's wrapped
+        // rows are normal-height, so cover from the bottom of the last full row
+        // that fits within `usable_height` down to the card edge. This routes
+        // through the shared descender-correct `display_rows`/`bottom_clip_height`
+        // helpers — the SAME per-visual-row mechanism scroll-mode uses on the main
+        // card (sanctioned in clip-prevention.md), so it never cuts through a glyph
+        // row the way `line_yrange` (whole-paragraph) would. Paging forward
+        // continues the paragraph from the next row.
+        //
+        // bottom_clip_height clips relative to a `usable_height`-tall viewport
+        // anchored at the scroll value, returning the gap from the last full row's
+        // bottom up to `scroll_val + usable_height`. The REAL viewport is
+        // `widget_height`, so add the reserved bottom band
+        // (`widget_height - usable_height` = descender_guard + BASE_BOTTOM_MARGIN)
+        // the clip must also cover, giving the same bottom gap a normal full page
+        // keeps.
+        let tv: &gtk4::TextView = text_view.upcast_ref();
+        let rows = crate::ui::display_rows(tv);
+        let scroll_val_now = scrolled_window.vadjustment().value();
+        let content_h = rows.last().map(|&(_, b)| b).unwrap_or(0.0);
+        let row_clip = crate::ui::bottom_clip_height(
+            &rows,
+            scroll_val_now,
+            usable_height as f64,
+            content_h,
+        );
+        let clip = overtall_clip(row_clip, widget_height, usable_height);
+        let reserve = (widget_height - usable_height).max(0);
+        if bottom_clip.height_request() != clip {
+            bottom_clip.set_height_request(clip);
+        }
+        crate::logging::log(&format!(
+            "BOTTOM_CLIP_OVERTALL: page_top={} usable={} widget_h={} row_clip={} reserve={} -> clip={}",
+            page_top, usable_height, widget_height, row_clip, reserve, clip
+        ));
         return;
     }
 
@@ -1191,6 +1243,35 @@ pub fn scroll_paragraph_to_top(state: &mut AppState, para_start: usize) {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod overtall_clip_tests {
+    use super::overtall_clip;
+
+    #[test]
+    fn adds_the_reserve_band_to_the_row_clip() {
+        // widget 1112, usable 1052 -> reserve 60. A row_clip of 20 (small partial
+        // row above usable bottom) plus the 60px reserve = 80px total clip, so the
+        // over-tall paragraph keeps a full-page-sized bottom gap.
+        assert_eq!(overtall_clip(20, 1112, 1052), 80);
+    }
+
+    #[test]
+    fn zero_row_clip_still_reserves_the_band() {
+        // Even when the last row lands exactly on usable_height (row_clip 0), the
+        // reserve alone keeps the paragraph off the card edge (the flush-bottom fix).
+        assert_eq!(overtall_clip(0, 1112, 1052), 60);
+    }
+
+    #[test]
+    fn clamps_to_widget_height_and_non_negative() {
+        // Absurd row_clip can't push the clip past the card height.
+        assert_eq!(overtall_clip(9000, 1112, 1052), 1112);
+        // usable >= widget (no reserve) with a 0 row_clip -> 0, never negative.
+        assert_eq!(overtall_clip(0, 1112, 1112), 0);
+        assert_eq!(overtall_clip(0, 1112, 1200), 0);
+    }
+}
 
 #[cfg(test)]
 mod page_turn_lock_tests {

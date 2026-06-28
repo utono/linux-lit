@@ -134,7 +134,15 @@ pub(crate) fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, windo
     } else if is_verse {
         super::VERSE_LEFT_OFFSET
     } else {
-        super::PROSE_LEFT_OFFSET
+        // Prose monocle: a centered NYTimes-style column. Inset is a fraction of
+        // the ACTUAL on-screen card width (clamped to the window), so the text
+        // centers in the cream card with ~1/3 whitespace each side. Subtract the
+        // base text_margins so logical_left lands exactly at prose_column_margin.
+        // Mirrors the translations_visible branch's card-relative inset.
+        let card_w = target_card_width(
+            window_width, state.config.column_width, state.column_count(), false,
+        ).min(window_width.max(1));
+        (crate::ui::prose_column_margin(card_w) - state.config.text_margins as i32).max(0)
     };
     let logical_left = state.config.text_margins as i32 + left_bump;
     let gutter_active = state.gutter_renderer.is_some();
@@ -192,6 +200,14 @@ pub(crate) fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, windo
         );
         let card_w = target.min(window_width.max(1));
         state.text_view.set_right_margin(crate::ui::card_side_margin(card_w).max(crate::gutter::LINE_NUMBER_TEXT_GAP_TWO_COL));
+    } else if !is_verse {
+        // Prose monocle: symmetric right margin == the centered left inset, so
+        // the column is centered in the card (NYTimes body look). Recompute the
+        // same card-relative value used for logical_left above.
+        let card_w = target_card_width(
+            window_width, state.config.column_width, state.column_count(), false,
+        ).min(window_width.max(1));
+        state.text_view.set_right_margin(crate::ui::prose_column_margin(card_w));
     } else {
         let logical_right = state.config.text_margins as i32
             + crate::config::EXTRA_RIGHT_MARGIN;

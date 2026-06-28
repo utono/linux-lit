@@ -262,6 +262,16 @@ Three clip strategies coexist deliberately; merging them changes behavior:
   `line_yrange` heights from a known `page_top` to a column-split/section
   boundary, with `descender_guard`/`BASE_BOTTOM_MARGIN`/`exact_end`. A different
   strategy (it knows the page boundary; the free-scroll mask doesn't).
+  **Exception — the over-tall single paragraph.** `line_yrange` is per-BUFFER-line.
+  When ONE prose paragraph (one buffer line) wraps TALLER than `usable_height`,
+  `visible_range` fits zero buffer lines (`count == 0`) and the paged clip can't
+  pick a boundary inside the paragraph — it has no per-row granularity. That case
+  (only) borrows the free-scroll per-row helpers: clip below the last full VISUAL
+  row via `bottom_clip_height(display_rows(view), scroll_val, usable_height, …)`
+  plus the `widget_height − usable_height` reserve. This is NOT a dedup of the two
+  strategies — it is the paged clip delegating its one sub-paragraph case to the
+  per-row math, the same way scroll-mode already does. See the over-tall-paragraph
+  entry in the failure checklist.
 - **Box-slack guard** (`recompute_overlay_bottom_clip_box`) — the translation
   column stack. No wrapped partial row; covers only trailing slack.
 
@@ -303,6 +313,23 @@ When a half line clips at the bottom edge of a scrolled surface:
    Fix: make the scroll YIELD the space — vexpand OFF + explicit height via
    `AskCardHost` (see "occlusion is not clipping" above). The tell: opening the
    card does not change `page_size`.
+6. **MAIN CARD only — an over-tall single prose paragraph renders flush to the
+   bottom edge (no gap, or a half-cut last row).** The paged `update_bottom_clip`
+   counts whole BUFFER lines (`line_yrange`). When one paragraph wraps taller than
+   `usable_height`, `visible_range` returns `count == 0`; the old code then set the
+   clip to **0**, so the paragraph filled the card flush. The tell: a prose page
+   that is one continuous paragraph (the displayed range is a single buffer line,
+   `last_fit == page_top`) with the last line touching the card's bottom rule. A
+   FIXED-pixel reserve "fixes" the flush but cuts mid-glyph-row (checklist #2 in a
+   new guise). Fix: clip at a clean visual-row boundary via
+   `bottom_clip_height(display_rows(view), scroll_val, usable_height, content_h)`
+   + the `widget_height − usable_height` reserve, in the `count == 0` branch of
+   `update_bottom_clip`. Diagnosing this is far easier with the clip box painted a
+   visible color (`background-color: #f00`) for one run — flush pages show NO clip
+   band, over-tall-but-fitting pages show the expected band; that one screenshot
+   separates "clip is 0" from "clip is mis-sized." Exposed by the prose
+   NYTimes-column narrowing (commit on `feat/prose-nyt-column`), but it was a
+   latent edge case for any single paragraph taller than the viewport.
 
 ## Verifying
 
@@ -330,8 +357,10 @@ overlay_clipping -- --ignored --nocapture`.
   journal and gloss overlays.
 - `src/ui/translation_overlay.rs` — the Box-child variant.
 - `src/input/scroll.rs` — `update_bottom_clip` (the MAIN card's *paginated*
-  clip, NOT this algorithm), `scrolloff_bottom_clip_widgets` (scroll-mode, routed
-  through the shared helper), `snap_value_to_line_top`.
+  clip, NOT this algorithm — except its `count == 0` over-tall-paragraph branch,
+  which delegates to the shared `display_rows`/`bottom_clip_height` per-row math),
+  `scrolloff_bottom_clip_widgets` (scroll-mode, routed through the shared helper),
+  `snap_value_to_line_top`.
 - `src/theme.rs` — the `.gloss-bottom-clip` background CSS.
 - `docs/troubleshooting/page-turning-mechanics.md` — the paged clip + pagination.
 - `docs/superpowers/specs/2026-06-25-clip-prevention-design.md` — the unification

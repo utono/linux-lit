@@ -713,7 +713,6 @@ impl AppState {
 /// (tiled layouts), the offset is dropped so the text stays symmetric inside
 /// the card and isn't pushed off-center.
 pub const VERSE_LEFT_OFFSET: i32 = 120;
-pub const PROSE_LEFT_OFFSET: i32 = 120;
 
 /// Left offset used in two-column mode. Small on purpose: it only needs to
 /// give the sign-column gutter enough room to put padding to the LEFT of the
@@ -2606,13 +2605,16 @@ pub fn display_work_at_with_prepared(
     // offset for wide windows, the page-label padding, and the root-color
     // masking CSS class for narrow/tiled windows.
     let work_type = state.current_work.as_ref().map(|w| w.work_type.clone()).unwrap_or_default();
+    let work_is_prose = crate::db::line_types::is_prose_work(&work_type);
+    state.gloss_overlay.set_prose(work_is_prose);
+    state.journal_overlay.set_prose(work_is_prose);
     let vbox = state.vbox.clone();
     let ww = state.window.width();
     apply_tiled_mode(state, &vbox, ww);
     // Non-prose works (plays, poems, epics) use tight 0px global spacing.
     // Prose uses the configured line_spacing. Reset on every load so the
     // previous work's spacing never leaks through.
-    let ls = if crate::db::line_types::is_prose_work(&work_type) {
+    let ls = if work_is_prose {
         state.config.line_spacing as i32
     } else {
         0
