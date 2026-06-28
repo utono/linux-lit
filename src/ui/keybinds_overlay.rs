@@ -83,7 +83,7 @@ const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 const BOTTOM_ROW: &[KeyDef] = &[
     bare("'", "\"", "reopen BCP echoes"),
     key("q", "Q", "next speaker", "Q: next dlg", &[]),
-    key("j", "J", "cursor \u{2193}", "J: next speaker", &[("C-j", "journal tog"), ("J", "jrnl from gloss"), ("C-j", "view jrnl")]),
+    key("j", "J", "cursor \u{2193}", "J: next speaker", &[("C-j", "journal tog"), ("J", "jrnl from gloss"), ("C-j", "view jrnl"), ("C-S-j", "move jrnl band")]),
     key("k", "K", "cursor \u{2191}", "K: prev speaker", &[]),
     bare("x", "X", "pg fwd"),
     bare("b", "B", ""),
@@ -396,6 +396,12 @@ journal overlay in the Passage band on the first page. Toasts \u{201c}No journal
 this passage\u{201d} when none exist. \
 -> journal::view_journal_from_gloss \
 \u{2014} src/input/actions/journal.rs",
+        "move jrnl band" => "While the journal overlay is open (Ctrl+Shift+J): move the \
+current Q&A page to a different band. Opens a picker listing every scene/chapter in \
+the work plus a \u{201c}whole work\u{201d} row (the current band omitted); Enter re-targets \
+the entry\u{2019}s scope + (div1,div2) in lit.db and follows it to its new band. Passage \
+pages can\u{2019}t be moved. \
+-> journal::open_move_picker / confirm_move_picker \u{2014} src/input/actions/journal.rs",
         "view gloss" => "While the journal overlay is open on a passage page (Ctrl+g): view \
 the gloss for the passage cited by the current journal page. Looks up glosses by the \
 page\u{2019}s start_citation; if found, closes the journal overlay and opens the gloss \
