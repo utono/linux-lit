@@ -30,13 +30,28 @@ pub struct JournalState {
 }
 
 /// Resolve which band a stored journal page belongs to, for the Q&A picker. A
-/// page is `Work` when its `div1 < 0` (the JOURNAL_WORK_DIV sentinel), a
-/// `Passage` when it carries citations (only passage pages set
-/// `start_citation`/`end_citation`), and a `Scene` otherwise. Getting the
-/// passage case wrong was a real bug: the picker built `Scene(div1,div2)` for a
-/// passage page, so `confirm_picker` queried the scene band, never found the
-/// page by id, and Enter did nothing. Passages must be queried by citation.
+/// page is `Work` when its `div1 < 0` (the JOURNAL_WORK_DIV sentinel), and a
+/// `Scene` otherwise — INCLUDING passage Q&As, which belong to their
+/// `(div1, div2)` scene/chapter band. A passage page therefore resolves to the
+/// same `Scene` band as the scene Q&As around it, so `confirm_picker` lands the
+/// reader in the merged band (where `render_current` loads scene + passage pages
+/// together via `find_scene_band_pages`) and finds the page by id. The picker's
+/// "N.N passage" label is computed separately from the ROW's citations, not from
+/// the band — see `open_picker`.
 fn band_for_page(p: &crate::db::journal::JournalPage) -> JournalBand {
+    if p.div1 < 0 {
+        JournalBand::Work
+    } else {
+        JournalBand::Scene(p.div1, p.div2)
+    }
+}
+
+/// Resolve the band to GROUND a rewrite of a page in (`rewrite_context`). Unlike
+/// `band_for_page` (which folds a passage page into its Scene band for *viewing*
+/// and *navigation*), this reconstructs the `Passage` band for a passage row so
+/// the rewrite context keeps the passage-specific arm (which appends the passage
+/// source text). A page is a passage row iff it carries start+end citations.
+fn band_for_rewrite(p: &crate::db::journal::JournalPage) -> JournalBand {
     if p.div1 < 0 {
         JournalBand::Work
     } else if let (Some(start), Some(end)) = (p.start_citation.clone(), p.end_citation.clone()) {
@@ -131,8 +146,11 @@ pub(crate) fn render_current(s: &mut AppState) {
             (pages, title)
         }
         JournalBand::Scene(d1, d2) => {
+            // A scene/chapter band holds BOTH its scene Q&As and the passage
+            // Q&As anchored in the same (div1, div2) — `find_scene_band_pages`
+            // merges them so Ctrl+n/p pages through all of a chapter's Q&As.
             let pages = conn
-                .and_then(|c| crate::db::journal::find_journal_pages(&c, &work_abbrev, d1, d2).ok())
+                .and_then(|c| crate::db::journal::find_scene_band_pages(&c, &work_abbrev, d1, d2).ok())
                 .unwrap_or_default();
             let title = format!(
                 "{} — {}",
@@ -460,7 +478,11 @@ pub(crate) fn submit_edit_rewrite(state: &Rc<RefCell<AppState>>) {
             p.claude_model.clone()
         };
         let passage_source = p.source_text.clone().unwrap_or_default();
-        let band = s.journal_band.clone();
+        // Derive the rewrite band from the page ROW, not `s.journal_band`: a
+        // passage page now lives inside its Scene band, so the view band is
+        // Scene — but the rewrite context must still take the Passage arm (which
+        // appends the passage source) when the current page is a passage page.
+        let band = band_for_rewrite(p);
         let anchor_work_line = s
             .journal
             .return_pos
@@ -688,8 +710,13 @@ pub(crate) fn open_picker(state: &Rc<RefCell<AppState>>) {
         .iter()
         .map(|p| {
             let band = band_for_page(p);
+            // A passage Q&A resolves to its Scene band (so Enter lands in the
+            // merged chapter band), but the picker still labels it "N.N passage"
+            // — read passage-ness from the ROW's citations, not the band.
+            let is_passage = p.start_citation.is_some() && p.end_citation.is_some();
             let scene_label = match &band {
                 JournalBand::Work => "whole work".to_string(),
+                JournalBand::Scene(d1, d2) if is_passage => format!("{}.{} passage", d1, d2),
                 JournalBand::Scene(d1, d2) => crate::app::scene_synopsis::synopsis_label(&s, *d1, *d2),
                 JournalBand::Passage { div1, div2, .. } => {
                     format!("{}.{} passage", div1, div2)
@@ -749,7 +776,16 @@ pub(crate) fn open_move_picker(state: &Rc<RefCell<AppState>>) {
         crate::ui::toast::show_transient(&s.chapter_toast, "No page to move", 2);
         return;
     }
-    if matches!(s.journal_band, JournalBand::Passage { .. }) {
+    // Passage pages are citation-anchored and not movable. A passage page now
+    // lives inside its Scene band, so guard on the current PAGE's citations
+    // (not the band, which is Scene) — and also keep the band guard for the
+    // transient ask-time Passage band.
+    let on_passage_page = s
+        .journal
+        .pages
+        .get(s.journal.page_index)
+        .is_some_and(|p| p.start_citation.is_some() && p.end_citation.is_some());
+    if on_passage_page || matches!(s.journal_band, JournalBand::Passage { .. }) {
         crate::ui::toast::show_transient(&s.chapter_toast, "Can't move a passage page", 2);
         return;
     }
@@ -855,25 +891,22 @@ pub(crate) fn action_gloss_from_journal_passage(state: &Rc<RefCell<AppState>>) {
     let (ctx, model, tokio_handle, all_glosses, passage_doc) = {
         let s = state.borrow();
 
-        // Must be in a Passage band.
-        let (div1, div2, start_cit, end_cit) = match &s.journal_band {
-            JournalBand::Passage { div1, div2, start, end } => {
-                (*div1, *div2, start.clone(), end.clone())
-            }
-            _ => {
+        // The current PAGE must be a passage page: it carries source_text plus a
+        // start/end citation. (Read from the row, not the band — a passage page
+        // now lives inside its Scene band alongside scene Q&As.)
+        let (div1, div2, start_cit, end_cit) = match s.journal.pages.get(s.journal.page_index) {
+            Some(p) => match (p.source_text.as_ref(), p.start_citation.clone(), p.end_citation.clone()) {
+                (Some(_), Some(start), Some(end)) => (p.div1, p.div2, start, end),
+                _ => {
+                    crate::ui::toast::show_transient(&s.chapter_toast, "Not a passage page", 2);
+                    return;
+                }
+            },
+            None => {
                 crate::ui::toast::show_transient(&s.chapter_toast, "Not a passage page", 2);
                 return;
             }
         };
-
-        // Must have a source_text on the current page.
-        match s.journal.pages.get(s.journal.page_index) {
-            Some(p) if p.source_text.is_some() => {}
-            _ => {
-                crate::ui::toast::show_transient(&s.chapter_toast, "Not a passage page", 2);
-                return;
-            }
-        }
 
         // Look up the actual work lines for the citation range so we can build a
         // proper GlossContext (with plain-text source_text and line numbers).
@@ -1238,16 +1271,30 @@ mod tests {
     }
 
     #[test]
-    fn band_for_page_classifies_work_scene_passage() {
+    fn band_for_page_classifies_work_and_scene_passages_share_scene_band() {
         // Work: div1 < 0 (the JOURNAL_WORK_DIV sentinel), no citations.
         assert_eq!(band_for_page(&page(-1, -1, None, None)), JournalBand::Work);
         // Scene: div1 >= 0, no citations.
         assert_eq!(band_for_page(&page(1, 0, None, None)), JournalBand::Scene(1, 0));
-        // Passage: div1 >= 0 AND has start+end citations -> Passage band (NOT
-        // Scene). This is the bug fix: a passage page used to be mis-banded as
-        // Scene, so the picker's confirm couldn't find it by id.
+        // Passage: div1 >= 0 AND has citations -> the SAME Scene band as the
+        // scene Q&As around it. A passage Q&A belongs to its scene/chapter band,
+        // so the picker lands the reader in the merged band (render_current then
+        // loads scene + passage pages together) and finds the page by id.
         assert_eq!(
             band_for_page(&page(1, 0, Some("BH.1.0.18"), Some("BH.1.0.18"))),
+            JournalBand::Scene(1, 0),
+        );
+    }
+
+    #[test]
+    fn band_for_rewrite_reconstructs_passage_band_for_grounding() {
+        // Viewing/navigation folds a passage page into its Scene band, but the
+        // REWRITE context must keep the Passage band so it appends the passage
+        // source. A scene page (no citations) still grounds as Scene.
+        assert_eq!(band_for_rewrite(&page(-1, -1, None, None)), JournalBand::Work);
+        assert_eq!(band_for_rewrite(&page(1, 0, None, None)), JournalBand::Scene(1, 0));
+        assert_eq!(
+            band_for_rewrite(&page(1, 0, Some("BH.1.0.18"), Some("BH.1.0.18"))),
             JournalBand::Passage { div1: 1, div2: 0, start: "BH.1.0.18".into(), end: "BH.1.0.18".into() },
         );
     }
