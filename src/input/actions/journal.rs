@@ -600,6 +600,88 @@ pub(crate) fn confirm_picker(state: &Rc<RefCell<AppState>>) {
     }
 }
 
+/// Open the "move this Q&A to another band" picker over the journal overlay.
+/// Lists every band the current entry could move to (whole work + every
+/// scene/chapter), excluding its current band. No-op with a toast if there is no
+/// current page, or if the current band is a passage (passages are
+/// citation-anchored and not movable).
+pub(crate) fn open_move_picker(state: &Rc<RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    if s.journal.pages.is_empty() {
+        crate::ui::toast::show_transient(&s.chapter_toast, "No page to move", 2);
+        return;
+    }
+    if matches!(s.journal_band, JournalBand::Passage { .. }) {
+        crate::ui::toast::show_transient(&s.chapter_toast, "Can't move a passage page", 2);
+        return;
+    }
+    let rows = move_target_rows(&s, &s.journal_band.clone());
+    if rows.is_empty() {
+        crate::ui::toast::show_transient(&s.chapter_toast, "No other band to move to", 2);
+        return;
+    }
+    s.journal_move_picker.set_items(rows);
+    s.journal_move_picker.show();
+    s.input_mode = InputMode::JournalMovePicker;
+}
+
+/// Confirm the move-picker selection: re-target the current entry to the chosen
+/// band in lit.db, then follow it — switch the overlay to the destination band
+/// and land on the moved entry (matched by id). Hides the picker and returns to
+/// the journal overlay.
+pub(crate) fn confirm_move_picker(state: &Rc<RefCell<AppState>>) {
+    let selected = state.borrow().journal_move_picker.selected_index();
+    let mut s = state.borrow_mut();
+    s.journal_move_picker.hide();
+    s.input_mode = InputMode::JournalOverlay;
+
+    let Some(idx) = selected else {
+        render_current(&mut s);
+        return;
+    };
+
+    // The destination band + label, and the current entry's id.
+    let (dest_band, label) = {
+        let row = &s.journal_move_picker.items[idx];
+        (row.band.clone(), row.label.clone())
+    };
+    let Some(entry_id) = s.journal.pages.get(s.journal.page_index).map(|p| p.id) else {
+        render_current(&mut s);
+        return;
+    };
+
+    // Map the destination band to (scope, div1, div2).
+    let (scope, d1, d2) = match &dest_band {
+        JournalBand::Work => ("work", crate::app::JOURNAL_WORK_DIV.0, crate::app::JOURNAL_WORK_DIV.1),
+        JournalBand::Scene(a, b) => ("scene", *a, *b),
+        // open_move_picker excludes the passage band from targets; unreachable
+        // in practice, but re-render-and-bail defensively rather than panic.
+        JournalBand::Passage { .. } => {
+            render_current(&mut s);
+            return;
+        }
+    };
+
+    if let Ok(conn) = crate::db::queries::open_db_rw() {
+        if let Err(e) = crate::db::journal::move_journal_page(&conn, entry_id, scope, d1, d2) {
+            crate::logging::log(&format!("JOURNAL: move failed: {}", e));
+            render_current(&mut s);
+            return;
+        }
+    }
+
+    // Follow the entry: switch to the destination band and land on it.
+    s.journal_band = dest_band;
+    s.journal.page_index = 0;
+    render_current(&mut s); // loads the destination band's pages
+    if let Some(pos) = s.journal.pages.iter().position(|p| p.id == entry_id) {
+        s.journal.page_index = pos;
+        render_current(&mut s);
+    }
+    crate::ui::toast::show_transient(&s.chapter_toast, &format!("Moved to {}", label), 2);
+    crate::logging::log("JOURNAL: moved page to new band");
+}
+
 pub(crate) fn delete_current(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
     if s.journal.pages.is_empty() {
