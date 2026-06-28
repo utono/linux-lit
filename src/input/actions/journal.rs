@@ -870,6 +870,13 @@ pub(crate) fn delete_current(state: &Rc<RefCell<AppState>>) {
     let id = s.journal.pages[s.journal.page_index].id;
     if let Ok(conn) = crate::db::queries::open_db_rw() {
         let _ = crate::db::journal::delete_journal_page(&conn, id);
+        // Purge this entry's cached TTS MP3s (rows + files), since SQLite FK
+        // cascade is not enabled app-wide — mirrors the gloss/synopsis delete.
+        if let Ok(paths) = crate::db::queries::delete_journal_audio(&conn, id) {
+            for p in paths {
+                let _ = std::fs::remove_file(&p);
+            }
+        }
     }
     if s.journal.page_index > 0 {
         s.journal.page_index -= 1;

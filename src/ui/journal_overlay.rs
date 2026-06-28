@@ -183,7 +183,7 @@ impl JournalOverlay {
         // right.
         let footer = crate::ui::footer::build_footer_row(
             text_margins as i32,
-            "Alt+w work \u{00b7} Ctrl+\\ pick \u{00b7} Alt+g gloss \u{00b7} Ctrl+g view gloss \u{00b7} \u{21e7}V select \u{00b7} c copy id",
+            "Space read \u{00b7} Alt+w work \u{00b7} Ctrl+\\ pick \u{00b7} Alt+g gloss \u{00b7} Ctrl+g view gloss \u{00b7} \u{21e7}V select \u{00b7} c copy id",
         );
         let footer_left = footer.left;
         let hint = footer.hint;
@@ -406,68 +406,6 @@ impl JournalOverlay {
         self.container.is_visible()
     }
 
-    fn row_step(&self) -> f64 {
-        let (_, h) = self.view.line_yrange(&self.view.buffer().start_iter());
-        if h > 0 {
-            h as f64
-        } else {
-            (self.font_size.get() as f64) * 1.4
-        }
-    }
-
-    fn snap_value_to_line(&self, value: f64) -> f64 {
-        let step = self.row_step();
-        if step <= 0.0 {
-            return value;
-        }
-        (value / step).round() * step
-    }
-
-    /// Scroll by exactly ONE real visual row per `delta` step, landing the
-    /// viewport top on the next (delta>0) or previous (delta<0) wrapped-row top.
-    /// Uses real per-row geometry (`display_rows`) rather than a uniform
-    /// `row_step` grid so no line is skipped on non-uniform wrapped prose — the
-    /// earlier `step * 3.0` jumped three rows and scrolled lines off before they
-    /// could be read.
-    pub fn scroll(&self, delta: i32) {
-        let adj = self.scrolled.vadjustment();
-        let rows = crate::ui::display_rows(&self.view);
-        let cur = adj.value();
-        let lower = adj.lower();
-        let max_value = (adj.upper() - adj.page_size()).max(lower);
-        let target = if delta > 0 {
-            // First row top strictly below the current top.
-            rows.iter()
-                .map(|(top, _)| *top)
-                .find(|top| *top > cur + 0.5)
-                .unwrap_or(max_value)
-        } else if delta < 0 {
-            // Last row top strictly above the current top.
-            rows.iter()
-                .map(|(top, _)| *top)
-                .filter(|top| *top < cur - 0.5)
-                .next_back()
-                .unwrap_or(lower)
-        } else {
-            cur
-        };
-        adj.set_value(target.clamp(lower, max_value));
-        self.update_bottom_clip();
-    }
-
-    pub fn scroll_to_top(&self) {
-        let adj = self.scrolled.vadjustment();
-        adj.set_value(adj.lower());
-        self.update_bottom_clip();
-    }
-
-    pub fn scroll_to_bottom(&self) {
-        let adj = self.scrolled.vadjustment();
-        let bottom = (adj.upper() - adj.page_size()).max(adj.lower());
-        adj.set_value(self.snap_value_to_line(bottom));
-        self.update_bottom_clip();
-    }
-
     /// Set the footer-left label to the band identity (`<abbrev> <act>.<scene>`)
     /// followed by the page position, joined with a `·`, e.g.
     /// `Cromwell 1.0 · page 1 of 1 in this scene`. The position used to live in a
@@ -605,7 +543,10 @@ impl JournalOverlay {
         self.ask_host.close_to_closed_height();
     }
 
-    /// Rebuild `self.blocks` from the current buffer text (paragraph runs).
+    /// Rebuild `self.blocks` from the current buffer text (paragraph runs), reset
+    /// the block cursor to the first block, and mark it so the left accent bar
+    /// shows the cursor on a freshly-rendered page (mirrors the gloss overlay's
+    /// `rebuild_blocks` + cursor reset). j/k step this cursor; Space/a read it.
     fn rebuild_blocks(&self) {
         let buffer = self.view.buffer();
         let text = buffer
@@ -615,6 +556,92 @@ impl JournalOverlay {
         *self.blocks.borrow_mut() = journal_blocks(&lines);
         self.cursor_block.set(0);
         self.visual_anchor.set(None);
+        self.mark_cursor_block();
+    }
+
+    /// The block cursor's current index (the block j/k/gg/G select), clamped to
+    /// the block list. None when the page has no blocks (the empty/loading card).
+    pub fn current_block_index(&self) -> Option<usize> {
+        let len = self.blocks.borrow().len();
+        if len == 0 {
+            None
+        } else {
+            Some(self.cursor_block.get().min(len - 1))
+        }
+    }
+
+    /// The text of the cursor's current block (for TTS). None when no blocks.
+    pub fn current_block_text(&self) -> Option<String> {
+        let blocks = self.blocks.borrow();
+        let len = blocks.len();
+        if len == 0 {
+            return None;
+        }
+        let i = self.cursor_block.get().min(len - 1);
+        blocks.get(i).map(|b| b.text.clone())
+    }
+
+    /// `j`/`k`: move the block cursor down/up one block, mark it (the left accent
+    /// bar), and scroll it into view. No-op at the ends (does not re-snap the
+    /// viewport — see the gloss overlay's `step_cursor` for why).
+    pub fn cursor_next_block(&self) {
+        self.step_block_cursor(1);
+    }
+    pub fn cursor_prev_block(&self) {
+        self.step_block_cursor(-1);
+    }
+    /// `gg`/`G`: jump the block cursor to the first/last block.
+    pub fn cursor_first_block(&self) {
+        self.block_cursor_to_end(false);
+    }
+    pub fn cursor_last_block(&self) {
+        self.block_cursor_to_end(true);
+    }
+
+    fn step_block_cursor(&self, delta: i32) {
+        let len = self.blocks.borrow().len();
+        if len == 0 {
+            return;
+        }
+        let cur = self.cursor_block.get().min(len - 1) as i64;
+        let next = (cur + delta as i64).clamp(0, len as i64 - 1);
+        if next == cur {
+            return;
+        }
+        self.cursor_block.set(next as usize);
+        self.mark_cursor_block();
+        self.scroll_cursor_into_view();
+    }
+
+    fn block_cursor_to_end(&self, last: bool) {
+        let len = self.blocks.borrow().len();
+        if len == 0 {
+            return;
+        }
+        self.cursor_block.set(if last { len - 1 } else { 0 });
+        self.mark_cursor_block();
+        self.scroll_cursor_into_view();
+    }
+
+    /// Move the left accent bar to the single cursor block and repaint. No-op
+    /// when there are no blocks. Logs the landing block so j/k/gg/G navigation
+    /// stays verifiable from the dev log (mirrors the gloss overlay).
+    fn mark_cursor_block(&self) {
+        let blocks = self.blocks.borrow();
+        if blocks.is_empty() {
+            drop(blocks);
+            self.clear_bar();
+            return;
+        }
+        let i = self.cursor_block.get().min(blocks.len() - 1);
+        let span = (blocks[i].start_line, blocks[i].end_line);
+        drop(blocks);
+        crate::logging::log(&format!(
+            "JOURNAL-CURSOR: cursor#{} bar lines [{}, {}]",
+            i, span.0, span.1
+        ));
+        *self.bar_ranges.borrow_mut() = vec![span];
+        self.bar_drawing.queue_draw();
     }
 
     /// Clear the selection bar (no ranges) and repaint.
@@ -731,21 +758,22 @@ impl JournalOverlay {
         }
     }
 
-    /// Exit visual mode: clear the anchor and the bar. (The journal has no
-    /// persistent normal-mode cursor, so yank and cancel both just clear.)
+    /// Exit visual mode: clear the anchor and return the bar to the single block
+    /// cursor (the journal now has a persistent normal-mode block cursor that
+    /// j/k drive and Space/a read).
     pub fn exit_visual(&self) {
         self.visual_anchor.set(None);
-        self.clear_bar();
+        self.mark_cursor_block();
     }
 
-    /// Exit visual mode returning the cursor to the anchor block. Equivalent to
-    /// `exit_visual` here (no persistent cursor), provided for handler symmetry.
+    /// Exit visual mode returning the cursor to the anchor block, then re-mark
+    /// the single cursor bar.
     pub fn exit_visual_to_anchor(&self) {
         if let Some(anchor) = self.visual_anchor.get() {
             self.cursor_block.set(anchor);
         }
         self.visual_anchor.set(None);
-        self.clear_bar();
+        self.mark_cursor_block();
     }
 
     /// Scroll the viewport so the current cursor block is visible. Uses the
@@ -771,12 +799,16 @@ impl JournalOverlay {
                 adj.set_value((y_bottom - page).max(adj.lower()));
             }
         }
+        // Refresh the bottom clip after the viewport may have moved, so block nav
+        // never leaves a stale clip box (the value_changed catch-all on the guard
+        // also fires, but recompute is idempotent and keeps this self-contained).
+        self.update_bottom_clip();
     }
 
     /// Normal-navigation footer hint (advertises Shift+V). Re-set on visual exit.
     pub fn set_journal_hint(&self) {
         self.hint.set_text(
-            "Alt+w work \u{00b7} Ctrl+\\ pick \u{00b7} Alt+g gloss \u{00b7} Ctrl+g view gloss \u{00b7} \u{21e7}V select \u{00b7} c copy id",
+            "Space read \u{00b7} Alt+w work \u{00b7} Ctrl+\\ pick \u{00b7} Alt+g gloss \u{00b7} Ctrl+g view gloss \u{00b7} \u{21e7}V select \u{00b7} c copy id",
         );
     }
 

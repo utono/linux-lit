@@ -723,11 +723,12 @@ fn handle_journal_key(
         AskIntercept::NotHandled => {}
     }
 
-    // gg chord -> top
+    // gg chord -> first block (mirrors the gloss/synopsis overlays' block cursor)
     if key_state.borrow().chord == ChordState::PendingG {
         key_state.borrow_mut().chord = ChordState::None;
         if key_name == "g" {
-            state.borrow().journal_overlay.scroll_to_top();
+            crate::input::actions::gloss::stop_all_gloss_audio(state);
+            state.borrow().journal_overlay.cursor_first_block();
         }
         return true;
     }
@@ -825,15 +826,33 @@ fn handle_journal_key(
             true
         }
         "G" => {
-            state.borrow().journal_overlay.scroll_to_bottom();
+            crate::input::actions::gloss::stop_all_gloss_audio(state);
+            state.borrow().journal_overlay.cursor_last_block();
             true
         }
+        // j/k step the paragraph block cursor (the left accent bar), mirroring
+        // the gloss/synopsis overlays; Space/Tab read the cursor block aloud and
+        // `a` restarts it. Silence audio on nav, like the other overlays' j/k.
         "j" => {
-            state.borrow().journal_overlay.scroll(1);
+            crate::input::actions::gloss::stop_all_gloss_audio(state);
+            state.borrow().journal_overlay.cursor_next_block();
             true
         }
         "k" => {
-            state.borrow().journal_overlay.scroll(-1);
+            crate::input::actions::gloss::stop_all_gloss_audio(state);
+            state.borrow().journal_overlay.cursor_prev_block();
+            true
+        }
+        // Space/Tab: play/stop the cursor paragraph's TTS (cache hit plays the
+        // stored MP3, miss synthesizes via ElevenLabs). ISO_Left_Tab is Shift+Tab.
+        "space" | "Tab" | "ISO_Left_Tab" => {
+            crate::input::actions::gloss::read_current_journal_block(state);
+            true
+        }
+        // `a`: always (re)start the cursor paragraph's TTS from the beginning
+        // (no pause-toggle), mirroring the gloss/synopsis `a`.
+        "a" => {
+            crate::input::actions::gloss::begin_current_journal_block(state);
             true
         }
         "c" => {
