@@ -523,3 +523,17 @@ Single-file (`transcript-tracer.js`, 20 KB) library for syncing audio/video with
 3. Read the named file end-to-end before grepping — these are small enough.
 4. Translate the **algorithm or schema**, never the code. linux-lit is Rust + GTK4 + SQLite + MPV — not JS, not curses, not WebView.
 5. If the reference disagrees with linux-lit's current approach, that's a design question — don't silently change linux-lit to match. Surface the tradeoff.
+
+## Memory Bank System
+
+This project uses a structured memory bank system. Always check these context
+files before starting work, and keep them updated as the project evolves:
+
+- **CLAUDE-activeContext.md** — current session state, goals, and progress
+- **CLAUDE-patterns.md** — established code patterns and conventions
+- **CLAUDE-decisions.md** — architecture decisions and rationale
+- **CLAUDE-troubleshooting.md** — common issues and proven solutions
+- **CLAUDE-config-variables.md** — configuration variables reference
+
+Always read **CLAUDE-activeContext.md** first to maintain session continuity.
+When you change core context, update the relevant memory bank file.
