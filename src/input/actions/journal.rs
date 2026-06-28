@@ -346,13 +346,59 @@ pub(crate) fn begin_ask(state: &Rc<RefCell<AppState>>) {
         .open_ask_card(title, "Tab switch  \u{00b7}  Ctrl+Enter submit");
 }
 
-/// Build the user message for an Alt+Enter rewrite: the question, the current
-/// answer, and the user's revision instruction, in "revise this answer" shape.
-fn rewrite_user_message(question: &str, answer: &str, instruction: &str) -> String {
+/// Build the user message for an Alt+Enter rewrite. `context` is the band-aware
+/// grounding block (work title/author, the band the Q&A now lives in, and the
+/// relevant scene/passage text) — the same framing the original ask sends — so a
+/// rewrite instruction that references the band (e.g. "now that this is in the
+/// work band, broaden the opening") has the context it needs. The question, the
+/// current answer, and the instruction follow in "revise this answer" shape.
+fn rewrite_user_message(context: &str, question: &str, answer: &str, instruction: &str) -> String {
     format!(
-        "Original question:\n{}\n\nCurrent answer:\n{}\n\nRevise the answer per this instruction (return only the revised answer):\n{}",
-        question, answer, instruction,
+        "{}\n\nOriginal question:\n{}\n\nCurrent answer:\n{}\n\nRevise the answer per this instruction (return only the revised answer):\n{}",
+        context, question, answer, instruction,
     )
+}
+
+/// Assemble the band-aware grounding context for a journal Q&A, mirroring the
+/// framing `ask_claude` sends. For Work the context is just the work header; for
+/// Scene/Passage it adds the band label and the windowed scene text (and, for a
+/// passage page, the stored source markup). `anchor_work_line` anchors the
+/// windowed slice; `passage_source` is the editing page's own `source_text`
+/// (empty for non-passage pages).
+fn rewrite_context(
+    s: &AppState,
+    band: &JournalBand,
+    anchor_work_line: usize,
+    passage_source: &str,
+) -> String {
+    let (title, author) = match s.current_work.as_ref() {
+        Some(w) => (w.title.clone(), w.author.clone()),
+        None => (String::new(), String::new()),
+    };
+    match band {
+        JournalBand::Work => {
+            format!("Work: {} by {}\nThis Q&A is filed under the WHOLE WORK (not a single scene).", title, author)
+        }
+        JournalBand::Scene(d1, d2) => {
+            let scene_text = crate::app::scene_synopsis::scene_text_windowed(
+                s, *d1, *d2, anchor_work_line, PROSE_CONTEXT_RADIUS,
+            );
+            format!(
+                "Work: {} by {}\nThis Q&A is filed under: {}\n\nScene text:\n{}",
+                title, author, crate::app::scene_synopsis::scene_label(*d1, *d2), scene_text,
+            )
+        }
+        JournalBand::Passage { div1, div2, .. } => {
+            let scene_text = crate::app::scene_synopsis::scene_text_windowed(
+                s, *div1, *div2, anchor_work_line, PROSE_CONTEXT_RADIUS,
+            );
+            format!(
+                "Work: {} by {}\nThis Q&A is filed under a PASSAGE in {}\n\nScene text:\n{}\n\nPassage:\n{}",
+                title, author, crate::app::scene_synopsis::scene_label(*div1, *div2),
+                scene_text, passage_source,
+            )
+        }
+    }
 }
 
 /// `E` in the journal overlay: open the dedicated edit card pre-filled with the
@@ -417,24 +463,33 @@ pub(crate) fn submit_edit_rewrite(state: &Rc<RefCell<AppState>>) {
         return;
     }
 
-    // Capture the page id + model, then call Claude.
-    let (edit_id, model) = {
+    // Capture the page id + model + the band-aware grounding context, then call
+    // Claude. The context (work header, the band the Q&A is filed under, the
+    // windowed scene text, and any passage source) mirrors what the original ask
+    // sends, so a rewrite instruction that references the band has what it needs.
+    let (edit_id, model, context) = {
         let s = state.borrow();
-        match s.journal.pages.get(s.journal.page_index) {
-            Some(p) => {
-                let model = if p.claude_model.is_empty() {
-                    s.config.claude_model.clone()
-                } else {
-                    p.claude_model.clone()
-                };
-                (p.id, model)
-            }
-            None => return,
-        }
+        let Some(p) = s.journal.pages.get(s.journal.page_index) else {
+            return;
+        };
+        let model = if p.claude_model.is_empty() {
+            s.config.claude_model.clone()
+        } else {
+            p.claude_model.clone()
+        };
+        let passage_source = p.source_text.clone().unwrap_or_default();
+        let band = s.journal_band.clone();
+        let anchor_work_line = s
+            .journal
+            .return_pos
+            .and_then(|(buf, _top)| s.work_line_for_buffer(buf))
+            .unwrap_or(0);
+        let context = rewrite_context(&s, &band, anchor_work_line, &passage_source);
+        (p.id, model, context)
     };
     let question_owned = question.clone();
     let model_for_db = model.clone();
-    let user_msg = rewrite_user_message(&question, &answer, &instruction);
+    let user_msg = rewrite_user_message(&context, &question, &answer, &instruction);
 
     {
         let s = state.borrow();
@@ -1162,14 +1217,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rewrite_user_message_includes_all_three_parts() {
-        let msg = rewrite_user_message("Who is Esther?", "She narrates half the book.", "Add her surname.");
+    fn rewrite_user_message_includes_context_and_all_three_parts() {
+        let msg = rewrite_user_message(
+            "Work: Bleak House by Charles Dickens\nThis Q&A is filed under the WHOLE WORK (not a single scene).",
+            "Who is Esther?",
+            "She narrates half the book.",
+            "Add her surname.",
+        );
+        // The band context is present and leads the message.
+        assert!(msg.contains("WHOLE WORK"));
         assert!(msg.contains("Who is Esther?"));
         assert!(msg.contains("She narrates half the book."));
         assert!(msg.contains("Add her surname."));
-        // The instruction must come after the current answer (revise-this shape).
+        // Order: context, then question, then answer, then instruction.
+        let c_pos = msg.find("WHOLE WORK").unwrap();
+        let q_pos = msg.find("Who is Esther?").unwrap();
         let a_pos = msg.find("She narrates half the book.").unwrap();
         let i_pos = msg.find("Add her surname.").unwrap();
+        assert!(c_pos < q_pos, "context should lead the message");
+        assert!(q_pos < a_pos, "question before answer");
         assert!(i_pos > a_pos, "instruction should follow the current answer");
     }
 
