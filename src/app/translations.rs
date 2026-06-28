@@ -287,11 +287,27 @@ fn show_translations(state: &mut AppState) {
             // the paged refresh_bottom_clip is page_top-relative and unreliable
             // here, so use the same scroll-aware clip the j/k path uses.
             crate::input::scroll::scrolloff_bottom_clip_widgets(&tv, &sw, &bc, val);
+            // 100ms backstop: reapply_font changed line heights, so the FIRST
+            // scroll-aware clip above can read pre-relayout metrics. Re-run it once
+            // more against the settled layout at the SAME scroll value (mirrors
+            // schedule_bottom_clip_update's idle+100ms pair, but scroll-aware — the
+            // paged path is wrong here, see below).
+            let (tv2, sw2, bc2) = (tv.clone(), sw.clone(), bc.clone());
+            gtk4::glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
+                crate::input::scroll::scrolloff_bottom_clip_widgets(&tv2, &sw2, &bc2, val);
+            });
         }
         vbox.set_opacity(1.0);
     });
 
-    crate::input::navigation::refresh_bottom_clip(state);
+    // NOTE: deliberately NOT calling refresh_bottom_clip(state) here. That is the
+    // PAGED clip (page_top-relative), which assumes the scroll is snapped to
+    // page_top. The translation reveal scrolls to a cursor-centered value that is
+    // NOT page_top's top, so the paged clip computed a huge scroll_offset
+    // (scroll_val - expected_y) and set the bottom clip to >2× the viewport height
+    // — blanking the whole card until the first j/k. The scroll-aware
+    // scrolloff_bottom_clip_widgets in the idle (and its 100ms backstop) is the
+    // correct clip for the continuously-scrolled translation view.
 
     let new_buf_lines = state.buffer.line_count() as usize;
     let lm_len_after = state
