@@ -51,6 +51,19 @@ fn prefix_question(question: &str) -> String {
     }
 }
 
+/// Vertical chrome margins the column needs that `preferred_size()` does NOT
+/// report (GTK's preferred-size excludes a widget's own margins). The journal
+/// card column is `title` + `scroll_overlay` + `footer` stacked; the title
+/// carries a 24px `margin_top` (journal_overlay::new) and the footer container a
+/// 12px top + 12px bottom (`ui::footer::build_footer_row`). Without reserving
+/// these, `size_card` budgets `card_height − title_h − footer_h` for the scroll,
+/// the assembled column's natural height becomes `card_height + 48`, and because
+/// the `valign=Center` container's `set_size_request` is only a FLOOR, the
+/// container grows past `card_height` and overflows the window (the "too-tall
+/// journal overlay" bug). The gloss overlay reserves the same way via its
+/// `SCROLL_OVERLAY_MARGINS`. Keep in sync with those two margin sites.
+const UNACCOUNTED_CHROME_MARGINS: i32 = 24 /* title top */ + 12 + 12 /* footer top+bottom */;
+
 impl JournalOverlay {
     pub fn new(column_width: u32, text_margins: u32) -> Self {
         let overlay = Overlay::new();
@@ -248,8 +261,19 @@ impl JournalOverlay {
         // restores this stored closed height. Deterministic — no auto-resize race.
         let (_, title_h) = self.title.preferred_size();
         let (_, footer_h) = self.footer_container.preferred_size();
-        self.ask_host
-            .size(card_width, card_height, title_h.height(), footer_h.height());
+        // Fold the chrome margins `preferred_size()` omits (title's top margin +
+        // the footer's top/bottom) into the fixed-chrome argument, so the host's
+        // closed scroll height equals `closed_scroll_budget(card_height, title_h,
+        // footer_h)`. Without this the column is `UNACCOUNTED_CHROME_MARGINS`
+        // (48px) too tall and the `valign=Center` container grows past
+        // `card_height`, overflowing the window (the "too-tall journal overlay"
+        // bug). `closed_scroll_budget` is the unit-tested source of truth.
+        self.ask_host.size(
+            card_width,
+            card_height,
+            title_h.height() + UNACCOUNTED_CHROME_MARGINS,
+            footer_h.height(),
+        );
         // Anchor the text + headers to the card's side margin (card_width/4, the
         // ~65-char readability optimum the gloss overlay uses) rather than the
         // small fixed `text_margins` — otherwise the Q&A prose runs nearly edge
@@ -856,6 +880,41 @@ mod prefix_question_tests {
         // not double-prefixed.
         assert_eq!(prefix_question("Q: already asked"), "Q: already asked");
         assert_eq!(prefix_question("  Q: leading space"), "  Q: leading space");
+    }
+}
+
+#[cfg(test)]
+mod scroll_budget_tests {
+    use super::UNACCOUNTED_CHROME_MARGINS;
+
+    /// `size_card` passes `title_h + UNACCOUNTED_CHROME_MARGINS` as the fixed
+    /// chrome, so the host's closed scroll height is
+    /// `card_height − title_h − margins − footer_h`. This is the formula that the
+    /// too-tall bug got wrong (it omitted `margins`). Mirror the production
+    /// arithmetic here so a change to either is caught.
+    fn closed_scroll_budget(card_height: i32, title_h: i32, footer_h: i32) -> i32 {
+        (card_height - (title_h + UNACCOUNTED_CHROME_MARGINS) - footer_h).max(80)
+    }
+
+    #[test]
+    fn reserves_unaccounted_chrome_margins() {
+        // window 1200 → card_height 1152; title 40, footer 30.
+        let (card_h, title_h, footer_h) = (1152, 40, 30);
+        let budget = closed_scroll_budget(card_h, title_h, footer_h);
+        // Exactly the old (buggy) budget minus the reserved margins.
+        let old_buggy = card_h - title_h - footer_h;
+        assert_eq!(old_buggy - budget, UNACCOUNTED_CHROME_MARGINS);
+    }
+
+    #[test]
+    fn floors_at_80_for_tiny_cards() {
+        assert_eq!(closed_scroll_budget(50, 40, 30), 80);
+    }
+
+    #[test]
+    fn margins_match_the_two_margin_sites() {
+        // 24 (title margin_top) + 12 + 12 (footer top+bottom) = 48.
+        assert_eq!(UNACCOUNTED_CHROME_MARGINS, 48);
     }
 }
 
