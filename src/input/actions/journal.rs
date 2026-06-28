@@ -1,4 +1,5 @@
 use crate::app::{AppState, InputMode, JournalBand, JournalPromptMode};
+use crate::ui::journal_move_picker::MoveTargetRow;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -36,6 +37,59 @@ fn footer_left_text(abbrev: &str, band: JournalBand) -> String {
         JournalBand::Scene(d1, d2) => format!("{} {}.{}", abbrev, d1, d2),
         JournalBand::Passage { div1, div2, .. } => format!("{} {}.{} passage", abbrev, div1, div2),
     }
+}
+
+/// Pure core of `move_target_rows`: given the work's unique scene keys in
+/// reading order and the entry's current band, return the ordered list of
+/// destination bands — whole work first, then each scene — with the current
+/// band omitted. Labels are applied by `move_target_rows`.
+fn target_bands(scenes: &[(i64, i64)], current: &JournalBand) -> Vec<JournalBand> {
+    let mut out = Vec::with_capacity(scenes.len() + 1);
+    if *current != JournalBand::Work {
+        out.push(JournalBand::Work);
+    }
+    for &(d1, d2) in scenes {
+        let band = JournalBand::Scene(d1, d2);
+        if band != *current {
+            out.push(band);
+        }
+    }
+    out
+}
+
+/// Build the list of move targets for the current entry: every band it could be
+/// moved to (whole work + every scene/chapter in the work), excluding its
+/// current band. Scene keys come from `work.lines` (unique (div1,div2) in
+/// reading order — the same source the synopsis picker uses), unfiltered, so
+/// every scene is offered even if it has no Q&A yet. Labels via `synopsis_label`.
+fn move_target_rows(s: &AppState, current: &JournalBand) -> Vec<MoveTargetRow> {
+    let scenes: Vec<(i64, i64)> = match s.current_work.as_ref() {
+        Some(work) => {
+            let mut seen = std::collections::HashSet::new();
+            let mut keys = Vec::new();
+            for line in &work.lines {
+                let k = (line.div1, line.div2);
+                if seen.insert(k) {
+                    keys.push(k);
+                }
+            }
+            keys
+        }
+        None => Vec::new(),
+    };
+
+    target_bands(&scenes, current)
+        .into_iter()
+        .map(|band| {
+            let label = match band {
+                JournalBand::Work => "whole work".to_string(),
+                JournalBand::Scene(d1, d2) => crate::app::scene_synopsis::synopsis_label(s, d1, d2),
+                // target_bands never yields Passage; map defensively.
+                JournalBand::Passage { div1, div2, .. } => format!("{}.{} passage", div1, div2),
+            };
+            MoveTargetRow { band, label }
+        })
+        .collect()
 }
 
 /// Load the current band's pages from the DB into `journal.pages`, clamp the
@@ -926,5 +980,27 @@ mod tests {
     #[test]
     fn footer_left_work_shows_whole_work() {
         assert_eq!(footer_left_text("2H6", JournalBand::Work), "2H6 \u{00b7} whole work");
+    }
+
+    #[test]
+    fn target_bands_exclude_current_and_lead_with_work() {
+        // Pure core: given the unique (div1,div2) scene keys in reading order and
+        // the current band, produce the ordered destination bands (work first,
+        // current band omitted). Labels are applied separately by the caller.
+        let scenes = vec![(1, 1), (1, 2), (3, 1)];
+
+        // Current = Scene(1,2): work row first, then 1.1 and 3.1 (1.2 omitted).
+        let bands = target_bands(&scenes, &JournalBand::Scene(1, 2));
+        assert_eq!(
+            bands,
+            vec![JournalBand::Work, JournalBand::Scene(1, 1), JournalBand::Scene(3, 1)]
+        );
+
+        // Current = Work: work row omitted, all scenes listed.
+        let bands = target_bands(&scenes, &JournalBand::Work);
+        assert_eq!(
+            bands,
+            vec![JournalBand::Scene(1, 1), JournalBand::Scene(1, 2), JournalBand::Scene(3, 1)]
+        );
     }
 }

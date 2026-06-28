@@ -100,6 +100,7 @@ pub enum InputMode {
     TranslationOverlay,
     GlossPicker,
     JournalPicker,
+    JournalMovePicker,
     EchoPicker,
     EchoTurnsPicker,
     EchoesOverlay,
