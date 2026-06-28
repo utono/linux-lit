@@ -2,6 +2,7 @@ use crate::ui::ask_card::{AskCard, AskCardHost, AskFocus};
 use crate::ui::gloss_block::visual_block_range;
 use crate::ui::gloss_render::populate_verse_buffer;
 use crate::ui::journal_block::{journal_blocks, JournalBlock};
+use crate::ui::journal_edit_card::{EditField, JournalEditCard};
 use gtk4::prelude::*;
 use gtk4::{Label, Overlay};
 use std::cell::{Cell, RefCell};
@@ -36,6 +37,7 @@ pub struct JournalOverlay {
     /// occlusion fix) + the footer hide/show + the clip recompute. Shared with the
     /// gloss overlay so the mechanism can't drift. See `AskCardHost`.
     ask_host: AskCardHost,
+    edit_card: JournalEditCard,
 }
 
 /// Prefix a journal Q&A question with `Q: ` for display (the answer follows
@@ -195,6 +197,9 @@ impl JournalOverlay {
         let ask_host =
             AskCardHost::new(ask, &scrolled, Some(footer_container.clone()), recompute);
 
+        let edit_card = JournalEditCard::new(text_margins as i32, &view);
+        container.append(edit_card.container());
+
         Self {
             overlay,
             scrim,
@@ -218,6 +223,7 @@ impl JournalOverlay {
             font_size: Cell::new(16),
             last_card_size: Cell::new((0, 0)),
             ask_host,
+            edit_card,
         }
     }
 
@@ -548,7 +554,8 @@ impl JournalOverlay {
             return;
         }
         let font_str = format!("{} {}", family, self.font_size.get());
-        for view in [&self.view, self.ask_host.input()] {
+        let edit_views = self.edit_card.views();
+        for view in [&self.view, self.ask_host.input(), edit_views[0], edit_views[1], edit_views[2]] {
             let buffer = view.buffer();
             let table = buffer.tag_table();
             if let Some(old) = table.lookup("journal-font") {
@@ -619,6 +626,40 @@ impl JournalOverlay {
 
     pub fn take_ask_text(&self) -> String {
         self.ask_host.take_text()
+    }
+
+    pub fn edit_is_open(&self) -> bool {
+        self.edit_card.is_open()
+    }
+
+    pub fn edit_focus(&self) -> EditField {
+        self.edit_card.focused_field()
+    }
+
+    pub fn toggle_edit_focus(&self) {
+        self.edit_card.cycle_focus();
+    }
+
+    pub fn take_edit_fields(&self) -> (String, String, String) {
+        self.edit_card.take()
+    }
+
+    /// Open the edit card pre-filled with the current page's Q & A. Hides the
+    /// nav footer (the edit card carries its own hint) and shrinks the scroll so
+    /// the card doesn't occlude the page (mirrors open_ask_card).
+    pub fn open_edit_card(&self, question: &str, answer: &str) {
+        let (card_width, _) = self.last_card_size.get();
+        self.edit_card.open(question, answer, card_width);
+        self.footer_container.set_visible(false);
+        self.apply_font();
+        let (_, edit_h) = self.edit_card.container().preferred_size();
+        self.ask_host.open_for_natural_height(edit_h.height());
+    }
+
+    pub fn close_edit_card(&self) {
+        self.edit_card.close();
+        self.footer_container.set_visible(true);
+        self.ask_host.close_to_closed_height();
     }
 
     /// Rebuild `self.blocks` from the current buffer text (paragraph runs).
