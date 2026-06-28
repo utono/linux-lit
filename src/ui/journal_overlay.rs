@@ -322,8 +322,17 @@ impl JournalOverlay {
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         self.clip_guard.on_open();
+        // rebuild_blocks resets the cursor to block 0 and marks it (the left
+        // accent bar). It used to be followed by clear_bar(), which wiped that
+        // mark so the bar only appeared after the first j/k. Keep the mark, and
+        // repaint once more after layout settles: mark_cursor_block sets
+        // bar_ranges, but the bar DRAW reads per-line geometry (line_yrange),
+        // which is 0/stale until GTK lays out the buffer just made visible — so
+        // the synchronous draw paints nothing on a fresh open. (Same fix the
+        // gloss overlay uses in show_gloss.)
         self.rebuild_blocks();
-        self.clear_bar();
+        let bar = self.bar_drawing.clone();
+        glib::idle_add_local_once(move || bar.queue_draw());
 
         // Headless test: emit the journal overlay viewport rect once layout
         // settles, so tests/journal_clipping.rs can target the card's region.
@@ -776,33 +785,106 @@ impl JournalOverlay {
         self.mark_cursor_block();
     }
 
-    /// Scroll the viewport so the current cursor block is visible. Uses the
-    /// view's vadjustment and the cursor block's line range.
+    /// Scroll the viewport so the WHOLE current cursor block is visible, leaving
+    /// a `pad` of clearance so the block's last row never strands under the
+    /// footer (the footer overlays the bottom of the card; revealing a block's
+    /// bottom exactly at `view_bottom` left its final lines clipped behind it).
+    /// Delegates the decision to the shared pure `cursor_scroll_target` helper —
+    /// the same logic the gloss overlay uses — so an over-tall block reveals its
+    /// bottom and a fitting block shows both edges. No-op when already visible.
     fn scroll_cursor_into_view(&self) {
         let idx = self.cursor_block.get();
-        let blocks = self.blocks.borrow();
-        let Some(b) = blocks.get(idx) else { return };
+        let (start_line, end_line) = {
+            let blocks = self.blocks.borrow();
+            match blocks.get(idx) {
+                Some(b) => (b.start_line, b.end_line),
+                None => return,
+            }
+        };
         let buffer = self.view.buffer();
+        let top_margin = self.view.top_margin() as f64;
+        let Some(si) = buffer.iter_at_line(start_line) else { return };
+        let block_top = self.view.line_yrange(&si).0 as f64 + top_margin;
+        let block_bottom = match buffer.iter_at_line(end_line) {
+            Some(ei) => {
+                let (y, h) = self.view.line_yrange(&ei);
+                (y + h) as f64 + top_margin
+            }
+            None => block_top,
+        };
+
         let adj = self.scrolled.vadjustment();
-        let page = adj.page_size();
-        if let Some(si) = buffer.iter_at_line(b.start_line) {
-            let (y_top, _) = self.view.line_yrange(&si);
-            let y_top = y_top as f64;
-            if y_top < adj.value() {
-                adj.set_value(y_top);
+        let view_top = adj.value();
+        let view_bottom = view_top + adj.page_size();
+        let max_value = (adj.upper() - adj.page_size()).max(adj.lower());
+        // Clear the footer (footer container ~36px) plus a little breathing room
+        // so the last row sits above it, not under it.
+        let pad = 40.0;
+
+        let new_value = match crate::ui::gloss_util::cursor_scroll_target(
+            &crate::ui::gloss_util::CursorScrollGeom {
+                block_top,
+                block_bottom,
+                view_top,
+                view_bottom,
+                page_size: adj.page_size(),
+                lower: adj.lower(),
+                max_value,
+                pad,
+            },
+        ) {
+            Some(v) => v,
+            None => {
+                self.update_bottom_clip();
+                return; // already fully visible
             }
-        }
-        if let Some(ei) = buffer.iter_at_line(b.end_line) {
-            let (y, h) = self.view.line_yrange(&ei);
-            let y_bottom = (y + h) as f64;
-            if y_bottom > adj.value() + page {
-                adj.set_value((y_bottom - page).max(adj.lower()));
-            }
-        }
-        // Refresh the bottom clip after the viewport may have moved, so block nav
-        // never leaves a stale clip box (the value_changed catch-all on the guard
-        // also fires, but recompute is idempotent and keeps this self-contained).
+        };
+        // Snapping direction matters (see the gloss overlay): when revealing a
+        // block's BOTTOM, snap UP to the nearest whole row so we don't scroll back
+        // and re-hide it; otherwise floor so a revealed top isn't pushed under the
+        // title rule.
+        let revealing_bottom = block_bottom > view_bottom - pad && block_top >= view_top + pad;
+        let new_value = if revealing_bottom {
+            self.snap_value_to_line_up(new_value)
+        } else {
+            self.snap_value_to_line(new_value)
+        };
+        adj.set_value(new_value);
         self.update_bottom_clip();
+        self.bar_drawing.queue_draw();
+    }
+
+    /// Greatest real visual-row top at or below `target_y` (clamped). Floors the
+    /// viewport to a whole row so the top line is not half-clipped under the
+    /// title rule. Mirrors the gloss overlay.
+    fn snap_value_to_line(&self, target_y: f64) -> f64 {
+        let adj = self.scrolled.vadjustment();
+        let lower = adj.lower();
+        let max_value = (adj.upper() - adj.page_size()).max(lower);
+        let target = target_y.clamp(lower, max_value);
+        let mut best = lower;
+        for (row_top, _row_bottom) in crate::ui::display_rows(&self.view) {
+            if row_top <= target + 0.5 {
+                best = best.max(row_top);
+            } else {
+                break;
+            }
+        }
+        best.clamp(lower, max_value)
+    }
+
+    /// Least real visual-row top at or above `target_y` (clamped). The
+    /// up-direction counterpart used when revealing a block's bottom, so flooring
+    /// doesn't scroll back and re-hide it. Mirrors the gloss overlay.
+    fn snap_value_to_line_up(&self, target_y: f64) -> f64 {
+        let adj = self.scrolled.vadjustment();
+        let lower = adj.lower();
+        let max_value = (adj.upper() - adj.page_size()).max(lower);
+        let row_tops: Vec<f64> = crate::ui::display_rows(&self.view)
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        crate::ui::gloss_util::snap_up_to_row(target_y, &row_tops, lower, max_value)
     }
 
     /// Normal-navigation footer hint (advertises Shift+V). Re-set on visual exit.
