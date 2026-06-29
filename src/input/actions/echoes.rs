@@ -669,7 +669,12 @@ pub(crate) fn build_source_header(turn: &[Line], speaker: &str) -> String {
             continue;
         }
         let label = line.speaker.as_deref().unwrap_or(speaker).to_uppercase();
-        if current.as_deref() != Some(label.as_str()) {
+        // Prose / novels have no speaker — the resolved label is empty or the
+        // "UNKNOWN" placeholder. Don't emit a <speaker> tag in that case, so the
+        // gloss + glossing overlays show no speaker header (issue: BH showed
+        // "UNKNOWN"). A real speaker still emits its label once per run.
+        let has_speaker = !label.is_empty() && label != "UNKNOWN";
+        if has_speaker && current.as_deref() != Some(label.as_str()) {
             doc.push_str(&format!("<speaker>{}</speaker>\n", label));
             current = Some(label);
         }

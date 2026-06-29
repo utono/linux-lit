@@ -247,7 +247,15 @@ pub(crate) fn populate_verse_buffer(
     tag_table.add(&citation_tag);
     tag_table.add(&pron_tag);
 
-    let elements = parse_gloss_tags(gloss);
+    // Drop empty / "UNKNOWN" speaker labels: prose works (novels) have no
+    // speaker, and a stored gloss may carry `<speaker>UNKNOWN</speaker>`. Filtering
+    // here (rather than skipping mid-loop) keeps the spacing logic correct — the
+    // first real element becomes `first`. New glosses no longer emit the tag at
+    // all (build_source_header), so this guards pre-existing stored data.
+    let elements: Vec<GlossElement> = parse_gloss_tags(gloss)
+        .into_iter()
+        .filter(|el| !matches!(el, GlossElement::Speaker(n) if n.trim().is_empty() || n.eq_ignore_ascii_case("UNKNOWN")))
+        .collect();
     let mut first = true;
     let mut only_speakers_so_far = true;
     // Whether we have reached the echo list (`<gloss>` elements). Speaker
