@@ -1,6 +1,6 @@
 use crate::ui::ask_card::{AskCard, AskCardHost, AskFocus};
 use crate::ui::gloss_block::{
-    gloss_blocks, render_synopsis_with_labels, selected_blocks_text,
+    gloss_block_markups, gloss_blocks, render_synopsis_with_labels, selected_blocks_text,
     synopsis_blocks, visual_block_range, BlockKind, GlossBlock,
 };
 use crate::ui::gloss_render::{
@@ -22,6 +22,18 @@ struct BlockRange {
     index: i32,
     start_line: i32,
     end_line: i32,
+}
+
+/// Which block-bearing render the pagination state currently holds, so
+/// `render_current_page` dispatches to the right page renderer. Synopsis pages
+/// render via `render_synopsis_with_labels`/`set_text`; gloss-result pages render
+/// via `populate_gloss_buffer` over the page's `<speaker>`/`<verse>`/`<gloss>`
+/// markup slice (the speaker tags `gloss_blocks` drops cannot be reconstructed
+/// from `GlossBlock.display`). Irrelevant when `paginated` is false.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PaginatedMode {
+    Synopsis,
+    Gloss,
 }
 
 pub struct GlossOverlay {
@@ -106,6 +118,25 @@ pub struct GlossOverlay {
     /// the cursor-nav methods turn pages instead of scrolling. False in echo +
     /// glossing-loading modes (cursor-nav keeps the old scroll behavior).
     paginated: Cell<bool>,
+    /// Which paginated render is active (set by `show_synopsis`/`show_gloss_with_color`),
+    /// so `render_current_page` dispatches to the right page renderer. Only read
+    /// while `paginated` is true.
+    paginated_mode: Cell<PaginatedMode>,
+    /// PER-BLOCK original markup for the gloss-result render, in the SAME order as
+    /// `all_blocks` (`gloss_block_markups`). A page's markup is its blocks' markups
+    /// joined, fed back through `populate_gloss_buffer` so speaker headings + verse
+    /// indents survive (which `GlossBlock.display` loses). Empty in synopsis/echo
+    /// modes. Set by `show_gloss_with_color`.
+    gloss_block_markups: RefCell<Vec<String>>,
+    /// The gloss string currently shown (raw, tagged), retained for the
+    /// single-page full render (echoes/pron intact, exactly as before pagination)
+    /// and so a re-show can rebuild blocks. Set by `show_gloss_with_color`.
+    current_gloss: RefCell<String>,
+    /// Source line-number annotations the open gloss was rendered with. Stored so
+    /// each page render can re-pass them to `populate_gloss_buffer`. (Glosses then
+    /// clear the produced numbers — verse numbers belong only to the main reading
+    /// view — but the argument is preserved for fidelity.)
+    gloss_source_line_numbers: RefCell<Vec<(String, i64)>>,
     /// The synopsis string currently shown (raw, `<p>`-tagged), retained so
     /// visual-mode yank can rebuild the selected paragraphs via
     /// `selected_blocks_text`. Set by `show_synopsis`.
@@ -443,6 +474,10 @@ impl GlossOverlay {
             page_idx: Cell::new(0),
             cursor_full: Cell::new(0),
             paginated: Cell::new(false),
+            paginated_mode: Cell::new(PaginatedMode::Synopsis),
+            gloss_block_markups: RefCell::new(Vec::new()),
+            current_gloss: RefCell::new(String::new()),
+            gloss_source_line_numbers: RefCell::new(Vec::new()),
             current_synopsis: RefCell::new(String::new()),
             ask_host,
         }
@@ -660,8 +695,6 @@ impl GlossOverlay {
     pub fn show_gloss_with_color(&self, _original: &str, gloss: &str, card_width: i32, card_height: i32, root_color: Option<&str>, source_line_numbers: &[(String, i64)]) {
         // No synopsis label bolding in gloss view.
         self.synopsis_label_ranges.borrow_mut().clear();
-        // Gloss-result mode is not yet paginated (Task 3) — keep scroll-based nav.
-        self.paginated.set(false);
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         self.last_card_size.set((card_width, card_height));
@@ -703,34 +736,41 @@ impl GlossOverlay {
         let bar_left = left;
         *self.bar_x.borrow_mut() = bar_left;
 
-        // Gloss prose and speaker headings both keep the normal foreground.
-        // The prose is set off from the verse only by a slightly smaller scale
-        // and looser line spacing (no color dimming, no speaker tint).
-        let (ranges, _nums) = populate_gloss_buffer(
-            &self.gloss_view, gloss, self.text_margins, bar_left, source_line_numbers,
-            None, None,
-        );
-        *self.bar_ranges.borrow_mut() = ranges;
-        // Glosses do not show verse line numbers (those belong only to the main
-        // reading view); clear any the buffer produced.
-        self.line_numbers.borrow_mut().clear();
-        *self.echo_lines.borrow_mut() = Vec::new();
-        self.bar_drawing.queue_draw();
+        // PAGINATE (like the synopsis + journal): each cursor-stop block is one
+        // page unit; the page renders only the blocks that fit so no partial
+        // verse/paragraph shows at either edge (the top edge has no clip box). The
+        // page slice is re-rendered via populate_gloss_buffer over its blocks'
+        // ORIGINAL markup (gloss_block_markups), because GlossBlock.display drops
+        // the speaker headings + verse tags the gloss render needs. Source (verse)
+        // blocks are over-measured (gloss_block_height) so a speaker label never
+        // clips at a page top. render_gloss_page (below) does the populate.
+        *self.current_gloss.borrow_mut() = gloss.to_string();
+        *self.gloss_source_line_numbers.borrow_mut() = source_line_numbers.to_vec();
+        *self.all_blocks.borrow_mut() = gloss_blocks(gloss);
+        *self.gloss_block_markups.borrow_mut() = gloss_block_markups(gloss);
+        self.cursor_full.set(0);
+        self.page_idx.set(0);
+        self.paginated.set(true);
+        self.paginated_mode.set(PaginatedMode::Gloss);
 
-        self.rebuild_block_ranges(gloss);
+        *self.echo_lines.borrow_mut() = Vec::new();
+
         self.gloss_scroll_overlay.set_visible(true);
         self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
-        self.apply_font();
         // Fixed-scroll-height: the gloss result hides the title; only the footer
         // sits below the scroll (hidden when the ask card opens). Record the closed
         // scroll height so the add/edit ask card shrinks the viewport (no occlusion
-        // of the gloss text).
+        // of the gloss text). Must run BEFORE repaginate (it sets the page budget).
         self.size_scroll(card_height, self.title_pref_h());
+        // Paginate against the now-fixed viewport, then render page 0. render_*
+        // populates the buffer, re-derives the page-local blocks, applies the
+        // font, pins the vadjustment at 0, and marks the bar.
+        self.repaginate(self.gloss_page_height());
+        self.render_gloss_page();
         self.reset_scroll_top();
-        self.mark_cursor_block();
-        // mark_cursor_block sets bar_ranges, but the bar DRAW reads per-line
+        // mark_cursor_block (inside render) sets bar_ranges, but the bar DRAW reads per-line
         // geometry (line_yrange) which is 0/stale until GTK lays out the buffer
         // just made visible above — so the synchronous draw paints nothing and
         // the accent bar only appeared after the first j/k/Alt+n. Repaint once
@@ -1033,6 +1073,7 @@ impl GlossOverlay {
         self.cursor_full.set(0);
         self.page_idx.set(0);
         self.paginated.set(true);
+        self.paginated_mode.set(PaginatedMode::Synopsis);
 
         self.gloss_scroll_overlay.set_visible(true);
         self.set_synopsis_hint();
@@ -1152,14 +1193,6 @@ impl GlossOverlay {
     /// host's TOGGLED footer — hidden while the ask card is open.
     fn footer_pref_h(&self) -> i32 {
         self.footer_box.preferred_size().1.height()
-    }
-
-    /// Recompute `blocks` line spans from the current buffer + gloss text. Each
-    /// block is located by scanning buffer lines for its first text line; a
-    /// source block extends to its last verse line.
-    fn rebuild_block_ranges(&self, gloss: &str) {
-        let blocks = gloss_blocks(gloss);
-        self.rebuild_block_ranges_from(blocks);
     }
 
     /// Map a pre-built block list to buffer-line spans (shared by the gloss path,
@@ -1355,6 +1388,17 @@ impl GlossOverlay {
         (card_height - self.title_pref_h() - self.footer_pref_h() - SCROLL_OVERLAY_MARGINS).max(80)
     }
 
+    /// Usable viewport height for GLOSS-RESULT pagination. Same accounting as
+    /// `synopsis_page_height` (gloss-result hides the title, so `title_pref_h`
+    /// is 0; only the footer sits below the scroll). Must be called after
+    /// `size_scroll`. Kept separate from `synopsis_page_height` for symmetry with
+    /// the two render paths and so the gloss budget can diverge if needed.
+    fn gloss_page_height(&self) -> i32 {
+        let (_, card_height) = self.last_card_size.get();
+        const SCROLL_OVERLAY_MARGINS: i32 = 24 + 20;
+        (card_height - self.title_pref_h() - self.footer_pref_h() - SCROLL_OVERLAY_MARGINS).max(80)
+    }
+
     /// Measure every block in `all_blocks` and pack them into `pages` by the
     /// usable viewport height. Verse Source blocks are over-measured
     /// (`gloss_block_height`) so a speaker label never clips at a page top.
@@ -1366,7 +1410,21 @@ impl GlossOverlay {
         }
         let family = self.font_family.borrow().clone();
         let size = self.font_size.get();
-        let wrap_w = (self.last_card_size.get().0 - 2 * self.gloss_view.left_margin()).max(1);
+        // Measure at the NARROWEST wrap width any block in this mode uses, so the
+        // height estimate over-counts (more wrapping → taller) rather than under —
+        // the safe direction for never clipping. Gloss verse lines are indented
+        // the deepest (`quote_verse = bar_left + 120` in gloss_render.rs), so a
+        // verse measured at the full card width would wrap into FEWER lines than it
+        // really does and under-estimate. Subtract that verse indent in gloss mode;
+        // synopsis prose sits at the body margin, so keep the body wrap there.
+        let card_w = self.last_card_size.get().0;
+        let left = self.gloss_view.left_margin();
+        let wrap_w = match self.paginated_mode.get() {
+            // bar_left == left in gloss mode; verse adds +120 on the left and the
+            // right margin is `left`.
+            PaginatedMode::Gloss => (card_w - 2 * left - 120).max(1),
+            PaginatedMode::Synopsis => (card_w - 2 * left).max(1),
+        };
         let pctx = self.gloss_view.pango_context();
         let heights: Vec<i32> = blocks
             .iter()
@@ -1376,12 +1434,16 @@ impl GlossOverlay {
         *self.pages.borrow_mut() = crate::ui::pagination::paginate(&heights, page_height.max(1));
     }
 
-    /// Re-render the CURRENT page's block slice (synopsis prose), re-derive the
-    /// page-local block ranges + bar, pin the vadjustment at 0, and re-apply the
-    /// font + label bold. Dispatches by what `all_blocks` holds (synopsis here;
-    /// the gloss-result path renders via populate_gloss_buffer in Task 3).
+    /// Re-render the CURRENT page's block slice, re-derive the page-local block
+    /// ranges + bar, pin the vadjustment at 0, and re-apply the font. Dispatches
+    /// by `paginated_mode`: synopsis prose via `render_synopsis_page`, gloss-result
+    /// verse via `render_gloss_page` (which re-renders the page's markup slice
+    /// through `populate_gloss_buffer`).
     fn render_current_page(&self) {
-        self.render_synopsis_page();
+        match self.paginated_mode.get() {
+            PaginatedMode::Synopsis => self.render_synopsis_page(),
+            PaginatedMode::Gloss => self.render_gloss_page(),
+        }
     }
 
     /// Render the current synopsis page into the buffer. Single-page case renders
@@ -1422,6 +1484,79 @@ impl GlossOverlay {
             *self.synopsis_label_ranges.borrow_mut() = Vec::new();
             self.rebuild_block_ranges_from(slice);
         }
+
+        // Pin the viewport at the top — the page fits, nothing scrolls.
+        let adj = self.gloss_scrolled.vadjustment();
+        adj.set_value(adj.lower());
+
+        // Project the global cursor onto this page + mark the bar.
+        let page_start = page.map(|p| p.start).unwrap_or(0);
+        let page_local = self
+            .cursor_full
+            .get()
+            .saturating_sub(page_start)
+            .min(self.blocks.borrow().len().saturating_sub(1));
+        self.cursor_block.set(page_local);
+        self.apply_font();
+        self.mark_cursor_block();
+        self.bar_drawing.queue_draw();
+        self.update_bottom_clip();
+    }
+
+    /// Render the current GLOSS-RESULT page into the buffer via
+    /// `populate_gloss_buffer`. Single-page case renders the FULL original gloss
+    /// markup (echo brackets + pron notes intact, exactly as before pagination).
+    /// Multi-page case renders only this page's cursor-stop blocks by joining their
+    /// ORIGINAL markup (`gloss_block_markups`) — NOT `GlossBlock.display`, which
+    /// drops the speaker headings + verse tags the render needs. Re-derives the
+    /// page-local block ranges + bar; vadjustment pinned at 0 so the accent bar +
+    /// line-number gutter are correct (`populate_gloss_buffer` rebuilds them at
+    /// scroll 0). Source blocks were over-measured so a speaker label is never
+    /// clipped at a page top.
+    fn render_gloss_page(&self) {
+        let bar_left = *self.bar_x.borrow();
+        let line_numbers = self.gloss_source_line_numbers.borrow().clone();
+
+        let pages = self.pages.borrow();
+        let single_page = pages.len() <= 1;
+        let pidx = self.page_idx.get().min(pages.len().saturating_sub(1));
+        let page = pages.get(pidx).copied();
+        drop(pages);
+
+        // Build the markup to render: the whole gloss when it fits one page, else
+        // only this page's blocks' markup slice.
+        let (markup, page_blocks): (String, Vec<GlossBlock>) = if single_page {
+            let gloss = self.current_gloss.borrow().clone();
+            (gloss.clone(), gloss_blocks(&gloss))
+        } else {
+            let Some(page) = page else { return };
+            let markups = self.gloss_block_markups.borrow();
+            let all = self.all_blocks.borrow();
+            let end = page.end.min(markups.len()).min(all.len());
+            let start = page.start.min(end);
+            let body = markups[start..end].join("\n");
+            let slice: Vec<GlossBlock> = all[start..end].to_vec();
+            (body, slice)
+        };
+
+        // Gloss prose and speaker headings keep the normal foreground (the prose
+        // is set off only by scale + line spacing). Same call as the pre-pagination
+        // render, but over this page's markup slice.
+        let (ranges, _nums) = populate_gloss_buffer(
+            &self.gloss_view,
+            &markup,
+            self.text_margins,
+            bar_left,
+            &line_numbers,
+            None,
+            None,
+        );
+        *self.bar_ranges.borrow_mut() = ranges;
+        // Glosses do not show verse line numbers (those belong only to the main
+        // reading view); clear any the buffer produced.
+        self.line_numbers.borrow_mut().clear();
+        self.synopsis_label_ranges.borrow_mut().clear();
+        self.rebuild_block_ranges_from(page_blocks);
 
         // Pin the viewport at the top — the page fits, nothing scrolls.
         let adj = self.gloss_scrolled.vadjustment();

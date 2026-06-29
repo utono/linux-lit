@@ -922,6 +922,8 @@ fn handle_gloss_key(
             let has_blocks = state.borrow().gloss_overlay.current_block().is_some();
             if has_blocks {
                 state.borrow().gloss_overlay.cursor_first_block();
+                // A page turn re-rendered the buffer; recolor cached blocks.
+                crate::input::actions::gloss::recolor_cached_blocks_rc(state);
             } else {
                 state.borrow().gloss_overlay.scroll_gloss_to_top();
             }
@@ -1043,6 +1045,8 @@ fn handle_gloss_key(
             // Result gloss: jump the block cursor to the last block.
             if state.borrow().gloss_overlay.current_block().is_some() {
                 state.borrow().gloss_overlay.cursor_last_block();
+                // A page turn re-rendered the buffer; recolor cached blocks.
+                crate::input::actions::gloss::recolor_cached_blocks_rc(state);
             } else {
                 state.borrow().gloss_overlay.scroll_gloss_to_bottom();
             }
@@ -1065,6 +1069,8 @@ fn handle_gloss_key(
             // Result gloss: step the block cursor to the next block.
             if state.borrow().gloss_overlay.current_block().is_some() {
                 state.borrow().gloss_overlay.cursor_next_block();
+                // A page turn re-rendered the buffer; recolor cached blocks.
+                crate::input::actions::gloss::recolor_cached_blocks_rc(state);
             } else {
                 state.borrow().gloss_overlay.scroll_gloss(1);
             }
@@ -1074,6 +1080,8 @@ fn handle_gloss_key(
             crate::input::actions::gloss::stop_all_gloss_audio(state);
             if state.borrow().gloss_overlay.current_block().is_some() {
                 state.borrow().gloss_overlay.cursor_prev_block();
+                // A page turn re-rendered the buffer; recolor cached blocks.
+                crate::input::actions::gloss::recolor_cached_blocks_rc(state);
             } else {
                 state.borrow().gloss_overlay.scroll_gloss(-1);
             }
