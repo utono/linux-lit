@@ -1430,8 +1430,26 @@ impl GlossOverlay {
             .iter()
             .map(|b| gloss_block_height(b, &pctx, &family, size, wrap_w))
             .collect();
+        let pages = match self.paginated_mode.get() {
+            // Gloss: keep each gloss together — a Source (speaker+verse) block and
+            // the Explication(s) that follow it form one indivisible unit, so a
+            // page break never orphans an explication onto the next page (the
+            // "don't orphan a gloss" rule). A unit starts at each Source block; an
+            // Explication attaches to the preceding unit.
+            PaginatedMode::Gloss => {
+                let group_start: Vec<bool> = blocks
+                    .iter()
+                    .map(|b| b.kind == BlockKind::Source)
+                    .collect();
+                crate::ui::pagination::paginate_grouped(&heights, &group_start, page_height.max(1))
+            }
+            // Synopsis: every paragraph is its own unit.
+            PaginatedMode::Synopsis => {
+                crate::ui::pagination::paginate(&heights, page_height.max(1))
+            }
+        };
         drop(blocks);
-        *self.pages.borrow_mut() = crate::ui::pagination::paginate(&heights, page_height.max(1));
+        *self.pages.borrow_mut() = pages;
     }
 
     /// Re-render the CURRENT page's block slice, re-derive the page-local block

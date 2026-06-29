@@ -40,6 +40,45 @@ pub fn paginate(block_heights: &[i32], page_height: i32) -> Vec<Page> {
     pages
 }
 
+/// Like `paginate`, but blocks are grouped into indivisible UNITS that must not
+/// be split across a page. `group_start[i] == true` marks block i as the first
+/// block of a new unit (the rest attach to the preceding unit). A page break can
+/// only fall on a unit boundary, so e.g. a gloss's Source (speaker+verse) block
+/// and the Explication that follows it stay on the same page (the "don't orphan a
+/// gloss" rule). A unit taller than a whole page still gets its own page (never
+/// dropped). `group_start[0]` is treated as true regardless. Pure — unit-tested.
+pub fn paginate_grouped(block_heights: &[i32], group_start: &[bool], page_height: i32) -> Vec<Page> {
+    let n = block_heights.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    // Unit boundaries: indices where a new unit begins (always includes 0).
+    let mut unit_starts: Vec<usize> = (0..n)
+        .filter(|&i| i == 0 || group_start.get(i).copied().unwrap_or(true))
+        .collect();
+    unit_starts.push(n); // sentinel end
+    // Sum each unit's height.
+    let unit_h: Vec<i32> = unit_starts
+        .windows(2)
+        .map(|w| block_heights[w[0]..w[1]].iter().sum())
+        .collect();
+    // Pack whole units; translate unit-page boundaries back to block indices.
+    let mut pages: Vec<Page> = Vec::new();
+    let mut start_unit = 0usize;
+    let mut acc = 0i32;
+    let budget = page_height.max(1);
+    for (u, &h) in unit_h.iter().enumerate() {
+        if u > start_unit && acc + h > budget {
+            pages.push(Page { start: unit_starts[start_unit], end: unit_starts[u] });
+            start_unit = u;
+            acc = 0;
+        }
+        acc += h;
+    }
+    pages.push(Page { start: unit_starts[start_unit], end: n });
+    pages
+}
+
 /// The page index whose `[start, end)` range contains `block_idx`. Clamps to the
 /// last page if `block_idx` is past the end; returns 0 when there are no pages.
 pub fn page_containing_block(pages: &[Page], block_idx: usize) -> usize {
@@ -85,6 +124,41 @@ mod tests {
             Page { start: 3, end: 6 },
             Page { start: 6, end: 7 },
         ]);
+    }
+
+    #[test]
+    fn paginate_grouped_never_splits_a_unit() {
+        // 4 blocks in 2 units: [0,1] and [2,3] (each unit 60 tall). Page budget
+        // 100 fits one unit but not two, so the break falls on the unit boundary
+        // (block 2), NOT between block 0 and 1 — the "don't orphan a gloss" rule.
+        let h = vec![30, 30, 30, 30];
+        let starts = vec![true, false, true, false];
+        let pages = paginate_grouped(&h, &starts, 100);
+        assert_eq!(pages, vec![
+            Page { start: 0, end: 2 },
+            Page { start: 2, end: 4 },
+        ]);
+    }
+
+    #[test]
+    fn paginate_grouped_oversize_unit_gets_own_page() {
+        // A unit taller than a page (blocks 1+2 = 120 > 100) still gets its own
+        // page, never dropped or split.
+        let h = vec![40, 70, 50];
+        let starts = vec![true, true, false];
+        let pages = paginate_grouped(&h, &starts, 100);
+        assert_eq!(pages, vec![
+            Page { start: 0, end: 1 },
+            Page { start: 1, end: 3 },
+        ]);
+    }
+
+    #[test]
+    fn paginate_grouped_matches_paginate_when_all_units_singleton() {
+        // Every block its own unit -> identical to plain paginate.
+        let h = vec![30, 30, 30, 30, 30, 30, 30];
+        let starts = vec![true; 7];
+        assert_eq!(paginate_grouped(&h, &starts, 100), paginate(&h, 100));
     }
 
     #[test]
