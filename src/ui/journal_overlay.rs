@@ -84,7 +84,10 @@ impl JournalOverlay {
         container.set_visible(false);
 
         let title = Label::new(Some(""));
-        title.add_css_class("gloss-title");
+        // A quiet, small uppercase header (journal-title) rather than the
+        // body-sized bold gloss-title — the full-size bold title competed with the
+        // Q&A text and read as distracting. See src/theme.rs `.journal-title`.
+        title.add_css_class("journal-title");
         title.set_halign(gtk4::Align::Start);
         title.set_margin_start(text_margins as i32);
         title.set_margin_end(text_margins as i32);

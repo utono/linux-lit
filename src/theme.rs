@@ -517,6 +517,10 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .gloss-title {{ font-size: {size}pt; font-weight: bold; \
            margin-bottom: 12px; padding-bottom: 12px; \
            border-bottom: 1px solid {dim}; }} \
+         .journal-title {{ font-size: 13px; font-weight: normal; \
+           color: {dim}; \
+           margin-bottom: 12px; padding-bottom: 10px; \
+           border-bottom: 1px solid {dim}; }} \
          .gloss-header {{ font-size: 11px; font-weight: bold; \
            color: {dim}; letter-spacing: 2px; margin-top: 8px; margin-bottom: 4px; }} \
          .gloss-text {{ font-family: {font}; font-size: {size}pt; }} \
