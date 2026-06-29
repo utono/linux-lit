@@ -114,10 +114,11 @@ pub struct GlossOverlay {
     pages: RefCell<Vec<crate::ui::pagination::Page>>,
     page_idx: Cell<usize>,
     cursor_full: Cell<usize>,
-    /// The gloss-INDEX position shown in the footer's right label: `(index,
-    /// total)` over the work's glosses (set by `set_position`, the cross-gloss
-    /// nav). Combined with the render-page count (`pages`/`page_idx`) by
-    /// `update_position_label` into e.g. "3 / 12 · page 1 / 2".
+    /// The cross-gloss INDEX position `(index, total)` over the work's glosses,
+    /// recorded by `set_position`. No longer shown in the footer — the right
+    /// label now shows only the bare render-page counter (`pages`/`page_idx` via
+    /// `update_position_label`). Kept as the authoritative nav index for callers
+    /// and any future footer use.
     gloss_pos: Cell<(usize, usize)>,
     /// True while the current render is paginated (synopsis or gloss-result), so
     /// the cursor-nav methods turn pages instead of scrolling. False in echo +
@@ -1479,8 +1480,9 @@ impl GlossOverlay {
     fn render_synopsis_page(&self) {
         let buffer = self.gloss_view.buffer();
         let pages = self.pages.borrow();
-        let single_page = pages.len() <= 1;
-        let pidx = self.page_idx.get().min(pages.len().saturating_sub(1));
+        let n_pages = pages.len();
+        let single_page = n_pages <= 1;
+        let pidx = self.page_idx.get().min(n_pages.saturating_sub(1));
         let page = pages.get(pidx).copied();
         drop(pages);
 
@@ -1508,6 +1510,10 @@ impl GlossOverlay {
             *self.synopsis_label_ranges.borrow_mut() = Vec::new();
             self.rebuild_block_ranges_from(slice);
         }
+
+        // "More below" affordance: a centered chevron when another page follows
+        // (same render-time, non-block treatment as the gloss path).
+        self.append_more_chevron(!single_page && pidx + 1 < n_pages);
 
         // Pin the viewport at the top — the page fits, nothing scrolls.
         let adj = self.gloss_scrolled.vadjustment();
@@ -1543,8 +1549,9 @@ impl GlossOverlay {
         let line_numbers = self.gloss_source_line_numbers.borrow().clone();
 
         let pages = self.pages.borrow();
-        let single_page = pages.len() <= 1;
-        let pidx = self.page_idx.get().min(pages.len().saturating_sub(1));
+        let n_pages = pages.len();
+        let single_page = n_pages <= 1;
+        let pidx = self.page_idx.get().min(n_pages.saturating_sub(1));
         let page = pages.get(pidx).copied();
         drop(pages);
 
@@ -1583,6 +1590,11 @@ impl GlossOverlay {
         self.synopsis_label_ranges.borrow_mut().clear();
         self.rebuild_block_ranges_from(page_blocks);
 
+        // "More below" affordance: a centered chevron when another page follows.
+        // Appended AFTER the block ranges are derived from `page_blocks`, so it is
+        // outside the cursor/bar model and cannot perturb pagination.
+        self.append_more_chevron(!single_page && pidx + 1 < n_pages);
+
         // Pin the viewport at the top — the page fits, nothing scrolls.
         let adj = self.gloss_scrolled.vadjustment();
         adj.set_value(adj.lower());
@@ -1600,6 +1612,50 @@ impl GlossOverlay {
         self.bar_drawing.queue_draw();
         self.update_bottom_clip();
         self.update_position_label();
+    }
+
+    /// Append a centered "⌄" chevron paragraph to the gloss/synopsis buffer when
+    /// `has_next` (another render page follows), so the reader sees there is more
+    /// without glancing at the footer's page counter. Added at RENDER time, after
+    /// the page body is in the buffer — it is NOT a measured block (so it can't
+    /// shift pagination or get orphaned) and NOT a cursor-stop (so j/k/gg/G and
+    /// the selection bar never touch it). Colored with the overlay's accent
+    /// (`bar_color`, the same theme color as the accent bar) so it reads as quiet
+    /// chrome. TextTag styling is property-based (not CSS — a tag is not a
+    /// widget). Re-creating the tag each call mirrors `populate_gloss_buffer`'s
+    /// lookup-remove-readd pattern, so a re-render never accretes duplicates.
+    fn append_more_chevron(&self, has_next: bool) {
+        if !has_next {
+            return;
+        }
+        let buffer = self.gloss_view.buffer();
+        let tag_table = buffer.tag_table();
+        if let Some(old) = tag_table.lookup("gloss-more-chevron") {
+            tag_table.remove(&old);
+        }
+        let (r, g, b) = *self.bar_color.borrow();
+        let fg = format!(
+            "#{:02x}{:02x}{:02x}",
+            (r * 255.0).round() as u8,
+            (g * 255.0).round() as u8,
+            (b * 255.0).round() as u8
+        );
+        let tag = gtk4::TextTag::builder()
+            .name("gloss-more-chevron")
+            .justification(gtk4::Justification::Center)
+            .foreground(&fg)
+            .pixels_above_lines(12)
+            .build();
+        tag_table.add(&tag);
+
+        // Blank line to separate the chevron from the last block, then the glyph.
+        let offset = buffer.char_count();
+        let mut end = buffer.end_iter();
+        buffer.insert(&mut end, "\n\u{2304}");
+        // Tag only the appended chevron paragraph (the inserted "\n⌄").
+        let start = buffer.iter_at_offset(offset);
+        let end = buffer.end_iter();
+        buffer.apply_tag(&tag, &start, &end);
     }
 
     /// Enter synopsis visual mode: anchor at the current block. No-op if there
@@ -2092,18 +2148,28 @@ impl GlossOverlay {
         self.update_position_label();
     }
 
-    /// Refresh the footer's right label from the stored gloss-index position.
-    /// Shows the gloss index "N / total" when there is more than one gloss;
-    /// hidden otherwise. Call from `set_position` (index changed) and after a
-    /// (re)render / page turn (kept for the now-removed render-page suffix; the
-    /// render-page count no longer affects the label).
+    /// Refresh the footer's right label to the bare render-page counter
+    /// ("X / Y", hidden on a single page). Call after a (re)render / page turn —
+    /// the page count drives the label. The cross-gloss index no longer appears
+    /// here, but `set_position` still calls this so the label refreshes whenever
+    /// the displayed gloss (and its page set) changes.
     fn update_position_label(&self) {
-        let (index, total) = self.gloss_pos.get();
-        if total > 1 {
-            self.position_label.set_text(&format!("{} / {}", index + 1, total));
-            self.position_label.set_visible(true);
-        } else {
-            self.position_label.set_visible(false);
+        // Footer right label shows ONLY the render-page counter as a bare
+        // "X / Y" (no "page" word, no cross-gloss index). Hidden on a single
+        // page. The page token is computed by the shared `pagination::page_token`
+        // so the gloss/synopsis/journal footers stay in sync.
+        let n_pages = self.pages.borrow().len();
+        match self
+            .paginated
+            .get()
+            .then(|| crate::ui::pagination::page_token(self.page_idx.get(), n_pages))
+            .flatten()
+        {
+            Some(token) => {
+                self.position_label.set_text(&token);
+                self.position_label.set_visible(true);
+            }
+            None => self.position_label.set_visible(false),
         }
     }
 

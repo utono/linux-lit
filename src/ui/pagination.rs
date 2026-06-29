@@ -90,6 +90,24 @@ pub fn page_containing_block(pages: &[Page], block_idx: usize) -> usize {
     pages.len().saturating_sub(1)
 }
 
+/// Footer page counter shared by every paginated overlay (gloss, synopsis,
+/// journal). Returns `Some("<current> / <total>")` (1-based, `page_idx` clamped
+/// into range) when there is more than one render page, and `None` for 0 or 1
+/// page (nothing to count). Callers add their own prefix if they want one
+/// (gloss/synopsis show the bare token; journal prefixes "page ").
+///
+/// Centralizing this is deliberate: the per-overlay copies of this computation
+/// drifted once (one overlay lost the token while another kept it), so it lives
+/// in one place to keep the three footers in sync.
+pub fn page_token(page_idx: usize, n_pages: usize) -> Option<String> {
+    if n_pages > 1 {
+        let current = page_idx.min(n_pages - 1) + 1;
+        Some(format!("{} / {}", current, n_pages))
+    } else {
+        None
+    }
+}
+
 /// Pixel height of `text` wrapped at `width_px` in `family` at `size_pt`, via a
 /// `pango::Layout` on `pctx` (a widget's pango context). Used only for page-fit
 /// math — no widget allocation, so no GTK settle race.
@@ -200,5 +218,24 @@ mod tests {
         assert_eq!(page_containing_block(&pages, 99), 1);
         // No pages -> 0.
         assert_eq!(page_containing_block(&[], 0), 0);
+    }
+
+    #[test]
+    fn page_token_hidden_for_zero_or_one_page() {
+        assert_eq!(page_token(0, 0), None);
+        assert_eq!(page_token(0, 1), None);
+    }
+
+    #[test]
+    fn page_token_counts_one_based() {
+        assert_eq!(page_token(0, 2).as_deref(), Some("1 / 2"));
+        assert_eq!(page_token(1, 2).as_deref(), Some("2 / 2"));
+        assert_eq!(page_token(2, 5).as_deref(), Some("3 / 5"));
+    }
+
+    #[test]
+    fn page_token_clamps_out_of_range_index() {
+        // A stale page_idx past the last page clamps to the final page.
+        assert_eq!(page_token(9, 3).as_deref(), Some("3 / 3"));
     }
 }

@@ -500,10 +500,12 @@ impl JournalOverlay {
             s.push_str(" \u{00b7} no Q&A yet");
         } else {
             s.push_str(&format!(" \u{00b7} Q&A {} of {}", entry_idx + 1, entry_count));
+            // Render-page counter via the shared helper (keeps the gloss/
+            // synopsis/journal footers in sync); journal prefixes "page " so the
+            // bare "X / Y" isn't confused with the "Q&A N of M" beside it.
             let n_pages = self.pages.borrow().len();
-            if n_pages > 1 {
-                let p = self.page_idx.get().min(n_pages - 1) + 1;
-                s.push_str(&format!(" \u{00b7} page {} / {}", p, n_pages));
+            if let Some(token) = crate::ui::pagination::page_token(self.page_idx.get(), n_pages) {
+                s.push_str(&format!(" \u{00b7} page {}", token));
             }
         }
         self.footer_left.set_text(&s);
@@ -546,6 +548,41 @@ impl JournalOverlay {
             // Keep stage/bracket directions italic above the upright font tag.
             crate::ui::reassert_italic_tags(&table);
         }
+    }
+
+    /// Append a centered "⌄" chevron paragraph to the journal page buffer when
+    /// `has_next` (another render page follows), so the reader sees there is more
+    /// without glancing at the footer's page counter. Added at RENDER time, after
+    /// `journal_blocks` is derived — it is NOT a measured paragraph (so it can't
+    /// shift pagination) and NOT a cursor-stop block (so j/k/gg/G and the
+    /// selection bar never touch it). Colored with the journal's fixed accent
+    /// (`#879eb5`, matching the accent bar's `set_source_rgb(0.53, 0.62, 0.71)`).
+    /// Mirrors `GlossOverlay::append_more_chevron`; the two will be unified by a
+    /// later maintainability-audit helper (kept inline per overlay for now).
+    fn append_more_chevron(&self, has_next: bool) {
+        if !has_next {
+            return;
+        }
+        let buffer = self.view.buffer();
+        let table = buffer.tag_table();
+        if let Some(old) = table.lookup("journal-more-chevron") {
+            table.remove(&old);
+        }
+        let tag = gtk4::TextTag::builder()
+            .name("journal-more-chevron")
+            .justification(gtk4::Justification::Center)
+            .foreground("#879eb5")
+            .pixels_above_lines(12)
+            .build();
+        table.add(&tag);
+
+        // Blank line to separate the chevron from the last block, then the glyph.
+        let offset = buffer.char_count();
+        let mut end = buffer.end_iter();
+        buffer.insert(&mut end, "\n\u{2304}");
+        let start = buffer.iter_at_offset(offset);
+        let end = buffer.end_iter();
+        buffer.apply_tag(&tag, &start, &end);
     }
 
     pub fn ask_is_open(&self) -> bool {
@@ -680,7 +717,8 @@ impl JournalOverlay {
     fn render_page(&self) {
         let paras = self.all_paragraphs.borrow();
         let pages = self.pages.borrow();
-        let pidx = self.page_idx.get().min(pages.len().saturating_sub(1));
+        let n_pages = pages.len();
+        let pidx = self.page_idx.get().min(n_pages.saturating_sub(1));
         let Some(page) = pages.get(pidx) else {
             drop(paras);
             drop(pages);
@@ -694,12 +732,19 @@ impl JournalOverlay {
         drop(pages);
 
         self.view.buffer().set_text(&body);
+        // "More below" affordance: a centered chevron when another page follows.
+        // Appended BEFORE apply_font (so the font tag, applied over buffer bounds,
+        // covers it) but it does NOT affect the block model — `journal_blocks`
+        // below reads the original `body` string, not the buffer, so the chevron
+        // is never a measured paragraph or a cursor-stop block.
+        self.append_more_chevron(pidx + 1 < n_pages);
         self.apply_font();
         // The vadjustment stays at top — the page fits, nothing scrolls.
         let adj = self.scrolled.vadjustment();
         adj.set_value(adj.lower());
 
-        // Re-derive per-page blocks for the bar / visual mode.
+        // Re-derive per-page blocks for the bar / visual mode (from `body`, not
+        // the buffer — so the appended chevron is excluded).
         let lines: Vec<&str> = body.split('\n').collect();
         *self.blocks.borrow_mut() = journal_blocks(&lines);
         self.visual_anchor.set(None);
