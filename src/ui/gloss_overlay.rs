@@ -1801,6 +1801,54 @@ fn line_is_speaker(buffer: &gtk4::TextBuffer, line: i32) -> bool {
     })
 }
 
+// ---------------------------------------------------------------------------
+// Block height helpers for gloss overlay pagination
+// ---------------------------------------------------------------------------
+
+/// Per-paragraph spacing the rendered view adds that a plain pango::Layout omits
+/// (mirrors the journal's pad_per_para at 19pt-ish). Prose/synopsis blocks.
+const PROSE_PAD: i32 = 16;
+
+/// Conservative overhead for a Source (verse) block: the speaker heading's 36px
+/// `pixels_above_lines` + its ~0.75-scaled line, plus slack. OVER-estimate so a
+/// multi-line speech never clips its speaker label at a page top. Tied to
+/// gloss_render.rs `gloss-speaker` (pixels_above_lines 36, scale 0.75).
+const SPEAKER_BLOCK_OVERHEAD: i32 = 56;
+
+/// Conservative per-block height overhead. For Source (verse) blocks the speaker
+/// heading carries `pixels_above_lines(36)` + a `scale(0.75)` label that a plain
+/// `pango::Layout` never models, so we must over-estimate. For Explication (prose)
+/// blocks we add the paragraph pad that the rendered view inserts between blocks.
+/// NEVER under-estimate a Source block — too-tall just gives it its own page;
+/// too-small clips the speaker label.
+fn block_height_overhead(is_source: bool, text_h: i32) -> i32 {
+    if is_source {
+        // verse lines carry per-line gaps too -> 1.15 slack on the text height.
+        (text_h as f32 * 1.15) as i32 + SPEAKER_BLOCK_OVERHEAD
+    } else {
+        text_h + PROSE_PAD
+    }
+}
+
+/// Pixel height of `block` when rendered in the gloss overlay, using a
+/// conservative over-estimate for Source (verse) blocks to prevent the speaker
+/// label from being clipped at a page boundary.
+///
+/// Calls `crate::ui::pagination::measure_text_height` for the raw text height,
+/// then adds the appropriate overhead via `block_height_overhead`.
+#[allow(dead_code)]
+fn gloss_block_height(
+    block: &GlossBlock,
+    pctx: &pango::Context,
+    family: &str,
+    size_pt: i32,
+    wrap_w: i32,
+) -> i32 {
+    let text_h =
+        crate::ui::pagination::measure_text_height(pctx, &block.display, size_pt, family, wrap_w);
+    block_height_overhead(block.kind == BlockKind::Source, text_h)
+}
+
 #[cfg(test)]
 mod apply_font_priority_tests {
     use super::*;
@@ -1844,5 +1892,23 @@ mod apply_font_priority_tests {
             stage.priority(),
             font.priority(),
         );
+    }
+}
+
+#[cfg(test)]
+mod block_height_tests {
+    use super::{block_height_overhead, PROSE_PAD};
+
+    #[test]
+    fn source_block_height_exceeds_prose_for_equal_text() {
+        // A Source (verse, has a speaker heading + per-line gaps) block must measure
+        // TALLER than an Explication block of the same text — the conservative
+        // over-estimate that prevents clipping the speaker label.
+        // (Pure-arithmetic check on the overhead constants; no GTK pango here —
+        // factor the overhead into a pure helper `block_height_overhead(is_source,
+        // text_h)` that gloss_block_height calls, and test THAT.)
+        assert!(block_height_overhead(true, 100) > block_height_overhead(false, 100));
+        // Prose overhead is the journal's per-paragraph pad.
+        assert_eq!(block_height_overhead(false, 100), 100 + PROSE_PAD);
     }
 }
