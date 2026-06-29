@@ -16,7 +16,9 @@ pub struct JournalOverlay {
     clip_guard: crate::ui::bottom_clip_guard::BottomClipGuard,
     footer_container: gtk4::Box,
     footer_left: Label,
+    position_label: Label,
     hint: Label,
+    page_marker: Label,
     bar_drawing: gtk4::DrawingArea,
     bar_ranges: Rc<RefCell<Vec<(i32, i32)>>>,
     /// The blocks RENDERED on the current page (buffer-line spans). Visual mode
@@ -206,6 +208,20 @@ impl JournalOverlay {
         scroll_overlay.set_measure_overlay(&bar_drawing, false);
         scroll_overlay.set_clip_overlay(&bar_drawing, true);
 
+        // Floating page marker: a dim centered glyph anchored at the viewport
+        // bottom — `⌄` when another page follows, `•` on the last page. Floats over
+        // the scroll viewport (NOT in the text flow) so it shows even when the page
+        // is full and has no trailing whitespace. Hidden on single-page content.
+        let page_marker = Label::new(None);
+        page_marker.set_halign(gtk4::Align::Center);
+        page_marker.set_valign(gtk4::Align::End);
+        page_marker.set_margin_bottom(6);
+        page_marker.add_css_class("page-marker");
+        page_marker.set_visible(false);
+        scroll_overlay.add_overlay(&page_marker);
+        scroll_overlay.set_measure_overlay(&page_marker, false);
+        scroll_overlay.set_clip_overlay(&page_marker, true);
+
         // Breathing gap above the footer and below the title, mirroring the gloss
         // overlay (gloss_overlay.rs). Without the bottom margin the viewport's
         // bottom edge sits flush against the footer, so a block scrolled to the
@@ -229,6 +245,14 @@ impl JournalOverlay {
         );
         let footer_left = footer.left;
         let hint = footer.hint;
+        // Right-aligned bare "X / Y" render-page counter, mirroring the gloss
+        // overlay's position_label (gloss_overlay.rs). The journal footer's left
+        // label keeps "band · Q&A N of M"; the page count moves here so the two
+        // overlays' footers read the same way (no "page" word inline).
+        let position_label = Label::new(None);
+        position_label.set_halign(gtk4::Align::End);
+        position_label.set_visible(false);
+        footer.container.append(&position_label);
         let footer_container = footer.container.clone();
         container.append(&footer.container);
 
@@ -263,7 +287,9 @@ impl JournalOverlay {
             clip_guard,
             footer_container,
             footer_left,
+            position_label,
             hint,
+            page_marker,
             bar_drawing,
             bar_ranges,
             blocks: RefCell::new(Vec::new()),
@@ -473,6 +499,7 @@ impl JournalOverlay {
         self.page_idx.set(0);
         self.cursor_full.set(0);
         self.clear_bar();
+        self.page_marker.set_visible(false);
     }
 
     pub fn hide(&self) {
@@ -486,12 +513,13 @@ impl JournalOverlay {
     }
 
     /// Set the footer-left label to the band identity (`<abbrev> <act>.<scene>`)
-    /// Rebuild the footer-left text from the stored band + Q&A-entry position +
-    /// the current render-page count. Format:
-    /// `<abbrev> <act>.<scene> · Q&A 2 of 5 · page 1 / 3`, where "Q&A N of M" is
-    /// the entry's position in the band (Ctrl+n/p) and "page X / Y" is the render
-    /// page within this Q&A (j/k), shown ONLY when the Q&A spans >1 render page.
-    /// Call after pagination (page count known) and on every page turn.
+    /// Rebuild the footer from the stored band + Q&A-entry position + the current
+    /// render-page count. LEFT label: `<abbrev> <act>.<scene> · Q&A 2 of 5` (the
+    /// entry's position in the band, Ctrl+n/p). RIGHT label: a bare `X / Y` render
+    /// page within this Q&A (j/k), shown ONLY when the Q&A spans >1 render page —
+    /// consistent with the gloss overlay's right-aligned position_label (no "page"
+    /// word inline). Call after pagination (page count known) and on every page
+    /// turn.
     fn update_footer_position(&self) {
         let band = self.footer_band.borrow().clone();
         let (entry_idx, entry_count) = self.entry_pos.get();
@@ -500,15 +528,19 @@ impl JournalOverlay {
             s.push_str(" \u{00b7} no Q&A yet");
         } else {
             s.push_str(&format!(" \u{00b7} Q&A {} of {}", entry_idx + 1, entry_count));
-            // Render-page counter via the shared helper (keeps the gloss/
-            // synopsis/journal footers in sync); journal prefixes "page " so the
-            // bare "X / Y" isn't confused with the "Q&A N of M" beside it.
-            let n_pages = self.pages.borrow().len();
-            if let Some(token) = crate::ui::pagination::page_token(self.page_idx.get(), n_pages) {
-                s.push_str(&format!(" \u{00b7} page {}", token));
-            }
         }
         self.footer_left.set_text(&s);
+
+        // Right-aligned bare "X / Y" page counter (gloss-consistent), via the
+        // shared helper. Hidden on a single page.
+        let n_pages = self.pages.borrow().len();
+        match crate::ui::pagination::page_token(self.page_idx.get(), n_pages) {
+            Some(token) => {
+                self.position_label.set_text(&token);
+                self.position_label.set_visible(true);
+            }
+            None => self.position_label.set_visible(false),
+        }
     }
 
     fn update_bottom_clip(&self) {
@@ -550,39 +582,19 @@ impl JournalOverlay {
         }
     }
 
-    /// Append a centered "⌄" chevron paragraph to the journal page buffer when
-    /// `has_next` (another render page follows), so the reader sees there is more
-    /// without glancing at the footer's page counter. Added at RENDER time, after
-    /// `journal_blocks` is derived — it is NOT a measured paragraph (so it can't
-    /// shift pagination) and NOT a cursor-stop block (so j/k/gg/G and the
-    /// selection bar never touch it). Colored with the journal's fixed accent
-    /// (`#879eb5`, matching the accent bar's `set_source_rgb(0.53, 0.62, 0.71)`).
-    /// Mirrors `GlossOverlay::append_more_chevron`; the two will be unified by a
-    /// later maintainability-audit helper (kept inline per overlay for now).
-    fn append_more_chevron(&self, has_next: bool) {
-        if !has_next {
-            return;
+    /// Set the floating page marker for the current page: `⌄` when another page
+    /// follows, `•` on the last page, hidden on single-page content. The marker
+    /// is an overlay child anchored bottom-center of the viewport (NOT in the
+    /// text flow), so it shows even when the page is full. Glyph chosen by the
+    /// shared `pagination::page_marker`. Mirrors `GlossOverlay::update_page_marker`.
+    fn update_page_marker(&self, page_idx: usize, n_pages: usize) {
+        match crate::ui::pagination::page_marker(page_idx, n_pages) {
+            Some(glyph) => {
+                self.page_marker.set_text(glyph);
+                self.page_marker.set_visible(true);
+            }
+            None => self.page_marker.set_visible(false),
         }
-        let buffer = self.view.buffer();
-        let table = buffer.tag_table();
-        if let Some(old) = table.lookup("journal-more-chevron") {
-            table.remove(&old);
-        }
-        let tag = gtk4::TextTag::builder()
-            .name("journal-more-chevron")
-            .justification(gtk4::Justification::Center)
-            .foreground("#879eb5")
-            .pixels_above_lines(12)
-            .build();
-        table.add(&tag);
-
-        // Blank line to separate the chevron from the last block, then the glyph.
-        let offset = buffer.char_count();
-        let mut end = buffer.end_iter();
-        buffer.insert(&mut end, "\n\u{2304}");
-        let start = buffer.iter_at_offset(offset);
-        let end = buffer.end_iter();
-        buffer.apply_tag(&tag, &start, &end);
     }
 
     pub fn ask_is_open(&self) -> bool {
@@ -694,15 +706,24 @@ impl JournalOverlay {
         // Wrap width = the view's content width (card minus the two side margins).
         let wrap_w = (self.last_card_size.get().0 - 2 * self.view.left_margin()).max(1);
         let pctx = self.view.pango_context();
-        // The rendered view adds line_spacing above and below each paragraph; the
-        // standalone layout does not. Approximate it from the row gap so the page
-        // budget matches what actually renders.
-        let pad_per_para = (size as f64 * 0.4).round() as i32 * 2;
+        // The rendered TextView is consistently TALLER than a standalone
+        // `pango::Layout` of the same text+width: it adds per-line leading and
+        // paragraph spacing the bare layout omits (measured: real render ≈ 1.13×
+        // the layout height for stacked prose paragraphs). Under-counting packed
+        // one block too many; the viewport then clipped its tail and the next page
+        // resumed past it — the paragraph-split / dropped-text bug. So
+        // CONSERVATIVELY over-estimate: ×1.15 slack on the text height (the same
+        // multiplier the gloss verse blocks use) PLUS the real blank-line height
+        // between paragraphs (`slice.join("\n\n")` renders one empty line per
+        // gap). Erring tall only ever yields an extra page — it never splits a
+        // paragraph, satisfying "keep whole blocks fully visible for TTS".
+        let line_h = crate::ui::pagination::measure_text_height(&pctx, "Mg", size, &family, wrap_w);
         let heights: Vec<i32> = paras
             .iter()
             .map(|p| {
-                crate::ui::pagination::measure_text_height(&pctx, p, size, &family, wrap_w)
-                    + pad_per_para
+                let text_h =
+                    crate::ui::pagination::measure_text_height(&pctx, p, size, &family, wrap_w);
+                (text_h as f32 * 1.15) as i32 + line_h
             })
             .collect();
         drop(paras);
@@ -732,13 +753,9 @@ impl JournalOverlay {
         drop(pages);
 
         self.view.buffer().set_text(&body);
-        // "More below" affordance: a centered chevron when another page follows.
-        // Appended BEFORE apply_font (so the font tag, applied over buffer bounds,
-        // covers it) but it does NOT affect the block model — `journal_blocks`
-        // below reads the original `body` string, not the buffer, so the chevron
-        // is never a measured paragraph or a cursor-stop block.
-        self.append_more_chevron(pidx + 1 < n_pages);
         self.apply_font();
+        // Floating page marker (⌄ more / • end), bottom-center of the viewport.
+        self.update_page_marker(pidx, n_pages);
         // The vadjustment stays at top — the page fits, nothing scrolls.
         let adj = self.scrolled.vadjustment();
         adj.set_value(adj.lower());

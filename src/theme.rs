@@ -582,6 +582,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
            color: {cursor_bg}; padding: 2px 0; }} \
          .legend-action {{ font-family: {font}; font-size: 16px; color: {fg}; \
            opacity: 0.72; padding: 2px 0; }} \
+         .page-marker {{ color: {dim}; font-size: 20px; opacity: 0.55; }} \
          .picker-entry {{ margin-bottom: 8px; }} \
          .picker-list row:selected {{ background-color: rgba(100, 140, 200, 0.8); }} \
          .picker-item-title {{ }} \

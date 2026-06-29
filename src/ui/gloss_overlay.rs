@@ -54,6 +54,7 @@ pub struct GlossOverlay {
     footer_box: gtk4::Box,
     citation_label: Label,
     position_label: Label,
+    page_marker: Label,
     gloss_scroll_overlay: Overlay,
     gloss_scrolled: gtk4::ScrolledWindow,
     gloss_view: gtk4::TextView,
@@ -343,6 +344,19 @@ impl GlossOverlay {
         gloss_scroll_overlay.set_measure_overlay(&bar_drawing, false);
         gloss_scroll_overlay.set_clip_overlay(&bar_drawing, true);
 
+        // Floating page marker (⌄ more / • end) anchored bottom-center of the
+        // viewport — see JournalOverlay. Shows even on a full page (it floats over
+        // the viewport, not in the text flow). Hidden on single-page content.
+        let page_marker = Label::new(None);
+        page_marker.set_halign(Align::Center);
+        page_marker.set_valign(Align::End);
+        page_marker.set_margin_bottom(6);
+        page_marker.add_css_class("page-marker");
+        page_marker.set_visible(false);
+        gloss_scroll_overlay.add_overlay(&page_marker);
+        gloss_scroll_overlay.set_measure_overlay(&page_marker, false);
+        gloss_scroll_overlay.set_clip_overlay(&page_marker, true);
+
         // Attach the bottom-clip guard: builds the clip Box, adds it as a
         // non-measured, clipped overlay, and wires the persistent value_changed
         // catch-all (path c). All three recompute paths (c / on_open / recompute)
@@ -453,6 +467,7 @@ impl GlossOverlay {
             footer_box,
             citation_label,
             position_label,
+            page_marker,
             gloss_scroll_overlay,
             gloss_scrolled,
             gloss_view,
@@ -797,6 +812,7 @@ impl GlossOverlay {
         self.synopsis_label_ranges.borrow_mut().clear();
         self.blocks.borrow_mut().clear();
         self.paginated.set(false);
+        self.page_marker.set_visible(false);
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         self.last_card_size.set((card_width, card_height));
@@ -886,6 +902,7 @@ impl GlossOverlay {
         self.synopsis_label_ranges.borrow_mut().clear();
         self.blocks.borrow_mut().clear();
         self.paginated.set(false);
+        self.page_marker.set_visible(false);
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         self.last_card_size.set((card_width, card_height));
@@ -1511,9 +1528,8 @@ impl GlossOverlay {
             self.rebuild_block_ranges_from(slice);
         }
 
-        // "More below" affordance: a centered chevron when another page follows
-        // (same render-time, non-block treatment as the gloss path).
-        self.append_more_chevron(!single_page && pidx + 1 < n_pages);
+        // Floating page marker (⌄ more / • end), bottom-center of the viewport.
+        self.update_page_marker(pidx, n_pages);
 
         // Pin the viewport at the top — the page fits, nothing scrolls.
         let adj = self.gloss_scrolled.vadjustment();
@@ -1590,10 +1606,8 @@ impl GlossOverlay {
         self.synopsis_label_ranges.borrow_mut().clear();
         self.rebuild_block_ranges_from(page_blocks);
 
-        // "More below" affordance: a centered chevron when another page follows.
-        // Appended AFTER the block ranges are derived from `page_blocks`, so it is
-        // outside the cursor/bar model and cannot perturb pagination.
-        self.append_more_chevron(!single_page && pidx + 1 < n_pages);
+        // Floating page marker (⌄ more / • end), bottom-center of the viewport.
+        self.update_page_marker(pidx, n_pages);
 
         // Pin the viewport at the top — the page fits, nothing scrolls.
         let adj = self.gloss_scrolled.vadjustment();
@@ -1614,48 +1628,20 @@ impl GlossOverlay {
         self.update_position_label();
     }
 
-    /// Append a centered "⌄" chevron paragraph to the gloss/synopsis buffer when
-    /// `has_next` (another render page follows), so the reader sees there is more
-    /// without glancing at the footer's page counter. Added at RENDER time, after
-    /// the page body is in the buffer — it is NOT a measured block (so it can't
-    /// shift pagination or get orphaned) and NOT a cursor-stop (so j/k/gg/G and
-    /// the selection bar never touch it). Colored with the overlay's accent
-    /// (`bar_color`, the same theme color as the accent bar) so it reads as quiet
-    /// chrome. TextTag styling is property-based (not CSS — a tag is not a
-    /// widget). Re-creating the tag each call mirrors `populate_gloss_buffer`'s
-    /// lookup-remove-readd pattern, so a re-render never accretes duplicates.
-    fn append_more_chevron(&self, has_next: bool) {
-        if !has_next {
-            return;
+    /// Set the floating page marker for the current gloss/synopsis page: `⌄` when
+    /// another page follows, `•` on the last page, hidden on single-page content.
+    /// The marker is an overlay child anchored bottom-center of the viewport (NOT
+    /// in the text flow), so it shows even when the page is full. Glyph chosen by
+    /// the shared `pagination::page_marker`. Mirrors
+    /// `JournalOverlay::update_page_marker`.
+    fn update_page_marker(&self, page_idx: usize, n_pages: usize) {
+        match crate::ui::pagination::page_marker(page_idx, n_pages) {
+            Some(glyph) => {
+                self.page_marker.set_text(glyph);
+                self.page_marker.set_visible(true);
+            }
+            None => self.page_marker.set_visible(false),
         }
-        let buffer = self.gloss_view.buffer();
-        let tag_table = buffer.tag_table();
-        if let Some(old) = tag_table.lookup("gloss-more-chevron") {
-            tag_table.remove(&old);
-        }
-        let (r, g, b) = *self.bar_color.borrow();
-        let fg = format!(
-            "#{:02x}{:02x}{:02x}",
-            (r * 255.0).round() as u8,
-            (g * 255.0).round() as u8,
-            (b * 255.0).round() as u8
-        );
-        let tag = gtk4::TextTag::builder()
-            .name("gloss-more-chevron")
-            .justification(gtk4::Justification::Center)
-            .foreground(&fg)
-            .pixels_above_lines(12)
-            .build();
-        tag_table.add(&tag);
-
-        // Blank line to separate the chevron from the last block, then the glyph.
-        let offset = buffer.char_count();
-        let mut end = buffer.end_iter();
-        buffer.insert(&mut end, "\n\u{2304}");
-        // Tag only the appended chevron paragraph (the inserted "\n⌄").
-        let start = buffer.iter_at_offset(offset);
-        let end = buffer.end_iter();
-        buffer.apply_tag(&tag, &start, &end);
     }
 
     /// Enter synopsis visual mode: anchor at the current block. No-op if there
@@ -2043,6 +2029,7 @@ impl GlossOverlay {
         self.synopsis_label_ranges.borrow_mut().clear();
         self.blocks.borrow_mut().clear();
         self.paginated.set(false);
+        self.page_marker.set_visible(false);
         // Size the card to the full reading area so the loading state reads as a
         // proper card (the same footprint the synopsis/gloss card will occupy)
         // rather than a label-sized box. Reuse the last card geometry; fall back

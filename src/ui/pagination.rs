@@ -108,6 +108,22 @@ pub fn page_token(page_idx: usize, n_pages: usize) -> Option<String> {
     }
 }
 
+/// The end-of-content marker glyph for a paginated overlay page, or `None` when
+/// nothing should show. Floating bottom-center marker shared by gloss / synopsis
+/// / journal:
+/// - `⌄` (U+2304) when another page follows (`page_idx + 1 < n_pages`) — "more".
+/// - `•` (U+2022) on the LAST page of paginated content — "end / no more pages".
+/// - `None` for single-page (or empty) content — no marker at all.
+pub fn page_marker(page_idx: usize, n_pages: usize) -> Option<&'static str> {
+    if n_pages <= 1 {
+        None
+    } else if page_idx + 1 < n_pages {
+        Some("\u{2304}")
+    } else {
+        Some("\u{2022}")
+    }
+}
+
 /// Pixel height of `text` wrapped at `width_px` in `family` at `size_pt`, via a
 /// `pango::Layout` on `pctx` (a widget's pango context). Used only for page-fit
 /// math — no widget allocation, so no GTK settle race.
@@ -237,5 +253,19 @@ mod tests {
     fn page_token_clamps_out_of_range_index() {
         // A stale page_idx past the last page clamps to the final page.
         assert_eq!(page_token(9, 3).as_deref(), Some("3 / 3"));
+    }
+
+    #[test]
+    fn page_marker_none_for_single_or_empty() {
+        assert_eq!(page_marker(0, 0), None);
+        assert_eq!(page_marker(0, 1), None);
+    }
+
+    #[test]
+    fn page_marker_chevron_then_bullet() {
+        // 3 pages: pages 0,1 show the "more" chevron; page 2 (last) shows the bullet.
+        assert_eq!(page_marker(0, 3), Some("\u{2304}"));
+        assert_eq!(page_marker(1, 3), Some("\u{2304}"));
+        assert_eq!(page_marker(2, 3), Some("\u{2022}"));
     }
 }
