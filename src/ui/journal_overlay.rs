@@ -38,6 +38,13 @@ pub struct JournalOverlay {
     /// Cursor index within `all_paragraphs` (the whole Q&A). `cursor_block` is its
     /// page-local projection.
     cursor_full: Cell<usize>,
+    /// Footer position state, rebuilt by `update_footer_position`: the band
+    /// identity (`<abbrev> <act>.<scene>`) and the Q&A-ENTRY position in the band
+    /// `(entry_index, entry_count)` (the Ctrl+n/p count). The render-page count
+    /// (`pages`/`page_idx`, the j/k pages) is appended as "page X / Y" when the
+    /// current Q&A spans more than one render page.
+    footer_band: RefCell<String>,
+    entry_pos: Cell<(usize, usize)>,
     text_margins: i32,
     column_width: i32,
     /// True when the loaded work is prose. Set once per work load via
@@ -266,6 +273,8 @@ impl JournalOverlay {
             pages: RefCell::new(Vec::new()),
             page_idx: Cell::new(0),
             cursor_full: Cell::new(0),
+            footer_band: RefCell::new(String::new()),
+            entry_pos: Cell::new((0, 0)),
             text_margins: text_margins as i32,
             column_width: column_width as i32,
             is_prose: Cell::new(false),
@@ -332,12 +341,11 @@ impl JournalOverlay {
         card_height: i32,
     ) {
         self.size_card(card_width, card_height);
-        let pos_text = if page_count == 0 {
-            "page 0 of 0 in this scene".to_string()
-        } else {
-            format!("page {} of {} in this scene", page_index + 1, page_count)
-        };
-        self.set_footer_left(footer_left, &pos_text);
+        // Store the band identity + Q&A-entry position; the footer text is
+        // (re)built by update_footer_position, which also appends the render-page
+        // count once pagination has run / on every page turn.
+        *self.footer_band.borrow_mut() = footer_left.to_string();
+        self.entry_pos.set((page_index, page_count));
         if page_count == 0 {
             // Empty band: a bare message, no navigable paragraphs.
             self.view.buffer().set_text("No pages yet \u{2014} press A to ask.");
@@ -360,6 +368,8 @@ impl JournalOverlay {
             self.page_idx.set(0);
             self.render_page();
         }
+        // Now the render-page count is known — build the footer with it.
+        self.update_footer_position();
         self.ask_host.card().close();
         // Restore the navigation footer (show_loading may have hidden it).
         self.footer_container.set_visible(true);
@@ -476,16 +486,27 @@ impl JournalOverlay {
     }
 
     /// Set the footer-left label to the band identity (`<abbrev> <act>.<scene>`)
-    /// followed by the page position, joined with a `·`, e.g.
-    /// `Cromwell 1.0 · page 1 of 1 in this scene`. The position used to live in a
-    /// standalone row above the body; it now rides in the footer.
-    fn set_footer_left(&self, band: &str, position: &str) {
-        if position.is_empty() {
-            self.footer_left.set_text(band);
+    /// Rebuild the footer-left text from the stored band + Q&A-entry position +
+    /// the current render-page count. Format:
+    /// `<abbrev> <act>.<scene> · Q&A 2 of 5 · page 1 / 3`, where "Q&A N of M" is
+    /// the entry's position in the band (Ctrl+n/p) and "page X / Y" is the render
+    /// page within this Q&A (j/k), shown ONLY when the Q&A spans >1 render page.
+    /// Call after pagination (page count known) and on every page turn.
+    fn update_footer_position(&self) {
+        let band = self.footer_band.borrow().clone();
+        let (entry_idx, entry_count) = self.entry_pos.get();
+        let mut s = band;
+        if entry_count == 0 {
+            s.push_str(" \u{00b7} no Q&A yet");
         } else {
-            self.footer_left
-                .set_text(&format!("{} \u{00b7} {}", band, position));
+            s.push_str(&format!(" \u{00b7} Q&A {} of {}", entry_idx + 1, entry_count));
+            let n_pages = self.pages.borrow().len();
+            if n_pages > 1 {
+                let p = self.page_idx.get().min(n_pages - 1) + 1;
+                s.push_str(&format!(" \u{00b7} page {} / {}", p, n_pages));
+            }
         }
+        self.footer_left.set_text(&s);
     }
 
     fn update_bottom_clip(&self) {
@@ -823,6 +844,8 @@ impl JournalOverlay {
         if target_page != self.page_idx.get() {
             self.page_idx.set(target_page);
             self.render_page();
+            // The render page changed — refresh the footer's "page X / Y".
+            self.update_footer_position();
         } else {
             let page_start = self
                 .pages

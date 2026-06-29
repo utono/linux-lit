@@ -114,6 +114,11 @@ pub struct GlossOverlay {
     pages: RefCell<Vec<crate::ui::pagination::Page>>,
     page_idx: Cell<usize>,
     cursor_full: Cell<usize>,
+    /// The gloss-INDEX position shown in the footer's right label: `(index,
+    /// total)` over the work's glosses (set by `set_position`, the cross-gloss
+    /// nav). Combined with the render-page count (`pages`/`page_idx`) by
+    /// `update_position_label` into e.g. "3 / 12 · page 1 / 2".
+    gloss_pos: Cell<(usize, usize)>,
     /// True while the current render is paginated (synopsis or gloss-result), so
     /// the cursor-nav methods turn pages instead of scrolling. False in echo +
     /// glossing-loading modes (cursor-nav keeps the old scroll behavior).
@@ -473,6 +478,7 @@ impl GlossOverlay {
             pages: RefCell::new(Vec::new()),
             page_idx: Cell::new(0),
             cursor_full: Cell::new(0),
+            gloss_pos: Cell::new((0, 0)),
             paginated: Cell::new(false),
             paginated_mode: Cell::new(PaginatedMode::Synopsis),
             gloss_block_markups: RefCell::new(Vec::new()),
@@ -1519,6 +1525,7 @@ impl GlossOverlay {
         self.mark_cursor_block();
         self.bar_drawing.queue_draw();
         self.update_bottom_clip();
+        self.update_position_label();
     }
 
     /// Render the current GLOSS-RESULT page into the buffer via
@@ -1592,6 +1599,7 @@ impl GlossOverlay {
         self.mark_cursor_block();
         self.bar_drawing.queue_draw();
         self.update_bottom_clip();
+        self.update_position_label();
     }
 
     /// Enter synopsis visual mode: anchor at the current block. No-op if there
@@ -2080,11 +2088,32 @@ impl GlossOverlay {
     }
 
     pub fn set_position(&self, index: usize, total: usize) {
+        self.gloss_pos.set((index, total));
+        self.update_position_label();
+    }
+
+    /// Refresh the footer's right label from the stored gloss-index position AND
+    /// the current render-page count. Shows the gloss index "N / total" when there
+    /// is more than one gloss, and appends "page X / Y" when the current gloss
+    /// paginates to more than one render page (the j/k pages). Hidden when neither
+    /// applies. Call from `set_position` (index changed) and after a (re)render /
+    /// page turn (render-page count or current page changed).
+    fn update_position_label(&self) {
+        let (index, total) = self.gloss_pos.get();
+        let n_pages = self.pages.borrow().len();
+        let mut parts: Vec<String> = Vec::new();
         if total > 1 {
-            self.position_label.set_text(&format!("{} / {}", index + 1, total));
-            self.position_label.set_visible(true);
-        } else {
+            parts.push(format!("{} / {}", index + 1, total));
+        }
+        if self.paginated.get() && n_pages > 1 {
+            let p = self.page_idx.get().min(n_pages - 1) + 1;
+            parts.push(format!("page {} / {}", p, n_pages));
+        }
+        if parts.is_empty() {
             self.position_label.set_visible(false);
+        } else {
+            self.position_label.set_text(&parts.join(" \u{00b7} "));
+            self.position_label.set_visible(true);
         }
     }
 
