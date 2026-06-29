@@ -339,7 +339,8 @@ A gloss is a saved AI commentary on a highlighted passage — a \
 teacher-style Q&A note, an inner-monologue cross-reference, or a terse \
 reader-focused gloss. If a gloss is \
 already loaded it reopens that one without re-querying the database. Inside the \
-overlay, Space (or Tab) reads the cursor block aloud; Shift+Space \
+overlay, j/k (or q/comma) move the cursor block; Space (or Tab) reads the cursor \
+block aloud; Shift+Space \
 batch-synthesizes every prose (explication) block to \
 cached ElevenLabs MP3s (cache only, no playback), showing a \
 \u{201c}Synthesizing\u{2026}\u{201d} toast. \
@@ -589,8 +590,8 @@ and play from there. -> timestamps::play_current_line — src/input/timestamps.r
 that flag timestamps, chapters, bookmarks, and A/B points. \
 -> app::toggle_sign_column — src/app.rs",
         "synopsis" => "Show the synopsis overlay for the current scene. Inside \
-it, j/k move the cursor block (left accent bar) and gg/G jump first/last, like \
-the gloss overlay; Space (or Tab) plays/stops the cursor paragraph's TTS \
+it, j/k (or q/comma) move the cursor block (left accent bar) and gg/G jump \
+first/last, like the gloss overlay; Space (or Tab) plays/stops the cursor paragraph's TTS \
 (synthesizing on a cache miss); Shift+Space batch-synthesizes every synopsis paragraph to \
 cached ElevenLabs MP3s (cache only, no playback), showing a \u{201c}Synthesizing\u{2026}\u{201d} \
 toast. Ctrl+p / Ctrl+n step to the previous / next scene's synopsis, clamping at \

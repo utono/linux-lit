@@ -1056,7 +1056,10 @@ fn handle_gloss_key(
             state.borrow().gloss_overlay.adjust_font_size(-1);
             true
         }
-        "j" => {
+        // `q` aliases j and `,` aliases k, matching the reading card's
+        // dialogue-nav keys (and the journal overlay) so the same fingers move
+        // the block cursor here.
+        "j" | "q" => {
             crate::input::actions::gloss::stop_all_gloss_audio(state);
             // Loading card (no blocks): scroll the viewport down.
             // Result gloss: step the block cursor to the next block.
@@ -1067,7 +1070,7 @@ fn handle_gloss_key(
             }
             true
         }
-        "k" => {
+        "k" | "comma" => {
             crate::input::actions::gloss::stop_all_gloss_audio(state);
             if state.borrow().gloss_overlay.current_block().is_some() {
                 state.borrow().gloss_overlay.cursor_prev_block();
@@ -1542,11 +1545,13 @@ fn handle_block_visual_key(
     }
 
     match key_name {
-        "j" => {
+        // q aliases j and `,` aliases k (extend the selection), matching the
+        // normal-mode block-nav aliases in both overlays.
+        "j" | "q" => {
             state.borrow().gloss_overlay.visual_step(1);
             true
         }
-        "k" => {
+        "k" | "comma" => {
             state.borrow().gloss_overlay.visual_step(-1);
             true
         }
