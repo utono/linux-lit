@@ -1194,6 +1194,46 @@ pub(crate) fn recolor_cached_blocks_rc(state: &Rc<RefCell<AppState>>) {
     recolor_cached_blocks(&state.borrow());
 }
 
+/// Color the journal Q&A overlay's current-page paragraphs whose TTS MP3 is
+/// cached, with the same accent the gloss/synopsis overlays use. Keyed by the
+/// page's `journal_entries.id` + the paragraph's FULL index + the fixed
+/// plain-prose voice (the journal always synthesizes in that voice). Called on
+/// every page render and after a synth completes. No-op when not in the journal
+/// overlay or no current page.
+pub(crate) fn recolor_journal_cached_blocks(s: &AppState) {
+    if s.input_mode != crate::app::InputMode::JournalOverlay {
+        return;
+    }
+    let entry_id = match s.journal.pages.get(s.journal.page_index) {
+        Some(p) => p.id,
+        None => return,
+    };
+    let (voice_id, _mid) = crate::elevenlabs::voice_for(crate::elevenlabs::Gender::Unknown, false);
+    let voice_id = voice_id.to_string();
+    let accent = CACHED_BLOCK_ACCENT.to_string();
+    let conn = match crate::db::queries::open_db() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    s.journal_overlay.color_cached_blocks(&accent, move |full_index| {
+        for vid_try in [voice_id.as_str(), crate::elevenlabs::ALICE_VOICE_ID] {
+            if let Ok(Some(path)) =
+                crate::db::queries::find_journal_audio(&conn, entry_id, full_index as i64, vid_try)
+            {
+                if std::path::Path::new(&path).exists() {
+                    return true;
+                }
+            }
+        }
+        false
+    });
+}
+
+/// Borrow-then-recolor wrapper for the journal, for async synth-completion sites.
+pub(crate) fn recolor_journal_cached_blocks_rc(state: &Rc<RefCell<AppState>>) {
+    recolor_journal_cached_blocks(&state.borrow());
+}
+
 fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32) {
     let kind_str = match kind {
         BlockKind::Source => "source",
@@ -1830,6 +1870,9 @@ fn play_journal_block(state_rc: &Rc<RefCell<AppState>>, index: i32) {
                 &used_model,
             );
         }
+        // The paragraph is now cached — recolor the open page so it shows the
+        // cached-block accent (mirrors the gloss/synopsis synth path).
+        recolor_journal_cached_blocks_rc(&state_for_result);
         // Playback begins now — dismiss the persistent "Synthesizing…" pill.
         hide_tts_toast(&state_for_result);
         state_for_result.borrow().tts.play_file(&path);

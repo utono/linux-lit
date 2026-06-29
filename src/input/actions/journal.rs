@@ -214,6 +214,10 @@ pub(crate) fn render_current(s: &mut AppState) {
         .show_page(&scene_title, &footer_left, s.journal.page_index, count, &q, &a, cw, h);
 
     s.journal.pages = pages;
+    // Color any paragraphs whose TTS MP3 is already cached, like the gloss
+    // overlay (must run after the page renders + s.journal.pages is set so the
+    // entry id resolves).
+    crate::input::actions::gloss::recolor_journal_cached_blocks(s);
 }
 
 pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {

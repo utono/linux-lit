@@ -729,6 +729,7 @@ fn handle_journal_key(
         if key_name == "g" {
             crate::input::actions::gloss::stop_all_gloss_audio(state);
             state.borrow().journal_overlay.cursor_first_block();
+            crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
         }
         return true;
     }
@@ -828,6 +829,7 @@ fn handle_journal_key(
         "G" => {
             crate::input::actions::gloss::stop_all_gloss_audio(state);
             state.borrow().journal_overlay.cursor_last_block();
+            crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
             true
         }
         // j/k step the paragraph block cursor (the left accent bar), mirroring
@@ -839,11 +841,14 @@ fn handle_journal_key(
         "j" | "q" => {
             crate::input::actions::gloss::stop_all_gloss_audio(state);
             state.borrow().journal_overlay.cursor_next_block();
+            // A page turn re-rendered the buffer; recolor cached blocks.
+            crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
             true
         }
         "k" | "comma" => {
             crate::input::actions::gloss::stop_all_gloss_audio(state);
             state.borrow().journal_overlay.cursor_prev_block();
+            crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
             true
         }
         // Space/Tab: play/stop the cursor paragraph's TTS (cache hit plays the

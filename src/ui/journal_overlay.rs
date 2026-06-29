@@ -89,14 +89,9 @@ fn prefix_question(question: &str) -> String {
 /// `card_height` and overflows the window (the "too-tall journal overlay" bug).
 /// The gloss overlay reserves the same way via its `SCROLL_OVERLAY_MARGINS`. Keep
 /// in sync with those three margin sites.
-/// Extra bottom margin added to the journal footer container (beyond the shared
-/// 12px) so the footer text sits off the card's bottom edge, matching the gloss
-/// overlay's footer padding. Reserved in UNACCOUNTED_CHROME_MARGINS below.
-const FOOTER_EXTRA_BOTTOM: i32 = 16;
-
 const UNACCOUNTED_CHROME_MARGINS: i32 = 24 /* title top */
     + 24 + 20 /* scroll_overlay top+bottom */
-    + 12 + 12 + FOOTER_EXTRA_BOTTOM /* footer top + bottom + extra */;
+    + 12 + 12 /* footer top+bottom */;
 
 impl JournalOverlay {
     pub fn new(column_width: u32, text_margins: u32) -> Self {
@@ -238,12 +233,6 @@ impl JournalOverlay {
         let footer_left = footer.left;
         let hint = footer.hint;
         let footer_container = footer.container.clone();
-        // Extra breathing room below the footer text so it sits off the card's
-        // bottom edge (matching the gloss overlay's footer padding) — the shared
-        // build_footer_row gives 12px top/bottom; add 16px more at the bottom. The
-        // extra is reserved in UNACCOUNTED_CHROME_MARGINS so the column still
-        // balances to card_height.
-        footer_container.set_margin_bottom(12 + FOOTER_EXTRA_BOTTOM);
         container.append(&footer.container);
 
         // Shared "ask" input card (canonical synopsis values), stacked last in
@@ -725,6 +714,60 @@ impl JournalOverlay {
         self.update_bottom_clip();
     }
 
+    /// The FULL-paragraph index of the current page's first block — the offset to
+    /// map a page-local block index to its `all_paragraphs`/journal_audio index.
+    pub fn current_page_start(&self) -> usize {
+        let pages = self.pages.borrow();
+        pages
+            .get(self.page_idx.get().min(pages.len().saturating_sub(1)))
+            .map(|p| p.start)
+            .unwrap_or(0)
+    }
+
+    /// Color every block ON THE CURRENT PAGE whose audio is cached with `accent`
+    /// (the same cached-block accent the gloss/synopsis overlays use). `is_cached`
+    /// is called with each block's FULL paragraph index (page_start + local), so
+    /// the caller can look it up in `journal_audio` by entry id + paragraph index.
+    /// Mirrors the gloss overlay's `color_audio_blocks`.
+    pub fn color_cached_blocks(&self, accent: &str, is_cached: impl Fn(usize) -> bool) {
+        let buffer = self.view.buffer();
+        let table = buffer.tag_table();
+        let tag = match table.lookup("journal-audio-cached") {
+            Some(t) => {
+                t.set_foreground(Some(accent));
+                t
+            }
+            None => {
+                let t = gtk4::TextTag::builder()
+                    .name("journal-audio-cached")
+                    .foreground(accent)
+                    .build();
+                table.add(&t);
+                t
+            }
+        };
+        // Outrank the buffer-wide `journal-font` tag (added last on apply_font).
+        let size = table.size();
+        if size > 0 {
+            tag.set_priority(size - 1);
+        }
+        let line_count = buffer.line_count();
+        let page_start = self.current_page_start();
+        for (local, blk) in self.blocks.borrow().iter().enumerate() {
+            if !is_cached(page_start + local) {
+                continue;
+            }
+            let start = buffer
+                .iter_at_line(blk.start_line)
+                .unwrap_or_else(|| buffer.start_iter());
+            let end_line = (blk.end_line + 1).min(line_count);
+            let end = buffer
+                .iter_at_line(end_line)
+                .unwrap_or_else(|| buffer.end_iter());
+            buffer.apply_tag(&tag, &start, &end);
+        }
+    }
+
     /// The block cursor's current index (the block j/k/gg/G select), clamped to
     /// the block list. None when the page has no blocks (the empty/loading card).
     pub fn current_block_index(&self) -> Option<usize> {
@@ -1007,7 +1050,7 @@ mod prefix_question_tests {
 
 #[cfg(test)]
 mod scroll_budget_tests {
-    use super::{FOOTER_EXTRA_BOTTOM, UNACCOUNTED_CHROME_MARGINS};
+    use super::UNACCOUNTED_CHROME_MARGINS;
 
     /// `size_card` passes `title_h + UNACCOUNTED_CHROME_MARGINS` as the fixed
     /// chrome, so the host's closed scroll height is
@@ -1036,9 +1079,8 @@ mod scroll_budget_tests {
     #[test]
     fn margins_match_the_three_margin_sites() {
         // 24 (title margin_top) + 24 + 20 (scroll_overlay top+bottom)
-        // + 12 + 12 (footer top+bottom) + 16 (footer extra bottom) = 108.
-        assert_eq!(UNACCOUNTED_CHROME_MARGINS, 92 + FOOTER_EXTRA_BOTTOM);
-        assert_eq!(UNACCOUNTED_CHROME_MARGINS, 108);
+        // + 12 + 12 (footer top+bottom) = 92.
+        assert_eq!(UNACCOUNTED_CHROME_MARGINS, 92);
     }
 }
 
