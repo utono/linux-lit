@@ -225,7 +225,7 @@ impl JournalOverlay {
         // right.
         let footer = crate::ui::footer::build_footer_row(
             text_margins as i32,
-            "Ctrl+/ keybinds",
+            "",
         );
         let footer_left = footer.left;
         let hint = footer.hint;
@@ -1020,7 +1020,7 @@ impl JournalOverlay {
     /// Normal-navigation footer hint (advertises Shift+V). Re-set on visual exit.
     pub fn set_journal_hint(&self) {
         self.hint.set_text(
-            "Ctrl+/ keybinds",
+            "",
         );
     }
 

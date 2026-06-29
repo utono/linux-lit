@@ -19,10 +19,10 @@ pub fn build_legend(title: &str, binds: &[(&str, &str)]) -> (GtkBox, GtkBox) {
 
     let container = GtkBox::builder()
         .orientation(Orientation::Vertical)
-        .spacing(4)
+        .spacing(6)
         .halign(Align::Center)
         .valign(Align::Center)
-        .width_request(460)
+        .width_request(620)
         .build();
     // Match the library picker's parchment card (theme {bg}/{fg}), not the dark
     // picker-box — see .legend-box in theme.rs.

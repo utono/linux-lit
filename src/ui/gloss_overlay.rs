@@ -1698,7 +1698,7 @@ impl GlossOverlay {
 
     /// Set the synopsis-overlay footer hint (normal navigation).
     pub fn set_synopsis_hint(&self) {
-        self.hint.set_text("Ctrl+/ keybinds");
+        self.hint.set_text("");
     }
 
     /// Set the footer hint shown while synopsis visual mode is active.
@@ -1710,7 +1710,7 @@ impl GlossOverlay {
     /// gloss render path and when exiting gloss visual mode, so both share one
     /// string. `\u{21e7}V select` advertises gloss visual mode.
     pub fn set_gloss_hint(&self) {
-        self.hint.set_text("Ctrl+/ keybinds");
+        self.hint.set_text("");
     }
 
     /// Set the footer hint shown while gloss visual mode is active.
