@@ -127,6 +127,9 @@ pub fn handle_key(
             crate::app::InputMode::GamepadOverlay => handle_gamepad_key(state, key_name),
             crate::app::InputMode::KeybindsOverlay => handle_keybinds_key(state, key_name),
             crate::app::InputMode::EchoKeybindsOverlay => handle_echo_keybinds_key(state, key_name, is_ctrl),
+            crate::app::InputMode::GlossKeybindsOverlay => handle_overlay_keybinds_key(state, key_name, is_ctrl, OverlayLegend::Gloss),
+            crate::app::InputMode::SynopsisKeybindsOverlay => handle_overlay_keybinds_key(state, key_name, is_ctrl, OverlayLegend::Synopsis),
+            crate::app::InputMode::JournalKeybindsOverlay => handle_overlay_keybinds_key(state, key_name, is_ctrl, OverlayLegend::Journal),
             crate::app::InputMode::ActionPopup => handle_action_popup_key(state, key_name, is_ctrl, tokio_handle),
             crate::app::InputMode::Visual => handle_visual_key(state, key_state, key_name, tokio_handle),
             crate::app::InputMode::PageCalibration => handle_page_calibration_key(state, key_state, key_name),
@@ -791,6 +794,14 @@ fn handle_journal_key(
                 crate::input::actions::journal::view_gloss_from_journal(state);
                 return true;
             }
+            // Ctrl+/ opens the JOURNAL-specific keybind legend (its full keybind
+            // set), returning to the journal overlay on close.
+            "slash" => {
+                let mut s = state.borrow_mut();
+                s.journal_keybinds_overlay.show();
+                s.input_mode = crate::app::InputMode::JournalKeybindsOverlay;
+                return true;
+            }
             _ => {}
         }
     }
@@ -992,13 +1003,12 @@ fn handle_gloss_key(
                 crate::input::actions::journal::view_journal_from_gloss(state);
                 return true;
             }
-            // Ctrl+/ opens the keybinds overlay, returning to the gloss overlay
-            // on close (same overlay-return pattern as Ctrl+, settings).
+            // Ctrl+/ opens the GLOSS-specific keybind legend (its full keybind
+            // set), returning to the gloss overlay on close.
             "slash" => {
-                crate::input::actions::pickers::open_keybinds_from_mode(
-                    state,
-                    crate::app::InputMode::GlossOverlay,
-                );
+                let mut s = state.borrow_mut();
+                s.gloss_keybinds_overlay.show();
+                s.input_mode = crate::app::InputMode::GlossKeybindsOverlay;
                 return true;
             }
             // Ctrl+Up/Ctrl+Down adjust volume, mirroring the reader's
@@ -1435,13 +1445,12 @@ fn handle_synopsis_overlay_key(
             );
             true
         }
-        // Ctrl+/ opens the keybinds overlay, returning to the synopsis overlay
-        // on close (same overlay-return pattern as Ctrl+, settings).
+        // Ctrl+/ opens the SYNOPSIS-specific keybind legend (its full keybind
+        // set), returning to the synopsis overlay on close.
         "slash" if is_ctrl => {
-            crate::input::actions::pickers::open_keybinds_from_mode(
-                state,
-                crate::app::InputMode::SynopsisOverlay,
-            );
+            let mut s = state.borrow_mut();
+            s.synopsis_keybinds_overlay.show();
+            s.input_mode = crate::app::InputMode::SynopsisKeybindsOverlay;
             true
         }
         // Ctrl+Up/Ctrl+Down adjust volume, mirroring the reader's
@@ -2001,6 +2010,44 @@ fn handle_echo_keybinds_key(
         let mut s = state.borrow_mut();
         s.echo_keybinds_overlay.hide();
         s.input_mode = crate::app::InputMode::EchoesOverlay;
+    }
+    true // consume all keys while the legend is up (modal)
+}
+
+/// Which per-overlay keybind legend is open, so the shared modal handler hides
+/// the right widget and returns to the right parent overlay.
+#[derive(Clone, Copy)]
+enum OverlayLegend {
+    Gloss,
+    Synopsis,
+    Journal,
+}
+
+/// Modal handler for the gloss/synopsis/journal Ctrl+/ keybind legends: Esc or
+/// Ctrl+/ closes the legend and returns to its parent overlay; all other keys are
+/// swallowed. Mirrors `handle_echo_keybinds_key`.
+fn handle_overlay_keybinds_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+    is_ctrl: bool,
+    which: OverlayLegend,
+) -> bool {
+    if key_name == "Escape" || (is_ctrl && key_name == "slash") {
+        let mut s = state.borrow_mut();
+        match which {
+            OverlayLegend::Gloss => {
+                s.gloss_keybinds_overlay.hide();
+                s.input_mode = crate::app::InputMode::GlossOverlay;
+            }
+            OverlayLegend::Synopsis => {
+                s.synopsis_keybinds_overlay.hide();
+                s.input_mode = crate::app::InputMode::SynopsisOverlay;
+            }
+            OverlayLegend::Journal => {
+                s.journal_keybinds_overlay.hide();
+                s.input_mode = crate::app::InputMode::JournalOverlay;
+            }
+        }
     }
     true // consume all keys while the legend is up (modal)
 }

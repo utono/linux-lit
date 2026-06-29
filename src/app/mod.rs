@@ -112,6 +112,9 @@ pub enum InputMode {
     VoicePicker,
     EchoLinePicker,
     EchoKeybindsOverlay,
+    GlossKeybindsOverlay,
+    SynopsisKeybindsOverlay,
+    JournalKeybindsOverlay,
     ConcordanceListPicker,
     ConcordanceWorksPicker,
     AuthorshipPicker,
@@ -417,6 +420,9 @@ pub struct AppState {
     pub voice_picker: crate::ui::voice_picker::VoicePicker,
     pub echo_line_picker: crate::ui::echo_line_picker::EchoLinePicker,
     pub echo_keybinds_overlay: crate::ui::echo_keybinds_overlay::EchoKeybindsOverlay,
+    pub gloss_keybinds_overlay: crate::ui::gloss_keybinds_overlay::GlossKeybindsOverlay,
+    pub synopsis_keybinds_overlay: crate::ui::synopsis_keybinds_overlay::SynopsisKeybindsOverlay,
+    pub journal_keybinds_overlay: crate::ui::journal_keybinds_overlay::JournalKeybindsOverlay,
     /// turn_id the add-echo picker will attach the chosen line to.
     pub echo_add_turn_id: Option<i64>,
     pub concordance_list_picker: crate::ui::concordance_list_picker::ConcordanceListPicker,
@@ -1224,6 +1230,17 @@ pub fn build_window(
     let echo_keybinds_overlay = crate::ui::echo_keybinds_overlay::EchoKeybindsOverlay::new();
     echo_keybinds_overlay.attach_to(&authorship_picker.overlay);
 
+    // Per-overlay Ctrl+/ keybind legends (gloss, synopsis, journal). add_overlay
+    // panels on a persistent outer overlay, NOT chain links.
+    let gloss_keybinds_overlay = crate::ui::gloss_keybinds_overlay::GlossKeybindsOverlay::new();
+    gloss_keybinds_overlay.attach_to(&authorship_picker.overlay);
+    let synopsis_keybinds_overlay =
+        crate::ui::synopsis_keybinds_overlay::SynopsisKeybindsOverlay::new();
+    synopsis_keybinds_overlay.attach_to(&authorship_picker.overlay);
+    let journal_keybinds_overlay =
+        crate::ui::journal_keybinds_overlay::JournalKeybindsOverlay::new();
+    journal_keybinds_overlay.attach_to(&authorship_picker.overlay);
+
     // Concordance works picker (Alt+R: jump to a specific work)
     let concordance_works_picker = crate::ui::concordance_works_picker::ConcordanceWorksPicker::new();
     authorship_picker.overlay.add_overlay(&concordance_works_picker.scrim);
@@ -1549,6 +1566,9 @@ pub fn build_window(
         voice_picker,
         echo_line_picker,
         echo_keybinds_overlay,
+        gloss_keybinds_overlay,
+        synopsis_keybinds_overlay,
+        journal_keybinds_overlay,
         echo_add_turn_id: None,
         concordance_list_picker,
         concordance_works_picker,
