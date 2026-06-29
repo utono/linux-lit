@@ -87,6 +87,103 @@ pub(crate) fn reassert_italic_tags(table: &gtk4::TextTagTable) {
     }
 }
 
+/// Stroke a vertical selection bar at column `x` over each `(start_line,
+/// end_line)` span of `view`'s buffer: from the start line's top
+/// (`iter_location().y()`) to the end line's bottom (`line_yrange().0 + .1`), both
+/// mapped to widget coords. The caller sets the cairo source color and line width
+/// before calling. The shared stroke loop of the gloss/journal bar-draw closures
+/// (audit #48); the gloss closure keeps its separate line-number pass.
+pub(crate) fn draw_bar_spans(
+    cr: &gtk4::cairo::Context,
+    view: &gtk4::TextView,
+    spans: &[(i32, i32)],
+    x: f64,
+) {
+    use gtk4::prelude::*;
+    let buffer = view.buffer();
+    for &(start_line, end_line) in spans {
+        if let (Some(si), Some(ei)) =
+            (buffer.iter_at_line(start_line), buffer.iter_at_line(end_line))
+        {
+            let start_loc = view.iter_location(&si);
+            let (y_end, h_end) = view.line_yrange(&ei);
+            let (_, by_start) =
+                view.buffer_to_window_coords(gtk4::TextWindowType::Widget, 0, start_loc.y());
+            let (_, by_end) =
+                view.buffer_to_window_coords(gtk4::TextWindowType::Widget, 0, y_end + h_end);
+            cr.move_to(x, by_start as f64);
+            cr.line_to(x, by_end as f64);
+            let _ = cr.stroke();
+        }
+    }
+}
+
+/// Color the given `(start_line, end_line)` block spans of `buffer` with the tag
+/// `tag_name` set to `accent`: look the tag up or create it, refresh its
+/// foreground, raise it above the buffer-wide font tag, and `apply_tag` over each
+/// span (`end_line+1` clamped to the buffer; iters fall back to buffer ends). The
+/// shared body of the gloss/journal cached-audio coloring (audit #47). The caller
+/// computes which blocks are cached, normalizes the accent, and folds in any
+/// speaker-header line extension — passing the final span list here.
+pub(crate) fn apply_cached_coloring(
+    buffer: &gtk4::TextBuffer,
+    tag_name: &str,
+    accent: &str,
+    spans: &[(i32, i32)],
+) {
+    use gtk4::prelude::*;
+    let table = buffer.tag_table();
+    let tag = match table.lookup(tag_name) {
+        Some(t) => {
+            t.set_foreground(Some(accent));
+            t
+        }
+        None => {
+            let t = gtk4::TextTag::builder().name(tag_name).foreground(accent).build();
+            table.add(&t);
+            t
+        }
+    };
+    // Outrank the buffer-wide font tag (added last on apply_font).
+    let size = table.size();
+    if size > 0 {
+        tag.set_priority(size - 1);
+    }
+    let line_count = buffer.line_count();
+    for &(start_line, end_line) in spans {
+        let start = buffer
+            .iter_at_line(start_line)
+            .unwrap_or_else(|| buffer.start_iter());
+        let end_line = (end_line + 1).min(line_count);
+        let end = buffer
+            .iter_at_line(end_line)
+            .unwrap_or_else(|| buffer.end_iter());
+        buffer.apply_tag(&tag, &start, &end);
+    }
+}
+
+/// Apply a buffer-wide font `TextTag` named `tag_name` (set to `font_str`) over
+/// each view's full buffer, replacing any prior tag of that name, and re-assert
+/// the italic stage/bracket tags above it. The shared body of the gloss and
+/// journal overlays' `apply_font` (audit #46). The caller owns the family guard,
+/// the view list, the tag name, and any trailing label-bold pass.
+pub(crate) fn apply_font_to_views(views: &[&gtk4::TextView], font_str: &str, tag_name: &str) {
+    use gtk4::prelude::*;
+    for view in views {
+        let buffer = view.buffer();
+        let table = buffer.tag_table();
+        if let Some(old) = table.lookup(tag_name) {
+            table.remove(&old);
+        }
+        let tag = gtk4::TextTag::builder().name(tag_name).font(font_str).build();
+        table.add(&tag);
+        let (start, end) = buffer.bounds();
+        buffer.apply_tag(&tag, &start, &end);
+        // Keep stage/bracket directions italic above the upright font tag.
+        reassert_italic_tags(&table);
+    }
+}
+
 /// Pure core of the overlay bottom-clip calculation: given each visual row's
 /// `(top, bottom)` in scroll-coordinate space, the viewport top (`top_y`), the
 /// viewport height (`viewport_h`), and the total content height (`content_h`),

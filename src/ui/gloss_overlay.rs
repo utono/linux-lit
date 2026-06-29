@@ -1,7 +1,7 @@
 use crate::ui::ask_card::{AskCard, AskCardHost, AskFocus};
 use crate::ui::gloss_block::{
     gloss_block_markups, gloss_blocks, render_synopsis_with_labels, selected_blocks_text,
-    synopsis_blocks, visual_block_range, BlockKind, GlossBlock,
+    synopsis_blocks, visual_block_range, visual_selection_count, BlockKind, GlossBlock,
 };
 use crate::ui::gloss_render::{
     populate_gloss_buffer, populate_verse_buffer, BarRange, LineNumber,
@@ -276,23 +276,9 @@ impl GlossOverlay {
             if !ranges.is_empty() {
                 cr.set_source_rgb(r, g, b);
                 cr.set_line_width(2.0);
-
-                let buffer = view_clone.buffer();
-                for range in ranges.iter() {
-                    let start_iter = buffer.iter_at_line(range.start_line);
-                    let end_iter = buffer.iter_at_line(range.end_line);
-                    if let (Some(si), Some(ei)) = (start_iter, end_iter) {
-                        let start_loc = view_clone.iter_location(&si);
-                        let (y_end, h_end) = view_clone.line_yrange(&ei);
-                        let (_, by_start) = view_clone.buffer_to_window_coords(
-                            gtk4::TextWindowType::Widget, 0, start_loc.y());
-                        let (_, by_end) = view_clone.buffer_to_window_coords(
-                            gtk4::TextWindowType::Widget, 0, y_end + h_end);
-                        cr.move_to(x, by_start as f64);
-                        cr.line_to(x, by_end as f64);
-                        let _ = cr.stroke();
-                    }
-                }
+                let spans: Vec<(i32, i32)> =
+                    ranges.iter().map(|r| (r.start_line, r.end_line)).collect();
+                crate::ui::draw_bar_spans(cr, &view_clone, &spans, x);
             }
 
             // Draw line numbers (every 5th)
@@ -524,19 +510,11 @@ impl GlossOverlay {
     /// after each populate so a rebuilt buffer keeps the chosen size.
     pub fn apply_font(&self) {
         let font_str = format!("{} {}", self.font_family.borrow(), self.font_size.get());
-        for view in [&self.gloss_view, &self.echo_header_view, self.ask_host.input()] {
-            let buffer = view.buffer();
-            let table = buffer.tag_table();
-            if let Some(old) = table.lookup("gloss-font") {
-                table.remove(&old);
-            }
-            let tag = gtk4::TextTag::builder().name("gloss-font").font(&font_str).build();
-            table.add(&tag);
-            let (start, end) = buffer.bounds();
-            buffer.apply_tag(&tag, &start, &end);
-            // Keep stage/bracket directions italic above the upright font tag.
-            crate::ui::reassert_italic_tags(&table);
-        }
+        crate::ui::apply_font_to_views(
+            &[&self.gloss_view, &self.echo_header_view, self.ask_host.input()],
+            &font_str,
+            "gloss-font",
+        );
         // The buffer-wide font tag carries the family's regular weight, so it
         // overrides any earlier bold tag. Re-assert the synopsis label bold so
         // it wins (it is added/applied last, hence highest priority).
@@ -590,7 +568,7 @@ impl GlossOverlay {
     /// would panic.
     pub fn color_audio_blocks(&self, accent: &str, is_cached: impl Fn(&BlockKind, i32) -> bool) {
         let buffer = self.gloss_view.buffer();
-        let table = buffer.tag_table();
+        // Normalize the accent to a stable #rrggbb (gloss-only round-trip).
         let rgba = match parse_hex_color(accent) {
             Some((r, g, b)) => format!(
                 "#{:02x}{:02x}{:02x}",
@@ -600,62 +578,31 @@ impl GlossOverlay {
             ),
             None => accent.to_string(),
         };
-        let tag = match table.lookup("gloss-audio-cached") {
-            Some(t) => {
-                t.set_foreground(Some(&rgba));
-                t
-            }
-            None => {
-                let t = gtk4::TextTag::builder()
-                    .name("gloss-audio-cached")
-                    .foreground(&rgba)
-                    .build();
-                table.add(&t);
-                t
-            }
-        };
-        // Outrank the buffer-wide `gloss-font` tag (added last on first show).
-        let size = table.size();
-        if size > 0 {
-            tag.set_priority(size - 1);
-        }
-        let line_count = buffer.line_count();
+        // Build the cached spans. A Source block's range begins at its first VERSE
+        // line; the speaker heading (gloss_blocks drops it from the block text)
+        // sits one line above. Recolor it together with the verse so the whole
+        // turn — label and body — reads as cached. Only extend when that line
+        // truly carries a speaker tag, so we never bleed the accent onto a
+        // preceding verse/prose line of another block.
         let blocks = self.blocks.borrow();
-        crate::log_fmt!(
-            "COLOR-AUDIO: {} blocks, prio set to {}, tag fg={}",
-            blocks.len(), tag.priority(), rgba
-        );
-        for blk in blocks.iter() {
-            if !is_cached(&blk.kind, blk.index) {
-                continue;
-            }
-            // A Source block's range begins at its first VERSE line; the speaker
-            // heading (gloss_blocks drops it from the block text) sits one line
-            // above. Recolor it together with the verse so the whole turn —
-            // label and body — reads as cached. Only extend when that line truly
-            // carries a speaker tag, so we never bleed the accent onto a
-            // preceding verse/prose line of another block.
-            let start_line = if blk.kind == BlockKind::Source
-                && blk.start_line > 0
-                && line_is_speaker(&buffer, blk.start_line - 1)
-            {
-                blk.start_line - 1
-            } else {
-                blk.start_line
-            };
-            let start = buffer
-                .iter_at_line(start_line)
-                .unwrap_or_else(|| buffer.start_iter());
-            let end_line = (blk.end_line + 1).min(line_count);
-            let end = buffer
-                .iter_at_line(end_line)
-                .unwrap_or_else(|| buffer.end_iter());
-            buffer.apply_tag(&tag, &start, &end);
-            crate::log_fmt!(
-                "COLOR-AUDIO: tagged {:?}#{} lines [{}, {})",
-                blk.kind, blk.index, start_line, end_line
-            );
-        }
+        let spans: Vec<(i32, i32)> = blocks
+            .iter()
+            .filter(|blk| is_cached(&blk.kind, blk.index))
+            .map(|blk| {
+                let start_line = if blk.kind == BlockKind::Source
+                    && blk.start_line > 0
+                    && line_is_speaker(&buffer, blk.start_line - 1)
+                {
+                    blk.start_line - 1
+                } else {
+                    blk.start_line
+                };
+                (start_line, blk.end_line)
+            })
+            .collect();
+        crate::log_fmt!("COLOR-AUDIO: {} blocks, {} cached spans, fg={}", blocks.len(), spans.len(), rgba);
+        drop(blocks);
+        crate::ui::apply_cached_coloring(&buffer, "gloss-audio-cached", &rgba, &spans);
     }
 
     pub fn attach(&self, child: &impl IsA<gtk4::Widget>) {
@@ -1729,13 +1676,7 @@ impl GlossOverlay {
 
     /// Number of blocks currently selected (for the log line).
     pub fn visual_selection_len(&self) -> usize {
-        match self.synopsis_visual_anchor.get() {
-            Some(a) => {
-                let (s, e) = visual_block_range(a, self.cursor_block.get());
-                e - s + 1
-            }
-            None => 0,
-        }
+        visual_selection_count(self.synopsis_visual_anchor.get(), self.cursor_block.get())
     }
 
     /// Set the synopsis-overlay footer hint (normal navigation).

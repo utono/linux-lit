@@ -98,6 +98,19 @@ pub fn visual_block_range(anchor: usize, cursor: usize) -> (usize, usize) {
     (anchor.min(cursor), anchor.max(cursor))
 }
 
+/// Number of blocks in a visual selection: 0 when there is no anchor, else the
+/// inclusive `anchor..=cursor` span length. Shared by the gloss and journal
+/// overlays' `visual_selection_len` (audit #49).
+pub fn visual_selection_count(anchor: Option<usize>, cursor: usize) -> usize {
+    match anchor {
+        Some(a) => {
+            let (s, e) = visual_block_range(a, cursor);
+            e - s + 1
+        }
+        None => 0,
+    }
+}
+
 /// Build the yank text for a synopsis visual selection: the `display` (clean,
 /// `<p>`-stripped) text of cursor-stop blocks `start..=end`, joined by a blank
 /// line. Uses `synopsis_blocks` so the indices match the on-screen cursor

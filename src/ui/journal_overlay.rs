@@ -1,5 +1,5 @@
 use crate::ui::ask_card::{AskCard, AskCardHost, AskFocus};
-use crate::ui::gloss_block::visual_block_range;
+use crate::ui::gloss_block::{visual_block_range, visual_selection_count};
 use crate::ui::journal_block::{journal_blocks, JournalBlock};
 use crate::ui::journal_edit_card::JournalEditCard;
 use gtk4::prelude::*;
@@ -173,28 +173,13 @@ impl JournalOverlay {
                 // Fixed gloss accent default (NOT theme-wired).
                 cr.set_source_rgb(0.53, 0.62, 0.71);
                 cr.set_line_width(2.0);
-                let buffer = view_clone.buffer();
                 // Draw the bar in the left gutter just inside the text margin so
                 // it sits beside the selected paragraph. The card sets the view's
                 // left_margin to card_side_margin (card_width/4); a fixed x=4 put
                 // the bar far out in the empty gutter, looking like nothing was
                 // selected. 12px left of the text edge mirrors the gloss bar.
                 let x = (view_clone.left_margin() as f64 - 12.0).max(2.0);
-                for (start_line, end_line) in ranges.iter() {
-                    if let (Some(si), Some(ei)) =
-                        (buffer.iter_at_line(*start_line), buffer.iter_at_line(*end_line))
-                    {
-                        let start_loc = view_clone.iter_location(&si);
-                        let (y_end, h_end) = view_clone.line_yrange(&ei);
-                        let (_, by_start) = view_clone.buffer_to_window_coords(
-                            gtk4::TextWindowType::Widget, 0, start_loc.y());
-                        let (_, by_end) = view_clone.buffer_to_window_coords(
-                            gtk4::TextWindowType::Widget, 0, y_end + h_end);
-                        cr.move_to(x, by_start as f64);
-                        cr.line_to(x, by_end as f64);
-                        let _ = cr.stroke();
-                    }
-                }
+                crate::ui::draw_bar_spans(cr, &view_clone, &ranges, x);
             });
         }
         // Repaint the bar when the view scrolls (buffer->window y is scroll-dependent).
@@ -564,22 +549,11 @@ impl JournalOverlay {
         }
         let font_str = format!("{} {}", family, self.font_size.get());
         let edit_views = self.edit_card.views();
-        for view in [&self.view, self.ask_host.input(), edit_views[0], edit_views[1], edit_views[2]] {
-            let buffer = view.buffer();
-            let table = buffer.tag_table();
-            if let Some(old) = table.lookup("journal-font") {
-                table.remove(&old);
-            }
-            let tag = gtk4::TextTag::builder()
-                .name("journal-font")
-                .font(&font_str)
-                .build();
-            table.add(&tag);
-            let (start, end) = buffer.bounds();
-            buffer.apply_tag(&tag, &start, &end);
-            // Keep stage/bracket directions italic above the upright font tag.
-            crate::ui::reassert_italic_tags(&table);
-        }
+        crate::ui::apply_font_to_views(
+            &[&self.view, self.ask_host.input(), edit_views[0], edit_views[1], edit_views[2]],
+            &font_str,
+            "journal-font",
+        );
     }
 
     /// Set the floating page marker for the current page: `⌄` when another page
@@ -793,41 +767,16 @@ impl JournalOverlay {
     /// Mirrors the gloss overlay's `color_audio_blocks`.
     pub fn color_cached_blocks(&self, accent: &str, is_cached: impl Fn(usize) -> bool) {
         let buffer = self.view.buffer();
-        let table = buffer.tag_table();
-        let tag = match table.lookup("journal-audio-cached") {
-            Some(t) => {
-                t.set_foreground(Some(accent));
-                t
-            }
-            None => {
-                let t = gtk4::TextTag::builder()
-                    .name("journal-audio-cached")
-                    .foreground(accent)
-                    .build();
-                table.add(&t);
-                t
-            }
-        };
-        // Outrank the buffer-wide `journal-font` tag (added last on apply_font).
-        let size = table.size();
-        if size > 0 {
-            tag.set_priority(size - 1);
-        }
-        let line_count = buffer.line_count();
         let page_start = self.current_page_start();
-        for (local, blk) in self.blocks.borrow().iter().enumerate() {
-            if !is_cached(page_start + local) {
-                continue;
-            }
-            let start = buffer
-                .iter_at_line(blk.start_line)
-                .unwrap_or_else(|| buffer.start_iter());
-            let end_line = (blk.end_line + 1).min(line_count);
-            let end = buffer
-                .iter_at_line(end_line)
-                .unwrap_or_else(|| buffer.end_iter());
-            buffer.apply_tag(&tag, &start, &end);
-        }
+        let spans: Vec<(i32, i32)> = self
+            .blocks
+            .borrow()
+            .iter()
+            .enumerate()
+            .filter(|(local, _)| is_cached(page_start + local))
+            .map(|(_, blk)| (blk.start_line, blk.end_line))
+            .collect();
+        crate::ui::apply_cached_coloring(&buffer, "journal-audio-cached", accent, &spans);
     }
 
     /// The block cursor's current index (the block j/k/gg/G select), clamped to
@@ -1051,13 +1000,7 @@ impl JournalOverlay {
 
     /// Number of blocks currently selected.
     pub fn visual_selection_len(&self) -> usize {
-        match self.visual_anchor.get() {
-            Some(a) => {
-                let (s, e) = visual_block_range(a, self.cursor_block.get());
-                e - s + 1
-            }
-            None => 0,
-        }
+        visual_selection_count(self.visual_anchor.get(), self.cursor_block.get())
     }
 
     /// Exit visual mode: clear the anchor and return the bar to the single block

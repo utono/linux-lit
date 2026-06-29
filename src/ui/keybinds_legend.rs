@@ -10,6 +10,37 @@ use gtk4::{Align, Box as GtkBox, Label, Orientation, Separator};
 /// One titled group of `(key, action)` rows (e.g. "Navigation", "TTS / voice").
 pub type Group<'a> = (&'a str, &'a [(&'a str, &'a str)]);
 
+/// A per-overlay Ctrl+/ keybind legend: the centered card built by `build_legend`
+/// plus its translucent scrim, with the show/hide/attach lifecycle. One concrete
+/// type shared by the gloss, synopsis, and journal legends (audit #50) — each of
+/// those overlays now contributes only its own `GROUPS` data + title.
+pub struct KeybindsLegend {
+    pub container: GtkBox,
+    pub scrim: GtkBox,
+}
+
+impl KeybindsLegend {
+    pub fn new(title: &str, groups: &[Group]) -> Self {
+        let (container, scrim) = build_legend(title, groups);
+        Self { container, scrim }
+    }
+
+    pub fn attach_to(&self, overlay: &gtk4::Overlay) {
+        overlay.add_overlay(&self.scrim);
+        overlay.add_overlay(&self.container);
+    }
+
+    pub fn show(&self) {
+        self.scrim.set_visible(true);
+        self.container.set_visible(true);
+    }
+
+    pub fn hide(&self) {
+        self.scrim.set_visible(false);
+        self.container.set_visible(false);
+    }
+}
+
 /// Build a legend `(container, scrim)` with `title` and the given `groups`, laid
 /// out across two columns. Groups are distributed left-to-right by row weight so
 /// the two columns end up roughly balanced; a group is never split across the

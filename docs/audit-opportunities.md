@@ -1063,7 +1063,7 @@ pipeline as a single refactor.
   generics, skip.
 - **Safe-scope:** yes, but lowest priority.
 
-## #46 — apply-font-to-views helper — PROPOSED
+## #46 — apply-font-to-views helper — DONE
 
 - **Status:** PROPOSED (post-overlay-parity audit, 2026-06-28). Ranked #1 of this
   batch — byte-identical loop body, two callers, real drift risk (font/italic
@@ -1086,7 +1086,7 @@ pipeline as a single refactor.
   `self.apply_synopsis_label_bold()` (stays in the gloss caller after the call).
 - **Safe-scope:** yes — pure loop-body extraction, no behavior change.
 
-## #47 — cached-coloring span helper — PROPOSED
+## #47 — cached-coloring span helper — DONE
 
 - **Status:** PROPOSED. Ranked #2 — common tag-lifecycle + apply loop, two
   callers, both recently added (likely to drift).
@@ -1108,7 +1108,7 @@ pipeline as a single refactor.
 - **Safe-scope:** yes — the caller keeps all the variant logic and only delegates
   the tag application.
 
-## #48 — bar-stroke-loop helper — PROPOSED
+## #48 — bar-stroke-loop helper — DONE
 
 - **Status:** PROPOSED. Ranked #3 — the selection-bar draw closure's stroke loop
   is duplicated; PARTIAL because the gloss closure also draws line numbers.
@@ -1132,7 +1132,7 @@ pipeline as a single refactor.
   loop.
 - **Safe-scope:** yes — stroke-loop body only.
 
-## #49 — visual-mode tail helpers — PROPOSED (lowest)
+## #49 — visual-mode tail helpers — DONE (partial: visual_selection_count only)
 
 - **Status:** PROPOSED, lowest priority — only ~30 lines saved; worth doing ONLY
   if/when a third block-cursor overlay appears, or while already editing the
@@ -1201,7 +1201,7 @@ safe-scope opportunities:
   This is a latent correctness divergence, not duplication — route to /code-review
   if it ever manifests; out of scope for maintainability numbering.
 
-## #50 — keybinds-legend-overlay-wrapper — PROPOSED
+## #50 — keybinds-legend-overlay-wrapper — DONE
 
 - **Status:** PROPOSED (2026-06-29 keybind-legend-focused audit). Ranked #1 of
   this batch — three byte-identical wrapper structs, cross-file, real drift risk
@@ -1239,7 +1239,7 @@ safe-scope opportunities:
   triplicated wrapper type collapses. Net ~120 lines → ~one struct + three
   `GROUPS` consts.
 
-## #51 — overlay-legend-show-mode-setter — PROPOSED (low)
+## #51 — overlay-legend-show-mode-setter — DONE
 
 - **Status:** PROPOSED, low priority — only ~6 lines, 3 sites, but they sit in
   three different `handle_*_key` arms so the drift is invisible in any one diff

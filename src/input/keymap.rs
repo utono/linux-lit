@@ -809,9 +809,7 @@ fn handle_journal_key(
             // Ctrl+/ opens the JOURNAL-specific keybind legend (its full keybind
             // set), returning to the journal overlay on close.
             "slash" => {
-                let mut s = state.borrow_mut();
-                s.journal_keybinds_overlay.show();
-                s.input_mode = crate::app::InputMode::JournalKeybindsOverlay;
+                open_overlay_legend(&mut state.borrow_mut(), OverlayLegend::Journal);
                 return true;
             }
             _ => {}
@@ -1018,9 +1016,7 @@ fn handle_gloss_key(
             // Ctrl+/ opens the GLOSS-specific keybind legend (its full keybind
             // set), returning to the gloss overlay on close.
             "slash" => {
-                let mut s = state.borrow_mut();
-                s.gloss_keybinds_overlay.show();
-                s.input_mode = crate::app::InputMode::GlossKeybindsOverlay;
+                open_overlay_legend(&mut state.borrow_mut(), OverlayLegend::Gloss);
                 return true;
             }
             // Ctrl+Up/Ctrl+Down adjust volume, mirroring the reader's
@@ -1460,9 +1456,7 @@ fn handle_synopsis_overlay_key(
         // Ctrl+/ opens the SYNOPSIS-specific keybind legend (its full keybind
         // set), returning to the synopsis overlay on close.
         "slash" if is_ctrl => {
-            let mut s = state.borrow_mut();
-            s.synopsis_keybinds_overlay.show();
-            s.input_mode = crate::app::InputMode::SynopsisKeybindsOverlay;
+            open_overlay_legend(&mut state.borrow_mut(), OverlayLegend::Synopsis);
             true
         }
         // Ctrl+Up/Ctrl+Down adjust volume, mirroring the reader's
@@ -2033,6 +2027,27 @@ enum OverlayLegend {
     Gloss,
     Synopsis,
     Journal,
+}
+
+/// Open the gloss/synopsis/journal Ctrl+/ keybind legend for `which`: show the
+/// legend widget and switch to its modal InputMode. The open-side mirror of the
+/// close path in `handle_overlay_keybinds_key` (audit #51), keyed by the same
+/// `OverlayLegend` enum so the per-overlay field+mode mapping lives in ONE place.
+fn open_overlay_legend(s: &mut AppState, which: OverlayLegend) {
+    match which {
+        OverlayLegend::Gloss => {
+            s.gloss_keybinds_overlay.show();
+            s.input_mode = crate::app::InputMode::GlossKeybindsOverlay;
+        }
+        OverlayLegend::Synopsis => {
+            s.synopsis_keybinds_overlay.show();
+            s.input_mode = crate::app::InputMode::SynopsisKeybindsOverlay;
+        }
+        OverlayLegend::Journal => {
+            s.journal_keybinds_overlay.show();
+            s.input_mode = crate::app::InputMode::JournalKeybindsOverlay;
+        }
+    }
 }
 
 /// Modal handler for the gloss/synopsis/journal Ctrl+/ keybind legends: Esc or

@@ -420,9 +420,9 @@ pub struct AppState {
     pub voice_picker: crate::ui::voice_picker::VoicePicker,
     pub echo_line_picker: crate::ui::echo_line_picker::EchoLinePicker,
     pub echo_keybinds_overlay: crate::ui::echo_keybinds_overlay::EchoKeybindsOverlay,
-    pub gloss_keybinds_overlay: crate::ui::gloss_keybinds_overlay::GlossKeybindsOverlay,
-    pub synopsis_keybinds_overlay: crate::ui::synopsis_keybinds_overlay::SynopsisKeybindsOverlay,
-    pub journal_keybinds_overlay: crate::ui::journal_keybinds_overlay::JournalKeybindsOverlay,
+    pub gloss_keybinds_overlay: crate::ui::keybinds_legend::KeybindsLegend,
+    pub synopsis_keybinds_overlay: crate::ui::keybinds_legend::KeybindsLegend,
+    pub journal_keybinds_overlay: crate::ui::keybinds_legend::KeybindsLegend,
     /// turn_id the add-echo picker will attach the chosen line to.
     pub echo_add_turn_id: Option<i64>,
     pub concordance_list_picker: crate::ui::concordance_list_picker::ConcordanceListPicker,
@@ -1232,13 +1232,21 @@ pub fn build_window(
 
     // Per-overlay Ctrl+/ keybind legends (gloss, synopsis, journal). add_overlay
     // panels on a persistent outer overlay, NOT chain links.
-    let gloss_keybinds_overlay = crate::ui::gloss_keybinds_overlay::GlossKeybindsOverlay::new();
+    use crate::ui::keybinds_legend::KeybindsLegend;
+    let gloss_keybinds_overlay = KeybindsLegend::new(
+        crate::ui::gloss_keybinds_overlay::TITLE,
+        crate::ui::gloss_keybinds_overlay::GROUPS,
+    );
     gloss_keybinds_overlay.attach_to(&authorship_picker.overlay);
-    let synopsis_keybinds_overlay =
-        crate::ui::synopsis_keybinds_overlay::SynopsisKeybindsOverlay::new();
+    let synopsis_keybinds_overlay = KeybindsLegend::new(
+        crate::ui::synopsis_keybinds_overlay::TITLE,
+        crate::ui::synopsis_keybinds_overlay::GROUPS,
+    );
     synopsis_keybinds_overlay.attach_to(&authorship_picker.overlay);
-    let journal_keybinds_overlay =
-        crate::ui::journal_keybinds_overlay::JournalKeybindsOverlay::new();
+    let journal_keybinds_overlay = KeybindsLegend::new(
+        crate::ui::journal_keybinds_overlay::TITLE,
+        crate::ui::journal_keybinds_overlay::GROUPS,
+    );
     journal_keybinds_overlay.attach_to(&authorship_picker.overlay);
 
     // Concordance works picker (Alt+R: jump to a specific work)

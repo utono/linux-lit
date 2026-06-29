@@ -1,14 +1,12 @@
-use gtk4::prelude::*;
+//! Journal-overlay Ctrl+/ keybind legend DATA. The widget is the shared
+//! `keybinds_legend::KeybindsLegend`; this file contributes only the title +
+//! grouped binds (audit #50).
 
-/// Static legend of the journal-overlay keybinds, shown over the journal overlay
-/// via Ctrl+/ (replacing the footer hint). Mirrors `EchoKeybindsOverlay`.
-pub struct JournalKeybindsOverlay {
-    pub container: gtk4::Box,
-    pub scrim: gtk4::Box,
-}
+/// Legend card title.
+pub const TITLE: &str = "Journal keybinds";
 
 /// Grouped (key, action) rows. Matches handle_journal_key + journal visual mode.
-const GROUPS: &[super::keybinds_legend::Group] = &[
+pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ("Navigation", &[
         ("j / q", "next block"),
         ("k / ,", "prev block"),
@@ -39,26 +37,3 @@ const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Ctrl+/", "close this legend"),
     ]),
 ];
-
-impl JournalKeybindsOverlay {
-    pub fn new() -> Self {
-        let (container, scrim) =
-            super::keybinds_legend::build_legend("Journal keybinds", GROUPS);
-        Self { container, scrim }
-    }
-
-    pub fn attach_to(&self, overlay: &gtk4::Overlay) {
-        overlay.add_overlay(&self.scrim);
-        overlay.add_overlay(&self.container);
-    }
-
-    pub fn show(&self) {
-        self.scrim.set_visible(true);
-        self.container.set_visible(true);
-    }
-
-    pub fn hide(&self) {
-        self.scrim.set_visible(false);
-        self.container.set_visible(false);
-    }
-}
