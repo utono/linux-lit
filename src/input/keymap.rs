@@ -1377,6 +1377,8 @@ fn handle_synopsis_overlay_key(
         key_state.borrow_mut().chord = ChordState::None;
         if key_name == "g" {
             state.borrow().gloss_overlay.cursor_first_block();
+            // A page turn re-rendered the buffer; recolor cached blocks.
+            crate::input::actions::gloss::recolor_cached_blocks_rc(state);
         }
         return true;
     }
@@ -1471,10 +1473,14 @@ fn handle_synopsis_overlay_key(
         }
         "j" => {
             state.borrow().gloss_overlay.cursor_next_block();
+            // A page turn re-rendered the buffer; recolor cached blocks.
+            crate::input::actions::gloss::recolor_cached_blocks_rc(state);
             true
         }
         "k" => {
             state.borrow().gloss_overlay.cursor_prev_block();
+            // A page turn re-rendered the buffer; recolor cached blocks.
+            crate::input::actions::gloss::recolor_cached_blocks_rc(state);
             true
         }
         "g" => {
@@ -1483,6 +1489,8 @@ fn handle_synopsis_overlay_key(
         }
         "G" => {
             state.borrow().gloss_overlay.cursor_last_block();
+            // A page turn re-rendered the buffer; recolor cached blocks.
+            crate::input::actions::gloss::recolor_cached_blocks_rc(state);
             true
         }
         // Plain Space: play/stop the cursor paragraph's TTS (Shift+Space, the
