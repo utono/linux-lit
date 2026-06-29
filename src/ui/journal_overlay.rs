@@ -77,21 +77,19 @@ fn prefix_question(question: &str) -> String {
 
 /// Vertical chrome margins the column needs that `preferred_size()` does NOT
 /// report (GTK's preferred-size excludes a widget's own margins). The journal
-/// card column is `title` + `scroll_overlay` + `footer` stacked; the title
-/// carries a 24px `margin_top` (journal_overlay::new), the scroll_overlay a 24px
-/// top + 20px bottom margin (the breathing gap below the title / above the footer
-/// that keeps a scrolled block's last line off the footer rule — mirrors the
-/// gloss overlay), and the footer container a 12px top + 12px bottom
-/// (`ui::footer::build_footer_row`). Without reserving these, `size_card` budgets
-/// `card_height − title_h − footer_h` for the scroll, the assembled column's
-/// natural height becomes `card_height + 92`, and because the `valign=Center`
-/// container's `set_size_request` is only a FLOOR, the container grows past
-/// `card_height` and overflows the window (the "too-tall journal overlay" bug).
-/// The gloss overlay reserves the same way via its `SCROLL_OVERLAY_MARGINS`. Keep
-/// in sync with those three margin sites.
-const UNACCOUNTED_CHROME_MARGINS: i32 = 24 /* title top */
-    + 24 + 20 /* scroll_overlay top+bottom */
-    + 12 + 12 /* footer top+bottom */;
+/// scroll_overlay carries a 24px top + 20px bottom margin (the breathing gap
+/// below the title / above the footer — mirrors the gloss overlay). `size_card`
+/// folds these into the host's fixed-chrome arg so the scroll budget matches the
+/// gloss overlay's `size_scroll` exactly (which reserves the same 44 via its
+/// `SCROLL_OVERLAY_MARGINS`). Keep in sync with the two scroll_overlay margin
+/// sites in `new`.
+// Match the gloss overlay's `size_scroll`, which reserves ONLY the scroll_overlay
+// top+bottom margins (24+20=44) — NOT the title's top margin or the footer's
+// top/bottom. Reserving those extra 48px (the old value 92) made the journal
+// column 48px shorter than the gloss's for the same card, so its footer sat
+// flush at the bottom while the gloss footer floated higher. With 44 the journal
+// sizes its scroll exactly like the gloss, so the footer lands in the same place.
+const UNACCOUNTED_CHROME_MARGINS: i32 = 24 + 20 /* scroll_overlay top+bottom */;
 
 impl JournalOverlay {
     pub fn new(column_width: u32, text_margins: u32) -> Self {
@@ -309,13 +307,11 @@ impl JournalOverlay {
         // restores this stored closed height. Deterministic — no auto-resize race.
         let (_, title_h) = self.title.preferred_size();
         let (_, footer_h) = self.footer_container.preferred_size();
-        // Fold the chrome margins `preferred_size()` omits (title's top margin +
-        // the footer's top/bottom) into the fixed-chrome argument, so the host's
-        // closed scroll height equals `closed_scroll_budget(card_height, title_h,
-        // footer_h)`. Without this the column is `UNACCOUNTED_CHROME_MARGINS`
-        // (92px) too tall and the `valign=Center` container grows past
-        // `card_height`, overflowing the window (the "too-tall journal overlay"
-        // bug). `closed_scroll_budget` is the unit-tested source of truth.
+        // Fold the scroll_overlay's own margins (UNACCOUNTED_CHROME_MARGINS = 44),
+        // which `preferred_size()` omits, into the fixed-chrome argument so the
+        // host's closed scroll height matches the gloss overlay's `size_scroll`
+        // budget exactly (title_h + footer_h + 44). `closed_scroll_budget` is the
+        // unit-tested source of truth.
         self.ask_host.size(
             card_width,
             card_height,
@@ -1077,10 +1073,10 @@ mod scroll_budget_tests {
     }
 
     #[test]
-    fn margins_match_the_three_margin_sites() {
-        // 24 (title margin_top) + 24 + 20 (scroll_overlay top+bottom)
-        // + 12 + 12 (footer top+bottom) = 92.
-        assert_eq!(UNACCOUNTED_CHROME_MARGINS, 92);
+    fn margins_match_the_scroll_overlay_sites() {
+        // Mirrors the gloss overlay's SCROLL_OVERLAY_MARGINS: 24 + 20 = 44 (the
+        // scroll_overlay's top+bottom margins only — not the title/footer margins).
+        assert_eq!(UNACCOUNTED_CHROME_MARGINS, 44);
     }
 }
 
