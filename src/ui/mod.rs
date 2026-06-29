@@ -33,6 +33,7 @@ pub mod page_image_overlay;
 pub mod picker_attach;
 pub mod picker_filter;
 pub mod picker_nav;
+pub mod pagination;
 pub mod search_bar;
 pub mod settings_overlay;
 pub mod toast;
