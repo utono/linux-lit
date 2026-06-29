@@ -104,7 +104,7 @@ lexicon was missing during the run.
 - `src/voyage.rs` — runtime query embedding; `MODEL` must match the script
 - `src/db/queries.rs` — `find_similar_passages`, `decode_embedding` (reads
   the blobs this script writes)
-- `docs/specs/2026-05-30-semantic-echo-search-design.md` — full design
+- `docs/plans/2026-05-30-semantic-echo-search-design.md` — full design
 
 ## Important: Keep Model in Sync
 

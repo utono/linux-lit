@@ -9,7 +9,7 @@ Also computes a 3-D affect vector (Valence, Arousal, Dominance) per passage
 from the NRC-VAD lexicon, stored in the `sentiment` column. This is a
 cheap local lookup (no API cost) used as an optional re-rank axis on top of
 the semantic cosine ranking (see the "Sentiment/Affect Re-Rank Axis" section
-of docs/specs/2026-05-30-semantic-echo-search-design.md).
+of docs/plans/2026-05-30-semantic-echo-search-design.md).
 
 The NRC-VAD lexicon is NOT committed (redistribution-restricted academic
 license). Download it once into scripts/data/:

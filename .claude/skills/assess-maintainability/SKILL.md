@@ -12,7 +12,7 @@ Produce a **ranked, numbered list of behavior-preserving refactoring
 opportunities** for linux-lit, in the same house style as audit opportunities
 #5–#8 (footer-row-builder, picker-nav, claude-bridge, sentinel-keys). The
 deliverable is NOT a generic code-smell report — it is a continuation of the
-numbered ledger at `docs/superpowers/audit-opportunities.md`, where each entry is
+numbered ledger at `docs/audit-opportunities.md`, where each entry is
 sized to one **safe-scope** PR: extract the byte-identical part of a duplication
 family, name a magic literal, or move a self-contained block — with the
 structurally-different cases **explicitly EXCLUDED**.
@@ -63,7 +63,7 @@ A safe-scope opportunity:
 
 ## Procedure
 
-1. **Read the ledger.** Open `docs/superpowers/audit-opportunities.md` (create it
+1. **Read the ledger.** Open `docs/audit-opportunities.md` (create it
    from `ledger-template.md` if missing). Note the highest `#N` and which entries
    are already DONE (cross-check against `git log --grep refactor`). New
    opportunities continue the numbering; never reuse a merged number.

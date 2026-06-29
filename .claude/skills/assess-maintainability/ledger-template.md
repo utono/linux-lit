@@ -1,6 +1,6 @@
 # Audit-opportunity ledger entry format
 
-Each opportunity in `docs/superpowers/audit-opportunities.md` is one entry.
+Each opportunity in `docs/audit-opportunities.md` is one entry.
 Copy this shape. Keep numbering monotonic; never reuse a merged number.
 
 ```markdown

@@ -963,7 +963,7 @@ heights from a known `page_top` to a column-split/section boundary, with
 strategy from the free-scroll partial-row mask above; merging them would change
 behavior. Likewise the gloss vs journal `snap_value_to_line` are different
 algorithms (per-`display_rows`-row snap vs uniform `row_step` rounding), not
-duplicates. See `docs/superpowers/specs/2026-06-25-clip-prevention-design.md`.
+duplicates. See `docs/plans/2026-06-25-clip-prevention-design.md`.
 
 **Lesson: any overlay clipping a multi-row prose buffer must use per-row geometry
 — never a uniform row-step — or the last line's descenders clip.**

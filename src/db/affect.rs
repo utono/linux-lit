@@ -10,7 +10,7 @@
 //! If the file is absent, scoring returns `None` and callers fall back to
 //! pure semantic ranking.
 //!
-//! See docs/specs/2026-05-30-semantic-echo-search-design.md
+//! See docs/plans/2026-05-30-semantic-echo-search-design.md
 //! ("Sentiment/Affect Re-Rank Axis").
 
 use std::collections::HashMap;

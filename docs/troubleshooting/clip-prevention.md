@@ -96,7 +96,7 @@ page; block heights are measured with a standalone `pango::Layout` (synchronous,
 no GTK allocation); the cursor's page is rendered around the reader cursor, so the
 highlight paints immediately. The bottom-clip machinery it used to need
 (`attach_custom`/`Custom` guard, a per-row translation mask) was deleted. See
-`docs/superpowers/specs/2026-06-27-paginated-translation-overlay-design.md`.
+`docs/plans/2026-06-27-paginated-translation-overlay-design.md`.
 
 **Per-row geometry is mandatory for prose, never a uniform row-step.** The
 synopsis/gloss/journal buffers join paragraphs into single multi-row buffer
@@ -357,7 +357,7 @@ Three clip strategies coexist deliberately; merging them changes behavior:
 Likewise the top-snap algorithms differ (`snap_value_to_line` per-`display_rows`
 row vs scroll-mode's `snap_value_to_line_top` via `line_at_y` vs uniform
 `row_step` rounding) — not duplicates. See
-`docs/superpowers/specs/2026-06-25-clip-prevention-design.md`.
+`docs/plans/2026-06-25-clip-prevention-design.md`.
 
 ## Margins (cosmetic, separate from clipping)
 
@@ -481,5 +481,5 @@ overlay_clipping -- --ignored --nocapture`.
   `snap_value_to_line_top`.
 - `src/theme.rs` — the `.gloss-bottom-clip` background CSS.
 - `docs/troubleshooting/page-turning-mechanics.md` — the paged clip + pagination.
-- `docs/superpowers/specs/2026-06-25-clip-prevention-design.md` — the unification
+- `docs/plans/2026-06-25-clip-prevention-design.md` — the unification
   design.
