@@ -1506,6 +1506,7 @@ pub fn build_window(
             return_pos: None,
             prompt_mode: JournalPromptMode::Ask,
             pending_passage: None,
+            picker_from_reader: false,
         },
         page_image_overlay,
         page_image: PageImageState::default(),

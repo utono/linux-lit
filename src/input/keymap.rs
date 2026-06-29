@@ -289,7 +289,19 @@ fn handle_picker_key(
                         s.input_mode = InputMode::Reader;
                     }
                 }
-                InputMode::JournalPicker => { s.journal_picker.hide(); s.input_mode = InputMode::JournalOverlay; }
+                InputMode::JournalPicker => {
+                    s.journal_picker.hide();
+                    // Opened from the reader (Alt+j): nothing was revealed, so go
+                    // back to the reader, not a hidden journal overlay. Opened
+                    // from the overlay (Ctrl+\): return to it.
+                    if s.journal.picker_from_reader {
+                        s.journal.picker_from_reader = false;
+                        s.journal.return_pos = None;
+                        s.input_mode = InputMode::Reader;
+                    } else {
+                        s.input_mode = InputMode::JournalOverlay;
+                    }
+                }
                 InputMode::JournalMovePicker => { s.journal_move_picker.hide(); s.input_mode = InputMode::JournalOverlay; }
                 InputMode::EchoLinePicker => { drop(s); crate::input::actions::echoes::cancel_add_echo(state); }
                 _ => {
@@ -2358,6 +2370,7 @@ fn dispatch_action(
         }
         ToggleGlossOverlay => crate::input::actions::gloss::toggle_overlay(state),
         ToggleJournalOverlay => crate::input::actions::journal::toggle_overlay(state),
+        OpenJournalPicker => crate::input::actions::journal::open_picker_from_reader(state),
         OpenGlossPicker => crate::input::actions::pickers::open_gloss_picker(state, tokio_handle),
         OpenLastGloss => crate::input::actions::gloss::open_last_gloss(state),
         ShowEchoesBcp => crate::input::actions::echoes::show_echoes_for_cursor_line(state, crate::db::echo_channel::EchoChannel::Bcp, tokio_handle),

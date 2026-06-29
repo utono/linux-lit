@@ -102,6 +102,10 @@ pub enum Action {
     ToggleVocabHighlight,
     ToggleGlossOverlay,
     ToggleJournalOverlay,
+    /// Open the journal Q&A picker directly from the reading card (Alt+j),
+    /// without first opening the journal overlay. Confirming a pick reveals the
+    /// overlay on that Q&A; Escape returns to the reader.
+    OpenJournalPicker,
     OpenGlossPicker,
     OpenLastGloss,
     ShowEchoesBcp,
@@ -218,6 +222,7 @@ impl Action {
             | Action::ToggleVocabHighlight
             | Action::ToggleGlossOverlay
             | Action::ToggleJournalOverlay
+            | Action::OpenJournalPicker
             | Action::OpenGlossPicker
             | Action::OpenLastGloss
             | Action::ShowEchoesBcp
@@ -343,6 +348,7 @@ impl Action {
             Action::ToggleVocabHighlight => "ToggleVocabHighlight",
             Action::ToggleGlossOverlay => "ToggleGlossOverlay",
             Action::ToggleJournalOverlay => "ToggleJournalOverlay",
+            Action::OpenJournalPicker => "OpenJournalPicker",
             Action::OpenGlossPicker => "OpenGlossPicker",
             Action::OpenLastGloss => "OpenLastGloss",
             Action::ShowEchoesBcp => "ShowEchoesBcp",

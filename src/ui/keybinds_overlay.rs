@@ -83,7 +83,7 @@ const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 const BOTTOM_ROW: &[KeyDef] = &[
     bare("'", "\"", "reopen BCP echoes"),
     key("q", "Q", "next speaker", "Q: next dlg", &[]),
-    key("j", "J", "cursor \u{2193}", "J: next speaker", &[("C-j", "journal tog"), ("J", "jrnl from gloss"), ("C-j", "view jrnl"), ("C-S-j", "move jrnl band")]),
+    key("j", "J", "cursor \u{2193}", "J: next speaker", &[("C-j", "journal tog"), ("M-j", "jrnl Q&A picker"), ("J", "jrnl from gloss"), ("C-j", "view jrnl"), ("C-S-j", "move jrnl band")]),
     key("k", "K", "cursor \u{2191}", "K: prev speaker", &[]),
     bare("x", "X", "pg fwd"),
     bare("b", "B", ""),
@@ -378,6 +378,13 @@ to one. Escape (or Ctrl+j) closes and returns the cursor to where \
 you were reading. \
 -> journal::toggle_overlay — src/input/actions/journal.rs (overlay keys: \
 handle_journal_key in src/input/keymap.rs)",
+        "jrnl Q&A picker" => "Open the Q&A picker directly from the reading card \
+(Alt+j), without first opening the journal overlay. Lists every Q&A page in the \
+work \u{2014} whole-work pages first, then scene pages in scene order \u{2014} the \
+same picker the journal overlay\u{2019}s Ctrl+\\ opens. Choosing a page reveals the \
+journal overlay landed on that Q&A; Escape returns you to where you were reading. \
+Toasts \u{201c}No journal pages yet\u{201d} when the work has none. \
+-> journal::open_picker_from_reader — src/input/actions/journal.rs",
         "last gloss" => "Reopen the gloss overlay on the most recently viewed \
 gloss in this work, restored to the gloss type that was on screen. The reference \
 is remembered per work and persists across restarts; it is updated whenever a \

@@ -38,6 +38,11 @@ pub struct JournalState {
     /// Set by `action_journal_qa` before opening the ask card; read and
     /// consumed by `ask_claude` when the band is `Passage`.
     pub pending_passage: Option<PendingPassage>,
+    /// True when the Q&A picker was opened from the READING CARD (Alt+j) rather
+    /// than from inside the journal overlay (Ctrl+\). Set by
+    /// `open_picker_from_reader`; consumed by the picker's confirm/escape paths so
+    /// Escape returns to the reader (not a hidden journal overlay).
+    pub picker_from_reader: bool,
 }
 
 /// Resolve which band a stored journal page belongs to, for the Q&A picker. A
@@ -780,11 +785,11 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
     );
 }
 
-/// Open the Q&A picker over the journal overlay. Lists every page in the work
-/// (work pages first, then scene pages by scene), each by creation time. Empty
-/// journal -> toast, stay in the overlay.
-pub(crate) fn open_picker(state: &Rc<RefCell<AppState>>) {
-    let mut s = state.borrow_mut();
+/// Build the Q&A picker rows for the current work, populate + show the picker,
+/// and switch to `InputMode::JournalPicker`. Returns false (after a toast) when
+/// the journal is empty, so the caller can leave state untouched. Shared by the
+/// overlay (`open_picker`) and reader (`open_picker_from_reader`) entry points.
+fn populate_and_show_picker(s: &mut AppState) -> bool {
     let work_abbrev = s
         .current_work
         .as_ref()
@@ -797,7 +802,7 @@ pub(crate) fn open_picker(state: &Rc<RefCell<AppState>>) {
 
     if pages.is_empty() {
         crate::ui::toast::show_transient(&s.chapter_toast, "No journal pages yet — press A to ask", 3);
-        return;
+        return false;
     }
 
     let rows: Vec<crate::ui::journal_picker::JournalRow> = pages
@@ -811,7 +816,7 @@ pub(crate) fn open_picker(state: &Rc<RefCell<AppState>>) {
             let scene_label = match &band {
                 JournalBand::Work => "whole work".to_string(),
                 JournalBand::Scene(d1, d2) if is_passage => format!("{}.{} passage", d1, d2),
-                JournalBand::Scene(d1, d2) => crate::app::scene_synopsis::synopsis_label(&s, *d1, *d2),
+                JournalBand::Scene(d1, d2) => crate::app::scene_synopsis::synopsis_label(s, *d1, *d2),
                 JournalBand::Passage { div1, div2, .. } => {
                     format!("{}.{} passage", div1, div2)
                 }
@@ -829,6 +834,34 @@ pub(crate) fn open_picker(state: &Rc<RefCell<AppState>>) {
     s.journal_picker.set_items(rows);
     s.journal_picker.show();
     s.input_mode = InputMode::JournalPicker;
+    true
+}
+
+/// Open the Q&A picker over the journal overlay (Ctrl+\). Lists every page in the
+/// work (work pages first, then scene pages by scene), each by creation time.
+/// Empty journal -> toast, stay in the overlay.
+pub(crate) fn open_picker(state: &Rc<RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    s.journal.picker_from_reader = false;
+    populate_and_show_picker(&mut s);
+}
+
+/// Open the Q&A picker directly from the READING CARD (Alt+j), without first
+/// opening the journal overlay. Records the reader return position and flags the
+/// picker as reader-initiated so confirm reveals the overlay and Escape returns
+/// to the reader. Empty journal -> toast, stay in the reader.
+pub(crate) fn open_picker_from_reader(state: &Rc<RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    if s.current_work.is_none() {
+        return;
+    }
+    s.journal.return_pos = Some((s.current_line, s.page_top_line));
+    s.journal.picker_from_reader = true;
+    if !populate_and_show_picker(&mut s) {
+        // Empty journal: nothing shown, drop the half-set reader-return state.
+        s.journal.picker_from_reader = false;
+        s.journal.return_pos = None;
+    }
 }
 
 /// Confirm the picker selection: switch the journal overlay to the chosen page's
@@ -839,6 +872,10 @@ pub(crate) fn confirm_picker(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
     s.journal_picker.hide();
     s.input_mode = InputMode::JournalOverlay;
+    // Confirming always reveals the overlay (land_on_page -> render_current ->
+    // show_page), so the reader-initiated flag has done its job. Clear it but
+    // KEEP return_pos — closing the overlay later (Ctrl+j) restores the reader.
+    s.journal.picker_from_reader = false;
 
     let Some(idx) = selected else {
         // Nothing selected — just return to the overlay, re-render current band.
