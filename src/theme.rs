@@ -509,6 +509,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
            background-color: {root}; padding: 3px 10px; border-radius: 8px; \
            box-shadow: 0 3px 12px rgba(0, 0, 0, 0.35); opacity: 0.95; }} \
          .gloss-scrim {{ background-color: {root}; }} \
+         .legend-scrim {{ background-color: rgba(0, 0, 0, 0.5); }} \
          .gloss-overlay {{ background-color: {gloss_bg}; color: {fg}; border-radius: 12px; \
            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45); }} \
          .gloss-bottom-clip {{ background-color: {gloss_bg}; }} \

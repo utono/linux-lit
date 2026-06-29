@@ -11,8 +11,10 @@ use gtk4::{Align, Box as GtkBox, Label, Orientation};
 /// `(key, action)`. Both start hidden; the caller attaches them to an outer
 /// overlay and toggles `show`/`hide`.
 pub fn build_legend(title: &str, binds: &[(&str, &str)]) -> (GtkBox, GtkBox) {
+    // Translucent dim (NOT the opaque gloss-scrim) so the parent overlay shows
+    // through, dimmed, behind the legend rather than being fully hidden.
     let scrim = GtkBox::builder().hexpand(true).vexpand(true).build();
-    scrim.add_css_class("gloss-scrim");
+    scrim.add_css_class("legend-scrim");
     scrim.set_visible(false);
 
     let container = GtkBox::builder()
