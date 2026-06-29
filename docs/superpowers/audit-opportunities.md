@@ -1063,6 +1063,97 @@ pipeline as a single refactor.
   generics, skip.
 - **Safe-scope:** yes, but lowest priority.
 
+## #46 — apply-font-to-views helper — PROPOSED
+
+- **Status:** PROPOSED (post-overlay-parity audit, 2026-06-28). Ranked #1 of this
+  batch — byte-identical loop body, two callers, real drift risk (font/italic
+  handling).
+- **Signal:** `apply_font` in `gloss_overlay.rs:449-468` and
+  `journal_overlay.rs:521-544` share a byte-identical per-view loop body: build
+  `"{family} {size}"`, then for each view — `table.lookup(tag)`→remove, build a
+  `TextTag` with `.name(tag).font(font_str)`, `table.add`, `apply_tag` over
+  `buffer.bounds()`, `reassert_italic_tags(&table)`. Only the TAG NAME
+  (`"gloss-font"` vs `"journal-font"`) and the VIEW LIST (gloss: gloss_view +
+  echo_header_view + ask input; journal: view + ask input + 3 edit-card views)
+  differ.
+- **Identical part (extract):** a free fn in `src/ui/mod.rs` (or a new
+  `src/ui/font.rs`): `fn apply_font_to_views(views: &[&gtk4::TextView], font_str:
+  &str, tag_name: &str)` owning the loop body. Each overlay builds its own
+  `font_str` + view slice + tag name and calls it.
+- **EXCLUDED (named, why):** the journal's `family.is_empty()` early guard (the
+  family is user-set and starts blank — keep at the caller; gloss has a compiled
+  default so doesn't need it); the gloss-only trailing
+  `self.apply_synopsis_label_bold()` (stays in the gloss caller after the call).
+- **Safe-scope:** yes — pure loop-body extraction, no behavior change.
+
+## #47 — cached-coloring span helper — PROPOSED
+
+- **Status:** PROPOSED. Ranked #2 — common tag-lifecycle + apply loop, two
+  callers, both recently added (likely to drift).
+- **Signal:** `gloss_overlay.rs::color_audio_blocks` (515-583) and
+  `journal_overlay.rs::color_cached_blocks` (728-765) share: tag
+  lookup-or-create with `set_foreground`, the priority raise
+  (`tag.set_priority(size - 1)` after `table.size()`), and the per-span
+  `iter_at_line(...).unwrap_or(start/end_iter)` + `apply_tag` loop.
+- **Identical part (extract):** `fn apply_cached_coloring(buffer:
+  &gtk4::TextBuffer, tag_name: &str, accent: &str, spans: &[(i32, i32)])` —
+  caller passes the already-computed (start_line, end_line) spans of blocks to
+  color.
+- **EXCLUDED (named, why):** the predicate (different arity: journal
+  `Fn(usize)`, gloss `Fn(&BlockKind, i32)`) — caller filters and builds the span
+  list; the gloss-only speaker-header extension (extend a Source block up one
+  line when `line_is_speaker`) — caller folds it into its spans; the gloss-only
+  `parse_hex_color` round-trip normalization (journal passes the accent
+  directly); the gloss-only `log_fmt!` calls.
+- **Safe-scope:** yes — the caller keeps all the variant logic and only delegates
+  the tag application.
+
+## #48 — bar-stroke-loop helper — PROPOSED
+
+- **Status:** PROPOSED. Ranked #3 — the selection-bar draw closure's stroke loop
+  is duplicated; PARTIAL because the gloss closure also draws line numbers.
+- **Signal:** the per-span stroke loop in the `bar_drawing.set_draw_func` closure
+  is near-identical at `journal_overlay.rs:183-195` and `gloss_overlay.rs:229-243`
+  — `iter_at_line` both ends, `iter_location().y()` for the top,
+  `line_yrange().0+.1` for the bottom, two `buffer_to_window_coords(Widget,0,…)`
+  calls, `move_to`/`line_to`/`stroke` at a fixed x. Also the
+  `vadjustment().connect_value_changed(|_| …queue_draw())` repaint hook and the
+  three `add_overlay`/`set_measure_overlay(false)`/`set_clip_overlay(true)` calls
+  are 1-for-1.
+- **Identical part (extract):** `fn draw_bar_spans(cr: &cairo::Context, view:
+  &gtk4::TextView, spans: &[(i32, i32)], x: f64)` — the stroke loop only.
+- **EXCLUDED (named, why):** the range ELEMENT TYPE differs (journal `(i32,i32)`
+  tuple vs gloss `BarRange` struct) — normalize the gloss caller to pass
+  `(start_line, end_line)` tuples at the call (or keep `BarRange` and map); the
+  gloss-only second pass that draws line numbers (lines 247-274) — stays in the
+  gloss closure; the color source (journal fixed `set_source_rgb`, gloss
+  `Rc<RefCell<(f64,f64,f64)>>` theme color) and x source (journal computed from
+  `left_margin()`, gloss `Rc<RefCell<i32>>`) — caller sets the source before the
+  loop.
+- **Safe-scope:** yes — stroke-loop body only.
+
+## #49 — visual-mode tail helpers — PROPOSED (lowest)
+
+- **Status:** PROPOSED, lowest priority — only ~30 lines saved; worth doing ONLY
+  if/when a third block-cursor overlay appears, or while already editing the
+  visual-mode code.
+- **Signal:** `visual_selection_len` (journal 984-993 / gloss 1346-1354),
+  `exit_visual` (998-1001 / 1277-1280), `exit_visual_to_anchor` (1005-1011 /
+  1300-1306), and the `visual_to_end` body (959-966 / 1324-1332) are
+  structurally identical over "a list of (start_line,end_line) spans + an anchor
+  Cell + a cursor Cell", modulo the anchor field name (`visual_anchor` vs
+  `synopsis_visual_anchor`) and a gloss-only `scroll_cursor_into_view()` tail in
+  `visual_to_end`.
+- **Identical part (extract):** small free fns over `(anchor: Option<usize>,
+  cursor: usize, len: usize)` for the index math, leaving the bar redraw +
+  field-name + scroll tail at the caller.
+- **EXCLUDED (named, why):** `enter_visual` (different SEED — journal
+  `topmost_visible_block`, gloss `cursor_block`), `step_cursor`/`step_full_cursor`
+  (journal page-turn `sync_cursor_page` vs gloss `scroll_cursor_into_view`),
+  `mark_cursor_block` (gloss `(kind,index)` lookup vs journal direct index) — all
+  divergent, stay per-overlay.
+- **Safe-scope:** yes but marginal; do not do speculatively.
+
 ## Noted but NOT numbered (below the safe-scope floor or behavior-risky)
 
 These came up in the post-journal-Q&A audit but do not qualify as numbered
