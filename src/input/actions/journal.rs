@@ -145,41 +145,21 @@ pub(crate) fn render_current(s: &mut AppState) {
         .unwrap_or_default();
 
     let conn = crate::db::queries::open_db().ok();
-    let (pages, scene_title) = match s.journal_band.clone() {
-        JournalBand::Work => {
-            let pages = conn
-                .and_then(|c| crate::db::journal::find_work_pages(&c, &work_abbrev).ok())
-                .unwrap_or_default();
-            let title = format!(
-                "{} — whole work",
-                s.current_work.as_ref().map(|w| w.title.as_str()).unwrap_or(""),
-            );
-            (pages, title)
-        }
-        JournalBand::Scene(d1, d2) => {
+    // The overlay has no title header anymore (the footer identifies the work +
+    // chapter), so each band only needs its page list.
+    let pages = match s.journal_band.clone() {
+        JournalBand::Work => conn
+            .and_then(|c| crate::db::journal::find_work_pages(&c, &work_abbrev).ok())
+            .unwrap_or_default(),
+        JournalBand::Scene(d1, d2) => conn
             // A scene/chapter band holds BOTH its scene Q&As and the passage
             // Q&As anchored in the same (div1, div2) — `find_scene_band_pages`
             // merges them so Ctrl+n/p pages through all of a chapter's Q&As.
-            let pages = conn
-                .and_then(|c| crate::db::journal::find_scene_band_pages(&c, &work_abbrev, d1, d2).ok())
-                .unwrap_or_default();
-            let title = format!(
-                "{} — {}",
-                s.current_work.as_ref().map(|w| w.title.as_str()).unwrap_or(""),
-                crate::app::scene_synopsis::synopsis_label(s, d1, d2),
-            );
-            (pages, title)
-        }
-        JournalBand::Passage { start, end, .. } => {
-            let pages = conn
-                .and_then(|c| crate::db::journal::find_passage_pages(&c, &work_abbrev, &start, &end).ok())
-                .unwrap_or_default();
-            let title = format!(
-                "{} — passage",
-                s.current_work.as_ref().map(|w| w.title.as_str()).unwrap_or(""),
-            );
-            (pages, title)
-        }
+            .and_then(|c| crate::db::journal::find_scene_band_pages(&c, &work_abbrev, d1, d2).ok())
+            .unwrap_or_default(),
+        JournalBand::Passage { start, end, .. } => conn
+            .and_then(|c| crate::db::journal::find_passage_pages(&c, &work_abbrev, &start, &end).ok())
+            .unwrap_or_default(),
     };
 
     let count = pages.len();
@@ -211,7 +191,7 @@ pub(crate) fn render_current(s: &mut AppState) {
         .map(|p| (p.question.clone(), p.answer.clone()))
         .unwrap_or_default();
     s.journal_overlay
-        .show_page(&scene_title, &footer_left, s.journal.page_index, count, &q, &a, cw, h);
+        .show_page(&footer_left, s.journal.page_index, count, &q, &a, cw, h);
 
     s.journal.pages = pages;
     // Color any paragraphs whose TTS MP3 is already cached, like the gloss

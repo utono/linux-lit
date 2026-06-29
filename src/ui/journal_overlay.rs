@@ -11,7 +11,6 @@ pub struct JournalOverlay {
     pub overlay: Overlay,
     scrim: gtk4::Box,
     container: gtk4::Box,
-    title: Label,
     scrolled: gtk4::ScrolledWindow,
     view: gtk4::TextView,
     clip_guard: crate::ui::bottom_clip_guard::BottomClipGuard,
@@ -107,16 +106,9 @@ impl JournalOverlay {
         container.set_valign(gtk4::Align::Center);
         container.set_visible(false);
 
-        let title = Label::new(Some(""));
-        // A quiet, small uppercase header (journal-title) rather than the
-        // body-sized bold gloss-title — the full-size bold title competed with the
-        // Q&A text and read as distracting. See src/theme.rs `.journal-title`.
-        title.add_css_class("journal-title");
-        title.set_halign(gtk4::Align::Start);
-        title.set_margin_start(text_margins as i32);
-        title.set_margin_end(text_margins as i32);
-        title.set_margin_top(24);
-        container.append(&title);
+        // No title header: the footer already identifies the work + chapter
+        // (`<abbrev> <act>.<scene> · page N of M`), so the overlay drops the
+        // "<Work> — Chapter N" header that used to sit above the scroll.
 
         let scrolled = gtk4::ScrolledWindow::new();
         scrolled.set_hscrollbar_policy(gtk4::PolicyType::Never);
@@ -226,7 +218,7 @@ impl JournalOverlay {
         // right.
         let footer = crate::ui::footer::build_footer_row(
             text_margins as i32,
-            "Space read \u{00b7} Alt+w work \u{00b7} Ctrl+\\ pick \u{00b7} Alt+g gloss \u{00b7} Ctrl+g view gloss \u{00b7} \u{21e7}V select \u{00b7} c copy id",
+            "Alt+w work \u{00b7} Ctrl+\\ pick \u{00b7} Alt+g gloss \u{00b7} Ctrl+g view gloss",
         );
         let footer_left = footer.left;
         let hint = footer.hint;
@@ -259,7 +251,6 @@ impl JournalOverlay {
             overlay,
             scrim,
             container,
-            title,
             scrolled,
             view,
             clip_guard,
@@ -302,28 +293,24 @@ impl JournalOverlay {
         self.container.set_size_request(card_width, card_height);
         self.last_card_size.set((card_width, card_height));
         // Fixed-scroll-height (the host owns it): the scroll (vexpand off) gets an
-        // EXPLICIT height = pane minus the title + footer chrome — its height while
-        // the ask card is CLOSED. `ask_host.open` subtracts the ask slot, `close`
-        // restores this stored closed height. Deterministic — no auto-resize race.
-        let (_, title_h) = self.title.preferred_size();
+        // EXPLICIT height = pane minus the footer chrome — its height while the ask
+        // card is CLOSED. `ask_host.open` subtracts the ask slot, `close` restores
+        // this stored closed height. There is no title header anymore (the footer
+        // identifies the work + chapter), so only the scroll_overlay margins
+        // (UNACCOUNTED_CHROME_MARGINS = 44, which `preferred_size()` omits) and the
+        // footer count as fixed chrome.
         let (_, footer_h) = self.footer_container.preferred_size();
-        // Fold the scroll_overlay's own margins (UNACCOUNTED_CHROME_MARGINS = 44),
-        // which `preferred_size()` omits, into the fixed-chrome argument so the
-        // host's closed scroll height matches the gloss overlay's `size_scroll`
-        // budget exactly (title_h + footer_h + 44). `closed_scroll_budget` is the
-        // unit-tested source of truth.
         self.ask_host.size(
             card_width,
             card_height,
-            title_h.height() + UNACCOUNTED_CHROME_MARGINS,
+            UNACCOUNTED_CHROME_MARGINS,
             footer_h.height(),
         );
-        // Anchor the text + headers to the card's side margin (card_width/4, the
-        // ~65-char readability optimum the gloss overlay uses) rather than the
-        // small fixed `text_margins` — otherwise the Q&A prose runs nearly edge
-        // to edge on a wide card. Card SIZE is unchanged; only the inner padding
-        // grows. The title and position label indent to match so the left edge
-        // of the header and the body line up. See ui::card_side_margin (audit #27).
+        // Anchor the text to the card's side margin (card_width/4, the ~65-char
+        // readability optimum the gloss overlay uses) rather than the small fixed
+        // `text_margins` — otherwise the Q&A prose runs nearly edge to edge on a
+        // wide card. Card SIZE is unchanged; only the inner padding grows. See
+        // ui::card_side_margin (audit #27).
         let side = if self.is_prose.get() {
             crate::ui::prose_column_margin(card_width)
         } else {
@@ -331,13 +318,11 @@ impl JournalOverlay {
         };
         self.view.set_left_margin(side);
         self.view.set_right_margin(side);
-        self.title.set_margin_start(side);
         let _ = (self.text_margins, self.column_width);
     }
 
     pub fn show_page(
         &self,
-        scene_title: &str,
         footer_left: &str,
         page_index: usize,
         page_count: usize,
@@ -347,7 +332,6 @@ impl JournalOverlay {
         card_height: i32,
     ) {
         self.size_card(card_width, card_height);
-        self.title.set_text(scene_title);
         let pos_text = if page_count == 0 {
             "page 0 of 0 in this scene".to_string()
         } else {
@@ -629,13 +613,12 @@ impl JournalOverlay {
     }
 
     /// The usable viewport height one rendered page may fill — the closed scroll
-    /// budget the AskCardHost pins (card minus title + chrome + footer). Used as
-    /// the `paginate` page_height.
+    /// budget the AskCardHost pins (card minus the scroll_overlay margins + footer;
+    /// there is no title header). Used as the `paginate` page_height.
     fn page_height(&self) -> i32 {
         let (_, card_h) = self.last_card_size.get();
-        let (_, title_h) = self.title.preferred_size();
         let (_, footer_h) = self.footer_container.preferred_size();
-        (card_h - (title_h.height() + UNACCOUNTED_CHROME_MARGINS) - footer_h.height()).max(80)
+        (card_h - UNACCOUNTED_CHROME_MARGINS - footer_h.height()).max(80)
     }
 
     /// Measure each full paragraph and pack them into `pages` (whole blocks per
@@ -1014,7 +997,7 @@ impl JournalOverlay {
     /// Normal-navigation footer hint (advertises Shift+V). Re-set on visual exit.
     pub fn set_journal_hint(&self) {
         self.hint.set_text(
-            "Space read \u{00b7} Alt+w work \u{00b7} Ctrl+\\ pick \u{00b7} Alt+g gloss \u{00b7} Ctrl+g view gloss \u{00b7} \u{21e7}V select \u{00b7} c copy id",
+            "Alt+w work \u{00b7} Ctrl+\\ pick \u{00b7} Alt+g gloss \u{00b7} Ctrl+g view gloss",
         );
     }
 
