@@ -92,6 +92,20 @@ pub struct GlossOverlay {
     /// of the selection. The cursor end is `cursor_block`. `None` in normal
     /// synopsis navigation. Selected range: `visual_block_range(anchor, cursor)`.
     synopsis_visual_anchor: Cell<Option<usize>>,
+    /// PAGINATION (synopsis + gloss-result modes, like the journal overlay): the
+    /// FULL block list for the open gloss/synopsis (the pagination unit), the page
+    /// ranges over it, the current page, and the cursor's GLOBAL index across all
+    /// pages (`cursor_block` is its page-local projection). Empty/0 in echo +
+    /// glossing-loading modes (those don't paginate). See
+    /// docs/superpowers/specs/2026-06-28-gloss-overlay-pagination-design.md.
+    all_blocks: RefCell<Vec<GlossBlock>>,
+    pages: RefCell<Vec<crate::ui::pagination::Page>>,
+    page_idx: Cell<usize>,
+    cursor_full: Cell<usize>,
+    /// True while the current render is paginated (synopsis or gloss-result), so
+    /// the cursor-nav methods turn pages instead of scrolling. False in echo +
+    /// glossing-loading modes (cursor-nav keeps the old scroll behavior).
+    paginated: Cell<bool>,
     /// The synopsis string currently shown (raw, `<p>`-tagged), retained so
     /// visual-mode yank can rebuild the selected paragraphs via
     /// `selected_blocks_text`. Set by `show_synopsis`.
@@ -424,6 +438,11 @@ impl GlossOverlay {
             blocks,
             cursor_block: Cell::new(0),
             synopsis_visual_anchor: Cell::new(None),
+            all_blocks: RefCell::new(Vec::new()),
+            pages: RefCell::new(Vec::new()),
+            page_idx: Cell::new(0),
+            cursor_full: Cell::new(0),
+            paginated: Cell::new(false),
             current_synopsis: RefCell::new(String::new()),
             ask_host,
         }
@@ -641,6 +660,8 @@ impl GlossOverlay {
     pub fn show_gloss_with_color(&self, _original: &str, gloss: &str, card_width: i32, card_height: i32, root_color: Option<&str>, source_line_numbers: &[(String, i64)]) {
         // No synopsis label bolding in gloss view.
         self.synopsis_label_ranges.borrow_mut().clear();
+        // Gloss-result mode is not yet paginated (Task 3) — keep scroll-based nav.
+        self.paginated.set(false);
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         self.last_card_size.set((card_width, card_height));
@@ -728,6 +749,7 @@ impl GlossOverlay {
         self.hide_citation();
         self.synopsis_label_ranges.borrow_mut().clear();
         self.blocks.borrow_mut().clear();
+        self.paginated.set(false);
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         self.last_card_size.set((card_width, card_height));
@@ -816,6 +838,7 @@ impl GlossOverlay {
         self.hide_citation();
         self.synopsis_label_ranges.borrow_mut().clear();
         self.blocks.borrow_mut().clear();
+        self.paginated.set(false);
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         self.last_card_size.set((card_width, card_height));
@@ -993,39 +1016,41 @@ impl GlossOverlay {
         // supplies separation, so the prose can sit closer under the rule.
         self.gloss_view.set_top_margin(8);
         self.gloss_view.set_pixels_below_lines(6);
-        let buffer = self.gloss_view.buffer();
-        let (text, label_ranges) = render_synopsis_with_labels(synopsis);
-        buffer.set_text(&text);
-        // Remember label paragraphs (e.g. "Shakespearean parallels:") so they
-        // can be bolded now and re-bolded after every apply_font (which applies
-        // a regular-weight buffer-wide font tag that would otherwise win).
-        *self.synopsis_label_ranges.borrow_mut() = label_ranges;
-        self.apply_synopsis_label_bold();
-        // Block cursor + left accent bar, exactly like the gloss overlay. Each
-        // <p> paragraph (non-label) is one Explication cursor stop; j/k move the
-        // bar between them (see handle_synopsis_overlay_key). Match the gloss
-        // overlay's accent color (theme root_color) so the bar is the same
-        // saturated accent, not the pale constructor default.
+        // Match the gloss overlay's accent color (theme root_color) so the bar is
+        // the same saturated accent, not the pale constructor default.
         if let Some(color) = root_color {
             if let Some((r, g, b)) = parse_hex_color(color) {
                 *self.bar_color.borrow_mut() = (r, g, b);
             }
         }
         *self.bar_x.borrow_mut() = bar_left;
-        self.rebuild_block_ranges_from(synopsis_blocks(synopsis));
-        self.mark_cursor_block();
-        self.bar_drawing.queue_draw();
+        // PAGINATE (like the journal): each non-label <p> is one Explication
+        // cursor stop; the page renders only the blocks that fit so no partial
+        // paragraph shows at either edge. The first render selects block 0. The
+        // actual buffer text + block ranges are produced by render_synopsis_page
+        // below (after size_scroll fixes the page budget).
+        *self.all_blocks.borrow_mut() = synopsis_blocks(synopsis);
+        self.cursor_full.set(0);
+        self.page_idx.set(0);
+        self.paginated.set(true);
 
         self.gloss_scroll_overlay.set_visible(true);
         self.set_synopsis_hint();
         self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
-        self.apply_font();
+        // Fixed-scroll-height: record the closed scroll height (the footer is
+        // below; gloss has no toggled footer) so opening the ask card shrinks the
+        // viewport. Must run BEFORE repaginate (it sets the page-height budget).
+        self.size_scroll(card_height, self.title_pref_h());
+        // Paginate against the now-fixed viewport, then render page 0. render_*
+        // sets the buffer text, re-derives blocks, applies the font, marks the bar.
+        self.repaginate(self.synopsis_page_height());
+        self.render_synopsis_page();
         // Prose: override the overlay's Charter-19 font tag on the synopsis body
         // with the main card's font (family + size), so the synopsis reads like
-        // its reading card. Applied AFTER apply_font so it wins; scoped to
-        // gloss_view only (the shared echo/ask views aren't visible here).
+        // its reading card. Applied AFTER render (which applies the default font)
+        // so it wins; scoped to gloss_view only.
         if let Some(ref p) = prose_card {
             let buffer = self.gloss_view.buffer();
             let table = buffer.tag_table();
@@ -1040,11 +1065,6 @@ impl GlossOverlay {
             crate::ui::reassert_italic_tags(&table);
             self.apply_synopsis_label_bold();
         }
-        // Fixed-scroll-height: synopsis mode shows the title above the scroll and
-        // the footer below (the footer is hidden when the ask card opens). Record
-        // the closed scroll height so opening the ask card shrinks the viewport
-        // (no occlusion of the synopsis text).
-        self.size_scroll(card_height, self.title_pref_h());
         self.reset_scroll_top();
 
         // Headless test: emit the overlay viewport rect once layout settles, so
@@ -1226,8 +1246,14 @@ impl GlossOverlay {
     }
 
     /// Step the cursor to the next (`+1`) or previous (`-1`) block, clamped to
-    /// the ends; mark it and scroll it into view. No-op with no blocks.
+    /// the ends; mark it and scroll it into view. No-op with no blocks. When the
+    /// render is PAGINATED (synopsis / gloss result), steps the GLOBAL cursor
+    /// across all blocks and turns the page at a boundary instead of scrolling.
     fn step_cursor(&self, delta: i32) {
+        if self.paginated.get() {
+            self.step_full_cursor(delta);
+            return;
+        }
         let len = self.blocks.borrow().len();
         if len == 0 {
             return;
@@ -1248,8 +1274,12 @@ impl GlossOverlay {
     }
 
     /// Jump the cursor to the first (`false`) or last (`true`) block; mark it and
-    /// scroll it into view.
+    /// scroll it into view. Paginated: jumps the global cursor + turns the page.
     fn cursor_to_end(&self, last: bool) {
+        if self.paginated.get() {
+            self.full_cursor_to_end(last);
+            return;
+        }
         let len = self.blocks.borrow().len();
         if len == 0 {
             return;
@@ -1257,6 +1287,158 @@ impl GlossOverlay {
         self.cursor_block.set(if last { len - 1 } else { 0 });
         self.mark_cursor_block();
         self.scroll_cursor_into_view();
+    }
+
+    // ---- Pagination (synopsis + gloss-result) ----------------------------
+    // Mirrors the journal overlay: `all_blocks` is the full list, `pages` the
+    // ranges, `cursor_full` the global cursor; each page renders only its slice
+    // so no partial block is shown at either edge.
+
+    /// Step the global cursor by `delta` (clamped); turn the page if it leaves
+    /// the current page, else just re-mark the page-local bar.
+    fn step_full_cursor(&self, delta: i32) {
+        let total = self.all_blocks.borrow().len();
+        if total == 0 {
+            return;
+        }
+        let cur = self.cursor_full.get().min(total - 1) as i64;
+        let next = (cur + delta as i64).clamp(0, total as i64 - 1);
+        if next == cur {
+            return;
+        }
+        self.cursor_full.set(next as usize);
+        self.sync_cursor_page();
+    }
+
+    fn full_cursor_to_end(&self, last: bool) {
+        let total = self.all_blocks.borrow().len();
+        if total == 0 {
+            return;
+        }
+        self.cursor_full.set(if last { total - 1 } else { 0 });
+        self.sync_cursor_page();
+    }
+
+    /// After `cursor_full` moves: turn the page (re-render) if it now falls on a
+    /// different page; otherwise re-mark the bar at the new page-local block.
+    fn sync_cursor_page(&self) {
+        let target_page = crate::ui::pagination::page_containing_block(
+            &self.pages.borrow(),
+            self.cursor_full.get(),
+        );
+        if target_page != self.page_idx.get() {
+            self.page_idx.set(target_page);
+            self.render_current_page();
+        } else {
+            let page_start = self
+                .pages
+                .borrow()
+                .get(target_page)
+                .map(|p| p.start)
+                .unwrap_or(0);
+            let page_local = self
+                .cursor_full
+                .get()
+                .saturating_sub(page_start)
+                .min(self.blocks.borrow().len().saturating_sub(1));
+            self.cursor_block.set(page_local);
+            self.mark_cursor_block();
+        }
+    }
+
+    /// Usable viewport height for SYNOPSIS pagination — the same `scroll_h`
+    /// `size_scroll` pins (card − title chrome − footer − the 44px scroll_overlay
+    /// margins). Must be called after `size_scroll`.
+    fn synopsis_page_height(&self) -> i32 {
+        let (_, card_height) = self.last_card_size.get();
+        const SCROLL_OVERLAY_MARGINS: i32 = 24 + 20;
+        (card_height - self.title_pref_h() - self.footer_pref_h() - SCROLL_OVERLAY_MARGINS).max(80)
+    }
+
+    /// Measure every block in `all_blocks` and pack them into `pages` by the
+    /// usable viewport height. Verse Source blocks are over-measured
+    /// (`gloss_block_height`) so a speaker label never clips at a page top.
+    fn repaginate(&self, page_height: i32) {
+        let blocks = self.all_blocks.borrow();
+        if blocks.is_empty() {
+            self.pages.borrow_mut().clear();
+            return;
+        }
+        let family = self.font_family.borrow().clone();
+        let size = self.font_size.get();
+        let wrap_w = (self.last_card_size.get().0 - 2 * self.gloss_view.left_margin()).max(1);
+        let pctx = self.gloss_view.pango_context();
+        let heights: Vec<i32> = blocks
+            .iter()
+            .map(|b| gloss_block_height(b, &pctx, &family, size, wrap_w))
+            .collect();
+        drop(blocks);
+        *self.pages.borrow_mut() = crate::ui::pagination::paginate(&heights, page_height.max(1));
+    }
+
+    /// Re-render the CURRENT page's block slice (synopsis prose), re-derive the
+    /// page-local block ranges + bar, pin the vadjustment at 0, and re-apply the
+    /// font + label bold. Dispatches by what `all_blocks` holds (synopsis here;
+    /// the gloss-result path renders via populate_gloss_buffer in Task 3).
+    fn render_current_page(&self) {
+        self.render_synopsis_page();
+    }
+
+    /// Render the current synopsis page into the buffer. Single-page case renders
+    /// the FULL original synopsis (labels included, exactly as before pagination).
+    /// Multi-page case renders only the page's cursor-stop blocks' display text
+    /// joined by blank lines (inter-page label paragraphs are dropped on
+    /// paginated pages — a minor synopsis-only tradeoff for never clipping a
+    /// block). Re-derives the page-local block ranges + bar; vadjustment pinned 0.
+    fn render_synopsis_page(&self) {
+        let buffer = self.gloss_view.buffer();
+        let pages = self.pages.borrow();
+        let single_page = pages.len() <= 1;
+        let pidx = self.page_idx.get().min(pages.len().saturating_sub(1));
+        let page = pages.get(pidx).copied();
+        drop(pages);
+
+        if single_page {
+            // Common case: the whole synopsis fits — render it verbatim (labels
+            // intact), then re-derive blocks from synopsis_blocks of the source.
+            let synopsis = self.current_synopsis.borrow().clone();
+            let (text, label_ranges) = render_synopsis_with_labels(&synopsis);
+            buffer.set_text(&text);
+            *self.synopsis_label_ranges.borrow_mut() = label_ranges;
+            self.apply_synopsis_label_bold();
+            self.rebuild_block_ranges_from(crate::ui::gloss_block::synopsis_blocks(&synopsis));
+        } else {
+            // Paginated: render only this page's cursor-stop blocks.
+            let Some(page) = page else { return };
+            let all = self.all_blocks.borrow();
+            let slice: Vec<GlossBlock> = all[page.start..page.end.min(all.len())].to_vec();
+            drop(all);
+            let body = slice
+                .iter()
+                .map(|b| b.display.clone())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            buffer.set_text(&body);
+            *self.synopsis_label_ranges.borrow_mut() = Vec::new();
+            self.rebuild_block_ranges_from(slice);
+        }
+
+        // Pin the viewport at the top — the page fits, nothing scrolls.
+        let adj = self.gloss_scrolled.vadjustment();
+        adj.set_value(adj.lower());
+
+        // Project the global cursor onto this page + mark the bar.
+        let page_start = page.map(|p| p.start).unwrap_or(0);
+        let page_local = self
+            .cursor_full
+            .get()
+            .saturating_sub(page_start)
+            .min(self.blocks.borrow().len().saturating_sub(1));
+        self.cursor_block.set(page_local);
+        self.apply_font();
+        self.mark_cursor_block();
+        self.bar_drawing.queue_draw();
+        self.update_bottom_clip();
     }
 
     /// Enter synopsis visual mode: anchor at the current block. No-op if there
@@ -1643,6 +1825,7 @@ impl GlossOverlay {
     pub fn show_loading_message(&self, message: &str) {
         self.synopsis_label_ranges.borrow_mut().clear();
         self.blocks.borrow_mut().clear();
+        self.paginated.set(false);
         // Size the card to the full reading area so the loading state reads as a
         // proper card (the same footprint the synopsis/gloss card will occupy)
         // rather than a label-sized box. Reuse the last card geometry; fall back
@@ -1836,7 +2019,6 @@ fn block_height_overhead(is_source: bool, text_h: i32) -> i32 {
 ///
 /// Calls `crate::ui::pagination::measure_text_height` for the raw text height,
 /// then adds the appropriate overhead via `block_height_overhead`.
-#[allow(dead_code)]
 fn gloss_block_height(
     block: &GlossBlock,
     pctx: &pango::Context,

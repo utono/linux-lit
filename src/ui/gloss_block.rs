@@ -75,6 +75,7 @@ pub enum BlockKind {
 }
 
 /// One cursor stop in the gloss, in document order.
+#[derive(Clone)]
 pub struct GlossBlock {
     pub kind: BlockKind,
     /// 0-based index WITHIN its kind (source blocks numbered separately from
