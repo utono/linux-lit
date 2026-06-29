@@ -1201,6 +1201,72 @@ safe-scope opportunities:
   This is a latent correctness divergence, not duplication — route to /code-review
   if it ever manifests; out of scope for maintainability numbering.
 
+## #50 — keybinds-legend-overlay-wrapper — PROPOSED
+
+- **Status:** PROPOSED (2026-06-29 keybind-legend-focused audit). Ranked #1 of
+  this batch — three byte-identical wrapper structs, cross-file, real drift risk
+  (a 4th overlay would copy a 4th identical struct; the recent footer-hint and
+  two-column changes already had to be re-checked against all three by hand).
+- **Signal:** `src/ui/gloss_keybinds_overlay.rs`, `synopsis_keybinds_overlay.rs`,
+  and `journal_keybinds_overlay.rs` are line-for-line identical EXCEPT for the
+  struct name, the `GROUPS` const, and the title string passed to
+  `build_legend`. All three define the same `{ container, scrim }` struct and the
+  same four methods — `new()` (calls `keybinds_legend::build_legend(title,
+  GROUPS)`), `attach_to(&overlay)` (two `add_overlay`), `show()` (two
+  `set_visible(true)`), `hide()` (two `set_visible(false)`). The bodies of
+  `attach_to`/`show`/`hide` are byte-identical across the three; `new()` differs
+  only in the two string/const arguments.
+- **Identical part (extract):** one concrete struct in `keybinds_legend.rs`, e.g.
+  `pub struct KeybindsLegend { pub container: GtkBox, pub scrim: GtkBox }` with
+  `KeybindsLegend::new(title: &str, groups: &[Group]) -> Self` (wrapping the
+  existing `build_legend`) plus `attach_to`/`show`/`hide`. The three call sites in
+  `app/mod.rs:1235-1242` become `KeybindsLegend::new("Gloss keybinds",
+  gloss_keybinds_overlay::GROUPS)` etc.; the three `AppState` fields
+  (`app/mod.rs:423-425`) all become `KeybindsLegend`. The per-overlay files
+  collapse to just their `pub const GROUPS` (the legend DATA — kept separate,
+  hand-maintained, one per overlay, with their "Matches handle_*_key" comment).
+- **EXCLUDED (named, why):** `echo_keybinds_overlay.rs` — it does NOT route
+  through `build_legend`; it constructs its widgets inline with the dark
+  `picker-box`/`picker-item-title` CSS and a flat single-column `BINDS` (no
+  groups, no two-column split, no `legend-*` classes). Folding it would CHANGE its
+  look — leave it. `keybinds_overlay.rs` (the reader card's Ctrl+/ Cairo overlay)
+  — entirely different mechanism (Cairo-drawn keycap strip + detail panel), not a
+  legend card. The three `GROUPS` consts themselves — they are DATA that must
+  drift per overlay (different binds); they stay as three separate consts, only
+  the wrapper boilerplate is shared.
+- **Safe-scope:** yes — pure struct/method consolidation, no behavior change. The
+  rendered card is produced by the same `build_legend` either way; only the
+  triplicated wrapper type collapses. Net ~120 lines → ~one struct + three
+  `GROUPS` consts.
+
+## #51 — overlay-legend-show-mode-setter — PROPOSED (low)
+
+- **Status:** PROPOSED, low priority — only ~6 lines, 3 sites, but they sit in
+  three different `handle_*_key` arms so the drift is invisible in any one diff
+  (the open-legend half mirrors the already-shared close half in
+  `handle_overlay_keybinds_key`). Worth folding only while doing #50 or touching
+  these handlers.
+- **Signal:** the "open this overlay's legend" block is repeated three times in
+  `keymap.rs` — `keymap.rs:1009-1011` (gloss), `:1451-1453` (synopsis),
+  `:800-802` (journal): `s.<x>_keybinds_overlay.show(); s.input_mode =
+  InputMode::<X>KeybindsOverlay;`. This is the exact inverse of the CLOSE side,
+  which is ALREADY shared via `handle_overlay_keybinds_key` + the `OverlayLegend`
+  enum (`keymap.rs:2029-2053`). The open side was never given the same treatment.
+- **Identical part (extract):** a small helper keyed by the same `OverlayLegend`
+  enum, e.g. `fn open_overlay_legend(s: &mut AppState, which: OverlayLegend)` that
+  does the `show()` + `input_mode` set (mapping `Gloss → GlossKeybindsOverlay`,
+  etc.) — the symmetric partner of the close path. Each `Ctrl+/` arm calls it
+  with its variant.
+- **EXCLUDED (named, why):** if #50 lands and the three legends become one
+  `KeybindsLegend` type held in three fields, the `show()` call is uniform but the
+  FIELD and the target `InputMode` still differ per overlay — so the `match
+  which { … }` is still required (same shape as the close path). Nothing else in
+  those `handle_*_key` arms is shared (each is reached from a different modal
+  handler). Do NOT try to also unify which field/mode — that is the irreducible
+  per-overlay part, exactly as in the close handler.
+- **Safe-scope:** yes — mechanical, mirrors an existing shared helper. Marginal
+  payoff; bundle with #50 rather than ship alone.
+
 ### Clip-prevention pass (2026-06-25, see specs/2026-06-25-clip-prevention-design.md)
 
 - **Free-scroll covering math is now unified.** `scrolloff_bottom_clip_widgets`
