@@ -223,6 +223,70 @@ pub fn gloss_blocks(gloss: &str) -> Vec<GlossBlock> {
 }
 
 
+/// Return one ORIGINAL-tagged markup string per cursor-stop block, in the SAME
+/// order and count as [`gloss_blocks`]. Where `gloss_blocks` returns clean
+/// `display`/`text` (speaker labels dropped, `/IPA/` stripped), this returns the
+/// markup needed to RE-RENDER that block through `populate_gloss_buffer` — a
+/// Source block's `<speaker>`/`<verse>`/`<stage>` tags, an Explication block's
+/// `<gloss>` tag.
+///
+/// Paginating the gloss-result overlay renders a page by concatenating its
+/// blocks' markups and feeding that to `populate_gloss_buffer`; joining
+/// `GlossBlock.display` would lose the speaker headings, verse indents, and the
+/// per-tag spacing that the gloss render applies.
+///
+/// The split rule mirrors `gloss_blocks` exactly so the two `Vec`s line up index
+/// for index:
+/// - A contiguous `<speaker>`/`<verse>`/`<stage>` run flushes to ONE Source
+///   markup, but ONLY when it carried at least one verse/stage (a lone
+///   speaker with no body is not a cursor stop — same as `flush_source`'s
+///   non-empty `pending` guard).
+/// - Each non-echo `<gloss>` is one Explication markup and flushes the pending
+///   source run.
+/// - Echo `<gloss>` brackets and `<pron>` notes are not cursor stops and belong
+///   to no block (dropped), exactly as `gloss_blocks` skips them.
+pub fn gloss_block_markups(gloss: &str) -> Vec<String> {
+    let mut markups: Vec<String> = Vec::new();
+    // Accumulated original-tagged lines of the current source run, plus whether
+    // it carries a body (verse/stage) — matching gloss_blocks' pending_verses.
+    let mut pending: Vec<String> = Vec::new();
+    let mut pending_has_body = false;
+
+    let flush_source = |markups: &mut Vec<String>, pending: &mut Vec<String>, has_body: &mut bool| {
+        if *has_body {
+            markups.push(pending.join("\n"));
+        }
+        pending.clear();
+        *has_body = false;
+    };
+
+    for el in parse_gloss_tags(gloss) {
+        match el {
+            GlossElement::Speaker(name) => {
+                pending.push(format!("<speaker>{}</speaker>", name));
+            }
+            GlossElement::Verse(text) => {
+                pending.push(format!("<verse>{}</verse>", text));
+                pending_has_body = true;
+            }
+            GlossElement::Stage(text) => {
+                pending.push(format!("<stage>{}</stage>", text));
+                pending_has_body = true;
+            }
+            GlossElement::Gloss(text) => {
+                if split_echo(&text).is_some() {
+                    continue; // echo bracket: not a cursor stop, belongs to no block
+                }
+                flush_source(&mut markups, &mut pending, &mut pending_has_body);
+                markups.push(format!("<gloss>{}</gloss>", text));
+            }
+            GlossElement::Pron(_) => { /* not a cursor stop, belongs to no block */ }
+        }
+    }
+    flush_source(&mut markups, &mut pending, &mut pending_has_body);
+    markups
+}
+
 pub(crate) fn parse_gloss_tags(gloss: &str) -> Vec<GlossElement> {
     let mut elements = Vec::new();
     let mut remaining = gloss;
@@ -560,6 +624,73 @@ mod block_tests {
             "expected a Stage element carrying the direction, got {:?}", els.get(1)
         );
         assert!(matches!(&els[2], GlossElement::Verse(_)));
+    }
+
+    #[test]
+    fn block_markups_match_blocks_count_and_order() {
+        // gloss_block_markups must return one markup per cursor-stop block, in the
+        // SAME order and count as gloss_blocks, so a page's block slice maps 1:1
+        // to its markup slice.
+        let gloss = "<speaker>CRANMER</speaker>\n\
+                     <verse>Ah, my good Lord of Winchester, I thank you.</verse>\n\
+                     <verse>You are always my good friend.</verse>\n\
+                     <gloss>Cranmer opens with cutting irony.</gloss>\n\
+                     <speaker>CRANMER</speaker>\n\
+                     <verse>'Tis my undoing. Love and meekness, lord,</verse>\n\
+                     <gloss>The tone shifts from irony to sincere counsel.</gloss>\n\
+                     <gloss>[\"a quote\" — Macbeth 1.1]</gloss>";
+        let blocks = gloss_blocks(gloss);
+        let markups = gloss_block_markups(gloss);
+        assert_eq!(
+            markups.len(),
+            blocks.len(),
+            "one markup per block: blocks={}, markups={}",
+            blocks.len(),
+            markups.len()
+        );
+        // Block 0 is a Source block; its markup must carry the speaker + verse tags
+        // (which gloss_blocks drops from GlossBlock.text), so it can re-render.
+        assert_eq!(blocks[0].kind, BlockKind::Source);
+        assert!(
+            markups[0].contains("<speaker>CRANMER</speaker>"),
+            "source markup must carry its speaker, got {:?}",
+            markups[0]
+        );
+        assert!(
+            markups[0].contains("<verse>Ah, my good Lord of Winchester, I thank you.</verse>"),
+            "source markup must carry its verse, got {:?}",
+            markups[0]
+        );
+        // Block 1 is an Explication; its markup is the <gloss> tag.
+        assert_eq!(blocks[1].kind, BlockKind::Explication);
+        assert!(markups[1].contains("<gloss>Cranmer opens with cutting irony.</gloss>"));
+        // The echo bracket is excluded (not a cursor stop) in BOTH lists.
+        assert!(!markups.iter().any(|m| m.contains("a quote")));
+    }
+
+    #[test]
+    fn block_markups_carry_stage_in_source_run() {
+        // A stage direction inside a source run stays in that block's markup.
+        let gloss = "<speaker>YORK</speaker>\n\
+                     <verse>Lay hands upon these traitors and their trash.</verse>\n\
+                     <stage>[To Jourdain.]</stage>\n\
+                     <verse>Beldam, I think we watched you at an</verse>\n\
+                     <gloss>York gloatingly arrests the conjurers.</gloss>";
+        let blocks = gloss_blocks(gloss);
+        let markups = gloss_block_markups(gloss);
+        assert_eq!(markups.len(), blocks.len());
+        assert!(markups[0].contains("<speaker>YORK</speaker>"));
+        assert!(markups[0].contains("<stage>[To Jourdain.]</stage>"));
+        assert!(markups[0].contains("<verse>Beldam, I think we watched you at an</verse>"));
+    }
+
+    #[test]
+    fn block_markups_lone_pron_yields_nothing() {
+        // A bare <pron> is not a cursor stop, so it produces no markup (matching
+        // gloss_blocks producing no block).
+        let g = "<pron>BEE: be /biː/ keeps the long vowel.</pron>";
+        assert_eq!(gloss_block_markups(g).len(), gloss_blocks(g).len());
+        assert!(gloss_block_markups(g).is_empty());
     }
 
     #[test]
