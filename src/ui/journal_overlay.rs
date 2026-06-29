@@ -89,8 +89,14 @@ fn prefix_question(question: &str) -> String {
 /// `card_height` and overflows the window (the "too-tall journal overlay" bug).
 /// The gloss overlay reserves the same way via its `SCROLL_OVERLAY_MARGINS`. Keep
 /// in sync with those three margin sites.
-const UNACCOUNTED_CHROME_MARGINS: i32 =
-    24 /* title top */ + 24 + 20 /* scroll_overlay top+bottom */ + 12 + 12 /* footer top+bottom */;
+/// Extra bottom margin added to the journal footer container (beyond the shared
+/// 12px) so the footer text sits off the card's bottom edge, matching the gloss
+/// overlay's footer padding. Reserved in UNACCOUNTED_CHROME_MARGINS below.
+const FOOTER_EXTRA_BOTTOM: i32 = 16;
+
+const UNACCOUNTED_CHROME_MARGINS: i32 = 24 /* title top */
+    + 24 + 20 /* scroll_overlay top+bottom */
+    + 12 + 12 + FOOTER_EXTRA_BOTTOM /* footer top + bottom + extra */;
 
 impl JournalOverlay {
     pub fn new(column_width: u32, text_margins: u32) -> Self {
@@ -232,6 +238,12 @@ impl JournalOverlay {
         let footer_left = footer.left;
         let hint = footer.hint;
         let footer_container = footer.container.clone();
+        // Extra breathing room below the footer text so it sits off the card's
+        // bottom edge (matching the gloss overlay's footer padding) — the shared
+        // build_footer_row gives 12px top/bottom; add 16px more at the bottom. The
+        // extra is reserved in UNACCOUNTED_CHROME_MARGINS so the column still
+        // balances to card_height.
+        footer_container.set_margin_bottom(12 + FOOTER_EXTRA_BOTTOM);
         container.append(&footer.container);
 
         // Shared "ask" input card (canonical synopsis values), stacked last in
@@ -995,7 +1007,7 @@ mod prefix_question_tests {
 
 #[cfg(test)]
 mod scroll_budget_tests {
-    use super::UNACCOUNTED_CHROME_MARGINS;
+    use super::{FOOTER_EXTRA_BOTTOM, UNACCOUNTED_CHROME_MARGINS};
 
     /// `size_card` passes `title_h + UNACCOUNTED_CHROME_MARGINS` as the fixed
     /// chrome, so the host's closed scroll height is
@@ -1024,8 +1036,9 @@ mod scroll_budget_tests {
     #[test]
     fn margins_match_the_three_margin_sites() {
         // 24 (title margin_top) + 24 + 20 (scroll_overlay top+bottom)
-        // + 12 + 12 (footer top+bottom) = 92.
-        assert_eq!(UNACCOUNTED_CHROME_MARGINS, 92);
+        // + 12 + 12 (footer top+bottom) + 16 (footer extra bottom) = 108.
+        assert_eq!(UNACCOUNTED_CHROME_MARGINS, 92 + FOOTER_EXTRA_BOTTOM);
+        assert_eq!(UNACCOUNTED_CHROME_MARGINS, 108);
     }
 }
 
