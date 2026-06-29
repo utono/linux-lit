@@ -588,10 +588,18 @@ impl GlossOverlay {
         );
     }
 
+    /// Restore the body-sized bold `gloss-title` style on the shared title (the
+    /// synopsis view swaps it to the quiet `journal-title`). Idempotent.
+    fn set_gloss_title_style(&self) {
+        self.title.remove_css_class("journal-title");
+        self.title.add_css_class("gloss-title");
+    }
+
     pub fn show(&self, original: &str, corrected: &str) {
         self.hide_citation();
         self.title.set_visible(true);
         self.title.set_text("Gloss");
+        self.set_gloss_title_style();
         // Reset the top margin in case `show_glossing` widened it (shared title).
         self.title.set_margin_top(24);
         // Indent the title and the diff/error labels to match the inset used by
@@ -728,6 +736,7 @@ impl GlossOverlay {
         // "Glossing…" as a top header (not the centered label of
         // `show_loading_message`), matching the gloss result's title placement.
         self.title.set_text("Glossing\u{2026}");
+        self.set_gloss_title_style();
         self.title.set_visible(true);
         self.title.set_vexpand(false);
         self.title.set_valign(Align::Start);
@@ -946,6 +955,11 @@ impl GlossOverlay {
         let bar_left = prose_card.as_ref().map(|p| (p.left_margin - 60).max(0)).unwrap_or(inset);
         let title_left = prose_card.as_ref().map(|p| p.left_margin).unwrap_or(inset);
         self.title.set_text(title);
+        // The synopsis title uses the quiet journal-title style (small, dim,
+        // normal weight) rather than the body-sized bold gloss-title, matching the
+        // journal Q&A overlay. The gloss-result paths restore gloss-title.
+        self.title.remove_css_class("gloss-title");
+        self.title.add_css_class("journal-title");
         self.title.set_visible(true);
         self.title.set_vexpand(false);
         self.title.set_valign(Align::Start);
@@ -1641,6 +1655,7 @@ impl GlossOverlay {
             self.container.set_height_request(ch);
         }
         self.title.set_text(message);
+        self.set_gloss_title_style();
         self.title.set_visible(true);
         self.title.set_vexpand(true);
         self.title.set_valign(Align::Center);
