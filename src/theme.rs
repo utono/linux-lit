@@ -509,7 +509,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
            background-color: {root}; padding: 3px 10px; border-radius: 8px; \
            box-shadow: 0 3px 12px rgba(0, 0, 0, 0.35); opacity: 0.95; }} \
          .gloss-scrim {{ background-color: {root}; }} \
-         .legend-scrim {{ background-color: rgba(0, 0, 0, 0.5); }} \
+         .legend-scrim {{ background-color: rgba(0, 0, 0, 0.3); }} \
          .gloss-overlay {{ background-color: {gloss_bg}; color: {fg}; border-radius: 12px; \
            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45); }} \
          .gloss-bottom-clip {{ background-color: {gloss_bg}; }} \
@@ -568,6 +568,15 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .title-bar-hint {{ color: {dim}; font-size: 12px; opacity: 0.6; }} \
          .picker-box {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
            padding: 16px; border-radius: 8px; }} \
+         .legend-box {{ background-color: {bg}; color: {fg}; \
+           padding: 18px 22px; border-radius: 12px; border: 1px solid {dim}; \
+           box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22), \
+                       0 2px 6px rgba(0, 0, 0, 0.08); }} \
+         .legend-title {{ font-size: 14px; font-weight: 700; \
+           letter-spacing: 2px; color: {fg}; opacity: 0.75; \
+           margin-bottom: 8px; }} \
+         .legend-key {{ color: {fg}; opacity: 0.85; }} \
+         .legend-action {{ color: {fg}; opacity: 0.65; }} \
          .picker-entry {{ margin-bottom: 8px; }} \
          .picker-list row:selected {{ background-color: rgba(100, 140, 200, 0.8); }} \
          .picker-item-title {{ }} \

@@ -24,11 +24,13 @@ pub fn build_legend(title: &str, binds: &[(&str, &str)]) -> (GtkBox, GtkBox) {
         .valign(Align::Center)
         .width_request(460)
         .build();
-    container.add_css_class("picker-box");
+    // Match the library picker's parchment card (theme {bg}/{fg}), not the dark
+    // picker-box — see .legend-box in theme.rs.
+    container.add_css_class("legend-box");
     container.set_visible(false);
 
     let title_label = Label::builder().label(title).halign(Align::Start).build();
-    title_label.add_css_class("picker-item-title");
+    title_label.add_css_class("legend-title");
     container.append(&title_label);
 
     for (key, action) in binds {
@@ -42,13 +44,14 @@ pub fn build_legend(title: &str, binds: &[(&str, &str)]) -> (GtkBox, GtkBox) {
             .width_chars(18)
             .xalign(0.0)
             .build();
-        key_label.add_css_class("picker-item-title");
+        key_label.add_css_class("legend-key");
         let action_label = Label::builder()
             .label(*action)
             .halign(Align::Start)
             .hexpand(true)
             .xalign(0.0)
             .build();
+        action_label.add_css_class("legend-action");
         row.append(&key_label);
         row.append(&action_label);
         container.append(&row);
