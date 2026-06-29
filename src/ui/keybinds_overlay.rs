@@ -361,8 +361,9 @@ card prompting you to press A to ask. Inside the overlay: A asks a new question 
 genre \u{2014} novel/chapter, play/scene, epic/book, etc.), E opens an edit \
 card (Question + Answer pre-filled, plus a rewrite-instruction field): Ctrl+Enter \
 saves your hand-edits straight to lit.db, Alt+Enter sends the Q&A + instruction \
-to Claude and saves the revised answer. D deletes the current page, j/k move the paragraph \
-cursor (the left accent bar) between blocks and gg/G jump to the first/last block; Space \
+to Claude and saves the revised answer. D deletes the current page, j/k (or q/comma, \
+matching the reading card) move the paragraph cursor (the left accent bar) between \
+blocks and gg/G jump to the first/last block; Space \
 (or Tab) plays/stops the cursor paragraph\u{2019}s TTS (synthesizing a plain-prose ElevenLabs \
 MP3 on a cache miss, cached per page) and `a` restarts it from the beginning, \
 Ctrl+n / Ctrl+p step through every Q&A in the work across bands (at a band\u{2019}s \

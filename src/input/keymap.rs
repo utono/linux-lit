@@ -833,12 +833,15 @@ fn handle_journal_key(
         // j/k step the paragraph block cursor (the left accent bar), mirroring
         // the gloss/synopsis overlays; Space/Tab read the cursor block aloud and
         // `a` restarts it. Silence audio on nav, like the other overlays' j/k.
-        "j" => {
+        // `q` aliases j and `,` aliases k, matching the reading card's
+        // dialogue-nav keys (q = next, comma = prev) so the same fingers move the
+        // block cursor here.
+        "j" | "q" => {
             crate::input::actions::gloss::stop_all_gloss_audio(state);
             state.borrow().journal_overlay.cursor_next_block();
             true
         }
-        "k" => {
+        "k" | "comma" => {
             crate::input::actions::gloss::stop_all_gloss_audio(state);
             state.borrow().journal_overlay.cursor_prev_block();
             true
@@ -1597,11 +1600,13 @@ fn handle_journal_visual_key(
         return true;
     }
     match key_name {
-        "j" => {
+        // q aliases j and `,` aliases k (extend the selection down/up), matching
+        // the normal journal-overlay block-nav aliases.
+        "j" | "q" => {
             state.borrow().journal_overlay.visual_step(1);
             true
         }
-        "k" => {
+        "k" | "comma" => {
             state.borrow().journal_overlay.visual_step(-1);
             true
         }
