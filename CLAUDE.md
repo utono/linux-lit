@@ -327,6 +327,27 @@ arm) that catches missing/wrong descriptions. Run it after any keybind change so
 every bind — and each modifier variant on each key — is represented and
 described.
 
+### Overlay keybind legends drift too (gloss / synopsis / journal)
+
+The gloss, synopsis, and journal overlays each have their OWN per-overlay Ctrl+/
+keybind legend, separate from the reader card's `keybinds_overlay.rs`:
+
+- `src/ui/gloss_keybinds_overlay.rs`
+- `src/ui/synopsis_keybinds_overlay.rs`
+- `src/ui/journal_keybinds_overlay.rs`
+
+Each defines a `GROUPS` const (grouped `(key, action)` rows) rendered by the
+shared `ui::keybinds_legend::build_legend`. Their binds are handled directly in
+the overlay's modal key handler (e.g. `handle_gloss_key` in
+`src/input/keymap.rs`), NOT in `keymap_config.rs` / `keymap.json`.
+
+**When adding, removing, or changing ANY keybind for the gloss, synopsis, or
+journal overlay, update that overlay's legend `GROUPS` in the same change.** Like
+the reader overlay these are hand-maintained mirrors with no compile-time
+enforcement, so they drift silently. Verify the legend's `(key, action)` text
+against the actual handler arm (especially the direction/order in paired binds
+like `Alt+n / Alt+p`).
+
 ## Pagination & Scene Boundaries
 
 **Scene/section boundaries are authoritative metadata, not inferred from text.**
