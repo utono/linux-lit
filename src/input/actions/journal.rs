@@ -276,6 +276,21 @@ fn land_on_page(s: &mut AppState, band: JournalBand, target_id: i64) {
     }
 }
 
+/// Within the CURRENT band (already loaded by a preceding `render_current`),
+/// point `page_index` at `target_id` and re-render. Unlike `land_on_page` this
+/// does NOT switch bands — it is for after an in-place edit/rewrite, where the
+/// band is unchanged but `update_journal_page` bumped the row's timestamp and the
+/// band's `timestamp ASC` ordering moved the entry to a new index. A no-op if the
+/// id isn't found (defensive). The caller must have rendered the band first.
+fn land_on_current_band_id(s: &mut AppState, target_id: i64) {
+    if let Some(pos) = s.journal.pages.iter().position(|p| p.id == target_id) {
+        if pos != s.journal.page_index {
+            s.journal.page_index = pos;
+            render_current(s);
+        }
+    }
+}
+
 /// `Ctrl+n` / `Ctrl+p`: step through EVERY Q&A in the work, across bands, in the
 /// same order the `Ctrl+\` picker uses (`find_all_pages_ordered`: whole-work
 /// pages first, then by div1/div2, then timestamp/id; passage Q&As interleave in
@@ -494,6 +509,10 @@ pub(crate) fn submit_edit_save(state: &Rc<RefCell<AppState>>) {
     }
     s.journal_overlay.close_edit_card();
     render_current(&mut s);
+    // The save bumped the row's timestamp; re-find it so the band's timestamp
+    // ordering doesn't leave the view on a different page (see
+    // land_on_current_band_id).
+    land_on_current_band_id(&mut s, id);
     crate::ui::toast::show_transient(&s.chapter_toast, "Saved", 2);
 }
 
@@ -507,8 +526,7 @@ pub(crate) fn submit_edit_rewrite(state: &Rc<RefCell<AppState>>) {
     if instruction.trim().is_empty() {
         {
             let mut s = state.borrow_mut();
-            let page = s.journal.pages.get(s.journal.page_index);
-            if let Some(page) = page {
+            let saved_id = s.journal.pages.get(s.journal.page_index).map(|page| {
                 let (id, model) = (page.id, page.claude_model.clone());
                 if let Ok(conn) = crate::db::queries::open_db_rw() {
                     let _ = crate::db::journal::update_journal_page(
@@ -516,9 +534,15 @@ pub(crate) fn submit_edit_rewrite(state: &Rc<RefCell<AppState>>) {
                     );
                     purge_journal_audio(&conn, id);
                 }
-            }
+                id
+            });
             s.journal_overlay.close_edit_card();
             render_current(&mut s);
+            // Keep the view on the saved entry (the timestamp bump can reorder
+            // the band — see land_on_current_band_id).
+            if let Some(id) = saved_id {
+                land_on_current_band_id(&mut s, id);
+            }
             crate::ui::toast::show_transient(
                 &s.chapter_toast, "No rewrite instruction \u{2014} saved as-is", 3,
             );
@@ -588,7 +612,13 @@ pub(crate) fn submit_edit_rewrite(state: &Rc<RefCell<AppState>>) {
                 purge_journal_audio(&conn, edit_id);
             }
             let mut s = st.borrow_mut();
+            // Re-render, then re-find the edited page by id: update_journal_page
+            // bumps the row's timestamp, and a band is ordered by timestamp ASC,
+            // so after the reload the edited entry may sit at a different index.
+            // Without this, page_index stayed put and the view jumped to whatever
+            // page now occupies that slot (the "rewrote 8, landed on 9" bug).
             render_current(&mut s);
+            land_on_current_band_id(&mut s, edit_id);
             crate::ui::toast::show_transient(&s.chapter_toast, "Rewritten", 2);
         },
         move |st, msg| {
