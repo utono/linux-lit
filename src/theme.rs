@@ -569,14 +569,19 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .picker-box {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
            padding: 16px; border-radius: 8px; }} \
          .legend-box {{ background-color: {bg}; color: {fg}; \
-           padding: 22px 28px; border-radius: 12px; border: 1px solid {dim}; \
+           padding: 32px 40px; border-radius: 12px; border: 1px solid {dim}; \
            box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22), \
                        0 2px 6px rgba(0, 0, 0, 0.08); }} \
-         .legend-title {{ font-size: 19px; font-weight: 700; \
-           letter-spacing: 2px; color: {fg}; opacity: 0.75; \
-           margin-bottom: 12px; }} \
-         .legend-key {{ font-size: 17px; color: {fg}; opacity: 0.85; }} \
-         .legend-action {{ font-size: 17px; color: {fg}; opacity: 0.65; }} \
+         .legend-title {{ font-family: {font}; font-size: 20px; font-weight: 700; \
+           letter-spacing: 2px; color: {fg}; opacity: 0.78; }} \
+         .legend-group {{ font-family: {font}; font-size: 12px; font-weight: 700; \
+           letter-spacing: 2px; text-transform: uppercase; color: {dim}; }} \
+         .legend-rule {{ background-color: {dim}; opacity: 0.25; min-height: 1px; \
+           margin: 2px 0; }} \
+         .legend-key {{ font-family: monospace; font-size: 15px; \
+           color: {cursor_bg}; padding: 2px 0; }} \
+         .legend-action {{ font-family: {font}; font-size: 16px; color: {fg}; \
+           opacity: 0.72; padding: 2px 0; }} \
          .picker-entry {{ margin-bottom: 8px; }} \
          .picker-list row:selected {{ background-color: rgba(100, 140, 200, 0.8); }} \
          .picker-item-title {{ }} \

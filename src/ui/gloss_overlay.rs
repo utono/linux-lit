@@ -2092,28 +2092,18 @@ impl GlossOverlay {
         self.update_position_label();
     }
 
-    /// Refresh the footer's right label from the stored gloss-index position AND
-    /// the current render-page count. Shows the gloss index "N / total" when there
-    /// is more than one gloss, and appends "page X / Y" when the current gloss
-    /// paginates to more than one render page (the j/k pages). Hidden when neither
-    /// applies. Call from `set_position` (index changed) and after a (re)render /
-    /// page turn (render-page count or current page changed).
+    /// Refresh the footer's right label from the stored gloss-index position.
+    /// Shows the gloss index "N / total" when there is more than one gloss;
+    /// hidden otherwise. Call from `set_position` (index changed) and after a
+    /// (re)render / page turn (kept for the now-removed render-page suffix; the
+    /// render-page count no longer affects the label).
     fn update_position_label(&self) {
         let (index, total) = self.gloss_pos.get();
-        let n_pages = self.pages.borrow().len();
-        let mut parts: Vec<String> = Vec::new();
         if total > 1 {
-            parts.push(format!("{} / {}", index + 1, total));
-        }
-        if self.paginated.get() && n_pages > 1 {
-            let p = self.page_idx.get().min(n_pages - 1) + 1;
-            parts.push(format!("page {} / {}", p, n_pages));
-        }
-        if parts.is_empty() {
-            self.position_label.set_visible(false);
-        } else {
-            self.position_label.set_text(&parts.join(" \u{00b7} "));
+            self.position_label.set_text(&format!("{} / {}", index + 1, total));
             self.position_label.set_visible(true);
+        } else {
+            self.position_label.set_visible(false);
         }
     }
 
