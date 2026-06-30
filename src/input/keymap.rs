@@ -817,6 +817,9 @@ fn handle_journal_edit_key(
             crate::input::actions::journal::vim_open_rewrite(state, tokio_handle);
             true
         }
+        // The engine already toggled the `<hi>` tags in its buffer and
+        // feed_edit_key re-mirrored; the dirty-check sees the change on :w/:q.
+        EditorAction::ToggleHighlight => true,
     }
 }
 
@@ -907,6 +910,9 @@ fn handle_gloss_edit_key(
             }
             true
         }
+        // The engine already toggled the `<hi>` tags in its buffer and
+        // feed_edit_key re-mirrored; the dirty-check sees the change on :w/:q.
+        EditorAction::ToggleHighlight => true,
     }
 }
 
