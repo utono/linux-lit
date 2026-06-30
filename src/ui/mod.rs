@@ -117,6 +117,62 @@ pub(crate) fn draw_bar_spans(
     }
 }
 
+/// Paint a vim-style BLOCK cursor: a one-character background fill (`fill`) with
+/// the glyph drawn in `fg`, over the char at `char_index` (a CHAR offset). Used
+/// by the vim editors (journal page + ask-card prompt) to show a solid block in
+/// NORMAL/VISUAL mode instead of GTK's thin caret. Re-applies the named tag each
+/// call (clearing the old range first), so calling it on every mirror just moves
+/// the block. At end-of-buffer (no char to cover) it clears the block (the caller
+/// should fall back to the native caret there). Raised above the font tag.
+pub(crate) fn paint_block_cursor(
+    buffer: &gtk4::TextBuffer,
+    tag_name: &str,
+    fill: &str,
+    fg: &str,
+    char_index: usize,
+) {
+    use gtk4::prelude::*;
+    let table = buffer.tag_table();
+    let tag = match table.lookup(tag_name) {
+        Some(t) => {
+            t.set_background(Some(fill));
+            t.set_foreground(Some(fg));
+            t
+        }
+        None => {
+            let t = gtk4::TextTag::builder()
+                .name(tag_name)
+                .background(fill)
+                .foreground(fg)
+                .build();
+            table.add(&t);
+            t
+        }
+    };
+    let size = table.size();
+    if size > 0 {
+        tag.set_priority(size - 1);
+    }
+    let (lo, hi) = buffer.bounds();
+    buffer.remove_tag(&tag, &lo, &hi);
+    let start = buffer.iter_at_offset(char_index as i32);
+    let mut end = start;
+    // Cover exactly one char; if at the last position there is nothing to cover.
+    if !end.forward_char() {
+        return;
+    }
+    buffer.apply_tag(&tag, &start, &end);
+}
+
+/// Remove the block-cursor tag's range (INSERT mode shows the native caret).
+pub(crate) fn clear_block_cursor(buffer: &gtk4::TextBuffer, tag_name: &str) {
+    use gtk4::prelude::*;
+    if let Some(tag) = buffer.tag_table().lookup(tag_name) {
+        let (lo, hi) = buffer.bounds();
+        buffer.remove_tag(&tag, &lo, &hi);
+    }
+}
+
 /// Color the given `(start_line, end_line)` block spans of `buffer` with the tag
 /// `tag_name` set to `accent`: look the tag up or create it, refresh its
 /// foreground, raise it above the buffer-wide font tag, and `apply_tag` over each

@@ -425,7 +425,15 @@ fn show_prompt_dialog(state_rc: &Rc<RefCell<AppState>>, mode: crate::app::GlossP
     // "ask" flow uses) instead of a separate floating dialog. The gloss card
     // stays visible above it; `gloss_prompt_mode` routes the eventual submit.
     state_rc.borrow_mut().gloss_prompt_mode = mode;
-    state_rc.borrow().gloss_overlay.open_ask_card_with(title_text, hint_text);
+    {
+        let s = state_rc.borrow();
+        s.gloss_overlay.open_ask_card_with(
+            title_text,
+            hint_text,
+            &s.theme.cursor_bg,
+            &s.theme.cursor_fg,
+        );
+    }
 }
 
 pub(crate) fn show_edit_dialog(state_rc: &Rc<RefCell<AppState>>) {

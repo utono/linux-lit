@@ -22,6 +22,8 @@ pub struct AskCard {
     hint: Label,
     /// The static hint passed to `open`, re-shown after the mode indicator.
     base_hint: std::cell::RefCell<String>,
+    /// (block-fill, glyph-fg) for the NORMAL-mode block cursor, set on `open`.
+    cursor_colors: std::cell::RefCell<(String, String)>,
     focus: Cell<AskFocus>,
     return_focus: gtk4::Widget,
     /// The input is a modal vim editor (NORMAL by default; `i`/`a` to type). The
@@ -89,6 +91,7 @@ impl AskCard {
             input,
             hint,
             base_hint: std::cell::RefCell::new(String::new()),
+            cursor_colors: std::cell::RefCell::new((String::new(), String::new())),
             focus: Cell::new(AskFocus::Doc),
             return_focus: return_focus.clone().upcast(),
             vim: std::cell::RefCell::new(None),
@@ -107,9 +110,10 @@ impl AskCard {
 
     /// Reveal with heading + hint, clear the field, re-align margins to
     /// card_width/4, focus the input (AskFocus::Ask + card-focused highlight).
-    pub fn open(&self, title: &str, hint: &str, card_width: i32) {
+    pub fn open(&self, title: &str, hint: &str, card_width: i32, block_fill: &str, block_fg: &str) {
         self.title.set_text(title);
         *self.base_hint.borrow_mut() = hint.to_string();
+        *self.cursor_colors.borrow_mut() = (block_fill.to_string(), block_fg.to_string());
         self.input.buffer().set_text("");
         if card_width > 0 {
             let margin = crate::ui::card_side_margin(card_width);
@@ -161,6 +165,15 @@ impl AskCard {
             let cur = buffer.iter_at_offset(ci as i32);
             buffer.place_cursor(&cur);
         }
+        // Block cursor in NORMAL/VISUAL, native caret in INSERT (vim convention).
+        if engine.mode() == crate::input::vim::Mode::Insert {
+            crate::ui::clear_block_cursor(&buffer, "ask-vim-block");
+            self.input.set_cursor_visible(true);
+        } else {
+            let (fill, fg) = self.cursor_colors.borrow().clone();
+            crate::ui::paint_block_cursor(&buffer, "ask-vim-block", &fill, &fg, ci);
+            self.input.set_cursor_visible(ci >= n_chars);
+        }
         let base = self.base_hint.borrow();
         let mode = match engine.cmdline() {
             Some(cmd) => format!(":{cmd}"),
@@ -181,6 +194,7 @@ impl AskCard {
         self.container.remove_css_class("card-focused");
         self.container.remove_css_class("card-dimmed");
         *self.vim.borrow_mut() = None;
+        crate::ui::clear_block_cursor(&self.input.buffer(), "ask-vim-block");
         if self.input.has_focus() {
             let _ = self.return_focus.grab_focus();
         }
@@ -340,8 +354,8 @@ impl AskCardHost {
     /// it (the occlusion fix). Open height = pane − fixed chrome − ask-natural;
     /// the toggled footer (if any) is hidden, freeing its slot. Recomputes the
     /// clip now and on the idle tick after the height lands.
-    pub fn open(&self, title: &str, hint: &str) {
-        self.ask.open(title, hint, self.card_width.get());
+    pub fn open(&self, title: &str, hint: &str, block_fill: &str, block_fg: &str) {
+        self.ask.open(title, hint, self.card_width.get(), block_fill, block_fg);
         if let Some(f) = &self.footer {
             f.set_visible(false);
         }

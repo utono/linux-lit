@@ -66,6 +66,9 @@ pub struct JournalOverlay {
     vim_engine: RefCell<Option<crate::input::vim::VimEngine>>,
     /// The buffer the editor was seeded with, for dirty-check on cancel.
     vim_seed: RefCell<String>,
+    /// (block-fill, glyph-fg) for the NORMAL-mode block cursor, set on enter from
+    /// the theme's cursor colors.
+    vim_cursor_colors: RefCell<(String, String)>,
 }
 
 /// Split the full Q&A text into paragraph blocks (the pagination unit): maximal
@@ -297,6 +300,7 @@ impl JournalOverlay {
             ask_host,
             vim_engine: RefCell::new(None),
             vim_seed: RefCell::new(String::new()),
+            vim_cursor_colors: RefCell::new((String::new(), String::new())),
         }
     }
 
@@ -577,12 +581,12 @@ impl JournalOverlay {
         self.ask_host.is_open()
     }
 
-    pub fn open_ask_card(&self, title: &str, hint: &str) {
-        // The host reveals the ask card, hides the navigation footer (the ask
-        // card carries its own "Tab switch · Ctrl+Enter submit" hint), shrinks the
-        // scroll viewport to pane − title − ask (the occlusion fix), and recomputes
-        // the clip. apply_font re-fonts the now-visible input.
-        self.ask_host.open(title, hint);
+    pub fn open_ask_card(&self, title: &str, hint: &str, block_fill: &str, block_fg: &str) {
+        // The host reveals the ask card (a vim editor, NORMAL by default), hides
+        // the nav footer, shrinks the scroll viewport (occlusion fix), recomputes
+        // the clip. apply_font re-fonts the now-visible input. block_fill/fg are
+        // the NORMAL-mode block-cursor colors.
+        self.ask_host.open(title, hint, block_fill, block_fg);
         self.apply_font();
 
         // Headless test: emit the scrolled viewport rect WITH the ask card open
@@ -634,7 +638,8 @@ impl JournalOverlay {
     /// Enter the in-place vim editor: build the `Q: …\n\n<answer>` buffer, seed
     /// the engine, make the page view show the whole buffer (pagination
     /// suspended), place the cursor, and show the mode indicator in the footer.
-    pub fn enter_edit_buffer(&self, question: &str, answer: &str) {
+    pub fn enter_edit_buffer(&self, question: &str, answer: &str, block_fill: &str, block_fg: &str) {
+        *self.vim_cursor_colors.borrow_mut() = (block_fill.to_string(), block_fg.to_string());
         let buf = crate::input::vim::journal_doc::build_buffer(question, answer);
         *self.vim_seed.borrow_mut() = buf.clone();
         let engine = crate::input::vim::VimEngine::new(buf);
@@ -714,6 +719,7 @@ impl JournalOverlay {
     pub fn exit_edit_buffer(&self) {
         *self.vim_engine.borrow_mut() = None;
         self.vim_seed.borrow_mut().clear();
+        crate::ui::clear_block_cursor(&self.view.buffer(), "journal-vim-block");
         self.view.set_cursor_visible(false);
         self.view.set_focusable(false);
     }
@@ -748,6 +754,20 @@ impl JournalOverlay {
         } else {
             let cur = char_to_iter(engine.cursor());
             buffer.place_cursor(&cur);
+        }
+        // Cursor style: a solid BLOCK over the char in NORMAL/VISUAL, the thin
+        // native caret in INSERT (vim convention).
+        let insert_mode = engine.mode() == crate::input::vim::Mode::Insert;
+        if insert_mode {
+            crate::ui::clear_block_cursor(&buffer, "journal-vim-block");
+            self.view.set_cursor_visible(true);
+        } else {
+            let (fill, fg) = self.vim_cursor_colors.borrow().clone();
+            crate::ui::paint_block_cursor(&buffer, "journal-vim-block", &fill, &fg, engine.cursor());
+            // Hide the native caret so it doesn't sit inside the block; but at
+            // end-of-buffer there is no char to cover, so keep the caret there.
+            let at_end = engine.cursor() >= engine.buffer().chars().count();
+            self.view.set_cursor_visible(at_end);
         }
         // Keep the cursor on screen.
         let mark = buffer.get_insert();

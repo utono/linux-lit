@@ -396,8 +396,12 @@ pub(crate) fn begin_passage_ask(
     s.journal.page_index = 0;
     s.input_mode = crate::app::InputMode::JournalOverlay;
     render_current(&mut s);
-    s.journal_overlay
-        .open_ask_card("Ask a question about this passage", "Ctrl+Enter submit");
+    s.journal_overlay.open_ask_card(
+        "Ask a question about this passage",
+        "Ctrl+Enter submit",
+        &s.theme.cursor_bg,
+        &s.theme.cursor_fg,
+    );
 }
 
 /// Set up the journal overlay for a SCENE (chapter) Q&A and open the ask card.
@@ -416,8 +420,12 @@ pub(crate) fn begin_scene_ask(state: &Rc<RefCell<AppState>>, div1: i64, div2: i6
     s.journal.page_index = 0;
     s.input_mode = crate::app::InputMode::JournalOverlay;
     render_current(&mut s);
-    s.journal_overlay
-        .open_ask_card("Ask a question about this scene", "Ctrl+Enter submit");
+    s.journal_overlay.open_ask_card(
+        "Ask a question about this scene",
+        "Ctrl+Enter submit",
+        &s.theme.cursor_bg,
+        &s.theme.cursor_fg,
+    );
 }
 
 pub(crate) fn begin_ask(state: &Rc<RefCell<AppState>>) {
@@ -428,8 +436,12 @@ pub(crate) fn begin_ask(state: &Rc<RefCell<AppState>>) {
         JournalBand::Scene(_, _) => "Ask a question about this scene",
         JournalBand::Passage { .. } => "Ask a question about this passage",
     };
-    s.journal_overlay
-        .open_ask_card(title, "Ctrl+Enter submit");
+    s.journal_overlay.open_ask_card(
+        title,
+        "Ctrl+Enter submit",
+        &s.theme.cursor_bg,
+        &s.theme.cursor_fg,
+    );
 }
 
 /// Build the user message for a Ctrl+Enter rewrite. `context` is the band-aware
@@ -498,7 +510,8 @@ pub(crate) fn begin_edit(state: &Rc<RefCell<AppState>>) {
         return;
     };
     let (q, a) = (page.question.clone(), page.answer.clone());
-    s.journal_overlay.enter_edit_buffer(&q, &a);
+    let (block_fill, block_fg) = (s.theme.cursor_bg.clone(), s.theme.cursor_fg.clone());
+    s.journal_overlay.enter_edit_buffer(&q, &a, &block_fill, &block_fg);
     s.input_mode = crate::app::InputMode::JournalEdit;
 }
 
@@ -606,8 +619,12 @@ pub(crate) fn vim_open_rewrite(
         s.journal.vim_rewrite = Some((id, q, a));
     }
     let s = state.borrow();
-    s.journal_overlay
-        .open_ask_card("Rewrite instruction", "Ctrl+Enter rewrite \u{00b7} Esc cancel");
+    s.journal_overlay.open_ask_card(
+        "Rewrite instruction",
+        "Ctrl+Enter rewrite \u{00b7} Esc cancel",
+        &s.theme.cursor_bg,
+        &s.theme.cursor_fg,
+    );
 }
 
 /// Undo the last `e` journal edit (single-level): restore the snapshot in

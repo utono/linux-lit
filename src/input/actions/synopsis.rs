@@ -43,6 +43,8 @@ pub(crate) fn show_edit_prompt(state_rc: &Rc<RefCell<AppState>>) {
     s.gloss_overlay.open_ask_card_with(
         "Edit this scene",
         "Describe the edit (split/merge paragraphs, reword, reorder)  \u{00b7}  Ctrl+Enter submit",
+        &s.theme.cursor_bg,
+        &s.theme.cursor_fg,
     );
     drop(s);
     let mut s = state_rc.borrow_mut();
