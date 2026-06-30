@@ -359,7 +359,7 @@ impl JournalOverlay {
         self.entry_pos.set((page_index, page_count));
         if page_count == 0 {
             // Empty band: a bare message, no navigable paragraphs.
-            self.view.buffer().set_text("No pages yet \u{2014} press A to ask.");
+            self.view.buffer().set_text("No pages yet \u{2014} press r to ask.");
             self.apply_font();
             self.clear_blocks();
             *self.all_paragraphs.borrow_mut() = Vec::new();

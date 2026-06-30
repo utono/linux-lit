@@ -121,6 +121,10 @@ pub enum InputMode {
     ActionPopup,
     Visual,
     DeleteConfirm,
+    /// Confirm reverting the last `e` edit in the gloss/synopsis/journal overlay:
+    /// the card shows "Undo last edit? y / Esc". `y` restores the pre-edit text
+    /// and returns to the originating overlay; `Esc`/`n` cancels.
+    UndoConfirm,
     /// Manual page-image calibration: the card shows a page PNG and a readout of
     /// the cursor line; Enter marks the cursor line as that page's start and
     /// advances to the next page.
@@ -421,9 +425,25 @@ pub struct AppState {
     /// The (div1, div2) scene whose synopsis the open `A` amend prompt targets.
     pub synopsis_amend_scene: (i64, i64),
     /// Single-level undo for the `A` amend flow: the scene and its synopsis text
-    /// from immediately before the last amendment. `U` in the synopsis overlay
+    /// from immediately before the last amendment. `u` in the synopsis overlay
     /// restores it. Cleared once consumed.
     pub synopsis_undo: Option<((i64, i64), String)>,
+    /// Single-level undo snapshot for the gloss overlay's `e` edit:
+    /// `(gloss_id, pre_edit_gloss_text)`. Set by `update_and_render_gloss_in_place`
+    /// before it overwrites the row; `u` restores it via `update_gloss`. Cleared
+    /// once consumed.
+    pub gloss_undo: Option<(i64, String)>,
+    /// Single-level undo snapshot for the journal overlay's `e` edit:
+    /// `(page_id, pre_edit_question, pre_edit_answer, claude_model)`. Set by the
+    /// journal edit-save / edit-rewrite paths before they update the row; `u`
+    /// restores it via `update_journal_page`. Cleared once consumed.
+    pub journal_undo: Option<(i64, String, String, String)>,
+    /// Which overlay a pending `UndoConfirm` belongs to, so `y` runs the right
+    /// overlay's undo and returns to the right mode. Set when `u` opens the
+    /// confirm; cleared when it closes.
+    pub undo_confirm_origin: Option<InputMode>,
+    pub undo_confirm_container: Option<glib::WeakRef<gtk4::Box>>,
+    pub undo_confirm_overlay: Option<glib::WeakRef<gtk4::Overlay>>,
     /// Which prompt the currently-open synopsis input card will run on submit
     /// (set by `A` -> Ask / `E` -> Edit). Meaningful only while the card is open.
     pub synopsis_prompt_kind: SynopsisPromptKind,
@@ -1561,6 +1581,11 @@ pub fn build_window(
         gloss_prompt_mode: GlossPromptMode::Add,
         delete_confirm_container: None,
         delete_confirm_overlay: None,
+        gloss_undo: None,
+        journal_undo: None,
+        undo_confirm_origin: None,
+        undo_confirm_container: None,
+        undo_confirm_overlay: None,
         gloss_picker,
         echo_picker,
         echo_turns_picker,

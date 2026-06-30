@@ -84,7 +84,7 @@ impl JournalEditCard {
         container.set_margin_end(text_margins);
         container.set_margin_bottom(14);
 
-        let title = Label::new(Some("Edit Q&A"));
+        let title = Label::new(Some("Edit this Q&A"));
         title.add_css_class("gloss-header");
         title.set_halign(Align::Start);
         title.set_margin_start(16);
@@ -93,13 +93,13 @@ impl JournalEditCard {
 
         let (q_box, question) = build_field("Question", 60, 120);
         let (a_box, answer) = build_field("Answer", 140, 280);
-        let (i_box, instruction) = build_field("Rewrite instruction (Alt+Enter)", 50, 100);
+        let (i_box, instruction) = build_field("Rewrite instruction (optional)", 50, 100);
         container.append(&q_box);
         container.append(&a_box);
         container.append(&i_box);
 
         let hint = Label::new(Some(
-            "Tab cycle  \u{00b7}  Ctrl+Enter save  \u{00b7}  Alt+Enter rewrite  \u{00b7}  Esc cancel",
+            "Ctrl+Enter submit",
         ));
         hint.add_css_class("ask-hint");
         hint.set_halign(Align::Center);

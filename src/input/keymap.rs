@@ -121,6 +121,7 @@ pub fn handle_key(
             crate::app::InputMode::SynopsisVisual => handle_block_visual_key(state, key_state, key_name, &SYNOPSIS_VISUAL_CFG),
             crate::app::InputMode::TranslationOverlay => handle_translation_overlay_key(state, key_name),
             crate::app::InputMode::DeleteConfirm => handle_delete_confirm_key(state, key_name),
+            crate::app::InputMode::UndoConfirm => handle_undo_confirm_key(state, key_name),
             crate::app::InputMode::EchoPicker => handle_echo_picker_key(state, key_name, tokio_handle),
             crate::app::InputMode::EchoTurnsPicker => handle_echo_turns_picker_key(state, key_name, tokio_handle),
             crate::app::InputMode::EchoesOverlay => handle_echoes_overlay_key(state, key_state, key_name, is_ctrl, tokio_handle),
@@ -694,7 +695,11 @@ fn handle_journal_key(
     is_ctrl: bool,
     is_alt: bool,
 ) -> bool {
-    // ---- Edit card (E) intercepts Tab / Ctrl+Enter / Alt+Enter / Escape ----
+    // ---- Edit card (e) intercepts Tab / Ctrl+Enter / Escape ----
+    // Ctrl+Enter submits as a rewrite: a non-empty "Rewrite instruction" asks
+    // Claude to revise the answer; an empty instruction falls back to saving the
+    // hand-edited Q&A as-is (no LLM). The old Alt+Enter (rewrite) bind was removed
+    // — Ctrl+Enter now covers both cases.
     if state.borrow().journal_overlay.edit_is_open() {
         match key_name {
             "Tab" | "ISO_Left_Tab" => {
@@ -702,10 +707,6 @@ fn handle_journal_key(
                 return true;
             }
             "Return" if is_ctrl => {
-                crate::input::actions::journal::submit_edit_save(state);
-                return true;
-            }
-            "Return" if is_alt => {
                 crate::input::actions::journal::submit_edit_rewrite(state);
                 return true;
             }
@@ -817,17 +818,23 @@ fn handle_journal_key(
     }
 
     match key_name {
-        // `A` (uppercase) opens the ask card, matching the gloss/synopsis
-        // overlays where uppercase `A` is the ask/amend feature.
-        // Ask/edit/delete are uppercase (A/E/D) across all overlays with an
-        // ask feature, so the destructive/editing keys are shift-guarded and
-        // consistent. Lowercase letters stay free for navigation.
-        "A" => {
+        // `r` opens the ask card to create a new Q&A in the current band,
+        // matching the gloss + synopsis overlays where `r` opens a journal Q&A.
+        // (Moved from A to r across all three overlays.)
+        "r" => {
             crate::input::actions::journal::begin_ask(state);
             true
         }
-        "E" => {
+        "e" => {
             crate::input::actions::journal::begin_edit(state);
+            true
+        }
+        // u: undo the last `e` edit (single-level), behind a y/Esc confirmation.
+        "u" => {
+            crate::input::actions::gloss::show_undo_confirmation(
+                state,
+                crate::app::InputMode::JournalOverlay,
+            );
             true
         }
         "D" => {
@@ -1037,10 +1044,6 @@ fn handle_gloss_key(
             crate::input::actions::gloss::begin_current_block(state);
             true
         }
-        "A" => {
-            crate::input::actions::gloss::show_amend_dialog(state);
-            true
-        }
         "c" => {
             crate::input::actions::gloss::copy_gloss_id(state);
             true
@@ -1049,8 +1052,16 @@ fn handle_gloss_key(
             crate::input::actions::gloss::show_delete_confirmation(state);
             true
         }
-        "E" => {
+        "e" => {
             crate::input::actions::gloss::show_edit_dialog(state);
+            true
+        }
+        // u: undo the last `e` edit (single-level), behind a y/Esc confirmation.
+        "u" => {
+            crate::input::actions::gloss::show_undo_confirmation(
+                state,
+                crate::app::InputMode::GlossOverlay,
+            );
             true
         }
         "g" => {
@@ -1147,13 +1158,16 @@ fn handle_gloss_key(
             }
             true
         }
-        // J (Shift+j): create a journal Q&A page for the gloss's current
-        // source passage. Reads gloss_context for citations/speaker, resolves
-        // the line range from current_work, and builds <speaker>/<verse>/<stage>
-        // markup via build_source_header — the same markup the journal overlay
-        // feeds to populate_verse_buffer. Plain ctx.source_text is NOT used as
-        // source_text (it lacks verse/stage tags and renders without formatting).
-        "J" => {
+        // r: create a journal Q&A page for the gloss's current source passage.
+        // Reads gloss_context for citations/speaker, resolves the line range from
+        // current_work, and builds <speaker>/<verse>/<stage> markup via
+        // build_source_header — the same markup the journal overlay feeds to
+        // populate_verse_buffer. Plain ctx.source_text is NOT used as source_text
+        // (it lacks verse/stage tags and renders without formatting). (Moved from
+        // A to r; the source-TTS play/stop that was on r moved to l/L. The gloss
+        // overlay now only EDITS the current gloss (E) or deletes it (D) — it no
+        // longer adds a second gloss to the passage.)
+        "r" => {
             // Collect what we need from gloss_context before dropping the borrow.
             // Build the <speaker>/<verse>/<stage> markup here while we still hold
             // the borrow that gives access to ctx and current_work.
@@ -1225,15 +1239,17 @@ fn handle_gloss_key(
             );
             true
         }
-        "r" => {
+        "l" => {
             // Source verse only: play/stop the synthesized MP3 in the active /
-            // default voice (pauses MPV first). No picker.
+            // default voice (pauses MPV first). No picker. (Moved off `r`, which
+            // now opens a journal Q&A for the passage.)
             crate::input::actions::gloss::toggle_source_tts(state);
             true
         }
-        "R" => {
+        "L" => {
             // Source verse only: open the voice picker for the synthesized
             // reading (the only picker key); confirm sets active voice + plays.
+            // (Moved off `R` when `r` was repurposed for the journal Q&A.)
             crate::input::actions::gloss::pick_source_voice(state);
             true
         }
@@ -1406,11 +1422,25 @@ fn handle_synopsis_overlay_key(
             crate::input::actions::gloss::begin_current_synopsis_block(state);
             true
         }
-        "A" => {
-            crate::input::actions::synopsis::show_amend_prompt(state);
+        // r: create a journal Q&A filed under the scene/chapter the synopsis is
+        // currently showing (synopsis_overlay_scene, which Ctrl+n/p may have moved
+        // away from the cursor's scene). Close the synopsis overlay and return to
+        // reader mode first, then open the journal scene ask. (Moved from A to r,
+        // matching the gloss + journal overlays; the synopsis overlay now only
+        // EDITS the synopsis in place via E, with U to undo.)
+        "r" => {
+            let (div1, div2) = state.borrow().synopsis_overlay_scene;
+            {
+                let mut s = state.borrow_mut();
+                s.tts.stop();
+                s.gloss_overlay.hide();
+                s.input_mode = crate::app::InputMode::Reader;
+            }
+            crate::input::actions::journal::begin_scene_ask(state, div1, div2);
+            crate::logging::log("JOURNAL-FROM-SYNOPSIS: opened scene ask from synopsis overlay");
             true
         }
-        "E" => {
+        "e" => {
             crate::input::actions::synopsis::show_edit_prompt(state);
             true
         }
@@ -1423,8 +1453,13 @@ fn handle_synopsis_overlay_key(
             }
             true
         }
-        "U" => {
-            crate::input::actions::synopsis::undo_amend(state);
+        // u: undo the last `e` edit (single-level), behind a y/Esc confirmation.
+        // (Was `U`; now lowercased + gated by the confirm like gloss/journal.)
+        "u" => {
+            crate::input::actions::gloss::show_undo_confirmation(
+                state,
+                crate::app::InputMode::SynopsisOverlay,
+            );
             true
         }
         "bar" => {
@@ -1775,6 +1810,39 @@ fn handle_delete_confirm_key(
         }
         "Escape" | "n" => {
             crate::input::actions::gloss::close_delete_confirmation(state);
+            true
+        }
+        _ => true,
+    }
+}
+
+fn handle_undo_confirm_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+) -> bool {
+    match key_name {
+        "y" => {
+            // Read the origin before closing (close clears it), then run that
+            // overlay's single-level undo. close_undo_confirmation has already
+            // restored the originating overlay mode.
+            let origin = state.borrow().undo_confirm_origin;
+            crate::input::actions::gloss::close_undo_confirmation(state);
+            match origin {
+                Some(crate::app::InputMode::GlossOverlay) => {
+                    crate::input::actions::gloss::undo_gloss_edit(state);
+                }
+                Some(crate::app::InputMode::SynopsisOverlay) => {
+                    crate::input::actions::synopsis::undo_amend(state);
+                }
+                Some(crate::app::InputMode::JournalOverlay) => {
+                    crate::input::actions::journal::undo_journal_edit(state);
+                }
+                _ => {}
+            }
+            true
+        }
+        "Escape" | "n" => {
+            crate::input::actions::gloss::close_undo_confirmation(state);
             true
         }
         _ => true,

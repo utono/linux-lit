@@ -1952,16 +1952,6 @@ impl GlossOverlay {
         snap_up_to_row(target_y, &row_tops, lower, max_value)
     }
 
-    // ---- "Ask about this scene" card -------------------------------------
-
-    /// Reveal the ask card below the synopsis with the canonical heading + hint.
-    pub fn open_ask_card(&self) {
-        self.open_ask_card_with(
-            "ASK ABOUT THIS SCENE",
-            "Ask a question; the synopsis will be expanded to answer it  ·  Tab switch  ·  Ctrl+Enter submit",
-        );
-    }
-
     /// Reveal the stacked input card below the open synopsis/gloss card with the
     /// given heading and footer hint. Shared by the synopsis "ask" flow and the
     /// gloss add/edit prompts. The host shrinks the scroll viewport so the

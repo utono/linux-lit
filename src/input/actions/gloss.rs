@@ -316,6 +316,76 @@ pub(crate) fn close_delete_confirmation(state: &Rc<RefCell<AppState>>) {
     s.input_mode = crate::app::InputMode::GlossOverlay;
 }
 
+/// Open the "Undo last edit? y / Esc" confirmation over `origin`'s overlay (the
+/// gloss / synopsis / journal overlay that the `u` key was pressed in). Records
+/// `origin` so `y` runs the right overlay's undo and returns to the right mode.
+/// No-op (toast) when there is no pending edit to undo for that overlay. Mirrors
+/// `show_delete_confirmation`'s centered amend-dialog box.
+pub(crate) fn show_undo_confirmation(
+    state_rc: &Rc<RefCell<AppState>>,
+    origin: crate::app::InputMode,
+) {
+    // Bail with a toast if there is nothing to undo for the originating overlay.
+    let has_undo = {
+        let s = state_rc.borrow();
+        match origin {
+            crate::app::InputMode::GlossOverlay => s.gloss_undo.is_some(),
+            crate::app::InputMode::SynopsisOverlay => s.synopsis_undo.is_some(),
+            crate::app::InputMode::JournalOverlay => s.journal_undo.is_some(),
+            _ => false,
+        }
+    };
+    if !has_undo {
+        show_tts_toast(state_rc, "Nothing to undo");
+        return;
+    }
+
+    let overlay_parent = {
+        let s = state_rc.borrow();
+        s.action_popup_widget.container.parent()
+    };
+    let overlay_parent = match overlay_parent.and_then(|p| p.downcast::<gtk4::Overlay>().ok()) {
+        Some(o) => o,
+        None => return,
+    };
+
+    let container = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
+    container.set_halign(gtk4::Align::Center);
+    container.set_valign(gtk4::Align::Center);
+    container.set_width_request(400);
+    container.add_css_class("amend-dialog");
+
+    let label = gtk4::Label::new(Some("Undo last edit?"));
+    label.add_css_class("amend-title");
+    label.set_halign(gtk4::Align::Start);
+    container.append(&label);
+
+    let hint = gtk4::Label::new(Some("y = confirm  \u{00b7}  Esc = cancel"));
+    hint.add_css_class("amend-hint");
+    hint.set_halign(gtk4::Align::Center);
+    container.append(&hint);
+
+    overlay_parent.add_overlay(&container);
+
+    let mut s = state_rc.borrow_mut();
+    s.undo_confirm_container = Some(container.downgrade());
+    s.undo_confirm_overlay = Some(overlay_parent.downgrade());
+    s.undo_confirm_origin = Some(origin);
+    s.input_mode = crate::app::InputMode::UndoConfirm;
+}
+
+/// Tear down the undo confirmation box and return to the originating overlay
+/// mode (or Reader if the origin was somehow lost). Clears the origin marker.
+pub(crate) fn close_undo_confirmation(state: &Rc<RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    if let (Some(cw), Some(ow)) = (s.undo_confirm_container.take(), s.undo_confirm_overlay.take()) {
+        if let (Some(c), Some(o)) = (cw.upgrade(), ow.upgrade()) {
+            o.remove_overlay(&c);
+        }
+    }
+    s.input_mode = s.undo_confirm_origin.take().unwrap_or(crate::app::InputMode::Reader);
+}
+
 fn show_prompt_dialog(state_rc: &Rc<RefCell<AppState>>, mode: crate::app::GlossPromptMode) {
     let (is_inner_monologue, is_reader_gloss, is_edit) = {
         let s = state_rc.borrow();
@@ -333,22 +403,22 @@ fn show_prompt_dialog(state_rc: &Rc<RefCell<AppState>>, mode: crate::app::GlossP
     let title_text = if is_fix_ipa {
         "FIX IPA — word /IPA/  OR  word <hint>"
     } else if is_edit {
-        "EDIT GLOSS — PASTE SUBTEXT LINES"
+        "Edit gloss"
     } else if is_inner_monologue {
-        "INNER MONOLOGUE PASSAGE"
+        "Inner monologue passage"
     } else if is_reader_gloss {
-        "READER GLOSS PROMPT"
+        "Ask a question about the passage"
     } else {
-        "GLOSS PROMPT"
+        "Ask a question about the passage"
     };
     let hint_text = if is_fix_ipa {
         "e.g. `daily /\u{02c8}de\u{026a}li/` or `daily hard a`  \u{00b7}  Ctrl+Enter submit"
     } else if is_edit {
-        "Paste lines for subtext  \u{00b7}  Tab switch  \u{00b7}  Ctrl+Enter submit"
+        "Ctrl+Enter submit"
     } else if is_inner_monologue {
-        "Paste lines from another work  \u{00b7}  Tab switch  \u{00b7}  Ctrl+Enter submit"
+        "Paste lines from another work  \u{00b7}  Ctrl+Enter submit"
     } else {
-        "Tab switch  \u{00b7}  Ctrl+Enter submit"
+        "Ctrl+Enter submit"
     };
 
     // Stack the input as a card below the open gloss (same widget the synopsis
@@ -356,10 +426,6 @@ fn show_prompt_dialog(state_rc: &Rc<RefCell<AppState>>, mode: crate::app::GlossP
     // stays visible above it; `gloss_prompt_mode` routes the eventual submit.
     state_rc.borrow_mut().gloss_prompt_mode = mode;
     state_rc.borrow().gloss_overlay.open_ask_card_with(title_text, hint_text);
-}
-
-pub(crate) fn show_amend_dialog(state_rc: &Rc<RefCell<AppState>>) {
-    show_prompt_dialog(state_rc, crate::app::GlossPromptMode::Add);
 }
 
 pub(crate) fn show_edit_dialog(state_rc: &Rc<RefCell<AppState>>) {
@@ -750,6 +816,116 @@ fn persist_and_render_gloss(
     crate::logging::log(log_msg);
 }
 
+/// Re-gloss the CURRENT gloss row IN PLACE (the `E` / edit flow): overwrite its
+/// `gloss_text` via `update_gloss` (no new row), invalidate its cached TTS audio
+/// (DB rows + on-disk mp3 dir, since the whole text changed), patch the
+/// in-memory `gloss_list[gloss_index]`, and re-render the card at the SAME index.
+/// Mirrors `apply_ipa_fix`'s in-place update path, but for the whole gloss rather
+/// than one source block. Unlike `persist_and_render_gloss`, it does NOT insert a
+/// new gloss or shift the position.
+fn update_and_render_gloss_in_place(
+    state_rc: &Rc<RefCell<AppState>>,
+    ctx: &crate::gloss::GlossContext,
+    gloss_index: usize,
+    gloss_id: i64,
+    full_gloss: &str,
+    model_for_db: &str,
+    log_msg: &str,
+) {
+    // Persist the rewritten text in place and purge this gloss's cached audio
+    // (every block's verse/answer may have changed, so drop all of it).
+    if let Ok(conn) = crate::db::queries::open_db_rw() {
+        let _ = crate::db::queries::update_gloss(&conn, gloss_id, full_gloss, model_for_db);
+        let _ = crate::db::queries::delete_gloss_audio(&conn, gloss_id);
+    }
+    let _ = std::fs::remove_dir_all(gloss_audio_dir(&ctx.work_abbrev, gloss_id));
+
+    let mut s = state_rc.borrow_mut();
+    // Snapshot the pre-edit text for single-level undo (`u`) BEFORE overwriting
+    // the in-memory row. Keyed by gloss_id so `u` can restore the exact row.
+    if let Some(g) = s.gloss_list.get(gloss_index) {
+        s.gloss_undo = Some((gloss_id, g.gloss_text.clone()));
+    }
+    // Patch the in-memory row so play_block_tts reads the rewritten text.
+    if let Some(g) = s.gloss_list.get_mut(gloss_index) {
+        g.gloss_text = full_gloss.to_string();
+    }
+    s.gloss_active_voice = 0;
+    let (cw, h) = crate::app::layout::overlay_card_size(&s);
+    let pairs = ctx.source_line_pairs();
+    s.gloss_overlay.show_gloss_with_color(
+        &ctx.source_text, full_gloss, cw, h,
+        Some(&s.theme.root_color), &pairs,
+    );
+    s.gloss_overlay.set_position(gloss_index, s.gloss_list.len());
+    s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
+    s.gloss_index = gloss_index;
+    recolor_cached_blocks(&s);
+    // The gloss text changed but the glossed-passage SET did not, so the
+    // main-card reader-gloss tint is unchanged; recompute anyway for parity with
+    // persist_and_render_gloss (harmless no-op for non reader-gloss types).
+    crate::app::apply_reader_gloss_highlighting(&mut s);
+    crate::logging::log(log_msg);
+}
+
+/// Undo the last `e` gloss edit (single-level): restore the snapshot in
+/// `gloss_undo` to the row it came from via `update_gloss`, purge that gloss's
+/// cached audio (the text reverted), patch the in-memory row if it is the
+/// currently-displayed gloss, re-render, and clear the snapshot. Toasts and
+/// bails when there is nothing to undo, the work/gloss can't be resolved, or the
+/// snapshot's gloss is no longer the one on screen. Called by the `u` undo
+/// confirmation (`y`).
+pub(crate) fn undo_gloss_edit(state_rc: &Rc<RefCell<AppState>>) {
+    let snapshot = state_rc.borrow().gloss_undo.clone();
+    let (gloss_id, original) = match snapshot {
+        Some(snap) => snap,
+        None => {
+            show_tts_toast(state_rc, "Nothing to undo");
+            return;
+        }
+    };
+
+    // Resolve the displayed gloss's context + index; the undo only applies to the
+    // gloss currently on screen (single-level, same row that `e` just edited).
+    let (ctx, gloss_index) = {
+        let s = state_rc.borrow();
+        match (s.gloss_context.clone(), s.gloss_list.get(s.gloss_index)) {
+            (Some(ctx), Some(g)) if g.gloss_id == gloss_id => (ctx, s.gloss_index),
+            _ => {
+                drop(s);
+                show_tts_toast(state_rc, "Nothing to undo");
+                return;
+            }
+        }
+    };
+
+    let model = state_rc.borrow().config.claude_model.clone();
+    if let Ok(conn) = crate::db::queries::open_db_rw() {
+        let _ = crate::db::queries::update_gloss(&conn, gloss_id, &original, &model);
+        let _ = crate::db::queries::delete_gloss_audio(&conn, gloss_id);
+    }
+    let _ = std::fs::remove_dir_all(gloss_audio_dir(&ctx.work_abbrev, gloss_id));
+
+    let mut s = state_rc.borrow_mut();
+    if let Some(g) = s.gloss_list.get_mut(gloss_index) {
+        g.gloss_text = original.clone();
+    }
+    s.gloss_undo = None;
+    s.gloss_active_voice = 0;
+    let (cw, h) = crate::app::layout::overlay_card_size(&s);
+    let pairs = ctx.source_line_pairs();
+    s.gloss_overlay.show_gloss_with_color(
+        &ctx.source_text, &original, cw, h,
+        Some(&s.theme.root_color), &pairs,
+    );
+    s.gloss_overlay.set_position(gloss_index, s.gloss_list.len());
+    s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
+    s.gloss_index = gloss_index;
+    recolor_cached_blocks(&s);
+    crate::app::apply_reader_gloss_highlighting(&mut s);
+    crate::logging::log(&format!("GLOSS: undid edit of gloss {}", gloss_id));
+}
+
 /// Persist a freshly composed async-Claude gloss, reload the start-citation
 /// gloss list, select the new row, render it into the gloss overlay, reinstall
 /// `gloss_context`, and call `record_last_gloss`. Shared by the four async
@@ -871,16 +1047,19 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
 }
 
 pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
-    let (ctx, existing_gloss_text, model) = {
+    let (ctx, existing_gloss_text, model, gloss_index, gloss_id) = {
         let state = state_rc.borrow();
         let ctx = match &state.gloss_context {
             Some(c) => c.clone(),
             None => return,
         };
-        let existing = state.gloss_list.get(state.gloss_index)
-            .map(|g| g.gloss_text.clone())
-            .unwrap_or_default();
-        (ctx, existing, state.config.claude_model.clone())
+        let idx = state.gloss_index;
+        let (existing, gloss_id) = match state.gloss_list.get(idx) {
+            Some(g) => (g.gloss_text.clone(), g.gloss_id),
+            // No current gloss to edit in place — nothing to do.
+            None => return,
+        };
+        (ctx, existing, state.config.claude_model.clone(), idx, gloss_id)
     };
 
     state_rc.borrow().gloss_overlay.show_loading();
@@ -922,9 +1101,9 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
             } else {
                 format!("<gloss>Edit context:</gloss>\n\n{}\n\n{}", pasted_owned, verified_text)
             };
-            persist_and_render_gloss(
-                st, &ctx, &full_gloss, &gloss_type_owned, &model_for_db,
-                &format!("GLOSS: edited {} gloss (added new)", gloss_type_owned),
+            update_and_render_gloss_in_place(
+                st, &ctx, gloss_index, gloss_id, &full_gloss, &model_for_db,
+                &format!("GLOSS: edited {} gloss {} in place", gloss_type_owned, gloss_id),
             );
         },
         |st, msg| {

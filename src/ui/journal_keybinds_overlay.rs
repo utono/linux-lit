@@ -21,8 +21,9 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("a", "restart cursor block TTS"),
     ]),
     ("Editing", &[
-        ("A", "ask a new question"),
-        ("E", "edit Q&A"),
+        ("r", "ask a new question"),
+        ("e", "edit Q&A"),
+        ("u", "undo last edit (confirm)"),
         ("D", "delete Q&A"),
         ("c", "copy Q&A id"),
         ("Ctrl+Shift+J", "move Q&A to another band"),
