@@ -336,11 +336,14 @@ pub(crate) fn update_highlight(state: &mut AppState) {
     crate::app::scene_synopsis::update_title_bar_scene(state);
 }
 
-/// Reapply the slate reader-gloss tint to every glossed buffer line EXCEPT the
-/// current cursor line (the cursor-line highlight wins on its own line). Called
-/// at the end of `update_highlight` after the dim and cursor tags are set,
-/// because the dim path repaints `dim_tag` across the whole visible range every
-/// move and would otherwise leave glossed lines un-tinted. Iterates the
+/// Reapply the reader-gloss tints to every glossed buffer line. Off-cursor
+/// glossed lines get the contrast-guarded tint (reader-gloss-line /
+/// theme.reader_gloss). The cursor's own glossed line gets the distinct
+/// on-cursor color (reader-gloss-cursor-line / theme.reader_gloss_cursor) so
+/// it reads differently from both normal body text and the off-cursor tint.
+/// Called at the end of `update_highlight` after the dim and cursor tags are
+/// set, because the dim path repaints `dim_tag` across the whole visible range
+/// every move and would otherwise leave glossed lines un-tinted. Iterates the
 /// `reader_gloss_lines` set directly (a handful of explicitly-glossed lines) so
 /// it is correct in both single- and two-column layouts and still cheap.
 fn repaint_reader_gloss_visible(state: &AppState) {
@@ -349,8 +352,12 @@ fn repaint_reader_gloss_visible(state: &AppState) {
     }
     for &buf_idx in &state.reader_gloss_lines {
         if buf_idx == state.current_line {
+            // Cursor on a glossed line: show the distinct on-cursor color.
             crate::app::remove_reader_gloss_tag_from_line(state, buf_idx);
+            crate::app::apply_reader_gloss_cursor_tag_to_line(state, buf_idx);
         } else {
+            // Off-cursor glossed line: the gloss tint; clear any stale on-cursor color.
+            crate::app::remove_reader_gloss_cursor_tag_from_line(state, buf_idx);
             crate::app::apply_reader_gloss_tag_to_line(state, buf_idx);
         }
     }

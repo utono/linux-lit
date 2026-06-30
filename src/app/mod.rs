@@ -390,6 +390,11 @@ pub struct AppState {
     /// synthesized-TTS block. See `reader_gloss_lines` and
     /// `apply_reader_gloss_highlighting`.
     pub reader_gloss_tag: gtk4::TextTag,
+    /// Foreground tag for a glossed line that is ALSO the cursor block — a
+    /// distinct, contrast-guarded color (theme.reader_gloss_cursor) so it reads
+    /// differently from both body text and the off-cursor gloss tint. Applied by
+    /// `repaint_reader_gloss_visible` on the cursor line.
+    pub reader_gloss_cursor_tag: gtk4::TextTag,
     /// Buffer line indices that fall inside a `reader-gloss` passage for the
     /// current work. Recomputed by `display_work`; used to repaint the slate
     /// tint after the cursor leaves a glossed line (cursor-line wins while on it).
@@ -903,19 +908,28 @@ pub fn build_window(
         .build();
     buffer.tag_table().add(&vocab_tag);
 
-    // Source lines covered by a reader-gloss passage are tinted with the theme's
-    // focused-window border color (dwl `focuscolor`), matching the frame around
-    // the active reader window. Added after the dim/cursor tags so this
-    // foreground wins over the dim foreground on a glossed line; the cursor-line
-    // tag paints a paragraph background (not a foreground), and `update_highlight`
-    // strips this tag from the cursor's own line so the active line reads in the
-    // normal fg. The color is refreshed on theme change in
-    // `input::actions::settings`.
+    // Source lines covered by a reader-gloss passage are tinted with the
+    // contrast-guarded off-cursor gloss color (theme.reader_gloss). Added after
+    // the dim/cursor tags so this foreground wins over the dim foreground on a
+    // glossed line; the cursor-line tag paints a paragraph background (not a
+    // foreground). On the cursor's own line the on-cursor variant
+    // (reader-gloss-cursor-line) is applied instead by
+    // `repaint_reader_gloss_visible`. Both colors are refreshed on theme change
+    // in `input::actions::settings`.
     let reader_gloss_tag = gtk4::TextTag::builder()
         .name("reader-gloss-line")
-        .foreground(&theme.focus_color)
+        .foreground(&theme.reader_gloss)
         .build();
     buffer.tag_table().add(&reader_gloss_tag);
+
+    // The on-cursor glossed tint: same role as reader-gloss-line but a distinct
+    // color, applied while a glossed line is the cursor block. Added after
+    // reader-gloss-line so it outranks it on the cursor's own line.
+    let reader_gloss_cursor_tag = gtk4::TextTag::builder()
+        .name("reader-gloss-cursor-line")
+        .foreground(&theme.reader_gloss_cursor)
+        .build();
+    buffer.tag_table().add(&reader_gloss_cursor_tag);
 
     let word_bold_tag = gtk4::TextTag::builder()
         .name("word-bold")
@@ -1548,6 +1562,7 @@ pub fn build_window(
         vocab_match_idx: None,
         vocab_tag,
         reader_gloss_tag,
+        reader_gloss_cursor_tag,
         reader_gloss_lines: std::collections::HashSet::new(),
         dim_enabled,
         vocab_highlight_visible: false,
@@ -3834,6 +3849,28 @@ pub(crate) fn remove_reader_gloss_tag_from_line(state: &AppState, buf_idx: usize
             end.forward_to_line_end();
         }
         state.buffer.remove_tag(&state.reader_gloss_tag, &start, &end);
+    }
+}
+
+/// Apply the on-cursor glossed tint to a single buffer line.
+pub(crate) fn apply_reader_gloss_cursor_tag_to_line(state: &AppState, buf_idx: usize) {
+    if let Some(start) = state.buffer.iter_at_line(buf_idx as i32) {
+        let mut end = start;
+        if !end.ends_line() {
+            end.forward_to_line_end();
+        }
+        state.buffer.apply_tag(&state.reader_gloss_cursor_tag, &start, &end);
+    }
+}
+
+/// Remove the on-cursor glossed tint from a single buffer line.
+pub(crate) fn remove_reader_gloss_cursor_tag_from_line(state: &AppState, buf_idx: usize) {
+    if let Some(start) = state.buffer.iter_at_line(buf_idx as i32) {
+        let mut end = start;
+        if !end.ends_line() {
+            end.forward_to_line_end();
+        }
+        state.buffer.remove_tag(&state.reader_gloss_cursor_tag, &start, &end);
     }
 }
 
