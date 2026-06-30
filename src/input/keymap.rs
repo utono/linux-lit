@@ -128,6 +128,9 @@ pub fn handle_key(
             // JournalEdit is intercepted at the top of handle_key (before the
             // global guards), so it never reaches this match.
             crate::app::InputMode::JournalEdit => unreachable!("JournalEdit handled before mode dispatch"),
+            // GlossEdit is intercepted at the top of handle_key (before the
+            // global guards), so it never reaches this match.
+            crate::app::InputMode::GlossEdit => unreachable!("GlossEdit handled before mode dispatch"),
             crate::app::InputMode::JournalVisual => handle_journal_visual_key(state, key_state, key_name),
             crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_state, key_name, key_char, is_ctrl, is_alt, is_shift),
             crate::app::InputMode::SynopsisVisual => handle_block_visual_key(state, key_state, key_name, &SYNOPSIS_VISUAL_CFG),
