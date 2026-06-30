@@ -26,6 +26,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ]),
     ("Editing", &[
         ("e", "edit gloss in place (vim)"),
+        ("v … H", "in editor: visual-select, H toggles highlight"),
         (":w / :q / R", "save · quit · ask-Claude rewrite (in editor)"),
         ("u", "undo last edit (confirm)"),
         ("D", "delete current gloss"),

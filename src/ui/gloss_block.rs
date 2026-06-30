@@ -31,7 +31,9 @@ fn is_label_paragraph(p: &str) -> bool {
 /// `<gloss>` per paragraph). `<p>` paragraphs are joined with a blank line so the
 /// text view shows visible paragraph breaks; plain text with no `<p>` tags is
 /// returned trimmed, so legacy single-paragraph synopses keep working.
-pub fn render_synopsis_with_labels(synopsis: &str) -> (String, Vec<(usize, usize)>) {
+pub fn render_synopsis_with_labels(
+    synopsis: &str,
+) -> (String, Vec<(usize, usize)>, Vec<(usize, usize)>) {
     let mut paras: Vec<String> = Vec::new();
     let mut remaining = synopsis;
     while let Some(pos) = remaining.find("<p>") {
@@ -46,26 +48,36 @@ pub fn render_synopsis_with_labels(synopsis: &str) -> (String, Vec<(usize, usize
         }
     }
     if paras.is_empty() {
-        return (synopsis.trim().to_string(), Vec::new());
+        // Plain (untagged) synopsis: still honor inline `<hi>`.
+        let (clean, hi) = strip_hi_spans(synopsis.trim());
+        return (clean, Vec::new(), hi);
     }
     // Join with a blank line, tracking each paragraph's char offset so label
-    // paragraphs can be located precisely in the assembled string.
+    // paragraphs can be located precisely in the assembled string. `<hi>` spans
+    // are stripped per paragraph; their ranges are shifted into the joined string.
     let mut out = String::new();
     let mut labels: Vec<(usize, usize)> = Vec::new();
+    let mut hi_ranges: Vec<(usize, usize)> = Vec::new();
     let mut char_off = 0usize;
     for (i, p) in paras.iter().enumerate() {
         if i > 0 {
             out.push_str("\n\n");
             char_off += 2;
         }
-        let len = p.chars().count();
-        if is_label_paragraph(p) {
+        let (clean, hi) = strip_hi_spans(p);
+        let len = clean.chars().count();
+        // is_label_paragraph reads the CLEAN text (a `<hi>` shouldn't change it,
+        // but strip first to be safe).
+        if is_label_paragraph(&clean) {
             labels.push((char_off, char_off + len));
         }
-        out.push_str(p);
+        for (s, e) in hi {
+            hi_ranges.push((char_off + s, char_off + e));
+        }
+        out.push_str(&clean);
         char_off += len;
     }
-    (out, labels)
+    (out, labels, hi_ranges)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -464,6 +476,62 @@ fn try_extract<'a>(s: &'a str, tag: &str) -> Option<(&'a str, &'a str)> {
     }
 }
 
+/// Strip inline `<hi>…</hi>` highlight tags from `text` for DISPLAY, returning
+/// the clean text plus the half-open CHAR ranges (in the CLEAN text's offsets) of
+/// each highlighted span. Callers insert the clean text into a `TextBuffer` and
+/// apply a background `TextTag` over each returned range (offset by where the
+/// clean text landed). Shared by the gloss, synopsis, and journal render paths so
+/// `<hi>` works uniformly — the tag may appear inside a `<verse>`/`<gloss>` body
+/// or in otherwise-plain synopsis/journal prose. Unbalanced/stray tags are
+/// dropped without recording a range.
+pub(crate) fn strip_hi_spans(text: &str) -> (String, Vec<(usize, usize)>) {
+    const OPEN: &str = "<hi>";
+    const CLOSE: &str = "</hi>";
+    let mut clean = String::new();
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    let mut clean_chars = 0usize; // char count emitted to `clean` so far
+    let mut open_at: Option<usize> = None; // clean-offset where the current <hi> opened
+    let mut rest = text;
+    loop {
+        // Next significant marker: an OPEN or a CLOSE, whichever comes first.
+        let next_open = rest.find(OPEN);
+        let next_close = rest.find(CLOSE);
+        let (pos, is_open) = match (next_open, next_close) {
+            (Some(o), Some(c)) => {
+                if o < c {
+                    (o, true)
+                } else {
+                    (c, false)
+                }
+            }
+            (Some(o), None) => (o, true),
+            (None, Some(c)) => (c, false),
+            (None, None) => {
+                clean.push_str(rest);
+                break;
+            }
+        };
+        // Emit text before the marker.
+        let before = &rest[..pos];
+        clean.push_str(before);
+        clean_chars += before.chars().count();
+        if is_open {
+            if open_at.is_none() {
+                open_at = Some(clean_chars);
+            }
+            rest = &rest[pos + OPEN.len()..];
+        } else {
+            if let Some(start) = open_at.take() {
+                if clean_chars > start {
+                    ranges.push((start, clean_chars));
+                }
+            }
+            rest = &rest[pos + CLOSE.len()..];
+        }
+    }
+    (clean, ranges)
+}
+
 /// Rewrite the `/IPA/` after `word` (whole-word, all occurrences) within ONLY
 /// the source block at `source_index`, operating on the TAGGED `gloss_text`
 /// (each verse line is wrapped in `<verse>…</verse>`). Returns the full updated
@@ -559,6 +627,64 @@ pub(crate) fn replace_word_ipa_in_source_block(
         Some(out)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod hi_tests {
+    use super::*;
+
+    #[test]
+    fn strips_a_single_highlight_and_records_range() {
+        let (clean, ranges) = strip_hi_spans("hello <hi>world</hi>");
+        assert_eq!(clean, "hello world");
+        // "world" starts at char 6, ends at 11
+        assert_eq!(ranges, vec![(6, 11)]);
+    }
+
+    #[test]
+    fn no_tags_yields_text_and_empty_ranges() {
+        let (clean, ranges) = strip_hi_spans("plain text");
+        assert_eq!(clean, "plain text");
+        assert!(ranges.is_empty());
+    }
+
+    #[test]
+    fn multiple_highlights() {
+        let (clean, ranges) = strip_hi_spans("<hi>a</hi> b <hi>c</hi>");
+        assert_eq!(clean, "a b c");
+        assert_eq!(ranges, vec![(0, 1), (4, 5)]);
+    }
+
+    #[test]
+    fn highlight_inside_a_verse_body_keeps_outer_tag() {
+        // strip_hi only touches <hi>; the <verse> tag passes through untouched.
+        let (clean, ranges) = strip_hi_spans("<verse>To <hi>be</hi></verse>");
+        assert_eq!(clean, "<verse>To be</verse>");
+        // "be" is at char offsets 10..12 in the clean string
+        assert_eq!(ranges, vec![(10, 12)]);
+    }
+
+    #[test]
+    fn empty_highlight_records_no_range() {
+        let (clean, ranges) = strip_hi_spans("a<hi></hi>b");
+        assert_eq!(clean, "ab");
+        assert!(ranges.is_empty());
+    }
+
+    #[test]
+    fn stray_close_is_dropped() {
+        let (clean, ranges) = strip_hi_spans("foo</hi>bar");
+        assert_eq!(clean, "foobar");
+        assert!(ranges.is_empty());
+    }
+
+    #[test]
+    fn multibyte_offsets_are_char_based() {
+        // "café" is 4 chars; the highlight after it must use char offsets.
+        let (clean, ranges) = strip_hi_spans("café <hi>au</hi>");
+        assert_eq!(clean, "café au");
+        assert_eq!(ranges, vec![(5, 7)]);
     }
 }
 
@@ -985,7 +1111,7 @@ mod label_tests {
     #[test]
     fn bolds_standalone_label_paragraph() {
         let syn = "<p>Plot stuff here.</p><p>Shakespearean parallels:</p><p>The Court of Chancery is Elsinore.</p>";
-        let (text, labels) = render_synopsis_with_labels(syn);
+        let (text, labels, _hi) = render_synopsis_with_labels(syn);
         assert_eq!(
             text,
             "Plot stuff here.\n\nShakespearean parallels:\n\nThe Court of Chancery is Elsinore."
@@ -1000,13 +1126,13 @@ mod label_tests {
     #[test]
     fn does_not_bold_running_prose() {
         let syn = "<p>The fog descends on London. It is November.</p>";
-        let (_text, labels) = render_synopsis_with_labels(syn);
+        let (_text, labels, _hi) = render_synopsis_with_labels(syn);
         assert!(labels.is_empty());
     }
 
     #[test]
     fn plain_text_synopsis_has_no_labels() {
-        let (text, labels) = render_synopsis_with_labels("Just plain text.");
+        let (text, labels, _hi) = render_synopsis_with_labels("Just plain text.");
         assert_eq!(text, "Just plain text.");
         assert!(labels.is_empty());
     }

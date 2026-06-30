@@ -1205,6 +1205,11 @@ pub fn build_window(
     journal_overlay.attach(&gloss_overlay.overlay);
     journal_overlay.overlay.set_vexpand(true);
 
+    // Thread the `<hi>` highlight background (theme current-line color) into the
+    // overlays so visual-mode highlights render the theme marker color.
+    gloss_overlay.set_highlight_color(&theme.cursor_line_bg);
+    journal_overlay.set_highlight_color(&theme.cursor_line_bg);
+
     // Journal picker overlays the journal overlay (above journal, below translation)
     let journal_picker = JournalQaPicker::new();
     journal_picker.attach(&journal_overlay.overlay);

@@ -49,6 +49,11 @@ pub mod voice_picker;
 /// default monospace — degraded, not broken.
 pub(crate) const EDIT_FONT_FAMILY: &str = "JetBrainsMono Nerd Font";
 
+/// Fallback `<hi>` highlight background, used when the `gloss-hi` tag is created
+/// before the overlay re-asserts the theme color in `apply_font`. A muted amber
+/// that reads as a marker on both light and dark reading backgrounds.
+pub(crate) const DEFAULT_HIGHLIGHT_BG: &str = "#e6c200";
+
 /// The side margin (left and right) for the full-screen gloss / synopsis / ask
 /// cards: a quarter of the *live* card width, which keeps the prose near the
 /// ~65-char readability optimum on a wide (~1660px) card.

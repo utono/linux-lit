@@ -168,6 +168,15 @@ pub struct GlossOverlay {
     vim_seed: RefCell<String>,
     /// Block-cursor (fill, glyph-fg) colors, threaded from the theme on enter.
     vim_cursor_colors: RefCell<(String, String)>,
+    /// `<hi>` highlight background (theme `cursor_line_bg`), re-asserted on the
+    /// `gloss-hi` tag in `apply_font`. Defaults to `DEFAULT_HIGHLIGHT_BG` until
+    /// the app threads the theme color via `set_highlight_color`.
+    highlight_bg: RefCell<String>,
+    /// Char ranges of `<hi>` highlights in the CURRENT synopsis buffer (the
+    /// set_text path doesn't go through `populate_verse_buffer`, so the overlay
+    /// re-applies the `gloss-hi` tag here, like `synopsis_label_ranges`). Empty
+    /// for glosses (those tag during population).
+    hi_ranges: RefCell<Vec<(usize, usize)>>,
     /// Reading font family stashed on edit-enter, restored on exit (mono swap).
     pre_edit_family: RefCell<Option<String>>,
 }
@@ -550,6 +559,8 @@ impl GlossOverlay {
             vim_engine: RefCell::new(None),
             vim_seed: RefCell::new(String::new()),
             vim_cursor_colors: RefCell::new((String::new(), String::new())),
+            highlight_bg: RefCell::new(crate::ui::DEFAULT_HIGHLIGHT_BG.to_string()),
+            hi_ranges: RefCell::new(Vec::new()),
             pre_edit_family: RefCell::new(None),
         }
     }
@@ -582,6 +593,43 @@ impl GlossOverlay {
         // overrides any earlier bold tag. Re-assert the synopsis label bold so
         // it wins (it is added/applied last, hence highest priority).
         self.apply_synopsis_label_bold();
+        // Re-assert the `<hi>` highlight background color (the tag was created at
+        // population time with a default; this paints it the theme color).
+        self.apply_hi_color();
+    }
+
+    /// Set the `<hi>` highlight background (theme `cursor_line_bg`) and re-assert
+    /// it on the existing `gloss-hi` tag. Idempotent; safe before any render.
+    pub fn set_highlight_color(&self, color: &str) {
+        *self.highlight_bg.borrow_mut() = color.to_string();
+        self.apply_hi_color();
+    }
+
+    /// Re-assert the `<hi>` highlight: paint the `gloss-hi` tag the stored theme
+    /// background, and (for the set_text synopsis path) re-apply it over the
+    /// stored `hi_ranges`. The gloss-result path tags during population, so it has
+    /// no ranges here — this only refreshes the color there.
+    fn apply_hi_color(&self) {
+        let buffer = self.gloss_view.buffer();
+        let table = buffer.tag_table();
+        let ranges = self.hi_ranges.borrow();
+        // Ensure the tag exists if we have ranges to paint (synopsis set_text).
+        if table.lookup("gloss-hi").is_none() && !ranges.is_empty() {
+            table.add(
+                &gtk4::TextTag::builder()
+                    .name("gloss-hi")
+                    .background(&*self.highlight_bg.borrow())
+                    .build(),
+            );
+        }
+        if let Some(tag) = table.lookup("gloss-hi") {
+            tag.set_background(Some(&self.highlight_bg.borrow()));
+            for &(s, e) in ranges.iter() {
+                let si = buffer.iter_at_offset(s as i32);
+                let ei = buffer.iter_at_offset(e as i32);
+                buffer.apply_tag(&tag, &si, &ei);
+            }
+        }
     }
 
     /// Set the overlay's font (family + size) and re-apply it. Thin entry point
@@ -934,7 +982,7 @@ impl GlossOverlay {
 
     pub fn show_gloss_with_color(&self, _original: &str, gloss: &str, card_width: i32, card_height: i32, root_color: Option<&str>, source_line_numbers: &[(String, i64)]) {
         // No synopsis label bolding in gloss view.
-        self.synopsis_label_ranges.borrow_mut().clear();
+        self.synopsis_label_ranges.borrow_mut().clear();        self.hi_ranges.borrow_mut().clear();
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         self.last_card_size.set((card_width, card_height));
@@ -1027,7 +1075,7 @@ impl GlossOverlay {
     /// view in place when it arrives, so the passage looks identical before/after.
     pub fn show_glossing(&self, passage_doc: &str, card_width: i32, card_height: i32, root_color: Option<&str>) {
         self.hide_citation();
-        self.synopsis_label_ranges.borrow_mut().clear();
+        self.synopsis_label_ranges.borrow_mut().clear();        self.hi_ranges.borrow_mut().clear();
         self.blocks.borrow_mut().clear();
         self.paginated.set(false);
         self.page_marker.set_visible(false);
@@ -1117,7 +1165,7 @@ impl GlossOverlay {
     ) {
         // No synopsis label bolding in echo view.
         self.hide_citation();
-        self.synopsis_label_ranges.borrow_mut().clear();
+        self.synopsis_label_ranges.borrow_mut().clear();        self.hi_ranges.borrow_mut().clear();
         self.blocks.borrow_mut().clear();
         self.paginated.set(false);
         self.page_marker.set_visible(false);
@@ -1734,10 +1782,12 @@ impl GlossOverlay {
             // Common case: the whole synopsis fits — render it verbatim (labels
             // intact), then re-derive blocks from synopsis_blocks of the source.
             let synopsis = self.current_synopsis.borrow().clone();
-            let (text, label_ranges) = render_synopsis_with_labels(&synopsis);
+            let (text, label_ranges, hi_ranges) = render_synopsis_with_labels(&synopsis);
             buffer.set_text(&text);
             *self.synopsis_label_ranges.borrow_mut() = label_ranges;
+            *self.hi_ranges.borrow_mut() = hi_ranges;
             self.apply_synopsis_label_bold();
+            self.apply_hi_color();
             self.rebuild_block_ranges_from(crate::ui::gloss_block::synopsis_blocks(&synopsis));
         } else {
             // Paginated: render this page's blocks, each preceded by its lead
@@ -1750,6 +1800,7 @@ impl GlossOverlay {
             drop(all);
             let mut body = String::new();
             let mut label_ranges: Vec<(usize, usize)> = Vec::new();
+            let mut hi_ranges: Vec<(usize, usize)> = Vec::new();
             let mut char_off = 0usize; // char offset into `body`
             for b in &slice {
                 for a in &b.attached {
@@ -1770,13 +1821,21 @@ impl GlossOverlay {
                     body.push_str("\n\n");
                     char_off += 2;
                 }
-                let len = b.display.chars().count();
-                body.push_str(&b.display);
+                // `b.display` is IPA-stripped but may still carry `<hi>` tags;
+                // strip them and shift the highlight ranges into `body`.
+                let (clean, hi) = crate::ui::gloss_block::strip_hi_spans(&b.display);
+                let len = clean.chars().count();
+                for (s, e) in hi {
+                    hi_ranges.push((char_off + s, char_off + e));
+                }
+                body.push_str(&clean);
                 char_off += len;
             }
             buffer.set_text(&body);
             *self.synopsis_label_ranges.borrow_mut() = label_ranges;
+            *self.hi_ranges.borrow_mut() = hi_ranges;
             self.apply_synopsis_label_bold();
+            self.apply_hi_color();
             self.rebuild_block_ranges_from(slice);
         }
 
@@ -1855,7 +1914,7 @@ impl GlossOverlay {
         // Glosses do not show verse line numbers (those belong only to the main
         // reading view); clear any the buffer produced.
         self.line_numbers.borrow_mut().clear();
-        self.synopsis_label_ranges.borrow_mut().clear();
+        self.synopsis_label_ranges.borrow_mut().clear();        self.hi_ranges.borrow_mut().clear();
         self.rebuild_block_ranges_from(page_blocks);
 
         // Floating page marker (⌄ more / • end), bottom-center of the viewport.
@@ -2271,7 +2330,7 @@ impl GlossOverlay {
     }
 
     pub fn show_loading_message(&self, message: &str) {
-        self.synopsis_label_ranges.borrow_mut().clear();
+        self.synopsis_label_ranges.borrow_mut().clear();        self.hi_ranges.borrow_mut().clear();
         self.blocks.borrow_mut().clear();
         self.paginated.set(false);
         self.page_marker.set_visible(false);

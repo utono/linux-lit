@@ -80,6 +80,12 @@ pub struct JournalOverlay {
     /// (block-fill, glyph-fg) for the NORMAL-mode block cursor, set on enter from
     /// the theme's cursor colors.
     vim_cursor_colors: RefCell<(String, String)>,
+    /// `<hi>` highlight background (theme `cursor_line_bg`), threaded by the app
+    /// via `set_highlight_color`; defaults to `DEFAULT_HIGHLIGHT_BG`.
+    highlight_bg: RefCell<String>,
+    /// Char ranges of `<hi>` highlights in the CURRENT page body, re-applied on
+    /// the `journal-hi` tag after each `set_text`. Empty when none.
+    hi_ranges: RefCell<Vec<(usize, usize)>>,
 }
 
 /// Split the full Q&A text into paragraph blocks (the pagination unit): maximal
@@ -357,6 +363,8 @@ impl JournalOverlay {
             vim_engine: RefCell::new(None),
             vim_seed: RefCell::new(String::new()),
             vim_cursor_colors: RefCell::new((String::new(), String::new())),
+            highlight_bg: RefCell::new(crate::ui::DEFAULT_HIGHLIGHT_BG.to_string()),
+            hi_ranges: RefCell::new(Vec::new()),
         }
     }
 
@@ -645,6 +653,38 @@ impl JournalOverlay {
             &font_str,
             "journal-font",
         );
+        // Re-assert the `<hi>` highlight after the font tag (so it isn't masked).
+        self.apply_hi_color();
+    }
+
+    /// Set the `<hi>` highlight background (theme `cursor_line_bg`) and re-assert.
+    pub fn set_highlight_color(&self, color: &str) {
+        *self.highlight_bg.borrow_mut() = color.to_string();
+        self.apply_hi_color();
+    }
+
+    /// Re-apply the `journal-hi` highlight tag over the stored `hi_ranges` with
+    /// the theme background. No-op when there are no ranges.
+    fn apply_hi_color(&self) {
+        let buffer = self.view.buffer();
+        let table = buffer.tag_table();
+        let ranges = self.hi_ranges.borrow();
+        if table.lookup("journal-hi").is_none() && !ranges.is_empty() {
+            table.add(
+                &gtk4::TextTag::builder()
+                    .name("journal-hi")
+                    .background(&*self.highlight_bg.borrow())
+                    .build(),
+            );
+        }
+        if let Some(tag) = table.lookup("journal-hi") {
+            tag.set_background(Some(&self.highlight_bg.borrow()));
+            for &(s, e) in ranges.iter() {
+                let si = buffer.iter_at_offset(s as i32);
+                let ei = buffer.iter_at_offset(e as i32);
+                buffer.apply_tag(&tag, &si, &ei);
+            }
+        }
     }
 
     /// Set the floating page marker for the current page: `⌄` when another page
@@ -966,10 +1006,16 @@ impl JournalOverlay {
             return;
         };
         let slice = &paras[page.start..page.end.min(paras.len())];
-        let body = slice.join("\n\n");
+        let raw_body = slice.join("\n\n");
         let page_start = page.start;
         drop(paras);
         drop(pages);
+
+        // Strip inline `<hi>` for display, recording the highlight ranges so the
+        // `journal-hi` background is re-applied after set_text. Blocks are derived
+        // from the CLEAN body so line indices line up with what's shown.
+        let (body, hi_ranges) = crate::ui::gloss_block::strip_hi_spans(&raw_body);
+        *self.hi_ranges.borrow_mut() = hi_ranges;
 
         self.view.buffer().set_text(&body);
         self.apply_font();
