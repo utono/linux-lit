@@ -261,7 +261,22 @@ impl JournalOverlay {
             AskCardHost::new(ask, &scrolled, Some(footer_container.clone()), recompute);
 
         let edit_card = JournalEditCard::new(text_margins as i32, &view);
-        container.append(edit_card.container());
+        // FLOAT the edit card OVER the page-text region (scroll_overlay), not as a
+        // vbox sibling below it. As an overlay child filling the scroll_overlay it
+        // covers the WHOLE Q&A text — top AND bottom — when shown (the user wants
+        // the edit card to overlap all of the page text, matching how it already
+        // spans the full width). A vbox sibling could only ever stack BELOW the
+        // page, leaving the question line + chevron visible above it. The
+        // `.ask-card` background is opaque ({gloss_bg}), so the page text behind is
+        // fully obscured. Hidden during normal reading. Non-measuring so it never
+        // inflates the scroll_overlay's size; clipping so it can't paint outside
+        // the page region. (Mirrors the picker-as-overlay-panel rule — modal
+        // panels float over the card, never join the size-bearing widget chain.)
+        edit_card.container().set_halign(gtk4::Align::Fill);
+        edit_card.container().set_valign(gtk4::Align::Fill);
+        scroll_overlay.add_overlay(edit_card.container());
+        scroll_overlay.set_measure_overlay(edit_card.container(), false);
+        scroll_overlay.set_clip_overlay(edit_card.container(), true);
 
         Self {
             overlay,
@@ -638,22 +653,51 @@ impl JournalOverlay {
         self.edit_card.take()
     }
 
-    /// Open the edit card pre-filled with the current page's Q & A. Hides the
-    /// nav footer (the edit card carries its own hint) and shrinks the scroll so
-    /// the card doesn't occlude the page (mirrors open_ask_card).
+    /// Open the edit card pre-filled with the current page's Q & A. The edit card
+    /// floats OVER the page-text region (see `new`), covering the whole Q&A text
+    /// top-to-bottom; this hides the nav footer (the edit card carries its own
+    /// hint) and pins the Answer field to fill that region (scrolling overflow).
     pub fn open_edit_card(&self, question: &str, answer: &str) {
         let (card_width, _) = self.last_card_size.get();
-        self.edit_card.open(question, answer, card_width);
+        // Inset the edit card's fields to the SAME left/right margin the page
+        // text uses (prose vs verse aware), so the edit card wraps lines exactly
+        // like the journal page.
+        let text_inset = if self.is_prose.get() {
+            crate::ui::prose_column_margin(card_width)
+        } else {
+            crate::ui::card_side_margin(card_width)
+        };
+        self.edit_card.open(question, answer, text_inset);
+        // The edit card floats OVER the page-text region (scroll_overlay), so it
+        // already covers the whole Q&A text — top and bottom — when shown; the
+        // page viewport is NOT shrunk (no strip left above it). Hide only the nav
+        // footer (the edit card carries its own hint). No scroll resize, so no
+        // occlusion/clip recompute is needed for the edit card.
         self.footer_container.set_visible(false);
         self.apply_font();
-        let (_, edit_h) = self.edit_card.container().preferred_size();
-        self.ask_host.open_for_natural_height(edit_h.height());
+        // PIN the Answer field to EXACTLY fill the page region the edit card now
+        // covers. vexpand/min_content_height alone did NOT bound it: the Answer
+        // scroller's natural height grew with the (long) Answer text, so it
+        // rendered all its content with no scroll and spilled over the Instruction
+        // field + hint (the overflow bug). The region the edit card fills is the
+        // page viewport = the closed scroll budget (`page_height()` = card −
+        // scroll_overlay margins − footer). Subtract the edit card's fixed
+        // (Answer-independent) chrome to get the Answer's exact size, so the card's
+        // contents fit the region and a long Answer SCROLLS instead of spilling.
+        // fixed_chrome_height() reads only Answer-independent widgets → race-free
+        // (unlike the whole-container measure that over-counted the just-set
+        // Answer). See docs/troubleshooting/journal-edit-card-sizing.md.
+        let region_h = self.page_height();
+        let answer_h = region_h - self.edit_card.fixed_chrome_height();
+        self.edit_card.pin_answer_height(answer_h);
     }
 
     pub fn close_edit_card(&self) {
+        // The edit card floated over the page region without resizing the scroll,
+        // so closing it just hides the card and restores the nav footer — no
+        // scroll-height restore is needed (nothing was shrunk for it).
         self.edit_card.close();
         self.footer_container.set_visible(true);
-        self.ask_host.close_to_closed_height();
     }
 
     /// The usable viewport height one rendered page may fill — the closed scroll

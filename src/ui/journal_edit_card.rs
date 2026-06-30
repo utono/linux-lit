@@ -18,6 +18,19 @@ pub struct JournalEditCard {
     question: TextView,
     answer: TextView,
     instruction: TextView,
+    /// The Answer field's scroller, kept so `open` can PIN its height to the
+    /// space freed when the card fills the parent (the expanding field).
+    answer_scrolled: ScrolledWindow,
+    /// The card's fixed (Answer-independent) chrome widgets, measured to size the
+    /// Answer field: the title, the Question field vbox, the Instruction field
+    /// vbox, and the hint. Their heights do NOT depend on the (variable-length)
+    /// Answer text, so summing their `preferred_size()` is race-free — unlike
+    /// measuring the whole container after the long Answer was set (the approach
+    /// that raced; see docs/troubleshooting/journal-edit-card-sizing.md).
+    title: Label,
+    question_box: gtk4::Box,
+    instruction_box: gtk4::Box,
+    hint: Label,
     focus: Cell<EditField>,
     /// Per-field "already focused since this open" flags ([Question, Answer,
     /// Instruction]). The FIRST time Tab lands on a field its cursor is moved to
@@ -40,8 +53,13 @@ impl EditField {
 
 /// Build one labeled field: a header label + a scrolled, editable TextView.
 /// `min_h`/`max_h` bound the scroller. Returns (the field's vbox, the view).
-fn build_field(label_text: &str, min_h: i32, max_h: i32) -> (gtk4::Box, TextView) {
+fn build_field(label_text: &str, min_h: i32, max_h: i32, expand: bool) -> (gtk4::Box, TextView, ScrolledWindow) {
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    // An expanding field (the Answer) takes all the spare height the card has,
+    // so a card grown to nearly its parent's height gives that room to editing.
+    if expand {
+        vbox.set_vexpand(true);
+    }
 
     let label = Label::new(Some(label_text));
     label.add_css_class("gloss-header");
@@ -58,6 +76,11 @@ fn build_field(label_text: &str, min_h: i32, max_h: i32) -> (gtk4::Box, TextView
     scrolled.set_margin_end(16);
     scrolled.set_margin_top(4);
     scrolled.set_margin_bottom(4);
+    if expand {
+        // Fill the vexpanded vbox's spare height (max_content_height alone caps
+        // growth; vexpand lets the scroller stretch past it).
+        scrolled.set_vexpand(true);
+    }
 
     let view = TextView::new();
     view.set_editable(true);
@@ -72,7 +95,7 @@ fn build_field(label_text: &str, min_h: i32, max_h: i32) -> (gtk4::Box, TextView
     scrolled.set_child(Some(&view));
     vbox.append(&scrolled);
 
-    (vbox, view)
+    (vbox, view, scrolled)
 }
 
 impl JournalEditCard {
@@ -91,9 +114,9 @@ impl JournalEditCard {
         title.set_margin_top(12);
         container.append(&title);
 
-        let (q_box, question) = build_field("Question", 60, 120);
-        let (a_box, answer) = build_field("Answer", 140, 280);
-        let (i_box, instruction) = build_field("Rewrite instruction (optional)", 50, 100);
+        let (q_box, question, _) = build_field("Question", 60, 120, false);
+        let (a_box, answer, answer_scrolled) = build_field("Answer", 140, 4000, true);
+        let (i_box, instruction, _) = build_field("Rewrite instruction (optional)", 50, 100, false);
         container.append(&q_box);
         container.append(&a_box);
         container.append(&i_box);
@@ -113,6 +136,11 @@ impl JournalEditCard {
             question,
             answer,
             instruction,
+            answer_scrolled,
+            title,
+            question_box: q_box,
+            instruction_box: i_box,
+            hint,
             focus: Cell::new(EditField::Question),
             visited: Cell::new([false; 3]),
             return_focus: return_focus.clone().upcast(),
@@ -128,22 +156,62 @@ impl JournalEditCard {
         [&self.question, &self.answer, &self.instruction]
     }
 
-    /// Reveal the card, pre-fill Question + Answer, clear the instruction,
-    /// re-inset to card_width/4, and focus the Question field.
-    pub fn open(&self, question: &str, answer: &str, card_width: i32) {
+    /// Inner padding each field adds INSIDE the card container, between the
+    /// container edge and the editable text: the scroller margin (16) + the
+    /// TextView's left/right margin (6). `open` subtracts this from the requested
+    /// text inset so the field text lines up with the page text at the same x.
+    const FIELD_INNER_PAD: i32 = 16 + 6;
+
+    /// Reveal the card, pre-fill Question + Answer, clear the instruction, inset
+    /// it so the field text wraps at the SAME width as the journal page text
+    /// (`text_inset` is the page's left/right margin), and focus Question.
+    pub fn open(&self, question: &str, answer: &str, text_inset: i32) {
         self.question.buffer().set_text(question);
         self.answer.buffer().set_text(answer);
         self.instruction.buffer().set_text("");
-        if card_width > 0 {
-            let margin = crate::ui::card_side_margin(card_width);
-            self.container.set_margin_start(margin);
-            self.container.set_margin_end(margin);
-        }
+        // The field text sits FIELD_INNER_PAD inside the container, so set the
+        // container margin to text_inset − that pad: the editable text then starts
+        // at exactly text_inset (matching the page's left margin → same wrap).
+        let margin = (text_inset - Self::FIELD_INNER_PAD).max(0);
+        self.container.set_margin_start(margin);
+        self.container.set_margin_end(margin);
         self.container.set_visible(true);
         // Fresh open: no field has been focused yet, so the first Tab landing on
         // each field will move its cursor to the start.
         self.visited.set([false; 3]);
         self.set_focus(EditField::Question);
+    }
+
+    /// Summed height of the card's FIXED chrome — everything except the Answer
+    /// scroller: the title, the Question field, the Instruction field, the hint,
+    /// and the container's own top+bottom margins. These are all
+    /// Answer-independent, so this is safe to read synchronously right after the
+    /// Answer text is set (the whole-container measurement was NOT — it
+    /// over-counted the just-set tall Answer and raced). The caller subtracts this
+    /// from the height freed below the page strip to get the Answer's exact size.
+    pub fn fixed_chrome_height(&self) -> i32 {
+        let h = |w: &gtk4::Widget| w.preferred_size().1.height();
+        h(self.title.upcast_ref())
+            + h(self.question_box.upcast_ref())
+            + h(self.instruction_box.upcast_ref())
+            + h(self.hint.upcast_ref())
+            + self.container.margin_top()
+            + self.container.margin_bottom()
+    }
+
+    /// PIN the Answer scroller to EXACTLY `h` px (min == max content height), so it
+    /// fills the height freed below the collapsed page viewport AND scrolls any
+    /// overflow. A `max_content_height` cap is the real bound (`vexpand` /
+    /// `min_content_height` alone let the scroller's natural height grow with the
+    /// Answer text, which inflated the `valign:Center` journal container PAST the
+    /// parent card height — the overflow bug). Mirrors `gloss_overlay::size_scroll`
+    /// pinning its visible scroll. Pass a value derived from the parent card
+    /// height minus `fixed_chrome_height()`, never from the Answer's own height.
+    pub fn pin_answer_height(&self, h: i32) {
+        let h = h.max(120);
+        self.answer_scrolled.set_min_content_height(h);
+        self.answer_scrolled.set_max_content_height(h);
+        self.answer_scrolled.queue_resize();
     }
 
     pub fn close(&self) {
