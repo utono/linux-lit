@@ -616,10 +616,11 @@ gloss::read_current_synopsis_block, gloss::synth_all_synopsis_blocks \
 the side panel via app::toggle_synopsis).",
         "synopsis side" => "Toggle the persistent synopsis side panel (distinct \
 from h's transient synopsis overlay). -> app::toggle_synopsis — src/app.rs",
-        "synopsis edit" => "While the synopsis overlay is open (h), press E to open \
-the EDIT card: type an instruction (split/merge paragraphs, reword, reorder) that \
-is sent to Claude to rewrite the current scene synopsis. Ctrl+Enter submits; U \
-reverts. -> synopsis::show_edit_prompt — src/input/actions/synopsis.rs",
+        "synopsis edit (vim)" => "While the synopsis overlay is open (h), press e to \
+edit the scene synopsis IN PLACE in a modal vim editor (raw text, monospace font): \
+motions/edits, :w/:wq save, :q/:q! quit, double-Esc exits. R opens the ask-Claude \
+rewrite card instead. -> synopsis::begin_edit (R -> show_edit_prompt) — \
+src/input/actions/synopsis.rs",
         "col layout" => "Toggle between one-column and two-column (spread) page \
 layout. -> navigation::toggle_column_layout — src/input/navigation.rs",
         "authorship" => "Toggle authorship formatting on/off — visually marks each \
