@@ -292,13 +292,25 @@ pub fn gloss_block_markups(gloss: &str) -> Vec<String> {
     // it carries a body (verse/stage) — matching gloss_blocks' pending_verses.
     let mut pending: Vec<String> = Vec::new();
     let mut pending_has_body = false;
+    // Echo brackets encountered inside a pending source run, deferred until the
+    // run flushes (mirrors gloss_blocks' `continue` — echoes don't split a run).
+    let mut pending_echoes: Vec<String> = Vec::new();
 
-    let flush_source = |markups: &mut Vec<String>, pending: &mut Vec<String>, has_body: &mut bool| {
+    let flush_source = |markups: &mut Vec<String>,
+                        pending: &mut Vec<String>,
+                        has_body: &mut bool,
+                        echoes: &mut Vec<String>| {
         if *has_body {
-            markups.push(pending.join("\n"));
+            let mut markup = pending.join("\n");
+            for echo in echoes.iter() {
+                markup.push('\n');
+                markup.push_str(echo);
+            }
+            markups.push(markup);
         }
         pending.clear();
         *has_body = false;
+        echoes.clear();
     };
 
     for el in parse_gloss_tags(gloss) {
@@ -316,15 +328,51 @@ pub fn gloss_block_markups(gloss: &str) -> Vec<String> {
             }
             GlossElement::Gloss(text) => {
                 if split_echo(&text).is_some() {
-                    continue; // echo bracket: not a cursor stop, belongs to no block
+                    // Echo bracket: not a cursor stop, but RETAIN it by appending
+                    // to the block it trails. If we're inside a pending source run,
+                    // defer the echo so it flushes with that run (mirrors
+                    // gloss_blocks' `continue` — echoes don't split a source run).
+                    // If there's no pending source run, attach to the last markup.
+                    let echo = format!("<gloss>{}</gloss>", text);
+                    if pending_has_body {
+                        pending_echoes.push(echo);
+                    } else {
+                        flush_source(&mut markups, &mut pending, &mut pending_has_body, &mut pending_echoes);
+                        if let Some(last) = markups.last_mut() {
+                            last.push('\n');
+                            last.push_str(&echo);
+                        }
+                        // else: an echo with no preceding block (cannot occur in
+                        // real lit.db) is dropped, matching gloss_blocks — keeps
+                        // markups.len() == gloss_blocks().len() unconditionally.
+                    }
+                    continue;
                 }
-                flush_source(&mut markups, &mut pending, &mut pending_has_body);
-                markups.push(format!("<gloss>{}</gloss>", text));
+                flush_source(&mut markups, &mut pending, &mut pending_has_body, &mut pending_echoes);
+                // Attach any pending echoes that accumulated after the source run
+                // was already flushed (echo after explication, rare).
+                let mut markup = format!("<gloss>{}</gloss>", text);
+                for echo in pending_echoes.iter() {
+                    markup.push('\n');
+                    markup.push_str(echo);
+                }
+                pending_echoes.clear();
+                markups.push(markup);
             }
             GlossElement::Pron(_) => { /* not a cursor stop, belongs to no block */ }
         }
     }
-    flush_source(&mut markups, &mut pending, &mut pending_has_body);
+    flush_source(&mut markups, &mut pending, &mut pending_has_body, &mut pending_echoes);
+    // Attach any remaining echoes to the last markup (echo after last explication).
+    if !pending_echoes.is_empty() {
+        if let Some(last) = markups.last_mut() {
+            for echo in &pending_echoes {
+                last.push('\n');
+                last.push_str(echo);
+            }
+        }
+        pending_echoes.clear();
+    }
     markups
 }
 
@@ -716,8 +764,10 @@ mod block_tests {
         // Block 1 is an Explication; its markup is the <gloss> tag.
         assert_eq!(blocks[1].kind, BlockKind::Explication);
         assert!(markups[1].contains("<gloss>Cranmer opens with cutting irony.</gloss>"));
-        // The echo bracket is excluded (not a cursor stop) in BOTH lists.
-        assert!(!markups.iter().any(|m| m.contains("a quote")));
+        // The echo bracket now RIDES in the preceding block's markup (retained
+        // across page turns) rather than being dropped.
+        assert!(markups.iter().any(|m| m.contains("a quote")),
+            "echo should be retained in a block markup");
     }
 
     #[test]
@@ -746,6 +796,42 @@ mod block_tests {
     }
 
     #[test]
+    fn echo_attaches_to_preceding_block_markup() {
+        let gloss = "<speaker>CRANMER</speaker>\n\
+                     <verse>Ah, my good Lord of Winchester, I thank you.</verse>\n\
+                     <gloss>Cranmer opens with cutting irony.</gloss>\n\
+                     <gloss>[\"a quote\" — Macbeth 1.1]</gloss>";
+        let blocks = gloss_blocks(gloss);
+        let markups = gloss_block_markups(gloss);
+        // Count still 1:1 with cursor-stop blocks (echo is NOT a new entry).
+        assert_eq!(markups.len(), blocks.len());
+        // The echo rides in the LAST block's markup (the explication it trails).
+        assert!(
+            markups.last().unwrap().contains("a quote"),
+            "echo must be appended to the preceding block markup, got {:?}",
+            markups.last()
+        );
+    }
+
+    #[test]
+    fn all_echo_gloss_markups_count_matches_blocks() {
+        // The lit.db echoes-only style: every gloss is an echo trailing its source.
+        // Two speaker/verse pairs separated only by echoes (no non-echo gloss between
+        // them) form ONE source block in gloss_blocks (echoes don't flush the run).
+        // gloss_block_markups must stay 1:1 with that — both echoes ride in m[0].
+        let g = "<speaker>PARIS</speaker>\n<verse>Come you to make confession?</verse>\n\
+                 <gloss>[\"q1\" — Ado 4.1]</gloss>\n\
+                 <speaker>JULIET</speaker>\n<verse>To answer that.</verse>\n\
+                 <gloss>[\"q2\" — Oth 1.1]</gloss>";
+        let blocks = gloss_blocks(g);
+        let m = gloss_block_markups(g);
+        // Count invariant: one markup per cursor-stop block.
+        assert_eq!(m.len(), blocks.len(), "got markups={m:?}, blocks len={}", blocks.len());
+        // Both echoes ride in the single source block's markup.
+        assert!(m[0].contains("q1") && m[0].contains("q2"), "got {m:?}");
+    }
+
+    #[test]
     fn stage_line_stays_in_source_block() {
         // A stage direction between two verses by the same speaker must not split
         // the source block or create an extra cursor stop.
@@ -767,6 +853,15 @@ mod block_tests {
         // And both verses.
         assert!(sources[0].text.contains("Lay hands"));
         assert!(sources[0].text.contains("Beldam"));
+    }
+
+    #[test]
+    fn lone_echo_no_block_keeps_count_invariant() {
+        // A lone echo with no preceding source/explication cannot occur in real
+        // lit.db, but the markup count must still match gloss_blocks (both 0).
+        let g = "<gloss>[\"q\" — Lr 1.1]</gloss>";
+        assert_eq!(gloss_block_markups(g).len(), gloss_blocks(g).len());
+        assert_eq!(gloss_block_markups(g).len(), 0);
     }
 }
 
