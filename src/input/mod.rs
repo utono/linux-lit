@@ -11,4 +11,5 @@ pub mod scroll;
 pub mod search;
 pub mod timestamps;
 pub mod viewport;
+pub mod vim;
 pub mod visual;

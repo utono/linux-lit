@@ -1,4 +1,4 @@
-use crate::ui::ask_card::{AskCard, AskCardHost, AskFocus};
+use crate::ui::ask_card::{AskCard, AskCardHost};
 use crate::ui::gloss_block::{
     gloss_block_markups, gloss_blocks, render_synopsis_with_labels, selected_blocks_text,
     synopsis_blocks, visual_block_range, visual_selection_count, BlockKind, GlossBlock,
@@ -1952,23 +1952,13 @@ impl GlossOverlay {
         snap_up_to_row(target_y, &row_tops, lower, max_value)
     }
 
-    // ---- "Ask about this scene" card -------------------------------------
-
-    /// Reveal the ask card below the synopsis with the canonical heading + hint.
-    pub fn open_ask_card(&self) {
-        self.open_ask_card_with(
-            "ASK ABOUT THIS SCENE",
-            "Ask a question; the synopsis will be expanded to answer it  ·  Tab switch  ·  Ctrl+Enter submit",
-        );
-    }
-
     /// Reveal the stacked input card below the open synopsis/gloss card with the
     /// given heading and footer hint. Shared by the synopsis "ask" flow and the
     /// gloss add/edit prompts. The host shrinks the scroll viewport so the
     /// synopsis/gloss text ends ABOVE the ask card (the occlusion fix) and
     /// recomputes the clip; apply_font re-fonts the now-visible input.
-    pub fn open_ask_card_with(&self, title: &str, hint: &str) {
-        self.ask_host.open(title, hint);
+    pub fn open_ask_card_with(&self, title: &str, hint: &str, block_fill: &str, block_fg: &str) {
+        self.ask_host.open(title, hint, block_fill, block_fg);
         self.apply_font();
     }
 
@@ -1983,17 +1973,16 @@ impl GlossOverlay {
         self.ask_host.take_text()
     }
 
-    /// Flip focus between the synopsis and the ask card. No-op if closed.
-    pub fn toggle_ask_focus(&self) {
-        self.ask_host.toggle_focus();
+    /// Feed a key to the ask card's vim engine (the prompt is a modal editor).
+    pub fn feed_ask_vim_key(
+        &self,
+        key: crate::input::vim::VimKey,
+    ) -> crate::input::vim::EditorAction {
+        self.ask_host.feed_vim_key(key)
     }
 
     pub fn ask_is_open(&self) -> bool {
         self.ask_host.is_open()
-    }
-
-    pub fn ask_focus(&self) -> AskFocus {
-        self.ask_host.focus()
     }
 
     pub fn show_loading(&self) {

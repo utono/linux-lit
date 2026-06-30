@@ -57,8 +57,8 @@ const UPPER_ROW: &[KeyDef] = &[
     key("f", "F", "next font", "F: prev font", &[("M-f", "font info")]),
     key("g", "G", "", "", &[("C-g", "gloss tog"), ("S-C-g", "last gloss"), ("M-g", "gloss pick"), ("M-g", "gloss from jrnl"), ("C-g", "view gloss")]),
     key("c", "C", "toggle ch start", "C: show chapter", &[("C-c", "set track mark")]),
-    key("r", "R", "next conc", "R: prev conc", &[("C-r", "next vocab"), ("S-C-r", "prev vocab"), ("M-r", "conc works"), ("r", "verse audio: play/stop"), ("R", "verse audio: pick voice")]),
-    key("l", "L", "toggle signs", "", &[("S-C-l", "save+quit")]),
+    key("r", "R", "next conc", "R: prev conc", &[("C-r", "next vocab"), ("S-C-r", "prev vocab"), ("M-r", "conc works")]),
+    key("l", "L", "toggle signs", "", &[("S-C-l", "save+quit"), ("l", "verse audio: play/stop"), ("L", "verse audio: pick voice")]),
     key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
     ub("@", "^"),
     key("\\", "#", "gloss tog", "◀ vocab", &[("C-\\", "conc picker"), ("M-\\", "vocab hi")]),
@@ -68,7 +68,7 @@ const TAB_KEY: KeyDef = bare("Tab", "", "play from ts");
 const HOME_ROW: &[KeyDef] = &[
     key("a", "A", "play/pause", "", &[("C-a", "authorship"), ("S-C-a", "attr set")]),
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
-    key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echoes"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echo turns"), ("E", "synopsis edit")]),
+    key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echoes"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echo turns"), ("e", "synopsis edit")]),
     key("u", "U", "start time", "U: undo ts", &[("M-u", "set end time")]),
     key("i", "I", "2-col translation", "", &[("M-i", "scansion"), ("C-M-i", "inline translation"), ("C-i", "page image"), ("S-C-i", "calibrate pages")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
@@ -83,7 +83,7 @@ const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 const BOTTOM_ROW: &[KeyDef] = &[
     bare("'", "\"", "reopen BCP echoes"),
     key("q", "Q", "next speaker", "Q: next dlg", &[]),
-    key("j", "J", "cursor \u{2193}", "J: next speaker", &[("C-j", "journal tog"), ("M-j", "jrnl Q&A picker"), ("J", "jrnl from gloss"), ("C-j", "view jrnl"), ("C-S-j", "move jrnl band")]),
+    key("j", "J", "cursor \u{2193}", "J: next speaker", &[("C-j", "journal tog"), ("M-j", "jrnl Q&A picker"), ("r", "jrnl from gloss"), ("C-j", "view jrnl"), ("C-S-j", "move jrnl band")]),
     key("k", "K", "cursor \u{2191}", "K: prev speaker", &[]),
     bare("x", "X", "pg fwd"),
     bare("b", "B", ""),
@@ -357,12 +357,14 @@ handle_gloss_picker_key in src/input/keymap.rs)",
 The journal is a per-work notebook: each scene holds zero or more \u{201c}pages,\u{201d} \
 where a page is one question you asked and the answer Claude gave. It opens on the \
 scene under the reading cursor; if that scene has no pages yet it shows an empty \
-card prompting you to press A to ask. Inside the overlay: A asks a new question \
+card prompting you to press r to ask. Inside the overlay: r asks a new question \
 (Claude answers, drawing on its knowledge of the whole work, in the work\u{2019}s own \
-genre \u{2014} novel/chapter, play/scene, epic/book, etc.), E opens an edit \
-card (Question + Answer pre-filled, plus a rewrite-instruction field): Ctrl+Enter \
-saves your hand-edits straight to lit.db, Alt+Enter sends the Q&A + instruction \
-to Claude and saves the revised answer. D deletes the current page, j/k (or q/comma, \
+genre \u{2014} novel/chapter, play/scene, epic/book, etc.), e opens an edit \
+card (Question + Answer pre-filled, plus an optional rewrite-instruction field): \
+Ctrl+Enter submits \u{2014} with an instruction it sends the Q&A + instruction to \
+Claude and saves the revised answer, with the field empty it saves your hand-edits \
+straight to lit.db (no Claude); u undoes the last edit after a y/Esc confirm. \
+D deletes the current page, j/k (or q/comma, \
 matching the reading card) move the paragraph cursor (the left accent bar) between \
 blocks and gg/G jump to the first/last block; Space \
 (or Tab) plays/stops the cursor paragraph\u{2019}s TTS (synthesizing a plain-prose ElevenLabs \
@@ -393,13 +395,13 @@ there is none recorded, or the remembered passage was deleted or no longer \
 resolves. \
 -> gloss::open_last_gloss — src/input/actions/gloss.rs",
         // ── Gloss ↔ journal cross-view (Task 7) ──
-        "jrnl from gloss" => "While the gloss overlay is open (J = Shift+j): create a \
+        "jrnl from gloss" => "While the gloss overlay is open (r): create a \
 journal Q&A page for the gloss\u{2019}s current source passage. Closes the gloss overlay, \
 opens the journal overlay in the Passage band, and presents the ask card so you can \
 pose a question. Uses the same passage markup (speaker/verse/stage) the journal \
 passage renderer displays. \
 -> journal::begin_passage_ask — src/input/actions/journal.rs \
-(handler: handle_gloss_key \u{2018}J\u{2019} arm \u{2014} src/input/keymap.rs)",
+(handler: handle_gloss_key \u{2018}r\u{2019} arm \u{2014} src/input/keymap.rs)",
         "gloss from jrnl" => "While the journal overlay is open on a passage page (Alt+g): \
 create (or show cached) a reader-gloss for the passage cited by the current journal page. \
 If the passage already has a reader-gloss it opens instantly; otherwise calls Claude and \
@@ -605,8 +607,9 @@ first/last, like the gloss overlay; Space (or Tab) plays/stops the cursor paragr
 cached ElevenLabs MP3s (cache only, no playback), showing a \u{201c}Synthesizing\u{2026}\u{201d} \
 toast. Ctrl+p / Ctrl+n step to the previous / next scene's synopsis, clamping at \
 the ends (no wraparound); a whole-work synopsis sorts first (before Act 1), so \
-from Act 1 Scene 1, Ctrl+p shows the whole-work overview. A amends and E edits the \
-current synopsis (including the whole-work one); U undoes the last amend. \
+from Act 1 Scene 1, Ctrl+p shows the whole-work overview. e edits the \
+current synopsis in place (no new row); u undoes the last edit after a y/Esc \
+confirm; r opens a journal Q&A for the displayed scene/chapter. \
 -> app::show_synopsis_overlay — src/app.rs; \
 gloss::read_current_synopsis_block, gloss::synth_all_synopsis_blocks \
 — src/input/actions/gloss.rs (Ctrl+h toggles \

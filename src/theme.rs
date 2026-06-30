@@ -629,11 +629,11 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
            color: {dim}; padding-top: 8px; \
            border-top: 1px solid {dim}; }} \
          .gloss-position {{ font-size: 14px; color: {dim}; }} \
-         .ask-card {{ background-color: {gloss_bg}; border-radius: 10px; \
+         .ask-card {{ background-color: alpha({gloss_bg}, 0.82); border-radius: 10px; \
            border: 1px solid {header_border}; transition: opacity 120ms ease; }} \
          .ask-card .gloss-header {{ margin-top: 0; }} \
-         textview.ask-input {{ background-color: {gloss_bg}; color: {fg}; }} \
-         textview.ask-input text {{ background-color: {gloss_bg}; }} \
+         textview.ask-input {{ background-color: transparent; color: {fg}; }} \
+         textview.ask-input text {{ background-color: transparent; }} \
          .ask-hint {{ font-size: 13px; color: {dim}; }} \
          .ask-card.card-focused {{ border-color: {cursor_bg}; \
            border-left: 4px solid {cursor_bg}; \

@@ -31,24 +31,6 @@ Break paragraphs at natural shifts in the scene (a new entrance, a turn in the \
 action, a change of subject). If the input synopsis already had <p> tags, keep a \
 similar paragraph structure. Output ONLY the <p>-tagged paragraphs, nothing else.";
 
-/// Open the stacked "ask" card below the synopsis card. The synopsis card
-/// shrinks to make room and `Tab` toggles focus between the two; the input
-/// receives typed characters while it holds focus. No-op if already open.
-pub(crate) fn show_amend_prompt(state_rc: &Rc<RefCell<AppState>>) {
-    let s = state_rc.borrow();
-    if s.gloss_overlay.ask_is_open() {
-        return;
-    }
-    // Amend the scene currently displayed in the overlay (which n/p may have
-    // moved away from the cursor's scene).
-    let scene = s.synopsis_overlay_scene;
-    s.gloss_overlay.open_ask_card();
-    drop(s);
-    let mut s = state_rc.borrow_mut();
-    s.synopsis_amend_scene = scene;
-    s.synopsis_prompt_kind = crate::app::SynopsisPromptKind::Ask;
-}
-
 /// Open the stacked "edit" card below the synopsis card (same widget as the ask
 /// card, edit framing). On Ctrl+Enter the typed instruction is sent to Claude
 /// with the structural-editor prompt. No-op if a card is already open.
@@ -59,8 +41,10 @@ pub(crate) fn show_edit_prompt(state_rc: &Rc<RefCell<AppState>>) {
     }
     let scene = s.synopsis_overlay_scene;
     s.gloss_overlay.open_ask_card_with(
-        "EDIT THIS SCENE",
-        "Describe the edit (split/merge paragraphs, reword, reorder)  \u{00b7}  Tab switch  \u{00b7}  Ctrl+Enter submit",
+        "Edit this scene",
+        "Describe the edit (split/merge paragraphs, reword, reorder)  \u{00b7}  Ctrl+Enter submit",
+        &s.theme.cursor_bg,
+        &s.theme.cursor_fg,
     );
     drop(s);
     let mut s = state_rc.borrow_mut();

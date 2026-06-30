@@ -19,9 +19,11 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Shift+Space", "synthesize all paragraphs"),
     ]),
     ("Editing", &[
-        ("A", "ask (amend the synopsis)"),
-        ("E", "edit synopsis"),
-        ("U", "undo last amend"),
+        ("e", "edit synopsis"),
+        ("u", "undo last edit (confirm)"),
+    ]),
+    ("Journal", &[
+        ("r", "new journal Q&A for scene"),
         ("Alt+g", "work glosses"),
     ]),
     ("View", &[

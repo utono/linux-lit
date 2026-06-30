@@ -37,12 +37,21 @@ pub fn handle_key(
     state: &Rc<RefCell<AppState>>,
     key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
+    key_char: Option<char>,
     is_ctrl: bool,
     is_shift: bool,
     is_alt: bool,
     tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
     crate::logging::log(&format!("KEY: name={} ctrl={} shift={} alt={}", key_name, is_ctrl, is_shift, is_alt));
+
+    // Journal vim-edit mode owns ALL keys (including space, which Insert mode must
+    // type literally), so route it BEFORE the global space / play-pause guards.
+    // The emergency Shift+Ctrl+L quit above still wins. handle_journal_edit_key
+    // translates the GTK key (+ key_char for printables) into a VimKey.
+    if state.borrow().input_mode == crate::app::InputMode::JournalEdit {
+        return handle_journal_edit_key(state, key_name, key_char, is_ctrl, is_shift, tokio_handle);
+    }
 
     // Shift+Ctrl+L: quit from any mode. GTK delivers the shifted letter as the
     // uppercase name "L" (with shift=true), so match that; also accept "l" for
@@ -113,14 +122,18 @@ pub fn handle_key(
             crate::app::InputMode::Settings => handle_settings_key(state, key_name, is_ctrl),
             crate::app::InputMode::VoicePicker => handle_voice_picker_key(state, key_name, is_ctrl),
             crate::app::InputMode::Search => handle_search_key(state, key_name),
-            crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_shift, is_alt, tokio_handle),
+            crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, key_char, is_ctrl, is_shift, is_alt, tokio_handle),
             crate::app::InputMode::GlossVisual => handle_block_visual_key(state, key_state, key_name, &GLOSS_VISUAL_CFG),
-            crate::app::InputMode::JournalOverlay => handle_journal_key(state, key_state, key_name, is_ctrl, is_alt),
+            crate::app::InputMode::JournalOverlay => handle_journal_key(state, key_state, key_name, key_char, is_ctrl, is_alt),
+            // JournalEdit is intercepted at the top of handle_key (before the
+            // global guards), so it never reaches this match.
+            crate::app::InputMode::JournalEdit => unreachable!("JournalEdit handled before mode dispatch"),
             crate::app::InputMode::JournalVisual => handle_journal_visual_key(state, key_state, key_name),
-            crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_state, key_name, is_ctrl, is_alt, is_shift),
+            crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_state, key_name, key_char, is_ctrl, is_alt, is_shift),
             crate::app::InputMode::SynopsisVisual => handle_block_visual_key(state, key_state, key_name, &SYNOPSIS_VISUAL_CFG),
             crate::app::InputMode::TranslationOverlay => handle_translation_overlay_key(state, key_name),
             crate::app::InputMode::DeleteConfirm => handle_delete_confirm_key(state, key_name),
+            crate::app::InputMode::UndoConfirm => handle_undo_confirm_key(state, key_name),
             crate::app::InputMode::EchoPicker => handle_echo_picker_key(state, key_name, tokio_handle),
             crate::app::InputMode::EchoTurnsPicker => handle_echo_turns_picker_key(state, key_name, tokio_handle),
             crate::app::InputMode::EchoesOverlay => handle_echoes_overlay_key(state, key_state, key_name, is_ctrl, tokio_handle),
@@ -639,102 +652,189 @@ fn handle_search_key(
 
 /// Outcome of the shared ask-card key intercept.
 enum AskIntercept {
-    /// The helper consumed the key (Tab / Ctrl+Enter / Esc-while-open) — the
-    /// calling handler must `return true`.
+    /// The helper consumed the key — the calling handler must `return true`.
     Consumed,
-    /// The ask card holds focus and the key is a plain character — the calling
-    /// handler must `return false` so GTK delivers it to the editable input.
-    FallThrough,
-    /// Not an ask-card key, or the card is closed — the calling handler
-    /// continues its own routing.
+    /// The card is closed — the calling handler continues its own routing.
     NotHandled,
 }
 
-/// Intercept the ask-card chord keys when `ask_open`. `toggle` / `submit` /
-/// `close` are the calling overlay's own actions. Esc-when-closed is
-/// intentionally NOT handled here; the helper returns `NotHandled` so the
-/// caller's existing overlay-close path runs unchanged.
+/// Route a key to an OPEN ask card that is a vim editor (the prompt input is
+/// modal: NORMAL by default, `i`/`a` to type). `feed` drives the overlay's ask
+/// engine; `submit`/`close` are the overlay's actions. Submit = `:w`/`:wq` (via
+/// the engine action) OR Ctrl+Enter; close = double-Esc OR `:q`/`:q!`; a single
+/// Esc goes to the engine (→ Normal mode). Returns `Consumed` while the card is
+/// open (vim owns every key), else `NotHandled`.
 #[allow(clippy::too_many_arguments)]
-fn ask_card_intercept(
+fn ask_vim_intercept(
     ask_open: bool,
-    ask_focus: crate::ui::ask_card::AskFocus,
     key_name: &str,
+    key_char: Option<char>,
     is_ctrl: bool,
     state: &Rc<RefCell<AppState>>,
-    toggle: impl Fn(&Rc<RefCell<AppState>>),
+    feed: impl Fn(&Rc<RefCell<AppState>>, crate::input::vim::VimKey) -> crate::input::vim::EditorAction,
     submit: impl Fn(&Rc<RefCell<AppState>>),
     close: impl Fn(&Rc<RefCell<AppState>>),
 ) -> AskIntercept {
-    use crate::ui::ask_card::AskFocus;
+    use crate::input::vim::{EditorAction, VimKey};
     if !ask_open {
         return AskIntercept::NotHandled;
     }
-    if key_name == "Tab" || key_name == "ISO_Left_Tab" {
-        toggle(state);
+    // Esc: single → Normal mode (engine); double (quick) → close the prompt.
+    if key_name == "Escape" && !is_ctrl {
+        if is_double_esc() {
+            close(state);
+        } else {
+            feed(state, VimKey::Esc);
+        }
         return AskIntercept::Consumed;
     }
+    // Ctrl+Enter is an always-available submit (in addition to `:w`).
     if is_ctrl && key_name == "Return" {
         submit(state);
         return AskIntercept::Consumed;
     }
-    if key_name == "Escape" {
-        close(state);
-        return AskIntercept::Consumed;
+    if let Some(vk) = gtk_key_to_vim(key_name, key_char, is_ctrl) {
+        match feed(state, vk) {
+            EditorAction::Save | EditorAction::SaveQuit => submit(state),
+            EditorAction::Cancel | EditorAction::CancelForce => close(state),
+            _ => {}
+        }
     }
-    if ask_focus == AskFocus::Ask {
-        return AskIntercept::FallThrough;
+    // The prompt is a vim editor: consume EVERY key while it is open.
+    AskIntercept::Consumed
+}
+
+thread_local! {
+    /// Timestamp of the last Escape press in a vim editor (the journal page
+    /// editor OR an ask-card prompt), for the double-Esc-to-exit gesture. A
+    /// single Esc goes to vim Normal mode; two in quick succession (< DOUBLE_ESC_MS)
+    /// exit/close. Shared by both vim surfaces (only one is active at a time).
+    static LAST_EDIT_ESC: std::cell::Cell<Option<std::time::Instant>> =
+        const { std::cell::Cell::new(None) };
+}
+const DOUBLE_ESC_MS: u128 = 400;
+
+/// True when this Esc press is the SECOND within `DOUBLE_ESC_MS` of the last one
+/// (and resets the timer on a double). Used for the double-Esc exit gesture.
+fn is_double_esc() -> bool {
+    let now = std::time::Instant::now();
+    let double = LAST_EDIT_ESC.with(|c| {
+        let prev = c.get();
+        c.set(Some(now));
+        prev.is_some_and(|p| now.duration_since(p).as_millis() < DOUBLE_ESC_MS)
+    });
+    if double {
+        LAST_EDIT_ESC.with(|c| c.set(None));
     }
-    AskIntercept::NotHandled
+    double
+}
+
+/// Translate a GTK key (name + the printable `key_char` + ctrl) into a `VimKey`
+/// for a vim surface. `None` = not editor input (swallow). Esc is handled by the
+/// caller (double-Esc timing), so it is NOT mapped here.
+fn gtk_key_to_vim(
+    key_name: &str,
+    key_char: Option<char>,
+    is_ctrl: bool,
+) -> Option<crate::input::vim::VimKey> {
+    use crate::input::vim::VimKey;
+    match key_name {
+        "Return" | "KP_Enter" => Some(VimKey::Enter),
+        "BackSpace" => Some(VimKey::Backspace),
+        "Tab" | "ISO_Left_Tab" => Some(VimKey::Tab),
+        "r" | "R" if is_ctrl => Some(VimKey::CtrlR),
+        _ => {
+            if is_ctrl {
+                None
+            } else {
+                key_char.filter(|c| !c.is_control()).map(VimKey::Char)
+            }
+        }
+    }
+}
+
+/// The journal in-place vim editor's key handler (InputMode::JournalEdit).
+/// Translates the GTK key (+ `key_char` for printables) into a `VimKey`, feeds
+/// it to the engine via the overlay, and acts on the returned `EditorAction`.
+fn handle_journal_edit_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+    key_char: Option<char>,
+    is_ctrl: bool,
+    _is_shift: bool,
+    tokio_handle: &tokio::runtime::Handle,
+) -> bool {
+    use crate::input::vim::{EditorAction, VimKey};
+
+    // Esc: a SINGLE Esc returns to vim Normal mode (handled by the engine); TWO
+    // in quick succession EXIT the editor. Timing lives here, not in the pure
+    // engine (which has no clock).
+    if key_name == "Escape" && !is_ctrl {
+        if is_double_esc() {
+            crate::input::actions::journal::vim_cancel(state, false);
+            return true;
+        }
+        let _ = state.borrow().journal_overlay.feed_edit_key(VimKey::Esc);
+        return true;
+    }
+
+    let Some(vk) = gtk_key_to_vim(key_name, key_char, is_ctrl) else {
+        // Swallow unmapped keys so they don't leak to other handlers while editing.
+        return true;
+    };
+
+    let action = state.borrow().journal_overlay.feed_edit_key(vk);
+    crate::logging::log(&format!("JOURNAL-EDIT: key={:?} -> action={:?}", vk, action));
+    match action {
+        EditorAction::Nop => true,
+        EditorAction::Save => {
+            crate::input::actions::journal::vim_save(state, false);
+            true
+        }
+        EditorAction::SaveQuit => {
+            crate::input::actions::journal::vim_save(state, true);
+            true
+        }
+        EditorAction::Cancel => {
+            crate::input::actions::journal::vim_cancel(state, false);
+            true
+        }
+        EditorAction::CancelForce => {
+            crate::input::actions::journal::vim_cancel(state, true);
+            true
+        }
+        EditorAction::OpenRewrite => {
+            crate::input::actions::journal::vim_open_rewrite(state, tokio_handle);
+            true
+        }
+    }
 }
 
 fn handle_journal_key(
     state: &Rc<RefCell<AppState>>,
     key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
+    key_char: Option<char>,
     is_ctrl: bool,
     is_alt: bool,
 ) -> bool {
-    // ---- Edit card (E) intercepts Tab / Ctrl+Enter / Alt+Enter / Escape ----
-    if state.borrow().journal_overlay.edit_is_open() {
-        match key_name {
-            "Tab" | "ISO_Left_Tab" => {
-                state.borrow().journal_overlay.toggle_edit_focus();
-                return true;
-            }
-            "Return" if is_ctrl => {
-                crate::input::actions::journal::submit_edit_save(state);
-                return true;
-            }
-            "Return" if is_alt => {
-                crate::input::actions::journal::submit_edit_rewrite(state);
-                return true;
-            }
-            "Escape" => {
-                state.borrow().journal_overlay.close_edit_card();
-                return true;
-            }
-            // Any other key: let it fall through to the focused editable field.
-            _ => return false,
-        }
-    }
+    // The `e` editor is an in-place vim mode (InputMode::JournalEdit, handled at
+    // the top of handle_key). The ask card (the `r` create + `R` rewrite prompts)
+    // is itself a vim editor, intercepted here.
 
-    // ---- Ask/edit input card intercepts Tab / Ctrl+Enter / Escape first ----
-    let (ask_open, ask_focus) = {
-        let s = state.borrow();
-        (s.journal_overlay.ask_is_open(), s.journal_overlay.ask_focus())
-    };
-    match ask_card_intercept(
+    // ---- Ask input card (a vim editor) intercepts all keys while open ----
+    let ask_open = state.borrow().journal_overlay.ask_is_open();
+    match ask_vim_intercept(
         ask_open,
-        ask_focus,
         key_name,
+        key_char,
         is_ctrl,
         state,
-        |st| st.borrow().journal_overlay.toggle_ask_focus(),
+        |st, k| st.borrow().journal_overlay.feed_ask_vim_key(k),
         crate::input::actions::journal::submit_prompt,
         crate::input::actions::journal::close_prompt,
     ) {
         AskIntercept::Consumed => return true,
-        AskIntercept::FallThrough => return false,
         AskIntercept::NotHandled => {}
     }
 
@@ -817,17 +917,23 @@ fn handle_journal_key(
     }
 
     match key_name {
-        // `A` (uppercase) opens the ask card, matching the gloss/synopsis
-        // overlays where uppercase `A` is the ask/amend feature.
-        // Ask/edit/delete are uppercase (A/E/D) across all overlays with an
-        // ask feature, so the destructive/editing keys are shift-guarded and
-        // consistent. Lowercase letters stay free for navigation.
-        "A" => {
+        // `r` opens the ask card to create a new Q&A in the current band,
+        // matching the gloss + synopsis overlays where `r` opens a journal Q&A.
+        // (Moved from A to r across all three overlays.)
+        "r" => {
             crate::input::actions::journal::begin_ask(state);
             true
         }
-        "E" => {
+        "e" => {
             crate::input::actions::journal::begin_edit(state);
+            true
+        }
+        // u: undo the last `e` edit (single-level), behind a y/Esc confirmation.
+        "u" => {
+            crate::input::actions::gloss::show_undo_confirmation(
+                state,
+                crate::app::InputMode::JournalOverlay,
+            );
             true
         }
         "D" => {
@@ -900,31 +1006,27 @@ fn handle_gloss_key(
     state: &Rc<RefCell<AppState>>,
     key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
+    key_char: Option<char>,
     is_ctrl: bool,
     is_shift: bool,
     is_alt: bool,
     tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
-    // ---- Stacked add/edit input card (A / E) ------------------------------
-    // When open it behaves like the synopsis ask card: Tab toggles focus,
-    // Ctrl+Enter submits, Esc closes the card; typed characters fall through to
-    // the editable input while it holds focus. Handled before gloss nav keys.
-    let (ask_open, ask_focus) = {
-        let s = state.borrow();
-        (s.gloss_overlay.ask_is_open(), s.gloss_overlay.ask_focus())
-    };
-    match ask_card_intercept(
+    // ---- Stacked add/edit input card (a vim editor) -----------------------
+    // The prompt is modal vim: NORMAL by default, `i`/`a` to type; `:w`/Ctrl+Enter
+    // submits; double-Esc / `:q` closes. Handled before gloss nav keys.
+    let ask_open = state.borrow().gloss_overlay.ask_is_open();
+    match ask_vim_intercept(
         ask_open,
-        ask_focus,
         key_name,
+        key_char,
         is_ctrl,
         state,
-        |st| st.borrow().gloss_overlay.toggle_ask_focus(),
+        |st, k| st.borrow().gloss_overlay.feed_ask_vim_key(k),
         crate::input::actions::gloss::submit_gloss_prompt,
         crate::input::actions::gloss::close_gloss_prompt,
     ) {
         AskIntercept::Consumed => return true,
-        AskIntercept::FallThrough => return false,
         AskIntercept::NotHandled => {}
     }
 
@@ -1037,10 +1139,6 @@ fn handle_gloss_key(
             crate::input::actions::gloss::begin_current_block(state);
             true
         }
-        "A" => {
-            crate::input::actions::gloss::show_amend_dialog(state);
-            true
-        }
         "c" => {
             crate::input::actions::gloss::copy_gloss_id(state);
             true
@@ -1049,8 +1147,16 @@ fn handle_gloss_key(
             crate::input::actions::gloss::show_delete_confirmation(state);
             true
         }
-        "E" => {
+        "e" => {
             crate::input::actions::gloss::show_edit_dialog(state);
+            true
+        }
+        // u: undo the last `e` edit (single-level), behind a y/Esc confirmation.
+        "u" => {
+            crate::input::actions::gloss::show_undo_confirmation(
+                state,
+                crate::app::InputMode::GlossOverlay,
+            );
             true
         }
         "g" => {
@@ -1147,13 +1253,16 @@ fn handle_gloss_key(
             }
             true
         }
-        // J (Shift+j): create a journal Q&A page for the gloss's current
-        // source passage. Reads gloss_context for citations/speaker, resolves
-        // the line range from current_work, and builds <speaker>/<verse>/<stage>
-        // markup via build_source_header — the same markup the journal overlay
-        // feeds to populate_verse_buffer. Plain ctx.source_text is NOT used as
-        // source_text (it lacks verse/stage tags and renders without formatting).
-        "J" => {
+        // r: create a journal Q&A page for the gloss's current source passage.
+        // Reads gloss_context for citations/speaker, resolves the line range from
+        // current_work, and builds <speaker>/<verse>/<stage> markup via
+        // build_source_header — the same markup the journal overlay feeds to
+        // populate_verse_buffer. Plain ctx.source_text is NOT used as source_text
+        // (it lacks verse/stage tags and renders without formatting). (Moved from
+        // A to r; the source-TTS play/stop that was on r moved to l/L. The gloss
+        // overlay now only EDITS the current gloss (E) or deletes it (D) — it no
+        // longer adds a second gloss to the passage.)
+        "r" => {
             // Collect what we need from gloss_context before dropping the borrow.
             // Build the <speaker>/<verse>/<stage> markup here while we still hold
             // the borrow that gives access to ctx and current_work.
@@ -1225,15 +1334,17 @@ fn handle_gloss_key(
             );
             true
         }
-        "r" => {
+        "l" => {
             // Source verse only: play/stop the synthesized MP3 in the active /
-            // default voice (pauses MPV first). No picker.
+            // default voice (pauses MPV first). No picker. (Moved off `r`, which
+            // now opens a journal Q&A for the passage.)
             crate::input::actions::gloss::toggle_source_tts(state);
             true
         }
-        "R" => {
+        "L" => {
             // Source verse only: open the voice picker for the synthesized
             // reading (the only picker key); confirm sets active voice + plays.
+            // (Moved off `R` when `r` was repurposed for the journal Q&A.)
             crate::input::actions::gloss::pick_source_voice(state);
             true
         }
@@ -1334,29 +1445,26 @@ fn handle_synopsis_overlay_key(
     state: &Rc<RefCell<AppState>>,
     key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
+    key_char: Option<char>,
     is_ctrl: bool,
     is_alt: bool,
     is_shift: bool,
 ) -> bool {
-    let (ask_open, ask_focus) = {
-        let s = state.borrow();
-        (s.gloss_overlay.ask_is_open(), s.gloss_overlay.ask_focus())
-    };
+    let ask_open = state.borrow().gloss_overlay.ask_is_open();
 
-    // Open-card chord keys go through the shared helper (Tab toggles focus,
-    // Ctrl+Enter submits, Esc closes the card, Ask-focus falls through).
-    match ask_card_intercept(
+    // The edit prompt is modal vim (NORMAL by default, `i`/`a` to type; `:w`/
+    // Ctrl+Enter submits; double-Esc / `:q` closes).
+    match ask_vim_intercept(
         ask_open,
-        ask_focus,
         key_name,
+        key_char,
         is_ctrl,
         state,
-        |st| st.borrow().gloss_overlay.toggle_ask_focus(),
+        |st, k| st.borrow().gloss_overlay.feed_ask_vim_key(k),
         crate::input::actions::synopsis::submit_amend_prompt,
         crate::input::actions::synopsis::close_amend_prompt,
     ) {
         AskIntercept::Consumed => return true,
-        AskIntercept::FallThrough => return false,
         AskIntercept::NotHandled => {}
     }
 
@@ -1406,11 +1514,25 @@ fn handle_synopsis_overlay_key(
             crate::input::actions::gloss::begin_current_synopsis_block(state);
             true
         }
-        "A" => {
-            crate::input::actions::synopsis::show_amend_prompt(state);
+        // r: create a journal Q&A filed under the scene/chapter the synopsis is
+        // currently showing (synopsis_overlay_scene, which Ctrl+n/p may have moved
+        // away from the cursor's scene). Close the synopsis overlay and return to
+        // reader mode first, then open the journal scene ask. (Moved from A to r,
+        // matching the gloss + journal overlays; the synopsis overlay now only
+        // EDITS the synopsis in place via E, with U to undo.)
+        "r" => {
+            let (div1, div2) = state.borrow().synopsis_overlay_scene;
+            {
+                let mut s = state.borrow_mut();
+                s.tts.stop();
+                s.gloss_overlay.hide();
+                s.input_mode = crate::app::InputMode::Reader;
+            }
+            crate::input::actions::journal::begin_scene_ask(state, div1, div2);
+            crate::logging::log("JOURNAL-FROM-SYNOPSIS: opened scene ask from synopsis overlay");
             true
         }
-        "E" => {
+        "e" => {
             crate::input::actions::synopsis::show_edit_prompt(state);
             true
         }
@@ -1423,8 +1545,13 @@ fn handle_synopsis_overlay_key(
             }
             true
         }
-        "U" => {
-            crate::input::actions::synopsis::undo_amend(state);
+        // u: undo the last `e` edit (single-level), behind a y/Esc confirmation.
+        // (Was `U`; now lowercased + gated by the confirm like gloss/journal.)
+        "u" => {
+            crate::input::actions::gloss::show_undo_confirmation(
+                state,
+                crate::app::InputMode::SynopsisOverlay,
+            );
             true
         }
         "bar" => {
@@ -1775,6 +1902,39 @@ fn handle_delete_confirm_key(
         }
         "Escape" | "n" => {
             crate::input::actions::gloss::close_delete_confirmation(state);
+            true
+        }
+        _ => true,
+    }
+}
+
+fn handle_undo_confirm_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+) -> bool {
+    match key_name {
+        "y" => {
+            // Read the origin before closing (close clears it), then run that
+            // overlay's single-level undo. close_undo_confirmation has already
+            // restored the originating overlay mode.
+            let origin = state.borrow().undo_confirm_origin;
+            crate::input::actions::gloss::close_undo_confirmation(state);
+            match origin {
+                Some(crate::app::InputMode::GlossOverlay) => {
+                    crate::input::actions::gloss::undo_gloss_edit(state);
+                }
+                Some(crate::app::InputMode::SynopsisOverlay) => {
+                    crate::input::actions::synopsis::undo_amend(state);
+                }
+                Some(crate::app::InputMode::JournalOverlay) => {
+                    crate::input::actions::journal::undo_journal_edit(state);
+                }
+                _ => {}
+            }
+            true
+        }
+        "Escape" | "n" => {
+            crate::input::actions::gloss::close_undo_confirmation(state);
             true
         }
         _ => true,

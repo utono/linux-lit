@@ -20,8 +20,16 @@ pub struct AskCard {
     title: Label,
     input: TextView,
     hint: Label,
+    /// The static hint passed to `open`, re-shown after the mode indicator.
+    base_hint: std::cell::RefCell<String>,
+    /// (block-fill, glyph-fg) for the NORMAL-mode block cursor, set on `open`.
+    cursor_colors: std::cell::RefCell<(String, String)>,
     focus: Cell<AskFocus>,
     return_focus: gtk4::Widget,
+    /// The input is a modal vim editor (NORMAL by default; `i`/`a` to type). The
+    /// engine is the source of truth; the input TextView (editable=false) mirrors
+    /// it. `Some` while open. Submit = `:w`/Ctrl+Enter; cancel = double-Esc/`:q`.
+    vim: std::cell::RefCell<Option<crate::input::vim::VimEngine>>,
 }
 
 impl AskCard {
@@ -53,8 +61,12 @@ impl AskCard {
         scrolled.set_margin_bottom(6);
 
         let input = TextView::new();
-        input.set_editable(true);
+        // The input is a vim editor driven by a VimEngine, so it must NOT be
+        // natively editable (GTK editing would fight the engine). cursor_visible
+        // + focus (grabbed in `open`) make the caret show.
+        input.set_editable(false);
         input.set_cursor_visible(true);
+        input.set_focusable(true);
         input.set_wrap_mode(gtk4::WrapMode::Word);
         input.set_top_margin(6);
         input.set_bottom_margin(6);
@@ -78,8 +90,11 @@ impl AskCard {
             title,
             input,
             hint,
+            base_hint: std::cell::RefCell::new(String::new()),
+            cursor_colors: std::cell::RefCell::new((String::new(), String::new())),
             focus: Cell::new(AskFocus::Doc),
             return_focus: return_focus.clone().upcast(),
+            vim: std::cell::RefCell::new(None),
         }
     }
 
@@ -95,9 +110,10 @@ impl AskCard {
 
     /// Reveal with heading + hint, clear the field, re-align margins to
     /// card_width/4, focus the input (AskFocus::Ask + card-focused highlight).
-    pub fn open(&self, title: &str, hint: &str, card_width: i32) {
+    pub fn open(&self, title: &str, hint: &str, card_width: i32, block_fill: &str, block_fg: &str) {
         self.title.set_text(title);
-        self.hint.set_text(hint);
+        *self.base_hint.borrow_mut() = hint.to_string();
+        *self.cursor_colors.borrow_mut() = (block_fill.to_string(), block_fg.to_string());
         self.input.buffer().set_text("");
         if card_width > 0 {
             let margin = crate::ui::card_side_margin(card_width);
@@ -105,7 +121,70 @@ impl AskCard {
             self.container.set_margin_end(margin);
         }
         self.container.set_visible(true);
+        // Seed an empty vim engine in NORMAL mode (press `i`/`a` to type). The
+        // input mirrors it; focus is grabbed so the caret paints.
+        *self.vim.borrow_mut() = Some(crate::input::vim::VimEngine::new(String::new()));
         self.set_focus(AskFocus::Ask);
+        let _ = self.input.grab_focus();
+        self.mirror_vim();
+    }
+
+    /// Feed one key to the input's vim engine, mirror, and return the
+    /// `EditorAction` (Save/SaveQuit = submit; Cancel/CancelForce = close).
+    pub fn feed_vim_key(&self, key: crate::input::vim::VimKey) -> crate::input::vim::EditorAction {
+        let action = {
+            let mut guard = self.vim.borrow_mut();
+            let Some(engine) = guard.as_mut() else {
+                return crate::input::vim::EditorAction::Nop;
+            };
+            engine.handle_key(key).action
+        };
+        self.mirror_vim();
+        action
+    }
+
+    /// Mirror the engine's buffer/cursor into the input TextView and show the
+    /// mode indicator (`-- NORMAL/INSERT --` or the `:` line) in the hint.
+    fn mirror_vim(&self) {
+        let guard = self.vim.borrow();
+        let Some(engine) = guard.as_ref() else { return };
+        let buffer = self.input.buffer();
+        let current = buffer
+            .text(&buffer.start_iter(), &buffer.end_iter(), false)
+            .to_string();
+        if current != engine.buffer() {
+            buffer.set_text(engine.buffer());
+        }
+        let n_chars = engine.buffer().chars().count();
+        let ci = engine.cursor().min(n_chars);
+        if let Some(sel) = engine.selection() {
+            let s = buffer.iter_at_offset(sel.start as i32);
+            let e = buffer.iter_at_offset(sel.end as i32);
+            buffer.select_range(&s, &e);
+        } else {
+            let cur = buffer.iter_at_offset(ci as i32);
+            buffer.place_cursor(&cur);
+        }
+        // Block cursor in NORMAL/VISUAL, native caret in INSERT (vim convention).
+        if engine.mode() == crate::input::vim::Mode::Insert {
+            crate::ui::clear_block_cursor(&buffer, "ask-vim-block");
+            self.input.set_cursor_visible(true);
+        } else {
+            let (fill, fg) = self.cursor_colors.borrow().clone();
+            crate::ui::paint_block_cursor(&buffer, "ask-vim-block", &fill, &fg, ci);
+            self.input.set_cursor_visible(ci >= n_chars);
+        }
+        let base = self.base_hint.borrow();
+        let mode = match engine.cmdline() {
+            Some(cmd) => format!(":{cmd}"),
+            None => match engine.mode() {
+                crate::input::vim::Mode::Normal => format!("-- NORMAL --  ({base})"),
+                crate::input::vim::Mode::Insert => "-- INSERT --".to_string(),
+                crate::input::vim::Mode::Visual => "-- VISUAL --".to_string(),
+                crate::input::vim::Mode::VisualLine => "-- VISUAL LINE --".to_string(),
+            },
+        };
+        self.hint.set_text(&mode);
     }
 
     /// Hide, set AskFocus::Doc, drop the highlight, return focus to return_focus.
@@ -114,6 +193,8 @@ impl AskCard {
         self.focus.set(AskFocus::Doc);
         self.container.remove_css_class("card-focused");
         self.container.remove_css_class("card-dimmed");
+        *self.vim.borrow_mut() = None;
+        crate::ui::clear_block_cursor(&self.input.buffer(), "ask-vim-block");
         if self.input.has_focus() {
             let _ = self.return_focus.grab_focus();
         }
@@ -123,22 +204,6 @@ impl AskCard {
         self.container.is_visible()
     }
 
-    pub fn focus(&self) -> AskFocus {
-        self.focus.get()
-    }
-
-    /// Flip Doc<->Ask (no-op if closed). Owns the card-focused/card-dimmed
-    /// highlight swap and the input grab / return-focus grab.
-    pub fn toggle_focus(&self) {
-        if !self.is_open() {
-            return;
-        }
-        let next = match self.focus.get() {
-            AskFocus::Doc => AskFocus::Ask,
-            AskFocus::Ask => AskFocus::Doc,
-        };
-        self.set_focus(next);
-    }
 
     fn set_focus(&self, focus: AskFocus) {
         self.focus.set(focus);
@@ -289,8 +354,8 @@ impl AskCardHost {
     /// it (the occlusion fix). Open height = pane − fixed chrome − ask-natural;
     /// the toggled footer (if any) is hidden, freeing its slot. Recomputes the
     /// clip now and on the idle tick after the height lands.
-    pub fn open(&self, title: &str, hint: &str) {
-        self.ask.open(title, hint, self.card_width.get());
+    pub fn open(&self, title: &str, hint: &str, block_fill: &str, block_fg: &str) {
+        self.ask.open(title, hint, self.card_width.get(), block_fill, block_fg);
         if let Some(f) = &self.footer {
             f.set_visible(false);
         }
@@ -312,24 +377,6 @@ impl AskCardHost {
         self.recompute_now_and_idle();
     }
 
-    /// Shrink the scroll viewport to make room for an EXTERNAL card of natural
-    /// height `natural_h` (the journal edit card), mirroring `open` but without
-    /// touching the internal ask card or the footer (the caller manages those).
-    /// Open height = card_height − fixed_chrome − natural_h.
-    pub fn open_for_natural_height(&self, natural_h: i32) {
-        let scroll_h =
-            (self.card_height.get() - self.fixed_chrome_h.get() - natural_h).max(80);
-        self.pin_scroll_height(scroll_h);
-        self.recompute_now_and_idle();
-    }
-
-    /// Restore the scroll's stored CLOSED height after an external card closes
-    /// (mirrors `close`'s restore, without touching the ask card or footer).
-    pub fn close_to_closed_height(&self) {
-        self.pin_scroll_height(self.closed_scroll_h.get().max(80));
-        self.recompute_now_and_idle();
-    }
-
     /// Recompute the clip synchronously AND on the next idle tick — the
     /// `set_height_request` lands on a later layout pass, so the synchronous
     /// recompute runs against the stale viewport and the idle one against the
@@ -340,10 +387,6 @@ impl AskCardHost {
         glib::idle_add_local_once(move || recompute());
     }
 
-    pub fn toggle_focus(&self) {
-        self.ask.toggle_focus();
-    }
-
     pub fn take_text(&self) -> String {
         self.ask.take_text()
     }
@@ -352,11 +395,15 @@ impl AskCardHost {
         self.ask.is_open()
     }
 
-    pub fn focus(&self) -> AskFocus {
-        self.ask.focus()
-    }
-
     pub fn input(&self) -> &TextView {
         self.ask.input()
+    }
+
+    /// Feed a key to the ask card's vim engine (the prompt is a modal editor).
+    pub fn feed_vim_key(
+        &self,
+        key: crate::input::vim::VimKey,
+    ) -> crate::input::vim::EditorAction {
+        self.ask.feed_vim_key(key)
     }
 }
