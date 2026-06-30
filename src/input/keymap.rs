@@ -700,6 +700,15 @@ fn ask_card_intercept(
     AskIntercept::NotHandled
 }
 
+thread_local! {
+    /// Timestamp of the last Escape press in the journal vim editor, for the
+    /// double-Esc-to-exit gesture. A single Esc goes to vim Normal mode; two in
+    /// quick succession (< DOUBLE_ESC_MS) exit the editor.
+    static LAST_EDIT_ESC: std::cell::Cell<Option<std::time::Instant>> =
+        const { std::cell::Cell::new(None) };
+}
+const DOUBLE_ESC_MS: u128 = 400;
+
 /// The journal in-place vim editor's key handler (InputMode::JournalEdit).
 /// Translates the GTK key (+ `key_char` for printables) into a `VimKey`, feeds
 /// it to the engine via the overlay, and acts on the returned `EditorAction`.
@@ -713,9 +722,28 @@ fn handle_journal_edit_key(
 ) -> bool {
     use crate::input::vim::{EditorAction, VimKey};
 
+    // Esc: a SINGLE Esc returns to vim Normal mode (handled by the engine); TWO
+    // in quick succession EXIT the editor. Timing lives here, not in the pure
+    // engine (which has no clock).
+    if key_name == "Escape" && !is_ctrl {
+        let now = std::time::Instant::now();
+        let is_double = LAST_EDIT_ESC.with(|c| {
+            let prev = c.get();
+            c.set(Some(now));
+            prev.is_some_and(|p| now.duration_since(p).as_millis() < DOUBLE_ESC_MS)
+        });
+        if is_double {
+            LAST_EDIT_ESC.with(|c| c.set(None));
+            crate::input::actions::journal::vim_cancel(state, false);
+            return true;
+        }
+        // Single Esc -> engine (go to / stay in Normal mode).
+        let _ = state.borrow().journal_overlay.feed_edit_key(VimKey::Esc);
+        return true;
+    }
+
     // Ctrl+R is vim redo; plain printable Ctrl/Alt combos are otherwise ignored.
     let vk: Option<VimKey> = match key_name {
-        "Escape" => Some(VimKey::Esc),
         "Return" | "KP_Enter" => Some(VimKey::Enter),
         "BackSpace" => Some(VimKey::Backspace),
         "Tab" | "ISO_Left_Tab" => Some(VimKey::Tab),

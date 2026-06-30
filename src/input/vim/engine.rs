@@ -286,8 +286,13 @@ impl VimEngine {
             VimKey::Char(c) => c,
             VimKey::CtrlR => return self.do_redo(),
             VimKey::Esc => {
+                // Esc in Normal mode is the "stay in / return to Normal" key — it
+                // cancels any half-typed count/operator/pending state and does
+                // NOT leave the editor (vim semantics). Exit is `:q` only.
                 self.pending_count = None;
-                return self.out(false, EditorAction::Cancel);
+                self.pending = Pending::None;
+                self.pending_register = None;
+                return self.out(false, EditorAction::Nop);
             }
             VimKey::Enter | VimKey::Backspace | VimKey::Tab => {
                 return self.out(false, EditorAction::Nop)
@@ -1388,12 +1393,28 @@ mod tests {
     }
 
     #[test]
-    fn r_opens_rewrite_and_esc_cancels() {
+    fn r_opens_rewrite() {
         let mut e = eng("x");
         let o = e.handle_key(VimKey::Char('R'));
         assert_eq!(o.action, EditorAction::OpenRewrite);
-        let c = e.handle_key(VimKey::Esc);
-        assert_eq!(c.action, EditorAction::Cancel);
+    }
+
+    #[test]
+    fn esc_in_normal_stays_in_normal() {
+        // Esc in Normal mode is a no-op (stays put) — it does NOT exit the editor.
+        // It cancels a half-typed operator/count.
+        let mut e = eng("hello");
+        e.feed("d"); // pending operator
+        let o = e.handle_key(VimKey::Esc);
+        assert_eq!(o.action, EditorAction::Nop);
+        assert_eq!(o.mode, Mode::Normal);
+        // the pending 'd' was cancelled, so a following 'w' is a plain motion
+        e.feed("w");
+        assert_eq!(e.buffer(), "hello"); // nothing deleted
+        // Only :q exits.
+        e.feed(":q");
+        let q = e.handle_key(VimKey::Enter);
+        assert_eq!(q.action, EditorAction::Cancel);
     }
 
     #[test]
