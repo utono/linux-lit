@@ -43,6 +43,12 @@ pub mod toast;
 pub mod translation_overlay;
 pub mod voice_picker;
 
+/// Monospace family used while editing a journal Q&A, gloss, or synopsis in the
+/// in-place vim editor. Only the family swaps during edit; the reading size is
+/// kept. Confirmed installed via `fc-list`. If absent, Pango falls back to a
+/// default monospace — degraded, not broken.
+pub(crate) const EDIT_FONT_FAMILY: &str = "JetBrainsMono Nerd Font";
+
 /// The side margin (left and right) for the full-screen gloss / synopsis / ask
 /// cards: a quarter of the *live* card width, which keeps the prose near the
 /// ~65-char readability optimum on a wide (~1660px) card.
