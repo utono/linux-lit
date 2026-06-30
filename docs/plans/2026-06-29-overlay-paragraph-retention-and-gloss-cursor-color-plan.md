@@ -4,7 +4,7 @@
 
 **Goal:** Add a distinct per-theme color for a glossed line that is the cursor block (Feature B), and stop multi-page synopsis/gloss overlays from dropping label/echo paragraphs the single-page path keeps (Feature A).
 
-**Architecture:** B adds a second reader-gloss TextTag whose color comes from a new optional per-theme key (falling back to a hue-complement of the existing reddish gloss tint), and flips `repaint_reader_gloss_visible` to apply it on the cursor line. A adds a display-only `attached: Vec<Attachment>` field to `GlossBlock`; the block builders attach label/echo paragraphs to a block instead of dropping them, and the multi-page render arms emit them.
+**Architecture:** B derives BOTH reader-gloss tints (off-cursor + on-cursor) through a contrast/distinctness guard (`ensure_gloss_color`, modeled on the existing `choose_vocab_fg`) so they are legible on the reading bg and distinct from body text and each other — fixing the raw-focuscolor tint that is dim/indistinct on ~13 themes — then adds a second TextTag and flips `repaint_reader_gloss_visible` to apply the on-cursor color on the cursor line. A adds a display-only `attached: Vec<Attachment>` field to `GlossBlock`; the block builders attach label/echo paragraphs to a block instead of dropping them, and the multi-page render arms emit them.
 
 **Tech Stack:** Rust, GTK4 (gtk4-rs), serde_json, SQLite (rusqlite). Pure-logic tests via `cargo test --bins`.
 
@@ -22,80 +22,104 @@
 
 ---
 
-# FEATURE B — glossed-cursor 3rd color (implement first)
+# FEATURE B — glossed-cursor color + contrast-guaranteed gloss tints (implement first)
 
-## Task B1: hue-complement helper in theme.rs
+> Revised after a 36-theme audit: the raw `focuscolor` off-cursor tint is dim or
+> near-body-color on 13 themes, and the naive complement has its own failures. So
+> BOTH gloss colors are derived through a contrast/distinctness guard
+> (`ensure_gloss_color`), modeled on the existing `choose_vocab_fg`. Themes that
+> already look right are returned unchanged by the guard.
+
+## Task B1: `complement_hex` + `contrast_ratio` helpers in theme.rs
 
 **Files:**
-- Modify: `src/theme.rs` (add `complement_hex` fn near the other color helpers, after `rgb_to_hsl`/`hsl_to_rgb`, ~line 338; add a unit test in the existing `#[cfg(test)] mod tests` if present, else a new one at end of file)
+- Modify: `src/theme.rs` — add `complement_hex` and `contrast_ratio` near the other color helpers (after `hsl_to_rgb`/`hue_distance`, ~line 346); add unit tests in the in-file `#[cfg(test)] mod tests` (it exists — `choose_vocab_fg` etc. are tested there; if not, create `mod tests` at end of file).
 
 **Interfaces:**
-- Consumes: existing `hex_to_rgb(&str) -> (f64,f64,f64)`, `rgb_to_hsl(f64,f64,f64) -> (f64,f64,f64)`, `hsl_to_rgb(f64,f64,f64) -> (f64,f64,f64)`, `rgb_to_hex(f64,f64,f64) -> String` (all already in `src/theme.rs`).
-- Produces: `fn complement_hex(hex: &str) -> String` — returns the hex color with hue rotated 180° (0.5 in [0,1] hue space), same S and L. Used by `Theme::load` as the fallback for `reader_gloss_cursor`.
+- Consumes: existing `hex_to_rgb`, `rgb_to_hsl`, `hsl_to_rgb`, `rgb_to_hex` (all in `src/theme.rs`).
+- Produces:
+  - `fn complement_hex(hex: &str) -> String` — `hex` with hue rotated 180°, same S/L.
+  - `fn contrast_ratio(a_hex: &str, b_hex: &str) -> f64` — WCAG contrast ratio (1.0–21.0) between two hex colors.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing tests**
 
-Add to `src/theme.rs` test module:
+Add to the `tests` module in `src/theme.rs`:
 
 ```rust
 #[test]
 fn complement_rotates_hue_180() {
-    // rose-pine-dawn focuscolor #c4788a (a rose-red) -> a teal/green complement.
     let c = complement_hex("#c4788a");
     let (h_in, _, _) = rgb_to_hsl(hex_to_rgb("#c4788a").0, hex_to_rgb("#c4788a").1, hex_to_rgb("#c4788a").2);
     let (h_out, _, _) = rgb_to_hsl(hex_to_rgb(&c).0, hex_to_rgb(&c).1, hex_to_rgb(&c).2);
-    // hue moved ~0.5 (180°), wrapping mod 1.0
     let diff = ((h_out - h_in).abs() - 0.5).abs();
-    assert!(diff < 0.02, "expected ~0.5 hue rotation, got in={h_in} out={h_out} ({c})");
-    // and it is a green-ish hue (teal), not red: hue in [0.33, 0.66]
-    assert!((0.33..=0.70).contains(&h_out), "complement of a red should be green/teal, got hue {h_out} ({c})");
+    assert!(diff < 0.02, "expected ~0.5 hue rotation, in={h_in} out={h_out} ({c})");
+    assert!((0.33..=0.70).contains(&h_out), "complement of a red should be teal/green, got {h_out} ({c})");
 }
 
 #[test]
 fn complement_malformed_is_safe() {
-    // hex_to_rgb returns (0,0,0) for malformed; complement must still return a hex.
-    let c = complement_hex("not-a-color");
+    let c = complement_hex("nope");
     assert!(c.starts_with('#') && c.len() == 7, "got {c}");
+}
+
+#[test]
+fn contrast_ratio_known_pairs() {
+    assert!((contrast_ratio("#ffffff", "#000000") - 21.0).abs() < 0.1);
+    assert!((contrast_ratio("#888888", "#888888") - 1.0).abs() < 0.01);
+    // a mid case is between
+    let c = contrast_ratio("#c4788a", "#faf4ed");
+    assert!(c > 2.5 && c < 3.5, "rose on cream ~3.0, got {c}");
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Run to verify it fails**
 
-Run: `cargo test --bins theme::tests::complement -- --nocapture`
-Expected: FAIL — `complement_hex` not found (cannot find function).
+Run: `cargo test --bins theme::tests::complement theme::tests::contrast -- --nocapture`
+Expected: FAIL — functions not found.
 
-- [ ] **Step 3: Write minimal implementation**
+- [ ] **Step 3: Implement the helpers**
 
-Add after `hsl_to_rgb` (around line 338) in `src/theme.rs`:
+Add after `hue_distance` (~346) in `src/theme.rs`:
 
 ```rust
 /// Return `hex` with its hue rotated 180° (the color-wheel complement), keeping
-/// saturation and lightness. Used as the per-theme fallback for the
-/// glossed-cursor tint (the "opposite of the reddish" gloss color) when a theme
-/// does not define `linux-lit.reader_gloss_cursor`. Malformed input degrades to
-/// the complement of black (still a valid `#rrggbb`), never panics.
+/// saturation and lightness. Malformed input degrades to the complement of black
+/// (still a valid `#rrggbb`); never panics.
 fn complement_hex(hex: &str) -> String {
     let (r, g, b) = hex_to_rgb(hex);
     let (h, s, l) = rgb_to_hsl(r, g, b);
     let (nr, ng, nb) = hsl_to_rgb((h + 0.5) % 1.0, s, l);
     rgb_to_hex(nr, ng, nb)
 }
+
+/// WCAG relative-luminance contrast ratio between two hex colors, 1.0 (identical)
+/// to 21.0 (black on white). Used to keep the gloss tints legible on the reading
+/// background and distinct from body text.
+fn contrast_ratio(a_hex: &str, b_hex: &str) -> f64 {
+    let lin = |c: f64| if c <= 0.03928 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+    let lum = |hex: &str| {
+        let (r, g, b) = hex_to_rgb(hex);
+        0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+    };
+    let (la, lb) = (lum(a_hex) + 0.05, lum(b_hex) + 0.05);
+    if la > lb { la / lb } else { lb / la }
+}
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 4: Run to verify pass**
 
-Run: `cargo test --bins theme::tests::complement -- --nocapture`
-Expected: PASS (both tests).
+Run: `cargo test --bins theme::tests -- --nocapture`
+Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/theme.rs
 git commit -m "$(cat <<'EOF'
-feat(theme): complement_hex helper (180° hue rotation)
+feat(theme): complement_hex + contrast_ratio helpers
 
-Composes the existing hex/hsl helpers to produce a color-wheel complement.
-Used next as the per-theme fallback for the glossed-cursor tint.
+Hue complement (180°) and WCAG contrast ratio, composed from the existing
+hex/hsl helpers. Used next to derive contrast-guaranteed gloss tints.
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01QBmkjF6UmwopCrhALaGQgj
@@ -105,18 +129,127 @@ EOF
 
 ---
 
-## Task B2: `reader_gloss_cursor` field on Theme + load/default
+## Task B2: `ensure_gloss_color` contrast/distinctness guard
 
 **Files:**
-- Modify: `src/theme.rs` — `Theme` struct (~line 19, after `vocab_fg`); `load`/builder return (the `Theme { ... }` at ~164); `default_theme` (~180).
+- Modify: `src/theme.rs` — add `ensure_gloss_color` near `choose_vocab_fg` (~351); tests in the `tests` module.
 
 **Interfaces:**
-- Consumes: `complement_hex` (Task B1); existing `str_field`, `focus_color`, `lit` (`val.get("linux-lit")`).
-- Produces: `Theme.reader_gloss_cursor: String` — the glossed-cursor foreground color. Read from `linux-lit.reader_gloss_cursor` when present, else `complement_hex(&focus_color)`.
+- Consumes: `contrast_ratio` (B1), `hue_distance`, `hex_to_rgb`, `rgb_to_hsl`, `hsl_to_rgb`, `rgb_to_hex` (existing).
+- Produces: `fn ensure_gloss_color(base_hex: &str, bg_hex: &str, avoid: &[&str]) -> String` — a color at `base_hex`'s hue with WCAG contrast ≥ 3.0 vs `bg_hex`, distinct (hue ≥ 40° OR contrast ≥ 1.4) from every color in `avoid`. Returns `base_hex` unchanged when it already qualifies.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing tests**
 
-Add to `src/theme.rs` test module:
+```rust
+#[test]
+fn ensure_keeps_already_good_color() {
+    // rose-pine-dawn focuscolor on cream, avoiding slate body text: already good.
+    let c = ensure_gloss_color("#c4788a", "#faf4ed", &["#575279"]);
+    assert_eq!(c, "#c4788a", "a color that already passes must be returned unchanged");
+}
+
+#[test]
+fn ensure_fixes_dim_color_on_light_bg() {
+    // dayfox: a muted purple focuscolor on a near-white bg is too dim.
+    let c = ensure_gloss_color("#7b6b99", "#f6f2ee", &["#3d2b5a"]);
+    assert!(contrast_ratio(&c, "#f6f2ee") >= 3.0,
+        "fixed color must contrast with bg, got {} ({c})", contrast_ratio(&c, "#f6f2ee"));
+}
+
+#[test]
+fn ensure_result_is_distinct_from_avoid() {
+    let c = ensure_gloss_color("#7b6b99", "#f6f2ee", &["#3d2b5a"]);
+    let distinct = hue_distance(&c, "#3d2b5a") >= 40.0 || contrast_ratio(&c, "#3d2b5a") >= 1.4;
+    assert!(distinct, "result {c} must be distinct from the avoid color");
+}
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `cargo test --bins theme::tests::ensure -- --nocapture`
+Expected: FAIL — `ensure_gloss_color` not found.
+
+- [ ] **Step 3: Implement**
+
+Add near `choose_vocab_fg` in `src/theme.rs`:
+
+```rust
+/// Return a color at `base_hex`'s hue that is legible on `bg_hex` (WCAG contrast
+/// ≥ 3.0) and visually distinct (hue distance ≥ 40° OR contrast ≥ 1.4) from each
+/// color in `avoid`. If `base_hex` already qualifies it is returned unchanged, so
+/// themes that already look right do not move. Otherwise lightness is pushed away
+/// from the background and saturation raised at the same hue; as a last resort the
+/// hue is rotated 150° (the `choose_vocab_fg` strategy) and S/L clamped. Used to
+/// derive both reader-gloss tints so they never wash out or blend into body text.
+fn ensure_gloss_color(base_hex: &str, bg_hex: &str, avoid: &[&str]) -> String {
+    let ok = |c: &str| {
+        contrast_ratio(c, bg_hex) >= 3.0
+            && avoid.iter().all(|a| hue_distance(c, a) >= 40.0 || contrast_ratio(c, a) >= 1.4)
+    };
+    if ok(base_hex) {
+        return base_hex.to_string();
+    }
+    let (br, bg_, bb) = hex_to_rgb(base_hex);
+    let (h, s, _l) = rgb_to_hsl(br, bg_, bb);
+    let bg_is_light = contrast_ratio(bg_hex, "#000000") > contrast_ratio(bg_hex, "#ffffff");
+    // Push lightness toward the side with headroom against the bg; raise S.
+    let s2 = s.max(0.50);
+    for &l in if bg_is_light {
+        &[0.42_f64, 0.36, 0.30, 0.24][..]   // darker, for a light bg
+    } else {
+        &[0.62_f64, 0.68, 0.74, 0.80][..]   // lighter, for a dark bg
+    } {
+        let (r, g, b) = hsl_to_rgb(h, s2, l);
+        let cand = rgb_to_hex(r, g, b);
+        if ok(&cand) {
+            return cand;
+        }
+    }
+    // Last resort: rotate hue 150° (matches choose_vocab_fg) and clamp.
+    let new_h = (h + 150.0 / 360.0) % 1.0;
+    let l = if bg_is_light { 0.36 } else { 0.70 };
+    let (r, g, b) = hsl_to_rgb(new_h, s.max(0.50), l);
+    rgb_to_hex(r, g, b)
+}
+```
+
+- [ ] **Step 4: Run to verify pass**
+
+Run: `cargo test --bins theme::tests -- --nocapture`
+Expected: PASS (all three new + existing theme tests).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/theme.rs
+git commit -m "$(cat <<'EOF'
+feat(theme): ensure_gloss_color contrast/distinctness guard
+
+Returns a color at the base hue that is legible on the bg (WCAG >= 3.0) and
+distinct from given avoid colors, leaving an already-good color unchanged.
+Modeled on choose_vocab_fg. Used next to derive both reader-gloss tints.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01QBmkjF6UmwopCrhALaGQgj
+EOF
+)"
+```
+
+---
+
+## Task B3: `reader_gloss` + `reader_gloss_cursor` on Theme + all-themes invariant
+
+**Files:**
+- Modify: `src/theme.rs` — `Theme` struct (~19, after `vocab_fg`); `resolve_theme` return (~164); `default_theme` (~180); tests.
+
+**Interfaces:**
+- Consumes: `ensure_gloss_color` (B2), `complement_hex` (B1), existing `focus_color`/`text_bg`/`text_fg`/`lit`/`str_field`.
+- Produces:
+  - `Theme.reader_gloss: String` — the off-cursor gloss tint (guarded focuscolor).
+  - `Theme.reader_gloss_cursor: String` — the on-cursor color (guarded complement).
+  Each: `linux-lit.<key>` override if present, else derived.
+
+- [ ] **Step 1: Write the failing tests**
 
 ```rust
 #[test]
@@ -124,71 +257,92 @@ fn reader_gloss_cursor_explicit_wins() {
     let json: serde_json::Value = serde_json::from_str(
         r#"{ "dwl": {"focuscolor": "#c4788a"},
              "linux-lit": {"reader_gloss_cursor": "#56949f"},
-             "kitty": {"background": "#faf4ed"} }"#,
+             "kitty": {"background": "#faf4ed", "active_tab_foreground": "#575279"} }"#,
     ).unwrap();
     let t = resolve_theme("rose-pine-dawn", &json);
     assert_eq!(t.reader_gloss_cursor, "#56949f");
+    // off-cursor tint: focuscolor already passes -> unchanged.
+    assert_eq!(t.reader_gloss, "#c4788a");
 }
 
 #[test]
-fn reader_gloss_cursor_falls_back_to_complement() {
-    let json: serde_json::Value = serde_json::from_str(
-        r#"{ "dwl": {"focuscolor": "#c4788a"}, "kitty": {"background": "#faf4ed"} }"#,
-    ).unwrap();
-    let t = resolve_theme("x", &json);
-    assert_eq!(t.reader_gloss_cursor, complement_hex("#c4788a"));
+fn reader_gloss_colors_are_legible_and_distinct_for_all_themes() {
+    // The audit invariant: every shipped theme yields a legible, mutually
+    // distinct pair. Guards against a future theme regressing.
+    for t in load_all_themes() {
+        let cvb_off = contrast_ratio(&t.reader_gloss, &t.text_bg);
+        let cvb_cur = contrast_ratio(&t.reader_gloss_cursor, &t.text_bg);
+        assert!(cvb_off >= 3.0, "{}: off-cursor tint {} dim on bg {} ({cvb_off:.2})", t.name, t.reader_gloss, t.text_bg);
+        assert!(cvb_cur >= 3.0, "{}: on-cursor color {} dim on bg {} ({cvb_cur:.2})", t.name, t.reader_gloss_cursor, t.text_bg);
+        let distinct = hue_distance(&t.reader_gloss, &t.reader_gloss_cursor) >= 40.0
+            || contrast_ratio(&t.reader_gloss, &t.reader_gloss_cursor) >= 1.4;
+        assert!(distinct, "{}: off {} and on {} not distinct", t.name, t.reader_gloss, t.reader_gloss_cursor);
+    }
 }
 ```
 
-NOTE: the per-value constructor is the existing private `fn resolve_theme(name: &str, val: &Value) -> Theme` (src/theme.rs:90), callable from the in-file test module. `load_theme`/`load_all_themes` are thin file-reading wrappers around it — do NOT test through them (they read the real themes-unified.json). No `from_value` exists; do not invent one.
+NOTE: `load_all_themes()` reads the real `themes-unified.json`. If it is missing in CI the call returns `[default_theme()]` (see theme.rs:48) — the loop still runs over the default, so the test never hard-fails on a missing file.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Run to verify it fails**
 
-Run: `cargo test --bins theme::tests::reader_gloss_cursor -- --nocapture`
-Expected: FAIL — no `reader_gloss_cursor` field (or no `from_value`).
+Run: `cargo test --bins theme::tests::reader_gloss -- --nocapture`
+Expected: FAIL — no `reader_gloss`/`reader_gloss_cursor` fields.
 
-- [ ] **Step 3: Write minimal implementation**
+- [ ] **Step 3: Implement**
 
 In `src/theme.rs`:
 
-1. Add the field to `struct Theme` after `vocab_fg: String,` (~line 19):
+1. Add fields to `struct Theme` after `vocab_fg: String,` (~19):
 
 ```rust
+    pub reader_gloss: String,        // off-cursor glossed-line tint (guarded)
     pub reader_gloss_cursor: String, // glossed line that is ALSO the cursor block
 ```
 
-2. In `resolve_theme` (the per-value builder), after the `focus_color` line (~132) and after `let lit = ...` (~134), add:
+2. In `resolve_theme`, after `let lit = ...` and the `focus_color`/`text_bg`/`text_fg` lines are all in scope (~134), add:
 
 ```rust
-    let reader_gloss_cursor = str_field(&lit, "reader_gloss_cursor")
-        .unwrap_or_else(|| complement_hex(&focus_color));
+    // Reader-gloss tints, contrast-guaranteed (raw focuscolor is dim/indistinct
+    // on ~13 themes). Off-cursor = guarded focuscolor; on-cursor = guarded
+    // complement, also kept distinct from the off-cursor tint.
+    let reader_gloss = str_field(&lit, "reader_gloss")
+        .unwrap_or_else(|| ensure_gloss_color(&focus_color, &text_bg, &[&text_fg]));
+    let reader_gloss_cursor = str_field(&lit, "reader_gloss_cursor").unwrap_or_else(|| {
+        ensure_gloss_color(&complement_hex(&reader_gloss), &text_bg, &[&text_fg, &reader_gloss])
+    });
 ```
 
-3. Add `reader_gloss_cursor,` to the returned `Theme { ... }` (after `vocab_fg,` ~176).
+3. Add `reader_gloss,` and `reader_gloss_cursor,` to the returned `Theme { ... }` (after `vocab_fg,` ~176).
 
 4. In `default_theme` (~193, after `vocab_fg`), add:
 
 ```rust
-        reader_gloss_cursor: complement_hex("#d4be98"),
+        reader_gloss: ensure_gloss_color("#d4be98", "#282828", &["#d4be98"]),
+        reader_gloss_cursor: ensure_gloss_color(&complement_hex("#d4be98"), "#282828", &["#d4be98"]),
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+(NOTE: default's focuscolor == text_fg == `#d4be98`; the guard will rotate it to a distinct, legible color — that is correct, the default theme had no real gloss color before.)
 
-Run: `cargo test --bins theme::tests::reader_gloss_cursor -- --nocapture`
-Expected: PASS.
+- [ ] **Step 4: Run to verify pass**
 
-- [ ] **Step 5: Build + full bins + commit**
+Run: `cargo test --bins theme:: -- --nocapture`
+Expected: PASS, including the all-themes invariant. If a specific theme fails the invariant, the assert message names it + its colors — tighten `ensure_gloss_color`'s lightness ladder for that bg until it passes (do NOT special-case the theme).
+
+- [ ] **Step 5: Build + bins + commit**
 
 ```bash
 cargo build 2>&1 | tail -3
 cargo test --bins 2>&1 | tail -3
 git add src/theme.rs
 git commit -m "$(cat <<'EOF'
-feat(theme): reader_gloss_cursor color (explicit key or hue complement)
+feat(theme): contrast-guaranteed reader_gloss + reader_gloss_cursor
 
-New optional per-theme linux-lit.reader_gloss_cursor; falls back to the
-180° complement of the reddish focuscolor so all themes get a sensible
-glossed-cursor color without per-theme entries.
+Both reader-gloss tints are now derived through ensure_gloss_color so they
+are legible on the reading bg and distinct from body text and each other —
+fixing the dim/washed-out off-cursor tint on ~13 themes (dayfox,
+melange-light, everforest-light-*, solarized-light, ...). Either may be
+overridden per theme via linux-lit.reader_gloss / .reader_gloss_cursor. A
+new test asserts the invariant for every shipped theme.
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01QBmkjF6UmwopCrhALaGQgj
@@ -198,26 +352,23 @@ EOF
 
 ---
 
-## Task B3: rose-pine-dawn explicit value in themes-unified.json
+## Task B4: rose-pine-dawn explicit cursor value in themes-unified.json
 
 **Files:**
-- Modify: `~/utono/themes/.config/themes/themes-unified.json` — the `rose-pine-dawn` object's `linux-lit` block (currently `{"cursor_line_bg": "rgba(196, 120, 138, 0.2)"}`).
+- Modify: `~/utono/themes/.config/themes/themes-unified.json` — `rose-pine-dawn.linux-lit` (separate repo).
 
 **Interfaces:**
-- Consumes: nothing (data file).
-- Produces: `rose-pine-dawn.linux-lit.reader_gloss_cursor == "#56949f"` (rosé-pine "foam").
-
-NOTE: this file is in a SEPARATE repo (`~/utono/themes`), not linux-lit. Edit + commit it there separately; it is not part of any linux-lit commit.
+- Produces: `rose-pine-dawn.linux-lit.reader_gloss_cursor == "#56949f"` (foam). `reader_gloss` is NOT set there — the guard returns `#c4788a` unchanged.
 
 - [ ] **Step 1: Add the key**
 
-Edit the `rose-pine-dawn` → `linux-lit` object to:
+Edit `rose-pine-dawn` → `linux-lit` to:
 
 ```json
 "linux-lit": { "cursor_line_bg": "rgba(196, 120, 138, 0.2)", "reader_gloss_cursor": "#56949f" }
 ```
 
-- [ ] **Step 2: Verify JSON is valid**
+- [ ] **Step 2: Verify**
 
 Run: `jq '."rose-pine-dawn"."linux-lit".reader_gloss_cursor' ~/utono/themes/.config/themes/themes-unified.json`
 Expected: `"#56949f"`
@@ -228,7 +379,7 @@ Expected: `"#56949f"`
 cd ~/utono/themes && git add .config/themes/themes-unified.json && git commit -m "$(cat <<'EOF'
 feat(rose-pine-dawn): reader_gloss_cursor #56949f (foam) for linux-lit
 
-The glossed-cursor color for linux-lit's reading card: rosé-pine "foam",
+The on-cursor glossed color for linux-lit's reading card: rosé-pine "foam",
 the complement of the #c4788a focuscolor gloss tint.
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
@@ -240,39 +391,52 @@ cd ~/utono/linux-lit
 
 ---
 
-## Task B4: second TextTag + apply/remove helpers + state field
+## Task B5: tags + helpers + state field (use theme.reader_gloss)
 
 **Files:**
-- Modify: `src/app/mod.rs` — `AppState` field (~392, after `pub reader_gloss_tag`); tag creation (~914, after `reader_gloss_tag` add); state construction (~1550, after `reader_gloss_tag,`); add helpers next to `apply_reader_gloss_tag_to_line`/`remove_reader_gloss_tag_from_line` (~3818–3838).
+- Modify: `src/app/mod.rs` — `AppState` field (~392, after `reader_gloss_tag`); the existing `reader-gloss-line` tag (~914) now uses `theme.reader_gloss` (was `theme.focus_color`); add the second tag; state construction (~1550); apply/remove helpers (~3818).
 
 **Interfaces:**
-- Consumes: `theme.reader_gloss_cursor` (Task B2).
-- Produces:
-  - `AppState.reader_gloss_cursor_tag: gtk4::TextTag`
-  - `pub(crate) fn apply_reader_gloss_cursor_tag_to_line(state: &AppState, buf_idx: usize)`
-  - `pub(crate) fn remove_reader_gloss_cursor_tag_from_line(state: &AppState, buf_idx: usize)`
+- Consumes: `theme.reader_gloss`, `theme.reader_gloss_cursor` (B3).
+- Produces: `AppState.reader_gloss_cursor_tag: gtk4::TextTag`; `apply_reader_gloss_cursor_tag_to_line` / `remove_reader_gloss_cursor_tag_from_line`.
 
-This task has no standalone unit test (it is GTK widget wiring); it is verified by `cargo build` and consumed by Task B5's behavior. Fold it into B5's review gate.
+Verified by `cargo build`; behavior consumed by B6.
 
-- [ ] **Step 1: Add the AppState field**
+- [ ] **Step 1: Point the existing tint tag at theme.reader_gloss**
+
+In `src/app/mod.rs` ~916, change:
+
+```rust
+        .foreground(&theme.focus_color)
+```
+
+(inside the `reader-gloss-line` builder) to:
+
+```rust
+        .foreground(&theme.reader_gloss)
+```
+
+Update its comment (~906–913): the tint is now the contrast-guarded gloss color, not the raw dwl focuscolor.
+
+- [ ] **Step 2: Add the AppState field**
 
 After `pub reader_gloss_tag: gtk4::TextTag,` (~392):
 
 ```rust
     /// Foreground tag for a glossed line that is ALSO the cursor block — a
-    /// distinct color (theme.reader_gloss_cursor) so it reads differently from
-    /// both body text and the off-cursor reddish gloss tint. Applied by
+    /// distinct, contrast-guarded color (theme.reader_gloss_cursor) so it reads
+    /// differently from both body text and the off-cursor gloss tint. Applied by
     /// `repaint_reader_gloss_visible` on the cursor line.
     pub reader_gloss_cursor_tag: gtk4::TextTag,
 ```
 
-- [ ] **Step 2: Create the tag**
+- [ ] **Step 3: Create the tag**
 
-After the `reader_gloss_tag` block (after `buffer.tag_table().add(&reader_gloss_tag);` ~918):
+After `buffer.tag_table().add(&reader_gloss_tag);` (~918):
 
 ```rust
-    // The glossed-cursor tint: same role as reader-gloss-line but a distinct
-    // color, applied to a glossed line WHILE it is the cursor block. Added after
+    // The on-cursor glossed tint: same role as reader-gloss-line but a distinct
+    // color, applied while a glossed line is the cursor block. Added after
     // reader-gloss-line so it outranks it on the cursor's own line.
     let reader_gloss_cursor_tag = gtk4::TextTag::builder()
         .name("reader-gloss-cursor-line")
@@ -281,22 +445,20 @@ After the `reader_gloss_tag` block (after `buffer.tag_table().add(&reader_gloss_
     buffer.tag_table().add(&reader_gloss_cursor_tag);
 ```
 
-- [ ] **Step 3: Store it in AppState**
+- [ ] **Step 4: Store it in AppState**
 
-After `reader_gloss_tag,` in the construction (~1550):
+After `reader_gloss_tag,` in construction (~1550):
 
 ```rust
         reader_gloss_cursor_tag,
 ```
 
-- [ ] **Step 4: Add the apply/remove helpers**
+- [ ] **Step 5: Add apply/remove helpers**
 
 After `remove_reader_gloss_tag_from_line` (~3838):
 
 ```rust
-/// Apply the glossed-cursor tint to a single buffer line (used when the cursor
-/// is on a glossed line, so it reads in the distinct color rather than the
-/// off-cursor reddish tint).
+/// Apply the on-cursor glossed tint to a single buffer line.
 pub(crate) fn apply_reader_gloss_cursor_tag_to_line(state: &AppState, buf_idx: usize) {
     if let Some(start) = state.buffer.iter_at_line(buf_idx as i32) {
         let mut end = start;
@@ -307,8 +469,7 @@ pub(crate) fn apply_reader_gloss_cursor_tag_to_line(state: &AppState, buf_idx: u
     }
 }
 
-/// Remove the glossed-cursor tint from a single buffer line (used when the cursor
-/// leaves a glossed line, so it reverts to the off-cursor reddish tint).
+/// Remove the on-cursor glossed tint from a single buffer line.
 pub(crate) fn remove_reader_gloss_cursor_tag_from_line(state: &AppState, buf_idx: usize) {
     if let Some(start) = state.buffer.iter_at_line(buf_idx as i32) {
         let mut end = start;
@@ -320,28 +481,28 @@ pub(crate) fn remove_reader_gloss_cursor_tag_from_line(state: &AppState, buf_idx
 }
 ```
 
-- [ ] **Step 5: Build**
+- [ ] **Step 6: Build**
 
 Run: `cargo build 2>&1 | tail -3`
-Expected: Finished (clean). No commit yet — commit with B5.
+Expected: Finished. No commit yet — commit with B6.
 
 ---
 
-## Task B5: flip `repaint_reader_gloss_visible` + theme-change refresh
+## Task B6: flip `repaint_reader_gloss_visible` + theme-change refresh
 
 **Files:**
-- Modify: `src/input/highlight.rs` — `repaint_reader_gloss_visible` (~346–357).
-- Modify: `src/input/actions/settings.rs` — theme-change refresh (~285, after the `reader_gloss_tag` foreground set).
+- Modify: `src/input/highlight.rs` — `repaint_reader_gloss_visible` (~346–357) + its doc comment.
+- Modify: `src/input/actions/settings.rs` — theme-change refresh (~285).
 
 **Interfaces:**
-- Consumes: `apply_reader_gloss_cursor_tag_to_line` / `remove_reader_gloss_cursor_tag_from_line` (B4); `state.reader_gloss_cursor_tag` (B4); `theme.reader_gloss_cursor` (B2).
-- Produces: three-state behavior (normal / reddish-off-cursor / new-color-on-cursor).
+- Consumes: B5's helpers + `state.reader_gloss_cursor_tag`; `theme.reader_gloss`, `theme.reader_gloss_cursor`.
+- Produces: three-state behavior (normal / off-cursor tint / on-cursor color), live on theme change.
 
-No new unit test (behavior is GTK-tag application on a live buffer, covered by the e2e visual check). Verified by `cargo build` + `cargo test --bins` parity + the user's screenshot.
+Verified by `cargo build` + `cargo test --bins` parity + the user's screenshot.
 
-- [ ] **Step 1: Flip the cursor-line case in repaint_reader_gloss_visible**
+- [ ] **Step 1: Flip the cursor-line case**
 
-Replace the body of the loop in `src/input/highlight.rs` (~350–356):
+Replace the loop body in `src/input/highlight.rs` (~350–356):
 
 ```rust
     for &buf_idx in &state.reader_gloss_lines {
@@ -358,60 +519,62 @@ with:
 ```rust
     for &buf_idx in &state.reader_gloss_lines {
         if buf_idx == state.current_line {
-            // Cursor is on a glossed line: show the distinct glossed-cursor color
-            // (not the off-cursor reddish tint).
+            // Cursor on a glossed line: show the distinct on-cursor color.
             crate::app::remove_reader_gloss_tag_from_line(state, buf_idx);
             crate::app::apply_reader_gloss_cursor_tag_to_line(state, buf_idx);
         } else {
-            // Off-cursor glossed line: reddish tint; clear any stale cursor color.
+            // Off-cursor glossed line: the gloss tint; clear any stale on-cursor color.
             crate::app::remove_reader_gloss_cursor_tag_from_line(state, buf_idx);
             crate::app::apply_reader_gloss_tag_to_line(state, buf_idx);
         }
     }
 ```
 
-Also update the doc comment above the fn (~339–345): it currently says the cursor line is left un-tinted ("the cursor-line highlight wins on its own line") — change it to say the cursor line now gets the distinct glossed-cursor color.
+Update the fn doc comment (~339–345): the cursor line now gets the distinct
+on-cursor color (was: left un-tinted).
 
-- [ ] **Step 2: Refresh the new tag's color on theme change**
+- [ ] **Step 2: Refresh both tags on theme change**
 
-In `src/input/actions/settings.rs`, after the existing line (~285):
+In `src/input/actions/settings.rs`, change the existing line (~285):
 
 ```rust
     state.reader_gloss_tag.set_property("foreground", &theme.focus_color);
 ```
 
-add:
+to:
 
 ```rust
-    // Glossed-cursor tint tracks the theme too (the "opposite of the reddish").
+    state.reader_gloss_tag.set_property("foreground", &theme.reader_gloss);
     state.reader_gloss_cursor_tag.set_property("foreground", &theme.reader_gloss_cursor);
 ```
+
+(Update the nearby comment: the tints are the guarded gloss colors now.)
 
 - [ ] **Step 3: Build + bins + clippy**
 
 ```bash
 cargo build 2>&1 | tail -3
 cargo test --bins 2>&1 | tail -3
-cargo clippy 2>&1 | rg -c '^warning'   # expect 122 (baseline; no new)
+cargo clippy 2>&1 | rg -c '^warning'   # expect 122 baseline (no new)
 ```
-Expected: build Finished; bins 519+ pass (517 baseline + new theme tests), 0 fail; clippy count 122.
+Expected: build Finished; bins green (517 baseline + new theme tests); clippy 122.
 
-- [ ] **Step 4: Commit B4 + B5 together**
+- [ ] **Step 4: Commit B5 + B6 together**
 
 ```bash
 git add src/app/mod.rs src/input/highlight.rs src/input/actions/settings.rs
 git commit -m "$(cat <<'EOF'
-feat(reader): distinct color for a glossed line that is the cursor block
+feat(reader): distinct on-cursor color for a glossed line; guarded tints
 
-A glossed line now has three states on the reading card: normal body text
-(not glossed); the reddish focuscolor tint (glossed, off-cursor); and a
-distinct theme.reader_gloss_cursor color (glossed AND the cursor block).
-Adds the reader-gloss-cursor-line TextTag + apply/remove helpers, flips
-repaint_reader_gloss_visible to apply it on the cursor line instead of
-stripping the tint, and refreshes its color on theme change.
+A glossed line now has three states on the reading card: normal body text;
+the contrast-guarded off-cursor gloss tint (theme.reader_gloss, was the raw
+focuscolor); and a distinct on-cursor color (theme.reader_gloss_cursor) when
+it is the cursor block. Adds the reader-gloss-cursor-line tag + helpers, flips
+repaint_reader_gloss_visible to apply it on the cursor line, and refreshes both
+tints on theme change.
 
-Logic-verified (cargo test --bins); visual acceptance needs an e2e
-screenshot on rose-pine-dawn — see ac.
+Logic-verified (cargo test --bins, incl. the all-themes contrast invariant);
+visual acceptance needs e2e screenshots on the previously-dim themes — see ac.
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01QBmkjF6UmwopCrhALaGQgj
@@ -421,12 +584,11 @@ EOF
 
 - [ ] **Step 5: ASK THE USER to verify on screen**
 
-Per CLAUDE.md, the agent cannot launch on the live dwl seat. Ask the user to launch on rose-pine-dawn, open Bleak House → "In Chancery", and confirm:
-- cursor ON the glossed first paragraph → it renders teal `#56949f`;
-- cursor OFF it (on para 2) → the glossed para renders reddish `#c4788a`;
-- a non-glossed cursor line renders normal slate body text.
+Per CLAUDE.md the agent cannot launch on the live dwl seat. Ask the user to open Bleak House → "In Chancery" and confirm, on at least:
+- **rose-pine-dawn:** cursor ON the glossed first paragraph → teal `#56949f`; OFF → rose `#c4788a`; non-glossed cursor line → normal slate.
+- **dayfox** and **melange-light** (previously dim): the OFF-cursor glossed paragraph now reads clearly tinted (not washed out), and ON-cursor shows a distinct color.
 
-Provide the manual single-work launch from CLAUDE.md "Headless Verification" + `grim`, or `./scripts/e2e-env.sh cargo test --test line_clipping -- --ignored --nocapture` for a smoke screenshot.
+Provide the manual single-work launch from CLAUDE.md "Headless Verification" + `grim` per theme (the user switches theme with super+\ / their theme toggle), or the e2e smoke `./scripts/e2e-env.sh cargo test --test line_clipping -- --ignored --nocapture`.
 
 ---
 
@@ -962,15 +1124,18 @@ and the manual single-work synopsis/gloss launch from CLAUDE.md "Headless Verifi
 ## Self-Review (completed)
 
 **Spec coverage:**
-- B color source (new theme key + complement fallback) → B1, B2, B3. ✓
-- B three states + repaint flip + theme refresh → B4, B5. ✓
+- B color helpers (complement + WCAG contrast) → B1. ✓
+- B contrast/distinctness guard (`ensure_gloss_color`, the 13-theme fix) → B2. ✓
+- B both colors derived + per-theme override + all-themes invariant → B3. ✓
+- B rose-pine-dawn explicit on-cursor value → B4. ✓
+- B three states + tags + repaint flip + theme refresh → B5, B6. ✓
 - A scope (labels + echoes; pron excluded) → A2 (labels), A3 (echoes); pron untouched by design. ✓
 - A attach rule (lead→following, trail→preceding) → A2, A3. ✓
 - A pagination measures attachments → A4. ✓
 - A multi-page render emits attachments → A5 (synopsis), A6 (gloss verify). ✓
 
-**Placeholder scan:** No "TBD/TODO". All three previously-speculative spots are now resolved against the real source: B2 uses the existing `resolve_theme(name, &Value)` (theme.rs:90), A4 uses the real `gloss_block_height`/`block_height_overhead` shape (theme.rs:2188), A5's `rebuild_block_ranges_from` is confirmed text-search-based (gloss_overlay.rs:1173) so it needs no edit.
+**Placeholder scan:** No "TBD/TODO". All previously-speculative spots are resolved against real source: B3 uses the existing `resolve_theme(name, &Value)` (theme.rs:90) and `load_all_themes()` (theme.rs:42); B5 flips the existing `reader-gloss-line` tag from `theme.focus_color` to `theme.reader_gloss` (app/mod.rs:916) and `settings.rs:285`; A4 uses the real `gloss_block_height`/`block_height_overhead` shape (gloss_overlay.rs:2188); A5's `rebuild_block_ranges_from` is confirmed text-search-based (gloss_overlay.rs:1173) so it needs no edit.
 
-**Type consistency:** `Attachment::{LeadLabel, TrailEcho}` used identically across A1/A2/A3/A4/A5. `reader_gloss_cursor` (field) / `reader-gloss-cursor-line` (tag name) / `reader_gloss_cursor_tag` (state field) / `apply_reader_gloss_cursor_tag_to_line` consistent across B2/B4/B5. `complement_hex` consistent B1/B2. `resolve_theme` is the real per-value builder (not `from_value`).
+**Type consistency:** `Attachment::{LeadLabel, TrailEcho}` used identically across A1/A2/A3/A4/A5. `reader_gloss` + `reader_gloss_cursor` (Theme fields) / `reader-gloss-line` + `reader-gloss-cursor-line` (tag names) / `reader_gloss_cursor_tag` (state field) / `apply_reader_gloss_cursor_tag_to_line` consistent across B3/B5/B6. `complement_hex`, `contrast_ratio`, `ensure_gloss_color` consistent B1/B2/B3. `resolve_theme` is the real per-value builder (not `from_value`).
 
 **Known soft spot flagged inline (not a gap):** the echo count invariant in `gloss_block_markups` (A3 step 3 warning + the explicit `all_echo_gloss_markups_count_matches_blocks` test) — the only place the 1:1 markup/block count could drift. Covered by a test and the never-fires `else` safety net.

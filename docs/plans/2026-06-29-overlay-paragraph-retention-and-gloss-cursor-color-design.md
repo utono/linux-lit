@@ -43,64 +43,124 @@ For a buffer line:
 This flips the cursor-line case from *remove the tint* to *apply a different
 tint*.
 
-### Color source — new per-theme key
+### Color source — derive BOTH gloss colors with guaranteed contrast
 
-`themes-unified.json` is keyed by theme name at top level (no `.themes`
-wrapper); each theme's `linux-lit` block today holds only `cursor_line_bg`. The
-new color is a new OPTIONAL key in that block:
+A 36-theme audit (2026-06-29) showed the contrast problem is broader than the
+new feature: the EXISTING off-cursor tint (raw `dwl.focuscolor`) is itself dim
+against `text_bg` or near `text_fg` on **13 themes** (dayfox, melange-light,
+everforest-light-{hard,medium,soft}, solarized-light, modus-operandi,
+gruvbox-material-light-soft, kanagawa-lotus, tokyonight-day, several
+everforest-dark, …), and the naive 180° complement has its OWN contrast failures
+on a different set. Using raw `focuscolor` / raw complement does NOT guarantee a
+legible, distinct color.
+
+The codebase already solves exactly this for vocab words via `choose_vocab_fg`
+(`theme.rs`): pick a color with enough hue distance from the body text, else
+derive one by rotating hue and clamping S/L. We reuse that pattern for BOTH gloss
+colors.
+
+**Two derived colors, both guarded** (and both new OPTIONAL per-theme keys —
+explicit value wins, derivation is the default):
+
+- **`reader_gloss` — off-cursor tint.** Base hue = `focus_color`. Adjust so it
+  (a) contrasts with `text_bg` (WCAG ratio ≥ 3.0) and (b) is distinct from
+  `text_fg` (contrast ≥ ~1.4 OR hue distance ≥ 40°). If the raw focuscolor
+  already satisfies both, keep it (so themes that look right today are unchanged
+  — e.g. rose-pine-dawn, gruvbox-material). Else clamp lightness away from the bg
+  and raise saturation at the same hue; if still indistinct, rotate hue like
+  `choose_vocab_fg`'s last resort.
+- **`reader_gloss_cursor` — on-cursor color.** Base hue = the 180° complement of
+  the (derived) off-cursor tint. Run through the SAME guard against `text_bg`,
+  `text_fg`, AND the derived off-cursor tint, so the three states (body /
+  off-cursor / on-cursor) are mutually distinct and all legible.
+
+`themes-unified.json` is keyed by theme name at top level (no `.themes` wrapper);
+each theme's `linux-lit` block today holds only `cursor_line_bg`. Both colors may
+be overridden there:
 
 ```json
 "rose-pine-dawn": { "linux-lit": { "cursor_line_bg": "...", "reader_gloss_cursor": "#56949f" } }
 ```
 
-- **rose-pine-dawn explicit value: `#56949f`** (rosé-pine "foam" — the dawn-variant
-  teal; the true complement of the `#c4788a` rose-red focuscolor, and clearly
-  distinct from the `#575279` slate body text). This is the theme being verified
-  on screen.
-- **Fallback when a theme omits the key:** `Theme::load` derives a sensible
-  complement so all 36 themes get a reasonable color WITHOUT hand-authoring 36
-  entries. Derivation rule (in `theme.rs`): rotate `focus_color`'s hue by ~180°
-  at the same saturation/lightness (a small `hsl` round-trip helper), yielding a
-  teal/green for a red focuscolor. If parsing fails, fall back to `text_fg`
-  (never panics, never invisible).
+- **rose-pine-dawn `reader_gloss_cursor` explicit value: `#56949f`** (rosé-pine
+  "foam"). Its off-cursor tint (`focus_color #c4788a`) already passes the guard
+  (contrast-vs-bg 3.0, distinct from body), so `reader_gloss` is NOT overridden
+  there — the derivation keeps the current look.
+- **No per-theme `reader_gloss`/`reader_gloss_cursor` entries are required** for
+  the other 35 — the guarded derivation gives every theme a legible, distinct
+  pair automatically. (This is the whole point: a new theme added later is safe.)
 
-`Theme` gains `pub reader_gloss_cursor: String`. The hard-coded default `Theme`
-(`theme.rs` ~186) gets a teal default too.
+`Theme` gains `pub reader_gloss: String` AND `pub reader_gloss_cursor: String`.
+The existing `focus_color` field stays (still used elsewhere if any), but the
+reader-gloss TINT tag now uses `theme.reader_gloss` (the guarded value), not the
+raw `focus_color`. The hard-coded default `Theme` gets both, derived from its
+`#d4be98` focuscolor.
+
+### Guard helper (new, in theme.rs, pure + unit-tested)
+
+```
+fn ensure_gloss_color(base_hex, bg_hex, avoid: &[&str]) -> String
+```
+Returns a color at `base_hex`'s hue that has WCAG contrast ≥ 3.0 vs `bg_hex` and
+is distinct (hue distance ≥ 40° OR contrast ≥ 1.4) from every color in `avoid`.
+Strategy: if `base_hex` already qualifies, return it; else adjust L (toward the
+side of `bg` with more headroom) and raise S at the same hue and re-check; if it
+still collides on hue with an `avoid` color, rotate hue +150° (the
+`choose_vocab_fg` last resort) and clamp S/L. Reuses existing `hex_to_rgb`,
+`rgb_to_hsl`, `hsl_to_rgb`, `rgb_to_hex`, `hue_distance`, and a small WCAG
+`contrast_ratio(a,b)` (extract the luminance math already inside `contrast_on`).
 
 ### Wiring
 
-- `theme.rs` `Theme::load`: read `linux-lit.reader_gloss_cursor`; else derive
-  from `focus_color`; store in the new field. Add the `hsl` complement helper
-  (pure, unit-testable).
-- `src/app/mod.rs`: add a second TextTag `reader-gloss-cursor-line` with
-  `foreground = theme.reader_gloss_cursor`, added right after `reader-gloss-line`
-  (so it also outranks dim, and is available to apply on the cursor line). The
-  cursor-line tag paints a paragraph BACKGROUND, so a foreground tag on the same
-  line composes fine.
+- `theme.rs` `resolve_theme`: compute
+  `reader_gloss = linux-lit.reader_gloss override OR ensure_gloss_color(focus_color, text_bg, &[text_fg])`,
+  then
+  `reader_gloss_cursor = override OR ensure_gloss_color(complement_hex(&reader_gloss), text_bg, &[text_fg, &reader_gloss])`.
+  Store both. `default_theme` does the same from its constants.
+- `src/app/mod.rs`: the existing `reader-gloss-line` tag uses
+  `theme.reader_gloss` (was `theme.focus_color`). Add a second TextTag
+  `reader-gloss-cursor-line` with `foreground = theme.reader_gloss_cursor`, right
+  after it (outranks dim; applied on the cursor line). The cursor-line tag paints
+  a paragraph BACKGROUND, so a foreground tag on the same line composes fine.
 - `src/input/highlight.rs` `repaint_reader_gloss_visible`: on the cursor line,
   REMOVE `reader-gloss-line` and APPLY `reader-gloss-cursor-line`; on every other
-  glossed line, REMOVE `reader-gloss-cursor-line` and APPLY `reader-gloss-line`
-  (so moving the cursor off a line restores the reddish tint and clears the new
-  color). Helpers
-  `apply_reader_gloss_cursor_tag_to_line`/`remove_…` mirror the existing pair in
-  `src/app/mod.rs`.
-- Theme change refresh: `src/input/actions/settings.rs` already refreshes
-  `reader-gloss-line`'s color on theme change — refresh the new tag's color there
-  too (set foreground from the reloaded `theme.reader_gloss_cursor`).
+  glossed line, REMOVE `reader-gloss-cursor-line` and APPLY `reader-gloss-line`.
+  Helpers `apply_reader_gloss_cursor_tag_to_line`/`remove_…` mirror the existing
+  pair in `src/app/mod.rs`.
+- Theme change refresh: `src/input/actions/settings.rs` refreshes
+  `reader-gloss-line` (set foreground to `theme.reader_gloss`, was `focus_color`)
+  AND the new `reader-gloss-cursor-line` (foreground `theme.reader_gloss_cursor`).
 
 ### What does NOT change
-The reddish tint for non-cursor glossed lines; the cursor-line background
-highlight; the gloss overlay's OWN cached-TTS coloring (separate path); the set
-of glossed lines (`reader_gloss_lines`). No change to navigation.
+The cursor-line background highlight; the gloss overlay's OWN cached-TTS coloring
+(separate path); the set of glossed lines (`reader_gloss_lines`). No change to
+navigation. NOTE: the off-cursor tint COLOR does change on the ~13 themes where
+the raw focuscolor was dim/indistinct (that is the fix); on themes that already
+looked right (rose-pine-dawn, gruvbox-material, …) the guard returns the raw
+focuscolor unchanged, so they are visually identical to today.
 
 ### Testing (B)
-- Unit: the `hsl` complement helper rotates a known red to a known teal; a
-  malformed color falls back to `text_fg`.
-- Unit: `Theme::load` picks up an explicit `reader_gloss_cursor` when present and
-  derives one when absent (use a small in-test JSON value).
-- Visual (e2e, ask user): on rose-pine-dawn, open Bleak House "In Chancery",
-  move the cursor onto the glossed first paragraph → it renders teal `#56949f`;
-  move off → it renders reddish; a non-glossed cursor line renders normal.
+- Unit: `complement_hex` rotates a known red to a teal hue; malformed input is
+  safe (returns a valid `#rrggbb`).
+- Unit: `contrast_ratio` matches known WCAG pairs (white/black ≈ 21; equal
+  colors = 1).
+- Unit: `ensure_gloss_color` — (a) returns the base unchanged when it already
+  passes (rose-pine-dawn `#c4788a` on `#faf4ed` avoiding `#575279`); (b) for a
+  dim base on a light bg (dayfox `#7b6b99` on `#f6f2ee`) returns a color with
+  contrast-vs-bg ≥ 3.0; (c) the result is distinct (hue ≥ 40° or contrast ≥ 1.4)
+  from every `avoid` color.
+- Unit: `resolve_theme` — explicit `reader_gloss_cursor` override wins; absent →
+  derived; `reader_gloss` defaults to the guarded focuscolor; the derived
+  off-cursor and on-cursor colors are mutually distinct.
+- Property-ish: for EVERY theme in `themes-unified.json`, `resolve_theme`'s
+  `reader_gloss` and `reader_gloss_cursor` each pass contrast-vs-bg ≥ 3.0 and are
+  mutually distinct (a loop over `load_all_themes()` asserting the invariant — the
+  guard against future-theme regressions the audit found).
+- Visual (e2e, ask user): on the previously-failing themes (dayfox,
+  melange-light, everforest-light-medium) the off-cursor glossed paragraph now
+  reads clearly tinted (not washed out), and moving the cursor onto it shows the
+  distinct on-cursor color; on rose-pine-dawn the on-cursor color is teal
+  `#56949f` and off-cursor is the rose `#c4788a` (unchanged).
 
 ---
 
