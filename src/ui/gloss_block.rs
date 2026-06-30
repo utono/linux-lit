@@ -75,16 +75,14 @@ pub enum BlockKind {
 }
 
 /// A non-cursor-stop paragraph that rides WITH a block on a paginated page so it
-/// is not dropped at a page boundary (the single-page render keeps it; without
-/// this the multi-page render would lose it). Display-only — never a cursor stop.
+/// is not dropped at a page boundary. Display-only — never a cursor stop.
+/// Currently only synopsis lead labels use this; gloss echo brackets ride inside
+/// the block's markup string (`gloss_block_markups`), not here.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Attachment {
     /// A bold label paragraph that HEADS the block (synopsis, e.g.
     /// "Shakespearean parallels:"). Rendered above the block body.
     LeadLabel(String),
-    /// An echo-bracket markup ("<gloss>[...]</gloss>") that TRAILS the block
-    /// (gloss). Rendered below the block body via the echo render path.
-    TrailEcho(String),
 }
 
 /// One cursor stop in the gloss, in document order.

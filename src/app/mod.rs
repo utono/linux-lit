@@ -386,18 +386,19 @@ pub struct AppState {
     pub vocab_match_idx: Option<usize>,
     pub vocab_tag: gtk4::TextTag,
     /// Foreground tint applied to source lines covered by a `reader-gloss`
-    /// passage — the same slate-blue (#2d5570) the gloss overlay uses to mark a
-    /// synthesized-TTS block. See `reader_gloss_lines` and
+    /// passage. Color comes from `theme.reader_gloss` — the contrast-guarded
+    /// gloss tint derived from the dwl focuscolor. See `reader_gloss_lines` and
     /// `apply_reader_gloss_highlighting`.
     pub reader_gloss_tag: gtk4::TextTag,
     /// Foreground tag for a glossed line that is ALSO the cursor block — a
-    /// distinct, contrast-guarded color (theme.reader_gloss_cursor) so it reads
+    /// distinct, contrast-guarded color (`theme.reader_gloss_cursor`) so it reads
     /// differently from both body text and the off-cursor gloss tint. Applied by
     /// `repaint_reader_gloss_visible` on the cursor line.
     pub reader_gloss_cursor_tag: gtk4::TextTag,
     /// Buffer line indices that fall inside a `reader-gloss` passage for the
-    /// current work. Recomputed by `display_work`; used to repaint the slate
-    /// tint after the cursor leaves a glossed line (cursor-line wins while on it).
+    /// current work. Recomputed by `display_work`; used to repaint the
+    /// `theme.reader_gloss` tint after the cursor leaves a glossed line
+    /// (cursor-line wins while on it).
     pub reader_gloss_lines: std::collections::HashSet<usize>,
     pub dim_enabled: bool,
     pub vocab_highlight_visible: bool,
@@ -2838,8 +2839,8 @@ pub fn display_work_at_with_prepared(
         crate::logging::log(&format!("TIMING: apply_vocab_highlighting {:.0}ms", t4.elapsed().as_millis()));
     }
 
-    // Tint source lines covered by a reader-gloss passage (slate-blue, the same
-    // marker the gloss overlay uses for synthesized-TTS blocks).
+    // Tint source lines covered by a reader-gloss passage (theme.reader_gloss,
+    // the contrast-guarded color derived from the dwl focuscolor).
     let t_rg = std::time::Instant::now();
     apply_reader_gloss_highlighting(state);
     crate::logging::log(&format!(
@@ -3726,8 +3727,8 @@ pub(crate) fn line_in_any_passage(
 }
 
 /// Recompute which buffer lines fall inside a `reader-gloss` passage for the
-/// current work and tint them slate-blue (the gloss overlay's synthesized-TTS
-/// color). Stores the set in `reader_gloss_lines` so `update_highlight` can
+/// current work and tint them with `theme.reader_gloss` (contrast-guarded,
+/// derived from the dwl focuscolor). Stores the set in `reader_gloss_lines` so `update_highlight` can
 /// restore the tint on a line the cursor leaves. The cursor's own line is left
 /// untinted (`update_highlight` strips it) so the active line wins.
 ///

@@ -134,15 +134,15 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
     let focus_color = str_field(dwl, "focuscolor").unwrap_or_else(|| text_fg.clone());
 
     let lit = val.get("linux-lit").unwrap_or(&Value::Null);
-    let cursor_line_bg = str_field(&lit, "cursor_line_bg")
+    let cursor_line_bg = str_field(lit, "cursor_line_bg")
         .unwrap_or_else(|| "rgba(86, 148, 100, 0.25)".to_string());
 
     // Reader-gloss tints, contrast-guaranteed (raw focuscolor is dim/indistinct
     // on ~13 themes). Off-cursor = guarded focuscolor; on-cursor = guarded
     // complement, also kept distinct from the off-cursor tint.
-    let reader_gloss = str_field(&lit, "reader_gloss")
+    let reader_gloss = str_field(lit, "reader_gloss")
         .unwrap_or_else(|| ensure_gloss_color(&focus_color, &text_bg, &[&text_fg]));
-    let reader_gloss_cursor = str_field(&lit, "reader_gloss_cursor").unwrap_or_else(|| {
+    let reader_gloss_cursor = str_field(lit, "reader_gloss_cursor").unwrap_or_else(|| {
         ensure_gloss_color(&complement_hex(&reader_gloss), &text_bg, &[&text_fg, &reader_gloss])
     });
 
