@@ -1,4 +1,4 @@
-use crate::ui::ask_card::{AskCard, AskCardHost, AskFocus};
+use crate::ui::ask_card::{AskCard, AskCardHost};
 use crate::ui::gloss_block::{
     gloss_block_markups, gloss_blocks, render_synopsis_with_labels, selected_blocks_text,
     synopsis_blocks, visual_block_range, visual_selection_count, BlockKind, GlossBlock,
@@ -1973,17 +1973,16 @@ impl GlossOverlay {
         self.ask_host.take_text()
     }
 
-    /// Flip focus between the synopsis and the ask card. No-op if closed.
-    pub fn toggle_ask_focus(&self) {
-        self.ask_host.toggle_focus();
+    /// Feed a key to the ask card's vim engine (the prompt is a modal editor).
+    pub fn feed_ask_vim_key(
+        &self,
+        key: crate::input::vim::VimKey,
+    ) -> crate::input::vim::EditorAction {
+        self.ask_host.feed_vim_key(key)
     }
 
     pub fn ask_is_open(&self) -> bool {
         self.ask_host.is_open()
-    }
-
-    pub fn ask_focus(&self) -> AskFocus {
-        self.ask_host.focus()
     }
 
     pub fn show_loading(&self) {

@@ -1,4 +1,4 @@
-use crate::ui::ask_card::{AskCard, AskCardHost, AskFocus};
+use crate::ui::ask_card::{AskCard, AskCardHost};
 use crate::ui::gloss_block::{visual_block_range, visual_selection_count};
 use crate::ui::journal_block::{journal_blocks, JournalBlock};
 use gtk4::prelude::*;
@@ -577,10 +577,6 @@ impl JournalOverlay {
         self.ask_host.is_open()
     }
 
-    pub fn ask_focus(&self) -> AskFocus {
-        self.ask_host.focus()
-    }
-
     pub fn open_ask_card(&self, title: &str, hint: &str) {
         // The host reveals the ask card, hides the navigation footer (the ask
         // card carries its own "Tab switch · Ctrl+Enter submit" hint), shrinks the
@@ -620,12 +616,17 @@ impl JournalOverlay {
         self.ask_host.close();
     }
 
-    pub fn toggle_ask_focus(&self) {
-        self.ask_host.toggle_focus();
-    }
 
     pub fn take_ask_text(&self) -> String {
         self.ask_host.take_text()
+    }
+
+    /// Feed a key to the ask card's vim engine (the prompt is a modal editor).
+    pub fn feed_ask_vim_key(
+        &self,
+        key: crate::input::vim::VimKey,
+    ) -> crate::input::vim::EditorAction {
+        self.ask_host.feed_vim_key(key)
     }
 
     // ---- in-place vim editor (the `e` bind) ----

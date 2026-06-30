@@ -122,14 +122,14 @@ pub fn handle_key(
             crate::app::InputMode::Settings => handle_settings_key(state, key_name, is_ctrl),
             crate::app::InputMode::VoicePicker => handle_voice_picker_key(state, key_name, is_ctrl),
             crate::app::InputMode::Search => handle_search_key(state, key_name),
-            crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_shift, is_alt, tokio_handle),
+            crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, key_char, is_ctrl, is_shift, is_alt, tokio_handle),
             crate::app::InputMode::GlossVisual => handle_block_visual_key(state, key_state, key_name, &GLOSS_VISUAL_CFG),
-            crate::app::InputMode::JournalOverlay => handle_journal_key(state, key_state, key_name, is_ctrl, is_alt),
+            crate::app::InputMode::JournalOverlay => handle_journal_key(state, key_state, key_name, key_char, is_ctrl, is_alt),
             // JournalEdit is intercepted at the top of handle_key (before the
             // global guards), so it never reaches this match.
             crate::app::InputMode::JournalEdit => unreachable!("JournalEdit handled before mode dispatch"),
             crate::app::InputMode::JournalVisual => handle_journal_visual_key(state, key_state, key_name),
-            crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_state, key_name, is_ctrl, is_alt, is_shift),
+            crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_state, key_name, key_char, is_ctrl, is_alt, is_shift),
             crate::app::InputMode::SynopsisVisual => handle_block_visual_key(state, key_state, key_name, &SYNOPSIS_VISUAL_CFG),
             crate::app::InputMode::TranslationOverlay => handle_translation_overlay_key(state, key_name),
             crate::app::InputMode::DeleteConfirm => handle_delete_confirm_key(state, key_name),
@@ -652,62 +652,106 @@ fn handle_search_key(
 
 /// Outcome of the shared ask-card key intercept.
 enum AskIntercept {
-    /// The helper consumed the key (Tab / Ctrl+Enter / Esc-while-open) — the
-    /// calling handler must `return true`.
+    /// The helper consumed the key — the calling handler must `return true`.
     Consumed,
-    /// The ask card holds focus and the key is a plain character — the calling
-    /// handler must `return false` so GTK delivers it to the editable input.
-    FallThrough,
-    /// Not an ask-card key, or the card is closed — the calling handler
-    /// continues its own routing.
+    /// The card is closed — the calling handler continues its own routing.
     NotHandled,
 }
 
-/// Intercept the ask-card chord keys when `ask_open`. `toggle` / `submit` /
-/// `close` are the calling overlay's own actions. Esc-when-closed is
-/// intentionally NOT handled here; the helper returns `NotHandled` so the
-/// caller's existing overlay-close path runs unchanged.
+/// Route a key to an OPEN ask card that is a vim editor (the prompt input is
+/// modal: NORMAL by default, `i`/`a` to type). `feed` drives the overlay's ask
+/// engine; `submit`/`close` are the overlay's actions. Submit = `:w`/`:wq` (via
+/// the engine action) OR Ctrl+Enter; close = double-Esc OR `:q`/`:q!`; a single
+/// Esc goes to the engine (→ Normal mode). Returns `Consumed` while the card is
+/// open (vim owns every key), else `NotHandled`.
 #[allow(clippy::too_many_arguments)]
-fn ask_card_intercept(
+fn ask_vim_intercept(
     ask_open: bool,
-    ask_focus: crate::ui::ask_card::AskFocus,
     key_name: &str,
+    key_char: Option<char>,
     is_ctrl: bool,
     state: &Rc<RefCell<AppState>>,
-    toggle: impl Fn(&Rc<RefCell<AppState>>),
+    feed: impl Fn(&Rc<RefCell<AppState>>, crate::input::vim::VimKey) -> crate::input::vim::EditorAction,
     submit: impl Fn(&Rc<RefCell<AppState>>),
     close: impl Fn(&Rc<RefCell<AppState>>),
 ) -> AskIntercept {
-    use crate::ui::ask_card::AskFocus;
+    use crate::input::vim::{EditorAction, VimKey};
     if !ask_open {
         return AskIntercept::NotHandled;
     }
-    if key_name == "Tab" || key_name == "ISO_Left_Tab" {
-        toggle(state);
+    // Esc: single → Normal mode (engine); double (quick) → close the prompt.
+    if key_name == "Escape" && !is_ctrl {
+        if is_double_esc() {
+            close(state);
+        } else {
+            feed(state, VimKey::Esc);
+        }
         return AskIntercept::Consumed;
     }
+    // Ctrl+Enter is an always-available submit (in addition to `:w`).
     if is_ctrl && key_name == "Return" {
         submit(state);
         return AskIntercept::Consumed;
     }
-    if key_name == "Escape" {
-        close(state);
-        return AskIntercept::Consumed;
+    if let Some(vk) = gtk_key_to_vim(key_name, key_char, is_ctrl) {
+        match feed(state, vk) {
+            EditorAction::Save | EditorAction::SaveQuit => submit(state),
+            EditorAction::Cancel | EditorAction::CancelForce => close(state),
+            _ => {}
+        }
     }
-    if ask_focus == AskFocus::Ask {
-        return AskIntercept::FallThrough;
-    }
-    AskIntercept::NotHandled
+    // The prompt is a vim editor: consume EVERY key while it is open.
+    AskIntercept::Consumed
 }
 
 thread_local! {
-    /// Timestamp of the last Escape press in the journal vim editor, for the
-    /// double-Esc-to-exit gesture. A single Esc goes to vim Normal mode; two in
-    /// quick succession (< DOUBLE_ESC_MS) exit the editor.
+    /// Timestamp of the last Escape press in a vim editor (the journal page
+    /// editor OR an ask-card prompt), for the double-Esc-to-exit gesture. A
+    /// single Esc goes to vim Normal mode; two in quick succession (< DOUBLE_ESC_MS)
+    /// exit/close. Shared by both vim surfaces (only one is active at a time).
     static LAST_EDIT_ESC: std::cell::Cell<Option<std::time::Instant>> =
         const { std::cell::Cell::new(None) };
 }
 const DOUBLE_ESC_MS: u128 = 400;
+
+/// True when this Esc press is the SECOND within `DOUBLE_ESC_MS` of the last one
+/// (and resets the timer on a double). Used for the double-Esc exit gesture.
+fn is_double_esc() -> bool {
+    let now = std::time::Instant::now();
+    let double = LAST_EDIT_ESC.with(|c| {
+        let prev = c.get();
+        c.set(Some(now));
+        prev.is_some_and(|p| now.duration_since(p).as_millis() < DOUBLE_ESC_MS)
+    });
+    if double {
+        LAST_EDIT_ESC.with(|c| c.set(None));
+    }
+    double
+}
+
+/// Translate a GTK key (name + the printable `key_char` + ctrl) into a `VimKey`
+/// for a vim surface. `None` = not editor input (swallow). Esc is handled by the
+/// caller (double-Esc timing), so it is NOT mapped here.
+fn gtk_key_to_vim(
+    key_name: &str,
+    key_char: Option<char>,
+    is_ctrl: bool,
+) -> Option<crate::input::vim::VimKey> {
+    use crate::input::vim::VimKey;
+    match key_name {
+        "Return" | "KP_Enter" => Some(VimKey::Enter),
+        "BackSpace" => Some(VimKey::Backspace),
+        "Tab" | "ISO_Left_Tab" => Some(VimKey::Tab),
+        "r" | "R" if is_ctrl => Some(VimKey::CtrlR),
+        _ => {
+            if is_ctrl {
+                None
+            } else {
+                key_char.filter(|c| !c.is_control()).map(VimKey::Char)
+            }
+        }
+    }
+}
 
 /// The journal in-place vim editor's key handler (InputMode::JournalEdit).
 /// Translates the GTK key (+ `key_char` for printables) into a `VimKey`, feeds
@@ -726,43 +770,15 @@ fn handle_journal_edit_key(
     // in quick succession EXIT the editor. Timing lives here, not in the pure
     // engine (which has no clock).
     if key_name == "Escape" && !is_ctrl {
-        let now = std::time::Instant::now();
-        let is_double = LAST_EDIT_ESC.with(|c| {
-            let prev = c.get();
-            c.set(Some(now));
-            prev.is_some_and(|p| now.duration_since(p).as_millis() < DOUBLE_ESC_MS)
-        });
-        if is_double {
-            LAST_EDIT_ESC.with(|c| c.set(None));
+        if is_double_esc() {
             crate::input::actions::journal::vim_cancel(state, false);
             return true;
         }
-        // Single Esc -> engine (go to / stay in Normal mode).
         let _ = state.borrow().journal_overlay.feed_edit_key(VimKey::Esc);
         return true;
     }
 
-    // Ctrl+R is vim redo; plain printable Ctrl/Alt combos are otherwise ignored.
-    let vk: Option<VimKey> = match key_name {
-        "Return" | "KP_Enter" => Some(VimKey::Enter),
-        "BackSpace" => Some(VimKey::Backspace),
-        "Tab" | "ISO_Left_Tab" => Some(VimKey::Tab),
-        "r" | "R" if is_ctrl => Some(VimKey::CtrlR),
-        _ => {
-            if is_ctrl {
-                // Other Ctrl combos are not editor input (avoid inserting them).
-                None
-            } else {
-                // Printable input (letters, digits, punctuation, space) — use the
-                // unicode the keyval produced.
-                key_char
-                    .filter(|c| !c.is_control())
-                    .map(VimKey::Char)
-            }
-        }
-    };
-
-    let Some(vk) = vk else {
+    let Some(vk) = gtk_key_to_vim(key_name, key_char, is_ctrl) else {
         // Swallow unmapped keys so they don't leak to other handlers while editing.
         return true;
     };
@@ -798,31 +814,27 @@ fn handle_journal_key(
     state: &Rc<RefCell<AppState>>,
     key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
+    key_char: Option<char>,
     is_ctrl: bool,
     is_alt: bool,
 ) -> bool {
-    // The `e` editor is now an in-place vim mode (InputMode::JournalEdit, handled
-    // at the top of handle_key), not a card here — so there is no edit-card
-    // intercept. The ask card (the `r` create prompt and the `R` rewrite prompt)
-    // is still intercepted below.
+    // The `e` editor is an in-place vim mode (InputMode::JournalEdit, handled at
+    // the top of handle_key). The ask card (the `r` create + `R` rewrite prompts)
+    // is itself a vim editor, intercepted here.
 
-    // ---- Ask input card intercepts Tab / Ctrl+Enter / Escape first ----
-    let (ask_open, ask_focus) = {
-        let s = state.borrow();
-        (s.journal_overlay.ask_is_open(), s.journal_overlay.ask_focus())
-    };
-    match ask_card_intercept(
+    // ---- Ask input card (a vim editor) intercepts all keys while open ----
+    let ask_open = state.borrow().journal_overlay.ask_is_open();
+    match ask_vim_intercept(
         ask_open,
-        ask_focus,
         key_name,
+        key_char,
         is_ctrl,
         state,
-        |st| st.borrow().journal_overlay.toggle_ask_focus(),
+        |st, k| st.borrow().journal_overlay.feed_ask_vim_key(k),
         crate::input::actions::journal::submit_prompt,
         crate::input::actions::journal::close_prompt,
     ) {
         AskIntercept::Consumed => return true,
-        AskIntercept::FallThrough => return false,
         AskIntercept::NotHandled => {}
     }
 
@@ -994,31 +1006,27 @@ fn handle_gloss_key(
     state: &Rc<RefCell<AppState>>,
     key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
+    key_char: Option<char>,
     is_ctrl: bool,
     is_shift: bool,
     is_alt: bool,
     tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
-    // ---- Stacked add/edit input card (A / E) ------------------------------
-    // When open it behaves like the synopsis ask card: Tab toggles focus,
-    // Ctrl+Enter submits, Esc closes the card; typed characters fall through to
-    // the editable input while it holds focus. Handled before gloss nav keys.
-    let (ask_open, ask_focus) = {
-        let s = state.borrow();
-        (s.gloss_overlay.ask_is_open(), s.gloss_overlay.ask_focus())
-    };
-    match ask_card_intercept(
+    // ---- Stacked add/edit input card (a vim editor) -----------------------
+    // The prompt is modal vim: NORMAL by default, `i`/`a` to type; `:w`/Ctrl+Enter
+    // submits; double-Esc / `:q` closes. Handled before gloss nav keys.
+    let ask_open = state.borrow().gloss_overlay.ask_is_open();
+    match ask_vim_intercept(
         ask_open,
-        ask_focus,
         key_name,
+        key_char,
         is_ctrl,
         state,
-        |st| st.borrow().gloss_overlay.toggle_ask_focus(),
+        |st, k| st.borrow().gloss_overlay.feed_ask_vim_key(k),
         crate::input::actions::gloss::submit_gloss_prompt,
         crate::input::actions::gloss::close_gloss_prompt,
     ) {
         AskIntercept::Consumed => return true,
-        AskIntercept::FallThrough => return false,
         AskIntercept::NotHandled => {}
     }
 
@@ -1437,29 +1445,26 @@ fn handle_synopsis_overlay_key(
     state: &Rc<RefCell<AppState>>,
     key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
+    key_char: Option<char>,
     is_ctrl: bool,
     is_alt: bool,
     is_shift: bool,
 ) -> bool {
-    let (ask_open, ask_focus) = {
-        let s = state.borrow();
-        (s.gloss_overlay.ask_is_open(), s.gloss_overlay.ask_focus())
-    };
+    let ask_open = state.borrow().gloss_overlay.ask_is_open();
 
-    // Open-card chord keys go through the shared helper (Tab toggles focus,
-    // Ctrl+Enter submits, Esc closes the card, Ask-focus falls through).
-    match ask_card_intercept(
+    // The edit prompt is modal vim (NORMAL by default, `i`/`a` to type; `:w`/
+    // Ctrl+Enter submits; double-Esc / `:q` closes).
+    match ask_vim_intercept(
         ask_open,
-        ask_focus,
         key_name,
+        key_char,
         is_ctrl,
         state,
-        |st| st.borrow().gloss_overlay.toggle_ask_focus(),
+        |st, k| st.borrow().gloss_overlay.feed_ask_vim_key(k),
         crate::input::actions::synopsis::submit_amend_prompt,
         crate::input::actions::synopsis::close_amend_prompt,
     ) {
         AskIntercept::Consumed => return true,
-        AskIntercept::FallThrough => return false,
         AskIntercept::NotHandled => {}
     }
 

@@ -20,8 +20,14 @@ pub struct AskCard {
     title: Label,
     input: TextView,
     hint: Label,
+    /// The static hint passed to `open`, re-shown after the mode indicator.
+    base_hint: std::cell::RefCell<String>,
     focus: Cell<AskFocus>,
     return_focus: gtk4::Widget,
+    /// The input is a modal vim editor (NORMAL by default; `i`/`a` to type). The
+    /// engine is the source of truth; the input TextView (editable=false) mirrors
+    /// it. `Some` while open. Submit = `:w`/Ctrl+Enter; cancel = double-Esc/`:q`.
+    vim: std::cell::RefCell<Option<crate::input::vim::VimEngine>>,
 }
 
 impl AskCard {
@@ -53,8 +59,12 @@ impl AskCard {
         scrolled.set_margin_bottom(6);
 
         let input = TextView::new();
-        input.set_editable(true);
+        // The input is a vim editor driven by a VimEngine, so it must NOT be
+        // natively editable (GTK editing would fight the engine). cursor_visible
+        // + focus (grabbed in `open`) make the caret show.
+        input.set_editable(false);
         input.set_cursor_visible(true);
+        input.set_focusable(true);
         input.set_wrap_mode(gtk4::WrapMode::Word);
         input.set_top_margin(6);
         input.set_bottom_margin(6);
@@ -78,8 +88,10 @@ impl AskCard {
             title,
             input,
             hint,
+            base_hint: std::cell::RefCell::new(String::new()),
             focus: Cell::new(AskFocus::Doc),
             return_focus: return_focus.clone().upcast(),
+            vim: std::cell::RefCell::new(None),
         }
     }
 
@@ -97,7 +109,7 @@ impl AskCard {
     /// card_width/4, focus the input (AskFocus::Ask + card-focused highlight).
     pub fn open(&self, title: &str, hint: &str, card_width: i32) {
         self.title.set_text(title);
-        self.hint.set_text(hint);
+        *self.base_hint.borrow_mut() = hint.to_string();
         self.input.buffer().set_text("");
         if card_width > 0 {
             let margin = crate::ui::card_side_margin(card_width);
@@ -105,7 +117,61 @@ impl AskCard {
             self.container.set_margin_end(margin);
         }
         self.container.set_visible(true);
+        // Seed an empty vim engine in NORMAL mode (press `i`/`a` to type). The
+        // input mirrors it; focus is grabbed so the caret paints.
+        *self.vim.borrow_mut() = Some(crate::input::vim::VimEngine::new(String::new()));
         self.set_focus(AskFocus::Ask);
+        let _ = self.input.grab_focus();
+        self.mirror_vim();
+    }
+
+    /// Feed one key to the input's vim engine, mirror, and return the
+    /// `EditorAction` (Save/SaveQuit = submit; Cancel/CancelForce = close).
+    pub fn feed_vim_key(&self, key: crate::input::vim::VimKey) -> crate::input::vim::EditorAction {
+        let action = {
+            let mut guard = self.vim.borrow_mut();
+            let Some(engine) = guard.as_mut() else {
+                return crate::input::vim::EditorAction::Nop;
+            };
+            engine.handle_key(key).action
+        };
+        self.mirror_vim();
+        action
+    }
+
+    /// Mirror the engine's buffer/cursor into the input TextView and show the
+    /// mode indicator (`-- NORMAL/INSERT --` or the `:` line) in the hint.
+    fn mirror_vim(&self) {
+        let guard = self.vim.borrow();
+        let Some(engine) = guard.as_ref() else { return };
+        let buffer = self.input.buffer();
+        let current = buffer
+            .text(&buffer.start_iter(), &buffer.end_iter(), false)
+            .to_string();
+        if current != engine.buffer() {
+            buffer.set_text(engine.buffer());
+        }
+        let n_chars = engine.buffer().chars().count();
+        let ci = engine.cursor().min(n_chars);
+        if let Some(sel) = engine.selection() {
+            let s = buffer.iter_at_offset(sel.start as i32);
+            let e = buffer.iter_at_offset(sel.end as i32);
+            buffer.select_range(&s, &e);
+        } else {
+            let cur = buffer.iter_at_offset(ci as i32);
+            buffer.place_cursor(&cur);
+        }
+        let base = self.base_hint.borrow();
+        let mode = match engine.cmdline() {
+            Some(cmd) => format!(":{cmd}"),
+            None => match engine.mode() {
+                crate::input::vim::Mode::Normal => format!("-- NORMAL --  ({base})"),
+                crate::input::vim::Mode::Insert => "-- INSERT --".to_string(),
+                crate::input::vim::Mode::Visual => "-- VISUAL --".to_string(),
+                crate::input::vim::Mode::VisualLine => "-- VISUAL LINE --".to_string(),
+            },
+        };
+        self.hint.set_text(&mode);
     }
 
     /// Hide, set AskFocus::Doc, drop the highlight, return focus to return_focus.
@@ -114,6 +180,7 @@ impl AskCard {
         self.focus.set(AskFocus::Doc);
         self.container.remove_css_class("card-focused");
         self.container.remove_css_class("card-dimmed");
+        *self.vim.borrow_mut() = None;
         if self.input.has_focus() {
             let _ = self.return_focus.grab_focus();
         }
@@ -123,22 +190,6 @@ impl AskCard {
         self.container.is_visible()
     }
 
-    pub fn focus(&self) -> AskFocus {
-        self.focus.get()
-    }
-
-    /// Flip Doc<->Ask (no-op if closed). Owns the card-focused/card-dimmed
-    /// highlight swap and the input grab / return-focus grab.
-    pub fn toggle_focus(&self) {
-        if !self.is_open() {
-            return;
-        }
-        let next = match self.focus.get() {
-            AskFocus::Doc => AskFocus::Ask,
-            AskFocus::Ask => AskFocus::Doc,
-        };
-        self.set_focus(next);
-    }
 
     fn set_focus(&self, focus: AskFocus) {
         self.focus.set(focus);
@@ -322,10 +373,6 @@ impl AskCardHost {
         glib::idle_add_local_once(move || recompute());
     }
 
-    pub fn toggle_focus(&self) {
-        self.ask.toggle_focus();
-    }
-
     pub fn take_text(&self) -> String {
         self.ask.take_text()
     }
@@ -334,11 +381,15 @@ impl AskCardHost {
         self.ask.is_open()
     }
 
-    pub fn focus(&self) -> AskFocus {
-        self.ask.focus()
-    }
-
     pub fn input(&self) -> &TextView {
         self.ask.input()
+    }
+
+    /// Feed a key to the ask card's vim engine (the prompt is a modal editor).
+    pub fn feed_vim_key(
+        &self,
+        key: crate::input::vim::VimKey,
+    ) -> crate::input::vim::EditorAction {
+        self.ask.feed_vim_key(key)
     }
 }
