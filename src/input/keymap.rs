@@ -53,6 +53,13 @@ pub fn handle_key(
         return handle_journal_edit_key(state, key_name, key_char, is_ctrl, is_shift, tokio_handle);
     }
 
+    // GlossEdit owns ALL keys for the in-place gloss/synopsis vim editor, for the
+    // same reasons as JournalEdit above (Insert mode must type space literally),
+    // so route it BEFORE the global space / play-pause guards.
+    if state.borrow().input_mode == crate::app::InputMode::GlossEdit {
+        return handle_gloss_edit_key(state, key_name, key_char, is_ctrl, is_shift, tokio_handle);
+    }
+
     // Shift+Ctrl+L: quit from any mode. GTK delivers the shifted letter as the
     // uppercase name "L" (with shift=true), so match that; also accept "l" for
     // layouts that report the unshifted name.
@@ -813,6 +820,96 @@ fn handle_journal_edit_key(
     }
 }
 
+/// Route a key to the gloss/synopsis in-place vim editor (`InputMode::GlossEdit`).
+/// Near-clone of `handle_journal_edit_key`; `:w`/`:wq`/`:q`/`:q!`/`R` branch to the
+/// gloss vs synopsis handler by `GlossOverlay::is_showing_synopsis`.
+fn handle_gloss_edit_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+    key_char: Option<char>,
+    is_ctrl: bool,
+    _is_shift: bool,
+    tokio_handle: &tokio::runtime::Handle,
+) -> bool {
+    use crate::input::vim::{EditorAction, VimKey};
+
+    // Esc: a SINGLE Esc returns to vim Normal mode (handled by the engine); TWO
+    // in quick succession EXIT the editor (force cancel). Timing lives here.
+    if key_name == "Escape" && !is_ctrl {
+        if is_double_esc() {
+            // Read the surface inline here: no save has run, so paginated_mode is
+            // still the surface the editor was entered from.
+            let synopsis = state.borrow().gloss_overlay.is_showing_synopsis();
+            if synopsis {
+                crate::input::actions::synopsis::vim_cancel(state, true);
+            } else {
+                crate::input::actions::gloss::vim_cancel(state, true);
+            }
+            return true;
+        }
+        let _ = state.borrow().gloss_overlay.feed_edit_key(VimKey::Esc);
+        return true;
+    }
+
+    let Some(vk) = gtk_key_to_vim(key_name, key_char, is_ctrl) else {
+        // Swallow unmapped keys so they don't leak to other handlers while editing.
+        return true;
+    };
+
+    let action = state.borrow().gloss_overlay.feed_edit_key(vk);
+    // Read the surface BEFORE the save/cancel call: the gloss/synopsis
+    // vim_save/vim_cancel re-render and may flip paginated_mode (which backs
+    // is_showing_synopsis), so capturing it after the match would route wrong.
+    let synopsis = state.borrow().gloss_overlay.is_showing_synopsis();
+    crate::logging::log(&format!(
+        "GLOSS-EDIT: key={:?} -> action={:?} synopsis={}",
+        vk, action, synopsis
+    ));
+    match action {
+        EditorAction::Nop => true,
+        EditorAction::Save => {
+            if synopsis {
+                crate::input::actions::synopsis::vim_save(state, false);
+            } else {
+                crate::input::actions::gloss::vim_save(state, false);
+            }
+            true
+        }
+        EditorAction::SaveQuit => {
+            if synopsis {
+                crate::input::actions::synopsis::vim_save(state, true);
+            } else {
+                crate::input::actions::gloss::vim_save(state, true);
+            }
+            true
+        }
+        EditorAction::Cancel => {
+            if synopsis {
+                crate::input::actions::synopsis::vim_cancel(state, false);
+            } else {
+                crate::input::actions::gloss::vim_cancel(state, false);
+            }
+            true
+        }
+        EditorAction::CancelForce => {
+            if synopsis {
+                crate::input::actions::synopsis::vim_cancel(state, true);
+            } else {
+                crate::input::actions::gloss::vim_cancel(state, true);
+            }
+            true
+        }
+        EditorAction::OpenRewrite => {
+            if synopsis {
+                crate::input::actions::synopsis::vim_open_rewrite(state, tokio_handle);
+            } else {
+                crate::input::actions::gloss::vim_open_rewrite(state, tokio_handle);
+            }
+            true
+        }
+    }
+}
+
 fn handle_journal_key(
     state: &Rc<RefCell<AppState>>,
     key_state: &Rc<RefCell<KeyState>>,
@@ -1151,7 +1248,7 @@ fn handle_gloss_key(
             true
         }
         "e" => {
-            crate::input::actions::gloss::show_edit_dialog(state);
+            crate::input::actions::gloss::begin_edit(state);
             true
         }
         // u: undo the last `e` edit (single-level), behind a y/Esc confirmation.
@@ -1536,7 +1633,7 @@ fn handle_synopsis_overlay_key(
             true
         }
         "e" => {
-            crate::input::actions::synopsis::show_edit_prompt(state);
+            crate::input::actions::synopsis::begin_edit(state);
             true
         }
         "V" => {
