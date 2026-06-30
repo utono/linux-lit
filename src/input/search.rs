@@ -257,9 +257,9 @@ pub fn clear_search(state: &mut AppState) {
 // --- internal helpers ---
 
 fn push_page_back_dedup(state: &mut AppState) {
-    let top = state.page_top_line;
-    if state.page_back_stack.last() != Some(&top) {
-        state.page_back_stack.push(top);
+    let entry = (state.page_top_line, state.page_top_offset);
+    if state.page_back_stack.last() != Some(&entry) {
+        state.page_back_stack.push(entry);
     }
 }
 

@@ -173,7 +173,16 @@ pub struct AppState {
     pub current_line: usize,
     pub prev_highlight_line: std::cell::Cell<Option<usize>>,
     pub page_top_line: usize,
-    pub page_back_stack: Vec<usize>,
+    /// Pixels scrolled PAST `page_top_line`'s pixel top. 0 in the normal
+    /// (line-aligned) case; non-zero only while paging WITHIN an over-tall prose
+    /// paragraph (one buffer line taller than the viewport) — the viewport top is
+    /// `line_yrange(page_top_line).y + page_top_offset`. See
+    /// `docs/troubleshooting/page-turning-mechanics.md` → "Prose over-tall paragraph".
+    pub page_top_offset: i32,
+    /// History of `(page_top_line, page_top_offset)` so `y` round-trips a
+    /// mid-paragraph forward turn exactly. Pushed by `page_forward`, popped by
+    /// `page_backward`.
+    pub page_back_stack: Vec<(usize, i32)>,
     pub dim_tag: gtk4::TextTag,
     pub cursor_line_tag: gtk4::TextTag,
     pub cursor_fade_tag: gtk4::TextTag,
@@ -1430,6 +1439,7 @@ pub fn build_window(
         current_line: 0,
         prev_highlight_line: std::cell::Cell::new(None),
         page_top_line: 0,
+        page_top_offset: 0,
         page_back_stack: Vec::new(),
         dim_tag,
         cursor_line_tag,

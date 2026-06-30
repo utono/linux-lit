@@ -109,8 +109,60 @@ helper diverged from `column_split` by a speaker block and caused a persistent
 Page state lives in `AppState`:
 
 - `page_top_line: usize` — buffer line at the top of the current viewport
-- `page_back_stack: Vec<usize>` — history of previous `page_top_line` values,
-  pushed by `page_forward`, popped by `page_backward`
+- `page_top_offset: i32` — pixels scrolled PAST `page_top_line`'s pixel top. 0 in
+  the normal line-aligned case; non-zero ONLY while paging within an over-tall
+  prose paragraph (see *Prose over-tall paragraph* below). Viewport top y =
+  `line_yrange(page_top_line).y + page_top_offset`.
+- `page_back_stack: Vec<(usize, i32)>` — history of previous
+  `(page_top_line, page_top_offset)` pairs, pushed by `page_forward`, popped by
+  `page_backward`. The offset is in the entry so `y` round-trips a mid-paragraph
+  forward turn exactly.
+
+## Prose over-tall paragraph (sub-line paging)
+
+**The trap:** prose stores ONE buffer line per paragraph, and a long paragraph
+wraps TALLER than the viewport (Bleak House "On such an afternoon…" = 2529 chars,
+1170px vs ~1067px usable). Pagination counts whole buffer lines via
+`line_yrange`, so `visible_range` fits ZERO lines for an over-tall paragraph at
+`page_top` (`last_fully_visible_line == page_top`). Without special handling
+`next_page_top` then advances `new_top` to `page_top + 1` = the NEXT paragraph,
+**dropping every wrapped row of the current paragraph below the fold** (the
+classic "x skips a chunk of a long paragraph" bug). The render/clip side already
+handled this (`update_bottom_clip`'s `range.count==0` branch reads the live scroll
+and clips at a visual-row boundary), but page-forward did not continue by row.
+
+**The fix — sub-line scroll within the paragraph.** When the paragraph at
+`page_top` is taller than the viewport, `x` advances the SCROLL by one viewport
+height WITHIN the same buffer line (a `page_top_offset`, snapped to a real
+visual-row top), and only advances `page_top_line` to the next paragraph once the
+paragraph is exhausted. `y` reverses it.
+
+- `page_forward` (single column only): `overtall_forward_step` measures the
+  paragraph height + usable height, asks the PURE
+  `viewport::overtall_next_offset(offset, para_h, usable)` whether rows remain
+  below the fold, snaps `y + raw` DOWN to a real visual-row top via
+  `scroll::snap_value_to_display_row` (the main-card per-`display_rows` snap —
+  sanctioned in clip-prevention.md), and on a within-paragraph step pushes
+  `(page_top_line, page_top_offset)` and calls `set_page_instant_offset(state,
+  top, new_off)` (page_top_line UNCHANGED). Falls through to the normal line turn
+  when the paragraph is exhausted.
+- `set_page` resets `page_top_offset = 0` on every whole-line turn; jumps/search/
+  scene all go through it (offset 0). `set_page_instant_offset` /
+  `snap_scroll_to_line_offset` carry a non-zero offset only on the over-tall
+  forward step and the `page_backward` mid-paragraph restore.
+- `page_backward` mirror: when the popped entry is the SAME buffer line behind the
+  current scroll, restore via `set_page_instant_offset` (no line turn); else
+  normal `set_page`. The stale-drop loop compares `(line, offset)`.
+- Playback sync / dimming / two-column plays: unchanged. The over-tall guard
+  `current_line > last_vis` is already false when the cursor is the same buffer
+  line as `page_top` (over-tall → `last_vis == page_top`), so sync never spuriously
+  turns; sub-line offset is manual-paging only.
+
+Guarded by `viewport::overtall_offset_tests` (pure coverage + multi-step + safety)
+— the old `test_page_forward_prose_bleak_house` models a fixed 30-line page and is
+BLIND to an over-tall single buffer line, which is why this bug shipped. Visual
+acceptance is pixel-level (the dropped tail must reappear; `x`/`y` must round-trip
+the mid-paragraph stops) — verify on the real display.
 
 Page boundaries are computed by `next_page_top()` in `viewport.rs`, which:
 
