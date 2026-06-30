@@ -76,6 +76,27 @@ pub(crate) fn visible_range(
     VisibleRange { last_fit, total_height, count }
 }
 
+/// Forward sub-line paging step for an OVER-TALL prose paragraph (one buffer line
+/// taller than the viewport). Given the current pixel `offset` already scrolled
+/// past the paragraph's top, the paragraph's full wrapped height `para_h`, and the
+/// `usable` viewport height, return:
+/// - `Some(next_offset)` — the paragraph still has rows below the fold, so the
+///   next `x` scrolls down by one viewport WITHIN the same buffer line; or
+/// - `None` — the paragraph is exhausted (its bottom is at/above the fold), so the
+///   next `x` advances to the next buffer line (offset resets to 0).
+///
+/// Pure (no GTK) so it is unit-testable. The GTK caller snaps `offset + usable`
+/// DOWN to a real visual-row top before using it; snapping only reduces the step,
+/// which stays `> offset` and `< para_h`, so row coverage is preserved.
+pub(crate) fn overtall_next_offset(offset: i32, para_h: i32, usable: i32) -> Option<i32> {
+    let usable = usable.max(1);
+    if para_h - offset > usable {
+        Some(offset + usable)
+    } else {
+        None
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Trim helpers — pure + GTK-bound
 // ---------------------------------------------------------------------------
@@ -2983,5 +3004,52 @@ mod headless_pagination_tests {
         let split = column_split_pure_tr(&l, &is_trans, 0, 3, false);
         // left column ends on a translation line (1), not splitting pair (2,3)
         assert_eq!(split.split, 2);
+    }
+}
+
+#[cfg(test)]
+mod overtall_offset_tests {
+    use super::overtall_next_offset;
+
+    #[test]
+    fn steps_within_an_overtall_paragraph_then_stops() {
+        // Paragraph 1170px tall, viewport usable 1067px (the real Bleak House case).
+        // Offset 0: 1170 - 0 = 1170 > 1067 -> advance within (step to 1067).
+        assert_eq!(overtall_next_offset(0, 1170, 1067), Some(1067));
+        // Offset 1067: 1170 - 1067 = 103 <= 1067 -> exhausted, advance to next line.
+        assert_eq!(overtall_next_offset(1067, 1170, 1067), None);
+    }
+
+    #[test]
+    fn normal_height_paragraph_never_steps_within() {
+        // A 122px paragraph fits the viewport: 122 - 0 = 122 <= 1067 -> None.
+        assert_eq!(overtall_next_offset(0, 122, 1067), None);
+    }
+
+    #[test]
+    fn very_tall_paragraph_steps_multiple_times_covering_all_rows() {
+        // 3 viewports tall: must take 2 within-steps then exhaust on the 3rd.
+        let para = 3200;
+        let usable = 1000;
+        let mut off = 0;
+        let mut steps = vec![off];
+        while let Some(next) = overtall_next_offset(off, para, usable) {
+            assert!(next > off, "offset must advance");
+            assert!(next < para, "offset must stay inside the paragraph");
+            off = next;
+            steps.push(off);
+        }
+        // Coverage: the last offset + usable must reach or pass the paragraph end,
+        // so no row is left below the fold of the final page.
+        assert!(off + usable >= para, "last page must cover the paragraph end: off={off} usable={usable} para={para}");
+        // 3200/1000 -> offsets 0, 1000, 2000 (2200 left = 1200 > 1000 -> 2000 still steps? )
+        // 3200-2000=1200>1000 -> step to 3000; 3200-3000=200<=1000 -> stop. So 0,1000,2000,3000.
+        assert_eq!(steps, vec![0, 1000, 2000, 3000]);
+    }
+
+    #[test]
+    fn zero_usable_is_safe() {
+        // Degenerate viewport must not divide-by-zero or loop forever.
+        assert_eq!(overtall_next_offset(0, 100, 0), Some(1));
     }
 }

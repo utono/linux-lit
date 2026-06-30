@@ -1397,10 +1397,19 @@ impl GlossOverlay {
             PaginatedMode::Synopsis => (card_w - 2 * left).max(1),
         };
         let pctx = self.gloss_view.pango_context();
+        let markups = self.gloss_block_markups.borrow();
         let heights: Vec<i32> = blocks
             .iter()
-            .map(|b| gloss_block_height(b, &pctx, &family, size, wrap_w))
+            .enumerate()
+            .map(|(i, b)| {
+                let m = match self.paginated_mode.get() {
+                    PaginatedMode::Gloss => markups.get(i).map(|s| s.as_str()),
+                    PaginatedMode::Synopsis => None,
+                };
+                gloss_block_height(b, m, &pctx, &family, size, wrap_w)
+            })
             .collect();
+        drop(markups);
         let pages = match self.paginated_mode.get() {
             // Gloss: keep each gloss together — a Source (speaker+verse) block and
             // the Explication(s) that follow it form one indivisible unit, so a
@@ -1460,18 +1469,43 @@ impl GlossOverlay {
             self.apply_synopsis_label_bold();
             self.rebuild_block_ranges_from(crate::ui::gloss_block::synopsis_blocks(&synopsis));
         } else {
-            // Paginated: render only this page's cursor-stop blocks.
+            // Paginated: render this page's blocks, each preceded by its lead
+            // label(s) (bolded) so labels survive the page turn. Track label
+            // char-offset ranges in the page text so apply_synopsis_label_bold
+            // can bold them.
             let Some(page) = page else { return };
             let all = self.all_blocks.borrow();
             let slice: Vec<GlossBlock> = all[page.start..page.end.min(all.len())].to_vec();
             drop(all);
-            let body = slice
-                .iter()
-                .map(|b| b.display.clone())
-                .collect::<Vec<_>>()
-                .join("\n\n");
+            let mut body = String::new();
+            let mut label_ranges: Vec<(usize, usize)> = Vec::new();
+            let mut char_off = 0usize; // char offset into `body`
+            for b in &slice {
+                for a in &b.attached {
+                    // Plain irrefutable `let`: Attachment currently has the single
+                    // LeadLabel variant (gloss echoes ride in the markup string, not
+                    // here), so `if let`/`let-else` would be flagged irrefutable.
+                    let crate::ui::gloss_block::Attachment::LeadLabel(lbl) = a;
+                    if !body.is_empty() {
+                        body.push_str("\n\n");
+                        char_off += 2;
+                    }
+                    let len = lbl.chars().count();
+                    label_ranges.push((char_off, char_off + len));
+                    body.push_str(lbl);
+                    char_off += len;
+                }
+                if !body.is_empty() {
+                    body.push_str("\n\n");
+                    char_off += 2;
+                }
+                let len = b.display.chars().count();
+                body.push_str(&b.display);
+                char_off += len;
+            }
             buffer.set_text(&body);
-            *self.synopsis_label_ranges.borrow_mut() = Vec::new();
+            *self.synopsis_label_ranges.borrow_mut() = label_ranges;
+            self.apply_synopsis_label_bold();
             self.rebuild_block_ranges_from(slice);
         }
 
@@ -2187,6 +2221,7 @@ fn block_height_overhead(is_source: bool, text_h: i32) -> i32 {
 /// then adds the appropriate overhead via `block_height_overhead`.
 fn gloss_block_height(
     block: &GlossBlock,
+    markup: Option<&str>,
     pctx: &pango::Context,
     family: &str,
     size_pt: i32,
@@ -2194,7 +2229,31 @@ fn gloss_block_height(
 ) -> i32 {
     let text_h =
         crate::ui::pagination::measure_text_height(pctx, &block.display, size_pt, family, wrap_w);
-    block_height_overhead(block.kind == BlockKind::Source, text_h)
+    let mut h = block_height_overhead(block.kind == BlockKind::Source, text_h);
+    let line = size_pt + size_pt / 2;
+    // Synopsis: lead label paragraph(s) ride ABOVE the block body (in `attached`).
+    // Plain irrefutable `let`: Attachment has the single LeadLabel variant.
+    for a in &block.attached {
+        let crate::ui::gloss_block::Attachment::LeadLabel(s) = a;
+        h += crate::ui::pagination::measure_text_height(pctx, s, size_pt, family, wrap_w) + line;
+    }
+    // Gloss: a trailing echo lives in the block's MARKUP (A3), not in `display`.
+    // Each `<gloss>[...]</gloss>` echo renders as a quote line + a citation line;
+    // reserve room (over-measure) so a paginated page never clips it. Count the
+    // echo `<gloss>` tags in the markup beyond the block's own content.
+    if let Some(m) = markup {
+        for seg in m.split("<gloss>").skip(1) {
+            let inner = seg.split("</gloss>").next().unwrap_or("").trim();
+            // Only an echo bracket adds height beyond block.display; the
+            // block's own explication is already in `display`.
+            if inner.starts_with('[') {
+                h += crate::ui::pagination::measure_text_height(
+                    pctx, inner, size_pt, family, wrap_w,
+                ) + line * 2;
+            }
+        }
+    }
+    h
 }
 
 #[cfg(test)]

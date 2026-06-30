@@ -40,7 +40,7 @@ use super::viewport::{
     clamp_page_top_to_scroll_ceiling, column_split, would_empty_right_column,
 };
 use super::scroll::{
-    set_page, set_page_instant, scroll_to_cursor, center_cursor,
+    set_page, set_page_instant, set_page_instant_offset, scroll_to_cursor, center_cursor,
     scroll_after_jump_forward, scroll_after_jump_backward,
     PageDirection,
 };
@@ -192,7 +192,7 @@ pub fn jump_to_start(state: &mut AppState) {
 
     state.current_line = target;
     state.page_back_stack.clear();
-    state.page_back_stack.push(state.page_top_line);
+    state.page_back_stack.push((state.page_top_line, state.page_top_offset));
     set_page_instant(state, 0);
     after_page_change(state, PageChangeReason::JumpToLine);
 }
@@ -682,6 +682,38 @@ fn scene_snap_top(state: &AppState, line_count: usize) -> Option<usize> {
     }
 }
 
+/// Forward sub-line step for an over-tall prose paragraph at `page_top_line`.
+/// Returns `Some(new_offset)` (snapped to a real visual-row top) when the
+/// paragraph still has rows below the current fold, or `None` when the paragraph
+/// fits the viewport or is exhausted (caller does a normal line turn). GTK-bound;
+/// the pure decision is `viewport::overtall_next_offset`.
+fn overtall_forward_step(state: &mut AppState) -> Option<i32> {
+    let top = state.page_top_line;
+    let iter = state.buffer.iter_at_line(top as i32)?;
+    let (y, para_h) = state.text_view.line_yrange(&iter);
+    let widget_height = state.text_view.height();
+    if widget_height <= 0 {
+        return None;
+    }
+    let descender_guard = crate::input::viewport::descender_guard_px(&state.text_view, top);
+    let usable = widget_height - descender_guard - crate::input::scroll::BASE_BOTTOM_MARGIN;
+    let cur_off = state.page_top_offset;
+    // Pure decision: is there a viewport's worth of rows still below the fold?
+    let raw = crate::input::viewport::overtall_next_offset(cur_off, para_h, usable)?;
+    // Snap the raw target (y + raw) DOWN to a real visual-row top so the next
+    // page never starts mid-glyph-row; convert back to an offset from the line top.
+    let snapped_val = crate::input::scroll::snap_value_to_display_row(state, (y + raw) as f64);
+    let new_off = (snapped_val - y as f64).round() as i32;
+    // The snap must still ADVANCE past the current offset (a degenerate snap that
+    // landed back at/below cur_off would stall the chain — fall through to a line
+    // turn instead).
+    if new_off > cur_off {
+        Some(new_off)
+    } else {
+        None
+    }
+}
+
 pub fn page_forward(state: &mut AppState) {
     if state.current_work.is_none() {
         return;
@@ -740,7 +772,7 @@ pub fn page_forward(state: &mut AppState) {
             let next_dialogue = next_dialogue_from(&state.buffer, clamped, line_count, state.is_prose(), &stage_lookup);
             log_fmt!("PAGE_FWD: scene-snap page_top={} -> new_top={} next_dialogue={}",
                      state.page_top_line, clamped, next_dialogue);
-            state.page_back_stack.push(state.page_top_line);
+            state.page_back_stack.push((state.page_top_line, state.page_top_offset));
             state.current_line = next_dialogue.min(line_count.saturating_sub(1));
             set_page(state, clamped, PageDirection::Forward);
             after_page_change(state, PageChangeReason::Forward);
@@ -749,6 +781,24 @@ pub fn page_forward(state: &mut AppState) {
         log_fmt!("PAGE_FWD: scene-snap to {} skipped (clamps to {} <= page_top {})",
                  snap_top, clamped, state.page_top_line);
         // Fall through: the normal path / jump_to_end handles the final spread.
+    }
+
+    // Over-tall prose paragraph (single column): the paragraph at page_top is one
+    // buffer line taller than the viewport, so a whole-line turn would skip the
+    // rows below the fold. Advance the SCROLL by one viewport WITHIN the same
+    // line (snapped to a real visual-row top); only fall through to a line turn
+    // once the paragraph is exhausted. See
+    // docs/troubleshooting/page-turning-mechanics.md → "Prose over-tall paragraph".
+    if state.column_count() == 1 {
+        if let Some(off) = overtall_forward_step(state) {
+            state.page_back_stack.push((state.page_top_line, state.page_top_offset));
+            log_fmt!("PAGE_FWD: over-tall within-paragraph line={} offset {}->{}",
+                     state.page_top_line, state.page_top_offset, off);
+            let top = state.page_top_line;
+            crate::input::scroll::set_page_instant_offset(state, top, off);
+            after_page_change(state, PageChangeReason::Forward);
+            return;
+        }
     }
 
     let NextPage { new_top, next_dialogue } = next_page_top(state, state.page_top_line);
@@ -774,8 +824,12 @@ pub fn page_forward(state: &mut AppState) {
         None => candidate_top,
     };
     let effective_top = clamp_page_top_to_scroll_ceiling(state, candidate_top);
+    log_fmt!(
+        "PAGE_FWD: page_top={} new_top={} next_dialogue={} candidate_top={} effective_top={} prose={}",
+        state.page_top_line, new_top, next_dialogue, candidate_top, effective_top, state.is_prose()
+    );
     if effective_top > state.page_top_line {
-        state.page_back_stack.push(state.page_top_line);
+        state.page_back_stack.push((state.page_top_line, state.page_top_offset));
         state.current_line = next_dialogue;
         set_page(state, effective_top, PageDirection::Forward);
         after_page_change(state, PageChangeReason::Forward);
@@ -820,15 +874,34 @@ pub fn page_backward(state: &mut AppState) {
     // entry at or ahead of the current page top (left over from forward nav that
     // didn't clear the stack) would make `y` jump FORWARD — never correct.
     // (Do this before defining stage_lookup to avoid overlapping borrows.)
-    while let Some(&top) = state.page_back_stack.last() {
-        if top < state.page_top_line {
+    while let Some(&(top, off)) = state.page_back_stack.last() {
+        // A stale entry is one at/ahead of the current position. Compare the line,
+        // and for the SAME line compare the offset (a mid-paragraph entry behind
+        // the current scroll within the same over-tall paragraph is NOT stale).
+        let stale = top > state.page_top_line
+            || (top == state.page_top_line && off >= state.page_top_offset);
+        if !stale {
             break;
         }
-        log_fmt!("PAGE_BWD: dropping stale stack entry {} (>= page_top {})",
-                 top, state.page_top_line);
+        log_fmt!("PAGE_BWD: dropping stale stack entry ({},{}) (>= page_top {},{})",
+                 top, off, state.page_top_line, state.page_top_offset);
         state.page_back_stack.pop();
     }
-    let (new_top, next_dialogue) = if let Some(prev_top) = state.page_back_stack.pop() {
+    // Over-tall restore: if the popped entry is the SAME buffer line we're on (a
+    // step back WITHIN an over-tall paragraph), restore the scroll offset directly
+    // without a line turn, and return early.
+    if let Some(&(prev_top, prev_off)) = state.page_back_stack.last() {
+        if prev_top == state.page_top_line && prev_off < state.page_top_offset {
+            state.page_back_stack.pop();
+            log_fmt!("PAGE_BWD: within-paragraph restore line={} offset {}->{}",
+                     prev_top, state.page_top_offset, prev_off);
+            set_page_instant_offset(state, prev_top, prev_off);
+            // Cursor: keep it on the same paragraph line (over-tall = one line).
+            after_page_change(state, PageChangeReason::Backward);
+            return;
+        }
+    }
+    let (new_top, next_dialogue) = if let Some((prev_top, _prev_off)) = state.page_back_stack.pop() {
         // Use a local stage_lookup scoped to this block so it's dropped before
         // the mutable use of state below.
         let nd = {
@@ -915,7 +988,7 @@ pub fn page_backward_bottom(state: &mut AppState) {
     }
 
     let line_count = state.effective_line_count();
-    let (prev_top, new_top) = if let Some(prev) = state.page_back_stack.pop() {
+    let (prev_top, new_top) = if let Some((prev, _prev_off)) = state.page_back_stack.pop() {
         let nd = {
             let stage_lookup = |bi: usize| -> Option<i64> {
                 state.work_line_for_buffer(bi)
@@ -1149,7 +1222,7 @@ pub fn jump_to_prev_chapter(state: &mut AppState) {
     if let Some(line_idx) = target {
         state.current_line = line_idx;
         state.page_back_stack.clear();
-        state.page_back_stack.push(state.page_top_line);
+        state.page_back_stack.push((state.page_top_line, state.page_top_offset));
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
             crate::config::NavigationMode::EReader => {
@@ -1212,7 +1285,7 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
     if let Some(line_idx) = target {
         state.current_line = line_idx;
         state.page_back_stack.clear();
-        state.page_back_stack.push(state.page_top_line);
+        state.page_back_stack.push((state.page_top_line, state.page_top_offset));
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => center_cursor(state),
             crate::config::NavigationMode::EReader => {
@@ -1244,7 +1317,7 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
 fn land_on_chapter_target(state: &mut AppState, line_idx: usize) {
     state.current_line = line_idx;
     state.page_back_stack.clear();
-    state.page_back_stack.push(state.page_top_line);
+    state.page_back_stack.push((state.page_top_line, state.page_top_offset));
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
@@ -1974,7 +2047,7 @@ pub fn jump_to_line(state: &mut AppState, buffer_line: usize) {
 
     state.current_line = buffer_line;
     state.page_back_stack.clear();
-    state.page_back_stack.push(state.page_top_line);
+    state.page_back_stack.push((state.page_top_line, state.page_top_offset));
     // Land on the CANONICAL spread for this line — the same page paging through
     // the work shows — so the bookmark sits where natural pagination places it,
     // not force-top-aligned (which page_turn_top_state would do).
@@ -2058,7 +2131,7 @@ pub fn jump_to_next_vocab(state: &mut AppState) {
     let target_line = state.vocab_matches[next_idx].line_index;
     state.current_line = target_line;
     state.page_back_stack.clear();
-    state.page_back_stack.push(state.page_top_line);
+    state.page_back_stack.push((state.page_top_line, state.page_top_offset));
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
@@ -2100,7 +2173,7 @@ pub fn jump_to_prev_vocab(state: &mut AppState) {
     let target_line = state.vocab_matches[prev_idx].line_index;
     state.current_line = target_line;
     state.page_back_stack.clear();
-    state.page_back_stack.push(state.page_top_line);
+    state.page_back_stack.push((state.page_top_line, state.page_top_offset));
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {

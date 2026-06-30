@@ -280,9 +280,9 @@ pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &cra
     // Update vocab tag foreground
     state.vocab_tag.set_property("foreground", &theme.vocab_fg);
 
-    // Update reader-gloss line tint to the new theme's focused-window border
-    // color (dwl focuscolor).
-    state.reader_gloss_tag.set_property("foreground", &theme.focus_color);
+    // Update reader-gloss tints to the new theme's contrast-guarded gloss colors.
+    state.reader_gloss_tag.set_property("foreground", &theme.reader_gloss);
+    state.reader_gloss_cursor_tag.set_property("foreground", &theme.reader_gloss_cursor);
 
     // Update cursor line highlight from root_color
     state.cursor_line_tag.set_property("paragraph-background", &theme.cursor_line_bg);

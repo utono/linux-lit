@@ -17,6 +17,8 @@ pub struct Theme {
     pub cursor_bg: String,        // cursor indicator background
     pub cursor_fg: String,        // cursor indicator foreground
     pub vocab_fg: String,         // vocabulary word highlight foreground
+    pub reader_gloss: String,        // off-cursor glossed-line tint (guarded)
+    pub reader_gloss_cursor: String, // glossed line that is ALSO the cursor block
 }
 
 fn themes_path() -> PathBuf {
@@ -132,8 +134,17 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
     let focus_color = str_field(dwl, "focuscolor").unwrap_or_else(|| text_fg.clone());
 
     let lit = val.get("linux-lit").unwrap_or(&Value::Null);
-    let cursor_line_bg = str_field(&lit, "cursor_line_bg")
+    let cursor_line_bg = str_field(lit, "cursor_line_bg")
         .unwrap_or_else(|| "rgba(86, 148, 100, 0.25)".to_string());
+
+    // Reader-gloss tints, contrast-guaranteed (raw focuscolor is dim/indistinct
+    // on ~13 themes). Off-cursor = guarded focuscolor; on-cursor = guarded
+    // complement, also kept distinct from the off-cursor tint.
+    let reader_gloss = str_field(lit, "reader_gloss")
+        .unwrap_or_else(|| ensure_gloss_color(&focus_color, &text_bg, &[&text_fg]));
+    let reader_gloss_cursor = str_field(lit, "reader_gloss_cursor").unwrap_or_else(|| {
+        ensure_gloss_color(&complement_hex(&reader_gloss), &text_bg, &[&text_fg, &reader_gloss])
+    });
 
     // Dim foreground: 40% fg blended toward bg (matching lit's playback sync)
     let dim_fg = blend_colors(&text_fg, &text_bg, 0.40);
@@ -174,6 +185,8 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
         cursor_bg,
         cursor_fg,
         vocab_fg,
+        reader_gloss,
+        reader_gloss_cursor,
     }
 }
 
@@ -191,6 +204,8 @@ fn default_theme() -> Theme {
         cursor_bg: "#d4be98".to_string(),
         cursor_fg: "#282828".to_string(),
         vocab_fg: "#d8a657".to_string(),
+        reader_gloss: ensure_gloss_color("#d4be98", "#282828", &["#d4be98"]),
+        reader_gloss_cursor: ensure_gloss_color(&complement_hex("#d4be98"), "#282828", &["#d4be98"]),
     }
 }
 
@@ -345,6 +360,29 @@ fn hue_distance(c1: &str, c2: &str) -> f64 {
     d.min(1.0 - d) * 360.0
 }
 
+/// Return `hex` with its hue rotated 180° (the color-wheel complement), keeping
+/// saturation and lightness. Malformed input degrades to the complement of black
+/// (still a valid `#rrggbb`); never panics.
+fn complement_hex(hex: &str) -> String {
+    let (r, g, b) = hex_to_rgb(hex);
+    let (h, s, l) = rgb_to_hsl(r, g, b);
+    let (nr, ng, nb) = hsl_to_rgb((h + 0.5) % 1.0, s, l);
+    rgb_to_hex(nr, ng, nb)
+}
+
+/// WCAG relative-luminance contrast ratio between two hex colors, 1.0 (identical)
+/// to 21.0 (black on white). Used to keep the gloss tints legible on the reading
+/// background and distinct from body text.
+fn contrast_ratio(a_hex: &str, b_hex: &str) -> f64 {
+    let lin = |c: f64| if c <= 0.03928 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+    let lum = |hex: &str| {
+        let (r, g, b) = hex_to_rgb(hex);
+        0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+    };
+    let (la, lb) = (lum(a_hex) + 0.05, lum(b_hex) + 0.05);
+    if la > lb { la / lb } else { lb / la }
+}
+
 /// Choose a vocab foreground color that is visually distinct from text_fg.
 /// Picks the best candidate from vocab_orig and cursor_bg, or derives one
 /// by rotating text_fg hue by 150 degrees.
@@ -369,6 +407,66 @@ fn choose_vocab_fg(text_fg: &str, cursor_bg: &str, vocab_orig: &str) -> String {
     let new_l = l.clamp(0.30, 0.45);
     let (r2, g2, b2) = hsl_to_rgb(new_h, new_s, new_l);
     rgb_to_hex(r2, g2, b2)
+}
+
+/// Return a color at `base_hex`'s hue that is legible on `bg_hex` (WCAG contrast
+/// ≥ 3.0) and visually distinct (hue distance ≥ 40° OR contrast ≥ 1.4) from each
+/// color in `avoid`. If `base_hex` already qualifies it is returned unchanged, so
+/// themes that already look right do not move. Otherwise lightness is pushed away
+/// from the background and saturation raised at the same hue; as a last resort the
+/// hue is rotated 150° (the `choose_vocab_fg` strategy) and S/L clamped. Used to
+/// derive both reader-gloss tints so they never wash out or blend into body text.
+fn ensure_gloss_color(base_hex: &str, bg_hex: &str, avoid: &[&str]) -> String {
+    let ok = |c: &str| {
+        contrast_ratio(c, bg_hex) >= 3.0
+            && avoid.iter().all(|a| hue_distance(c, a) >= 40.0 || contrast_ratio(c, a) >= 1.4)
+    };
+    if ok(base_hex) {
+        return base_hex.to_string();
+    }
+    let (br, bg_, bb) = hex_to_rgb(base_hex);
+    let (h, s, _l) = rgb_to_hsl(br, bg_, bb);
+    let bg_is_light = contrast_ratio(bg_hex, "#000000") > contrast_ratio(bg_hex, "#ffffff");
+    // Push lightness toward the side with headroom against the bg; raise S.
+    let s2 = s.max(0.50);
+    for &l in if bg_is_light {
+        &[0.42_f64, 0.36, 0.30, 0.24][..]   // darker, for a light bg
+    } else {
+        &[0.62_f64, 0.68, 0.74, 0.80][..]   // lighter, for a dark bg
+    } {
+        let (r, g, b) = hsl_to_rgb(h, s2, l);
+        let cand = rgb_to_hex(r, g, b);
+        if ok(&cand) {
+            return cand;
+        }
+    }
+    // Last resort: rotate hue 150° (matches choose_vocab_fg), then sweep
+    // lightness on that hue for a rung that satisfies `ok` so the returned color
+    // is guaranteed compliant (contrast >= 3.0 vs bg, distinct from avoid) even
+    // on a pathological palette. Falls back to the highest-contrast-vs-bg
+    // candidate if (theoretically) none satisfy the full guard.
+    let new_h = (h + 150.0 / 360.0) % 1.0;
+    let s2 = s.max(0.50);
+    let rungs: &[f64] = if bg_is_light {
+        &[0.36, 0.30, 0.24, 0.42, 0.18]
+    } else {
+        &[0.70, 0.76, 0.64, 0.82, 0.58]
+    };
+    let mut best = rgb_to_hex(0.0, 0.0, 0.0);
+    let mut best_c = -1.0;
+    for &l in rungs {
+        let (r, g, b) = hsl_to_rgb(new_h, s2, l);
+        let cand = rgb_to_hex(r, g, b);
+        if ok(&cand) {
+            return cand;
+        }
+        let c = contrast_ratio(&cand, bg_hex);
+        if c > best_c {
+            best_c = c;
+            best = cand;
+        }
+    }
+    best
 }
 
 /// Background color for the gloss/synopsis overlay card. A pure-white reading
@@ -607,3 +705,84 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
         size = font_size,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn complement_rotates_hue_180() {
+        let c = complement_hex("#c4788a");
+        let (h_in, _, _) = rgb_to_hsl(hex_to_rgb("#c4788a").0, hex_to_rgb("#c4788a").1, hex_to_rgb("#c4788a").2);
+        let (h_out, _, _) = rgb_to_hsl(hex_to_rgb(&c).0, hex_to_rgb(&c).1, hex_to_rgb(&c).2);
+        let diff = ((h_out - h_in).abs() - 0.5).abs();
+        assert!(diff < 0.02, "expected ~0.5 hue rotation, in={h_in} out={h_out} ({c})");
+        assert!((0.33..=0.70).contains(&h_out), "complement of a red should be teal/green, got {h_out} ({c})");
+    }
+
+    #[test]
+    fn complement_malformed_is_safe() {
+        let c = complement_hex("nope");
+        assert!(c.starts_with('#') && c.len() == 7, "got {c}");
+    }
+
+    #[test]
+    fn contrast_ratio_known_pairs() {
+        assert!((contrast_ratio("#ffffff", "#000000") - 21.0).abs() < 0.1);
+        assert!((contrast_ratio("#888888", "#888888") - 1.0).abs() < 0.01);
+        // a mid case is between
+        let c = contrast_ratio("#c4788a", "#faf4ed");
+        assert!(c > 2.5 && c < 3.5, "rose on cream ~3.0, got {c}");
+    }
+
+    #[test]
+    fn ensure_keeps_already_good_color() {
+        // rose-pine-dawn focuscolor on cream, avoiding slate body text: already good.
+        let c = ensure_gloss_color("#c4788a", "#faf4ed", &["#575279"]);
+        assert_eq!(c, "#c4788a", "a color that already passes must be returned unchanged");
+    }
+
+    #[test]
+    fn ensure_fixes_dim_color_on_light_bg() {
+        // dayfox: a muted purple focuscolor on a near-white bg is too dim.
+        let c = ensure_gloss_color("#7b6b99", "#f6f2ee", &["#3d2b5a"]);
+        assert!(contrast_ratio(&c, "#f6f2ee") >= 3.0,
+            "fixed color must contrast with bg, got {} ({c})", contrast_ratio(&c, "#f6f2ee"));
+    }
+
+    #[test]
+    fn ensure_result_is_distinct_from_avoid() {
+        let c = ensure_gloss_color("#7b6b99", "#f6f2ee", &["#3d2b5a"]);
+        let distinct = hue_distance(&c, "#3d2b5a") >= 40.0 || contrast_ratio(&c, "#3d2b5a") >= 1.4;
+        assert!(distinct, "result {c} must be distinct from the avoid color");
+    }
+
+    #[test]
+    fn reader_gloss_cursor_explicit_wins() {
+        let json: serde_json::Value = serde_json::from_str(
+            r##"{ "dwl": {"focuscolor": "#c4788a"},
+                 "linux-lit": {"reader_gloss_cursor": "#56949f"},
+                 "kitty": {"background": "#faf4ed", "active_tab_foreground": "#575279"} }"##,
+        ).unwrap();
+        let t = resolve_theme("rose-pine-dawn", &json);
+        assert_eq!(t.reader_gloss_cursor, "#56949f");
+        // off-cursor tint: focuscolor already passes -> unchanged.
+        assert_eq!(t.reader_gloss, "#c4788a");
+    }
+
+    #[test]
+    fn reader_gloss_colors_are_legible_and_distinct_for_all_themes() {
+        // The audit invariant: every shipped theme yields a legible, mutually
+        // distinct pair. Guards against a future theme regressing.
+        for t in load_all_themes() {
+            let cvb_off = contrast_ratio(&t.reader_gloss, &t.text_bg);
+            let cvb_cur = contrast_ratio(&t.reader_gloss_cursor, &t.text_bg);
+            assert!(cvb_off >= 3.0, "{}: off-cursor tint {} dim on bg {} ({cvb_off:.2})", t.name, t.reader_gloss, t.text_bg);
+            assert!(cvb_cur >= 3.0, "{}: on-cursor color {} dim on bg {} ({cvb_cur:.2})", t.name, t.reader_gloss_cursor, t.text_bg);
+            let distinct = hue_distance(&t.reader_gloss, &t.reader_gloss_cursor) >= 40.0
+                || contrast_ratio(&t.reader_gloss, &t.reader_gloss_cursor) >= 1.4;
+            assert!(distinct, "{}: off {} and on {} not distinct", t.name, t.reader_gloss, t.reader_gloss_cursor);
+        }
+    }
+}
+

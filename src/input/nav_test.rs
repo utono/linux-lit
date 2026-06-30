@@ -434,9 +434,9 @@ fn run_step(s: &mut AppState) {
                 .filter(|&d| d < line_count)
                 .unwrap_or(raw);
             s.current_line = target;
-            let top = s.page_top_line;
-            if s.page_back_stack.last() != Some(&top) {
-                s.page_back_stack.push(top);
+            let entry = (s.page_top_line, s.page_top_offset);
+            if s.page_back_stack.last() != Some(&entry) {
+                s.page_back_stack.push(entry);
             }
             crate::input::highlight::update_highlight_and_center(s);
         }

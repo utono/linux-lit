@@ -173,7 +173,16 @@ pub struct AppState {
     pub current_line: usize,
     pub prev_highlight_line: std::cell::Cell<Option<usize>>,
     pub page_top_line: usize,
-    pub page_back_stack: Vec<usize>,
+    /// Pixels scrolled PAST `page_top_line`'s pixel top. 0 in the normal
+    /// (line-aligned) case; non-zero only while paging WITHIN an over-tall prose
+    /// paragraph (one buffer line taller than the viewport) — the viewport top is
+    /// `line_yrange(page_top_line).y + page_top_offset`. See
+    /// `docs/troubleshooting/page-turning-mechanics.md` → "Prose over-tall paragraph".
+    pub page_top_offset: i32,
+    /// History of `(page_top_line, page_top_offset)` so `y` round-trips a
+    /// mid-paragraph forward turn exactly. Pushed by `page_forward`, popped by
+    /// `page_backward`.
+    pub page_back_stack: Vec<(usize, i32)>,
     pub dim_tag: gtk4::TextTag,
     pub cursor_line_tag: gtk4::TextTag,
     pub cursor_fade_tag: gtk4::TextTag,
@@ -386,13 +395,19 @@ pub struct AppState {
     pub vocab_match_idx: Option<usize>,
     pub vocab_tag: gtk4::TextTag,
     /// Foreground tint applied to source lines covered by a `reader-gloss`
-    /// passage — the same slate-blue (#2d5570) the gloss overlay uses to mark a
-    /// synthesized-TTS block. See `reader_gloss_lines` and
+    /// passage. Color comes from `theme.reader_gloss` — the contrast-guarded
+    /// gloss tint derived from the dwl focuscolor. See `reader_gloss_lines` and
     /// `apply_reader_gloss_highlighting`.
     pub reader_gloss_tag: gtk4::TextTag,
+    /// Foreground tag for a glossed line that is ALSO the cursor block — a
+    /// distinct, contrast-guarded color (`theme.reader_gloss_cursor`) so it reads
+    /// differently from both body text and the off-cursor gloss tint. Applied by
+    /// `repaint_reader_gloss_visible` on the cursor line.
+    pub reader_gloss_cursor_tag: gtk4::TextTag,
     /// Buffer line indices that fall inside a `reader-gloss` passage for the
-    /// current work. Recomputed by `display_work`; used to repaint the slate
-    /// tint after the cursor leaves a glossed line (cursor-line wins while on it).
+    /// current work. Recomputed by `display_work`; used to repaint the
+    /// `theme.reader_gloss` tint after the cursor leaves a glossed line
+    /// (cursor-line wins while on it).
     pub reader_gloss_lines: std::collections::HashSet<usize>,
     pub dim_enabled: bool,
     pub vocab_highlight_visible: bool,
@@ -903,19 +918,28 @@ pub fn build_window(
         .build();
     buffer.tag_table().add(&vocab_tag);
 
-    // Source lines covered by a reader-gloss passage are tinted with the theme's
-    // focused-window border color (dwl `focuscolor`), matching the frame around
-    // the active reader window. Added after the dim/cursor tags so this
-    // foreground wins over the dim foreground on a glossed line; the cursor-line
-    // tag paints a paragraph background (not a foreground), and `update_highlight`
-    // strips this tag from the cursor's own line so the active line reads in the
-    // normal fg. The color is refreshed on theme change in
-    // `input::actions::settings`.
+    // Source lines covered by a reader-gloss passage are tinted with the
+    // contrast-guarded off-cursor gloss color (theme.reader_gloss). Added after
+    // the dim/cursor tags so this foreground wins over the dim foreground on a
+    // glossed line; the cursor-line tag paints a paragraph background (not a
+    // foreground). On the cursor's own line the on-cursor variant
+    // (reader-gloss-cursor-line) is applied instead by
+    // `repaint_reader_gloss_visible`. Both colors are refreshed on theme change
+    // in `input::actions::settings`.
     let reader_gloss_tag = gtk4::TextTag::builder()
         .name("reader-gloss-line")
-        .foreground(&theme.focus_color)
+        .foreground(&theme.reader_gloss)
         .build();
     buffer.tag_table().add(&reader_gloss_tag);
+
+    // The on-cursor glossed tint: same role as reader-gloss-line but a distinct
+    // color, applied while a glossed line is the cursor block. Added after
+    // reader-gloss-line so it outranks it on the cursor's own line.
+    let reader_gloss_cursor_tag = gtk4::TextTag::builder()
+        .name("reader-gloss-cursor-line")
+        .foreground(&theme.reader_gloss_cursor)
+        .build();
+    buffer.tag_table().add(&reader_gloss_cursor_tag);
 
     let word_bold_tag = gtk4::TextTag::builder()
         .name("word-bold")
@@ -1415,6 +1439,7 @@ pub fn build_window(
         current_line: 0,
         prev_highlight_line: std::cell::Cell::new(None),
         page_top_line: 0,
+        page_top_offset: 0,
         page_back_stack: Vec::new(),
         dim_tag,
         cursor_line_tag,
@@ -1548,6 +1573,7 @@ pub fn build_window(
         vocab_match_idx: None,
         vocab_tag,
         reader_gloss_tag,
+        reader_gloss_cursor_tag,
         reader_gloss_lines: std::collections::HashSet::new(),
         dim_enabled,
         vocab_highlight_visible: false,
@@ -2823,8 +2849,8 @@ pub fn display_work_at_with_prepared(
         crate::logging::log(&format!("TIMING: apply_vocab_highlighting {:.0}ms", t4.elapsed().as_millis()));
     }
 
-    // Tint source lines covered by a reader-gloss passage (slate-blue, the same
-    // marker the gloss overlay uses for synthesized-TTS blocks).
+    // Tint source lines covered by a reader-gloss passage (theme.reader_gloss,
+    // the contrast-guarded color derived from the dwl focuscolor).
     let t_rg = std::time::Instant::now();
     apply_reader_gloss_highlighting(state);
     crate::logging::log(&format!(
@@ -3711,8 +3737,8 @@ pub(crate) fn line_in_any_passage(
 }
 
 /// Recompute which buffer lines fall inside a `reader-gloss` passage for the
-/// current work and tint them slate-blue (the gloss overlay's synthesized-TTS
-/// color). Stores the set in `reader_gloss_lines` so `update_highlight` can
+/// current work and tint them with `theme.reader_gloss` (contrast-guarded,
+/// derived from the dwl focuscolor). Stores the set in `reader_gloss_lines` so `update_highlight` can
 /// restore the tint on a line the cursor leaves. The cursor's own line is left
 /// untinted (`update_highlight` strips it) so the active line wins.
 ///
@@ -3834,6 +3860,28 @@ pub(crate) fn remove_reader_gloss_tag_from_line(state: &AppState, buf_idx: usize
             end.forward_to_line_end();
         }
         state.buffer.remove_tag(&state.reader_gloss_tag, &start, &end);
+    }
+}
+
+/// Apply the on-cursor glossed tint to a single buffer line.
+pub(crate) fn apply_reader_gloss_cursor_tag_to_line(state: &AppState, buf_idx: usize) {
+    if let Some(start) = state.buffer.iter_at_line(buf_idx as i32) {
+        let mut end = start;
+        if !end.ends_line() {
+            end.forward_to_line_end();
+        }
+        state.buffer.apply_tag(&state.reader_gloss_cursor_tag, &start, &end);
+    }
+}
+
+/// Remove the on-cursor glossed tint from a single buffer line.
+pub(crate) fn remove_reader_gloss_cursor_tag_from_line(state: &AppState, buf_idx: usize) {
+    if let Some(start) = state.buffer.iter_at_line(buf_idx as i32) {
+        let mut end = start;
+        if !end.ends_line() {
+            end.forward_to_line_end();
+        }
+        state.buffer.remove_tag(&state.reader_gloss_cursor_tag, &start, &end);
     }
 }
 

@@ -914,10 +914,12 @@ EOF
 - Modify: `src/ui/gloss_overlay.rs` — `gloss_block_height` (find it: `rg -n "fn gloss_block_height" src/ui/gloss_overlay.rs`).
 
 **Interfaces:**
-- Consumes: `GlossBlock.attached` (A1); existing `measure_text_height` / pango context already used in `gloss_block_height`.
-- Produces: `gloss_block_height` returns a height that INCLUDES the block's attachments, so pagination reserves room for them and nothing clips.
+- Consumes: `GlossBlock.attached` (A1, holds only `LeadLabel` for synopsis — A3 put echoes in the MARKUP string, not in `attached`); the per-block markup from `self.gloss_block_markups` for the gloss-echo height; existing `measure_text_height`.
+- Produces: `gloss_block_height` returns a height INCLUDING the block's lead labels (synopsis) AND any trailing echo (gloss), so pagination reserves room and nothing clips.
 
-No standalone unit test (it needs a live pango context, like the rest of `gloss_block_height` — there are deliberately no pure tests for the measurement path per CLAUDE.md). Verified by `cargo build` + the e2e spread.
+REVISED (post-A3): A3 stores gloss echoes inside the markup string (`gloss_block_markups`), NOT in `GlossBlock.attached`. So `gloss_block_height` must take the block's markup to measure the echo. `attached` only ever holds `LeadLabel` (synopsis). The `TrailEcho` enum variant is unused (final-review removes it). So A4 measures: LeadLabels from `attached`, AND echo lines counted from the optional markup arg.
+
+No standalone unit test (needs a live pango context; no pure tests for the measurement path per CLAUDE.md). Verified by `cargo build` + the e2e spread.
 
 - [ ] **Step 1: The current function (already read)**
 
@@ -930,26 +932,40 @@ fn gloss_block_height(block: &GlossBlock, pctx: &pango::Context, family: &str, s
 }
 ```
 
-There is NO line-height local. Use `measure_text_height` (already imported via the `crate::ui::pagination` path) for each attachment and a conservative per-attachment line allowance of `size_pt + size_pt/2` (over-measure is the safe direction per `repaginate`'s comment).
+There is NO line-height local. Use `measure_text_height` for each attachment and a conservative per-line allowance of `size_pt + size_pt/2` (over-measure is the safe direction per `repaginate`'s comment).
 
-- [ ] **Step 2: Add attachment height**
+- [ ] **Step 2: Add a `markup` param + measure labels and the echo**
 
-Rewrite `gloss_block_height` to add the attachments' measured height before returning:
+Rewrite `gloss_block_height` to take the block's markup (`Option<&str>`, `None` for synopsis) and add the lead-label height (from `attached`) plus the echo height (counted from the markup, gloss):
 
 ```rust
-fn gloss_block_height(block: &GlossBlock, pctx: &pango::Context, family: &str, size_pt: i32, wrap_w: i32) -> i32 {
+fn gloss_block_height(
+    block: &GlossBlock,
+    markup: Option<&str>,
+    pctx: &pango::Context,
+    family: &str,
+    size_pt: i32,
+    wrap_w: i32,
+) -> i32 {
     let text_h = crate::ui::pagination::measure_text_height(pctx, &block.display, size_pt, family, wrap_w);
     let mut h = block_height_overhead(block.kind == BlockKind::Source, text_h);
-    // Reserve room for attachments so a paginated page never clips them
-    // (over-measure: one extra line allowance per attachment as a gap/citation).
     let line = size_pt + size_pt / 2;
+    // Synopsis: lead label paragraph(s) ride ABOVE the block body (in `attached`).
     for a in &block.attached {
-        match a {
-            crate::ui::gloss_block::Attachment::LeadLabel(s) => {
-                h += crate::ui::pagination::measure_text_height(pctx, s, size_pt, family, wrap_w) + line;
-            }
-            crate::ui::gloss_block::Attachment::TrailEcho(markup) => {
-                let inner = markup.trim_start_matches("<gloss>").trim_end_matches("</gloss>");
+        if let crate::ui::gloss_block::Attachment::LeadLabel(s) = a {
+            h += crate::ui::pagination::measure_text_height(pctx, s, size_pt, family, wrap_w) + line;
+        }
+    }
+    // Gloss: a trailing echo lives in the block's MARKUP (A3), not in `display`.
+    // Each `<gloss>[...]</gloss>` echo renders as a quote line + a citation line;
+    // reserve room (over-measure) so a paginated page never clips it. Count the
+    // echo `<gloss>` tags in the markup beyond the block's own content.
+    if let Some(m) = markup {
+        let echo_count = m.matches("<gloss>").count();
+        if echo_count > 0 {
+            // measure the echoes' inner text + 2 lines each (quote + citation gap)
+            for seg in m.split("<gloss>").skip(1) {
+                let inner = seg.split("</gloss>").next().unwrap_or("");
                 h += crate::ui::pagination::measure_text_height(pctx, inner, size_pt, family, wrap_w) + line * 2;
             }
         }
@@ -957,6 +973,41 @@ fn gloss_block_height(block: &GlossBlock, pctx: &pango::Context, family: &str, s
     h
 }
 ```
+
+NOTE on `<gloss>` counting: in GLOSS mode a block's markup string is its source/explication markup with any trailing echo appended (A3). An Explication block's own markup IS a `<gloss>…</gloss>` — so naively counting `<gloss>` would also count the explication itself. To avoid double-counting the explication body (already in `block.display`), only count echoes: an echo's inner text matches `split_echo` (starts with `[` and contains `—`). Refine the loop to skip a `<gloss>` segment whose inner is NOT an echo:
+
+```rust
+            for seg in m.split("<gloss>").skip(1) {
+                let inner = seg.split("</gloss>").next().unwrap_or("").trim();
+                // Only an echo bracket adds height beyond block.display; the
+                // block's own explication is already in `display`.
+                if inner.starts_with('[') {
+                    h += crate::ui::pagination::measure_text_height(pctx, inner, size_pt, family, wrap_w) + line * 2;
+                }
+            }
+```
+(Use the refined loop; drop the `echo_count`/first loop.)
+
+- [ ] **Step 2b: Update the call site in `repaginate`**
+
+In `repaginate` (~line 1400), the heights map currently calls `gloss_block_height(b, &pctx, ...)`. Pass the per-block markup for gloss mode, `None` for synopsis:
+
+```rust
+        let markups = self.gloss_block_markups.borrow();
+        let heights: Vec<i32> = blocks
+            .iter()
+            .enumerate()
+            .map(|(i, b)| {
+                let m = match self.paginated_mode.get() {
+                    PaginatedMode::Gloss => markups.get(i).map(|s| s.as_str()),
+                    PaginatedMode::Synopsis => None,
+                };
+                gloss_block_height(b, m, &pctx, &family, size, wrap_w)
+            })
+            .collect();
+        drop(markups);
+```
+(`self.gloss_block_markups` is a `RefCell<Vec<String>>` field; borrow it before the map and drop after. In gloss mode `markups` is 1:1 with `all_blocks` — A3's invariant — so `markups.get(i)` lines up. In synopsis mode it is unused.)
 
 - [ ] **Step 3: Build**
 

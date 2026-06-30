@@ -153,6 +153,11 @@ pub(crate) fn set_page(state: &mut AppState, new_top: usize, direction: PageDire
         new_top, state.page_top_line, state.current_line, state.config.transition_style
     ));
 
+    // A whole-line page turn always lands line-aligned; reset any over-tall
+    // sub-line offset (a forward step WITHIN an over-tall paragraph does NOT go
+    // through set_page — it uses set_page_instant_offset).
+    state.page_top_offset = 0;
+
     match state.config.transition_style {
         crate::config::TransitionStyle::Instant => {
             clear_old_page_dim(state);
@@ -355,7 +360,19 @@ fn schedule_bottom_clip_update(
 pub(crate) fn set_page_instant(state: &mut AppState, new_top: usize) {
     clear_old_page_dim(state);
     state.page_top_line = new_top;
+    state.page_top_offset = 0;
     snap_scroll_to_line(state, new_top);
+}
+
+/// Instant page set to `new_top` with a sub-line scroll `offset` (the over-tall
+/// prose paragraph case — restoring a mid-paragraph position on `y`). With
+/// `offset == 0` this is identical to `set_page_instant`.
+pub(crate) fn set_page_instant_offset(state: &mut AppState, new_top: usize, offset: i32) {
+    clear_old_page_dim(state);
+    state.page_top_line = new_top;
+    state.page_top_offset = offset;
+    snap_scroll_to_line_offset(state, new_top, offset);
+    refresh_bottom_clip(state);
 }
 
 /// Show a dim "Next: Act N, Scene M" label centered in an EMPTY right column
@@ -421,15 +438,30 @@ fn update_next_scene_watermark(state: &AppState, cs: &super::viewport::ColumnSpl
 /// Scroll so `line` is at the top of the viewport, then size the bottom clip
 /// overlay to hide any partially-visible line at the bottom of the page.
 pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
+    snap_scroll_to_line_offset(state, line, 0);
+}
+
+/// Like `snap_scroll_to_line`, but scrolls `offset` pixels PAST `line`'s pixel
+/// top (the over-tall prose paragraph sub-line case). With `offset == 0` this is
+/// identical to `snap_scroll_to_line`. When `offset > 0` the caller has already
+/// snapped `offset` to a real visual-row top within the (over-tall) line, so the
+/// line-clamp/back-up correction below is skipped — we are deliberately
+/// positioned mid-line and the paragraph is tall enough to scroll there.
+pub(crate) fn snap_scroll_to_line_offset(state: &mut AppState, line: usize, offset: i32) {
     let mut effective_top = line;
 
     if let Some(iter) = state.buffer.iter_at_line(line as i32) {
         let (y, _h) = state.text_view.line_yrange(&iter);
         let adj = state.scrolled_window.vadjustment();
         let max_value = (adj.upper() - adj.page_size()).max(0.0);
-        let target = (y as f64).min(max_value);
+        let target = ((y + offset) as f64).min(max_value);
         adj.set_value(target);
 
+        // The clamp/back-up correction below only applies to a line-aligned snap
+        // (`offset == 0`). With `offset > 0` we are deliberately positioned
+        // mid-line inside an over-tall paragraph; the caller already snapped the
+        // offset to a real visual-row top, so do not drag page_top backward.
+        if offset == 0 {
         // When the scroll was clamped, `line` can't appear at the viewport
         // top — earlier lines bleed in clipped. Walk backward to find the
         // line whose y <= the clamped scroll position and re-scroll to that
@@ -479,6 +511,7 @@ pub(crate) fn snap_scroll_to_line(state: &mut AppState, line: usize) {
                 }
             }
         }
+        } // end `if offset == 0` (line-aligned snap correction)
     }
 
     // F4: populate the cache synchronously so MPV sync handlers reading
@@ -947,7 +980,7 @@ pub(crate) fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize)
                 // structural jump) — otherwise `y` pops a STALE older entry and
                 // jumps somewhere unrelated.
                 state.page_back_stack.clear();
-                state.page_back_stack.push(state.page_top_line);
+                state.page_back_stack.push((state.page_top_line, state.page_top_offset));
                 log_fmt!("NAV_PAGE_FWD: current={} old_top={} new_top={}", state.current_line, state.page_top_line, new_top);
                 set_page_instant(state, new_top);
             } else {
@@ -1031,7 +1064,8 @@ pub(crate) fn scroll_after_jump_backward(state: &mut AppState) {
                 // Record the page we came from (single return entry) so a later
                 // `x`/`y` round-trips, and so `y` never pops a stale older entry.
                 state.page_back_stack.clear();
-                state.page_back_stack.push(old_top);
+                // center-cursor lands line-aligned, so the return entry has offset 0.
+                state.page_back_stack.push((old_top, 0));
                 set_page_instant(state, new_top);
                 // If the target now sits on this spread, keep it (it is a real
                 // dialogue line). Otherwise fall back to the spread's bottom-right
@@ -1182,6 +1216,30 @@ fn snap_value_to_line_top(state: &AppState, target_y: f64) -> f64 {
         }
         None => target_y,
     }
+}
+
+/// Greatest VISUAL-ROW top y at or below `target_y` on the main reading card —
+/// the per-wrapped-row analogue of `snap_value_to_line_top`, for paging WITHIN an
+/// over-tall prose paragraph (one buffer line wrapping to many rows, so there are
+/// no intermediate line tops to snap to). Walks real per-row rects via
+/// `crate::ui::display_rows` (the same descender-correct mechanism the overlays
+/// and the over-tall bottom-clip use — sanctioned for the main card in
+/// clip-prevention.md). Clamped to the scroll range.
+pub(crate) fn snap_value_to_display_row(state: &AppState, target_y: f64) -> f64 {
+    let adj = state.scrolled_window.vadjustment();
+    let lower = adj.lower();
+    let max_value = (adj.upper() - adj.page_size()).max(lower);
+    let target = target_y.clamp(lower, max_value);
+    let tv = state.text_view.upcast_ref::<gtk4::TextView>();
+    let mut best = lower;
+    for (row_top, _row_bottom) in crate::ui::display_rows(tv) {
+        if row_top <= target + 0.5 {
+            best = best.max(row_top);
+        } else {
+            break;
+        }
+    }
+    best.clamp(lower, max_value)
 }
 
 /// Get the vadjustment value that places the given line at the top of the viewport.
