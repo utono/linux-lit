@@ -14,7 +14,6 @@ pub mod gloss_overlay;
 pub(crate) mod gloss_render;
 pub mod gloss_util;
 pub mod journal_block;
-pub mod journal_edit_card;
 pub mod journal_overlay;
 pub mod journal_move_picker;
 pub mod journal_picker;

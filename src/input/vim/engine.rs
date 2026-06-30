@@ -41,7 +41,6 @@ pub struct VimEngine {
     buffer: String,
     cursor: usize,
     mode: Mode,
-    seed: String,
 
     pending: Pending,
     pending_count: Option<usize>,
@@ -57,8 +56,6 @@ pub struct VimEngine {
     // undo/redo: snapshots of (buffer, cursor) BEFORE a change group.
     undo: Vec<(String, usize)>,
     redo: Vec<(String, usize)>,
-    // whether the current insert session already pushed an undo snapshot.
-    insert_snapshotted: bool,
 
     // dot-repeat: the key sequence of the last buffer-mutating command.
     last_change: Vec<VimKey>,
@@ -68,12 +65,10 @@ pub struct VimEngine {
 
 impl VimEngine {
     pub fn new(buffer: String) -> Self {
-        let seed = buffer.clone();
         VimEngine {
             buffer,
             cursor: 0,
             mode: Mode::Normal,
-            seed,
             pending: Pending::None,
             pending_count: None,
             pending_register: None,
@@ -83,7 +78,6 @@ impl VimEngine {
             cmdline: None,
             undo: Vec::new(),
             redo: Vec::new(),
-            insert_snapshotted: false,
             last_change: Vec::new(),
             recording: None,
             replaying: false,
@@ -101,9 +95,6 @@ impl VimEngine {
     }
     pub fn cmdline(&self) -> Option<&str> {
         self.cmdline.as_deref()
-    }
-    pub fn is_dirty(&self) -> bool {
-        self.buffer != self.seed
     }
 
     // ---- helpers ----
@@ -1406,12 +1397,14 @@ mod tests {
     }
 
     #[test]
-    fn dirty_tracking() {
-        let mut e = eng("abc");
-        assert!(!e.is_dirty());
+    fn undo_restores_seed_buffer() {
+        // The host tracks "dirty" by comparing the engine buffer to its seed; an
+        // edit then undo must return the buffer to the original so dirty resets.
+        let seed = "abc";
+        let mut e = eng(seed);
         e.feed("x");
-        assert!(e.is_dirty());
+        assert_ne!(e.buffer(), seed);
         e.feed("u");
-        assert!(!e.is_dirty());
+        assert_eq!(e.buffer(), seed);
     }
 }
