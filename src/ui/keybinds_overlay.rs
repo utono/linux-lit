@@ -63,10 +63,10 @@ const UPPER_ROW: &[KeyDef] = &[
     ub("@", "^"),
     key("\\", "#", "gloss tog", "◀ vocab", &[("C-\\", "conc picker"), ("M-\\", "vocab hi")]),
 ];
-const TAB_KEY: KeyDef = bare("Tab", "", "play/pause");
+const TAB_KEY: KeyDef = bare("Tab", "", "play from ts");
 
 const HOME_ROW: &[KeyDef] = &[
-    key("a", "A", "play from ts", "", &[("C-a", "authorship"), ("S-C-a", "attr set")]),
+    key("a", "A", "play/pause", "", &[("C-a", "authorship"), ("S-C-a", "attr set")]),
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
     key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echoes"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echo turns"), ("E", "synopsis edit")]),
     key("u", "U", "start time", "U: undo ts", &[("M-u", "set end time")]),
@@ -517,9 +517,10 @@ handle_block_visual_key / gloss_overlay::enter_visual \
 — src/input/keymap.rs, src/ui/gloss_overlay.rs",
 
         // ── MPV / audio ──
-        "play/pause" => "Toggle MPV playback (play or pause the synced audio). \
--> TogglePlayback arm -> search::toggle_playback — src/input/keymap.rs, \
-src/input/search.rs",
+        "play/pause" => "Pure play/pause toggle of the synced audio. Does NOT \
+seek — playback resumes wherever it was paused (unlike Tab/Space, which seek to \
+the cursor line's start timestamp). \
+-> TogglePause arm -> MpvCommand::TogglePause — src/input/keymap.rs",
         "toggle speed" => "Toggle MPV playback speed between 1.0x and 1.3x (shows \
 a toast). -> TogglePlaybackSpeed arm (inline) -> MpvCommand::SetSpeed — \
 src/input/keymap.rs",
@@ -573,7 +574,8 @@ lit.db. -> timestamps::undo_timestamp — src/input/timestamps.rs",
         "+0.2" => "Nudge the current line's start timestamp 0.2s later (Shift+p). \
 -> timestamps::nudge_start_forward — src/input/timestamps.rs",
         "play from ts" => "Seek MPV to the current line's saved start timestamp \
-and play from there. -> timestamps::play_current_line — src/input/timestamps.rs",
+and play from there (Tab and Space). For a pure pause/resume with no seek, use \
+`a` (play/pause). -> timestamps::play_current_line — src/input/timestamps.rs",
         "clear AB" => "Dismiss any visible toast, else clear the A–B repeat range \
 / exit reader sub-modes (Esc). \
 -> escape::escape_reader_mode — src/input/actions/escape.rs",

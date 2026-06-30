@@ -1270,17 +1270,18 @@ fn handle_translation_overlay_key(state: &Rc<RefCell<AppState>>, key_name: &str)
         "q" => { overlay_nav(state, navigation::jump_to_next_dialogue); true }
         "j" => { overlay_nav(state, navigation::cursor_next_dialogue); true }
         "k" => { overlay_nav(state, navigation::cursor_prev_line); true }
-        // Playback (same as the main card): Tab toggles play/pause, a plays
-        // from the current line. Neither moves the cursor, so no re-highlight.
-        "Tab" | "ISO_Left_Tab" => {
-            crate::input::search::toggle_playback(&mut state.borrow_mut());
-            true
-        }
-        "a" | "space" => {
+        // Playback (same as the main card): Tab plays from the current line, a
+        // toggles play/pause (pure pause/resume, no seek). Neither moves the
+        // cursor, so no re-highlight. Space mirrors Tab (play from current line).
+        "Tab" | "ISO_Left_Tab" | "space" => {
             let mut s = state.borrow_mut();
             if !crate::input::timestamps::play_current_line(&mut s) {
                 show_no_timestamp_toast(&s);
             }
+            true
+        }
+        "a" => {
+            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
             true
         }
         // Toggle playback sync (same as the main card): identical state +
@@ -2324,7 +2325,14 @@ fn dispatch_action(
 
         // MPV / media
         TogglePlaybackSync => toggle_playback_sync(&mut state.borrow_mut()),
-        TogglePlayback => crate::input::search::toggle_playback(&mut state.borrow_mut()),
+        TogglePlaybackFromTimestamp => {
+            crate::input::search::toggle_playback_from_timestamp(&mut state.borrow_mut())
+        }
+        // Pure pause/resume: no seek to the cursor line (unlike
+        // TogglePlaybackFromTimestamp).
+        TogglePause => {
+            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
+        }
         SeekShortBackward => do_mpv_seek(state, -3.5),
         SeekShortForward => do_mpv_seek(state, 3.5),
         SeekLongBackward => do_mpv_seek(state, -60.0),

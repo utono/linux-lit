@@ -81,7 +81,14 @@ pub enum Action {
 
     // MPV / media
     TogglePlaybackSync,
-    TogglePlayback,
+    /// Seek to the cursor line's start timestamp, THEN toggle pause. Used by the
+    /// gamepad button and the translation overlay; the reader card uses
+    /// `PlayCurrentLine` (always-resume) and `TogglePause` (no-seek toggle).
+    TogglePlaybackFromTimestamp,
+    /// Pure play/pause toggle — does NOT seek to the cursor line's start time on
+    /// resume (unlike `TogglePlaybackFromTimestamp`, which seeks). Bound to `a`
+    /// in the reader.
+    TogglePause,
     SeekShortBackward,
     SeekShortForward,
     SeekLongBackward,
@@ -203,7 +210,8 @@ impl Action {
 
             // Media
             Action::TogglePlaybackSync
-            | Action::TogglePlayback
+            | Action::TogglePlaybackFromTimestamp
+            | Action::TogglePause
             | Action::SeekShortBackward
             | Action::SeekShortForward
             | Action::SeekLongBackward
@@ -331,7 +339,8 @@ impl Action {
             Action::OpenSearch => "OpenSearch",
             Action::OpenSearchBackward => "OpenSearchBackward",
             Action::TogglePlaybackSync => "TogglePlaybackSync",
-            Action::TogglePlayback => "TogglePlayback",
+            Action::TogglePlaybackFromTimestamp => "TogglePlaybackFromTimestamp",
+            Action::TogglePause => "TogglePause",
             Action::SeekShortBackward => "SeekShortBackward",
             Action::SeekShortForward => "SeekShortForward",
             Action::SeekLongBackward => "SeekLongBackward",
@@ -411,7 +420,7 @@ mod tests {
     fn every_action_has_a_category() {
         let actions = [
             Action::PageForward, Action::CursorNextDialogue, Action::ToggleBookmark,
-            Action::OpenLibraryPicker, Action::TogglePlayback, Action::ToggleVocabPopup,
+            Action::OpenLibraryPicker, Action::TogglePlaybackFromTimestamp, Action::ToggleVocabPopup,
             Action::EnterVisualMode, Action::ToggleTranslations, Action::AdjustFontSizeUp,
             Action::SetStartTime, Action::SaveAndQuit, Action::SearchNextMatch,
         ];
@@ -425,7 +434,8 @@ mod tests {
         assert_eq!(Action::PageForward.category(), Category::Navigation);
         assert_eq!(Action::JumpToNextChapter.category(), Category::Navigation);
         assert_eq!(Action::NextBookmark.category(), Category::Navigation);
-        assert_eq!(Action::TogglePlayback.category(), Category::Media);
+        assert_eq!(Action::TogglePlaybackFromTimestamp.category(), Category::Media);
+        assert_eq!(Action::TogglePause.category(), Category::Media);
         assert_eq!(Action::SeekShortForward.category(), Category::Media);
         assert_eq!(Action::ToggleVocabPopup.category(), Category::Vocab);
         assert_eq!(Action::OpenConcordancePicker.category(), Category::Vocab);
@@ -453,7 +463,8 @@ mod tests {
     fn action_name_returns_variant_string() {
         assert_eq!(Action::PageForward.name(), "PageForward");
         assert_eq!(Action::JumpToNextChapter.name(), "JumpToNextChapter");
-        assert_eq!(Action::TogglePlayback.name(), "TogglePlayback");
+        assert_eq!(Action::TogglePlaybackFromTimestamp.name(), "TogglePlaybackFromTimestamp");
+        assert_eq!(Action::TogglePause.name(), "TogglePause");
         assert_eq!(Action::SaveAndQuit.name(), "SaveAndQuit");
     }
 

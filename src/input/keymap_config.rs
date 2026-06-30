@@ -252,7 +252,11 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
 fn media_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
         (KeyCombo::plain("s"), Action::TogglePlaybackSync),
-        (KeyCombo::plain("Tab"), Action::TogglePlayback),
+        // Tab and Space both play from the cursor line's start timestamp
+        // (PlayCurrentLine; Space is intercepted before dispatch in keymap.rs).
+        // `a` is a PURE pause/resume toggle — no seek (TogglePause).
+        (KeyCombo::plain("Tab"), Action::PlayCurrentLine),
+        (KeyCombo::plain("a"), Action::TogglePause),
         (KeyCombo::plain("o"), Action::SeekShortBackward),
         (KeyCombo::plain("e"), Action::SeekShortForward),
         (KeyCombo::plain("O"), Action::SeekLongBackward),
@@ -335,7 +339,6 @@ fn timestamp_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("p"), Action::NudgeStartBackward),
         (KeyCombo::plain("P"), Action::NudgeStartForward),
         (KeyCombo::plain("U"), Action::UndoTimestamp),
-        (KeyCombo::plain("a"), Action::PlayCurrentLine),
     ]
 }
 

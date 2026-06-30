@@ -152,7 +152,7 @@ fn dispatch(state: &Rc<RefCell<AppState>>, action: GamepadAction) {
             navigation::jump_to_prev_dialogue(&mut state.borrow_mut());
         }
         GamepadAction::TogglePlayback => {
-            crate::input::search::toggle_playback(&mut state.borrow_mut());
+            crate::input::search::toggle_playback_from_timestamp(&mut state.borrow_mut());
         }
         GamepadAction::SetStartTime => {
             let ok = crate::input::timestamps::set_start_time(&mut state.borrow_mut());

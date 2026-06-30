@@ -84,9 +84,11 @@ pub fn execute_search(state_rc: &Rc<RefCell<AppState>>) {
     }
 }
 
-/// Toggle playback. If resuming, seek to current line's start_time first.
-/// Clears sync suppression so cursor tracking resumes.
-pub fn toggle_playback(state: &mut AppState) {
+/// Toggle playback, seeking to the current line's start_time first when
+/// resuming. Clears sync suppression so cursor tracking resumes. For a pure
+/// pause/resume with no seek, send `MpvCommand::TogglePause` directly
+/// (the `TogglePause` action).
+pub fn toggle_playback_from_timestamp(state: &mut AppState) {
     // Hide translations when starting playback
     crate::app::translations::hide_translations_for_navigation(state);
     // Suppress cursor fade on the first sync-driven highlight after unpause
@@ -238,7 +240,7 @@ fn seek_and_resume(state: &mut AppState) {
     // the previous line by the next TimePos event (the second-seek + re-pause
     // seen in the log). Also drop any in-flight fade and the prev-highlight
     // bookkeeping so the highlight settles on the match line. Mirrors
-    // toggle_playback's post-seek handling.
+    // toggle_playback_from_timestamp's post-seek handling.
     if let Some(prev) = state.cursor_fade_anim.take() {
         prev.skip();
     }
