@@ -123,6 +123,48 @@ pub(crate) fn draw_bar_spans(
     }
 }
 
+/// Position a floating page-marker `Label` (the `⌄`/`•` glyph) just below the
+/// LAST line of `view`'s rendered text, instead of pinned to the viewport
+/// bottom. The marker is an overlay child of the scroll-overlay with
+/// `valign=Start`, so its top is `margin_top` px from the content top; we set
+/// `margin_top` to the last line's bottom (in widget coords) plus `gap`.
+///
+/// The y must be measured AFTER GTK lays out the buffer (line geometry is
+/// 0/stale before the first layout pass), so call this from an idle tick — the
+/// same deferral the accent bar uses. Returns silently doing nothing if the
+/// buffer is empty or geometry hasn't settled (y <= 0), leaving the previous
+/// margin until the next tick recomputes it.
+///
+/// Because the journal/gloss overlays always render a page that FITS (no
+/// scroll), the widget-space y is stable across j/k once settled — re-running
+/// this on every page render keeps the marker glued under the last block rather
+/// than drifting. The placement is bounded by the SCROLLED window's allocated
+/// height (the live viewport, whichever render path produced it) so a near-full
+/// page can't shove the marker under the footer: the top is clamped to
+/// `viewport_h - reserve`.
+pub(crate) fn position_page_marker_below_text(
+    view: &gtk4::TextView,
+    scrolled: &gtk4::ScrolledWindow,
+    marker: &gtk4::Label,
+    gap: i32,
+) {
+    use gtk4::prelude::*;
+    let buffer = view.buffer();
+    // Last line bottom in BUFFER coords, then to WIDGET coords (scroll-aware,
+    // matches the accent bar's path). end_iter's line is the last line.
+    let last = buffer.end_iter();
+    let (y, h) = view.line_yrange(&last);
+    let (_, bottom) = view.buffer_to_window_coords(gtk4::TextWindowType::Widget, 0, y + h);
+    if bottom <= 0 {
+        return; // geometry not settled yet — leave the prior margin for now.
+    }
+    // Reserve room for the marker's own height so it never pokes the footer.
+    let reserve = marker.preferred_size().1.height().max(20);
+    let viewport_h = scrolled.height();
+    let top = (bottom + gap).min((viewport_h - reserve).max(0));
+    marker.set_margin_top(top);
+}
+
 /// Paint a vim-style BLOCK cursor: a one-character background fill (`fill`) with
 /// the glyph drawn in `fg`, over the char at `char_index` (a CHAR offset). Used
 /// by the vim editors (journal page + ask-card prompt) to show a solid block in

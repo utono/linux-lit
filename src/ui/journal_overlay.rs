@@ -206,16 +206,39 @@ impl JournalOverlay {
         scroll_overlay.set_measure_overlay(&bar_drawing, false);
         scroll_overlay.set_clip_overlay(&bar_drawing, true);
 
-        // Floating page marker: a dim centered glyph anchored at the viewport
-        // bottom — `⌄` when another page follows, `•` on the last page. Floats over
-        // the scroll viewport (NOT in the text flow) so it shows even when the page
-        // is full and has no trailing whitespace. Hidden on single-page content.
+        // Floating page marker: a dim centered glyph that sits just BELOW the
+        // page's last block — `⌄` when another page follows, `•` on the last page.
+        // Floats over the scroll viewport (NOT in the text flow) so it shows even
+        // when the page is full and has no trailing whitespace. `valign=Start` +
+        // a recomputed `margin_top` (see `position_page_marker_below_text`) glues
+        // it under the last line; the recompute runs on every render so j/k can't
+        // strand it. Hidden on single-page content.
         let page_marker = Label::new(None);
         page_marker.set_halign(gtk4::Align::Center);
-        page_marker.set_valign(gtk4::Align::End);
-        page_marker.set_margin_bottom(6);
+        page_marker.set_valign(gtk4::Align::Start);
         page_marker.add_css_class("page-marker");
         page_marker.set_visible(false);
+        // Reposition under the last line whenever GTK assigns/changes the scroll
+        // range — the settle signal (same one the bar/test-rect use) that fires
+        // AFTER the first layout pass. The per-render idle in update_page_marker
+        // can run before geometry settles (bottom==0, bails); this guarantees the
+        // first open lands the marker once line_yrange is real. Only acts while
+        // the marker is visible (multi-page content).
+        {
+            let view_for_marker = view.clone();
+            let scrolled_for_marker = scrolled.clone();
+            let marker_for_settle = page_marker.clone();
+            scrolled.vadjustment().connect_changed(move |_| {
+                if marker_for_settle.is_visible() {
+                    crate::ui::position_page_marker_below_text(
+                        &view_for_marker,
+                        &scrolled_for_marker,
+                        &marker_for_settle,
+                        8,
+                    );
+                }
+            });
+        }
         scroll_overlay.add_overlay(&page_marker);
         scroll_overlay.set_measure_overlay(&page_marker, false);
         scroll_overlay.set_clip_overlay(&page_marker, true);
@@ -599,14 +622,24 @@ impl JournalOverlay {
 
     /// Set the floating page marker for the current page: `⌄` when another page
     /// follows, `•` on the last page, hidden on single-page content. The marker
-    /// is an overlay child anchored bottom-center of the viewport (NOT in the
+    /// is an overlay child floating just BELOW the page's last block (NOT in the
     /// text flow), so it shows even when the page is full. Glyph chosen by the
     /// shared `pagination::page_marker`. Mirrors `GlossOverlay::update_page_marker`.
+    ///
+    /// The glyph + visibility are set synchronously; its vertical position is
+    /// recomputed on an idle tick (line geometry is stale until GTK lays out the
+    /// just-set buffer — the same deferral the accent bar uses).
     fn update_page_marker(&self, page_idx: usize, n_pages: usize) {
         match crate::ui::pagination::page_marker(page_idx, n_pages) {
             Some(glyph) => {
                 self.page_marker.set_text(glyph);
                 self.page_marker.set_visible(true);
+                let view = self.view.clone();
+                let scrolled = self.scrolled.clone();
+                let marker = self.page_marker.clone();
+                glib::idle_add_local_once(move || {
+                    crate::ui::position_page_marker_below_text(&view, &scrolled, &marker, 8);
+                });
             }
             None => self.page_marker.set_visible(false),
         }
