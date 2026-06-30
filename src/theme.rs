@@ -394,6 +394,66 @@ fn choose_vocab_fg(text_fg: &str, cursor_bg: &str, vocab_orig: &str) -> String {
     rgb_to_hex(r2, g2, b2)
 }
 
+/// Return a color at `base_hex`'s hue that is legible on `bg_hex` (WCAG contrast
+/// ≥ 3.0) and visually distinct (hue distance ≥ 40° OR contrast ≥ 1.4) from each
+/// color in `avoid`. If `base_hex` already qualifies it is returned unchanged, so
+/// themes that already look right do not move. Otherwise lightness is pushed away
+/// from the background and saturation raised at the same hue; as a last resort the
+/// hue is rotated 150° (the `choose_vocab_fg` strategy) and S/L clamped. Used to
+/// derive both reader-gloss tints so they never wash out or blend into body text.
+fn ensure_gloss_color(base_hex: &str, bg_hex: &str, avoid: &[&str]) -> String {
+    let ok = |c: &str| {
+        contrast_ratio(c, bg_hex) >= 3.0
+            && avoid.iter().all(|a| hue_distance(c, a) >= 40.0 || contrast_ratio(c, a) >= 1.4)
+    };
+    if ok(base_hex) {
+        return base_hex.to_string();
+    }
+    let (br, bg_, bb) = hex_to_rgb(base_hex);
+    let (h, s, _l) = rgb_to_hsl(br, bg_, bb);
+    let bg_is_light = contrast_ratio(bg_hex, "#000000") > contrast_ratio(bg_hex, "#ffffff");
+    // Push lightness toward the side with headroom against the bg; raise S.
+    let s2 = s.max(0.50);
+    for &l in if bg_is_light {
+        &[0.42_f64, 0.36, 0.30, 0.24][..]   // darker, for a light bg
+    } else {
+        &[0.62_f64, 0.68, 0.74, 0.80][..]   // lighter, for a dark bg
+    } {
+        let (r, g, b) = hsl_to_rgb(h, s2, l);
+        let cand = rgb_to_hex(r, g, b);
+        if ok(&cand) {
+            return cand;
+        }
+    }
+    // Last resort: rotate hue 150° (matches choose_vocab_fg), then sweep
+    // lightness on that hue for a rung that satisfies `ok` so the returned color
+    // is guaranteed compliant (contrast >= 3.0 vs bg, distinct from avoid) even
+    // on a pathological palette. Falls back to the highest-contrast-vs-bg
+    // candidate if (theoretically) none satisfy the full guard.
+    let new_h = (h + 150.0 / 360.0) % 1.0;
+    let s2 = s.max(0.50);
+    let rungs: &[f64] = if bg_is_light {
+        &[0.36, 0.30, 0.24, 0.42, 0.18]
+    } else {
+        &[0.70, 0.76, 0.64, 0.82, 0.58]
+    };
+    let mut best = rgb_to_hex(0.0, 0.0, 0.0);
+    let mut best_c = -1.0;
+    for &l in rungs {
+        let (r, g, b) = hsl_to_rgb(new_h, s2, l);
+        let cand = rgb_to_hex(r, g, b);
+        if ok(&cand) {
+            return cand;
+        }
+        let c = contrast_ratio(&cand, bg_hex);
+        if c > best_c {
+            best_c = c;
+            best = cand;
+        }
+    }
+    best
+}
+
 /// Background color for the gloss/synopsis overlay card. A pure-white reading
 /// surface is harsh under a long gloss, so on light themes we warm `text_bg`
 /// toward a paper cream. Dark themes already have a soft, non-garish `text_bg`,
@@ -658,6 +718,28 @@ mod tests {
         // a mid case is between
         let c = contrast_ratio("#c4788a", "#faf4ed");
         assert!(c > 2.5 && c < 3.5, "rose on cream ~3.0, got {c}");
+    }
+
+    #[test]
+    fn ensure_keeps_already_good_color() {
+        // rose-pine-dawn focuscolor on cream, avoiding slate body text: already good.
+        let c = ensure_gloss_color("#c4788a", "#faf4ed", &["#575279"]);
+        assert_eq!(c, "#c4788a", "a color that already passes must be returned unchanged");
+    }
+
+    #[test]
+    fn ensure_fixes_dim_color_on_light_bg() {
+        // dayfox: a muted purple focuscolor on a near-white bg is too dim.
+        let c = ensure_gloss_color("#7b6b99", "#f6f2ee", &["#3d2b5a"]);
+        assert!(contrast_ratio(&c, "#f6f2ee") >= 3.0,
+            "fixed color must contrast with bg, got {} ({c})", contrast_ratio(&c, "#f6f2ee"));
+    }
+
+    #[test]
+    fn ensure_result_is_distinct_from_avoid() {
+        let c = ensure_gloss_color("#7b6b99", "#f6f2ee", &["#3d2b5a"]);
+        let distinct = hue_distance(&c, "#3d2b5a") >= 40.0 || contrast_ratio(&c, "#3d2b5a") >= 1.4;
+        assert!(distinct, "result {c} must be distinct from the avoid color");
     }
 }
 
