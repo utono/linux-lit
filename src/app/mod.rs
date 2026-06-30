@@ -101,6 +101,13 @@ pub enum InputMode {
     /// TextView mirrors the engine's buffer/cursor. `:w` saves, `:q`/Esc cancels,
     /// `R` opens the LLM-rewrite prompt. Replaces the old JournalEditCard.
     JournalEdit,
+    /// In-place modal vim editor for the gloss/synopsis overlay (the same
+    /// `GlossOverlay` widget). Early-dispatched in `handle_key` beside
+    /// `JournalEdit` so Insert-mode space and printable keys reach the engine.
+    /// `:w`/`:wq` save the raw text; `:q`/double-Esc exit; `R` opens the ask-Claude
+    /// rewrite. The save path branches on whether the overlay shows a gloss or a
+    /// synopsis.
+    GlossEdit,
     SynopsisOverlay,
     SynopsisVisual,
     TranslationOverlay,

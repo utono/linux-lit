@@ -253,6 +253,122 @@ pub(crate) fn undo_amend(state_rc: &Rc<RefCell<AppState>>) {
     crate::logging::log(&format!("SYNOPSIS: undid amend ({},{})", div1, div2));
 }
 
+/// `e` in the synopsis overlay: enter the in-place modal vim editor on the
+/// current scene's RAW synopsis text (`synopsis_cache[(div1,div2)]`). Uses the
+/// SAME `GlossOverlay` editor as gloss-edit; the save path (`vim_save`) branches
+/// to the synopsis persistence. No-op + toast if no cached synopsis.
+pub(crate) fn begin_edit(state: &Rc<RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    let (div1, div2) = s.synopsis_overlay_scene;
+    let raw = match s.synopsis_cache.get(&(div1, div2)) {
+        Some(t) => t.clone(),
+        None => {
+            crate::ui::toast::show_transient(&s.chapter_toast, "No synopsis to edit", 2);
+            return;
+        }
+    };
+    let (fill, fg) = (s.theme.cursor_bg.clone(), s.theme.cursor_fg.clone());
+    s.gloss_overlay.enter_edit_buffer(&raw, &fill, &fg);
+    s.input_mode = crate::app::InputMode::GlossEdit;
+}
+
+/// Re-render the synopsis card for `(div1,div2)` from `text` (the colored/formatted
+/// display). Mirrors the render block in `run_synopsis_revision`'s success
+/// callback. Caller holds no borrow.
+fn render_synopsis(state: &Rc<RefCell<AppState>>, div1: i64, div2: i64, text: &str) {
+    let s = state.borrow_mut();
+    let label = crate::app::scene_synopsis::synopsis_label(&s, div1, div2);
+    let cw = s.content_hbox.width();
+    let h = crate::app::layout::overlay_card_height(&s);
+    let root_color = s.theme.root_color.clone();
+    let prose_card = crate::app::scene_synopsis::prose_synopsis_card(&s, cw);
+    s.gloss_overlay
+        .show_synopsis(&label, text, Some(&root_color), cw, h, prose_card);
+    crate::input::actions::gloss::recolor_cached_blocks(&s);
+}
+
+/// Save the synopsis vim-editor buffer's raw text to lit.db as-is (no Claude) via
+/// `save_synopsis` (upsert), snapshot `synopsis_undo`, update `synopsis_cache`,
+/// and re-render the colored card. `:w` stays + re-seeds; `:wq` exits.
+pub(crate) fn vim_save(state: &Rc<RefCell<AppState>>, quit: bool) {
+    let raw = state.borrow().gloss_overlay.edit_buffer_text();
+    let raw = raw.trim_end().to_string();
+    let (div1, div2, abbrev, model, original) = {
+        let s = state.borrow();
+        let (div1, div2) = s.synopsis_overlay_scene;
+        let abbrev = match s.current_work.as_ref() {
+            Some(w) => crate::app::base_work_abbrev(&w.abbrev).to_string(),
+            None => return,
+        };
+        let original = s
+            .synopsis_cache
+            .get(&(div1, div2))
+            .cloned()
+            .unwrap_or_default();
+        (div1, div2, abbrev, s.config.claude_model.clone(), original)
+    };
+    if let Ok(conn) = crate::db::queries::open_db_rw() {
+        if let Err(e) = crate::db::queries::save_synopsis(&conn, &abbrev, div1, div2, &raw, &model) {
+            crate::logging::log(&format!("SYNOPSIS: vim save error: {}", e));
+        }
+    }
+    {
+        let mut s = state.borrow_mut();
+        s.synopsis_undo = Some(((div1, div2), original));
+        s.synopsis_cache.insert((div1, div2), raw.clone());
+    }
+    if quit {
+        state.borrow().gloss_overlay.exit_edit_buffer();
+        render_synopsis(state, div1, div2, &raw);
+        let mut s = state.borrow_mut();
+        s.input_mode = crate::app::InputMode::SynopsisOverlay;
+        crate::ui::toast::show_transient(&s.chapter_toast, "Saved", 2);
+    } else {
+        state.borrow().gloss_overlay.reseed_edit_buffer(&raw);
+        crate::ui::toast::show_transient(&state.borrow().chapter_toast, "Saved (:q to exit)", 2);
+    }
+}
+
+/// Leave the synopsis vim editor. Warn + STAY on a dirty buffer unless `force`.
+/// Re-renders the stored (un-edited) synopsis on exit.
+pub(crate) fn vim_cancel(state: &Rc<RefCell<AppState>>, force: bool) {
+    let dirty = state.borrow().gloss_overlay.edit_is_dirty();
+    if dirty && !force {
+        crate::ui::toast::show_transient(
+            &state.borrow().chapter_toast,
+            "Unsaved changes \u{2014} :w to save, :q! to discard",
+            3,
+        );
+        return;
+    }
+    let (div1, div2, stored) = {
+        let s = state.borrow();
+        let (div1, div2) = s.synopsis_overlay_scene;
+        let stored = s
+            .synopsis_cache
+            .get(&(div1, div2))
+            .cloned()
+            .unwrap_or_default();
+        (div1, div2, stored)
+    };
+    state.borrow().gloss_overlay.exit_edit_buffer();
+    render_synopsis(state, div1, div2, &stored);
+    state.borrow_mut().input_mode = crate::app::InputMode::SynopsisOverlay;
+}
+
+/// `R` in the synopsis vim editor: leave the editor and open the existing
+/// ask-Claude synopsis edit prompt. Mirrors gloss `vim_open_rewrite`.
+pub(crate) fn vim_open_rewrite(
+    state: &Rc<RefCell<AppState>>,
+    _tokio_handle: &tokio::runtime::Handle,
+) {
+    {
+        let mut s = state.borrow_mut();
+        s.gloss_overlay.exit_edit_buffer();
+        s.input_mode = crate::app::InputMode::SynopsisOverlay;
+    }
+    show_edit_prompt(state);
+}
 
 /// Alt+g in the synopsis card: open the gloss overlay for the whole work, with
 /// the glosses for the currently-displayed scene shown first. Mirrors the state
