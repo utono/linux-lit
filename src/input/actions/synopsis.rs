@@ -276,7 +276,7 @@ pub(crate) fn begin_edit(state: &Rc<RefCell<AppState>>) {
 /// display). Mirrors the render block in `run_synopsis_revision`'s success
 /// callback. Caller holds no borrow.
 fn render_synopsis(state: &Rc<RefCell<AppState>>, div1: i64, div2: i64, text: &str) {
-    let mut s = state.borrow_mut();
+    let s = state.borrow_mut();
     let label = crate::app::scene_synopsis::synopsis_label(&s, div1, div2);
     let cw = s.content_hbox.width();
     let h = crate::app::layout::overlay_card_height(&s);
