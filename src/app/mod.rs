@@ -96,6 +96,11 @@ pub enum InputMode {
     GlossVisual,
     JournalOverlay,
     JournalVisual,
+    /// In-place modal vim editing of the journal Q&A page (the `e` bind). All
+    /// keys route to the vim engine via `handle_journal_edit_key`; the page
+    /// TextView mirrors the engine's buffer/cursor. `:w` saves, `:q`/Esc cancels,
+    /// `R` opens the LLM-rewrite prompt. Replaces the old JournalEditCard.
+    JournalEdit,
     SynopsisOverlay,
     SynopsisVisual,
     TranslationOverlay,
@@ -1560,6 +1565,7 @@ pub fn build_window(
             prompt_mode: JournalPromptMode::Ask,
             pending_passage: None,
             picker_from_reader: false,
+            vim_rewrite: None,
         },
         page_image_overlay,
         page_image: PageImageState::default(),
@@ -2088,6 +2094,10 @@ pub fn build_window(
     key_controller.set_propagation_phase(gtk4::PropagationPhase::Capture);
     key_controller.connect_key_pressed(move |_controller, keyval, _keycode, modifier| {
         let key_name = keyval.name().unwrap_or_default();
+        // The printable character this keyval produces (None for non-printables
+        // like arrows/Esc). The journal vim-edit mode needs it to insert typed
+        // text; other modes ignore it and route on `key_name`.
+        let key_char = keyval.to_unicode();
         let is_ctrl = modifier.contains(gtk4::gdk::ModifierType::CONTROL_MASK);
         let is_shift = modifier.contains(gtk4::gdk::ModifierType::SHIFT_MASK);
         let is_alt = modifier.contains(gtk4::gdk::ModifierType::ALT_MASK);
@@ -2095,6 +2105,7 @@ pub fn build_window(
             &state_for_keys,
             &key_state,
             &key_name,
+            key_char,
             is_ctrl,
             is_shift,
             is_alt,

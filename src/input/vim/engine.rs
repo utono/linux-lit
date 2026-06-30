@@ -112,7 +112,9 @@ impl VimEngine {
         self.pending_count.take().unwrap_or(1).max(1)
     }
 
-    fn selection(&self) -> Option<Range> {
+    /// The current visual selection as a half-open char range, if in Visual or
+    /// VisualLine mode. The adapter paints this as a GTK selection.
+    pub fn selection(&self) -> Option<Range> {
         self.visual_anchor.map(|a| self.visual_range(a))
     }
 

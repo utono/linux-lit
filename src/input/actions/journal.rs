@@ -43,6 +43,11 @@ pub struct JournalState {
     /// `open_picker_from_reader`; consumed by the picker's confirm/escape paths so
     /// Escape returns to the reader (not a hidden journal overlay).
     pub picker_from_reader: bool,
+    /// Set by `vim_open_rewrite` (the `R` key in the vim editor) before opening
+    /// the ask card: `(page_id, question, answer)` of the CURRENT edit buffer.
+    /// Read and consumed by `submit_prompt`, which sends it + the typed
+    /// instruction to Claude as a rewrite. `None` for a normal create-ask.
+    pub vim_rewrite: Option<(i64, String, String)>,
 }
 
 /// Resolve which band a stored journal page belongs to, for the Q&A picker. A
@@ -485,15 +490,108 @@ fn rewrite_context(
     }
 }
 
-/// `E` in the journal overlay: open the dedicated edit card pre-filled with the
-/// current page's stored Question and Answer. No-op if the band is empty.
+/// `e` in the journal overlay: enter the in-place modal vim editor on the
+/// current page's Q&A (replaces the old edit card). No-op if the band is empty.
 pub(crate) fn begin_edit(state: &Rc<RefCell<AppState>>) {
-    let s = state.borrow();
+    let mut s = state.borrow_mut();
     let Some(page) = s.journal.pages.get(s.journal.page_index) else {
         return;
     };
     let (q, a) = (page.question.clone(), page.answer.clone());
-    s.journal_overlay.open_edit_card(&q, &a);
+    s.journal_overlay.enter_edit_buffer(&q, &a);
+    s.input_mode = crate::app::InputMode::JournalEdit;
+}
+
+/// Save the current vim-editor buffer's Q&A to the DB as-is (no Claude), snapshot
+/// the pre-edit Q&A for the reading-mode `u` undo, re-render, and land back on the
+/// saved entry. If `quit`, leave the editor and return to the journal overlay.
+/// Called for `:w` (quit=false) and `:wq` (quit=true).
+pub(crate) fn vim_save(state: &Rc<RefCell<AppState>>, quit: bool) {
+    let (question, answer) = state.borrow().journal_overlay.edit_buffer_qa();
+    let q = question.trim().to_string();
+    let a = answer.trim().to_string();
+    {
+        let mut s = state.borrow_mut();
+        let undo_snap = s.journal.pages.get(s.journal.page_index).map(|page| {
+            (page.id, page.question.clone(), page.answer.clone(), page.claude_model.clone())
+        });
+        let saved_id = s.journal.pages.get(s.journal.page_index).map(|page| {
+            let (id, model) = (page.id, page.claude_model.clone());
+            if let Ok(conn) = crate::db::queries::open_db_rw() {
+                let _ = crate::db::journal::update_journal_page(&conn, id, &q, &a, &model);
+                purge_journal_audio(&conn, id);
+            }
+            id
+        });
+        s.journal_undo = undo_snap;
+        if quit {
+            // Leave the editor, restore the read view, land on the saved entry.
+            s.journal_overlay.exit_edit_buffer();
+            s.input_mode = crate::app::InputMode::JournalOverlay;
+            render_current(&mut s);
+            if let Some(id) = saved_id {
+                land_on_current_band_id(&mut s, id);
+            }
+            crate::ui::toast::show_transient(&s.chapter_toast, "Saved", 2);
+        } else {
+            // Stay in the editor; the buffer is now the saved baseline so the
+            // dirty-check resets. Re-seed the seed to the just-saved buffer.
+            crate::ui::toast::show_transient(&s.chapter_toast, "Saved (:q to exit)", 2);
+        }
+    }
+    // After a non-quit `:w`, reset the editor's dirty baseline to the saved text
+    // by re-entering with the saved Q&A (keeps the buffer, resets the seed).
+    if !quit {
+        let s = state.borrow();
+        s.journal_overlay.reseed_edit_buffer(&q, &a);
+    }
+}
+
+/// Leave the vim editor. With unsaved changes and not `force`, warn and STAY
+/// (vim semantics: `:q` on a modified buffer is refused; `:q!` forces). Called
+/// for `:q` (force=false), Esc-in-Normal (force=false), and `:q!` (force=true).
+pub(crate) fn vim_cancel(state: &Rc<RefCell<AppState>>, force: bool) {
+    let dirty = state.borrow().journal_overlay.edit_is_dirty();
+    if dirty && !force {
+        crate::ui::toast::show_transient(
+            &state.borrow().chapter_toast,
+            "Unsaved changes \u{2014} :w to save, :q! to discard",
+            3,
+        );
+        return;
+    }
+    let mut s = state.borrow_mut();
+    s.journal_overlay.exit_edit_buffer();
+    s.input_mode = crate::app::InputMode::JournalOverlay;
+    render_current(&mut s);
+}
+
+/// `R` in the vim editor: persist the current buffer, then open the ask card to
+/// collect a rewrite instruction for Claude. Stashes the current `(id, q, a)` in
+/// `journal.vim_rewrite` so `submit_prompt` sends them with the instruction.
+pub(crate) fn vim_open_rewrite(
+    state: &Rc<RefCell<AppState>>,
+    _tokio_handle: &tokio::runtime::Handle,
+) {
+    let (question, answer) = state.borrow().journal_overlay.edit_buffer_qa();
+    let q = question.trim().to_string();
+    let a = answer.trim().to_string();
+    let id = {
+        let s = state.borrow();
+        s.journal.pages.get(s.journal.page_index).map(|p| p.id)
+    };
+    let Some(id) = id else { return };
+    {
+        let mut s = state.borrow_mut();
+        // Leave the editor (the ask card uses the journal overlay's ask_host and
+        // its own Tab/Ctrl+Enter/Esc intercept in handle_journal_key).
+        s.journal_overlay.exit_edit_buffer();
+        s.input_mode = crate::app::InputMode::JournalOverlay;
+        s.journal.vim_rewrite = Some((id, q, a));
+    }
+    let s = state.borrow();
+    s.journal_overlay
+        .open_ask_card("Rewrite instruction", "Ctrl+Enter rewrite \u{00b7} Esc cancel");
 }
 
 /// Ctrl+Enter in the edit card (the only submit key): with a non-empty "Rewrite
@@ -663,12 +761,116 @@ pub(crate) fn close_prompt(state: &Rc<RefCell<AppState>>) {
 }
 
 pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
-    let question = state.borrow().journal_overlay.take_ask_text();
+    let text = state.borrow().journal_overlay.take_ask_text();
+    // If a vim-editor rewrite is pending (`R`), this ask text is a REWRITE
+    // instruction for the stashed (id, q, a) — not a new-Q&A question.
+    let rewrite = state.borrow_mut().journal.vim_rewrite.take();
     close_prompt(state);
-    if question.trim().is_empty() {
+    if let Some((id, question, answer)) = rewrite {
+        let instruction = text.trim();
+        if instruction.is_empty() {
+            // Empty instruction → just save the hand-edits as-is.
+            if let Ok(conn) = crate::db::queries::open_db_rw() {
+                let model = state
+                    .borrow()
+                    .journal
+                    .pages
+                    .iter()
+                    .find(|p| p.id == id)
+                    .map(|p| p.claude_model.clone())
+                    .unwrap_or_default();
+                let _ = crate::db::journal::update_journal_page(
+                    &conn, id, question.trim(), answer.trim(), &model,
+                );
+                purge_journal_audio(&conn, id);
+            }
+            let mut s = state.borrow_mut();
+            render_current(&mut s);
+            land_on_current_band_id(&mut s, id);
+            crate::ui::toast::show_transient(&s.chapter_toast, "Saved as-is", 2);
+            return;
+        }
+        rewrite_with_claude(state, id, &question, &answer, instruction);
         return;
     }
-    ask_claude(state, &question);
+    if text.trim().is_empty() {
+        return;
+    }
+    ask_claude(state, &text);
+}
+
+/// Send a journal Q&A `(question, answer)` plus a rewrite `instruction` to Claude,
+/// save the revised answer to row `id`, and re-render. Factored from
+/// `submit_edit_rewrite` so the vim editor's `R` path reuses the exact grounding
+/// context + save + undo-snapshot behavior.
+fn rewrite_with_claude(
+    state: &Rc<RefCell<AppState>>,
+    id: i64,
+    question: &str,
+    answer: &str,
+    instruction: &str,
+) {
+    let (model, context, work_type, prev_question, prev_answer) = {
+        let s = state.borrow();
+        let Some(p) = s.journal.pages.iter().find(|p| p.id == id) else {
+            return;
+        };
+        let model = if p.claude_model.is_empty() {
+            s.config.claude_model.clone()
+        } else {
+            p.claude_model.clone()
+        };
+        let work_type = s
+            .current_work
+            .as_ref()
+            .map(|w| w.work_type.clone())
+            .unwrap_or_default();
+        let passage_source = p.source_text.clone().unwrap_or_default();
+        let band = band_for_rewrite(p);
+        let anchor_work_line = s
+            .journal
+            .return_pos
+            .and_then(|(buf, _top)| s.work_line_for_buffer(buf))
+            .unwrap_or(0);
+        let context = rewrite_context(&s, &band, &work_type, anchor_work_line, &passage_source);
+        (model, context, work_type, p.question.clone(), p.answer.clone())
+    };
+    let question_owned = question.to_string();
+    let model_for_db = model.clone();
+    let user_msg = rewrite_user_message(&context, question, answer, instruction);
+
+    crate::ui::toast::show_persistent(&state.borrow().chapter_toast, "Rewriting\u{2026}");
+
+    crate::input::actions::claude_bridge::run_claude_request(
+        state,
+        crate::gloss::journal_qa_prompt(&work_type),
+        user_msg,
+        model,
+        move |st, revised| {
+            st.borrow_mut().journal_undo = Some((
+                id,
+                prev_question.clone(),
+                prev_answer.clone(),
+                model_for_db.clone(),
+            ));
+            if let Ok(conn) = crate::db::queries::open_db_rw() {
+                if let Err(e) = crate::db::journal::update_journal_page(
+                    &conn, id, &question_owned, &revised, &model_for_db,
+                ) {
+                    crate::logging::log(&format!("JOURNAL: vim-rewrite save failed: {}", e));
+                }
+                purge_journal_audio(&conn, id);
+            }
+            let mut s = st.borrow_mut();
+            render_current(&mut s);
+            land_on_current_band_id(&mut s, id);
+            crate::ui::toast::show_transient(&s.chapter_toast, "Rewritten", 2);
+        },
+        move |st, msg| {
+            let s = st.borrow();
+            crate::ui::toast::show_transient(&s.chapter_toast, msg, 4);
+        },
+    );
 }
 
 fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {

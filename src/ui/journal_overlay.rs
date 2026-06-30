@@ -61,6 +61,13 @@ pub struct JournalOverlay {
     /// gloss overlay so the mechanism can't drift. See `AskCardHost`.
     ask_host: AskCardHost,
     edit_card: JournalEditCard,
+    /// The in-place vim editor's engine, `Some` while the `e` editor is open.
+    /// The page `view` mirrors its buffer/cursor; `enter_edit_buffer` seeds it,
+    /// `feed_edit_key` drives it, `exit_edit_buffer` drops it. See
+    /// docs/plans/2026-06-30-journal-vim-edit-design.md.
+    vim_engine: RefCell<Option<crate::input::vim::VimEngine>>,
+    /// The buffer the editor was seeded with, for dirty-check on cancel.
+    vim_seed: RefCell<String>,
 }
 
 /// Split the full Q&A text into paragraph blocks (the pagination unit): maximal
@@ -309,6 +316,8 @@ impl JournalOverlay {
             last_card_size: Cell::new((0, 0)),
             ask_host,
             edit_card,
+            vim_engine: RefCell::new(None),
+            vim_seed: RefCell::new(String::new()),
         }
     }
 
@@ -651,6 +660,139 @@ impl JournalOverlay {
 
     pub fn take_edit_fields(&self) -> (String, String, String) {
         self.edit_card.take()
+    }
+
+    // ---- in-place vim editor (the `e` bind) ----
+
+    /// True while the vim editor is open.
+    pub fn vim_is_open(&self) -> bool {
+        self.vim_engine.borrow().is_some()
+    }
+
+    /// Enter the in-place vim editor: build the `Q: …\n\n<answer>` buffer, seed
+    /// the engine, make the page view show the whole buffer (pagination
+    /// suspended), place the cursor, and show the mode indicator in the footer.
+    pub fn enter_edit_buffer(&self, question: &str, answer: &str) {
+        let buf = crate::input::vim::journal_doc::build_buffer(question, answer);
+        *self.vim_seed.borrow_mut() = buf.clone();
+        let engine = crate::input::vim::VimEngine::new(buf);
+        // Render the whole buffer (no pagination while editing).
+        self.view.buffer().set_text(engine.buffer());
+        self.apply_font();
+        *self.vim_engine.borrow_mut() = Some(engine);
+        // Show the text cursor while editing (the read view hides it).
+        self.view.set_cursor_visible(true);
+        // Hide the floating page marker + accent bar while editing.
+        self.page_marker.set_visible(false);
+        self.clear_bar();
+        self.mirror_engine();
+        // Scroll to top so the start of the Q&A is visible.
+        let adj = self.scrolled.vadjustment();
+        adj.set_value(adj.lower());
+    }
+
+    /// Feed one key to the engine, mirror the result to the view, and return the
+    /// `EditorAction` the engine asks the host to perform.
+    pub fn feed_edit_key(&self, key: crate::input::vim::VimKey) -> crate::input::vim::EditorAction {
+        let action = {
+            let mut guard = self.vim_engine.borrow_mut();
+            let Some(engine) = guard.as_mut() else {
+                return crate::input::vim::EditorAction::Nop;
+            };
+            let outcome = engine.handle_key(key);
+            outcome.action
+        };
+        self.mirror_engine();
+        action
+    }
+
+    /// The current edited Q&A, parsed back from the engine buffer.
+    pub fn edit_buffer_qa(&self) -> (String, String) {
+        let guard = self.vim_engine.borrow();
+        match guard.as_ref() {
+            Some(e) => crate::input::vim::journal_doc::parse_back(e.buffer()),
+            None => (String::new(), String::new()),
+        }
+    }
+
+    /// Reset the dirty baseline to the engine's CURRENT buffer (called after a
+    /// non-quit `:w` so the just-saved text becomes "clean"). The `q`/`a` args are
+    /// unused — the seed tracks the raw buffer — but kept for caller clarity.
+    pub fn reseed_edit_buffer(&self, _q: &str, _a: &str) {
+        let cur = self
+            .vim_engine
+            .borrow()
+            .as_ref()
+            .map(|e| e.buffer().to_string());
+        if let Some(buf) = cur {
+            *self.vim_seed.borrow_mut() = buf;
+        }
+    }
+
+    /// Whether the edit buffer differs from what it was seeded with.
+    pub fn edit_is_dirty(&self) -> bool {
+        let guard = self.vim_engine.borrow();
+        match guard.as_ref() {
+            Some(e) => e.buffer() != self.vim_seed.borrow().as_str(),
+            None => false,
+        }
+    }
+
+    /// Leave the vim editor: drop the engine (the caller re-renders the read
+    /// view and restores the footer).
+    pub fn exit_edit_buffer(&self) {
+        *self.vim_engine.borrow_mut() = None;
+        self.vim_seed.borrow_mut().clear();
+        self.view.set_cursor_visible(false);
+        self.view.buffer().set_text("");
+    }
+
+    /// Write the engine's buffer + cursor + selection + mode indicator into the
+    /// page view. The view itself stays non-editable — the engine is the source
+    /// of truth and we paint it here.
+    fn mirror_engine(&self) {
+        let guard = self.vim_engine.borrow();
+        let Some(engine) = guard.as_ref() else { return };
+        let buffer = self.view.buffer();
+        // Only rewrite the text when it actually changed (cheap guard; avoids
+        // resetting marks on pure cursor moves).
+        let current = buffer
+            .text(&buffer.start_iter(), &buffer.end_iter(), false)
+            .to_string();
+        if current != engine.buffer() {
+            buffer.set_text(engine.buffer());
+            self.apply_font();
+        }
+        // Char index -> byte offset for GtkTextIter.
+        let char_to_iter = |ci: usize| -> gtk4::TextIter {
+            let n_chars = engine.buffer().chars().count();
+            let ci = ci.min(n_chars);
+            buffer.iter_at_offset(ci as i32)
+        };
+        // Selection (Visual) or plain cursor.
+        if let Some(sel) = engine.selection() {
+            let start = char_to_iter(sel.start);
+            let end = char_to_iter(sel.end);
+            buffer.select_range(&start, &end);
+        } else {
+            let cur = char_to_iter(engine.cursor());
+            buffer.place_cursor(&cur);
+        }
+        // Keep the cursor on screen.
+        let mark = buffer.get_insert();
+        self.view.scroll_mark_onscreen(&mark);
+        // Mode indicator in the footer-left label.
+        let indicator = match engine.cmdline() {
+            Some(cmd) => format!(":{cmd}"),
+            None => match engine.mode() {
+                crate::input::vim::Mode::Normal => "-- NORMAL --  (e edit · :w save · R rewrite · :q quit)".to_string(),
+                crate::input::vim::Mode::Insert => "-- INSERT --".to_string(),
+                crate::input::vim::Mode::Visual => "-- VISUAL --".to_string(),
+                crate::input::vim::Mode::VisualLine => "-- VISUAL LINE --".to_string(),
+            },
+        };
+        self.footer_left.set_text(&indicator);
+        self.position_label.set_visible(false);
     }
 
     /// Open the edit card pre-filled with the current page's Q & A. The edit card

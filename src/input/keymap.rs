@@ -37,12 +37,21 @@ pub fn handle_key(
     state: &Rc<RefCell<AppState>>,
     key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
+    key_char: Option<char>,
     is_ctrl: bool,
     is_shift: bool,
     is_alt: bool,
     tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
     crate::logging::log(&format!("KEY: name={} ctrl={} shift={} alt={}", key_name, is_ctrl, is_shift, is_alt));
+
+    // Journal vim-edit mode owns ALL keys (including space, which Insert mode must
+    // type literally), so route it BEFORE the global space / play-pause guards.
+    // The emergency Shift+Ctrl+L quit above still wins. handle_journal_edit_key
+    // translates the GTK key (+ key_char for printables) into a VimKey.
+    if state.borrow().input_mode == crate::app::InputMode::JournalEdit {
+        return handle_journal_edit_key(state, key_name, key_char, is_ctrl, is_shift, tokio_handle);
+    }
 
     // Shift+Ctrl+L: quit from any mode. GTK delivers the shifted letter as the
     // uppercase name "L" (with shift=true), so match that; also accept "l" for
@@ -116,6 +125,9 @@ pub fn handle_key(
             crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, is_ctrl, is_shift, is_alt, tokio_handle),
             crate::app::InputMode::GlossVisual => handle_block_visual_key(state, key_state, key_name, &GLOSS_VISUAL_CFG),
             crate::app::InputMode::JournalOverlay => handle_journal_key(state, key_state, key_name, is_ctrl, is_alt),
+            // JournalEdit is intercepted at the top of handle_key (before the
+            // global guards), so it never reaches this match.
+            crate::app::InputMode::JournalEdit => unreachable!("JournalEdit handled before mode dispatch"),
             crate::app::InputMode::JournalVisual => handle_journal_visual_key(state, key_state, key_name),
             crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_state, key_name, is_ctrl, is_alt, is_shift),
             crate::app::InputMode::SynopsisVisual => handle_block_visual_key(state, key_state, key_name, &SYNOPSIS_VISUAL_CFG),
@@ -686,6 +698,71 @@ fn ask_card_intercept(
         return AskIntercept::FallThrough;
     }
     AskIntercept::NotHandled
+}
+
+/// The journal in-place vim editor's key handler (InputMode::JournalEdit).
+/// Translates the GTK key (+ `key_char` for printables) into a `VimKey`, feeds
+/// it to the engine via the overlay, and acts on the returned `EditorAction`.
+fn handle_journal_edit_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+    key_char: Option<char>,
+    is_ctrl: bool,
+    _is_shift: bool,
+    tokio_handle: &tokio::runtime::Handle,
+) -> bool {
+    use crate::input::vim::{EditorAction, VimKey};
+
+    // Ctrl+R is vim redo; plain printable Ctrl/Alt combos are otherwise ignored.
+    let vk: Option<VimKey> = match key_name {
+        "Escape" => Some(VimKey::Esc),
+        "Return" | "KP_Enter" => Some(VimKey::Enter),
+        "BackSpace" => Some(VimKey::Backspace),
+        "Tab" | "ISO_Left_Tab" => Some(VimKey::Tab),
+        "r" | "R" if is_ctrl => Some(VimKey::CtrlR),
+        _ => {
+            if is_ctrl {
+                // Other Ctrl combos are not editor input (avoid inserting them).
+                None
+            } else {
+                // Printable input (letters, digits, punctuation, space) — use the
+                // unicode the keyval produced.
+                key_char
+                    .filter(|c| !c.is_control())
+                    .map(VimKey::Char)
+            }
+        }
+    };
+
+    let Some(vk) = vk else {
+        // Swallow unmapped keys so they don't leak to other handlers while editing.
+        return true;
+    };
+
+    let action = state.borrow().journal_overlay.feed_edit_key(vk);
+    match action {
+        EditorAction::Nop => true,
+        EditorAction::Save => {
+            crate::input::actions::journal::vim_save(state, false);
+            true
+        }
+        EditorAction::SaveQuit => {
+            crate::input::actions::journal::vim_save(state, true);
+            true
+        }
+        EditorAction::Cancel => {
+            crate::input::actions::journal::vim_cancel(state, false);
+            true
+        }
+        EditorAction::CancelForce => {
+            crate::input::actions::journal::vim_cancel(state, true);
+            true
+        }
+        EditorAction::OpenRewrite => {
+            crate::input::actions::journal::vim_open_rewrite(state, tokio_handle);
+            true
+        }
+    }
 }
 
 fn handle_journal_key(
