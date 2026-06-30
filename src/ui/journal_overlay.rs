@@ -54,6 +54,11 @@ pub struct JournalOverlay {
     is_prose: Cell<bool>,
     font_family: RefCell<String>,
     font_size: Cell<i32>,
+    /// Reading font family stashed on edit-enter and restored on exit, so the
+    /// monospace edit font does not leak into the rendered display. `None` when
+    /// not editing. Save-and-restore (not hardcode-Charter) so a non-default
+    /// overlay font would survive an edit.
+    pre_edit_family: RefCell<Option<String>>,
     last_card_size: Cell<(i32, i32)>,
     /// Owns the ask-card lifecycle + the fixed-scroll-height viewport-shrink (the
     /// occlusion fix) + the footer hide/show + the clip recompute. Shared with the
@@ -296,6 +301,7 @@ impl JournalOverlay {
             is_prose: Cell::new(false),
             font_family: RefCell::new(String::new()),
             font_size: Cell::new(16),
+            pre_edit_family: RefCell::new(None),
             last_card_size: Cell::new((0, 0)),
             ask_host,
             vim_engine: RefCell::new(None),
@@ -545,6 +551,28 @@ impl JournalOverlay {
         self.apply_font();
     }
 
+    /// Swap to the monospace edit font, stashing the current reading family so
+    /// `end_edit_font` can restore it. Size is unchanged. Idempotent: a second
+    /// call without an intervening `end_edit_font` re-stashes the (already
+    /// monospace) family — harmless, but callers pair it with `end_edit_font`.
+    pub fn begin_edit_font(&self) {
+        let current = self.font_family.borrow().clone();
+        *self.pre_edit_family.borrow_mut() = Some(current);
+        let size = self.font_size.get();
+        self.set_font(crate::ui::EDIT_FONT_FAMILY, size);
+    }
+
+    /// Restore the reading font stashed by `begin_edit_font`. No-op when nothing
+    /// is stashed, so redundant exit paths (e.g. `:q` after a font-less state)
+    /// are safe.
+    pub fn end_edit_font(&self) {
+        let stashed = self.pre_edit_family.borrow_mut().take();
+        if let Some(family) = stashed {
+            let size = self.font_size.get();
+            self.set_font(&family, size);
+        }
+    }
+
     /// Apply the overlay's font (family + size) to the page text and the ask
     /// input via a buffer-wide font TextTag — the same technique the gloss
     /// overlay uses (`GlossOverlay::apply_font`), since this gtk4 version's
@@ -639,6 +667,7 @@ impl JournalOverlay {
     /// the engine, make the page view show the whole buffer (pagination
     /// suspended), place the cursor, and show the mode indicator in the footer.
     pub fn enter_edit_buffer(&self, question: &str, answer: &str, block_fill: &str, block_fg: &str) {
+        self.begin_edit_font();
         *self.vim_cursor_colors.borrow_mut() = (block_fill.to_string(), block_fg.to_string());
         let buf = crate::input::vim::journal_doc::build_buffer(question, answer);
         *self.vim_seed.borrow_mut() = buf.clone();
@@ -722,6 +751,7 @@ impl JournalOverlay {
         crate::ui::clear_block_cursor(&self.view.buffer(), "journal-vim-block");
         self.view.set_cursor_visible(false);
         self.view.set_focusable(false);
+        self.end_edit_font();
     }
 
     /// Write the engine's buffer + cursor + selection + mode indicator into the
