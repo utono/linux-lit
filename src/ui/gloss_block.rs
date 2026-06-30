@@ -74,6 +74,19 @@ pub enum BlockKind {
     Explication,
 }
 
+/// A non-cursor-stop paragraph that rides WITH a block on a paginated page so it
+/// is not dropped at a page boundary (the single-page render keeps it; without
+/// this the multi-page render would lose it). Display-only — never a cursor stop.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Attachment {
+    /// A bold label paragraph that HEADS the block (synopsis, e.g.
+    /// "Shakespearean parallels:"). Rendered above the block body.
+    LeadLabel(String),
+    /// An echo-bracket markup ("<gloss>[...]</gloss>") that TRAILS the block
+    /// (gloss). Rendered below the block body via the echo render path.
+    TrailEcho(String),
+}
+
 /// One cursor stop in the gloss, in document order.
 #[derive(Clone)]
 pub struct GlossBlock {
@@ -88,6 +101,9 @@ pub struct GlossBlock {
     /// DISPLAY text: `text` with `/IPA/` stripped (`strip_ipa`). Used for the
     /// reader's buffer and the accent-bar block matcher.
     pub display: String,
+    /// Non-cursor-stop paragraphs that ride with this block on a paginated page.
+    /// Empty in the common case. See `Attachment`.
+    pub attached: Vec<Attachment>,
 }
 
 /// Parse a `<p>`-tagged synopsis into cursor-stop blocks, one per paragraph,
@@ -161,6 +177,7 @@ pub fn synopsis_blocks(synopsis: &str) -> Vec<GlossBlock> {
             index: 0,
             text: t.to_string(),
             display: t.to_string(),
+            attached: Vec::new(),
         }];
     }
     let mut blocks: Vec<GlossBlock> = Vec::new();
@@ -174,6 +191,7 @@ pub fn synopsis_blocks(synopsis: &str) -> Vec<GlossBlock> {
             index,
             text: p.clone(),
             display: p.clone(),
+            attached: Vec::new(),
         });
         index += 1;
     }
@@ -200,6 +218,7 @@ pub fn gloss_blocks(gloss: &str) -> Vec<GlossBlock> {
                     index: *source_idx,
                     text,
                     display,
+                    attached: Vec::new(),
                 });
                 *source_idx += 1;
                 pending.clear();
@@ -224,6 +243,7 @@ pub fn gloss_blocks(gloss: &str) -> Vec<GlossBlock> {
                     index: expl_idx,
                     text,
                     display,
+                    attached: Vec::new(),
                 });
                 expl_idx += 1;
             }
@@ -491,6 +511,17 @@ pub(crate) fn replace_word_ipa_in_source_block(
 #[cfg(test)]
 mod block_tests {
     use super::*;
+
+    #[test]
+    fn blocks_default_to_no_attachments() {
+        let g = "<speaker>X</speaker>\n<verse>a line</verse>\n<gloss>note</gloss>";
+        for b in gloss_blocks(g) {
+            assert!(b.attached.is_empty(), "fresh block must have no attachments");
+        }
+        for b in synopsis_blocks("<p>One.</p><p>Two.</p>") {
+            assert!(b.attached.is_empty());
+        }
+    }
 
     #[test]
     fn parse_extracts_pron_element() {
