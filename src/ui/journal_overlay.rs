@@ -553,9 +553,16 @@ impl JournalOverlay {
 
     /// Swap to the monospace edit font, stashing the current reading family so
     /// `end_edit_font` can restore it. Size is unchanged. Idempotent: a second
-    /// call without an intervening `end_edit_font` re-stashes the (already
-    /// monospace) family — harmless, but callers pair it with `end_edit_font`.
+    /// call without an intervening `end_edit_font` no-ops (the reading family is
+    /// already stashed; re-stashing would overwrite it with the mono font and lose
+    /// the reading baseline).
     pub fn begin_edit_font(&self) {
+        // Already editing: the reading family is already stashed. Do NOT re-stash
+        // (the current family is the mono edit font now) or the reading baseline
+        // would be lost and never restored on exit. This makes the call idempotent.
+        if self.pre_edit_family.borrow().is_some() {
+            return;
+        }
         let current = self.font_family.borrow().clone();
         *self.pre_edit_family.borrow_mut() = Some(current);
         let size = self.font_size.get();

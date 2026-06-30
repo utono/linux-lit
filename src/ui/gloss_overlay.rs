@@ -549,6 +549,12 @@ impl GlossOverlay {
     /// `end_edit_font` can restore it. Size is unchanged. Mirrors
     /// `JournalOverlay::begin_edit_font`.
     pub fn begin_edit_font(&self) {
+        // Already editing: the reading family is already stashed. Do NOT re-stash
+        // (the current family is the mono edit font now) or the reading baseline
+        // would be lost and never restored on exit. This makes the call idempotent.
+        if self.pre_edit_family.borrow().is_some() {
+            return;
+        }
         let current = self.font_family.borrow().clone();
         *self.pre_edit_family.borrow_mut() = Some(current);
         let size = self.font_size.get();
