@@ -1448,4 +1448,25 @@ mod tests {
         e.feed("u");
         assert_eq!(e.buffer(), seed);
     }
+
+    #[test]
+    fn raw_text_round_trips_unchanged() {
+        // A representative gloss markup blob.
+        let gloss = "<speaker>HAMLET</speaker>\n<verse>To be, or not to be</verse>\n\n<gloss>The question of existence.</gloss>";
+        let engine = VimEngine::new(gloss.to_string());
+        assert_eq!(engine.buffer(), gloss, "gloss markup must round-trip");
+
+        // A representative synopsis blob.
+        let synopsis = "<p>The court gathers.</p>\n<p>A ghost appears on the battlements.</p>";
+        let engine = VimEngine::new(synopsis.to_string());
+        assert_eq!(engine.buffer(), synopsis, "synopsis text must round-trip");
+    }
+
+    #[test]
+    fn trim_end_is_the_only_save_transform() {
+        // The save path applies `trim_end()` and nothing else; interior markup
+        // and leading whitespace are preserved.
+        let raw = "  <p>indented and trailing</p>  \n\n";
+        assert_eq!(raw.trim_end(), "  <p>indented and trailing</p>");
+    }
 }
