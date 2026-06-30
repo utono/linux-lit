@@ -641,8 +641,15 @@ impl JournalOverlay {
         self.view.buffer().set_text(engine.buffer());
         self.apply_font();
         *self.vim_engine.borrow_mut() = Some(engine);
-        // Show the text cursor while editing (the read view hides it).
+        // Show the text caret while editing. GTK only PAINTS the caret when the
+        // TextView holds keyboard focus, so the read view's `focusable(false)`
+        // must be lifted and focus grabbed — otherwise there is no visible
+        // insertion point (the "no insertion point" bug). Key routing is on the
+        // window's capture-phase controller, so giving the view focus does not
+        // change which handler sees keys.
         self.view.set_cursor_visible(true);
+        self.view.set_focusable(true);
+        let _ = self.view.grab_focus();
         // Hide the floating page marker + accent bar while editing.
         self.page_marker.set_visible(false);
         self.clear_bar();
@@ -699,13 +706,15 @@ impl JournalOverlay {
         }
     }
 
-    /// Leave the vim editor: drop the engine (the caller re-renders the read
-    /// view and restores the footer).
+    /// Leave the vim editor: drop the engine and restore the read view's
+    /// non-editable, non-focusable state. Does NOT clear the buffer text — the
+    /// caller re-renders the read page (clearing here left a blank card when the
+    /// caller opened the rewrite prompt without an immediate re-render).
     pub fn exit_edit_buffer(&self) {
         *self.vim_engine.borrow_mut() = None;
         self.vim_seed.borrow_mut().clear();
         self.view.set_cursor_visible(false);
-        self.view.buffer().set_text("");
+        self.view.set_focusable(false);
     }
 
     /// Write the engine's buffer + cursor + selection + mode indicator into the

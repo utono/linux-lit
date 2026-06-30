@@ -583,10 +583,26 @@ pub(crate) fn vim_open_rewrite(
     let Some(id) = id else { return };
     {
         let mut s = state.borrow_mut();
+        // Persist the current hand-edits and re-render the READ page first, so the
+        // Q&A is visible (and clean) behind the rewrite prompt — and so Esc from
+        // the prompt lands on the rendered page, not a blank or half-edited one.
+        if let Ok(conn) = crate::db::queries::open_db_rw() {
+            let model = s
+                .journal
+                .pages
+                .iter()
+                .find(|p| p.id == id)
+                .map(|p| p.claude_model.clone())
+                .unwrap_or_default();
+            let _ = crate::db::journal::update_journal_page(&conn, id, &q, &a, &model);
+            purge_journal_audio(&conn, id);
+        }
         // Leave the editor (the ask card uses the journal overlay's ask_host and
         // its own Tab/Ctrl+Enter/Esc intercept in handle_journal_key).
         s.journal_overlay.exit_edit_buffer();
         s.input_mode = crate::app::InputMode::JournalOverlay;
+        render_current(&mut s);
+        land_on_current_band_id(&mut s, id);
         s.journal.vim_rewrite = Some((id, q, a));
     }
     let s = state.borrow();
@@ -627,6 +643,9 @@ pub(crate) fn undo_journal_edit(state: &Rc<RefCell<AppState>>) {
 }
 
 pub(crate) fn close_prompt(state: &Rc<RefCell<AppState>>) {
+    // Discard any pending vim rewrite so a later create-ask isn't mistaken for a
+    // rewrite (Esc out of the `R` prompt; the hand-edits were already saved).
+    state.borrow_mut().journal.vim_rewrite = None;
     state.borrow().journal_overlay.close_ask_card();
 }
 

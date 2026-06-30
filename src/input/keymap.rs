@@ -740,6 +740,7 @@ fn handle_journal_edit_key(
     };
 
     let action = state.borrow().journal_overlay.feed_edit_key(vk);
+    crate::logging::log(&format!("JOURNAL-EDIT: key={:?} -> action={:?}", vk, action));
     match action {
         EditorAction::Nop => true,
         EditorAction::Save => {
