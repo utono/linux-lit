@@ -66,6 +66,12 @@ pub struct GlossOverlay {
     clip_guard: crate::ui::bottom_clip_guard::BottomClipGuard,
     bar_ranges: Rc<RefCell<Vec<BarRange>>>,
     bar_color: Rc<RefCell<(f64, f64, f64)>>,
+    /// When the vim editor's NORMAL/VISUAL cursor sits on a BLANK line, that
+    /// line's `\n` has no glyph cell, so the char-background block tag paints
+    /// nothing. We draw a thin left-edge block here instead. `Some((buffer_line,
+    /// r, g, b))` while on a blank line; `None` otherwise (real glyph, INSERT
+    /// mode, or not editing). Painted by `bar_drawing`'s draw func.
+    vim_block_line: crate::ui::VimBlankCursor,
     bar_x: Rc<RefCell<i32>>,
     line_numbers: Rc<RefCell<Vec<LineNumber>>>,
     echo_lines: Rc<RefCell<Vec<i32>>>,
@@ -266,6 +272,7 @@ impl GlossOverlay {
 
         let bar_ranges: Rc<RefCell<Vec<BarRange>>> = Rc::new(RefCell::new(Vec::new()));
         let bar_color: Rc<RefCell<(f64, f64, f64)>> = Rc::new(RefCell::new((0.53, 0.62, 0.71)));
+        let vim_block_line: crate::ui::VimBlankCursor = Rc::new(RefCell::new(None));
         let bar_x: Rc<RefCell<i32>> = Rc::new(RefCell::new((column_width as i32) / 8));
         let line_numbers: Rc<RefCell<Vec<LineNumber>>> = Rc::new(RefCell::new(Vec::new()));
         let echo_lines: Rc<RefCell<Vec<i32>>> = Rc::new(RefCell::new(Vec::new()));
@@ -276,11 +283,31 @@ impl GlossOverlay {
         let bar_x_clone = bar_x.clone();
         let line_numbers_clone = line_numbers.clone();
         let view_clone = gloss_view.clone();
+        let vim_block_clone = vim_block_line.clone();
+        let block_left_margin = text_margins as i32;
         let right_margin_val = right_margin;
         bar_drawing.set_draw_func(move |_area, cr, w, _h| {
             let ranges = ranges_clone.borrow();
             let (r, g, b) = *color_clone.borrow();
             let x = *bar_x_clone.borrow() as f64;
+
+            // Vim block cursor on a BLANK line: the line has no glyph to fill, so
+            // draw a thin left-edge block at the line's window-y (same coord path
+            // as the accent bar / line numbers below).
+            if let Some((buf_line, cr_, cg, cb)) = *vim_block_clone.borrow() {
+                let buffer = view_clone.buffer();
+                if let Some(iter) = buffer.iter_at_line(buf_line) {
+                    let loc = view_clone.iter_location(&iter);
+                    let (_, by) = view_clone.buffer_to_window_coords(
+                        gtk4::TextWindowType::Widget, 0, loc.y());
+                    // Block height = line height (fall back to a sane default).
+                    let bh = if loc.height() > 0 { loc.height() } else { 18 } as f64;
+                    let bw = (bh * 0.5).max(7.0); // half-em-ish, like a cell
+                    cr.set_source_rgb(cr_, cg, cb);
+                    cr.rectangle(block_left_margin as f64, by as f64, bw, bh);
+                    let _ = cr.fill();
+                }
+            }
 
             // Draw bars
             if !ranges.is_empty() {
@@ -492,6 +519,7 @@ impl GlossOverlay {
             clip_guard,
             bar_ranges,
             bar_color,
+            vim_block_line,
             bar_x,
             line_numbers,
             echo_lines,
@@ -660,6 +688,8 @@ impl GlossOverlay {
     /// the input mode.
     pub fn exit_edit_buffer(&self) {
         crate::ui::clear_block_cursor(&self.gloss_view.buffer(), "gloss-vim-block");
+        *self.vim_block_line.borrow_mut() = None;
+        self.bar_drawing.queue_draw();
         *self.vim_engine.borrow_mut() = None;
         self.vim_seed.borrow_mut().clear();
         self.gloss_view.set_cursor_visible(false);
@@ -704,12 +734,28 @@ impl GlossOverlay {
         let mode = engine.mode();
         if mode == crate::input::vim::Mode::Insert {
             crate::ui::clear_block_cursor(&buffer, "gloss-vim-block");
+            *self.vim_block_line.borrow_mut() = None;
             self.gloss_view.set_cursor_visible(true);
         } else {
             let (fill, fg) = self.vim_cursor_colors.borrow().clone();
             crate::ui::paint_block_cursor(&buffer, "gloss-vim-block", &fill, &fg, engine.cursor());
-            // At end-of-buffer there is no char to cover, so keep the caret there.
-            let at_end = engine.cursor() >= n_chars;
+            // On a BLANK line the cursor char is the line's `\n` (no glyph cell),
+            // so the char-background paints nothing. Draw a left-edge block via
+            // `bar_drawing` instead (cleared otherwise). A line is blank when its
+            // cursor iter both starts and ends the line.
+            let cur_iter = char_to_iter(engine.cursor());
+            let on_blank = cur_iter.starts_line() && cur_iter.ends_line();
+            if on_blank {
+                let rgb = parse_hex_color(&fill).unwrap_or((0.53, 0.62, 0.71));
+                *self.vim_block_line.borrow_mut() =
+                    Some((cur_iter.line(), rgb.0, rgb.1, rgb.2));
+            } else {
+                *self.vim_block_line.borrow_mut() = None;
+            }
+            self.bar_drawing.queue_draw();
+            // Hide the native caret except at true end-of-buffer (where neither the
+            // char block nor — if that line has glyphs — the drawn block applies).
+            let at_end = engine.cursor() >= n_chars && !on_blank;
             self.gloss_view.set_cursor_visible(at_end);
         }
         // Keep the cursor on screen.

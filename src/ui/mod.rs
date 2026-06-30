@@ -172,6 +172,12 @@ pub(crate) fn position_page_marker_below_text(
 /// call (clearing the old range first), so calling it on every mirror just moves
 /// the block. At end-of-buffer (no char to cover) it clears the block (the caller
 /// should fall back to the native caret there). Raised above the font tag.
+///
+/// NOTE: on a BLANK line the char under the cursor is the line's newline, which
+/// has no glyph cell, so this char-background paints nothing — the block vanishes
+/// between paragraphs. The gloss/synopsis editor draws a Cairo left-edge block
+/// for that case (see `GlossOverlay`'s `bar_drawing`); the char tag here is the
+/// real-glyph path.
 pub(crate) fn paint_block_cursor(
     buffer: &gtk4::TextBuffer,
     tag_name: &str,
@@ -220,6 +226,14 @@ pub(crate) fn clear_block_cursor(buffer: &gtk4::TextBuffer, tag_name: &str) {
         buffer.remove_tag(&tag, &lo, &hi);
     }
 }
+
+/// Shared state for the vim editors' BLANK-line block cursor. The char-background
+/// block (`paint_block_cursor`) paints nothing on an empty line (its only char is
+/// the newline, with no glyph cell), so the gloss + journal overlays draw a thin
+/// left-edge block via their `bar_drawing` instead. `Some((buffer_line, r, g, b))`
+/// while the NORMAL/VISUAL cursor is on a blank line; `None` otherwise.
+pub(crate) type VimBlankCursor =
+    std::rc::Rc<std::cell::RefCell<Option<(i32, f64, f64, f64)>>>;
 
 /// Color the given `(start_line, end_line)` block spans of `buffer` with the tag
 /// `tag_name` set to `accent`: look the tag up or create it, refresh its

@@ -20,6 +20,12 @@ pub struct JournalOverlay {
     page_marker: Label,
     bar_drawing: gtk4::DrawingArea,
     bar_ranges: Rc<RefCell<Vec<(i32, i32)>>>,
+    /// When the vim editor's NORMAL/VISUAL cursor sits on a BLANK line, that
+    /// line's `\n` has no glyph cell, so the char-background block tag paints
+    /// nothing. We draw a thin left-edge block here instead. `Some((buffer_line,
+    /// r, g, b))` while on a blank line; `None` otherwise. Painted by
+    /// `bar_drawing`'s draw func.
+    vim_block_line: crate::ui::VimBlankCursor,
     /// The blocks RENDERED on the current page (buffer-line spans). Visual mode
     /// and the accent bar work on these. Re-derived by `render_page` from the
     /// current page's slice of `all_paragraphs`.
@@ -173,12 +179,32 @@ impl JournalOverlay {
         // hosts bottom_clip, drawing a 2px vertical accent line over selected
         // buffer-line spans. Fixed color — NOT theme-wired.
         let bar_ranges: Rc<RefCell<Vec<(i32, i32)>>> = Rc::new(RefCell::new(Vec::new()));
+        let vim_block_line: crate::ui::VimBlankCursor = Rc::new(RefCell::new(None));
         let bar_drawing = gtk4::DrawingArea::new();
         bar_drawing.set_can_target(false);
         {
             let ranges_clone = bar_ranges.clone();
             let view_clone = view.clone();
+            let vim_block_clone = vim_block_line.clone();
             bar_drawing.set_draw_func(move |_area, cr, _w, _h| {
+                // Vim block cursor on a BLANK line: the line has no glyph to fill,
+                // so draw a thin left-edge block at the line's window-y. Drawn
+                // BEFORE the selection-bar early-return so it shows while editing
+                // (no selection ranges then).
+                if let Some((buf_line, br, bg, bb)) = *vim_block_clone.borrow() {
+                    let buffer = view_clone.buffer();
+                    if let Some(iter) = buffer.iter_at_line(buf_line) {
+                        let loc = view_clone.iter_location(&iter);
+                        let (_, by) = view_clone.buffer_to_window_coords(
+                            gtk4::TextWindowType::Widget, 0, loc.y());
+                        let bh = if loc.height() > 0 { loc.height() } else { 18 } as f64;
+                        let bw = (bh * 0.5).max(7.0);
+                        let bx = (view_clone.left_margin() as f64).max(2.0);
+                        cr.set_source_rgb(br, bg, bb);
+                        cr.rectangle(bx, by as f64, bw, bh);
+                        let _ = cr.fill();
+                    }
+                }
                 let ranges = ranges_clone.borrow();
                 if ranges.is_empty() {
                     return;
@@ -310,6 +336,7 @@ impl JournalOverlay {
             page_marker,
             bar_drawing,
             bar_ranges,
+            vim_block_line,
             blocks: RefCell::new(Vec::new()),
             visual_anchor: Cell::new(None),
             cursor_block: Cell::new(0),
@@ -789,6 +816,8 @@ impl JournalOverlay {
         *self.vim_engine.borrow_mut() = None;
         self.vim_seed.borrow_mut().clear();
         crate::ui::clear_block_cursor(&self.view.buffer(), "journal-vim-block");
+        *self.vim_block_line.borrow_mut() = None;
+        self.bar_drawing.queue_draw();
         self.view.set_cursor_visible(false);
         self.view.set_focusable(false);
         self.end_edit_font();
@@ -830,13 +859,29 @@ impl JournalOverlay {
         let insert_mode = engine.mode() == crate::input::vim::Mode::Insert;
         if insert_mode {
             crate::ui::clear_block_cursor(&buffer, "journal-vim-block");
+            *self.vim_block_line.borrow_mut() = None;
             self.view.set_cursor_visible(true);
         } else {
             let (fill, fg) = self.vim_cursor_colors.borrow().clone();
             crate::ui::paint_block_cursor(&buffer, "journal-vim-block", &fill, &fg, engine.cursor());
-            // Hide the native caret so it doesn't sit inside the block; but at
-            // end-of-buffer there is no char to cover, so keep the caret there.
-            let at_end = engine.cursor() >= engine.buffer().chars().count();
+            // On a BLANK line the cursor char is the line's `\n` (no glyph cell),
+            // so the char-background paints nothing. Draw a left-edge block via
+            // `bar_drawing` instead (cleared otherwise). A line is blank when its
+            // cursor iter both starts and ends the line.
+            let cur_iter = char_to_iter(engine.cursor());
+            let on_blank = cur_iter.starts_line() && cur_iter.ends_line();
+            if on_blank {
+                let rgb = crate::ui::gloss_util::parse_hex_color(&fill)
+                    .unwrap_or((0.53, 0.62, 0.71));
+                *self.vim_block_line.borrow_mut() =
+                    Some((cur_iter.line(), rgb.0, rgb.1, rgb.2));
+            } else {
+                *self.vim_block_line.borrow_mut() = None;
+            }
+            self.bar_drawing.queue_draw();
+            // Hide the native caret so it doesn't sit inside the block; but at true
+            // end-of-buffer (and not a blank line) there is no block, so keep it.
+            let at_end = engine.cursor() >= engine.buffer().chars().count() && !on_blank;
             self.view.set_cursor_visible(at_end);
         }
         // Keep the cursor on screen.
