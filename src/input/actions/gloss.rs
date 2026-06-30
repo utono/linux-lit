@@ -876,6 +876,129 @@ fn update_and_render_gloss_in_place(
     crate::logging::log(log_msg);
 }
 
+/// `e` in the gloss overlay: enter the in-place modal vim editor on the current
+/// gloss's RAW markup (`gloss_list[gloss_index].gloss_text`). Toasts and bails
+/// when there is no current gloss. The save path (`vim_save`) writes the buffer
+/// back via `update_and_render_gloss_in_place` — no Claude.
+pub(crate) fn begin_edit(state: &Rc<RefCell<AppState>>) {
+    // Resolve the raw markup + cursor colors under a mutable borrow, then enter
+    // the editor. `show_tts_toast` re-borrows `state`, so the no-gloss toast is
+    // emitted only after the borrow is dropped.
+    let entered = {
+        let mut s = state.borrow_mut();
+        let idx = s.gloss_index;
+        match s.gloss_list.get(idx) {
+            Some(g) => {
+                let raw = g.gloss_text.clone();
+                let (fill, fg) = (s.theme.cursor_bg.clone(), s.theme.cursor_fg.clone());
+                s.gloss_overlay.enter_edit_buffer(&raw, &fill, &fg);
+                s.input_mode = crate::app::InputMode::GlossEdit;
+                true
+            }
+            None => false,
+        }
+    };
+    if !entered {
+        show_tts_toast(state, "No gloss to edit");
+    }
+}
+
+/// Save the gloss vim-editor buffer's raw markup to lit.db as-is (no Claude) via
+/// `update_and_render_gloss_in_place` (which also snapshots `gloss_undo`, purges
+/// cached audio, patches the in-memory row, and re-renders the colored display).
+/// `:w` (quit=false) stays in the editor and re-seeds the dirty baseline; `:wq`
+/// (quit=true) exits to the gloss overlay.
+pub(crate) fn vim_save(state: &Rc<RefCell<AppState>>, quit: bool) {
+    let raw = state.borrow().gloss_overlay.edit_buffer_text();
+    let raw = raw.trim_end().to_string();
+    let (ctx, idx, gloss_id, model) = {
+        let s = state.borrow();
+        let ctx = match &s.gloss_context {
+            Some(c) => c.clone(),
+            None => return,
+        };
+        let idx = s.gloss_index;
+        let gloss_id = match s.gloss_list.get(idx) {
+            Some(g) => g.gloss_id,
+            None => return,
+        };
+        (ctx, idx, gloss_id, s.config.claude_model.clone())
+    };
+    update_and_render_gloss_in_place(
+        state, &ctx, idx, gloss_id, &raw, &model,
+        &format!("GLOSS: hand-edited gloss {} in place (vim)", gloss_id),
+    );
+    if quit {
+        let mut s = state.borrow_mut();
+        s.gloss_overlay.exit_edit_buffer();
+        s.input_mode = crate::app::InputMode::GlossOverlay;
+        crate::ui::toast::show_transient(&s.chapter_toast, "Saved", 2);
+    } else {
+        // `update_and_render_gloss_in_place` re-rendered the COLORED read display
+        // and does not know about the editor, so the editor view is now gone.
+        // Re-open the editor on the just-saved raw text and re-seed the dirty
+        // baseline so the user stays in mono-edit mode with a clean buffer.
+        let (fill, fg) = {
+            let s = state.borrow();
+            (s.theme.cursor_bg.clone(), s.theme.cursor_fg.clone())
+        };
+        {
+            let mut s = state.borrow_mut();
+            s.gloss_overlay.enter_edit_buffer(&raw, &fill, &fg);
+            s.gloss_overlay.reseed_edit_buffer(&raw);
+            s.input_mode = crate::app::InputMode::GlossEdit;
+            crate::ui::toast::show_transient(&s.chapter_toast, "Saved (:q to exit)", 2);
+        }
+    }
+}
+
+/// Leave the gloss vim editor. With unsaved changes and not `force`, warn and
+/// STAY (`:q` refused on a modified buffer; `:q!` forces). Re-renders the colored
+/// gloss display (from the unchanged stored gloss) on exit.
+pub(crate) fn vim_cancel(state: &Rc<RefCell<AppState>>, force: bool) {
+    let dirty = state.borrow().gloss_overlay.edit_is_dirty();
+    if dirty && !force {
+        crate::ui::toast::show_transient(
+            &state.borrow().chapter_toast,
+            "Unsaved changes \u{2014} :w to save, :q! to discard",
+            3,
+        );
+        return;
+    }
+    // Drop the editor, then re-render the STORED (un-edited) gloss in its colored
+    // form via the render-only `render_gloss_row` helper. Unlike
+    // `update_and_render_gloss_in_place`, it does NOT re-persist the text or purge
+    // cached audio — so a no-op cancel keeps the synthesized gloss audio. The
+    // reader-gloss tint is untouched (the gloss text + glossed-passage set never
+    // changed), so no `apply_reader_gloss_highlighting` is needed.
+    let mut s = state.borrow_mut();
+    s.gloss_overlay.exit_edit_buffer();
+    let idx = s.gloss_index;
+    if s.gloss_context.is_some() && s.gloss_list.get(idx).is_some() {
+        render_gloss_row(&mut s, idx);
+    }
+    s.input_mode = crate::app::InputMode::GlossOverlay;
+    crate::logging::log("GLOSS: vim edit cancelled, re-rendered stored gloss");
+}
+
+/// `R` in the gloss vim editor: leave the editor and open the existing ask-Claude
+/// rewrite (edit) card so an AI rewrite is reachable without switching surfaces.
+/// Mirrors journal `vim_open_rewrite`. The hand-edits in the buffer are discarded
+/// (the rewrite operates on the stored gloss); `R` is "ask AI", distinct from
+/// `:w` "save my edit".
+pub(crate) fn vim_open_rewrite(
+    state: &Rc<RefCell<AppState>>,
+    _tokio_handle: &tokio::runtime::Handle,
+) {
+    {
+        let mut s = state.borrow_mut();
+        s.gloss_overlay.exit_edit_buffer();
+        s.input_mode = crate::app::InputMode::GlossOverlay;
+    }
+    // Open the existing ask-Claude edit dialog (GlossPromptMode::Edit).
+    show_edit_dialog(state);
+}
+
 /// Undo the last `e` gloss edit (single-level): restore the snapshot in
 /// `gloss_undo` to the row it came from via `update_gloss`, purge that gloss's
 /// cached audio (the text reverted), patch the in-memory row if it is the
