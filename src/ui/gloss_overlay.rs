@@ -1482,16 +1482,18 @@ impl GlossOverlay {
             let mut char_off = 0usize; // char offset into `body`
             for b in &slice {
                 for a in &b.attached {
-                    if let crate::ui::gloss_block::Attachment::LeadLabel(lbl) = a {
-                        if !body.is_empty() {
-                            body.push_str("\n\n");
-                            char_off += 2;
-                        }
-                        let len = lbl.chars().count();
-                        label_ranges.push((char_off, char_off + len));
-                        body.push_str(lbl);
-                        char_off += len;
+                    // Plain irrefutable `let`: Attachment currently has the single
+                    // LeadLabel variant (gloss echoes ride in the markup string, not
+                    // here), so `if let`/`let-else` would be flagged irrefutable.
+                    let crate::ui::gloss_block::Attachment::LeadLabel(lbl) = a;
+                    if !body.is_empty() {
+                        body.push_str("\n\n");
+                        char_off += 2;
                     }
+                    let len = lbl.chars().count();
+                    label_ranges.push((char_off, char_off + len));
+                    body.push_str(lbl);
+                    char_off += len;
                 }
                 if !body.is_empty() {
                     body.push_str("\n\n");
@@ -2230,11 +2232,10 @@ fn gloss_block_height(
     let mut h = block_height_overhead(block.kind == BlockKind::Source, text_h);
     let line = size_pt + size_pt / 2;
     // Synopsis: lead label paragraph(s) ride ABOVE the block body (in `attached`).
+    // Plain irrefutable `let`: Attachment has the single LeadLabel variant.
     for a in &block.attached {
-        if let crate::ui::gloss_block::Attachment::LeadLabel(s) = a {
-            h += crate::ui::pagination::measure_text_height(pctx, s, size_pt, family, wrap_w)
-                + line;
-        }
+        let crate::ui::gloss_block::Attachment::LeadLabel(s) = a;
+        h += crate::ui::pagination::measure_text_height(pctx, s, size_pt, family, wrap_w) + line;
     }
     // Gloss: a trailing echo lives in the block's MARKUP (A3), not in `display`.
     // Each `<gloss>[...]</gloss>` echo renders as a quote line + a citation line;
