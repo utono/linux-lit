@@ -1469,18 +1469,41 @@ impl GlossOverlay {
             self.apply_synopsis_label_bold();
             self.rebuild_block_ranges_from(crate::ui::gloss_block::synopsis_blocks(&synopsis));
         } else {
-            // Paginated: render only this page's cursor-stop blocks.
+            // Paginated: render this page's blocks, each preceded by its lead
+            // label(s) (bolded) so labels survive the page turn. Track label
+            // char-offset ranges in the page text so apply_synopsis_label_bold
+            // can bold them.
             let Some(page) = page else { return };
             let all = self.all_blocks.borrow();
             let slice: Vec<GlossBlock> = all[page.start..page.end.min(all.len())].to_vec();
             drop(all);
-            let body = slice
-                .iter()
-                .map(|b| b.display.clone())
-                .collect::<Vec<_>>()
-                .join("\n\n");
+            let mut body = String::new();
+            let mut label_ranges: Vec<(usize, usize)> = Vec::new();
+            let mut char_off = 0usize; // char offset into `body`
+            for b in &slice {
+                for a in &b.attached {
+                    if let crate::ui::gloss_block::Attachment::LeadLabel(lbl) = a {
+                        if !body.is_empty() {
+                            body.push_str("\n\n");
+                            char_off += 2;
+                        }
+                        let len = lbl.chars().count();
+                        label_ranges.push((char_off, char_off + len));
+                        body.push_str(lbl);
+                        char_off += len;
+                    }
+                }
+                if !body.is_empty() {
+                    body.push_str("\n\n");
+                    char_off += 2;
+                }
+                let len = b.display.chars().count();
+                body.push_str(&b.display);
+                char_off += len;
+            }
             buffer.set_text(&body);
-            *self.synopsis_label_ranges.borrow_mut() = Vec::new();
+            *self.synopsis_label_ranges.borrow_mut() = label_ranges;
+            self.apply_synopsis_label_bold();
             self.rebuild_block_ranges_from(slice);
         }
 
