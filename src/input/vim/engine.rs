@@ -338,7 +338,13 @@ impl VimEngine {
                 }
                 self.out(false, EditorAction::Nop)
             }
-            ';' => self.repeat_find(false),
+            // `;` enters command mode (mirrors the user's Neovim mapping
+            // `vim.keymap.set('n', ';', ':')`); displaces vim's default
+            // repeat-find. `,` keeps its default reverse-repeat-find.
+            ';' | ':' => {
+                self.cmdline = Some(String::new());
+                self.out(false, EditorAction::Nop)
+            }
             ',' => self.repeat_find(true),
             'g' => {
                 self.pending = Pending::GPrefix;
@@ -433,11 +439,7 @@ impl VimEngine {
             'u' => self.do_undo(),
             '.' => self.do_dot(),
 
-            // ex / rewrite
-            ':' => {
-                self.cmdline = Some(String::new());
-                self.out(false, EditorAction::Nop)
-            }
+            // ex / rewrite (`:` is handled together with `;` above)
             'R' => self.out(false, EditorAction::OpenRewrite),
 
             _ => self.out(false, EditorAction::Nop),
@@ -1390,6 +1392,24 @@ mod tests {
         e.feed(":wq");
         let o2 = e.handle_key(VimKey::Enter);
         assert_eq!(o2.action, EditorAction::SaveQuit);
+    }
+
+    #[test]
+    fn semicolon_enters_command_mode() {
+        // The user's Neovim mapping `vim.keymap.set('n', ';', ':')` is mirrored
+        // here: `;` opens the command line exactly like `:`, so `;w<CR>` saves
+        // and `;q<CR>` cancels. This displaces vim's default repeat-find on `;`.
+        let mut e = eng("x");
+        e.feed(";");
+        assert_eq!(e.cmdline(), Some(""));
+        e.feed("w");
+        let o = e.handle_key(VimKey::Enter);
+        assert_eq!(o.action, EditorAction::Save);
+
+        let mut q = eng("x");
+        q.feed(";q");
+        let qo = q.handle_key(VimKey::Enter);
+        assert_eq!(qo.action, EditorAction::Cancel);
     }
 
     #[test]
