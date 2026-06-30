@@ -16,6 +16,15 @@ git (uncommitted work, why a decision was made, what to do next); convert
 relative dates to absolute (US Central). Update it before a likely
 context break (reboot, compaction, end of a work block).
 
+**ALWAYS update `ac` after every `git commit` AND after finishing a branch**
+(the merge-to-master + push sequence). This is the default and does not require
+the user to ask — refresh the "Current Focus" / HEAD / build-status / Next
+Actions to reflect the new committed (or merged + pushed) state. After a merge
+to master, record the new master HEAD, that the feature branch was deleted, and
+the push state. Skip only when the user explicitly says not to update `ac` that
+time. (This mirrors the global `~/CLAUDE.md` "After a Commit" rule, made explicit
+here for this project.)
+
 ## Debug Log
 
 The app writes debug logs to:
