@@ -182,8 +182,10 @@ pub fn synopsis_blocks(synopsis: &str) -> Vec<GlossBlock> {
     }
     let mut blocks: Vec<GlossBlock> = Vec::new();
     let mut index = 0i32;
+    let mut pending_labels: Vec<Attachment> = Vec::new();
     for p in &paras {
         if is_label_paragraph(p) {
+            pending_labels.push(Attachment::LeadLabel(p.clone()));
             continue;
         }
         blocks.push(GlossBlock {
@@ -191,9 +193,15 @@ pub fn synopsis_blocks(synopsis: &str) -> Vec<GlossBlock> {
             index,
             text: p.clone(),
             display: p.clone(),
-            attached: Vec::new(),
+            attached: std::mem::take(&mut pending_labels),
         });
         index += 1;
+    }
+    // A label after the last block: attach to the last block (so it is not lost).
+    if !pending_labels.is_empty() {
+        if let Some(last) = blocks.last_mut() {
+            last.attached.append(&mut pending_labels);
+        }
     }
     blocks
 }
@@ -766,6 +774,35 @@ mod block_tests {
 #[cfg(test)]
 mod synopsis_blocks_tests {
     use super::{synopsis_blocks, BlockKind};
+
+    #[test]
+    fn label_attaches_as_lead_to_following_block() {
+        let syn = "<p>First paragraph of action.</p>\
+                   <p>Shakespearean parallels:</p>\
+                   <p>Second paragraph continues.</p>";
+        let blocks = synopsis_blocks(syn);
+        // Still 2 cursor-stop blocks, indices unchanged.
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].index, 0);
+        assert_eq!(blocks[1].index, 1);
+        // Block 0 has no lead; the label heads block 1.
+        assert!(blocks[0].attached.is_empty());
+        assert_eq!(
+            blocks[1].attached,
+            vec![super::Attachment::LeadLabel("Shakespearean parallels:".to_string())]
+        );
+    }
+
+    #[test]
+    fn trailing_label_attaches_to_last_block() {
+        let syn = "<p>Only paragraph.</p><p>Afterword:</p>";
+        let blocks = synopsis_blocks(syn);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(
+            blocks[0].attached,
+            vec![super::Attachment::LeadLabel("Afterword:".to_string())]
+        );
+    }
 
     #[test]
     fn each_p_becomes_one_explication_block_skipping_labels() {
