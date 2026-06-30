@@ -17,6 +17,8 @@ pub struct Theme {
     pub cursor_bg: String,        // cursor indicator background
     pub cursor_fg: String,        // cursor indicator foreground
     pub vocab_fg: String,         // vocabulary word highlight foreground
+    pub reader_gloss: String,        // off-cursor glossed-line tint (guarded)
+    pub reader_gloss_cursor: String, // glossed line that is ALSO the cursor block
 }
 
 fn themes_path() -> PathBuf {
@@ -135,6 +137,15 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
     let cursor_line_bg = str_field(&lit, "cursor_line_bg")
         .unwrap_or_else(|| "rgba(86, 148, 100, 0.25)".to_string());
 
+    // Reader-gloss tints, contrast-guaranteed (raw focuscolor is dim/indistinct
+    // on ~13 themes). Off-cursor = guarded focuscolor; on-cursor = guarded
+    // complement, also kept distinct from the off-cursor tint.
+    let reader_gloss = str_field(&lit, "reader_gloss")
+        .unwrap_or_else(|| ensure_gloss_color(&focus_color, &text_bg, &[&text_fg]));
+    let reader_gloss_cursor = str_field(&lit, "reader_gloss_cursor").unwrap_or_else(|| {
+        ensure_gloss_color(&complement_hex(&reader_gloss), &text_bg, &[&text_fg, &reader_gloss])
+    });
+
     // Dim foreground: 40% fg blended toward bg (matching lit's playback sync)
     let dim_fg = blend_colors(&text_fg, &text_bg, 0.40);
 
@@ -174,6 +185,8 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
         cursor_bg,
         cursor_fg,
         vocab_fg,
+        reader_gloss,
+        reader_gloss_cursor,
     }
 }
 
@@ -191,6 +204,8 @@ fn default_theme() -> Theme {
         cursor_bg: "#d4be98".to_string(),
         cursor_fg: "#282828".to_string(),
         vocab_fg: "#d8a657".to_string(),
+        reader_gloss: ensure_gloss_color("#d4be98", "#282828", &["#d4be98"]),
+        reader_gloss_cursor: ensure_gloss_color(&complement_hex("#d4be98"), "#282828", &["#d4be98"]),
     }
 }
 
@@ -740,6 +755,34 @@ mod tests {
         let c = ensure_gloss_color("#7b6b99", "#f6f2ee", &["#3d2b5a"]);
         let distinct = hue_distance(&c, "#3d2b5a") >= 40.0 || contrast_ratio(&c, "#3d2b5a") >= 1.4;
         assert!(distinct, "result {c} must be distinct from the avoid color");
+    }
+
+    #[test]
+    fn reader_gloss_cursor_explicit_wins() {
+        let json: serde_json::Value = serde_json::from_str(
+            r##"{ "dwl": {"focuscolor": "#c4788a"},
+                 "linux-lit": {"reader_gloss_cursor": "#56949f"},
+                 "kitty": {"background": "#faf4ed", "active_tab_foreground": "#575279"} }"##,
+        ).unwrap();
+        let t = resolve_theme("rose-pine-dawn", &json);
+        assert_eq!(t.reader_gloss_cursor, "#56949f");
+        // off-cursor tint: focuscolor already passes -> unchanged.
+        assert_eq!(t.reader_gloss, "#c4788a");
+    }
+
+    #[test]
+    fn reader_gloss_colors_are_legible_and_distinct_for_all_themes() {
+        // The audit invariant: every shipped theme yields a legible, mutually
+        // distinct pair. Guards against a future theme regressing.
+        for t in load_all_themes() {
+            let cvb_off = contrast_ratio(&t.reader_gloss, &t.text_bg);
+            let cvb_cur = contrast_ratio(&t.reader_gloss_cursor, &t.text_bg);
+            assert!(cvb_off >= 3.0, "{}: off-cursor tint {} dim on bg {} ({cvb_off:.2})", t.name, t.reader_gloss, t.text_bg);
+            assert!(cvb_cur >= 3.0, "{}: on-cursor color {} dim on bg {} ({cvb_cur:.2})", t.name, t.reader_gloss_cursor, t.text_bg);
+            let distinct = hue_distance(&t.reader_gloss, &t.reader_gloss_cursor) >= 40.0
+                || contrast_ratio(&t.reader_gloss, &t.reader_gloss_cursor) >= 1.4;
+            assert!(distinct, "{}: off {} and on {} not distinct", t.name, t.reader_gloss, t.reader_gloss_cursor);
+        }
     }
 }
 
