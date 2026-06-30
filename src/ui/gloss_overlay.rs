@@ -154,6 +154,16 @@ pub struct GlossOverlay {
     /// overlay so the mechanism can't drift. Serves both the synopsis "ask" flow
     /// and the gloss add/edit prompts. See `crate::ui::ask_card::AskCardHost`.
     ask_host: AskCardHost,
+    /// In-place vim editor engine (None when not editing). The buffer is a single
+    /// raw-text blob: the gloss markup OR the synopsis text, depending on which
+    /// surface opened the editor.
+    vim_engine: RefCell<Option<crate::input::vim::VimEngine>>,
+    /// The raw text the editor was seeded with, for the `:q` dirty-check.
+    vim_seed: RefCell<String>,
+    /// Block-cursor (fill, glyph-fg) colors, threaded from the theme on enter.
+    vim_cursor_colors: RefCell<(String, String)>,
+    /// Reading font family stashed on edit-enter, restored on exit (mono swap).
+    pre_edit_family: RefCell<Option<String>>,
 }
 
 /// Default font for the synopsis/gloss/echoes overlay cards.
@@ -488,6 +498,10 @@ impl GlossOverlay {
             gloss_source_line_numbers: RefCell::new(Vec::new()),
             current_synopsis: RefCell::new(String::new()),
             ask_host,
+            vim_engine: RefCell::new(None),
+            vim_seed: RefCell::new(String::new()),
+            vim_cursor_colors: RefCell::new((String::new(), String::new())),
+            pre_edit_family: RefCell::new(None),
         }
     }
 
@@ -519,6 +533,190 @@ impl GlossOverlay {
         // overrides any earlier bold tag. Re-assert the synopsis label bold so
         // it wins (it is added/applied last, hence highest priority).
         self.apply_synopsis_label_bold();
+    }
+
+    /// Set the overlay's font (family + size) and re-apply it. Thin entry point
+    /// mirroring `JournalOverlay::set_font`, so `begin_edit_font`/`end_edit_font`
+    /// can swap to the mono edit font and back. (The overlay otherwise drives its
+    /// font through `apply_font` + the `font_family`/`font_size` fields directly.)
+    pub fn set_font(&self, family: &str, size: i32) {
+        *self.font_family.borrow_mut() = family.to_string();
+        self.font_size.set(size);
+        self.apply_font();
+    }
+
+    /// Swap to the monospace edit font, stashing the current reading family so
+    /// `end_edit_font` can restore it. Size is unchanged. Mirrors
+    /// `JournalOverlay::begin_edit_font`.
+    pub fn begin_edit_font(&self) {
+        let current = self.font_family.borrow().clone();
+        *self.pre_edit_family.borrow_mut() = Some(current);
+        let size = self.font_size.get();
+        self.set_font(crate::ui::EDIT_FONT_FAMILY, size);
+    }
+
+    /// Restore the reading font stashed by `begin_edit_font`. No-op when nothing
+    /// is stashed, so redundant exit paths are safe.
+    pub fn end_edit_font(&self) {
+        let stashed = self.pre_edit_family.borrow_mut().take();
+        if let Some(family) = stashed {
+            let size = self.font_size.get();
+            self.set_font(&family, size);
+        }
+    }
+
+    // ---- in-place vim editor (the `e` bind) ----
+    //
+    // Mirrors `JournalOverlay`'s editor, but the buffer is a SINGLE raw-text blob
+    // (the gloss markup OR the synopsis text) — no `Q:`/answer framing, so the
+    // engine is seeded with the raw text directly and `edit_buffer_text` reads it
+    // back as-is. A later task wires the `e` keybind + `InputMode::GlossEdit`.
+
+    /// Enter the in-place vim editor on a single raw-text blob (gloss markup or
+    /// synopsis text). Seeds a `VimEngine` in NORMAL mode, loads the text as
+    /// plain text into `gloss_view`, swaps to the mono edit font, paints the block
+    /// cursor + mode footer. The caller sets `InputMode::GlossEdit` afterward.
+    pub fn enter_edit_buffer(&self, raw: &str, block_fill: &str, block_fg: &str) {
+        self.begin_edit_font();
+        *self.vim_cursor_colors.borrow_mut() = (block_fill.to_string(), block_fg.to_string());
+        *self.vim_seed.borrow_mut() = raw.to_string();
+        *self.vim_engine.borrow_mut() = Some(crate::input::vim::VimEngine::new(raw.to_string()));
+        // Drive the buffer/cursor ourselves; the native caret is hidden in NORMAL.
+        // GTK only PAINTS the caret while the view holds focus, so lift
+        // `focusable(false)` and grab focus — otherwise INSERT has no insertion
+        // point. Key routing stays on the window's capture-phase controller.
+        self.gloss_view.set_editable(false);
+        self.gloss_view.set_cursor_visible(false);
+        self.gloss_view.set_focusable(true);
+        let _ = self.gloss_view.grab_focus();
+        self.mirror_engine();
+    }
+
+    /// Feed one key to the engine, re-mirror, and return the resulting action.
+    pub fn feed_edit_key(&self, key: crate::input::vim::VimKey) -> crate::input::vim::EditorAction {
+        let action = {
+            let mut guard = self.vim_engine.borrow_mut();
+            match guard.as_mut() {
+                Some(engine) => engine.handle_key(key).action,
+                None => crate::input::vim::EditorAction::Nop,
+            }
+        };
+        self.mirror_engine();
+        action
+    }
+
+    /// The current editor buffer text (raw). Empty string when not editing.
+    pub fn edit_buffer_text(&self) -> String {
+        self.vim_engine
+            .borrow()
+            .as_ref()
+            .map(|e| e.buffer().to_string())
+            .unwrap_or_default()
+    }
+
+    /// True iff the buffer differs from the seed (for the `:q` dirty refusal).
+    pub fn edit_is_dirty(&self) -> bool {
+        match self.vim_engine.borrow().as_ref() {
+            Some(e) => e.buffer() != self.vim_seed.borrow().as_str(),
+            None => false,
+        }
+    }
+
+    /// Reset the dirty baseline to `raw` (after a non-quit `:w`).
+    pub fn reseed_edit_buffer(&self, raw: &str) {
+        *self.vim_seed.borrow_mut() = raw.to_string();
+    }
+
+    /// Leave the editor: drop the engine, clear the block cursor, restore the
+    /// native caret default + the read view's non-focusable state, and restore
+    /// the reading font. The caller re-renders the formatted display and resets
+    /// the input mode.
+    pub fn exit_edit_buffer(&self) {
+        crate::ui::clear_block_cursor(&self.gloss_view.buffer(), "gloss-vim-block");
+        *self.vim_engine.borrow_mut() = None;
+        self.vim_seed.borrow_mut().clear();
+        self.gloss_view.set_cursor_visible(false);
+        self.gloss_view.set_focusable(false);
+        self.end_edit_font();
+    }
+
+    /// Sync the engine state into `gloss_view`: replace the buffer text, place the
+    /// cursor/selection, paint the block cursor in NORMAL/VISUAL (hide it + show
+    /// the native caret in INSERT), and render the mode/`:` footer. Mirrors
+    /// `JournalOverlay::mirror_engine`, adapted to the single raw buffer + the
+    /// `"gloss-vim-block"` tag.
+    fn mirror_engine(&self) {
+        let guard = self.vim_engine.borrow();
+        let Some(engine) = guard.as_ref() else {
+            return;
+        };
+        let buffer = self.gloss_view.buffer();
+        // 1. Text — only rewrite when it actually changed (avoids resetting marks
+        // on pure cursor moves), then re-apply the font over the new text.
+        let current = buffer
+            .text(&buffer.start_iter(), &buffer.end_iter(), false)
+            .to_string();
+        if current != engine.buffer() {
+            buffer.set_text(engine.buffer());
+            self.apply_font();
+        }
+        // 2. Cursor + selection (char indices → iters, clamped to the buffer).
+        let n_chars = engine.buffer().chars().count();
+        let char_to_iter = |ci: usize| -> gtk4::TextIter {
+            buffer.iter_at_offset(ci.min(n_chars) as i32)
+        };
+        if let Some(sel) = engine.selection() {
+            let start = char_to_iter(sel.start);
+            let end = char_to_iter(sel.end);
+            buffer.select_range(&start, &end);
+        } else {
+            let cur = char_to_iter(engine.cursor());
+            buffer.place_cursor(&cur);
+        }
+        // 3. Block cursor (NORMAL/VISUAL) vs native caret (INSERT).
+        let mode = engine.mode();
+        if mode == crate::input::vim::Mode::Insert {
+            crate::ui::clear_block_cursor(&buffer, "gloss-vim-block");
+            self.gloss_view.set_cursor_visible(true);
+        } else {
+            let (fill, fg) = self.vim_cursor_colors.borrow().clone();
+            crate::ui::paint_block_cursor(&buffer, "gloss-vim-block", &fill, &fg, engine.cursor());
+            // At end-of-buffer there is no char to cover, so keep the caret there.
+            let at_end = engine.cursor() >= n_chars;
+            self.gloss_view.set_cursor_visible(at_end);
+        }
+        // Keep the cursor on screen.
+        let mark = buffer.get_insert();
+        self.gloss_view.scroll_mark_onscreen(&mark);
+        // 4. Footer (mode line / `:` command).
+        let footer = if let Some(cmd) = engine.cmdline() {
+            format!(":{}", cmd)
+        } else {
+            match mode {
+                crate::input::vim::Mode::Normal => {
+                    "-- NORMAL --  (:w save \u{00b7} R rewrite \u{00b7} :q quit)".to_string()
+                }
+                crate::input::vim::Mode::Insert => "-- INSERT --".to_string(),
+                crate::input::vim::Mode::Visual => "-- VISUAL --".to_string(),
+                crate::input::vim::Mode::VisualLine => "-- VISUAL LINE --".to_string(),
+            }
+        };
+        self.set_edit_footer(&footer);
+    }
+
+    /// Show `text` in the overlay footer during edit. Uses the overlay's
+    /// right-aligned `position_label` (the page counter); a non-edit re-render
+    /// restores the counter via `update_position_label`.
+    fn set_edit_footer(&self, text: &str) {
+        self.position_label.set_text(text);
+        self.position_label.set_visible(true);
+    }
+
+    /// Whether the overlay is currently showing a SYNOPSIS (vs a gloss result),
+    /// so the edit caller can seed the engine with the synopsis text rather than
+    /// the gloss markup. Reads the paginated render mode.
+    pub fn is_showing_synopsis(&self) -> bool {
+        self.paginated_mode.get() == PaginatedMode::Synopsis
     }
 
     /// Bold the stored synopsis label ranges on the gloss view. Adds the
