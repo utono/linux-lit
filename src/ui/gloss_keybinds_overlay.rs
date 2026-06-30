@@ -25,7 +25,8 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Ctrl+v", "cycle active voice"),
     ]),
     ("Editing", &[
-        ("e", "edit current gloss"),
+        ("e", "edit gloss in place (vim)"),
+        (":w / :q / R", "save · quit · ask-Claude rewrite (in editor)"),
         ("u", "undo last edit (confirm)"),
         ("D", "delete current gloss"),
         ("c", "copy gloss id"),

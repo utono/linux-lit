@@ -19,7 +19,8 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Shift+Space", "synthesize all paragraphs"),
     ]),
     ("Editing", &[
-        ("e", "edit synopsis"),
+        ("e", "edit synopsis in place (vim)"),
+        (":w / :q / R", "save · quit · ask-Claude rewrite (in editor)"),
         ("u", "undo last edit (confirm)"),
     ]),
     ("Journal", &[
