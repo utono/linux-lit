@@ -345,6 +345,29 @@ fn hue_distance(c1: &str, c2: &str) -> f64 {
     d.min(1.0 - d) * 360.0
 }
 
+/// Return `hex` with its hue rotated 180° (the color-wheel complement), keeping
+/// saturation and lightness. Malformed input degrades to the complement of black
+/// (still a valid `#rrggbb`); never panics.
+fn complement_hex(hex: &str) -> String {
+    let (r, g, b) = hex_to_rgb(hex);
+    let (h, s, l) = rgb_to_hsl(r, g, b);
+    let (nr, ng, nb) = hsl_to_rgb((h + 0.5) % 1.0, s, l);
+    rgb_to_hex(nr, ng, nb)
+}
+
+/// WCAG relative-luminance contrast ratio between two hex colors, 1.0 (identical)
+/// to 21.0 (black on white). Used to keep the gloss tints legible on the reading
+/// background and distinct from body text.
+fn contrast_ratio(a_hex: &str, b_hex: &str) -> f64 {
+    let lin = |c: f64| if c <= 0.03928 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+    let lum = |hex: &str| {
+        let (r, g, b) = hex_to_rgb(hex);
+        0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+    };
+    let (la, lb) = (lum(a_hex) + 0.05, lum(b_hex) + 0.05);
+    if la > lb { la / lb } else { lb / la }
+}
+
 /// Choose a vocab foreground color that is visually distinct from text_fg.
 /// Picks the best candidate from vocab_orig and cursor_bg, or derives one
 /// by rotating text_fg hue by 150 degrees.
@@ -607,3 +630,34 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
         size = font_size,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn complement_rotates_hue_180() {
+        let c = complement_hex("#c4788a");
+        let (h_in, _, _) = rgb_to_hsl(hex_to_rgb("#c4788a").0, hex_to_rgb("#c4788a").1, hex_to_rgb("#c4788a").2);
+        let (h_out, _, _) = rgb_to_hsl(hex_to_rgb(&c).0, hex_to_rgb(&c).1, hex_to_rgb(&c).2);
+        let diff = ((h_out - h_in).abs() - 0.5).abs();
+        assert!(diff < 0.02, "expected ~0.5 hue rotation, in={h_in} out={h_out} ({c})");
+        assert!((0.33..=0.70).contains(&h_out), "complement of a red should be teal/green, got {h_out} ({c})");
+    }
+
+    #[test]
+    fn complement_malformed_is_safe() {
+        let c = complement_hex("nope");
+        assert!(c.starts_with('#') && c.len() == 7, "got {c}");
+    }
+
+    #[test]
+    fn contrast_ratio_known_pairs() {
+        assert!((contrast_ratio("#ffffff", "#000000") - 21.0).abs() < 0.1);
+        assert!((contrast_ratio("#888888", "#888888") - 1.0).abs() < 0.01);
+        // a mid case is between
+        let c = contrast_ratio("#c4788a", "#faf4ed");
+        assert!(c > 2.5 && c < 3.5, "rose on cream ~3.0, got {c}");
+    }
+}
+
