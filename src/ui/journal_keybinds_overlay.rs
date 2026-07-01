@@ -43,10 +43,10 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ("Cross-reference", &[
         ("Ctrl+\\", "pick a Q&A"),
         ("Alt+g", "gloss this passage"),
-        ("Ctrl+g", "view gloss for passage"),
+        ("Ctrl+g / Ctrl+j", "view gloss for passage"),
     ]),
     ("Close", &[
-        ("Ctrl+j / Esc", "close"),
+        ("Esc", "close"),
         ("Ctrl+/", "close this legend"),
     ]),
 ];

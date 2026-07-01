@@ -986,12 +986,17 @@ fn handle_journal_key(
                 crate::input::actions::journal::nav_page(state, -1);
                 return true;
             }
+            // Ctrl+j: same as Ctrl+g — view the gloss for the current journal
+            // passage page. Ctrl+j/Ctrl+g thus cross-jump to the sibling overlay
+            // from EITHER side (the gloss overlay's Ctrl+j/Ctrl+g open the
+            // journal), so the same fingers flip between the two views. Close
+            // with Esc.
             "j" => {
-                crate::input::actions::journal::close_overlay(state);
+                crate::input::actions::journal::view_gloss_from_journal(state);
                 return true;
             }
             // Ctrl+Shift+J: open the "move this Q&A to another band" picker.
-            // Arrives as key_name "J" (shifted), distinct from Ctrl+j (close).
+            // Arrives as key_name "J" (shifted), distinct from Ctrl+j.
             "J" => {
                 crate::input::actions::journal::open_move_picker(state);
                 return true;
@@ -1209,11 +1214,15 @@ fn handle_gloss_key(
                 );
                 return true;
             }
-            // Ctrl+j: view the journal passage pages for the current gloss's
-            // passage (if any exist). Closes the gloss overlay and opens the
-            // journal overlay in the Passage band. Toasts "No journal page for
-            // this passage" when none are found.
-            "j" => {
+            // Ctrl+j / Ctrl+g: view the journal passage pages for the current
+            // gloss's passage (if any exist). Closes the gloss overlay and opens
+            // the journal overlay in the Passage band. Toasts "No journal page
+            // for this passage" when none are found. Ctrl+g mirrors the journal
+            // overlay (where Ctrl+j/Ctrl+g both view the gloss), so the same
+            // fingers cross-jump between the two overlays from either side. The
+            // Ctrl+g arm also keeps a held Ctrl from starting the plain-`g` gg
+            // chord below.
+            "j" | "g" => {
                 crate::input::actions::journal::view_journal_from_gloss(state);
                 return true;
             }

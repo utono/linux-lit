@@ -34,7 +34,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ]),
     ("Journal", &[
         ("r", "new journal Q&A from passage"),
-        ("Ctrl+j", "view journal for passage"),
+        ("Ctrl+j / Ctrl+g", "view journal for passage"),
         ("Alt+g", "glosses picker"),
     ]),
     ("View", &[

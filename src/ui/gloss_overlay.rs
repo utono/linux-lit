@@ -482,7 +482,7 @@ impl GlossOverlay {
 
         let footer = crate::ui::footer::build_footer_row(
             text_margins as i32,
-            "J journal · Ctrl+j view jrnl",
+            "r journal · Ctrl+j/Ctrl+g view jrnl",
         );
         let footer_box = footer.container;
         let citation_label = footer.left;
