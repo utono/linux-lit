@@ -250,12 +250,15 @@ impl JournalOverlay {
                 // Fixed gloss accent default (NOT theme-wired).
                 cr.set_source_rgb(0.53, 0.62, 0.71);
                 cr.set_line_width(2.0);
-                // Draw the bar AT the text's left margin so it sits just inside
-                // the inset panel beside the selected paragraph — matching the
-                // gloss/synopsis bar (`bar_x = left`) and the journal blank-line
-                // block cursor above, which also use `left_margin()`. (An earlier
-                // `- 12.0` pushed it out into the gutter, the odd one out.)
-                let x = (view_clone.left_margin() as f64).max(2.0);
+                // Draw the bar 12px LEFT of the text so it sits in the gap
+                // between the panel's inner edge (left_margin - PANEL_PAD = -24)
+                // and the text (0) — i.e. centered in the pad gutter, cleanly
+                // separated from the glyphs. Gloss achieves the same separation
+                // differently: its bar is AT `left` but the explication body is
+                // indented ~60px PAST the bar, so the bar sits in the gap. Journal
+                // has no body indent, so it insets the BAR instead. (Drawing at
+                // exactly left_margin() made the bar collide with the first glyph.)
+                let x = (view_clone.left_margin() as f64 - 12.0).max(2.0);
                 crate::ui::draw_bar_spans(cr, &view_clone, &ranges, x);
             });
         }
