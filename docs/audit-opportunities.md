@@ -1418,3 +1418,86 @@ safe-scope opportunities:
   pixel-verifiable). The rest of the closure stays per-file. Rank below #52/#53:
   only ~10 lines extract, and the block cursor only shows during vim edit (narrow
   surface).
+
+## #55 — overlay header-tag style triple (gloss + journal) — PROPOSED
+
+- **Status:** PROPOSED, medium value. NEW duplication introduced THIS session by the
+  header restyle (journal `Q:` header + gloss speaker/verse all adopted one look).
+- **Signal:** the "header" TextTag style — `weight(700)` + `scale(0.9)` +
+  `pixels_below_lines(10)` — is now hard-coded as literal builder args at **5 sites**:
+  gloss_render.rs `gloss-speaker` (:165), `gloss-verse` (:177),
+  `gloss-speaker-first` (:210), `gloss-speaker-source` (:224); and
+  journal_overlay.rs `journal-qa-header` in `apply_qa_header` (:771). No shared
+  const/helper exists (grep: no `HEADER_`, `header_style`, `header_tag`).
+- **Identical core (extract):** the triple `(weight 700, scale 0.9, pixels_below 10)`
+  — either a named `const HEADER_STYLE: (i32, f64, i32) = (700, 0.9, 10)` or a
+  `fn header_tag_core(b: TextTagBuilder) -> TextTagBuilder` chaining just those three
+  in `src/ui/mod.rs` (beside `draw_overlay_panel`). Each site calls it, then adds its
+  own variant properties.
+- **Per-site VARIANTS (stay caller-side):** `.variant(SmallCaps)` (the 3 speaker tags,
+  not verse/journal); `.pixels_above_lines(36|8)` (speaker 36, speaker-source 8;
+  verse/first/journal none); `.left_margin(quote_speaker|quote_verse)` (gloss only;
+  journal uses the view left_margin). These differ per site — do NOT fold them in.
+- **EXCLUDED — the color-application split (a real inconsistency, but NOT part of this
+  cut):** gloss applies color via `.foreground(&str)` (hex string, via the local
+  `header_dim` closure, `dim_color.or(speaker_accent)`, ABSENT when None); journal
+  applies via `.foreground_rgba(RGBA::new(r,g,b,1.0))` decoded from an `(f64,f64,f64)`
+  tuple in `marker_color`, ALWAYS present. The core-triple helper must NOT touch color
+  (the `&str` vs `RGBA` type + source mismatch is separate). Reconciling the color path
+  is a bigger change (would mean storing hex in `marker_color`, or a color enum) —
+  note it, don't bundle it.
+- **Safe-scope:** yes for the triple — pure literal→named, behavior-preserving,
+  pixel-verifiable. Medium rank: 5 sites, low individual drift, but the style was just
+  hand-copied to all 5 and a future tweak (e.g. scale 0.9→0.85) must hit all five or
+  the gloss/journal headers visibly diverge.
+
+## #56 — PANEL_PAD / PANEL_RADIUS named constants — PROPOSED
+
+- **Status:** PROPOSED, low value but trivial. NEW this session (the inset panel).
+- **Signal:** `draw_overlay_panel(cr, view, w, h, rgb, PAD, RADIUS)` is called at two
+  sites with the SAME literals `24.0` (pad) and `12.0` (radius) — gloss_overlay.rs:401
+  and journal_overlay.rs:297 — each "named" only by an inline comment
+  (`// PANEL_PAD` / `// PANEL_RADIUS`), not a real `const`. The pad value `24` also
+  relates to the `24`px scroll_overlay top margin (implicit coupling).
+- **Identical part (extract):** `const PANEL_PAD: f64 = 24.0;` +
+  `const PANEL_RADIUS: f64 = 12.0;` at `src/ui/mod.rs` scope (beside
+  `draw_overlay_panel`). Both call sites pass the const. Makes the two literals a
+  single source and documents the pad↔radius↔card-border-radius relationships.
+- **EXCLUDED:** the per-overlay `pad`/`radius` args STAY parameters of
+  `draw_overlay_panel` (don't hardcode inside the fn — a future overlay might want a
+  different inset). This only names the shared call-site value.
+- **Safe-scope:** yes — literal→const, zero behavior change. Low rank (2 sites, tiny),
+  fold in opportunistically (e.g. while doing #52, the panel-attach helper, which would
+  naturally own these constants).
+
+## #57 — body-indent `60` split across gloss + journal — PROPOSED
+
+- **Status:** PROPOSED, low value. NEW implicit coupling this session.
+- **Signal:** the "body indented past the accent bar" value **60** is
+  `const JOURNAL_BODY_INDENT: i32 = 60` in journal_overlay.rs:141, but appears as a
+  RAW INLINE literal `60` in gloss_overlay.rs:1358-1359 (`p.left_margin - 60`, the
+  gloss prose_card measurement, commented "proportional inset + 60 past the bar").
+  Same semantic constant (the gloss body/verse indent off the accent bar), two
+  locations, one named + one raw.
+- **Identical part (extract):** a single shared `const` (e.g. `OVERLAY_BODY_INDENT: i32
+  = 60` in `src/ui/mod.rs`, or reuse `JOURNAL_BODY_INDENT` from a shared scope), used
+  at the journal size_card AND the two gloss measurement sites.
+- **EXCLUDED:** gloss's OTHER quote offsets — `quote_speaker = bar_left + 60` and
+  `quote_verse = quote_speaker + 60` in gloss_render.rs — are a DIFFERENT 60 (the
+  render-time speaker/verse indent, a separate concern from the prose_card measurement
+  60). Do NOT merge those; verify each `60` is the same semantic before sharing. Only
+  the prose_card-measurement 60 matches JOURNAL_BODY_INDENT.
+- **Safe-scope:** borderline — needs confirming the two 60s are truly the same concept
+  (they appear to be: both = "body pushed right of the bar"). If confirmed, literal→
+  shared const. Low rank; the risk is mis-merging two coincidentally-equal 60s, so scope
+  it carefully or skip.
+
+## #53 UPDATE (2026-07-01) — setter family grew 4→5
+
+The `set_*_color` byte-identical setter family (#53) GREW this session: `set_bar_color`
+(journal_overlay.rs:746) was added, bringing the count from 4 to **5** byte-identical
+setters (gloss set_marker/set_panel; journal set_marker/set_panel/set_bar). The 2
+`set_highlight_color` methods remain EXCLUDED (they store a `String` + call
+`apply_hi_color`, not the parse→borrow_mut→queue_draw shape). The bare-vs-full-path
+`parse_hex_color` split persists (gloss bare, journal `crate::ui::gloss_util::`). Scope
+unchanged in character; the shared `set_rc_color` helper now eliminates 5 bodies, not 4.
