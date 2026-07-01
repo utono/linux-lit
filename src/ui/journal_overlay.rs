@@ -394,9 +394,12 @@ impl JournalOverlay {
             text_margins: text_margins as i32,
             column_width: column_width as i32,
             is_prose: Cell::new(false),
-            font_family: RefCell::new(String::new()),
-            // Match the gloss/synopsis overlay's reading-font size (shared const),
-            // so journal Q&A renders at the same size instead of drifting.
+            // Match the gloss overlay's reading family + size (shared consts) so
+            // the journal applies its OWN 19pt font tag. An EMPTY family made
+            // apply_font early-return, so the journal never applied a tag and fell
+            // back to the `.gloss-text` CSS at config.font_size (the reader's size,
+            // e.g. 17pt) — rendering SMALLER than the gloss overlay's 19pt.
+            font_family: RefCell::new(crate::ui::gloss_overlay::GLOSS_DEFAULT_FONT_FAMILY.to_string()),
             font_size: Cell::new(crate::ui::gloss_overlay::GLOSS_DEFAULT_FONT_SIZE),
             pre_edit_family: RefCell::new(None),
             last_card_size: Cell::new((0, 0)),

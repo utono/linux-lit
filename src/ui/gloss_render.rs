@@ -146,13 +146,13 @@ pub(crate) fn populate_verse_buffer(
         }
     };
 
-    // Speaker, verse, AND explication all start ~12px right of the accent bar,
-    // sharing ONE left edge — matching the journal Q&A (bar 12px left of the body;
-    // question + answer aligned). Previously the verse was inset +120 and the
-    // speaker/explication +60, which put the gloss text far right of the bar and
-    // read as larger/differently-laid-out than the journal.
-    let quote_speaker = bar_left + 12;
-    let quote_verse = bar_left + 12;
+    // The explication (FOCUS body) sits flush ~12px right of the accent bar, like
+    // the journal answer. The speaker label + verse (the dim source header) are
+    // INDENTED further right (+48) so the source reads as a set-off block quote
+    // above the flush explication.
+    let quote_body = bar_left + 12; // explication (gloss-para) — flush, the focus
+    let quote_speaker = bar_left + 48; // speaker + verse header — indented
+    let quote_verse = bar_left + 48;
 
     // Speaker + verse "header" styling: matches the journal Q&A question header
     // (bold 700, 0.9 scale, DIM fg, space below) so the top of a gloss reads like
@@ -208,7 +208,7 @@ pub(crate) fn populate_verse_buffer(
     // like the journal Q: question), which now RECEDES behind this prose.
     let para_builder = gtk4::TextTag::builder()
         .name("gloss-para")
-        .left_margin(quote_speaker)
+        .left_margin(quote_body)
         .pixels_above_lines(24)
         .pixels_below_lines(10)
         .scale(1.0);

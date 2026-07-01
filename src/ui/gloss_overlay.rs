@@ -191,7 +191,10 @@ pub struct GlossOverlay {
 }
 
 /// Default font for the synopsis/gloss/echoes overlay cards.
-const GLOSS_DEFAULT_FONT_FAMILY: &str = "Charter";
+/// Default overlay reading-font family. Shared (like `GLOSS_DEFAULT_FONT_SIZE`) so
+/// the journal overlay applies the SAME font tag instead of falling back to the
+/// `.gloss-text` CSS at the reader's config size.
+pub(crate) const GLOSS_DEFAULT_FONT_FAMILY: &str = "Charter";
 /// Default overlay reading-font size (pt). Shared so the journal overlay matches
 /// the gloss/synopsis overlay instead of drifting on its own hardcoded value.
 pub(crate) const GLOSS_DEFAULT_FONT_SIZE: i32 = 19;
