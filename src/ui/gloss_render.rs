@@ -16,6 +16,19 @@ pub(crate) struct LineNumber {
     pub(crate) number: i64,
 }
 
+/// Left inset (past the accent bar) of the explication body — flush, the focus.
+pub(crate) const QUOTE_BODY_INDENT: i32 = 12;
+/// Left inset (past the accent bar) of the speaker label heading the quoted
+/// source turn. Echo quotes and citations share this indent.
+pub(crate) const QUOTE_SPEAKER_INDENT: i32 = 48;
+/// Left inset (past the accent bar) of the quoted source verse: one main-card
+/// dialogue step past the speaker label, so the source turn reads with the same
+/// speaker→dialogue hang-indent as the main reading card. This is the DEEPEST
+/// indent any gloss block uses — the paginated height measurement
+/// (`GlossOverlay::repaginate`) subtracts it from the wrap width so estimates
+/// over-count (never clip).
+pub(crate) const QUOTE_VERSE_INDENT: i32 = QUOTE_SPEAKER_INDENT + crate::app::DIALOGUE_INDENT;
+
 /// Apply italic styling to any `[bracket]` spans found after `base_offset` in
 /// the buffer, using `bracket_tag`.
 pub(crate) fn apply_bracket_styling(
@@ -148,11 +161,13 @@ pub(crate) fn populate_verse_buffer(
 
     // The explication (FOCUS body) sits flush ~12px right of the accent bar, like
     // the journal answer. The speaker label + verse (the dim source header) are
-    // INDENTED further right (+48) so the source reads as a set-off block quote
-    // above the flush explication.
-    let quote_body = bar_left + 12; // explication (gloss-para) — flush, the focus
-    let quote_speaker = bar_left + 48; // speaker + verse header — indented
-    let quote_verse = bar_left + 48;
+    // INDENTED further right so the source reads as a set-off block quote above
+    // the flush explication; the verse hangs one main-card dialogue step PAST the
+    // speaker label, so the quoted turn keeps the reading card's speaker→dialogue
+    // rhythm.
+    let quote_body = bar_left + QUOTE_BODY_INDENT; // explication (gloss-para) — flush, the focus
+    let quote_speaker = bar_left + QUOTE_SPEAKER_INDENT;
+    let quote_verse = bar_left + QUOTE_VERSE_INDENT;
 
     // Speaker + verse "header" styling: matches the journal Q&A question header
     // (bold 700, 0.9 scale, DIM fg, space below) so the top of a gloss reads like
@@ -194,11 +209,13 @@ pub(crate) fn populate_verse_buffer(
     )
     .build();
 
-    // Stage direction inside the quoted source turn: same indent as verse, but
-    // italic — matching the main reading card. Not a cursor stop, not TTS.
+    // Stage direction inside the quoted source turn: italic, at the SPEAKER
+    // level — matching the main reading card, where stage directions sit at the
+    // speaker margin and dialogue hang-indents past them. Not a cursor stop,
+    // not TTS.
     let stage_tag = gtk4::TextTag::builder()
         .name("gloss-stage")
-        .left_margin(quote_verse)
+        .left_margin(quote_speaker)
         .style(pango::Style::Italic)
         .build();
 
@@ -264,12 +281,13 @@ pub(crate) fn populate_verse_buffer(
         .style(pango::Style::Italic)
         .build();
 
-    // Citation line: indented further, smaller and dimmer. Use the theme's
-    // dim foreground when provided so the source citations recede behind the
-    // echo quotes.
+    // Citation line: same indent as its echo quote, smaller and dimmer. Use the
+    // theme's dim foreground when provided so the source citations recede behind
+    // the echo quotes. (NOT quote_verse — the deep verse hang-indent belongs to
+    // the quoted source turn only.)
     let citation_builder = gtk4::TextTag::builder()
         .name("gloss-citation")
-        .left_margin(quote_verse)
+        .left_margin(quote_speaker)
         .scale(0.85);
     let citation_tag = match dim_color {
         Some(c) => citation_builder.foreground(c).build(),
@@ -281,7 +299,7 @@ pub(crate) fn populate_verse_buffer(
     // (like the citation/para tags) so it reads as a recessed teaching aside.
     let pron_builder = gtk4::TextTag::builder()
         .name("gloss-pron")
-        .left_margin(quote_verse)
+        .left_margin(quote_speaker)
         .style(pango::Style::Italic)
         .scale(0.92);
     let pron_tag = match dim_color {

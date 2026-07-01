@@ -1746,16 +1746,17 @@ impl GlossOverlay {
         let size = self.font_size.get();
         // Measure at the NARROWEST wrap width any block in this mode uses, so the
         // height estimate over-counts (more wrapping → taller) rather than under —
-        // the safe direction for never clipping. Gloss speaker/verse/explication
-        // now all sit at `quote_speaker = quote_verse = bar_left + 12`
-        // (gloss_render.rs, aligned to the journal), so the deepest indent is +12.
+        // the safe direction for never clipping. The deepest gloss indent is the
+        // quoted source verse (`QUOTE_VERSE_INDENT` past the bar, gloss_render.rs).
         // Subtract it in gloss mode; synopsis prose sits at the body margin.
         let card_w = self.last_card_size.get().0;
         let left = self.gloss_view.left_margin();
         let wrap_w = match self.paginated_mode.get() {
-            // bar_left == left in gloss mode; the text adds +12 on the left and the
-            // right margin is `left`.
-            PaginatedMode::Gloss => (card_w - 2 * left - 12).max(1),
+            // bar_left == left in gloss mode; the text adds QUOTE_VERSE_INDENT on
+            // the left (worst case) and the right margin is `left`.
+            PaginatedMode::Gloss => {
+                (card_w - 2 * left - crate::ui::gloss_render::QUOTE_VERSE_INDENT).max(1)
+            }
             PaginatedMode::Synopsis => (card_w - 2 * left).max(1),
         };
         let pctx = self.gloss_view.pango_context();
@@ -2215,6 +2216,22 @@ impl GlossOverlay {
         self.bar_drawing.queue_draw();
     }
 
+    /// Bar start for a block span: walk upward over any speaker heading line(s)
+    /// directly above `start_line`, so the accent bar beside a Source block also
+    /// covers its speaker label. Block ranges themselves start at the first
+    /// verse line (`gloss_blocks` drops speaker tags from `display`, so
+    /// `rebuild_block_ranges_from` can't match the label); extending only the
+    /// DRAWN span keeps navigation/TTS block semantics untouched. Same
+    /// tag-sniffing `color_audio_blocks` uses to color the label with its turn.
+    fn bar_start_with_speaker(&self, start_line: i32) -> i32 {
+        let buffer = self.gloss_view.buffer();
+        let mut line = start_line;
+        while line > 0 && line_is_speaker(&buffer, line - 1) {
+            line -= 1;
+        }
+        line
+    }
+
     /// Move the left accent bar to the selected cursor block and repaint. No-op
     /// when there are no blocks. Logs the landing block so j/k/gg/G navigation
     /// stays verifiable from the dev log.
@@ -2234,6 +2251,7 @@ impl GlossOverlay {
                 "GLOSS-CURSOR: cursor#{} -> {:?}#{} bar lines [{}, {}]",
                 self.cursor_block.get(), kind, index, start_line, end_line
             );
+            let start_line = self.bar_start_with_speaker(start_line);
             *self.bar_ranges.borrow_mut() = vec![BarRange { start_line, end_line }];
             self.bar_drawing.queue_draw();
         }
@@ -2259,6 +2277,8 @@ impl GlossOverlay {
         let (s, e) = visual_block_range(anchor.min(last), cursor);
         let start_line = blocks[s].start_line;
         let end_line = blocks[e].end_line;
+        drop(blocks);
+        let start_line = self.bar_start_with_speaker(start_line);
         *self.bar_ranges.borrow_mut() = vec![BarRange { start_line, end_line }];
         self.bar_drawing.queue_draw();
     }
