@@ -39,7 +39,6 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ]),
     ("View", &[
         (";", "show chapter"),
-        ("| / !", "font size +/−"),
         ("Ctrl+,", "settings"),
         ("Ctrl+↑ / Ctrl+↓", "volume"),
         ("Esc / n", "close (jump to source)"),

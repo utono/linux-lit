@@ -1278,14 +1278,8 @@ fn handle_gloss_key(
             }
             true
         }
-        "bar" => {
-            state.borrow().gloss_overlay.adjust_font_size(1);
-            true
-        }
-        "exclam" => {
-            state.borrow().gloss_overlay.adjust_font_size(-1);
-            true
-        }
+        // (Font-size adjust removed: the gloss + journal overlays are locked to
+        // GLOSS_DEFAULT_FONT_SIZE so they always render at the same size.)
         // `q` aliases j and `,` aliases k, matching the reading card's
         // dialogue-nav keys (and the journal overlay) so the same fingers move
         // the block cursor here.
@@ -1685,14 +1679,7 @@ fn handle_synopsis_overlay_key(
             );
             true
         }
-        "bar" => {
-            state.borrow().gloss_overlay.adjust_font_size(1);
-            true
-        }
-        "exclam" => {
-            state.borrow().gloss_overlay.adjust_font_size(-1);
-            true
-        }
+        // (Font-size adjust removed: overlays are locked to GLOSS_DEFAULT_FONT_SIZE.)
         "n" if is_ctrl => {
             crate::app::scene_synopsis::cycle_synopsis(state, 1);
             true
