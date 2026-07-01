@@ -134,6 +134,12 @@ fn prefix_question(question: &str) -> String {
 // sizes its scroll exactly like the gloss, so the footer lands in the same place.
 const UNACCOUNTED_CHROME_MARGINS: i32 = 24 + 20 /* scroll_overlay top+bottom */;
 
+/// Extra LEFT indent on the Q&A body so it sits right of the accent bar, with the
+/// bar in a clear gutter beside the text — matching the gloss explication's
+/// `bar_left + 60`. Added to the left margin only; pagination reads left_margin
+/// live so wrap/height follow automatically (no measure change).
+const JOURNAL_BODY_INDENT: i32 = 60;
+
 impl JournalOverlay {
     pub fn new(column_width: u32, text_margins: u32) -> Self {
         let overlay = Overlay::new();
@@ -459,7 +465,9 @@ impl JournalOverlay {
         } else {
             crate::ui::card_side_margin(card_width)
         };
-        self.view.set_left_margin(side);
+        // Indent the body right of the accent bar (bar sits in the gutter),
+        // matching gloss. Left-only; the right margin stays `side`.
+        self.view.set_left_margin(side + JOURNAL_BODY_INDENT);
         self.view.set_right_margin(side);
         let _ = (self.text_margins, self.column_width);
     }
@@ -742,6 +750,44 @@ impl JournalOverlay {
 
     /// Re-apply the `journal-hi` highlight tag over the stored `hi_ranges` with
     /// the theme background. No-op when there are no ranges.
+    /// Style the leading `Q:` line as a header (small, bold, dim, extra space
+    /// below) — mirroring the gloss `.gloss-header` speaker-label look — when the
+    /// current page begins with the question. Answer pages (no `Q:` line) are
+    /// untouched. Uses the marker color (theme `dim_fg`) as the header foreground.
+    fn apply_qa_header(&self, body: &str) {
+        let Some(first_line) = body.split('\n').next() else {
+            return;
+        };
+        if !first_line.trim_start().starts_with("Q:") {
+            return;
+        }
+        let buffer = self.view.buffer();
+        let table = buffer.tag_table();
+        if table.lookup("journal-qa-header").is_none() {
+            let (r, g, b) = *self.marker_color.borrow();
+            table.add(
+                &gtk4::TextTag::builder()
+                    .name("journal-qa-header")
+                    .weight(700)
+                    .scale(0.9)
+                    .foreground_rgba(&gtk4::gdk::RGBA::new(r as f32, g as f32, b as f32, 1.0))
+                    .pixels_below_lines(10)
+                    .build(),
+            );
+        }
+        if let Some(tag) = table.lookup("journal-qa-header") {
+            // Keep the color live with the theme (marker_color = dim_fg).
+            let (r, g, b) = *self.marker_color.borrow();
+            tag.set_foreground_rgba(Some(&gtk4::gdk::RGBA::new(
+                r as f32, g as f32, b as f32, 1.0,
+            )));
+            let si = buffer.start_iter();
+            let mut ei = buffer.start_iter();
+            ei.forward_chars(first_line.chars().count() as i32);
+            buffer.apply_tag(&tag, &si, &ei);
+        }
+    }
+
     fn apply_hi_color(&self) {
         let buffer = self.view.buffer();
         let table = buffer.tag_table();
@@ -1096,6 +1142,8 @@ impl JournalOverlay {
         // Paint the `<hi>` highlight AFTER set_text + font (read-mode only; the
         // editor sets raw text and must not re-apply these read-mode ranges).
         self.apply_hi_color();
+        // Style the leading `Q:` line as a header (gloss look), first page only.
+        self.apply_qa_header(&body);
         // Floating page marker (⌄ more / • end), bottom-center of the viewport.
         self.update_page_marker(pidx, n_pages);
         // The vadjustment stays at top — the page fits, nothing scrolls.
