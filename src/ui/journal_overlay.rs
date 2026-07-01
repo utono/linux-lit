@@ -18,6 +18,7 @@ pub struct JournalOverlay {
     position_label: Label,
     hint: Label,
     bar_drawing: gtk4::DrawingArea,
+    panel_drawing: gtk4::DrawingArea,
     bar_ranges: Rc<RefCell<Vec<(i32, i32)>>>,
     /// When the vim editor's NORMAL/VISUAL cursor sits on a BLANK line, that
     /// line's `\n` has no glyph cell, so the char-background block tag paints
@@ -90,6 +91,7 @@ pub struct JournalOverlay {
     /// func. Its dim color is `marker_color`.
     marker_glyph: Rc<RefCell<Option<&'static str>>>,
     marker_color: Rc<RefCell<(f64, f64, f64)>>,
+    panel_color: Rc<RefCell<(f64, f64, f64)>>,
 }
 
 /// Split the full Q&A text into paragraph blocks (the pagination unit): maximal
@@ -167,6 +169,7 @@ impl JournalOverlay {
         view.set_focusable(false);
         view.set_wrap_mode(gtk4::WrapMode::Word);
         view.add_css_class("gloss-text");
+        view.add_css_class("overlay-prose");
 
         // The ScrolledWindow's child MUST be the TextView DIRECTLY so GTK uses
         // the view's native scroll adjustments (a TextView is `Scrollable`).
@@ -194,6 +197,10 @@ impl JournalOverlay {
         // see draw_page_marker_glyph) + its dim color, threaded by set_marker_color.
         let marker_glyph: Rc<RefCell<Option<&'static str>>> = Rc::new(RefCell::new(None));
         let marker_color: Rc<RefCell<(f64, f64, f64)>> = Rc::new(RefCell::new((0.5, 0.5, 0.5)));
+        let panel_color: Rc<RefCell<(f64, f64, f64)>> =
+            Rc::new(RefCell::new((0.95, 0.93, 0.86))); // placeholder; set at startup
+        let panel_drawing = gtk4::DrawingArea::new();
+        panel_drawing.set_can_target(false);
         let bar_drawing = gtk4::DrawingArea::new();
         bar_drawing.set_can_target(false);
         {
@@ -247,13 +254,33 @@ impl JournalOverlay {
                 crate::ui::draw_bar_spans(cr, &view_clone, &ranges, x);
             });
         }
+        {
+            let view_for_panel = view.clone();
+            let panel_color_clone = panel_color.clone();
+            panel_drawing.set_draw_func(move |_area, cr, w, h| {
+                crate::ui::draw_overlay_panel(
+                    cr,
+                    &view_for_panel,
+                    w,
+                    h,
+                    *panel_color_clone.borrow(),
+                    10.0,
+                    12.0,
+                );
+            });
+        }
         // Repaint the bar when the view scrolls (buffer->window y is scroll-dependent).
         {
             let bar_for_scroll = bar_drawing.clone();
+            let panel_for_scroll = panel_drawing.clone();
             scrolled.vadjustment().connect_value_changed(move |_| {
                 bar_for_scroll.queue_draw();
+                panel_for_scroll.queue_draw();
             });
         }
+        scroll_overlay.add_overlay(&panel_drawing);
+        scroll_overlay.set_measure_overlay(&panel_drawing, false);
+        scroll_overlay.set_clip_overlay(&panel_drawing, true);
         scroll_overlay.add_overlay(&bar_drawing);
         scroll_overlay.set_measure_overlay(&bar_drawing, false);
         scroll_overlay.set_clip_overlay(&bar_drawing, true);
@@ -330,6 +357,7 @@ impl JournalOverlay {
             position_label,
             hint,
             bar_drawing,
+            panel_drawing,
             bar_ranges,
             vim_block_line,
             blocks: RefCell::new(Vec::new()),
@@ -356,6 +384,7 @@ impl JournalOverlay {
             hi_ranges: RefCell::new(Vec::new()),
             marker_glyph,
             marker_color,
+            panel_color,
         }
     }
 
@@ -659,6 +688,14 @@ impl JournalOverlay {
         if let Some(rgb) = crate::ui::gloss_util::parse_hex_color(hex) {
             *self.marker_color.borrow_mut() = rgb;
             self.bar_drawing.queue_draw();
+        }
+    }
+
+    /// Set the inset panel tint color (theme `panel_bg`) and repaint the panel.
+    pub fn set_panel_color(&self, hex: &str) {
+        if let Some(rgb) = crate::ui::gloss_util::parse_hex_color(hex) {
+            *self.panel_color.borrow_mut() = rgb;
+            self.panel_drawing.queue_draw();
         }
     }
 
