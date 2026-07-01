@@ -58,6 +58,7 @@ pub struct GlossOverlay {
     gloss_scrolled: gtk4::ScrolledWindow,
     gloss_view: gtk4::TextView,
     bar_drawing: gtk4::DrawingArea,
+    panel_drawing: gtk4::DrawingArea,
     /// Owns the clip Box pinned to the bottom of the gloss viewport and all three
     /// recompute paths (value_changed catch-all, reset_scroll_top range+idle,
     /// update_bottom_clip). Replaces the hand-wired `bottom_clip` + inline
@@ -69,6 +70,7 @@ pub struct GlossOverlay {
     /// Label — no overlay-child allocation lag). See `draw_page_marker_glyph`.
     marker_glyph: Rc<RefCell<Option<&'static str>>>,
     marker_color: Rc<RefCell<(f64, f64, f64)>>,
+    panel_color: Rc<RefCell<(f64, f64, f64)>>,
     /// When the vim editor's NORMAL/VISUAL cursor sits on a BLANK line, that
     /// line's `\n` has no glyph cell, so the char-background block tag paints
     /// nothing. We draw a thin left-edge block here instead. `Some((buffer_line,
@@ -278,6 +280,7 @@ impl GlossOverlay {
         gloss_view.set_top_margin(24);
         gloss_view.set_bottom_margin(80);
         gloss_view.add_css_class("gloss-text");
+        gloss_view.add_css_class("overlay-prose");
 
         let bar_drawing = gtk4::DrawingArea::new();
         bar_drawing.set_can_target(false);
@@ -288,6 +291,10 @@ impl GlossOverlay {
         // its dim color — see draw_page_marker_glyph.
         let marker_glyph: Rc<RefCell<Option<&'static str>>> = Rc::new(RefCell::new(None));
         let marker_color: Rc<RefCell<(f64, f64, f64)>> = Rc::new(RefCell::new((0.5, 0.5, 0.5)));
+        let panel_color: Rc<RefCell<(f64, f64, f64)>> =
+            Rc::new(RefCell::new((0.95, 0.93, 0.86))); // placeholder; set at startup
+        let panel_drawing = gtk4::DrawingArea::new();
+        panel_drawing.set_can_target(false);
         let vim_block_line: crate::ui::VimBlankCursor = Rc::new(RefCell::new(None));
         let bar_x: Rc<RefCell<i32>> = Rc::new(RefCell::new((column_width as i32) / 8));
         let line_numbers: Rc<RefCell<Vec<LineNumber>>> = Rc::new(RefCell::new(Vec::new()));
@@ -379,6 +386,22 @@ impl GlossOverlay {
             }
         });
 
+        {
+            let view_for_panel = gloss_view.clone();
+            let panel_color_clone = panel_color.clone();
+            panel_drawing.set_draw_func(move |_area, cr, w, h| {
+                crate::ui::draw_overlay_panel(
+                    cr,
+                    &view_for_panel,
+                    w,
+                    h,
+                    *panel_color_clone.borrow(),
+                    10.0, // PANEL_PAD — breathe a few px outside the text ink
+                    12.0, // PANEL_RADIUS — matches the card border-radius
+                );
+            });
+        }
+
         gloss_scrolled.set_child(Some(&gloss_view));
 
         // The bar overlay (accent bar, source/echo rule, line numbers) maps
@@ -387,12 +410,17 @@ impl GlossOverlay {
         // scroll offset while the text moves beneath them.
         {
             let bar_for_scroll = bar_drawing.clone();
+            let panel_for_scroll = panel_drawing.clone();
             gloss_scrolled.vadjustment().connect_value_changed(move |_| {
                 bar_for_scroll.queue_draw();
+                panel_for_scroll.queue_draw();
             });
         }
 
         gloss_scroll_overlay.set_child(Some(&gloss_scrolled));
+        gloss_scroll_overlay.add_overlay(&panel_drawing);
+        gloss_scroll_overlay.set_measure_overlay(&panel_drawing, false);
+        gloss_scroll_overlay.set_clip_overlay(&panel_drawing, true);
         gloss_scroll_overlay.add_overlay(&bar_drawing);
         gloss_scroll_overlay.set_measure_overlay(&bar_drawing, false);
         gloss_scroll_overlay.set_clip_overlay(&bar_drawing, true);
@@ -514,10 +542,12 @@ impl GlossOverlay {
             position_label,
             marker_glyph,
             marker_color,
+            panel_color,
             gloss_scroll_overlay,
             gloss_scrolled,
             gloss_view,
             bar_drawing,
+            panel_drawing,
             clip_guard,
             bar_ranges,
             bar_color,
@@ -603,6 +633,14 @@ impl GlossOverlay {
         if let Some(rgb) = parse_hex_color(hex) {
             *self.marker_color.borrow_mut() = rgb;
             self.bar_drawing.queue_draw();
+        }
+    }
+
+    /// Set the inset tinted panel color (theme `panel_bg`) and repaint the panel.
+    pub fn set_panel_color(&self, hex: &str) {
+        if let Some(rgb) = parse_hex_color(hex) {
+            *self.panel_color.borrow_mut() = rgb;
+            self.panel_drawing.queue_draw();
         }
     }
 
