@@ -219,13 +219,13 @@ impl JournalOverlay {
         // see draw_page_marker_glyph) + its dim color, threaded by set_marker_color.
         let marker_glyph: Rc<RefCell<Option<&'static str>>> = Rc::new(RefCell::new(None));
         let marker_color: Rc<RefCell<(f64, f64, f64)>> = Rc::new(RefCell::new((0.5, 0.5, 0.5)));
-        let panel_color: Rc<RefCell<(f64, f64, f64)>> =
-            Rc::new(RefCell::new((0.95, 0.93, 0.86))); // placeholder; set at startup
+        // Inset-panel DrawingArea + its color cell (shared helper, audit #52). The
+        // draw_func is wired inside; the caller sets it as the Overlay main child
+        // and adds panel_drawing.queue_draw() to its scroll-repaint closure below.
+        let (panel_drawing, panel_color) = crate::ui::attach_overlay_panel(&view);
         // Accent-bar color = theme root_color, set by set_bar_color at startup.
         let bar_color: Rc<RefCell<(f64, f64, f64)>> =
             Rc::new(RefCell::new((0.53, 0.62, 0.71))); // placeholder; set at startup
-        let panel_drawing = gtk4::DrawingArea::new();
-        panel_drawing.set_can_target(false);
         let bar_drawing = gtk4::DrawingArea::new();
         bar_drawing.set_can_target(false);
         {
@@ -282,21 +282,6 @@ impl JournalOverlay {
                 // exactly left_margin() made the bar collide with the first glyph.)
                 let x = (view_clone.left_margin() as f64 - 12.0).max(2.0);
                 crate::ui::draw_bar_spans(cr, &view_clone, &ranges, x);
-            });
-        }
-        {
-            let view_for_panel = view.clone();
-            let panel_color_clone = panel_color.clone();
-            panel_drawing.set_draw_func(move |_area, cr, w, h| {
-                crate::ui::draw_overlay_panel(
-                    cr,
-                    &view_for_panel,
-                    w,
-                    h,
-                    *panel_color_clone.borrow(),
-                    24.0, // PANEL_PAD — gap between the text ink and the panel edge
-                    12.0, // PANEL_RADIUS — matches the card border-radius
-                );
             });
         }
         // Repaint the bar when the view scrolls (buffer->window y is scroll-dependent).

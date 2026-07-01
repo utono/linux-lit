@@ -185,6 +185,49 @@ pub(crate) fn draw_page_marker_glyph(
     let _ = h_px; // (height available if vertical centering is ever needed)
 }
 
+/// Inset of the tinted panel edge from the text ink, in px (both sides). Shared
+/// by the gloss + journal overlays so the panel breathes identically.
+pub(crate) const PANEL_PAD: f64 = 24.0;
+/// Corner radius of the inset panel, in px — matches the card's `border-radius`.
+pub(crate) const PANEL_RADIUS: f64 = 12.0;
+
+/// Build the inset-panel `DrawingArea` + its color cell for a prose overlay, wired
+/// to paint `draw_overlay_panel` behind `view`'s text column. Returns the
+/// `(panel_drawing, panel_color)` pair the caller stores; the caller is
+/// responsible for (a) adding `panel_drawing` as the Overlay's MAIN CHILD (it must
+/// paint BELOW the transparent view + accent bar) and (b) calling
+/// `panel_drawing.queue_draw()` in its own scroll-repaint closure (that closure is
+/// shared with the accent-bar DrawingArea, so it stays per-overlay). `panel_color`
+/// starts at a placeholder and is set by the app via `set_panel_color`.
+///
+/// Extracted from the two byte-identical panel-setup blocks in gloss_overlay.rs +
+/// journal_overlay.rs (audit #52) so the two overlays cannot drift.
+pub(crate) fn attach_overlay_panel(
+    view: &gtk4::TextView,
+) -> (gtk4::DrawingArea, std::rc::Rc<std::cell::RefCell<(f64, f64, f64)>>) {
+    use gtk4::prelude::*;
+    let panel_color: std::rc::Rc<std::cell::RefCell<(f64, f64, f64)>> =
+        std::rc::Rc::new(std::cell::RefCell::new((0.95, 0.93, 0.86))); // placeholder; set at startup
+    let panel_drawing = gtk4::DrawingArea::new();
+    panel_drawing.set_can_target(false);
+    {
+        let view_for_panel = view.clone();
+        let panel_color_clone = panel_color.clone();
+        panel_drawing.set_draw_func(move |_area, cr, w, h| {
+            draw_overlay_panel(
+                cr,
+                &view_for_panel,
+                w,
+                h,
+                *panel_color_clone.borrow(),
+                PANEL_PAD,
+                PANEL_RADIUS,
+            );
+        });
+    }
+    (panel_drawing, panel_color)
+}
+
 /// Fill the inset tinted panel behind a prose overlay's text column. Draws ONE
 /// rounded rectangle aligned to the view's live text margins (so it hugs the
 /// column on every work/theme with no hand-tuned offsets) and spanning the full
