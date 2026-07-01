@@ -150,13 +150,15 @@ pub(crate) fn populate_verse_buffer(
     let quote_verse = quote_speaker + 60;
 
     // Speaker + verse "header" styling: matches the journal Q&A question header
-    // (bold 700, 0.9 scale, dim fg, space below) so the top of a gloss reads like
-    // the top of a journal Q&A. `speaker_accent` is intentionally unused for the
-    // color now (the header is dim, not accent-tinted); the param stays for the
-    // dim fallback. The speaker keeps small-caps (it's a name label).
+    // (bold 700, 0.9 scale, DIM fg, space below) so the top of a gloss reads like
+    // the top of a journal Q&A — the source text RECEDES (dim) behind the
+    // full-ink explication. The header color comes from `speaker_accent` (the
+    // gloss overlay now threads theme `dim_fg` there); it is a DISTINCT color from
+    // the para's `dim_color`, so the header can dim while the explication stays
+    // full foreground. Falls back to `dim_color`, then inherited fg. The speaker
+    // keeps small-caps (it's a name label).
     let header_dim = |b: gtk4::builders::TextTagBuilder| -> gtk4::builders::TextTagBuilder {
-        // Prefer the passed dim color; fall back to the accent, then inherited fg.
-        match dim_color.or(speaker_accent) {
+        match speaker_accent.or(dim_color) {
             Some(c) => b.foreground(c),
             None => b,
         }
