@@ -1487,6 +1487,11 @@ fn handle_translation_overlay_key(state: &Rc<RefCell<AppState>>, key_name: &str)
         "q" => { overlay_nav(state, navigation::jump_to_next_dialogue); true }
         "j" => { overlay_nav(state, navigation::cursor_next_dialogue); true }
         "k" => { overlay_nav(state, navigation::cursor_prev_line); true }
+        // x / y turn the OVERLAY page forward / backward (same roles as the main
+        // reading card), moving the reader cursor onto the first dialogue line of
+        // the new page so the highlight + MPV sync follow.
+        "x" => { overlay_page_turn(state, true); true }
+        "y" => { overlay_page_turn(state, false); true }
         // Playback (same as the main card): Tab plays from the current line, a
         // toggles play/pause (pure pause/resume, no seek). Neither moves the
         // cursor, so no re-highlight. Space mirrors Tab (play from current line).
@@ -1544,6 +1549,30 @@ fn show_no_timestamp_toast(s: &AppState) {
 fn overlay_nav(state: &Rc<RefCell<AppState>>, nav_fn: fn(&mut AppState)) {
     let scene_before = crate::app::scene_synopsis::current_scene_divs(&state.borrow());
     nav_fn(&mut state.borrow_mut());
+    crate::app::translations::sync_translation_overlay(state, scene_before);
+}
+
+/// Turn the translation overlay's page forward/backward (x/y), moving the reader
+/// cursor onto the FIRST line of the adjacent overlay page so the highlight and
+/// MPV sync follow. No-op at the first/last page. The overlay owns its own
+/// pagination, so it computes the target work line; we move the real cursor there
+/// (via `jump_to_line`, which seeks MPV) and then let `sync_translation_overlay`
+/// re-page + re-highlight the overlay.
+fn overlay_page_turn(state: &Rc<RefCell<AppState>>, forward: bool) {
+    let target_work_idx = state.borrow().translation_overlay.page_turn_target(forward);
+    let Some(work_idx) = target_work_idx else { return };
+    let scene_before = crate::app::scene_synopsis::current_scene_divs(&state.borrow());
+    {
+        let mut s = state.borrow_mut();
+        // work index -> buffer line (line_map present for plays; identity otherwise).
+        let buffer_line = match s.line_map.as_ref() {
+            Some(lm) => lm.work_to_buffer.get(work_idx).copied(),
+            None => Some(work_idx),
+        };
+        if let Some(bl) = buffer_line {
+            navigation::jump_to_line(&mut s, bl);
+        }
+    }
     crate::app::translations::sync_translation_overlay(state, scene_before);
 }
 

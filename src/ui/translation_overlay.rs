@@ -105,6 +105,11 @@ pub struct TranslationOverlay {
     /// `container`) with `propagate_natural_height(false)` that hard-caps the card
     /// to its `height_request` so an under-measured page can't grow it.
     content_vbox: gtk4::Box,
+    /// The non-scrolling `ScrolledWindow` wrapping `content_vbox`. Its height is
+    /// PINNED in `show()` (min == max == height_request) so the card stays exactly
+    /// `card_height` regardless of how little the current page holds — otherwise a
+    /// short page would let the `valign=Center` container collapse to its content.
+    scrolled: gtk4::ScrolledWindow,
     /// The whole scene's blocks (all pages).
     blocks: RefCell<Vec<TranslationBlock>>,
     /// Page boundaries over `blocks`.
@@ -165,6 +170,7 @@ impl TranslationOverlay {
             container,
             title,
             content_vbox,
+            scrolled,
             blocks: RefCell::new(Vec::new()),
             pages: RefCell::new(Vec::new()),
             current_page: Cell::new(0),
@@ -209,7 +215,12 @@ impl TranslationOverlay {
         self.container.set_height_request(card_height);
         self.title.set_text(title);
 
-        let side_margin = card_width / 12;
+        // Tighter side margins than the main reading card (was /12): with no-wrap
+        // columns a long translation overflows its `col_width` rightward, and the
+        // right `side_margin` + block `margin_end` is what clips it at the card
+        // edge. A smaller margin gives the (rightmost) translation column more room
+        // before the clip so it isn't truncated mid-word.
+        let side_margin = card_width / 24;
         let col_width = ((card_width - 2 * side_margin) / 2 - 12).max(120);
         let full_width = (card_width - 2 * side_margin).max(120);
         // Speaker header point size: 0.75 of the body (reader) font, matching the
@@ -235,7 +246,6 @@ impl TranslationOverlay {
         // deterministic — no GTK widget-allocation settle race. The context comes
         // from a realized widget so it uses the real font map / DPI.
         let pctx = self.content_vbox.pango_context();
-        let heights: Vec<i32> = blocks.iter().map(|b| block_height(b, &pctx, &ctx)).collect();
         // Page budget = card height minus the title chrome and the bottom margin,
         // then a conservative safety factor. Standalone `pango::Layout` measurement
         // under-shoots the rendered TextView height (the view's intrinsic line
@@ -246,14 +256,33 @@ impl TranslationOverlay {
         let title_h = self.title.preferred_size().1.height().max(48);
         let raw_budget = (card_height - title_h - 20).max(120);
         let page_height = raw_budget * 9 / 10;
+        // A single speaker's speech longer than one page is one indivisible
+        // `TranslationBlock`; splitting it at line boundaries first keeps every
+        // page ≤ the card height, so no page overflows the pinned scroll (the old
+        // over-tall-block-grows-the-card bug). The speaker label repeats on each
+        // continued sub-page.
+        let blocks: Vec<TranslationBlock> =
+            split_oversize_blocks(blocks, &pctx, &ctx, page_height);
+        let heights: Vec<i32> = blocks.iter().map(|b| block_height(b, &pctx, &ctx)).collect();
         let pages = paginate(&heights, page_height);
 
+        // PIN the scroll to exactly the content budget (min == max ==
+        // height_request). `propagate_natural_height(false)` alone leaves the
+        // scroll free to report its child's (small) natural height, so a short
+        // page lets the `valign=Center` container collapse to its content and the
+        // card visibly shrinks on a page turn. Pinning all three forces the card
+        // to stay `card_height` regardless of how little the page holds — the same
+        // technique the gloss overlay's `size_scroll` uses.
+        self.scrolled.set_height_request(raw_budget);
+        self.scrolled.set_min_content_height(raw_budget);
+        self.scrolled.set_max_content_height(raw_budget);
+
         let start_page = cursor_work_idx
-            .and_then(|w| block_for_work_idx(blocks, w))
+            .and_then(|w| block_for_work_idx(&blocks, w))
             .map(|bi| page_containing_block(&pages, bi))
             .unwrap_or(0);
 
-        *self.blocks.borrow_mut() = blocks.to_vec();
+        *self.blocks.borrow_mut() = blocks;
         *self.pages.borrow_mut() = pages;
         *self.ctx.borrow_mut() = Some(ctx);
 
@@ -288,6 +317,27 @@ impl TranslationOverlay {
             let entry = render_block(&self.content_vbox, block, ctx);
             self.block_widgets.borrow_mut().push(entry);
         }
+    }
+
+    /// The work-line index to move the reader cursor to for a page turn: the
+    /// FIRST block's `start_idx` on the page adjacent to the current one
+    /// (`forward` → next page, else previous). Returns `None` when there is no
+    /// such page (already at the first/last page) so the caller can no-op. The
+    /// caller moves the real reader cursor there (which seeks MPV) and then syncs
+    /// the overlay, so page-turning stays consistent with the reader + playback.
+    pub fn page_turn_target(&self, forward: bool) -> Option<usize> {
+        let pages = self.pages.borrow();
+        let blocks = self.blocks.borrow();
+        let cur = self.current_page.get();
+        let target_page = if forward {
+            if cur + 1 < pages.len() { cur + 1 } else { return None }
+        } else if cur > 0 {
+            cur - 1
+        } else {
+            return None;
+        };
+        let page = pages.get(target_page)?;
+        blocks.get(page.start).map(|b| b.start_idx)
     }
 
     /// Follow the reader cursor: turn to the page containing `work_idx`'s block
@@ -381,7 +431,10 @@ fn render_block(parent: &gtk4::Box, block: &TranslationBlock, ctx: &RenderCtx) -
             view.set_editable(false);
             view.set_cursor_visible(false);
             view.set_focusable(false);
-            view.set_wrap_mode(gtk4::WrapMode::WordChar);
+            // No wrapping for interludes (stage directions / scene headers) either
+            // (per user): each stays on one visual row, matching the speech columns.
+            // Full-width, so overflow risk is minimal.
+            view.set_wrap_mode(gtk4::WrapMode::None);
             view.set_pixels_above_lines(ctx.line_spacing);
             view.set_pixels_below_lines(ctx.line_spacing);
             view.add_css_class("gloss-text");
@@ -459,6 +512,87 @@ fn block_height(block: &TranslationBlock, pctx: &pango::Context, ctx: &RenderCtx
     }
 }
 
+/// The fixed (line-independent) chrome height of a block: top margin, plus the
+/// speaker header + its bottom margin for a speech block. A split sub-block
+/// repeats this chrome (the speaker label shows on every continued page).
+fn block_chrome_height(block: &TranslationBlock, pctx: &pango::Context, ctx: &RenderCtx) -> i32 {
+    if block.speaker.is_some() {
+        let header_h = measure_text_height(pctx, "Mg", ctx.header_pt, &ctx.font_family, ctx.col_width);
+        ctx.block_margin_top + header_h + ctx.header_margin_bottom
+    } else {
+        ctx.block_margin_top
+    }
+}
+
+/// Rendered height of ONE source line within a block (the taller of its original
+/// / translation column line, plus the per-paragraph above+below spacing). Used
+/// to split an over-tall block at line boundaries.
+fn line_height(block: &TranslationBlock, i: usize, pctx: &pango::Context, ctx: &RenderCtx) -> i32 {
+    let (orig, trans) = &block.lines[i];
+    let width = if block.speaker.is_some() { ctx.col_width } else { ctx.full_width };
+    let oh = measure_text_height(pctx, orig, ctx.body_font_size, &ctx.font_family, width);
+    let th = if trans.is_empty() {
+        0
+    } else {
+        measure_text_height(pctx, trans, ctx.body_font_size, &ctx.font_family, width)
+    };
+    oh.max(th) + 2 * ctx.line_spacing
+}
+
+/// Split any block taller than `page_height` into contiguous sub-blocks that
+/// each fit on a page, breaking only at source-line boundaries. A sub-block
+/// carries the same `speaker` (so the label repeats on each continued page) and
+/// the correct `start_idx`/`end_idx` sub-range, so cursor↔block mapping and
+/// highlighting keep working unchanged. Blocks that already fit pass through
+/// untouched. This is what keeps a long speech from forcing the card taller than
+/// its fixed height (an un-splittable over-tall block used to overflow the pin).
+fn split_oversize_blocks(
+    blocks: &[TranslationBlock],
+    pctx: &pango::Context,
+    ctx: &RenderCtx,
+    page_height: i32,
+) -> Vec<TranslationBlock> {
+    let budget = page_height.max(1);
+    let mut out: Vec<TranslationBlock> = Vec::new();
+    for block in blocks {
+        if block_height(block, pctx, ctx) <= budget {
+            out.push(block.clone());
+            continue;
+        }
+        // Greedily pack this block's lines into sub-blocks that fit the budget.
+        let chrome = block_chrome_height(block, pctx, ctx);
+        let mut seg_start = 0usize; // index into block.lines of the current sub-block
+        let mut acc = chrome;
+        for i in 0..block.lines.len() {
+            let lh = line_height(block, i, pctx, ctx);
+            // Close the current sub-block before adding a line that would overflow
+            // it (but never emit an empty sub-block — a single line taller than the
+            // budget still gets its own sub-block rather than being dropped).
+            if i > seg_start && acc + lh > budget {
+                out.push(sub_block(block, seg_start, i));
+                seg_start = i;
+                acc = chrome;
+            }
+            acc += lh;
+        }
+        out.push(sub_block(block, seg_start, block.lines.len()));
+    }
+    out
+}
+
+/// Build a sub-block covering `block.lines[from..to]`, carrying the parent's
+/// speaker and the correct work-index sub-range.
+/// The parent's lines are contiguous work indices (`start_idx + from` down to
+/// `start_idx + to - 1`), so the offset arithmetic is exact.
+fn sub_block(block: &TranslationBlock, from: usize, to: usize) -> TranslationBlock {
+    TranslationBlock {
+        speaker: block.speaker.clone(),
+        lines: block.lines[from..to].to_vec(),
+        start_idx: block.start_idx + from,
+        end_idx: block.start_idx + to - 1,
+    }
+}
+
 /// Ensure the buffer has a `cursor-line` tag painting the paragraph background
 /// with the theme's cursor-line color. Idempotent (lookup before add).
 fn ensure_cursor_tag(buffer: &gtk4::TextBuffer, cursor_line_bg: &str) {
@@ -496,7 +630,13 @@ fn make_column(width: i32, color: &str, italic: bool, line_spacing: i32) -> Text
     view.set_editable(false);
     view.set_cursor_visible(false);
     view.set_focusable(false);
-    view.set_wrap_mode(gtk4::WrapMode::WordChar);
+    // No wrapping (per user): each source/translation line stays on ONE visual
+    // row so the columns line up 1:1 and the cursor-line highlight band is a
+    // single row. A translation longer than the column overflows into the card's
+    // side margin rather than wrapping to a second row (mirrors the reading card,
+    // where verse lines never wrap). `width` is a MINIMUM request, so an
+    // overflowing line simply extends past it.
+    view.set_wrap_mode(gtk4::WrapMode::None);
     // Per-line above/below spacing so the cursor line's `paragraph_background`
     // band has room below the descenders (matches the main reading card).
     view.set_pixels_above_lines(line_spacing);
@@ -635,5 +775,34 @@ mod tests {
         assert_eq!(block_for_work_idx(&blocks, 12), Some(0));
         assert_eq!(block_for_work_idx(&blocks, 13), Some(1));
         assert_eq!(block_for_work_idx(&blocks, 99), None);
+    }
+
+    #[test]
+    fn sub_block_preserves_speaker_and_work_range() {
+        // A 4-line speech at work indices 20..=23. A sub-block covering lines
+        // [1,3) must carry the same speaker, its two lines, and the exact
+        // work-index sub-range 21..=22 — so a cursor at work line 22 still maps
+        // into this sub-block after an over-tall split.
+        let block = TranslationBlock {
+            speaker: Some("CRANMER".into()),
+            lines: vec![
+                ("a".into(), "A".into()),
+                ("b".into(), "B".into()),
+                ("c".into(), "C".into()),
+                ("d".into(), "D".into()),
+            ],
+            start_idx: 20,
+            end_idx: 23,
+        };
+        let sb = sub_block(&block, 1, 3);
+        assert_eq!(sb.speaker.as_deref(), Some("CRANMER"));
+        assert_eq!(sb.lines, vec![("b".into(), "B".into()), ("c".into(), "C".into())]);
+        assert_eq!(sb.start_idx, 21);
+        assert_eq!(sb.end_idx, 22);
+        // A full-span sub-block is identical to the original range.
+        let full = sub_block(&block, 0, 4);
+        assert_eq!(full.start_idx, 20);
+        assert_eq!(full.end_idx, 23);
+        assert_eq!(full.lines.len(), 4);
     }
 }
