@@ -1084,8 +1084,16 @@ impl JournalOverlay {
         }
         let family = self.font_family.borrow().clone();
         let size = self.font_size.get();
-        // Wrap width = the view's content width (card minus the two side margins).
-        let wrap_w = (self.last_card_size.get().0 - 2 * self.view.left_margin()).max(1);
+        // Wrap width = the view's content width (card minus the LEFT and RIGHT
+        // margins). These are asymmetric: the left carries JOURNAL_BODY_INDENT
+        // (body pushed right of the accent bar) while the right does not, so
+        // subtract each separately — `2 * left_margin` would over-narrow the
+        // measured width by JOURNAL_BODY_INDENT and over-paginate (a short/extra
+        // page). Must match the buffer's actual left+right margins.
+        let wrap_w = (self.last_card_size.get().0
+            - self.view.left_margin()
+            - self.view.right_margin())
+        .max(1);
         let pctx = self.view.pango_context();
         // The rendered TextView is consistently TALLER than a standalone
         // `pango::Layout` of the same text+width: it adds per-line leading and
