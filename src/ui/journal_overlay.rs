@@ -92,6 +92,10 @@ pub struct JournalOverlay {
     marker_glyph: Rc<RefCell<Option<&'static str>>>,
     marker_color: Rc<RefCell<(f64, f64, f64)>>,
     panel_color: Rc<RefCell<(f64, f64, f64)>>,
+    /// Selection accent-bar color = theme `root_color` (the crisp accent), threaded
+    /// by the app via `set_bar_color` — matching the gloss overlay's theme-wired
+    /// bar. (Was a hardcoded pale grey-blue default, the odd one out.)
+    bar_color: Rc<RefCell<(f64, f64, f64)>>,
 }
 
 /// Split the full Q&A text into paragraph blocks (the pagination unit): maximal
@@ -168,6 +172,13 @@ impl JournalOverlay {
         view.set_cursor_visible(false);
         view.set_focusable(false);
         view.set_wrap_mode(gtk4::WrapMode::Word);
+        // ~one line of breathing room above the first line and below the last
+        // line INSIDE the panel, so the text isn't flush against the panel's
+        // inner top/bottom edge (matches the gloss view's inner margins; the
+        // scroll_overlay's own margins sit OUTSIDE the panel, so they can't
+        // provide this gap).
+        view.set_top_margin(28);
+        view.set_bottom_margin(28);
         view.add_css_class("gloss-text");
         view.add_css_class("overlay-prose");
 
@@ -204,6 +215,9 @@ impl JournalOverlay {
         let marker_color: Rc<RefCell<(f64, f64, f64)>> = Rc::new(RefCell::new((0.5, 0.5, 0.5)));
         let panel_color: Rc<RefCell<(f64, f64, f64)>> =
             Rc::new(RefCell::new((0.95, 0.93, 0.86))); // placeholder; set at startup
+        // Accent-bar color = theme root_color, set by set_bar_color at startup.
+        let bar_color: Rc<RefCell<(f64, f64, f64)>> =
+            Rc::new(RefCell::new((0.53, 0.62, 0.71))); // placeholder; set at startup
         let panel_drawing = gtk4::DrawingArea::new();
         panel_drawing.set_can_target(false);
         let bar_drawing = gtk4::DrawingArea::new();
@@ -214,6 +228,7 @@ impl JournalOverlay {
             let vim_block_clone = vim_block_line.clone();
             let marker_glyph_clone = marker_glyph.clone();
             let marker_color_clone = marker_color.clone();
+            let bar_color_clone = bar_color.clone();
             bar_drawing.set_draw_func(move |_area, cr, area_w, _h| {
                 // Page marker first (independent of the selection bar's early-return).
                 crate::ui::draw_page_marker_glyph(
@@ -247,8 +262,9 @@ impl JournalOverlay {
                 if ranges.is_empty() {
                     return;
                 }
-                // Fixed gloss accent default (NOT theme-wired).
-                cr.set_source_rgb(0.53, 0.62, 0.71);
+                // Theme accent (root_color), matching the gloss overlay's bar.
+                let (r, g, b) = *bar_color_clone.borrow();
+                cr.set_source_rgb(r, g, b);
                 cr.set_line_width(2.0);
                 // Draw the bar 12px LEFT of the text so it sits in the gap
                 // between the panel's inner edge (left_margin - PANEL_PAD = -24)
@@ -399,6 +415,7 @@ impl JournalOverlay {
             hi_ranges: RefCell::new(Vec::new()),
             marker_glyph,
             marker_color,
+            bar_color,
             panel_color,
         }
     }
@@ -711,6 +728,15 @@ impl JournalOverlay {
         if let Some(rgb) = crate::ui::gloss_util::parse_hex_color(hex) {
             *self.panel_color.borrow_mut() = rgb;
             self.panel_drawing.queue_draw();
+        }
+    }
+
+    /// Set the selection accent-bar color (theme `root_color`) and repaint the
+    /// bar — matches the gloss overlay's theme-wired bar.
+    pub fn set_bar_color(&self, hex: &str) {
+        if let Some(rgb) = crate::ui::gloss_util::parse_hex_color(hex) {
+            *self.bar_color.borrow_mut() = rgb;
+            self.bar_drawing.queue_draw();
         }
     }
 
