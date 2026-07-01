@@ -75,7 +75,13 @@ pub(crate) fn escape_reader_mode(state: &Rc<RefCell<AppState>>) {
     {
         let has_search = !state.borrow().search_matches.is_empty();
         if has_search {
-            crate::input::search::clear_search(&mut state.borrow_mut());
+            let mut s = state.borrow_mut();
+            crate::input::search::clear_search(&mut s);
+            // clear_search removes the search-match tags but leaves the cursor
+            // on the matched line. Re-apply the cursor-line highlight so the
+            // match line stays highlighted after the search tags are gone
+            // (otherwise the line renders with no highlight at all).
+            crate::input::highlight::update_highlight(&mut s);
         }
     }
 }

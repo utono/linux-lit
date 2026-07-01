@@ -622,18 +622,14 @@ fn handle_search_key(
         "Escape" => {
             {
                 let mut s = state.borrow_mut();
+                // Escape commits the current live-search jump (same as Return):
+                // keep the cursor on the matched line and highlight it, rather
+                // than restoring the pre-search position. The live search has
+                // already moved current_line/page_top_line to the match's
+                // canonical spread; just drop the saved return pos and re-apply
+                // the cursor-line highlight after clearing the search-match tags.
+                s.search_return_pos = None;
                 crate::input::search::clear_search(&mut s);
-                // Escape cancels the search: restore the reader position saved
-                // when search opened so the live-search jump does not affect
-                // pagination. resnap_page re-tiles the original page cleanly
-                // (two-column split, bottom clip, etc.).
-                if let Some((line, top)) = s.search_return_pos.take() {
-                    s.current_line = line;
-                    s.page_top_line = top;
-                } else {
-                    s.page_top_line = s.current_line;
-                }
-                crate::input::scroll::resnap_page(&mut s);
                 crate::input::highlight::update_highlight(&mut s);
             }
             state.borrow().search_bar.hide();
