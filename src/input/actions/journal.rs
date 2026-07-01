@@ -18,6 +18,30 @@ fn titlecase_first(s: &str) -> String {
 /// reader's anchor). Prose divisions can be the whole book, so cap the context.
 const PROSE_CONTEXT_RADIUS: usize = 10;
 
+/// The first spoken/stage line of a passage's `<speaker>/<verse>/<stage>` source
+/// markup (as built by `build_source_header`), for the Q&A picker to show
+/// instead of the question. Returns the inner text of the first `<verse>` or
+/// `<stage>` element (speaker labels are chrome, skipped), or `None` if the
+/// markup has no such line. Pure — unit-tested.
+fn first_passage_line(source_markup: &str) -> Option<String> {
+    for line in source_markup.lines() {
+        let line = line.trim();
+        for tag in ["verse", "stage"] {
+            let open = format!("<{tag}>");
+            let close = format!("</{tag}>");
+            if let Some(rest) = line.strip_prefix(&open) {
+                if let Some(inner) = rest.strip_suffix(&close) {
+                    let inner = inner.trim();
+                    if !inner.is_empty() {
+                        return Some(inner.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Passage context captured from a visual selection, held until the ask-card
 /// submit fires (at which point `ask_claude` reads it and clears it).
 /// The passage coordinates (div1/div2/start/end) live in `JournalBand::Passage`;
@@ -970,7 +994,18 @@ fn populate_and_show_picker(s: &mut AppState) -> bool {
                     format!("{}.{} passage", div1, div2)
                 }
             };
-            let prefix: String = p.question.chars().take(80).collect();
+            // A passage Q&A shows the FIRST LINE of its passage (not the
+            // question) so the picker reads like the text it's about; fall back to
+            // the question if the source markup has no verse/stage line.
+            let label_text = if is_passage {
+                p.source_text
+                    .as_deref()
+                    .and_then(first_passage_line)
+                    .unwrap_or_else(|| p.question.clone())
+            } else {
+                p.question.clone()
+            };
+            let prefix: String = label_text.chars().take(80).collect();
             crate::ui::journal_picker::JournalRow {
                 id: p.id,
                 band,
@@ -1536,6 +1571,35 @@ mod tests {
         assert_eq!(super::titlecase_first("chapter"), "Chapter");
         assert_eq!(super::titlecase_first("scene"), "Scene");
         assert_eq!(super::titlecase_first(""), "");
+    }
+
+    #[test]
+    fn first_passage_line_reads_first_verse() {
+        let markup = "<speaker>FIRST GENTLEMAN</speaker>\n\
+                      <verse>You do not meet a man but frowns. Our bloods</verse>\n\
+                      <verse>No more obey the heavens than our courtiers'</verse>\n";
+        assert_eq!(
+            super::first_passage_line(markup).as_deref(),
+            Some("You do not meet a man but frowns. Our bloods"),
+        );
+    }
+
+    #[test]
+    fn first_passage_line_uses_leading_stage_direction() {
+        // A passage that opens on a stage direction shows that line.
+        let markup = "<stage>[Enter two Gentlemen.]</stage>\n\
+                      <speaker>FIRST GENTLEMAN</speaker>\n\
+                      <verse>You do not meet a man but frowns.</verse>\n";
+        assert_eq!(
+            super::first_passage_line(markup).as_deref(),
+            Some("[Enter two Gentlemen.]"),
+        );
+    }
+
+    #[test]
+    fn first_passage_line_none_without_verse_or_stage() {
+        assert_eq!(super::first_passage_line("<speaker>KING</speaker>\n"), None);
+        assert_eq!(super::first_passage_line(""), None);
     }
 
     #[test]
