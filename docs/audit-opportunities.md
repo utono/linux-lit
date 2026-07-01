@@ -1501,3 +1501,110 @@ setters (gloss set_marker/set_panel; journal set_marker/set_panel/set_bar). The 
 `apply_hi_color`, not the parse→borrow_mut→queue_draw shape). The bare-vs-full-path
 `parse_hex_color` split persists (gloss bare, journal `crate::ui::gloss_util::`). Scope
 unchanged in character; the shared `set_rc_color` helper now eliminates 5 bodies, not 4.
+
+## Consistency audit (2026-07-01) — journal↔gloss overlays, #58-#60 + updates
+
+Run after this session's overlay-consistency work (both overlays now share a
+"prose overlay identity" — font family/size, marker/panel/bar/dim colors, header
+style, panel, ~12px bar gap — but each holds its own copy, which is exactly why
+they kept drifting: the empty-font_family fallback bug, hardcoded 16pt, pale
+hardcoded bar color were all this class). Two Explore finders, byte-level.
+
+## #58 — BAR_TEXT_GAP shared const — PROPOSED
+
+- **Status:** PROPOSED, low value but clean. Both overlays encode the SAME 12px
+  accent-bar↔text gap as a bare literal, inverse structure — a shared const makes
+  the coupling explicit.
+- **Signal:** gloss `quote_body = bar_left + 12` (gloss_render.rs:153, the
+  explication's left margin = bar + 12); journal bar `x = left_margin() - 12.0`
+  (journal_overlay.rs:283, bar sits 12px LEFT of the text). Structurally inverse,
+  same semantic distance. Both bare `12`.
+- **Identical part (extract):** `const BAR_TEXT_GAP: i32 = 12;` (a shared home,
+  e.g. `src/ui/mod.rs`). Substitute at both sites (`bar_left + BAR_TEXT_GAP`;
+  `left_margin() - BAR_TEXT_GAP as f64`).
+- **EXCLUDED:** the gloss `bar_left + 48` speaker/verse indent — 48 is an
+  INDEPENDENT design choice, NOT `4 * BAR_TEXT_GAP`; do not express it as a
+  multiple (would obscure intent). The journal's `JOURNAL_BODY_INDENT = 60`
+  already bundles `48 + 12` as one named unit; leave it (splitting into
+  `48 + BAR_TEXT_GAP` alters an existing const — defer).
+- **Safe-scope:** yes — literal→const, zero behavior change. Low rank (2 sites),
+  fold in opportunistically.
+
+## #59 — remove journal apply_font vestigial empty-guard — PROPOSED
+
+- **Status:** PROPOSED, trivial cleanup. NEW dead code as of this session's
+  font-family fix.
+- **Signal:** `journal_overlay.rs` `apply_font` (~697) has
+  `let family = ...; if family.is_empty() { return; }`. That guard existed because
+  the journal used to init `font_family = String::new()` (empty) — which was the
+  root cause of the "journal renders smaller" bug (empty family → early return →
+  no font tag → fell back to the `.gloss-text` CSS at config size). The fix seeded
+  `font_family = GLOSS_DEFAULT_FONT_FAMILY` ("Charter", non-empty) at construction,
+  so the guard is now PERMANENTLY DEAD. Removing it makes the journal
+  `apply_font` core byte-identical to gloss's (`format!` + `apply_font_to_views`).
+- **Identical part (remove):** the 3-line empty-guard. After removal, the journal
+  `let family = self.font_family.borrow().clone();` can inline back into the
+  `format!` like gloss.
+- **EXCLUDED:** the `apply_font` BODY otherwise stays per-overlay — the view list
+  (gloss 3 views vs journal 2), the tag name (gloss-font vs journal-font), and
+  gloss's tail (`apply_synopsis_label_bold` + `apply_hi_color`) are irreducibly
+  per-overlay. NO shared free-fn for the whole body (a `format!`-only helper adds
+  indirection for one line).
+- **Safe-scope:** yes — removing provably-dead code, behavior-preserving.
+  Do it while touching the file.
+
+## #60 — OVERLAY_BOTTOM_PAD alignment (journal 28 vs gloss 80) — PROPOSED (conditional)
+
+- **Status:** PROPOSED but CONDITIONAL — needs on-screen verification, NOT a blind
+  literal→const.
+- **Signal:** journal view `set_bottom_margin(28)` (journal_overlay.rs:187) vs
+  gloss view `set_bottom_margin(80)` (gloss_overlay.rs:290) — a 52px divergence.
+  BOTH also add an external `scroll_overlay.set_margin_bottom(20)`. The gloss 80 is
+  an ADDITIONAL internal pad; the comment doesn't decisively justify why gloss needs
+  52px more than journal internally.
+- **Possible cut:** `const OVERLAY_BOTTOM_PAD = 28` applied to both — BUT only
+  behavior-preserving if the extra 52px in gloss is truly redundant with the
+  external 20px + the BottomClipGuard. That is NOT provable from source alone.
+- **EXCLUDED unless verified:** do NOT change gloss's 80 without an on-screen check
+  that the last gloss line still clears the footer at end-of-scroll (the 80 may be
+  load-bearing for the gloss's denser content + clip guard). If it clips, keep 80.
+- **Safe-scope:** conditional — it's literal→const in shape, but the VALUE change
+  (80→28 for gloss) is a behavior change that must be visually accepted. Treat as a
+  "verify then maybe unify," not a mechanical cut.
+
+## #53 UPDATE (2026-07-01, 2nd) — set_rc_color family now 5 confirmed sites
+
+Re-confirmed the byte-identical `parse_hex_color(hex) → *cell.borrow_mut() = rgb →
+drawing.queue_draw()` triple at 5 sites: gloss set_marker_color (core) + set_panel_color;
+journal set_marker_color (core) + set_panel_color + set_bar_color. The shared helper
+`fn set_rc_color(hex, cell: &Rc<RefCell<(f64,f64,f64)>>, drawing: &DrawingArea)` (home:
+gloss_util.rs, beside parse_hex_color) collapses all 5. NOTE: gloss set_marker_color has
+an EXTRA line BEFORE the triple — `*self.dim_fg.borrow_mut() = hex.to_string()` (stashes
+the dim_fg for the speaker/verse header color) — that line stays OUTSIDE the helper.
+set_highlight_color is EXCLUDED (stores a String + calls apply_hi_color, different shape).
+
+## #55 UPDATE (2026-07-01) — header triple still 4+1 sites; verse drops pixels_below
+
+Header style triple (weight 700 / scale 0.9 / pixels_below_lines 10) confirmed at 4
+gloss_render.rs sites (gloss-speaker, gloss-speaker-first, gloss-speaker-source, +
+journal-qa-header). The gloss-verse tag INTENTIONALLY drops pixels_below_lines (each
+verse line is its own paragraph; a per-line gap read as double-spacing — fixed this
+session). So the fully-shared pair is weight(700)+scale(0.9); pixels_below(10) is 4 of 5.
+A `fn dim_header_tag_base(name, left_margin) -> TextTagBuilder` chaining weight+scale
+would serve all 5, each caller adding its own pixels_below/pixels_above/variant. The
+color-application split STANDS and is load-bearing (gloss `.foreground(hex)` from a
+String; journal `.foreground_rgba(RGBA)` from an (f64,f64,f64) tuple) — EXCLUDED until
+color storage is normalized.
+
+## EXCLUDED (documented, do NOT propose as cuts)
+- **Top margins** (journal 28 always; gloss 8/24/32 per show-mode) — legitimately
+  per-surface (gloss's one view serves synopsis/echo/gloss-result, each a distinct
+  layout). Not a drift, real intent.
+- **The dim-header + full-body pattern** — SAME visual intent, STRUCTURALLY divergent
+  mechanism: gloss bakes the dim into tags at render time (populate_verse_buffer with
+  dim_fg/speaker_accent); journal applies a post-render tag on the `Q:` line
+  (apply_qa_header after set_text). Different color type (hex vs RGBA), different
+  boundary concept (element-typed vs line-prefix). Not extractable without two code
+  paths inside a helper. Keep parallel, documented, unmerged.
+- **Font family/size init** — already shared (GLOSS_DEFAULT_FONT_FAMILY /
+  GLOSS_DEFAULT_FONT_SIZE consts, journal consumes by path). Done, no cut.
