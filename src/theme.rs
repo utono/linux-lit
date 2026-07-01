@@ -19,6 +19,7 @@ pub struct Theme {
     pub vocab_fg: String,         // vocabulary word highlight foreground
     pub reader_gloss: String,        // off-cursor glossed-line tint (guarded)
     pub reader_gloss_cursor: String, // glossed line that is ALSO the cursor block
+    pub overlay_panel_bg: String, // inset prose-overlay panel tint (barely-there)
 }
 
 fn themes_path() -> PathBuf {
@@ -185,7 +186,7 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
         vocab_orig
     };
 
-    Theme {
+    let mut theme = Theme {
         name: name.to_string(),
         display_name,
         is_light,
@@ -200,11 +201,14 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
         vocab_fg,
         reader_gloss,
         reader_gloss_cursor,
-    }
+        overlay_panel_bg: String::new(),
+    };
+    theme.overlay_panel_bg = overlay_panel_bg(&theme);
+    theme
 }
 
 fn default_theme() -> Theme {
-    Theme {
+    let mut theme = Theme {
         name: "default".to_string(),
         display_name: "Default".to_string(),
         is_light: false,
@@ -219,7 +223,10 @@ fn default_theme() -> Theme {
         vocab_fg: "#d8a657".to_string(),
         reader_gloss: ensure_gloss_color("#d4be98", "#282828", &["#d4be98"]),
         reader_gloss_cursor: ensure_gloss_color(&complement_hex("#d4be98"), "#282828", &["#d4be98"]),
-    }
+        overlay_panel_bg: String::new(),
+    };
+    theme.overlay_panel_bg = overlay_panel_bg(&theme);
+    theme
 }
 
 fn str_field(val: &Value, key: &str) -> Option<String> {
@@ -493,6 +500,20 @@ fn gloss_background(theme: &Theme) -> String {
         "#faf4ed".to_string()
     } else {
         theme.text_bg.clone()
+    }
+}
+
+/// The inset-panel tint for the prose overlays: a barely-there (~3–5%) luminance
+/// shift from the card's `gloss_bg` cream. Light themes darken; dark themes
+/// lighten (darkening a dark bg would vanish). Never boxy on any theme.
+fn overlay_panel_bg(theme: &Theme) -> String {
+    let gloss_bg = gloss_background(theme);
+    if theme.is_light {
+        // ~3.5% darker.
+        darken_color(&gloss_bg, 0.965)
+    } else {
+        // ~5% toward white.
+        blend_colors("#ffffff", &gloss_bg, 0.05)
     }
 }
 
@@ -794,6 +815,37 @@ mod tests {
             let distinct = hue_distance(&t.reader_gloss, &t.reader_gloss_cursor) >= 40.0
                 || contrast_ratio(&t.reader_gloss, &t.reader_gloss_cursor) >= 1.4;
             assert!(distinct, "{}: off {} and on {} not distinct", t.name, t.reader_gloss, t.reader_gloss_cursor);
+        }
+    }
+
+    #[test]
+    fn overlay_panel_bg_is_a_small_bounded_delta_from_gloss_bg() {
+        // A light sample theme (cream gloss bg) and a dark sample theme.
+        let light = Theme {
+            is_light: true,
+            text_bg: "#fbf1c7".to_string(),
+            ..default_theme()
+        };
+        let dark = Theme {
+            is_light: false,
+            text_bg: "#282828".to_string(),
+            ..default_theme()
+        };
+
+        for theme in [&light, &dark] {
+            let gloss_bg = gloss_background(theme);
+            let panel = overlay_panel_bg(theme);
+            // Barely-there: distinct from the card bg...
+            assert_ne!(panel, gloss_bg, "panel tint must differ from gloss_bg");
+            // ...but close — contrast ratio between panel and gloss_bg is tiny
+            // (both are near-identical luminance; ratio ~1.0, well under 1.15).
+            let ratio = contrast_ratio(&panel, &gloss_bg);
+            assert!(
+                ratio > 1.0 && ratio < 1.15,
+                "panel tint delta out of the barely-there band: ratio={ratio} \
+                 (panel={panel}, gloss_bg={gloss_bg}, is_light={})",
+                theme.is_light
+            );
         }
     }
 }
