@@ -192,9 +192,11 @@ pub(crate) fn populate_verse_buffer(
         .style(pango::Style::Italic)
         .build();
 
-    // Prose gloss recedes behind the verse it explains: dimmer color, slightly
-    // smaller, looser line spacing for the dense commentary. The verse stays the
-    // full-ink "hero".
+    // Prose gloss: dimmer color + looser line spacing for the dense commentary.
+    // NOTE: since the header restyle the speaker + verse are bold/scale-0.9/dim
+    // (matching the journal Q: header), so the verse is no longer a full-ink
+    // "hero" — the para scale (0.92) now reads slightly LARGER than the verse
+    // (0.9). If the verse should stay >= the prose, lower this to <= 0.9.
     let para_builder = gtk4::TextTag::builder()
         .name("gloss-para")
         .left_margin(quote_speaker)

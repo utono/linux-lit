@@ -2565,17 +2565,20 @@ fn line_is_speaker(buffer: &gtk4::TextBuffer, line: i32) -> bool {
 const PROSE_PAD: i32 = 16;
 
 /// Conservative overhead for a Source (verse) block: the speaker heading's 36px
-/// `pixels_above_lines` + its ~0.75-scaled line, plus slack. OVER-estimate so a
-/// multi-line speech never clips its speaker label at a page top. Tied to
-/// gloss_render.rs `gloss-speaker` (pixels_above_lines 36, scale 0.75).
-const SPEAKER_BLOCK_OVERHEAD: i32 = 56;
+/// `pixels_above_lines` + its scale-0.9 label + 10px `pixels_below_lines`, plus
+/// slack. OVER-estimate so a multi-line speech never clips its speaker label at a
+/// page top. Tied to gloss_render.rs `gloss-speaker` (pixels_above_lines 36,
+/// scale 0.9, pixels_below_lines 10) — the header restyle raised the label from
+/// scale 0.75 (→ ~14pt) to 0.9 (→ ~17pt) and added the 10px gap, so this budget
+/// grew from 56 to 72 to keep the over-estimate conservative.
+const SPEAKER_BLOCK_OVERHEAD: i32 = 72;
 
 /// Conservative per-block height overhead. For Source (verse) blocks the speaker
-/// heading carries `pixels_above_lines(36)` + a `scale(0.75)` label that a plain
-/// `pango::Layout` never models, so we must over-estimate. For Explication (prose)
-/// blocks we add the paragraph pad that the rendered view inserts between blocks.
-/// NEVER under-estimate a Source block — too-tall just gives it its own page;
-/// too-small clips the speaker label.
+/// heading carries `pixels_above_lines(36)` + a `scale(0.9)` label + a 10px
+/// `pixels_below_lines` gap that a plain `pango::Layout` never models, so we must
+/// over-estimate. For Explication (prose) blocks we add the paragraph pad that the
+/// rendered view inserts between blocks. NEVER under-estimate a Source block —
+/// too-tall just gives it its own page; too-small clips the speaker label.
 fn block_height_overhead(is_source: bool, text_h: i32) -> i32 {
     if is_source {
         // verse lines carry per-line gaps too -> 1.15 slack on the text height.
