@@ -252,11 +252,11 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
 fn media_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
         (KeyCombo::plain("s"), Action::TogglePlaybackSync),
-        // Tab and Space both play from the cursor line's start timestamp
+        // `a` and Space both play from the cursor line's start timestamp
         // (PlayCurrentLine; Space is intercepted before dispatch in keymap.rs).
-        // `a` is a PURE pause/resume toggle — no seek (TogglePause).
-        (KeyCombo::plain("Tab"), Action::PlayCurrentLine),
-        (KeyCombo::plain("a"), Action::TogglePause),
+        // Tab is a PURE pause/resume toggle — no seek (TogglePause).
+        (KeyCombo::plain("a"), Action::PlayCurrentLine),
+        (KeyCombo::plain("Tab"), Action::TogglePause),
         (KeyCombo::plain("o"), Action::SeekShortBackward),
         (KeyCombo::plain("e"), Action::SeekShortForward),
         (KeyCombo::plain("O"), Action::SeekLongBackward),
@@ -460,7 +460,7 @@ mod tests {
     #[test]
     fn keymap_lookup_distinguishes_modifiers() {
         let km = Keymap::default();
-        // "a" plain is ToggleAuthorship; Ctrl+a vs Ctrl+Shift+a differ.
+        // "a" plain is PlayCurrentLine; Ctrl+a vs Ctrl+Shift+a differ.
         let a_ctrl = km.lookup("a", true, false, false);
         let a_ctrl_shift = km.lookup("A", true, true, false);
         assert_ne!(a_ctrl, a_ctrl_shift);

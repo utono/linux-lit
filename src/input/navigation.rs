@@ -114,7 +114,9 @@ pub(crate) enum PageChangeReason {
     Vocab,
     /// User pressed comma/q/j/k for dialogue navigation.
     Dialogue,
-    /// User pressed k/K for cursor-only movement (no audio seek).
+    /// Cursor-only movement with no audio seek. Currently unused: j/k now seek
+    /// like comma/q (Dialogue). Kept for a future no-seek cursor verb.
+    #[allow(dead_code)]
     Cursor,
     /// MPV CursorSync drove the cursor to a new line; do NOT re-seek MPV.
     MpvSync,
@@ -1066,7 +1068,7 @@ pub fn jump_to_next_dialogue(state: &mut AppState) {
     }
 }
 
-/// Move cursor to previous dialogue line without seeking media (`k` key).
+/// Move cursor to previous dialogue line and seek media to it (`k` key).
 pub fn cursor_prev_line(state: &mut AppState) {
     if state.current_line == 0 {
         return;
@@ -1092,17 +1094,19 @@ pub fn cursor_prev_line(state: &mut AppState) {
     state.pending_advance_ignore_bl = None;
     state.prev_highlight_line.set(None);
     // Translation view: highlight follows the cursor, scroll only to keep it
-    // within a vim-style scrolloff margin (not a page turn).
+    // within a vim-style scrolloff margin (not a page turn). Seek MPV to the new
+    // line's start time so audio follows the cursor here too.
     if state.translations_visible {
         update_highlight_only(state);
         super::scroll::scroll_cursor_into_view_scrolloff(state);
+        seek_to_current_line(state);
         return;
     }
     scroll_after_jump_backward(state);
-    after_page_change(state, PageChangeReason::Cursor);
+    after_page_change(state, PageChangeReason::Dialogue);
 }
 
-/// Move cursor to next dialogue line without seeking media (`j` key).
+/// Move cursor to next dialogue line and seek media to it (`j` key).
 pub fn cursor_next_dialogue(state: &mut AppState) {
     let line_count = state.buffer.line_count() as usize;
     if line_count == 0 {
@@ -1126,14 +1130,16 @@ pub fn cursor_next_dialogue(state: &mut AppState) {
         state.pending_advance = None;
         state.pending_advance_ignore_bl = None;
         // Translation view: highlight follows the cursor, scroll only to keep
-        // it within a vim-style scrolloff margin (not a page turn).
+        // it within a vim-style scrolloff margin (not a page turn). Seek MPV to
+        // the new line's start time so audio follows the cursor here too.
         if state.translations_visible {
             update_highlight_only(state);
             super::scroll::scroll_cursor_into_view_scrolloff(state);
+            seek_to_current_line(state);
             return;
         }
         scroll_after_jump_forward(state, prev_line);
-        after_page_change(state, PageChangeReason::Cursor);
+        after_page_change(state, PageChangeReason::Dialogue);
     }
 }
 
