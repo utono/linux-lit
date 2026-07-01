@@ -188,7 +188,9 @@ pub struct GlossOverlay {
 
 /// Default font for the synopsis/gloss/echoes overlay cards.
 const GLOSS_DEFAULT_FONT_FAMILY: &str = "Charter";
-const GLOSS_DEFAULT_FONT_SIZE: i32 = 19;
+/// Default overlay reading-font size (pt). Shared so the journal overlay matches
+/// the gloss/synopsis overlay instead of drifting on its own hardcoded value.
+pub(crate) const GLOSS_DEFAULT_FONT_SIZE: i32 = 19;
 
 /// Card-matching layout for a PROSE synopsis: render it in the main reading
 /// card's font and left padding instead of the play overlay's Charter-19 +
