@@ -181,7 +181,12 @@ impl JournalOverlay {
         scrolled.set_child(Some(&view));
 
         let scroll_overlay = Overlay::new();
-        scroll_overlay.set_child(Some(&scrolled));
+        // The Overlay's MAIN CHILD is set to `panel_drawing` below (so the inset
+        // tint paints BELOW the transparent prose view); the scroll becomes a
+        // measured overlay on top. `panel_drawing` isn't built until after the
+        // clip guard, so the main child is assigned in the panel-wiring block
+        // (search "set_child(Some(&panel_drawing))"), not here. The clip guard
+        // only ADDS an overlay, so it does not need the main child set first.
         let clip_guard = crate::ui::bottom_clip_guard::BottomClipGuard::attach(
             &scroll_overlay,
             &view,
@@ -278,9 +283,16 @@ impl JournalOverlay {
                 panel_for_scroll.queue_draw();
             });
         }
-        scroll_overlay.add_overlay(&panel_drawing);
-        scroll_overlay.set_measure_overlay(&panel_drawing, false);
-        scroll_overlay.set_clip_overlay(&panel_drawing, true);
+        // Panel is the Overlay's MAIN CHILD so its inset tint paints BELOW the
+        // (transparent) prose view; the scroll becomes a measured overlay on top.
+        // A GTK Overlay paints its main child first, then overlays in add-order —
+        // so a panel added as an *overlay* would paint ON TOP of the text (an
+        // opaque tint rect hiding the prose). The scroll MUST be measured
+        // (`set_measure_overlay(.., true)`) — a bare DrawingArea main child
+        // reports 0×0 natural size and would collapse the Overlay.
+        scroll_overlay.set_child(Some(&panel_drawing));
+        scroll_overlay.add_overlay(&scrolled);
+        scroll_overlay.set_measure_overlay(&scrolled, true);
         scroll_overlay.add_overlay(&bar_drawing);
         scroll_overlay.set_measure_overlay(&bar_drawing, false);
         scroll_overlay.set_clip_overlay(&bar_drawing, true);

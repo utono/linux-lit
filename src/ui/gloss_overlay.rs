@@ -417,10 +417,17 @@ impl GlossOverlay {
             });
         }
 
-        gloss_scroll_overlay.set_child(Some(&gloss_scrolled));
-        gloss_scroll_overlay.add_overlay(&panel_drawing);
-        gloss_scroll_overlay.set_measure_overlay(&panel_drawing, false);
-        gloss_scroll_overlay.set_clip_overlay(&panel_drawing, true);
+        // Panel is the Overlay's MAIN CHILD so it paints BELOW everything: the
+        // inset tint sits behind the (transparent) prose view, which sits below
+        // the accent bar. A GTK Overlay paints its main child first, then each
+        // overlay in add-order — so a panel added as an *overlay* would paint
+        // ON TOP of the text (an opaque tint rect hiding the prose). The scroll
+        // (with the transparent view) becomes an overlay ON TOP of the panel and
+        // MUST be measured (`set_measure_overlay(.., true)`) — a bare DrawingArea
+        // main child reports 0×0 natural size and would collapse the Overlay.
+        gloss_scroll_overlay.set_child(Some(&panel_drawing));
+        gloss_scroll_overlay.add_overlay(&gloss_scrolled);
+        gloss_scroll_overlay.set_measure_overlay(&gloss_scrolled, true);
         gloss_scroll_overlay.add_overlay(&bar_drawing);
         gloss_scroll_overlay.set_measure_overlay(&bar_drawing, false);
         gloss_scroll_overlay.set_clip_overlay(&bar_drawing, true);
