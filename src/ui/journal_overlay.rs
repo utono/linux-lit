@@ -17,7 +17,6 @@ pub struct JournalOverlay {
     footer_left: Label,
     position_label: Label,
     hint: Label,
-    page_marker: Label,
     bar_drawing: gtk4::DrawingArea,
     bar_ranges: Rc<RefCell<Vec<(i32, i32)>>>,
     /// When the vim editor's NORMAL/VISUAL cursor sits on a BLANK line, that
@@ -86,6 +85,11 @@ pub struct JournalOverlay {
     /// Char ranges of `<hi>` highlights in the CURRENT page body, re-applied on
     /// the `journal-hi` tag after each `set_text`. Empty when none.
     hi_ranges: RefCell<Vec<(usize, usize)>>,
+    /// Page-marker glyph (`⌄`/`•`/None) drawn on `bar_drawing` — no Label, so no
+    /// overlay-child allocation lag. Set by `update_page_marker`, read by the draw
+    /// func. Its dim color is `marker_color`.
+    marker_glyph: Rc<RefCell<Option<&'static str>>>,
+    marker_color: Rc<RefCell<(f64, f64, f64)>>,
 }
 
 /// Split the full Q&A text into paragraph blocks (the pagination unit): maximal
@@ -186,13 +190,29 @@ impl JournalOverlay {
         // buffer-line spans. Fixed color — NOT theme-wired.
         let bar_ranges: Rc<RefCell<Vec<(i32, i32)>>> = Rc::new(RefCell::new(Vec::new()));
         let vim_block_line: crate::ui::VimBlankCursor = Rc::new(RefCell::new(None));
+        // Page-marker glyph (⌄ more / • last page) drawn on the bar (no Label —
+        // see draw_page_marker_glyph) + its dim color, threaded by set_marker_color.
+        let marker_glyph: Rc<RefCell<Option<&'static str>>> = Rc::new(RefCell::new(None));
+        let marker_color: Rc<RefCell<(f64, f64, f64)>> = Rc::new(RefCell::new((0.5, 0.5, 0.5)));
         let bar_drawing = gtk4::DrawingArea::new();
         bar_drawing.set_can_target(false);
         {
             let ranges_clone = bar_ranges.clone();
             let view_clone = view.clone();
             let vim_block_clone = vim_block_line.clone();
-            bar_drawing.set_draw_func(move |_area, cr, _w, _h| {
+            let marker_glyph_clone = marker_glyph.clone();
+            let marker_color_clone = marker_color.clone();
+            bar_drawing.set_draw_func(move |_area, cr, area_w, _h| {
+                // Page marker first (independent of the selection bar's early-return).
+                crate::ui::draw_page_marker_glyph(
+                    cr,
+                    &view_clone,
+                    area_w,
+                    *marker_glyph_clone.borrow(),
+                    *marker_color_clone.borrow(),
+                    0.55,
+                    8,
+                );
                 // Vim block cursor on a BLANK line: the line has no glyph to fill,
                 // so draw a thin left-edge block at the line's window-y. Drawn
                 // BEFORE the selection-bar early-return so it shows while editing
@@ -238,42 +258,12 @@ impl JournalOverlay {
         scroll_overlay.set_measure_overlay(&bar_drawing, false);
         scroll_overlay.set_clip_overlay(&bar_drawing, true);
 
-        // Floating page marker: a dim centered glyph that sits just BELOW the
-        // page's last block — `⌄` when another page follows, `•` on the last page.
-        // Floats over the scroll viewport (NOT in the text flow) so it shows even
-        // when the page is full and has no trailing whitespace. `valign=Start` +
-        // a recomputed `margin_top` (see `position_page_marker_below_text`) glues
-        // it under the last line; the recompute runs on every render so j/k can't
-        // strand it. Hidden on single-page content.
-        let page_marker = Label::new(None);
-        page_marker.set_halign(gtk4::Align::Center);
-        page_marker.set_valign(gtk4::Align::Start);
-        page_marker.add_css_class("page-marker");
-        page_marker.set_visible(false);
-        // Reposition under the last line whenever GTK assigns/changes the scroll
-        // range — the settle signal (same one the bar/test-rect use) that fires
-        // AFTER the first layout pass. The per-render idle in update_page_marker
-        // can run before geometry settles (bottom==0, bails); this guarantees the
-        // first open lands the marker once line_yrange is real. Only acts while
-        // the marker is visible (multi-page content).
-        {
-            let view_for_marker = view.clone();
-            let scrolled_for_marker = scrolled.clone();
-            let marker_for_settle = page_marker.clone();
-            scrolled.vadjustment().connect_changed(move |_| {
-                if marker_for_settle.is_visible() {
-                    crate::ui::position_page_marker_below_text(
-                        &view_for_marker,
-                        &scrolled_for_marker,
-                        &marker_for_settle,
-                        8,
-                    );
-                }
-            });
-        }
-        scroll_overlay.add_overlay(&page_marker);
-        scroll_overlay.set_measure_overlay(&page_marker, false);
-        scroll_overlay.set_clip_overlay(&page_marker, true);
+        // The page marker (⌄ more / • last page) is drawn ON `bar_drawing` via
+        // `draw_page_marker_glyph` (see above) — NOT a Label. An Overlay child's
+        // allocation lagged `set_margin_top` by several frames, so a Label glyph
+        // painted off a short last page until an unrelated relayout. The bar's
+        // draw func reads live `buffer_to_window_coords` and repaints on every
+        // render/scroll, so the glyph is always at the right y.
 
         // Breathing gap above the footer and below the title, mirroring the gloss
         // overlay (gloss_overlay.rs). Without the bottom margin the viewport's
@@ -339,7 +329,6 @@ impl JournalOverlay {
             footer_left,
             position_label,
             hint,
-            page_marker,
             bar_drawing,
             bar_ranges,
             vim_block_line,
@@ -365,6 +354,8 @@ impl JournalOverlay {
             vim_cursor_colors: RefCell::new((String::new(), String::new())),
             highlight_bg: RefCell::new(crate::ui::DEFAULT_HIGHLIGHT_BG.to_string()),
             hi_ranges: RefCell::new(Vec::new()),
+            marker_glyph,
+            marker_color,
         }
     }
 
@@ -555,7 +546,7 @@ impl JournalOverlay {
         self.page_idx.set(0);
         self.cursor_full.set(0);
         self.clear_bar();
-        self.page_marker.set_visible(false);
+        *self.marker_glyph.borrow_mut() = None;
     }
 
     pub fn hide(&self) {
@@ -663,6 +654,14 @@ impl JournalOverlay {
         self.apply_hi_color();
     }
 
+    /// Set the page-marker glyph's dim color (theme `dim_fg`) and repaint the bar.
+    pub fn set_marker_color(&self, hex: &str) {
+        if let Some(rgb) = crate::ui::gloss_util::parse_hex_color(hex) {
+            *self.marker_color.borrow_mut() = rgb;
+            self.bar_drawing.queue_draw();
+        }
+    }
+
     /// Re-apply the `journal-hi` highlight tag over the stored `hi_ranges` with
     /// the theme background. No-op when there are no ranges.
     fn apply_hi_color(&self) {
@@ -693,23 +692,17 @@ impl JournalOverlay {
     /// text flow), so it shows even when the page is full. Glyph chosen by the
     /// shared `pagination::page_marker`. Mirrors `GlossOverlay::update_page_marker`.
     ///
-    /// The glyph + visibility are set synchronously; its vertical position is
-    /// recomputed on an idle tick (line geometry is stale until GTK lays out the
-    /// just-set buffer — the same deferral the accent bar uses).
+    /// The glyph is stored for the bar's draw func and the bar is repainted; the
+    /// draw func reads live line geometry each paint, so there is no allocation
+    /// race and the marker lands correctly the moment the page reflows.
     fn update_page_marker(&self, page_idx: usize, n_pages: usize) {
-        match crate::ui::pagination::page_marker(page_idx, n_pages) {
-            Some(glyph) => {
-                self.page_marker.set_text(glyph);
-                self.page_marker.set_visible(true);
-                let view = self.view.clone();
-                let scrolled = self.scrolled.clone();
-                let marker = self.page_marker.clone();
-                glib::idle_add_local_once(move || {
-                    crate::ui::position_page_marker_below_text(&view, &scrolled, &marker, 8);
-                });
-            }
-            None => self.page_marker.set_visible(false),
-        }
+        *self.marker_glyph.borrow_mut() = crate::ui::pagination::page_marker(page_idx, n_pages);
+        self.bar_drawing.queue_draw();
+        // The draw reads live line geometry; a page turn's reflow may not have run
+        // yet, so also repaint on the next idle (after layout) so the glyph lands
+        // at the new page's last line even when the scroll range didn't change.
+        let bar = self.bar_drawing.clone();
+        glib::idle_add_local_once(move || bar.queue_draw());
     }
 
     pub fn ask_is_open(&self) -> bool {
@@ -796,7 +789,7 @@ impl JournalOverlay {
         self.view.set_focusable(true);
         let _ = self.view.grab_focus();
         // Hide the floating page marker + accent bar while editing.
-        self.page_marker.set_visible(false);
+        *self.marker_glyph.borrow_mut() = None;
         self.clear_bar();
         self.mirror_engine();
         // Scroll to top so the start of the Q&A is visible.

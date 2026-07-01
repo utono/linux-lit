@@ -274,6 +274,9 @@ pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &cra
     // change must repaint both overlays' highlight color (responsive to dwl theme).
     state.gloss_overlay.set_highlight_color(selection_bg);
     state.journal_overlay.set_highlight_color(selection_bg);
+    // Page-marker glyph color follows theme dim foreground.
+    state.gloss_overlay.set_marker_color(&theme.dim_fg);
+    state.journal_overlay.set_marker_color(&theme.dim_fg);
 
     // Update vocab tag foreground
     state.vocab_tag.set_property("foreground", &theme.vocab_fg);

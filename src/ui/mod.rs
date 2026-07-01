@@ -128,46 +128,61 @@ pub(crate) fn draw_bar_spans(
     }
 }
 
-/// Position a floating page-marker `Label` (the `⌄`/`•` glyph) just below the
-/// LAST line of `view`'s rendered text, instead of pinned to the viewport
-/// bottom. The marker is an overlay child of the scroll-overlay with
-/// `valign=Start`, so its top is `margin_top` px from the content top; we set
-/// `margin_top` to the last line's bottom (in widget coords) plus `gap`.
-///
-/// The y must be measured AFTER GTK lays out the buffer (line geometry is
-/// 0/stale before the first layout pass), so call this from an idle tick — the
-/// same deferral the accent bar uses. Returns silently doing nothing if the
-/// buffer is empty or geometry hasn't settled (y <= 0), leaving the previous
-/// margin until the next tick recomputes it.
-///
-/// Because the journal/gloss overlays always render a page that FITS (no
-/// scroll), the widget-space y is stable across j/k once settled — re-running
-/// this on every page render keeps the marker glued under the last block rather
-/// than drifting. The placement is bounded by the SCROLLED window's allocated
-/// height (the live viewport, whichever render path produced it) so a near-full
-/// page can't shove the marker under the footer: the top is clamped to
-/// `viewport_h - reserve`.
-pub(crate) fn position_page_marker_below_text(
-    view: &gtk4::TextView,
-    scrolled: &gtk4::ScrolledWindow,
-    marker: &gtk4::Label,
-    gap: i32,
-) {
+/// The last text line's bottom in WIDGET coords (scroll-aware; the y the page
+/// marker glyph sits under). `end_iter`'s line is the last line.
+pub(crate) fn measure_last_line_bottom(view: &gtk4::TextView) -> i32 {
     use gtk4::prelude::*;
     let buffer = view.buffer();
-    // Last line bottom in BUFFER coords, then to WIDGET coords (scroll-aware,
-    // matches the accent bar's path). end_iter's line is the last line.
     let last = buffer.end_iter();
     let (y, h) = view.line_yrange(&last);
     let (_, bottom) = view.buffer_to_window_coords(gtk4::TextWindowType::Widget, 0, y + h);
+    bottom
+}
+
+/// Draw the floating page-marker glyph (`⌄` more / `•` last page) DIRECTLY on the
+/// accent-bar `DrawingArea`'s Cairo context, just below the last rendered line.
+///
+/// This replaces the old margin-positioned `Label`: an `Overlay` child's
+/// allocation lags a `set_margin_top` change by several frames (the child y stuck
+/// at the previous page's bottom), so the glyph painted off a short last page
+/// until an unrelated relayout. Drawing in the bar's `draw_func` — which already
+/// repaints on every render/scroll and reads live `buffer_to_window_coords` — has
+/// no allocation step, so the marker is always at the right y. Called from BOTH
+/// overlays' `bar_drawing` draw funcs.
+///
+/// `area_w` is the DrawingArea's width (for horizontal centering). `rgb`+`alpha`
+/// are the theme dim color (matching the old `.page-marker` CSS). No-op when
+/// `glyph` is `None` (single-page content) or geometry hasn't settled.
+pub(crate) fn draw_page_marker_glyph(
+    cr: &gtk4::cairo::Context,
+    view: &gtk4::TextView,
+    area_w: i32,
+    glyph: Option<&str>,
+    rgb: (f64, f64, f64),
+    alpha: f64,
+    gap: i32,
+) {
+    use gtk4::prelude::*;
+    let Some(glyph) = glyph else { return };
+    let bottom = measure_last_line_bottom(view);
     if bottom <= 0 {
-        return; // geometry not settled yet — leave the prior margin for now.
+        return; // geometry not settled — the next repaint will catch it.
     }
-    // Reserve room for the marker's own height so it never pokes the footer.
-    let reserve = marker.preferred_size().1.height().max(20);
-    let viewport_h = scrolled.height();
-    let top = (bottom + gap).min((viewport_h - reserve).max(0));
-    marker.set_margin_top(top);
+    // Render via Pango (NOT `cr.show_text`): Cairo's toy text API does no font
+    // fallback, so `⌄` (U+2304)/`•` rendered as tofu on fonts lacking the glyph.
+    // A Pango layout on the view's context falls back like the old Label did.
+    let layout = view.create_pango_layout(Some(glyph));
+    if let Some(mut desc) = view.pango_context().font_description() {
+        desc.set_size(20 * gtk4::pango::SCALE); // ~20px, matching the old CSS
+        layout.set_font_description(Some(&desc));
+    }
+    let (w_px, h_px) = layout.pixel_size();
+    let x = ((area_w - w_px) / 2).max(0) as f64;
+    let y = bottom as f64 + gap as f64;
+    cr.set_source_rgba(rgb.0, rgb.1, rgb.2, alpha);
+    let _ = cr.move_to(x, y);
+    pangocairo::functions::show_layout(cr, &layout);
+    let _ = h_px; // (height available if vertical centering is ever needed)
 }
 
 /// Paint a vim-style BLOCK cursor: a one-character background fill (`fill`) with

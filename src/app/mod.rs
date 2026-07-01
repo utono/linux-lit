@@ -1206,6 +1206,9 @@ pub fn build_window(
     let highlight_bg = crate::theme::selection_bg(&theme);
     gloss_overlay.set_highlight_color(highlight_bg);
     journal_overlay.set_highlight_color(highlight_bg);
+    // Page-marker glyph color = theme dim foreground (matches the old CSS).
+    gloss_overlay.set_marker_color(&theme.dim_fg);
+    journal_overlay.set_marker_color(&theme.dim_fg);
 
     // Journal picker overlays the journal overlay (above journal, below translation)
     let journal_picker = JournalQaPicker::new();

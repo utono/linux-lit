@@ -54,7 +54,6 @@ pub struct GlossOverlay {
     footer_box: gtk4::Box,
     citation_label: Label,
     position_label: Label,
-    page_marker: Label,
     gloss_scroll_overlay: Overlay,
     gloss_scrolled: gtk4::ScrolledWindow,
     gloss_view: gtk4::TextView,
@@ -66,6 +65,10 @@ pub struct GlossOverlay {
     clip_guard: crate::ui::bottom_clip_guard::BottomClipGuard,
     bar_ranges: Rc<RefCell<Vec<BarRange>>>,
     bar_color: Rc<RefCell<(f64, f64, f64)>>,
+    /// Page-marker glyph (`⌄`/`•`/None) + dim color, drawn on `bar_drawing` (no
+    /// Label — no overlay-child allocation lag). See `draw_page_marker_glyph`.
+    marker_glyph: Rc<RefCell<Option<&'static str>>>,
+    marker_color: Rc<RefCell<(f64, f64, f64)>>,
     /// When the vim editor's NORMAL/VISUAL cursor sits on a BLANK line, that
     /// line's `\n` has no glyph cell, so the char-background block tag paints
     /// nothing. We draw a thin left-edge block here instead. `Some((buffer_line,
@@ -281,6 +284,10 @@ impl GlossOverlay {
 
         let bar_ranges: Rc<RefCell<Vec<BarRange>>> = Rc::new(RefCell::new(Vec::new()));
         let bar_color: Rc<RefCell<(f64, f64, f64)>> = Rc::new(RefCell::new((0.53, 0.62, 0.71)));
+        // Page-marker glyph (⌄ more / • last page) drawn on the bar (no Label) +
+        // its dim color — see draw_page_marker_glyph.
+        let marker_glyph: Rc<RefCell<Option<&'static str>>> = Rc::new(RefCell::new(None));
+        let marker_color: Rc<RefCell<(f64, f64, f64)>> = Rc::new(RefCell::new((0.5, 0.5, 0.5)));
         let vim_block_line: crate::ui::VimBlankCursor = Rc::new(RefCell::new(None));
         let bar_x: Rc<RefCell<i32>> = Rc::new(RefCell::new((column_width as i32) / 8));
         let line_numbers: Rc<RefCell<Vec<LineNumber>>> = Rc::new(RefCell::new(Vec::new()));
@@ -293,12 +300,26 @@ impl GlossOverlay {
         let line_numbers_clone = line_numbers.clone();
         let view_clone = gloss_view.clone();
         let vim_block_clone = vim_block_line.clone();
+        let marker_glyph_clone = marker_glyph.clone();
+        let marker_color_clone = marker_color.clone();
         let block_left_margin = text_margins as i32;
         let right_margin_val = right_margin;
         bar_drawing.set_draw_func(move |_area, cr, w, _h| {
             let ranges = ranges_clone.borrow();
             let (r, g, b) = *color_clone.borrow();
             let x = *bar_x_clone.borrow() as f64;
+
+            // Page marker (⌄/•) drawn just below the last line — no Label, so no
+            // overlay-child allocation lag.
+            crate::ui::draw_page_marker_glyph(
+                cr,
+                &view_clone,
+                w,
+                *marker_glyph_clone.borrow(),
+                *marker_color_clone.borrow(),
+                0.55,
+                8,
+            );
 
             // Vim block cursor on a BLANK line: the line has no glyph to fill, so
             // draw a thin left-edge block at the line's window-y (same coord path
@@ -376,39 +397,10 @@ impl GlossOverlay {
         gloss_scroll_overlay.set_measure_overlay(&bar_drawing, false);
         gloss_scroll_overlay.set_clip_overlay(&bar_drawing, true);
 
-        // Floating page marker (⌄ more / • end) sitting just BELOW the page's
-        // last block — see JournalOverlay. Shows even on a full page (it floats
-        // over the viewport, not in the text flow). `valign=Start` + a recomputed
-        // `margin_top` (see `position_page_marker_below_text`) glues it under the
-        // last line; the recompute runs on every render so j/k can't strand it.
-        // Hidden on single-page content.
-        let page_marker = Label::new(None);
-        page_marker.set_halign(Align::Center);
-        page_marker.set_valign(Align::Start);
-        page_marker.add_css_class("page-marker");
-        page_marker.set_visible(false);
-        // Reposition under the last line whenever GTK assigns/changes the scroll
-        // range (the settle signal after the first layout pass) — see
-        // JournalOverlay. The per-render idle can run before geometry settles;
-        // this guarantees the first open lands the marker. Visible-only.
-        {
-            let view_for_marker = gloss_view.clone();
-            let scrolled_for_marker = gloss_scrolled.clone();
-            let marker_for_settle = page_marker.clone();
-            gloss_scrolled.vadjustment().connect_changed(move |_| {
-                if marker_for_settle.is_visible() {
-                    crate::ui::position_page_marker_below_text(
-                        &view_for_marker,
-                        &scrolled_for_marker,
-                        &marker_for_settle,
-                        8,
-                    );
-                }
-            });
-        }
-        gloss_scroll_overlay.add_overlay(&page_marker);
-        gloss_scroll_overlay.set_measure_overlay(&page_marker, false);
-        gloss_scroll_overlay.set_clip_overlay(&page_marker, true);
+        // The page marker (⌄ more / • last page) is drawn ON `bar_drawing` via
+        // `draw_page_marker_glyph` — NOT a Label (an Overlay child's allocation
+        // lagged `set_margin_top`, so the glyph painted off a short last page). The
+        // bar reads live geometry each paint and repaints on every render/scroll.
 
         // Attach the bottom-clip guard: builds the clip Box, adds it as a
         // non-measured, clipped overlay, and wires the persistent value_changed
@@ -520,7 +512,8 @@ impl GlossOverlay {
             footer_box,
             citation_label,
             position_label,
-            page_marker,
+            marker_glyph,
+            marker_color,
             gloss_scroll_overlay,
             gloss_scrolled,
             gloss_view,
@@ -603,6 +596,14 @@ impl GlossOverlay {
     pub fn set_highlight_color(&self, color: &str) {
         *self.highlight_bg.borrow_mut() = color.to_string();
         self.apply_hi_color();
+    }
+
+    /// Set the page-marker glyph's dim color (theme `dim_fg`) and repaint the bar.
+    pub fn set_marker_color(&self, hex: &str) {
+        if let Some(rgb) = parse_hex_color(hex) {
+            *self.marker_color.borrow_mut() = rgb;
+            self.bar_drawing.queue_draw();
+        }
     }
 
     /// Re-assert the `<hi>` highlight: paint the `gloss-hi` tag the stored theme
@@ -1081,7 +1082,7 @@ impl GlossOverlay {
         self.synopsis_label_ranges.borrow_mut().clear();        self.hi_ranges.borrow_mut().clear();
         self.blocks.borrow_mut().clear();
         self.paginated.set(false);
-        self.page_marker.set_visible(false);
+        *self.marker_glyph.borrow_mut() = None;
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         self.last_card_size.set((card_width, card_height));
@@ -1171,7 +1172,7 @@ impl GlossOverlay {
         self.synopsis_label_ranges.borrow_mut().clear();        self.hi_ranges.borrow_mut().clear();
         self.blocks.borrow_mut().clear();
         self.paginated.set(false);
-        self.page_marker.set_visible(false);
+        *self.marker_glyph.borrow_mut() = None;
         self.container.set_width_request(card_width);
         self.container.set_height_request(card_height);
         self.last_card_size.set((card_width, card_height));
@@ -1949,23 +1950,15 @@ impl GlossOverlay {
     /// chosen by the shared `pagination::page_marker`. Mirrors
     /// `JournalOverlay::update_page_marker`.
     ///
-    /// The glyph + visibility are set synchronously; its vertical position is
-    /// recomputed on an idle tick (line geometry is stale until GTK lays out the
-    /// just-set buffer — the same deferral the accent bar uses).
+    /// The glyph is stored for the bar's draw func and the bar repainted; the draw
+    /// func reads live line geometry each paint, so there is no allocation race.
     fn update_page_marker(&self, page_idx: usize, n_pages: usize) {
-        match crate::ui::pagination::page_marker(page_idx, n_pages) {
-            Some(glyph) => {
-                self.page_marker.set_text(glyph);
-                self.page_marker.set_visible(true);
-                let view = self.gloss_view.clone();
-                let scrolled = self.gloss_scrolled.clone();
-                let marker = self.page_marker.clone();
-                glib::idle_add_local_once(move || {
-                    crate::ui::position_page_marker_below_text(&view, &scrolled, &marker, 8);
-                });
-            }
-            None => self.page_marker.set_visible(false),
-        }
+        *self.marker_glyph.borrow_mut() = crate::ui::pagination::page_marker(page_idx, n_pages);
+        self.bar_drawing.queue_draw();
+        // Also repaint after the next layout pass (the page turn's reflow) so the
+        // glyph lands at the new last line even when the scroll range is unchanged.
+        let bar = self.bar_drawing.clone();
+        glib::idle_add_local_once(move || bar.queue_draw());
     }
 
     /// Enter synopsis visual mode: anchor at the current block. No-op if there
@@ -2336,7 +2329,7 @@ impl GlossOverlay {
         self.synopsis_label_ranges.borrow_mut().clear();        self.hi_ranges.borrow_mut().clear();
         self.blocks.borrow_mut().clear();
         self.paginated.set(false);
-        self.page_marker.set_visible(false);
+        *self.marker_glyph.borrow_mut() = None;
         // Size the card to the full reading area so the loading state reads as a
         // proper card (the same footprint the synopsis/gloss card will occupy)
         // rather than a label-sized box. Reuse the last card geometry; fall back
