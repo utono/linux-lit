@@ -1310,3 +1310,111 @@ safe-scope opportunities:
   impossible without a trait/inherent method (out of scope). `hide_pair(&a,&b)`
   for the 5 scrim+container hides saves ~1 line/site across 4 structs — marginal,
   skip.
+
+## #52 — overlay-panel-attach helper (gloss + journal) — PROPOSED
+
+- **Status:** PROPOSED, **highest value of this batch.** Directly serves the
+  "standardize journal + gloss overlays" goal — the panel wiring was added to both
+  files by hand this session and two of its pieces are already byte-identical.
+- **Signal:** the inset-panel setup (`feat/overlay-inset-panel-framing`) is
+  duplicated across `gloss_overlay.rs` and `journal_overlay.rs`. Byte-level
+  breakdown (Explore, 2026-07-01):
+  - **Piece 3 — the `panel_drawing.set_draw_func` closure** (gloss :389-403,
+    journal :281-295): **BYTE-IDENTICAL** except `gloss_view.clone()` vs
+    `view.clone()`. Same `draw_overlay_panel(cr, &view, w, h, *panel_color, 24.0,
+    12.0)` call incl. the pad/radius comments.
+  - **Piece 4 — the `panel_for_scroll.queue_draw()` add to the vadjustment
+    closure** (gloss :411-418, journal :296-304): **BYTE-IDENTICAL** except
+    `gloss_scrolled` vs `scrolled`.
+  - **Piece 2 — `panel_color` Rc creation + `panel_drawing = DrawingArea::new()` +
+    `set_can_target(false)`** (gloss :294-297, journal :216-222): the individual
+    lines are byte-identical; only the surrounding declaration ORDER differs.
+- **Identical part (extract):** a constructor helper, e.g.
+  `fn attach_overlay_panel(view: &TextView, scrolled: &ScrolledWindow, bar: &DrawingArea) -> (DrawingArea, Rc<RefCell<(f64,f64,f64)>>)`
+  that: creates `panel_color` (placeholder rgb) + `panel_drawing`
+  (`set_can_target(false)`), installs the draw_func (calls `draw_overlay_panel`
+  with the 24/12 constants), and adds `panel.queue_draw()` to the passed
+  `scrolled.vadjustment().connect_value_changed` (or returns a closure the caller
+  wires). Both overlays call it and store the returned `(panel_drawing,
+  panel_color)`. The 24.0/12.0 magic literals become named consts in one place
+  (`PANEL_PAD`/`PANEL_RADIUS`), currently duplicated as inline comments at both
+  call sites.
+- **EXCLUDED (named, why):** Piece 5 (the `set_child(panel)` + `add_overlay` +
+  bottom-clip-guard sequence) — the six wiring lines are byte-identical modulo
+  names, BUT the **clip-guard attach ORDER differs** (gloss attaches it AFTER the
+  panel/bar wiring; journal BEFORE, because `panel_drawing` is built after the
+  guard). That ordering is load-bearing (main-child assignment vs guard) and
+  structurally different, so the overlay-child wiring stays per-file. Also EXCLUDE
+  the struct field declarations (Piece 1) — same types, different positions; not
+  worth reordering.
+- **Safe-scope:** yes — pure widget-construction extraction, behavior-preserving,
+  verifiable by the existing overlay-clip e2e + an on-screen glance. Ranks highest:
+  2 byte-identical multi-line pieces × high drift risk (they were hand-copied and
+  already drifted once — the pad went 10→24 at both sites this session) ÷ small
+  helper.
+
+## #53 — overlay set_rc_color setter family — PROPOSED
+
+- **Status:** PROPOSED, medium value. Five near-identical setter methods across the
+  two overlays; the family grew again this session (`set_bar_color` added to
+  journal).
+- **Signal:** the `set_*_color(&self, hex: &str)` setters
+  (`set_marker_color`/`set_panel_color`/`set_bar_color`) share one body shape
+  (Explore, 2026-07-01):
+  ```
+  if let Some(rgb) = <parse>(hex) { *self.<field>.borrow_mut() = rgb; self.<drawing>.queue_draw(); }
+  ```
+  Five sites: gloss `set_marker_color` (:639) + `set_panel_color` (:647); journal
+  `set_marker_color` (:719) + `set_panel_color` (:727) + `set_bar_color` (:736).
+  Byte-identical modulo (a) the `Rc` field, (b) which `DrawingArea` is queue_drawn.
+- **Variant delta (must reconcile):** gloss calls **bare** `parse_hex_color(hex)`
+  (imported at :10); journal calls the **full path**
+  `crate::ui::gloss_util::parse_hex_color(hex)`. A shared helper picks ONE spelling
+  (add the `use` to journal, or use the full path in the helper).
+- **Identical part (extract):** a free function
+  `fn set_rc_color(slot: &RefCell<(f64,f64,f64)>, drawing: &DrawingArea, hex: &str)`
+  in `gloss_util` (beside `parse_hex_color`). Each setter becomes a one-line
+  forwarder: `set_rc_color(&self.marker_color, &self.bar_drawing, hex)`. The public
+  method names stay (callers in app/mod.rs + settings.rs are unchanged).
+- **EXCLUDED (named, why):** gloss has NO `set_bar_color` — it writes `bar_color`
+  INLINE in four `show_*` methods (`show_gloss_with_color`/`show_glossing`/
+  `show_echoes`/`show_synopsis`) via `parse_hex_color(color)` +
+  `*self.bar_color.borrow_mut()`. Those inline writes are a DIFFERENT shape (no
+  method, set during render, no standalone queue_draw) — do NOT try to fold them
+  into the setter helper. `translation_overlay` has zero such fields (colors are
+  `show()` params) — excluded entirely.
+- **Safe-scope:** yes — trivial mechanical forwarders, behavior-preserving. Medium
+  rank: 5 sites, but each is only ~4 lines and low individual drift; the payoff is
+  eliminating the bare-vs-qualified `parse_hex_color` inconsistency that already
+  bit this session.
+
+## #54 — overlay bar_drawing draw-func shared prefix — PROPOSED
+
+- **Status:** PROPOSED, medium value but larger cut than #52/#53 — the two
+  `bar_drawing.set_draw_func` closures share a substantial identical prefix.
+- **Signal:** gloss `bar_drawing.set_draw_func` (:314-387) and journal (:232-279)
+  share three byte-identical pieces (Explore, 2026-07-01):
+  1. the `draw_page_marker_glyph(cr, &view, <w>, *marker_glyph, *marker_color,
+     0.55, 8)` call (identical args/order);
+  2. the vim blank-line block-cursor rectangle (identical `bh`/`bw` formulas,
+     `buffer_to_window_coords`, `set_source_rgb`+`rectangle`+`fill`);
+  3. the bar tail: `set_source_rgb(r,g,b)` + `set_line_width(2.0)` +
+     `draw_bar_spans(cr, &view, &spans, x)`.
+- **Identical part (extract):** the page-marker call is already
+  `crate::ui::draw_page_marker_glyph` (shared) — the new cut is a
+  `draw_vim_block_cursor(cr, view, block_line_opt, x)` helper for piece 2 (the
+  blank-line block rect), reused by both draw funcs. The bar tail is already
+  `draw_bar_spans` (shared); only the block-cursor rect is un-extracted.
+- **EXCLUDED (named, why):** (a) the **bar x-offset** differs — gloss reads a
+  stored `bar_x` Rc (updated per-render by `show_*`), journal computes
+  `left_margin() - 12` live. Keep per-file. (b) the **block-cursor x** differs —
+  gloss uses a captured `block_left_margin` const, journal computes
+  `left_margin().max(2.0)` live. The helper takes `x` as a param so each caller
+  passes its own. (c) gloss has an entire **line-numbers section** (~25 lines,
+  every-5th verse number) journal lacks — gloss-only, excluded. (d) journal has an
+  early `return` on empty ranges (it has no line-numbers section to reach); gloss
+  wraps the bar in `if !ranges.is_empty()`. Control-flow difference — keep per-file.
+- **Safe-scope:** yes for the block-cursor-rect extraction (behavior-preserving,
+  pixel-verifiable). The rest of the closure stays per-file. Rank below #52/#53:
+  only ~10 lines extract, and the block cursor only shows during vim edit (narrow
+  surface).
