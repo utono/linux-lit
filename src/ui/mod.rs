@@ -49,10 +49,10 @@ pub mod voice_picker;
 /// default monospace — degraded, not broken.
 pub(crate) const EDIT_FONT_FAMILY: &str = "JetBrainsMono Nerd Font";
 
-/// Fallback `<hi>` highlight background, used when the `gloss-hi` tag is created
-/// before the overlay re-asserts the theme color in `apply_font`. A muted amber
-/// that reads as a marker on both light and dark reading backgrounds.
-pub(crate) const DEFAULT_HIGHLIGHT_BG: &str = "#e6c200";
+/// Fallback `<hi>` highlight background, used when the `gloss-hi`/`journal-hi`
+/// tag is created before the app threads the theme color via `set_highlight_color`
+/// (which passes `theme::selection_bg`, the same blue as the visual selection).
+pub(crate) const DEFAULT_HIGHLIGHT_BG: &str = "rgba(38, 109, 211, 0.15)";
 
 /// The side margin (left and right) for the full-screen gloss / synopsis / ask
 /// cards: a quarter of the *live* card width, which keeps the prose near the

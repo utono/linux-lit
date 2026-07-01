@@ -936,11 +936,7 @@ pub fn build_window(
 
     let selection_tag = gtk4::TextTag::builder()
         .name("visual-selection")
-        .background(if theme.is_light {
-            "rgba(38, 109, 211, 0.15)"
-        } else {
-            "rgba(68, 138, 255, 0.25)"
-        })
+        .background(crate::theme::selection_bg(&theme))
         .build();
     buffer.tag_table().add(&selection_tag);
 
@@ -1207,8 +1203,9 @@ pub fn build_window(
 
     // Thread the `<hi>` highlight background (theme current-line color) into the
     // overlays so visual-mode highlights render the theme marker color.
-    gloss_overlay.set_highlight_color(&theme.cursor_line_bg);
-    journal_overlay.set_highlight_color(&theme.cursor_line_bg);
+    let highlight_bg = crate::theme::selection_bg(&theme);
+    gloss_overlay.set_highlight_color(highlight_bg);
+    journal_overlay.set_highlight_color(highlight_bg);
 
     // Journal picker overlays the journal overlay (above journal, below translation)
     let journal_picker = JournalQaPicker::new();

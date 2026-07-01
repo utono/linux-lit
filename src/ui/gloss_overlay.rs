@@ -681,6 +681,9 @@ impl GlossOverlay {
     /// cursor + mode footer. The caller sets `InputMode::GlossEdit` afterward.
     pub fn enter_edit_buffer(&self, raw: &str, block_fill: &str, block_fg: &str) {
         self.begin_edit_font();
+        // The editor shows RAW markup (with `<hi>` literals); the read-mode hi
+        // ranges are stale here and must not be re-applied to the raw buffer.
+        self.hi_ranges.borrow_mut().clear();
         *self.vim_cursor_colors.borrow_mut() = (block_fill.to_string(), block_fg.to_string());
         *self.vim_seed.borrow_mut() = raw.to_string();
         *self.vim_engine.borrow_mut() = Some(crate::input::vim::VimEngine::new(raw.to_string()));

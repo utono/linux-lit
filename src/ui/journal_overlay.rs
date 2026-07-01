@@ -653,11 +653,11 @@ impl JournalOverlay {
             &font_str,
             "journal-font",
         );
-        // Re-assert the `<hi>` highlight after the font tag (so it isn't masked).
-        self.apply_hi_color();
     }
 
-    /// Set the `<hi>` highlight background (theme `cursor_line_bg`) and re-assert.
+    /// Set the `<hi>` highlight background and re-assert it (so a live theme
+    /// change repaints the current read view). `apply_hi_color` re-applies over
+    /// `hi_ranges`, which are cleared while editing, so this is safe in any mode.
     pub fn set_highlight_color(&self, color: &str) {
         *self.highlight_bg.borrow_mut() = color.to_string();
         self.apply_hi_color();
@@ -775,6 +775,9 @@ impl JournalOverlay {
     /// suspended), place the cursor, and show the mode indicator in the footer.
     pub fn enter_edit_buffer(&self, question: &str, answer: &str, block_fill: &str, block_fg: &str) {
         self.begin_edit_font();
+        // The editor shows RAW text (with `<hi>` literals); the read-mode hi
+        // ranges are stale here and must not be re-applied to the raw buffer.
+        self.hi_ranges.borrow_mut().clear();
         *self.vim_cursor_colors.borrow_mut() = (block_fill.to_string(), block_fg.to_string());
         let buf = crate::input::vim::journal_doc::build_buffer(question, answer);
         *self.vim_seed.borrow_mut() = buf.clone();
@@ -1019,6 +1022,9 @@ impl JournalOverlay {
 
         self.view.buffer().set_text(&body);
         self.apply_font();
+        // Paint the `<hi>` highlight AFTER set_text + font (read-mode only; the
+        // editor sets raw text and must not re-apply these read-mode ranges).
+        self.apply_hi_color();
         // Floating page marker (⌄ more / • end), bottom-center of the viewport.
         self.update_page_marker(pidx, n_pages);
         // The vadjustment stays at top — the page fits, nothing scrolls.

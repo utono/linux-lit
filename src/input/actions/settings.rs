@@ -268,14 +268,12 @@ pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &cra
     state.dim_tag.set_property("foreground", &theme.dim_fg);
     state.ab_dim_tag.set_property("foreground", &theme.dim_fg);
     state.translation_dim_tag.set_property("foreground", &theme.dim_fg);
-    state.selection_tag.set_property(
-        "background",
-        if theme.is_light {
-            "rgba(38, 109, 211, 0.15)"
-        } else {
-            "rgba(68, 138, 255, 0.25)"
-        },
-    );
+    let selection_bg = crate::theme::selection_bg(theme);
+    state.selection_tag.set_property("background", selection_bg);
+    // The `<hi>` marker in the overlays uses the SAME selection blue, so a theme
+    // change must repaint both overlays' highlight color (responsive to dwl theme).
+    state.gloss_overlay.set_highlight_color(selection_bg);
+    state.journal_overlay.set_highlight_color(selection_bg);
 
     // Update vocab tag foreground
     state.vocab_tag.set_property("foreground", &theme.vocab_fg);
