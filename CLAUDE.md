@@ -40,6 +40,33 @@ When fixing bugs, **always read the log first** before proposing changes:
 cat ~/utono/linux-lit/linux-lit-dev.log
 ```
 
+## Playback Sync Bugs — identify the PLAYING work FIRST
+
+For ANY playback-sync bug (highlight jumps to the wrong line, seeks to the wrong
+place, page turns early/late, cursor lands on a stray line during MPV playback)
+the FIRST step is to identify **which work is currently playing** — not the work
+the user names casually, and not the base work. A play often has several editions
+sharing the same text (`Cym`, `Cym-Amb`, `Cym-BBC`), each with its OWN media file
+and its OWN `line_timestamps` rows. Sync is driven entirely by the playing
+edition's timestamps, so diagnosing against the wrong abbrev inspects the wrong
+data and leads nowhere.
+
+Confirm the abbrev before touching the log or DB:
+
+- Ask the user, or read the title bar / library picker in the screenshot
+  (e.g. "Cymbeline (BBC Radio)" → `Cym-BBC`, not `Cym`).
+- The debug log's `SEEK:`/`CURSOR_LINE:` lines and the loaded media path pin it
+  down; the media file lives at `media_files.path` for that abbrev.
+
+Then run the sync queries (see the `debug-playback-sync` skill) against **that**
+abbrev's `line_mapping` + `line_timestamps` + `media_files.id`. A common root
+cause is a single corrupt/out-of-order timestamp in the playing edition whose
+`start_time` falls inside an earlier line's audio window — that stray line gets
+highlighted while the earlier line is actually being spoken. Production editions
+(`-Amb`, `-BBC`) are aligned by the `wizard-ambrose` skill in litdb; a
+backwards-in-time timestamp there is a wizard/import defect, fixed in lit.db (and
+in that skill's monotonicity gate), not in linux-lit code.
+
 ## Clipping Bugs — read clip-prevention.md FIRST
 
 For ANY text-clipping or flush-to-the-edge bug — a half-cut line at the top or

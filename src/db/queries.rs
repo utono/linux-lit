@@ -346,11 +346,14 @@ pub fn recompute_page_image_ends(
 
 /// Load translations for a work, keyed by line_mapping.id.
 ///
-/// For `-Amb` (Ambrose edition) works, translations are stored against the
-/// base edition's line_mapping rows. If the direct query returns nothing,
-/// fall back to matching Ambrose lines to base-edition lines by
-/// (div1, div2, normalized_text) and key the translations to the Ambrose
-/// line_mapping.id so the app's existing lookup by line.id works unchanged.
+/// Production variants (`-Amb` Ambrose, `-BBC` BBC Radio, etc.) share the base
+/// edition's translations: translations are stored only against the base
+/// edition's line_mapping rows. If the direct query returns nothing and the
+/// abbrev is a `<base>-<suffix>` variant, fall back to matching the variant's
+/// lines to the base-edition lines by (div1, div2, line_in_div) and key the
+/// translations to the variant's line_mapping.id, so the app's existing lookup
+/// by line.id works unchanged. E.g. Cym-Amb and Cym-BBC both inherit Cym's
+/// translations. This handles any production suffix, not just `-Amb`.
 pub fn load_translations(
     conn: &Connection,
     abbrev: &str,
@@ -370,8 +373,10 @@ pub fn load_translations(
         map.insert(id, translation);
     }
 
+    // No direct translations: if this is a production variant `<base>-<suffix>`,
+    // inherit the base work's translations matched line-for-line.
     if map.is_empty() {
-        if let Some(base) = abbrev.strip_suffix("-Amb") {
+        if let Some((base, _suffix)) = abbrev.rsplit_once('-') {
             let mut stmt = conn.prepare(
                 "SELECT a.id, MIN(lt.translation) \
                  FROM line_mapping a \
@@ -2818,6 +2823,57 @@ mod tests {
         assert!(
             !translations.contains_key(&1),
             "Err's id must not appear as a key"
+        );
+    }
+
+    #[test]
+    fn test_load_translations_production_variant_fallback() {
+        // Any `<base>-<suffix>` production variant (not just -Amb) inherits the
+        // base work's translations. Verifies the generalized rsplit_once('-')
+        // fallback: Cym-BBC and Cym-Amb both fall back to Cym.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE line_mapping (
+                id INTEGER PRIMARY KEY,
+                work_abbrev TEXT NOT NULL,
+                div1 INTEGER,
+                div2 INTEGER,
+                line_in_div INTEGER NOT NULL,
+                sub_line INTEGER NOT NULL DEFAULT 0,
+                canonical_text TEXT NOT NULL,
+                normalized_text TEXT NOT NULL,
+                speaker TEXT
+             );
+             CREATE TABLE line_translations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                line_mapping_id INTEGER NOT NULL REFERENCES line_mapping(id),
+                translation TEXT NOT NULL,
+                UNIQUE(line_mapping_id)
+             );
+             -- Base work (Cym) line
+             INSERT INTO line_mapping VALUES (1,'Cym',1,1,1,0,'You do not meet a man but frowns.','you do not meet a man but frowns',NULL);
+             -- BBC and Ambrose variants: same (div1, div2, line_in_div), different ids
+             INSERT INTO line_mapping VALUES (2,'Cym-BBC',1,1,1,0,'You do not meet a man but frowns.','you do not meet a man but frowns',NULL);
+             INSERT INTO line_mapping VALUES (3,'Cym-Amb',1,1,1,0,'You do not meet a man but frowns.','you do not meet a man but frowns',NULL);
+             -- Translation attached only to the base-work line
+             INSERT INTO line_translations (line_mapping_id, translation) VALUES (1,'Non incontri un uomo.');",
+        ).unwrap();
+
+        // -BBC (the previously-unhandled suffix) inherits Cym's translation.
+        let bbc = load_translations(&conn, "Cym-BBC").unwrap();
+        assert_eq!(
+            bbc.get(&2).map(|s| s.as_str()),
+            Some("Non incontri un uomo."),
+            "Cym-BBC must inherit Cym's translation, keyed to the Cym-BBC line id"
+        );
+        assert!(!bbc.contains_key(&1), "Base work's id must not be a key");
+
+        // -Amb still works via the same generalized path.
+        let amb = load_translations(&conn, "Cym-Amb").unwrap();
+        assert_eq!(
+            amb.get(&3).map(|s| s.as_str()),
+            Some("Non incontri un uomo."),
+            "Cym-Amb must inherit Cym's translation, keyed to the Cym-Amb line id"
         );
     }
 
