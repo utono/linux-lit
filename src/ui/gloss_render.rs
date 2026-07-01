@@ -181,8 +181,11 @@ pub(crate) fn populate_verse_buffer(
             .name("gloss-verse")
             .weight(700)
             .scale(0.9)
-            .left_margin(quote_verse)
-            .pixels_below_lines(10),
+            .left_margin(quote_verse),
+        // NO pixels_below_lines: each verse line is its own paragraph, so a
+        // per-line gap reads as loose double-spacing. Verse lines sit at the
+        // view's natural single leading (like the journal answer body); the
+        // speaker tag's pixels_below_lines(10) supplies the gap ABOVE the verse.
     )
     .build();
 
