@@ -134,11 +134,12 @@ fn prefix_question(question: &str) -> String {
 // sizes its scroll exactly like the gloss, so the footer lands in the same place.
 const UNACCOUNTED_CHROME_MARGINS: i32 = 24 + 20 /* scroll_overlay top+bottom */;
 
-/// Extra LEFT indent on the Q&A body so it sits right of the accent bar, with the
-/// bar in a clear gutter beside the text — matching the gloss explication's
-/// `bar_left + 60`. Added to the left margin only; pagination reads left_margin
+/// Extra LEFT indent on the Q&A body so it sits ~12px right of the accent bar,
+/// with the bar in the gutter beside the text — MATCHING the gloss explication's
+/// left position (`quote_body = bar_left + 12`) so the two overlays have the same
+/// text-column width. Added to the left margin only; pagination reads left_margin
 /// live so wrap/height follow automatically (no measure change).
-const JOURNAL_BODY_INDENT: i32 = 60;
+const JOURNAL_BODY_INDENT: i32 = 12;
 
 impl JournalOverlay {
     pub fn new(column_width: u32, text_margins: u32) -> Self {
