@@ -146,17 +146,24 @@ pub(crate) fn populate_verse_buffer(
         }
     };
 
-    let quote_speaker = bar_left + 60;
-    let quote_verse = quote_speaker + 60;
+    // The explication (FOCUS body) sits flush ~12px right of the accent bar, like
+    // the journal answer. The speaker label + verse (the dim source header) are
+    // INDENTED further right (+48) so the source reads as a set-off block quote
+    // above the flush explication.
+    let quote_body = bar_left + 12; // explication (gloss-para) — flush, the focus
+    let quote_speaker = bar_left + 48; // speaker + verse header — indented
+    let quote_verse = bar_left + 48;
 
     // Speaker + verse "header" styling: matches the journal Q&A question header
-    // (bold 700, 0.9 scale, dim fg, space below) so the top of a gloss reads like
-    // the top of a journal Q&A. `speaker_accent` is intentionally unused for the
-    // color now (the header is dim, not accent-tinted); the param stays for the
-    // dim fallback. The speaker keeps small-caps (it's a name label).
+    // (bold 700, 0.9 scale, DIM fg, space below) so the top of a gloss reads like
+    // the top of a journal Q&A — the source text RECEDES (dim) behind the
+    // full-ink explication. The header color comes from `speaker_accent` (the
+    // gloss overlay now threads theme `dim_fg` there); it is a DISTINCT color from
+    // the para's `dim_color`, so the header can dim while the explication stays
+    // full foreground. Falls back to `dim_color`, then inherited fg. The speaker
+    // keeps small-caps (it's a name label).
     let header_dim = |b: gtk4::builders::TextTagBuilder| -> gtk4::builders::TextTagBuilder {
-        // Prefer the passed dim color; fall back to the accent, then inherited fg.
-        match dim_color.or(speaker_accent) {
+        match speaker_accent.or(dim_color) {
             Some(c) => b.foreground(c),
             None => b,
         }
@@ -179,8 +186,11 @@ pub(crate) fn populate_verse_buffer(
             .name("gloss-verse")
             .weight(700)
             .scale(0.9)
-            .left_margin(quote_verse)
-            .pixels_below_lines(10),
+            .left_margin(quote_verse),
+        // NO pixels_below_lines: each verse line is its own paragraph, so a
+        // per-line gap reads as loose double-spacing. Verse lines sit at the
+        // view's natural single leading (like the journal answer body); the
+        // speaker tag's pixels_below_lines(10) supplies the gap ABOVE the verse.
     )
     .build();
 
@@ -198,7 +208,7 @@ pub(crate) fn populate_verse_buffer(
     // like the journal Q: question), which now RECEDES behind this prose.
     let para_builder = gtk4::TextTag::builder()
         .name("gloss-para")
-        .left_margin(quote_speaker)
+        .left_margin(quote_body)
         .pixels_above_lines(24)
         .pixels_below_lines(10)
         .scale(1.0);

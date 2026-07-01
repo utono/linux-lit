@@ -177,6 +177,10 @@ pub struct GlossOverlay {
     /// `gloss-hi` tag in `apply_font`. Defaults to `DEFAULT_HIGHLIGHT_BG` until
     /// the app threads the theme color via `set_highlight_color`.
     highlight_bg: RefCell<String>,
+    /// Theme `dim_fg` hex, threaded by `set_marker_color`. Passed as the
+    /// speaker/verse header color so the source text dims (like the journal Q&A
+    /// question) instead of rendering in the full body foreground.
+    dim_fg: RefCell<String>,
     /// Char ranges of `<hi>` highlights in the CURRENT synopsis buffer (the
     /// set_text path doesn't go through `populate_verse_buffer`, so the overlay
     /// re-applies the `gloss-hi` tag here, like `synopsis_label_ranges`). Empty
@@ -187,10 +191,14 @@ pub struct GlossOverlay {
 }
 
 /// Default font for the synopsis/gloss/echoes overlay cards.
-const GLOSS_DEFAULT_FONT_FAMILY: &str = "Charter";
-/// Default overlay reading-font size (pt). Shared so the journal overlay matches
-/// the gloss/synopsis overlay instead of drifting on its own hardcoded value.
-pub(crate) const GLOSS_DEFAULT_FONT_SIZE: i32 = 19;
+/// Default overlay reading-font family. Shared (like `GLOSS_DEFAULT_FONT_SIZE`) so
+/// the journal overlay applies the SAME font tag instead of falling back to the
+/// `.gloss-text` CSS at the reader's config size.
+pub(crate) const GLOSS_DEFAULT_FONT_FAMILY: &str = "Charter";
+/// Default overlay reading-font size (pt). Shared by the gloss + journal overlays
+/// so they always render at the same size (never drift). 17pt matches the reader
+/// card's default.
+pub(crate) const GLOSS_DEFAULT_FONT_SIZE: i32 = 17;
 
 /// Card-matching layout for a PROSE synopsis: render it in the main reading
 /// card's font and left padding instead of the play overlay's Charter-19 +
@@ -293,10 +301,10 @@ impl GlossOverlay {
         // its dim color — see draw_page_marker_glyph.
         let marker_glyph: Rc<RefCell<Option<&'static str>>> = Rc::new(RefCell::new(None));
         let marker_color: Rc<RefCell<(f64, f64, f64)>> = Rc::new(RefCell::new((0.5, 0.5, 0.5)));
-        let panel_color: Rc<RefCell<(f64, f64, f64)>> =
-            Rc::new(RefCell::new((0.95, 0.93, 0.86))); // placeholder; set at startup
-        let panel_drawing = gtk4::DrawingArea::new();
-        panel_drawing.set_can_target(false);
+        // Inset-panel DrawingArea + its color cell (shared helper, audit #52). The
+        // draw_func is wired inside; the caller sets it as the Overlay main child
+        // and adds panel_drawing.queue_draw() to its scroll-repaint closure below.
+        let (panel_drawing, panel_color) = crate::ui::attach_overlay_panel(&gloss_view);
         let vim_block_line: crate::ui::VimBlankCursor = Rc::new(RefCell::new(None));
         let bar_x: Rc<RefCell<i32>> = Rc::new(RefCell::new((column_width as i32) / 8));
         let line_numbers: Rc<RefCell<Vec<LineNumber>>> = Rc::new(RefCell::new(Vec::new()));
@@ -387,22 +395,6 @@ impl GlossOverlay {
                 }
             }
         });
-
-        {
-            let view_for_panel = gloss_view.clone();
-            let panel_color_clone = panel_color.clone();
-            panel_drawing.set_draw_func(move |_area, cr, w, h| {
-                crate::ui::draw_overlay_panel(
-                    cr,
-                    &view_for_panel,
-                    w,
-                    h,
-                    *panel_color_clone.borrow(),
-                    24.0, // PANEL_PAD — gap between the text ink and the panel edge
-                    12.0, // PANEL_RADIUS — matches the card border-radius
-                );
-            });
-        }
 
         gloss_scrolled.set_child(Some(&gloss_view));
 
@@ -592,6 +584,7 @@ impl GlossOverlay {
             vim_seed: RefCell::new(String::new()),
             vim_cursor_colors: RefCell::new((String::new(), String::new())),
             highlight_bg: RefCell::new(crate::ui::DEFAULT_HIGHLIGHT_BG.to_string()),
+            dim_fg: RefCell::new(String::new()), // set by set_marker_color at startup
             hi_ranges: RefCell::new(Vec::new()),
             pre_edit_family: RefCell::new(None),
         }
@@ -601,14 +594,6 @@ impl GlossOverlay {
     /// centered prose column inset. Called once per work load from display_work.
     pub fn set_prose(&self, is_prose: bool) {
         self.is_prose.set(is_prose);
-    }
-
-    /// Adjust the overlay's own font size by `delta` pt (clamped), then re-apply
-    /// it to the currently-shown gloss text. Independent of the main reader font.
-    pub fn adjust_font_size(&self, delta: i32) {
-        let new_size = (self.font_size.get() + delta).clamp(8, 72);
-        self.font_size.set(new_size);
-        self.apply_font();
     }
 
     /// Apply the overlay's font (family + size) to the gloss text and header via
@@ -638,7 +623,10 @@ impl GlossOverlay {
     }
 
     /// Set the page-marker glyph's dim color (theme `dim_fg`) and repaint the bar.
+    /// Also stores the hex as the speaker/verse header color (so the source text
+    /// dims like the journal Q&A question). The change shows on the next render.
     pub fn set_marker_color(&self, hex: &str) {
+        *self.dim_fg.borrow_mut() = hex.to_string();
         if let Some(rgb) = parse_hex_color(hex) {
             *self.marker_color.borrow_mut() = rgb;
             self.bar_drawing.queue_draw();
@@ -1181,9 +1169,14 @@ impl GlossOverlay {
 
         // Render the passage through the SAME path as the gloss result's original
         // passage, so speaker small-caps + indented verse look identical.
+        // Pass dim_fg as the header (speaker/verse) color so the source text
+        // recedes like the journal Q&A question; the explication (para) stays
+        // full-ink (it reads dim_color, which stays None here).
+        let dim = self.dim_fg.borrow().clone();
+        let dim_opt = (!dim.is_empty()).then_some(dim.as_str());
         let (ranges, _nums) = populate_gloss_buffer(
             &self.gloss_view, passage_doc, self.text_margins, bar_left, &[],
-            None, None,
+            None, dim_opt,
         );
         *self.bar_ranges.borrow_mut() = ranges;
         self.line_numbers.borrow_mut().clear();
@@ -1753,17 +1746,16 @@ impl GlossOverlay {
         let size = self.font_size.get();
         // Measure at the NARROWEST wrap width any block in this mode uses, so the
         // height estimate over-counts (more wrapping → taller) rather than under —
-        // the safe direction for never clipping. Gloss verse lines are indented
-        // the deepest (`quote_verse = bar_left + 120` in gloss_render.rs), so a
-        // verse measured at the full card width would wrap into FEWER lines than it
-        // really does and under-estimate. Subtract that verse indent in gloss mode;
-        // synopsis prose sits at the body margin, so keep the body wrap there.
+        // the safe direction for never clipping. Gloss speaker/verse/explication
+        // now all sit at `quote_speaker = quote_verse = bar_left + 12`
+        // (gloss_render.rs, aligned to the journal), so the deepest indent is +12.
+        // Subtract it in gloss mode; synopsis prose sits at the body margin.
         let card_w = self.last_card_size.get().0;
         let left = self.gloss_view.left_margin();
         let wrap_w = match self.paginated_mode.get() {
-            // bar_left == left in gloss mode; verse adds +120 on the left and the
+            // bar_left == left in gloss mode; the text adds +12 on the left and the
             // right margin is `left`.
-            PaginatedMode::Gloss => (card_w - 2 * left - 120).max(1),
+            PaginatedMode::Gloss => (card_w - 2 * left - 12).max(1),
             PaginatedMode::Synopsis => (card_w - 2 * left).max(1),
         };
         let pctx = self.gloss_view.pango_context();
@@ -1949,9 +1941,12 @@ impl GlossOverlay {
             (body, slice)
         };
 
-        // Gloss prose and speaker headings keep the normal foreground (the prose
-        // is set off only by scale + line spacing). Same call as the pre-pagination
-        // render, but over this page's markup slice.
+        // Prose (explication) keeps the full foreground (the focus); the speaker +
+        // verse header recede in dim_fg (like the journal Q&A question). dim_fg is
+        // passed as the header color (speaker_accent slot); dim_color stays None so
+        // the prose is NOT dimmed.
+        let dim = self.dim_fg.borrow().clone();
+        let dim_opt = (!dim.is_empty()).then_some(dim.as_str());
         let (ranges, _nums) = populate_gloss_buffer(
             &self.gloss_view,
             &markup,
@@ -1959,7 +1954,7 @@ impl GlossOverlay {
             bar_left,
             &line_numbers,
             None,
-            None,
+            dim_opt,
         );
         *self.bar_ranges.borrow_mut() = ranges;
         // Glosses do not show verse line numbers (those belong only to the main
