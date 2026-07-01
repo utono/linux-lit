@@ -1742,17 +1742,16 @@ impl GlossOverlay {
         let size = self.font_size.get();
         // Measure at the NARROWEST wrap width any block in this mode uses, so the
         // height estimate over-counts (more wrapping → taller) rather than under —
-        // the safe direction for never clipping. Gloss verse lines are indented
-        // the deepest (`quote_verse = bar_left + 120` in gloss_render.rs), so a
-        // verse measured at the full card width would wrap into FEWER lines than it
-        // really does and under-estimate. Subtract that verse indent in gloss mode;
-        // synopsis prose sits at the body margin, so keep the body wrap there.
+        // the safe direction for never clipping. Gloss speaker/verse/explication
+        // now all sit at `quote_speaker = quote_verse = bar_left + 12`
+        // (gloss_render.rs, aligned to the journal), so the deepest indent is +12.
+        // Subtract it in gloss mode; synopsis prose sits at the body margin.
         let card_w = self.last_card_size.get().0;
         let left = self.gloss_view.left_margin();
         let wrap_w = match self.paginated_mode.get() {
-            // bar_left == left in gloss mode; verse adds +120 on the left and the
+            // bar_left == left in gloss mode; the text adds +12 on the left and the
             // right margin is `left`.
-            PaginatedMode::Gloss => (card_w - 2 * left - 120).max(1),
+            PaginatedMode::Gloss => (card_w - 2 * left - 12).max(1),
             PaginatedMode::Synopsis => (card_w - 2 * left).max(1),
         };
         let pctx = self.gloss_view.pango_context();

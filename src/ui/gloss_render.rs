@@ -146,8 +146,13 @@ pub(crate) fn populate_verse_buffer(
         }
     };
 
-    let quote_speaker = bar_left + 60;
-    let quote_verse = quote_speaker + 60;
+    // Speaker, verse, AND explication all start ~12px right of the accent bar,
+    // sharing ONE left edge — matching the journal Q&A (bar 12px left of the body;
+    // question + answer aligned). Previously the verse was inset +120 and the
+    // speaker/explication +60, which put the gloss text far right of the bar and
+    // read as larger/differently-laid-out than the journal.
+    let quote_speaker = bar_left + 12;
+    let quote_verse = bar_left + 12;
 
     // Speaker + verse "header" styling: matches the journal Q&A question header
     // (bold 700, 0.9 scale, DIM fg, space below) so the top of a gloss reads like
