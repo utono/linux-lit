@@ -1411,8 +1411,13 @@ pub(crate) fn view_gloss_from_journal(state: &Rc<RefCell<AppState>>) {
             }
         };
 
+        // Glosses are STORED under the normalized abbrev (strips only `-Amb`), so
+        // look them up the same way — NOT base_work_abbrev (strips any `-suffix`:
+        // Cym-BBC -> Cym), which misses a variant edition's own gloss and toasts
+        // "No gloss for this passage". Same class as the gloss-overlay Ctrl+g fix
+        // (81d6ff9) + the picker/tint paths. See project_gloss_lookup_normalize_abbrev.
         let work_abbrev = match s.current_work.as_ref() {
-            Some(w) => crate::app::base_work_abbrev(&w.abbrev).to_string(),
+            Some(w) => crate::gloss::normalize_abbrev(&w.abbrev).to_string(),
             None => return,
         };
 
