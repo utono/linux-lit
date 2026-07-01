@@ -3812,7 +3812,17 @@ pub fn apply_reader_gloss_highlighting(state: &mut AppState) {
         Ok(c) => c,
         Err(_) => return,
     };
-    let abbrev = base_work_abbrev(&work.abbrev).to_string();
+    // Look up passages under the SAME abbrev the gloss-save + gloss-overlay paths
+    // use — `normalize_abbrev` (strips only `-Amb`) — NOT `base_work_abbrev`
+    // (strips ANY `-suffix`). A gloss created while reading a `-BBC`/`-DC` edition
+    // is stored under that variant abbrev (e.g. `Cym-BBC`), because `save_gloss`
+    // gets its abbrev from `GlossContext` = `normalize_abbrev(work.abbrev)`. Using
+    // `base_work_abbrev` here queried `Cym` and missed the `Cym-BBC` passage — so
+    // no main-card line got the reader-gloss tint even though the gloss overlay
+    // (which uses `normalize_abbrev`) found and rendered it. The two paths MUST
+    // normalize identically. (`-Amb` still resolves to the base, since
+    // `normalize_abbrev` strips `-Amb`.)
+    let abbrev = crate::gloss::normalize_abbrev(&work.abbrev).to_string();
     let passages = crate::db::queries::find_glossed_passages(&conn, &abbrev, &["reader-gloss"])
         .unwrap_or_default();
     if passages.is_empty() {

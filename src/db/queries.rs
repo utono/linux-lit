@@ -3703,4 +3703,41 @@ mod passages_div1_div2_tests {
         assert_eq!(ps[0].act, 2);   // field name unchanged; value comes from div1 column
         assert_eq!(ps[0].scene, 2); // from div2 column
     }
+
+    /// Regression: a reader-gloss created while reading a `-BBC`/`-DC` edition is
+    /// stored under the VARIANT abbrev (because `save_gloss` gets its abbrev from
+    /// `GlossContext` = `normalize_abbrev`, which strips only `-Amb`). The
+    /// main-card highlight path must therefore look it up under
+    /// `normalize_abbrev(work.abbrev)` (→ `Cym-BBC`), NOT `base_work_abbrev`
+    /// (→ `Cym`), which is what silently disabled the tint on `-BBC` editions.
+    #[test]
+    fn reader_gloss_lookup_matches_variant_abbrev_normalization() {
+        use rusqlite::Connection;
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE passages (
+                id INTEGER PRIMARY KEY, hash TEXT, work_abbrev TEXT,
+                start_citation TEXT, end_citation TEXT, div1 INTEGER, div2 INTEGER,
+                character TEXT, source_text TEXT
+             );
+             CREATE TABLE glosses (
+                id INTEGER PRIMARY KEY, passage_id INTEGER, gloss_type TEXT,
+                gloss_text TEXT, status TEXT, word_id INTEGER
+             );
+             INSERT INTO passages (id, hash, work_abbrev, start_citation, end_citation, div1, div2, character, source_text)
+                VALUES (1, 'h', 'Cym-BBC', 'Cym-BBC.1.1.1', 'Cym-BBC.1.1.3', 1, 1, 'FIRST GENTLEMAN', 'text');
+             INSERT INTO glosses (id, passage_id, gloss_type, gloss_text, status, word_id)
+                VALUES (1, 1, 'reader-gloss', 'g', 'complete', NULL);",
+        ).unwrap();
+
+        // The abbrev the highlight path now uses: normalize_abbrev keeps -BBC.
+        let good = crate::gloss::normalize_abbrev("Cym-BBC");
+        assert_eq!(good, "Cym-BBC");
+        assert_eq!(find_glossed_passages(&conn, good, &["reader-gloss"]).unwrap().len(), 1);
+
+        // The old (buggy) abbrev: base_work_abbrev strips to "Cym" and misses it.
+        let bad = crate::app::base_work_abbrev("Cym-BBC");
+        assert_eq!(bad, "Cym");
+        assert_eq!(find_glossed_passages(&conn, bad, &["reader-gloss"]).unwrap().len(), 0);
+    }
 }
