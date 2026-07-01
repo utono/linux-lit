@@ -8,6 +8,7 @@ pub mod textobject;
 pub mod registers;
 pub mod engine;
 pub mod journal_doc;
+pub mod highlight;
 
 pub use engine::VimEngine;
 
@@ -42,6 +43,9 @@ pub enum EditorAction {
     Cancel,
     CancelForce,
     OpenRewrite,
+    /// Visual-mode `H` toggled an inline `<hi>` highlight over the selection. The
+    /// engine has already mutated its buffer; the host re-mirrors + marks dirty.
+    ToggleHighlight,
 }
 
 /// Half-open char range `[start, end)` into the buffer.

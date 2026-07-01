@@ -80,6 +80,12 @@ pub struct JournalOverlay {
     /// (block-fill, glyph-fg) for the NORMAL-mode block cursor, set on enter from
     /// the theme's cursor colors.
     vim_cursor_colors: RefCell<(String, String)>,
+    /// `<hi>` highlight background (theme `cursor_line_bg`), threaded by the app
+    /// via `set_highlight_color`; defaults to `DEFAULT_HIGHLIGHT_BG`.
+    highlight_bg: RefCell<String>,
+    /// Char ranges of `<hi>` highlights in the CURRENT page body, re-applied on
+    /// the `journal-hi` tag after each `set_text`. Empty when none.
+    hi_ranges: RefCell<Vec<(usize, usize)>>,
 }
 
 /// Split the full Q&A text into paragraph blocks (the pagination unit): maximal
@@ -357,6 +363,8 @@ impl JournalOverlay {
             vim_engine: RefCell::new(None),
             vim_seed: RefCell::new(String::new()),
             vim_cursor_colors: RefCell::new((String::new(), String::new())),
+            highlight_bg: RefCell::new(crate::ui::DEFAULT_HIGHLIGHT_BG.to_string()),
+            hi_ranges: RefCell::new(Vec::new()),
         }
     }
 
@@ -647,6 +655,38 @@ impl JournalOverlay {
         );
     }
 
+    /// Set the `<hi>` highlight background and re-assert it (so a live theme
+    /// change repaints the current read view). `apply_hi_color` re-applies over
+    /// `hi_ranges`, which are cleared while editing, so this is safe in any mode.
+    pub fn set_highlight_color(&self, color: &str) {
+        *self.highlight_bg.borrow_mut() = color.to_string();
+        self.apply_hi_color();
+    }
+
+    /// Re-apply the `journal-hi` highlight tag over the stored `hi_ranges` with
+    /// the theme background. No-op when there are no ranges.
+    fn apply_hi_color(&self) {
+        let buffer = self.view.buffer();
+        let table = buffer.tag_table();
+        let ranges = self.hi_ranges.borrow();
+        if table.lookup("journal-hi").is_none() && !ranges.is_empty() {
+            table.add(
+                &gtk4::TextTag::builder()
+                    .name("journal-hi")
+                    .background(&*self.highlight_bg.borrow())
+                    .build(),
+            );
+        }
+        if let Some(tag) = table.lookup("journal-hi") {
+            tag.set_background(Some(&self.highlight_bg.borrow()));
+            for &(s, e) in ranges.iter() {
+                let si = buffer.iter_at_offset(s as i32);
+                let ei = buffer.iter_at_offset(e as i32);
+                buffer.apply_tag(&tag, &si, &ei);
+            }
+        }
+    }
+
     /// Set the floating page marker for the current page: `⌄` when another page
     /// follows, `•` on the last page, hidden on single-page content. The marker
     /// is an overlay child floating just BELOW the page's last block (NOT in the
@@ -735,6 +775,9 @@ impl JournalOverlay {
     /// suspended), place the cursor, and show the mode indicator in the footer.
     pub fn enter_edit_buffer(&self, question: &str, answer: &str, block_fill: &str, block_fg: &str) {
         self.begin_edit_font();
+        // The editor shows RAW text (with `<hi>` literals); the read-mode hi
+        // ranges are stale here and must not be re-applied to the raw buffer.
+        self.hi_ranges.borrow_mut().clear();
         *self.vim_cursor_colors.borrow_mut() = (block_fill.to_string(), block_fg.to_string());
         let buf = crate::input::vim::journal_doc::build_buffer(question, answer);
         *self.vim_seed.borrow_mut() = buf.clone();
@@ -966,13 +1009,22 @@ impl JournalOverlay {
             return;
         };
         let slice = &paras[page.start..page.end.min(paras.len())];
-        let body = slice.join("\n\n");
+        let raw_body = slice.join("\n\n");
         let page_start = page.start;
         drop(paras);
         drop(pages);
 
+        // Strip inline `<hi>` for display, recording the highlight ranges so the
+        // `journal-hi` background is re-applied after set_text. Blocks are derived
+        // from the CLEAN body so line indices line up with what's shown.
+        let (body, hi_ranges) = crate::ui::gloss_block::strip_hi_spans(&raw_body);
+        *self.hi_ranges.borrow_mut() = hi_ranges;
+
         self.view.buffer().set_text(&body);
         self.apply_font();
+        // Paint the `<hi>` highlight AFTER set_text + font (read-mode only; the
+        // editor sets raw text and must not re-apply these read-mode ranges).
+        self.apply_hi_color();
         // Floating page marker (⌄ more / • end), bottom-center of the viewport.
         self.update_page_marker(pidx, n_pages);
         // The vadjustment stays at top — the page fits, nothing scrolls.

@@ -39,6 +39,19 @@ pub fn current_theme_name() -> String {
         .to_string()
 }
 
+/// The blue selection-highlight background for a theme — the color used both for
+/// the reading card's visual-selection tag AND the `<hi>` marker in the gloss/
+/// synopsis/journal overlays, so a highlighted span reads the SAME in the editor
+/// (visual selection) and on the page. Slightly stronger on dark themes for
+/// contrast. Single source of truth so a theme change updates both at once.
+pub fn selection_bg(theme: &Theme) -> &'static str {
+    if theme.is_light {
+        "rgba(38, 109, 211, 0.15)"
+    } else {
+        "rgba(68, 138, 255, 0.25)"
+    }
+}
+
 /// Load all themes from themes-unified.json.
 #[allow(dead_code)]
 pub fn load_all_themes() -> Vec<Theme> {

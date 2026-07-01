@@ -1030,6 +1030,7 @@ impl VimEngine {
             'd' | 'x' => self.visual_operator(Op::Delete),
             'c' | 's' => self.visual_operator(Op::Change),
             'y' => self.visual_operator(Op::Yank),
+            'H' => self.visual_toggle_highlight(),
             '>' => self.visual_indent(1),
             '<' => self.visual_indent(-1),
             '"' => {
@@ -1075,6 +1076,34 @@ impl VimEngine {
             self.clamp_normal();
         }
         res
+    }
+
+    /// Visual-mode `H`: toggle an inline `<hi>` highlight over the selection.
+    /// Snapshots for undo, mutates the buffer via the pure `highlight::toggle`,
+    /// returns to Normal mode, and signals the host with `ToggleHighlight`.
+    fn visual_toggle_highlight(&mut self) -> Outcome {
+        let anchor = match self.visual_anchor {
+            Some(a) => a,
+            None => return self.out(false, EditorAction::Nop),
+        };
+        let r = self.visual_range(anchor);
+        self.snapshot();
+        let new_buf = super::highlight::toggle(&self.buffer, r.start, r.end);
+        let changed = new_buf != self.buffer;
+        if !changed {
+            // Nothing to do — drop the snapshot we just pushed.
+            self.undo.pop();
+            self.visual_anchor = None;
+            self.mode = Mode::Normal;
+            self.clamp_normal();
+            return self.out(false, EditorAction::Nop);
+        }
+        self.buffer = new_buf;
+        self.visual_anchor = None;
+        self.mode = Mode::Normal;
+        self.cursor = buffer::clamp_cursor(&self.buffer, r.start);
+        self.clamp_normal();
+        self.out(true, EditorAction::ToggleHighlight)
     }
 
     fn visual_indent(&mut self, dir: i32) -> Outcome {
@@ -1468,5 +1497,30 @@ mod tests {
         // and leading whitespace are preserved.
         let raw = "  <p>indented and trailing</p>  \n\n";
         assert_eq!(raw.trim_end(), "  <p>indented and trailing</p>");
+    }
+
+    #[test]
+    fn visual_h_wraps_selection_in_hi_and_returns_to_normal() {
+        // "hello world": put cursor on 'w', visual-select to end, press H.
+        let mut e = eng("hello world");
+        e.feed("w");      // cursor on 'w' (offset 6)
+        e.feed("v");      // enter visual
+        e.feed("$");      // extend to last char
+        let out = e.handle_key(VimKey::Char('H'));
+        assert_eq!(out.action, EditorAction::ToggleHighlight);
+        assert!(out.buffer_changed);
+        assert_eq!(e.mode(), Mode::Normal);
+        assert_eq!(e.buffer(), "hello <hi>world</hi>");
+    }
+
+    #[test]
+    fn visual_h_undo_restores_pre_highlight_text() {
+        let mut e = eng("alpha beta");
+        e.feed("w");  // cursor on 'b'
+        e.feed("v$"); // select "beta"
+        e.handle_key(VimKey::Char('H'));
+        assert_eq!(e.buffer(), "alpha <hi>beta</hi>");
+        e.feed("u"); // undo
+        assert_eq!(e.buffer(), "alpha beta", "undo restores pre-highlight text");
     }
 }

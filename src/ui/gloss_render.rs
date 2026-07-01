@@ -48,6 +48,23 @@ pub(crate) fn apply_bracket_styling(
     }
 }
 
+/// Apply the `gloss-hi` highlight background over each `(start, end)` CHAR range
+/// (relative to `base_offset`) of a just-inserted body piece. Ranges come from
+/// `gloss_block::strip_hi_spans` on the already-IPA-stripped text, so they index
+/// the SHOWN text. No-op when `ranges` is empty.
+pub(crate) fn apply_hi_ranges(
+    buffer: &gtk4::TextBuffer,
+    base_offset: i32,
+    ranges: &[(usize, usize)],
+    hi_tag: &gtk4::TextTag,
+) {
+    for &(s, e) in ranges {
+        let start = buffer.iter_at_offset(base_offset + s as i32);
+        let end = buffer.iter_at_offset(base_offset + e as i32);
+        buffer.apply_tag(hi_tag, &start, &end);
+    }
+}
+
 /// Populate `view`'s buffer with a rendered gloss/passage doc (no echo
 /// highlight). Delegates to `populate_verse_buffer` with `selected_echo: None`.
 pub(crate) fn populate_gloss_buffer(
@@ -113,6 +130,21 @@ pub(crate) fn populate_verse_buffer(
             tag_table.remove(&old);
         }
     }
+
+    // The `<hi>` highlight background tag. Created here (color is a neutral
+    // default); the overlay re-asserts the theme color in `apply_font` (like it
+    // does for `synopsis-label`). Reused across renders, so look up first.
+    let hi_tag = match tag_table.lookup("gloss-hi") {
+        Some(t) => t,
+        None => {
+            let t = gtk4::TextTag::builder()
+                .name("gloss-hi")
+                .background(crate::ui::DEFAULT_HIGHLIGHT_BG)
+                .build();
+            tag_table.add(&t);
+            t
+        }
+    };
 
     let quote_speaker = bar_left + 60;
     let quote_verse = quote_speaker + 60;
@@ -298,12 +330,13 @@ pub(crate) fn populate_verse_buffer(
             }
             GlossElement::Verse(text) => {
                 only_speakers_so_far = false;
-                let shown = strip_ipa(text);
+                let (shown, hi) = crate::ui::gloss_block::strip_hi_spans(&strip_ipa(text));
                 let mut end = buffer.end_iter();
                 buffer.insert(&mut end, &shown);
                 let start = buffer.iter_at_offset(offset);
                 buffer.apply_tag(&verse_tag, &start, &buffer.end_iter());
                 apply_bracket_styling(&buffer, offset, &bracket_tag);
+                apply_hi_ranges(&buffer, offset, &hi, &hi_tag);
 
                 // line-number gutter: match on bracket+IPA-stripped, trimmed text
                 let stripped = strip_brackets(&shown);
@@ -371,11 +404,12 @@ pub(crate) fn populate_verse_buffer(
                         });
                     }
                 } else {
-                    let shown = strip_ipa(text);
+                    let (shown, hi) = crate::ui::gloss_block::strip_hi_spans(&strip_ipa(text));
                     let mut end = buffer.end_iter();
                     buffer.insert(&mut end, &shown);
                     let start = buffer.iter_at_offset(offset);
                     buffer.apply_tag(&para_tag, &start, &buffer.end_iter());
+                    apply_hi_ranges(&buffer, offset, &hi, &hi_tag);
                 }
             }
             GlossElement::Pron(_) => {
@@ -387,10 +421,12 @@ pub(crate) fn populate_verse_buffer(
             }
             GlossElement::Stage(text) => {
                 only_speakers_so_far = false;
+                let (shown, hi) = crate::ui::gloss_block::strip_hi_spans(text);
                 let mut end = buffer.end_iter();
-                buffer.insert(&mut end, text);
+                buffer.insert(&mut end, &shown);
                 let start = buffer.iter_at_offset(offset);
                 buffer.apply_tag(&stage_tag, &start, &buffer.end_iter());
+                apply_hi_ranges(&buffer, offset, &hi, &hi_tag);
                 // No line-number gutter entry: stage directions are not numbered
                 // verse lines.
             }

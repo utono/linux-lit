@@ -34,6 +34,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("i a o / I A O", "insert / append / open line"),
         ("x dd D / cw ciw / r J ~", "delete · change · replace · join"),
         ("y p P / v V", "yank · put · visual"),
+        ("H", "highlight selection (visual; toggles)"),
         ("u / Ctrl+R / .", "undo · redo · repeat"),
         (":w / :wq", "save / save & quit"),
         ("R", "ask Claude to rewrite"),
