@@ -149,31 +149,40 @@ pub(crate) fn populate_verse_buffer(
     let quote_speaker = bar_left + 60;
     let quote_verse = quote_speaker + 60;
 
-    // Speaker headings: small-caps, tinted with the accent (root) color so they
-    // read as structural labels rather than body text. Falls back to inherited
-    // fg when no accent is supplied.
-    let apply_accent = |b: gtk4::builders::TextTagBuilder| -> gtk4::builders::TextTagBuilder {
-        match speaker_accent {
+    // Speaker + verse "header" styling: matches the journal Q&A question header
+    // (bold 700, 0.9 scale, dim fg, space below) so the top of a gloss reads like
+    // the top of a journal Q&A. `speaker_accent` is intentionally unused for the
+    // color now (the header is dim, not accent-tinted); the param stays for the
+    // dim fallback. The speaker keeps small-caps (it's a name label).
+    let header_dim = |b: gtk4::builders::TextTagBuilder| -> gtk4::builders::TextTagBuilder {
+        // Prefer the passed dim color; fall back to the accent, then inherited fg.
+        match dim_color.or(speaker_accent) {
             Some(c) => b.foreground(c),
             None => b,
         }
     };
 
-    let speaker_tag = apply_accent(
+    let speaker_tag = header_dim(
         gtk4::TextTag::builder()
             .name("gloss-speaker")
             .variant(pango::Variant::SmallCaps)
-            .weight(400)
-            .scale(0.75)
+            .weight(700)
+            .scale(0.9)
             .left_margin(quote_speaker)
-            .pixels_above_lines(36),
+            .pixels_above_lines(36)
+            .pixels_below_lines(10),
     )
     .build();
 
-    let verse_tag = gtk4::TextTag::builder()
-        .name("gloss-verse")
-        .left_margin(quote_verse)
-        .build();
+    let verse_tag = header_dim(
+        gtk4::TextTag::builder()
+            .name("gloss-verse")
+            .weight(700)
+            .scale(0.9)
+            .left_margin(quote_verse)
+            .pixels_below_lines(10),
+    )
+    .build();
 
     // Stage direction inside the quoted source turn: same indent as verse, but
     // italic — matching the main reading card. Not a cursor stop, not TTS.
@@ -197,27 +206,29 @@ pub(crate) fn populate_verse_buffer(
         None => para_builder.build(),
     };
 
-    let speaker_first_tag = apply_accent(
+    let speaker_first_tag = header_dim(
         gtk4::TextTag::builder()
             .name("gloss-speaker-first")
             .variant(pango::Variant::SmallCaps)
-            .weight(400)
-            .scale(0.75)
-            .left_margin(quote_speaker),
+            .weight(700)
+            .scale(0.9)
+            .left_margin(quote_speaker)
+            .pixels_below_lines(10),
     )
     .build();
 
     // Speaker label inside the quoted source turn (before the echo list). The
     // turn may span several speakers; keep them tightly spaced to match the
     // reader's 8px speaker rhythm rather than the 36px echo-section gap.
-    let speaker_source_tag = apply_accent(
+    let speaker_source_tag = header_dim(
         gtk4::TextTag::builder()
             .name("gloss-speaker-source")
             .variant(pango::Variant::SmallCaps)
-            .weight(400)
-            .scale(0.75)
+            .weight(700)
+            .scale(0.9)
             .left_margin(quote_speaker)
-            .pixels_above_lines(8),
+            .pixels_above_lines(8)
+            .pixels_below_lines(10),
     )
     .build();
 

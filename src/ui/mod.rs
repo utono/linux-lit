@@ -185,6 +185,45 @@ pub(crate) fn draw_page_marker_glyph(
     let _ = h_px; // (height available if vertical centering is ever needed)
 }
 
+/// Fill the inset tinted panel behind a prose overlay's text column. Draws ONE
+/// rounded rectangle aligned to the view's live text margins (so it hugs the
+/// column on every work/theme with no hand-tuned offsets) and spanning the full
+/// DrawingArea height (the scroll region). Barely-there tint only — no border,
+/// no shadow. Painted BELOW the accent bar / page marker (added as an earlier
+/// overlay) and below the transparent text, so it reads as the text's backdrop.
+pub fn draw_overlay_panel(
+    cr: &gtk4::cairo::Context,
+    view: &gtk4::TextView,
+    area_w: i32,
+    area_h: i32,
+    rgb: (f64, f64, f64),
+    pad: f64,
+    radius: f64,
+) {
+    use gtk4::prelude::*;
+    let x0 = (view.left_margin() as f64 - pad).max(0.0);
+    let x1 = (area_w as f64 - view.right_margin() as f64 + pad).min(area_w as f64);
+    let y0 = 0.0_f64;
+    let y1 = area_h as f64;
+    if x1 <= x0 || y1 <= y0 {
+        return;
+    }
+    let w = x1 - x0;
+    let h = y1 - y0;
+    let r = radius.min(w / 2.0).min(h / 2.0).max(0.0);
+
+    // Rounded-rectangle path (four arcs).
+    let (r0, g0, b0) = rgb;
+    cr.new_sub_path();
+    cr.arc(x1 - r, y0 + r, r, -std::f64::consts::FRAC_PI_2, 0.0);
+    cr.arc(x1 - r, y1 - r, r, 0.0, std::f64::consts::FRAC_PI_2);
+    cr.arc(x0 + r, y1 - r, r, std::f64::consts::FRAC_PI_2, std::f64::consts::PI);
+    cr.arc(x0 + r, y0 + r, r, std::f64::consts::PI, 3.0 * std::f64::consts::FRAC_PI_2);
+    cr.close_path();
+    cr.set_source_rgb(r0, g0, b0);
+    let _ = cr.fill();
+}
+
 /// Paint a vim-style BLOCK cursor: a one-character background fill (`fill`) with
 /// the glyph drawn in `fg`, over the char at `char_index` (a CHAR offset). Used
 /// by the vim editors (journal page + ask-card prompt) to show a solid block in

@@ -1209,6 +1209,9 @@ pub fn build_window(
     // Page-marker glyph color = theme dim foreground (matches the old CSS).
     gloss_overlay.set_marker_color(&theme.dim_fg);
     journal_overlay.set_marker_color(&theme.dim_fg);
+    gloss_overlay.set_panel_color(&theme.overlay_panel_bg);
+    journal_overlay.set_panel_color(&theme.overlay_panel_bg);
+    journal_overlay.set_bar_color(&theme.root_color);
 
     // Journal picker overlays the journal overlay (above journal, below translation)
     let journal_picker = JournalQaPicker::new();

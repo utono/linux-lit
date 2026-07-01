@@ -18,6 +18,7 @@ pub struct JournalOverlay {
     position_label: Label,
     hint: Label,
     bar_drawing: gtk4::DrawingArea,
+    panel_drawing: gtk4::DrawingArea,
     bar_ranges: Rc<RefCell<Vec<(i32, i32)>>>,
     /// When the vim editor's NORMAL/VISUAL cursor sits on a BLANK line, that
     /// line's `\n` has no glyph cell, so the char-background block tag paints
@@ -90,6 +91,11 @@ pub struct JournalOverlay {
     /// func. Its dim color is `marker_color`.
     marker_glyph: Rc<RefCell<Option<&'static str>>>,
     marker_color: Rc<RefCell<(f64, f64, f64)>>,
+    panel_color: Rc<RefCell<(f64, f64, f64)>>,
+    /// Selection accent-bar color = theme `root_color` (the crisp accent), threaded
+    /// by the app via `set_bar_color` — matching the gloss overlay's theme-wired
+    /// bar. (Was a hardcoded pale grey-blue default, the odd one out.)
+    bar_color: Rc<RefCell<(f64, f64, f64)>>,
 }
 
 /// Split the full Q&A text into paragraph blocks (the pagination unit): maximal
@@ -127,6 +133,12 @@ fn prefix_question(question: &str) -> String {
 // flush at the bottom while the gloss footer floated higher. With 44 the journal
 // sizes its scroll exactly like the gloss, so the footer lands in the same place.
 const UNACCOUNTED_CHROME_MARGINS: i32 = 24 + 20 /* scroll_overlay top+bottom */;
+
+/// Extra LEFT indent on the Q&A body so it sits right of the accent bar, with the
+/// bar in a clear gutter beside the text — matching the gloss explication's
+/// `bar_left + 60`. Added to the left margin only; pagination reads left_margin
+/// live so wrap/height follow automatically (no measure change).
+const JOURNAL_BODY_INDENT: i32 = 60;
 
 impl JournalOverlay {
     pub fn new(column_width: u32, text_margins: u32) -> Self {
@@ -166,7 +178,15 @@ impl JournalOverlay {
         view.set_cursor_visible(false);
         view.set_focusable(false);
         view.set_wrap_mode(gtk4::WrapMode::Word);
+        // ~one line of breathing room above the first line and below the last
+        // line INSIDE the panel, so the text isn't flush against the panel's
+        // inner top/bottom edge (matches the gloss view's inner margins; the
+        // scroll_overlay's own margins sit OUTSIDE the panel, so they can't
+        // provide this gap).
+        view.set_top_margin(28);
+        view.set_bottom_margin(28);
         view.add_css_class("gloss-text");
+        view.add_css_class("overlay-prose");
 
         // The ScrolledWindow's child MUST be the TextView DIRECTLY so GTK uses
         // the view's native scroll adjustments (a TextView is `Scrollable`).
@@ -178,7 +198,12 @@ impl JournalOverlay {
         scrolled.set_child(Some(&view));
 
         let scroll_overlay = Overlay::new();
-        scroll_overlay.set_child(Some(&scrolled));
+        // The Overlay's MAIN CHILD is set to `panel_drawing` below (so the inset
+        // tint paints BELOW the transparent prose view); the scroll becomes a
+        // measured overlay on top. `panel_drawing` isn't built until after the
+        // clip guard, so the main child is assigned in the panel-wiring block
+        // (search "set_child(Some(&panel_drawing))"), not here. The clip guard
+        // only ADDS an overlay, so it does not need the main child set first.
         let clip_guard = crate::ui::bottom_clip_guard::BottomClipGuard::attach(
             &scroll_overlay,
             &view,
@@ -194,6 +219,13 @@ impl JournalOverlay {
         // see draw_page_marker_glyph) + its dim color, threaded by set_marker_color.
         let marker_glyph: Rc<RefCell<Option<&'static str>>> = Rc::new(RefCell::new(None));
         let marker_color: Rc<RefCell<(f64, f64, f64)>> = Rc::new(RefCell::new((0.5, 0.5, 0.5)));
+        let panel_color: Rc<RefCell<(f64, f64, f64)>> =
+            Rc::new(RefCell::new((0.95, 0.93, 0.86))); // placeholder; set at startup
+        // Accent-bar color = theme root_color, set by set_bar_color at startup.
+        let bar_color: Rc<RefCell<(f64, f64, f64)>> =
+            Rc::new(RefCell::new((0.53, 0.62, 0.71))); // placeholder; set at startup
+        let panel_drawing = gtk4::DrawingArea::new();
+        panel_drawing.set_can_target(false);
         let bar_drawing = gtk4::DrawingArea::new();
         bar_drawing.set_can_target(false);
         {
@@ -202,6 +234,7 @@ impl JournalOverlay {
             let vim_block_clone = vim_block_line.clone();
             let marker_glyph_clone = marker_glyph.clone();
             let marker_color_clone = marker_color.clone();
+            let bar_color_clone = bar_color.clone();
             bar_drawing.set_draw_func(move |_area, cr, area_w, _h| {
                 // Page marker first (independent of the selection bar's early-return).
                 crate::ui::draw_page_marker_glyph(
@@ -235,25 +268,56 @@ impl JournalOverlay {
                 if ranges.is_empty() {
                     return;
                 }
-                // Fixed gloss accent default (NOT theme-wired).
-                cr.set_source_rgb(0.53, 0.62, 0.71);
+                // Theme accent (root_color), matching the gloss overlay's bar.
+                let (r, g, b) = *bar_color_clone.borrow();
+                cr.set_source_rgb(r, g, b);
                 cr.set_line_width(2.0);
-                // Draw the bar in the left gutter just inside the text margin so
-                // it sits beside the selected paragraph. The card sets the view's
-                // left_margin to card_side_margin (card_width/4); a fixed x=4 put
-                // the bar far out in the empty gutter, looking like nothing was
-                // selected. 12px left of the text edge mirrors the gloss bar.
+                // Draw the bar 12px LEFT of the text so it sits in the gap
+                // between the panel's inner edge (left_margin - PANEL_PAD = -24)
+                // and the text (0) — i.e. centered in the pad gutter, cleanly
+                // separated from the glyphs. Gloss achieves the same separation
+                // differently: its bar is AT `left` but the explication body is
+                // indented ~60px PAST the bar, so the bar sits in the gap. Journal
+                // has no body indent, so it insets the BAR instead. (Drawing at
+                // exactly left_margin() made the bar collide with the first glyph.)
                 let x = (view_clone.left_margin() as f64 - 12.0).max(2.0);
                 crate::ui::draw_bar_spans(cr, &view_clone, &ranges, x);
+            });
+        }
+        {
+            let view_for_panel = view.clone();
+            let panel_color_clone = panel_color.clone();
+            panel_drawing.set_draw_func(move |_area, cr, w, h| {
+                crate::ui::draw_overlay_panel(
+                    cr,
+                    &view_for_panel,
+                    w,
+                    h,
+                    *panel_color_clone.borrow(),
+                    24.0, // PANEL_PAD — gap between the text ink and the panel edge
+                    12.0, // PANEL_RADIUS — matches the card border-radius
+                );
             });
         }
         // Repaint the bar when the view scrolls (buffer->window y is scroll-dependent).
         {
             let bar_for_scroll = bar_drawing.clone();
+            let panel_for_scroll = panel_drawing.clone();
             scrolled.vadjustment().connect_value_changed(move |_| {
                 bar_for_scroll.queue_draw();
+                panel_for_scroll.queue_draw();
             });
         }
+        // Panel is the Overlay's MAIN CHILD so its inset tint paints BELOW the
+        // (transparent) prose view; the scroll becomes a measured overlay on top.
+        // A GTK Overlay paints its main child first, then overlays in add-order —
+        // so a panel added as an *overlay* would paint ON TOP of the text (an
+        // opaque tint rect hiding the prose). The scroll MUST be measured
+        // (`set_measure_overlay(.., true)`) — a bare DrawingArea main child
+        // reports 0×0 natural size and would collapse the Overlay.
+        scroll_overlay.set_child(Some(&panel_drawing));
+        scroll_overlay.add_overlay(&scrolled);
+        scroll_overlay.set_measure_overlay(&scrolled, true);
         scroll_overlay.add_overlay(&bar_drawing);
         scroll_overlay.set_measure_overlay(&bar_drawing, false);
         scroll_overlay.set_clip_overlay(&bar_drawing, true);
@@ -330,6 +394,7 @@ impl JournalOverlay {
             position_label,
             hint,
             bar_drawing,
+            panel_drawing,
             bar_ranges,
             vim_block_line,
             blocks: RefCell::new(Vec::new()),
@@ -345,7 +410,9 @@ impl JournalOverlay {
             column_width: column_width as i32,
             is_prose: Cell::new(false),
             font_family: RefCell::new(String::new()),
-            font_size: Cell::new(16),
+            // Match the gloss/synopsis overlay's reading-font size (shared const),
+            // so journal Q&A renders at the same size instead of drifting.
+            font_size: Cell::new(crate::ui::gloss_overlay::GLOSS_DEFAULT_FONT_SIZE),
             pre_edit_family: RefCell::new(None),
             last_card_size: Cell::new((0, 0)),
             ask_host,
@@ -356,6 +423,8 @@ impl JournalOverlay {
             hi_ranges: RefCell::new(Vec::new()),
             marker_glyph,
             marker_color,
+            bar_color,
+            panel_color,
         }
     }
 
@@ -398,7 +467,9 @@ impl JournalOverlay {
         } else {
             crate::ui::card_side_margin(card_width)
         };
-        self.view.set_left_margin(side);
+        // Indent the body right of the accent bar (bar sits in the gutter),
+        // matching gloss. Left-only; the right margin stays `side`.
+        self.view.set_left_margin(side + JOURNAL_BODY_INDENT);
         self.view.set_right_margin(side);
         let _ = (self.text_margins, self.column_width);
     }
@@ -662,8 +733,63 @@ impl JournalOverlay {
         }
     }
 
+    /// Set the inset panel tint color (theme `panel_bg`) and repaint the panel.
+    pub fn set_panel_color(&self, hex: &str) {
+        if let Some(rgb) = crate::ui::gloss_util::parse_hex_color(hex) {
+            *self.panel_color.borrow_mut() = rgb;
+            self.panel_drawing.queue_draw();
+        }
+    }
+
+    /// Set the selection accent-bar color (theme `root_color`) and repaint the
+    /// bar — matches the gloss overlay's theme-wired bar.
+    pub fn set_bar_color(&self, hex: &str) {
+        if let Some(rgb) = crate::ui::gloss_util::parse_hex_color(hex) {
+            *self.bar_color.borrow_mut() = rgb;
+            self.bar_drawing.queue_draw();
+        }
+    }
+
     /// Re-apply the `journal-hi` highlight tag over the stored `hi_ranges` with
     /// the theme background. No-op when there are no ranges.
+    /// Style the leading `Q:` line as a header (small, bold, dim, extra space
+    /// below) — mirroring the gloss `.gloss-header` speaker-label look — when the
+    /// current page begins with the question. Answer pages (no `Q:` line) are
+    /// untouched. Uses the marker color (theme `dim_fg`) as the header foreground.
+    fn apply_qa_header(&self, body: &str) {
+        let Some(first_line) = body.split('\n').next() else {
+            return;
+        };
+        if !first_line.trim_start().starts_with("Q:") {
+            return;
+        }
+        let buffer = self.view.buffer();
+        let table = buffer.tag_table();
+        if table.lookup("journal-qa-header").is_none() {
+            let (r, g, b) = *self.marker_color.borrow();
+            table.add(
+                &gtk4::TextTag::builder()
+                    .name("journal-qa-header")
+                    .weight(700)
+                    .scale(0.9)
+                    .foreground_rgba(&gtk4::gdk::RGBA::new(r as f32, g as f32, b as f32, 1.0))
+                    .pixels_below_lines(10)
+                    .build(),
+            );
+        }
+        if let Some(tag) = table.lookup("journal-qa-header") {
+            // Keep the color live with the theme (marker_color = dim_fg).
+            let (r, g, b) = *self.marker_color.borrow();
+            tag.set_foreground_rgba(Some(&gtk4::gdk::RGBA::new(
+                r as f32, g as f32, b as f32, 1.0,
+            )));
+            let si = buffer.start_iter();
+            let mut ei = buffer.start_iter();
+            ei.forward_chars(first_line.chars().count() as i32);
+            buffer.apply_tag(&tag, &si, &ei);
+        }
+    }
+
     fn apply_hi_color(&self) {
         let buffer = self.view.buffer();
         let table = buffer.tag_table();
@@ -1018,6 +1144,8 @@ impl JournalOverlay {
         // Paint the `<hi>` highlight AFTER set_text + font (read-mode only; the
         // editor sets raw text and must not re-apply these read-mode ranges).
         self.apply_hi_color();
+        // Style the leading `Q:` line as a header (gloss look), first page only.
+        self.apply_qa_header(&body);
         // Floating page marker (⌄ more / • end), bottom-center of the viewport.
         self.update_page_marker(pidx, n_pages);
         // The vadjustment stays at top — the page fits, nothing scrolls.

@@ -2542,7 +2542,13 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
             }
         };
         (
-            crate::app::base_work_abbrev(&work.abbrev).to_string(),
+            // Glosses are STORED under the normalized abbrev (strips only `-Amb`),
+            // so look them up the same way — NOT `base_work_abbrev`, which strips
+            // any `-suffix` (`Cym-BBC` -> `Cym`) and misses a variant's own gloss,
+            // making Ctrl+g toast "No gloss on this line" on `-BBC`/`-DC` editions.
+            // Matches the gloss picker (pickers.rs) and the main-card tint
+            // (apply_reader_gloss_highlighting), which already use normalize_abbrev.
+            crate::gloss::normalize_abbrev(&work.abbrev).to_string(),
             (line.div1, line.div2, line.line_in_div),
         )
     };
@@ -2613,7 +2619,12 @@ pub(crate) fn open_last_gloss(state: &Rc<RefCell<AppState>>) {
                 return;
             }
         };
-        let abbrev = crate::app::base_work_abbrev(&work.abbrev).to_string();
+        // `last_gloss` is KEYED by the normalized abbrev (record_last_gloss writes
+        // `ctx.work_abbrev` = normalize_abbrev), and glosses are STORED under it
+        // too — so read with normalize_abbrev, NOT base_work_abbrev (which strips
+        // any `-suffix` and both misses the config key AND the passage on
+        // `-BBC`/`-DC` editions). Same bug/fix as toggle_overlay above.
+        let abbrev = crate::gloss::normalize_abbrev(&work.abbrev).to_string();
         match s.config.last_gloss.get(&abbrev) {
             Some(lg) => (abbrev, lg.start_citation.clone(), lg.gloss_type.clone()),
             None => {
