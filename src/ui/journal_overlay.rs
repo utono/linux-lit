@@ -250,12 +250,12 @@ impl JournalOverlay {
                 // Fixed gloss accent default (NOT theme-wired).
                 cr.set_source_rgb(0.53, 0.62, 0.71);
                 cr.set_line_width(2.0);
-                // Draw the bar in the left gutter just inside the text margin so
-                // it sits beside the selected paragraph. The card sets the view's
-                // left_margin to card_side_margin (card_width/4); a fixed x=4 put
-                // the bar far out in the empty gutter, looking like nothing was
-                // selected. 12px left of the text edge mirrors the gloss bar.
-                let x = (view_clone.left_margin() as f64 - 12.0).max(2.0);
+                // Draw the bar AT the text's left margin so it sits just inside
+                // the inset panel beside the selected paragraph — matching the
+                // gloss/synopsis bar (`bar_x = left`) and the journal blank-line
+                // block cursor above, which also use `left_margin()`. (An earlier
+                // `- 12.0` pushed it out into the gutter, the odd one out.)
+                let x = (view_clone.left_margin() as f64).max(2.0);
                 crate::ui::draw_bar_spans(cr, &view_clone, &ranges, x);
             });
         }
@@ -269,8 +269,8 @@ impl JournalOverlay {
                     w,
                     h,
                     *panel_color_clone.borrow(),
-                    10.0,
-                    12.0,
+                    24.0, // PANEL_PAD — gap between the text ink and the panel edge
+                    12.0, // PANEL_RADIUS — matches the card border-radius
                 );
             });
         }

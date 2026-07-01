@@ -396,7 +396,7 @@ impl GlossOverlay {
                     w,
                     h,
                     *panel_color_clone.borrow(),
-                    10.0, // PANEL_PAD — breathe a few px outside the text ink
+                    24.0, // PANEL_PAD — gap between the text ink and the panel edge
                     12.0, // PANEL_RADIUS — matches the card border-radius
                 );
             });
