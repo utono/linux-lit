@@ -277,6 +277,8 @@ pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &cra
     // Page-marker glyph color follows theme dim foreground.
     state.gloss_overlay.set_marker_color(&theme.dim_fg);
     state.journal_overlay.set_marker_color(&theme.dim_fg);
+    state.gloss_overlay.set_panel_color(&theme.overlay_panel_bg);
+    state.journal_overlay.set_panel_color(&theme.overlay_panel_bg);
 
     // Update vocab tag foreground
     state.vocab_tag.set_property("foreground", &theme.vocab_fg);
