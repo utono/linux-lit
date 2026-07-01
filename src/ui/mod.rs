@@ -202,8 +202,16 @@ pub(crate) const PANEL_RADIUS: f64 = 12.0;
 ///
 /// Extracted from the two byte-identical panel-setup blocks in gloss_overlay.rs +
 /// journal_overlay.rs (audit #52) so the two overlays cannot drift.
+///
+/// `body_indent` is the part of `view.left_margin()` that is BODY indent past the
+/// text column's visual left edge, excluded when anchoring the panel. The gloss
+/// keeps its view margin at the column edge (body indent is per-tag) so it passes
+/// 0; the journal folds `JOURNAL_BODY_INDENT` into the view margin, and without
+/// excluding it the journal panel rendered 12px narrower than the gloss panel on
+/// the same card (left edge inboard, right edges aligned).
 pub(crate) fn attach_overlay_panel(
     view: &gtk4::TextView,
+    body_indent: i32,
 ) -> (gtk4::DrawingArea, std::rc::Rc<std::cell::RefCell<(f64, f64, f64)>>) {
     use gtk4::prelude::*;
     let panel_color: std::rc::Rc<std::cell::RefCell<(f64, f64, f64)>> =
@@ -222,6 +230,7 @@ pub(crate) fn attach_overlay_panel(
                 *panel_color_clone.borrow(),
                 PANEL_PAD,
                 PANEL_RADIUS,
+                body_indent as f64,
             );
         });
     }
@@ -234,6 +243,8 @@ pub(crate) fn attach_overlay_panel(
 /// DrawingArea height (the scroll region). Barely-there tint only — no border,
 /// no shadow. Painted BELOW the accent bar / page marker (added as an earlier
 /// overlay) and below the transparent text, so it reads as the text's backdrop.
+/// `body_indent` — see `attach_overlay_panel`: the body-indent slice of
+/// `left_margin` excluded so the panel anchors to the COLUMN edge.
 pub fn draw_overlay_panel(
     cr: &gtk4::cairo::Context,
     view: &gtk4::TextView,
@@ -242,9 +253,10 @@ pub fn draw_overlay_panel(
     rgb: (f64, f64, f64),
     pad: f64,
     radius: f64,
+    body_indent: f64,
 ) {
     use gtk4::prelude::*;
-    let x0 = (view.left_margin() as f64 - pad).max(0.0);
+    let x0 = (view.left_margin() as f64 - body_indent - pad).max(0.0);
     let x1 = (area_w as f64 - view.right_margin() as f64 + pad).min(area_w as f64);
     let y0 = 0.0_f64;
     let y1 = area_h as f64;

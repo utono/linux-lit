@@ -224,7 +224,12 @@ impl JournalOverlay {
         // Inset-panel DrawingArea + its color cell (shared helper, audit #52). The
         // draw_func is wired inside; the caller sets it as the Overlay main child
         // and adds panel_drawing.queue_draw() to its scroll-repaint closure below.
-        let (panel_drawing, panel_color) = crate::ui::attach_overlay_panel(&view);
+        // The journal folds JOURNAL_BODY_INDENT into the view's left_margin
+        // (size_card), so the panel must exclude it to anchor at the COLUMN edge
+        // — otherwise the journal panel renders 12px narrower than the gloss
+        // panel on the identical card (left edge inboard, right edges aligned).
+        let (panel_drawing, panel_color) =
+            crate::ui::attach_overlay_panel(&view, JOURNAL_BODY_INDENT);
         // Accent-bar color = theme root_color, set by set_bar_color at startup.
         let bar_color: Rc<RefCell<(f64, f64, f64)>> =
             Rc::new(RefCell::new((0.53, 0.62, 0.71))); // placeholder; set at startup
@@ -274,14 +279,13 @@ impl JournalOverlay {
                 let (r, g, b) = *bar_color_clone.borrow();
                 cr.set_source_rgb(r, g, b);
                 cr.set_line_width(2.0);
-                // Draw the bar 12px LEFT of the text so it sits in the gap
-                // between the panel's inner edge (left_margin - PANEL_PAD = -24)
-                // and the text (0) — i.e. centered in the pad gutter, cleanly
-                // separated from the glyphs. Gloss achieves the same separation
-                // differently: its bar is AT `left` but the explication body is
-                // indented ~60px PAST the bar, so the bar sits in the gap. Journal
-                // has no body indent, so it insets the BAR instead. (Drawing at
-                // exactly left_margin() made the bar collide with the first glyph.)
+                // Draw the bar 12px LEFT of the text — at the COLUMN edge
+                // (left_margin - JOURNAL_BODY_INDENT), exactly where the gloss
+                // draws its bar (`bar_x = left`). The panel's inner edge sits a
+                // further PANEL_PAD left of that (the panel excludes the body
+                // indent — see attach_overlay_panel), so bar-to-panel and
+                // bar-to-glyph gaps match the gloss. (Drawing at exactly
+                // left_margin() made the bar collide with the first glyph.)
                 let x = (view_clone.left_margin() as f64 - 12.0).max(2.0);
                 crate::ui::draw_bar_spans(cr, &view_clone, &ranges, x);
             });

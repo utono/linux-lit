@@ -304,7 +304,9 @@ impl GlossOverlay {
         // Inset-panel DrawingArea + its color cell (shared helper, audit #52). The
         // draw_func is wired inside; the caller sets it as the Overlay main child
         // and adds panel_drawing.queue_draw() to its scroll-repaint closure below.
-        let (panel_drawing, panel_color) = crate::ui::attach_overlay_panel(&gloss_view);
+        // body_indent 0: the gloss view's left_margin IS the column edge (the
+        // explication's +12 body indent is a per-tag margin, not the view's).
+        let (panel_drawing, panel_color) = crate::ui::attach_overlay_panel(&gloss_view, 0);
         let vim_block_line: crate::ui::VimBlankCursor = Rc::new(RefCell::new(None));
         let bar_x: Rc<RefCell<i32>> = Rc::new(RefCell::new((column_width as i32) / 8));
         let line_numbers: Rc<RefCell<Vec<LineNumber>>> = Rc::new(RefCell::new(Vec::new()));
