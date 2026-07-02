@@ -152,9 +152,10 @@ wtype "3"                          # send keystrokes to the focused reader
 
 ### Useful key sequences for verification
 
-- `3` / `2` — next / previous chapter (jumps the cursor onto the `CHAPTER N`
-  heading). Front matter (before Chapter 1) has chapter number 0 and no
-  synopsis, so `h` shows nothing there — advance into a chapter first.
+- `5` / `4` — next / previous chapter (jumps the cursor onto the `CHAPTER N`
+  heading; `3`/`2` step bookmarks instead). Front matter (before Chapter 1) has
+  chapter number 0 and no synopsis, so `h` shows nothing there — advance into a
+  chapter first.
 - `h` — open the synopsis overlay for the current chapter; `Ctrl+g` glosses.
 - `j` / `k` — scroll. While an overlay is open these scroll the overlay; with no
   overlay they scroll the reading buffer. To stress overlay top/bottom clipping,

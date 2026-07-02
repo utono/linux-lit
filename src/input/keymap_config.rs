@@ -227,17 +227,25 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         // RPD: the 2/3 number-row keys emit bracketleft/braceleft unshifted and
         // 2/3 shifted. Scene jumps sit on the UNSHIFTED glyph; bookmarks on the
         // SHIFTED digit (see Bookmarks below).
-        (KeyCombo::plain("parenleft"), Action::JumpToPrevChapter),
-        (KeyCombo::plain("ampersand"), Action::JumpToNextChapter),
-        // `}` (braceright on RPD) duplicates `(` — jump to the previous chapter.
+        // RPD: `(`/`4` share the AE04 key (unshifted symbol, shifted digit) and
+        // `&`/`5` share AE05. The unshifted symbol steps BOOKMARKS; the shifted
+        // digit takes the chapter jump the symbol used to have.
+        (KeyCombo::plain("parenleft"), Action::PrevBookmark),
+        (KeyCombo::plain("ampersand"), Action::NextBookmark),
+        (KeyCombo::plain("4"), Action::JumpToPrevChapter),
+        (KeyCombo::shift("4"), Action::JumpToPrevChapter),
+        (KeyCombo::plain("5"), Action::JumpToNextChapter),
+        (KeyCombo::shift("5"), Action::JumpToNextChapter),
+        // `}` (braceright on RPD) duplicates `4` — jump to the previous chapter.
         (KeyCombo::plain("braceright"), Action::JumpToPrevChapter),
-        // `]` (bracketright on RPD) duplicates `&` — jump to the next chapter.
+        // `]` (bracketright on RPD) duplicates `5` — jump to the next chapter.
         (KeyCombo::plain("bracketright"), Action::JumpToNextChapter),
         (KeyCombo::plain("bracketleft"), Action::JumpToPrevScene),
         (KeyCombo::plain("braceleft"), Action::JumpToNextScene),
         (KeyCombo::plain("C"), Action::ShowCurrentChapter),
         (KeyCombo::plain("semicolon"), Action::ShowCurrentChapter),
-        // Bookmarks (the SHIFTED 2/3 glyphs on the bracketleft/braceleft keys)
+        // Bookmarks (the SHIFTED 2/3 glyphs on the bracketleft/braceleft keys
+        // keep working as aliases of `(`/`&`)
         (KeyCombo::plain("m"), Action::ToggleBookmark),
         (KeyCombo::ctrl("c"), Action::SetChapter),
         (KeyCombo::ctrl("e"), Action::ShowEchoesBcp),
