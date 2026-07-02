@@ -1634,3 +1634,166 @@ color storage is normalized.
   `QUOTE_BODY_INDENT` (12) and removed the raw gloss `- 60` measurement.
 - **Still open:** #54 (bar draw-func block-cursor extraction), #58
   (BAR_TEXT_GAP const), #60 (bottom-pad alignment, needs on-screen verify).
+
+---
+
+## Batch 4 (audited 2026-07-01, post overlay-consistency-53-59 branch)
+
+Fresh full-tree scan (three parallel Explore finders over input/actions+keymap,
+ui/, db/app/misc). Every entry below verified by direct side-by-side read, not
+agent word (the #11 lesson — one agent claim, the current_line→id pair, turned
+out token-different and was demoted to the #23-style-equivalence entry #66).
+Ranked by (duplication × drift_risk) ÷ scope_size.
+
+## #61 — buffer-line-for-line-id resolver — PROPOSED
+
+- **Status:** PROPOSED — rank #1 of this batch: 3 byte-identical 10-line sites,
+  cross-file, in the mapping logic that is the repo's most bug-prone core.
+- **Signal:** the "resolve a `line_mapping_id` to a buffer line, honoring the
+  optional `line_map`" block is byte-identical at **3 sites**:
+  bookmarks.rs:84-92, pickers.rs:983-991, keymap.rs:350-359. Body:
+  `let buffer_line = if let Some(ref lm) = s.line_map {
+  s.current_work.as_ref().and_then(|w| { let work_idx = w.lines.iter()
+  .position(|l| l.id == lm_id)?; Some(lm.work_to_buffer[work_idx]) }) } else {
+  s.current_work.as_ref().and_then(|w| w.lines.iter().position(|l| l.id == lm_id)) };`
+- **Identical part (extract):** `pub(crate) fn buffer_line_for_line_id(s: &AppState,
+  lm_id: i64) -> Option<usize>` in `src/input/navigation.rs` (beside
+  `jump_to_line`, which all three sites call next).
+- **Variant (delegable):** pickers.rs:216-224 `jump_to_line_mapping_id` computes
+  the same value restructured (position hoisted above the `lm` check; else-arm
+  `Some(work_idx)` ≡ the position result). Trivially equivalent — its body can
+  delegate to the helper (#23-style, the helper picks one shape).
+- **EXCLUDED (named, why):** concordance.rs:493 `concordance_resolve_indices`
+  (adds the canonical `buffer_to_work.get(bi) == Some(&Some(work_idx))` check +
+  returns a `(buf, work)` pair — different contract); app/mod.rs:3066 & :3179
+  (guarded `.get(work_idx).unwrap_or(&state.current_line)` + canonical check
+  falling back to `current_line` — different fallback semantics, hard exclude);
+  timestamps.rs:623-630 (`.get(idx).copied()` over an already-computed Option —
+  different shape); gutter.rs/main.rs direct `work_to_buffer` consumers.
+- **Safe-scope:** yes — pure resolver extraction; each site keeps its own borrow
+  scope and follow-up (`jump_to_line`, mode set). Drift risk is real: a fix to
+  the mapping fallback must currently be hand-copied to 3 files.
+
+## #62 — readonly-textview triple — PROPOSED
+
+- **Status:** PROPOSED — rank #2: 5 byte-identical sites across 3 files.
+- **Signal:** the read-only display-view init triple `view.set_editable(false);
+  view.set_cursor_visible(false); view.set_focusable(false);` — byte-identical
+  modulo receiver name — at **5 sites**: gloss_overlay.rs:279-281 (gloss_view),
+  :447-449 (echo_header_view); journal_overlay.rs:179-181; 
+  translation_overlay.rs:431-433 (interlude view), :630-632 (make_column).
+- **Identical part (extract):** `pub fn set_view_readonly(view: &gtk4::TextView)`
+  in `src/ui/mod.rs` (beside the other shared overlay helpers).
+- **EXCLUDED (named, why):** gloss_overlay.rs:720-722 vim begin_edit (sets
+  `focusable(true)` + `grab_focus` — the vim-editor entry toggle, opposite
+  intent); gloss_overlay.rs:782-783 + journal_overlay.rs:977-978 vim exit pairs
+  (2-line, no `set_editable` — the editable flag never changed during vim edit;
+  different lifecycle, leave inline); ask_card's editable prompt view (true
+  values).
+- **Safe-scope:** yes — 3-line construction-time widget init → one call.
+
+## #63 — gloss set_bar_color_from_root — PROPOSED
+
+- **Status:** PROPOSED — rank #3: 4 byte-identical sites, one file, 5 lines.
+- **Signal:** the Option-guarded accent-bar color update
+  `if let Some(color) = root_color { if let Some((r, g, b)) =
+  parse_hex_color(color) { *self.bar_color.borrow_mut() = (r, g, b); } }`
+  — byte-identical at **4 sites** in gloss_overlay.rs: :1057-1061
+  (show_gloss_prose), :1161-1165 (show_gloss_prose_loading), :1234-1238
+  (show_echo_list), :1393-1397 (show_synopsis).
+- **Identical part (extract):** a private method
+  `fn set_bar_color_from_root(&self, root_color: Option<&str>)` on GlossOverlay.
+- **Related but do NOT merge:** #53's shared `ui::set_rc_color` takes a bare
+  `&str` AND queues a draw — these show-path sites are Option-guarded and
+  deliberately do NOT `queue_draw` (the show fn repaints anyway). Routing them
+  through `set_rc_color` would add a redundant draw per show = not the exact
+  same behavior; keep the new helper draw-free.
+- **EXCLUDED:** gloss_overlay.rs:836 (`parse_hex_color(&fill).unwrap_or(...)` —
+  fallback-default form, different consumer); :930 (rgba match for a tag color).
+- **Safe-scope:** yes — 5-line block → one method call at 4 sites.
+
+## #64 — gloss hide-diff-labels core — PROPOSED
+
+- **Status:** PROPOSED — rank #4: 5 sites, one file; the extensions have already
+  drifted (which is the evidence the core needs a name).
+- **Signal:** the 4-line diff-label hide core `orig_header/original_label/
+  corr_header/corrected_label .set_visible(false)` — byte-identical and
+  contiguous at **5 sites** in gloss_overlay.rs: :1050-1053, :1152-1155,
+  :1229-1232, :1367-1370, :2423-2426. The tails vary per site
+  (echo_header_view+echo_rule at 4 of 5; position_label at 2;
+  gloss_scroll_overlay + hint at the :2423 clear-all site) — those stay inline.
+- **Identical part (extract):** `fn hide_diff_labels(&self)` on GlossOverlay
+  hiding exactly the 4 diff widgets; every site calls it then keeps its own
+  extra hides.
+- **Rider (same-PR candidate, at the 2-site floor):** the byte-identical 5-line
+  prose-margin prefix `self.title.set_margin_start(left); gloss_view
+  set_left/right_margin(left); set_top_margin(32); set_pixels_below_lines(4);`
+  at :1044-1048 & :1145-1149 (the show_gloss_prose / _loading twins) →
+  `fn set_prose_margins(&self, left: i32)` while touching the file.
+- **EXCLUDED:** the show-path `set_visible(true)` sequences (hint/scrim/container
+  order genuinely varies per show fn — extraction risks reordering side effects);
+  any site hiding only a subset of the 4.
+- **Safe-scope:** yes — pure widget-visibility extraction.
+
+## #65 — mpv discover-or-launch-blocking closure — PROPOSED
+
+- **Status:** PROPOSED — rank #5: only 2 sites, but the whole ~12-line closure
+  body is byte-identical and it encodes MPV startup behavior that must stay in
+  lockstep.
+- **Signal:** the `spawn_blocking` closure body — `if let Some((sock, _)) =
+  find_socket_for_work(&[path.clone()]) { return sock…; } let launched =
+  launch_mpv(&path); for _ in 0..60 { sleep(50ms); if Path::new(&launched)
+  .exists() { return launched; } } launched` — byte-identical at **2 sites** in
+  pickers.rs: :419-431 (media-picker confirm) and :505-521 (the other confirm
+  path).
+- **Identical part (extract):** `pub fn discover_or_launch_blocking(path: &str)
+  -> String` in `src/mpv/discovery.rs` (beside `launch_mpv` /
+  `find_socket_for_work`, which it composes). Call sites become
+  `spawn_blocking(move || discover_or_launch_blocking(&path_for_discover))`.
+  Also names the magic 60×50ms (≤3s socket wait) in one place.
+- **EXCLUDED:** every other `find_socket_for_work` caller (discovery without the
+  launch+wait tail — e.g. display_work's skip/attach paths); the
+  `LIT_HEADLESS_TEST` skip lives inside `launch_mpv` and is untouched.
+- **Safe-scope:** yes — pure fn extraction of a blocking helper; identical
+  control flow preserved (early returns become the fn's returns).
+
+## #66 — current-line-id helper — PROPOSED
+
+- **Status:** PROPOSED — rank #6 (2 sites at the floor; do in the same PR as
+  #61 — same home, inverse direction).
+- **Signal:** the inverse resolution ("current buffer line → line_mapping_id")
+  at **2 sites**: bookmarks.rs:18-24 and concordance.rs:66-72. NOT byte-identical
+  — bookmarks uses `lm.buffer_to_work.get(s.current_line)?.as_ref().copied()`,
+  concordance `.get(s.current_line).copied().flatten()` — but trivially
+  equivalent (both `Option<&Option<usize>>` → `Option<usize>`; #23-precedent:
+  the helper picks one shape). The wrapper + tail
+  (`work_idx.and_then(|wi| w.lines.get(wi).map(|l| l.id))`) is byte-identical.
+- **Identical part (extract):** `pub(crate) fn current_line_id(s: &AppState) ->
+  Option<i64>` beside #61's `buffer_line_for_line_id` in navigation.rs.
+- **EXCLUDED:** timestamps' undo path (works from a stored id, not the cursor);
+  any site with a canonical-check or fallback (none found at this shape).
+- **Safe-scope:** yes — with the one-token equivalence noted above verified.
+
+### Examined and EXCLUDED in Batch 4 (no clean cut — do NOT number)
+
+- **app/mod.rs canonical-check resolver pair** (:3066 resume, :3179 concordance
+  target) — near-identical to *each other* (guarded `.get().unwrap_or(&current_line)`
+  + canonical check), but their else/fallback arms differ in comments/structure
+  and both live in the same fn's flow; 2 sites, one file, load-bearing startup
+  logic. Note only; revisit if a third site appears.
+- **queries.rs dynamic gloss-param scaffold** (4 sites, :1925/:1963/:2015/:2051)
+  — the `param_refs: Vec<&dyn ToSql> = params.iter().map(|p| p.as_ref()).collect()`
+  line is byte-identical ×4 but the push-prefix varies 1–3 pushes; a helper would
+  dedup one line or need a builder (speculative generality). Note only.
+- **"No gloss on this line" drop+toast 3-liner** (×3, all inside one gloss.rs fn)
+  — below the cross-site floor; an early-guard restructure of that fn would be a
+  behavior-risk rewrite, not a dedup.
+- **gloss_context work_abbrev guard** (gloss.rs ×2, 4 lines) — below floor.
+- **vim exit_edit_buffer near-twin** (gloss_overlay:776-784 vs
+  journal_overlay:971-979) — same intent, but statement ORDER differs and journal
+  has an extra `clear_block_cursor` line; vim-editor lifecycle is behavior-risky
+  to reorder. Keep parallel, documented, unmerged.
+- **2-line idiom pairs** — scrollbar-policy pair (gloss/journal), pixels
+  above/below pair (translation ×2), `.map_or(0, |w| w.lines.len())` (app ×2),
+  `.optional().ok().flatten()` (queries ×2), the 3-line `for row in rows` collect
+  loops (queries ×2 ×2) — all idiomatic Rust/GTK at or below the floor. Skip.
