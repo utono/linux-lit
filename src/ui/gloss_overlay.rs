@@ -1037,24 +1037,13 @@ impl GlossOverlay {
         } else {
             crate::ui::card_side_margin(card_width)
         };
-        self.title.set_margin_start(left);
-        self.gloss_view.set_left_margin(left);
-        self.gloss_view.set_right_margin(left);
-        self.gloss_view.set_top_margin(32);
-        self.gloss_view.set_pixels_below_lines(4);
+        self.set_prose_margins(left);
         self.set_gloss_hint();
-        self.orig_header.set_visible(false);
-        self.original_label.set_visible(false);
-        self.corr_header.set_visible(false);
-        self.corrected_label.set_visible(false);
+        self.hide_diff_labels();
         self.echo_header_view.set_visible(false);
         self.echo_rule.set_visible(false);
 
-        if let Some(color) = root_color {
-            if let Some((r, g, b)) = parse_hex_color(color) {
-                *self.bar_color.borrow_mut() = (r, g, b);
-            }
-        }
+        self.set_bar_color_from_root(root_color);
 
         let bar_left = left;
         *self.bar_x.borrow_mut() = bar_left;
@@ -1108,6 +1097,36 @@ impl GlossOverlay {
     /// `<speaker>`/`<verse>` markup (see `build_source_header`). The "Glossing…"
     /// status sits as a header above the passage; the result simply replaces this
     /// view in place when it arrives, so the passage looks identical before/after.
+    /// Shared prose-geometry prefix of the gloss show paths (audit #64 rider):
+    /// title indent + body margins for a prose gloss page.
+    fn set_prose_margins(&self, left: i32) {
+        self.title.set_margin_start(left);
+        self.gloss_view.set_left_margin(left);
+        self.gloss_view.set_right_margin(left);
+        self.gloss_view.set_top_margin(32);
+        self.gloss_view.set_pixels_below_lines(4);
+    }
+
+    /// Hide the four gloss-diff labels (audit #64). Every show path hides
+    /// these; the echo/position/hint extras vary per caller and stay inline.
+    fn hide_diff_labels(&self) {
+        self.orig_header.set_visible(false);
+        self.original_label.set_visible(false);
+        self.corr_header.set_visible(false);
+        self.corrected_label.set_visible(false);
+    }
+
+    /// Update the accent-bar color from the theme `root_color` (audit #63).
+    /// Deliberately no `queue_draw` — the show paths repaint anyway (this is
+    /// NOT `ui::set_rc_color`, which queues a draw for the standalone setters).
+    fn set_bar_color_from_root(&self, root_color: Option<&str>) {
+        if let Some(color) = root_color {
+            if let Some((r, g, b)) = parse_hex_color(color) {
+                *self.bar_color.borrow_mut() = (r, g, b);
+            }
+        }
+    }
+
     pub fn show_glossing(&self, passage_doc: &str, card_width: i32, card_height: i32, root_color: Option<&str>) {
         self.hide_citation();
         self.synopsis_label_ranges.borrow_mut().clear();        self.hi_ranges.borrow_mut().clear();
@@ -1138,27 +1157,16 @@ impl GlossOverlay {
         } else {
             crate::ui::card_side_margin(card_width)
         };
-        self.title.set_margin_start(left);
-        self.gloss_view.set_left_margin(left);
-        self.gloss_view.set_right_margin(left);
-        self.gloss_view.set_top_margin(32);
-        self.gloss_view.set_pixels_below_lines(4);
+        self.set_prose_margins(left);
 
         // No diff labels, echo views, hint, or position while loading.
-        self.orig_header.set_visible(false);
-        self.original_label.set_visible(false);
-        self.corr_header.set_visible(false);
-        self.corrected_label.set_visible(false);
+        self.hide_diff_labels();
         self.echo_header_view.set_visible(false);
         self.echo_rule.set_visible(false);
         self.hint.set_visible(false);
         self.position_label.set_visible(false);
 
-        if let Some(color) = root_color {
-            if let Some((r, g, b)) = parse_hex_color(color) {
-                *self.bar_color.borrow_mut() = (r, g, b);
-            }
-        }
+        self.set_bar_color_from_root(root_color);
 
         let bar_left = left;
         *self.bar_x.borrow_mut() = bar_left;
@@ -1222,16 +1230,9 @@ impl GlossOverlay {
         self.gloss_view.set_pixels_below_lines(0);
         self.echo_header_view.set_left_margin(left);
         self.hint.set_text("Esc close · a play · A add · s curate · d/D delete · R refresh");
-        self.orig_header.set_visible(false);
-        self.original_label.set_visible(false);
-        self.corr_header.set_visible(false);
-        self.corrected_label.set_visible(false);
+        self.hide_diff_labels();
 
-        if let Some(color) = root_color {
-            if let Some((r, g, b)) = parse_hex_color(color) {
-                *self.bar_color.borrow_mut() = (r, g, b);
-            }
-        }
+        self.set_bar_color_from_root(root_color);
 
         let bar_left = self.column_width / 8;
         *self.bar_x.borrow_mut() = bar_left;
@@ -1360,10 +1361,7 @@ impl GlossOverlay {
         // title widget). The synopsis card gives the "Act N, Scene N" header
         // extra breathing room above it.
         self.title.set_margin_top(56);
-        self.orig_header.set_visible(false);
-        self.original_label.set_visible(false);
-        self.corr_header.set_visible(false);
-        self.corrected_label.set_visible(false);
+        self.hide_diff_labels();
         self.position_label.set_visible(false);
         self.echo_header_view.set_visible(false);
         self.echo_rule.set_visible(false);
@@ -1386,11 +1384,7 @@ impl GlossOverlay {
         self.gloss_view.set_pixels_below_lines(6);
         // Match the gloss overlay's accent color (theme root_color) so the bar is
         // the same saturated accent, not the pale constructor default.
-        if let Some(color) = root_color {
-            if let Some((r, g, b)) = parse_hex_color(color) {
-                *self.bar_color.borrow_mut() = (r, g, b);
-            }
-        }
+        self.set_bar_color_from_root(root_color);
         *self.bar_x.borrow_mut() = bar_left;
         // PAGINATE (like the journal): each non-label <p> is one Explication
         // cursor stop; the page renders only the blocks that fit so no partial
@@ -2416,10 +2410,7 @@ impl GlossOverlay {
         self.title.set_valign(Align::Center);
         self.title.set_halign(Align::Center);
         self.title.set_margin_start(0);
-        self.orig_header.set_visible(false);
-        self.original_label.set_visible(false);
-        self.corr_header.set_visible(false);
-        self.corrected_label.set_visible(false);
+        self.hide_diff_labels();
         self.gloss_scroll_overlay.set_visible(false);
         self.echo_header_view.set_visible(false);
         self.echo_rule.set_visible(false);
