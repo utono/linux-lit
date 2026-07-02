@@ -282,8 +282,8 @@ impl MarkdownTags {
                 .build(),
         );
 
-        // H1 (title): bold, ~1.5× scale, space below. (Tuned down from 2.0 —
-        // at 2.0 the title dominated the card; 1.5 keeps it clearly largest
+        // H1 (title): bold, ~1.3× scale, space below. (Tuned down from 2.0 —
+        // at 2.0 the title dominated the card; 1.3 keeps it clearly largest
         // while staying readable, matching the claude.ai artifact proportions.)
         let h1 = get_or_add(
             "md-h1",
@@ -291,7 +291,7 @@ impl MarkdownTags {
                 .name("md-h1")
                 .family(serif)
                 .weight(700)
-                .scale(1.5)
+                .scale(1.3)
                 .pixels_below_lines(12)
                 .build(),
         );
