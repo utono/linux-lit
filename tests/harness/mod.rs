@@ -410,6 +410,79 @@ impl Harness {
         fs::read_to_string(Self::dev_log_path()).unwrap_or_default()
     }
 
+    /// The horizontal band all journal-overlay text ink must stay inside
+    /// (`TEST_JOURNAL_CONTENT_BAND x0 x1`, emitted with the journal viewport
+    /// rect). `#[allow(dead_code)]`: shared harness, not every test binary
+    /// calls it.
+    #[allow(dead_code)]
+    pub fn wait_for_journal_content_band(&self, timeout: Duration) -> io::Result<(i32, i32)> {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if let Ok(text) = fs::read_to_string(Self::dev_log_path()) {
+                if let Some(band) = text
+                    .lines()
+                    .rev()
+                    .find_map(|l| l.split("TEST_JOURNAL_CONTENT_BAND ").nth(1))
+                {
+                    let nums: Vec<i32> = band
+                        .split_whitespace()
+                        .take(2)
+                        .filter_map(|n| n.parse().ok())
+                        .collect();
+                    if let [x0, x1] = nums[..] {
+                        return Ok((x0, x1));
+                    }
+                }
+            }
+            sleep(Duration::from_millis(100));
+        }
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "TEST_JOURNAL_CONTENT_BAND never appeared (journal overlay under LIT_HEADLESS_TEST?)",
+        ))
+    }
+
+    /// Capture `name` and assert every text-ink column inside `region` lies
+    /// within the absolute x `band` — the guard for styled blocks (lists,
+    /// quotes) escaping the overlay's centered column. Optional `min_fill`
+    /// additionally fails a grossly underfilled page (ink bottom above that
+    /// fraction of the region height). Fails closed like the clip check.
+    #[allow(dead_code)]
+    pub fn assert_ink_within_band(
+        &self,
+        name: &str,
+        region: (i32, i32, i32, i32),
+        band: (i32, i32),
+        min_fill: f64,
+    ) -> io::Result<()> {
+        let png = self.capture(name)?;
+        let (x, y, w, h) = region;
+        let out = self
+            .client_cmd("python3")
+            .arg("scripts/check_ink_outside.py")
+            .arg("--shot")
+            .arg(&png)
+            .arg("--region")
+            .arg(format!("{x},{y},{w},{h}"))
+            .arg("--band")
+            .arg(format!("{},{}", band.0, band.1))
+            .arg("--min-fill")
+            .arg(format!("{min_fill}"))
+            .output()?;
+        if out.status.success() {
+            return Ok(());
+        }
+        let report = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("ink-band check failed for '{name}' ({}):\n{report}", png.display()),
+        ))
+    }
+
     /// Path to the dev log the app writes under `LIT_DEV`.
     fn dev_log_path() -> PathBuf {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
