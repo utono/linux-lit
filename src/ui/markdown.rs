@@ -430,49 +430,28 @@ impl MarkdownTags {
                 .build(),
         );
 
-        // H1 (title): bold, ~1.3× scale. (Tuned down from 2.0 — at 2.0 the
-        // title dominated the card; 1.3 keeps it clearly largest while staying
-        // readable, matching the claude.ai artifact proportions.)
-        let (a, b) = sp(&Style::H1);
-        let h1 = get_or_add(
-            "md-h1",
-            gtk4::TextTag::builder()
-                .name("md-h1")
-                .family(serif)
-                .weight(700)
-                .scale(block_scale(&Style::H1))
-                .pixels_above_lines(a)
-                .pixels_below_lines(b)
-                .build(),
-        );
-
-        // H2 (section): bold, ~1.2× scale, space above.
-        let (a, b) = sp(&Style::H2);
-        let h2 = get_or_add(
-            "md-h2",
-            gtk4::TextTag::builder()
-                .name("md-h2")
-                .family(serif)
-                .weight(700)
-                .scale(block_scale(&Style::H2))
-                .pixels_above_lines(a)
-                .pixels_below_lines(b)
-                .build(),
-        );
-
-        // H3 (subtitle): bold, ~1.1× scale.
-        let (a, b) = sp(&Style::H3);
-        let h3 = get_or_add(
-            "md-h3",
-            gtk4::TextTag::builder()
-                .name("md-h3")
-                .family(serif)
-                .weight(700)
-                .scale(block_scale(&Style::H3))
-                .pixels_above_lines(a)
-                .pixels_below_lines(b)
-                .build(),
-        );
+        // Headings (H1 title / H2 section / H3 subtitle): bold serif, scale +
+        // spacing entirely from block_scale / block_spacing (H1 ~1.3×, tuned down
+        // from 2.0 so the title stays largest without dominating the card, per the
+        // claude.ai artifact proportions; H2 ~1.2×; H3 ~1.1×). One closure builds
+        // all three — they differ only by name + Style variant (audit #71).
+        let heading = |name: &str, style: Style| {
+            let (a, b) = sp(&style);
+            get_or_add(
+                name,
+                gtk4::TextTag::builder()
+                    .name(name)
+                    .family(serif)
+                    .weight(700)
+                    .scale(block_scale(&style))
+                    .pixels_above_lines(a)
+                    .pixels_below_lines(b)
+                    .build(),
+            )
+        };
+        let h1 = heading("md-h1", Style::H1);
+        let h2 = heading("md-h2", Style::H2);
+        let h3 = heading("md-h3", Style::H3);
 
         // Bold: weight 700, inherits serif.
         let bold = get_or_add(

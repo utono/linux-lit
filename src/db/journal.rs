@@ -60,28 +60,21 @@ pub fn ensure_journal_table(conn: &Connection) -> Result<(), rusqlite::Error> {
             ON journal_entries(work_abbrev, div1, div2, timestamp);",
     )?;
     // Idempotent migration for any DB whose table predates the scope column.
-    let has_scope = conn
-        .prepare("SELECT 1 FROM pragma_table_info('journal_entries') WHERE name='scope'")?
-        .exists([])?;
-    if !has_scope {
+    // All column-existence probes share the `column_exists` helper (audit #67).
+    use crate::db::queries::column_exists;
+    if !column_exists(conn, "journal_entries", "scope")? {
         conn.execute_batch(
             "ALTER TABLE journal_entries ADD COLUMN scope TEXT NOT NULL DEFAULT 'scene';",
         )?;
     }
     for col in ["start_citation", "end_citation", "source_text"] {
-        let has: bool = conn
-            .prepare("SELECT 1 FROM pragma_table_info('journal_entries') WHERE name=?1")?
-            .exists([col])?;
-        if !has {
+        if !column_exists(conn, "journal_entries", col)? {
             conn.execute_batch(&format!(
                 "ALTER TABLE journal_entries ADD COLUMN {col} TEXT;"
             ))?;
         }
     }
-    let has_kind: bool = conn
-        .prepare("SELECT 1 FROM pragma_table_info('journal_entries') WHERE name='kind'")?
-        .exists([])?;
-    if !has_kind {
+    if !column_exists(conn, "journal_entries", "kind")? {
         conn.execute_batch(
             "ALTER TABLE journal_entries ADD COLUMN kind TEXT NOT NULL DEFAULT 'qa';",
         )?;

@@ -3,6 +3,17 @@ use crate::ui::journal_move_picker::MoveTargetRow;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// The current work's canonical abbrev, or `""` if no work is loaded. The
+/// journal Q&A / picker paths key every DB read on this string; extracted so the
+/// `.current_work.map(canonical_abbrev).unwrap_or_default()` idiom lives once
+/// (audit #72).
+fn current_work_abbrev(s: &AppState) -> String {
+    s.current_work
+        .as_ref()
+        .map(|w| w.canonical_abbrev.clone())
+        .unwrap_or_default()
+}
+
 /// Capitalize the first character of `s` (ASCII), leaving the rest unchanged.
 /// Used to turn a unit noun (`chapter`) into a user-message field label
 /// (`Chapter:`). Empty input returns empty.
@@ -17,6 +28,13 @@ fn titlecase_first(s: &str) -> String {
 /// Prose journal-Q&A context window radius (paragraphs each side of the
 /// reader's anchor). Prose divisions can be the whole book, so cap the context.
 const PROSE_CONTEXT_RADIUS: usize = 10;
+
+/// Toast strings shown when a passage-scoped journal action is invoked off a
+/// passage row (audit #70). Hoisted so the message text stays identical across
+/// every guard site.
+const TOAST_NOT_A_PASSAGE_PAGE: &str = "Not a passage page";
+const TOAST_NO_GLOSS_FOR_PASSAGE: &str = "No gloss for this passage";
+const TOAST_NO_JOURNAL_PAGE_FOR_PASSAGE: &str = "No journal page for this passage";
 
 /// The first spoken/stage line of a passage's `<speaker>/<verse>/<stage>` source
 /// markup (as built by `build_source_header`), for the Q&A picker to show
@@ -182,11 +200,7 @@ fn move_target_rows(s: &AppState, current: &JournalBand) -> Vec<MoveTargetRow> {
 /// Load the current band's pages from the DB into `journal.pages`, clamp the
 /// index, and render the current page (or the empty-band card).
 pub(crate) fn render_current(s: &mut AppState) {
-    let work_abbrev = s
-        .current_work
-        .as_ref()
-        .map(|w| w.canonical_abbrev.clone())
-        .unwrap_or_default();
+    let work_abbrev = current_work_abbrev(s);
 
     let conn = crate::db::queries::open_db().ok();
     // The overlay has no title header anymore (the footer identifies the work +
@@ -361,11 +375,7 @@ pub(crate) fn nav_page(state: &Rc<RefCell<AppState>>, delta: i32) {
     let Some(cur_id) = s.journal.pages.get(s.journal.page_index).map(|p| p.id) else {
         return;
     };
-    let work_abbrev = s
-        .current_work
-        .as_ref()
-        .map(|w| w.canonical_abbrev.clone())
-        .unwrap_or_default();
+    let work_abbrev = current_work_abbrev(&s);
     let all = crate::db::queries::open_db()
         .ok()
         .and_then(|conn| crate::db::journal::find_all_pages_ordered(&conn, &work_abbrev).ok())
@@ -392,11 +402,7 @@ pub(crate) fn nav_page(state: &Rc<RefCell<AppState>>, delta: i32) {
 /// scene with pages, delta<0 on the last (the Work band sorts before scenes).
 pub(crate) fn nav_scene(state: &Rc<RefCell<AppState>>, delta: i32) {
     let mut s = state.borrow_mut();
-    let work_abbrev = s
-        .current_work
-        .as_ref()
-        .map(|w| w.canonical_abbrev.clone())
-        .unwrap_or_default();
+    let work_abbrev = current_work_abbrev(&s);
     let scenes = crate::db::queries::open_db()
         .ok()
         .and_then(|conn| crate::db::journal::find_journal_scenes(&conn, &work_abbrev).ok())
@@ -1060,11 +1066,7 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
 /// the journal is empty, so the caller can leave state untouched. Shared by the
 /// overlay (`open_picker`) and reader (`open_picker_from_reader`) entry points.
 fn populate_and_show_picker(s: &mut AppState) -> bool {
-    let work_abbrev = s
-        .current_work
-        .as_ref()
-        .map(|w| w.canonical_abbrev.clone())
-        .unwrap_or_default();
+    let work_abbrev = current_work_abbrev(s);
     let pages = crate::db::queries::open_db()
         .ok()
         .and_then(|conn| crate::db::journal::find_all_pages_ordered(&conn, &work_abbrev).ok())
@@ -1337,12 +1339,12 @@ pub(crate) fn action_gloss_from_journal_passage(state: &Rc<RefCell<AppState>>) {
             Some(p) => match (p.source_text.as_ref(), p.start_citation.clone(), p.end_citation.clone()) {
                 (Some(_), Some(start), Some(end)) => (p.div1, p.div2, start, end),
                 _ => {
-                    crate::ui::toast::show_transient(&s.chapter_toast, "Not a passage page", 2);
+                    crate::ui::toast::show_transient(&s.chapter_toast, TOAST_NOT_A_PASSAGE_PAGE, 2);
                     return;
                 }
             },
             None => {
-                crate::ui::toast::show_transient(&s.chapter_toast, "Not a passage page", 2);
+                crate::ui::toast::show_transient(&s.chapter_toast, TOAST_NOT_A_PASSAGE_PAGE, 2);
                 return;
             }
         };
@@ -1501,7 +1503,7 @@ pub(crate) fn view_gloss_from_journal(state: &Rc<RefCell<AppState>>) {
                     Some(c) => c.clone(),
                     None => {
                         crate::ui::toast::show_transient(
-                            &s.chapter_toast, "Not a passage page", 2,
+                            &s.chapter_toast, TOAST_NOT_A_PASSAGE_PAGE, 2,
                         );
                         return;
                     }
@@ -1509,7 +1511,7 @@ pub(crate) fn view_gloss_from_journal(state: &Rc<RefCell<AppState>>) {
             }
             _ => {
                 crate::ui::toast::show_transient(
-                    &s.chapter_toast, "Not a passage page", 2,
+                    &s.chapter_toast, TOAST_NOT_A_PASSAGE_PAGE, 2,
                 );
                 return;
             }
@@ -1537,7 +1539,7 @@ pub(crate) fn view_gloss_from_journal(state: &Rc<RefCell<AppState>>) {
             Err(_) => {
                 let s = state.borrow();
                 crate::ui::toast::show_transient(
-                    &s.chapter_toast, "No gloss for this passage", 3,
+                    &s.chapter_toast, TOAST_NO_GLOSS_FOR_PASSAGE, 3,
                 );
                 return;
             }
@@ -1551,7 +1553,7 @@ pub(crate) fn view_gloss_from_journal(state: &Rc<RefCell<AppState>>) {
         if all_glosses.is_empty() {
             let s = state.borrow();
             crate::ui::toast::show_transient(
-                &s.chapter_toast, "No gloss for this passage", 3,
+                &s.chapter_toast, TOAST_NO_GLOSS_FOR_PASSAGE, 3,
             );
             return;
         }
@@ -1565,7 +1567,7 @@ pub(crate) fn view_gloss_from_journal(state: &Rc<RefCell<AppState>>) {
             None => {
                 let s = state.borrow();
                 crate::ui::toast::show_transient(
-                    &s.chapter_toast, "No gloss for this passage", 3,
+                    &s.chapter_toast, TOAST_NO_GLOSS_FOR_PASSAGE, 3,
                 );
                 return;
             }
@@ -1610,16 +1612,12 @@ pub(crate) fn view_journal_from_gloss(state: &Rc<RefCell<AppState>>) {
             Some(c) => c,
             None => {
                 crate::ui::toast::show_transient(
-                    &s.chapter_toast, "No journal page for this passage", 3,
+                    &s.chapter_toast, TOAST_NO_JOURNAL_PAGE_FOR_PASSAGE, 3,
                 );
                 return;
             }
         };
-        let work_abbrev = s
-            .current_work
-            .as_ref()
-            .map(|w| w.canonical_abbrev.clone())
-            .unwrap_or_default();
+        let work_abbrev = current_work_abbrev(&s);
         (
             work_abbrev,
             ctx.start_citation.clone(),
@@ -1640,7 +1638,7 @@ pub(crate) fn view_journal_from_gloss(state: &Rc<RefCell<AppState>>) {
     if pages.is_empty() {
         let s = state.borrow();
         crate::ui::toast::show_transient(
-            &s.chapter_toast, "No journal page for this passage", 3,
+            &s.chapter_toast, TOAST_NO_JOURNAL_PAGE_FOR_PASSAGE, 3,
         );
         return;
     }

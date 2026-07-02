@@ -659,10 +659,16 @@ pub fn open_db_rw() -> Result<Connection, rusqlite::Error> {
 
 /// Does `table` have a column named `col`? The `pragma_table_info` probe the
 /// idempotent `ensure_*` migrations share before an `ALTER TABLE ... ADD COLUMN`
-/// (SQLite has no `ADD COLUMN IF NOT EXISTS`). EXCLUDED: the `works.default_voice_id`
-/// probe deliberately SWALLOWS its error (the table may not exist on a fresh/test
-/// DB) instead of propagating with `?`, so it keeps its own non-`?` form.
-fn column_exists(conn: &Connection, table: &str, col: &str) -> Result<bool, rusqlite::Error> {
+/// (SQLite has no `ADD COLUMN IF NOT EXISTS`). Shared by the `ensure_*` helpers
+/// here and by `db::journal::ensure_journal_table` (audit #37/#67). EXCLUDED: the
+/// `works.default_voice_id` probe deliberately SWALLOWS its error (the table may
+/// not exist on a fresh/test DB) instead of propagating with `?`, so it keeps its
+/// own non-`?` form.
+pub(crate) fn column_exists(
+    conn: &Connection,
+    table: &str,
+    col: &str,
+) -> Result<bool, rusqlite::Error> {
     conn.prepare(&format!(
         "SELECT 1 FROM pragma_table_info('{table}') WHERE name = '{col}'"
     ))?
