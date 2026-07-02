@@ -583,6 +583,39 @@ impl JournalOverlay {
         self.container.set_visible(true);
     }
 
+    /// Render a PENDING passage ask: the visually selected source text
+    /// (`<speaker>/<verse>` markup) shown through the shared gloss source
+    /// renderer (speaker small-caps + verse hang-indent, full ink), in place of
+    /// the empty band's "No pages yet — press r to ask." placeholder — so the
+    /// reader sees the passage they are asking about while the ask card is open
+    /// (mirrors the gloss overlay's "Glossing…" card). No navigable blocks and
+    /// no accent bar: the render is transient until submit/cancel.
+    pub fn show_passage_source(
+        &self,
+        footer_left: &str,
+        source_doc: &str,
+        card_width: i32,
+        card_height: i32,
+    ) {
+        self.size_card(card_width, card_height);
+        *self.footer_band.borrow_mut() = footer_left.to_string();
+        self.entry_pos.set((0, 0));
+        // Anchor the source tags at the COLUMN edge (left_margin minus the body
+        // indent) — the same anchor the gloss passes as `bar_left`, so the
+        // speaker/verse indents land exactly where the gloss card puts them.
+        let bar_left = self.view.left_margin() - JOURNAL_BODY_INDENT;
+        let _ = crate::ui::gloss_render::populate_gloss_buffer(
+            &self.view, source_doc, self.text_margins, bar_left, &[], None, None,
+        );
+        self.apply_font();
+        self.clear_blocks();
+        self.update_footer_position();
+        self.footer_container.set_visible(true);
+        self.scrim.set_visible(true);
+        self.container.set_visible(true);
+        self.clip_guard.on_open();
+    }
+
     pub fn show_message(&self, text: &str) {
         let (w, h) = self.last_card_size.get();
         if w > 0 {

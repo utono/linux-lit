@@ -211,6 +211,21 @@ pub(crate) fn render_current(s: &mut AppState) {
     let (cw, h) = crate::app::layout::overlay_card_size(&s);
     let footer_left = footer_left_text(&work_abbrev, s.journal_band.clone());
 
+    // A passage ask in flight (visual selection → Journal Q&A) on a band with
+    // no stored pages yet: render the SELECTED passage source in place of the
+    // bare "No pages yet — press r to ask." placeholder, so the reader sees the
+    // text they are asking about while the ask card is open. `pending_passage`
+    // is consumed by `ask_claude` on submit; stored pages render below as plain
+    // Q&As (their source intentionally not reproduced).
+    if count == 0 && matches!(s.journal_band, JournalBand::Passage { .. }) {
+        if let Some(doc) = s.journal.pending_passage.as_ref().map(|pp| pp.source_text.clone())
+        {
+            s.journal_overlay.show_passage_source(&footer_left, &doc, cw, h);
+            s.journal.pages = pages;
+            return;
+        }
+    }
+
     // Every Q&A — including passage pages — renders as a plain Q&A. The passage
     // source block is intentionally NOT shown: the highlighted source stays in
     // lit.db (`source_text` + citations) for provenance, but a Q&A's rendering
