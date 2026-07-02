@@ -308,6 +308,19 @@ pub fn draw_overlay_panel(
     let _ = cr.fill();
 }
 
+/// Raise `tag` to the top of `table`'s priority order so it outranks every tag
+/// added before it — in particular the buffer-wide `*-font` tag (added last on
+/// `apply_font`), which would otherwise win conflicts. The `size > 0` guard
+/// mirrors GTK's requirement that priority be in `0..table.size()`. Shared by the
+/// block-cursor / cached-coloring / synopsis-label paths (audit #68).
+pub(crate) fn raise_tag_to_top(table: &gtk4::TextTagTable, tag: &gtk4::TextTag) {
+    use gtk4::prelude::*;
+    let size = table.size();
+    if size > 0 {
+        tag.set_priority(size - 1);
+    }
+}
+
 /// Paint a vim-style BLOCK cursor: a one-character background fill (`fill`) with
 /// the glyph drawn in `fg`, over the char at `char_index` (a CHAR offset). Used
 /// by the vim editors (journal page + ask-card prompt) to show a solid block in
@@ -346,10 +359,7 @@ pub(crate) fn paint_block_cursor(
             t
         }
     };
-    let size = table.size();
-    if size > 0 {
-        tag.set_priority(size - 1);
-    }
+    raise_tag_to_top(&table, &tag);
     let (lo, hi) = buffer.bounds();
     buffer.remove_tag(&tag, &lo, &hi);
     let start = buffer.iter_at_offset(char_index as i32);
@@ -405,10 +415,7 @@ pub(crate) fn apply_cached_coloring(
         }
     };
     // Outrank the buffer-wide font tag (added last on apply_font).
-    let size = table.size();
-    if size > 0 {
-        tag.set_priority(size - 1);
-    }
+    raise_tag_to_top(&table, &tag);
     let line_count = buffer.line_count();
     for &(start_line, end_line) in spans {
         let start = buffer

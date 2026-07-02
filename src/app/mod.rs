@@ -3945,7 +3945,10 @@ pub fn remove_vocab_highlighting(state: &AppState) {
 /// The journal_entries table ALSO carries a `scope` TEXT column ('work'/'scene'),
 /// so this pair is not unique on its own — it is always paired with scope='work'.
 pub(crate) const JOURNAL_WORK_DIV: (i64, i64) = (-1, -1);
-pub(crate) const JOURNAL_AUTHOR_DIV: (i64, i64) = (-2, -2);
+/// Author/corpus-scope sentinel. Single source of truth is `db::journal::AUTHOR_DIV`
+/// (declared beside `save_author_page`); re-exported here so the app-side band
+/// classification reads the same `(-2, -2)` (audit #69).
+pub(crate) use crate::db::journal::AUTHOR_DIV as JOURNAL_AUTHOR_DIV;
 
 /// Toggle the main card between text and the page-scan image for the current
 /// work. No-op (with a toast) for works that have no page images. When turning

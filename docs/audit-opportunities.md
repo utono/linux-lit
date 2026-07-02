@@ -1830,3 +1830,144 @@ Ranked by (duplication × drift_risk) ÷ scope_size.
   above/below pair (translation ×2), `.map_or(0, |w| w.lines.len())` (app ×2),
   `.optional().ok().flatten()` (queries ×2), the 3-line `for row in rows` collect
   loops (queries ×2 ×2) — all idiomatic Rust/GTK at or below the floor. Skip.
+
+---
+
+## Batch 5 (audited 2026-07-02, after the corpus/author journal-notes + Markdown-render merge)
+
+Fresh full-tree scan (three parallel Explore finders over journal/markdown/notes,
+TextTag construction, and the new author-scope db/overlay paths — the
+`feat/corpus-author-journal-notes` branch, merged fdc22df). Every entry verified
+by direct side-by-side read, not agent word (the #11 lesson). The recent branch
+mostly REUSED the prior-batch shared helpers (`JOURNAL_PAGE_COLUMNS`,
+`map_journal_page_row`, `apply_cached_coloring`, `apply_font_to_views`,
+`block_scale`/`block_spacing`) — good hygiene — so the fresh crop is small.
+All six shipped together on `refactor/audit-67-72`; build + 633 bin tests green.
+
+## #67 — journal pragma-probes route to shared column_exists — DONE (branch refactor/audit-67-72)
+
+- **Signal:** `db::journal::ensure_journal_table` hand-rolls the
+  `SELECT 1 FROM pragma_table_info('journal_entries') WHERE name=…`.`exists()`
+  probe at **3 non-test sites** (scope :64, the citation-cols loop :73, kind :82)
+  — the EXACT pattern audit #37 already extracted into `db::queries::column_exists`.
+  A helper was shipped, then new code re-introduced the raw form: textbook drift.
+- **Identical part (route to existing helper):** promoted `column_exists` from
+  private `fn` to `pub(crate)`; the 3 sites become `column_exists(conn,
+  "journal_entries", <col>)?`. The `?1`-param loop site collapses too (the helper
+  interpolates the col — safe for these fixed identifiers).
+- **EXCLUDED:** the 2 `#[cfg(test)]` probes (:411, :485 — test assertions, not
+  migrations); the `works.default_voice_id` probe (queries.rs:1033) that
+  deliberately swallows its error (already #37's documented exclusion).
+- **Safe-scope:** yes — route-to-shared, one visibility bump; #32/#66-style.
+
+## #68 — raise_tag_to_top helper — DONE (branch refactor/audit-67-72)
+
+- **Signal:** `let size = table.size(); if size > 0 { tag.set_priority(size - 1); }`
+  — the "outrank the buffer-wide font tag" priority-raise — byte-identical with
+  ZERO varying tokens at **3 sites, 2 files**: mod.rs:349 (`paint_block_cursor`),
+  mod.rs:408 (`apply_cached_coloring`), gloss_overlay.rs:893
+  (`apply_synopsis_label_bold`).
+- **Identical part (extract):** `pub(crate) fn raise_tag_to_top(table:
+  &TextTagTable, tag: &TextTag)` in `src/ui/mod.rs` (beside the other shared tag
+  helpers). Each site becomes one call; the `size > 0` GTK-range guard moves into
+  the helper.
+- **EXCLUDED:** any `set_priority` with a different value (none found — all 3 are
+  the `size - 1` top-of-stack form).
+- **Safe-scope:** yes — cross-file verbatim idiom → one 2-line helper.
+
+## #69 — dedup author-sentinel (-2,-2) constant — DONE (branch refactor/audit-67-72)
+
+- **Signal:** the author/corpus `(div1,div2)` sentinel is defined TWICE:
+  `db::journal::AUTHOR_DIV` (:154, `pub`) and `app::mod::JOURNAL_AUTHOR_DIV`
+  (:3948, `pub(crate)`) — same magic `(-2, -2)`, a cross-module literal-drift
+  hazard (change one, the other silently disagrees and author rows misclassify).
+- **Identical part (unify):** kept `db::journal::AUTHOR_DIV` as the single source
+  of truth (declared beside `save_author_page`, its main consumer) and made
+  `app::mod::JOURNAL_AUTHOR_DIV` a `pub(crate) use … as` re-export. Avoids a
+  `db → app` dependency (db is the lower layer). All existing `JOURNAL_AUTHOR_DIV`
+  readers (journal.rs:91/106/1248) are unchanged.
+- **EXCLUDED:** `JOURNAL_WORK_DIV = (-1,-1)` is single-defined already — leave it.
+- **Safe-scope:** yes — literal dedup via re-export; #8/#12/#27-style.
+
+## #70 — named toast literal consts (journal passage guards) — DONE (branch refactor/audit-67-72)
+
+- **Signal:** three passage-guard toast strings repeated verbatim in
+  actions/journal.rs: `"Not a passage page"` (×4, dur 2), `"No gloss for this
+  passage"` (×3, dur 3), `"No journal page for this passage"` (×2, dur 3).
+- **Identical part (extract):** three `const TOAST_*: &str` at the module top; the
+  9 `show_transient` sites reference the const. Durations stay inline (they are
+  the site's own concern, not part of the message).
+- **EXCLUDED:** other one-off toast strings (single-site); the durations
+  themselves (2 vs 3 varies by call, not a shared literal).
+- **Safe-scope:** yes — literal → named const, #8-style; protects message text
+  from drifting between the guard sites.
+
+## #71 — markdown heading-tag closure — DONE (branch refactor/audit-67-72)
+
+- **Signal:** in `MarkdownTags::register`, the H1/H2/H3 `get_or_add("md-hN",
+  builder.name("md-hN").family(serif).weight(700).scale(block_scale(&Style::HN))
+  .pixels_above_lines(a).pixels_below_lines(b).build())` blocks are near-identical
+  at **3 sites** (markdown.rs:437/451/465), differing ONLY by the `Style::HN`
+  variant + the `"md-hN"` name (which is DOUBLED per block — the `get_or_add` key
+  and `.name()`). Scale/spacing are already single-sourced in
+  `block_scale`/`block_spacing`.
+- **Identical part (extract):** a local `let heading = |name, style|` closure that
+  reads `block_spacing(&style)`, builds the bold serif scaled tag, and returns via
+  `get_or_add`. The 3 blocks collapse to `let h1 = heading("md-h1", Style::H1);`
+  etc. Also removes the name-duplicated-twice hazard.
+- **EXCLUDED:** the non-heading builders (body/bold/italic/blockquote/listitem/
+  rule/mono) — each sets a DIFFERENT attribute set, not congruent with the
+  headings. The `get_or_add` scaffold + `sp(&Style::X)` (8 sites) is subsumed by
+  the closure for the 3 headings only; unifying all 10 would need a per-tag prop
+  closure = more machinery than payoff. Kept the closure heading-only.
+- **Safe-scope:** yes — pure builder-construction reshuffle inside one fn;
+  identical resulting tags. No trait/generic (a plain closure).
+
+## #72 — current_work_abbrev(s) getter — DONE (branch refactor/audit-67-72)
+
+- **Signal:** `s.current_work.as_ref().map(|w| w.canonical_abbrev.clone())
+  .unwrap_or_default()` — the "current work's canonical abbrev or empty" idiom —
+  byte-identical (modulo indentation) at **5 sites** in actions/journal.rs
+  (render_current, nav_page, nav_scene, populate_and_show_picker,
+  view_journal_from_gloss).
+- **Identical part (extract):** file-local `fn current_work_abbrev(s: &AppState)
+  -> String`. `&mut`-holding sites pass `s`; `Ref`/`RefMut`-holding sites pass
+  `&s` (deref-coercion) — verified with clippy (no needless_borrow introduced).
+- **EXCLUDED:** the `gloss.rs` work_abbrev guards (below floor, different module);
+  any site reading `abbrev` rather than `canonical_abbrev` (none in this set).
+- **Safe-scope:** yes — pure getter extraction; #17/#66-style.
+
+### Examined and EXCLUDED in Batch 5 (no clean cut — do NOT number)
+
+- **`find_*` journal query skeleton** (db/journal.rs, 6 sites) — the
+  `prepare(&format!("SELECT {JOURNAL_PAGE_COLUMNS} … WHERE … ORDER BY …"))?;
+  query_map(params, map_journal_page_row)?; collect()` wrapper recurs, but the
+  load-bearing WHERE/ORDER-BY string AND the params tuple differ per fn (and
+  `find_all_pages_ordered` even differs in ORDER BY). The column list + row mapper
+  are ALREADY shared consts (#29); only the varying SQL body remains. A helper
+  would parameterize the SQL = the #29-excluded "query bodies unchanged" line.
+- **`band_for_page` → Author-name remap block** (journal.rs:380/1081, 6 lines,
+  2 sites) — byte-identical modulo the matched binding name; a clean pure
+  `band_for_page_with_author(s, p)` extraction IS available. Deferred, not
+  shipped: at exactly the 2-site floor and lower value than the six above; number
+  it in a future batch if a 3rd site appears or the file is touched anyway.
+- **author-sentinel predicate** (`p.div1 == JOURNAL_AUTHOR_DIV.0 && p.div2 ==
+  .1`, journal.rs:91/106/1248) — a 1-line expr at 3 sites; a `fn author_sentinel(p)`
+  predicate is behavior-preserving but below the ≥4-line-block bar. The #69
+  constant-dedup already removes the drift hazard on the VALUE; the predicate
+  shape is idiomatic. Note only.
+- **close-journal-to-reader 4-liner** (journal.rs:1412/1580, 2 sites) —
+  `hide(); input_mode = Reader; let pos = return_pos.take();
+  restore_saved_position(&mut s, pos);` byte-identical at 2 sites; a
+  `close_journal_to_reader(s)` helper is clean BUT the near-misses (toggle_overlay
+  uses `return_to_reader_mode`+`_resnap`; the gloss-close reorders + takes a
+  different field) mean it's a narrow 2-site cut. At the floor; note, don't number.
+- **journal_overlay `reveal()` visibility tail** (footer/scrim/container
+  `set_visible(true)`, 3 sites) + **`restore_card_size` size-request guard**
+  (2 sites) — both clean small extractions, but single-file and low drift risk;
+  `show_loading`'s inverse footer-bool correctly disqualifies it from the reveal
+  set. Do as a drive-by if journal_overlay is touched; not worth their own PR.
+- **`return_pos = Some((s.current_line, s.page_top_line))`** (journal ×5 + gloss
+  ×3) — the RHS is a repeated `current_pos(s)` candidate, but it spans the
+  journal AND gloss return-position families (wider than this batch) and the LHS
+  field differs; revisit as a cross-cutting cut, not a journal-local one.

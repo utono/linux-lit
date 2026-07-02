@@ -890,10 +890,7 @@ impl GlossOverlay {
             // The `gloss-font` tag (regular weight) is added after this one on
             // the first show, so it would win. Force the label to the highest
             // priority so its bold weight outranks the font tag's weight.
-            let size = table.size();
-            if size > 0 {
-                tag.set_priority(size - 1);
-            }
+            crate::ui::raise_tag_to_top(&table, &tag);
             for &(start, end) in ranges.iter() {
                 let s = buffer.iter_at_offset(start as i32);
                 let e = buffer.iter_at_offset(end as i32);
