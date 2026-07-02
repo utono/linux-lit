@@ -57,6 +57,24 @@ Two concrete needs drove this:
   `TextTag`s. Rich for headings/emphasis/lists/blockquotes/rules; monospace
   preformatted block for tables/code (a `TextBuffer` cannot render true grids).
   Applies to **all** journal bodies (Q&A answers too).
+- **Target styling — replicate the claude.ai artifact view** (the reference
+  screenshot of `loading-the-cry.md`): a **serif** body in linux-lit's existing
+  reading-card family (Charter), generous leading, and a comfortable left
+  measure (not edge-to-edge). Specifically:
+  - **Title (`#`)**: large bold serif, ~2× body size, space below.
+  - **Subtitle/`###`**: smaller bold serif directly under the title.
+  - **Section heading (`##`)**: bold serif, ~1.3× body, clear space above.
+  - **`---` rule**: a thin, full-width light-grey line with real vertical margin
+    above/below — NOT a row of dashes/box-drawing characters. (Rendered as a
+    dedicated paragraph carrying a bottom-border style via the tag, or a
+    single light `─`-run styled to span the measure; pick the cleaner of the two
+    in the TextView, but it must read as a hairline rule, not literal dashes.)
+  - ***Italic*** and **bold** inline runs render as true italic/bold serif.
+  - **Ordered/bulleted lists**: real `1.`/`•` markers with a **hanging indent**,
+    the bold lead-in phrase then flowing into body text.
+  - Blank line between paragraphs; paragraph leading matches the reading card.
+  The intent is that an imported `.md` looks like the claude.ai render, reusing
+  the reader's serif look rather than inventing a new typographic scale.
 - **Schema encoding (Approach 1):** reuse `work_abbrev` to hold the author string
   for author rows, with a new sentinel `div1=div2=-2`. No NOT-NULL drop, no key
   column added — mirrors how `work` scope already overloads sentinels. The
