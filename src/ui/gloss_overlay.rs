@@ -1180,7 +1180,7 @@ impl GlossOverlay {
         // sets the source apart. Matches render_gloss_page.
         let (ranges, _nums) = populate_gloss_buffer(
             &self.gloss_view, passage_doc, self.text_margins, bar_left, &[],
-            None, None,
+            None,
         );
         *self.bar_ranges.borrow_mut() = ranges;
         self.line_numbers.borrow_mut().clear();
@@ -1250,14 +1250,14 @@ impl GlossOverlay {
         // Reuse populate_verse_buffer (it builds the speaker/verse tags and
         // returns empty bar data for a source-only doc).
         let _ = populate_verse_buffer(
-            &self.echo_header_view, source_doc, self.text_margins, bar_left, &[], None, dim_color, None);
+            &self.echo_header_view, source_doc, self.text_margins, bar_left, &[], None, dim_color);
         self.echo_header_view.set_visible(true);
         self.echo_rule.set_visible(true);
 
         // Scrolling list: only the echoes. echo_lines/bar_ranges are now indexed
         // from the first echo (no source lines to offset past).
         let (ranges, nums, echo_lines) = populate_verse_buffer(
-            &self.gloss_view, echo_doc, self.text_margins, bar_left, &[], Some(selected), dim_color, None);
+            &self.gloss_view, echo_doc, self.text_margins, bar_left, &[], Some(selected), dim_color);
         *self.bar_ranges.borrow_mut() = ranges;
         *self.line_numbers.borrow_mut() = nums;
         *self.echo_lines.borrow_mut() = echo_lines;
@@ -1748,20 +1748,28 @@ impl GlossOverlay {
         }
         let family = self.font_family.borrow().clone();
         let size = self.font_size.get();
-        // Measure at the NARROWEST wrap width any block in this mode uses, so the
-        // height estimate over-counts (more wrapping → taller) rather than under —
-        // the safe direction for never clipping. The deepest gloss indent is the
-        // quoted source verse (`QUOTE_VERSE_INDENT` past the bar, gloss_render.rs).
-        // Subtract it in gloss mode; synopsis prose sits at the body margin.
+        // Measure each block at ITS OWN wrap width. A single mode-wide width is
+        // wrong in gloss mode because the two block kinds render at different
+        // indents: the quoted source verse hangs at `QUOTE_VERSE_INDENT` past
+        // the bar while the explication prose (the bulk of a gloss) sits at
+        // `QUOTE_BODY_INDENT`. Measuring explications at the verse's narrower
+        // width over-estimated their heights ~11% and pushed units that fit
+        // onto the next page (page underfill). Verse blocks keep the deep-indent
+        // width — their speaker/stage lines render shallower, so that direction
+        // still over-counts (safe; never clips). Synopsis prose sits at the
+        // body margin.
         let card_w = self.last_card_size.get().0;
         let left = self.gloss_view.left_margin();
-        let wrap_w = match self.paginated_mode.get() {
-            // bar_left == left in gloss mode; the text adds QUOTE_VERSE_INDENT on
-            // the left (worst case) and the right margin is `left`.
-            PaginatedMode::Gloss => {
-                (card_w - 2 * left - crate::ui::gloss_render::QUOTE_VERSE_INDENT).max(1)
-            }
-            PaginatedMode::Synopsis => (card_w - 2 * left).max(1),
+        // bar_left == left in gloss mode; the right margin is `left`.
+        let wrap_for = |kind: BlockKind| -> i32 {
+            let indent = match (self.paginated_mode.get(), kind) {
+                (PaginatedMode::Gloss, BlockKind::Source) => {
+                    crate::ui::gloss_render::QUOTE_VERSE_INDENT
+                }
+                (PaginatedMode::Gloss, _) => crate::ui::gloss_render::QUOTE_BODY_INDENT,
+                (PaginatedMode::Synopsis, _) => 0,
+            };
+            (card_w - 2 * left - indent).max(1)
         };
         let pctx = self.gloss_view.pango_context();
         let markups = self.gloss_block_markups.borrow();
@@ -1773,7 +1781,7 @@ impl GlossOverlay {
                     PaginatedMode::Gloss => markups.get(i).map(|s| s.as_str()),
                     PaginatedMode::Synopsis => None,
                 };
-                gloss_block_height(b, m, &pctx, &family, size, wrap_w)
+                gloss_block_height(b, m, &pctx, &family, size, wrap_for(b.kind))
             })
             .collect();
         drop(markups);
@@ -1947,16 +1955,15 @@ impl GlossOverlay {
         };
 
         // Speaker + verse header render FULL ink like the explication — no
-        // header color (speaker_accent None; the user found the dimmed source
-        // too recessed). The bold/small-caps/0.9-scale header styling and the
-        // verse hang-indent alone set the quoted source apart from the prose.
+        // dim color (the user found the dimmed source too recessed). The
+        // bold/small-caps/0.9-scale header styling and the verse hang-indent
+        // alone set the quoted source apart from the prose.
         let (ranges, _nums) = populate_gloss_buffer(
             &self.gloss_view,
             &markup,
             self.text_margins,
             bar_left,
             &line_numbers,
-            None,
             None,
         );
         *self.bar_ranges.borrow_mut() = ranges;
@@ -2249,11 +2256,13 @@ impl GlossOverlay {
             .find(|r| r.kind == kind && r.index == index)
             .map(|r| (r.start_line, r.end_line));
         if let Some((start_line, end_line)) = span {
+            // Extend BEFORE logging so the logged range matches the drawn bar
+            // (the dev-log/screen agreement the debug workflow relies on).
+            let start_line = self.bar_start_with_speaker(start_line);
             crate::log_fmt!(
                 "GLOSS-CURSOR: cursor#{} -> {:?}#{} bar lines [{}, {}]",
                 self.cursor_block.get(), kind, index, start_line, end_line
             );
-            let start_line = self.bar_start_with_speaker(start_line);
             *self.bar_ranges.borrow_mut() = vec![BarRange { start_line, end_line }];
             self.bar_drawing.queue_draw();
         }
@@ -2374,16 +2383,16 @@ impl GlossOverlay {
     }
 
     /// Feed a key to the ask card's vim engine (the prompt is a modal editor).
-    /// Paste system-clipboard text into the ask card's vim engine.
-    pub fn paste_ask_text(&self, text: &str) {
-        self.ask_host.paste_text(text);
-    }
-
     pub fn feed_ask_vim_key(
         &self,
         key: crate::input::vim::VimKey,
     ) -> crate::input::vim::EditorAction {
         self.ask_host.feed_vim_key(key)
+    }
+
+    /// Paste system-clipboard text into the ask card's vim engine.
+    pub fn paste_ask_text(&self, text: &str) {
+        self.ask_host.paste_text(text);
     }
 
     pub fn ask_is_open(&self) -> bool {

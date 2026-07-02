@@ -87,7 +87,6 @@ pub(crate) fn populate_gloss_buffer(
     bar_left: i32,
     source_line_numbers: &[(String, i64)],
     gloss_dim: Option<&str>,
-    speaker_accent: Option<&str>,
 ) -> (Vec<BarRange>, Vec<LineNumber>) {
     let (ranges, nums, _) = populate_verse_buffer(
         view,
@@ -97,7 +96,6 @@ pub(crate) fn populate_gloss_buffer(
         source_line_numbers,
         None,
         gloss_dim,
-        speaker_accent,
     );
     (ranges, nums)
 }
@@ -120,7 +118,6 @@ pub(crate) fn populate_verse_buffer(
     source_line_numbers: &[(String, i64)],
     selected_echo: Option<usize>,
     dim_color: Option<&str>,
-    speaker_accent: Option<&str>,
 ) -> (Vec<BarRange>, Vec<LineNumber>, Vec<i32>) {
     let buffer = view.buffer();
     buffer.set_text("");
@@ -169,16 +166,14 @@ pub(crate) fn populate_verse_buffer(
     let quote_speaker = bar_left + QUOTE_SPEAKER_INDENT;
     let quote_verse = bar_left + QUOTE_VERSE_INDENT;
 
-    // Speaker + verse "header" styling: matches the journal Q&A question header
-    // (bold 700, 0.9 scale, DIM fg, space below) so the top of a gloss reads like
-    // the top of a journal Q&A — the source text RECEDES (dim) behind the
-    // full-ink explication. The header color comes from `speaker_accent` (the
-    // gloss overlay now threads theme `dim_fg` there); it is a DISTINCT color from
-    // the para's `dim_color`, so the header can dim while the explication stays
-    // full foreground. Falls back to `dim_color`, then inherited fg. The speaker
-    // keeps small-caps (it's a name label).
+    // Speaker + verse "header" styling: bold 700, 0.9 scale, space below, the
+    // speaker in small-caps (it's a name label). The header renders in the
+    // FULL body foreground on the gloss surfaces (no color threaded — the
+    // dimmed source read as too recessed); only the ECHOES view passes
+    // `dim_color`, so its fixed source-turn header still recedes behind the
+    // echo list.
     let header_dim = |b: gtk4::builders::TextTagBuilder| -> gtk4::builders::TextTagBuilder {
-        match speaker_accent.or(dim_color) {
+        match dim_color {
             Some(c) => b.foreground(c),
             None => b,
         }
@@ -221,8 +216,8 @@ pub(crate) fn populate_verse_buffer(
 
     // Prose gloss is the FOCUS ("hero"): full size (scale 1.0), generous 10px
     // leading like the journal answer body, so the reader's eye lands on the
-    // explication. The speaker + verse above are the header (bold/scale-0.9/dim,
-    // like the journal Q: question), which now RECEDES behind this prose.
+    // explication. The speaker + verse above are the header (bold/scale-0.9,
+    // full ink; set off by the hang-indent).
     let para_builder = gtk4::TextTag::builder()
         .name("gloss-para")
         .left_margin(quote_body)

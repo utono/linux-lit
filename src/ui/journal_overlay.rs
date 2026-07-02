@@ -286,7 +286,7 @@ impl JournalOverlay {
                 // indent — see attach_overlay_panel), so bar-to-panel and
                 // bar-to-glyph gaps match the gloss. (Drawing at exactly
                 // left_margin() made the bar collide with the first glyph.)
-                let x = (view_clone.left_margin() as f64 - 12.0).max(2.0);
+                let x = ((view_clone.left_margin() - JOURNAL_BODY_INDENT) as f64).max(2.0);
                 crate::ui::draw_bar_spans(cr, &view_clone, &ranges, x);
             });
         }
@@ -605,7 +605,7 @@ impl JournalOverlay {
         // speaker/verse indents land exactly where the gloss card puts them.
         let bar_left = self.view.left_margin() - JOURNAL_BODY_INDENT;
         let _ = crate::ui::gloss_render::populate_gloss_buffer(
-            &self.view, source_doc, self.text_margins, bar_left, &[], None, None,
+            &self.view, source_doc, self.text_margins, bar_left, &[], None,
         );
         self.apply_font();
         self.clear_blocks();
@@ -645,6 +645,11 @@ impl JournalOverlay {
         self.cursor_full.set(0);
         self.clear_bar();
         *self.marker_glyph.borrow_mut() = None;
+        // Stale <hi> char ranges from the last Q&A page must not survive into a
+        // block-less buffer (loading / message / pending-passage): a later theme
+        // change calls apply_hi_color, which would paint the OLD page's ranges
+        // over arbitrary spans of the new text.
+        self.hi_ranges.borrow_mut().clear();
     }
 
     pub fn hide(&self) {
@@ -1249,6 +1254,31 @@ impl JournalOverlay {
     }
     pub fn cursor_prev_block(&self) {
         self.step_full_cursor(-1);
+    }
+
+    /// True when the current render has navigable paragraph blocks (a Q&A
+    /// page). False for the block-less renders (loading / message / pending
+    /// passage source), where j/k fall back to `scroll_view`.
+    pub fn has_nav_blocks(&self) -> bool {
+        !self.all_paragraphs.borrow().is_empty()
+    }
+
+    /// Raw viewport scroll for BLOCK-LESS renders — the pending-passage source
+    /// card renders the whole selection unpaginated, so without this a
+    /// selection taller than the card was keyboard-unreachable (j/k no-op with
+    /// no blocks). Steps ~3 line-heights; the BottomClipGuard's persistent
+    /// value_changed recompute masks the partial row at the viewport bottom.
+    /// Mirrors the gloss overlay's loading-card scroll fallback.
+    pub fn scroll_view(&self, delta: i32) {
+        let adj = self.scrolled.vadjustment();
+        let ctx = self.view.pango_context();
+        let metrics = ctx.metrics(None, None);
+        let line = ((metrics.ascent() + metrics.descent()) as f64
+            / gtk4::pango::SCALE as f64)
+            .max(12.0);
+        let target = (adj.value() + line * 3.0 * delta as f64)
+            .clamp(adj.lower(), (adj.upper() - adj.page_size()).max(adj.lower()));
+        adj.set_value(target);
     }
     /// `gg`/`G`: jump the cursor to the first/last paragraph of the whole Q&A
     /// (turning to its page).

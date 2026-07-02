@@ -720,6 +720,12 @@ fn ask_vim_intercept(
 /// of the vim surfaces). GTK's clipboard API is async-only, so the paste lands
 /// on the main loop a moment later; empty / non-text clipboards are ignored.
 /// `apply` is a plain fn pointer so the 'static callback captures no borrows.
+///
+/// Line endings are normalized to `\n` here, for every sink: GDK's text
+/// deserializer does NOT normalize (it is charset conversion only), so CRLF
+/// from Windows/web sources would otherwise put literal `\r` chars into the
+/// engine buffer — persisting into lit.db on `:w` and breaking the journal's
+/// `\n\n` question/answer split.
 fn paste_clipboard(state: &Rc<RefCell<AppState>>, apply: fn(&Rc<RefCell<AppState>>, &str)) {
     let Some(display) = gtk4::gdk::Display::default() else {
         return;
@@ -730,6 +736,7 @@ fn paste_clipboard(state: &Rc<RefCell<AppState>>, apply: fn(&Rc<RefCell<AppState
         move |res| {
             if let Ok(Some(text)) = res {
                 if !text.is_empty() {
+                    let text = text.replace("\r\n", "\n").replace('\r', "\n");
                     apply(&state, &text);
                 }
             }
@@ -983,12 +990,17 @@ fn handle_journal_key(
     // gg chord -> first block (mirrors the gloss/synopsis overlays' block cursor)
     if key_state.borrow().chord == ChordState::PendingG {
         key_state.borrow_mut().chord = ChordState::None;
-        if key_name == "g" {
-            crate::input::actions::gloss::stop_all_gloss_audio(state);
-            state.borrow().journal_overlay.cursor_first_block();
-            crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
+        // A ctrl-chord within the gg window cancels the pending `g` and
+        // dispatches normally below (Ctrl+g arrives as key_name "g" too, so
+        // without this `g` then Ctrl+g ran the gg jump instead of view-gloss).
+        if !is_ctrl {
+            if key_name == "g" {
+                crate::input::actions::gloss::stop_all_gloss_audio(state);
+                state.borrow().journal_overlay.cursor_first_block();
+                crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
+            }
+            return true;
         }
-        return true;
     }
 
     if is_alt {
@@ -1114,15 +1126,24 @@ fn handle_journal_key(
         // block cursor here.
         "j" | "q" => {
             crate::input::actions::gloss::stop_all_gloss_audio(state);
-            state.borrow().journal_overlay.cursor_next_block();
-            // A page turn re-rendered the buffer; recolor cached blocks.
-            crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
+            // Block-less render (pending-passage source): scroll the viewport.
+            if state.borrow().journal_overlay.has_nav_blocks() {
+                state.borrow().journal_overlay.cursor_next_block();
+                // A page turn re-rendered the buffer; recolor cached blocks.
+                crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
+            } else {
+                state.borrow().journal_overlay.scroll_view(1);
+            }
             true
         }
         "k" | "comma" => {
             crate::input::actions::gloss::stop_all_gloss_audio(state);
-            state.borrow().journal_overlay.cursor_prev_block();
-            crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
+            if state.borrow().journal_overlay.has_nav_blocks() {
+                state.borrow().journal_overlay.cursor_prev_block();
+                crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
+            } else {
+                state.borrow().journal_overlay.scroll_view(-1);
+            }
             true
         }
         // Space/Tab: play/stop the cursor paragraph's TTS (cache hit plays the
@@ -1186,20 +1207,26 @@ fn handle_gloss_key(
 
     if key_state.borrow().chord == ChordState::PendingG {
         key_state.borrow_mut().chord = ChordState::None;
-        if key_name == "g" {
-            crate::input::actions::gloss::stop_all_gloss_audio(state);
-            // Loading card (no blocks): scroll the viewport to the top.
-            // Result gloss: jump the block cursor to the first block.
-            let has_blocks = state.borrow().gloss_overlay.current_block().is_some();
-            if has_blocks {
-                state.borrow().gloss_overlay.cursor_first_block();
-                // A page turn re-rendered the buffer; recolor cached blocks.
-                crate::input::actions::gloss::recolor_cached_blocks_rc(state);
-            } else {
-                state.borrow().gloss_overlay.scroll_gloss_to_top();
+        // A ctrl-chord within the gg window cancels the pending `g` and
+        // dispatches normally below — otherwise `g` then Ctrl+g ran the gg
+        // jump instead of the Ctrl+g cross-jump (Ctrl+g arrives as key_name
+        // "g" too), and Ctrl+j was swallowed as a no-op.
+        if !is_ctrl {
+            if key_name == "g" {
+                crate::input::actions::gloss::stop_all_gloss_audio(state);
+                // Loading card (no blocks): scroll the viewport to the top.
+                // Result gloss: jump the block cursor to the first block.
+                let has_blocks = state.borrow().gloss_overlay.current_block().is_some();
+                if has_blocks {
+                    state.borrow().gloss_overlay.cursor_first_block();
+                    // A page turn re-rendered the buffer; recolor cached blocks.
+                    crate::input::actions::gloss::recolor_cached_blocks_rc(state);
+                } else {
+                    state.borrow().gloss_overlay.scroll_gloss_to_top();
+                }
             }
+            return true;
         }
-        return true;
     }
     if is_alt {
         match key_name {
