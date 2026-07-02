@@ -2035,6 +2035,35 @@ pub fn prev_bookmark(state: &mut AppState) {
     }
 }
 
+/// Resolve a `line_mapping.id` to its buffer line, honoring the optional
+/// `line_map` (text-file works split/merge lines, so buffer and work indices
+/// diverge; without a map they are 1:1).
+pub(crate) fn buffer_line_for_line_id(s: &AppState, lm_id: i64) -> Option<usize> {
+    if let Some(ref lm) = s.line_map {
+        s.current_work.as_ref().and_then(|w| {
+            let work_idx = w.lines.iter().position(|l| l.id == lm_id)?;
+            Some(lm.work_to_buffer[work_idx])
+        })
+    } else {
+        s.current_work.as_ref().and_then(|w| {
+            w.lines.iter().position(|l| l.id == lm_id)
+        })
+    }
+}
+
+/// The `line_mapping.id` of the current cursor line, honoring the optional
+/// `line_map` (the inverse of `buffer_line_for_line_id`).
+pub(crate) fn current_line_id(s: &AppState) -> Option<i64> {
+    s.current_work.as_ref().and_then(|w| {
+        let work_idx = if let Some(ref lm) = s.line_map {
+            lm.buffer_to_work.get(s.current_line).copied().flatten()
+        } else {
+            Some(s.current_line)
+        };
+        work_idx.and_then(|wi| w.lines.get(wi).map(|l| l.id))
+    })
+}
+
 /// Jump to a specific buffer line (used by bookmark jump-to-recent).
 pub fn jump_to_line(state: &mut AppState, buffer_line: usize) {
     let line_count = state.effective_line_count();

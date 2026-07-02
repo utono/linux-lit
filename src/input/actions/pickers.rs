@@ -214,14 +214,7 @@ pub(crate) fn toggle_previous_work(
 
 fn jump_to_line_mapping_id(state: &Rc<RefCell<AppState>>, line_mapping_id: i64) {
     let mut s = state.borrow_mut();
-    let buf_idx = s.current_work.as_ref().and_then(|w| {
-        let work_idx = w.lines.iter().position(|l| l.id == line_mapping_id)?;
-        if let Some(ref lm) = s.line_map {
-            Some(lm.work_to_buffer[work_idx])
-        } else {
-            Some(work_idx)
-        }
-    });
+    let buf_idx = crate::input::navigation::buffer_line_for_line_id(&s, line_mapping_id);
     if let Some(idx) = buf_idx {
         s.current_line = idx;
         crate::input::highlight::update_highlight_and_center(&mut s);
@@ -416,19 +409,7 @@ pub(crate) fn open_media_picker(
                     let path_for_discover = path.clone();
                     let socket_path = handle_for_confirm
                         .spawn_blocking(move || {
-                            if let Some((sock, _)) =
-                                crate::mpv::discovery::find_socket_for_work(&[path_for_discover.clone()])
-                            {
-                                return sock.to_string_lossy().to_string();
-                            }
-                            let launched = crate::mpv::discovery::launch_mpv(&path_for_discover);
-                            for _ in 0..60 {
-                                std::thread::sleep(std::time::Duration::from_millis(50));
-                                if std::path::Path::new(&launched).exists() {
-                                    return launched;
-                                }
-                            }
-                            launched
+                            crate::mpv::discovery::discover_or_launch_blocking(&path_for_discover)
                         })
                         .await
                         .unwrap_or_default();
@@ -503,19 +484,7 @@ pub(crate) fn confirm_media_selection(
                 let path_for_discover = path.clone();
                 handle
                     .spawn_blocking(move || {
-                        if let Some((sock, _)) =
-                            crate::mpv::discovery::find_socket_for_work(&[path_for_discover.clone()])
-                        {
-                            return sock.to_string_lossy().to_string();
-                        }
-                        let launched = crate::mpv::discovery::launch_mpv(&path_for_discover);
-                        for _ in 0..60 {
-                            std::thread::sleep(std::time::Duration::from_millis(50));
-                            if std::path::Path::new(&launched).exists() {
-                                return launched;
-                            }
-                        }
-                        launched
+                        crate::mpv::discovery::discover_or_launch_blocking(&path_for_discover)
                     })
                     .await
                     .unwrap_or_default()
@@ -980,16 +949,8 @@ pub(crate) fn delete_bookmark(
             if let Ok(Ok(())) = result {
                 let mut s = state_clone.borrow_mut();
                 // Update is_bookmarked vec
-                let buffer_line = if let Some(ref lm) = s.line_map {
-                    s.current_work.as_ref().and_then(|w| {
-                        let work_idx = w.lines.iter().position(|l| l.id == lm_id)?;
-                        Some(lm.work_to_buffer[work_idx])
-                    })
-                } else {
-                    s.current_work.as_ref().and_then(|w| {
-                        w.lines.iter().position(|l| l.id == lm_id)
-                    })
-                };
+                let buffer_line =
+                    crate::input::navigation::buffer_line_for_line_id(&s, lm_id);
                 if let Some(bl) = buffer_line {
                     let mut bm = s.is_bookmarked.borrow_mut();
                     if bl < bm.len() {

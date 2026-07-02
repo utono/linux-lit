@@ -128,6 +128,34 @@ pub(crate) fn draw_bar_spans(
     }
 }
 
+/// Draw the vim blank-line block cursor (audit #54): a thin left-edge block at
+/// the line's window-y, because an empty line has no glyph cell for the buffer
+/// block-cursor tag to paint. Shared by the gloss/journal `bar_drawing` draw
+/// closures; each caller passes its own `x` (gloss: a captured margin const;
+/// journal: `left_margin()` read live). No-op when `block_line` is `None`.
+pub(crate) fn draw_vim_block_cursor(
+    cr: &gtk4::cairo::Context,
+    view: &gtk4::TextView,
+    block_line: Option<(i32, f64, f64, f64)>,
+    x: f64,
+) {
+    use gtk4::prelude::*;
+    if let Some((buf_line, r, g, b)) = block_line {
+        let buffer = view.buffer();
+        if let Some(iter) = buffer.iter_at_line(buf_line) {
+            let loc = view.iter_location(&iter);
+            let (_, by) =
+                view.buffer_to_window_coords(gtk4::TextWindowType::Widget, 0, loc.y());
+            // Block height = line height (fall back to a sane default).
+            let bh = if loc.height() > 0 { loc.height() } else { 18 } as f64;
+            let bw = (bh * 0.5).max(7.0); // half-em-ish, like a cell
+            cr.set_source_rgb(r, g, b);
+            cr.rectangle(x, by as f64, bw, bh);
+            let _ = cr.fill();
+        }
+    }
+}
+
 /// The last text line's bottom in WIDGET coords (scroll-aware; the y the page
 /// marker glyph sits under). `end_iter`'s line is the last line.
 pub(crate) fn measure_last_line_bottom(view: &gtk4::TextView) -> i32 {
@@ -428,6 +456,16 @@ pub(crate) fn set_rc_color(
         *cell.borrow_mut() = rgb;
         drawing.queue_draw();
     }
+}
+
+/// Configure a TextView as a read-only display surface (audit #62): not
+/// editable, no caret, not focusable. The vim editors flip these back
+/// per-mode (`begin_edit_buffer` raises `focusable` so GTK paints the caret).
+pub(crate) fn set_view_readonly(view: &gtk4::TextView) {
+    use gtk4::prelude::*;
+    view.set_editable(false);
+    view.set_cursor_visible(false);
+    view.set_focusable(false);
 }
 
 /// Pure core of the overlay bottom-clip calculation: given each visual row's

@@ -135,6 +135,25 @@ pub fn launch_mpv(media_path: &str) -> String {
     socket_path
 }
 
+/// Blocking discover-or-launch (audit #65): reuse an existing MPV socket for
+/// this media path if one is live, otherwise launch MPV and wait up to ~3s
+/// (60 × 50ms) for its IPC socket to appear. Returns the socket path either
+/// way — with no MPV listening, connection attempts simply fail gracefully.
+/// Run inside `spawn_blocking`; it sleeps on the calling thread.
+pub fn discover_or_launch_blocking(media_path: &str) -> String {
+    if let Some((sock, _)) = find_socket_for_work(&[media_path.to_string()]) {
+        return sock.to_string_lossy().to_string();
+    }
+    let launched = launch_mpv(media_path);
+    for _ in 0..60 {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        if std::path::Path::new(&launched).exists() {
+            return launched;
+        }
+    }
+    launched
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

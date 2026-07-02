@@ -276,9 +276,7 @@ impl GlossOverlay {
         gloss_scrolled.set_propagate_natural_height(false);
 
         let gloss_view = gtk4::TextView::new();
-        gloss_view.set_editable(false);
-        gloss_view.set_cursor_visible(false);
-        gloss_view.set_focusable(false);
+        crate::ui::set_view_readonly(&gloss_view);
         gloss_view.set_wrap_mode(gtk4::WrapMode::Word);
         let right_margin = column_width as i32 / 8;
         gloss_view.set_left_margin(text_margins as i32);
@@ -336,23 +334,14 @@ impl GlossOverlay {
                 8,
             );
 
-            // Vim block cursor on a BLANK line: the line has no glyph to fill, so
-            // draw a thin left-edge block at the line's window-y (same coord path
-            // as the accent bar / line numbers below).
-            if let Some((buf_line, cr_, cg, cb)) = *vim_block_clone.borrow() {
-                let buffer = view_clone.buffer();
-                if let Some(iter) = buffer.iter_at_line(buf_line) {
-                    let loc = view_clone.iter_location(&iter);
-                    let (_, by) = view_clone.buffer_to_window_coords(
-                        gtk4::TextWindowType::Widget, 0, loc.y());
-                    // Block height = line height (fall back to a sane default).
-                    let bh = if loc.height() > 0 { loc.height() } else { 18 } as f64;
-                    let bw = (bh * 0.5).max(7.0); // half-em-ish, like a cell
-                    cr.set_source_rgb(cr_, cg, cb);
-                    cr.rectangle(block_left_margin as f64, by as f64, bw, bh);
-                    let _ = cr.fill();
-                }
-            }
+            // Vim block cursor on a BLANK line (shared draw; same coord path as
+            // the accent bar / line numbers below).
+            crate::ui::draw_vim_block_cursor(
+                cr,
+                &view_clone,
+                *vim_block_clone.borrow(),
+                block_left_margin as f64,
+            );
 
             // Draw bars
             if !ranges.is_empty() {
@@ -444,9 +433,7 @@ impl GlossOverlay {
         // Echoes-only: a fixed source-turn header + a fixed rule, above the
         // scrolling echo list. Hidden in all non-echo overlay modes.
         let echo_header_view = gtk4::TextView::new();
-        echo_header_view.set_editable(false);
-        echo_header_view.set_cursor_visible(false);
-        echo_header_view.set_focusable(false);
+        crate::ui::set_view_readonly(&echo_header_view);
         echo_header_view.set_wrap_mode(gtk4::WrapMode::Word);
         echo_header_view.set_left_margin(text_margins as i32);
         echo_header_view.set_right_margin(right_margin);
@@ -1041,24 +1028,13 @@ impl GlossOverlay {
         } else {
             crate::ui::card_side_margin(card_width)
         };
-        self.title.set_margin_start(left);
-        self.gloss_view.set_left_margin(left);
-        self.gloss_view.set_right_margin(left);
-        self.gloss_view.set_top_margin(32);
-        self.gloss_view.set_pixels_below_lines(4);
+        self.set_prose_margins(left);
         self.set_gloss_hint();
-        self.orig_header.set_visible(false);
-        self.original_label.set_visible(false);
-        self.corr_header.set_visible(false);
-        self.corrected_label.set_visible(false);
+        self.hide_diff_labels();
         self.echo_header_view.set_visible(false);
         self.echo_rule.set_visible(false);
 
-        if let Some(color) = root_color {
-            if let Some((r, g, b)) = parse_hex_color(color) {
-                *self.bar_color.borrow_mut() = (r, g, b);
-            }
-        }
+        self.set_bar_color_from_root(root_color);
 
         let bar_left = left;
         *self.bar_x.borrow_mut() = bar_left;
@@ -1112,6 +1088,36 @@ impl GlossOverlay {
     /// `<speaker>`/`<verse>` markup (see `build_source_header`). The "Glossing…"
     /// status sits as a header above the passage; the result simply replaces this
     /// view in place when it arrives, so the passage looks identical before/after.
+    /// Shared prose-geometry prefix of the gloss show paths (audit #64 rider):
+    /// title indent + body margins for a prose gloss page.
+    fn set_prose_margins(&self, left: i32) {
+        self.title.set_margin_start(left);
+        self.gloss_view.set_left_margin(left);
+        self.gloss_view.set_right_margin(left);
+        self.gloss_view.set_top_margin(32);
+        self.gloss_view.set_pixels_below_lines(4);
+    }
+
+    /// Hide the four gloss-diff labels (audit #64). Every show path hides
+    /// these; the echo/position/hint extras vary per caller and stay inline.
+    fn hide_diff_labels(&self) {
+        self.orig_header.set_visible(false);
+        self.original_label.set_visible(false);
+        self.corr_header.set_visible(false);
+        self.corrected_label.set_visible(false);
+    }
+
+    /// Update the accent-bar color from the theme `root_color` (audit #63).
+    /// Deliberately no `queue_draw` — the show paths repaint anyway (this is
+    /// NOT `ui::set_rc_color`, which queues a draw for the standalone setters).
+    fn set_bar_color_from_root(&self, root_color: Option<&str>) {
+        if let Some(color) = root_color {
+            if let Some((r, g, b)) = parse_hex_color(color) {
+                *self.bar_color.borrow_mut() = (r, g, b);
+            }
+        }
+    }
+
     pub fn show_glossing(&self, passage_doc: &str, card_width: i32, card_height: i32, root_color: Option<&str>) {
         self.hide_citation();
         self.synopsis_label_ranges.borrow_mut().clear();        self.hi_ranges.borrow_mut().clear();
@@ -1142,27 +1148,16 @@ impl GlossOverlay {
         } else {
             crate::ui::card_side_margin(card_width)
         };
-        self.title.set_margin_start(left);
-        self.gloss_view.set_left_margin(left);
-        self.gloss_view.set_right_margin(left);
-        self.gloss_view.set_top_margin(32);
-        self.gloss_view.set_pixels_below_lines(4);
+        self.set_prose_margins(left);
 
         // No diff labels, echo views, hint, or position while loading.
-        self.orig_header.set_visible(false);
-        self.original_label.set_visible(false);
-        self.corr_header.set_visible(false);
-        self.corrected_label.set_visible(false);
+        self.hide_diff_labels();
         self.echo_header_view.set_visible(false);
         self.echo_rule.set_visible(false);
         self.hint.set_visible(false);
         self.position_label.set_visible(false);
 
-        if let Some(color) = root_color {
-            if let Some((r, g, b)) = parse_hex_color(color) {
-                *self.bar_color.borrow_mut() = (r, g, b);
-            }
-        }
+        self.set_bar_color_from_root(root_color);
 
         let bar_left = left;
         *self.bar_x.borrow_mut() = bar_left;
@@ -1226,16 +1221,9 @@ impl GlossOverlay {
         self.gloss_view.set_pixels_below_lines(0);
         self.echo_header_view.set_left_margin(left);
         self.hint.set_text("Esc close · a play · A add · s curate · d/D delete · R refresh");
-        self.orig_header.set_visible(false);
-        self.original_label.set_visible(false);
-        self.corr_header.set_visible(false);
-        self.corrected_label.set_visible(false);
+        self.hide_diff_labels();
 
-        if let Some(color) = root_color {
-            if let Some((r, g, b)) = parse_hex_color(color) {
-                *self.bar_color.borrow_mut() = (r, g, b);
-            }
-        }
+        self.set_bar_color_from_root(root_color);
 
         let bar_left = self.column_width / 8;
         *self.bar_x.borrow_mut() = bar_left;
@@ -1364,10 +1352,7 @@ impl GlossOverlay {
         // title widget). The synopsis card gives the "Act N, Scene N" header
         // extra breathing room above it.
         self.title.set_margin_top(56);
-        self.orig_header.set_visible(false);
-        self.original_label.set_visible(false);
-        self.corr_header.set_visible(false);
-        self.corrected_label.set_visible(false);
+        self.hide_diff_labels();
         self.position_label.set_visible(false);
         self.echo_header_view.set_visible(false);
         self.echo_rule.set_visible(false);
@@ -1390,11 +1375,7 @@ impl GlossOverlay {
         self.gloss_view.set_pixels_below_lines(6);
         // Match the gloss overlay's accent color (theme root_color) so the bar is
         // the same saturated accent, not the pale constructor default.
-        if let Some(color) = root_color {
-            if let Some((r, g, b)) = parse_hex_color(color) {
-                *self.bar_color.borrow_mut() = (r, g, b);
-            }
-        }
+        self.set_bar_color_from_root(root_color);
         *self.bar_x.borrow_mut() = bar_left;
         // PAGINATE (like the journal): each non-label <p> is one Explication
         // cursor stop; the page renders only the blocks that fit so no partial
@@ -2420,10 +2401,7 @@ impl GlossOverlay {
         self.title.set_valign(Align::Center);
         self.title.set_halign(Align::Center);
         self.title.set_margin_start(0);
-        self.orig_header.set_visible(false);
-        self.original_label.set_visible(false);
-        self.corr_header.set_visible(false);
-        self.corrected_label.set_visible(false);
+        self.hide_diff_labels();
         self.gloss_scroll_overlay.set_visible(false);
         self.echo_header_view.set_visible(false);
         self.echo_rule.set_visible(false);

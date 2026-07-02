@@ -428,9 +428,7 @@ fn render_block(parent: &gtk4::Box, block: &TranslationBlock, ctx: &RenderCtx) -
             (orig, Some(trans))
         } else {
             let view = TextView::new();
-            view.set_editable(false);
-            view.set_cursor_visible(false);
-            view.set_focusable(false);
+            crate::ui::set_view_readonly(&view);
             // No wrapping for interludes (stage directions / scene headers) either
             // (per user): each stays on one visual row, matching the speech columns.
             // Full-width, so overflow risk is minimal.
@@ -627,9 +625,7 @@ fn apply_cursor_tag(buffer: &gtk4::TextBuffer, line: i32) {
 
 fn make_column(width: i32, color: &str, italic: bool, line_spacing: i32) -> TextView {
     let view = TextView::new();
-    view.set_editable(false);
-    view.set_cursor_visible(false);
-    view.set_focusable(false);
+    crate::ui::set_view_readonly(&view);
     // No wrapping (per user): each source/translation line stays on ONE visual
     // row so the columns line up 1:1 and the cursor-line highlight band is a
     // single row. A translation longer than the column overflows into the card's

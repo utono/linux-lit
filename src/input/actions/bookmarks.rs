@@ -15,14 +15,7 @@ pub(crate) fn toggle_bookmark(
     let (abbrev, line_mapping_id, buffer_line) = {
         let s = state.borrow();
         let abbrev = s.current_work.as_ref().map(|w| w.abbrev.clone());
-        let lm_id = s.current_work.as_ref().and_then(|w| {
-            let work_idx = if let Some(ref lm) = s.line_map {
-                lm.buffer_to_work.get(s.current_line)?.as_ref().copied()
-            } else {
-                Some(s.current_line)
-            };
-            work_idx.and_then(|wi| w.lines.get(wi).map(|l| l.id))
-        });
+        let lm_id = navigation::current_line_id(&s);
         (abbrev, lm_id, s.current_line)
     };
     if let (Some(abbrev), Some(lm_id)) = (abbrev, line_mapping_id) {
@@ -81,16 +74,7 @@ pub(crate) fn jump_to_recent_bookmark(
                 .await;
             if let Ok(Ok(Some(lm_id))) = result {
                 let mut s = state_clone.borrow_mut();
-                let buffer_line = if let Some(ref lm) = s.line_map {
-                    s.current_work.as_ref().and_then(|w| {
-                        let work_idx = w.lines.iter().position(|l| l.id == lm_id)?;
-                        Some(lm.work_to_buffer[work_idx])
-                    })
-                } else {
-                    s.current_work.as_ref().and_then(|w| {
-                        w.lines.iter().position(|l| l.id == lm_id)
-                    })
-                };
+                let buffer_line = navigation::buffer_line_for_line_id(&s, lm_id);
                 if let Some(bl) = buffer_line {
                     navigation::jump_to_line(&mut s, bl);
                 }
