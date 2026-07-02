@@ -436,6 +436,28 @@ pub(crate) fn nav_to_work_band(state: &Rc<RefCell<AppState>>) {
     render_current(&mut s);
 }
 
+/// Switch to the Author band (corpus-scope pages for the current work's author)
+/// and render it. Jump-only — not part of the sequential scene/work band walk.
+///
+/// # nav_to_author_band verified via e2e (needs GTK AppState)
+pub(crate) fn nav_to_author_band(state: &Rc<RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    let author = s
+        .current_work
+        .as_ref()
+        .map(|w| w.author.clone())
+        .unwrap_or_default();
+    if author.is_empty() {
+        return;
+    }
+    if s.journal_band == JournalBand::Author(author.clone()) {
+        return;
+    }
+    s.journal_band = JournalBand::Author(author);
+    s.journal.page_index = 0;
+    render_current(&mut s);
+}
+
 /// Set up the journal overlay for a passage Q&A and open the ask card.
 ///
 /// Called both from `action_journal_qa` (visual selection path) and from the
