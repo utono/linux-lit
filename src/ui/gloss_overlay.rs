@@ -177,10 +177,6 @@ pub struct GlossOverlay {
     /// `gloss-hi` tag in `apply_font`. Defaults to `DEFAULT_HIGHLIGHT_BG` until
     /// the app threads the theme color via `set_highlight_color`.
     highlight_bg: RefCell<String>,
-    /// Theme `dim_fg` hex, threaded by `set_marker_color`. Passed as the
-    /// speaker/verse header color so the source text dims (like the journal Q&A
-    /// question) instead of rendering in the full body foreground.
-    dim_fg: RefCell<String>,
     /// Char ranges of `<hi>` highlights in the CURRENT synopsis buffer (the
     /// set_text path doesn't go through `populate_verse_buffer`, so the overlay
     /// re-applies the `gloss-hi` tag here, like `synopsis_label_ranges`). Empty
@@ -586,7 +582,6 @@ impl GlossOverlay {
             vim_seed: RefCell::new(String::new()),
             vim_cursor_colors: RefCell::new((String::new(), String::new())),
             highlight_bg: RefCell::new(crate::ui::DEFAULT_HIGHLIGHT_BG.to_string()),
-            dim_fg: RefCell::new(String::new()), // set by set_marker_color at startup
             hi_ranges: RefCell::new(Vec::new()),
             pre_edit_family: RefCell::new(None),
         }
@@ -625,10 +620,9 @@ impl GlossOverlay {
     }
 
     /// Set the page-marker glyph's dim color (theme `dim_fg`) and repaint the bar.
-    /// Also stores the hex as the speaker/verse header color (so the source text
-    /// dims like the journal Q&A question). The change shows on the next render.
+    /// (The gloss speaker/verse header used to dim in this color too; it now
+    /// renders full ink — see render_gloss_page.)
     pub fn set_marker_color(&self, hex: &str) {
-        *self.dim_fg.borrow_mut() = hex.to_string();
         if let Some(rgb) = parse_hex_color(hex) {
             *self.marker_color.borrow_mut() = rgb;
             self.bar_drawing.queue_draw();
@@ -1171,14 +1165,12 @@ impl GlossOverlay {
 
         // Render the passage through the SAME path as the gloss result's original
         // passage, so speaker small-caps + indented verse look identical.
-        // Pass dim_fg as the header (speaker/verse) color so the source text
-        // recedes like the journal Q&A question; the explication (para) stays
-        // full-ink (it reads dim_color, which stays None here).
-        let dim = self.dim_fg.borrow().clone();
-        let dim_opt = (!dim.is_empty()).then_some(dim.as_str());
+        // Speaker + verse render FULL ink like the explication (no header color:
+        // the user found the dimmed source too recessed) — the hang-indent alone
+        // sets the source apart. Matches render_gloss_page.
         let (ranges, _nums) = populate_gloss_buffer(
             &self.gloss_view, passage_doc, self.text_margins, bar_left, &[],
-            None, dim_opt,
+            None, None,
         );
         *self.bar_ranges.borrow_mut() = ranges;
         self.line_numbers.borrow_mut().clear();
@@ -1944,12 +1936,10 @@ impl GlossOverlay {
             (body, slice)
         };
 
-        // Prose (explication) keeps the full foreground (the focus); the speaker +
-        // verse header recede in dim_fg (like the journal Q&A question). dim_fg is
-        // passed as the header color (speaker_accent slot); dim_color stays None so
-        // the prose is NOT dimmed.
-        let dim = self.dim_fg.borrow().clone();
-        let dim_opt = (!dim.is_empty()).then_some(dim.as_str());
+        // Speaker + verse header render FULL ink like the explication — no
+        // header color (speaker_accent None; the user found the dimmed source
+        // too recessed). The bold/small-caps/0.9-scale header styling and the
+        // verse hang-indent alone set the quoted source apart from the prose.
         let (ranges, _nums) = populate_gloss_buffer(
             &self.gloss_view,
             &markup,
@@ -1957,7 +1947,7 @@ impl GlossOverlay {
             bar_left,
             &line_numbers,
             None,
-            dim_opt,
+            None,
         );
         *self.bar_ranges.borrow_mut() = ranges;
         // Glosses do not show verse line numbers (those belong only to the main

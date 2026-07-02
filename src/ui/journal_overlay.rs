@@ -777,12 +777,11 @@ impl JournalOverlay {
         }
     }
 
-    /// Re-apply the `journal-hi` highlight tag over the stored `hi_ranges` with
-    /// the theme background. No-op when there are no ranges.
-    /// Style the leading `Q:` line as a header (small, bold, dim, extra space
-    /// below) — mirroring the gloss `.gloss-header` speaker-label look — when the
-    /// current page begins with the question. Answer pages (no `Q:` line) are
-    /// untouched. Uses the marker color (theme `dim_fg`) as the header foreground.
+    /// Style the leading `Q:` line as a header (small, bold, extra space below)
+    /// when the current page begins with the question. Answer pages (no `Q:`
+    /// line) are untouched. FULL ink — the question used to dim in `dim_fg`
+    /// (like the gloss source once did); the user found the dimming too
+    /// recessed, so only the weight/scale/spacing set the header apart.
     fn apply_qa_header(&self, body: &str) {
         let Some(first_line) = body.split('\n').next() else {
             return;
@@ -793,23 +792,16 @@ impl JournalOverlay {
         let buffer = self.view.buffer();
         let table = buffer.tag_table();
         if table.lookup("journal-qa-header").is_none() {
-            let (r, g, b) = *self.marker_color.borrow();
             table.add(
                 &gtk4::TextTag::builder()
                     .name("journal-qa-header")
                     .weight(700)
                     .scale(0.9)
-                    .foreground_rgba(&gtk4::gdk::RGBA::new(r as f32, g as f32, b as f32, 1.0))
                     .pixels_below_lines(10)
                     .build(),
             );
         }
         if let Some(tag) = table.lookup("journal-qa-header") {
-            // Keep the color live with the theme (marker_color = dim_fg).
-            let (r, g, b) = *self.marker_color.borrow();
-            tag.set_foreground_rgba(Some(&gtk4::gdk::RGBA::new(
-                r as f32, g as f32, b as f32, 1.0,
-            )));
             let si = buffer.start_iter();
             let mut ei = buffer.start_iter();
             ei.forward_chars(first_line.chars().count() as i32);
