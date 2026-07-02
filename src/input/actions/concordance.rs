@@ -63,14 +63,7 @@ pub(crate) fn handle_word_selection(
 
         let current_line_id = {
             let s = state_clone.borrow();
-            s.current_work.as_ref().and_then(|w| {
-                let work_idx = if let Some(ref lm) = s.line_map {
-                    lm.buffer_to_work.get(s.current_line).copied().flatten()
-                } else {
-                    Some(s.current_line)
-                };
-                work_idx.and_then(|wi| w.lines.get(wi).map(|l| l.id))
-            })
+            crate::input::navigation::current_line_id(&s)
         };
 
         // Check if cursor line is itself a hit

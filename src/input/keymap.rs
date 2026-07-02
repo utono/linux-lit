@@ -347,16 +347,7 @@ fn handle_picker_key(
                         }
                         let mut s = state.borrow_mut();
                         s.input_mode = InputMode::Reader;
-                        let buffer_line = if let Some(ref lm) = s.line_map {
-                            s.current_work.as_ref().and_then(|w| {
-                                let work_idx = w.lines.iter().position(|l| l.id == lm_id)?;
-                                Some(lm.work_to_buffer[work_idx])
-                            })
-                        } else {
-                            s.current_work.as_ref().and_then(|w| {
-                                w.lines.iter().position(|l| l.id == lm_id)
-                            })
-                        };
+                        let buffer_line = navigation::buffer_line_for_line_id(&s, lm_id);
                         if let Some(bl) = buffer_line {
                             navigation::jump_to_line(&mut s, bl);
                         }
