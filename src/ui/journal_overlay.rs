@@ -777,38 +777,6 @@ impl JournalOverlay {
         }
     }
 
-    /// Style the leading `Q:` line as a header (small, bold, extra space below)
-    /// when the current page begins with the question. Answer pages (no `Q:`
-    /// line) are untouched. FULL ink — the question used to dim in `dim_fg`
-    /// (like the gloss source once did); the user found the dimming too
-    /// recessed, so only the weight/scale/spacing set the header apart.
-    fn apply_qa_header(&self, body: &str) {
-        let Some(first_line) = body.split('\n').next() else {
-            return;
-        };
-        if !first_line.trim_start().starts_with("Q:") {
-            return;
-        }
-        let buffer = self.view.buffer();
-        let table = buffer.tag_table();
-        if table.lookup("journal-qa-header").is_none() {
-            table.add(
-                &gtk4::TextTag::builder()
-                    .name("journal-qa-header")
-                    .weight(700)
-                    .scale(0.9)
-                    .pixels_below_lines(10)
-                    .build(),
-            );
-        }
-        if let Some(tag) = table.lookup("journal-qa-header") {
-            let si = buffer.start_iter();
-            let mut ei = buffer.start_iter();
-            ei.forward_chars(first_line.chars().count() as i32);
-            buffer.apply_tag(&tag, &si, &ei);
-        }
-    }
-
     fn apply_hi_color(&self) {
         let buffer = self.view.buffer();
         let table = buffer.tag_table();
@@ -1186,8 +1154,10 @@ impl JournalOverlay {
         // Paint the `<hi>` highlight AFTER set_text + font (read-mode only; the
         // editor sets raw text and must not re-apply these read-mode ranges).
         self.apply_hi_color();
-        // Style the leading `Q:` line as a header (gloss look), first page only.
-        self.apply_qa_header(&body);
+        // The leading `Q:` line renders as PLAIN body text — no header tag. It
+        // used to get a bold/0.9-scale/dim header treatment, but the tag only
+        // landed on the first render (page turns skipped it), and the user
+        // prefers the plain look: same weight and size as the answer.
         // Floating page marker (⌄ more / • end), bottom-center of the viewport.
         self.update_page_marker(pidx, n_pages);
         // The vadjustment stays at top — the page fits, nothing scrolls.
