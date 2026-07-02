@@ -737,11 +737,7 @@ impl JournalOverlay {
     /// overlay uses (`GlossOverlay::apply_font`), since this gtk4 version's
     /// per-widget CSS provider path is the deprecated `style_context()` API.
     fn apply_font(&self) {
-        let family = self.font_family.borrow().clone();
-        if family.is_empty() {
-            return;
-        }
-        let font_str = format!("{} {}", family, self.font_size.get());
+        let font_str = format!("{} {}", self.font_family.borrow(), self.font_size.get());
         crate::ui::apply_font_to_views(
             &[&self.view, self.ask_host.input()],
             &font_str,
@@ -759,27 +755,18 @@ impl JournalOverlay {
 
     /// Set the page-marker glyph's dim color (theme `dim_fg`) and repaint the bar.
     pub fn set_marker_color(&self, hex: &str) {
-        if let Some(rgb) = crate::ui::gloss_util::parse_hex_color(hex) {
-            *self.marker_color.borrow_mut() = rgb;
-            self.bar_drawing.queue_draw();
-        }
+        crate::ui::set_rc_color(hex, &self.marker_color, &self.bar_drawing);
     }
 
     /// Set the inset panel tint color (theme `panel_bg`) and repaint the panel.
     pub fn set_panel_color(&self, hex: &str) {
-        if let Some(rgb) = crate::ui::gloss_util::parse_hex_color(hex) {
-            *self.panel_color.borrow_mut() = rgb;
-            self.panel_drawing.queue_draw();
-        }
+        crate::ui::set_rc_color(hex, &self.panel_color, &self.panel_drawing);
     }
 
     /// Set the selection accent-bar color (theme `root_color`) and repaint the
     /// bar — matches the gloss overlay's theme-wired bar.
     pub fn set_bar_color(&self, hex: &str) {
-        if let Some(rgb) = crate::ui::gloss_util::parse_hex_color(hex) {
-            *self.bar_color.borrow_mut() = rgb;
-            self.bar_drawing.queue_draw();
-        }
+        crate::ui::set_rc_color(hex, &self.bar_color, &self.bar_drawing);
     }
 
     fn apply_hi_color(&self) {

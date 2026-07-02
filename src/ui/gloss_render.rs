@@ -31,6 +31,19 @@ pub(crate) const QUOTE_VERSE_INDENT: i32 = QUOTE_SPEAKER_INDENT + crate::app::DI
 
 /// Apply italic styling to any `[bracket]` spans found after `base_offset` in
 /// the buffer, using `bracket_tag`.
+/// Core of the header tag style shared by the speaker/verse header tags
+/// (audit #55): bold 700 at 0.9 scale, indented to `left_margin`. Each caller
+/// adds its own small-caps variant, pixels_above/below, and (via the
+/// `header_dim` closure) the optional echoes-view dim color. A future tweak to
+/// the header look (e.g. scale) lands here once instead of per-site.
+fn header_tag_base(name: &str, left_margin: i32) -> gtk4::builders::TextTagBuilder {
+    gtk4::TextTag::builder()
+        .name(name)
+        .weight(700)
+        .scale(0.9)
+        .left_margin(left_margin)
+}
+
 pub(crate) fn apply_bracket_styling(
     buffer: &gtk4::TextBuffer,
     base_offset: i32,
@@ -180,23 +193,15 @@ pub(crate) fn populate_verse_buffer(
     };
 
     let speaker_tag = header_dim(
-        gtk4::TextTag::builder()
-            .name("gloss-speaker")
+        header_tag_base("gloss-speaker", quote_speaker)
             .variant(pango::Variant::SmallCaps)
-            .weight(700)
-            .scale(0.9)
-            .left_margin(quote_speaker)
             .pixels_above_lines(36)
             .pixels_below_lines(10),
     )
     .build();
 
     let verse_tag = header_dim(
-        gtk4::TextTag::builder()
-            .name("gloss-verse")
-            .weight(700)
-            .scale(0.9)
-            .left_margin(quote_verse),
+        header_tag_base("gloss-verse", quote_verse),
         // NO pixels_below_lines: each verse line is its own paragraph, so a
         // per-line gap reads as loose double-spacing. Verse lines sit at the
         // view's natural single leading (like the journal answer body); the
@@ -230,12 +235,8 @@ pub(crate) fn populate_verse_buffer(
     };
 
     let speaker_first_tag = header_dim(
-        gtk4::TextTag::builder()
-            .name("gloss-speaker-first")
+        header_tag_base("gloss-speaker-first", quote_speaker)
             .variant(pango::Variant::SmallCaps)
-            .weight(700)
-            .scale(0.9)
-            .left_margin(quote_speaker)
             .pixels_below_lines(10),
     )
     .build();
@@ -244,12 +245,8 @@ pub(crate) fn populate_verse_buffer(
     // turn may span several speakers; keep them tightly spaced to match the
     // reader's 8px speaker rhythm rather than the 36px echo-section gap.
     let speaker_source_tag = header_dim(
-        gtk4::TextTag::builder()
-            .name("gloss-speaker-source")
+        header_tag_base("gloss-speaker-source", quote_speaker)
             .variant(pango::Variant::SmallCaps)
-            .weight(700)
-            .scale(0.9)
-            .left_margin(quote_speaker)
             .pixels_above_lines(8)
             .pixels_below_lines(10),
     )

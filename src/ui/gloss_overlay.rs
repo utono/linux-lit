@@ -623,18 +623,12 @@ impl GlossOverlay {
     /// (The gloss speaker/verse header used to dim in this color too; it now
     /// renders full ink — see render_gloss_page.)
     pub fn set_marker_color(&self, hex: &str) {
-        if let Some(rgb) = parse_hex_color(hex) {
-            *self.marker_color.borrow_mut() = rgb;
-            self.bar_drawing.queue_draw();
-        }
+        crate::ui::set_rc_color(hex, &self.marker_color, &self.bar_drawing);
     }
 
     /// Set the inset tinted panel color (theme `panel_bg`) and repaint the panel.
     pub fn set_panel_color(&self, hex: &str) {
-        if let Some(rgb) = parse_hex_color(hex) {
-            *self.panel_color.borrow_mut() = rgb;
-            self.panel_drawing.queue_draw();
-        }
+        crate::ui::set_rc_color(hex, &self.panel_color, &self.panel_drawing);
     }
 
     /// Re-assert the `<hi>` highlight: paint the `gloss-hi` tag the stored theme

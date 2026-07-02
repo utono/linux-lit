@@ -396,8 +396,8 @@ pub(crate) fn apply_cached_coloring(
 /// Apply a buffer-wide font `TextTag` named `tag_name` (set to `font_str`) over
 /// each view's full buffer, replacing any prior tag of that name, and re-assert
 /// the italic stage/bracket tags above it. The shared body of the gloss and
-/// journal overlays' `apply_font` (audit #46). The caller owns the family guard,
-/// the view list, the tag name, and any trailing label-bold pass.
+/// journal overlays' `apply_font` (audit #46). The caller owns the view list,
+/// the tag name, and any trailing label-bold pass.
 pub(crate) fn apply_font_to_views(views: &[&gtk4::TextView], font_str: &str, tag_name: &str) {
     use gtk4::prelude::*;
     for view in views {
@@ -412,6 +412,21 @@ pub(crate) fn apply_font_to_views(views: &[&gtk4::TextView], font_str: &str, tag
         buffer.apply_tag(&tag, &start, &end);
         // Keep stage/bracket directions italic above the upright font tag.
         reassert_italic_tags(&table);
+    }
+}
+
+/// Shared body of the overlays' `set_*_color` setters (audit #53): parse the
+/// theme hex into rgb, store it in the drawn-state cell, and repaint the
+/// drawing area that reads it. A malformed hex leaves the prior color intact.
+pub(crate) fn set_rc_color(
+    hex: &str,
+    cell: &std::cell::RefCell<(f64, f64, f64)>,
+    drawing: &gtk4::DrawingArea,
+) {
+    use gtk4::prelude::*;
+    if let Some(rgb) = gloss_util::parse_hex_color(hex) {
+        *cell.borrow_mut() = rgb;
+        drawing.queue_draw();
     }
 }
 
