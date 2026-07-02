@@ -1183,13 +1183,24 @@ impl JournalOverlay {
         // highlight ranges (char offsets into `body`) and per-page block offsets
         // (derived from body.split('\n') below) stay byte-aligned with the buffer
         // content. apply_markdown appends — clear the buffer first.
-        if self.page_is_note.get() {
+        // For notes, `apply_markdown_blocks` returns the RENDERED buffer's
+        // top-level blocks (real buffer-line spans + a stoppable flag). We use
+        // those for the accent-bar cursor instead of splitting `body` — the
+        // rendered text's line structure differs from the raw Markdown, so a
+        // `body`-derived block would misalign the bar (and would land on
+        // headings/rules). `None` for qa keeps the plain body-split path.
+        let note_md_blocks = if self.page_is_note.get() {
             let buffer = self.view.buffer();
             buffer.set_text("");
-            crate::ui::markdown::apply_markdown(&buffer, &body, &self.md_tags);
+            Some(crate::ui::markdown::apply_markdown_blocks(
+                &buffer,
+                &body,
+                &self.md_tags,
+            ))
         } else {
             self.view.buffer().set_text(&body);
-        }
+            None
+        };
         self.apply_font();
         // Paint the `<hi>` highlight AFTER set_text + font (read-mode only; the
         // editor sets raw text and must not re-apply these read-mode ranges).
@@ -1205,10 +1216,26 @@ impl JournalOverlay {
         let adj = self.scrolled.vadjustment();
         adj.set_value(adj.lower());
 
-        // Re-derive per-page blocks for the bar / visual mode (from `body`, not
-        // the buffer — so the appended chevron is excluded).
-        let lines: Vec<&str> = body.split('\n').collect();
-        *self.blocks.borrow_mut() = journal_blocks(&lines);
+        // Re-derive per-page blocks for the bar / visual mode.
+        // - Notes: use the RENDERED buffer's Markdown blocks, keeping only the
+        //   stoppable ones (paragraphs, list items, quotes, tables) so the
+        //   accent-bar cursor never lands on a heading or horizontal rule and
+        //   aligns to the actual painted lines.
+        // - Q&A: split `body` (byte-aligned with the plain set_text buffer).
+        *self.blocks.borrow_mut() = if let Some(md_blocks) = note_md_blocks {
+            md_blocks
+                .into_iter()
+                .filter(|b| b.stoppable)
+                .map(|b| JournalBlock {
+                    start_line: b.start_line,
+                    end_line: b.end_line,
+                    text: String::new(),
+                })
+                .collect()
+        } else {
+            let lines: Vec<&str> = body.split('\n').collect();
+            journal_blocks(&lines)
+        };
         self.visual_anchor.set(None);
         // Project the full cursor onto this page (clamped into the page range).
         let page_local = self

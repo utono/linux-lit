@@ -4,9 +4,11 @@
 //! `pulldown-cmark` and returns `Vec<Span>` — no GTK, fully unit-testable.
 //!
 //! **GTK layer:** `MarkdownTags` holds one `gtk4::TextTag` per `Style`;
-//! `apply_markdown(buffer, src, tags)` walks `plan_markdown`, inserts each
-//! span's text at the buffer end iter, and applies the matching tag over the
-//! inserted byte range.
+//! `apply_markdown_blocks(buffer, src, tags)` walks `plan_markdown`, inserts each
+//! span's text at the buffer end iter, applies the matching tag over the inserted
+//! byte range, and returns the rendered buffer's top-level `MdBlock`s (buffer-line
+//! spans + a `stoppable` flag) so the journal accent-bar cursor aligns to the
+//! painted text and skips heading/rule chrome.
 
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
@@ -27,11 +29,37 @@ pub enum Style {
     Mono,
 }
 
+impl Style {
+    /// Whether a block whose leading run has this style is a valid **cursor
+    /// stop** for the journal accent bar. Headings and horizontal rules are
+    /// chrome — the block cursor must never land on them (the user wants the
+    /// accent bar only beside prose paragraphs and list items). Body,
+    /// list-item, block-quote and mono (table/code) blocks are stoppable.
+    pub fn is_stoppable_block(&self) -> bool {
+        !matches!(self, Style::H1 | Style::H2 | Style::H3 | Style::Rule)
+    }
+}
+
 /// A single styled text run.
 #[derive(Debug, Clone)]
 pub struct Span {
     pub text: String,
     pub style: Style,
+}
+
+/// A rendered top-level block's buffer-line span + whether the accent-bar
+/// cursor may stop on it. Produced by `apply_markdown_blocks` so the journal
+/// overlay can align the bar to the RENDERED buffer (not the raw Markdown
+/// source, whose line structure differs) and skip heading/rule chrome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MdBlock {
+    /// First buffer line (0-based) of the block.
+    pub start_line: i32,
+    /// Last buffer line (0-based) of the block.
+    pub end_line: i32,
+    /// True for prose paragraphs / list items / quotes / tables; false for
+    /// headings and horizontal rules (never a cursor stop).
+    pub stoppable: bool,
 }
 
 // ── Pure parser ───────────────────────────────────────────────────────────────
@@ -414,8 +442,37 @@ impl MarkdownTags {
 ///
 /// Appends to whatever is already in `buffer` — callers should call
 /// `buffer.set_text("")` first if a clean render is desired.
-pub fn apply_markdown(buffer: &gtk4::TextBuffer, src: &str, tags: &MarkdownTags) {
+/// Render `src` (CommonMark) into `buffer` with styled `TextTag`s AND return the
+/// RENDERED buffer's top-level blocks (`MdBlock`) with real buffer-line spans and
+/// a `stoppable` flag, so the
+/// journal accent-bar cursor can align to what is actually painted and skip
+/// heading/rule chrome. The block boundaries come from the buffer text after
+/// insertion (blank-line separated), guaranteeing the line numbers match the
+/// buffer — unlike deriving them from the raw Markdown source, whose line
+/// structure differs from the rendered output.
+pub fn apply_markdown_blocks(
+    buffer: &gtk4::TextBuffer,
+    src: &str,
+    tags: &MarkdownTags,
+) -> Vec<MdBlock> {
     use gtk4::prelude::*;
+
+    // Insert each span; close the current block at every separator span. A
+    // separator is the pure-whitespace Body span `plan_markdown` emits after
+    // each top-level block (paragraph, heading, rule, AND each list item — items
+    // are separated by "\n", so this makes every list item its own block/cursor
+    // stop, not the whole list). Tracking boundaries here (rather than by
+    // blank-line grouping of the rendered text) keeps single-newline-separated
+    // list items as distinct blocks while staying aligned to the buffer.
+    let mut blocks: Vec<MdBlock> = Vec::new();
+    // Current open block: (start_line, last visible line, saw a stoppable run).
+    let mut cur: Option<(i32, i32, bool)> = None;
+
+    let close = |cur: &mut Option<(i32, i32, bool)>, blocks: &mut Vec<MdBlock>| {
+        if let Some((start, end, stoppable)) = cur.take() {
+            blocks.push(MdBlock { start_line: start, end_line: end, stoppable });
+        }
+    };
 
     for span in plan_markdown(src) {
         let start_offset = buffer.end_iter().offset();
@@ -424,7 +481,26 @@ pub fn apply_markdown(buffer: &gtk4::TextBuffer, src: &str, tags: &MarkdownTags)
         let start = buffer.iter_at_offset(start_offset);
         let end = buffer.end_iter();
         buffer.apply_tag(tags.tag_for(&span.style), &start, &end);
+
+        if span.text.trim().is_empty() {
+            // Separator run — end the current block.
+            close(&mut cur, &mut blocks);
+            continue;
+        }
+
+        // Visible run — extend (or open) the current block over its lines. The
+        // block's stoppability is fixed by its LEADING run's style (a heading or
+        // rule opens a chrome block; inline bold/italic nested inside a heading
+        // must not flip it back to stoppable), so only the opening span sets it.
+        let first = start.line();
+        let last = buffer.iter_at_offset(end.offset()).line();
+        match cur.as_mut() {
+            Some(c) => c.1 = c.1.max(last),
+            None => cur = Some((first, last, span.style.is_stoppable_block())),
+        }
     }
+    close(&mut cur, &mut blocks);
+    blocks
 }
 
 // ── Unit tests (pure — no GTK) ────────────────────────────────────────────────
@@ -454,5 +530,19 @@ mod tests {
     fn table_becomes_mono() {
         let spans = plan_markdown("| a | b |\n|---|---|\n| 1 | 2 |");
         assert!(spans.iter().any(|s| matches!(s.style, Style::Mono)));
+    }
+
+    #[test]
+    fn headings_and_rules_are_not_cursor_stops() {
+        // The accent bar must never land on a heading or a horizontal rule —
+        // only on prose paragraphs, list items, quotes, and tables.
+        assert!(!Style::H1.is_stoppable_block());
+        assert!(!Style::H2.is_stoppable_block());
+        assert!(!Style::H3.is_stoppable_block());
+        assert!(!Style::Rule.is_stoppable_block());
+        assert!(Style::Body.is_stoppable_block());
+        assert!(Style::ListItem.is_stoppable_block());
+        assert!(Style::BlockQuote.is_stoppable_block());
+        assert!(Style::Mono.is_stoppable_block());
     }
 }
