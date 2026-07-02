@@ -148,6 +148,38 @@ pub fn find_scene_band_pages(
     rows.collect()
 }
 
+/// The (div1, div2) sentinel that marks an author/corpus-scope journal row.
+/// Distinct from JOURNAL_WORK_DIV (-1,-1) so author rows never collide with
+/// whole-work rows. `work_abbrev` holds the AUTHOR string for these rows.
+pub const AUTHOR_DIV: (i64, i64) = (-2, -2);
+
+pub fn save_author_page(
+    conn: &Connection,
+    author: &str,
+    question: &str,
+    answer: &str,
+    claude_model: &str,
+    kind: &str,
+) -> Result<i64, rusqlite::Error> {
+    save_journal_page(
+        conn, author, AUTHOR_DIV.0, AUTHOR_DIV.1, question, answer, claude_model, "author", kind,
+    )
+}
+
+pub fn find_author_pages(
+    conn: &Connection,
+    author: &str,
+) -> Result<Vec<JournalPage>, rusqlite::Error> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {JOURNAL_PAGE_COLUMNS} \
+         FROM journal_entries \
+         WHERE work_abbrev = ?1 AND scope = 'author' \
+         ORDER BY timestamp ASC, id ASC",
+    ))?;
+    let rows = stmt.query_map(rusqlite::params![author], map_journal_page_row)?;
+    rows.collect()
+}
+
 pub fn find_work_pages(
     conn: &Connection,
     work_abbrev: &str,
@@ -487,5 +519,23 @@ mod tests {
         let scene = find_journal_pages(&conn, "Ham", 3, 1).unwrap();
         assert_eq!(scene.len(), 1);
         assert_eq!(scene[0].id, id);
+    }
+
+    #[test]
+    fn author_pages_roundtrip_and_exclude_work_scene() {
+        let conn = mem();
+        let nid = save_author_page(&conn, "Shakespeare", "", "## Cry\n\n**load** it", "m", "note").unwrap();
+        save_author_page(&conn, "Shakespeare", "Corpus Q?", "Corpus A.", "m", "qa").unwrap();
+        // A scene page for an actual work must NOT appear in author queries.
+        save_journal_page(&conn, "Ham", 1, 2, "SQ?", "SA.", "m", "scene", "qa").unwrap();
+
+        let pages = find_author_pages(&conn, "Shakespeare").unwrap();
+        assert_eq!(pages.len(), 2);
+        let note = pages.iter().find(|p| p.id == nid).unwrap();
+        assert_eq!(note.kind, "note");
+        assert_eq!(note.question, "");
+        assert_eq!(note.answer, "## Cry\n\n**load** it");
+        assert_eq!(note.div1, -2);
+        assert_eq!(note.div2, -2);
     }
 }
