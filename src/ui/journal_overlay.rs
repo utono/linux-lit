@@ -251,24 +251,16 @@ impl JournalOverlay {
                     0.55,
                     8,
                 );
-                // Vim block cursor on a BLANK line: the line has no glyph to fill,
-                // so draw a thin left-edge block at the line's window-y. Drawn
-                // BEFORE the selection-bar early-return so it shows while editing
-                // (no selection ranges then).
-                if let Some((buf_line, br, bg, bb)) = *vim_block_clone.borrow() {
-                    let buffer = view_clone.buffer();
-                    if let Some(iter) = buffer.iter_at_line(buf_line) {
-                        let loc = view_clone.iter_location(&iter);
-                        let (_, by) = view_clone.buffer_to_window_coords(
-                            gtk4::TextWindowType::Widget, 0, loc.y());
-                        let bh = if loc.height() > 0 { loc.height() } else { 18 } as f64;
-                        let bw = (bh * 0.5).max(7.0);
-                        let bx = (view_clone.left_margin() as f64).max(2.0);
-                        cr.set_source_rgb(br, bg, bb);
-                        cr.rectangle(bx, by as f64, bw, bh);
-                        let _ = cr.fill();
-                    }
-                }
+                // Vim block cursor on a BLANK line (shared draw). Drawn BEFORE
+                // the selection-bar early-return so it shows while editing (no
+                // selection ranges then). x reads left_margin() live.
+                let bx = (view_clone.left_margin() as f64).max(2.0);
+                crate::ui::draw_vim_block_cursor(
+                    cr,
+                    &view_clone,
+                    *vim_block_clone.borrow(),
+                    bx,
+                );
                 let ranges = ranges_clone.borrow();
                 if ranges.is_empty() {
                     return;

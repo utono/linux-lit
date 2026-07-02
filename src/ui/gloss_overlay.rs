@@ -334,23 +334,14 @@ impl GlossOverlay {
                 8,
             );
 
-            // Vim block cursor on a BLANK line: the line has no glyph to fill, so
-            // draw a thin left-edge block at the line's window-y (same coord path
-            // as the accent bar / line numbers below).
-            if let Some((buf_line, cr_, cg, cb)) = *vim_block_clone.borrow() {
-                let buffer = view_clone.buffer();
-                if let Some(iter) = buffer.iter_at_line(buf_line) {
-                    let loc = view_clone.iter_location(&iter);
-                    let (_, by) = view_clone.buffer_to_window_coords(
-                        gtk4::TextWindowType::Widget, 0, loc.y());
-                    // Block height = line height (fall back to a sane default).
-                    let bh = if loc.height() > 0 { loc.height() } else { 18 } as f64;
-                    let bw = (bh * 0.5).max(7.0); // half-em-ish, like a cell
-                    cr.set_source_rgb(cr_, cg, cb);
-                    cr.rectangle(block_left_margin as f64, by as f64, bw, bh);
-                    let _ = cr.fill();
-                }
-            }
+            // Vim block cursor on a BLANK line (shared draw; same coord path as
+            // the accent bar / line numbers below).
+            crate::ui::draw_vim_block_cursor(
+                cr,
+                &view_clone,
+                *vim_block_clone.borrow(),
+                block_left_margin as f64,
+            );
 
             // Draw bars
             if !ranges.is_empty() {
