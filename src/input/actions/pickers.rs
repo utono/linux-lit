@@ -409,19 +409,7 @@ pub(crate) fn open_media_picker(
                     let path_for_discover = path.clone();
                     let socket_path = handle_for_confirm
                         .spawn_blocking(move || {
-                            if let Some((sock, _)) =
-                                crate::mpv::discovery::find_socket_for_work(&[path_for_discover.clone()])
-                            {
-                                return sock.to_string_lossy().to_string();
-                            }
-                            let launched = crate::mpv::discovery::launch_mpv(&path_for_discover);
-                            for _ in 0..60 {
-                                std::thread::sleep(std::time::Duration::from_millis(50));
-                                if std::path::Path::new(&launched).exists() {
-                                    return launched;
-                                }
-                            }
-                            launched
+                            crate::mpv::discovery::discover_or_launch_blocking(&path_for_discover)
                         })
                         .await
                         .unwrap_or_default();
@@ -496,19 +484,7 @@ pub(crate) fn confirm_media_selection(
                 let path_for_discover = path.clone();
                 handle
                     .spawn_blocking(move || {
-                        if let Some((sock, _)) =
-                            crate::mpv::discovery::find_socket_for_work(&[path_for_discover.clone()])
-                        {
-                            return sock.to_string_lossy().to_string();
-                        }
-                        let launched = crate::mpv::discovery::launch_mpv(&path_for_discover);
-                        for _ in 0..60 {
-                            std::thread::sleep(std::time::Duration::from_millis(50));
-                            if std::path::Path::new(&launched).exists() {
-                                return launched;
-                            }
-                        }
-                        launched
+                        crate::mpv::discovery::discover_or_launch_blocking(&path_for_discover)
                     })
                     .await
                     .unwrap_or_default()
