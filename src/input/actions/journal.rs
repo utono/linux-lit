@@ -945,14 +945,14 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
                         crate::db::journal::save_journal_page(
                             &conn, &work_abbrev,
                             crate::app::JOURNAL_WORK_DIV.0, crate::app::JOURNAL_WORK_DIV.1,
-                            &question_owned, &answer, &model_for_db, "work",
+                            &question_owned, &answer, &model_for_db, "work", "qa",
                         )
                         .map(|_| ())
                     }
                     JournalBand::Scene(d1, d2) => {
                         crate::db::journal::save_journal_page(
                             &conn, &work_abbrev, *d1, *d2,
-                            &question_owned, &answer, &model_for_db, "scene",
+                            &question_owned, &answer, &model_for_db, "scene", "qa",
                         )
                         .map(|_| ())
                     }
@@ -1698,6 +1698,7 @@ mod tests {
             start_citation: start.map(|s| s.to_string()),
             end_citation: end.map(|s| s.to_string()),
             source_text: None,
+            kind: "qa".into(),
         }
     }
 
