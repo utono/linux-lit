@@ -228,6 +228,7 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
 
     Ok(Work {
         abbrev: abbrev.to_string(),
+        canonical_abbrev: canonical_work_abbrev(conn, abbrev),
         title,
         author,
         work_type,
@@ -696,6 +697,194 @@ pub fn ensure_claude_model_columns(conn: &Connection) -> Result<(), rusqlite::Er
                 rusqlite::params![BACKFILL_MODEL],
             )?;
         }
+    }
+    Ok(())
+}
+
+/// Resolve the abbrev under which a work's shared artifacts (glosses, journal
+/// Q&A, scene synopses) are stored and looked up. A variant edition
+/// (`Cym-Amb`, `Cym-BBC`, `MND-KPR`) resolves to its base work (`Cym`) so the
+/// artifacts are shared across every edition — but ONLY when stripping the
+/// last `-suffix` names a real work by the SAME author. That guard keeps
+/// non-variant hyphenated abbrevs intact: `Mac-Ep-1` (MacCulloch) must never
+/// collapse onto `Mac` (Macbeth), and `Aen-MW`/`Od-F` have no base work at
+/// all. Unknown abbrevs (not in `works`) are returned unchanged.
+pub fn canonical_work_abbrev(conn: &Connection, abbrev: &str) -> String {
+    fn author_of(conn: &Connection, abbrev: &str) -> Option<String> {
+        conn.query_row(
+            "SELECT COALESCE(author, '') FROM works WHERE abbrev = ?1",
+            [abbrev],
+            |row| row.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+    }
+    let Some(author) = author_of(conn, abbrev) else {
+        return abbrev.to_string();
+    };
+    let mut cur = abbrev.to_string();
+    while let Some((base, _)) = cur.rsplit_once('-') {
+        match author_of(conn, base) {
+            Some(a) if a == author => cur = base.to_string(),
+            _ => break,
+        }
+    }
+    cur
+}
+
+/// The abbrev prefix of a full citation string `{abbrev}.{div1}.{div2}.{line}`
+/// (abbrevs contain no dots, so it's everything before the last three).
+fn citation_abbrev(citation: &str) -> Option<&str> {
+    let mut idx = citation.len();
+    for _ in 0..3 {
+        idx = citation[..idx].rfind('.')?;
+    }
+    Some(&citation[..idx])
+}
+
+/// Idempotent startup migration: re-key shared artifacts stored under a
+/// VARIANT edition's abbrev (`Cym-BBC`) onto the base work (`Cym`) so glosses,
+/// journal Q&A, and scene synopses are shared across all editions. Rows land
+/// under a variant abbrev only via pre-fix app builds — new writes go through
+/// `Work.canonical_abbrev`. Citation strings are re-prefixed too (including
+/// journal entries whose `work_abbrev` was already the base but whose
+/// citations carried the variant prefix from `GlossContext`).
+pub fn ensure_canonical_artifact_abbrevs(conn: &Connection) -> Result<(), rusqlite::Error> {
+    for table in ["passages", "journal_entries", "scene_synopses"] {
+        let abbrevs: Vec<String> = conn
+            .prepare(&format!(
+                "SELECT DISTINCT work_abbrev FROM {table} WHERE work_abbrev LIKE '%-%'"
+            ))?
+            .query_map([], |r| r.get(0))?
+            .collect::<Result<_, _>>()?;
+        for old in abbrevs {
+            let new = canonical_work_abbrev(conn, &old);
+            if new == old {
+                continue;
+            }
+            crate::log_fmt!("MIGRATE-ABBREV: {table} {old} -> {new}");
+            match table {
+                "passages" => migrate_variant_passages(conn, &old, &new)?,
+                "scene_synopses" => {
+                    // UNIQUE(work_abbrev, div1, div2): keep an existing base
+                    // row, drop the variant duplicate it collides with.
+                    conn.execute(
+                        "UPDATE OR IGNORE scene_synopses SET work_abbrev = ?1 \
+                         WHERE work_abbrev = ?2",
+                        rusqlite::params![new, old],
+                    )?;
+                    conn.execute(
+                        "DELETE FROM scene_synopses WHERE work_abbrev = ?1",
+                        [&old],
+                    )?;
+                }
+                _ => {
+                    conn.execute(
+                        "UPDATE journal_entries SET work_abbrev = ?1 WHERE work_abbrev = ?2",
+                        rusqlite::params![new, old],
+                    )?;
+                }
+            }
+        }
+    }
+    rekey_journal_citations(conn)
+}
+
+/// Re-key a variant edition's passages to the base abbrev: `work_abbrev`, both
+/// citation prefixes, and the dedup `hash`. The hash is
+/// md5("{abbrev}:{start}:{end}:{gloss_type}") — recomputed only when the
+/// stored hash verifiably matches that recipe for one of the passage's
+/// attached gloss types (so a future gloss on the same lines dedups onto the
+/// migrated passage); otherwise the old hash is kept (it stays unique).
+fn migrate_variant_passages(
+    conn: &Connection,
+    old: &str,
+    new: &str,
+) -> Result<(), rusqlite::Error> {
+    let rows: Vec<(i64, String, Option<String>, Option<String>)> = conn
+        .prepare(
+            "SELECT id, hash, start_citation, end_citation FROM passages \
+             WHERE work_abbrev = ?1",
+        )?
+        .query_map([old], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+        .collect::<Result<_, _>>()?;
+    let old_prefix = format!("{old}.");
+    for (id, hash, start, end) in rows {
+        let reprefix = |c: &Option<String>| {
+            c.as_ref().map(|c| match c.strip_prefix(&old_prefix) {
+                Some(rest) => format!("{new}.{rest}"),
+                None => c.clone(),
+            })
+        };
+        let new_start = reprefix(&start);
+        let new_end = reprefix(&end);
+        let mut new_hash = hash.clone();
+        if let (Some(os), Some(oe), Some(ns), Some(ne)) =
+            (&start, &end, &new_start, &new_end)
+        {
+            let types: Vec<String> = conn
+                .prepare("SELECT DISTINCT gloss_type FROM glosses WHERE passage_id = ?1")?
+                .query_map([id], |r| r.get(0))?
+                .collect::<Result<_, _>>()?;
+            for gt in &types {
+                let old_input = format!("{old}:{os}:{oe}:{gt}");
+                if format!("{:x}", md5::compute(old_input.as_bytes())) == hash {
+                    let cand = format!(
+                        "{:x}",
+                        md5::compute(format!("{new}:{ns}:{ne}:{gt}").as_bytes())
+                    );
+                    let taken = conn
+                        .prepare("SELECT 1 FROM passages WHERE hash = ?1")?
+                        .exists([&cand])?;
+                    if !taken {
+                        new_hash = cand;
+                    }
+                    break;
+                }
+            }
+        }
+        conn.execute(
+            "UPDATE passages SET work_abbrev = ?1, start_citation = ?2, \
+             end_citation = ?3, hash = ?4 WHERE id = ?5",
+            rusqlite::params![new, new_start, new_end, new_hash, id],
+        )?;
+    }
+    Ok(())
+}
+
+/// Journal entries created from a variant edition can carry the VARIANT
+/// citation prefix (`Cym-BBC.1.1.1`) even when `work_abbrev` is already the
+/// base — the citations came from `GlossContext`. Re-prefix them to the
+/// canonical abbrev so the journal→gloss cross-lookup (exact start_citation
+/// match) finds the migrated passage.
+fn rekey_journal_citations(conn: &Connection) -> Result<(), rusqlite::Error> {
+    let rows: Vec<(i64, String, Option<String>)> = conn
+        .prepare(
+            "SELECT id, start_citation, end_citation FROM journal_entries \
+             WHERE start_citation IS NOT NULL AND start_citation != ''",
+        )?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<Result<_, _>>()?;
+    for (id, start, end) in rows {
+        let Some(abbr) = citation_abbrev(&start) else {
+            continue;
+        };
+        let canon = canonical_work_abbrev(conn, abbr);
+        if canon == abbr {
+            continue;
+        }
+        crate::log_fmt!("MIGRATE-ABBREV: journal citation {start} -> {canon} prefix");
+        let old_prefix = format!("{abbr}.");
+        let new_start = format!("{canon}.{}", &start[old_prefix.len()..]);
+        let new_end = end.map(|e| match e.strip_prefix(&old_prefix) {
+            Some(rest) => format!("{canon}.{rest}"),
+            None => e,
+        });
+        conn.execute(
+            "UPDATE journal_entries SET start_citation = ?1, end_citation = ?2 WHERE id = ?3",
+            rusqlite::params![new_start, new_end, id],
+        )?;
     }
     Ok(())
 }
@@ -2009,7 +2198,10 @@ pub fn find_similar_passages(
     top_n: usize,
     affect_weight: f32,
 ) -> Result<Vec<EchoCandidate>, rusqlite::Error> {
-    let base_exclude = crate::gloss::normalize_abbrev(exclude_work);
+    // `passage_embeddings` is keyed by base-work abbrevs, so exclude the
+    // canonical base — a variant edition (`Cym-BBC`) must not surface its own
+    // base work (`Cym`) as an "echo" of itself.
+    let base_exclude = canonical_work_abbrev(conn, exclude_work);
 
     // Only engage the affect axis when it's both requested and possible.
     let affect_on = affect_weight > 0.0 && crate::db::affect::lexicon_available();
@@ -3704,19 +3896,59 @@ mod passages_div1_div2_tests {
         assert_eq!(ps[0].scene, 2); // from div2 column
     }
 
-    /// Regression: a reader-gloss created while reading a `-BBC`/`-DC` edition is
-    /// stored under the VARIANT abbrev (because `save_gloss` gets its abbrev from
-    /// `GlossContext` = `normalize_abbrev`, which strips only `-Amb`). The
-    /// main-card highlight path must therefore look it up under
-    /// `normalize_abbrev(work.abbrev)` (→ `Cym-BBC`), NOT `base_work_abbrev`
-    /// (→ `Cym`), which is what silently disabled the tint on `-BBC` editions.
+    /// Seed a minimal `works` table for the canonical-abbrev tests: Cymbeline
+    /// with two variant editions, plus the two hyphenated-but-NOT-variant traps
+    /// (`Mac-Ep-1` shares the `Mac` prefix with Macbeth but a DIFFERENT author;
+    /// `Aen-MW` has no base work at all).
+    fn seed_works(conn: &rusqlite::Connection) {
+        conn.execute_batch(
+            "CREATE TABLE works (abbrev TEXT PRIMARY KEY, author TEXT);
+             INSERT INTO works VALUES
+                ('Cym', 'Shakespeare'),
+                ('Cym-Amb', 'Shakespeare'),
+                ('Cym-BBC', 'Shakespeare'),
+                ('Mac', 'Shakespeare'),
+                ('Mac-Ep-1', 'Diarmaid MacCulloch'),
+                ('Aen-MW', 'Virgil (trans. McGill-Wright)');",
+        )
+        .unwrap();
+    }
+
     #[test]
-    fn reader_gloss_lookup_matches_variant_abbrev_normalization() {
+    fn canonical_abbrev_shares_variants_and_keeps_non_variants() {
         use rusqlite::Connection;
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(
+        seed_works(&conn);
+        // Variant editions collapse onto the base work.
+        assert_eq!(canonical_work_abbrev(&conn, "Cym"), "Cym");
+        assert_eq!(canonical_work_abbrev(&conn, "Cym-Amb"), "Cym");
+        assert_eq!(canonical_work_abbrev(&conn, "Cym-BBC"), "Cym");
+        // A different author's hyphenated abbrev must NOT collapse onto a
+        // same-prefix work (Mac-Ep-1 is MacCulloch, Mac is Macbeth).
+        assert_eq!(canonical_work_abbrev(&conn, "Mac-Ep-1"), "Mac-Ep-1");
+        // No base work at all -> unchanged; unknown abbrev -> unchanged.
+        assert_eq!(canonical_work_abbrev(&conn, "Aen-MW"), "Aen-MW");
+        assert_eq!(canonical_work_abbrev(&conn, "Nope-X"), "Nope-X");
+    }
+
+    /// A gloss created on ANY edition is stored under — and found under — the
+    /// canonical base abbrev, so all editions share it. The startup migration
+    /// re-keys pre-fix rows stored under a variant abbrev (`Cym-BBC`),
+    /// re-prefixes their citations, and recomputes the dedup hash
+    /// (md5("{abbrev}:{start}:{end}:{gloss_type}")) so a future gloss on the
+    /// same lines still dedups onto the migrated passage.
+    #[test]
+    fn migration_rekeys_variant_passages_to_base() {
+        use rusqlite::Connection;
+        let conn = Connection::open_in_memory().unwrap();
+        seed_works(&conn);
+        let old_hash = format!(
+            "{:x}",
+            md5::compute("Cym-BBC:Cym-BBC.1.1.1:Cym-BBC.1.1.3:reader-gloss".as_bytes())
+        );
+        conn.execute_batch(&format!(
             "CREATE TABLE passages (
-                id INTEGER PRIMARY KEY, hash TEXT, work_abbrev TEXT,
+                id INTEGER PRIMARY KEY, hash TEXT UNIQUE, work_abbrev TEXT,
                 start_citation TEXT, end_citation TEXT, div1 INTEGER, div2 INTEGER,
                 character TEXT, source_text TEXT
              );
@@ -3724,20 +3956,73 @@ mod passages_div1_div2_tests {
                 id INTEGER PRIMARY KEY, passage_id INTEGER, gloss_type TEXT,
                 gloss_text TEXT, status TEXT, word_id INTEGER
              );
+             CREATE TABLE journal_entries (
+                id INTEGER PRIMARY KEY, work_abbrev TEXT, div1 INTEGER, div2 INTEGER,
+                question TEXT, answer TEXT, scope TEXT,
+                start_citation TEXT, end_citation TEXT, source_text TEXT
+             );
+             CREATE TABLE scene_synopses (
+                id INTEGER PRIMARY KEY, work_abbrev TEXT, div1 INTEGER, div2 INTEGER,
+                synopsis TEXT, UNIQUE(work_abbrev, div1, div2)
+             );
              INSERT INTO passages (id, hash, work_abbrev, start_citation, end_citation, div1, div2, character, source_text)
-                VALUES (1, 'h', 'Cym-BBC', 'Cym-BBC.1.1.1', 'Cym-BBC.1.1.3', 1, 1, 'FIRST GENTLEMAN', 'text');
+                VALUES (1, '{old_hash}', 'Cym-BBC', 'Cym-BBC.1.1.1', 'Cym-BBC.1.1.3', 1, 1, 'FIRST GENTLEMAN', 'text');
              INSERT INTO glosses (id, passage_id, gloss_type, gloss_text, status, word_id)
-                VALUES (1, 1, 'reader-gloss', 'g', 'complete', NULL);",
-        ).unwrap();
+                VALUES (1, 1, 'reader-gloss', 'g', 'complete', NULL);
+             -- journal row already keyed by the base but carrying VARIANT citations
+             INSERT INTO journal_entries (id, work_abbrev, div1, div2, question, answer, scope, start_citation, end_citation)
+                VALUES (1, 'Cym', 1, 1, 'q', 'a', 'passage', 'Cym-BBC.1.1.1', 'Cym-BBC.1.1.3');
+             -- variant synopsis colliding with an existing base row: base wins
+             INSERT INTO scene_synopses (work_abbrev, div1, div2, synopsis) VALUES
+                ('Cym', 1, 1, 'base'), ('Cym-BBC', 1, 1, 'variant'), ('Cym-BBC', 1, 2, 'only-variant');"
+        ))
+        .unwrap();
 
-        // The abbrev the highlight path now uses: normalize_abbrev keeps -BBC.
-        let good = crate::gloss::normalize_abbrev("Cym-BBC");
-        assert_eq!(good, "Cym-BBC");
-        assert_eq!(find_glossed_passages(&conn, good, &["reader-gloss"]).unwrap().len(), 1);
+        ensure_canonical_artifact_abbrevs(&conn).unwrap();
 
-        // The old (buggy) abbrev: base_work_abbrev strips to "Cym" and misses it.
-        let bad = crate::app::base_work_abbrev("Cym-BBC");
-        assert_eq!(bad, "Cym");
-        assert_eq!(find_glossed_passages(&conn, bad, &["reader-gloss"]).unwrap().len(), 0);
+        // Passage re-keyed + citations re-prefixed + hash recomputed.
+        let (abbrev, start, end, hash): (String, String, String, String) = conn
+            .query_row(
+                "SELECT work_abbrev, start_citation, end_citation, hash FROM passages WHERE id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(abbrev, "Cym");
+        assert_eq!(start, "Cym.1.1.1");
+        assert_eq!(end, "Cym.1.1.3");
+        assert_eq!(
+            hash,
+            format!("{:x}", md5::compute("Cym:Cym.1.1.1:Cym.1.1.3:reader-gloss".as_bytes()))
+        );
+        // Every edition now finds it; the variant abbrev no longer matches.
+        assert_eq!(find_glossed_passages(&conn, "Cym", &["reader-gloss"]).unwrap().len(), 1);
+        assert_eq!(find_glossed_passages(&conn, "Cym-BBC", &["reader-gloss"]).unwrap().len(), 0);
+
+        // Journal citations re-prefixed (work_abbrev was already the base).
+        let (js, je): (String, String) = conn
+            .query_row(
+                "SELECT start_citation, end_citation FROM journal_entries WHERE id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((js.as_str(), je.as_str()), ("Cym.1.1.1", "Cym.1.1.3"));
+
+        // Synopses: collision keeps the base row, non-colliding variant re-keyed.
+        let rows: Vec<(String, i64, i64, String)> = conn
+            .prepare("SELECT work_abbrev, div1, div2, synopsis FROM scene_synopses ORDER BY div1, div2")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                ("Cym".to_string(), 1, 1, "base".to_string()),
+                ("Cym".to_string(), 1, 2, "only-variant".to_string()),
+            ]
+        );
     }
 }

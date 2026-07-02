@@ -1473,7 +1473,7 @@ pub(crate) fn recolor_cached_blocks(s: &AppState) {
     // itself loaded under the base abbrev, so the audio key must match it.
     let (div1, div2) = s.synopsis_overlay_scene;
     let work_abbrev = match s.current_work.as_ref() {
-        Some(w) => crate::app::base_work_abbrev(&w.abbrev).to_string(),
+        Some(w) => w.canonical_abbrev.clone(),
         None => return,
     };
     let (voice_id, _mid) =
@@ -1814,7 +1814,7 @@ pub(crate) fn synth_all_synopsis_blocks(state_rc: &Rc<RefCell<AppState>>) {
             None => return,
         };
         let work_abbrev = match s.current_work.as_ref() {
-            Some(w) => crate::app::base_work_abbrev(&w.abbrev).to_string(),
+            Some(w) => w.canonical_abbrev.clone(),
             None => return,
         };
         let prose: Vec<(i32, String)> = crate::ui::gloss_block::synopsis_blocks(&synopsis)
@@ -1898,7 +1898,7 @@ fn play_synopsis_block(state_rc: &Rc<RefCell<AppState>>, index: i32) {
             None => return,
         };
         let work_abbrev = match s.current_work.as_ref() {
-            Some(w) => crate::app::base_work_abbrev(&w.abbrev).to_string(),
+            Some(w) => w.canonical_abbrev.clone(),
             None => return,
         };
         let text = match crate::ui::gloss_block::synopsis_blocks(&synopsis)
@@ -2086,7 +2086,7 @@ fn play_journal_block(state_rc: &Rc<RefCell<AppState>>, index: i32) {
             _ => return,
         };
         let work_abbrev = match s.current_work.as_ref() {
-            Some(w) => crate::app::base_work_abbrev(&w.abbrev).to_string(),
+            Some(w) => w.canonical_abbrev.clone(),
             None => return,
         };
         // Journal Q&A is plain English prose -> the fixed plain-prose voice.
@@ -2542,13 +2542,11 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
             }
         };
         (
-            // Glosses are STORED under the normalized abbrev (strips only `-Amb`),
-            // so look them up the same way — NOT `base_work_abbrev`, which strips
-            // any `-suffix` (`Cym-BBC` -> `Cym`) and misses a variant's own gloss,
-            // making Ctrl+g toast "No gloss on this line" on `-BBC`/`-DC` editions.
-            // Matches the gloss picker (pickers.rs) and the main-card tint
-            // (apply_reader_gloss_highlighting), which already use normalize_abbrev.
-            crate::gloss::normalize_abbrev(&work.abbrev).to_string(),
+            // Glosses are STORED under the canonical base abbrev, so look them
+            // up the same way — every gloss path (save, overlay, picker, tint)
+            // uses `Work.canonical_abbrev` or a variant edition misses its own
+            // glosses (the recurring `-BBC`/`-Amb` lookup-mismatch bug class).
+            work.canonical_abbrev.clone(),
             (line.div1, line.div2, line.line_in_div),
         )
     };
@@ -2619,12 +2617,11 @@ pub(crate) fn open_last_gloss(state: &Rc<RefCell<AppState>>) {
                 return;
             }
         };
-        // `last_gloss` is KEYED by the normalized abbrev (record_last_gloss writes
-        // `ctx.work_abbrev` = normalize_abbrev), and glosses are STORED under it
-        // too — so read with normalize_abbrev, NOT base_work_abbrev (which strips
-        // any `-suffix` and both misses the config key AND the passage on
-        // `-BBC`/`-DC` editions). Same bug/fix as toggle_overlay above.
-        let abbrev = crate::gloss::normalize_abbrev(&work.abbrev).to_string();
+        // `last_gloss` is KEYED by the canonical base abbrev (record_last_gloss
+        // writes `ctx.work_abbrev` = `Work.canonical_abbrev`), and glosses are
+        // STORED under it too — read with the same key. Same bug/fix class as
+        // toggle_overlay above.
+        let abbrev = work.canonical_abbrev.clone();
         match s.config.last_gloss.get(&abbrev) {
             Some(lg) => (abbrev, lg.start_citation.clone(), lg.gloss_type.clone()),
             None => {

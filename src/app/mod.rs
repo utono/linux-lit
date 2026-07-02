@@ -2347,16 +2347,6 @@ pub fn clear_display(state: &mut AppState) {
     state.buffer.set_text("");
 }
 
-/// Strip variant suffixes (-Amb, -BBC, -Ep-N) to get base work abbreviation
-/// for shared data like synopses.
-pub fn base_work_abbrev(abbrev: &str) -> &str {
-    if let Some(pos) = abbrev.find('-') {
-        &abbrev[..pos]
-    } else {
-        abbrev
-    }
-}
-
 /// After layout settles (`text_view.height() > 0`), correct a `page_top` that
 /// `display_work` could only GUESS before layout (it uses `current_line - 1`,
 /// forcing the cursor to the top-left and rendering a different, often near-empty
@@ -2511,6 +2501,7 @@ pub fn display_work_at_with_prepared(
             let _ = crate::db::queries::ensure_claude_model_columns(&conn);
             let _ = crate::db::queries::ensure_vocab_highlight_column(&conn);
             let _ = crate::db::journal::ensure_journal_table(&conn);
+            let _ = crate::db::queries::ensure_canonical_artifact_abbrevs(&conn);
         }
     });
 
@@ -2775,7 +2766,7 @@ pub fn display_work_at_with_prepared(
     // Load scene synopses for this work
     if let Some(ref work) = state.current_work {
         if let Ok(conn) = crate::db::queries::open_db() {
-            let base_abbrev = base_work_abbrev(&work.abbrev);
+            let base_abbrev = work.canonical_abbrev.as_str();
             state.synopsis_cache = crate::db::queries::load_synopses(&conn, base_abbrev);
             crate::logging::log(&format!(
                 "SYNOPSIS: loaded {} scene synopses for {}",
@@ -3815,17 +3806,12 @@ pub fn apply_reader_gloss_highlighting(state: &mut AppState) {
         Ok(c) => c,
         Err(_) => return,
     };
-    // Look up passages under the SAME abbrev the gloss-save + gloss-overlay paths
-    // use — `normalize_abbrev` (strips only `-Amb`) — NOT `base_work_abbrev`
-    // (strips ANY `-suffix`). A gloss created while reading a `-BBC`/`-DC` edition
-    // is stored under that variant abbrev (e.g. `Cym-BBC`), because `save_gloss`
-    // gets its abbrev from `GlossContext` = `normalize_abbrev(work.abbrev)`. Using
-    // `base_work_abbrev` here queried `Cym` and missed the `Cym-BBC` passage — so
-    // no main-card line got the reader-gloss tint even though the gloss overlay
-    // (which uses `normalize_abbrev`) found and rendered it. The two paths MUST
-    // normalize identically. (`-Amb` still resolves to the base, since
-    // `normalize_abbrev` strips `-Amb`.)
-    let abbrev = crate::gloss::normalize_abbrev(&work.abbrev).to_string();
+    // Look up passages under the SAME abbrev the gloss-save + gloss-overlay
+    // paths use — `Work.canonical_abbrev`, the variant-base abbrev all shared
+    // artifacts are keyed by. Every gloss path (save, overlay, picker, tint)
+    // MUST normalize identically or a variant edition misses its own glosses
+    // (the recurring `-BBC`/`-Amb` lookup-mismatch bug class).
+    let abbrev = work.canonical_abbrev.clone();
     let passages = crate::db::queries::find_glossed_passages(&conn, &abbrev, &["reader-gloss"])
         .unwrap_or_default();
     if passages.is_empty() {

@@ -179,7 +179,7 @@ pub(crate) fn render_current(s: &mut AppState) {
     let work_abbrev = s
         .current_work
         .as_ref()
-        .map(|w| crate::app::base_work_abbrev(&w.abbrev).to_string())
+        .map(|w| w.canonical_abbrev.clone())
         .unwrap_or_default();
 
     let conn = crate::db::queries::open_db().ok();
@@ -353,7 +353,7 @@ pub(crate) fn nav_page(state: &Rc<RefCell<AppState>>, delta: i32) {
     let work_abbrev = s
         .current_work
         .as_ref()
-        .map(|w| crate::app::base_work_abbrev(&w.abbrev).to_string())
+        .map(|w| w.canonical_abbrev.clone())
         .unwrap_or_default();
     let all = crate::db::queries::open_db()
         .ok()
@@ -379,7 +379,7 @@ pub(crate) fn nav_scene(state: &Rc<RefCell<AppState>>, delta: i32) {
     let work_abbrev = s
         .current_work
         .as_ref()
-        .map(|w| crate::app::base_work_abbrev(&w.abbrev).to_string())
+        .map(|w| w.canonical_abbrev.clone())
         .unwrap_or_default();
     let scenes = crate::db::queries::open_db()
         .ok()
@@ -845,7 +845,7 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
             Some(w) => (
                 w.title.clone(),
                 w.author.clone(),
-                crate::app::base_work_abbrev(&w.abbrev).to_string(),
+                w.canonical_abbrev.clone(),
                 w.work_type.clone(),
             ),
             None => return,
@@ -1003,7 +1003,7 @@ fn populate_and_show_picker(s: &mut AppState) -> bool {
     let work_abbrev = s
         .current_work
         .as_ref()
-        .map(|w| crate::app::base_work_abbrev(&w.abbrev).to_string())
+        .map(|w| w.canonical_abbrev.clone())
         .unwrap_or_default();
     let pages = crate::db::queries::open_db()
         .ok()
@@ -1448,13 +1448,13 @@ pub(crate) fn view_gloss_from_journal(state: &Rc<RefCell<AppState>>) {
             }
         };
 
-        // Glosses are STORED under the normalized abbrev (strips only `-Amb`), so
-        // look them up the same way — NOT base_work_abbrev (strips any `-suffix`:
-        // Cym-BBC -> Cym), which misses a variant edition's own gloss and toasts
-        // "No gloss for this passage". Same class as the gloss-overlay Ctrl+g fix
-        // (81d6ff9) + the picker/tint paths. See project_gloss_lookup_normalize_abbrev.
+        // Glosses are STORED under the canonical base abbrev, so look them up
+        // the same way — every gloss path uses `Work.canonical_abbrev` or a
+        // variant edition misses its own gloss and toasts "No gloss for this
+        // passage" (the recurring lookup-mismatch bug class; see
+        // project_gloss_lookup_normalize_abbrev).
         let work_abbrev = match s.current_work.as_ref() {
-            Some(w) => crate::gloss::normalize_abbrev(&w.abbrev).to_string(),
+            Some(w) => w.canonical_abbrev.clone(),
             None => return,
         };
 
@@ -1548,10 +1548,11 @@ pub(crate) fn view_journal_from_gloss(state: &Rc<RefCell<AppState>>) {
                 return;
             }
         };
-        let work_abbrev = crate::app::base_work_abbrev(
-            s.current_work.as_ref().map(|w| w.abbrev.as_str()).unwrap_or(""),
-        )
-        .to_string();
+        let work_abbrev = s
+            .current_work
+            .as_ref()
+            .map(|w| w.canonical_abbrev.clone())
+            .unwrap_or_default();
         (
             work_abbrev,
             ctx.start_citation.clone(),

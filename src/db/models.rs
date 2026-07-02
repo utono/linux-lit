@@ -8,6 +8,12 @@ pub fn citation(abbrev: &str, div1: i64, div2: i64, line_in_div: i64) -> String 
 #[allow(dead_code)]
 pub struct Work {
     pub abbrev: String,
+    /// The abbrev under which this work's shared artifacts (glosses, journal
+    /// Q&A, scene synopses) are stored and looked up. For a variant edition
+    /// (`Cym-Amb`, `Cym-BBC`) this is the base work (`Cym`), so artifacts are
+    /// shared across all editions; for everything else it equals `abbrev`.
+    /// Resolved by `db::queries::canonical_work_abbrev` at load.
+    pub canonical_abbrev: String,
     pub title: String,
     pub author: String,
     pub work_type: String,

@@ -331,9 +331,10 @@ mod tests {
 
     #[test]
     fn shared_base_abbrev_contract() {
-        // 2H6 and 2H6-Amb share a journal because callers always pass
-        // base_work_abbrev (== "2H6"). This test documents that contract at the
-        // DB layer: a page saved under "2H6" is found when querying "2H6".
+        // 2H6 and 2H6-Amb share a journal because callers always pass the
+        // canonical base abbrev (`Work.canonical_abbrev` == "2H6"). This test
+        // documents that contract at the DB layer: a page saved under "2H6" is
+        // found when querying "2H6".
         let conn = mem();
         save_journal_page(&conn, "2H6", 4, 8, "Q?", "A.", "m", "scene").unwrap();
         let pages = find_journal_pages(&conn, "2H6", 4, 8).unwrap();
