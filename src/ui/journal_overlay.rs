@@ -906,6 +906,11 @@ impl JournalOverlay {
         self.ask_host.feed_vim_key(key)
     }
 
+    /// Paste system-clipboard text into the ask card's vim engine.
+    pub fn paste_ask_text(&self, text: &str) {
+        self.ask_host.paste_text(text);
+    }
+
     // ---- in-place vim editor (the `e` bind) ----
 
     /// Enter the in-place vim editor: build the `Q: …\n\n<answer>` buffer, seed
@@ -955,6 +960,16 @@ impl JournalOverlay {
         };
         self.mirror_engine();
         action
+    }
+
+    /// Paste system-clipboard text into the in-place vim editor and mirror.
+    pub fn paste_edit_text(&self, text: &str) {
+        {
+            let mut guard = self.vim_engine.borrow_mut();
+            let Some(engine) = guard.as_mut() else { return };
+            let _ = engine.paste_text(text);
+        }
+        self.mirror_engine();
     }
 
     /// The current edited Q&A, parsed back from the engine buffer.

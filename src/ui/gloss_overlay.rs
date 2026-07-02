@@ -743,6 +743,16 @@ impl GlossOverlay {
         action
     }
 
+    /// Paste system-clipboard text into the in-place vim editor and mirror.
+    pub fn paste_edit_text(&self, text: &str) {
+        {
+            let mut guard = self.vim_engine.borrow_mut();
+            let Some(engine) = guard.as_mut() else { return };
+            let _ = engine.paste_text(text);
+        }
+        self.mirror_engine();
+    }
+
     /// The current editor buffer text (raw). Empty string when not editing.
     pub fn edit_buffer_text(&self) -> String {
         self.vim_engine
@@ -2364,6 +2374,11 @@ impl GlossOverlay {
     }
 
     /// Feed a key to the ask card's vim engine (the prompt is a modal editor).
+    /// Paste system-clipboard text into the ask card's vim engine.
+    pub fn paste_ask_text(&self, text: &str) {
+        self.ask_host.paste_text(text);
+    }
+
     pub fn feed_ask_vim_key(
         &self,
         key: crate::input::vim::VimKey,

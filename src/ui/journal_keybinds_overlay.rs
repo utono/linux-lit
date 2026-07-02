@@ -36,6 +36,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("y p P / v V", "yank · put · visual"),
         ("H", "highlight selection (visual; toggles)"),
         ("u / Ctrl+R / .", "undo · redo · repeat"),
+        ("Ctrl+v", "paste clipboard"),
         (":w / :wq", "save / save & quit"),
         ("R", "ask Claude to rewrite"),
         (":q / Esc / :q!", "quit (warns if unsaved) · force"),

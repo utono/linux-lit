@@ -143,6 +143,16 @@ impl AskCard {
         action
     }
 
+    /// Paste system-clipboard text into the input's vim engine and mirror.
+    pub fn paste_text(&self, text: &str) {
+        {
+            let mut guard = self.vim.borrow_mut();
+            let Some(engine) = guard.as_mut() else { return };
+            let _ = engine.paste_text(text);
+        }
+        self.mirror_vim();
+    }
+
     /// Mirror the engine's buffer/cursor into the input TextView and show the
     /// mode indicator (`-- NORMAL/INSERT --` or the `:` line) in the hint.
     fn mirror_vim(&self) {
@@ -405,5 +415,10 @@ impl AskCardHost {
         key: crate::input::vim::VimKey,
     ) -> crate::input::vim::EditorAction {
         self.ask.feed_vim_key(key)
+    }
+
+    /// Paste system-clipboard text into the ask card's vim engine.
+    pub fn paste_text(&self, text: &str) {
+        self.ask.paste_text(text);
     }
 }

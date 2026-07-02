@@ -680,6 +680,7 @@ fn ask_vim_intercept(
     feed: impl Fn(&Rc<RefCell<AppState>>, crate::input::vim::VimKey) -> crate::input::vim::EditorAction,
     submit: impl Fn(&Rc<RefCell<AppState>>),
     close: impl Fn(&Rc<RefCell<AppState>>),
+    paste: fn(&Rc<RefCell<AppState>>, &str),
 ) -> AskIntercept {
     use crate::input::vim::{EditorAction, VimKey};
     if !ask_open {
@@ -699,6 +700,11 @@ fn ask_vim_intercept(
         submit(state);
         return AskIntercept::Consumed;
     }
+    // Ctrl+v / Ctrl+Shift+V: paste the system clipboard into the prompt.
+    if is_ctrl && matches!(key_name, "v" | "V") {
+        paste_clipboard(state, paste);
+        return AskIntercept::Consumed;
+    }
     if let Some(vk) = gtk_key_to_vim(key_name, key_char, is_ctrl) {
         match feed(state, vk) {
             EditorAction::Save | EditorAction::SaveQuit => submit(state),
@@ -708,6 +714,27 @@ fn ask_vim_intercept(
     }
     // The prompt is a vim editor: consume EVERY key while it is open.
     AskIntercept::Consumed
+}
+
+/// Read the system clipboard and hand its text to `apply` (a paste sink on one
+/// of the vim surfaces). GTK's clipboard API is async-only, so the paste lands
+/// on the main loop a moment later; empty / non-text clipboards are ignored.
+/// `apply` is a plain fn pointer so the 'static callback captures no borrows.
+fn paste_clipboard(state: &Rc<RefCell<AppState>>, apply: fn(&Rc<RefCell<AppState>>, &str)) {
+    let Some(display) = gtk4::gdk::Display::default() else {
+        return;
+    };
+    let state = state.clone();
+    display.clipboard().read_text_async(
+        gtk4::gio::Cancellable::NONE,
+        move |res| {
+            if let Ok(Some(text)) = res {
+                if !text.is_empty() {
+                    apply(&state, &text);
+                }
+            }
+        },
+    );
 }
 
 thread_local! {
@@ -784,6 +811,12 @@ fn handle_journal_edit_key(
         return true;
     }
 
+    // Ctrl+v / Ctrl+Shift+V: paste the system clipboard at the cursor.
+    if is_ctrl && matches!(key_name, "v" | "V") {
+        paste_clipboard(state, |st, t| st.borrow().journal_overlay.paste_edit_text(t));
+        return true;
+    }
+
     let Some(vk) = gtk_key_to_vim(key_name, key_char, is_ctrl) else {
         // Swallow unmapped keys so they don't leak to other handlers while editing.
         return true;
@@ -847,6 +880,12 @@ fn handle_gloss_edit_key(
             return true;
         }
         let _ = state.borrow().gloss_overlay.feed_edit_key(VimKey::Esc);
+        return true;
+    }
+
+    // Ctrl+v / Ctrl+Shift+V: paste the system clipboard at the cursor.
+    if is_ctrl && matches!(key_name, "v" | "V") {
+        paste_clipboard(state, |st, t| st.borrow().gloss_overlay.paste_edit_text(t));
         return true;
     }
 
@@ -935,6 +974,7 @@ fn handle_journal_key(
         |st, k| st.borrow().journal_overlay.feed_ask_vim_key(k),
         crate::input::actions::journal::submit_prompt,
         crate::input::actions::journal::close_prompt,
+        |st, t| st.borrow().journal_overlay.paste_ask_text(t),
     ) {
         AskIntercept::Consumed => return true,
         AskIntercept::NotHandled => {}
@@ -1132,6 +1172,7 @@ fn handle_gloss_key(
         |st, k| st.borrow().gloss_overlay.feed_ask_vim_key(k),
         crate::input::actions::gloss::submit_gloss_prompt,
         crate::input::actions::gloss::close_gloss_prompt,
+        |st, t| st.borrow().gloss_overlay.paste_ask_text(t),
     ) {
         AskIntercept::Consumed => return true,
         AskIntercept::NotHandled => {}
@@ -1597,6 +1638,7 @@ fn handle_synopsis_overlay_key(
         |st, k| st.borrow().gloss_overlay.feed_ask_vim_key(k),
         crate::input::actions::synopsis::submit_amend_prompt,
         crate::input::actions::synopsis::close_amend_prompt,
+        |st, t| st.borrow().gloss_overlay.paste_ask_text(t),
     ) {
         AskIntercept::Consumed => return true,
         AskIntercept::NotHandled => {}

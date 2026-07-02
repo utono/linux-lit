@@ -896,6 +896,46 @@ impl VimEngine {
         self.out(true, EditorAction::Nop)
     }
 
+    /// Paste system-clipboard text (the GTK layer reads the clipboard — this
+    /// engine is pure — and hands the text in). Insert mode: inserted at the
+    /// cursor as if typed (recorded for dot-repeat). Normal mode: seeds the
+    /// unnamed register and behaves as a charwise `p` (so `u` undoes it and a
+    /// later `p`/`.` repeats it). Visual/VisualLine: replaces the selection.
+    /// While the `:` command line is open the paste is ignored.
+    pub fn paste_text(&mut self, text: &str) -> Outcome {
+        if text.is_empty() || self.cmdline.is_some() {
+            return self.out(false, EditorAction::Nop);
+        }
+        match self.mode {
+            Mode::Insert => {
+                if let Some(rec) = self.recording.as_mut() {
+                    rec.extend(text.chars().map(VimKey::Char));
+                }
+                self.insert_str_at(self.cursor, text);
+                self.cursor += text.chars().count();
+                self.out(true, EditorAction::Nop)
+            }
+            Mode::Normal => {
+                self.registers.yank(None, text.to_string(), false);
+                self.pending_register = None;
+                self.do_put(true)
+            }
+            Mode::Visual | Mode::VisualLine => {
+                self.registers.yank(None, text.to_string(), false);
+                self.snapshot();
+                if let Some(r) = self.selection() {
+                    self.delete_range(r);
+                }
+                self.visual_anchor = None;
+                self.mode = Mode::Normal;
+                self.insert_str_at(self.cursor, text);
+                self.cursor += text.chars().count().saturating_sub(1);
+                self.clamp_normal();
+                self.out(true, EditorAction::Nop)
+            }
+        }
+    }
+
     // ---- undo / redo / dot ----
 
     fn do_undo(&mut self) -> Outcome {
@@ -1522,5 +1562,49 @@ mod tests {
         assert_eq!(e.buffer(), "alpha <hi>beta</hi>");
         e.feed("u"); // undo
         assert_eq!(e.buffer(), "alpha beta", "undo restores pre-highlight text");
+    }
+
+    // clipboard paste (paste_text — the GTK layer reads the clipboard)
+
+    #[test]
+    fn paste_in_insert_mode_inserts_at_cursor() {
+        let mut e = eng("ad");
+        e.feed("a"); // insert after 'a'
+        e.paste_text("bc");
+        assert_eq!(e.buffer(), "abcd");
+        assert_eq!(e.mode(), Mode::Insert);
+        e.feed("\x1b");
+        // Cursor sits after the pasted text while inserting.
+        assert_eq!(e.buffer(), "abcd");
+    }
+
+    #[test]
+    fn paste_in_normal_mode_puts_after_cursor_and_undoes() {
+        let mut e = eng("ab");
+        e.paste_text("XY"); // after 'a'
+        assert_eq!(e.buffer(), "aXYb");
+        e.feed("u");
+        assert_eq!(e.buffer(), "ab", "one undo step reverts the paste");
+        // The pasted text also lands in the unnamed register: p repeats it.
+        e.feed("p");
+        assert_eq!(e.buffer(), "aXYb");
+    }
+
+    #[test]
+    fn paste_in_visual_mode_replaces_selection() {
+        let mut e = eng("hello world");
+        e.feed("w");  // cursor on 'w'
+        e.feed("v$"); // select "world"
+        e.paste_text("vim");
+        assert_eq!(e.buffer(), "hello vim");
+        assert_eq!(e.mode(), Mode::Normal);
+    }
+
+    #[test]
+    fn paste_multiline_in_insert_mode() {
+        let mut e = eng("");
+        e.feed("i");
+        e.paste_text("one\ntwo");
+        assert_eq!(e.buffer(), "one\ntwo");
     }
 }
