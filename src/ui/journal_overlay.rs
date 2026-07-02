@@ -176,9 +176,7 @@ impl JournalOverlay {
         scrolled.set_vexpand(false);
 
         let view = gtk4::TextView::new();
-        view.set_editable(false);
-        view.set_cursor_visible(false);
-        view.set_focusable(false);
+        crate::ui::set_view_readonly(&view);
         view.set_wrap_mode(gtk4::WrapMode::Word);
         // ~one line of breathing room above the first line and below the last
         // line INSIDE the panel, so the text isn't flush against the panel's

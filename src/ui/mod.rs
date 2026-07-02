@@ -430,6 +430,16 @@ pub(crate) fn set_rc_color(
     }
 }
 
+/// Configure a TextView as a read-only display surface (audit #62): not
+/// editable, no caret, not focusable. The vim editors flip these back
+/// per-mode (`begin_edit_buffer` raises `focusable` so GTK paints the caret).
+pub(crate) fn set_view_readonly(view: &gtk4::TextView) {
+    use gtk4::prelude::*;
+    view.set_editable(false);
+    view.set_cursor_visible(false);
+    view.set_focusable(false);
+}
+
 /// Pure core of the overlay bottom-clip calculation: given each visual row's
 /// `(top, bottom)` in scroll-coordinate space, the viewport top (`top_y`), the
 /// viewport height (`viewport_h`), and the total content height (`content_h`),

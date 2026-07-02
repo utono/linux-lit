@@ -276,9 +276,7 @@ impl GlossOverlay {
         gloss_scrolled.set_propagate_natural_height(false);
 
         let gloss_view = gtk4::TextView::new();
-        gloss_view.set_editable(false);
-        gloss_view.set_cursor_visible(false);
-        gloss_view.set_focusable(false);
+        crate::ui::set_view_readonly(&gloss_view);
         gloss_view.set_wrap_mode(gtk4::WrapMode::Word);
         let right_margin = column_width as i32 / 8;
         gloss_view.set_left_margin(text_margins as i32);
@@ -444,9 +442,7 @@ impl GlossOverlay {
         // Echoes-only: a fixed source-turn header + a fixed rule, above the
         // scrolling echo list. Hidden in all non-echo overlay modes.
         let echo_header_view = gtk4::TextView::new();
-        echo_header_view.set_editable(false);
-        echo_header_view.set_cursor_visible(false);
-        echo_header_view.set_focusable(false);
+        crate::ui::set_view_readonly(&echo_header_view);
         echo_header_view.set_wrap_mode(gtk4::WrapMode::Word);
         echo_header_view.set_left_margin(text_margins as i32);
         echo_header_view.set_right_margin(right_margin);
