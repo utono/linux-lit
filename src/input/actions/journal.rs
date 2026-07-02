@@ -610,9 +610,9 @@ pub(crate) fn begin_edit(state: &Rc<RefCell<AppState>>) {
     let Some(page) = s.journal.pages.get(s.journal.page_index) else {
         return;
     };
-    let (q, a) = (page.question.clone(), page.answer.clone());
+    let (q, a, kind) = (page.question.clone(), page.answer.clone(), page.kind.clone());
     let (block_fill, block_fg) = (s.theme.cursor_bg.clone(), s.theme.cursor_fg.clone());
-    s.journal_overlay.enter_edit_buffer(&q, &a, &block_fill, &block_fg);
+    s.journal_overlay.enter_edit_buffer(&q, &a, &block_fill, &block_fg, &kind);
     s.input_mode = crate::app::InputMode::JournalEdit;
 }
 

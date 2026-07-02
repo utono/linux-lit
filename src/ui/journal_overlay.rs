@@ -77,6 +77,9 @@ pub struct JournalOverlay {
     vim_engine: RefCell<Option<crate::input::vim::VimEngine>>,
     /// The buffer the editor was seeded with, for dirty-check on cancel.
     vim_seed: RefCell<String>,
+    /// The kind of the page being edited (`"note"` or `"qa"`). Set on enter,
+    /// used by the save path to choose the right parse function.
+    edit_kind: RefCell<String>,
     /// (block-fill, glyph-fg) for the NORMAL-mode block cursor, set on enter from
     /// the theme's cursor colors.
     vim_cursor_colors: RefCell<(String, String)>,
@@ -402,6 +405,7 @@ impl JournalOverlay {
             ask_host,
             vim_engine: RefCell::new(None),
             vim_seed: RefCell::new(String::new()),
+            edit_kind: RefCell::new(String::new()),
             vim_cursor_colors: RefCell::new((String::new(), String::new())),
             highlight_bg: RefCell::new(crate::ui::DEFAULT_HIGHLIGHT_BG.to_string()),
             hi_ranges: RefCell::new(Vec::new()),
@@ -871,13 +875,18 @@ impl JournalOverlay {
     /// Enter the in-place vim editor: build the `Q: …\n\n<answer>` buffer, seed
     /// the engine, make the page view show the whole buffer (pagination
     /// suspended), place the cursor, and show the mode indicator in the footer.
-    pub fn enter_edit_buffer(&self, question: &str, answer: &str, block_fill: &str, block_fg: &str) {
+    pub fn enter_edit_buffer(&self, question: &str, answer: &str, block_fill: &str, block_fg: &str, kind: &str) {
         self.begin_edit_font();
         // The editor shows RAW text (with `<hi>` literals); the read-mode hi
         // ranges are stale here and must not be re-applied to the raw buffer.
         self.hi_ranges.borrow_mut().clear();
         *self.vim_cursor_colors.borrow_mut() = (block_fill.to_string(), block_fg.to_string());
-        let buf = crate::input::vim::journal_doc::build_buffer(question, answer);
+        *self.edit_kind.borrow_mut() = kind.to_string();
+        let buf = if kind == "note" {
+            crate::input::vim::journal_doc::build_note_buffer(answer)
+        } else {
+            crate::input::vim::journal_doc::build_buffer(question, answer)
+        };
         *self.vim_seed.borrow_mut() = buf.clone();
         let engine = crate::input::vim::VimEngine::new(buf);
         // Render the whole buffer (no pagination while editing).
@@ -928,10 +937,19 @@ impl JournalOverlay {
     }
 
     /// The current edited Q&A, parsed back from the engine buffer.
+    /// For `note` entries, returns `("", raw_answer)` (question is always empty).
+    /// For `qa` entries, returns the normal `(question, answer)` parse.
     pub fn edit_buffer_qa(&self) -> (String, String) {
         let guard = self.vim_engine.borrow();
         match guard.as_ref() {
-            Some(e) => crate::input::vim::journal_doc::parse_back(e.buffer()),
+            Some(e) => {
+                if self.edit_kind.borrow().as_str() == "note" {
+                    let answer = crate::input::vim::journal_doc::parse_note_back(e.buffer());
+                    (String::new(), answer)
+                } else {
+                    crate::input::vim::journal_doc::parse_back(e.buffer())
+                }
+            }
             None => (String::new(), String::new()),
         }
     }
