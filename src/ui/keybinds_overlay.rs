@@ -34,8 +34,8 @@ const fn bare(unshifted: &'static str, shifted: &'static str, action: &'static s
 const NUMBER_ROW: &[KeyDef] = &[
     ub("$", "~"),
     bare("+", "1", "toggle speed"),
-    key("[", "2", "prev scene", "2: prev bkmk", &[("M-[", "col layout")]),
-    key("{", "3", "next scene", "3: next bkmk", &[]),
+    key("[", "2", "prev scene", "2: prev scene", &[("M-[", "col layout")]),
+    key("{", "3", "next scene", "3: next scene", &[]),
     key("(", "4", "prev bkmk", "4: prev ch", &[]),
     key("&", "5", "next bkmk", "5: next ch", &[]),
     ub("=", "6"),
@@ -49,7 +49,7 @@ const NUMBER_ROW: &[KeyDef] = &[
 const BACKSPACE: KeyDef = bare("\u{232b}", "", "delete ts");
 
 const UPPER_ROW: &[KeyDef] = &[
-    bare(";", ":", "prev bkmk"),
+    key(";", ":", "prev bkmk", ":: show chapter", &[]),
     key(",", "<", "prev speaker", "<: prev dlg", &[("C-,", "settings")]),
     key(".", ">", "", "", &[("C-.", "bookmarks")]),
     key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("C-p", "lib picker"), ("S-C-p", "conc word"), ("C-M-p", "conc list")]),
@@ -265,9 +265,12 @@ stage direction. -> navigation::jump_to_prev_chapter — src/input/navigation.rs
 boundary sourced from (div1,div2) divisions, independent of any loaded audio. In \
 a play the cursor lands on the act's FIRST DIALOGUE line, never the entrance \
 stage direction. -> navigation::jump_to_next_chapter — src/input/navigation.rs",
-        "prev scene" => "Jump to the previous scene/act section heading. \
+        "prev scene" => "Jump to the first line of the CURRENT scene (plays) or \
+chapter (prose); pressed again from that first line, jump to the previous \
+scene/chapter. Toasts the landing act/scene or chapter. \
 -> navigation::jump_to_prev_section — src/input/navigation.rs",
-        "next scene" => "Jump to the next scene/act section heading. \
+        "next scene" => "Jump to the first line of the next scene (plays) or \
+chapter (prose). Toasts the landing act/scene or chapter. \
 -> navigation::jump_to_next_section — src/input/navigation.rs",
 
         // ── Bookmarks ──
