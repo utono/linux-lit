@@ -1081,7 +1081,7 @@ impl JournalOverlay {
 
     /// Measure each full paragraph and pack them into `pages` (whole blocks per
     /// page). Heights come from a standalone `pango::Layout` at the view's font +
-    /// wrap width, plus the per-paragraph line spacing the rendered view adds, so
+    /// wrap width, plus the real blank-line gap between paragraphs, so
     /// pagination doesn't over-pack. No widget allocation — no settle race.
     fn repaginate(&self) {
         let paras = self.all_paragraphs.borrow();
@@ -1102,33 +1102,32 @@ impl JournalOverlay {
             - self.view.right_margin())
         .max(1);
         let pctx = self.view.pango_context();
-        // The rendered TextView is consistently TALLER than a standalone
-        // `pango::Layout` of the same text+width: it adds per-line leading and
-        // paragraph spacing the bare layout omits (measured: real render ≈ 1.13×
-        // the layout height for stacked prose paragraphs). Under-counting packed
-        // one block too many; the viewport then clipped its tail and the next page
-        // resumed past it — the paragraph-split / dropped-text bug. So
-        // CONSERVATIVELY over-estimate: ×1.15 slack on the text height (the same
-        // multiplier the gloss verse blocks use) PLUS the real blank-line height
-        // between paragraphs (`slice.join("\n\n")` renders one empty line per
-        // gap). Erring tall only ever yields an extra page — it never splits a
-        // paragraph, satisfying "keep whole blocks fully visible for TTS".
+        // A rendered page is `slice.join("\n\n")` — each paragraph plus one
+        // blank line per gap — and the view has NO per-line spacing
+        // (apply_font_to_views sets only a font tag), so a standalone
+        // `pango::Layout` at the same font + wrap width measures the render
+        // exactly: page height = Σ text_h + (k-1)·line_h. Charging every block
+        // text_h + line_h therefore over-counts by exactly ONE line_h per page
+        // (the last block's gap never renders) — deliberate headroom, so
+        // packing can never under-count and clip a paragraph tail (the old
+        // paragraph-split / dropped-text bug). A ×1.15 slack used to sit on
+        // top of this from when the view added per-line leading; with that
+        // spacing gone it was pure over-count (~15% of every paragraph) and
+        // UNDERFILLED pages — a fitting paragraph got pushed to the next page
+        // (Cym 1.4 Q&A id 14; JOURNAL-PAGINATE log confirmed the estimates
+        // summed well under the budget while a block still moved at tighter
+        // geometries).
         let line_h = crate::ui::pagination::measure_text_height(&pctx, "Mg", size, &family, wrap_w);
         let heights: Vec<i32> = paras
             .iter()
             .map(|p| {
                 let text_h =
                     crate::ui::pagination::measure_text_height(&pctx, p, size, &family, wrap_w);
-                (text_h as f32 * 1.15) as i32 + line_h
+                text_h + line_h
             })
             .collect();
         drop(paras);
-        // Diagnostic for the reported page UNDERFILL (a paragraph the user says
-        // fits gets pushed to the next page): log the exact budget + per-block
-        // estimates so the over-count can be pinned from a real run. The ×1.15
-        // slack dates from when the rendered view measured ~1.13× the bare
-        // layout; the view now has NO per-line spacing (apply_font_to_views sets
-        // only a font tag), so the multiplier may be pure over-count today.
+        // Budget + per-block estimates for diagnosing pack decisions from a run.
         crate::log_fmt!(
             "JOURNAL-PAGINATE: page_h={} wrap_w={} line_h={} font='{} {}' heights={:?}",
             self.page_height(), wrap_w, line_h, family, size, heights
