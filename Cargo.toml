@@ -22,6 +22,7 @@ unicode-normalization = "0.1.25"
 bincode = "1.3"
 evdev = "0.12"
 pangocairo = "0.20"
+pulldown-cmark = { version = "0.12", default-features = false }
 
 [dev-dependencies]
 libc = "0.2.186"

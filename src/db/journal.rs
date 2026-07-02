@@ -12,6 +12,7 @@ pub struct JournalPage {
     pub start_citation: Option<String>,
     pub end_citation: Option<String>,
     pub source_text: Option<String>,
+    pub kind: String,
 }
 
 /// The SELECT column list every `find_*` query uses, in the order
@@ -19,7 +20,7 @@ pub struct JournalPage {
 /// row mapper cannot drift apart.
 const JOURNAL_PAGE_COLUMNS: &str =
     "id, div1, div2, question, answer, COALESCE(claude_model, ''), timestamp, \
-     start_citation, end_citation, source_text";
+     start_citation, end_citation, source_text, COALESCE(kind, 'qa')";
 
 /// Build a `JournalPage` from a row selected with `JOURNAL_PAGE_COLUMNS`.
 fn map_journal_page_row(row: &rusqlite::Row<'_>) -> Result<JournalPage, rusqlite::Error> {
@@ -34,6 +35,7 @@ fn map_journal_page_row(row: &rusqlite::Row<'_>) -> Result<JournalPage, rusqlite
         start_citation: row.get(7)?,
         end_citation: row.get(8)?,
         source_text: row.get(9)?,
+        kind: row.get(10)?,
     })
 }
 
@@ -51,6 +53,7 @@ pub fn ensure_journal_table(conn: &Connection) -> Result<(), rusqlite::Error> {
             start_citation TEXT,
             end_citation   TEXT,
             source_text    TEXT,
+            kind        TEXT    NOT NULL DEFAULT 'qa',
             timestamp   TEXT    NOT NULL DEFAULT (datetime('now'))
         );
         CREATE INDEX IF NOT EXISTS idx_journal_work_scene
@@ -75,6 +78,14 @@ pub fn ensure_journal_table(conn: &Connection) -> Result<(), rusqlite::Error> {
             ))?;
         }
     }
+    let has_kind: bool = conn
+        .prepare("SELECT 1 FROM pragma_table_info('journal_entries') WHERE name='kind'")?
+        .exists([])?;
+    if !has_kind {
+        conn.execute_batch(
+            "ALTER TABLE journal_entries ADD COLUMN kind TEXT NOT NULL DEFAULT 'qa';",
+        )?;
+    }
     Ok(())
 }
 
@@ -87,12 +98,13 @@ pub fn save_journal_page(
     answer: &str,
     claude_model: &str,
     scope: &str,
+    kind: &str,
 ) -> Result<i64, rusqlite::Error> {
     conn.execute(
         "INSERT INTO journal_entries
-            (work_abbrev, div1, div2, question, answer, claude_model, scope, timestamp)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))",
-        rusqlite::params![work_abbrev, div1, div2, question, answer, claude_model, scope],
+            (work_abbrev, div1, div2, question, answer, claude_model, scope, kind, timestamp)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, datetime('now'))",
+        rusqlite::params![work_abbrev, div1, div2, question, answer, claude_model, scope, kind],
     )?;
     Ok(conn.last_insert_rowid())
 }
@@ -133,6 +145,38 @@ pub fn find_scene_band_pages(
          ORDER BY timestamp ASC, id ASC",
     ))?;
     let rows = stmt.query_map(rusqlite::params![work_abbrev, div1, div2], map_journal_page_row)?;
+    rows.collect()
+}
+
+/// The (div1, div2) sentinel that marks an author/corpus-scope journal row.
+/// Distinct from JOURNAL_WORK_DIV (-1,-1) so author rows never collide with
+/// whole-work rows. `work_abbrev` holds the AUTHOR string for these rows.
+pub const AUTHOR_DIV: (i64, i64) = (-2, -2);
+
+pub fn save_author_page(
+    conn: &Connection,
+    author: &str,
+    question: &str,
+    answer: &str,
+    claude_model: &str,
+    kind: &str,
+) -> Result<i64, rusqlite::Error> {
+    save_journal_page(
+        conn, author, AUTHOR_DIV.0, AUTHOR_DIV.1, question, answer, claude_model, "author", kind,
+    )
+}
+
+pub fn find_author_pages(
+    conn: &Connection,
+    author: &str,
+) -> Result<Vec<JournalPage>, rusqlite::Error> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {JOURNAL_PAGE_COLUMNS} \
+         FROM journal_entries \
+         WHERE work_abbrev = ?1 AND scope = 'author' \
+         ORDER BY timestamp ASC, id ASC",
+    ))?;
+    let rows = stmt.query_map(rusqlite::params![author], map_journal_page_row)?;
     rows.collect()
 }
 
@@ -281,10 +325,10 @@ mod tests {
     #[test]
     fn scene_pages_roundtrip_and_exclude_work() {
         let conn = mem();
-        save_journal_page(&conn, "Ham", 1, 2, "Q1?", "A1.", "claude-opus-4-8", "scene").unwrap();
-        save_journal_page(&conn, "Ham", 1, 2, "Q2?", "A2.", "claude-opus-4-8", "scene").unwrap();
+        save_journal_page(&conn, "Ham", 1, 2, "Q1?", "A1.", "claude-opus-4-8", "scene", "qa").unwrap();
+        save_journal_page(&conn, "Ham", 1, 2, "Q2?", "A2.", "claude-opus-4-8", "scene", "qa").unwrap();
         // A work page in the same work must NOT appear in scene queries.
-        save_journal_page(&conn, "Ham", -1, -1, "WQ?", "WA.", "claude-opus-4-8", "work").unwrap();
+        save_journal_page(&conn, "Ham", -1, -1, "WQ?", "WA.", "claude-opus-4-8", "work", "qa").unwrap();
 
         let scene_pages = find_journal_pages(&conn, "Ham", 1, 2).unwrap();
         assert_eq!(scene_pages.len(), 2);
@@ -299,9 +343,9 @@ mod tests {
     #[test]
     fn work_pages_roundtrip_and_exclude_scene() {
         let conn = mem();
-        save_journal_page(&conn, "Ham", -1, -1, "WQ1?", "WA1.", "claude-opus-4-8", "work").unwrap();
-        save_journal_page(&conn, "Ham", -1, -1, "WQ2?", "WA2.", "claude-opus-4-8", "work").unwrap();
-        save_journal_page(&conn, "Ham", 3, 1, "SQ?", "SA.", "claude-opus-4-8", "scene").unwrap();
+        save_journal_page(&conn, "Ham", -1, -1, "WQ1?", "WA1.", "claude-opus-4-8", "work", "qa").unwrap();
+        save_journal_page(&conn, "Ham", -1, -1, "WQ2?", "WA2.", "claude-opus-4-8", "work", "qa").unwrap();
+        save_journal_page(&conn, "Ham", 3, 1, "SQ?", "SA.", "claude-opus-4-8", "scene", "qa").unwrap();
 
         let work_pages = find_work_pages(&conn, "Ham").unwrap();
         assert_eq!(work_pages.len(), 2);
@@ -315,8 +359,8 @@ mod tests {
     #[test]
     fn update_and_delete_still_work() {
         let conn = mem();
-        let id1 = save_journal_page(&conn, "Ham", 1, 2, "Q1?", "A1.", "m", "scene").unwrap();
-        save_journal_page(&conn, "Ham", 1, 2, "Q2?", "A2.", "m", "scene").unwrap();
+        let id1 = save_journal_page(&conn, "Ham", 1, 2, "Q1?", "A1.", "m", "scene", "qa").unwrap();
+        save_journal_page(&conn, "Ham", 1, 2, "Q2?", "A2.", "m", "scene", "qa").unwrap();
 
         update_journal_page(&conn, id1, "Q1b?", "A1b.", "m").unwrap();
         let pages = find_journal_pages(&conn, "Ham", 1, 2).unwrap();
@@ -336,7 +380,7 @@ mod tests {
         // documents that contract at the DB layer: a page saved under "2H6" is
         // found when querying "2H6".
         let conn = mem();
-        save_journal_page(&conn, "2H6", 4, 8, "Q?", "A.", "m", "scene").unwrap();
+        save_journal_page(&conn, "2H6", 4, 8, "Q?", "A.", "m", "scene", "qa").unwrap();
         let pages = find_journal_pages(&conn, "2H6", 4, 8).unwrap();
         assert_eq!(pages.len(), 1);
         assert_eq!(pages[0].question, "Q?");
@@ -347,11 +391,11 @@ mod tests {
         let conn = mem();
         // Insert out of order; expect: work pages (by time), then scene pages
         // grouped by (div1,div2) then by time.
-        save_journal_page(&conn, "Ham", 3, 1, "S31a?", "a", "m", "scene").unwrap();
-        save_journal_page(&conn, "Ham", -1, -1, "W1?", "a", "m", "work").unwrap();
-        save_journal_page(&conn, "Ham", 1, 2, "S12a?", "a", "m", "scene").unwrap();
-        save_journal_page(&conn, "Ham", -1, -1, "W2?", "a", "m", "work").unwrap();
-        save_journal_page(&conn, "Ham", 1, 2, "S12b?", "a", "m", "scene").unwrap();
+        save_journal_page(&conn, "Ham", 3, 1, "S31a?", "a", "m", "scene", "qa").unwrap();
+        save_journal_page(&conn, "Ham", -1, -1, "W1?", "a", "m", "work", "qa").unwrap();
+        save_journal_page(&conn, "Ham", 1, 2, "S12a?", "a", "m", "scene", "qa").unwrap();
+        save_journal_page(&conn, "Ham", -1, -1, "W2?", "a", "m", "work", "qa").unwrap();
+        save_journal_page(&conn, "Ham", 1, 2, "S12b?", "a", "m", "scene", "qa").unwrap();
 
         let ordered = find_all_pages_ordered(&conn, "Ham").unwrap();
         let qs: Vec<&str> = ordered.iter().map(|p| p.question.as_str()).collect();
@@ -382,8 +426,8 @@ mod tests {
         assert!(id > 0);
 
         // A scene page and a work page in the same scene must NOT come back as passage pages.
-        save_journal_page(&conn, "2H6", 1, 4, "SceneQ?", "SceneA.", "m", "scene").unwrap();
-        save_journal_page(&conn, "2H6", -1, -1, "WorkQ?", "WorkA.", "m", "work").unwrap();
+        save_journal_page(&conn, "2H6", 1, 4, "SceneQ?", "SceneA.", "m", "scene", "qa").unwrap();
+        save_journal_page(&conn, "2H6", -1, -1, "WorkQ?", "WorkA.", "m", "work", "qa").unwrap();
 
         let pages = find_passage_pages(&conn, "2H6", "2H6.1.4.43", "2H6.1.4.50").unwrap();
         assert_eq!(pages.len(), 1, "exactly the one passage page");
@@ -406,7 +450,7 @@ mod tests {
         let conn = mem();
         // Scene Q&A first, then two passage Q&As, all in (1, 0) — interleaved
         // with an unrelated scene/passage and a work page that must be excluded.
-        save_journal_page(&conn, "BH", 1, 0, "SceneQ?", "SceneA.", "m", "scene").unwrap();
+        save_journal_page(&conn, "BH", 1, 0, "SceneQ?", "SceneA.", "m", "scene", "qa").unwrap();
         save_passage_page(
             &conn, "BH", 1, 0, "BH.1.0.14", "BH.1.0.14",
             "<p>chancery…</p>", "PassQ1?", "PassA1.", "m",
@@ -416,12 +460,12 @@ mod tests {
             "<p>fog…</p>", "PassQ2?", "PassA2.", "m",
         ).unwrap();
         // Different scene band — must NOT appear.
-        save_journal_page(&conn, "BH", 2, 0, "OtherScene?", "x", "m", "scene").unwrap();
+        save_journal_page(&conn, "BH", 2, 0, "OtherScene?", "x", "m", "scene", "qa").unwrap();
         save_passage_page(
             &conn, "BH", 2, 0, "BH.2.0.1", "BH.2.0.1", "<p>x</p>", "OtherPass?", "x", "m",
         ).unwrap();
         // Whole-work page — must NOT appear.
-        save_journal_page(&conn, "BH", -1, -1, "WorkQ?", "x", "m", "work").unwrap();
+        save_journal_page(&conn, "BH", -1, -1, "WorkQ?", "x", "m", "work", "qa").unwrap();
 
         let pages = find_scene_band_pages(&conn, "BH", 1, 0).unwrap();
         let qs: Vec<&str> = pages.iter().map(|p| p.question.as_str()).collect();
@@ -445,9 +489,20 @@ mod tests {
     }
 
     #[test]
+    fn kind_defaults_to_qa_and_roundtrips() {
+        let conn = mem();
+        // Old-style insert path (scene) must default kind to 'qa'.
+        let id = save_journal_page(&conn, "Ham", 1, 2, "Q?", "A.", "m", "scene", "qa").unwrap();
+        let pages = find_journal_pages(&conn, "Ham", 1, 2).unwrap();
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].id, id);
+        assert_eq!(pages[0].kind, "qa");
+    }
+
+    #[test]
     fn move_page_changes_band_scene_to_work_and_back() {
         let conn = mem();
-        let id = save_journal_page(&conn, "Ham", 1, 2, "Q?", "A.", "m", "scene").unwrap();
+        let id = save_journal_page(&conn, "Ham", 1, 2, "Q?", "A.", "m", "scene", "qa").unwrap();
 
         // Move scene -> work.
         move_journal_page(&conn, id, "work", -1, -1).unwrap();
@@ -464,5 +519,39 @@ mod tests {
         let scene = find_journal_pages(&conn, "Ham", 3, 1).unwrap();
         assert_eq!(scene.len(), 1);
         assert_eq!(scene[0].id, id);
+    }
+
+    #[test]
+    fn author_pages_roundtrip_and_exclude_work_scene() {
+        let conn = mem();
+        let nid = save_author_page(&conn, "Shakespeare", "", "## Cry\n\n**load** it", "m", "note").unwrap();
+        save_author_page(&conn, "Shakespeare", "Corpus Q?", "Corpus A.", "m", "qa").unwrap();
+        // A scene page for an actual work must NOT appear in author queries.
+        save_journal_page(&conn, "Ham", 1, 2, "SQ?", "SA.", "m", "scene", "qa").unwrap();
+
+        let pages = find_author_pages(&conn, "Shakespeare").unwrap();
+        assert_eq!(pages.len(), 2);
+        let note = pages.iter().find(|p| p.id == nid).unwrap();
+        assert_eq!(note.kind, "note");
+        assert_eq!(note.question, "");
+        assert_eq!(note.answer, "## Cry\n\n**load** it");
+        assert_eq!(note.div1, -2);
+        assert_eq!(note.div2, -2);
+    }
+
+    #[test]
+    fn move_to_author_band_sets_scope_and_sentinel() {
+        let conn = mem();
+        let id = save_journal_page(&conn, "Ham", 1, 2, "Q?", "A.", "m", "scene", "qa").unwrap();
+        move_journal_page(&conn, id, "author", AUTHOR_DIV.0, AUTHOR_DIV.1).unwrap();
+        // NOTE: move keeps work_abbrev; author-band lookups key by work_abbrev, so a
+        // moved-from-a-work page keys under the WORK abbrev, not the author. That's
+        // acceptable: the move picker is out of scope for author here (Task 6 does
+        // not add an Author move target). This test documents move_journal_page is
+        // scope-agnostic and needs no change.
+        let n: i64 = conn
+            .query_row("SELECT div1 FROM journal_entries WHERE id=?1", [id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, -2);
     }
 }

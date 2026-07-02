@@ -14,6 +14,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Ctrl+n / Ctrl+p", "prev / next Q&A in band"),
         ("Alt+n / Alt+p", "prev / next scene"),
         ("Alt+w", "whole-work band"),
+        ("Alt+a", "author corpus band"),
         ("Shift+V", "visual select (y yank)"),
     ]),
     ("TTS", &[

@@ -163,6 +163,8 @@ pub enum JournalBand {
     Work,
     Scene(i64, i64),
     Passage { div1: i64, div2: i64, start: String, end: String },
+    /// Author/corpus band: holds scope='author' pages keyed by the author name.
+    Author(String),
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -3943,6 +3945,7 @@ pub fn remove_vocab_highlighting(state: &AppState) {
 /// The journal_entries table ALSO carries a `scope` TEXT column ('work'/'scene'),
 /// so this pair is not unique on its own — it is always paired with scope='work'.
 pub(crate) const JOURNAL_WORK_DIV: (i64, i64) = (-1, -1);
+pub(crate) const JOURNAL_AUTHOR_DIV: (i64, i64) = (-2, -2);
 
 /// Toggle the main card between text and the page-scan image for the current
 /// work. No-op (with a toast) for works that have no page images. When turning

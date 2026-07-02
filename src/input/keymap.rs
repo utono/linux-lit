@@ -1010,6 +1010,13 @@ fn handle_journal_key(
                 crate::input::actions::journal::nav_to_work_band(state);
                 return true;
             }
+            // Alt+a: jump to the author/corpus band (scope='author' pages for
+            // the current work's author). A jump target, not part of the
+            // sequential band walk (Alt+n/p scenes, Alt+w work).
+            "a" => {
+                crate::input::actions::journal::nav_to_author_band(state);
+                return true;
+            }
             // Alt+g: create a reader-gloss for the current journal passage
             // page's source text. Toasts "Not a passage page" if the current
             // page has no source text (work/scene band or empty).

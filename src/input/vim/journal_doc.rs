@@ -16,6 +16,16 @@ pub fn build_buffer(question: &str, answer: &str) -> String {
     format!("Q: {}\n\n{}", strip_q_prefix(question), answer)
 }
 
+/// A `note` entry has no question and stores raw Markdown; its editor buffer is
+/// the raw Markdown verbatim (no `Q:` seed line). Round-trips losslessly.
+pub fn build_note_buffer(answer: &str) -> String {
+    answer.to_string()
+}
+
+pub fn parse_note_back(buffer: &str) -> String {
+    buffer.to_string()
+}
+
 pub fn parse_back(buffer: &str) -> (String, String) {
     let first = buffer.split('\n').next().unwrap_or("");
     let question = strip_q_prefix(first).to_string();
@@ -57,5 +67,13 @@ mod tests {
         let (q, a) = parse_back("Q: just a question line\nand a stray answer line");
         assert_eq!(q, "just a question line");
         assert_eq!(a, "and a stray answer line");
+    }
+
+    #[test]
+    fn note_buffer_is_raw_markdown_roundtrip() {
+        let md = "## Cry\n\n- load it\n- **then** drop it";
+        let b = build_note_buffer(md);
+        assert_eq!(b, md); // no Q: seed, verbatim
+        assert_eq!(parse_note_back(&b), md);
     }
 }

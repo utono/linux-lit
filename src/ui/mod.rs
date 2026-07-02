@@ -1,4 +1,5 @@
 pub mod authorship_picker;
+pub mod markdown;
 pub mod action_popup;
 pub mod ask_card;
 pub(crate) mod bottom_clip_guard;
