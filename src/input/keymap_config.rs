@@ -225,26 +225,43 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("z"), Action::VocabPopupNext),
         // Chapter / scene
         // RPD: the 2/3 number-row keys emit bracketleft/braceleft unshifted and
-        // 2/3 shifted. Scene jumps sit on the UNSHIFTED glyph; bookmarks on the
-        // SHIFTED digit (see Bookmarks below).
-        (KeyCombo::plain("parenleft"), Action::JumpToPrevChapter),
-        (KeyCombo::plain("ampersand"), Action::JumpToNextChapter),
-        // `}` (braceright on RPD) duplicates `(` — jump to the previous chapter.
+        // 2/3 shifted. Scene jumps sit on BOTH glyphs of each key: `[`/Shift+`[`
+        // jump to the current scene's first line (thereafter the previous
+        // scene); `{`/Shift+`{` jump to the next scene's first line.
+        // RPD: `(`/`4` share the AE04 key (unshifted symbol, shifted digit) and
+        // `&`/`5` share AE05. The unshifted symbol steps BOOKMARKS; the shifted
+        // digit takes the chapter jump the symbol used to have.
+        (KeyCombo::plain("parenleft"), Action::PrevBookmark),
+        (KeyCombo::plain("ampersand"), Action::NextBookmark),
+        (KeyCombo::plain("4"), Action::JumpToPrevChapter),
+        (KeyCombo::shift("4"), Action::JumpToPrevChapter),
+        (KeyCombo::plain("5"), Action::JumpToNextChapter),
+        (KeyCombo::shift("5"), Action::JumpToNextChapter),
+        // `}` (braceright on RPD) duplicates `4` — jump to the previous chapter.
         (KeyCombo::plain("braceright"), Action::JumpToPrevChapter),
-        // `]` (bracketright on RPD) duplicates `&` — jump to the next chapter.
+        // `]` (bracketright on RPD) duplicates `5` — jump to the next chapter.
         (KeyCombo::plain("bracketright"), Action::JumpToNextChapter),
         (KeyCombo::plain("bracketleft"), Action::JumpToPrevScene),
         (KeyCombo::plain("braceleft"), Action::JumpToNextScene),
         (KeyCombo::plain("C"), Action::ShowCurrentChapter),
-        (KeyCombo::plain("semicolon"), Action::ShowCurrentChapter),
-        // Bookmarks (the SHIFTED 2/3 glyphs on the bracketleft/braceleft keys)
+        // Shift+; emits ("colon", shift=true) on this layout (same class as
+        // Shift+, → "less") — toast the current act/scene or chapter. The
+        // bare-name form is bound too in case the compositor reports
+        // ("semicolon", shift=true) instead.
+        (KeyCombo::shift("colon"), Action::ShowCurrentChapter),
+        (KeyCombo::shift("semicolon"), Action::ShowCurrentChapter),
+        // Bookmarks (`(`/`&` on the AE04/AE05 keys; `;`/`'` are home-region
+        // aliases — `;` displaced ShowCurrentChapter, which keeps `C` and
+        // gains Shift+`;`)
+        (KeyCombo::plain("semicolon"), Action::PrevBookmark),
+        (KeyCombo::plain("apostrophe"), Action::NextBookmark),
         (KeyCombo::plain("m"), Action::ToggleBookmark),
         (KeyCombo::ctrl("c"), Action::SetChapter),
         (KeyCombo::ctrl("e"), Action::ShowEchoesBcp),
-        (KeyCombo::plain("2"), Action::PrevBookmark),
-        (KeyCombo::shift("2"), Action::PrevBookmark),
-        (KeyCombo::plain("3"), Action::NextBookmark),
-        (KeyCombo::shift("3"), Action::NextBookmark),
+        (KeyCombo::plain("2"), Action::JumpToPrevScene),
+        (KeyCombo::shift("2"), Action::JumpToPrevScene),
+        (KeyCombo::plain("3"), Action::JumpToNextScene),
+        (KeyCombo::shift("3"), Action::JumpToNextScene),
         (KeyCombo::ctrl("period"), Action::OpenBookmarkPicker),
     ]
 }
@@ -281,7 +298,8 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::alt("backslash"), Action::ToggleVocabHighlight),
         (KeyCombo::ctrl_shift("G"), Action::OpenLastGloss),
         (KeyCombo::alt("i"), Action::CycleScansion),
-        (KeyCombo::plain("apostrophe"), Action::ReopenEchoesBcp),
+        // `'` (apostrophe) now steps bookmarks (see nav_bindings); reopening
+        // BCP echoes keeps its Ctrl+Shift+E bind.
         (KeyCombo::ctrl("backslash"), Action::OpenConcordancePicker),
         (KeyCombo::ctrl_shift("P"), Action::OpenConcordanceWordPicker),
         (KeyCombo::ctrl_alt("p"), Action::OpenConcordanceListPicker),
@@ -440,15 +458,19 @@ mod tests {
             km.lookup("bracketleft", false, false, true),
             Some(Action::ToggleColumnLayout),
         );
-        // Plain [ (unshifted on the RPD 2-key) jumps to the previous scene;
-        // the shifted 2 glyph is the bookmark jump (see bracket/2 swap).
+        // Both glyphs of the RPD 2-key jump scenes: plain [ and the shifted
+        // 2 glyph (Shift+[) land on the current scene's start, thereafter the
+        // previous scene. Same for {/3 and the next scene.
         assert_eq!(
             km.lookup("bracketleft", false, false, false),
             Some(Action::JumpToPrevScene),
         );
-        assert_eq!(km.lookup("2", false, false, false), Some(Action::PrevBookmark));
-        assert_eq!(km.lookup("3", false, false, false), Some(Action::NextBookmark));
+        assert_eq!(km.lookup("2", false, true, false), Some(Action::JumpToPrevScene));
+        assert_eq!(km.lookup("3", false, true, false), Some(Action::JumpToNextScene));
         assert_eq!(km.lookup("braceleft", false, false, false), Some(Action::JumpToNextScene));
+        // Shift+; (the shifted colon glyph) toasts the current act/scene or
+        // chapter.
+        assert_eq!(km.lookup("colon", false, true, false), Some(Action::ShowCurrentChapter));
     }
 
     #[test]

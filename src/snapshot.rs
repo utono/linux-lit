@@ -271,6 +271,7 @@ mod tests {
     fn synthetic_work(abbrev: &str, text_file: Option<String>) -> Work {
         Work {
             abbrev: abbrev.to_string(),
+            canonical_abbrev: abbrev.to_string(),
             title: "Test".to_string(),
             author: "Test Author".to_string(),
             work_type: "prose".to_string(),

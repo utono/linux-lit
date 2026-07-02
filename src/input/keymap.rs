@@ -680,6 +680,7 @@ fn ask_vim_intercept(
     feed: impl Fn(&Rc<RefCell<AppState>>, crate::input::vim::VimKey) -> crate::input::vim::EditorAction,
     submit: impl Fn(&Rc<RefCell<AppState>>),
     close: impl Fn(&Rc<RefCell<AppState>>),
+    paste: fn(&Rc<RefCell<AppState>>, &str),
 ) -> AskIntercept {
     use crate::input::vim::{EditorAction, VimKey};
     if !ask_open {
@@ -699,6 +700,11 @@ fn ask_vim_intercept(
         submit(state);
         return AskIntercept::Consumed;
     }
+    // Ctrl+v / Ctrl+Shift+V: paste the system clipboard into the prompt.
+    if is_ctrl && matches!(key_name, "v" | "V") {
+        paste_clipboard(state, paste);
+        return AskIntercept::Consumed;
+    }
     if let Some(vk) = gtk_key_to_vim(key_name, key_char, is_ctrl) {
         match feed(state, vk) {
             EditorAction::Save | EditorAction::SaveQuit => submit(state),
@@ -708,6 +714,34 @@ fn ask_vim_intercept(
     }
     // The prompt is a vim editor: consume EVERY key while it is open.
     AskIntercept::Consumed
+}
+
+/// Read the system clipboard and hand its text to `apply` (a paste sink on one
+/// of the vim surfaces). GTK's clipboard API is async-only, so the paste lands
+/// on the main loop a moment later; empty / non-text clipboards are ignored.
+/// `apply` is a plain fn pointer so the 'static callback captures no borrows.
+///
+/// Line endings are normalized to `\n` here, for every sink: GDK's text
+/// deserializer does NOT normalize (it is charset conversion only), so CRLF
+/// from Windows/web sources would otherwise put literal `\r` chars into the
+/// engine buffer — persisting into lit.db on `:w` and breaking the journal's
+/// `\n\n` question/answer split.
+fn paste_clipboard(state: &Rc<RefCell<AppState>>, apply: fn(&Rc<RefCell<AppState>>, &str)) {
+    let Some(display) = gtk4::gdk::Display::default() else {
+        return;
+    };
+    let state = state.clone();
+    display.clipboard().read_text_async(
+        gtk4::gio::Cancellable::NONE,
+        move |res| {
+            if let Ok(Some(text)) = res {
+                if !text.is_empty() {
+                    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+                    apply(&state, &text);
+                }
+            }
+        },
+    );
 }
 
 thread_local! {
@@ -784,6 +818,12 @@ fn handle_journal_edit_key(
         return true;
     }
 
+    // Ctrl+v / Ctrl+Shift+V: paste the system clipboard at the cursor.
+    if is_ctrl && matches!(key_name, "v" | "V") {
+        paste_clipboard(state, |st, t| st.borrow().journal_overlay.paste_edit_text(t));
+        return true;
+    }
+
     let Some(vk) = gtk_key_to_vim(key_name, key_char, is_ctrl) else {
         // Swallow unmapped keys so they don't leak to other handlers while editing.
         return true;
@@ -847,6 +887,12 @@ fn handle_gloss_edit_key(
             return true;
         }
         let _ = state.borrow().gloss_overlay.feed_edit_key(VimKey::Esc);
+        return true;
+    }
+
+    // Ctrl+v / Ctrl+Shift+V: paste the system clipboard at the cursor.
+    if is_ctrl && matches!(key_name, "v" | "V") {
+        paste_clipboard(state, |st, t| st.borrow().gloss_overlay.paste_edit_text(t));
         return true;
     }
 
@@ -935,6 +981,7 @@ fn handle_journal_key(
         |st, k| st.borrow().journal_overlay.feed_ask_vim_key(k),
         crate::input::actions::journal::submit_prompt,
         crate::input::actions::journal::close_prompt,
+        |st, t| st.borrow().journal_overlay.paste_ask_text(t),
     ) {
         AskIntercept::Consumed => return true,
         AskIntercept::NotHandled => {}
@@ -943,12 +990,17 @@ fn handle_journal_key(
     // gg chord -> first block (mirrors the gloss/synopsis overlays' block cursor)
     if key_state.borrow().chord == ChordState::PendingG {
         key_state.borrow_mut().chord = ChordState::None;
-        if key_name == "g" {
-            crate::input::actions::gloss::stop_all_gloss_audio(state);
-            state.borrow().journal_overlay.cursor_first_block();
-            crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
+        // A ctrl-chord within the gg window cancels the pending `g` and
+        // dispatches normally below (Ctrl+g arrives as key_name "g" too, so
+        // without this `g` then Ctrl+g ran the gg jump instead of view-gloss).
+        if !is_ctrl {
+            if key_name == "g" {
+                crate::input::actions::gloss::stop_all_gloss_audio(state);
+                state.borrow().journal_overlay.cursor_first_block();
+                crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
+            }
+            return true;
         }
-        return true;
     }
 
     if is_alt {
@@ -986,12 +1038,17 @@ fn handle_journal_key(
                 crate::input::actions::journal::nav_page(state, -1);
                 return true;
             }
+            // Ctrl+j: same as Ctrl+g — view the gloss for the current journal
+            // passage page. Ctrl+j/Ctrl+g thus cross-jump to the sibling overlay
+            // from EITHER side (the gloss overlay's Ctrl+j/Ctrl+g open the
+            // journal), so the same fingers flip between the two views. Close
+            // with Esc.
             "j" => {
-                crate::input::actions::journal::close_overlay(state);
+                crate::input::actions::journal::view_gloss_from_journal(state);
                 return true;
             }
             // Ctrl+Shift+J: open the "move this Q&A to another band" picker.
-            // Arrives as key_name "J" (shifted), distinct from Ctrl+j (close).
+            // Arrives as key_name "J" (shifted), distinct from Ctrl+j.
             "J" => {
                 crate::input::actions::journal::open_move_picker(state);
                 return true;
@@ -1069,15 +1126,24 @@ fn handle_journal_key(
         // block cursor here.
         "j" | "q" => {
             crate::input::actions::gloss::stop_all_gloss_audio(state);
-            state.borrow().journal_overlay.cursor_next_block();
-            // A page turn re-rendered the buffer; recolor cached blocks.
-            crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
+            // Block-less render (pending-passage source): scroll the viewport.
+            if state.borrow().journal_overlay.has_nav_blocks() {
+                state.borrow().journal_overlay.cursor_next_block();
+                // A page turn re-rendered the buffer; recolor cached blocks.
+                crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
+            } else {
+                state.borrow().journal_overlay.scroll_view(1);
+            }
             true
         }
         "k" | "comma" => {
             crate::input::actions::gloss::stop_all_gloss_audio(state);
-            state.borrow().journal_overlay.cursor_prev_block();
-            crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
+            if state.borrow().journal_overlay.has_nav_blocks() {
+                state.borrow().journal_overlay.cursor_prev_block();
+                crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
+            } else {
+                state.borrow().journal_overlay.scroll_view(-1);
+            }
             true
         }
         // Space/Tab: play/stop the cursor paragraph's TTS (cache hit plays the
@@ -1127,6 +1193,7 @@ fn handle_gloss_key(
         |st, k| st.borrow().gloss_overlay.feed_ask_vim_key(k),
         crate::input::actions::gloss::submit_gloss_prompt,
         crate::input::actions::gloss::close_gloss_prompt,
+        |st, t| st.borrow().gloss_overlay.paste_ask_text(t),
     ) {
         AskIntercept::Consumed => return true,
         AskIntercept::NotHandled => {}
@@ -1140,20 +1207,26 @@ fn handle_gloss_key(
 
     if key_state.borrow().chord == ChordState::PendingG {
         key_state.borrow_mut().chord = ChordState::None;
-        if key_name == "g" {
-            crate::input::actions::gloss::stop_all_gloss_audio(state);
-            // Loading card (no blocks): scroll the viewport to the top.
-            // Result gloss: jump the block cursor to the first block.
-            let has_blocks = state.borrow().gloss_overlay.current_block().is_some();
-            if has_blocks {
-                state.borrow().gloss_overlay.cursor_first_block();
-                // A page turn re-rendered the buffer; recolor cached blocks.
-                crate::input::actions::gloss::recolor_cached_blocks_rc(state);
-            } else {
-                state.borrow().gloss_overlay.scroll_gloss_to_top();
+        // A ctrl-chord within the gg window cancels the pending `g` and
+        // dispatches normally below — otherwise `g` then Ctrl+g ran the gg
+        // jump instead of the Ctrl+g cross-jump (Ctrl+g arrives as key_name
+        // "g" too), and Ctrl+j was swallowed as a no-op.
+        if !is_ctrl {
+            if key_name == "g" {
+                crate::input::actions::gloss::stop_all_gloss_audio(state);
+                // Loading card (no blocks): scroll the viewport to the top.
+                // Result gloss: jump the block cursor to the first block.
+                let has_blocks = state.borrow().gloss_overlay.current_block().is_some();
+                if has_blocks {
+                    state.borrow().gloss_overlay.cursor_first_block();
+                    // A page turn re-rendered the buffer; recolor cached blocks.
+                    crate::input::actions::gloss::recolor_cached_blocks_rc(state);
+                } else {
+                    state.borrow().gloss_overlay.scroll_gloss_to_top();
+                }
             }
+            return true;
         }
-        return true;
     }
     if is_alt {
         match key_name {
@@ -1209,11 +1282,15 @@ fn handle_gloss_key(
                 );
                 return true;
             }
-            // Ctrl+j: view the journal passage pages for the current gloss's
-            // passage (if any exist). Closes the gloss overlay and opens the
-            // journal overlay in the Passage band. Toasts "No journal page for
-            // this passage" when none are found.
-            "j" => {
+            // Ctrl+j / Ctrl+g: view the journal passage pages for the current
+            // gloss's passage (if any exist). Closes the gloss overlay and opens
+            // the journal overlay in the Passage band. Toasts "No journal page
+            // for this passage" when none are found. Ctrl+g mirrors the journal
+            // overlay (where Ctrl+j/Ctrl+g both view the gloss), so the same
+            // fingers cross-jump between the two overlays from either side. The
+            // Ctrl+g arm also keeps a held Ctrl from starting the plain-`g` gg
+            // chord below.
+            "j" | "g" => {
                 crate::input::actions::journal::view_journal_from_gloss(state);
                 return true;
             }
@@ -1588,6 +1665,7 @@ fn handle_synopsis_overlay_key(
         |st, k| st.borrow().gloss_overlay.feed_ask_vim_key(k),
         crate::input::actions::synopsis::submit_amend_prompt,
         crate::input::actions::synopsis::close_amend_prompt,
+        |st, t| st.borrow().gloss_overlay.paste_ask_text(t),
     ) {
         AskIntercept::Consumed => return true,
         AskIntercept::NotHandled => {}

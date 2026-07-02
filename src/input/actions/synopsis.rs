@@ -113,7 +113,7 @@ fn run_synopsis_revision(
             Some(w) => w,
             None => return,
         };
-        let abbrev = crate::app::base_work_abbrev(&work.abbrev).to_string();
+        let abbrev = work.canonical_abbrev.clone();
         let original = match s.synopsis_cache.get(&(div1, div2)) {
             Some(t) => t.clone(),
             None => return,
@@ -225,7 +225,7 @@ pub(crate) fn undo_amend(state_rc: &Rc<RefCell<AppState>>) {
         let s = state_rc.borrow();
         s.current_work
             .as_ref()
-            .map(|w| crate::app::base_work_abbrev(&w.abbrev).to_string())
+            .map(|w| w.canonical_abbrev.clone())
     };
     if let Some(abbrev) = work_abbrev {
         if let Ok(conn) = crate::db::queries::open_db_rw() {
@@ -297,7 +297,7 @@ pub(crate) fn vim_save(state: &Rc<RefCell<AppState>>, quit: bool) {
         let s = state.borrow();
         let (div1, div2) = s.synopsis_overlay_scene;
         let abbrev = match s.current_work.as_ref() {
-            Some(w) => crate::app::base_work_abbrev(&w.abbrev).to_string(),
+            Some(w) => w.canonical_abbrev.clone(),
             None => return,
         };
         let original = s
@@ -380,7 +380,7 @@ pub(crate) fn open_work_glosses(state_rc: &Rc<RefCell<AppState>>) {
     let work_abbrev = {
         let s = state_rc.borrow();
         match s.current_work.as_ref() {
-            Some(w) => crate::app::base_work_abbrev(&w.abbrev).to_string(),
+            Some(w) => w.canonical_abbrev.clone(),
             None => return,
         }
     };

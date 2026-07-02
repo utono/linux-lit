@@ -36,6 +36,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("y p P / v V", "yank · put · visual"),
         ("H", "highlight selection (visual; toggles)"),
         ("u / Ctrl+R / .", "undo · redo · repeat"),
+        ("Ctrl+v", "paste clipboard (also in the r ask prompt)"),
         (":w / :wq", "save / save & quit"),
         ("R", "ask Claude to rewrite"),
         (":q / Esc / :q!", "quit (warns if unsaved) · force"),
@@ -43,10 +44,10 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ("Cross-reference", &[
         ("Ctrl+\\", "pick a Q&A"),
         ("Alt+g", "gloss this passage"),
-        ("Ctrl+g", "view gloss for passage"),
+        ("Ctrl+g / Ctrl+j", "view gloss for passage"),
     ]),
     ("Close", &[
-        ("Ctrl+j / Esc", "close"),
+        ("Esc", "close"),
         ("Ctrl+/", "close this legend"),
     ]),
 ];

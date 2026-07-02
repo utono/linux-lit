@@ -134,11 +134,13 @@ fn prefix_question(question: &str) -> String {
 // sizes its scroll exactly like the gloss, so the footer lands in the same place.
 const UNACCOUNTED_CHROME_MARGINS: i32 = 24 + 20 /* scroll_overlay top+bottom */;
 
-/// Extra LEFT indent on the Q&A body so it sits right of the accent bar, with the
-/// bar in a clear gutter beside the text — matching the gloss explication's
-/// `bar_left + 60`. Added to the left margin only; pagination reads left_margin
-/// live so wrap/height follow automatically (no measure change).
-const JOURNAL_BODY_INDENT: i32 = 60;
+/// Extra LEFT indent on the Q&A body so it sits ~12px right of the accent bar,
+/// with the bar in the gutter beside the text — MATCHING the gloss explication's
+/// left position (`quote_body = bar_left + QUOTE_BODY_INDENT`) so the two
+/// overlays have the same text-column width. Added to the left margin only;
+/// pagination reads left_margin live so wrap/height follow automatically (no
+/// measure change).
+const JOURNAL_BODY_INDENT: i32 = crate::ui::gloss_render::QUOTE_BODY_INDENT;
 
 impl JournalOverlay {
     pub fn new(column_width: u32, text_margins: u32) -> Self {
@@ -222,7 +224,12 @@ impl JournalOverlay {
         // Inset-panel DrawingArea + its color cell (shared helper, audit #52). The
         // draw_func is wired inside; the caller sets it as the Overlay main child
         // and adds panel_drawing.queue_draw() to its scroll-repaint closure below.
-        let (panel_drawing, panel_color) = crate::ui::attach_overlay_panel(&view);
+        // The journal folds JOURNAL_BODY_INDENT into the view's left_margin
+        // (size_card), so the panel must exclude it to anchor at the COLUMN edge
+        // — otherwise the journal panel renders 12px narrower than the gloss
+        // panel on the identical card (left edge inboard, right edges aligned).
+        let (panel_drawing, panel_color) =
+            crate::ui::attach_overlay_panel(&view, JOURNAL_BODY_INDENT);
         // Accent-bar color = theme root_color, set by set_bar_color at startup.
         let bar_color: Rc<RefCell<(f64, f64, f64)>> =
             Rc::new(RefCell::new((0.53, 0.62, 0.71))); // placeholder; set at startup
@@ -272,15 +279,14 @@ impl JournalOverlay {
                 let (r, g, b) = *bar_color_clone.borrow();
                 cr.set_source_rgb(r, g, b);
                 cr.set_line_width(2.0);
-                // Draw the bar 12px LEFT of the text so it sits in the gap
-                // between the panel's inner edge (left_margin - PANEL_PAD = -24)
-                // and the text (0) — i.e. centered in the pad gutter, cleanly
-                // separated from the glyphs. Gloss achieves the same separation
-                // differently: its bar is AT `left` but the explication body is
-                // indented ~60px PAST the bar, so the bar sits in the gap. Journal
-                // has no body indent, so it insets the BAR instead. (Drawing at
-                // exactly left_margin() made the bar collide with the first glyph.)
-                let x = (view_clone.left_margin() as f64 - 12.0).max(2.0);
+                // Draw the bar 12px LEFT of the text — at the COLUMN edge
+                // (left_margin - JOURNAL_BODY_INDENT), exactly where the gloss
+                // draws its bar (`bar_x = left`). The panel's inner edge sits a
+                // further PANEL_PAD left of that (the panel excludes the body
+                // indent — see attach_overlay_panel), so bar-to-panel and
+                // bar-to-glyph gaps match the gloss. (Drawing at exactly
+                // left_margin() made the bar collide with the first glyph.)
+                let x = ((view_clone.left_margin() - JOURNAL_BODY_INDENT) as f64).max(2.0);
                 crate::ui::draw_bar_spans(cr, &view_clone, &ranges, x);
             });
         }
@@ -577,6 +583,39 @@ impl JournalOverlay {
         self.container.set_visible(true);
     }
 
+    /// Render a PENDING passage ask: the visually selected source text
+    /// (`<speaker>/<verse>` markup) shown through the shared gloss source
+    /// renderer (speaker small-caps + verse hang-indent, full ink), in place of
+    /// the empty band's "No pages yet — press r to ask." placeholder — so the
+    /// reader sees the passage they are asking about while the ask card is open
+    /// (mirrors the gloss overlay's "Glossing…" card). No navigable blocks and
+    /// no accent bar: the render is transient until submit/cancel.
+    pub fn show_passage_source(
+        &self,
+        footer_left: &str,
+        source_doc: &str,
+        card_width: i32,
+        card_height: i32,
+    ) {
+        self.size_card(card_width, card_height);
+        *self.footer_band.borrow_mut() = footer_left.to_string();
+        self.entry_pos.set((0, 0));
+        // Anchor the source tags at the COLUMN edge (left_margin minus the body
+        // indent) — the same anchor the gloss passes as `bar_left`, so the
+        // speaker/verse indents land exactly where the gloss card puts them.
+        let bar_left = self.view.left_margin() - JOURNAL_BODY_INDENT;
+        let _ = crate::ui::gloss_render::populate_gloss_buffer(
+            &self.view, source_doc, self.text_margins, bar_left, &[], None,
+        );
+        self.apply_font();
+        self.clear_blocks();
+        self.update_footer_position();
+        self.footer_container.set_visible(true);
+        self.scrim.set_visible(true);
+        self.container.set_visible(true);
+        self.clip_guard.on_open();
+    }
+
     pub fn show_message(&self, text: &str) {
         let (w, h) = self.last_card_size.get();
         if w > 0 {
@@ -606,6 +645,11 @@ impl JournalOverlay {
         self.cursor_full.set(0);
         self.clear_bar();
         *self.marker_glyph.borrow_mut() = None;
+        // Stale <hi> char ranges from the last Q&A page must not survive into a
+        // block-less buffer (loading / message / pending-passage): a later theme
+        // change calls apply_hi_color, which would paint the OLD page's ranges
+        // over arbitrary spans of the new text.
+        self.hi_ranges.borrow_mut().clear();
     }
 
     pub fn hide(&self) {
@@ -693,11 +737,7 @@ impl JournalOverlay {
     /// overlay uses (`GlossOverlay::apply_font`), since this gtk4 version's
     /// per-widget CSS provider path is the deprecated `style_context()` API.
     fn apply_font(&self) {
-        let family = self.font_family.borrow().clone();
-        if family.is_empty() {
-            return;
-        }
-        let font_str = format!("{} {}", family, self.font_size.get());
+        let font_str = format!("{} {}", self.font_family.borrow(), self.font_size.get());
         crate::ui::apply_font_to_views(
             &[&self.view, self.ask_host.input()],
             &font_str,
@@ -715,67 +755,18 @@ impl JournalOverlay {
 
     /// Set the page-marker glyph's dim color (theme `dim_fg`) and repaint the bar.
     pub fn set_marker_color(&self, hex: &str) {
-        if let Some(rgb) = crate::ui::gloss_util::parse_hex_color(hex) {
-            *self.marker_color.borrow_mut() = rgb;
-            self.bar_drawing.queue_draw();
-        }
+        crate::ui::set_rc_color(hex, &self.marker_color, &self.bar_drawing);
     }
 
     /// Set the inset panel tint color (theme `panel_bg`) and repaint the panel.
     pub fn set_panel_color(&self, hex: &str) {
-        if let Some(rgb) = crate::ui::gloss_util::parse_hex_color(hex) {
-            *self.panel_color.borrow_mut() = rgb;
-            self.panel_drawing.queue_draw();
-        }
+        crate::ui::set_rc_color(hex, &self.panel_color, &self.panel_drawing);
     }
 
     /// Set the selection accent-bar color (theme `root_color`) and repaint the
     /// bar — matches the gloss overlay's theme-wired bar.
     pub fn set_bar_color(&self, hex: &str) {
-        if let Some(rgb) = crate::ui::gloss_util::parse_hex_color(hex) {
-            *self.bar_color.borrow_mut() = rgb;
-            self.bar_drawing.queue_draw();
-        }
-    }
-
-    /// Re-apply the `journal-hi` highlight tag over the stored `hi_ranges` with
-    /// the theme background. No-op when there are no ranges.
-    /// Style the leading `Q:` line as a header (small, bold, dim, extra space
-    /// below) — mirroring the gloss `.gloss-header` speaker-label look — when the
-    /// current page begins with the question. Answer pages (no `Q:` line) are
-    /// untouched. Uses the marker color (theme `dim_fg`) as the header foreground.
-    fn apply_qa_header(&self, body: &str) {
-        let Some(first_line) = body.split('\n').next() else {
-            return;
-        };
-        if !first_line.trim_start().starts_with("Q:") {
-            return;
-        }
-        let buffer = self.view.buffer();
-        let table = buffer.tag_table();
-        if table.lookup("journal-qa-header").is_none() {
-            let (r, g, b) = *self.marker_color.borrow();
-            table.add(
-                &gtk4::TextTag::builder()
-                    .name("journal-qa-header")
-                    .weight(700)
-                    .scale(0.9)
-                    .foreground_rgba(&gtk4::gdk::RGBA::new(r as f32, g as f32, b as f32, 1.0))
-                    .pixels_below_lines(10)
-                    .build(),
-            );
-        }
-        if let Some(tag) = table.lookup("journal-qa-header") {
-            // Keep the color live with the theme (marker_color = dim_fg).
-            let (r, g, b) = *self.marker_color.borrow();
-            tag.set_foreground_rgba(Some(&gtk4::gdk::RGBA::new(
-                r as f32, g as f32, b as f32, 1.0,
-            )));
-            let si = buffer.start_iter();
-            let mut ei = buffer.start_iter();
-            ei.forward_chars(first_line.chars().count() as i32);
-            buffer.apply_tag(&tag, &si, &ei);
-        }
+        crate::ui::set_rc_color(hex, &self.bar_color, &self.bar_drawing);
     }
 
     fn apply_hi_color(&self) {
@@ -875,6 +866,11 @@ impl JournalOverlay {
         self.ask_host.feed_vim_key(key)
     }
 
+    /// Paste system-clipboard text into the ask card's vim engine.
+    pub fn paste_ask_text(&self, text: &str) {
+        self.ask_host.paste_text(text);
+    }
+
     // ---- in-place vim editor (the `e` bind) ----
 
     /// Enter the in-place vim editor: build the `Q: …\n\n<answer>` buffer, seed
@@ -924,6 +920,16 @@ impl JournalOverlay {
         };
         self.mirror_engine();
         action
+    }
+
+    /// Paste system-clipboard text into the in-place vim editor and mirror.
+    pub fn paste_edit_text(&self, text: &str) {
+        {
+            let mut guard = self.vim_engine.borrow_mut();
+            let Some(engine) = guard.as_mut() else { return };
+            let _ = engine.paste_text(text);
+        }
+        self.mirror_engine();
     }
 
     /// The current edited Q&A, parsed back from the engine buffer.
@@ -1062,7 +1068,7 @@ impl JournalOverlay {
 
     /// Measure each full paragraph and pack them into `pages` (whole blocks per
     /// page). Heights come from a standalone `pango::Layout` at the view's font +
-    /// wrap width, plus the per-paragraph line spacing the rendered view adds, so
+    /// wrap width, plus the real blank-line gap between paragraphs, so
     /// pagination doesn't over-pack. No widget allocation — no settle race.
     fn repaginate(&self) {
         let paras = self.all_paragraphs.borrow();
@@ -1083,27 +1089,36 @@ impl JournalOverlay {
             - self.view.right_margin())
         .max(1);
         let pctx = self.view.pango_context();
-        // The rendered TextView is consistently TALLER than a standalone
-        // `pango::Layout` of the same text+width: it adds per-line leading and
-        // paragraph spacing the bare layout omits (measured: real render ≈ 1.13×
-        // the layout height for stacked prose paragraphs). Under-counting packed
-        // one block too many; the viewport then clipped its tail and the next page
-        // resumed past it — the paragraph-split / dropped-text bug. So
-        // CONSERVATIVELY over-estimate: ×1.15 slack on the text height (the same
-        // multiplier the gloss verse blocks use) PLUS the real blank-line height
-        // between paragraphs (`slice.join("\n\n")` renders one empty line per
-        // gap). Erring tall only ever yields an extra page — it never splits a
-        // paragraph, satisfying "keep whole blocks fully visible for TTS".
+        // A rendered page is `slice.join("\n\n")` — each paragraph plus one
+        // blank line per gap — and the view has NO per-line spacing
+        // (apply_font_to_views sets only a font tag), so a standalone
+        // `pango::Layout` at the same font + wrap width measures the render
+        // exactly: page height = Σ text_h + (k-1)·line_h. Charging every block
+        // text_h + line_h therefore over-counts by exactly ONE line_h per page
+        // (the last block's gap never renders) — deliberate headroom, so
+        // packing can never under-count and clip a paragraph tail (the old
+        // paragraph-split / dropped-text bug). A ×1.15 slack used to sit on
+        // top of this from when the view added per-line leading; with that
+        // spacing gone it was pure over-count (~15% of every paragraph) and
+        // UNDERFILLED pages — a fitting paragraph got pushed to the next page
+        // (Cym 1.4 Q&A id 14; JOURNAL-PAGINATE log confirmed the estimates
+        // summed well under the budget while a block still moved at tighter
+        // geometries).
         let line_h = crate::ui::pagination::measure_text_height(&pctx, "Mg", size, &family, wrap_w);
         let heights: Vec<i32> = paras
             .iter()
             .map(|p| {
                 let text_h =
                     crate::ui::pagination::measure_text_height(&pctx, p, size, &family, wrap_w);
-                (text_h as f32 * 1.15) as i32 + line_h
+                text_h + line_h
             })
             .collect();
         drop(paras);
+        // Budget + per-block estimates for diagnosing pack decisions from a run.
+        crate::log_fmt!(
+            "JOURNAL-PAGINATE: page_h={} wrap_w={} line_h={} font='{} {}' heights={:?}",
+            self.page_height(), wrap_w, line_h, family, size, heights
+        );
         *self.pages.borrow_mut() = crate::ui::pagination::paginate(&heights, self.page_height());
     }
 
@@ -1140,8 +1155,10 @@ impl JournalOverlay {
         // Paint the `<hi>` highlight AFTER set_text + font (read-mode only; the
         // editor sets raw text and must not re-apply these read-mode ranges).
         self.apply_hi_color();
-        // Style the leading `Q:` line as a header (gloss look), first page only.
-        self.apply_qa_header(&body);
+        // The leading `Q:` line renders as PLAIN body text — no header tag. It
+        // used to get a bold/0.9-scale/dim header treatment, but the tag only
+        // landed on the first render (page turns skipped it), and the user
+        // prefers the plain look: same weight and size as the answer.
         // Floating page marker (⌄ more / • end), bottom-center of the viewport.
         self.update_page_marker(pidx, n_pages);
         // The vadjustment stays at top — the page fits, nothing scrolls.
@@ -1223,6 +1240,31 @@ impl JournalOverlay {
     }
     pub fn cursor_prev_block(&self) {
         self.step_full_cursor(-1);
+    }
+
+    /// True when the current render has navigable paragraph blocks (a Q&A
+    /// page). False for the block-less renders (loading / message / pending
+    /// passage source), where j/k fall back to `scroll_view`.
+    pub fn has_nav_blocks(&self) -> bool {
+        !self.all_paragraphs.borrow().is_empty()
+    }
+
+    /// Raw viewport scroll for BLOCK-LESS renders — the pending-passage source
+    /// card renders the whole selection unpaginated, so without this a
+    /// selection taller than the card was keyboard-unreachable (j/k no-op with
+    /// no blocks). Steps ~3 line-heights; the BottomClipGuard's persistent
+    /// value_changed recompute masks the partial row at the viewport bottom.
+    /// Mirrors the gloss overlay's loading-card scroll fallback.
+    pub fn scroll_view(&self, delta: i32) {
+        let adj = self.scrolled.vadjustment();
+        let ctx = self.view.pango_context();
+        let metrics = ctx.metrics(None, None);
+        let line = ((metrics.ascent() + metrics.descent()) as f64
+            / gtk4::pango::SCALE as f64)
+            .max(12.0);
+        let target = (adj.value() + line * 3.0 * delta as f64)
+            .clamp(adj.lower(), (adj.upper() - adj.page_size()).max(adj.lower()));
+        adj.set_value(target);
     }
     /// `gg`/`G`: jump the cursor to the first/last paragraph of the whole Q&A
     /// (turning to its page).

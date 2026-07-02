@@ -177,10 +177,6 @@ pub struct GlossOverlay {
     /// `gloss-hi` tag in `apply_font`. Defaults to `DEFAULT_HIGHLIGHT_BG` until
     /// the app threads the theme color via `set_highlight_color`.
     highlight_bg: RefCell<String>,
-    /// Theme `dim_fg` hex, threaded by `set_marker_color`. Passed as the
-    /// speaker/verse header color so the source text dims (like the journal Q&A
-    /// question) instead of rendering in the full body foreground.
-    dim_fg: RefCell<String>,
     /// Char ranges of `<hi>` highlights in the CURRENT synopsis buffer (the
     /// set_text path doesn't go through `populate_verse_buffer`, so the overlay
     /// re-applies the `gloss-hi` tag here, like `synopsis_label_ranges`). Empty
@@ -304,7 +300,9 @@ impl GlossOverlay {
         // Inset-panel DrawingArea + its color cell (shared helper, audit #52). The
         // draw_func is wired inside; the caller sets it as the Overlay main child
         // and adds panel_drawing.queue_draw() to its scroll-repaint closure below.
-        let (panel_drawing, panel_color) = crate::ui::attach_overlay_panel(&gloss_view);
+        // body_indent 0: the gloss view's left_margin IS the column edge (the
+        // explication's +12 body indent is a per-tag margin, not the view's).
+        let (panel_drawing, panel_color) = crate::ui::attach_overlay_panel(&gloss_view, 0);
         let vim_block_line: crate::ui::VimBlankCursor = Rc::new(RefCell::new(None));
         let bar_x: Rc<RefCell<i32>> = Rc::new(RefCell::new((column_width as i32) / 8));
         let line_numbers: Rc<RefCell<Vec<LineNumber>>> = Rc::new(RefCell::new(Vec::new()));
@@ -482,7 +480,7 @@ impl GlossOverlay {
 
         let footer = crate::ui::footer::build_footer_row(
             text_margins as i32,
-            "J journal · Ctrl+j view jrnl",
+            "r journal · Ctrl+j/Ctrl+g view jrnl",
         );
         let footer_box = footer.container;
         let citation_label = footer.left;
@@ -584,7 +582,6 @@ impl GlossOverlay {
             vim_seed: RefCell::new(String::new()),
             vim_cursor_colors: RefCell::new((String::new(), String::new())),
             highlight_bg: RefCell::new(crate::ui::DEFAULT_HIGHLIGHT_BG.to_string()),
-            dim_fg: RefCell::new(String::new()), // set by set_marker_color at startup
             hi_ranges: RefCell::new(Vec::new()),
             pre_edit_family: RefCell::new(None),
         }
@@ -623,22 +620,15 @@ impl GlossOverlay {
     }
 
     /// Set the page-marker glyph's dim color (theme `dim_fg`) and repaint the bar.
-    /// Also stores the hex as the speaker/verse header color (so the source text
-    /// dims like the journal Q&A question). The change shows on the next render.
+    /// (The gloss speaker/verse header used to dim in this color too; it now
+    /// renders full ink — see render_gloss_page.)
     pub fn set_marker_color(&self, hex: &str) {
-        *self.dim_fg.borrow_mut() = hex.to_string();
-        if let Some(rgb) = parse_hex_color(hex) {
-            *self.marker_color.borrow_mut() = rgb;
-            self.bar_drawing.queue_draw();
-        }
+        crate::ui::set_rc_color(hex, &self.marker_color, &self.bar_drawing);
     }
 
     /// Set the inset tinted panel color (theme `panel_bg`) and repaint the panel.
     pub fn set_panel_color(&self, hex: &str) {
-        if let Some(rgb) = parse_hex_color(hex) {
-            *self.panel_color.borrow_mut() = rgb;
-            self.panel_drawing.queue_draw();
-        }
+        crate::ui::set_rc_color(hex, &self.panel_color, &self.panel_drawing);
     }
 
     /// Re-assert the `<hi>` highlight: paint the `gloss-hi` tag the stored theme
@@ -745,6 +735,16 @@ impl GlossOverlay {
         };
         self.mirror_engine();
         action
+    }
+
+    /// Paste system-clipboard text into the in-place vim editor and mirror.
+    pub fn paste_edit_text(&self, text: &str) {
+        {
+            let mut guard = self.vim_engine.borrow_mut();
+            let Some(engine) = guard.as_mut() else { return };
+            let _ = engine.paste_text(text);
+        }
+        self.mirror_engine();
     }
 
     /// The current editor buffer text (raw). Empty string when not editing.
@@ -1169,14 +1169,12 @@ impl GlossOverlay {
 
         // Render the passage through the SAME path as the gloss result's original
         // passage, so speaker small-caps + indented verse look identical.
-        // Pass dim_fg as the header (speaker/verse) color so the source text
-        // recedes like the journal Q&A question; the explication (para) stays
-        // full-ink (it reads dim_color, which stays None here).
-        let dim = self.dim_fg.borrow().clone();
-        let dim_opt = (!dim.is_empty()).then_some(dim.as_str());
+        // Speaker + verse render FULL ink like the explication (no header color:
+        // the user found the dimmed source too recessed) — the hang-indent alone
+        // sets the source apart. Matches render_gloss_page.
         let (ranges, _nums) = populate_gloss_buffer(
             &self.gloss_view, passage_doc, self.text_margins, bar_left, &[],
-            None, dim_opt,
+            None,
         );
         *self.bar_ranges.borrow_mut() = ranges;
         self.line_numbers.borrow_mut().clear();
@@ -1246,14 +1244,14 @@ impl GlossOverlay {
         // Reuse populate_verse_buffer (it builds the speaker/verse tags and
         // returns empty bar data for a source-only doc).
         let _ = populate_verse_buffer(
-            &self.echo_header_view, source_doc, self.text_margins, bar_left, &[], None, dim_color, None);
+            &self.echo_header_view, source_doc, self.text_margins, bar_left, &[], None, dim_color);
         self.echo_header_view.set_visible(true);
         self.echo_rule.set_visible(true);
 
         // Scrolling list: only the echoes. echo_lines/bar_ranges are now indexed
         // from the first echo (no source lines to offset past).
         let (ranges, nums, echo_lines) = populate_verse_buffer(
-            &self.gloss_view, echo_doc, self.text_margins, bar_left, &[], Some(selected), dim_color, None);
+            &self.gloss_view, echo_doc, self.text_margins, bar_left, &[], Some(selected), dim_color);
         *self.bar_ranges.borrow_mut() = ranges;
         *self.line_numbers.borrow_mut() = nums;
         *self.echo_lines.borrow_mut() = echo_lines;
@@ -1744,19 +1742,28 @@ impl GlossOverlay {
         }
         let family = self.font_family.borrow().clone();
         let size = self.font_size.get();
-        // Measure at the NARROWEST wrap width any block in this mode uses, so the
-        // height estimate over-counts (more wrapping → taller) rather than under —
-        // the safe direction for never clipping. Gloss speaker/verse/explication
-        // now all sit at `quote_speaker = quote_verse = bar_left + 12`
-        // (gloss_render.rs, aligned to the journal), so the deepest indent is +12.
-        // Subtract it in gloss mode; synopsis prose sits at the body margin.
+        // Measure each block at ITS OWN wrap width. A single mode-wide width is
+        // wrong in gloss mode because the two block kinds render at different
+        // indents: the quoted source verse hangs at `QUOTE_VERSE_INDENT` past
+        // the bar while the explication prose (the bulk of a gloss) sits at
+        // `QUOTE_BODY_INDENT`. Measuring explications at the verse's narrower
+        // width over-estimated their heights ~11% and pushed units that fit
+        // onto the next page (page underfill). Verse blocks keep the deep-indent
+        // width — their speaker/stage lines render shallower, so that direction
+        // still over-counts (safe; never clips). Synopsis prose sits at the
+        // body margin.
         let card_w = self.last_card_size.get().0;
         let left = self.gloss_view.left_margin();
-        let wrap_w = match self.paginated_mode.get() {
-            // bar_left == left in gloss mode; the text adds +12 on the left and the
-            // right margin is `left`.
-            PaginatedMode::Gloss => (card_w - 2 * left - 12).max(1),
-            PaginatedMode::Synopsis => (card_w - 2 * left).max(1),
+        // bar_left == left in gloss mode; the right margin is `left`.
+        let wrap_for = |kind: BlockKind| -> i32 {
+            let indent = match (self.paginated_mode.get(), kind) {
+                (PaginatedMode::Gloss, BlockKind::Source) => {
+                    crate::ui::gloss_render::QUOTE_VERSE_INDENT
+                }
+                (PaginatedMode::Gloss, _) => crate::ui::gloss_render::QUOTE_BODY_INDENT,
+                (PaginatedMode::Synopsis, _) => 0,
+            };
+            (card_w - 2 * left - indent).max(1)
         };
         let pctx = self.gloss_view.pango_context();
         let markups = self.gloss_block_markups.borrow();
@@ -1768,7 +1775,7 @@ impl GlossOverlay {
                     PaginatedMode::Gloss => markups.get(i).map(|s| s.as_str()),
                     PaginatedMode::Synopsis => None,
                 };
-                gloss_block_height(b, m, &pctx, &family, size, wrap_w)
+                gloss_block_height(b, m, &pctx, &family, size, wrap_for(b.kind))
             })
             .collect();
         drop(markups);
@@ -1941,12 +1948,10 @@ impl GlossOverlay {
             (body, slice)
         };
 
-        // Prose (explication) keeps the full foreground (the focus); the speaker +
-        // verse header recede in dim_fg (like the journal Q&A question). dim_fg is
-        // passed as the header color (speaker_accent slot); dim_color stays None so
-        // the prose is NOT dimmed.
-        let dim = self.dim_fg.borrow().clone();
-        let dim_opt = (!dim.is_empty()).then_some(dim.as_str());
+        // Speaker + verse header render FULL ink like the explication — no
+        // dim color (the user found the dimmed source too recessed). The
+        // bold/small-caps/0.9-scale header styling and the verse hang-indent
+        // alone set the quoted source apart from the prose.
         let (ranges, _nums) = populate_gloss_buffer(
             &self.gloss_view,
             &markup,
@@ -1954,7 +1959,6 @@ impl GlossOverlay {
             bar_left,
             &line_numbers,
             None,
-            dim_opt,
         );
         *self.bar_ranges.borrow_mut() = ranges;
         // Glosses do not show verse line numbers (those belong only to the main
@@ -2215,6 +2219,22 @@ impl GlossOverlay {
         self.bar_drawing.queue_draw();
     }
 
+    /// Bar start for a block span: walk upward over any speaker heading line(s)
+    /// directly above `start_line`, so the accent bar beside a Source block also
+    /// covers its speaker label. Block ranges themselves start at the first
+    /// verse line (`gloss_blocks` drops speaker tags from `display`, so
+    /// `rebuild_block_ranges_from` can't match the label); extending only the
+    /// DRAWN span keeps navigation/TTS block semantics untouched. Same
+    /// tag-sniffing `color_audio_blocks` uses to color the label with its turn.
+    fn bar_start_with_speaker(&self, start_line: i32) -> i32 {
+        let buffer = self.gloss_view.buffer();
+        let mut line = start_line;
+        while line > 0 && line_is_speaker(&buffer, line - 1) {
+            line -= 1;
+        }
+        line
+    }
+
     /// Move the left accent bar to the selected cursor block and repaint. No-op
     /// when there are no blocks. Logs the landing block so j/k/gg/G navigation
     /// stays verifiable from the dev log.
@@ -2230,6 +2250,9 @@ impl GlossOverlay {
             .find(|r| r.kind == kind && r.index == index)
             .map(|r| (r.start_line, r.end_line));
         if let Some((start_line, end_line)) = span {
+            // Extend BEFORE logging so the logged range matches the drawn bar
+            // (the dev-log/screen agreement the debug workflow relies on).
+            let start_line = self.bar_start_with_speaker(start_line);
             crate::log_fmt!(
                 "GLOSS-CURSOR: cursor#{} -> {:?}#{} bar lines [{}, {}]",
                 self.cursor_block.get(), kind, index, start_line, end_line
@@ -2259,6 +2282,8 @@ impl GlossOverlay {
         let (s, e) = visual_block_range(anchor.min(last), cursor);
         let start_line = blocks[s].start_line;
         let end_line = blocks[e].end_line;
+        drop(blocks);
+        let start_line = self.bar_start_with_speaker(start_line);
         *self.bar_ranges.borrow_mut() = vec![BarRange { start_line, end_line }];
         self.bar_drawing.queue_draw();
     }
@@ -2357,6 +2382,11 @@ impl GlossOverlay {
         key: crate::input::vim::VimKey,
     ) -> crate::input::vim::EditorAction {
         self.ask_host.feed_vim_key(key)
+    }
+
+    /// Paste system-clipboard text into the ask card's vim engine.
+    pub fn paste_ask_text(&self, text: &str) {
+        self.ask_host.paste_text(text);
     }
 
     pub fn ask_is_open(&self) -> bool {

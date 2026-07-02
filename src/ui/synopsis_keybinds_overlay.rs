@@ -22,6 +22,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("e", "edit synopsis in place (vim)"),
         ("v … H", "in editor: visual-select, H toggles highlight"),
         (":w / :q / R", "save · quit · ask-Claude rewrite (in editor)"),
+        ("Ctrl+v", "paste clipboard (in editor / prompts)"),
         ("u", "undo last edit (confirm)"),
     ]),
     ("Journal", &[

@@ -172,9 +172,9 @@ impl VimEngine {
     fn insert_str_at(&mut self, at: usize, text: &str) {
         let mut cs: Vec<char> = self.buffer.chars().collect();
         let at = at.min(cs.len());
-        for (k, ch) in text.chars().enumerate() {
-            cs.insert(at + k, ch);
-        }
+        // splice shifts the tail once — a per-char Vec::insert made a large
+        // clipboard paste O(m·n).
+        cs.splice(at..at, text.chars());
         self.buffer = cs.into_iter().collect();
     }
 
@@ -896,6 +896,70 @@ impl VimEngine {
         self.out(true, EditorAction::Nop)
     }
 
+    /// Paste system-clipboard text (the GTK layer reads the clipboard — this
+    /// engine is pure — and hands the text in). Insert mode: inserted at the
+    /// cursor as if typed (recorded for dot-repeat). Normal mode: seeds the
+    /// unnamed register and behaves as a charwise `p` (so `u` undoes it and a
+    /// later `p`/`.` repeats it). Visual/VisualLine: replaces the selection
+    /// (recorded as a `p` for dot-repeat). While the `:` command line is open
+    /// the paste is ignored.
+    ///
+    /// The paste ARRIVES OUTSIDE `handle_key` (the GTK layer intercepts Ctrl+v
+    /// before the key feed), so any half-typed pending state — an armed
+    /// operator (`d`), find (`f`), replace (`r`), or register (`"`) prefix —
+    /// must be cancelled here, exactly as Esc would: otherwise the key AFTER
+    /// the paste resolves the stale prefix (e.g. `d` Ctrl+v `w` deleted a word).
+    pub fn paste_text(&mut self, text: &str) -> Outcome {
+        if text.is_empty() || self.cmdline.is_some() {
+            return self.out(false, EditorAction::Nop);
+        }
+        match self.mode {
+            Mode::Insert => {
+                if let Some(rec) = self.recording.as_mut() {
+                    rec.extend(text.chars().map(VimKey::Char));
+                }
+                self.insert_str_at(self.cursor, text);
+                self.cursor += text.chars().count();
+                self.out(true, EditorAction::Nop)
+            }
+            Mode::Normal => {
+                self.pending = Pending::None;
+                self.pending_register = None;
+                self.registers.yank(None, text.to_string(), false);
+                self.do_put(true)
+            }
+            Mode::Visual | Mode::VisualLine => {
+                let was_linewise = self.mode == Mode::VisualLine;
+                self.pending = Pending::None;
+                self.pending_register = None;
+                self.registers.yank(None, text.to_string(), false);
+                // Record as a charwise put so `.` repeats the paste (from the
+                // unnamed register) instead of replaying the previous change.
+                self.begin_change(&[VimKey::Char('p')]);
+                let mut removed_trailing_nl = false;
+                if let Some(r) = self.selection() {
+                    removed_trailing_nl = self.delete_range(r).ends_with('\n');
+                }
+                self.visual_anchor = None;
+                self.mode = Mode::Normal;
+                // A linewise (V) selection consumed its trailing newline; restore
+                // it so the pasted text stays its own line (vim's Vp) instead of
+                // gluing onto the following line.
+                let body: std::borrow::Cow<str> =
+                    if was_linewise && removed_trailing_nl && !text.ends_with('\n') {
+                        format!("{text}\n").into()
+                    } else {
+                        text.into()
+                    };
+                self.insert_str_at(self.cursor, &body);
+                self.cursor += body.chars().count().saturating_sub(1);
+                self.clamp_normal();
+                self.finish_recording();
+                self.out(true, EditorAction::Nop)
+            }
+        }
+    }
+
     // ---- undo / redo / dot ----
 
     fn do_undo(&mut self) -> Outcome {
@@ -1522,5 +1586,96 @@ mod tests {
         assert_eq!(e.buffer(), "alpha <hi>beta</hi>");
         e.feed("u"); // undo
         assert_eq!(e.buffer(), "alpha beta", "undo restores pre-highlight text");
+    }
+
+    // clipboard paste (paste_text — the GTK layer reads the clipboard)
+
+    #[test]
+    fn paste_in_insert_mode_inserts_at_cursor() {
+        let mut e = eng("ad");
+        e.feed("a"); // insert after 'a'
+        e.paste_text("bc");
+        assert_eq!(e.buffer(), "abcd");
+        assert_eq!(e.mode(), Mode::Insert);
+        e.feed("\x1b");
+        // Cursor sits after the pasted text while inserting.
+        assert_eq!(e.buffer(), "abcd");
+    }
+
+    #[test]
+    fn paste_in_normal_mode_puts_after_cursor_and_undoes() {
+        let mut e = eng("ab");
+        e.paste_text("XY"); // after 'a'
+        assert_eq!(e.buffer(), "aXYb");
+        e.feed("u");
+        assert_eq!(e.buffer(), "ab", "one undo step reverts the paste");
+        // The pasted text also lands in the unnamed register: p repeats it.
+        e.feed("p");
+        assert_eq!(e.buffer(), "aXYb");
+    }
+
+    #[test]
+    fn paste_in_visual_mode_replaces_selection() {
+        let mut e = eng("hello world");
+        e.feed("w");  // cursor on 'w'
+        e.feed("v$"); // select "world"
+        e.paste_text("vim");
+        assert_eq!(e.buffer(), "hello vim");
+        assert_eq!(e.mode(), Mode::Normal);
+    }
+
+    #[test]
+    fn paste_multiline_in_insert_mode() {
+        let mut e = eng("");
+        e.feed("i");
+        e.paste_text("one\ntwo");
+        assert_eq!(e.buffer(), "one\ntwo");
+    }
+
+    #[test]
+    fn paste_cancels_pending_operator() {
+        // The paste arrives OUTSIDE handle_key, so an armed `d` must be
+        // cancelled by the paste — the following motion must MOVE, not delete.
+        let mut e = eng("foo bar");
+        e.feed("d"); // Pending::Operator(Delete)
+        e.paste_text("X");
+        assert_eq!(e.buffer(), "fXoo bar");
+        e.feed("w"); // must be a plain motion now
+        assert_eq!(e.buffer(), "fXoo bar", "w after paste must not delete");
+    }
+
+    #[test]
+    fn paste_cancels_pending_register_prefix() {
+        // `"` then Ctrl+v: the armed register prefix must not survive the
+        // paste — the NEXT key must act as a command, not be eaten as a
+        // register name.
+        let mut e = eng("abc");
+        e.feed("\""); // Pending::Register
+        e.paste_text("Z"); // put after 'a' → "aZbc", cursor on Z
+        assert_eq!(e.buffer(), "aZbc");
+        e.feed("x"); // must DELETE Z, not resolve as a register name
+        assert_eq!(e.buffer(), "abc", "x after paste must delete, not be eaten");
+    }
+
+    #[test]
+    fn visual_line_paste_keeps_its_own_line() {
+        // Vp on "TWO" must yield "one\nX\nthree", not glue X onto "three".
+        let mut e = eng("one\nTWO\nthree");
+        e.feed("j");
+        e.feed("V");
+        e.paste_text("X");
+        assert_eq!(e.buffer(), "one\nX\nthree");
+    }
+
+    #[test]
+    fn visual_paste_dot_repeats_the_paste() {
+        let mut e = eng("hello world");
+        e.feed("w");
+        e.feed("v$");
+        e.paste_text("vim");
+        assert_eq!(e.buffer(), "hello vim");
+        e.feed("0");
+        e.feed("."); // repeats as a charwise put of the unnamed register
+        assert_eq!(e.buffer(), "hvimello vim");
     }
 }

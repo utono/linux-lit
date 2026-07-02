@@ -44,10 +44,14 @@ fn first_passage_line(source_markup: &str) -> Option<String> {
 
 /// Passage context captured from a visual selection, held until the ask-card
 /// submit fires (at which point `ask_claude` reads it and clears it).
-/// The passage coordinates (div1/div2/start/end) live in `JournalBand::Passage`;
-/// only `source_text` (the `<speaker>/<verse>` markup) needs separate storage.
+/// `band` is the Passage band the ask was started on: a cancelled ask leaves
+/// the pending value behind (close_prompt keeps it so `r` can re-ask on the
+/// same band), so every consumer MUST check `band` against the current
+/// `journal_band` — otherwise a stale pending renders (or, worse, persists to
+/// lit.db) as a DIFFERENT passage's source.
 pub struct PendingPassage {
     pub source_text: String,
+    pub band: JournalBand,
 }
 
 /// Grouped state for the journal feature (band pages + viewer index + the
@@ -175,7 +179,7 @@ pub(crate) fn render_current(s: &mut AppState) {
     let work_abbrev = s
         .current_work
         .as_ref()
-        .map(|w| crate::app::base_work_abbrev(&w.abbrev).to_string())
+        .map(|w| w.canonical_abbrev.clone())
         .unwrap_or_default();
 
     let conn = crate::db::queries::open_db().ok();
@@ -210,6 +214,32 @@ pub(crate) fn render_current(s: &mut AppState) {
     // correct. `overlay_card_size` mirrors what the reader's card actually shows.
     let (cw, h) = crate::app::layout::overlay_card_size(&s);
     let footer_left = footer_left_text(&work_abbrev, s.journal_band.clone());
+
+    // A passage ask in flight (visual selection → Journal Q&A) on a band with
+    // no stored pages yet: render the SELECTED passage source in place of the
+    // bare "No pages yet — press r to ask." placeholder, so the reader sees the
+    // text they are asking about while the ask card is open. `pending_passage`
+    // is consumed by `ask_claude` on submit; stored pages render below as plain
+    // Q&As (their source intentionally not reproduced). The band check is the
+    // staleness guard: a CANCELLED ask leaves pending_passage behind (so `r`
+    // can re-ask on its own band), and without it the stale source rendered on
+    // any other empty Passage band (e.g. after D deletes that band's last Q&A).
+    if count == 0
+        && s.journal
+            .pending_passage
+            .as_ref()
+            .is_some_and(|pp| pp.band == s.journal_band)
+    {
+        let doc = s
+            .journal
+            .pending_passage
+            .as_ref()
+            .map(|pp| pp.source_text.clone())
+            .unwrap_or_default();
+        s.journal_overlay.show_passage_source(&footer_left, &doc, cw, h);
+        s.journal.pages = pages;
+        return;
+    }
 
     // Every Q&A — including passage pages — renders as a plain Q&A. The passage
     // source block is intentionally NOT shown: the highlighted source stays in
@@ -323,7 +353,7 @@ pub(crate) fn nav_page(state: &Rc<RefCell<AppState>>, delta: i32) {
     let work_abbrev = s
         .current_work
         .as_ref()
-        .map(|w| crate::app::base_work_abbrev(&w.abbrev).to_string())
+        .map(|w| w.canonical_abbrev.clone())
         .unwrap_or_default();
     let all = crate::db::queries::open_db()
         .ok()
@@ -349,7 +379,7 @@ pub(crate) fn nav_scene(state: &Rc<RefCell<AppState>>, delta: i32) {
     let work_abbrev = s
         .current_work
         .as_ref()
-        .map(|w| crate::app::base_work_abbrev(&w.abbrev).to_string())
+        .map(|w| w.canonical_abbrev.clone())
         .unwrap_or_default();
     let scenes = crate::db::queries::open_db()
         .ok()
@@ -415,8 +445,12 @@ pub(crate) fn begin_passage_ask(
     let mut s = state.borrow_mut();
     s.journal.return_pos = Some((s.current_line, s.page_top_line));
     s.journal.prompt_mode = JournalPromptMode::Ask;
-    s.journal.pending_passage = Some(PendingPassage { source_text });
-    s.journal_band = JournalBand::Passage { div1, div2, start, end };
+    let band = JournalBand::Passage { div1, div2, start, end };
+    s.journal.pending_passage = Some(PendingPassage {
+        source_text,
+        band: band.clone(),
+    });
+    s.journal_band = band;
     s.journal.page_index = 0;
     s.input_mode = crate::app::InputMode::JournalOverlay;
     render_current(&mut s);
@@ -811,7 +845,7 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
             Some(w) => (
                 w.title.clone(),
                 w.author.clone(),
-                crate::app::base_work_abbrev(&w.abbrev).to_string(),
+                w.canonical_abbrev.clone(),
                 w.work_type.clone(),
             ),
             None => return,
@@ -848,15 +882,18 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
 
     state_rc.borrow().journal_overlay.show_loading(question);
 
-    // For a Passage band, consume pending_passage (take it so the Option is
-    // cleared after use — defensive hygiene; the guard above makes it
-    // harmless but the field should not linger after it is read).
+    // For a Passage band, consume pending_passage — but ONLY when it belongs
+    // to THIS band. A cancelled ask leaves a stale pending behind; using it
+    // here would embed (and persist via save_passage_page) a DIFFERENT
+    // passage's source under this band. A stale mismatch is dropped (take())
+    // either way so it cannot linger further.
     let passage_source_text: String = if matches!(band, JournalBand::Passage { .. }) {
         state_rc
             .borrow_mut()
             .journal
             .pending_passage
             .take()
+            .filter(|pp| pp.band == band)
             .map(|pp| pp.source_text)
             .unwrap_or_default()
     } else {
@@ -966,7 +1003,7 @@ fn populate_and_show_picker(s: &mut AppState) -> bool {
     let work_abbrev = s
         .current_work
         .as_ref()
-        .map(|w| crate::app::base_work_abbrev(&w.abbrev).to_string())
+        .map(|w| w.canonical_abbrev.clone())
         .unwrap_or_default();
     let pages = crate::db::queries::open_db()
         .ok()
@@ -1058,7 +1095,7 @@ pub(crate) fn confirm_picker(state: &Rc<RefCell<AppState>>) {
     s.input_mode = InputMode::JournalOverlay;
     // Confirming always reveals the overlay (land_on_page -> render_current ->
     // show_page), so the reader-initiated flag has done its job. Clear it but
-    // KEEP return_pos — closing the overlay later (Ctrl+j) restores the reader.
+    // KEEP return_pos — closing the overlay later (Esc) restores the reader.
     s.journal.picker_from_reader = false;
 
     let Some(idx) = selected else {
@@ -1411,8 +1448,13 @@ pub(crate) fn view_gloss_from_journal(state: &Rc<RefCell<AppState>>) {
             }
         };
 
+        // Glosses are STORED under the canonical base abbrev, so look them up
+        // the same way — every gloss path uses `Work.canonical_abbrev` or a
+        // variant edition misses its own gloss and toasts "No gloss for this
+        // passage" (the recurring lookup-mismatch bug class; see
+        // project_gloss_lookup_normalize_abbrev).
         let work_abbrev = match s.current_work.as_ref() {
-            Some(w) => crate::app::base_work_abbrev(&w.abbrev).to_string(),
+            Some(w) => w.canonical_abbrev.clone(),
             None => return,
         };
 
@@ -1506,10 +1548,11 @@ pub(crate) fn view_journal_from_gloss(state: &Rc<RefCell<AppState>>) {
                 return;
             }
         };
-        let work_abbrev = crate::app::base_work_abbrev(
-            s.current_work.as_ref().map(|w| w.abbrev.as_str()).unwrap_or(""),
-        )
-        .to_string();
+        let work_abbrev = s
+            .current_work
+            .as_ref()
+            .map(|w| w.canonical_abbrev.clone())
+            .unwrap_or_default();
         (
             work_abbrev,
             ctx.start_citation.clone(),

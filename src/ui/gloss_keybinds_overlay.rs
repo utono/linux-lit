@@ -28,13 +28,14 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("e", "edit gloss in place (vim)"),
         ("v … H", "in editor: visual-select, H toggles highlight"),
         (":w / :q / R", "save · quit · ask-Claude rewrite (in editor)"),
+        ("Ctrl+v", "paste clipboard (in editor / prompts)"),
         ("u", "undo last edit (confirm)"),
         ("D", "delete current gloss"),
         ("c", "copy gloss id"),
     ]),
     ("Journal", &[
         ("r", "new journal Q&A from passage"),
-        ("Ctrl+j", "view journal for passage"),
+        ("Ctrl+j / Ctrl+g", "view journal for passage"),
         ("Alt+g", "glosses picker"),
     ]),
     ("View", &[

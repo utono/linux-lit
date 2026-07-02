@@ -557,18 +557,14 @@ impl GlossContext {
     }
 }
 
-/// Normalize a work abbrev for gloss storage/lookup by stripping the `-Amb`
-/// (Ambrose-edition) suffix, so a base work and its `-Amb` companion share the
-/// same gloss rows. See `docs/plans/2026-04-29-glossing-design.md`.
-pub fn normalize_abbrev(abbrev: &str) -> &str {
-    abbrev.strip_suffix("-Amb").unwrap_or(abbrev)
-}
-
 pub fn build_context(work: &Work, lines: &[Line]) -> Option<GlossContext> {
     if lines.is_empty() {
         return None;
     }
-    let base_abbrev = normalize_abbrev(&work.abbrev);
+    // Store/cite under the canonical base abbrev so glosses are shared across
+    // ALL editions of a work (`Cym`/`Cym-Amb`/`Cym-BBC`). Resolved at work
+    // load by `db::queries::canonical_work_abbrev`.
+    let base_abbrev = work.canonical_abbrev.as_str();
     let first = lines.first().unwrap();
     let last = lines.last().unwrap();
     let start_citation = crate::db::models::citation(base_abbrev, first.div1, first.div2, first.line_in_div);
@@ -613,7 +609,7 @@ pub fn build_context_for_type(work: &Work, lines: &[Line], gloss_type: &str) -> 
     if lines.is_empty() {
         return None;
     }
-    let base_abbrev = normalize_abbrev(&work.abbrev);
+    let base_abbrev = work.canonical_abbrev.as_str();
     let first = lines.first().unwrap();
     let last = lines.last().unwrap();
     let start_citation = crate::db::models::citation(base_abbrev, first.div1, first.div2, first.line_in_div);
@@ -814,31 +810,32 @@ fn extract_echo_quote(line: &str) -> String {
 ///
 /// Ambiguity guard: a citation is only returned when the quote resolves to a
 /// SINGLE distinct `(work_abbrev, div1, div2)` (excluding the source work and
-/// any `-Amb` edition). If the phrase appears in more than one distinct
-/// work/scene — a reused line, or a short quote — the citation would be a guess,
-/// so we return `None` and the caller flags the gloss `(unverified)`. The fuzzy
-/// substring branch is gone entirely.
+/// every variant edition of it). If the phrase appears in more than one
+/// distinct work/scene — a reused line, or a short quote — the citation would
+/// be a guess, so we return `None` and the caller flags the gloss
+/// `(unverified)`. The fuzzy substring branch is gone entirely.
 fn lookup_citation(
     conn: &rusqlite::Connection,
     quote: &str,
     source_work: &str,
 ) -> Option<String> {
-    let base_source = normalize_abbrev(source_work);
+    let base_source = crate::db::queries::canonical_work_abbrev(conn, source_work);
     let normalized = crate::text_file_map::normalize(quote);
     if normalized.is_empty() {
         return None;
     }
 
     // Collect the DISTINCT (work, scene) tuples this normalized quote matches,
-    // excluding the source work and its -Amb companion. More than one ⇒
-    // ambiguous ⇒ no authoritative citation.
-    //   ?2 = base abbrev; ?3 = the raw source_work in case it is already the
-    //   -Amb form (so both the base and -Amb editions of the source are excluded).
+    // excluding the source work's canonical base and every `base-*` edition
+    // (variants share the base's text, so any of them would otherwise "cite"
+    // the quote back at itself). `-Amb` editions of OTHER works are excluded
+    // too — they duplicate their base's lines.
+    //   ?2 = canonical base abbrev; ?3 = its variant-prefix LIKE pattern.
     let mut stmt = conn
         .prepare(
             "SELECT DISTINCT work_abbrev, div1, div2 FROM line_mapping \
              WHERE normalized_text = ?1 \
-               AND work_abbrev != ?2 AND work_abbrev != ?3 \
+               AND work_abbrev != ?2 AND work_abbrev NOT LIKE ?3 \
                AND work_abbrev NOT LIKE '%-Amb'",
         )
         .ok()?;
@@ -846,9 +843,10 @@ fn lookup_citation(
     // dropping a row: a dropped row could collapse an AMBIGUOUS multi-match into
     // an apparent unique match and emit a wrong citation — the exact failure
     // this hardening prevents.
+    let variant_pattern = format!("{base_source}-%");
     let matches: Vec<(String, i64, i64)> = stmt
         .query_map(
-            rusqlite::params![normalized, base_source, source_work],
+            rusqlite::params![normalized, base_source, variant_pattern],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .ok()?
