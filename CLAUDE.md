@@ -40,6 +40,15 @@ When fixing bugs, **always read the log first** before proposing changes:
 cat ~/utono/linux-lit/linux-lit-dev.log
 ```
 
+### GTK/GLib runtime warnings go to stderr, not the app log
+
+The app's `linux-lit-dev.log` only holds `log_fmt!()` lines. **GLib/GTK
+diagnostics** — `GLib-GObject-CRITICAL`, `Gtk-WARNING`, `g_object_unref`
+assertions, GTK abort backtraces — are printed to the process **stderr**.
+Capture them with `cargo run 2>&1 | tee ~/utono/linux-lit/linux-lit-dev-stderr.log`.
+To investigate them (separating GLib criticals from cargo dead-code noise and
+proposing fixes), use the **`check-stderr-log`** skill.
+
 ## Playback Sync Bugs — identify the PLAYING work FIRST
 
 For ANY playback-sync bug (highlight jumps to the wrong line, seeks to the wrong

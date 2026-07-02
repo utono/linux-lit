@@ -34,8 +34,8 @@ const fn bare(unshifted: &'static str, shifted: &'static str, action: &'static s
 const NUMBER_ROW: &[KeyDef] = &[
     ub("$", "~"),
     bare("+", "1", "toggle speed"),
-    key("[", "2", "prev scene", "2: prev scene", &[("M-[", "col layout")]),
-    key("{", "3", "next scene", "3: next scene", &[]),
+    key("[", "2", "prev ch", "2: prev ch", &[("M-[", "col layout")]),
+    key("{", "3", "next ch", "3: next ch", &[]),
     key("(", "4", "prev bkmk", "4: prev ch", &[]),
     key("&", "5", "next bkmk", "5: next ch", &[]),
     ub("=", "6"),

@@ -258,10 +258,12 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("m"), Action::ToggleBookmark),
         (KeyCombo::ctrl("c"), Action::SetChapter),
         (KeyCombo::ctrl("e"), Action::ShowEchoesBcp),
-        (KeyCombo::plain("2"), Action::JumpToPrevScene),
-        (KeyCombo::shift("2"), Action::JumpToPrevScene),
-        (KeyCombo::plain("3"), Action::JumpToNextScene),
-        (KeyCombo::shift("3"), Action::JumpToNextScene),
+        // `2` duplicates `}` (braceright) / `4` — jump to the previous chapter.
+        (KeyCombo::plain("2"), Action::JumpToPrevChapter),
+        (KeyCombo::shift("2"), Action::JumpToPrevChapter),
+        // `3` duplicates `]` (bracketright) / `5` — jump to the next chapter.
+        (KeyCombo::plain("3"), Action::JumpToNextChapter),
+        (KeyCombo::shift("3"), Action::JumpToNextChapter),
         (KeyCombo::ctrl("period"), Action::OpenBookmarkPicker),
     ]
 }
@@ -465,8 +467,8 @@ mod tests {
             km.lookup("bracketleft", false, false, false),
             Some(Action::JumpToPrevScene),
         );
-        assert_eq!(km.lookup("2", false, true, false), Some(Action::JumpToPrevScene));
-        assert_eq!(km.lookup("3", false, true, false), Some(Action::JumpToNextScene));
+        assert_eq!(km.lookup("2", false, true, false), Some(Action::JumpToPrevChapter));
+        assert_eq!(km.lookup("3", false, true, false), Some(Action::JumpToNextChapter));
         assert_eq!(km.lookup("braceleft", false, false, false), Some(Action::JumpToNextScene));
         // Shift+; (the shifted colon glyph) toasts the current act/scene or
         // chapter.
