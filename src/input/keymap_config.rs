@@ -243,9 +243,11 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("bracketleft"), Action::JumpToPrevScene),
         (KeyCombo::plain("braceleft"), Action::JumpToNextScene),
         (KeyCombo::plain("C"), Action::ShowCurrentChapter),
-        (KeyCombo::plain("semicolon"), Action::ShowCurrentChapter),
         // Bookmarks (the SHIFTED 2/3 glyphs on the bracketleft/braceleft keys
-        // keep working as aliases of `(`/`&`)
+        // keep working as aliases of `(`/`&`; `;`/`'` are home-region aliases —
+        // `;` displaced ShowCurrentChapter, which keeps `C`)
+        (KeyCombo::plain("semicolon"), Action::PrevBookmark),
+        (KeyCombo::plain("apostrophe"), Action::NextBookmark),
         (KeyCombo::plain("m"), Action::ToggleBookmark),
         (KeyCombo::ctrl("c"), Action::SetChapter),
         (KeyCombo::ctrl("e"), Action::ShowEchoesBcp),
@@ -289,7 +291,8 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::alt("backslash"), Action::ToggleVocabHighlight),
         (KeyCombo::ctrl_shift("G"), Action::OpenLastGloss),
         (KeyCombo::alt("i"), Action::CycleScansion),
-        (KeyCombo::plain("apostrophe"), Action::ReopenEchoesBcp),
+        // `'` (apostrophe) now steps bookmarks (see nav_bindings); reopening
+        // BCP echoes keeps its Ctrl+Shift+E bind.
         (KeyCombo::ctrl("backslash"), Action::OpenConcordancePicker),
         (KeyCombo::ctrl_shift("P"), Action::OpenConcordanceWordPicker),
         (KeyCombo::ctrl_alt("p"), Action::OpenConcordanceListPicker),
