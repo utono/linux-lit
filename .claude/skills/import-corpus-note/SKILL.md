@@ -37,6 +37,15 @@ db, author, path = sys.argv[1], sys.argv[2], sys.argv[3]
 answer = open(path, encoding="utf-8").read()
 c = sqlite3.connect(db)
 
+# Ensure the kind column exists (mirrors linux-lit's ensure_journal_table
+# migration; a DB not yet opened by the migrated build won't have it).
+has_kind = c.execute(
+  "SELECT 1 FROM pragma_table_info('journal_entries') WHERE name='kind'"
+).fetchone()
+if not has_kind:
+  c.execute("ALTER TABLE journal_entries ADD COLUMN kind TEXT NOT NULL DEFAULT 'qa'")
+  c.commit()
+
 # Check if author exists in the works table
 author_count = c.execute(
   "SELECT COUNT(*) FROM works WHERE author = ?",
@@ -102,6 +111,8 @@ sqlite3 ~/utono/litdb/data/lit.db "SELECT DISTINCT author FROM works ORDER BY au
 **Author validation.** The skill checks that at least one work has the given author. If none is found, it prints a warning with a list of valid authors and exits without importing.
 
 **Linux-lit must be closed.** lit.db has no hot reload. The imported note only appears in linux-lit after it is restarted — a running instance will not see the new row until it is reopened.
+
+**`kind` column auto-migration.** The skill adds the `kind` column if it is absent (mirroring linux-lit's own idempotent `ensure_journal_table` migration), so import works correctly even before the migrated build has been launched for the first time against this DB.
 
 ## Row Semantics
 
