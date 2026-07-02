@@ -94,8 +94,15 @@ pub struct JournalOverlay {
     md_tags: crate::ui::markdown::MarkdownTags,
     /// True when the current page holds a `kind == "note"` entry (imported
     /// Markdown). Set by `show_page`; read by `render_page` to route note
-    /// bodies through `apply_markdown` rather than plain `set_text`.
+    /// bodies through the styled Markdown renderer rather than plain `set_text`.
     page_is_note: Cell<bool>,
+    /// For notes: the ONE planned-block list shared by pagination, rendering,
+    /// and cursor navigation (index-aligned with `all_paragraphs` and `pages`).
+    /// Empty for Q&A entries (whose unit is the plain paragraph). This single
+    /// unit is what keeps page fill, the accent bar, and j/k stepping aligned —
+    /// the old raw-paragraph pagination measured different blocks than the
+    /// styled render drew, so pages underfilled and j hit phantom stops.
+    note_blocks: RefCell<Vec<crate::ui::markdown::PlannedBlock>>,
     /// Page-marker glyph (`⌄`/`•`/None) drawn on `bar_drawing` — no Label, so no
     /// overlay-child allocation lag. Set by `update_page_marker`, read by the draw
     /// func. Its dim color is `marker_color`.
@@ -125,6 +132,28 @@ fn prefix_question(question: &str) -> String {
         question.to_string()
     } else {
         format!("Q: {}", question)
+    }
+}
+
+/// Next cursor index from `cur` stepping by `delta` (±1), skipping indices
+/// where `is_stop` is false (note heading/rule chrome). Returns `None` when no
+/// stoppable index exists in that direction — the caller no-ops (the press is
+/// consumed at the edge, exactly like the old clamp). Pure, unit-tested.
+fn step_skipping_chrome(
+    cur: usize,
+    delta: i32,
+    total: usize,
+    is_stop: impl Fn(usize) -> bool,
+) -> Option<usize> {
+    let mut i = cur as i64;
+    loop {
+        i += delta as i64;
+        if i < 0 || i >= total as i64 {
+            return None;
+        }
+        if is_stop(i as usize) {
+            return Some(i as usize);
+        }
     }
 }
 
@@ -416,6 +445,7 @@ impl JournalOverlay {
             vim_engine: RefCell::new(None),
             vim_seed: RefCell::new(String::new()),
             edit_kind: RefCell::new(String::new()),
+            note_blocks: RefCell::new(Vec::new()),
             vim_cursor_colors: RefCell::new((String::new(), String::new())),
             highlight_bg: RefCell::new(crate::ui::DEFAULT_HIGHLIGHT_BG.to_string()),
             hi_ranges: RefCell::new(Vec::new()),
@@ -494,6 +524,7 @@ impl JournalOverlay {
         if page_count == 0 {
             // Empty band: a bare message, no navigable paragraphs.
             self.page_is_note.set(false);
+            self.note_blocks.borrow_mut().clear();
             self.view.buffer().set_text("No pages yet \u{2014} press r to ask.");
             self.apply_font();
             self.clear_blocks();
@@ -502,20 +533,33 @@ impl JournalOverlay {
             self.page_idx.set(0);
             self.cursor_full.set(0);
         } else {
-            // Split the full Q&A into paragraph blocks (the pagination unit),
-            // paginate by measured height, and render the first page. j/k step
-            // the cursor across the FULL list, turning the page at boundaries —
-            // so no partial paragraph is ever rendered at either edge.
+            // Split the full entry into blocks (the shared pagination/render/
+            // nav unit), paginate by measured height, and render the first
+            // page. j/k step the cursor across the FULL list, turning the page
+            // at boundaries — so no partial block is ever rendered at either
+            // edge.
             let is_note = kind == "note";
             self.page_is_note.set(is_note);
-            let full = if is_note {
-                answer.to_string()
+            if is_note {
+                // Notes: plan the Markdown ONCE. The planned blocks are the
+                // unit everywhere; all_paragraphs mirrors their plain text
+                // (TTS / has_nav_blocks). Cursor starts on the first
+                // STOPPABLE block — never the title heading.
+                let planned = crate::ui::markdown::plan_markdown_blocks(answer);
+                *self.all_paragraphs.borrow_mut() =
+                    planned.iter().map(|b| b.plain_text()).collect();
+                let first_stop = planned
+                    .iter()
+                    .position(|b| b.stoppable)
+                    .unwrap_or(0);
+                *self.note_blocks.borrow_mut() = planned;
+                self.cursor_full.set(first_stop);
             } else {
-                format!("{}\n\n{}", prefix_question(question), answer)
-            };
-            let paras = paragraph_texts(&full);
-            *self.all_paragraphs.borrow_mut() = paras;
-            self.cursor_full.set(0);
+                self.note_blocks.borrow_mut().clear();
+                let full = format!("{}\n\n{}", prefix_question(question), answer);
+                *self.all_paragraphs.borrow_mut() = paragraph_texts(&full);
+                self.cursor_full.set(0);
+            }
             self.repaginate();
             self.page_idx.set(0);
             self.render_page();
@@ -543,6 +587,7 @@ impl JournalOverlay {
         // after the first emission with a non-zero rect.
         if std::env::var_os("LIT_HEADLESS_TEST").is_some() {
             let sc = self.scrolled.clone();
+            let view = self.view.clone();
             let adj = sc.vadjustment();
             let id_cell: Rc<std::cell::Cell<Option<glib::SignalHandlerId>>> =
                 Rc::new(std::cell::Cell::new(None));
@@ -556,6 +601,24 @@ impl JournalOverlay {
                             r.y().round() as i32,
                             r.width().round() as i32,
                             r.height().round() as i32
+                        ));
+                        // The horizontal band ALL text ink must stay inside:
+                        // the inset panel span (accent bar at left_margin −
+                        // JOURNAL_BODY_INDENT, panel pad beyond it) in window
+                        // coords. tests/journal_markdown.rs asserts no ink
+                        // outside this band — the guard for the "tag
+                        // left-margin replaces the view margin and text
+                        // escapes the column" bug class.
+                        let pad = crate::ui::PANEL_PAD as i32;
+                        let x0 = r.x().round() as i32 + view.left_margin()
+                            - JOURNAL_BODY_INDENT
+                            - pad;
+                        let x1 = r.x().round() as i32 + r.width().round() as i32
+                            - view.right_margin()
+                            + pad;
+                        crate::logging::log(&format!(
+                            "TEST_JOURNAL_CONTENT_BAND {} {}",
+                            x0, x1
                         ));
                         if let Some(hid) = id_cell_clone.take() {
                             // Disconnect so we only emit once per show_page open.
@@ -654,6 +717,7 @@ impl JournalOverlay {
         self.cursor_block.set(0);
         self.visual_anchor.set(None);
         self.all_paragraphs.borrow_mut().clear();
+        self.note_blocks.borrow_mut().clear();
         self.pages.borrow_mut().clear();
         self.page_idx.set(0);
         self.cursor_full.set(0);
@@ -1091,7 +1155,15 @@ impl JournalOverlay {
     fn page_height(&self) -> i32 {
         let (_, card_h) = self.last_card_size.get();
         let (_, footer_h) = self.footer_container.preferred_size();
-        (card_h - UNACCOUNTED_CHROME_MARGINS - footer_h.height()).max(80)
+        // Subtract the VIEW's own top/bottom padding (28+28) too: it lives
+        // INSIDE the scrolled viewport, so content taller than
+        // `viewport − padding` clips at the card bottom. The old Q&A-only
+        // estimator hid this shortfall under its per-block line_h slack; the
+        // exact note measurement exposed it (page-1 tail line clipped).
+        (card_h - UNACCOUNTED_CHROME_MARGINS - footer_h.height()
+            - self.view.top_margin()
+            - self.view.bottom_margin())
+        .max(80)
     }
 
     /// Measure each full paragraph and pack them into `pages` (whole blocks per
@@ -1133,21 +1205,53 @@ impl JournalOverlay {
         // summed well under the budget while a block still moved at tighter
         // geometries).
         let line_h = crate::ui::pagination::measure_text_height(&pctx, "Mg", size, &family, wrap_w);
-        let heights: Vec<i32> = paras
-            .iter()
-            .map(|p| {
-                let text_h =
-                    crate::ui::pagination::measure_text_height(&pctx, p, size, &family, wrap_w);
-                text_h + line_h
-            })
-            .collect();
+        let heights: Vec<i32> = if self.page_is_note.get() {
+            // Notes: measure each PLANNED Markdown block at its real style —
+            // heading scale/weight, list/quote extra indent — plus its tag
+            // pixels_above/below. The render inserts no blank lines, so the
+            // sum of these heights IS the rendered page height (same unit,
+            // no over- or under-count).
+            let blocks = self.note_blocks.borrow();
+            blocks
+                .iter()
+                .map(|b| {
+                    crate::ui::markdown::measure_planned_block(&pctx, b, size, &family, wrap_w)
+                })
+                .collect()
+        } else {
+            paras
+                .iter()
+                .map(|p| {
+                    let text_h = crate::ui::pagination::measure_text_height(
+                        &pctx, p, size, &family, wrap_w,
+                    );
+                    text_h + line_h
+                })
+                .collect()
+        };
         drop(paras);
         // Budget + per-block estimates for diagnosing pack decisions from a run.
         crate::log_fmt!(
             "JOURNAL-PAGINATE: page_h={} wrap_w={} line_h={} font='{} {}' heights={:?}",
             self.page_height(), wrap_w, line_h, family, size, heights
         );
-        *self.pages.borrow_mut() = crate::ui::pagination::paginate(&heights, self.page_height());
+        *self.pages.borrow_mut() = if self.page_is_note.get() {
+            // Notes: no-orphaned-heading packing — chrome blocks glue forward
+            // onto their content block so a page never ends on a heading.
+            let stoppable: Vec<bool> = self
+                .note_blocks
+                .borrow()
+                .iter()
+                .map(|b| b.stoppable)
+                .collect();
+            crate::ui::pagination::paginate_note_blocks(
+                &heights,
+                &stoppable,
+                self.page_height(),
+            )
+        } else {
+            crate::ui::pagination::paginate(&heights, self.page_height())
+        };
     }
 
     /// Render ONLY the current page's paragraphs into the buffer (joined by blank
@@ -1166,35 +1270,44 @@ impl JournalOverlay {
             self.clear_blocks();
             return;
         };
-        let slice = &paras[page.start..page.end.min(paras.len())];
-        let raw_body = slice.join("\n\n");
         let page_start = page.start;
+        let page_end = page.end.min(paras.len());
+        let is_note = self.page_is_note.get();
+        let body = if is_note {
+            String::new()
+        } else {
+            let slice = &paras[page_start..page_end];
+            let raw_body = slice.join("\n\n");
+            // Strip inline `<hi>` for display, recording the highlight ranges
+            // so the `journal-hi` background is re-applied after set_text.
+            // Blocks are derived from the CLEAN body so line indices line up
+            // with what's shown. (Notes have no <hi> spans.)
+            let (body, hi_ranges) = crate::ui::gloss_block::strip_hi_spans(&raw_body);
+            *self.hi_ranges.borrow_mut() = hi_ranges;
+            body
+        };
         drop(paras);
         drop(pages);
 
-        // Strip inline `<hi>` for display, recording the highlight ranges so the
-        // `journal-hi` background is re-applied after set_text. Blocks are derived
-        // from the CLEAN body so line indices line up with what's shown.
-        let (body, hi_ranges) = crate::ui::gloss_block::strip_hi_spans(&raw_body);
-        *self.hi_ranges.borrow_mut() = hi_ranges;
-
-        // Notes (kind == "note") are imported Markdown — render them as styled
-        // text via apply_markdown. Q&A answers keep plain set_text so that <hi>
-        // highlight ranges (char offsets into `body`) and per-page block offsets
-        // (derived from body.split('\n') below) stay byte-aligned with the buffer
-        // content. apply_markdown appends — clear the buffer first.
-        // For notes, `apply_markdown_blocks` returns the RENDERED buffer's
-        // top-level blocks (real buffer-line spans + a stoppable flag). We use
-        // those for the accent-bar cursor instead of splitting `body` — the
-        // rendered text's line structure differs from the raw Markdown, so a
-        // `body`-derived block would misalign the bar (and would land on
-        // headings/rules). `None` for qa keeps the plain body-split path.
-        let note_md_blocks = if self.page_is_note.get() {
+        // Notes (kind == "note") render the page's PLANNED Markdown blocks
+        // directly — the same blocks pagination measured — so the rendered
+        // block list is index-aligned 1:1 with `all_paragraphs[page range]`
+        // (the invariant the cursor projection relies on). Q&A answers keep
+        // plain set_text so that <hi> highlight ranges (char offsets into
+        // `body`) and per-page block offsets (derived from body.split('\n')
+        // below) stay byte-aligned with the buffer content.
+        let note_md_blocks = if is_note {
+            self.hi_ranges.borrow_mut().clear();
+            // Re-anchor list/quote tag margins to the view's CURRENT left
+            // margin (a tag left-margin replaces the view's — an absolute
+            // value would render lists outside the centered column).
+            self.md_tags.set_base_left_margin(self.view.left_margin());
             let buffer = self.view.buffer();
             buffer.set_text("");
-            Some(crate::ui::markdown::apply_markdown_blocks(
+            let planned = self.note_blocks.borrow();
+            Some(crate::ui::markdown::render_markdown_blocks(
                 &buffer,
-                &body,
+                &planned[page_start..page_end.min(planned.len())],
                 &self.md_tags,
             ))
         } else {
@@ -1217,15 +1330,14 @@ impl JournalOverlay {
         adj.set_value(adj.lower());
 
         // Re-derive per-page blocks for the bar / visual mode.
-        // - Notes: use the RENDERED buffer's Markdown blocks, keeping only the
-        //   stoppable ones (paragraphs, list items, quotes, tables) so the
-        //   accent-bar cursor never lands on a heading or horizontal rule and
-        //   aligns to the actual painted lines.
+        // - Notes: the rendered blocks, ALL of them (chrome included) so their
+        //   indices stay 1:1 with the planned/page indices — the cursor itself
+        //   never lands on chrome because `step_full_cursor` skips
+        //   non-stoppable indices.
         // - Q&A: split `body` (byte-aligned with the plain set_text buffer).
         *self.blocks.borrow_mut() = if let Some(md_blocks) = note_md_blocks {
             md_blocks
                 .into_iter()
-                .filter(|b| b.stoppable)
                 .map(|b| JournalBlock {
                     start_line: b.start_line,
                     end_line: b.end_line,
@@ -1237,14 +1349,26 @@ impl JournalOverlay {
             journal_blocks(&lines)
         };
         self.visual_anchor.set(None);
-        // Project the full cursor onto this page (clamped into the page range).
-        let page_local = self
-            .cursor_full
-            .get()
-            .saturating_sub(page_start)
-            .min(self.blocks.borrow().len().saturating_sub(1));
-        self.cursor_block.set(page_local);
-        self.mark_cursor_block();
+        // Project the full cursor onto this page. For notes the cursor can
+        // legitimately sit on ANOTHER page (e.g. a chrome-only opening page at
+        // small sizes): clamping it here painted the bar on a heading — clear
+        // the bar instead; the first j/k turns to the cursor's page.
+        let cursor_on_page = {
+            let c = self.cursor_full.get();
+            c >= page_start && c < page_end
+        };
+        if is_note && !cursor_on_page {
+            self.cursor_block.set(0);
+            self.clear_bar();
+        } else {
+            let page_local = self
+                .cursor_full
+                .get()
+                .saturating_sub(page_start)
+                .min(self.blocks.borrow().len().saturating_sub(1));
+            self.cursor_block.set(page_local);
+            self.mark_cursor_block();
+        }
         self.update_bottom_clip();
     }
 
@@ -1342,19 +1466,24 @@ impl JournalOverlay {
         self.full_cursor_to_end(true);
     }
 
-    /// Step the full-list cursor by `delta` (clamped), turning the page if the new
-    /// cursor leaves the current page; otherwise just re-mark the bar.
+    /// Step the full-list cursor by `delta`, SKIPPING non-stoppable chrome
+    /// blocks (note headings / rules), turning the page if the new cursor
+    /// leaves the current page; otherwise just re-mark the bar. One keypress =
+    /// one visible bar move — never a phantom press swallowed by a heading.
     fn step_full_cursor(&self, delta: i32) {
         let total = self.all_paragraphs.borrow().len();
         if total == 0 {
             return;
         }
-        let cur = self.cursor_full.get().min(total - 1) as i64;
-        let next = (cur + delta as i64).clamp(0, total as i64 - 1);
-        if next == cur {
-            return;
-        }
-        self.cursor_full.set(next as usize);
+        let cur = self.cursor_full.get().min(total - 1);
+        let next = {
+            let note_blocks = self.note_blocks.borrow();
+            step_skipping_chrome(cur, delta, total, |i| {
+                note_blocks.get(i).map(|b| b.stoppable).unwrap_or(true)
+            })
+        };
+        let Some(next) = next else { return };
+        self.cursor_full.set(next);
         self.sync_cursor_page();
     }
 
@@ -1363,7 +1492,17 @@ impl JournalOverlay {
         if total == 0 {
             return;
         }
-        self.cursor_full.set(if last { total - 1 } else { 0 });
+        let target = {
+            let note_blocks = self.note_blocks.borrow();
+            let is_stop =
+                |i: usize| note_blocks.get(i).map(|b| b.stoppable).unwrap_or(true);
+            if last {
+                (0..total).rev().find(|&i| is_stop(i)).unwrap_or(total - 1)
+            } else {
+                (0..total).find(|&i| is_stop(i)).unwrap_or(0)
+            }
+        };
+        self.cursor_full.set(target);
         self.sync_cursor_page();
     }
 
@@ -1410,9 +1549,15 @@ impl JournalOverlay {
         let i = self.cursor_block.get().min(blocks.len() - 1);
         let span = (blocks[i].start_line, blocks[i].end_line);
         drop(blocks);
+        // `cursor#` is the PAGE-LOCAL index (repeats across page turns);
+        // `full#` is the whole-entry block index — the one tests must compare
+        // to detect a swallowed/phantom keypress.
         crate::logging::log(&format!(
-            "JOURNAL-CURSOR: cursor#{} bar lines [{}, {}]",
-            i, span.0, span.1
+            "JOURNAL-CURSOR: cursor#{} full#{} bar lines [{}, {}]",
+            i,
+            self.cursor_full.get(),
+            span.0,
+            span.1
         ));
         *self.bar_ranges.borrow_mut() = vec![span];
         self.bar_drawing.queue_draw();
@@ -1575,6 +1720,42 @@ mod prefix_question_tests {
         // not double-prefixed.
         assert_eq!(prefix_question("Q: already asked"), "Q: already asked");
         assert_eq!(prefix_question("  Q: leading space"), "  Q: leading space");
+    }
+}
+
+#[cfg(test)]
+mod step_skipping_chrome_tests {
+    use super::step_skipping_chrome;
+
+    // Block layout mirroring an imported note:
+    // 0 H1(chrome) 1 body 2 rule(chrome) 3 H2(chrome) 4 body 5 body
+    const STOP: [bool; 6] = [false, true, false, false, true, true];
+
+    fn is_stop(i: usize) -> bool {
+        STOP[i]
+    }
+
+    #[test]
+    fn j_skips_chrome_in_one_press() {
+        // From the first paragraph (1), one j lands on the next paragraph (4),
+        // hopping the rule + section heading — the "4 presses of j" bug.
+        assert_eq!(step_skipping_chrome(1, 1, STOP.len(), is_stop), Some(4));
+        assert_eq!(step_skipping_chrome(4, -1, STOP.len(), is_stop), Some(1));
+    }
+
+    #[test]
+    fn edge_press_is_a_noop() {
+        // No stoppable block past the last paragraph → None (caller no-ops).
+        assert_eq!(step_skipping_chrome(5, 1, STOP.len(), is_stop), None);
+        // Backwards from the first paragraph: only the H1 above → None.
+        assert_eq!(step_skipping_chrome(1, -1, STOP.len(), is_stop), None);
+    }
+
+    #[test]
+    fn qa_all_stoppable_steps_one() {
+        // Q&A entries have no chrome — plain ±1 stepping.
+        assert_eq!(step_skipping_chrome(2, 1, 5, |_| true), Some(3));
+        assert_eq!(step_skipping_chrome(2, -1, 5, |_| true), Some(1));
     }
 }
 

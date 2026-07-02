@@ -79,6 +79,84 @@ pub fn paginate_grouped(block_heights: &[i32], group_start: &[bool], page_height
     pages
 }
 
+/// Paginate a Markdown NOTE's blocks with the **no-orphaned-heading rule**:
+/// chrome blocks (headings / rules, `stoppable[i] == false`) glue FORWARD onto
+/// the stoppable block that follows them, so a page never ends on a heading
+/// whose content moved to the next page. Degrades gracefully when a glued
+/// unit exceeds the page:
+/// - first retry with just `[immediately-preceding chrome…, stoppable]` where
+///   the leading chrome blocks are released as singletons (keeps a section
+///   heading with its first paragraph while letting a long title header stay
+///   behind);
+/// - if even the final `[heading, block]` pair is oversize, fall back to fully
+///   independent blocks (an orphan beats a clipped page).
+///
+/// All-stoppable input (no chrome) degenerates to plain `paginate`. Pure.
+pub fn paginate_note_blocks(
+    block_heights: &[i32],
+    stoppable: &[bool],
+    page_height: i32,
+) -> Vec<Page> {
+    let n = block_heights.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let budget = page_height.max(1);
+    let is_stop = |i: usize| stoppable.get(i).copied().unwrap_or(true);
+
+    // Build indivisible units as block ranges [start, end).
+    let mut units: Vec<(usize, usize)> = Vec::new();
+    let mut i = 0usize;
+    while i < n {
+        // Collect the chrome run (possibly empty) + its following stoppable.
+        let run_start = i;
+        while i < n && !is_stop(i) {
+            i += 1;
+        }
+        if i >= n {
+            // Trailing chrome with no content after it — singletons.
+            for j in run_start..n {
+                units.push((j, j + 1));
+            }
+            break;
+        }
+        let stop = i;
+        i += 1;
+        let group_h: i32 = block_heights[run_start..=stop].iter().sum();
+        if group_h <= budget {
+            units.push((run_start, stop + 1));
+            continue;
+        }
+        // Oversize: release leading chrome as singletons, keep the LAST chrome
+        // block (the section heading) glued to its content if that pair fits.
+        let pair_start = stop.saturating_sub(1).max(run_start);
+        let keep_pair = pair_start < stop
+            && !is_stop(pair_start)
+            && block_heights[pair_start..=stop].iter().sum::<i32>() <= budget;
+        let single_end = if keep_pair { pair_start } else { stop };
+        for j in run_start..single_end {
+            units.push((j, j + 1));
+        }
+        units.push((single_end, stop + 1));
+    }
+
+    // Greedy-pack units into pages (an oversize unit gets its own page).
+    let mut pages: Vec<Page> = Vec::new();
+    let mut start_unit = 0usize;
+    let mut acc = 0i32;
+    for (u, &(us, ue)) in units.iter().enumerate() {
+        let h: i32 = block_heights[us..ue].iter().sum();
+        if u > start_unit && acc + h > budget {
+            pages.push(Page { start: units[start_unit].0, end: us });
+            start_unit = u;
+            acc = 0;
+        }
+        acc += h;
+    }
+    pages.push(Page { start: units[start_unit].0, end: n });
+    pages
+}
+
 /// The page index whose `[start, end)` range contains `block_idx`. Clamps to the
 /// last page if `block_idx` is past the end; returns 0 when there are no pages.
 pub fn page_containing_block(pages: &[Page], block_idx: usize) -> usize {
@@ -216,6 +294,54 @@ mod tests {
             Page { start: 0, end: 2 },
             Page { start: 2, end: 3 },
         ]);
+    }
+
+    #[test]
+    fn note_heading_travels_with_its_paragraph() {
+        // [para, H2, para]: page can hold 2 blocks of 100 but the H2 (40) +
+        // para (100) exceed the remaining space after block 0 — the H2 must
+        // MOVE to page 2 with its paragraph, never end page 1 orphaned.
+        let h = [100, 40, 100];
+        let stop = [true, false, true];
+        let pages = paginate_note_blocks(&h, &stop, 180);
+        assert_eq!(pages, vec![Page { start: 0, end: 1 }, Page { start: 1, end: 3 }]);
+    }
+
+    #[test]
+    fn note_oversize_title_run_releases_leading_chrome() {
+        // [H1, H3, Rule, H2, big-para] where the whole glued run exceeds the
+        // page: leading chrome (H1/H3/Rule) become singletons on page 1, the
+        // final [H2, para] pair stays glued on page 2.
+        let h = [46, 81, 59, 64, 290];
+        let stop = [false, false, false, false, true];
+        let pages = paginate_note_blocks(&h, &stop, 486);
+        assert_eq!(pages, vec![Page { start: 0, end: 3 }, Page { start: 3, end: 5 }]);
+    }
+
+    #[test]
+    fn note_all_stoppable_matches_plain_paginate() {
+        let h = [30, 30, 30, 30, 30];
+        let stop = [true; 5];
+        assert_eq!(paginate_note_blocks(&h, &stop, 100), paginate(&h, 100));
+    }
+
+    #[test]
+    fn note_oversize_pair_falls_back_to_orphan_not_clip() {
+        // Heading + para together exceed the page: fall back to independent
+        // blocks (orphan allowed) rather than an overflowing glued unit.
+        let h = [40, 200];
+        let stop = [false, true];
+        let pages = paginate_note_blocks(&h, &stop, 210);
+        assert_eq!(pages, vec![Page { start: 0, end: 1 }, Page { start: 1, end: 2 }]);
+    }
+
+    #[test]
+    fn note_trailing_chrome_is_kept() {
+        // A rule at the very end (no content after) still renders on a page.
+        let h = [100, 30];
+        let stop = [true, false];
+        let pages = paginate_note_blocks(&h, &stop, 200);
+        assert_eq!(pages, vec![Page { start: 0, end: 2 }]);
     }
 
     #[test]

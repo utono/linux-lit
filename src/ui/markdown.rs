@@ -48,7 +48,7 @@ pub struct Span {
 }
 
 /// A rendered top-level block's buffer-line span + whether the accent-bar
-/// cursor may stop on it. Produced by `apply_markdown_blocks` so the journal
+/// cursor may stop on it. Produced by `render_markdown_blocks` so the journal
 /// overlay can align the bar to the RENDERED buffer (not the raw Markdown
 /// source, whose line structure differs) and skip heading/rule chrome.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +60,108 @@ pub struct MdBlock {
     /// True for prose paragraphs / list items / quotes / tables; false for
     /// headings and horizontal rules (never a cursor stop).
     pub stoppable: bool,
+}
+
+/// A PLANNED top-level block: the single unit shared by pagination (measure),
+/// rendering (insert + tag), and cursor navigation (stop/skip). Splitting the
+/// span stream once — instead of paginating raw-Markdown paragraphs while
+/// rendering styled blocks — is what keeps page fill, the accent bar, and j/k
+/// stepping aligned to the same indices.
+#[derive(Debug, Clone)]
+pub struct PlannedBlock {
+    /// The block's visible styled runs (separator whitespace excluded).
+    pub spans: Vec<Span>,
+    /// The block's role — the style of its LEADING run (a Bold run inside a
+    /// Body paragraph does not change the block's kind).
+    pub kind: Style,
+    /// Whether the accent-bar cursor may stop here (`kind.is_stoppable_block()`).
+    pub stoppable: bool,
+}
+
+impl PlannedBlock {
+    /// The block's plain text (all runs concatenated) — the TTS / measurement
+    /// input.
+    pub fn plain_text(&self) -> String {
+        self.spans.iter().map(|s| s.text.as_str()).collect()
+    }
+}
+
+/// Split `plan_markdown`'s span stream into top-level blocks. A separator is a
+/// whitespace-only span CONTAINING a newline (the runs `plan_markdown` emits
+/// after each paragraph / heading / rule / list item). A plain `" "` SoftBreak
+/// span is NOT a separator — a soft-wrapped source paragraph stays one block.
+pub fn plan_markdown_blocks(src: &str) -> Vec<PlannedBlock> {
+    let mut blocks: Vec<PlannedBlock> = Vec::new();
+    let mut cur: Vec<Span> = Vec::new();
+
+    let close = |cur: &mut Vec<Span>, blocks: &mut Vec<PlannedBlock>| {
+        if cur.is_empty() {
+            return;
+        }
+        let kind = cur[0].style.clone();
+        let stoppable = kind.is_stoppable_block();
+        blocks.push(PlannedBlock { spans: std::mem::take(cur), kind, stoppable });
+    };
+
+    for span in plan_markdown(src) {
+        if span.text.trim().is_empty() {
+            if span.text.contains('\n') {
+                close(&mut cur, &mut blocks);
+            } else if !cur.is_empty() {
+                // SoftBreak space inside a paragraph — keep it in the block.
+                cur.push(span);
+            }
+            continue;
+        }
+        cur.push(span);
+    }
+    close(&mut cur, &mut blocks);
+    blocks
+}
+
+// ── Block metrics (single source for tags AND pagination measurement) ────────
+
+/// Font-scale multiplier a block's leading style renders at.
+pub fn block_scale(style: &Style) -> f64 {
+    match style {
+        Style::H1 => 1.3,
+        Style::H2 => 1.2,
+        Style::H3 => 1.1,
+        _ => 1.0,
+    }
+}
+
+/// `(pixels_above, pixels_below)` paragraph spacing for a block of this style.
+/// ALL inter-block space comes from these — rendered blocks are joined by a
+/// single `\n`, never blank lines, so a standalone Pango layout plus these
+/// values measures a page exactly.
+pub fn block_spacing(style: &Style) -> (i32, i32) {
+    match style {
+        Style::H1 => (0, 10),
+        Style::H2 => (22, 8),
+        Style::H3 => (14, 6),
+        Style::Rule => (16, 16),
+        Style::ListItem => (0, 6),
+        Style::BlockQuote => (6, 10),
+        Style::Mono => (0, 12),
+        _ => (0, 14), // Body paragraph gap
+    }
+}
+
+/// Extra left indent (px) a block of this style renders with, ON TOP of the
+/// view's own left margin. Subtracted from the wrap width when measuring.
+pub fn block_extra_indent(style: &Style) -> i32 {
+    match style {
+        Style::ListItem => LIST_INDENT,
+        Style::BlockQuote => QUOTE_INDENT,
+        _ => 0,
+    }
+}
+
+/// Whether a block of this style renders bold (headings) — bold glyphs are
+/// wider, so measurement must match or a heading that wraps measures short.
+pub fn block_is_bold(style: &Style) -> bool {
+    matches!(style, Style::H1 | Style::H2 | Style::H3)
 }
 
 // ── Pure parser ───────────────────────────────────────────────────────────────
@@ -270,8 +372,12 @@ pub struct MarkdownTags {
     pub mono: gtk4::TextTag,
 }
 
-/// Hanging-indent left margin for list items (px).
+/// Hanging-indent left offset for list items (px), ON TOP of the view's left
+/// margin (see `set_base_left_margin` — a `TextTag` left-margin REPLACES the
+/// view's, it does not add to it).
 const LIST_INDENT: i32 = 32;
+/// Extra left offset for block quotes (px), on top of the view's left margin.
+const QUOTE_INDENT: i32 = 32;
 /// Negative first-line indent so the marker hangs left and wrapped text aligns
 /// under the text start (past the `• ` / `N. ` prefix).
 const LIST_HANG: i32 = -16;
@@ -300,52 +406,64 @@ impl MarkdownTags {
         // Monospace family — matches the in-place vim editor edit font.
         let mono_family = crate::ui::EDIT_FONT_FAMILY;
 
-        // Body: serif, paragraph leading below.
+        // All paragraph spacing (pixels above/below) comes from block_spacing —
+        // the SAME values pagination charges per block — so a page measures
+        // exactly. Rendered blocks are joined by a single `\n`: no blank lines.
+        let sp = block_spacing;
+
+        // Body: serif, paragraph gap below.
+        let (a, b) = sp(&Style::Body);
         let body = get_or_add(
             "md-body",
             gtk4::TextTag::builder()
                 .name("md-body")
                 .family(serif)
-                .pixels_below_lines(6)
+                .pixels_above_lines(a)
+                .pixels_below_lines(b)
                 .build(),
         );
 
-        // H1 (title): bold, ~1.3× scale, space below. (Tuned down from 2.0 —
-        // at 2.0 the title dominated the card; 1.3 keeps it clearly largest
-        // while staying readable, matching the claude.ai artifact proportions.)
+        // H1 (title): bold, ~1.3× scale. (Tuned down from 2.0 — at 2.0 the
+        // title dominated the card; 1.3 keeps it clearly largest while staying
+        // readable, matching the claude.ai artifact proportions.)
+        let (a, b) = sp(&Style::H1);
         let h1 = get_or_add(
             "md-h1",
             gtk4::TextTag::builder()
                 .name("md-h1")
                 .family(serif)
                 .weight(700)
-                .scale(1.3)
-                .pixels_below_lines(12)
+                .scale(block_scale(&Style::H1))
+                .pixels_above_lines(a)
+                .pixels_below_lines(b)
                 .build(),
         );
 
         // H2 (section): bold, ~1.2× scale, space above.
+        let (a, b) = sp(&Style::H2);
         let h2 = get_or_add(
             "md-h2",
             gtk4::TextTag::builder()
                 .name("md-h2")
                 .family(serif)
                 .weight(700)
-                .scale(1.2)
-                .pixels_above_lines(16)
-                .pixels_below_lines(6)
+                .scale(block_scale(&Style::H2))
+                .pixels_above_lines(a)
+                .pixels_below_lines(b)
                 .build(),
         );
 
-        // H3 (subtitle): bold, ~1.1× scale, small space below.
+        // H3 (subtitle): bold, ~1.1× scale.
+        let (a, b) = sp(&Style::H3);
         let h3 = get_or_add(
             "md-h3",
             gtk4::TextTag::builder()
                 .name("md-h3")
                 .family(serif)
                 .weight(700)
-                .scale(1.1)
-                .pixels_below_lines(4)
+                .scale(block_scale(&Style::H3))
+                .pixels_above_lines(a)
+                .pixels_below_lines(b)
                 .build(),
         );
 
@@ -367,43 +485,58 @@ impl MarkdownTags {
                 .build(),
         );
 
-        // BlockQuote: left-margin bump + muted foreground.
+        // BlockQuote: muted italic. Its left margin is set per-render by
+        // `set_base_left_margin` (a tag left-margin REPLACES the view's own
+        // margin — an absolute value here would yank the quote to the view's
+        // far-left edge, outside the card's centered column).
+        let (a, b) = sp(&Style::BlockQuote);
         let block_quote = get_or_add(
             "md-blockquote",
             gtk4::TextTag::builder()
                 .name("md-blockquote")
-                .left_margin(32)
                 .foreground("#888888")
                 .style(pango::Style::Italic)
+                .pixels_above_lines(a)
+                .pixels_below_lines(b)
                 .build(),
         );
 
-        // ListItem: hanging indent — left-margin with negative first-line indent.
+        // ListItem: hanging indent — left margin set per-render by
+        // `set_base_left_margin` (same override pitfall as the quote; the
+        // absolute 32px it used to bake in rendered lists at the view's far
+        // left, spilling outside the card), negative first-line indent.
+        let (a, b) = sp(&Style::ListItem);
         let list_item = get_or_add(
             "md-listitem",
             gtk4::TextTag::builder()
                 .name("md-listitem")
-                .left_margin(LIST_INDENT)
                 .indent(LIST_HANG)
+                .pixels_above_lines(a)
+                .pixels_below_lines(b)
                 .build(),
         );
 
         // Rule: light-grey foreground on the ─ run (thin hairline look).
+        let (a, b) = sp(&Style::Rule);
         let rule = get_or_add(
             "md-rule",
             gtk4::TextTag::builder()
                 .name("md-rule")
                 .foreground("#cccccc")
+                .pixels_above_lines(a)
+                .pixels_below_lines(b)
                 .build(),
         );
 
         // Mono (tables/code): monospace family.
+        let (a, b) = sp(&Style::Mono);
         let mono = get_or_add(
             "md-mono",
             gtk4::TextTag::builder()
                 .name("md-mono")
                 .family(mono_family)
-                .pixels_below_lines(2)
+                .pixels_above_lines(a)
+                .pixels_below_lines(b)
                 .build(),
         );
 
@@ -419,6 +552,16 @@ impl MarkdownTags {
             rule,
             mono,
         }
+    }
+
+    /// Re-anchor the indent-carrying tags to the VIEW's current left margin.
+    /// A `TextTag` left-margin REPLACES the view default (it does not add), so
+    /// list/quote margins must be `view_left_margin + indent`, recomputed
+    /// whenever the view margin changes (card resize). Call before each render.
+    pub fn set_base_left_margin(&self, base: i32) {
+        use gtk4::prelude::*;
+        self.list_item.set_left_margin(base + LIST_INDENT);
+        self.block_quote.set_left_margin(base + QUOTE_INDENT);
     }
 
     fn tag_for(&self, style: &Style) -> &gtk4::TextTag {
@@ -437,70 +580,94 @@ impl MarkdownTags {
     }
 }
 
-/// Parse `src` as CommonMark, insert all text at the end of `buffer`, and
-/// apply the matching tag from `tags` over each inserted run.
+/// Render a slice of PLANNED blocks into `buffer`, one buffer paragraph per
+/// block, joined by a single `\n` — NO blank lines (all inter-block space is
+/// tag `pixels_above/below`, the same values pagination charges). Each block's
+/// kind tag is applied over its whole range INCLUDING the trailing newline so
+/// GTK's paragraph-level attributes (margins, pixel spacing) come uniformly
+/// from the block tag; inline Bold/Italic/Mono runs are tagged on top.
+///
+/// Returns each rendered block's buffer-line span + stoppable flag, index-
+/// aligned 1:1 with `blocks` — the invariant the journal cursor relies on.
 ///
 /// Appends to whatever is already in `buffer` — callers should call
-/// `buffer.set_text("")` first if a clean render is desired.
-/// Render `src` (CommonMark) into `buffer` with styled `TextTag`s AND return the
-/// RENDERED buffer's top-level blocks (`MdBlock`) with real buffer-line spans and
-/// a `stoppable` flag, so the
-/// journal accent-bar cursor can align to what is actually painted and skip
-/// heading/rule chrome. The block boundaries come from the buffer text after
-/// insertion (blank-line separated), guaranteeing the line numbers match the
-/// buffer — unlike deriving them from the raw Markdown source, whose line
-/// structure differs from the rendered output.
-pub fn apply_markdown_blocks(
+/// `buffer.set_text("")` first for a clean render.
+pub fn render_markdown_blocks(
     buffer: &gtk4::TextBuffer,
-    src: &str,
+    blocks: &[PlannedBlock],
     tags: &MarkdownTags,
 ) -> Vec<MdBlock> {
     use gtk4::prelude::*;
 
-    // Insert each span; close the current block at every separator span. A
-    // separator is the pure-whitespace Body span `plan_markdown` emits after
-    // each top-level block (paragraph, heading, rule, AND each list item — items
-    // are separated by "\n", so this makes every list item its own block/cursor
-    // stop, not the whole list). Tracking boundaries here (rather than by
-    // blank-line grouping of the rendered text) keeps single-newline-separated
-    // list items as distinct blocks while staying aligned to the buffer.
-    let mut blocks: Vec<MdBlock> = Vec::new();
-    // Current open block: (start_line, last visible line, saw a stoppable run).
-    let mut cur: Option<(i32, i32, bool)> = None;
-
-    let close = |cur: &mut Option<(i32, i32, bool)>, blocks: &mut Vec<MdBlock>| {
-        if let Some((start, end, stoppable)) = cur.take() {
-            blocks.push(MdBlock { start_line: start, end_line: end, stoppable });
+    let mut out: Vec<MdBlock> = Vec::with_capacity(blocks.len());
+    for (i, block) in blocks.iter().enumerate() {
+        let block_start_off = buffer.end_iter().offset();
+        for span in &block.spans {
+            let start_offset = buffer.end_iter().offset();
+            let mut end_iter = buffer.end_iter();
+            buffer.insert(&mut end_iter, &span.text);
+            // Inline override tags only — whitespace runs (SoftBreak spaces)
+            // carry no styling and must not smuggle Body paragraph attrs into
+            // a list/quote block.
+            if span.style != block.kind && !span.text.trim().is_empty() {
+                let start = buffer.iter_at_offset(start_offset);
+                let end = buffer.end_iter();
+                buffer.apply_tag(tags.tag_for(&span.style), &start, &end);
+            }
         }
-    };
-
-    for span in plan_markdown(src) {
-        let start_offset = buffer.end_iter().offset();
-        let mut end_iter = buffer.end_iter();
-        buffer.insert(&mut end_iter, &span.text);
-        let start = buffer.iter_at_offset(start_offset);
+        // One newline between blocks (none after the last — no trailing blank
+        // paragraph to inflate the page).
+        if i + 1 < blocks.len() {
+            let mut end_iter = buffer.end_iter();
+            buffer.insert(&mut end_iter, "\n");
+        }
+        let start = buffer.iter_at_offset(block_start_off);
         let end = buffer.end_iter();
-        buffer.apply_tag(tags.tag_for(&span.style), &start, &end);
-
-        if span.text.trim().is_empty() {
-            // Separator run — end the current block.
-            close(&mut cur, &mut blocks);
-            continue;
-        }
-
-        // Visible run — extend (or open) the current block over its lines. The
-        // block's stoppability is fixed by its LEADING run's style (a heading or
-        // rule opens a chrome block; inline bold/italic nested inside a heading
-        // must not flip it back to stoppable), so only the opening span sets it.
-        let first = start.line();
-        let last = buffer.iter_at_offset(end.offset()).line();
-        match cur.as_mut() {
-            Some(c) => c.1 = c.1.max(last),
-            None => cur = Some((first, last, span.style.is_stoppable_block())),
-        }
+        buffer.apply_tag(tags.tag_for(&block.kind), &start, &end);
+        out.push(MdBlock {
+            start_line: start.line(),
+            // `end` sits at the start of the NEXT block (past the newline);
+            // the block's own last visible line is one back for non-final
+            // blocks. Guard with max() for empty-span blocks.
+            end_line: if i + 1 < blocks.len() {
+                (end.line() - 1).max(start.line())
+            } else {
+                end.line()
+            },
+            stoppable: block.stoppable,
+        });
     }
-    close(&mut cur, &mut blocks);
-    blocks
+    out
+}
+
+/// Pixel height a planned block will render at: its plain text measured by a
+/// standalone `pango::Layout` at the block's REAL style (scale, bold, extra
+/// indent) plus the block's `pixels_above + pixels_below`. Because the render
+/// inserts no blank lines, `Σ measure_planned_block` over a page's blocks is
+/// the page's rendered height — pagination and rendering share one unit.
+pub fn measure_planned_block(
+    pctx: &gtk4::pango::Context,
+    block: &PlannedBlock,
+    base_size_pt: i32,
+    family: &str,
+    wrap_px: i32,
+) -> i32 {
+    use gtk4::pango;
+
+    let layout = pango::Layout::new(pctx);
+    let mut desc = pango::FontDescription::from_string(family);
+    let scaled = (base_size_pt as f64 * block_scale(&block.kind) * pango::SCALE as f64) as i32;
+    desc.set_size(scaled);
+    if block_is_bold(&block.kind) {
+        desc.set_weight(pango::Weight::Bold);
+    }
+    layout.set_font_description(Some(&desc));
+    let w = (wrap_px - block_extra_indent(&block.kind)).max(1);
+    layout.set_width(w * pango::SCALE);
+    layout.set_wrap(pango::WrapMode::WordChar);
+    layout.set_text(&block.plain_text());
+    let (above, below) = block_spacing(&block.kind);
+    layout.pixel_size().1 + above + below
 }
 
 // ── Unit tests (pure — no GTK) ────────────────────────────────────────────────
@@ -530,6 +697,49 @@ mod tests {
     fn table_becomes_mono() {
         let spans = plan_markdown("| a | b |\n|---|---|\n| 1 | 2 |");
         assert!(spans.iter().any(|s| matches!(s.style, Style::Mono)));
+    }
+
+    #[test]
+    fn soft_break_does_not_split_a_paragraph_block() {
+        // A source paragraph hard-wrapped across lines (SoftBreak) is ONE
+        // block — the " " SoftBreak span must not be mistaken for a
+        // block separator (only newline-bearing whitespace separates).
+        let blocks = plan_markdown_blocks("first line\nsecond line of same para");
+        assert_eq!(blocks.len(), 1);
+        assert!(blocks[0].plain_text().contains("first line second line"));
+    }
+
+    #[test]
+    fn blocks_split_and_flag_chrome() {
+        let blocks =
+            plan_markdown_blocks("# Title\n\nA para.\n\n---\n\n## Section\n\n1. one\n2. two");
+        let kinds: Vec<(Style, bool)> =
+            blocks.iter().map(|b| (b.kind.clone(), b.stoppable)).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                (Style::H1, false),
+                (Style::Body, true),
+                (Style::Rule, false),
+                (Style::H2, false),
+                (Style::ListItem, true),
+                (Style::ListItem, true),
+            ]
+        );
+        assert_eq!(blocks[4].plain_text(), "1. one");
+        assert_eq!(blocks[5].plain_text(), "2. two");
+    }
+
+    #[test]
+    fn bold_inside_paragraph_stays_one_body_block() {
+        let blocks = plan_markdown("load **it** now")
+            .into_iter()
+            .collect::<Vec<_>>();
+        assert!(blocks.iter().any(|s| matches!(s.style, Style::Bold)));
+        let planned = plan_markdown_blocks("load **it** now");
+        assert_eq!(planned.len(), 1);
+        assert_eq!(planned[0].kind, Style::Body);
+        assert_eq!(planned[0].plain_text(), "load it now");
     }
 
     #[test]
