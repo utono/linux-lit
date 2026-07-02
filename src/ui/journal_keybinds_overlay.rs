@@ -48,6 +48,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ]),
     ("Close", &[
         ("Esc", "close"),
+        ("Ctrl+Shift+L", "save & quit app"),
         ("Ctrl+/", "close this legend"),
     ]),
 ];

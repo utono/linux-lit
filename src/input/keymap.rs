@@ -45,6 +45,18 @@ pub fn handle_key(
 ) -> bool {
     crate::logging::log(&format!("KEY: name={} ctrl={} shift={} alt={}", key_name, is_ctrl, is_shift, is_alt));
 
+    // Shift+Ctrl+L: save position and quit from ANY mode — every overlay,
+    // picker, and the vim editors included, so it sits ABOVE the JournalEdit/
+    // GlossEdit routing (which otherwise owns all keys). GTK delivers the
+    // shifted letter as the uppercase name "L" (with shift=true), so match
+    // that; also accept "l" for layouts that report the unshifted name.
+    if is_shift && is_ctrl && (key_name == "L" || key_name == "l") {
+        crate::app::save_position(&mut state.borrow_mut());
+        let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::Quit);
+        state.borrow().window.close();
+        return true;
+    }
+
     // Journal vim-edit mode owns ALL keys (including space, which Insert mode must
     // type literally), so route it BEFORE the global space / play-pause guards.
     // The emergency Shift+Ctrl+L quit above still wins. handle_journal_edit_key
@@ -58,16 +70,6 @@ pub fn handle_key(
     // so route it BEFORE the global space / play-pause guards.
     if state.borrow().input_mode == crate::app::InputMode::GlossEdit {
         return handle_gloss_edit_key(state, key_name, key_char, is_ctrl, is_shift, tokio_handle);
-    }
-
-    // Shift+Ctrl+L: quit from any mode. GTK delivers the shifted letter as the
-    // uppercase name "L" (with shift=true), so match that; also accept "l" for
-    // layouts that report the unshifted name.
-    if is_shift && is_ctrl && (key_name == "L" || key_name == "l") {
-        crate::app::save_position(&mut state.borrow_mut());
-        let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::Quit);
-        state.borrow().window.close();
-        return true;
     }
 
     // Spacebar (no modifiers) toggles MPV play/pause from any mode, UNLESS a

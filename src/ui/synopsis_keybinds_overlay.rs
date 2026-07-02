@@ -34,6 +34,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Ctrl+,", "settings"),
         ("Ctrl+↑ / Ctrl+↓", "volume"),
         ("h / Esc", "close"),
+        ("Ctrl+Shift+L", "save & quit app"),
         ("Ctrl+/", "close this legend"),
     ]),
 ];
