@@ -1118,6 +1118,16 @@ impl JournalOverlay {
             })
             .collect();
         drop(paras);
+        // Diagnostic for the reported page UNDERFILL (a paragraph the user says
+        // fits gets pushed to the next page): log the exact budget + per-block
+        // estimates so the over-count can be pinned from a real run. The ×1.15
+        // slack dates from when the rendered view measured ~1.13× the bare
+        // layout; the view now has NO per-line spacing (apply_font_to_views sets
+        // only a font tag), so the multiplier may be pure over-count today.
+        crate::log_fmt!(
+            "JOURNAL-PAGINATE: page_h={} wrap_w={} line_h={} font='{} {}' heights={:?}",
+            self.page_height(), wrap_w, line_h, family, size, heights
+        );
         *self.pages.borrow_mut() = crate::ui::pagination::paginate(&heights, self.page_height());
     }
 
