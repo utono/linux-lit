@@ -88,7 +88,9 @@ pub struct JournalState {
 /// "N.N passage" label is computed separately from the ROW's citations, not from
 /// the band — see `open_picker`.
 fn band_for_page(p: &crate::db::journal::JournalPage) -> JournalBand {
-    if p.div1 < 0 {
+    if p.div1 == crate::app::JOURNAL_AUTHOR_DIV.0 && p.div2 == crate::app::JOURNAL_AUTHOR_DIV.1 {
+        JournalBand::Author(String::new())
+    } else if p.div1 < 0 {
         JournalBand::Work
     } else {
         JournalBand::Scene(p.div1, p.div2)
@@ -101,7 +103,9 @@ fn band_for_page(p: &crate::db::journal::JournalPage) -> JournalBand {
 /// the rewrite context keeps the passage-specific arm (which appends the passage
 /// source text). A page is a passage row iff it carries start+end citations.
 fn band_for_rewrite(p: &crate::db::journal::JournalPage) -> JournalBand {
-    if p.div1 < 0 {
+    if p.div1 == crate::app::JOURNAL_AUTHOR_DIV.0 && p.div2 == crate::app::JOURNAL_AUTHOR_DIV.1 {
+        JournalBand::Author(String::new())
+    } else if p.div1 < 0 {
         JournalBand::Work
     } else if let (Some(start), Some(end)) = (p.start_citation.clone(), p.end_citation.clone()) {
         JournalBand::Passage { div1: p.div1, div2: p.div2, start, end }
@@ -117,6 +121,7 @@ fn footer_left_text(abbrev: &str, band: JournalBand) -> String {
         JournalBand::Work => format!("{} \u{00b7} whole work", abbrev),
         JournalBand::Scene(d1, d2) => format!("{} {}.{}", abbrev, d1, d2),
         JournalBand::Passage { div1, div2, .. } => format!("{} {}.{} passage", abbrev, div1, div2),
+        JournalBand::Author(name) => format!("{} \u{00b7} corpus", name),
     }
 }
 
@@ -165,8 +170,9 @@ fn move_target_rows(s: &AppState, current: &JournalBand) -> Vec<MoveTargetRow> {
             let label = match band {
                 JournalBand::Work => "whole work".to_string(),
                 JournalBand::Scene(d1, d2) => crate::app::scene_synopsis::synopsis_label(s, d1, d2),
-                // target_bands never yields Passage; map defensively.
+                // target_bands never yields Passage or Author; map defensively.
                 JournalBand::Passage { div1, div2, .. } => format!("{}.{} passage", div1, div2),
+                JournalBand::Author(_) => String::new(),
             };
             MoveTargetRow { band, label }
         })
@@ -197,6 +203,11 @@ pub(crate) fn render_current(s: &mut AppState) {
             .unwrap_or_default(),
         JournalBand::Passage { start, end, .. } => conn
             .and_then(|c| crate::db::journal::find_passage_pages(&c, &work_abbrev, &start, &end).ok())
+            .unwrap_or_default(),
+        // Author band: the author name is stored in the variant (filled by the
+        // caller after band_for_page returns Author(String::new())).
+        JournalBand::Author(author_name) => conn
+            .and_then(|c| crate::db::journal::find_author_pages(&c, &author_name).ok())
             .unwrap_or_default(),
     };
 
@@ -403,6 +414,7 @@ pub(crate) fn nav_scene(state: &Rc<RefCell<AppState>>, delta: i32) {
             }
         }
         JournalBand::Passage { .. } => return, // passage band nav is out of scope
+        JournalBand::Author(_) => return,       // author band is jump-only, not part of the walk
     };
 
     let target = JournalBand::Scene(scenes[target_idx as usize].0, scenes[target_idx as usize].1);
@@ -493,6 +505,7 @@ pub(crate) fn begin_ask(state: &Rc<RefCell<AppState>>) {
         JournalBand::Work => "Ask a question about the whole work",
         JournalBand::Scene(_, _) => "Ask a question about this scene",
         JournalBand::Passage { .. } => "Ask a question about this passage",
+        JournalBand::Author(_) => "Ask a question about this author's corpus",
     };
     s.journal_overlay.open_ask_card(
         title,
@@ -556,6 +569,9 @@ fn rewrite_context(
                 title, author, crate::app::scene_synopsis::scene_label(*div1, *div2),
                 unit_label, scene_text, passage_source,
             )
+        }
+        JournalBand::Author(author_name) => {
+            format!("Author: {}\nThis Q&A is filed under the AUTHOR'S CORPUS (cross-work scope).", author_name)
         }
     }
 }
@@ -868,6 +884,8 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
                     &s, div1, div2, anchor_work_line, PROSE_CONTEXT_RADIUS,
                 )
             }
+            // Author band: no single scene to anchor on.
+            JournalBand::Author(_) => String::new(),
         };
         (
             title,
@@ -930,6 +948,11 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
             passage_source_text,
             question,
         ),
+        // Author band: corpus-scope question, not tied to a specific work.
+        JournalBand::Author(ref author_name) => format!(
+            "Author: {}\n\nReader's question about the author's corpus:\n{}",
+            author_name, question,
+        ),
     };
     let question_owned = question.to_string();
     let model_for_db = model.clone();
@@ -963,6 +986,8 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
                         )
                         .map(|_| ())
                     }
+                    // Author band: save is deferred to Task 7 (save_author_page path).
+                    JournalBand::Author(_) => Ok(()),
                 };
                 if let Err(e) = write_result {
                     crate::logging::log(&format!("JOURNAL: db write failed: {}", e));
@@ -979,6 +1004,9 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
                     }
                     JournalBand::Passage { start, end, .. } => {
                         crate::db::journal::find_passage_pages(&conn, &work_abbrev, start, end).ok()
+                    }
+                    JournalBand::Author(author_name) => {
+                        crate::db::journal::find_author_pages(&conn, author_name).ok()
                     }
                 })
                 .unwrap_or_default();
@@ -1030,6 +1058,7 @@ fn populate_and_show_picker(s: &mut AppState) -> bool {
                 JournalBand::Passage { div1, div2, .. } => {
                     format!("{}.{} passage", div1, div2)
                 }
+                JournalBand::Author(author_name) => format!("{} corpus", author_name),
             };
             // A passage Q&A shows the FIRST LINE of its passage (not the
             // question) so the picker reads like the text it's about; fall back to
@@ -1179,6 +1208,7 @@ pub(crate) fn confirm_move_picker(state: &Rc<RefCell<AppState>>) {
             render_current(&mut s);
             return;
         }
+        JournalBand::Author(_) => ("author", crate::app::JOURNAL_AUTHOR_DIV.0, crate::app::JOURNAL_AUTHOR_DIV.1),
     };
 
     let conn = match crate::db::queries::open_db_rw() {
@@ -1716,6 +1746,16 @@ mod tests {
             band_for_page(&page(1, 0, Some("BH.1.0.18"), Some("BH.1.0.18"))),
             JournalBand::Scene(1, 0),
         );
+    }
+
+    #[test]
+    fn band_for_page_classifies_author() {
+        // An author page arrives with div1=div2=-2. band_for_page must classify it
+        // as Author using the page's work_abbrev — but band_for_page only sees a
+        // JournalPage (no work_abbrev field), so author classification keys on the
+        // -2 sentinel and the Author name is supplied by the caller (render_current).
+        // Here we assert the sentinel routes to the Work-vs-Author branch correctly.
+        assert_eq!(band_for_page(&page(-2, -2, None, None)), JournalBand::Author(String::new()));
     }
 
     #[test]
