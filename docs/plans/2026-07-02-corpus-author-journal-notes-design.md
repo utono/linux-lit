@@ -56,7 +56,16 @@ Two concrete needs drove this:
 - **Rendering:** parse full CommonMark with `pulldown-cmark`, map to `TextView`
   `TextTag`s. Rich for headings/emphasis/lists/blockquotes/rules; monospace
   preformatted block for tables/code (a `TextBuffer` cannot render true grids).
-  Applies to **all** journal bodies (Q&A answers too).
+  Applies to **note** bodies (imported `.md`, `kind='note'`). **Scope revised
+  during implementation (2026-07-02): NOTES ONLY, not Q&A answers.** A Q&A answer
+  can carry `<hi>` highlight spans and drives the block-cursor, both computed
+  against the raw-text character offsets; Markdown rendering changes that text
+  (consuming `##`/`**`, adding `• `/`─` markers) and would misalign the highlight
+  ranges and block navigation. Notes have no `<hi>` spans and no such offset
+  dependency, so only they render as Markdown. Q&A answers stay plain text. (The
+  original wording "all bodies" was narrowed to notes-only by user decision; a
+  future task could render Q&A answers by recomputing offsets against the rendered
+  buffer, but that is out of scope here.)
 - **Target styling — replicate the claude.ai artifact view** (the reference
   screenshot of `loading-the-cry.md`): a **serif** body in linux-lit's existing
   reading-card family (Charter), generous leading, and a comfortable left
