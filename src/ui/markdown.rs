@@ -138,13 +138,20 @@ pub fn block_scale(style: &Style) -> f64 {
 pub fn block_spacing(style: &Style) -> (i32, i32) {
     match style {
         Style::H1 => (0, 10),
-        Style::H2 => (22, 8),
+        // H2 above tuned so rule→H2 (rule_below 6 + 16 = 22) EQUALS
+        // subtitle→rule (H3_below 6 + rule_above 16 = 22) — the user flagged
+        // the asymmetry twice ("space between hr and heading should equal
+        // space between subtitle and hr").
+        Style::H2 => (16, 8),
         Style::H3 => (14, 6),
-        Style::Rule => (16, 16),
-        Style::ListItem => (0, 6),
+        Style::Rule => (16, 6),
+        // Items breathe (was 6 — "not enough space between bullet points");
+        // Body's above 4 makes list→paragraph 14 (= the old para gap) so a
+        // closing paragraph separates clearly from the list above it.
+        Style::ListItem => (0, 10),
         Style::BlockQuote => (6, 10),
         Style::Mono => (0, 12),
-        _ => (0, 14), // Body paragraph gap
+        _ => (4, 14), // Body paragraph gap (18 para→para with above+below)
     }
 }
 
@@ -601,6 +608,16 @@ pub fn render_markdown_blocks(
 
     let mut out: Vec<MdBlock> = Vec::with_capacity(blocks.len());
     for (i, block) in blocks.iter().enumerate() {
+        // A horizontal rule at the TOP of a page is a section break made
+        // redundant by the page break itself — suppress its ink (the user
+        // flagged these as "orphaned hr"). Keep a degenerate placeholder so
+        // the returned list stays index-aligned 1:1 with `blocks` (the
+        // invariant the journal cursor projection relies on); it is chrome,
+        // so the cursor never lands on it and the bar never reads its lines.
+        if i == 0 && block.kind == Style::Rule {
+            out.push(MdBlock { start_line: 0, end_line: 0, stoppable: false });
+            continue;
+        }
         let block_start_off = buffer.end_iter().offset();
         for span in &block.spans {
             let start_offset = buffer.end_iter().offset();
@@ -740,6 +757,29 @@ mod tests {
         assert_eq!(planned.len(), 1);
         assert_eq!(planned[0].kind, Style::Body);
         assert_eq!(planned[0].plain_text(), "load it now");
+    }
+
+    #[test]
+    fn rule_gaps_are_symmetric() {
+        // The gap ABOVE a rule (subtitle→rule) must equal the gap BELOW it
+        // (rule→section heading) — user-flagged asymmetry, twice.
+        let (_, h3_below) = block_spacing(&Style::H3);
+        let (rule_above, rule_below) = block_spacing(&Style::Rule);
+        let (h2_above, _) = block_spacing(&Style::H2);
+        assert_eq!(h3_below + rule_above, rule_below + h2_above);
+    }
+
+    #[test]
+    fn list_items_tighter_than_paragraphs_but_breathing() {
+        // item→item < item→paragraph <= paragraph→paragraph, all nonzero.
+        let (item_above, item_below) = block_spacing(&Style::ListItem);
+        let (body_above, body_below) = block_spacing(&Style::Body);
+        let item_gap = item_below + item_above;
+        let item_para_gap = item_below + body_above;
+        let para_gap = body_below + body_above;
+        assert!(item_gap >= 8, "items need breathing room, got {item_gap}");
+        assert!(item_gap < item_para_gap);
+        assert!(item_para_gap <= para_gap);
     }
 
     #[test]
