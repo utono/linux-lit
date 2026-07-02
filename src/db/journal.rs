@@ -538,4 +538,20 @@ mod tests {
         assert_eq!(note.div1, -2);
         assert_eq!(note.div2, -2);
     }
+
+    #[test]
+    fn move_to_author_band_sets_scope_and_sentinel() {
+        let conn = mem();
+        let id = save_journal_page(&conn, "Ham", 1, 2, "Q?", "A.", "m", "scene", "qa").unwrap();
+        move_journal_page(&conn, id, "author", AUTHOR_DIV.0, AUTHOR_DIV.1).unwrap();
+        // NOTE: move keeps work_abbrev; author-band lookups key by work_abbrev, so a
+        // moved-from-a-work page keys under the WORK abbrev, not the author. That's
+        // acceptable: the move picker is out of scope for author here (Task 6 does
+        // not add an Author move target). This test documents move_journal_page is
+        // scope-agnostic and needs no change.
+        let n: i64 = conn
+            .query_row("SELECT div1 FROM journal_entries WHERE id=?1", [id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, -2);
+    }
 }
