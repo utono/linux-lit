@@ -282,39 +282,41 @@ impl MarkdownTags {
                 .build(),
         );
 
-        // H1 (title): bold, ~2× scale, space below.
+        // H1 (title): bold, ~1.5× scale, space below. (Tuned down from 2.0 —
+        // at 2.0 the title dominated the card; 1.5 keeps it clearly largest
+        // while staying readable, matching the claude.ai artifact proportions.)
         let h1 = get_or_add(
             "md-h1",
             gtk4::TextTag::builder()
                 .name("md-h1")
                 .family(serif)
                 .weight(700)
-                .scale(2.0)
+                .scale(1.5)
                 .pixels_below_lines(12)
                 .build(),
         );
 
-        // H2 (section): bold, ~1.3× scale, space above.
+        // H2 (section): bold, ~1.2× scale, space above.
         let h2 = get_or_add(
             "md-h2",
             gtk4::TextTag::builder()
                 .name("md-h2")
                 .family(serif)
                 .weight(700)
-                .scale(1.3)
+                .scale(1.2)
                 .pixels_above_lines(16)
                 .pixels_below_lines(6)
                 .build(),
         );
 
-        // H3 (subtitle): bold, ~1.15× scale, small space below.
+        // H3 (subtitle): bold, ~1.1× scale, small space below.
         let h3 = get_or_add(
             "md-h3",
             gtk4::TextTag::builder()
                 .name("md-h3")
                 .family(serif)
                 .weight(700)
-                .scale(1.15)
+                .scale(1.1)
                 .pixels_below_lines(4)
                 .build(),
         );
