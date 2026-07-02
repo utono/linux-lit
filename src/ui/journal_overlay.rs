@@ -89,6 +89,13 @@ pub struct JournalOverlay {
     /// Char ranges of `<hi>` highlights in the CURRENT page body, re-applied on
     /// the `journal-hi` tag after each `set_text`. Empty when none.
     hi_ranges: RefCell<Vec<(usize, usize)>>,
+    /// Pre-registered Markdown TextTags for the journal buffer. Built once in
+    /// `new` so tag-table lookup is O(1) on every `render_page` call.
+    md_tags: crate::ui::markdown::MarkdownTags,
+    /// True when the current page holds a `kind == "note"` entry (imported
+    /// Markdown). Set by `show_page`; read by `render_page` to route note
+    /// bodies through `apply_markdown` rather than plain `set_text`.
+    page_is_note: Cell<bool>,
     /// Page-marker glyph (`⌄`/`•`/None) drawn on `bar_drawing` — no Label, so no
     /// overlay-child allocation lag. Set by `update_page_marker`, read by the draw
     /// func. Its dim color is `marker_color`.
@@ -365,6 +372,9 @@ impl JournalOverlay {
         };
         let ask_host =
             AskCardHost::new(ask, &scrolled, Some(footer_container.clone()), recompute);
+        // Build markdown tags once against the view's tag table so every
+        // render_page call reuses the same registered tags (O(1) apply).
+        let md_tags = crate::ui::markdown::MarkdownTags::register(&view.buffer());
 
         Self {
             overlay,
@@ -409,6 +419,8 @@ impl JournalOverlay {
             vim_cursor_colors: RefCell::new((String::new(), String::new())),
             highlight_bg: RefCell::new(crate::ui::DEFAULT_HIGHLIGHT_BG.to_string()),
             hi_ranges: RefCell::new(Vec::new()),
+            md_tags,
+            page_is_note: Cell::new(false),
             marker_glyph,
             marker_color,
             bar_color,
@@ -481,6 +493,7 @@ impl JournalOverlay {
         self.entry_pos.set((page_index, page_count));
         if page_count == 0 {
             // Empty band: a bare message, no navigable paragraphs.
+            self.page_is_note.set(false);
             self.view.buffer().set_text("No pages yet \u{2014} press r to ask.");
             self.apply_font();
             self.clear_blocks();
@@ -493,7 +506,9 @@ impl JournalOverlay {
             // paginate by measured height, and render the first page. j/k step
             // the cursor across the FULL list, turning the page at boundaries —
             // so no partial paragraph is ever rendered at either edge.
-            let full = if kind == "note" {
+            let is_note = kind == "note";
+            self.page_is_note.set(is_note);
+            let full = if is_note {
                 answer.to_string()
             } else {
                 format!("{}\n\n{}", prefix_question(question), answer)
@@ -1163,10 +1178,22 @@ impl JournalOverlay {
         let (body, hi_ranges) = crate::ui::gloss_block::strip_hi_spans(&raw_body);
         *self.hi_ranges.borrow_mut() = hi_ranges;
 
-        self.view.buffer().set_text(&body);
+        // Notes (kind == "note") are imported Markdown — render them as styled
+        // text via apply_markdown. Q&A answers keep plain set_text so that <hi>
+        // highlight ranges (char offsets into `body`) and per-page block offsets
+        // (derived from body.split('\n') below) stay byte-aligned with the buffer
+        // content. apply_markdown appends — clear the buffer first.
+        if self.page_is_note.get() {
+            let buffer = self.view.buffer();
+            buffer.set_text("");
+            crate::ui::markdown::apply_markdown(&buffer, &body, &self.md_tags);
+        } else {
+            self.view.buffer().set_text(&body);
+        }
         self.apply_font();
         // Paint the `<hi>` highlight AFTER set_text + font (read-mode only; the
         // editor sets raw text and must not re-apply these read-mode ranges).
+        // Notes have no <hi> spans so apply_hi_color is a no-op for them.
         self.apply_hi_color();
         // The leading `Q:` line renders as PLAIN body text — no header tag. It
         // used to get a bold/0.9-scale/dim header treatment, but the tag only
