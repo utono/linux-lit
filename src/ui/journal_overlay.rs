@@ -465,6 +465,7 @@ impl JournalOverlay {
         page_count: usize,
         question: &str,
         answer: &str,
+        kind: &str,
         card_width: i32,
         card_height: i32,
     ) {
@@ -488,7 +489,11 @@ impl JournalOverlay {
             // paginate by measured height, and render the first page. j/k step
             // the cursor across the FULL list, turning the page at boundaries —
             // so no partial paragraph is ever rendered at either edge.
-            let full = format!("{}\n\n{}", prefix_question(question), answer);
+            let full = if kind == "note" {
+                answer.to_string()
+            } else {
+                format!("{}\n\n{}", prefix_question(question), answer)
+            };
             let paras = paragraph_texts(&full);
             *self.all_paragraphs.borrow_mut() = paras;
             self.cursor_full.set(0);

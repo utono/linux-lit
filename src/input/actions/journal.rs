@@ -262,11 +262,11 @@ pub(crate) fn render_current(s: &mut AppState) {
     } else {
         Some(&pages[s.journal.page_index])
     };
-    let (q, a) = current_page
-        .map(|p| (p.question.clone(), p.answer.clone()))
-        .unwrap_or_default();
+    let (q, a, kind) = current_page
+        .map(|p| (p.question.clone(), p.answer.clone(), p.kind.clone()))
+        .unwrap_or_else(|| (String::new(), String::new(), "qa".to_string()));
     s.journal_overlay
-        .show_page(&footer_left, s.journal.page_index, count, &q, &a, cw, h);
+        .show_page(&footer_left, s.journal.page_index, count, &q, &a, &kind, cw, h);
 
     s.journal.pages = pages;
     // Color any paragraphs whose TTS MP3 is already cached, like the gloss
@@ -377,7 +377,12 @@ pub(crate) fn nav_page(state: &Rc<RefCell<AppState>>, delta: i32) {
         return; // already at the work's first/last Q&A
     };
     let target = &all[next];
-    let band = band_for_page(target);
+    let band = match band_for_page(target) {
+        JournalBand::Author(_) => JournalBand::Author(
+            s.current_work.as_ref().map(|w| w.author.clone()).unwrap_or_default(),
+        ),
+        other => other,
+    };
     let target_id = target.id;
     land_on_page(&mut s, band, target_id);
 }
@@ -1008,8 +1013,13 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
                         )
                         .map(|_| ())
                     }
-                    // Author band: save is deferred to Task 7 (save_author_page path).
-                    JournalBand::Author(_) => Ok(()),
+                    JournalBand::Author(_) => {
+                        crate::db::journal::save_author_page(
+                            &conn, &work_author,
+                            &question_owned, &answer, &model_for_db, "qa",
+                        )
+                        .map(|_| ())
+                    }
                 };
                 if let Err(e) = write_result {
                     crate::logging::log(&format!("JOURNAL: db write failed: {}", e));
@@ -1068,7 +1078,12 @@ fn populate_and_show_picker(s: &mut AppState) -> bool {
     let rows: Vec<crate::ui::journal_picker::JournalRow> = pages
         .iter()
         .map(|p| {
-            let band = band_for_page(p);
+            let band = match band_for_page(p) {
+                JournalBand::Author(_) => JournalBand::Author(
+                    s.current_work.as_ref().map(|w| w.author.clone()).unwrap_or_default(),
+                ),
+                other => other,
+            };
             // A passage Q&A resolves to its Scene band (so Enter lands in the
             // merged chapter band), but the picker still labels it "N.N passage"
             // — read passage-ness from the ROW's citations, not the band.
