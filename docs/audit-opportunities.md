@@ -1311,7 +1311,7 @@ safe-scope opportunities:
   for the 5 scrim+container hides saves ~1 line/site across 4 structs — marginal,
   skip.
 
-## #52 — overlay-panel-attach helper (gloss + journal) — PROPOSED
+## #52 — overlay-panel-attach helper (gloss + journal) — DONE (commit 9e9fc71)
 
 - **Status:** PROPOSED, **highest value of this batch.** Directly serves the
   "standardize journal + gloss overlays" goal — the panel wiring was added to both
@@ -1353,7 +1353,7 @@ safe-scope opportunities:
   already drifted once — the pad went 10→24 at both sites this session) ÷ small
   helper.
 
-## #53 — overlay set_rc_color setter family — PROPOSED
+## #53 — overlay set_rc_color setter family — DONE (commit 305d02b)
 
 - **Status:** PROPOSED, medium value. Five near-identical setter methods across the
   two overlays; the family grew again this session (`set_bar_color` added to
@@ -1419,7 +1419,7 @@ safe-scope opportunities:
   only ~10 lines extract, and the block cursor only shows during vim edit (narrow
   surface).
 
-## #55 — overlay header-tag style triple (gloss + journal) — PROPOSED
+## #55 — overlay header-tag style triple (gloss + journal) — DONE (commit 305d02b)
 
 - **Status:** PROPOSED, medium value. NEW duplication introduced THIS session by the
   header restyle (journal `Q:` header + gloss speaker/verse all adopted one look).
@@ -1451,7 +1451,7 @@ safe-scope opportunities:
   hand-copied to all 5 and a future tweak (e.g. scale 0.9→0.85) must hit all five or
   the gloss/journal headers visibly diverge.
 
-## #56 — PANEL_PAD / PANEL_RADIUS named constants — PROPOSED
+## #56 — PANEL_PAD / PANEL_RADIUS named constants — DONE (commit 9e9fc71)
 
 - **Status:** PROPOSED, low value but trivial. NEW this session (the inset panel).
 - **Signal:** `draw_overlay_panel(cr, view, w, h, rgb, PAD, RADIUS)` is called at two
@@ -1470,7 +1470,7 @@ safe-scope opportunities:
   fold in opportunistically (e.g. while doing #52, the panel-attach helper, which would
   naturally own these constants).
 
-## #57 — body-indent `60` split across gloss + journal — PROPOSED
+## #57 — body-indent `60` split across gloss + journal — RESOLVED by redesign (commit 2b03c7a)
 
 - **Status:** PROPOSED, low value. NEW implicit coupling this session.
 - **Signal:** the "body indented past the accent bar" value **60** is
@@ -1530,7 +1530,7 @@ hardcoded bar color were all this class). Two Explore finders, byte-level.
 - **Safe-scope:** yes — literal→const, zero behavior change. Low rank (2 sites),
   fold in opportunistically.
 
-## #59 — remove journal apply_font vestigial empty-guard — PROPOSED
+## #59 — remove journal apply_font vestigial empty-guard — DONE (commit 305d02b)
 
 - **Status:** PROPOSED, trivial cleanup. NEW dead code as of this session's
   font-family fix.
@@ -1608,3 +1608,29 @@ color storage is normalized.
   paths inside a helper. Keep parallel, documented, unmerged.
 - **Font family/size init** — already shared (GLOSS_DEFAULT_FONT_FAMILY /
   GLOSS_DEFAULT_FONT_SIZE consts, journal consumes by path). Done, no cut.
+
+## Landing notes (2026-07-01, branch refactor/overlay-consistency-53-59)
+
+- **#53 DONE (`305d02b`)** — shared `ui::set_rc_color(hex, cell, drawing)`
+  collapses all 5 setter bodies. DEVIATION from the proposal: home is
+  `src/ui/mod.rs` (beside the other shared overlay helpers), NOT
+  `gloss_util.rs` — that module's charter is "No GTK dependencies" and the
+  helper takes a `DrawingArea`. The gloss `dim_fg` pre-line noted in the 2nd
+  update no longer existed (field removed in `e2fd6f2`), so all 5 were pure
+  triples. Bare-vs-qualified `parse_hex_color` split gone with the bodies.
+- **#55 DONE (`305d02b`)** — helper `header_tag_base(name, left_margin)` in
+  `gloss_render.rs` (named without "dim": headers render full ink except
+  echoes; the `header_dim` closure still owns color). Sites were 4, not 5 —
+  `journal-qa-header`/`apply_qa_header` was removed on this branch
+  (`8361f5a`). All 4 sites also shared `left_margin`, so it joined the core;
+  small-caps/pixels_above/below stay caller-side as proposed.
+- **#59 DONE (`305d02b`)** — dead empty-guard removed; journal `apply_font`
+  core now matches gloss's. The stale "family guard" clause in the #46 helper
+  doc (`apply_font_to_views`) dropped too.
+- **#52/#56 DONE (`9e9fc71`, earlier this branch)** + **#57 RESOLVED
+  (`2b03c7a`)** — back-filled headings; these landed during the session but
+  were never flipped from PROPOSED. #57's two coupled `60`s no longer exist:
+  the indent redesign made `JOURNAL_BODY_INDENT` an alias of
+  `QUOTE_BODY_INDENT` (12) and removed the raw gloss `- 60` measurement.
+- **Still open:** #54 (bar draw-func block-cursor extraction), #58
+  (BAR_TEXT_GAP const), #60 (bottom-pad alignment, needs on-screen verify).
