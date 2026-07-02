@@ -1388,9 +1388,12 @@ safe-scope opportunities:
   eliminating the bare-vs-qualified `parse_hex_color` inconsistency that already
   bit this session.
 
-## #54 — overlay bar_drawing draw-func shared prefix — PROPOSED
+## #54 — overlay bar_drawing draw-func shared prefix — DONE (commit aa85226)
 
-- **Status:** PROPOSED, medium value but larger cut than #52/#53 — the two
+- **Status:** DONE — `ui::draw_vim_block_cursor(cr, view, block_line, x)` beside
+  `draw_bar_spans`; both closures call it, each passing its own x (journal now
+  reads `left_margin()` unconditionally — a pure getter, no behavior change).
+- **Orig:** PROPOSED, medium value but larger cut than #52/#53 — the two
   `bar_drawing.set_draw_func` closures share a substantial identical prefix.
 - **Signal:** gloss `bar_drawing.set_draw_func` (:314-387) and journal (:232-279)
   share three byte-identical pieces (Explore, 2026-07-01):
@@ -1510,7 +1513,13 @@ style, panel, ~12px bar gap — but each holds its own copy, which is exactly wh
 they kept drifting: the empty-font_family fallback bug, hardcoded 16pt, pale
 hardcoded bar color were all this class). Two Explore finders, byte-level.
 
-## #58 — BAR_TEXT_GAP shared const — PROPOSED
+## #58 — BAR_TEXT_GAP shared const — RESOLVED by the #57 indent redesign (2b03c7a)
+
+**Resolution (2026-07-01):** both former bare-12 sites now flow through the
+shared named const: gloss `quote_body = bar_left + QUOTE_BODY_INDENT`
+(gloss_render.rs:20/:178) and journal `left_margin() - JOURNAL_BODY_INDENT`
+where `JOURNAL_BODY_INDENT` is an alias of `QUOTE_BODY_INDENT`
+(journal_overlay.rs:143). No bare 12 remains; nothing to extract.
 
 - **Status:** PROPOSED, low value but clean. Both overlays encode the SAME 12px
   accent-bar↔text gap as a bare literal, inverse structure — a shared const makes
@@ -1553,7 +1562,16 @@ hardcoded bar color were all this class). Two Explore finders, byte-level.
 - **Safe-scope:** yes — removing provably-dead code, behavior-preserving.
   Do it while touching the file.
 
-## #60 — OVERLAY_BOTTOM_PAD alignment (journal 28 vs gloss 80) — PROPOSED (conditional)
+## #60 — OVERLAY_BOTTOM_PAD alignment (journal 28 vs gloss 80) — CLOSED, keep 80 (2026-07-01)
+
+**Resolution (2026-07-01):** the required on-screen check could not be run — a
+live user dev instance owned the session (a second instance would share
+config-dev.json + the log; headless cage from the agent shell was SIGTERMed,
+the documented seat-busy failure). Per this entry's own rule (only unify if
+visually verified; the 80 may be load-bearing for the gloss's denser content +
+clip guard, and it also feeds gloss pagination capacity), the divergence is
+KEPT and documented. Re-open only if a visual check someday shows the 80 is
+redundant.
 
 - **Status:** PROPOSED but CONDITIONAL — needs on-screen verification, NOT a blind
   literal→const.
@@ -1632,8 +1650,10 @@ color storage is normalized.
   were never flipped from PROPOSED. #57's two coupled `60`s no longer exist:
   the indent redesign made `JOURNAL_BODY_INDENT` an alias of
   `QUOTE_BODY_INDENT` (12) and removed the raw gloss `- 60` measurement.
-- **Still open:** #54 (bar draw-func block-cursor extraction), #58
-  (BAR_TEXT_GAP const), #60 (bottom-pad alignment, needs on-screen verify).
+- **Still open:** ~~#54 / #58 / #60~~ — ALL CLOSED 2026-07-01 on
+  `refactor/audit-54-58-61-66` (#54 done `aa85226`; #58 resolved by the #57
+  redesign; #60 closed keep-80, verify unavailable). The ledger has NO open
+  opportunities as of this batch.
 
 ---
 
@@ -1645,9 +1665,11 @@ agent word (the #11 lesson — one agent claim, the current_line→id pair, turn
 out token-different and was demoted to the #23-style-equivalence entry #66).
 Ranked by (duplication × drift_risk) ÷ scope_size.
 
-## #61 — buffer-line-for-line-id resolver — PROPOSED
+## #61 — buffer-line-for-line-id resolver — DONE (commit 8be7961)
 
-- **Status:** PROPOSED — rank #1 of this batch: 3 byte-identical 10-line sites,
+- **Status:** DONE — helper beside `jump_to_line`; the 3 A-sites and the
+  restructured `jump_to_line_mapping_id` variant all delegate.
+- **Orig:** rank #1 of this batch: 3 byte-identical 10-line sites,
   cross-file, in the mapping logic that is the repo's most bug-prone core.
 - **Signal:** the "resolve a `line_mapping_id` to a buffer line, honoring the
   optional `line_map`" block is byte-identical at **3 sites**:
@@ -1674,9 +1696,11 @@ Ranked by (duplication × drift_risk) ÷ scope_size.
   scope and follow-up (`jump_to_line`, mode set). Drift risk is real: a fix to
   the mapping fallback must currently be hand-copied to 3 files.
 
-## #62 — readonly-textview triple — PROPOSED
+## #62 — readonly-textview triple — DONE (commit bb03dc8)
 
-- **Status:** PROPOSED — rank #2: 5 byte-identical sites across 3 files.
+- **Status:** DONE — `ui::set_view_readonly`; all 5 construction sites call it,
+  vim per-mode toggles stayed inline as planned.
+- **Orig:** rank #2: 5 byte-identical sites across 3 files.
 - **Signal:** the read-only display-view init triple `view.set_editable(false);
   view.set_cursor_visible(false); view.set_focusable(false);` — byte-identical
   modulo receiver name — at **5 sites**: gloss_overlay.rs:279-281 (gloss_view),
@@ -1692,9 +1716,11 @@ Ranked by (duplication × drift_risk) ÷ scope_size.
   values).
 - **Safe-scope:** yes — 3-line construction-time widget init → one call.
 
-## #63 — gloss set_bar_color_from_root — PROPOSED
+## #63 — gloss set_bar_color_from_root — DONE (commit a9a83dd)
 
-- **Status:** PROPOSED — rank #3: 4 byte-identical sites, one file, 5 lines.
+- **Status:** DONE — private GlossOverlay method, draw-free as specified (NOT
+  routed through ui::set_rc_color).
+- **Orig:** rank #3: 4 byte-identical sites, one file, 5 lines.
 - **Signal:** the Option-guarded accent-bar color update
   `if let Some(color) = root_color { if let Some((r, g, b)) =
   parse_hex_color(color) { *self.bar_color.borrow_mut() = (r, g, b); } }`
@@ -1712,9 +1738,11 @@ Ranked by (duplication × drift_risk) ÷ scope_size.
   fallback-default form, different consumer); :930 (rgba match for a tag color).
 - **Safe-scope:** yes — 5-line block → one method call at 4 sites.
 
-## #64 — gloss hide-diff-labels core — PROPOSED
+## #64 — gloss hide-diff-labels core — DONE (commit a9a83dd)
 
-- **Status:** PROPOSED — rank #4: 5 sites, one file; the extensions have already
+- **Status:** DONE — `hide_diff_labels()` at all 5 sites, per-caller extras
+  inline; the `set_prose_margins(left)` rider shipped too (both prose twins).
+- **Orig:** rank #4: 5 sites, one file; the extensions have already
   drifted (which is the evidence the core needs a name).
 - **Signal:** the 4-line diff-label hide core `orig_header/original_label/
   corr_header/corrected_label .set_visible(false)` — byte-identical and
@@ -1735,9 +1763,11 @@ Ranked by (duplication × drift_risk) ÷ scope_size.
   any site hiding only a subset of the 4.
 - **Safe-scope:** yes — pure widget-visibility extraction.
 
-## #65 — mpv discover-or-launch-blocking closure — PROPOSED
+## #65 — mpv discover-or-launch-blocking closure — DONE (commit 576684b)
 
-- **Status:** PROPOSED — rank #5: only 2 sites, but the whole ~12-line closure
+- **Status:** DONE — `discovery::discover_or_launch_blocking(path)` beside
+  `launch_mpv`; both spawn_blocking sites are one-line calls.
+- **Orig:** rank #5: only 2 sites, but the whole ~12-line closure
   body is byte-identical and it encodes MPV startup behavior that must stay in
   lockstep.
 - **Signal:** the `spawn_blocking` closure body — `if let Some((sock, _)) =
@@ -1757,9 +1787,12 @@ Ranked by (duplication × drift_risk) ÷ scope_size.
 - **Safe-scope:** yes — pure fn extraction of a blocking helper; identical
   control flow preserved (early returns become the fn's returns).
 
-## #66 — current-line-id helper — PROPOSED
+## #66 — current-line-id helper — DONE (commit 8be7961)
 
-- **Status:** PROPOSED — rank #6 (2 sites at the floor; do in the same PR as
+- **Status:** DONE — shipped with #61 as planned; the helper standardized on
+  the `.copied().flatten()` shape (the `?.as_ref().copied()` twin was
+  equivalent).
+- **Orig:** rank #6 (2 sites at the floor; do in the same PR as
   #61 — same home, inverse direction).
 - **Signal:** the inverse resolution ("current buffer line → line_mapping_id")
   at **2 sites**: bookmarks.rs:18-24 and concordance.rs:66-72. NOT byte-identical
