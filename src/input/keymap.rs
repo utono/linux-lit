@@ -702,6 +702,8 @@ fn ask_vim_intercept(
         match feed(state, vk) {
             EditorAction::Save | EditorAction::SaveQuit => submit(state),
             EditorAction::Cancel | EditorAction::CancelForce => close(state),
+            // Visual `y`: copy the yanked selection to the system clipboard.
+            EditorAction::CopyToClipboard(text) => copy_to_clipboard(&text),
             _ => {}
         }
     }
@@ -735,6 +737,18 @@ fn paste_clipboard(state: &Rc<RefCell<AppState>>, apply: fn(&Rc<RefCell<AppState
             }
         },
     );
+}
+
+/// Write `text` to the system clipboard (visual-mode `y` in the vim editors).
+/// Uses the GDK clipboard, which on Wayland owns the selection for as long as
+/// the app runs — the same channel `paste_clipboard` reads back.
+fn copy_to_clipboard(text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    if let Some(display) = gtk4::gdk::Display::default() {
+        display.clipboard().set_text(text);
+    }
 }
 
 thread_local! {
@@ -849,6 +863,12 @@ fn handle_journal_edit_key(
         // The engine already toggled the `<hi>` tags in its buffer and
         // feed_edit_key re-mirrored; the dirty-check sees the change on :w/:q.
         EditorAction::ToggleHighlight => true,
+        // Visual `y`: engine yanked to its register; also copy to the system
+        // clipboard so the selection can paste into other apps.
+        EditorAction::CopyToClipboard(text) => {
+            copy_to_clipboard(&text);
+            true
+        }
     }
 }
 
@@ -948,6 +968,12 @@ fn handle_gloss_edit_key(
         // The engine already toggled the `<hi>` tags in its buffer and
         // feed_edit_key re-mirrored; the dirty-check sees the change on :w/:q.
         EditorAction::ToggleHighlight => true,
+        // Visual `y`: engine yanked to its register; also copy to the system
+        // clipboard so the selection can paste into other apps.
+        EditorAction::CopyToClipboard(text) => {
+            copy_to_clipboard(&text);
+            true
+        }
     }
 }
 

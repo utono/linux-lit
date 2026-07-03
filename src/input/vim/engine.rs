@@ -1135,6 +1135,15 @@ impl VimEngine {
         let r = self.visual_range(anchor);
         self.visual_anchor = None;
         self.mode = Mode::Normal;
+        // Visual `y` ALSO copies the yanked text to the system clipboard (the
+        // host writes it). Capture the slice before apply_operator moves the
+        // cursor to the range start, then signal the host.
+        if op == Op::Yank {
+            let text = self.char_slice(r);
+            self.apply_operator(op, r, linewise);
+            self.clamp_normal();
+            return self.out(false, EditorAction::CopyToClipboard(text));
+        }
         let res = self.apply_operator(op, r, linewise);
         if op != Op::Change {
             self.clamp_normal();
@@ -1452,6 +1461,31 @@ mod tests {
         e.feed("G");
         e.feed("p");
         assert_eq!(e.buffer(), "a\nb\nc\na");
+    }
+
+    #[test]
+    fn visual_yank_charwise_signals_clipboard() {
+        // "hello world": select "hello", press y. The engine both yanks to the
+        // register AND asks the host to copy "hello" to the system clipboard.
+        let mut e = eng("hello world");
+        e.feed("v");    // enter visual (anchor at 'h')
+        e.feed("llll"); // extend to the 'o' of "hello"
+        let out = e.handle_key(VimKey::Char('y'));
+        assert_eq!(out.action, EditorAction::CopyToClipboard("hello".into()));
+        assert!(!out.buffer_changed, "yank never mutates the buffer");
+        assert_eq!(e.mode(), Mode::Normal);
+        // register still works for in-editor put
+        e.feed("$p");
+        assert_eq!(e.buffer(), "hello worldhello");
+    }
+
+    #[test]
+    fn visual_line_yank_signals_clipboard_with_newline() {
+        // Linewise visual yank copies the whole line INCLUDING its trailing \n.
+        let mut e = eng("a\nb\nc");
+        e.feed("V"); // linewise visual over line "a"
+        let out = e.handle_key(VimKey::Char('y'));
+        assert_eq!(out.action, EditorAction::CopyToClipboard("a\n".into()));
     }
 
     // Task 10: undo / dot

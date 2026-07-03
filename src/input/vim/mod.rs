@@ -35,7 +35,8 @@ pub enum Mode {
 }
 
 /// What the engine asks the host (adapter) to do after a key.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+// Not `Copy`: `CopyToClipboard` carries an owned `String`.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EditorAction {
     Nop,
     Save,
@@ -46,6 +47,10 @@ pub enum EditorAction {
     /// Visual-mode `H` toggled an inline `<hi>` highlight over the selection. The
     /// engine has already mutated its buffer; the host re-mirrors + marks dirty.
     ToggleHighlight,
+    /// Visual-mode `y` yanked the selection. The engine already stored it in the
+    /// unnamed (or named) register; the host ALSO writes the carried text to the
+    /// system clipboard so it can be pasted into other apps.
+    CopyToClipboard(String),
 }
 
 /// Half-open char range `[start, end)` into the buffer.

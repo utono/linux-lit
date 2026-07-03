@@ -17,7 +17,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Alt+s", "current scene band"),
         ("Alt+w", "whole-work band"),
         ("Alt+a", "author corpus band"),
-        ("Shift+V", "visual select (y yank)"),
+        ("Shift+V", "visual select (y yank → clipboard)"),
     ]),
     ("TTS", &[
         ("Space / Tab", "read cursor block (TTS)"),

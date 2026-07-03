@@ -11,7 +11,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("j / k", "next / prev block"),
         ("g g / G", "first / last block"),
         ("Ctrl+n / Ctrl+p", "cycle synopsis fwd / back"),
-        ("Shift+V", "visual select (y yank)"),
+        ("Shift+V", "visual select (y yank → clipboard)"),
     ]),
     ("TTS", &[
         ("Space / Tab", "play / stop cursor block TTS"),
