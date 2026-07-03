@@ -1495,6 +1495,37 @@ impl JournalOverlay {
         self.sync_cursor_page();
     }
 
+    /// `x`/`y`: turn to the next/prev RENDER page of the current Q&A (the same
+    /// entry), landing the cursor on the first stoppable block of that page —
+    /// unlike `j`/`k` which step one block at a time. No-op at the first/last
+    /// page (or when the entry has no blocks / is a single page).
+    pub fn page_turn(&self, delta: i32) {
+        let n_pages = self.pages.borrow().len();
+        if n_pages < 2 {
+            return;
+        }
+        let cur_page = self.page_idx.get().min(n_pages - 1);
+        let target_page = cur_page as i64 + delta as i64;
+        if target_page < 0 || target_page >= n_pages as i64 {
+            return;
+        }
+        let (page_start, page_end) = {
+            let pages = self.pages.borrow();
+            let p = &pages[target_page as usize];
+            (p.start, p.end)
+        };
+        // Land on the first STOPPABLE block of the target page (skip note
+        // chrome — headings/rules), falling back to the page start.
+        let target = {
+            let note_blocks = self.note_blocks.borrow();
+            (page_start..page_end)
+                .find(|&i| note_blocks.get(i).map(|b| b.stoppable).unwrap_or(true))
+                .unwrap_or(page_start)
+        };
+        self.cursor_full.set(target);
+        self.sync_cursor_page();
+    }
+
     /// After `cursor_full` moves: if it now falls on a different page, turn the
     /// page (re-render, which re-projects + marks); otherwise just re-mark the bar
     /// at the new page-local block — no re-render.

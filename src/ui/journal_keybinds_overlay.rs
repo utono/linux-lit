@@ -10,9 +10,11 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ("Navigation", &[
         ("j / q", "next block"),
         ("k / ,", "prev block"),
+        ("x / y", "next / prev page (this Q&A)"),
         ("g g / G", "first / last block"),
         ("Ctrl+n / Ctrl+p", "prev / next Q&A in band"),
         ("Alt+n / Alt+p", "prev / next scene"),
+        ("Alt+s", "current scene band"),
         ("Alt+w", "whole-work band"),
         ("Alt+a", "author corpus band"),
         ("Shift+V", "visual select (y yank)"),

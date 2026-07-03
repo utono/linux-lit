@@ -447,6 +447,25 @@ pub(crate) fn nav_to_work_band(state: &Rc<RefCell<AppState>>) {
     render_current(&mut s);
 }
 
+/// Switch to the Scene band for the main card's current cursor line and render
+/// it. Jump-only — a direct jump to `Scene(current_scene_divs)`, complementing
+/// `Alt+n/p` (which only step through the scene list) and matching the band the
+/// overlay first opens on. Lets the author/work band return to the reading
+/// position's scene without closing and reopening the overlay.
+pub(crate) fn nav_to_scene_band(state: &Rc<RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    if s.current_work.is_none() {
+        return;
+    }
+    let (d1, d2) = crate::app::scene_synopsis::current_scene_divs(&s);
+    if s.journal_band == JournalBand::Scene(d1, d2) {
+        return;
+    }
+    s.journal_band = JournalBand::Scene(d1, d2);
+    s.journal.page_index = 0;
+    render_current(&mut s);
+}
+
 /// Switch to the Author band (corpus-scope pages for the current work's author)
 /// and render it. Jump-only — not part of the sequential scene/work band walk.
 ///

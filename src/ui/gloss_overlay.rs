@@ -1643,6 +1643,25 @@ impl GlossOverlay {
         self.sync_cursor_page();
     }
 
+    /// `x`/`y`: turn to the next/prev RENDER page of the current gloss, landing
+    /// the cursor on the first block of that page — unlike `j`/`k` which step one
+    /// block at a time. No-op at the first/last page (or when the gloss is a
+    /// single page / has no blocks).
+    pub fn page_turn(&self, delta: i32) {
+        let n_pages = self.pages.borrow().len();
+        if n_pages < 2 {
+            return;
+        }
+        let cur_page = self.page_idx.get().min(n_pages - 1);
+        let target_page = cur_page as i64 + delta as i64;
+        if target_page < 0 || target_page >= n_pages as i64 {
+            return;
+        }
+        let page_start = self.pages.borrow()[target_page as usize].start;
+        self.cursor_full.set(page_start);
+        self.sync_cursor_page();
+    }
+
     /// After `cursor_full` moves: turn the page (re-render) if it now falls on a
     /// different page; otherwise re-mark the bar at the new page-local block.
     fn sync_cursor_page(&self) {

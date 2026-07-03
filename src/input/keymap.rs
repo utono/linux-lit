@@ -1010,6 +1010,14 @@ fn handle_journal_key(
                 crate::input::actions::journal::nav_to_work_band(state);
                 return true;
             }
+            // Alt+s: jump to the Scene band for the main card's current line —
+            // a direct jump (like Alt+w/Alt+a), the same band the overlay opens
+            // on. Returns to the reading position's scene from the author/work
+            // band without closing and reopening the overlay.
+            "s" => {
+                crate::input::actions::journal::nav_to_scene_band(state);
+                return true;
+            }
             // Alt+a: jump to the author/corpus band (scope='author' pages for
             // the current work's author). A jump target, not part of the
             // sequential band walk (Alt+n/p scenes, Alt+w work).
@@ -1140,6 +1148,29 @@ fn handle_journal_key(
             crate::input::actions::gloss::stop_all_gloss_audio(state);
             if state.borrow().journal_overlay.has_nav_blocks() {
                 state.borrow().journal_overlay.cursor_prev_block();
+                crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
+            } else {
+                state.borrow().journal_overlay.scroll_view(-1);
+            }
+            true
+        }
+        // x/y: turn to the next/prev RENDER page of the current Q&A (same entry),
+        // landing the cursor on the first block of that page — a whole-page jump,
+        // unlike j/k which step one block. No-op at the first/last page.
+        "x" => {
+            crate::input::actions::gloss::stop_all_gloss_audio(state);
+            if state.borrow().journal_overlay.has_nav_blocks() {
+                state.borrow().journal_overlay.page_turn(1);
+                crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
+            } else {
+                state.borrow().journal_overlay.scroll_view(1);
+            }
+            true
+        }
+        "y" => {
+            crate::input::actions::gloss::stop_all_gloss_audio(state);
+            if state.borrow().journal_overlay.has_nav_blocks() {
+                state.borrow().journal_overlay.page_turn(-1);
                 crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
             } else {
                 state.borrow().journal_overlay.scroll_view(-1);
@@ -1378,6 +1409,30 @@ fn handle_gloss_key(
             if state.borrow().gloss_overlay.current_block().is_some() {
                 state.borrow().gloss_overlay.cursor_prev_block();
                 // A page turn re-rendered the buffer; recolor cached blocks.
+                crate::input::actions::gloss::recolor_cached_blocks_rc(state);
+            } else {
+                state.borrow().gloss_overlay.scroll_gloss(-1);
+            }
+            true
+        }
+        // x/y: turn to the next/prev RENDER page of the current gloss, landing
+        // the cursor on the first block of that page — a whole-page jump, unlike
+        // j/k which step one block. No-op at the first/last page. On the loading
+        // card (no blocks) fall back to the scroll, mirroring j/k.
+        "x" => {
+            crate::input::actions::gloss::stop_all_gloss_audio(state);
+            if state.borrow().gloss_overlay.current_block().is_some() {
+                state.borrow().gloss_overlay.page_turn(1);
+                crate::input::actions::gloss::recolor_cached_blocks_rc(state);
+            } else {
+                state.borrow().gloss_overlay.scroll_gloss(1);
+            }
+            true
+        }
+        "y" => {
+            crate::input::actions::gloss::stop_all_gloss_audio(state);
+            if state.borrow().gloss_overlay.current_block().is_some() {
+                state.borrow().gloss_overlay.page_turn(-1);
                 crate::input::actions::gloss::recolor_cached_blocks_rc(state);
             } else {
                 state.borrow().gloss_overlay.scroll_gloss(-1);

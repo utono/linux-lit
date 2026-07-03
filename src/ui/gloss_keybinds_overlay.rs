@@ -10,6 +10,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ("Navigation", &[
         ("j / q", "next block"),
         ("k / ,", "prev block"),
+        ("x / y", "next / prev page (this gloss)"),
         ("g g / G", "first / last block"),
         ("Alt+n / Alt+p", "prev / next gloss"),
         ("Ctrl+n / Ctrl+p", "next / prev passage"),
