@@ -685,6 +685,9 @@ pub fn measure_planned_block(
         layout.set_indent(LIST_HANG * pango::SCALE);
     }
     layout.set_wrap(pango::WrapMode::WordChar);
+    // The journal view renders with per-wrapped-line leading
+    // (`set_pixels_inside_wrap`); charge the same here or pages over-pack.
+    layout.set_spacing(crate::ui::OVERLAY_LINE_LEADING * pango::SCALE);
     // Measure the block as MARKUP mirroring the render's inline tags: bold
     // runs are wider than regular, so a span-heavy paragraph measured as
     // plain text wraps to FEWER lines than it renders — the page over-packs

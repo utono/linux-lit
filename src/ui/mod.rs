@@ -55,28 +55,35 @@ pub(crate) const EDIT_FONT_FAMILY: &str = "JetBrainsMono Nerd Font";
 /// (which passes `theme::selection_bg`, the same blue as the visual selection).
 pub(crate) const DEFAULT_HIGHLIGHT_BG: &str = "rgba(38, 109, 211, 0.15)";
 
-/// The side margin (left and right) for the full-screen gloss / synopsis / ask
-/// cards: a quarter of the *live* card width, which keeps the prose near the
-/// ~65-char readability optimum on a wide (~1660px) card.
+/// The verse reading card's side margin: a quarter of the *live* card width.
+/// Since the 2026-07-02 overlay readability pass this is the MAIN card's
+/// margin only — the gloss/journal/synopsis overlays and the ask card use
+/// `prose_column_margin` (card/5) uniformly, regardless of work type.
 ///
 /// CRITICAL: this is anchored to the on-screen `card_width`, NOT the fixed
 /// `column_width`. The echo view deliberately uses `column_width / 8` instead
 /// (a different value and concept); do NOT route those sites through here —
 /// conflating the two reintroduces the "tiny margin / edge-to-edge text on a
-/// wide card" bug. See `gloss_overlay::show_gloss_with_color` and audit #27.
+/// wide card" bug. See audit #27.
 pub(crate) fn card_side_margin(card_width: i32) -> i32 {
     card_width / 4
 }
 
-/// Symmetric inset (both sides) for the NYTimes-style centered prose column.
-/// Wider whitespace than `card_side_margin` (card_width/4): a ~⅓-margin
-/// reading measure. Used by the prose reading card and the prose overlays
-/// (synopsis/gloss/journal) so prose body text reads like a newspaper column,
-/// centered with generous left/right margins. Verse/play surfaces keep
-/// `card_side_margin`.
+/// Symmetric inset (both sides) for the NYTimes-style centered prose column:
+/// card_width/5, a ~60% reading measure (vs `card_side_margin`'s 50%). Used
+/// by the prose reading card AND by every gloss/journal/synopsis overlay
+/// surface and the ask card REGARDLESS of work type (2026-07-02 readability
+/// pass — the overlay column no longer narrows to card/4 on verse works).
 pub(crate) fn prose_column_margin(card_width: i32) -> i32 {
     card_width / 5
 }
+
+/// Extra pixels between the WRAPPED lines of a paragraph on the gloss/journal
+/// overlay reading views (`set_pixels_inside_wrap`). Every pagination
+/// measurement for those surfaces must charge the same leading
+/// (`measure_text_height_leaded`, `measure_planned_block`) or pages over-pack
+/// and clip their tail line.
+pub(crate) const OVERLAY_LINE_LEADING: i32 = 2;
 
 /// Re-assert the italic verse tags (`gloss-stage`, `gloss-bracket`) to the top
 /// of `table`'s priority order. An overlay's buffer-wide font tag is built with
@@ -216,7 +223,9 @@ pub(crate) fn draw_page_marker_glyph(
 
 /// Inset of the tinted panel edge from the text ink, in px (both sides). Shared
 /// by the gloss + journal overlays so the panel breathes identically.
-pub(crate) const PANEL_PAD: f64 = 24.0;
+/// 24 → 32 with the 2026-07-02 wider-column pass so the matting stays
+/// proportional to the larger reading measure.
+pub(crate) const PANEL_PAD: f64 = 32.0;
 /// Corner radius of the inset panel, in px — matches the card's `border-radius`.
 pub(crate) const PANEL_RADIUS: f64 = 12.0;
 

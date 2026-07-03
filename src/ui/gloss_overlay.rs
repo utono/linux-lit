@@ -84,10 +84,6 @@ pub struct GlossOverlay {
     echo_rule: gtk4::Separator,
     text_margins: i32,
     column_width: i32,
-    /// True when the currently-loaded work is prose. Set once per work load via
-    /// `set_prose` (from display_work). Selects the centered prose column inset
-    /// (card_width/5) over the verse `card_width/4` inset in the gloss render.
-    is_prose: Cell<bool>,
     /// The overlay's own font (independent of the main reader). `!`/`|` adjust
     /// the size while a gloss/synopsis is open without touching the main card.
     /// Applied as a font TextTag over the gloss buffer on every show, overriding
@@ -194,7 +190,7 @@ pub(crate) const GLOSS_DEFAULT_FONT_FAMILY: &str = "Charter";
 /// Default overlay reading-font size (pt). Shared by the gloss + journal overlays
 /// so they always render at the same size (never drift). 17pt matches the reader
 /// card's default.
-pub(crate) const GLOSS_DEFAULT_FONT_SIZE: i32 = 17;
+pub(crate) const GLOSS_DEFAULT_FONT_SIZE: i32 = 18;
 
 /// Card-matching layout for a PROSE synopsis: render it in the main reading
 /// card's font and left padding instead of the play overlay's Charter-19 +
@@ -283,6 +279,9 @@ impl GlossOverlay {
         gloss_view.set_right_margin(right_margin);
         gloss_view.set_top_margin(24);
         gloss_view.set_bottom_margin(80);
+        // Reading leading between wrapped lines; the paginated height
+        // measurement charges the same via measure_text_height_leaded.
+        gloss_view.set_pixels_inside_wrap(crate::ui::OVERLAY_LINE_LEADING);
         gloss_view.add_css_class("gloss-text");
         gloss_view.add_css_class("overlay-prose");
 
@@ -545,7 +544,6 @@ impl GlossOverlay {
             echo_rule,
             text_margins: text_margins as i32,
             column_width: column_width as i32,
-            is_prose: Cell::new(false),
             font_family: RefCell::new(GLOSS_DEFAULT_FONT_FAMILY.to_string()),
             font_size: std::cell::Cell::new(GLOSS_DEFAULT_FONT_SIZE),
             synopsis_label_ranges: RefCell::new(Vec::new()),
@@ -572,12 +570,6 @@ impl GlossOverlay {
             hi_ranges: RefCell::new(Vec::new()),
             pre_edit_family: RefCell::new(None),
         }
-    }
-
-    /// Record whether the loaded work is prose, so the gloss render picks the
-    /// centered prose column inset. Called once per work load from display_work.
-    pub fn set_prose(&self, is_prose: bool) {
-        self.is_prose.set(is_prose);
     }
 
     /// Apply the overlay's font (family + size) to the gloss text and header via
@@ -976,11 +968,7 @@ impl GlossOverlay {
             w if w > 0 => w,
             _ => self.container.width().max(self.container.width_request()),
         };
-        let left = if self.is_prose.get() {
-            crate::ui::prose_column_margin(card_width)
-        } else {
-            crate::ui::card_side_margin(card_width)
-        };
+        let left = crate::ui::prose_column_margin(card_width);
         self.title.set_margin_start(left);
         self.orig_header.set_margin_start(left);
         self.original_label.set_margin_start(left);
@@ -1016,15 +1004,12 @@ impl GlossOverlay {
         self.title.set_vexpand(false);
         self.title.set_valign(Align::Start);
         self.title.set_halign(Align::Start);
-        // Wide side margins keep gloss prose near the ~65-char readability
-        // optimum. Anchor to the actual card width (the overlay is full-screen,
-        // ~1660px), NOT the fixed column_width (1050) — otherwise on a wide card
-        // the margin stays tiny and the text runs nearly edge to edge.
-        let left = if self.is_prose.get() {
-            crate::ui::prose_column_margin(card_width)
-        } else {
-            crate::ui::card_side_margin(card_width)
-        };
+        // Wide side margins (card/5, uniform for all work types) keep the gloss
+        // column at a comfortable reading measure. Anchor to the actual card
+        // width (the overlay is full-screen), NOT the fixed column_width (1050)
+        // — otherwise on a wide card the margin stays tiny and the text runs
+        // nearly edge to edge.
+        let left = crate::ui::prose_column_margin(card_width);
         self.set_prose_margins(left);
         self.set_gloss_hint();
         self.hide_diff_labels();
@@ -1139,12 +1124,8 @@ impl GlossOverlay {
 
         // Same passage geometry the gloss result uses (`show_gloss_with_color`):
         // wide side margins anchored to the actual card width, accent bar at
-        // card_width/4 for verse, card_width/5 for prose.
-        let left = if self.is_prose.get() {
-            crate::ui::prose_column_margin(card_width)
-        } else {
-            crate::ui::card_side_margin(card_width)
-        };
+        // card_width/5 (uniform for all work types).
+        let left = crate::ui::prose_column_margin(card_width);
         self.set_prose_margins(left);
 
         // No diff labels, echo views, hint, or position while loading.
@@ -1326,9 +1307,9 @@ impl GlossOverlay {
         // width, not the fixed column_width, so the synopsis prose sits at the
         // same ~65-char measure as the gloss instead of running nearly edge to
         // edge.
-        let inset = crate::ui::card_side_margin(card_width);
+        let inset = crate::ui::prose_column_margin(card_width);
         // Prose synopses use the main card's fixed pixel left padding; plays/verse
-        // use the proportional `card_width/4` inset. The accent bar sits one
+        // use the proportional `card_width/5` inset. The accent bar sits one
         // "breathing room" (60px) to the LEFT of the prose body so text aligns to
         // the card while the bar is still visible.
         let body_left = prose_card.as_ref().map(|p| p.left_margin).unwrap_or(inset + 60);
@@ -2602,15 +2583,19 @@ fn gloss_block_height(
     size_pt: i32,
     wrap_w: i32,
 ) -> i32 {
-    let text_h =
-        crate::ui::pagination::measure_text_height(pctx, &block.display, size_pt, family, wrap_w);
+    // Leaded: the gloss view renders with `pixels_inside_wrap`
+    // (ui::OVERLAY_LINE_LEADING), so wrap heights must charge the same.
+    let text_h = crate::ui::pagination::measure_text_height_leaded(
+        pctx, &block.display, size_pt, family, wrap_w,
+    );
     let mut h = block_height_overhead(block.kind == BlockKind::Source, text_h);
     let line = size_pt + size_pt / 2;
     // Synopsis: lead label paragraph(s) ride ABOVE the block body (in `attached`).
     // Plain irrefutable `let`: Attachment has the single LeadLabel variant.
     for a in &block.attached {
         let crate::ui::gloss_block::Attachment::LeadLabel(s) = a;
-        h += crate::ui::pagination::measure_text_height(pctx, s, size_pt, family, wrap_w) + line;
+        h += crate::ui::pagination::measure_text_height_leaded(pctx, s, size_pt, family, wrap_w)
+            + line;
     }
     // Gloss: a trailing echo lives in the block's MARKUP (A3), not in `display`.
     // Each `<gloss>[...]</gloss>` echo renders as a quote line + a citation line;
@@ -2622,7 +2607,7 @@ fn gloss_block_height(
             // Only an echo bracket adds height beyond block.display; the
             // block's own explication is already in `display`.
             if inner.starts_with('[') {
-                h += crate::ui::pagination::measure_text_height(
+                h += crate::ui::pagination::measure_text_height_leaded(
                     pctx, inner, size_pt, family, wrap_w,
                 ) + line * 2;
             }

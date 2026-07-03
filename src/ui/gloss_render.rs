@@ -17,7 +17,8 @@ pub(crate) struct LineNumber {
 }
 
 /// Left inset (past the accent bar) of the explication body — flush, the focus.
-pub(crate) const QUOTE_BODY_INDENT: i32 = 12;
+/// 12 → 20 (2026-07-02 readability pass): the bar was hugging the text.
+pub(crate) const QUOTE_BODY_INDENT: i32 = 20;
 /// Left inset (past the accent bar) of the speaker label heading the quoted
 /// source turn. Echo quotes and citations share this indent.
 pub(crate) const QUOTE_SPEAKER_INDENT: i32 = 48;

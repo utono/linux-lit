@@ -108,15 +108,16 @@ impl AskCard {
         &self.input
     }
 
-    /// Reveal with heading + hint, clear the field, re-align margins to
-    /// card_width/4, focus the input (AskFocus::Ask + card-focused highlight).
+    /// Reveal with heading + hint, clear the field, re-align margins to the
+    /// overlay prose column (card_width/5), focus the input (AskFocus::Ask +
+    /// card-focused highlight).
     pub fn open(&self, title: &str, hint: &str, card_width: i32, block_fill: &str, block_fg: &str) {
         self.title.set_text(title);
         *self.base_hint.borrow_mut() = hint.to_string();
         *self.cursor_colors.borrow_mut() = (block_fill.to_string(), block_fg.to_string());
         self.input.buffer().set_text("");
         if card_width > 0 {
-            let margin = crate::ui::card_side_margin(card_width);
+            let margin = crate::ui::prose_column_margin(card_width);
             self.container.set_margin_start(margin);
             self.container.set_margin_end(margin);
         }

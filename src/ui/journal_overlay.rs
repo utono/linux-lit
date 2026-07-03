@@ -54,10 +54,6 @@ pub struct JournalOverlay {
     entry_pos: Cell<(usize, usize)>,
     text_margins: i32,
     column_width: i32,
-    /// True when the loaded work is prose. Set once per work load via
-    /// `set_prose`. Selects the centered prose column inset (card_width/5) over
-    /// the verse `card_width/4` inset in `size_card`.
-    is_prose: Cell<bool>,
     font_family: RefCell<String>,
     font_size: Cell<i32>,
     /// Reading font family stashed on edit-enter and restored on exit, so the
@@ -224,6 +220,9 @@ impl JournalOverlay {
         // provide this gap).
         view.set_top_margin(28);
         view.set_bottom_margin(28);
+        // Reading leading between wrapped lines; pagination charges the same
+        // (measure_planned_block / measure_text_height_leaded) — keep in sync.
+        view.set_pixels_inside_wrap(crate::ui::OVERLAY_LINE_LEADING);
         view.add_css_class("gloss-text");
         view.add_css_class("overlay-prose");
 
@@ -431,7 +430,6 @@ impl JournalOverlay {
             entry_pos: Cell::new((0, 0)),
             text_margins: text_margins as i32,
             column_width: column_width as i32,
-            is_prose: Cell::new(false),
             // Match the gloss overlay's reading family + size (shared consts) so
             // the journal applies its OWN 19pt font tag. An EMPTY family made
             // apply_font early-return, so the journal never applied a tag and fell
@@ -464,12 +462,6 @@ impl JournalOverlay {
         );
     }
 
-    /// Record whether the loaded work is prose, so `size_card` picks the
-    /// centered prose column inset. Called once per work load from display_work.
-    pub fn set_prose(&self, is_prose: bool) {
-        self.is_prose.set(is_prose);
-    }
-
     fn size_card(&self, card_width: i32, card_height: i32) {
         self.container.set_size_request(card_width, card_height);
         self.last_card_size.set((card_width, card_height));
@@ -487,16 +479,12 @@ impl JournalOverlay {
             UNACCOUNTED_CHROME_MARGINS,
             footer_h.height(),
         );
-        // Anchor the text to the card's side margin (card_width/4, the ~65-char
-        // readability optimum the gloss overlay uses) rather than the small fixed
-        // `text_margins` — otherwise the Q&A prose runs nearly edge to edge on a
-        // wide card. Card SIZE is unchanged; only the inner padding grows. See
-        // ui::card_side_margin (audit #27).
-        let side = if self.is_prose.get() {
-            crate::ui::prose_column_margin(card_width)
-        } else {
-            crate::ui::card_side_margin(card_width)
-        };
+        // Anchor the text to the card's prose-column margin (card/5, uniform
+        // for all work types — 2026-07-02 readability pass) rather than the
+        // small fixed `text_margins` — otherwise the Q&A prose runs nearly
+        // edge to edge on a wide card. Card SIZE is unchanged; only the inner
+        // padding grows. See ui::prose_column_margin (audit #27).
+        let side = crate::ui::prose_column_margin(card_width);
         // Indent the body right of the accent bar (bar sits in the gutter),
         // matching gloss. Left-only; the right margin stays `side`.
         self.view.set_left_margin(side + JOURNAL_BODY_INDENT);
@@ -1222,7 +1210,8 @@ impl JournalOverlay {
             paras
                 .iter()
                 .map(|p| {
-                    let text_h = crate::ui::pagination::measure_text_height(
+                    // Leaded: the view renders with pixels_inside_wrap.
+                    let text_h = crate::ui::pagination::measure_text_height_leaded(
                         &pctx, p, size, &family, wrap_w,
                     );
                     text_h + line_h

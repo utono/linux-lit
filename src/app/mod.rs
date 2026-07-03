@@ -2723,8 +2723,6 @@ pub fn display_work_at_with_prepared(
     // masking CSS class for narrow/tiled windows.
     let work_type = state.current_work.as_ref().map(|w| w.work_type.clone()).unwrap_or_default();
     let work_is_prose = crate::db::line_types::is_prose_work(&work_type);
-    state.gloss_overlay.set_prose(work_is_prose);
-    state.journal_overlay.set_prose(work_is_prose);
     let vbox = state.vbox.clone();
     let ww = state.window.width();
     apply_tiled_mode(state, &vbox, ww);

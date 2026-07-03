@@ -222,6 +222,29 @@ pub fn measure_text_height(
     layout.pixel_size().1
 }
 
+/// `measure_text_height` for a view that renders with
+/// `set_pixels_inside_wrap(ui::OVERLAY_LINE_LEADING)` (the gloss/journal
+/// reading views): adds the same per-line leading via pango layout spacing so
+/// the measured wrap height matches the render. Do NOT use for surfaces
+/// without the leading (the translation overlay) — they would over-count.
+pub fn measure_text_height_leaded(
+    pctx: &pango::Context,
+    text: &str,
+    size_pt: i32,
+    family: &str,
+    width_px: i32,
+) -> i32 {
+    let layout = pango::Layout::new(pctx);
+    let mut desc = pango::FontDescription::from_string(family);
+    desc.set_size(size_pt * pango::SCALE);
+    layout.set_font_description(Some(&desc));
+    layout.set_width(width_px.max(1) * pango::SCALE);
+    layout.set_wrap(pango::WrapMode::WordChar);
+    layout.set_spacing(crate::ui::OVERLAY_LINE_LEADING * pango::SCALE);
+    layout.set_text(text);
+    layout.pixel_size().1
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
