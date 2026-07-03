@@ -126,7 +126,9 @@ pub fn block_scale(style: &Style) -> f64 {
     match style {
         Style::H1 => 1.3,
         Style::H2 => 1.2,
-        Style::H3 => 1.1,
+        // H3 renders at BODY size (bold only) — it is the subtitle style, and
+        // the user wants it no larger than the paragraphs it introduces.
+        Style::H3 => 1.0,
         _ => 1.0,
     }
 }
@@ -145,10 +147,11 @@ pub fn block_spacing(style: &Style) -> (i32, i32) {
         Style::H2 => (16, 8),
         Style::H3 => (14, 6),
         Style::Rule => (16, 6),
-        // Items breathe (was 6 — "not enough space between bullet points");
-        // Body's above 4 makes list→paragraph 14 (= the old para gap) so a
-        // closing paragraph separates clearly from the list above it.
-        Style::ListItem => (0, 10),
+        // Items breathe (was 10 — user: "bullet spacing needs to be improved
+        // for readability"): item→item 16, intro-paragraph→list 16, and
+        // list→closing-paragraph 18 — still tighter than para→para (18) so a
+        // list reads as one unit, but each bullet separates cleanly.
+        Style::ListItem => (2, 14),
         Style::BlockQuote => (6, 10),
         Style::Mono => (0, 12),
         _ => (4, 14), // Body paragraph gap (18 para→para with above+below)
@@ -433,8 +436,9 @@ impl MarkdownTags {
         // Headings (H1 title / H2 section / H3 subtitle): bold serif, scale +
         // spacing entirely from block_scale / block_spacing (H1 ~1.3×, tuned down
         // from 2.0 so the title stays largest without dominating the card, per the
-        // claude.ai artifact proportions; H2 ~1.2×; H3 ~1.1×). One closure builds
-        // all three — they differ only by name + Style variant (audit #71).
+        // claude.ai artifact proportions; H2 ~1.2×; H3 body-size, bold only). One
+        // closure builds all three — they differ only by name + Style variant
+        // (audit #71).
         let heading = |name: &str, style: Style| {
             let (a, b) = sp(&style);
             get_or_add(
@@ -657,13 +661,48 @@ pub fn measure_planned_block(
     if block_is_bold(&block.kind) {
         desc.set_weight(pango::Weight::Bold);
     }
+    // The md-blockquote tag renders the whole block italic; italic glyph
+    // widths differ from regular, so the measurement must match or the
+    // wrap-line count can disagree with the render.
+    if matches!(block.kind, Style::BlockQuote) {
+        desc.set_style(pango::Style::Italic);
+    }
     layout.set_font_description(Some(&desc));
     let w = (wrap_px - block_extra_indent(&block.kind)).max(1);
     layout.set_width(w * pango::SCALE);
+    // List items render with a hanging first line (tag indent LIST_HANG);
+    // pango models the same with a negative layout indent.
+    if matches!(block.kind, Style::ListItem) {
+        layout.set_indent(LIST_HANG * pango::SCALE);
+    }
     layout.set_wrap(pango::WrapMode::WordChar);
-    layout.set_text(&block.plain_text());
+    // Measure the block as MARKUP mirroring the render's inline tags: bold
+    // runs are wider than regular, so a span-heavy paragraph measured as
+    // plain text wraps to FEWER lines than it renders — the page over-packs
+    // and its tail line clips at the card bottom (user-reported). Inline
+    // Style::Mono spans are NOT face-switched here because the journal's
+    // font tag overrides the family at render time (rows render serif).
+    let markup: String = block
+        .spans
+        .iter()
+        .map(|s| {
+            let esc = gtk4::glib::markup_escape_text(&s.text);
+            match s.style {
+                Style::Bold => format!("<b>{esc}</b>"),
+                Style::Italic => format!("<i>{esc}</i>"),
+                _ => esc.to_string(),
+            }
+        })
+        .collect();
+    layout.set_markup(&markup);
     let (above, below) = block_spacing(&block.kind);
-    layout.pixel_size().1 + above + below
+    // A block can render as SEVERAL buffer paragraphs: a table arrives as ONE
+    // Mono block whose rows are joined by inner newlines, and GTK applies the
+    // tag's pixels_above/below to EVERY paragraph. Charging the spacing once
+    // under-counted the sourcing-map table by ~130px, over-packed its page,
+    // and clipped the following block's tail at the card bottom.
+    let paras = 1 + block.plain_text().matches('\n').count() as i32;
+    layout.pixel_size().1 + (above + below) * paras
 }
 
 // ── Unit tests (pure — no GTK) ────────────────────────────────────────────────
