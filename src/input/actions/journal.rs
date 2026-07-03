@@ -753,6 +753,37 @@ pub(crate) fn vim_open_rewrite(
     );
 }
 
+/// `R` in the journal overlay (NOT the vim editor): open the ask card to collect
+/// a rewrite instruction for the CURRENT Q&A page, sending it to Claude. Unlike
+/// `vim_open_rewrite`, there is no edit buffer to persist first — the `(id, q, a)`
+/// come straight from the displayed page. Stashes them in `journal.vim_rewrite`
+/// so `submit_prompt` sends them with the instruction (same rewrite path as `R`
+/// inside the editor). No-op (toast) on an empty band.
+pub(crate) fn begin_rewrite(state: &Rc<RefCell<AppState>>) {
+    let page = {
+        let s = state.borrow();
+        s.journal
+            .pages
+            .get(s.journal.page_index)
+            .map(|p| (p.id, p.question.trim().to_string(), p.answer.trim().to_string()))
+    };
+    let Some((id, q, a)) = page else {
+        crate::ui::toast::show_transient(&state.borrow().chapter_toast, "Nothing to rewrite", 2);
+        return;
+    };
+    {
+        let mut s = state.borrow_mut();
+        s.journal.vim_rewrite = Some((id, q, a));
+    }
+    let s = state.borrow();
+    s.journal_overlay.open_ask_card(
+        "Rewrite instruction",
+        "Ctrl+Enter rewrite \u{00b7} Esc cancel",
+        &s.theme.cursor_bg,
+        &s.theme.cursor_fg,
+    );
+}
+
 /// Undo the last `e` journal edit (single-level): restore the snapshot in
 /// `journal_undo` (the pre-edit question/answer/model) to its page via
 /// `update_journal_page`, purge that page's cached TTS, re-render the band, land

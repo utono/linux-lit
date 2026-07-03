@@ -1091,6 +1091,14 @@ fn handle_journal_key(
             crate::input::actions::journal::begin_ask(state);
             true
         }
+        // `R` opens the rewrite prompt for the CURRENT Q&A: an ask card that
+        // collects an instruction and sends (question, answer, instruction) to
+        // Claude to revise the answer in place. Works directly from the Q&A view
+        // (no need to enter the `e` editor first).
+        "R" => {
+            crate::input::actions::journal::begin_rewrite(state);
+            true
+        }
         "e" => {
             crate::input::actions::journal::begin_edit(state);
             true

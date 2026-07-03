@@ -25,6 +25,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ]),
     ("Editing", &[
         ("r", "ask a new question"),
+        ("R", "ask Claude to rewrite this Q&A"),
         ("e", "edit Q&A in place (vim)"),
         ("u", "undo last saved edit (confirm)"),
         ("D", "delete Q&A"),
