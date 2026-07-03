@@ -266,12 +266,29 @@ pub(crate) fn delete_current_gloss(state_rc: &Rc<RefCell<AppState>>) {
     show_tts_toast(state_rc, &toast_msg);
 }
 
-pub(crate) fn show_delete_confirmation(state_rc: &Rc<RefCell<AppState>>) {
-    let gloss_id = {
+/// Open the "Delete …? y / Esc" confirmation over `origin`'s overlay. Records
+/// `origin` (gloss vs journal) so `y` runs the right delete and returns to the
+/// right mode; the dialog label names what will be deleted. No-op when there is
+/// nothing to delete for that overlay. Mirrors `show_undo_confirmation`.
+pub(crate) fn show_delete_confirmation(
+    state_rc: &Rc<RefCell<AppState>>,
+    origin: crate::app::InputMode,
+) {
+    // Resolve the label + bail with no dialog if there is nothing to delete.
+    let title = {
         let s = state_rc.borrow();
-        match s.gloss_list.get(s.gloss_index) {
-            Some(g) => g.gloss_id,
-            None => return,
+        match origin {
+            crate::app::InputMode::GlossOverlay => match s.gloss_list.get(s.gloss_index) {
+                Some(g) => format!("Delete gloss {}?", g.gloss_id),
+                None => return,
+            },
+            crate::app::InputMode::JournalOverlay => {
+                if s.journal.pages.is_empty() {
+                    return;
+                }
+                "Delete this Q&A?".to_string()
+            }
+            _ => return,
         }
     };
 
@@ -294,7 +311,7 @@ pub(crate) fn show_delete_confirmation(state_rc: &Rc<RefCell<AppState>>) {
     container.set_width_request(400);
     container.add_css_class("amend-dialog");
 
-    let label = gtk4::Label::new(Some(&format!("Delete gloss {}?", gloss_id)));
+    let label = gtk4::Label::new(Some(&title));
     label.add_css_class("amend-title");
     label.set_halign(gtk4::Align::Start);
     container.append(&label);
@@ -309,6 +326,7 @@ pub(crate) fn show_delete_confirmation(state_rc: &Rc<RefCell<AppState>>) {
     let mut s = state_rc.borrow_mut();
     s.delete_confirm_container = Some(container.downgrade());
     s.delete_confirm_overlay = Some(overlay_parent.downgrade());
+    s.delete_confirm_origin = Some(origin);
     s.input_mode = crate::app::InputMode::DeleteConfirm;
 }
 
@@ -319,7 +337,9 @@ pub(crate) fn close_delete_confirmation(state: &Rc<RefCell<AppState>>) {
             o.remove_overlay(&c);
         }
     }
-    s.input_mode = crate::app::InputMode::GlossOverlay;
+    // Return to the overlay the `D` was pressed in (gloss or journal), defaulting
+    // to the gloss overlay for safety if the origin was somehow not recorded.
+    s.input_mode = s.delete_confirm_origin.take().unwrap_or(crate::app::InputMode::GlossOverlay);
 }
 
 /// Open the "Undo last edit? y / Esc" confirmation over `origin`'s overlay (the

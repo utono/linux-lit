@@ -28,7 +28,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("R", "ask Claude to rewrite this Q&A"),
         ("e", "edit Q&A in place (vim)"),
         ("u", "undo last saved edit (confirm)"),
-        ("D", "delete Q&A"),
+        ("D", "delete Q&A (confirm)"),
         ("c", "copy Q&A id"),
         ("Ctrl+Shift+J", "move Q&A to another band"),
     ]),

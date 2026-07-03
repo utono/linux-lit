@@ -416,6 +416,11 @@ pub struct AppState {
     pub gloss_prompt_mode: GlossPromptMode,
     pub delete_confirm_container: Option<glib::WeakRef<gtk4::Box>>,
     pub delete_confirm_overlay: Option<glib::WeakRef<gtk4::Overlay>>,
+    /// Which overlay the delete confirmation (`D`) was opened from, so `y` runs
+    /// the right delete (gloss vs journal page) and returns to the right mode.
+    /// Set when `D` opens the confirm; cleared when it closes. Mirrors
+    /// `undo_confirm_origin`.
+    pub delete_confirm_origin: Option<InputMode>,
     pub gloss_picker: GlossPicker,
     pub echo_picker: crate::ui::echo_picker::EchoPicker,
     pub echo_turns_picker: crate::ui::echo_turns_picker::EchoTurnsPicker,
@@ -1624,6 +1629,7 @@ pub fn build_window(
         gloss_prompt_mode: GlossPromptMode::Add,
         delete_confirm_container: None,
         delete_confirm_overlay: None,
+        delete_confirm_origin: None,
         gloss_undo: None,
         journal_undo: None,
         undo_confirm_origin: None,

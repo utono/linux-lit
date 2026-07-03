@@ -1145,7 +1145,10 @@ fn handle_journal_key(
             true
         }
         "D" => {
-            crate::input::actions::journal::delete_current(state);
+            crate::input::actions::gloss::show_delete_confirmation(
+                state,
+                crate::app::InputMode::JournalOverlay,
+            );
             true
         }
         "V" => {
@@ -1408,7 +1411,10 @@ fn handle_gloss_key(
             true
         }
         "D" => {
-            crate::input::actions::gloss::show_delete_confirmation(state);
+            crate::input::actions::gloss::show_delete_confirmation(
+                state,
+                crate::app::InputMode::GlossOverlay,
+            );
             true
         }
         "e" => {
@@ -2235,8 +2241,18 @@ fn handle_delete_confirm_key(
 ) -> bool {
     match key_name {
         "y" => {
+            // Read the origin before closing (close clears it), then run that
+            // overlay's delete. close_delete_confirmation restores the origin mode.
+            let origin = state.borrow().delete_confirm_origin;
             crate::input::actions::gloss::close_delete_confirmation(state);
-            crate::input::actions::gloss::delete_current_gloss(state);
+            match origin {
+                Some(crate::app::InputMode::JournalOverlay) => {
+                    crate::input::actions::journal::delete_current(state);
+                }
+                _ => {
+                    crate::input::actions::gloss::delete_current_gloss(state);
+                }
+            }
             true
         }
         "Escape" | "n" => {
