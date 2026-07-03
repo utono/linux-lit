@@ -350,39 +350,58 @@ impl LibraryPicker {
                     }
                 } else {
                     // Show authors whose name matches, plus individual works
-                    // whose title/abbrev matches (with author context).
+                    // whose title/author/abbrev matches — all ranked by score so
+                    // the best match highlights first (fixes the loose-subsequence
+                    // ordering where an unrelated author outranked a real hit).
                     let filter_lower = filter.to_lowercase();
-                    let mut has_rows = false;
 
-                    // First: authors whose name matches the filter
-                    for group in &self.groups {
-                        if author_name_matches(&filter_lower, &group.author) {
-                            self.add_author_row(&group.author, group.works.len());
-                            has_rows = true;
-                        }
+                    enum Scored<'a> {
+                        Author(&'a str, usize),
+                        Work(&'a WorkSummary),
                     }
+                    let mut rows: Vec<(i32, Scored)> = Vec::new();
 
-                    // Second: individual works that match (skip if author already shown)
                     for group in &self.groups {
-                        if author_name_matches(&filter_lower, &group.author) {
-                            continue; // author already listed above
+                        if let Some(score) = author_name_score(&filter_lower, &group.author) {
+                            // Author rows sort above work rows at equal relevance.
+                            rows.push((
+                                score + 100,
+                                Scored::Author(&group.author, group.works.len()),
+                            ));
+                            continue; // don't also list this author's works individually
                         }
                         for work in &group.works {
-                            if subsequence_match_work(&filter_lower, work) {
-                                self.add_work_row(work);
-                                has_rows = true;
+                            if let Some(score) = work_score(&filter_lower, work) {
+                                rows.push((score, Scored::Work(work)));
                             }
                         }
                     }
 
-                    let _ = has_rows;
+                    // Stable sort by score descending; ties keep group order.
+                    rows.sort_by(|a, b| b.0.cmp(&a.0));
+                    for (_, item) in rows {
+                        match item {
+                            Scored::Author(author, count) => self.add_author_row(author, count),
+                            Scored::Work(work) => self.add_work_row(work),
+                        }
+                    }
                 }
             }
             PickerLevel::Works(author) => {
                 if let Some(group) = self.groups.iter().find(|g| &g.author == author) {
-                    let filter_lower = filter.to_lowercase();
-                    for work in &group.works {
-                        if filter.is_empty() || subsequence_match_work(&filter_lower, work) {
+                    if filter.is_empty() {
+                        for work in &group.works {
+                            self.add_work_row(work);
+                        }
+                    } else {
+                        let filter_lower = filter.to_lowercase();
+                        let mut scored: Vec<(i32, &WorkSummary)> = group
+                            .works
+                            .iter()
+                            .filter_map(|w| work_score(&filter_lower, w).map(|s| (s, w)))
+                            .collect();
+                        scored.sort_by(|a, b| b.0.cmp(&a.0));
+                        for (_, work) in scored {
                             self.add_work_row(work);
                         }
                     }
@@ -515,17 +534,47 @@ impl LibraryPicker {
 
 // ─── Helper functions ────────────────────────────────────────────────────────
 
+/// Case-insensitive match score of `filter` against a work, taking the BEST of
+/// its title / author / abbrev scored SEPARATELY (not a concatenated haystack).
+/// Scoring each field on its own prevents a query's chars from scattering across
+/// field boundaries (title→author→abbrev) and beating a genuine per-field match —
+/// which is what let "romeo" surface unrelated works via `title author abbrev`.
+/// `None` when the filter matches none of the three fields.
+fn work_score(filter: &str, work: &WorkSummary) -> Option<i32> {
+    use crate::ui::picker_filter::match_score;
+    let title = work.title.to_lowercase();
+    let author = work.author.to_lowercase();
+    let abbrev = work.abbrev.to_lowercase();
+    // Title is the primary field; author/abbrev matches are demoted so a title
+    // hit always outranks an author/abbrev-only hit for the same query.
+    [
+        match_score(filter, &title),
+        match_score(filter, &author).map(|s| s - 400),
+        match_score(filter, &abbrev).map(|s| s - 400),
+    ]
+    .into_iter()
+    .flatten()
+    .max()
+}
+
 /// Case-insensitive subsequence match against title, author, and abbrev.
+/// Boolean form retained for tests and any yes/no caller; the picker itself now
+/// ranks via `work_score`.
+#[cfg_attr(not(test), allow(dead_code))]
 fn subsequence_match_work(filter: &str, work: &WorkSummary) -> bool {
-    let target = format!("{} {} {}", work.title, work.author, work.abbrev).to_lowercase();
-    crate::ui::picker_filter::subsequence_match(filter, &target)
+    work_score(filter, work).is_some()
+}
+
+/// Case-insensitive match score against an author name (`None` = no match).
+pub fn author_name_score(filter: &str, author: &str) -> Option<i32> {
+    crate::ui::picker_filter::match_score(&filter.to_lowercase(), &author.to_lowercase())
 }
 
 /// Case-insensitive subsequence match against an author name.
+/// Boolean form retained for tests; the picker ranks via `author_name_score`.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn author_name_matches(filter: &str, author: &str) -> bool {
-    let filter_lower = filter.to_lowercase();
-    let author_lower = author.to_lowercase();
-    crate::ui::picker_filter::subsequence_match(&filter_lower, &author_lower)
+    author_name_score(filter, author).is_some()
 }
 
 /// Compute the (title, crumb) header text pair for the given picker level.
@@ -678,6 +727,31 @@ mod tests {
         // "dick" matches author name "Dickens, Charles"
         assert!(author_name_matches("dick", "Dickens, Charles"));
         assert!(!author_name_matches("dick", "Shakespeare"));
+    }
+
+    #[test]
+    fn test_romeo_ranks_real_works_above_scatter() {
+        // Regression for the Ctrl+P bug: typing "romeo" must rank the real
+        // Romeo works above a loose scatter through "Ralph Waldo Emerson", and
+        // above unrelated works that only matched via the old concatenated
+        // title+author+abbrev haystack.
+        let rom = make_work("Rom", "Romeo and Juliet", "Shakespeare");
+        let rom_amb = make_work("Rom-Amb", "Romeo and Juliet (Ambrose)", "Shakespeare");
+        let cor = make_work("Cor-Amb", "Coriolanus (Ambrose)", "Shakespeare");
+
+        let romeo = "romeo";
+        let rom_s = work_score(romeo, &rom).expect("Rom should match");
+        let rom_amb_s = work_score(romeo, &rom_amb).expect("Rom-Amb should match");
+        let emerson = author_name_score(romeo, "Ralph Waldo Emerson");
+
+        // Real title matches score positively (Tier-1 substring).
+        assert!(rom_s > 500 && rom_amb_s > 500);
+        // Coriolanus must NOT match "romeo" per-field (no cross-field scatter).
+        assert_eq!(work_score(romeo, &cor), None);
+        // If Emerson matches at all it's only a low scatter, well below the works.
+        if let Some(e) = emerson {
+            assert!(rom_s > e && rom_amb_s > e);
+        }
     }
 
     // ── Pre-existing tests (keep passing) ────────────────────────────────
