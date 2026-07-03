@@ -19,6 +19,9 @@ pub struct AskCard {
     container: gtk4::Box,
     title: Label,
     input: TextView,
+    /// The scroll wrapping `input`; a host may pin its height (journal Q&A =
+    /// 3/4 of the overlay) instead of the default 160..320 natural range.
+    scrolled: ScrolledWindow,
     hint: Label,
     /// The static hint passed to `open`, re-shown after the mode indicator.
     base_hint: std::cell::RefCell<String>,
@@ -89,6 +92,7 @@ impl AskCard {
             container,
             title,
             input,
+            scrolled,
             hint,
             base_hint: std::cell::RefCell::new(String::new()),
             cursor_colors: std::cell::RefCell::new((String::new(), String::new())),
@@ -106,6 +110,22 @@ impl AskCard {
     /// The input TextView — exposed so each overlay applies its own font.
     pub fn input(&self) -> &TextView {
         &self.input
+    }
+
+    /// Pin the input scroll to EXACTLY `h` px (both floor and cap), overriding
+    /// the default 160..320 natural range. The journal Q&A uses this to make the
+    /// input box 3/4 of the overlay height. `h <= 0` restores the default range.
+    pub fn set_input_height(&self, h: i32) {
+        if h > 0 {
+            // Order matters: GTK clamps min to the CURRENT max, so raise max
+            // before min (else min>max is silently clamped back down and the
+            // scroll never grows past the old 320 cap).
+            self.scrolled.set_max_content_height(h);
+            self.scrolled.set_min_content_height(h);
+        } else {
+            self.scrolled.set_min_content_height(160);
+            self.scrolled.set_max_content_height(320);
+        }
     }
 
     /// Reveal with heading + hint, clear the field, re-align margins to the
@@ -295,6 +315,10 @@ pub struct AskCardHost {
     /// because it is hidden, so it is not in this sum.
     fixed_chrome_h: Cell<i32>,
     card_width: Cell<i32>,
+    /// If set, the ask card's input scroll is pinned to this fraction of the
+    /// overlay's card height on every `open` (journal Q&A = 0.75). `None` keeps
+    /// the input's default 160..320 natural range (gloss/synopsis).
+    input_fill_fraction: Cell<Option<f32>>,
 }
 
 impl AskCardHost {
@@ -313,7 +337,15 @@ impl AskCardHost {
             card_height: Cell::new(0),
             fixed_chrome_h: Cell::new(0),
             card_width: Cell::new(0),
+            input_fill_fraction: Cell::new(None),
         }
+    }
+
+    /// Pin the ask card's input scroll to `fraction` of the overlay card height
+    /// on every `open` (journal Q&A calls this with 0.75). Without it the input
+    /// keeps its default 160..320 natural range.
+    pub fn set_input_fill_fraction(&self, fraction: f32) {
+        self.input_fill_fraction.set(Some(fraction));
     }
 
     /// The hosted `AskCard` (e.g. so the surface can append its container or read
@@ -369,6 +401,19 @@ impl AskCardHost {
         self.ask.open(title, hint, self.card_width.get(), block_fill, block_fg);
         if let Some(f) = &self.footer {
             f.set_visible(false);
+        }
+        // Size the input so the WHOLE ask card fills `frac` of the overlay
+        // before measuring the ask container (the scroll-shrink below reads its
+        // preferred height). The input is pinned to the fraction target minus
+        // the card's own chrome (title + hint + margins), which we measure by
+        // subtracting the current input height from the container's natural
+        // height. Done here (not once at build) because card_height is per-size.
+        if let Some(frac) = self.input_fill_fraction.get() {
+            self.ask.set_input_height(160); // known baseline for chrome measurement
+            let (_, base) = self.ask.container().preferred_size();
+            let chrome = (base.height() - 160).max(0);
+            let target = ((self.card_height.get() as f32 * frac).round() as i32) - chrome;
+            self.ask.set_input_height(target.max(80));
         }
         let (_, ask_size) = self.ask.container().preferred_size();
         let scroll_h =

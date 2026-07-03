@@ -400,6 +400,10 @@ impl JournalOverlay {
         };
         let ask_host =
             AskCardHost::new(ask, &scrolled, Some(footer_container.clone()), recompute);
+        // The journal Q&A input box fills 3/4 of the overlay height (the reading
+        // page shrinks to the remaining quarter above it). Gloss/synopsis keep
+        // the default compact input.
+        ask_host.set_input_fill_fraction(0.75);
         // Build markdown tags once against the view's tag table so every
         // render_page call reuses the same registered tags (O(1) apply).
         let md_tags = crate::ui::markdown::MarkdownTags::register(&view.buffer());

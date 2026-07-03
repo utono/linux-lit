@@ -503,6 +503,9 @@ impl GlossOverlay {
         };
         let ask_host =
             AskCardHost::new(ask, &gloss_scrolled, Some(footer_box.clone()), recompute);
+        // The gloss/synopsis ask card (add-question, edit gloss, fix-IPA, inner
+        // monologue) fills 3/4 of the overlay height, matching the journal Q&A.
+        ask_host.set_input_fill_fraction(0.75);
 
         container.set_visible(false);
 
