@@ -1245,13 +1245,16 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
             } else {
                 gloss_text.clone()
             };
-            let full_gloss = if is_inner_monologue {
-                format!("<gloss>Re-glossed with:</gloss>\n\n{}\n\n{}", pasted_owned, verified_text)
-            } else {
-                format!("<gloss>Edit context:</gloss>\n\n{}\n\n{}", pasted_owned, verified_text)
-            };
+            // Persist ONLY the model's rewritten gloss — no provenance header.
+            // The user's rewrite prompt (`pasted_owned`) was already delivered to
+            // Claude via `build_edit_gloss_message` (as USER-PROVIDED LINES); it
+            // is transient editing metadata, not gloss content, so it must not be
+            // saved into the gloss body in lit.db. (Earlier code prepended a
+            // `<gloss>Edit context: …</gloss>` header, which both polluted the
+            // stored gloss and — when stored untagged — vanished from the
+            // overlay; gloss 21784.)
             update_and_render_gloss_in_place(
-                st, &ctx, gloss_index, gloss_id, &full_gloss, &model_for_db,
+                st, &ctx, gloss_index, gloss_id, &verified_text, &model_for_db,
                 &format!("GLOSS: edited {} gloss {} in place", gloss_type_owned, gloss_id),
             );
         },
