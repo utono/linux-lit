@@ -28,8 +28,18 @@ pub fn open_db() -> Result<Connection, rusqlite::Error> {
 }
 
 pub fn list_works(conn: &Connection) -> Result<Vec<WorkSummary>, rusqlite::Error> {
-    let mut stmt =
-        conn.prepare("SELECT abbrev, title, author, work_type FROM works ORDER BY title")?;
+    // Only list works that have at least one associated media file — the
+    // Ctrl+p library picker is for opening something to read/listen to, and a
+    // work with no audio can't be played. `work_media_associations` is the
+    // authoritative "has media" signal (every media_files.work_abbrev also has
+    // an association row), matching the media picker's own join.
+    let mut stmt = conn.prepare(
+        "SELECT abbrev, title, author, work_type FROM works w \
+         WHERE EXISTS ( \
+             SELECT 1 FROM work_media_associations wma WHERE wma.work_abbrev = w.abbrev \
+         ) \
+         ORDER BY title",
+    )?;
     let rows = stmt.query_map([], |row| {
         Ok(WorkSummary {
             abbrev: row.get(0)?,
@@ -2977,6 +2987,25 @@ mod tests {
         let works = list_works(&conn).unwrap();
         assert!(works.len() > 100, "Should have 100+ works");
         assert!(works.iter().any(|w| w.abbrev == "Ham"));
+
+        // Every listed work must have at least one associated media file — the
+        // picker filters out media-less works. Verify none of the listed works
+        // lacks a work_media_associations row, and that a known media-less work
+        // (2H6, which has text but no audio) is excluded.
+        for w in &works {
+            let has_media: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM work_media_associations WHERE work_abbrev = ?1)",
+                    [&w.abbrev],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(has_media, "listed work {} has no media association", w.abbrev);
+        }
+        assert!(
+            !works.iter().any(|w| w.abbrev == "2H6"),
+            "media-less work 2H6 should be filtered out of the picker"
+        );
     }
 
     #[test]
