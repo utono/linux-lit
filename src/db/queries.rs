@@ -28,16 +28,54 @@ pub fn open_db() -> Result<Connection, rusqlite::Error> {
 }
 
 pub fn list_works(conn: &Connection) -> Result<Vec<WorkSummary>, rusqlite::Error> {
-    // Only list works that have at least one associated media file — the
-    // Ctrl+p library picker is for opening something to read/listen to, and a
-    // work with no audio can't be played. `work_media_associations` is the
-    // authoritative "has media" signal (every media_files.work_abbrev also has
-    // an association row), matching the media picker's own join.
+    // The Ctrl+p library picker lists works to open (read/listen to), so:
+    //
+    // 1. Only list works with at least one associated media file — a work with
+    //    no audio can't be played. `work_media_associations` is the
+    //    authoritative "has media" signal (superset of media_files.work_abbrev),
+    //    matching the media picker's own join.
+    //
+    // 2. Hide a BASE work whose media really belongs to its specific editions
+    //    ("edition-leak"): if a base with editions (e.g. AWW, editions AWW-Amb/
+    //    AWW-BBC) has ONLY media that is (a) not a multi-work bundle AND (b)
+    //    shared with one of its own editions, the base is redundant with the
+    //    edition — hide it. EXCEPTION: a media file that contains more than one
+    //    work (a multi-play bundle, associated with >1 distinct base work — e.g.
+    //    Rom's Hamlet+Macbeth+Romeo m4b) keeps the base shown, since that
+    //    recording is only reachable through the base. Base = abbrev before the
+    //    first '-'. Result on current lit.db: only AWW is hidden by rule 2;
+    //    Rom/MND (bundle) and Cym (has a base-only file) remain.
     let mut stmt = conn.prepare(
-        "SELECT abbrev, title, author, work_type FROM works w \
-         WHERE EXISTS ( \
-             SELECT 1 FROM work_media_associations wma WHERE wma.work_abbrev = w.abbrev \
+        "WITH bundle AS ( \
+             SELECT media_id FROM ( \
+                 SELECT media_id, \
+                     CASE WHEN instr(work_abbrev,'-')>0 \
+                          THEN substr(work_abbrev,1,instr(work_abbrev,'-')-1) \
+                          ELSE work_abbrev END AS base \
+                 FROM work_media_associations \
+             ) GROUP BY media_id HAVING COUNT(DISTINCT base) > 1 \
          ) \
+         SELECT abbrev, title, author, work_type FROM works w \
+         WHERE EXISTS ( \
+                 SELECT 1 FROM work_media_associations wma WHERE wma.work_abbrev = w.abbrev \
+             ) \
+             AND NOT ( \
+                 w.abbrev NOT LIKE '%-%' \
+                 AND EXISTS (SELECT 1 FROM works e WHERE e.abbrev LIKE w.abbrev || '-%') \
+                 AND NOT EXISTS ( \
+                     SELECT 1 FROM work_media_associations wma \
+                     WHERE wma.work_abbrev = w.abbrev AND wma.media_id IN (SELECT media_id FROM bundle) \
+                 ) \
+                 AND NOT EXISTS ( \
+                     SELECT 1 FROM work_media_associations wma \
+                     WHERE wma.work_abbrev = w.abbrev \
+                       AND NOT EXISTS ( \
+                           SELECT 1 FROM work_media_associations wma2 \
+                           JOIN works e ON e.abbrev = wma2.work_abbrev \
+                           WHERE wma2.media_id = wma.media_id AND e.abbrev LIKE w.abbrev || '-%' \
+                       ) \
+                 ) \
+             ) \
          ORDER BY title",
     )?;
     let rows = stmt.query_map([], |row| {
@@ -651,6 +689,27 @@ pub fn list_media_for_work(
         })
     })?;
     rows.collect()
+}
+
+/// True when `media_id` is a multi-work bundle — a media file that contains
+/// more than one work, i.e. associated (via work_media_associations) with more
+/// than one distinct BASE work (base = abbrev before the first '-', so Rom and
+/// Rom-BBC are the same base). Used to avoid silently auto-loading a bundle when
+/// it's a work's only media (e.g. Rom's Hamlet+Macbeth+Romeo m4b): the media
+/// picker is shown instead so the user chooses knowingly.
+pub fn is_bundle_media(conn: &Connection, media_id: i64) -> bool {
+    conn.query_row(
+        "SELECT COUNT(*) > 1 FROM ( \
+             SELECT DISTINCT CASE WHEN instr(work_abbrev,'-')>0 \
+                                  THEN substr(work_abbrev,1,instr(work_abbrev,'-')-1) \
+                                  ELSE work_abbrev END AS base \
+             FROM work_media_associations WHERE media_id = ?1 \
+         )",
+        [media_id],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|v| v != 0)
+    .unwrap_or(false)
 }
 
 pub fn set_media_priority(
@@ -3006,6 +3065,34 @@ mod tests {
             !works.iter().any(|w| w.abbrev == "2H6"),
             "media-less work 2H6 should be filtered out of the picker"
         );
+
+        // Edition-leak: a base work (AWW) whose only media is a single-play file
+        // shared with its own edition (AWW-BBC) is hidden — reach it via the
+        // edition. EXCEPTION: a base whose media is a multi-work bundle stays
+        // (Rom/MND: their only media is the Hamlet+Macbeth+Romeo m4b, reachable
+        // only through the base). Cym stays (has a base-only dedicated file).
+        assert!(
+            !works.iter().any(|w| w.abbrev == "AWW"),
+            "edition-leak base AWW should be filtered out (reach it via an edition)"
+        );
+        for keep in ["Rom", "MND", "Cym", "Ham"] {
+            assert!(
+                works.iter().any(|w| w.abbrev == keep),
+                "{keep} should remain listed (bundle exception or has dedicated media)"
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_bundle_media() {
+        let conn = open_db().unwrap();
+        // media_id 80 is the Hamlet+Macbeth+Romeo BBC m4b — a multi-work bundle.
+        assert!(
+            is_bundle_media(&conn, 80),
+            "media 80 spans Ham/Mac/Rom — should be a bundle"
+        );
+        // A nonexistent media id is not a bundle (no rows -> false, no panic).
+        assert!(!is_bundle_media(&conn, -1));
     }
 
     #[test]

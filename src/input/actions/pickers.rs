@@ -366,19 +366,32 @@ pub(crate) fn open_media_picker(
         let handle_for_confirm = tokio_handle.clone();
         glib::spawn_future_local(async move {
             let abbrev_log = abbrev.clone();
-            let items = handle
+            // Fetch the media list AND whether a lone item is a multi-work
+            // bundle in the same blocking DB hop.
+            let (items, single_is_bundle) = handle
                 .spawn_blocking(move || {
                     let conn =
                         crate::db::queries::open_db().expect(crate::db::queries::OPEN_DB_PANIC_MSG);
-                    crate::db::queries::list_media_for_work(&conn, &abbrev)
-                        .unwrap_or_default()
+                    let items = crate::db::queries::list_media_for_work(&conn, &abbrev)
+                        .unwrap_or_default();
+                    let single_is_bundle = items.len() == 1
+                        && crate::db::queries::is_bundle_media(&conn, items[0].media_id);
+                    (items, single_is_bundle)
                 })
                 .await
                 .unwrap_or_default();
             crate::logging::log(&format!(
                 "MEDIA_PICKER: work='{}' found {} media files", abbrev_log, items.len()
             ));
-            if items.len() == 1 {
+            // Auto-select only a single DEDICATED media. A single multi-work
+            // bundle (e.g. Rom's Hamlet+Macbeth+Romeo m4b) would auto-load the
+            // wrong play, so fall through to showing the picker instead.
+            if items.len() == 1 && single_is_bundle {
+                crate::logging::log(
+                    "MEDIA_PICKER: single media is a multi-work bundle — showing picker",
+                );
+            }
+            if items.len() == 1 && !single_is_bundle {
                 let item = &items[0];
                 crate::logging::log(&format!(
                     "MEDIA_PICKER: auto-selecting single media: id={} path='{}'",
