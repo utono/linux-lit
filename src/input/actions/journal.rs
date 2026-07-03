@@ -240,20 +240,23 @@ pub(crate) fn render_current(s: &mut AppState) {
     let (cw, h) = crate::app::layout::overlay_card_size(&s);
     let footer_left = footer_left_text(&work_abbrev, s.journal_band.clone());
 
-    // A passage ask in flight (visual selection → Journal Q&A) on a band with
-    // no stored pages yet: render the SELECTED passage source in place of the
-    // bare "No pages yet — press r to ask." placeholder, so the reader sees the
-    // text they are asking about while the ask card is open. `pending_passage`
-    // is consumed by `ask_claude` on submit; stored pages render below as plain
-    // Q&As (their source intentionally not reproduced). The band check is the
-    // staleness guard: a CANCELLED ask leaves pending_passage behind (so `r`
-    // can re-ask on its own band), and without it the stale source rendered on
-    // any other empty Passage band (e.g. after D deletes that band's last Q&A).
-    if count == 0
-        && s.journal
-            .pending_passage
-            .as_ref()
-            .is_some_and(|pp| pp.band == s.journal_band)
+    // A passage ask in flight (visual selection → Journal Q&A): render the
+    // SELECTED passage source behind the ask card, so the reader sees the text
+    // they are asking about while the ask card is open — mirroring the gloss
+    // "Glossing…" card. This runs whether or not the passage already has stored
+    // Q&As: when it has none it replaces the bare "No pages yet — press r to
+    // ask." placeholder; when it has some, it still shows the passage source
+    // (not the existing Q&A) for the duration of the transient ask. The stored
+    // pages are unaffected — `ask_claude` consumes `pending_passage` on submit
+    // and normal Ctrl+n/p viewing has no matching pending, so it renders the
+    // Q&As as plain pages. The `pp.band == journal_band` check is the staleness
+    // guard: it fires ONLY while an ask card is open for THIS band. A CANCELLED
+    // ask leaves pending_passage behind (so `r` can re-ask on its own band), and
+    // the band check keeps the stale source off any other Passage band.
+    if s.journal
+        .pending_passage
+        .as_ref()
+        .is_some_and(|pp| pp.band == s.journal_band)
     {
         let doc = s
             .journal
