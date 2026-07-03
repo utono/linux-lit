@@ -289,6 +289,91 @@ pub(crate) fn render_current(s: &mut AppState) {
     crate::input::actions::gloss::recolor_journal_cached_blocks(s);
 }
 
+/// From the journal source_text markup (`<speaker>…</speaker>\n<verse>text…`),
+/// return the first bare CONTENT line (inside a `<verse>`/`<stage>` tag), tags
+/// stripped and trimmed. Empty if there is no content line. Used only by the
+/// citationless text-match fallback in `jump_to_journal_source_start` — citation
+/// match is primary, so this is a rare `.txt`-only path.
+fn first_plain_source_line(source_text: &str) -> String {
+    for raw in source_text.lines() {
+        let line = raw.trim();
+        // Skip pure speaker headers and blank/tag-only lines.
+        if line.is_empty() || line.starts_with("<speaker>") {
+            continue;
+        }
+        // Strip a single leading/trailing tag pair (<verse>…</verse>, <stage>…).
+        let stripped = line
+            .trim_start_matches("<verse>")
+            .trim_start_matches("<stage>")
+            .trim_end_matches("</verse>")
+            .trim_end_matches("</stage>")
+            .trim();
+        if !stripped.is_empty() {
+            return stripped.to_string();
+        }
+    }
+    String::new()
+}
+
+/// Land the cursor on the first dialogue line of the CURRENT journal page's
+/// source passage, when that page is a passage page whose source resolves in the
+/// current work. Returns `true` on a successful jump, `false` for scene/corpus
+/// notes (no `start_citation`) or a passage from another work. Parallels
+/// `gloss::jump_to_gloss_source_start`.
+pub(crate) fn jump_to_journal_source_start(s: &mut AppState) -> bool {
+    let (start_citation, source_text) = match s.journal.pages.get(s.journal.page_index) {
+        // Only passage pages carry a source citation; scene/corpus notes don't.
+        Some(p) => match &p.start_citation {
+            Some(c) => (c.clone(), p.source_text.clone().unwrap_or_default()),
+            None => return false,
+        },
+        None => return false,
+    };
+
+    // start_citation is `ABBR.div1.div2.line_in_div`; match on the numeric tail
+    // (the abbrev may carry an edition suffix), same as the gloss path.
+    let target = crate::app::parse_citation(&start_citation);
+
+    let work = match s.current_work.as_ref() {
+        Some(w) => w,
+        None => return false,
+    };
+
+    // Citation tuple is unique → primary match; citationless text match is the
+    // .txt-only fallback (source_text carries <speaker>/<verse> markup, so strip
+    // to the first bare content line before comparing).
+    let by_citation = target
+        .and_then(|t| work.lines.iter().position(|l| (l.div1, l.div2, l.line_in_div) == t));
+    let first_src = first_plain_source_line(&source_text);
+    let start_idx = match by_citation.or_else(|| {
+        if first_src.is_empty() {
+            None
+        } else {
+            work.lines.iter().position(|l| l.text.trim() == first_src)
+        }
+    }) {
+        Some(i) => i,
+        None => return false,
+    };
+    let work_idx = work.lines[start_idx..]
+        .iter()
+        .position(|l| l.is_dialogue)
+        .map(|off| start_idx + off)
+        .unwrap_or(start_idx);
+
+    let buf_idx = if let Some(ref lm) = s.line_map {
+        match lm.work_to_buffer.get(work_idx) {
+            Some(&bi) => bi,
+            None => return false,
+        }
+    } else {
+        work_idx
+    };
+
+    crate::input::navigation::jump_to_line(s, buf_idx);
+    true
+}
+
 pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
     if state.borrow().input_mode == InputMode::JournalOverlay {
         let mut s = state.borrow_mut();
@@ -297,8 +382,15 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         // for reader_gloss_lines), so a reader-gloss created/edited in the overlay
         // colors immediately on return.
         crate::app::return_to_reader_mode(&mut s);
+        // Land on the passage's source start when this page is a passage page
+        // whose source lives in the current work; else restore the saved reading
+        // page. Covers Ctrl+Tab, Ctrl+j, and Escape (all route through here).
+        // Take return_pos regardless so it doesn't leak into the next open.
+        let jumped = jump_to_journal_source_start(&mut s);
         let pos = s.journal.return_pos.take();
-        crate::app::restore_saved_position_resnap(&mut s, pos);
+        if !jumped {
+            crate::app::restore_saved_position_resnap(&mut s, pos);
+        }
         return;
     }
 

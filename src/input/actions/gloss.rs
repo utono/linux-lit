@@ -2571,9 +2571,16 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         // A gloss may have just been created/edited; return to reader mode and
         // refresh the main-card tint so newly-glossed lines color without a reload.
         crate::app::return_to_reader_mode(&mut s);
-        // Restore the page the user was on before toggling the gloss open.
+        // Land on the passage's source start (matching close_gloss_to_reader, so
+        // reader-Ctrl+g and Ctrl+Tab behave like the in-overlay Ctrl+g/Escape).
+        // Fall back to the saved return page only when the source can't be
+        // resolved in the current work. Take gloss_return_pos regardless so it
+        // doesn't leak into the next open.
+        let jumped = jump_to_gloss_source_start(&mut s);
         let pos = s.gloss_return_pos.take();
-        crate::app::restore_saved_position_resnap(&mut s, pos);
+        if !jumped {
+            crate::app::restore_saved_position_resnap(&mut s, pos);
+        }
         return;
     }
 
