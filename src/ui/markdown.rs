@@ -98,7 +98,16 @@ pub fn plan_markdown_blocks(src: &str) -> Vec<PlannedBlock> {
         if cur.is_empty() {
             return;
         }
-        let kind = cur[0].style.clone();
+        // `kind` is the block's ROLE, so a paragraph that merely STARTS with
+        // an inline bold/italic run is still a Body paragraph. Taking the
+        // leading span's style verbatim gave such blocks the md-bold/md-italic
+        // tag as their BLOCK tag — no paragraph spacing (an italic-opening
+        // intro paragraph rendered with almost no gap before a following
+        // list) and whole-block styling instead of span-scoped.
+        let kind = match cur[0].style {
+            Style::Bold | Style::Italic => Style::Body,
+            ref s => s.clone(),
+        };
         let stoppable = kind.is_stoppable_block();
         blocks.push(PlannedBlock { spans: std::mem::take(cur), kind, stoppable });
     };
@@ -775,6 +784,20 @@ mod tests {
         assert_eq!(planned.len(), 1);
         assert_eq!(planned[0].kind, Style::Body);
         assert_eq!(planned[0].plain_text(), "load it now");
+    }
+
+    #[test]
+    fn leading_inline_style_block_is_still_body() {
+        // A paragraph OPENING with an italic (or bold) run is a Body block —
+        // its block tag must carry Body paragraph spacing so the gap before a
+        // following list matches every other paragraph's (user-flagged
+        // inconsistency: italic-opening intro paragraphs hugged their list).
+        let blocks = plan_markdown_blocks("*\"Ay me\"* is one of a family.\n\n- item");
+        assert_eq!(blocks[0].kind, Style::Body);
+        let blocks = plan_markdown_blocks("**The cry:** the wound is self-inflicted.");
+        assert_eq!(blocks[0].kind, Style::Body);
+        // The leading run keeps its INLINE style for span tagging.
+        assert_eq!(blocks[0].spans[0].style, Style::Bold);
     }
 
     #[test]
