@@ -802,6 +802,26 @@ pub(crate) fn select_first_echo(state_rc: &Rc<RefCell<AppState>>) {
     sync_session(&mut s);
 }
 
+/// Close the echoes overlay and return to the reader, clearing the echo session
+/// state and any turn AB-loop. This is the exact behavior of the overlay's
+/// Escape close — extracted so Ctrl+g can share it (Ctrl+g returns to the reader
+/// consistently across the gloss/synopsis/echoes overlays).
+pub(crate) fn close_echoes_to_reader(state_rc: &Rc<RefCell<AppState>>) {
+    let mut s = state_rc.borrow_mut();
+    s.gloss_overlay.hide();
+    s.echo_overlay.links.clear();
+    s.echo_overlay.turn_id = None;
+    s.echo_overlay.turn_key = None;
+    // Clear any turn AB-loop so normal reading isn't stuck looping.
+    if s.ab_repeat.loop_active {
+        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::ClearAbLoop);
+        s.ab_repeat.loop_active = false;
+        s.ab_repeat.a_time = None;
+        s.ab_repeat.b_time = None;
+    }
+    s.input_mode = crate::app::InputMode::Reader;
+}
+
 /// Move the accent-bar selection to the last echo (`G`).
 pub(crate) fn select_last_echo(state_rc: &Rc<RefCell<AppState>>) {
     let last = {

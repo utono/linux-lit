@@ -1127,7 +1127,14 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
         (ctx, state.config.claude_model.clone())
     };
 
-    state_rc.borrow().gloss_overlay.show_loading();
+    // Show the passage being reglossed on the loading card (same single-column
+    // `<speaker>`/`<verse>` formatting as the gloss result), not a bare
+    // "Glossing…" label.
+    {
+        let s = state_rc.borrow();
+        let (cw, h) = crate::app::layout::overlay_card_size(&s);
+        s.gloss_overlay.show_glossing(&ctx.passage_doc(), cw, h, Some(&s.theme.root_color));
+    }
 
     let prompt_owned = prompt.to_string();
     let is_inner_monologue = ctx.gloss_type == "inner-monologue";
@@ -1195,7 +1202,14 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
         (ctx, existing, state.config.claude_model.clone(), idx, gloss_id)
     };
 
-    state_rc.borrow().gloss_overlay.show_loading();
+    // Show the passage being reglossed on the loading card (same single-column
+    // `<speaker>`/`<verse>` formatting as the gloss result), not a bare
+    // "Glossing…" label.
+    {
+        let s = state_rc.borrow();
+        let (cw, h) = crate::app::layout::overlay_card_size(&s);
+        s.gloss_overlay.show_glossing(&ctx.passage_doc(), cw, h, Some(&s.theme.root_color));
+    }
 
     let pasted_owned = pasted_lines.to_string();
     let is_inner_monologue = ctx.gloss_type == "inner-monologue";
@@ -2500,6 +2514,24 @@ pub(crate) fn open_gloss_overlay(
 
     // Stamp the most-recent reference from the gloss now displayed.
     s.record_last_gloss(&shown_type);
+}
+
+/// Close the gloss overlay and return to the reader, landing the cursor on the
+/// glossed passage's source line (falling back to the pre-open page). This is
+/// the exact behavior of the overlay's Escape/`n` close — extracted so Ctrl+g
+/// can share it (Ctrl+g in the gloss overlay now returns to the reader instead
+/// of cross-jumping to the journal; the gloss→journal flip lives on Ctrl+j).
+pub(crate) fn close_gloss_to_reader(state: &Rc<RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    s.tts.stop();
+    s.gloss_overlay.hide();
+    s.gloss_opened_from_picker = false;
+    crate::app::return_to_reader_mode(&mut s);
+    let jumped = jump_to_gloss_source_start(&mut s);
+    let saved = s.gloss_return_pos.take();
+    if !jumped {
+        crate::app::restore_saved_position_resnap(&mut s, saved);
+    }
 }
 
 pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {

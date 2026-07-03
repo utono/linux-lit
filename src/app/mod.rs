@@ -406,6 +406,10 @@ pub struct AppState {
     pub echo_turns_picker: crate::ui::echo_turns_picker::EchoTurnsPicker,
     pub pending_echo_context: Option<crate::gloss::GlossContext>,
     pub pending_echo_scene_lines: Vec<crate::db::models::Line>,
+    /// `<speaker>`/`<verse>` markup for the passage being glossed, stashed with
+    /// the pending inner-monologue call so the post-picker "Glossing…" loading
+    /// card can render the passage (like reader-gloss) instead of a bare label.
+    pub pending_echo_passage_doc: String,
     pub echo_overlay: crate::input::actions::echoes::EchoOverlayState,
     pub echo_session: Option<crate::input::actions::echoes::EchoSession>,
     pub vocab_words: std::collections::HashSet<String>,
@@ -1614,6 +1618,7 @@ pub fn build_window(
         echo_turns_picker,
         pending_echo_context: None,
         pending_echo_scene_lines: Vec::new(),
+        pending_echo_passage_doc: String::new(),
         echo_overlay: crate::input::actions::echoes::EchoOverlayState::default(),
         echo_session: None,
         vocab_words: std::collections::HashSet::new(),

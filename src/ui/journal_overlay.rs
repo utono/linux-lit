@@ -507,6 +507,15 @@ impl JournalOverlay {
         card_width: i32,
         card_height: i32,
     ) {
+        // Restore the navigation footer BEFORE sizing: `size_card` reads
+        // `footer_container.preferred_size()` to reserve the footer's slot in the
+        // fixed-scroll-height budget, but `show_loading` hid the footer during the
+        // "Asking…" state. A hidden widget reports height 0, so sizing here (in the
+        // post-generation callback) reserved no footer slot — then showing the
+        // footer below pushed the `valign=Center` container PAST `card_height`, and
+        // the card rendered taller than the reading card (the bug the user saw
+        // after a Claude Q&A generated). Show it first so the measurement is real.
+        self.footer_container.set_visible(true);
         self.size_card(card_width, card_height);
         // Store the band identity + Q&A-entry position; the footer text is
         // (re)built by update_footer_position, which also appends the render-page
@@ -559,7 +568,8 @@ impl JournalOverlay {
         // Now the render-page count is known — build the footer with it.
         self.update_footer_position();
         self.ask_host.card().close();
-        // Restore the navigation footer (show_loading may have hidden it).
+        // Footer already re-shown at the top of show_page (before size_card, so
+        // its slot is measured). Left visible here for clarity.
         self.footer_container.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);

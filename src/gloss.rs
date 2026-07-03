@@ -555,6 +555,32 @@ impl GlossContext {
             .map(|(text, &num)| (text.to_string(), num))
             .collect()
     }
+
+    /// `<speaker>`/`<verse>` markup for the passage this context glosses, so the
+    /// "Glossing…" loading card (`GlossOverlay::show_glossing`) renders the source
+    /// being reglossed instead of a bare centered label. Mirrors
+    /// `echoes::build_source_header`, but reconstructs from the joined
+    /// `source_text` + a single `speaker` label (the `Line` structs are gone by
+    /// the time add/edit re-gloss runs). Stage-direction lines render as their
+    /// own `<stage>` line; the speaker header is emitted once at the top (unless
+    /// prose/`UNKNOWN`, which emits none).
+    pub fn passage_doc(&self) -> String {
+        let has_speaker = !self.speaker.is_empty() && self.speaker != "UNKNOWN";
+        let mut doc = String::new();
+        let mut speaker_emitted = false;
+        for line in self.source_text.lines() {
+            if crate::db::line_types::is_stage_direction(line) {
+                doc.push_str(&format!("<stage>{}</stage>\n", line));
+                continue;
+            }
+            if has_speaker && !speaker_emitted {
+                doc.push_str(&format!("<speaker>{}</speaker>\n", self.speaker.to_uppercase()));
+                speaker_emitted = true;
+            }
+            doc.push_str(&format!("<verse>{}</verse>\n", line));
+        }
+        doc
+    }
 }
 
 pub fn build_context(work: &Work, lines: &[Line]) -> Option<GlossContext> {
@@ -927,6 +953,42 @@ fn flag_unverified(line: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ctx_with(speaker: &str, source_text: &str) -> GlossContext {
+        GlossContext {
+            work_abbrev: "Rom".into(),
+            work_title: "Romeo and Juliet".into(),
+            start_citation: "Rom 3.1.32".into(),
+            end_citation: "Rom 3.1.35".into(),
+            act: 3,
+            scene: 1,
+            speaker: speaker.into(),
+            source_text: source_text.into(),
+            source_line_numbers: vec![],
+            hash: String::new(),
+            gloss_type: "teacher-generic".into(),
+        }
+    }
+
+    #[test]
+    fn passage_doc_emits_speaker_once_then_verse() {
+        let doc = ctx_with("Mercutio", "Thou wilt quarrel\nfor cracking nuts").passage_doc();
+        assert_eq!(
+            doc,
+            "<speaker>MERCUTIO</speaker>\n\
+             <verse>Thou wilt quarrel</verse>\n\
+             <verse>for cracking nuts</verse>\n"
+        );
+    }
+
+    #[test]
+    fn passage_doc_omits_speaker_for_prose_unknown() {
+        let doc = ctx_with("UNKNOWN", "It was the best of times").passage_doc();
+        assert_eq!(doc, "<verse>It was the best of times</verse>\n");
+        // Empty speaker (prose) also emits no <speaker> tag.
+        let doc = ctx_with("", "plain prose line").passage_doc();
+        assert_eq!(doc, "<verse>plain prose line</verse>\n");
+    }
 
     #[test]
     fn teacher_generic_has_no_unfilled_placeholder() {

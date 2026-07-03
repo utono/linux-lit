@@ -658,7 +658,7 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
 }
 
 fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
-    let (ctx, scene_lines, tokio_handle, all_glosses) = {
+    let (ctx, scene_lines, tokio_handle, all_glosses, passage_doc) = {
         let state = state_rc.borrow();
         let (start, end) = match &state.visual_selection {
             Some(s) => s.range(),
@@ -694,7 +694,12 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
             Err(_) => Vec::new(),
         };
 
-        (ctx, scene_lines, state.tokio_handle.clone(), all_glosses)
+        // `<speaker>`/`<verse>` markup for the passage being glossed, shared with
+        // the echoes source header so the "Glossing…" loading card formats it the
+        // same single-column way as the reader-gloss loading card + gloss result.
+        let passage_doc = crate::input::actions::echoes::build_source_header(&selected_lines, &ctx.speaker);
+
+        (ctx, scene_lines, state.tokio_handle.clone(), all_glosses, passage_doc)
     };
 
     exit_visual_mode(&mut state_rc.borrow_mut());
@@ -725,10 +730,15 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
     {
         let mut s = state_rc.borrow_mut();
         s.gloss_original_text = Some(ctx.source_text.clone());
-        s.gloss_overlay.show_loading();
+        // Show the passage being glossed on the loading card (like reader-gloss)
+        // rather than a bare "Glossing…" label.
+        let cw = s.content_hbox.width();
+        let h = crate::app::layout::overlay_card_height(&s);
+        s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color));
         s.input_mode = crate::app::InputMode::GlossOverlay;
         s.pending_echo_context = Some(ctx.clone());
         s.pending_echo_scene_lines = scene_lines.clone();
+        s.pending_echo_passage_doc = passage_doc;
     }
 
     // Build the enriched query: "{SPEAKER} to {ADDRESSEE}: {text}".
@@ -815,6 +825,7 @@ pub fn cancel_pending_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<
     s.gloss_overlay.hide();
     s.pending_echo_context = None;
     s.pending_echo_scene_lines = Vec::new();
+    s.pending_echo_passage_doc = String::new();
     s.input_mode = crate::app::InputMode::Reader;
     crate::logging::log("ECHO: cancelled gloss from picker");
 }
@@ -831,7 +842,17 @@ fn run_pending_inner_monologue_blocking(
             None => return,
         };
         let scene_lines = std::mem::take(&mut s.pending_echo_scene_lines);
-        s.gloss_overlay.show_loading();
+        // Re-show the passage on the loading card (the echo picker hid the
+        // overlay, or we skipped it) so generation reads as the reader-gloss
+        // loading card, not a bare "Glossing…" label.
+        let passage_doc = std::mem::take(&mut s.pending_echo_passage_doc);
+        let cw = s.content_hbox.width();
+        let h = crate::app::layout::overlay_card_height(&s);
+        if passage_doc.is_empty() {
+            s.gloss_overlay.show_loading();
+        } else {
+            s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color));
+        }
         s.input_mode = crate::app::InputMode::GlossOverlay;
         let titles = crate::db::queries::load_work_titles_or_default();
         (ctx, scene_lines, s.config.claude_model.clone(), titles)

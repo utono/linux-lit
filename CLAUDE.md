@@ -118,6 +118,17 @@ exception below lets an agent verify GUI changes **without touching the user's
 live session**, by running the reader inside a throwaway headless compositor
 (`cage`) on its own Wayland socket and screenshotting it with `grim`.
 
+**This DOES work from the agent's own shell — prefer it over asking the user.**
+It has been run successfully mid-session (nested `cage` on `wayland-1` while the
+user's dwl held `wayland-0`, app rendered, `wtype` drove it, `grim` captured a
+real screenshot). Earlier notes saying "the agent can't launch cage / gets
+SIGTERM'd" are **stale/overcautious** — treat headless verify as a first resort
+for any on-screen acceptance criterion, and only fall back to asking the user
+(see *When to ASK THE USER* below) if a launch genuinely fails after a retry.
+The two gotchas that make it *look* broken are both handled below: the first
+`grim` firing before the surface maps (empty ~2-byte PNG — retry after a few
+seconds), and the cleanup `pkill` matching the user's live instance (scope it).
+
 **Why this and not the live dwl:** on the user's dwl session a new reader window
 opens on a non-visible tag, so `grim` (which captures the *active* output) can't
 see it, and the user's seat is already owned — so `ydotool` and
@@ -155,8 +166,16 @@ grim /tmp/shot.png                 # screenshot the reader
 wtype "3"                          # send keystrokes to the focused reader
 ```
 
+- **Empty ~2-byte PNG = the surface hadn't mapped yet, NOT a failure.** `grim`
+  returns exit 0 with a near-empty file if it fires before the reader paints.
+  `sleep 3` and re-`grim`; a real capture is tens-to-hundreds of KB. Always
+  check `stat -c%s` before `Read`-ing the PNG.
 - `wtype` works (virtual-keyboard protocol, no seat needed) **once the window is
-  focused**; `ydotool`/libinput do not (seat owned by dwl).
+  focused**; `ydotool`/libinput do not (seat owned by dwl). Modifier chords use
+  `-M`/`-m`, e.g. `wtype -M ctrl -k j -m ctrl` for Ctrl+j.
+- **The shared dev log (`linux-lit-dev.log`) is NOT reliable here** — the user's
+  live instance writes to the same file, so its tail reflects the live session,
+  not the cage one. Trust the screenshot, not the log, when both instances run.
 - Then `Read` the PNG to inspect the result.
 
 ### Useful key sequences for verification
@@ -175,10 +194,17 @@ wtype "3"                          # send keystrokes to the focused reader
 ### Clean up
 
 ```bash
-pkill -f "cage -- ./target/debug/linux-lit"; pkill -f target/debug/linux-lit
+pkill -f "cage -- ./target/debug/linux-lit"
 ```
 
-(`ydotoold` is not needed for this flow; only `cage` + `wtype` + `grim`.)
+**Kill ONLY the cage-scoped pattern.** Do NOT run a bare
+`pkill -f target/debug/linux-lit` — that also matches the user's **live**
+`cargo run` instance (same binary path) and kills it out from under them. Killing
+the `cage --` parent takes its child reader down with it, so the narrow pattern
+is sufficient. If a headless reader somehow outlives its cage, target it by the
+specific PID (`pgrep -f "cage -- ./target/debug/linux-lit"` first), never by the
+shared binary-path pattern. (`ydotoold` is not needed for this flow; only `cage`
++ `wtype` + `grim`.)
 
 For the **automated** equivalent of this manual self-check, see *Automated UI
 tests* below — it wraps the same cage + grim + wtype flow in `cargo test` and
@@ -229,15 +255,26 @@ Design notes (so you don't re-derive them):
 
 ### When to ASK THE USER to run e2e-env.sh
 
-An agent often **cannot** launch cage from its own shell: the live dwl session
-owns the seat, and even the tempdir-isolated harness can be killed with SIGTERM
-(exit 144) before the app ever renders — the dev log never updates. When that
-happens, do **not** claim the change is verified. Build, run `cargo test --bins`
-(the pure-logic suite), state plainly that runtime verification is blocked, and
-**ask the user to run the e2e command** and paste the result / screenshot.
+**Default: TRY the headless launch yourself first** (manual cage per *Headless
+Verification* above, or `e2e-env.sh` for the cargo harness). It generally works
+from the agent shell — a nested `cage` does not need the seat. Only fall back to
+asking the user when a launch **actually fails after a retry**: the `cage --`
+process dies immediately (check `/tmp/cage.log`), or `grim` keeps returning an
+empty PNG after a few `sleep`+retry cycles (a real map failure, not the
+first-shot timing issue). If it truly won't launch, do **not** claim the change
+is verified — build, run `cargo test --bins` (the pure-logic suite), state
+plainly that the launch failed, and **ask the user to run the e2e command** and
+paste the result / screenshot.
 
-Ask the user to run `e2e-env.sh` whenever the change's acceptance criterion is
-"it renders correctly on screen" rather than "the logic is right":
+The old blanket claim "an agent cannot launch cage — the seat is owned / it gets
+SIGTERM'd" is **stale**; don't skip straight to asking. The SIGTERM/exit-144 case
+was usually the cleanup `pkill` (or a prior instance) killing the run, not the
+seat — launch first, and scope the eventual cleanup to `cage -- ...` only.
+
+Even when you CAN verify headlessly, the manual single-work launch is still worth
+handing to the user for a final eyeball on the real GL renderer (cage uses cairo
+software rendering). Reach for the user whenever the change's acceptance criterion
+is "it renders correctly on screen" rather than "the logic is right":
 
 - **pagination / spread / column-split / page-turn** changes — boundaries are
   computed from live Pango pixel heights against `text_view`/`right_view`; there

@@ -1122,8 +1122,9 @@ impl GlossOverlay {
         self.title.set_vexpand(false);
         self.title.set_valign(Align::Start);
         self.title.set_halign(Align::Start);
-        // Extra breathing room above the header (constructor default is 24).
-        self.title.set_margin_top(64);
+        // Match the gloss result's top spacing (constructor default) — the extra
+        // 64px pushed the tinted panel down and shrank it vs the result card.
+        self.title.set_margin_top(24);
 
         // Same passage geometry the gloss result uses (`show_gloss_with_color`):
         // wide side margins anchored to the actual card width, accent bar at
@@ -1131,11 +1132,16 @@ impl GlossOverlay {
         let left = crate::ui::prose_column_margin(card_width);
         self.set_prose_margins(left);
 
-        // No diff labels, echo views, hint, or position while loading.
+        // No diff labels or echo views while loading.
         self.hide_diff_labels();
         self.echo_header_view.set_visible(false);
         self.echo_rule.set_visible(false);
-        self.hint.set_visible(false);
+        // Reserve the SAME footer band the gloss result uses (hr + labels), so
+        // `size_scroll` sizes the tinted panel to the result's footprint. The
+        // labels carry no text on the loading card, so the band shows only the
+        // rule — matching dimensions without adding loading-card chrome.
+        self.set_gloss_hint();
+        self.hint.set_visible(true);
         self.position_label.set_visible(false);
 
         self.set_bar_color_from_root(root_color);

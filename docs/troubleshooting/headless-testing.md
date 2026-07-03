@@ -534,6 +534,34 @@ for n in $(seq 1 10); do wtype -k j; sleep 0.30; done  # forward across boundary
 grim /tmp/after.png
 ```
 
+### Reaching a specific OVERLAY state via the in-app pickers
+
+For testing an **overlay keybind** (e.g. what Ctrl+g does inside the gloss
+overlay), you don't need to navigate the reader to the exact line — drive the
+pickers to jump straight to the artifact:
+
+- **Switch works** — `Ctrl+p` (library picker) → type an author filter → `Return`
+  to expand that author → type a work filter → arrow `Down` to the row → `Return`.
+  The list is author-first; the work you want is usually NOT the pre-highlighted
+  row, so count arrow-downs from a screenshot.
+- **Open a specific gloss** — `Alt+g` opens the gloss picker listing every gloss
+  in the work by citation (e.g. "MERCUTIO: Nay… — Rom.3.1.16"); arrow to the row
+  and `Return` lands you in `GlossOverlay` on that exact passage. Far faster and
+  more reliable than navigating the cursor to the glossed line and pressing
+  Ctrl+g.
+- **Find the right artifact first with SQL**, then drive to it. `lit.db` is the
+  source of truth: `SELECT p.start_citation, g.gloss_type FROM passages p JOIN
+  glosses g ON g.passage_id=p.id WHERE p.work_abbrev='Rom'` tells you which lines
+  have a gloss; `SELECT scope,start_citation FROM journal_entries WHERE
+  work_abbrev='Rom'` tells you which have a journal page. Pick a citation that has
+  BOTH (or NEITHER) to exercise a specific cross-jump / fallback branch. This is
+  how the gloss-overlay Ctrl+g cross-jump (→ journal passage band when a page
+  exists; → author-corpus band when it doesn't) was verified end-to-end.
+- **Modifier chords in `wtype`:** `wtype -M ctrl -k g -m ctrl` for Ctrl+g,
+  `wtype -M ctrl -M shift -k g -m shift -m ctrl` for Ctrl+Shift+G. A screenshot
+  with an unchanged byte-size (`stat -c%s`) across a keypress is a quick "did
+  anything happen?" check before `Read`-ing the PNG.
+
 ## Process hygiene — do NOT `pkill` by binary name
 
 cage is headless (offscreen), but a launch that detaches or fails its cleanup
@@ -572,6 +600,16 @@ stray instance is disruptive.
   contention with the live session; set `LIT_DB_PATH` to a private copy.
 - **Blank reader / "load may be stuck"** → ran under bare dwl/sway instead of
   cage; the surface never got sized.
+- **Reader stuck on a teal "…/Music/…m4b" splash, never shows text** → a manual
+  cage launch WITHOUT `LIT_HEADLESS_TEST=1` tried to start MPV, which blocks on
+  the audio file / socket and the reveal stalls on its "load may be stuck"
+  fallback. **Always export `LIT_HEADLESS_TEST=1`** for a manual cage launch (it
+  makes `launch_mpv` a no-op); the cargo harness sets it for you. This is the
+  usual reason a hand-rolled cage renders a splash while the automated tests
+  render fine.
+- **First `grim` returns a ~2-byte PNG (exit 0)** → the surface had not mapped
+  when you captured; NOT a failure. `sleep 3` and re-`grim`; a real capture is
+  tens-to-hundreds of KB. Always check `stat -c%s` before `Read`-ing the PNG.
 - **Live session's `linux-lit-dev.log` got clobbered** → a headless run shared
   the log path; set `LIT_LOG_PATH`.
 - **Stray reader window on screen** → a leaked cage instance; kill by recorded

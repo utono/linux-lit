@@ -1,6 +1,13 @@
 use serde_json::Value;
 use std::path::PathBuf;
 
+/// Minimum contrast ratio (vs the reading-surface bg) for the reader-gloss line
+/// tint. The old 3.0 UI floor let a barely-distinct pastel (e.g. a 3.0 salmon on
+/// cream) through, which was hard to read against near-black body text. 4.5 is
+/// the WCAG AA body-text threshold — forces a DARKER variant of the same hue so
+/// glossed lines read clearly while staying a distinct tint (body text is ~6.7).
+const READER_GLOSS_MIN_CONTRAST: f64 = 4.5;
+
 /// Resolved theme colors for linux-lit.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -155,11 +162,20 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
     // Reader-gloss tints, contrast-guaranteed (raw focuscolor is dim/indistinct
     // on ~13 themes). Off-cursor = guarded focuscolor; on-cursor = guarded
     // complement, also kept distinct from the off-cursor tint.
-    let reader_gloss = str_field(lit, "reader_gloss")
-        .unwrap_or_else(|| ensure_gloss_color(&focus_color, &text_bg, &[&text_fg]));
-    let reader_gloss_cursor = str_field(lit, "reader_gloss_cursor").unwrap_or_else(|| {
-        ensure_gloss_color(&complement_hex(&reader_gloss), &text_bg, &[&text_fg, &reader_gloss])
-    });
+    // Both tints are run through the readable floor even when a theme sets them
+    // explicitly, so an explicit-but-washed-out value (e.g. a 3.1-contrast teal)
+    // is still darkened to a readable variant of its hue rather than shipping a
+    // hard-to-read gloss. Explicit values only differ from the derived ones by
+    // choosing the base hue.
+    let reader_gloss = {
+        let base = str_field(lit, "reader_gloss").unwrap_or_else(|| focus_color.clone());
+        ensure_gloss_color_min(&base, &text_bg, &[&text_fg], READER_GLOSS_MIN_CONTRAST)
+    };
+    let reader_gloss_cursor = {
+        let base = str_field(lit, "reader_gloss_cursor")
+            .unwrap_or_else(|| complement_hex(&reader_gloss));
+        ensure_gloss_color_min(&base, &text_bg, &[&text_fg, &reader_gloss], READER_GLOSS_MIN_CONTRAST)
+    };
 
     // Dim foreground: 40% fg blended toward bg (matching lit's playback sync)
     let dim_fg = blend_colors(&text_fg, &text_bg, 0.40);
@@ -224,8 +240,13 @@ fn default_theme() -> Theme {
         cursor_bg: "#d4be98".to_string(),
         cursor_fg: "#282828".to_string(),
         vocab_fg: "#d8a657".to_string(),
-        reader_gloss: ensure_gloss_color("#d4be98", "#282828", &["#d4be98"]),
-        reader_gloss_cursor: ensure_gloss_color(&complement_hex("#d4be98"), "#282828", &["#d4be98"]),
+        reader_gloss: ensure_gloss_color_min("#d4be98", "#282828", &["#d4be98"], READER_GLOSS_MIN_CONTRAST),
+        reader_gloss_cursor: ensure_gloss_color_min(
+            &complement_hex("#d4be98"),
+            "#282828",
+            &["#d4be98"],
+            READER_GLOSS_MIN_CONTRAST,
+        ),
         overlay_panel_bg: String::new(),
         scrim_bg: String::new(),
     };
@@ -441,9 +462,15 @@ fn choose_vocab_fg(text_fg: &str, cursor_bg: &str, vocab_orig: &str) -> String {
 /// from the background and saturation raised at the same hue; as a last resort the
 /// hue is rotated 150° (the `choose_vocab_fg` strategy) and S/L clamped. Used to
 /// derive both reader-gloss tints so they never wash out or blend into body text.
-fn ensure_gloss_color(base_hex: &str, bg_hex: &str, avoid: &[&str]) -> String {
+/// Resolve a gloss-tint color with a caller-chosen minimum contrast floor vs the
+/// background. The reader-gloss tint uses a higher floor (READER_GLOSS_MIN_
+/// CONTRAST) so it renders as a DARKER, clearly readable variant of the hue
+/// rather than a washed-out near-3.0 pastel that's hard to read on the cream
+/// reading surface. `min_contrast = 3.0` is the plain UI floor (used by tests /
+/// any future non-body-text caller).
+fn ensure_gloss_color_min(base_hex: &str, bg_hex: &str, avoid: &[&str], min_contrast: f64) -> String {
     let ok = |c: &str| {
-        contrast_ratio(c, bg_hex) >= 3.0
+        contrast_ratio(c, bg_hex) >= min_contrast
             && avoid.iter().all(|a| hue_distance(c, a) >= 40.0 || contrast_ratio(c, a) >= 1.4)
     };
     if ok(base_hex) {
@@ -786,37 +813,65 @@ mod tests {
 
     #[test]
     fn ensure_keeps_already_good_color() {
-        // rose-pine-dawn focuscolor on cream, avoiding slate body text: already good.
-        let c = ensure_gloss_color("#c4788a", "#faf4ed", &["#575279"]);
-        assert_eq!(c, "#c4788a", "a color that already passes must be returned unchanged");
+        // rose-pine-dawn focuscolor on cream, avoiding slate body text: passes
+        // the plain 3.0 UI floor, so returned unchanged there.
+        let c = ensure_gloss_color_min("#c4788a", "#faf4ed", &["#575279"], 3.0);
+        assert_eq!(c, "#c4788a", "a color that already passes the 3.0 floor must be returned unchanged");
+    }
+
+    #[test]
+    fn reader_gloss_floor_darkens_a_washed_out_pastel() {
+        // The user's case: #c4788a on cream is exactly ~3.0 — readable as UI but
+        // washed out as body text. The reader-gloss floor must push it DARKER
+        // (higher contrast) while keeping it distinct from the slate body text.
+        let bg = "#faf4ed";
+        let before = contrast_ratio("#c4788a", bg);
+        let c = ensure_gloss_color_min("#c4788a", bg, &["#575279"], READER_GLOSS_MIN_CONTRAST);
+        let after = contrast_ratio(&c, bg);
+        assert!(after >= READER_GLOSS_MIN_CONTRAST,
+            "reader-gloss tint {c} must clear the readable floor, got {after:.2}");
+        assert!(after > before,
+            "reader-gloss tint must be DARKER than the raw pastel ({after:.2} > {before:.2})");
+        assert_ne!(c, "#c4788a", "the washed-out pastel must not survive the readable floor");
     }
 
     #[test]
     fn ensure_fixes_dim_color_on_light_bg() {
         // dayfox: a muted purple focuscolor on a near-white bg is too dim.
-        let c = ensure_gloss_color("#7b6b99", "#f6f2ee", &["#3d2b5a"]);
+        let c = ensure_gloss_color_min("#7b6b99", "#f6f2ee", &["#3d2b5a"], 3.0);
         assert!(contrast_ratio(&c, "#f6f2ee") >= 3.0,
             "fixed color must contrast with bg, got {} ({c})", contrast_ratio(&c, "#f6f2ee"));
     }
 
     #[test]
     fn ensure_result_is_distinct_from_avoid() {
-        let c = ensure_gloss_color("#7b6b99", "#f6f2ee", &["#3d2b5a"]);
+        let c = ensure_gloss_color_min("#7b6b99", "#f6f2ee", &["#3d2b5a"], 3.0);
         let distinct = hue_distance(&c, "#3d2b5a") >= 40.0 || contrast_ratio(&c, "#3d2b5a") >= 1.4;
         assert!(distinct, "result {c} must be distinct from the avoid color");
     }
 
     #[test]
-    fn reader_gloss_cursor_explicit_wins() {
+    fn reader_gloss_tints_enforce_readable_floor_even_when_explicit() {
+        // An explicit reader_gloss_cursor (#56949f, ~3.1 contrast on cream) sets
+        // the HUE but is still darkened to the readable floor; the off-cursor tint
+        // derives from the focuscolor and is likewise darkened. Neither ships the
+        // washed-out raw value.
         let json: serde_json::Value = serde_json::from_str(
             r##"{ "dwl": {"focuscolor": "#c4788a"},
                  "linux-lit": {"reader_gloss_cursor": "#56949f"},
                  "kitty": {"background": "#faf4ed", "active_tab_foreground": "#575279"} }"##,
         ).unwrap();
         let t = resolve_theme("rose-pine-dawn", &json);
-        assert_eq!(t.reader_gloss_cursor, "#56949f");
-        // off-cursor tint: focuscolor already passes -> unchanged.
-        assert_eq!(t.reader_gloss, "#c4788a");
+        let bg = "#faf4ed";
+        assert!(contrast_ratio(&t.reader_gloss_cursor, bg) >= READER_GLOSS_MIN_CONTRAST,
+            "explicit cursor tint must be darkened to the readable floor, got {} ({:.2})",
+            t.reader_gloss_cursor, contrast_ratio(&t.reader_gloss_cursor, bg));
+        assert!(contrast_ratio(&t.reader_gloss, bg) >= READER_GLOSS_MIN_CONTRAST,
+            "off-cursor tint must clear the readable floor, got {} ({:.2})",
+            t.reader_gloss, contrast_ratio(&t.reader_gloss, bg));
+        // The raw washed-out inputs must NOT survive.
+        assert_ne!(t.reader_gloss, "#c4788a");
+        assert_ne!(t.reader_gloss_cursor, "#56949f");
     }
 
     #[test]
@@ -826,8 +881,10 @@ mod tests {
         for t in load_all_themes() {
             let cvb_off = contrast_ratio(&t.reader_gloss, &t.text_bg);
             let cvb_cur = contrast_ratio(&t.reader_gloss_cursor, &t.text_bg);
-            assert!(cvb_off >= 3.0, "{}: off-cursor tint {} dim on bg {} ({cvb_off:.2})", t.name, t.reader_gloss, t.text_bg);
-            assert!(cvb_cur >= 3.0, "{}: on-cursor color {} dim on bg {} ({cvb_cur:.2})", t.name, t.reader_gloss_cursor, t.text_bg);
+            // Reader-gloss tints now use the higher readable floor (a darker
+            // variant of the hue), not the old 3.0 UI floor.
+            assert!(cvb_off >= READER_GLOSS_MIN_CONTRAST, "{}: off-cursor tint {} dim on bg {} ({cvb_off:.2})", t.name, t.reader_gloss, t.text_bg);
+            assert!(cvb_cur >= READER_GLOSS_MIN_CONTRAST, "{}: on-cursor color {} dim on bg {} ({cvb_cur:.2})", t.name, t.reader_gloss_cursor, t.text_bg);
             let distinct = hue_distance(&t.reader_gloss, &t.reader_gloss_cursor) >= 40.0
                 || contrast_ratio(&t.reader_gloss, &t.reader_gloss_cursor) >= 1.4;
             assert!(distinct, "{}: off {} and on {} not distinct", t.name, t.reader_gloss, t.reader_gloss_cursor);

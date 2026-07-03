@@ -302,13 +302,42 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         return;
     }
 
+    open_journal_scene(state);
+}
+
+/// Open the journal overlay on the cursor's Scene band (with author-corpus
+/// fallback when that scene has no pages). Assumes reader mode / no conflicting
+/// overlay is showing; saves `return_pos` from the current cursor. Shared by the
+/// reader Ctrl+j (`toggle_overlay`'s open half) and the synopsis/echoes/
+/// translation overlays' Ctrl+j, which each return to the reader first (so the
+/// cursor is on the line whose scene the journal should open on) and then call
+/// this.
+pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
     if s.current_work.is_none() {
         return;
     }
     s.journal.return_pos = Some((s.current_line, s.page_top_line));
     let (d1, d2) = crate::app::scene_synopsis::current_scene_divs(&s);
-    s.journal_band = JournalBand::Scene(d1, d2);
+    // Open on the cursor's scene band — but if that scene has no journal pages,
+    // fall back to the author corpus band (when it has content) so Ctrl+j always
+    // lands somewhere with entries rather than a blank scene band.
+    // Use the SAME query the Scene band renders with (find_scene_band_pages =
+    // scene Q&As + passage Q&As in this (d1,d2)), so a scene that has only
+    // passage entries is NOT treated as empty.
+    let work_abbrev = current_work_abbrev(&s);
+    let scene_pages = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| crate::db::journal::find_scene_band_pages(&conn, &work_abbrev, d1, d2).ok())
+        .unwrap_or_default();
+    s.journal_band = if scene_pages.is_empty() {
+        match author_band_with_pages(&s) {
+            Some(author) => JournalBand::Author(author),
+            None => JournalBand::Scene(d1, d2),
+        }
+    } else {
+        JournalBand::Scene(d1, d2)
+    };
     s.journal.page_index = 0;
     s.input_mode = InputMode::JournalOverlay;
     render_current(&mut s);
@@ -486,6 +515,27 @@ pub(crate) fn nav_to_author_band(state: &Rc<RefCell<AppState>>) {
     s.journal_band = JournalBand::Author(author);
     s.journal.page_index = 0;
     render_current(&mut s);
+}
+
+/// The current work's author string IFF the author has at least one corpus
+/// (`scope='author'`) journal page — the destination for the Ctrl+j "nothing for
+/// this passage/scene" fallback. Returns `None` when there is no work, no author
+/// string, or the author corpus is empty (so callers keep their prior behavior
+/// rather than open a blank author band).
+fn author_band_with_pages(s: &AppState) -> Option<String> {
+    let author = s.current_work.as_ref().map(|w| w.author.clone())?;
+    if author.is_empty() {
+        return None;
+    }
+    let pages = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| crate::db::journal::find_author_pages(&conn, &author).ok())
+        .unwrap_or_default();
+    if pages.is_empty() {
+        None
+    } else {
+        Some(author)
+    }
 }
 
 /// Set up the journal overlay for a passage Q&A and open the ask card.
@@ -1653,47 +1703,49 @@ pub(crate) fn view_gloss_from_journal(state: &Rc<RefCell<AppState>>) {
 /// View the journal passage pages for the gloss currently shown in the gloss
 /// overlay (Ctrl+j in the gloss overlay). Reads gloss_context citations and
 /// calls find_passage_pages; if pages exist, closes the gloss overlay and opens
-/// the journal overlay in the Passage band on the first page. Toasts on failure.
+/// the journal overlay in the Passage band on the first page. When the passage
+/// has no journal page, falls back to the author corpus band (if the author has
+/// corpus notes); toasts only when neither a passage page nor an author corpus
+/// exists.
 pub(crate) fn view_journal_from_gloss(state: &Rc<RefCell<AppState>>) {
-    // Phase 1: gather citations from gloss_context.
-    let (work_abbrev, start_cit, end_cit, div1, div2) = {
+    // Phase 1: decide the target band. Prefer the glossed passage's own band when
+    // it has journal pages; otherwise fall back to the author corpus band (when it
+    // has content) so Ctrl+j always opens journal content rather than toasting.
+    // Only toast when there is neither a passage page nor an author corpus.
+    let band = {
         let s = state.borrow();
-        let ctx = match s.gloss_context.as_ref() {
-            Some(c) => c,
+        let ctx_citations = s.gloss_context.as_ref().map(|c| {
+            (c.start_citation.clone(), c.end_citation.clone(), c.act, c.scene)
+        });
+        let work_abbrev = current_work_abbrev(&s);
+
+        // Passage band, if this passage has journal pages.
+        let passage_band = ctx_citations.and_then(|(start_cit, end_cit, div1, div2)| {
+            let pages = crate::db::queries::open_db()
+                .ok()
+                .and_then(|conn| {
+                    crate::db::journal::find_passage_pages(&conn, &work_abbrev, &start_cit, &end_cit).ok()
+                })
+                .unwrap_or_default();
+            if pages.is_empty() {
+                None
+            } else {
+                Some(JournalBand::Passage { div1, div2, start: start_cit, end: end_cit })
+            }
+        });
+
+        match passage_band.or_else(|| author_band_with_pages(&s).map(JournalBand::Author)) {
+            Some(b) => b,
             None => {
                 crate::ui::toast::show_transient(
                     &s.chapter_toast, TOAST_NO_JOURNAL_PAGE_FOR_PASSAGE, 3,
                 );
                 return;
             }
-        };
-        let work_abbrev = current_work_abbrev(&s);
-        (
-            work_abbrev,
-            ctx.start_citation.clone(),
-            ctx.end_citation.clone(),
-            ctx.act,
-            ctx.scene,
-        )
+        }
     };
 
-    // Phase 2: look up passage pages.
-    let pages = crate::db::queries::open_db()
-        .ok()
-        .and_then(|conn| {
-            crate::db::journal::find_passage_pages(&conn, &work_abbrev, &start_cit, &end_cit).ok()
-        })
-        .unwrap_or_default();
-
-    if pages.is_empty() {
-        let s = state.borrow();
-        crate::ui::toast::show_transient(
-            &s.chapter_toast, TOAST_NO_JOURNAL_PAGE_FOR_PASSAGE, 3,
-        );
-        return;
-    }
-
-    // Phase 3: close the gloss overlay and open the journal overlay.
+    // Phase 2: close the gloss overlay and open the journal overlay on `band`.
     {
         let mut s = state.borrow_mut();
         s.tts.stop();
@@ -1707,17 +1759,12 @@ pub(crate) fn view_journal_from_gloss(state: &Rc<RefCell<AppState>>) {
     {
         let mut s = state.borrow_mut();
         s.journal.return_pos = Some((s.current_line, s.page_top_line));
-        s.journal_band = JournalBand::Passage {
-            div1,
-            div2,
-            start: start_cit,
-            end: end_cit,
-        };
+        s.journal_band = band;
         s.journal.page_index = 0;
         s.input_mode = InputMode::JournalOverlay;
         render_current(&mut s);
     }
-    crate::logging::log("VIEW-JOURNAL-FROM-GLOSS: opened journal passage band from gloss overlay");
+    crate::logging::log("VIEW-JOURNAL-FROM-GLOSS: opened journal band from gloss overlay");
 }
 
 #[cfg(test)]

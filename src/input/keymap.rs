@@ -143,7 +143,7 @@ pub fn handle_key(
             crate::app::InputMode::JournalVisual => handle_journal_visual_key(state, key_state, key_name),
             crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_state, key_name, key_char, is_ctrl, is_alt, is_shift),
             crate::app::InputMode::SynopsisVisual => handle_block_visual_key(state, key_state, key_name, &SYNOPSIS_VISUAL_CFG),
-            crate::app::InputMode::TranslationOverlay => handle_translation_overlay_key(state, key_name),
+            crate::app::InputMode::TranslationOverlay => handle_translation_overlay_key(state, key_name, is_ctrl),
             crate::app::InputMode::DeleteConfirm => handle_delete_confirm_key(state, key_name),
             crate::app::InputMode::UndoConfirm => handle_undo_confirm_key(state, key_name),
             crate::app::InputMode::EchoPicker => handle_echo_picker_key(state, key_name, tokio_handle),
@@ -1046,13 +1046,13 @@ fn handle_journal_key(
                 crate::input::actions::journal::nav_page(state, -1);
                 return true;
             }
-            // Ctrl+j: same as Ctrl+g — view the gloss for the current journal
-            // passage page. Ctrl+j/Ctrl+g thus cross-jump to the sibling overlay
-            // from EITHER side (the gloss overlay's Ctrl+j/Ctrl+g open the
-            // journal), so the same fingers flip between the two views. Close
-            // with Esc.
+            // Ctrl+j: close the journal and return to the reader (you're already
+            // AT the journal). Ctrl+j means "go to the journal" everywhere; from
+            // inside the journal that resolves to "toggle it closed", mirroring
+            // the reader's Ctrl+j toggle. To reach the gloss from here, use Ctrl+g
+            // (view_gloss_from_journal, below).
             "j" => {
-                crate::input::actions::journal::view_gloss_from_journal(state);
+                crate::input::actions::journal::close_overlay(state);
                 return true;
             }
             // Ctrl+Shift+J: open the "move this Q&A to another band" picker.
@@ -1321,16 +1321,22 @@ fn handle_gloss_key(
                 );
                 return true;
             }
-            // Ctrl+j / Ctrl+g: view the journal passage pages for the current
-            // gloss's passage (if any exist). Closes the gloss overlay and opens
-            // the journal overlay in the Passage band. Toasts "No journal page
-            // for this passage" when none are found. Ctrl+g mirrors the journal
-            // overlay (where Ctrl+j/Ctrl+g both view the gloss), so the same
-            // fingers cross-jump between the two overlays from either side. The
-            // Ctrl+g arm also keeps a held Ctrl from starting the plain-`g` gg
-            // chord below.
-            "j" | "g" => {
+            // Ctrl+j: cross-jump to the journal — view the journal passage pages
+            // for the current gloss's passage (Passage band if a page exists,
+            // else the author-corpus band, else a toast). This is the gloss→journal
+            // half of the flip; the journal overlay's Ctrl+j/Ctrl+g both jump the
+            // other way (view the gloss).
+            "j" => {
                 crate::input::actions::journal::view_journal_from_gloss(state);
+                return true;
+            }
+            // Ctrl+g: return to the reader (same as Escape here — lands on the
+            // glossed passage's source line). Ctrl+g is consistently "back to
+            // reading" across the gloss/synopsis/echoes overlays; the gloss→journal
+            // jump lives on Ctrl+j (above). Handling it in the is_ctrl block also
+            // keeps a held Ctrl from starting the plain-`g` gg chord below.
+            "g" => {
+                crate::input::actions::gloss::close_gloss_to_reader(state);
                 return true;
             }
             // Ctrl+/ opens the GLOSS-specific keybind legend (its full keybind
@@ -1458,23 +1464,11 @@ fn handle_gloss_key(
         // passage's source on close, NOT like toggle_overlay's
         // return-to-origin.
         "Escape" | "n" => {
-            let mut s = state.borrow_mut();
-            s.tts.stop();
-            s.gloss_overlay.hide();
-            s.gloss_opened_from_picker = false;
-            // A gloss may have just been created/edited in the overlay, adding a
-            // new glossed passage. Return to reader mode and recompute the
-            // main-card reader-gloss tint so the newly-glossed lines color
-            // without needing a work reload.
-            crate::app::return_to_reader_mode(&mut s);
-            // Jump the cursor to the first dialogue line of the glossed passage's
-            // source text. If that can't be resolved, fall back to the exact page
-            // the user was on before the gloss opened (saved by every open path).
-            let jumped = crate::input::actions::gloss::jump_to_gloss_source_start(&mut s);
-            let saved = s.gloss_return_pos.take();
-            if !jumped {
-                crate::app::restore_saved_position_resnap(&mut s, saved);
-            }
+            // Close to the reader, landing on the glossed passage's source line
+            // (recomputes the reader-gloss tint so a just-created gloss colors
+            // without a reload; falls back to the pre-open page). Shared with
+            // Ctrl+g via `close_gloss_to_reader`.
+            crate::input::actions::gloss::close_gloss_to_reader(state);
             true
         }
         // Shift+V enters visual block-selection mode (j/k extend, gg/G ends,
@@ -1594,13 +1588,27 @@ fn handle_gloss_key(
     }
 }
 
-fn handle_translation_overlay_key(state: &Rc<RefCell<AppState>>, key_name: &str) -> bool {
+fn handle_translation_overlay_key(state: &Rc<RefCell<AppState>>, key_name: &str, is_ctrl: bool) -> bool {
     // i (the same bind that opened the overlay) toggles it closed, matching
     // Escape. Without this, a second i would be swallowed by the catch-all.
     if key_name == "i" {
         let mut s = state.borrow_mut();
         s.translation_overlay.hide();
         s.input_mode = crate::app::InputMode::Reader;
+        return true;
+    }
+    // Ctrl+j: go to the journal for the current line's scene. Close the
+    // translation overlay to the reader (the overlay drives the real cursor, so
+    // it's on the current line), then open the journal on that Scene band
+    // (author-corpus fallback if empty). Ctrl+j is consistently "go to the
+    // journal" across the overlays. Checked before the plain-`j` dialogue-step.
+    if key_name == "j" && is_ctrl {
+        {
+            let mut s = state.borrow_mut();
+            s.translation_overlay.hide();
+            s.input_mode = crate::app::InputMode::Reader;
+        }
+        crate::input::actions::journal::open_journal_scene(state);
         return true;
     }
     match key_name {
@@ -1747,6 +1755,18 @@ fn handle_synopsis_overlay_key(
         return true;
     }
 
+    // Ctrl+g: return to the reader (same as Escape here). Handled before the
+    // gg-chord check so a held Ctrl can't be swallowed as the second `g` of a
+    // pending gg. Ctrl+g is consistently "back to reading" across the
+    // gloss/synopsis/echoes overlays.
+    if key_name == "g" && is_ctrl {
+        key_state.borrow_mut().chord = ChordState::None;
+        let mut s = state.borrow_mut();
+        s.gloss_overlay.hide();
+        s.input_mode = crate::app::InputMode::Reader;
+        return true;
+    }
+
     // gg: jump to the first block.
     if key_state.borrow().chord == ChordState::PendingG {
         key_state.borrow_mut().chord = ChordState::None;
@@ -1818,6 +1838,20 @@ fn handle_synopsis_overlay_key(
                 state,
                 crate::app::InputMode::SynopsisOverlay,
             );
+            true
+        }
+        // Ctrl+j: go to the journal for this synopsis's scene. Close the synopsis
+        // to the reader (leaving the cursor on this chapter/scene), then open the
+        // journal on that Scene band (author-corpus fallback if empty). Ctrl+j is
+        // consistently "go to the journal" across the overlays. Must be BEFORE the
+        // plain-`j` block-cursor arm below.
+        "j" if is_ctrl => {
+            {
+                let mut s = state.borrow_mut();
+                s.gloss_overlay.hide();
+                s.input_mode = crate::app::InputMode::Reader;
+            }
+            crate::input::actions::journal::open_journal_scene(state);
             true
         }
         // (Font-size adjust removed: overlays are locked to GLOSS_DEFAULT_FONT_SIZE.)
@@ -2285,6 +2319,24 @@ fn handle_echoes_overlay_key(
     // Ctrl+Up/Ctrl+Down adjust volume, mirroring the reader's VolumeUp/Down.
     if is_ctrl {
         match key_name {
+            // Ctrl+g: return to the reader (same as Escape here). Ctrl+g is
+            // consistently "back to reading" across the gloss/synopsis/echoes
+            // overlays. Reached only with no pending gg chord (the chord check
+            // above consumes a Ctrl+g completing a gg), which is the intended
+            // "lone Ctrl+g returns to reader" case.
+            "g" => {
+                crate::input::actions::echoes::close_echoes_to_reader(state);
+                return true;
+            }
+            // Ctrl+j: go to the journal for the turn's passage. Close the echoes
+            // overlay to the reader (cursor is on the turn's source line), then
+            // open the journal on that Scene band (author-corpus fallback if
+            // empty). Ctrl+j is consistently "go to the journal" across overlays.
+            "j" => {
+                crate::input::actions::echoes::close_echoes_to_reader(state);
+                crate::input::actions::journal::open_journal_scene(state);
+                return true;
+            }
             "Up" => {
                 let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(5.0));
                 return true;
@@ -2378,19 +2430,9 @@ fn handle_echoes_overlay_key(
             true
         }
         "Escape" => {
-            let mut s = state.borrow_mut();
-            s.gloss_overlay.hide();
-            s.echo_overlay.links.clear();
-            s.echo_overlay.turn_id = None;
-            s.echo_overlay.turn_key = None;
-            // Clear any turn AB-loop so normal reading isn't stuck looping.
-            if s.ab_repeat.loop_active {
-                let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::ClearAbLoop);
-                s.ab_repeat.loop_active = false;
-                s.ab_repeat.a_time = None;
-                s.ab_repeat.b_time = None;
-            }
-            s.input_mode = crate::app::InputMode::Reader;
+            // Shared with Ctrl+g (via close_echoes_to_reader): close the echoes
+            // overlay, clear the echo session + any turn AB-loop, return to reader.
+            crate::input::actions::echoes::close_echoes_to_reader(state);
             true
         }
         _ => true,

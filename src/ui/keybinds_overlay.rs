@@ -346,7 +346,8 @@ teacher-style Q&A note, an inner-monologue cross-reference, or a terse \
 reader-focused gloss. If a gloss is \
 already loaded it reopens that one without re-querying the database. Inside the \
 overlay, j/k (or q/comma) move the cursor block; Space (or Tab) reads the cursor \
-block aloud; Ctrl+g/Ctrl+j cross-jump to the passage's journal; Shift+Space \
+block aloud; Ctrl+j goes to the passage's journal while Ctrl+g returns to the \
+reader; Shift+Space \
 batch-synthesizes every prose (explication) block to \
 cached ElevenLabs MP3s (cache only, no playback), showing a \
 \u{201c}Synthesizing\u{2026}\u{201d} toast. \
@@ -362,7 +363,8 @@ handle_gloss_picker_key in src/input/keymap.rs)",
         "journal tog" => "Open or close the Q&A journal for the current scene. \
 The journal is a per-work notebook: each scene holds zero or more \u{201c}pages,\u{201d} \
 where a page is one question you asked and the answer Claude gave. It opens on the \
-scene under the reading cursor; if that scene has no pages yet it shows an empty \
+scene under the reading cursor; if that scene has no pages yet it opens the author \
+corpus band instead (when the author has corpus notes), else shows an empty \
 card prompting you to press r to ask. Inside the overlay: r asks a new question \
 (Claude answers, drawing on its knowledge of the whole work, in the work\u{2019}s own \
 genre \u{2014} novel/chapter, play/scene, epic/book, etc.), e opens an edit \
@@ -382,8 +384,8 @@ next/prev scene that has pages, Alt+w switches to the Work band \u{2014} \
 whole-work pages about the work as a whole (Claude is sent only the title and \
 author, not a scene) \u{2014} and Ctrl+\\ opens a picker of every Q&A page in the \
 work (whole-work pages first, then scene pages in scene order) to jump straight \
-to one. Escape closes and returns the cursor to where you were reading; \
-Ctrl+j / Ctrl+g on a passage page cross-jump to that passage's gloss. \
+to one. Escape (or Ctrl+j) closes and returns the cursor to where you were \
+reading; Ctrl+g on a passage page cross-jumps to that passage's gloss. \
 -> journal::toggle_overlay — src/input/actions/journal.rs (overlay keys: \
 handle_journal_key in src/input/keymap.rs)",
         "jrnl Q&A picker" => "Open the Q&A picker directly from the reading card \
@@ -414,11 +416,12 @@ If the passage already has a reader-gloss it opens instantly; otherwise calls Cl
 saves. Toasts \u{201c}Not a passage page\u{201d} when the current band is Work or Scene. \
 -> journal::action_gloss_from_journal_passage \
 \u{2014} src/input/actions/journal.rs",
-        "view jrnl" => "While the gloss overlay is open (Ctrl+j or Ctrl+g): view the journal \
-passage pages for the gloss\u{2019}s current source passage. Looks up journal entries whose \
-start/end citations match the open gloss; if found, closes the gloss overlay and opens the \
-journal overlay in the Passage band on the first page. Toasts \u{201c}No journal page for \
-this passage\u{201d} when none exist. \
+        "view jrnl" => "While the gloss overlay is open (Ctrl+j only \u{2014} Ctrl+g now returns to \
+the reader): view the journal passage pages for the gloss\u{2019}s current source passage. Looks \
+up journal entries whose start/end citations match the open gloss; if found, closes the gloss \
+overlay and opens the journal overlay in the Passage band on the first page. When the passage \
+has no journal page, falls back to the author corpus band (if the author has corpus notes); \
+toasts \u{201c}No journal page for this passage\u{201d} only when neither exists. \
 -> journal::view_journal_from_gloss \
 \u{2014} src/input/actions/journal.rs",
         "move jrnl band" => "While the journal overlay is open (Ctrl+Shift+J): move the \
