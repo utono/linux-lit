@@ -24,6 +24,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         (":w / :q / R", "save · quit · ask-Claude rewrite (in editor)"),
         ("Ctrl+v", "paste clipboard (in editor / prompts)"),
         ("u", "undo last edit (confirm)"),
+        ("c", "copy synopsis id"),
     ]),
     ("Journal", &[
         ("r", "new journal Q&A for scene"),

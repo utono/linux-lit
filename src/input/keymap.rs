@@ -1848,6 +1848,12 @@ fn handle_synopsis_overlay_key(
             crate::input::actions::synopsis::begin_edit(state);
             true
         }
+        // c: copy the current scene's scene_synopses.id to the clipboard + toast,
+        // mirroring gloss `c` (gloss_id) and journal `c` (page id).
+        "c" => {
+            crate::input::actions::synopsis::copy_synopsis_id(state);
+            true
+        }
         "V" => {
             let entered = state.borrow().gloss_overlay.enter_visual();
             if entered {

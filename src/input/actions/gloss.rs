@@ -184,13 +184,19 @@ pub(crate) fn navigate_gloss(state: &Rc<RefCell<AppState>>, delta: i32) {
 }
 
 pub(crate) fn copy_gloss_id(state: &Rc<RefCell<AppState>>) {
-    let s = state.borrow();
-    if let Some(gloss) = s.gloss_list.get(s.gloss_index) {
-        let id = gloss.gloss_id.to_string();
-        let _ = std::process::Command::new("wl-copy")
-            .arg(&id)
-            .spawn();
-        crate::logging::log(&format!("GLOSS: copied id {} to clipboard", id));
+    let copied = {
+        let s = state.borrow();
+        s.gloss_list.get(s.gloss_index).map(|gloss| {
+            let id = gloss.gloss_id.to_string();
+            let _ = std::process::Command::new("wl-copy").arg(&id).spawn();
+            crate::logging::log(&format!("GLOSS: copied id {} to clipboard", id));
+            id
+        })
+    };
+    // Toast AFTER dropping the borrow — show_tts_toast re-borrows state. Mirrors
+    // the journal overlay's `c` (copy id) toast.
+    if let Some(id) = copied {
+        show_tts_toast(state, &format!("Copied id {}", id));
     }
 }
 

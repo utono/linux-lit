@@ -253,6 +253,40 @@ pub(crate) fn undo_amend(state_rc: &Rc<RefCell<AppState>>) {
     crate::logging::log(&format!("SYNOPSIS: undid amend ({},{})", div1, div2));
 }
 
+/// `c` in the synopsis overlay: copy the current scene's `scene_synopses.id` to
+/// the clipboard and toast it, mirroring gloss `c` (gloss_id) and journal `c`
+/// (page id). Toasts "No synopsis id" when no row exists yet for the scene
+/// (e.g. a synopsis shown from cache that was never persisted).
+pub(crate) fn copy_synopsis_id(state: &Rc<RefCell<AppState>>) {
+    let lookup = {
+        let s = state.borrow();
+        let (div1, div2) = s.synopsis_overlay_scene;
+        s.current_work
+            .as_ref()
+            .map(|w| (w.canonical_abbrev.clone(), div1, div2))
+    };
+    let Some((abbrev, div1, div2)) = lookup else { return };
+
+    let id = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| crate::db::queries::synopsis_id(&conn, &abbrev, div1, div2).ok())
+        .flatten();
+
+    let msg = match id {
+        Some(id) => {
+            let s = id.to_string();
+            let _ = std::process::Command::new("wl-copy").arg(&s).spawn();
+            crate::logging::log(&format!("SYNOPSIS: copied id {} to clipboard", s));
+            format!("Copied id {}", s)
+        }
+        None => {
+            crate::logging::log("SYNOPSIS: no synopsis id to copy");
+            "No synopsis id".to_string()
+        }
+    };
+    crate::ui::toast::show_transient(&state.borrow().chapter_toast, &msg, 2);
+}
+
 /// `e` in the synopsis overlay: enter the in-place modal vim editor on the
 /// current scene's RAW synopsis text (`synopsis_cache[(div1,div2)]`). Uses the
 /// SAME `GlossOverlay` editor as gloss-edit; the save path (`vim_save`) branches

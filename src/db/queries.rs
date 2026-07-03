@@ -463,6 +463,24 @@ pub fn restore_synopsis_text(
     Ok(())
 }
 
+/// Look up the `scene_synopses.id` for a scene, keyed by `(work, div1, div2)`.
+/// Returns `None` when no synopsis row exists for that scene yet. Used by the
+/// synopsis overlay's `c` (copy id) bind, mirroring gloss `c` (gloss_id).
+pub fn synopsis_id(
+    conn: &Connection,
+    work_abbrev: &str,
+    div1: i64,
+    div2: i64,
+) -> Result<Option<i64>, rusqlite::Error> {
+    conn.query_row(
+        "SELECT id FROM scene_synopses \
+         WHERE work_abbrev = ?1 AND div1 = ?2 AND div2 = ?3",
+        rusqlite::params![work_abbrev, div1, div2],
+        |row| row.get::<_, i64>(0),
+    )
+    .optional()
+}
+
 /// Load all vocab words + variants for matching against buffer text.
 /// Returns a HashSet of lowercase words (base words + variants).
 pub fn load_vocab_words(
