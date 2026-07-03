@@ -20,6 +20,7 @@ pub struct Theme {
     pub reader_gloss: String,        // off-cursor glossed-line tint (guarded)
     pub reader_gloss_cursor: String, // glossed line that is ALSO the cursor block
     pub overlay_panel_bg: String, // inset prose-overlay panel tint (barely-there)
+    pub scrim_bg: String,         // full-bleed overlay matting (dimmed vs root_color)
 }
 
 fn themes_path() -> PathBuf {
@@ -202,8 +203,10 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
         reader_gloss,
         reader_gloss_cursor,
         overlay_panel_bg: String::new(),
+        scrim_bg: String::new(),
     };
     theme.overlay_panel_bg = overlay_panel_bg(&theme);
+    theme.scrim_bg = scrim_bg(&theme);
     theme
 }
 
@@ -224,8 +227,10 @@ fn default_theme() -> Theme {
         reader_gloss: ensure_gloss_color("#d4be98", "#282828", &["#d4be98"]),
         reader_gloss_cursor: ensure_gloss_color(&complement_hex("#d4be98"), "#282828", &["#d4be98"]),
         overlay_panel_bg: String::new(),
+        scrim_bg: String::new(),
     };
     theme.overlay_panel_bg = overlay_panel_bg(&theme);
+    theme.scrim_bg = scrim_bg(&theme);
     theme
 }
 
@@ -503,18 +508,26 @@ fn gloss_background(theme: &Theme) -> String {
     }
 }
 
-/// The inset-panel tint for the prose overlays: a barely-there (~3–5%) luminance
-/// shift from the card's `gloss_bg` cream. Light themes darken; dark themes
-/// lighten (darkening a dark bg would vanish). Never boxy on any theme.
+/// The inset-panel fill for the prose overlays. It now paints the card's own
+/// `gloss_bg` cream — i.e. NO tint — so the prose column reads as one flat
+/// surface. Framing is done entirely by the dimmed `scrim_bg` matting around the
+/// card (see `scrim_bg`); an additional panel tint here produced a competing
+/// second box inside the frame. The `panel_drawing` plumbing is retained (the
+/// overlay's measured main child, z-order below the accent bar, bottom-clip
+/// guard) — it simply fills invisibly. To reintroduce a subtle inset later,
+/// shift this a few percent off `gloss_bg` again (light darkens, dark lightens).
 fn overlay_panel_bg(theme: &Theme) -> String {
-    let gloss_bg = gloss_background(theme);
-    if theme.is_light {
-        // ~3.5% darker.
-        darken_color(&gloss_bg, 0.965)
-    } else {
-        // ~5% toward white.
-        blend_colors("#ffffff", &gloss_bg, 0.05)
-    }
+    gloss_background(theme)
+}
+
+/// Matting color for the full-bleed overlay scrim (gloss/journal/synopsis/
+/// translation/echo-keybinds). A subtle (~20%) darkening of `root_color` so the
+/// border area around an overlay card reads as an intentional dimmed frame
+/// rather than the identical, un-dimmed window background. Stays opaque (the
+/// main reading card is fully hidden behind the overlay), same hue as root, and
+/// tracks every theme automatically.
+fn scrim_bg(theme: &Theme) -> String {
+    darken_color(&theme.root_color, 0.80)
 }
 
 /// Generate GTK CSS for a theme.
@@ -640,7 +653,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .search-toast {{ font-size: 10px; color: {toast_fg}; \
            background-color: {root}; padding: 3px 10px; border-radius: 8px; \
            box-shadow: 0 3px 12px rgba(0, 0, 0, 0.35); opacity: 0.95; }} \
-         .gloss-scrim {{ background-color: {root}; }} \
+         .gloss-scrim {{ background-color: {scrim}; }} \
          .legend-scrim {{ background-color: rgba(0, 0, 0, 0.3); }} \
          .gloss-overlay {{ background-color: {gloss_bg}; color: {fg}; border-radius: 12px; \
            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45); }} \
@@ -723,6 +736,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .picker-header {{ font-size: 14px; font-weight: bold; }} \
 ",
         root = theme.root_color,
+        scrim = theme.scrim_bg,
         bg = theme.text_bg,
         gloss_bg = gloss_background(theme),
         fg = theme.text_fg,
@@ -821,8 +835,9 @@ mod tests {
     }
 
     #[test]
-    fn overlay_panel_bg_is_a_small_bounded_delta_from_gloss_bg() {
-        // A light sample theme (cream gloss bg) and a dark sample theme.
+    fn overlay_panel_bg_matches_the_card_background() {
+        // The inset panel now paints the card's own cream (no tint) so it reads
+        // as one flat surface — the dimmed scrim matting is the only frame.
         let light = Theme {
             is_light: true,
             text_bg: "#fbf1c7".to_string(),
@@ -837,15 +852,46 @@ mod tests {
         for theme in [&light, &dark] {
             let gloss_bg = gloss_background(theme);
             let panel = overlay_panel_bg(theme);
-            // Barely-there: distinct from the card bg...
-            assert_ne!(panel, gloss_bg, "panel tint must differ from gloss_bg");
-            // ...but close — contrast ratio between panel and gloss_bg is tiny
-            // (both are near-identical luminance; ratio ~1.0, well under 1.15).
-            let ratio = contrast_ratio(&panel, &gloss_bg);
+            assert_eq!(
+                panel, gloss_bg,
+                "panel must equal gloss_bg (no competing inner box), is_light={}",
+                theme.is_light
+            );
+        }
+    }
+
+    #[test]
+    fn scrim_bg_is_a_small_darkening_of_root() {
+        // Sample themes with distinct root colors (light-ish and dark).
+        let light = Theme {
+            is_light: true,
+            root_color: "#c8c0a8".to_string(),
+            ..default_theme()
+        };
+        let dark = Theme {
+            is_light: false,
+            root_color: "#1a1a2e".to_string(),
+            ..default_theme()
+        };
+
+        for theme in [&light, &dark] {
+            let scrim = scrim_bg(theme);
+            let root = &theme.root_color;
+            // Distinct from the un-dimmed window background...
+            assert_ne!(&scrim, root, "scrim must differ from root_color");
+            // ...but strictly darker on every channel (a dim, never a brighten)...
+            let (sr, sg, sb) = hex_to_rgb(&scrim);
+            let (rr, rg, rb) = hex_to_rgb(root);
             assert!(
-                ratio > 1.0 && ratio < 1.15,
-                "panel tint delta out of the barely-there band: ratio={ratio} \
-                 (panel={panel}, gloss_bg={gloss_bg}, is_light={})",
+                sr <= rr && sg <= rg && sb <= rb && (sr < rr || sg < rg || sb < rb),
+                "scrim {scrim} must be no brighter than root {root} on any channel"
+            );
+            // ...and a subtle (~20%) delta, not a heavy blackout.
+            let ratio = contrast_ratio(root, &scrim);
+            assert!(
+                ratio > 1.0 && ratio < 1.6,
+                "scrim darkening out of the subtle band: ratio={ratio} \
+                 (scrim={scrim}, root={root}, is_light={})",
                 theme.is_light
             );
         }
