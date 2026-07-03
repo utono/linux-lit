@@ -3780,9 +3780,11 @@ pub(crate) fn line_in_any_passage(
     false
 }
 
-/// Recompute which buffer lines fall inside a `reader-gloss` passage for the
-/// current work and tint them with `theme.reader_gloss` (contrast-guarded,
-/// derived from the dwl focuscolor). Stores the set in `reader_gloss_lines` so `update_highlight` can
+/// Recompute which buffer lines fall inside a `reader-gloss` passage OR a
+/// journal passage Q&A for the current work and tint them with
+/// `theme.reader_gloss` (contrast-guarded, derived from the dwl focuscolor).
+/// Both artifact kinds mark "this line has an annotation" and share the one
+/// tint. Stores the set in `reader_gloss_lines` so `update_highlight` can
 /// restore the tint on a line the cursor leaves. The cursor's own line is left
 /// untinted (`update_highlight` strips it) so the active line wins.
 ///
@@ -3816,9 +3818,6 @@ pub fn apply_reader_gloss_highlighting(state: &mut AppState) {
     let abbrev = work.canonical_abbrev.clone();
     let passages = crate::db::queries::find_glossed_passages(&conn, &abbrev, &["reader-gloss"])
         .unwrap_or_default();
-    if passages.is_empty() {
-        return;
-    }
 
     // Match glossed lines by CITATION/LINE IDENTITY, not by text. Each passage
     // covers an inclusive `[start_citation, end_citation]` line range within one
@@ -3829,10 +3828,18 @@ pub fn apply_reader_gloss_highlighting(state: &mut AppState) {
     // editions (-Amb/-BBC/-DC) are now byte-identical in line_mapping numbering
     // (litdb folger-stage-directions), so the citation tuple resolves correctly
     // on every edition — the reason text-matching was introduced is gone.
-    let ranges: Vec<(String, String)> = passages
+    let mut ranges: Vec<(String, String)> = passages
         .iter()
         .map(|p| (p.start_citation.clone(), p.end_citation.clone()))
         .collect();
+    // Journal passage Q&As carry the same [start_citation, end_citation] shape
+    // and mark their lines the same way.
+    ranges.extend(
+        crate::db::journal::find_passage_citation_ranges(&conn, &abbrev).unwrap_or_default(),
+    );
+    if ranges.is_empty() {
+        return;
+    }
 
     let line_count = state.buffer.line_count() as usize;
     let mut lines: Vec<usize> = Vec::new();

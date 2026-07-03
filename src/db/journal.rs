@@ -250,6 +250,24 @@ pub fn find_passage_pages(
     rows.collect()
 }
 
+/// Distinct `(start_citation, end_citation)` ranges of every passage-scope
+/// Q&A entry for a work. Feeds the main-card line tint: a line covered by a
+/// journal passage Q&A is colored exactly like a reader-glossed line
+/// (`apply_reader_gloss_highlighting`). Callers pass `Work.canonical_abbrev`,
+/// like every other journal path.
+pub fn find_passage_citation_ranges(
+    conn: &Connection,
+    work_abbrev: &str,
+) -> Result<Vec<(String, String)>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT start_citation, end_citation FROM journal_entries
+         WHERE work_abbrev = ?1 AND scope = 'passage'
+           AND start_citation IS NOT NULL AND end_citation IS NOT NULL",
+    )?;
+    let rows = stmt.query_map([work_abbrev], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    rows.collect()
+}
+
 pub fn find_journal_scenes(
     conn: &Connection,
     work_abbrev: &str,
@@ -347,6 +365,28 @@ mod tests {
 
         // A scene query must NOT return work pages.
         assert!(find_journal_pages(&conn, "Ham", -1, -1).unwrap().is_empty());
+    }
+
+    #[test]
+    fn passage_citation_ranges_distinct_and_scoped() {
+        let conn = mem();
+        // Two Q&As on the SAME passage → one distinct range.
+        save_passage_page(&conn, "Rom", 2, 2, "Rom.2.2.25", "Rom.2.2.25", "Ay me.", "Q1?", "A1.", "m").unwrap();
+        save_passage_page(&conn, "Rom", 2, 2, "Rom.2.2.25", "Rom.2.2.25", "Ay me.", "Q2?", "A2.", "m").unwrap();
+        save_passage_page(&conn, "Rom", 2, 2, "Rom.2.2.33", "Rom.2.2.36", "O Romeo…", "Q3?", "A3.", "m").unwrap();
+        // Scene-scope entry (no citations) and another work must not appear.
+        save_journal_page(&conn, "Rom", 2, 2, "SQ?", "SA.", "m", "scene", "qa").unwrap();
+        save_passage_page(&conn, "Ham", 1, 2, "Ham.1.2.1", "Ham.1.2.3", "…", "HQ?", "HA.", "m").unwrap();
+
+        let mut ranges = find_passage_citation_ranges(&conn, "Rom").unwrap();
+        ranges.sort();
+        assert_eq!(
+            ranges,
+            vec![
+                ("Rom.2.2.25".to_string(), "Rom.2.2.25".to_string()),
+                ("Rom.2.2.33".to_string(), "Rom.2.2.36".to_string()),
+            ]
+        );
     }
 
     #[test]
