@@ -1081,6 +1081,13 @@ fn handle_journal_key(
                 crate::input::actions::journal::close_overlay(state);
                 return true;
             }
+            // Ctrl+Tab: flip back to the reader (ToggleLastOverlay). From the
+            // reader it reopens this overlay; here it closes it (recording
+            // last_overlay = Journal via return_to_reader_mode).
+            "Tab" | "ISO_Left_Tab" => {
+                crate::input::actions::gloss::toggle_last_overlay(state);
+                return true;
+            }
             // Ctrl+Shift+J: open the "move this Q&A to another band" picker.
             // Arrives as key_name "J" (shifted), distinct from Ctrl+j.
             "J" => {
@@ -1363,6 +1370,13 @@ fn handle_gloss_key(
             // keeps a held Ctrl from starting the plain-`g` gg chord below.
             "g" => {
                 crate::input::actions::gloss::close_gloss_to_reader(state);
+                return true;
+            }
+            // Ctrl+Tab: flip back to the reader (ToggleLastOverlay). From the
+            // reader it reopens this overlay; here it closes it (recording
+            // last_overlay = Gloss via return_to_reader_mode).
+            "Tab" | "ISO_Left_Tab" => {
+                crate::input::actions::gloss::toggle_last_overlay(state);
                 return true;
             }
             // Ctrl+/ opens the GLOSS-specific keybind legend (its full keybind
@@ -2894,6 +2908,7 @@ fn dispatch_action(
         }
         ToggleGlossOverlay => crate::input::actions::gloss::toggle_overlay(state),
         ToggleJournalOverlay => crate::input::actions::journal::toggle_overlay(state),
+        ToggleLastOverlay => crate::input::actions::gloss::toggle_last_overlay(state),
         OpenJournalPicker => crate::input::actions::journal::open_picker_from_reader(state),
         OpenGlossPicker => crate::input::actions::pickers::open_gloss_picker(state, tokio_handle),
         OpenLastGloss => crate::input::actions::gloss::open_last_gloss(state),

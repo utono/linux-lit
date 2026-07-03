@@ -2644,6 +2644,35 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
     open_gloss_overlay(&mut s, passages, passage_index, passage, all_glosses, false, None);
 }
 
+/// Flip the reader against whichever toggleable overlay (gloss/journal) was
+/// last open (`AppState.last_overlay`, recorded at every close via
+/// `return_to_reader_mode`). From an open gloss/journal overlay this closes it;
+/// from the reader it reopens the last one (fresh from the cursor, via that
+/// overlay's own `toggle_overlay`); with nothing remembered it toasts. Bound to
+/// Ctrl+Tab (`ToggleLastOverlay`).
+pub(crate) fn toggle_last_overlay(state: &Rc<RefCell<AppState>>) {
+    use crate::app::{InputMode, LastOverlay};
+    let (mode, last) = {
+        let s = state.borrow();
+        (s.input_mode, s.last_overlay)
+    };
+    match mode {
+        // In an open overlay: its own toggle closes it (and records last_overlay).
+        InputMode::GlossOverlay => toggle_overlay(state),
+        InputMode::JournalOverlay => crate::input::actions::journal::toggle_overlay(state),
+        // In the reader: reopen whichever we last had up.
+        InputMode::Reader => match last {
+            Some(LastOverlay::Gloss) => toggle_overlay(state),
+            Some(LastOverlay::Journal) => {
+                crate::input::actions::journal::toggle_overlay(state)
+            }
+            None => show_tts_toast(state, "No overlay to reopen"),
+        },
+        // Some other overlay is up (synopsis, pickers, …): leave it alone.
+        _ => {}
+    }
+}
+
 /// Reopen the gloss overlay on the most-recently-viewed gloss for the current
 /// work (persisted in `config.last_gloss`), restored to the gloss type that was
 /// last shown. Toasts "No recent gloss" when there is no usable reference

@@ -143,6 +143,17 @@ pub enum InputMode {
     PageCalibration,
 }
 
+/// Which of the two toggleable reader overlays (gloss / journal) was most
+/// recently open. Recorded at the single close chokepoint
+/// (`return_to_reader_mode`) so `ToggleLastOverlay` (Ctrl+Tab) can flip the
+/// reader back to whichever overlay you last had up, regardless of how it was
+/// closed (toggle, Escape, or undo-confirm return).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LastOverlay {
+    Gloss,
+    Journal,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum GlossPromptMode {
     Add,
@@ -267,6 +278,10 @@ pub struct AppState {
     /// opens (picker, MRU toggle, or from synopsis), so Escape restores the page
     /// the user was on instead of jumping to the glossed passage.
     pub gloss_return_pos: Option<(usize, usize)>,
+    /// Which reader overlay (gloss/journal) was most recently open, so
+    /// `ToggleLastOverlay` (Ctrl+Tab) can reopen it from the reader. Set at the
+    /// close chokepoint `return_to_reader_mode`.
+    pub last_overlay: Option<LastOverlay>,
     pub search_tag: gtk4::TextTag,
     pub search_current_tag: gtk4::TextTag,
     pub current_time_pos: f64,
@@ -1527,6 +1542,7 @@ pub fn build_window(
         search_backward: false,
         search_return_pos: None,
         gloss_return_pos: None,
+        last_overlay: None,
         search_tag,
         search_current_tag,
         current_time_pos: 0.0,
@@ -3872,6 +3888,15 @@ pub fn apply_reader_gloss_highlighting(state: &mut AppState) {
 /// to recompute. Callers still own their own position-restore / re-snap; this
 /// owns only the two invariants (mode + tint).
 pub(crate) fn return_to_reader_mode(state: &mut AppState) {
+    // Record which toggleable overlay we're leaving so Ctrl+Tab
+    // (ToggleLastOverlay) can reopen it later. Synopsis renders through the
+    // gloss overlay widget but carries its own InputMode::SynopsisOverlay, so
+    // the GlossOverlay arm never mis-records a synopsis close.
+    match state.input_mode {
+        InputMode::GlossOverlay => state.last_overlay = Some(LastOverlay::Gloss),
+        InputMode::JournalOverlay => state.last_overlay = Some(LastOverlay::Journal),
+        _ => {}
+    }
     state.input_mode = InputMode::Reader;
     apply_reader_gloss_highlighting(state);
 }

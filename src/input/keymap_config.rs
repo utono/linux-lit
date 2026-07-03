@@ -310,6 +310,7 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::alt("g"), Action::OpenGlossPicker),
         (KeyCombo::ctrl("j"), Action::ToggleJournalOverlay),
         (KeyCombo::alt("j"), Action::OpenJournalPicker),
+        (KeyCombo::ctrl("Tab"), Action::ToggleLastOverlay),
         (KeyCombo::plain("H"), Action::ToggleVocabPopup),
     ]
 }

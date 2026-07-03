@@ -63,7 +63,7 @@ const UPPER_ROW: &[KeyDef] = &[
     ub("@", "^"),
     key("\\", "#", "gloss tog", "◀ vocab", &[("C-\\", "conc picker"), ("M-\\", "vocab hi")]),
 ];
-const TAB_KEY: KeyDef = bare("Tab", "", "play/pause");
+const TAB_KEY: KeyDef = key("Tab", "", "play/pause", "", &[("C-Tab", "last overlay")]);
 
 const HOME_ROW: &[KeyDef] = &[
     key("a", "A", "play from ts", "", &[("C-a", "authorship"), ("S-C-a", "attr set")]),
@@ -388,6 +388,15 @@ to one. Escape (or Ctrl+j) closes and returns the cursor to where you were \
 reading; Ctrl+g on a passage page cross-jumps to that passage's gloss. \
 -> journal::toggle_overlay — src/input/actions/journal.rs (overlay keys: \
 handle_journal_key in src/input/keymap.rs)",
+        "last overlay" => "Flip between the reading card and whichever of the \
+gloss / journal overlays you last had open. From the reader it reopens the last \
+one (the gloss for the cursor line, or the journal on the cursor\u{2019}s scene) \u{2014} \
+fresh from the cursor, exactly like pressing Ctrl+g / Ctrl+j; from inside that \
+overlay it closes it back to the reader. Which overlay is remembered is recorded \
+whenever either closes (by toggle, Escape, or undo-return), so opening with \
+Ctrl+j and closing with Escape still lets Ctrl+Tab reopen the journal. With \
+nothing opened yet this session it toasts \u{201c}No overlay to reopen.\u{201d} \
+-> gloss::toggle_last_overlay — src/input/actions/gloss.rs",
         "jrnl Q&A picker" => "Open the Q&A picker directly from the reading card \
 (Alt+j), without first opening the journal overlay. Lists every Q&A page in the \
 work \u{2014} whole-work pages first, then scene pages in scene order \u{2014} the \

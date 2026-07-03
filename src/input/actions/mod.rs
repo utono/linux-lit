@@ -109,6 +109,10 @@ pub enum Action {
     ToggleVocabHighlight,
     ToggleGlossOverlay,
     ToggleJournalOverlay,
+    /// Flip the reader against whichever of the gloss/journal overlays was last
+    /// open: closes an open gloss/journal overlay, or reopens the last one from
+    /// the reader (fresh from the cursor). No-op with a toast if none remembered.
+    ToggleLastOverlay,
     /// Open the journal Q&A picker directly from the reading card (Alt+j),
     /// without first opening the journal overlay. Confirming a pick reveals the
     /// overlay on that Q&A; Escape returns to the reader.
@@ -230,6 +234,7 @@ impl Action {
             | Action::ToggleVocabHighlight
             | Action::ToggleGlossOverlay
             | Action::ToggleJournalOverlay
+            | Action::ToggleLastOverlay
             | Action::OpenJournalPicker
             | Action::OpenGlossPicker
             | Action::OpenLastGloss
@@ -357,6 +362,7 @@ impl Action {
             Action::ToggleVocabHighlight => "ToggleVocabHighlight",
             Action::ToggleGlossOverlay => "ToggleGlossOverlay",
             Action::ToggleJournalOverlay => "ToggleJournalOverlay",
+            Action::ToggleLastOverlay => "ToggleLastOverlay",
             Action::OpenJournalPicker => "OpenJournalPicker",
             Action::OpenGlossPicker => "OpenGlossPicker",
             Action::OpenLastGloss => "OpenLastGloss",
