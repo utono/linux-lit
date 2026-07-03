@@ -743,7 +743,12 @@ pub async fn call_claude_with_prompt(
     crate::claude::send_message(system_prompt, user_message, model).await
 }
 
-pub fn verify_echo_citations(gloss_text: &str, source_work: &str) -> String {
+pub fn verify_echo_citations(
+    gloss_text: &str,
+    source_work: &str,
+    gloss_div1: i64,
+    gloss_div2: i64,
+) -> String {
     let conn = match crate::db::queries::open_db() {
         Ok(c) => c,
         Err(_) => return gloss_text.to_string(),
@@ -766,7 +771,9 @@ pub fn verify_echo_citations(gloss_text: &str, source_work: &str) -> String {
             continue;
         }
 
-        if let Some(citation) = lookup_citation(&conn, &quote_text, source_work) {
+        if let Some(citation) =
+            lookup_citation(&conn, &quote_text, source_work, gloss_div1, gloss_div2)
+        {
             let corrected = replace_citation(line, &citation);
             result.push_str(&corrected);
             crate::logging::log(&format!("GLOSS VERIFY: corrected citation to {}", citation));
@@ -808,16 +815,31 @@ fn extract_echo_quote(line: &str) -> String {
 /// missed and fell through to a fuzzy `LIKE '%quote%'` that returned an
 /// ARBITRARY first row — the wrong-line bug).
 ///
+/// Same-work loads ARE citable: the loadable-lines gloss prefers the
+/// character's own words elsewhere in the work, so the source work is no
+/// longer excluded wholesale. Only a same-work match inside the glossed scene
+/// itself (`gloss_div1.gloss_div2`) is dropped — a match there is (or shadows)
+/// the very line being glossed, so citing it would be self-citation.
+///
+/// Variant editions (`Ham-Amb`, `Rom-DC`, `AWW-BBC`, …) duplicate their base
+/// work's text line-for-line, so every match is collapsed onto its canonical
+/// base via `canonical_work_abbrev` before the ambiguity check — a quote that
+/// appears in a base work and its productions still counts as ONE source.
+/// Anthology works are excluded in SQL: their `line_mapping` is copies of
+/// other works' passages by construction, never the authoritative source.
+///
 /// Ambiguity guard: a citation is only returned when the quote resolves to a
-/// SINGLE distinct `(work_abbrev, div1, div2)` (excluding the source work and
-/// every variant edition of it). If the phrase appears in more than one
-/// distinct work/scene — a reused line, or a short quote — the citation would
-/// be a guess, so we return `None` and the caller flags the gloss
-/// `(unverified)`. The fuzzy substring branch is gone entirely.
+/// SINGLE distinct `(work, div1, div2)` after collapsing. If the phrase
+/// appears in more than one distinct work/scene — a reused line, or a short
+/// quote — the citation would be a guess, so we return `None` and the caller
+/// flags the gloss `(unverified)`. The fuzzy substring branch is gone
+/// entirely.
 fn lookup_citation(
     conn: &rusqlite::Connection,
     quote: &str,
     source_work: &str,
+    gloss_div1: i64,
+    gloss_div2: i64,
 ) -> Option<String> {
     let base_source = crate::db::queries::canonical_work_abbrev(conn, source_work);
     let normalized = crate::text_file_map::normalize(quote);
@@ -825,33 +847,39 @@ fn lookup_citation(
         return None;
     }
 
-    // Collect the DISTINCT (work, scene) tuples this normalized quote matches,
-    // excluding the source work's canonical base and every `base-*` edition
-    // (variants share the base's text, so any of them would otherwise "cite"
-    // the quote back at itself). `-Amb` editions of OTHER works are excluded
-    // too — they duplicate their base's lines.
-    //   ?2 = canonical base abbrev; ?3 = its variant-prefix LIKE pattern.
     let mut stmt = conn
         .prepare(
             "SELECT DISTINCT work_abbrev, div1, div2 FROM line_mapping \
              WHERE normalized_text = ?1 \
-               AND work_abbrev != ?2 AND work_abbrev NOT LIKE ?3 \
-               AND work_abbrev NOT LIKE '%-Amb'",
+               AND work_abbrev NOT IN \
+                   (SELECT abbrev FROM works WHERE work_type = 'anthology')",
         )
         .ok()?;
     // Propagate any row-deserialization error as None rather than silently
     // dropping a row: a dropped row could collapse an AMBIGUOUS multi-match into
     // an apparent unique match and emit a wrong citation — the exact failure
     // this hardening prevents.
-    let variant_pattern = format!("{base_source}-%");
-    let matches: Vec<(String, i64, i64)> = stmt
-        .query_map(
-            rusqlite::params![normalized, base_source, variant_pattern],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
+    let raw: Vec<(String, i64, i64)> = stmt
+        .query_map(rusqlite::params![normalized], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
         .ok()?
         .collect::<Result<Vec<_>, _>>()
         .ok()?;
+
+    // Collapse each match onto its canonical base work, then drop same-work
+    // matches in the glossed scene (the spoken line itself).
+    let mut matches: Vec<(String, i64, i64)> = raw
+        .into_iter()
+        .map(|(abbrev, d1, d2)| {
+            (crate::db::queries::canonical_work_abbrev(conn, &abbrev), d1, d2)
+        })
+        .filter(|(abbrev, d1, d2)| {
+            !(*abbrev == base_source && *d1 == gloss_div1 && *d2 == gloss_div2)
+        })
+        .collect();
+    matches.sort();
+    matches.dedup();
 
     // Unambiguous match only.
     if let [(abbrev, act, scene)] = matches.as_slice() {
@@ -946,12 +974,15 @@ mod tests {
 
     // ---- lookup_citation hardening ----
 
-    /// Build a tiny in-memory lit.db subset: `works(abbrev,title)` +
-    /// `line_mapping(work_abbrev,div1,div2,normalized_text)`.
+    /// Build a tiny in-memory lit.db subset: `works(abbrev,title,author,
+    /// work_type)` + `line_mapping(work_abbrev,div1,div2,normalized_text)`.
+    /// All works default to author 'Shakespeare' / work_type 'play' (so
+    /// `canonical_work_abbrev`'s same-author suffix-stripping is exercised);
+    /// override per-test with an UPDATE where needed.
     fn citation_test_db(rows: &[(&str, &str, i64, i64, &str)]) -> rusqlite::Connection {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch(
-            "CREATE TABLE works (abbrev TEXT, title TEXT);
+            "CREATE TABLE works (abbrev TEXT, title TEXT, author TEXT, work_type TEXT);
              CREATE TABLE line_mapping (work_abbrev TEXT, div1 INTEGER, div2 INTEGER, \
                  canonical_text TEXT, normalized_text TEXT);",
         )
@@ -960,7 +991,8 @@ mod tests {
         for (abbrev, title, div1, div2, text) in rows {
             if seen.insert(*abbrev) {
                 conn.execute(
-                    "INSERT INTO works (abbrev, title) VALUES (?1, ?2)",
+                    "INSERT INTO works (abbrev, title, author, work_type) \
+                     VALUES (?1, ?2, 'Shakespeare', 'play')",
                     rusqlite::params![abbrev, title],
                 )
                 .unwrap();
@@ -981,7 +1013,7 @@ mod tests {
             ("Ham", "Hamlet", 3, 1, "To be, or not to be"),
         ]);
         // Quote differs in punctuation/case — normalized_text match must still hit.
-        let got = lookup_citation(&conn, "to be or not to be", "Mac");
+        let got = lookup_citation(&conn, "to be or not to be", "Mac", 1, 1);
         assert_eq!(got, Some("Hamlet 3.1".to_string()));
     }
 
@@ -992,26 +1024,69 @@ mod tests {
             ("Ham", "Hamlet", 1, 2, "O, that this too too solid flesh"),
             ("Mac", "Macbeth", 5, 5, "O, that this too too solid flesh"),
         ]);
-        let got = lookup_citation(&conn, "O that this too too solid flesh", "Lr");
+        let got = lookup_citation(&conn, "O that this too too solid flesh", "Lr", 1, 1);
         assert_eq!(got, None);
     }
 
     #[test]
-    fn lookup_citation_excludes_source_work_and_amb() {
-        // Only the source work (and its -Amb) carry the line → nothing to verify
-        // against → None (not a self-citation).
+    fn lookup_citation_same_work_glossed_scene_is_never_citable() {
+        // The line lives only in the source work, IN the glossed scene (its
+        // -Amb duplicate collapses onto it) → self-citation guard → None.
         let conn = citation_test_db(&[
             ("Mac", "Macbeth", 1, 1, "When shall we three meet again"),
             ("Mac-Amb", "Macbeth", 1, 1, "When shall we three meet again"),
         ]);
-        let got = lookup_citation(&conn, "When shall we three meet again", "Mac");
+        let got = lookup_citation(&conn, "When shall we three meet again", "Mac", 1, 1);
         assert_eq!(got, None);
+    }
+
+    #[test]
+    fn lookup_citation_same_work_other_scene_is_citable() {
+        // A loadable line from the character's own words ELSEWHERE in the
+        // work — a different scene than the one being glossed — verifies.
+        let conn = citation_test_db(&[
+            ("Rom", "Romeo and Juliet", 1, 5, "My only love sprung from my only hate"),
+        ]);
+        let got = lookup_citation(
+            &conn, "My only love sprung from my only hate!", "Rom", 2, 2,
+        );
+        assert_eq!(got, Some("Romeo and Juliet 1.5".to_string()));
+    }
+
+    #[test]
+    fn lookup_citation_variant_editions_collapse_to_base() {
+        // A quote duplicated across a base work and its production editions
+        // is ONE source, not an ambiguity — cite the base.
+        let conn = citation_test_db(&[
+            ("AWW", "All's Well That Ends Well", 1, 1, "Are you meditating on virginity"),
+            ("AWW-BBC", "All's Well (BBC)", 1, 1, "Are you meditating on virginity"),
+            ("AWW-Amb", "All's Well (Ambrose)", 1, 1, "Are you meditating on virginity"),
+        ]);
+        let got = lookup_citation(&conn, "Are you meditating on virginity?", "Rom", 2, 2);
+        assert_eq!(got, Some("All's Well That Ends Well 1.1".to_string()));
+    }
+
+    #[test]
+    fn lookup_citation_anthology_rows_ignored() {
+        // Anthology line_mapping rows are copies of other works' passages by
+        // construction — they must not make a quote look ambiguous.
+        let conn = citation_test_db(&[
+            ("Ham", "Hamlet", 3, 1, "To be, or not to be"),
+            ("BenCrystalOP", "OP Speeches and Scenes", 1, 0, "To be, or not to be"),
+        ]);
+        conn.execute(
+            "UPDATE works SET work_type = 'anthology' WHERE abbrev = 'BenCrystalOP'",
+            [],
+        )
+        .unwrap();
+        let got = lookup_citation(&conn, "To be, or not to be", "Mac", 1, 1);
+        assert_eq!(got, Some("Hamlet 3.1".to_string()));
     }
 
     #[test]
     fn lookup_citation_no_match_returns_none() {
         let conn = citation_test_db(&[("Ham", "Hamlet", 3, 1, "To be, or not to be")]);
-        assert_eq!(lookup_citation(&conn, "a phrase not in any work", "Mac"), None);
+        assert_eq!(lookup_citation(&conn, "a phrase not in any work", "Mac", 1, 1), None);
     }
 
     #[test]
@@ -1022,7 +1097,7 @@ mod tests {
             ("Ham", "Hamlet", 1, 1, "Who's there"),
             ("Ham", "Hamlet", 4, 2, "Who's there"),
         ]);
-        assert_eq!(lookup_citation(&conn, "Who's there", "Mac"), None);
+        assert_eq!(lookup_citation(&conn, "Who's there", "Mac", 1, 1), None);
     }
 }
 

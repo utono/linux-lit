@@ -862,7 +862,9 @@ fn run_pending_inner_monologue_blocking(
 
         match result {
             Ok(Ok(gloss_text)) => {
-                let verified_text = crate::gloss::verify_echo_citations(&gloss_text, &ctx.work_abbrev);
+                let verified_text = crate::gloss::verify_echo_citations(
+                    &gloss_text, &ctx.work_abbrev, ctx.act, ctx.scene,
+                );
                 let mut s = state_for_result.borrow_mut();
                 crate::input::actions::gloss::persist_render_install_gloss(
                     &mut s, ctx, &verified_text, "inner-monologue", &model_for_db,

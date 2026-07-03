@@ -1157,7 +1157,9 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
         model,
         move |st, gloss_text| {
             let verified_text = if is_inner_monologue {
-                crate::gloss::verify_echo_citations(&gloss_text, &ctx.work_abbrev)
+                crate::gloss::verify_echo_citations(
+                    &gloss_text, &ctx.work_abbrev, ctx.act, ctx.scene,
+                )
             } else {
                 gloss_text.clone()
             };
@@ -1223,7 +1225,9 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
         model,
         move |st, gloss_text| {
             let verified_text = if is_inner_monologue {
-                crate::gloss::verify_echo_citations(&gloss_text, &ctx.work_abbrev)
+                crate::gloss::verify_echo_citations(
+                    &gloss_text, &ctx.work_abbrev, ctx.act, ctx.scene,
+                )
             } else {
                 gloss_text.clone()
             };
