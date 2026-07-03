@@ -35,6 +35,10 @@
 # Key tokens (passed to wtype): a bare token is `wtype -k <token>` (one keysym,
 #   e.g. j, x, g, Escape, Next). Prefix with `+mod:` for a chord in one wtype
 #   call, e.g. `+shift:g` → Shift+G, `+ctrl:Home`. Use real xkb keysym names.
+#   Prefix with `@` to type literal characters (wtype character mode), e.g.
+#   `@A` — REQUIRED for handlers that match the uppercase/shifted CHARACTER:
+#   `+shift:a` delivers keysym `a` + a shift modifier, which key+shift reader
+#   binds see but a handler matching the literal `A` never does.
 #   Repeated keys = repeat the token, e.g. --step "g g" sends g then g.
 #
 # Examples:
@@ -64,7 +68,9 @@ Screenshot / clipping test (this script):
   --settle MS        pause after each step before capture (default 500)
 
   Key tokens (space-separated within a --step): a bare token is one xkb keysym
-  (j, x, g, Escape); `+mod:key` is a chord (+shift:g -> Shift+G). Repeat to repeat.
+  (j, x, g, Escape); `+mod:key` is a chord (+shift:g -> Shift+G); `@TEXT` types
+  literal characters (@A — needed when the handler matches the uppercase
+  character itself, since +shift:a delivers lowercase-with-shift). Repeat to repeat.
 
   Examples:
     ./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-headless-test.sh \
@@ -187,12 +193,16 @@ fi
 echo "[headless-test] region: ${REGION:-<none>}" >&2
 sleep 1  # let the first paint settle
 
-# --- inject one wtype key group ("g g" or "+shift:g" tokens) -----------------
+# --- inject one wtype key group ("g g", "+shift:g", or "@A" tokens) ----------
 inject() {
   local group="$1" tok mods key m j
   local -a args MS
   for tok in $group; do
-    if [[ "$tok" == +*:* ]]; then
+    if [[ "$tok" == @?* ]]; then
+      # character mode: type the literal text (needed for handlers matching an
+      # uppercase/shifted CHARACTER — `+shift:a` only delivers keysym a + shift)
+      wtype -s 150 -d 15 "${tok#@}" </dev/null 2>/dev/null
+    elif [[ "$tok" == +*:* ]]; then
       mods="${tok%%:*}"; mods="${mods#+}"; key="${tok##*:}"
       args=()
       IFS=',' read -ra MS <<< "$mods"

@@ -7,6 +7,11 @@ and for the randomized navigation fuzz. Read this when a headless run won't
 start, stalls, surfaces a stray window, or you need to understand the
 `LIT_DB_PATH` / `LIT_LOG_PATH` env overrides.
 
+Companion: `headless-overlay-ui-verification.md` (verifying the journal / gloss /
+synopsis **overlay** surfaces without a manual review — rect/band contract,
+phantom-press detector, pixel invariants, agent visual review). Both docs share
+the launch stack and env overrides described below.
+
 ## The two things the skill does
 
 1. **Screenshot UI tests** — launch the reader in a throwaway headless `cage`,
@@ -38,6 +43,29 @@ start, stalls, surfaces a stray window, or you need to understand the
 
 Both run **inside a nested headless compositor** so they never collide with the
 user's dwl session or seat.
+
+## Three assertion channels (cheapest first)
+
+Every headless check — here and in the overlay companion — falls into one of
+three channels, in increasing cost. Prefer the cheapest channel that can catch
+the bug:
+
+1. **Dev-log assertions** (free, exact) — the app logs semantic state
+   (`NAV_TEST:` invariants, `ACTION:`, `NAV_PAGE_*`; the `TEST_*_RECT`
+   emissions under `LIT_HEADLESS_TEST`); tests parse the log instead of
+   pixels. The nav-fuzz and its in-app per-step clip check live entirely in
+   this channel.
+2. **Pixel invariants** (cheap, robust) — python checkers over `grim`
+   screenshots (`check_line_clipping.py`, `check_ink_outside.py`), always
+   scoped by rects the APP emits — never guessed or hardcoded.
+3. **Agent visual review** (last mile) — open every PNG in `target/ui/` and
+   report what's on screen. Judgment calls (spacing, size, "looks wrong")
+   only surface here; a passing exit code is not a review.
+
+If a test can't tell whether a keypress did something, the fix is to make the
+app log enough that it can (an app change under `LIT_HEADLESS_TEST`), not to
+infer from sleeps or screenshots — one keypress should produce one observable
+state change in the log.
 
 ## The launch stack (and why each piece exists)
 
@@ -78,6 +106,11 @@ then:
 `target/ui/` is auto-cleaned at the start of every run, so it only holds the
 current run's captures. See the skill's `SKILL.md` for the `--label` / `--step`
 / `--setup` / `--no-clip` / `--region` flags.
+
+The same app-emits-geometry contract extends to every overlay surface
+(`TEST_JOURNAL_VIEWPORT_RECT`, `TEST_OVERLAY_VIEWPORT_RECT`,
+`TEST_JOURNAL_ASK_VIEWPORT_RECT`, plus content bands) — never hardcode a region
+in a test; see *headless-overlay-ui-verification.md → "The rect/band contract"*.
 
 ## The environment overrides
 
@@ -443,7 +476,9 @@ lessons:
   often a different (prose) work than the one you're debugging. Editing it is
   safe; it never touches the live `config.json`. **Caveat:** a headless run
   rewrites `config-dev.json` on exit (it persists its own last position), so
-  re-set it before each run if the position drifted.
+  re-set it before each run if the position drifted. (The hermetic
+  `LIT_START_WORK`/`LIT_START_POS` overrides above avoid this dance entirely for
+  the fuzz.)
 - **The app resumes near the document END.** Press `g g` first to reset to the
   top, or a forward jump may be a silent no-op (`x`/`q`/`j` do nothing past the
   last line) and your test never reaches a page boundary. Give `gg` ~0.5 s to
@@ -451,6 +486,12 @@ lessons:
 - **`wtype` drops keys when hammered.** Space presses ≥0.18–0.25 s apart; at
   0.13 s some are silently lost and your counts come out short — which can look
   like "the page didn't turn" when really the keypress never landed.
+- **Shifted/uppercase keys: know which form the handler matches.**
+  `wtype -M shift -k a` delivers keysym `a` + a shift *modifier* — right for
+  reader binds declared as key+shift (harness: `chord(&["shift"], "g")`), but
+  an overlay handler matching the literal uppercase character `A` never fires
+  from it. For those, send the character itself: `wtype "A"` (harness:
+  `type_text("A", …)`; screenshot driver: the `@A` token).
 - **The FIRST keypress after launch is often dropped** (window not yet focused).
   Wait ~11 s after launching, then send a throwaway warm-up key (e.g. `j` then
   `k` to return) before the real sequence. If a single decisive keypress produces
@@ -537,6 +578,13 @@ stray instance is disruptive.
   PID, confirm `pgrep -f "cage -- ./target/debug/linux-lit"` is empty. Root
   cause was `run-fuzz.sh` not forcing `WLR_BACKENDS=headless` (cage then nested
   on the live dwl); now fixed there.
+- **A decisive keypress produced no `ACTION:` line** → the press never landed
+  (`wtype` too fast, or the window wasn't focused yet) — add settle time and a
+  warm-up key; don't debug the handler.
+- **A shifted/uppercase keybind never fires headless** → the handler matches
+  the literal character (`A`) but `wtype -M shift -k a` sends
+  lowercase-with-shift; use character mode (`wtype "A"` / `type_text` / the
+  screenshot driver's `@A` token).
 
 ## Design review — improvements (status)
 
@@ -595,3 +643,5 @@ deterministic). Status:
   `LIT_NAV_FUZZ` auto-start lives in `src/app.rs`.
 - `docs/troubleshooting/page-turning-mechanics.md` — the navigation behaviour
   the fuzz verifies.
+- `docs/troubleshooting/headless-overlay-ui-verification.md` — overlay-surface
+  verification (rect/band contract, pixel invariants, agent visual review).

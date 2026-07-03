@@ -198,7 +198,12 @@ registry the artifacts want):
 
 **Key tokens** (space-separated within a `--step`): a bare token is one xkb
 keysym (`j`, `x`, `g`, `Escape`, `Next`); `+mod:key` is a chord in one press
-(`+shift:g` → Shift+G, `+ctrl:Home`). Repeat a token to repeat the key.
+(`+shift:g` → Shift+G, `+ctrl:Home`); `@TEXT` types literal characters (wtype
+character mode). Repeat a token to repeat the key. **Pick chord vs character
+by what the handler matches:** `+shift:a` delivers keysym `a` + a shift
+*modifier* — right for reader binds declared as key+shift — but a handler
+matching the literal uppercase character `A` (common in overlay keymaps) never
+fires from it; send `@A` instead.
 
 **RPD keymap** (what to inject for common nav): line `j`/`k`, page `x`/`y`, top
 `g g` (sequential), end `+shift:g`, next/prev chapter `braceleft`/`bracketleft`
@@ -227,7 +232,9 @@ Artifacts land in `target/ui/<label>_N.png` (+ `_clip.png`, `.clip.json`).
 `target/ui/` is auto-cleaned at the start of each run, so it only ever holds the
 current run's captures. **Open every PNG and report what you see inline** in your
 reply (window title, panels, on-screen text, and whether anything clips) — that
-is the verification step. No written review file is required.
+is the verification step. No written review file is required. (This is the
+third and costliest of the three assertion channels — log → pixel → visual;
+see *headless-testing.md → "Three assertion channels"* for when each applies.)
 
 ## Navigation fuzz mode
 
@@ -441,6 +448,9 @@ screenshotting. Lessons from doing this:
   oddly, `grim` and check rather than trusting it.
 - **`wtype` drops keys when hammered.** Space presses ≥0.18–0.25s apart; at
   0.13s some are silently lost and your counts come out short.
+- **Shifted/uppercase keys: match the handler's form.** `wtype -M shift -k a`
+  delivers keysym `a` + shift (fires key+shift reader binds); a handler
+  matching the literal character `A` needs character mode: `wtype "A"`.
 - **One page-turn per boundary crossing is correct.** Don't read "few
   `NAV_PAGE_FWD` for many `j`" as a bug — a two-column spread can hold ~40–80
   lines, so dozens of `j` cross only one boundary. Compare the cursor line to the
@@ -481,6 +491,10 @@ The script bakes in hard-won requirements; changing them silently breaks renderi
   `--setup "h"` + `--region` (or `--no-clip`).
 - Wrong keysym for shifted keys → use `+shift:g`, `+shift:braceleft`; a bare
   wrong token silently no-ops.
+- Shifted/uppercase keybind never fires → the handler matches the literal
+  character (`A`), but `+shift:a` sends lowercase-with-shift; use the `@A`
+  character-mode token (harness: `type_text("A", …)`, not
+  `chord(&["shift"], "a")`).
 
 See also `tests/line_clipping.rs` (cargo-test form) and the "Automated UI tests"
 section of `CLAUDE.md`.

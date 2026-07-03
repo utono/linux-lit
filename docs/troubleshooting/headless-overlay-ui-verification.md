@@ -3,9 +3,13 @@
 How an agent (or CI) verifies overlay rendering and navigation **without the
 user eyeballing the screen**. Built for the journal corpus-note Markdown
 overhaul (2026-07-02), where the user asked for a way to test UI and UX
-without manual reviews. Companion to `headless-testing.md` (main-card
-nav-fuzz and launch-stack details) and `clip-prevention.md` (what clipping
-looks like and why).
+without manual reviews.
+
+Companion: `headless-testing.md` (the shared launch stack, the `LIT_DB_PATH` /
+`LIT_LOG_PATH` / `LIT_START_*` env overrides, the main-card nav-fuzz, and
+page-boundary diagnosis) and `clip-prevention.md` (what clipping looks like and
+why). This doc covers only the **overlay** surfaces (journal corpus-note / Q&A,
+gloss, synopsis); the launch mechanics it relies on live in `headless-testing.md`.
 
 ## TL;DR
 
@@ -29,6 +33,10 @@ looks like and why).
 - One keypress = one observable state change. If a test can't tell whether
   a press did something, the app must log enough that it can (that is an
   app change, not a test workaround).
+- The launch stack (cage + `e2e-env.sh` + `GSK_RENDERER=cairo` +
+  `LIT_HEADLESS_TEST=1`) and the env overrides are shared with the nav-fuzz —
+  see *headless-testing.md → "The launch stack"* and *"The environment
+  overrides"*. Everything below is overlay-specific.
 
 ## The rect/band contract (app → test)
 
@@ -118,7 +126,8 @@ the screenshot showed it immediately.
 - **Both `cursor#` and `full#` exist for a reason** — see above; asserting
   on the page-local one WILL false-positive at page turns.
 - **The uppercase-key trap:** `wtype -M shift -k a` delivers lowercase `a`
-  with shift; overlay keymaps matching `A` need `type_text("A", …)`.
+  with shift; overlay keymaps matching `A` need `type_text("A", …)` (the
+  shell screenshot driver's equivalent is the `@A` character-mode token).
 - **`annotate_ui.py` may warn** (`--app` required) — it is best-effort;
   the raw PNG is what matters.
 
