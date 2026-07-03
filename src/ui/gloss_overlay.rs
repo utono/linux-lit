@@ -1670,13 +1670,22 @@ impl GlossOverlay {
         }
     }
 
-    /// Usable viewport height for SYNOPSIS pagination — the same `scroll_h`
+    /// Usable viewport height for SYNOPSIS pagination — the `scroll_h`
     /// `size_scroll` pins (card − title chrome − footer − the 44px scroll_overlay
-    /// margins). Must be called after `size_scroll`.
+    /// margins) MINUS the gloss view's own top/bottom margins (24 + 80), which
+    /// live INSIDE the scrolled viewport: a page packed to the full `scroll_h`
+    /// renders `top_margin + content + bottom_margin` in a `scroll_h` viewport
+    /// and overflows by up to 104px — the tail block ran flush off the card
+    /// bottom (2H6 2.1.1–8 / 2.1.13–18, user-reported). The journal fixed the
+    /// same class by subtracting its 28+28 view padding in `page_height`.
+    /// Must be called after `size_scroll`.
     fn synopsis_page_height(&self) -> i32 {
         let (_, card_height) = self.last_card_size.get();
         const SCROLL_OVERLAY_MARGINS: i32 = 24 + 20;
-        (card_height - self.title_pref_h() - self.footer_pref_h() - SCROLL_OVERLAY_MARGINS).max(80)
+        (card_height - self.title_pref_h() - self.footer_pref_h() - SCROLL_OVERLAY_MARGINS
+            - self.gloss_view.top_margin()
+            - self.gloss_view.bottom_margin())
+        .max(80)
     }
 
     /// Usable viewport height for GLOSS-RESULT pagination. Same accounting as
@@ -1685,9 +1694,7 @@ impl GlossOverlay {
     /// `size_scroll`. Kept separate from `synopsis_page_height` for symmetry with
     /// the two render paths and so the gloss budget can diverge if needed.
     fn gloss_page_height(&self) -> i32 {
-        let (_, card_height) = self.last_card_size.get();
-        const SCROLL_OVERLAY_MARGINS: i32 = 24 + 20;
-        (card_height - self.title_pref_h() - self.footer_pref_h() - SCROLL_OVERLAY_MARGINS).max(80)
+        self.synopsis_page_height()
     }
 
     /// Measure every block in `all_blocks` and pack them into `pages` by the
