@@ -139,6 +139,10 @@ pub fn adjust_font_size(state: &mut AppState, delta: i32) {
     state.config.font_size = new_size;
     reapply_font(state);
     rebuild_line_number_gutter(state);
+    // Font metrics are in the page-table layout fingerprint: drop a
+    // now-stale table (and reload a matching one) BEFORE resnapping, so the
+    // resnap paginates with the correct engine.
+    crate::input::page_table::revalidate_on_resize(state);
     crate::input::navigation::resnap_page(state);
     crate::input::navigation::invalidate_page_tops(state);
     crate::config::save(&state.config);
@@ -153,6 +157,7 @@ pub fn reset_font_size(state: &mut AppState) {
     state.config.font_size = default;
     reapply_font(state);
     rebuild_line_number_gutter(state);
+    crate::input::page_table::revalidate_on_resize(state);
     crate::input::navigation::resnap_page(state);
     crate::input::navigation::invalidate_page_tops(state);
     crate::config::save(&state.config);
@@ -170,6 +175,7 @@ pub fn cycle_font(state: &mut AppState, forward: bool) {
     };
     state.config.font_family = cycle[next].to_string();
     reapply_font(state);
+    crate::input::page_table::revalidate_on_resize(state);
     crate::input::navigation::resnap_page(state);
     crate::input::navigation::invalidate_page_tops(state);
     crate::config::save(&state.config);
