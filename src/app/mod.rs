@@ -1989,6 +1989,7 @@ pub fn build_window(
                         let st = state_for_tick.clone();
                         glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
                             let s = st.borrow();
+                            crate::input::page_table::load_for_work(&s);
                             crate::input::page_table::generate_and_store(&s);
                         });
                     }
@@ -3267,6 +3268,14 @@ pub fn display_work_at_with_prepared(
     // Page label is set later by the resize tick once layout is valid.
     // Setting it here would compute a degenerate page=1 because the
     // scrolled_window is still hidden and text_view.height() is 0.
+
+    // Pinned play pagination: attempt to load a stored table for this work now
+    // that current_work, the buffer, and line_map are all set. The layout
+    // fingerprint depends on window size, which may still be 0 pre-first-layout
+    // (fresh startup) — in that case this misses and the resize-tick generation
+    // hook's own load_for_work call (before generate_and_store) picks it up
+    // once geometry settles.
+    crate::input::page_table::load_for_work(state);
 
     // Apply highlight, snap scroll, show the scrolled window.
     let t7 = std::time::Instant::now();

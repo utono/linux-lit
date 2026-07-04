@@ -209,6 +209,24 @@ pub fn jump_to_end(state: &mut AppState) {
         return;
     }
 
+    if let Some(table) = crate::input::page_table::active_page_table(state) {
+        let s = *table.last().expect("validated tables are non-empty");
+        state.page_back_stack.clear();
+        set_page_instant(state, s.left_start);
+        let stage_lookup = |bi: usize| -> Option<i64> {
+            state.work_line_for_buffer(bi)
+                .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+                .map(|l| l.sub_line)
+        };
+        state.current_line = prev_dialogue_line(&state.buffer, &state.translation_lines,
+                s.end + 1, state.is_prose(), &stage_lookup)
+            .filter(|&d| d >= s.left_start)
+            .unwrap_or(s.end);
+        after_page_change(state, PageChangeReason::JumpToLine);
+        log_fmt!("PAGES: page {}/{} (G)", table.len(), table.len());
+        return;
+    }
+
     // Find the last dialogue line in the buffer (skips trailing stage
     // directions, blanks, exit markers). For prose works there typically
     // isn't a difference; for plays this lands on the last spoken line.
@@ -293,6 +311,11 @@ pub(crate) fn canonical_page_top_for(state: &AppState, target: usize) -> usize {
     let line_count = state.effective_line_count();
     if line_count == 0 {
         return 0;
+    }
+    if let Some(table) = crate::input::page_table::active_page_table(state) {
+        if let Some(i) = crate::input::page_table::page_for_line(&table, target.min(line_count - 1)) {
+            return table[i].left_start;
+        }
     }
     let target = target.min(line_count - 1);
     // Start from a real page boundary at or before the target: the SECTION/SCENE
@@ -739,6 +762,59 @@ pub fn page_forward(state: &mut AppState) {
     if state.page_turn_lock.is_locked() {
         return;
     }
+
+    // Pinned page table: navigation is index arithmetic; none of the
+    // heuristics below run. See input::page_table / the design doc.
+    if let Some(table) = crate::input::page_table::active_page_table(state) {
+        let cur = crate::input::page_table::page_for_line(&table, state.page_top_line)
+            .unwrap_or(0);
+        if cur + 1 >= table.len() {
+            // Final page: move the highlight to the last on-page dialogue line.
+            let s = table[cur];
+            let stage_lookup = |bi: usize| -> Option<i64> {
+                state.work_line_for_buffer(bi)
+                    .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+                    .map(|l| l.sub_line)
+            };
+            let last_dlg = prev_dialogue_line(&state.buffer, &state.translation_lines,
+                    s.end + 1, state.is_prose(), &stage_lookup)
+                .filter(|&d| d >= s.left_start)
+                .unwrap_or(s.end);
+            if last_dlg > state.current_line {
+                state.current_line = last_dlg;
+                after_page_change(state, PageChangeReason::Forward);
+            }
+            log_fmt!("PAGES: page {}/{} (at end)", cur + 1, table.len());
+            return;
+        }
+        let next = table[cur + 1];
+        let landing = {
+            let stage_lookup = |bi: usize| -> Option<i64> {
+                state.work_line_for_buffer(bi)
+                    .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+                    .map(|l| l.sub_line)
+            };
+            let first_dlg = next_dialogue_from(&state.buffer, next.left_start,
+                state.effective_line_count(), state.is_prose(), &stage_lookup);
+            if cur + 2 == table.len() {
+                // Landing ON the final page: last on-page dialogue (matches the
+                // redirect_to_final_spread landing rule).
+                prev_dialogue_line(&state.buffer, &state.translation_lines,
+                        next.end + 1, state.is_prose(), &stage_lookup)
+                    .filter(|&d| d >= next.left_start)
+                    .unwrap_or(first_dlg.min(next.end))
+            } else {
+                first_dlg.min(next.end)
+            }
+        };
+        state.page_back_stack.push((state.page_top_line, state.page_top_offset));
+        state.current_line = landing;
+        set_page(state, next.left_start, PageDirection::Forward);
+        after_page_change(state, PageChangeReason::Forward);
+        log_fmt!("PAGES: page {}/{} top={}", cur + 2, table.len(), next.left_start);
+        return;
+    }
+
     let line_count = state.effective_line_count();
     if line_count == 0 {
         return;
@@ -889,6 +965,36 @@ pub fn page_backward(state: &mut AppState) {
         return;
     }
     if state.page_turn_lock.is_locked() {
+        return;
+    }
+
+    if let Some(table) = crate::input::page_table::active_page_table(state) {
+        let cur = crate::input::page_table::page_for_line(&table, state.page_top_line)
+            .unwrap_or(0);
+        if cur == 0 {
+            let first = first_dialogue_line(state);
+            if first < state.current_line {
+                state.current_line = first;
+                after_page_change(state, PageChangeReason::Backward);
+            }
+            log_fmt!("PAGES: page 1/{} (at start)", table.len());
+            return;
+        }
+        let prev = table[cur - 1];
+        let stage_lookup = |bi: usize| -> Option<i64> {
+            state.work_line_for_buffer(bi)
+                .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+                .map(|l| l.sub_line)
+        };
+        // Landing rule mirrors the live engine: last visible dialogue on the
+        // previous page.
+        state.current_line = prev_dialogue_line(&state.buffer, &state.translation_lines,
+                prev.end + 1, state.is_prose(), &stage_lookup)
+            .filter(|&d| d >= prev.left_start)
+            .unwrap_or(prev.left_start);
+        set_page(state, prev.left_start, PageDirection::Backward);
+        after_page_change(state, PageChangeReason::Backward);
+        log_fmt!("PAGES: page {}/{} top={}", cur, table.len(), prev.left_start);
         return;
     }
 

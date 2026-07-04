@@ -366,6 +366,88 @@ pub fn generate_and_store(state: &crate::app::AppState) {
     *state.page_table.borrow_mut() = Some(std::rc::Rc::new(spreads));
 }
 
+/// Load a stored table for the current work if BOTH fingerprints match.
+/// Resolves line_mapping ids to buffer lines via the id->buffer map built
+/// from the live line map; any unresolvable id drops the whole table (stale
+/// after re-import — db_fingerprint should have caught it, belt+braces).
+pub fn load_for_work(state: &crate::app::AppState) {
+    *state.page_table.borrow_mut() = None;
+    if std::env::var_os("LIT_NO_PAGE_TABLE").is_some() {
+        return;
+    }
+    let Some(work) = state.current_work.as_ref() else { return };
+    if state.column_count() != 2 {
+        return;
+    }
+    let fp = layout_fingerprint(state);
+    let Ok(conn) = crate::db::queries::open_db() else { return };
+    // Schema may not exist yet on a fresh lit.db; open_db is read-only, so
+    // just probe and bail quietly.
+    let loaded = match crate::db::play_pages::load_pages(&conn, &work.canonical_abbrev, &fp) {
+        Ok(v) => v,
+        Err(_) => None, // missing tables etc.
+    };
+    let Some((meta, rows)) = loaded else {
+        crate::logging::log(&format!("PAGES: no table for {} fp={}", work.canonical_abbrev, fp));
+        return;
+    };
+    if meta.db_fingerprint != crate::snapshot::db_fingerprint(work) {
+        crate::logging::log("PAGES: fallback (db_fingerprint stale — re-import?)");
+        return;
+    }
+    // id -> buffer line, built once.
+    let line_count = state.effective_line_count();
+    let mut id_to_buf = std::collections::HashMap::new();
+    for bi in 0..line_count {
+        if let Some(wi) = state.work_line_for_buffer(bi) {
+            if let Some(l) = work.lines.get(wi) {
+                id_to_buf.entry(l.id).or_insert(bi);
+            }
+        }
+    }
+    let mut spreads = Vec::with_capacity(rows.len());
+    for r in &rows {
+        let (Some(&ls), Some(&end)) = (id_to_buf.get(&r.left_start_id), id_to_buf.get(&r.end_id)) else {
+            crate::logging::log("PAGES: fallback (row id not in buffer)");
+            return;
+        };
+        let split = match r.split_id {
+            Some(id) => match id_to_buf.get(&id) {
+                Some(&b) => Some(b),
+                None => {
+                    crate::logging::log("PAGES: fallback (split id not in buffer)");
+                    return;
+                }
+            },
+            None => None,
+        };
+        spreads.push(Spread { left_start: ls, split, end });
+    }
+    crate::logging::log(&format!(
+        "PAGES: table hit ({} pages) for {}", spreads.len(), work.canonical_abbrev));
+    *state.page_table.borrow_mut() = Some(std::rc::Rc::new(spreads));
+}
+
+/// The single consumption gate. Every navigation/render consumer goes through
+/// this; adding a fallback mode means adding ONE condition here.
+pub fn active_page_table(state: &crate::app::AppState) -> Option<std::rc::Rc<Vec<Spread>>> {
+    if std::env::var_os("LIT_NO_PAGE_TABLE").is_some() {
+        return None;
+    }
+    if state.translations_visible
+        || state.column_count() != 2
+        || !matches!(state.config.navigation_mode, crate::config::NavigationMode::EReader)
+    {
+        return None;
+    }
+    state.page_table.borrow().clone()
+}
+
+/// The spread whose top is exactly `top` (page tops are canonical).
+pub fn spread_for_top(spreads: &[Spread], top: usize) -> Option<&Spread> {
+    spreads.iter().find(|s| s.left_start == top)
+}
+
 /// ISO-ish timestamp without adding a chrono dependency (not in Cargo.toml):
 /// seconds since epoch, prefixed so it's self-explaining in a DB browse.
 fn epoch_timestamp() -> String {
