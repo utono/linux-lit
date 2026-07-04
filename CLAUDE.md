@@ -480,6 +480,14 @@ clamps on). Lesson: when a per-work nav-fuzz FAIL is an `UNBALANCED`/short-colum
 at a scene edge, first ask whether the *assertion* (not production) is
 re-inferring the boundary from text.
 
+**Pinned play pagination:** two-column plays at the pinned layout read their
+spreads from lit.db `play_pages` (generated in-app, invariant-gated — see
+`src/input/page_table.rs` and `docs/plans/2026-07-04-pinned-play-pagination-design.md`).
+`PAGES: table hit/fallback/generated` log lines say which engine is active.
+Test flags: `LIT_NO_PAGE_TABLE=1` forces the live engine;
+`LIT_GEN_PAGE_TABLE=1` forces generation at the current (e.g. headless)
+geometry. Audit with the `validate-play-pages` skill.
+
 ## MPV Integration
 
 - MPV is reused across work switches via `loadfile replace` (no new process)
