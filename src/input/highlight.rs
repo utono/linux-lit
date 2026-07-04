@@ -32,11 +32,18 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
         crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
         crate::config::NavigationMode::EReader => {
             if !is_line_fully_visible(state, state.current_line) {
-                let new_top = if state.current_line >= state.page_top_line {
-                    page_turn_top_state(state, state.current_line)
-                } else {
-                    state.current_line
-                };
+                // Table mode: land on the stored page containing the cursor so
+                // sync turns share x/y's page grid (the spoken line becomes the
+                // first dialogue of the new page in forward playback). Falls
+                // back to the live computation when no table serves this line.
+                let new_top = crate::input::page_table::table_top_for(state, state.current_line)
+                    .unwrap_or_else(|| {
+                        if state.current_line >= state.page_top_line {
+                            page_turn_top_state(state, state.current_line)
+                        } else {
+                            state.current_line
+                        }
+                    });
                 log_fmt!(
                     "SYNC_PAGE: ensure_visible triggered, current_line={} page_top={} new_top={}",
                     state.current_line, state.page_top_line, new_top
@@ -60,15 +67,26 @@ pub fn update_highlight_and_advance_page(state: &mut AppState) {
         crate::config::NavigationMode::EReader => {
             let last_vis = last_raw_visible_line(state, state.page_top_line);
             if state.current_line > last_vis {
-                let mut new_top = page_turn_top_state(state, state.current_line);
-                // Don't turn onto a spread in the work's FINAL region (an empty
-                // right column for a lone EPILOGUE, or an underfilled too-early
-                // final spread) — redirect to the canonical final spread so the
-                // tail fills both columns. Shared with x and q/j; see
-                // `navigation::redirect_to_final_spread`.
-                if let Some(anchor) = super::navigation::redirect_to_final_spread(state, new_top) {
-                    new_top = anchor;
-                }
+                // Table mode: the stored page containing the spoken line IS the
+                // landing page — same grid as x/y, and the table's final page
+                // already is the canonical anchor spread, so the final-region
+                // redirect below is only needed on the live path.
+                let new_top = if let Some(t) =
+                    crate::input::page_table::table_top_for(state, state.current_line)
+                {
+                    t
+                } else {
+                    let mut nt = page_turn_top_state(state, state.current_line);
+                    // Don't turn onto a spread in the work's FINAL region (an empty
+                    // right column for a lone EPILOGUE, or an underfilled too-early
+                    // final spread) — redirect to the canonical final spread so the
+                    // tail fills both columns. Shared with x and q/j; see
+                    // `navigation::redirect_to_final_spread`.
+                    if let Some(anchor) = super::navigation::redirect_to_final_spread(state, nt) {
+                        nt = anchor;
+                    }
+                    nt
+                };
                 crate::logging::log_always(&format!(
                     "SYNC_PAGE_TURN: current={} last_vis={} old_top={} new_top={}",
                     state.current_line, last_vis, state.page_top_line, new_top,

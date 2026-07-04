@@ -566,6 +566,19 @@ pub fn spread_for_top(spreads: &[Spread], top: usize) -> Option<&Spread> {
     spreads.iter().find(|s| s.left_start == top)
 }
 
+/// The stored page top whose spread contains `line`, when the table drives
+/// navigation. Used by the playback-sync page turns so an auto turn lands on
+/// the SAME page grid as `x`/`y` — in forward playback the spoken line then
+/// sits as the first dialogue line of the new page instead of being
+/// force-top-aligned by the live `page_turn_top_state`. `None` (no table
+/// active, or the line falls in a trimmed non-dialogue gap) = fall back to
+/// the live computation.
+pub fn table_top_for(state: &crate::app::AppState, line: usize) -> Option<usize> {
+    let table = active_page_table(state)?;
+    let i = page_for_line(&table, line)?;
+    Some(table[i].left_start)
+}
+
 /// ISO-ish timestamp without adding a chrono dependency (not in Cargo.toml):
 /// seconds since epoch, prefixed so it's self-explaining in a DB browse.
 fn epoch_timestamp() -> String {
