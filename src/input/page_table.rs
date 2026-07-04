@@ -76,9 +76,20 @@ pub fn validate_spreads(spreads: &[Spread], ctx: &ValidateCtx) -> Result<(), Str
                 .and_then(|ss| ss.get(next_top).copied())
                 .unwrap_or(false);
             if !opens_section {
+                // Diagnostic detail: where the pages sit and any section-start
+                // lines near the gap, so a failure names the divergence.
+                let win_lo = s.end.saturating_sub(2);
+                let win_hi = (next_top + 6).min(ctx.line_count);
+                let nearby: Vec<usize> = ctx
+                    .section_starts
+                    .map(|ss| {
+                        (win_lo..win_hi).filter(|&j| ss.get(j).copied().unwrap_or(false)).collect()
+                    })
+                    .unwrap_or_default();
                 return Err(format!(
-                    "watermark: page {} has an empty right column but page {} does not open a section",
-                    i + 1, i + 2
+                    "watermark: page {} has an empty right column but page {} does not open a section \
+                     (top={} end={} next_top={} section_starts_nearby={:?})",
+                    i + 1, i + 2, s.left_start, s.end, next_top, nearby
                 ));
             }
         }
@@ -190,11 +201,15 @@ pub fn layout_fingerprint(state: &crate::app::AppState) -> String {
     fingerprint_string(&parts)
 }
 
-/// Walk the LIVE engine's forward chain once, recording every spread. This is
-/// the same chain `x` follows (next_page_top/column_split), so the recorded
-/// table reproduces exactly what paging forward shows. Includes the
-/// determinism check (design invariant 5): re-deriving a page's boundary from
-/// its own top must agree with what the chain said.
+/// Walk the LIVE engine's forward chain once, recording every spread. The
+/// chain advances on `column_split(top).next_page_top` — the documented
+/// source of truth for spread boundaries (see
+/// docs/troubleshooting/page-turning-mechanics.md, "column_split is the
+/// source of truth") — so an empty-right (watermark) spread's successor
+/// starts EXACTLY at the `(div1,div2)` section marker `column_split` found,
+/// never at a dialogue-driven boundary that can skip past it. Includes a
+/// non-termination guard (design invariant 5): the chain must strictly
+/// advance and terminate within `line_count` steps.
 pub fn record_spreads(state: &crate::app::AppState) -> Result<Vec<Spread>, String> {
     let line_count = state.effective_line_count();
     if line_count == 0 {
@@ -214,14 +229,9 @@ pub fn record_spreads(state: &crate::app::AppState) -> Result<Vec<Spread>, Strin
         let split = if cs.split == top { Some(top) } else { split };
         let end = cs.page_end.min(line_count.saturating_sub(1));
         spreads.push(Spread { left_start: top, split, end });
-        let next = crate::input::viewport::next_page_top(state, top).new_top;
+        let next = cs.next_page_top;
         if next >= line_count || next <= top {
             break;
-        }
-        // Determinism (invariant 5): column_split at `next` must not claim
-        // lines this spread already covered.
-        if next <= end && crate::input::viewport::column_split(state, next).page_end <= end {
-            return Err(format!("determinism: chain from {top} regressed at {next}"));
         }
         top = next;
         guard += 1;
@@ -229,9 +239,20 @@ pub fn record_spreads(state: &crate::app::AppState) -> Result<Vec<Spread>, Strin
             return Err("determinism: forward chain did not terminate".into());
         }
     }
-    // The final spread must be the same anchor G uses.
+    // The final spread must be the same anchor G uses. Only replace the tail
+    // when the chain's own natural last page does NOT already reach at least
+    // as far as that anchor: `last_page_top` (navigation.rs) walks a SEPARATE
+    // dialogue-driven chain and can settle on a different (earlier, mid-column)
+    // stopping point than the column_split-pure chain above, which — being the
+    // source of truth for spread boundaries — may legitimately continue
+    // further and already cover the anchor inside its own right column. In
+    // that case forcing a foreign anchor here would truncate a spread that is
+    // already both valid and further along, stranding real content and
+    // fabricating a watermark violation. Only pull the tail forward/backward
+    // to `anchor` when the chain's last page hasn't reached it.
     let anchor = crate::input::navigation::last_page_top(state);
-    if spreads.last().map(|s| s.left_start) != Some(anchor) {
+    let last_already_covers_anchor = spreads.last().map_or(false, |s| anchor <= s.end);
+    if !last_already_covers_anchor && spreads.last().map(|s| s.left_start) != Some(anchor) {
         // Replace the trailing spread(s) with the canonical final spread so the
         // chain and G agree (the dialogue-tail pull-forward case).
         while spreads.last().map_or(false, |s| s.left_start >= anchor) {
@@ -319,32 +340,45 @@ pub fn generate_and_store(state: &crate::app::AppState) {
         crate::logging::log(&format!("PAGES: VALIDATE_FAIL {e}"));
         return;
     }
-    // Map buffer lines -> line_mapping ids. Boundary lines are always work
-    // lines (page tops/splits land on real content), so a missing mapping is
-    // a hard failure, not something to paper over.
+    // Map buffer lines -> line_mapping ids. Boundary lines are usually work
+    // lines (page tops/splits/ends land on real content), but a buffer line
+    // can legitimately have no `line_mapping` row: a title-page preamble
+    // (author/title lines before the first mapped line, e.g. MND's buffer
+    // lines 0..6) or a blank/formatting-only line elsewhere in the buffer
+    // (`mapped_buffer_lines` < total buffer lines is the normal case). The id
+    // is purely a storage key (round-tripped back to A buffer line within the
+    // same page by `load_for_work`), so snapping an unmapped boundary to the
+    // nearest mapped line WITHIN this page is equivalent for pagination
+    // purposes. `left_start` snaps forward (its page begins there); `end`
+    // snaps backward (its page runs through there). Only a page with NO
+    // mapped line at all in its range is a hard failure. A `split` with no
+    // mapped line anywhere in its own range `[sp, end]` means the right
+    // column holds nothing but unmapped filler (e.g. a lone blank line) —
+    // there is no real content to navigate to there, so it is folded into
+    // `None` (an empty right column) rather than failing generation.
     let id_of = |bi: usize| -> Option<i64> {
         state.work_line_for_buffer(bi)
             .and_then(|wi| work.lines.get(wi))
             .map(|l| l.id)
     };
+    let id_of_fwd = |from: usize, to_incl: usize| -> Option<i64> {
+        (from..=to_incl).find_map(id_of)
+    };
+    let id_of_back = |from_incl: usize, down_to: usize| -> Option<i64> {
+        (down_to..=from_incl).rev().find_map(id_of)
+    };
+    let mut spreads = spreads;
     let mut rows = Vec::with_capacity(spreads.len());
-    for (i, s) in spreads.iter().enumerate() {
-        let (Some(ls), Some(end)) = (id_of(s.left_start), id_of(s.end)) else {
+    for (i, s) in spreads.iter_mut().enumerate() {
+        let (Some(ls), Some(end)) = (id_of_fwd(s.left_start, s.end), id_of_back(s.end, s.left_start)) else {
             crate::logging::log(&format!(
                 "PAGES: VALIDATE_FAIL citation: page {} boundary has no line_mapping id", i + 1));
             return;
         };
-        let split_id = match s.split {
-            Some(sp) => match id_of(sp) {
-                Some(v) => Some(v),
-                None => {
-                    crate::logging::log(&format!(
-                        "PAGES: VALIDATE_FAIL citation: page {} split has no id", i + 1));
-                    return;
-                }
-            },
-            None => None,
-        };
+        let split_id = s.split.and_then(|sp| id_of_fwd(sp, s.end));
+        if split_id.is_none() {
+            s.split = None; // keep the in-memory spread consistent with the stored row
+        }
         rows.push(crate::db::play_pages::PageRow {
             page_no: (i + 1) as i64,
             left_start_id: ls,
