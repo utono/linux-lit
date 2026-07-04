@@ -643,6 +643,28 @@ fn scroll_right_view_to_split(
 /// below. We only increase, never decrease, to avoid fighting GTK's layout.
 pub(crate) const BASE_BOTTOM_MARGIN: i32 = 40;
 
+/// Bottom-clip height for a paged column whose content is a sum of
+/// `line_yrange` LOGICAL line heights (`total`): `space` minus `total`, minus a
+/// small `allowance` so the clip's top edge sits BELOW the last line's glyph
+/// descenders (which render flush to the logical line bottom) instead of
+/// slicing them. Floored at 0. Pure so the arithmetic is unit-tested without
+/// GTK geometry.
+pub(crate) fn paged_bottom_clip(space: i32, total: i32, allowance: i32) -> i32 {
+    (space - total - allowance).max(0)
+}
+
+/// How far the paged clip's top edge may drop below the last line's logical
+/// bottom: the font's descent (`guard`, what the descenders need), capped at
+/// the inter-line spacing above the next line's ink (`spacing_above` =
+/// `pixels_above_lines`). The shared buffer renders the NEXT line immediately
+/// below the logical bottom (hidden by the clip), and GTK cannot draw its ink
+/// above `box_top + pixels_above_lines` — so a reveal within that spacing shows
+/// only descender overhang and blank space, never the next line's ascenders.
+/// Degrades to 0 (the pre-fix clip) when line_spacing is 0.
+pub(crate) fn descender_allowance(guard: i32, spacing_above: i32) -> i32 {
+    guard.min(spacing_above.max(0))
+}
+
 /// Final bottom-clip height for the over-tall single-paragraph case in
 /// `update_bottom_clip`: the per-visual-row clip from `bottom_clip_height`
 /// (computed against a `usable_height`-tall viewport) plus the reserved bottom
@@ -1328,6 +1350,47 @@ mod overtall_clip_tests {
         // usable >= widget (no reserve) with a 0 row_clip -> 0, never negative.
         assert_eq!(overtall_clip(0, 1112, 1112), 0);
         assert_eq!(overtall_clip(0, 1112, 1200), 0);
+    }
+}
+
+#[cfg(test)]
+mod paged_bottom_clip_tests {
+    use super::{descender_allowance, paged_bottom_clip};
+
+    #[test]
+    fn subtracts_descender_allowance_from_slack() {
+        // widget 1112, content sums to 1000 → 112px of slack below the last
+        // line. A 6px descender allowance moves the clip top edge 6px below
+        // the logical line bottom, revealing the flush descender ink.
+        assert_eq!(paged_bottom_clip(1112, 1000, 6), 106);
+    }
+
+    #[test]
+    fn never_negative_when_content_fills_widget() {
+        // Degenerate: content already equals/overflows the space (the last
+        // page, or pre-layout heights). Clip floors at 0.
+        assert_eq!(paged_bottom_clip(1112, 1112, 6), 0);
+        assert_eq!(paged_bottom_clip(1112, 1110, 6), 0);
+    }
+
+    #[test]
+    fn zero_allowance_is_the_old_behavior() {
+        // With allowance 0 the helper reduces to space - total, the pre-fix
+        // clip — proves the change is purely additive.
+        assert_eq!(paged_bottom_clip(1112, 1000, 0), 112);
+    }
+
+    #[test]
+    fn allowance_is_capped_at_the_inter_line_spacing() {
+        // The next line's ink can start as little as pixels_above_lines below
+        // the clip's top edge (measured ~5px on the failing MND spread), so
+        // the reveal must never exceed that spacing — a full descender_guard
+        // (up to 24) would expose the next line's ascender tops.
+        assert_eq!(descender_allowance(12, 6), 6);
+        assert_eq!(descender_allowance(4, 6), 4);
+        // line_spacing 0 → no reveal budget → old behavior, never negative.
+        assert_eq!(descender_allowance(12, 0), 0);
+        assert_eq!(descender_allowance(12, -3), 0);
     }
 }
 
