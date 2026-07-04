@@ -363,9 +363,10 @@ handle_gloss_picker_key in src/input/keymap.rs)",
         "journal tog" => "Open or close the Q&A journal for the current scene. \
 The journal is a per-work notebook: each scene holds zero or more \u{201c}pages,\u{201d} \
 where a page is one question you asked and the answer Claude gave. It opens on the \
-scene under the reading cursor; if that scene has no pages yet it opens the author \
-corpus band instead (when the author has corpus notes), else shows an empty \
-card prompting you to press r to ask. Inside the overlay: r asks a new question \
+scene under the reading cursor; if that scene has no pages yet it opens the \
+work-wide Q&A picker instead (so you can jump to any existing Q&A), and if the \
+whole work has no pages yet it toasts \u{201c}No journal pages yet.\u{201d} \
+Inside the overlay: r asks a new question \
 (Claude answers, drawing on its knowledge of the whole work, in the work\u{2019}s own \
 genre \u{2014} novel/chapter, play/scene, epic/book, etc.), e opens an edit \
 card (Question + Answer pre-filled, plus an optional rewrite-instruction field): \
@@ -379,10 +380,10 @@ blocks and gg/G jump to the first/last block; Space \
 MP3 on a cache miss, cached per page) and `a` restarts it from the beginning, \
 Ctrl+n / Ctrl+p step through every Q&A in the work across bands (at a band\u{2019}s \
 last page Ctrl+n rolls into the next chapter/scene\u{2019}s first Q&A, in the same \
-order as the Ctrl+\\ picker), Alt+n / Alt+p jump to the \
+order as the Ctrl+Alt+p picker), Alt+n / Alt+p jump to the \
 next/prev scene that has pages, Alt+w switches to the Work band \u{2014} \
 whole-work pages about the work as a whole (Claude is sent only the title and \
-author, not a scene) \u{2014} and Ctrl+\\ opens a picker of every Q&A page in the \
+author, not a scene) \u{2014} and Ctrl+Alt+p opens a picker of every Q&A page in the \
 work (whole-work pages first, then scene pages in scene order) to jump straight \
 to one. Escape (or Ctrl+j) closes and returns the cursor to where you were \
 reading; Ctrl+g on a passage page cross-jumps to that passage's gloss. \
@@ -400,7 +401,7 @@ nothing opened yet this session it toasts \u{201c}No overlay to reopen.\u{201d} 
         "jrnl Q&A picker" => "Open the Q&A picker directly from the reading card \
 (Alt+j), without first opening the journal overlay. Lists every Q&A page in the \
 work \u{2014} whole-work pages first, then scene pages in scene order \u{2014} the \
-same picker the journal overlay\u{2019}s Ctrl+\\ opens. Choosing a page reveals the \
+same picker the journal overlay\u{2019}s Ctrl+Alt+p opens. Choosing a page reveals the \
 journal overlay landed on that Q&A; Escape returns you to where you were reading. \
 Toasts \u{201c}No journal pages yet\u{201d} when the work has none. \
 -> journal::open_picker_from_reader — src/input/actions/journal.rs",

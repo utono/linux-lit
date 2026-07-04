@@ -1022,6 +1022,16 @@ fn handle_journal_key(
         }
     }
 
+    // Ctrl+Alt+p: open the work-wide Q&A picker (moved here from Ctrl+\). Checked
+    // BEFORE the plain Alt/Ctrl blocks so the chord wins over Alt+p (prev scene)
+    // and Ctrl+p (prev Q&A), both of which keep their single-modifier meaning.
+    // Lists every page in the work; confirm lands on the chosen page's band,
+    // Escape returns to the journal overlay.
+    if is_ctrl && is_alt && key_name == "p" {
+        crate::input::actions::journal::open_picker(state);
+        return true;
+    }
+
     if is_alt {
         match key_name {
             "n" => {
@@ -1092,10 +1102,6 @@ fn handle_journal_key(
             // Arrives as key_name "J" (shifted), distinct from Ctrl+j.
             "J" => {
                 crate::input::actions::journal::open_move_picker(state);
-                return true;
-            }
-            "backslash" => {
-                crate::input::actions::journal::open_picker(state);
                 return true;
             }
             // Ctrl+g: view the gloss for the current journal passage page.

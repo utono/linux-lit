@@ -85,7 +85,7 @@ pub struct JournalState {
     /// consumed by `ask_claude` when the band is `Passage`.
     pub pending_passage: Option<PendingPassage>,
     /// True when the Q&A picker was opened from the READING CARD (Alt+j) rather
-    /// than from inside the journal overlay (Ctrl+\). Set by
+    /// than from inside the journal overlay (Alt+p). Set by
     /// `open_picker_from_reader`; consumed by the picker's confirm/escape paths so
     /// Escape returns to the reader (not a hidden journal overlay).
     pub picker_from_reader: bool,
@@ -400,39 +400,46 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
     open_journal_scene(state);
 }
 
-/// Open the journal overlay on the cursor's Scene band (with author-corpus
-/// fallback when that scene has no pages). Assumes reader mode / no conflicting
-/// overlay is showing; saves `return_pos` from the current cursor. Shared by the
-/// reader Ctrl+j (`toggle_overlay`'s open half) and the synopsis/echoes/
-/// translation overlays' Ctrl+j, which each return to the reader first (so the
-/// cursor is on the line whose scene the journal should open on) and then call
-/// this.
+/// Open the journal overlay on the cursor's Scene band. When that scene band has
+/// no Q&A, open the work-wide Q&A picker instead (reader-initiated, so confirm
+/// reveals the overlay on the chosen page and Escape returns to the reader) —
+/// letting the reader jump to any existing Q&A rather than landing on a blank
+/// band. Assumes reader mode / no conflicting overlay is showing; saves
+/// `return_pos` from the current cursor. Shared by the reader Ctrl+j
+/// (`toggle_overlay`'s open half) and the synopsis/echoes/ translation overlays'
+/// Ctrl+j, which each return to the reader first (so the cursor is on the line
+/// whose scene the journal should open on) and then call this.
 pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) {
-    let mut s = state.borrow_mut();
-    if s.current_work.is_none() {
+    let (d1, d2, scene_empty) = {
+        let s = state.borrow();
+        if s.current_work.is_none() {
+            return;
+        }
+        let (d1, d2) = crate::app::scene_synopsis::current_scene_divs(&s);
+        // Use the SAME query the Scene band renders with (find_scene_band_pages =
+        // scene Q&As + passage Q&As in this (d1,d2)), so a scene that has only
+        // passage entries is NOT treated as empty.
+        let work_abbrev = current_work_abbrev(&s);
+        let scene_pages = crate::db::queries::open_db()
+            .ok()
+            .and_then(|conn| {
+                crate::db::journal::find_scene_band_pages(&conn, &work_abbrev, d1, d2).ok()
+            })
+            .unwrap_or_default();
+        (d1, d2, scene_pages.is_empty())
+    };
+
+    // Scene band has no Q&A: open the work-wide picker from the reader instead of
+    // landing on a blank scene band. If the whole work has no Q&A either, the
+    // picker toasts "No journal pages yet" and stays in the reader.
+    if scene_empty {
+        open_picker_from_reader(state);
         return;
     }
+
+    let mut s = state.borrow_mut();
     s.journal.return_pos = Some((s.current_line, s.page_top_line));
-    let (d1, d2) = crate::app::scene_synopsis::current_scene_divs(&s);
-    // Open on the cursor's scene band — but if that scene has no journal pages,
-    // fall back to the author corpus band (when it has content) so Ctrl+j always
-    // lands somewhere with entries rather than a blank scene band.
-    // Use the SAME query the Scene band renders with (find_scene_band_pages =
-    // scene Q&As + passage Q&As in this (d1,d2)), so a scene that has only
-    // passage entries is NOT treated as empty.
-    let work_abbrev = current_work_abbrev(&s);
-    let scene_pages = crate::db::queries::open_db()
-        .ok()
-        .and_then(|conn| crate::db::journal::find_scene_band_pages(&conn, &work_abbrev, d1, d2).ok())
-        .unwrap_or_default();
-    s.journal_band = if scene_pages.is_empty() {
-        match author_band_with_pages(&s) {
-            Some(author) => JournalBand::Author(author),
-            None => JournalBand::Scene(d1, d2),
-        }
-    } else {
-        JournalBand::Scene(d1, d2)
-    };
+    s.journal_band = JournalBand::Scene(d1, d2);
     s.journal.page_index = 0;
     s.input_mode = InputMode::JournalOverlay;
     render_current(&mut s);
@@ -489,7 +496,7 @@ fn land_on_current_band_id(s: &mut AppState, target_id: i64) {
 }
 
 /// `Ctrl+n` / `Ctrl+p`: step through EVERY Q&A in the work, across bands, in the
-/// same order the `Ctrl+\` picker uses (`find_all_pages_ordered`: whole-work
+/// same order the `Alt+p` picker uses (`find_all_pages_ordered`: whole-work
 /// pages first, then by div1/div2, then timestamp/id; passage Q&As interleave in
 /// their scene band). At the last page of a band, `Ctrl+n` rolls into the first
 /// Q&A of the next band; `Ctrl+p` symmetrically. Clamped at the work's first /
@@ -1321,7 +1328,7 @@ fn populate_and_show_picker(s: &mut AppState) -> bool {
     true
 }
 
-/// Open the Q&A picker over the journal overlay (Ctrl+\). Lists every page in the
+/// Open the Q&A picker over the journal overlay (Alt+p). Lists every page in the
 /// work (work pages first, then scene pages by scene), each by creation time.
 /// Empty journal -> toast, stay in the overlay.
 pub(crate) fn open_picker(state: &Rc<RefCell<AppState>>) {

@@ -13,17 +13,17 @@ recoverable from the code or git history alone. Resume from its "Next Actions".
 ac", "read ac", "check ac", etc., it means `CLAUDE-activeContext.md`. Keep it
 current as work progresses: record only what is NOT recoverable from the code or
 git (uncommitted work, why a decision was made, what to do next); convert
-relative dates to absolute (US Central). Update it before a likely
-context break (reboot, compaction, end of a work block).
+relative dates to absolute (US Central). Update it before a likely context break
+(reboot, compaction, end of a work block).
 
-**ALWAYS update `ac` after every `git commit` AND after finishing a branch**
-(the merge-to-master + push sequence). This is the default and does not require
-the user to ask — refresh the "Current Focus" / HEAD / build-status / Next
-Actions to reflect the new committed (or merged + pushed) state. After a merge
-to master, record the new master HEAD, that the feature branch was deleted, and
-the push state. Skip only when the user explicitly says not to update `ac` that
-time. (This mirrors the global `~/CLAUDE.md` "After a Commit" rule, made explicit
-here for this project.)
+**Do NOT update `ac` automatically after every commit.** Update it only when the
+user asks ("update ac" / "uac"), or before a likely context break. `ac` is a
+SCOPED continuity file, not a changelog — a per-commit summary is recoverable
+from `git log`, so do not accumulate one here. Keep `ac` short: the current state
++ any uncommitted work + next actions + genuinely non-recoverable decisions/
+gotchas. When you refresh it, REPLACE stale state rather than prepending a new
+block on top of the old ones. (This project deliberately opts OUT of the global
+`~/CLAUDE.md` "After a Commit" rule.)
 
 ## Debug Log
 
