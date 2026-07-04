@@ -48,14 +48,14 @@ pub fn ensure_schema(conn: &Connection) -> rusqlite::Result<()> {
 
 pub fn load_pages(
     conn: &Connection,
-    canonical_abbrev: &str,
+    abbrev: &str,
     layout_fingerprint: &str,
 ) -> rusqlite::Result<Option<(PagesMeta, Vec<PageRow>)>> {
     let meta: Option<PagesMeta> = conn
         .query_row(
             "SELECT db_fingerprint, page_count, generated_at, validated
              FROM play_pages_meta WHERE work_abbrev = ?1 AND layout_fingerprint = ?2",
-            params![canonical_abbrev, layout_fingerprint],
+            params![abbrev, layout_fingerprint],
             |row| {
                 let db_fp: String = row.get(0)?;
                 Ok(PagesMeta {
@@ -77,7 +77,7 @@ pub fn load_pages(
          WHERE work_abbrev = ?1 AND layout_fingerprint = ?2 ORDER BY page_no",
     )?;
     let rows = stmt
-        .query_map(params![canonical_abbrev, layout_fingerprint], |row| {
+        .query_map(params![abbrev, layout_fingerprint], |row| {
             Ok(PageRow {
                 page_no: row.get(0)?,
                 left_start_id: row.get(1)?,
@@ -94,25 +94,25 @@ pub fn load_pages(
 
 pub fn store_pages(
     conn: &mut Connection,
-    canonical_abbrev: &str,
+    abbrev: &str,
     meta: &PagesMeta,
     rows: &[PageRow],
 ) -> rusqlite::Result<()> {
     let tx = conn.transaction()?;
     tx.execute(
         "DELETE FROM play_pages WHERE work_abbrev = ?1 AND layout_fingerprint = ?2",
-        params![canonical_abbrev, meta.layout_fingerprint],
+        params![abbrev, meta.layout_fingerprint],
     )?;
     tx.execute(
         "DELETE FROM play_pages_meta WHERE work_abbrev = ?1 AND layout_fingerprint = ?2",
-        params![canonical_abbrev, meta.layout_fingerprint],
+        params![abbrev, meta.layout_fingerprint],
     )?;
     for r in rows {
         tx.execute(
             "INSERT INTO play_pages
              (work_abbrev, layout_fingerprint, page_no, left_start_id, split_id, end_id)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![canonical_abbrev, meta.layout_fingerprint, r.page_no,
+            params![abbrev, meta.layout_fingerprint, r.page_no,
                     r.left_start_id, r.split_id, r.end_id],
         )?;
     }
@@ -120,7 +120,7 @@ pub fn store_pages(
         "INSERT INTO play_pages_meta
          (work_abbrev, layout_fingerprint, db_fingerprint, page_count, generated_at, validated)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![canonical_abbrev, meta.layout_fingerprint,
+        params![abbrev, meta.layout_fingerprint,
                 meta.db_fingerprint.to_string(), rows.len() as i64,
                 meta.generated_at, meta.validated as i64],
     )?;

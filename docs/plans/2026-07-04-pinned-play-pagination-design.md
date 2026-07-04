@@ -62,9 +62,16 @@ CREATE TABLE IF NOT EXISTS play_pages_meta (
 - **Edge pages are representable, not special-cased:** empty left column
   (first-spread short-opening moved right) = `left_start_id == split_id`;
   empty right column (scene-end watermark spread) = `split_id NULL`.
-- The base abbrev convention follows `canonical_abbrev`: `Cym`, `Cym-Amb`,
+- ~~The base abbrev convention follows `canonical_abbrev`: `Cym`, `Cym-Amb`,
   `Cym-BBC` share text and therefore share one table keyed by the canonical
-  abbrev (same rule as glosses/journal).
+  abbrev (same rule as glosses/journal).~~ **AMENDED post-ship (2026-07-04):
+  tables are keyed by the EDITION's own abbrev.** Canonical sharing cannot
+  work in lit.db: each edition carries its own `line_mapping` ids, so a table
+  stored under the base could never be loaded by a sibling edition (the
+  `db_fingerprint` gate fails closed) while editions would overwrite each
+  other's rows under the shared key. Each edition now holds its own table;
+  the hot.db greenfield schema (`page_spread`, keyed by base abbrev +
+  citation strings) is where true sharing lives.
 
 ## Layout fingerprint
 

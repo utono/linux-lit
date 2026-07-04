@@ -434,7 +434,7 @@ pub fn generate_and_store(state: &crate::app::AppState) {
         Ok(mut conn) => {
             if let Err(e) = crate::db::play_pages::ensure_schema(&conn)
                 .and_then(|_| crate::db::play_pages::store_pages(
-                    &mut conn, &work.canonical_abbrev, &meta, &rows))
+                    &mut conn, &work.abbrev, &meta, &rows))
             {
                 crate::logging::log(&format!("PAGES: store failed ({e}) — will retry next load"));
                 return;
@@ -446,7 +446,7 @@ pub fn generate_and_store(state: &crate::app::AppState) {
         }
     }
     crate::logging::log(&format!(
-        "PAGES: generated {} pages for {} fp={}", rows.len(), work.canonical_abbrev, fp));
+        "PAGES: generated {} pages for {} fp={}", rows.len(), work.abbrev, fp));
     // Make the fresh table active this session.
     *state.page_table.borrow_mut() = Some(std::rc::Rc::new(spreads));
     *state.page_table_fp.borrow_mut() = fp;
@@ -470,12 +470,12 @@ pub fn load_for_work(state: &crate::app::AppState) {
     let Ok(conn) = crate::db::queries::open_db() else { return };
     // Schema may not exist yet on a fresh lit.db; open_db is read-only, so
     // just probe and bail quietly.
-    let loaded = match crate::db::play_pages::load_pages(&conn, &work.canonical_abbrev, &fp) {
+    let loaded = match crate::db::play_pages::load_pages(&conn, &work.abbrev, &fp) {
         Ok(v) => v,
         Err(_) => None, // missing tables etc.
     };
     let Some((meta, rows)) = loaded else {
-        crate::logging::log(&format!("PAGES: no table for {} fp={}", work.canonical_abbrev, fp));
+        crate::logging::log(&format!("PAGES: no table for {} fp={}", work.abbrev, fp));
         return;
     };
     if meta.db_fingerprint != crate::snapshot::db_fingerprint(work) {
@@ -511,7 +511,7 @@ pub fn load_for_work(state: &crate::app::AppState) {
         spreads.push(Spread { left_start: ls, split, end });
     }
     crate::logging::log(&format!(
-        "PAGES: table hit ({} pages) for {}", spreads.len(), work.canonical_abbrev));
+        "PAGES: table hit ({} pages) for {}", spreads.len(), work.abbrev));
     *state.page_table.borrow_mut() = Some(std::rc::Rc::new(spreads));
     *state.page_table_fp.borrow_mut() = fp;
 }
