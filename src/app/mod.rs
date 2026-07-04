@@ -1978,6 +1978,20 @@ pub fn build_window(
                     crate::log_fmt!("RESIZE_TICK: deferred layout refresh, sw_h={}", sw_h);
                     s.needs_layout_refresh.set(false);
                     do_reveal = vbox_for_tick.opacity() < 1.0;
+                    // Pinned play pagination: once layout is settled, generate+store
+                    // the page table if this work/layout doesn't have one (no-op when
+                    // one was already loaded from lit.db, or on any fallback mode).
+                    // Gated to the deferred-layout-refresh branch only — this must
+                    // NOT fire on every qualifying resize tick (width/height
+                    // changes), since column geometry (and thus the page table)
+                    // is only settled here, not mid-resize.
+                    {
+                        let st = state_for_tick.clone();
+                        glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
+                            let s = st.borrow();
+                            crate::input::page_table::generate_and_store(&s);
+                        });
+                    }
                 } else if width_changed {
                     let cw = s.config.column_width;
                     let cc = s.column_count();
@@ -2036,16 +2050,6 @@ pub fn build_window(
                     // sourceview5::View exposes no AT-SPI Text interface, so this
                     // log line is how the harness locates the pane.
                     crate::input::scroll::emit_test_viewport_rect(&s);
-                }
-                // Pinned play pagination: once layout is settled, generate+store
-                // the page table if this work/layout doesn't have one (no-op when
-                // one was already loaded from lit.db, or on any fallback mode).
-                {
-                    let st = state_for_tick.clone();
-                    glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
-                        let s = st.borrow();
-                        crate::input::page_table::generate_and_store(&s);
-                    });
                 }
             }
             glib::ControlFlow::Continue
