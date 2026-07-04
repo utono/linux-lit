@@ -205,6 +205,12 @@ pub struct AppState {
     /// layout fingerprint matches, or generated+stored after first settled
     /// layout. None = live engine. See input::page_table.
     pub page_table: std::cell::RefCell<Option<std::rc::Rc<Vec<crate::input::page_table::Spread>>>>,
+    /// The layout fingerprint the active `page_table` was loaded/generated at
+    /// (empty when no table is active). Compared against the CURRENT
+    /// fingerprint on resize so a plain window resize (dwl retiling) can't
+    /// leave a table with stale-geometry boundaries active. See
+    /// `input::page_table::revalidate_on_resize`.
+    pub page_table_fp: std::cell::RefCell<String>,
     /// One generation attempt per work load (reset in display_work).
     pub page_table_gen_attempted: std::cell::Cell<bool>,
     /// The first buffer line hidden below each column's paged bottom clip
@@ -1520,6 +1526,7 @@ pub fn build_window(
         current_line: 0,
         prev_highlight_line: std::cell::Cell::new(None),
         page_table: std::cell::RefCell::new(None),
+        page_table_fp: std::cell::RefCell::new(String::new()),
         page_table_gen_attempted: std::cell::Cell::new(false),
         left_clip_boundary: std::cell::Cell::new(None),
         right_clip_boundary: std::cell::Cell::new(None),
@@ -1999,6 +2006,19 @@ pub fn build_window(
                     let tr = s.translations_visible;
                     apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr);
                     apply_tiled_mode(&mut s, &vbox_for_tick, ww);
+                    // Pinned play pagination: a plain window resize (dwl
+                    // retiling — routine, not a work load) leaves any loaded
+                    // page table active with boundaries for the OLD geometry
+                    // unless we check the fingerprint here too. Same settle
+                    // delay as the deferred-layout-refresh branch above so
+                    // column geometry has actually finished reflowing before
+                    // we fingerprint it; does not regenerate — see
+                    // revalidate_on_resize's doc comment.
+                    let st = state_for_tick.clone();
+                    glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
+                        let s = st.borrow();
+                        crate::input::page_table::revalidate_on_resize(&s);
+                    });
                 }
                 // Layout just changed (resize or post-load refresh) — page
                 // boundaries shift, so any cached page_tops index is stale.
@@ -2814,6 +2834,7 @@ pub fn display_work_at_with_prepared(
     state.translation_section_starts = Vec::new();
     state.page_table_gen_attempted.set(false);
     *state.page_table.borrow_mut() = None;
+    state.page_table_fp.borrow_mut().clear();
     // Load translations for this work
     if let Some(ref work) = state.current_work {
         if let Ok(conn) = crate::db::queries::open_db() {

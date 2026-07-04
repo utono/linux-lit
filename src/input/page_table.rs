@@ -37,21 +37,49 @@ pub fn validate_spreads(spreads: &[Spread], ctx: &ValidateCtx) -> Result<(), Str
     // failure: that's real content the table would never surface. Pages must
     // stay strictly ordered (`s.left_start > prev.end`); the first page's gap
     // is checked against line 0 the same way.
+    //
+    // EXCEPTION: the final consecutive pair. The last page is the canonical
+    // `G`/final-`x` anchor (`last_page_top`), forward-pulled to fill both
+    // columns, and is deliberately allowed to OVERLAP the chain's last
+    // natural page (see `record_spreads`) — the documented, benign `y`-from-
+    // the-end seam. For that pair only, require `final.left_start >
+    // prev.left_start` (still strictly progressing, no duplicate/backward
+    // page) and `final.end >= prev.end` (the anchor doesn't regress content
+    // coverage); skip the dialogue-gap scan for that pair since an overlap by
+    // construction leaves no gap. Interior pairs keep the strict rule above.
     let mut expect_start = 0usize; // one-past the previous page's end (or 0 initially)
+    let last_idx = spreads.len() - 1;
     for (i, s) in spreads.iter().enumerate() {
-        if s.left_start < expect_start {
-            return Err(format!(
-                "coverage: page {} starts at {} but previous page ended at {}",
-                i + 1, s.left_start, expect_start.saturating_sub(1)
-            ));
-        }
-        if let Some(bad) = (expect_start..s.left_start)
-            .find(|&j| ctx.is_dialogue.get(j).copied().unwrap_or(false))
-        {
-            return Err(format!(
-                "coverage: dialogue line {} falls between page {} and page {}",
-                bad, i, i + 1
-            ));
+        let is_final_pair = i == last_idx && i > 0;
+        if is_final_pair {
+            let prev = &spreads[i - 1];
+            if !(s.left_start > prev.left_start) {
+                return Err(format!(
+                    "coverage: final page {} starts at {} but must be strictly after page {}'s start {}",
+                    i + 1, s.left_start, i, prev.left_start
+                ));
+            }
+            if !(s.end >= prev.end) {
+                return Err(format!(
+                    "coverage: final page {} ends at {} which regresses page {}'s end {}",
+                    i + 1, s.end, i, prev.end
+                ));
+            }
+        } else {
+            if s.left_start < expect_start {
+                return Err(format!(
+                    "coverage: page {} starts at {} but previous page ended at {}",
+                    i + 1, s.left_start, expect_start.saturating_sub(1)
+                ));
+            }
+            if let Some(bad) = (expect_start..s.left_start)
+                .find(|&j| ctx.is_dialogue.get(j).copied().unwrap_or(false))
+            {
+                return Err(format!(
+                    "coverage: dialogue line {} falls between page {} and page {}",
+                    bad, i, i + 1
+                ));
+            }
         }
         if let Some(sp) = s.split {
             if !(s.left_start <= sp && sp <= s.end + 1) {
@@ -136,13 +164,37 @@ pub fn validate_spreads(spreads: &[Spread], ctx: &ValidateCtx) -> Result<(), Str
 }
 
 /// The page whose [left_start, end] interval contains `line`.
+///
+/// Overlap is possible only between the last two pages (the canonical final
+/// anchor spread is allowed to overlap its predecessor — see
+/// `record_spreads`/`validate_spreads`'s final-pair exception). When `line`
+/// falls in that overlap, prefer the EARLIER page: that's the natural
+/// reading order (the reader reaches `line` on the earlier page first when
+/// paging forward), and matches the live engine's own behavior of not
+/// jumping ahead to the anchor until the forward-nav guard actually fires.
+///
+/// EXCEPTION: `line` that is itself a page's own `left_start` (a page TOP —
+/// e.g. `state.page_top_line`, used by nav to ask "which page am I currently
+/// on") always resolves to THAT page, never to an earlier page that merely
+/// happens to overlap it. Without this, `page_backward`/`page_forward`
+/// looking up their own current page top would be redirected to the earlier
+/// overlapping page and mis-navigate by an extra page at the overlap.
 pub fn page_for_line(spreads: &[Spread], line: usize) -> Option<usize> {
     let idx = spreads.partition_point(|s| s.left_start <= line);
     if idx == 0 {
         return None;
     }
     let i = idx - 1;
-    (line <= spreads[i].end).then_some(i)
+    if !(line <= spreads[i].end) {
+        return None;
+    }
+    if spreads[i].left_start == line {
+        return Some(i);
+    }
+    if i > 0 && line <= spreads[i - 1].end {
+        return Some(i - 1);
+    }
+    Some(i)
 }
 
 /// Everything the page geometry depends on. `ascent`/`descent`/`char_width`
@@ -239,22 +291,19 @@ pub fn record_spreads(state: &crate::app::AppState) -> Result<Vec<Spread>, Strin
             return Err("determinism: forward chain did not terminate".into());
         }
     }
-    // The final spread must be the same anchor G uses. Only replace the tail
-    // when the chain's own natural last page does NOT already reach at least
-    // as far as that anchor: `last_page_top` (navigation.rs) walks a SEPARATE
-    // dialogue-driven chain and can settle on a different (earlier, mid-column)
-    // stopping point than the column_split-pure chain above, which — being the
-    // source of truth for spread boundaries — may legitimately continue
-    // further and already cover the anchor inside its own right column. In
-    // that case forcing a foreign anchor here would truncate a spread that is
-    // already both valid and further along, stranding real content and
-    // fabricating a watermark violation. Only pull the tail forward/backward
-    // to `anchor` when the chain's last page hasn't reached it.
+    // The FINAL page must BE the same canonical anchor spread `G`/final-`x`
+    // lands on in the live engine (`last_page_top`, navigation.rs) — not the
+    // chain's own natural short tail page. This is deliberate live-engine UX
+    // (docs/troubleshooting/page-turning-mechanics.md, "final spread is
+    // special"): the anchor is forward-pulled so the tail content fills both
+    // columns, and it is ALLOWED to overlap the chain's last natural page —
+    // paging backward (`y`) from the anchor legitimately does not tile with
+    // it ("a small benign seam — the fuzz exempts it"). Model that seam here
+    // rather than truncating a survivor to force contiguity: drop whole
+    // trailing spreads whose `left_start >= anchor` (never mutate a
+    // surviving spread's `end`/`split`), then push the anchor spread itself.
     let anchor = crate::input::navigation::last_page_top(state);
-    let last_already_covers_anchor = spreads.last().map_or(false, |s| anchor <= s.end);
-    if !last_already_covers_anchor && spreads.last().map(|s| s.left_start) != Some(anchor) {
-        // Replace the trailing spread(s) with the canonical final spread so the
-        // chain and G agree (the dialogue-tail pull-forward case).
+    if spreads.last().map(|s| s.left_start) != Some(anchor) {
         while spreads.last().map_or(false, |s| s.left_start >= anchor) {
             spreads.pop();
         }
@@ -265,18 +314,6 @@ pub fn record_spreads(state: &crate::app::AppState) -> Result<Vec<Spread>, Strin
             split,
             end: cs.page_end.min(line_count.saturating_sub(1)),
         });
-        // Truncate the previous spread so coverage stays contiguous.
-        let n = spreads.len();
-        if n >= 2 {
-            let prev_end = anchor.saturating_sub(1);
-            let prev = &mut spreads[n - 2];
-            if prev.end >= anchor {
-                prev.end = prev_end;
-                if prev.split.map_or(false, |sp| sp > prev_end) {
-                    prev.split = None;
-                }
-            }
-        }
     }
     Ok(spreads)
 }
@@ -412,6 +449,7 @@ pub fn generate_and_store(state: &crate::app::AppState) {
         "PAGES: generated {} pages for {} fp={}", rows.len(), work.canonical_abbrev, fp));
     // Make the fresh table active this session.
     *state.page_table.borrow_mut() = Some(std::rc::Rc::new(spreads));
+    *state.page_table_fp.borrow_mut() = fp;
 }
 
 /// Load a stored table for the current work if BOTH fingerprints match.
@@ -420,6 +458,7 @@ pub fn generate_and_store(state: &crate::app::AppState) {
 /// after re-import — db_fingerprint should have caught it, belt+braces).
 pub fn load_for_work(state: &crate::app::AppState) {
     *state.page_table.borrow_mut() = None;
+    state.page_table_fp.borrow_mut().clear();
     if std::env::var_os("LIT_NO_PAGE_TABLE").is_some() {
         return;
     }
@@ -474,6 +513,37 @@ pub fn load_for_work(state: &crate::app::AppState) {
     crate::logging::log(&format!(
         "PAGES: table hit ({} pages) for {}", spreads.len(), work.canonical_abbrev));
     *state.page_table.borrow_mut() = Some(std::rc::Rc::new(spreads));
+    *state.page_table_fp.borrow_mut() = fp;
+}
+
+/// Drop a loaded/generated table whose fingerprint no longer matches the
+/// CURRENT layout — the fix for plain-resize staleness: `load_for_work` only
+/// runs at work-load / the settled-layout hook, so a routine window resize
+/// (dwl retiling) otherwise leaves the old `Rc<Vec<Spread>>` active with
+/// boundaries computed for the old geometry. Called from the resize tick's
+/// settled-size branch (see `app::mod`), NOT from every tick — this must run
+/// at most once per settled resize.
+///
+/// If a table is active and its fingerprint has gone stale, clear it (and its
+/// recorded fingerprint) and try `load_for_work` once so a stored table
+/// matching the NEW fingerprint (if one exists in lit.db for this work/layout)
+/// takes over immediately. If none exists, `load_for_work` leaves `page_table`
+/// `None` and the live engine's fallback handles rendering/navigation — this
+/// function deliberately does NOT call `generate_and_store`, so a page table
+/// is never (re)generated as a side effect of a resize; regeneration stays
+/// lazy (the existing settled-layout hook covers that separately).
+pub fn revalidate_on_resize(state: &crate::app::AppState) {
+    if state.page_table.borrow().is_none() {
+        return;
+    }
+    let current_fp = layout_fingerprint(state);
+    if current_fp == *state.page_table_fp.borrow() {
+        return; // still valid at this geometry
+    }
+    crate::logging::log("PAGES: dropped table (layout changed)");
+    *state.page_table.borrow_mut() = None;
+    state.page_table_fp.borrow_mut().clear();
+    load_for_work(state);
 }
 
 /// The single consumption gate. Every navigation/render consumer goes through
@@ -537,13 +607,24 @@ mod tests {
 
     #[test]
     fn gap_between_pages_fails_coverage() {
-        let h = vec![10; 10];
-        let d = vec![true; 10]; // line 6 (in the gap) is dialogue -> still a failure
+        // Three pages so the gap (between page 1 and page 2) is an INTERIOR
+        // pair, not the final pair — the final-pair overlap exemption must
+        // not mask a dialogue line stranded in an interior gap.
+        let h = vec![10; 15];
+        let d = vec![true; 15]; // line 6 (in the gap) is dialogue -> still a failure
         let s = vec![
             Spread { left_start: 0, split: Some(3), end: 5 },
             Spread { left_start: 7, split: Some(9), end: 9 }, // line 6 dropped
+            Spread { left_start: 10, split: Some(13), end: 14 },
         ];
-        let err = validate_spreads(&s, &ctx(&h, &d)).unwrap_err();
+        let c = ValidateCtx {
+            line_count: h.len(),
+            is_dialogue: &d,
+            section_starts: None,
+            heights: &h,
+            usable_height: 30,
+        };
+        let err = validate_spreads(&s, &c).unwrap_err();
         assert!(err.contains("coverage"), "got: {err}");
     }
 
@@ -632,6 +713,62 @@ mod tests {
         assert_eq!(page_for_line(&s, 6), Some(1));
         assert_eq!(page_for_line(&s, 9), Some(1));
         assert_eq!(page_for_line(&s, 10), None);
+    }
+
+    #[test]
+    fn final_page_may_overlap_predecessor() {
+        let h = vec![10; 10];
+        let mut d = vec![true; 10];
+        d[9] = false; // trailing non-dialogue line so `end: 8` still satisfies the tail rule
+        // Page 0: left col 0..=1 (2 lines, sums to 20), right col 2..=4 (3
+        // lines, sums to 30) — both fit usable_height 30. Last page's
+        // left_start (3) is inside page 0's range (0..=4) — the
+        // canonical-anchor overlap. Must still pass: strictly progressing
+        // start (3 > 0), and end (8) >= prev.end (4).
+        let s = vec![
+            Spread { left_start: 0, split: Some(2), end: 4 },
+            Spread { left_start: 3, split: Some(6), end: 8 },
+        ];
+        assert!(validate_spreads(&s, &ctx(&h, &d)).is_ok(), "final-pair overlap must be exempt");
+
+        // The SAME overlap shape one pair earlier (interior, not final) must
+        // still fail — the exception is final-pair only.
+        let s_interior = vec![
+            Spread { left_start: 0, split: Some(2), end: 4 },
+            Spread { left_start: 3, split: Some(4), end: 4 }, // overlaps page 0, NOT the last page
+            Spread { left_start: 5, split: Some(8), end: 9 },
+        ];
+        let c = ValidateCtx {
+            line_count: h.len(),
+            is_dialogue: &d,
+            section_starts: None,
+            heights: &h,
+            usable_height: 30,
+        };
+        let err = validate_spreads(&s_interior, &c).unwrap_err();
+        assert!(err.contains("coverage"), "got: {err}");
+    }
+
+    #[test]
+    fn overlap_lines_resolve_to_earlier_page() {
+        // Final page (index 1) overlaps the predecessor (index 0): page 0
+        // spans 0..=7, page 1 starts at 6 (inside page 0's range) and spans
+        // 6..=9. Lines strictly inside the overlap (7) that are NOT
+        // themselves a page's own top resolve to the EARLIER page (natural
+        // reading order). Line 6 IS page 1's own left_start (its identity as
+        // a page top — what `page_top_line` holds after landing on it), so
+        // it must resolve to page 1 itself, not be redirected backward — this
+        // is what `page_backward`/`page_forward` rely on to find "which page
+        // am I on" without mis-navigating by an extra page at the seam.
+        let s = vec![
+            Spread { left_start: 0, split: Some(3), end: 7 },
+            Spread { left_start: 6, split: Some(9), end: 9 },
+        ];
+        assert_eq!(page_for_line(&s, 5), Some(0), "before overlap: page 0");
+        assert_eq!(page_for_line(&s, 6), Some(1), "page 1's own top resolves to page 1");
+        assert_eq!(page_for_line(&s, 7), Some(0), "in overlap, not a page top: prefer earlier page");
+        assert_eq!(page_for_line(&s, 8), Some(1), "past overlap: page 1");
+        assert_eq!(page_for_line(&s, 9), Some(1));
     }
 
     #[test]
