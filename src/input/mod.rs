@@ -5,6 +5,7 @@ pub mod keymap;
 pub mod keymap_config;
 pub mod nav_test;
 pub mod navigation;
+pub mod page_table;
 pub mod picker_dispatch;
 pub mod picker_keys;
 pub mod scroll;

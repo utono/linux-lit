@@ -133,6 +133,26 @@ Page state lives in `AppState`:
   `page_backward`. The offset is in the entry so `y` round-trips a mid-paragraph
   forward turn exactly.
 
+## Pinned page tables (plays)
+
+Two-column plays at the pinned layout (the user's Charter/1920x1200 reading
+setup) do NOT run the forward-walk heuristics at all: pages come from lit.db
+`play_pages` (keyed by `line_mapping` ids + a layout fingerprint), generated
+once in-app by recording the live engine's walk and gating it behind the
+invariant suite in `src/input/page_table.rs` (coverage, tail, fit,
+watermark-sanity, determinism). `x`/`y`/`G`/`gg`/lookups are index arithmetic
+(`PAGES:` log lines). EVERYTHING in this document still applies to the
+fallback modes — fingerprint mismatch (font/resolution change, re-import),
+interlinear translations, scroll mode, 1-col — which use the live engine
+unchanged, and to the generator itself (the table is only as good as the
+walk it records; a walk bug becomes a VALIDATE_FAIL or a bad stored table).
+Audit stored tables with the validate-play-pages skill. One benign
+representation difference: a one-line right column whose only line is an
+unmapped blank/stage direction (no `line_mapping` row) stores as an
+empty-right page (`split_id` NULL) — the blank renders below the left
+column's clip instead of atop the right column; both are invisible, and
+extents match a live recompute.
+
 ## Prose over-tall paragraph (sub-line paging)
 
 **The trap:** prose stores ONE buffer line per paragraph, and a long paragraph

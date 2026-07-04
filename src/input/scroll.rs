@@ -584,8 +584,21 @@ pub(crate) fn snap_scroll_to_line_offset(state: &mut AppState, line: usize, offs
     // (which would underfill the column) or its fill-guard (which would render
     // past the split and duplicate the right column's top lines).
     let two_col = state.column_count() == 2;
+    let table = crate::input::page_table::active_page_table(state);
+    let table_spread = table.as_ref().and_then(|t|
+        crate::input::page_table::spread_for_top(t, effective_top).copied());
     let cs = if two_col {
-        Some(super::viewport::column_split(state, effective_top))
+        if let Some(s) = table_spread {
+            // Synthesize the ColumnSplit the downstream code expects from the
+            // stored spread — column_split() is NOT consulted in table mode.
+            Some(super::viewport::ColumnSplit {
+                split: s.split.unwrap_or(s.end + 1),
+                page_end: s.end,
+                next_page_top: s.end + 1,
+            })
+        } else {
+            Some(super::viewport::column_split(state, effective_top))
+        }
     } else {
         None
     };

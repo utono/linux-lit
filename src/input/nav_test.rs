@@ -21,6 +21,11 @@ pub struct NavTestState {
     pub prev_top: usize,
     pub expect_return: Option<usize>,
     pub fuzz: bool,
+    /// Table-mode page-monotonicity tracker: (page_index, table_len) as of the
+    /// last PageForward/PageBackward step, keyed off `page_for_line` on the
+    /// landed `page_top_line`. `None` when the table is inactive (live-engine
+    /// runs) or no PageForward/PageBackward has landed on a table page yet.
+    pub last_page_no: Option<(usize, usize)>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -312,6 +317,7 @@ pub fn toggle(state_rc: &Rc<RefCell<AppState>>) {
     s.nav_test.failures = 0;
     s.nav_test.prev_top = s.page_top_line;
     s.nav_test.expect_return = None;
+    s.nav_test.last_page_no = None;
     // Opt into the long random fuzz script via env (for headless 5-min runs).
     s.nav_test.fuzz = std::env::var("LIT_NAV_FUZZ").map(|v| v == "1").unwrap_or(false);
     crate::log_fmt!(
@@ -585,7 +591,7 @@ fn run_step(s: &mut AppState) {
     // spread — the page boundary landed too early. Exempt the genuine final
     // spread (short tail) and pages whose remaining content legitimately ends.
     if s.column_count() == 2 && line_count > 0 && !s.loading_work.get() {
-        let cs = crate::input::viewport::column_split(s, post_top);
+        let (cs, table_empty_right) = effective_column_split(s, post_top);
         let left_lines = cs.split.saturating_sub(post_top);
         let right_lines = (cs.page_end + 1).saturating_sub(cs.split);
         let more_below = cs.next_page_top < line_count
@@ -611,12 +617,85 @@ fn run_step(s: &mut AppState) {
         };
         // Unbalanced: right column is less than a third of the left AND there's
         // more content that could have filled it AND it didn't clamp at a scene.
-        if more_below && !clamped_at_scene && right_lines * 3 < left_lines && left_lines >= 12 {
+        // A sanctioned empty-right table page (stored split == None) is exempt:
+        // its right column renders empty by design, so "balance" is undefined.
+        if more_below && !clamped_at_scene && !table_empty_right
+            && right_lines * 3 < left_lines && left_lines >= 12 {
             fail(s, step_num, step, &format!(
                 "UNBALANCED SPREAD: top={} left={} lines right={} lines (more content below) split={} page_end={}",
                 post_top, left_lines, right_lines, cs.split, cs.page_end
             ));
         }
+    }
+
+    // 2f. PAGE-NUMBER MONOTONICITY (table mode only). When the table-driven
+    // path is active, consecutive PageForward/PageBackward steps must move
+    // exactly one page at a time through `active_page_table`'s index space —
+    // this is the fuzz-level guard that the `PAGES: page N/M` log lines
+    // (Task 5) always agree with reality, not just at the geometry the unit
+    // tests probe. Skipped entirely when `active_page_table` is `None`
+    // (live-engine fallback runs must not change behavior). Page tops are
+    // exact matches for `page_for_line`, so read the CURRENT page from
+    // `post_top`, not `post_line` (which can sit mid-page and, near the final
+    // overlapping spread, resolve ambiguously).
+    //
+    // Any OTHER step (JumpTop, JumpEnd, NextScene, NextChapter, bookmarks,
+    // NextDialogue/PrevDialogue, SyncAdvance, SearchJump) legitimately
+    // repositions the page outside the ±1 relationship — those are jumps, not
+    // page turns. `last_page_no` tracking must therefore span only an
+    // unbroken run of PageForward/PageBackward steps; a jump in between resets
+    // it so the NEXT PageForward/PageBackward is treated as the start of a new
+    // run (recorded, not compared) rather than compared against a stale index
+    // from before the jump.
+    if matches!(step, Step::PageForward | Step::PageBackward) {
+        if let Some(table) = crate::input::page_table::active_page_table(s) {
+            let table_len = table.len();
+            if let Some(cur_idx) = crate::input::page_table::page_for_line(&table, post_top) {
+                if let Some((prev_idx, prev_len)) = s.nav_test.last_page_no {
+                    // A layout/table regeneration mid-run changes the length;
+                    // don't compare indices across two different tables.
+                    if prev_len == table_len {
+                        let forward = matches!(step, Step::PageForward);
+                        let last = table_len - 1;
+                        let ok = if forward {
+                            cur_idx == prev_idx + 1
+                                || (prev_idx == last && cur_idx == last) // at-end pin
+                                // The canonical G-seam: PageForward from the
+                                // second-to-last page can land on the final
+                                // (overlapping) page, which is still +1 by
+                                // INDEX even though its top may be < the
+                                // previous page's end.
+                                || (prev_idx + 1 == last && cur_idx == last)
+                        } else {
+                            (prev_idx > 0 && cur_idx + 1 == prev_idx)
+                                || (prev_idx == 0 && cur_idx == 0) // at-start pin
+                        };
+                        if !ok {
+                            fail(s, step_num, step, &format!(
+                                "Pages: non-monotone (was {} now {})",
+                                prev_idx + 1, cur_idx + 1
+                            ));
+                        }
+                    }
+                }
+                s.nav_test.last_page_no = Some((cur_idx, table_len));
+            } else {
+                // Landed off-table (no page contains `post_top`) — covered by
+                // other checks (e.g. landing/clipping). Drop tracking rather
+                // than comparing the NEXT step against a stale known-good
+                // page across this gap.
+                s.nav_test.last_page_no = None;
+            }
+        } else {
+            // Live-engine fallback: nothing to track.
+            s.nav_test.last_page_no = None;
+        }
+    } else {
+        // Any non-Page step is a jump: it may reposition the page arbitrarily,
+        // so the ±1 relationship no longer holds against whatever
+        // PageForward/PageBackward comes next. Reset tracking; the next Page
+        // step starts a fresh run.
+        s.nav_test.last_page_no = None;
     }
 
     // 3. No scene break mid-page. A marker that STARTS a column is a legitimate
@@ -707,13 +786,17 @@ fn run_step(s: &mut AppState) {
     // lone EPILOGUE in the left column (empty right) or anchored G so late the
     // left column had a few lines and a huge gap.
     if s.column_count() == 2 && s.current_work.is_some() && line_count > 0 {
-        let cs = crate::input::viewport::column_split(s, post_top);
+        let (cs, table_empty_right) = effective_column_split(s, post_top);
         // Does ALL remaining content (post_top..end) fit in a single column? If
         // so an empty right column is unavoidable and fine. Approximate: the work
         // genuinely ends within this spread's left column.
         let tail_fits_one_col = cs.split >= line_count;
         let right_empty = cs.split >= line_count || cs.page_end < cs.split;
-        if right_empty && !tail_fits_one_col {
+        // A sanctioned empty-right table page (stored split == None: a scene-end
+        // watermark spread, or a right column whose only content was an unmapped
+        // blank folded away at storage time) renders empty-right BY DESIGN —
+        // generation's validate_spreads vouched for its coverage.
+        if right_empty && !tail_fits_one_col && !table_empty_right {
             fail(s, step_num, step, &format!(
                 "RIGHT COLUMN EMPTY (top={} split={} page_end={} line_count={})",
                 post_top, cs.split, cs.page_end, line_count
@@ -803,7 +886,7 @@ fn run_step(s: &mut AppState) {
     // forward would still reveal more. This is the 4308-vs-4316 bug — the cursor
     // was on-page but the page wasn't the end of the work.
     if matches!(step, Step::JumpEnd) && s.column_count() == 2 && line_count > 0 {
-        let cs = crate::input::viewport::column_split(s, post_top);
+        let (cs, _) = effective_column_split(s, post_top);
         if cs.next_page_top < line_count {
             // Only a bug if the remaining lines actually contain dialogue/content
             // worth showing (not just trailing blanks/exit markers).
@@ -846,7 +929,7 @@ fn run_step(s: &mut AppState) {
     // (The screenshot detector stays as an occasional oracle to confirm the
     // in-app geometry agrees with rendered pixels.)
     if s.column_count() == 2 && line_count > 0 && !s.loading_work.get() {
-        let cs = crate::input::viewport::column_split(s, post_top);
+        let (cs, _) = effective_column_split(s, post_top);
         // Left column spans [post_top, split-1]; right column [split, page_end].
         if let Some(msg) = clip_violation(
             &s.text_view, &s.scrolled_window, &s.buffer,
@@ -872,6 +955,59 @@ fn run_step(s: &mut AppState) {
     }
 
     s.nav_test.step += 1;
+}
+
+/// Column boundaries for the page whose top is `top`, taken from the source
+/// that actually RENDERED that page. In table mode the renderer
+/// (`scroll.rs::snap_scroll_to_line_offset`) takes split/end from the STORED
+/// spread (`spread_for_top`), NOT from a fresh `column_split` — and the two
+/// can legitimately differ: an unmapped blank/stage-direction boundary line
+/// (no `line_mapping` id) is forward-snapped to the first mapped line at
+/// storage time, so the blank renders at the BOTTOM of the left column
+/// instead of the TOP of the right (no ink lost, nothing clipped). A check
+/// that re-derives the boundary with a fresh `column_split` re-infers a
+/// boundary the renderer didn't use and false-positives (MND top=471: fresh
+/// split=481, a ~7px unmapped blank; stored split snapped to 482 — the
+/// "RIGHT COLUMN CLIPPED ... 7px" class). Same assertion-re-inference lesson
+/// as the 2H6/Cor/Ham `section_starts` case (CLAUDE.md: when a nav-fuzz FAIL
+/// is at a boundary, first ask whether the ASSERTION is re-inferring it).
+/// `split == None` in a stored spread is the sanctioned empty-right
+/// (watermark) page; synthesize `split = end + 1` exactly like the renderer
+/// so `page_end < split` naturally skips the right-column checks. Live mode
+/// (no table, or `top` off-table) keeps the fresh `column_split` behavior
+/// unchanged.
+/// Returns `(cs, table_empty_right)`: `table_empty_right` is true only for a
+/// table spread stored with `split == None` — the sanctioned empty-right page
+/// — so the right-column shape checks (RIGHT COLUMN EMPTY / UNBALANCED) can
+/// exempt it. In table mode `next_page_top` is the NEXT spread's
+/// `left_start` (page_forward's actual landing), not `end + 1`: trimmed
+/// non-dialogue gap lines (blanks / exit stage-directions before a scene
+/// marker) legitimately sit between one page's `end` and the next page's
+/// top, and the `clamped_at_scene` scans must reach the marker beyond that
+/// gap (with `end + 1` they stop short and false-positive UNBALANCED at
+/// scene edges, e.g. MND page top=300).
+fn effective_column_split(
+    s: &AppState,
+    top: usize,
+) -> (crate::input::viewport::ColumnSplit, bool) {
+    if let Some(table) = crate::input::page_table::active_page_table(s) {
+        if let Some(i) = table.iter().position(|sp| sp.left_start == top) {
+            let sp = table[i];
+            let next_page_top = table
+                .get(i + 1)
+                .map(|n| n.left_start)
+                .unwrap_or(sp.end + 1);
+            return (
+                crate::input::viewport::ColumnSplit {
+                    split: sp.split.unwrap_or(sp.end + 1),
+                    page_end: sp.end,
+                    next_page_top,
+                },
+                sp.split.is_none(),
+            );
+        }
+    }
+    (crate::input::viewport::column_split(s, top), false)
 }
 
 /// In-app clipping check for one column: do the `top` and `bottom` visible lines

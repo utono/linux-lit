@@ -201,6 +201,18 @@ pub struct AppState {
     pub current_work: Option<Work>,
     pub current_line: usize,
     pub prev_highlight_line: std::cell::Cell<Option<usize>>,
+    /// Pinned play page table (buffer-line space), loaded from lit.db when the
+    /// layout fingerprint matches, or generated+stored after first settled
+    /// layout. None = live engine. See input::page_table.
+    pub page_table: std::cell::RefCell<Option<std::rc::Rc<Vec<crate::input::page_table::Spread>>>>,
+    /// The layout fingerprint the active `page_table` was loaded/generated at
+    /// (empty when no table is active). Compared against the CURRENT
+    /// fingerprint on resize so a plain window resize (dwl retiling) can't
+    /// leave a table with stale-geometry boundaries active. See
+    /// `input::page_table::revalidate_on_resize`.
+    pub page_table_fp: std::cell::RefCell<String>,
+    /// One generation attempt per work load (reset in display_work).
+    pub page_table_gen_attempted: std::cell::Cell<bool>,
     /// The first buffer line hidden below each column's paged bottom clip
     /// (left/main view: the two-column `exact_end` = `cs.split`, `None` in
     /// single-column mode; right view: `cs.page_end + 1`). Stored so
@@ -1513,6 +1525,9 @@ pub fn build_window(
         current_work: None,
         current_line: 0,
         prev_highlight_line: std::cell::Cell::new(None),
+        page_table: std::cell::RefCell::new(None),
+        page_table_fp: std::cell::RefCell::new(String::new()),
+        page_table_gen_attempted: std::cell::Cell::new(false),
         left_clip_boundary: std::cell::Cell::new(None),
         right_clip_boundary: std::cell::Cell::new(None),
         page_top_line: 0,
@@ -1970,12 +1985,48 @@ pub fn build_window(
                     crate::log_fmt!("RESIZE_TICK: deferred layout refresh, sw_h={}", sw_h);
                     s.needs_layout_refresh.set(false);
                     do_reveal = vbox_for_tick.opacity() < 1.0;
-                } else if width_changed {
-                    let cw = s.config.column_width;
-                    let cc = s.column_count();
-                    let tr = s.translations_visible;
-                    apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr);
-                    apply_tiled_mode(&mut s, &vbox_for_tick, ww);
+                    // Pinned play pagination: once layout is settled, generate+store
+                    // the page table if this work/layout doesn't have one (no-op when
+                    // one was already loaded from lit.db, or on any fallback mode).
+                    // Gated to the deferred-layout-refresh branch only — this must
+                    // NOT fire on every qualifying resize tick (width/height
+                    // changes), since column geometry (and thus the page table)
+                    // is only settled here, not mid-resize.
+                    {
+                        let st = state_for_tick.clone();
+                        glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
+                            let s = st.borrow();
+                            crate::input::page_table::load_for_work(&s);
+                            crate::input::page_table::generate_and_store(&s);
+                        });
+                    }
+                } else {
+                    if width_changed {
+                        let cw = s.config.column_width;
+                        let cc = s.column_count();
+                        let tr = s.translations_visible;
+                        apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr);
+                        apply_tiled_mode(&mut s, &vbox_for_tick, ww);
+                    }
+                    if width_changed || height_changed {
+                        // Pinned play pagination: a plain window resize (dwl
+                        // retiling — routine, not a work load) leaves any loaded
+                        // page table active with boundaries for the OLD geometry
+                        // unless we check the fingerprint here too. This must also
+                        // fire on a HEIGHT-ONLY change (e.g. dwl stack-retiling
+                        // that changes height without width) — the fingerprint
+                        // includes height, so a height-only resize can go stale
+                        // just as easily as a width-only one. Same settle delay
+                        // as the deferred-layout-refresh branch above so column
+                        // geometry has actually finished reflowing before we
+                        // fingerprint it; does not regenerate — see
+                        // revalidate_on_resize's doc comment.
+                        let st = state_for_tick.clone();
+                        glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
+                            let s = st.borrow();
+                            crate::input::page_table::revalidate_on_resize(&s);
+                        });
+                    }
                 }
                 // Layout just changed (resize or post-load refresh) — page
                 // boundaries shift, so any cached page_tops index is stale.
@@ -2789,6 +2840,9 @@ pub fn display_work_at_with_prepared(
     state.translations_visible = false;
     state.translation_lines = Vec::new();
     state.translation_section_starts = Vec::new();
+    state.page_table_gen_attempted.set(false);
+    *state.page_table.borrow_mut() = None;
+    state.page_table_fp.borrow_mut().clear();
     // Load translations for this work
     if let Some(ref work) = state.current_work {
         if let Ok(conn) = crate::db::queries::open_db() {
@@ -3243,6 +3297,14 @@ pub fn display_work_at_with_prepared(
     // Page label is set later by the resize tick once layout is valid.
     // Setting it here would compute a degenerate page=1 because the
     // scrolled_window is still hidden and text_view.height() is 0.
+
+    // Pinned play pagination: attempt to load a stored table for this work now
+    // that current_work, the buffer, and line_map are all set. The layout
+    // fingerprint depends on window size, which may still be 0 pre-first-layout
+    // (fresh startup) — in that case this misses and the resize-tick generation
+    // hook's own load_for_work call (before generate_and_store) picks it up
+    // once geometry settles.
+    crate::input::page_table::load_for_work(state);
 
     // Apply highlight, snap scroll, show the scrolled window.
     let t7 = std::time::Instant::now();

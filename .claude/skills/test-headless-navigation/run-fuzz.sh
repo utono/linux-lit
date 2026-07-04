@@ -33,6 +33,12 @@ SECS=330
 START_WORK="${LIT_START_WORK:-}"
 START_POS="${LIT_START_POS:-}"
 NAV_SEED="${LIT_NAV_SEED:-}"
+# Page-table generation/fallback toggles (src/input/page_table.rs) — same
+# forwarding problem as the hermetic-start vars above: e2e-env.sh's
+# dbus-run-session re-exec doesn't guarantee ambient env inheritance, so these
+# must be threaded through explicitly if set in the calling shell.
+GEN_PAGE_TABLE="${LIT_GEN_PAGE_TABLE:-}"
+NO_PAGE_TABLE="${LIT_NO_PAGE_TABLE:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --secs) SECS="$2"; shift 2 ;;
@@ -98,6 +104,8 @@ HERMETIC=()
 [[ -n "$START_WORK" ]] && HERMETIC+=("LIT_START_WORK=$START_WORK")
 [[ -n "$START_POS"  ]] && HERMETIC+=("LIT_START_POS=$START_POS")
 [[ -n "$NAV_SEED"   ]] && HERMETIC+=("LIT_NAV_SEED=$NAV_SEED")
+[[ -n "$GEN_PAGE_TABLE" ]] && HERMETIC+=("LIT_GEN_PAGE_TABLE=$GEN_PAGE_TABLE")
+[[ -n "$NO_PAGE_TABLE"  ]] && HERMETIC+=("LIT_NO_PAGE_TABLE=$NO_PAGE_TABLE")
 
 setsid env -u WAYLAND_DISPLAY \
   XDG_RUNTIME_DIR="$RT" GSK_RENDERER=cairo \
