@@ -120,6 +120,62 @@ pub fn page_for_line(spreads: &[Spread], line: usize) -> Option<usize> {
     (line <= spreads[i].end).then_some(i)
 }
 
+/// Everything the page geometry depends on. `ascent`/`descent`/`char_width`
+/// come from a Pango metrics probe of the ACTIVE font so a font-stack upgrade
+/// that changes metrics at the same nominal size invalidates stored tables.
+#[derive(Debug, Clone)]
+pub struct FingerprintParts {
+    pub font_family: String,
+    pub font_size: u32,
+    pub ascent: i32,
+    pub descent: i32,
+    pub char_width: i32,
+    pub width: i32,
+    pub height: i32,
+    pub line_spacing: u32,
+    pub text_margins: u32,
+    pub columns: u8,
+}
+
+/// "v1|" + the parts, pipe-joined. Human-readable on purpose: the
+/// validate-play-pages skill prints it verbatim so a stale table is
+/// self-explaining (you can see WHICH input moved).
+pub fn fingerprint_string(p: &FingerprintParts) -> String {
+    format!(
+        "v1|{}|{}|{}|{}|{}|{}x{}|{}|{}|{}",
+        p.font_family, p.font_size, p.ascent, p.descent, p.char_width,
+        p.width, p.height, p.line_spacing, p.text_margins, p.columns
+    )
+}
+
+/// GTK wrapper: probe the live view. Uses the same font source as
+/// `descender_guard_px` (the `font-size` tag, avoiding the CSS-application
+/// race) and the toplevel window size (the dwl-tiled size, e.g. 1920x1200).
+pub fn layout_fingerprint(state: &crate::app::AppState) -> String {
+    use gtk4::prelude::{TextTagExt, TextBufferExt, TextViewExt, WidgetExt};
+    let ctx = state.text_view.pango_context();
+    let font_desc = state
+        .text_view
+        .buffer()
+        .tag_table()
+        .lookup("font-size")
+        .and_then(|tag| tag.font_desc());
+    let metrics = ctx.metrics(font_desc.as_ref(), None);
+    let parts = FingerprintParts {
+        font_family: state.config.font_family.clone(),
+        font_size: state.config.font_size,
+        ascent: metrics.ascent() / pango::SCALE,
+        descent: metrics.descent() / pango::SCALE,
+        char_width: metrics.approximate_char_width() / pango::SCALE,
+        width: state.window.width(),
+        height: state.window.height(),
+        line_spacing: state.config.line_spacing,
+        text_margins: state.config.text_margins,
+        columns: state.column_count(),
+    };
+    fingerprint_string(&parts)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -230,5 +286,22 @@ mod tests {
         assert_eq!(page_for_line(&s, 6), Some(1));
         assert_eq!(page_for_line(&s, 9), Some(1));
         assert_eq!(page_for_line(&s, 10), None);
+    }
+
+    #[test]
+    fn fingerprint_is_stable_and_input_sensitive() {
+        let p = FingerprintParts {
+            font_family: "Charter".into(), font_size: 17,
+            ascent: 16, descent: 5, char_width: 9,
+            width: 1920, height: 1200, line_spacing: 6, text_margins: 24,
+            columns: 2,
+        };
+        let a = fingerprint_string(&p);
+        assert_eq!(a, fingerprint_string(&p), "must be deterministic");
+        assert!(a.starts_with("v1|"), "schema-versioned: {a}");
+        let mut q = FingerprintParts { font_size: 18, ..p };
+        assert_ne!(a, fingerprint_string(&q));
+        q = FingerprintParts { descent: 6, font_size: 17, ..q };
+        assert_ne!(a, fingerprint_string(&q));
     }
 }
