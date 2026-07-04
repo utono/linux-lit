@@ -33,7 +33,7 @@ const fn bare(unshifted: &'static str, shifted: &'static str, action: &'static s
 
 const NUMBER_ROW: &[KeyDef] = &[
     ub("$", "~"),
-    bare("+", "1", "toggle speed"),
+    bare("+", "1", "show chapter"),
     key("[", "2", "prev ch", "2: prev ch", &[("M-[", "col layout")]),
     key("{", "3", "next ch", "3: next ch", &[]),
     key("(", "4", "prev bkmk", "4: prev ch", &[]),
@@ -49,7 +49,7 @@ const NUMBER_ROW: &[KeyDef] = &[
 const BACKSPACE: KeyDef = bare("\u{232b}", "", "delete ts");
 
 const UPPER_ROW: &[KeyDef] = &[
-    key(";", ":", "prev bkmk", ":: show chapter", &[]),
+    key(";", ":", "prev bkmk", ":: toggle speed", &[]),
     key(",", "<", "prev speaker", "<: prev dlg", &[("C-,", "settings")]),
     key(".", ">", "", "", &[("C-.", "bookmarks")]),
     key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("C-p", "lib picker"), ("S-C-p", "conc word"), ("C-M-p", "conc list")]),

@@ -245,11 +245,11 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("braceleft"), Action::JumpToNextScene),
         (KeyCombo::plain("C"), Action::ShowCurrentChapter),
         // Shift+; emits ("colon", shift=true) on this layout (same class as
-        // Shift+, → "less") — toast the current act/scene or chapter. The
-        // bare-name form is bound too in case the compositor reports
-        // ("semicolon", shift=true) instead.
-        (KeyCombo::shift("colon"), Action::ShowCurrentChapter),
-        (KeyCombo::shift("semicolon"), Action::ShowCurrentChapter),
+        // Shift+, → "less") — toggle playback speed. The bare-name form is
+        // bound too in case the compositor reports ("semicolon", shift=true)
+        // instead.
+        (KeyCombo::shift("colon"), Action::TogglePlaybackSpeed),
+        (KeyCombo::shift("semicolon"), Action::TogglePlaybackSpeed),
         // Bookmarks (`(`/`&` on the AE04/AE05 keys; `;`/`'` are home-region
         // aliases — `;` displaced ShowCurrentChapter, which keeps `C` and
         // gains Shift+`;`)
@@ -283,7 +283,7 @@ fn media_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("Left"), Action::SeekShortBackward),
         (KeyCombo::ctrl("Up"), Action::VolumeUp),
         (KeyCombo::ctrl("Down"), Action::VolumeDown),
-        (KeyCombo::plain("plus"), Action::TogglePlaybackSpeed),
+        (KeyCombo::plain("plus"), Action::ShowCurrentChapter),
     ]
 }
 
