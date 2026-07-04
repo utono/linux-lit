@@ -1764,6 +1764,37 @@ pub(crate) fn descender_guard_px(text_view: &sourceview5::View, _page_top: usize
     descent_px.clamp(4, 24)
 }
 
+/// The active font's internal leading at the TOP of a line: how far the tallest
+/// realistic glyph ink sits below the line box's logical top, measured by
+/// laying out a probe of the tallest glyphs (brackets, quotes, ascenders,
+/// accented caps) and comparing Pango's ink vs logical extents. This is the
+/// strip at the top of every line that is guaranteed blank even with
+/// `pixels_above_lines = 0` (the verse/tight-spacing case) — the paged bottom
+/// clip may drop its top edge into the NEXT line's box by at most this much
+/// without revealing the next line's ascenders. Same font source as
+/// `descender_guard_px` (the `font-size` tag) for the same CSS-race reason.
+/// Clamped to `[0, 12]`; a failed probe returns 0 (no reveal — the safe side).
+pub(crate) fn ascent_ink_gap_px(text_view: &sourceview5::View) -> i32 {
+    use gtk4::prelude::{TextTagExt, TextBufferExt, WidgetExt};
+    let ctx = text_view.pango_context();
+    let font_desc = text_view
+        .buffer()
+        .tag_table()
+        .lookup("font-size")
+        .and_then(|tag| tag.font_desc());
+    let layout = pango::Layout::new(&ctx);
+    if let Some(fd) = font_desc.as_ref() {
+        layout.set_font_description(Some(fd));
+    }
+    // Tallest glyphs that realistically start a line: brackets (stage
+    // directions), quotes, full ascenders, accented capitals. If the actual
+    // next line opens with something shorter, the real blank strip is larger —
+    // erring toward less reveal, never more.
+    layout.set_text("[\"'bdfhklÉÀ|]?!");
+    let (ink, logical) = layout.extents();
+    ((ink.y() - logical.y()) / pango::SCALE).clamp(0, 12)
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

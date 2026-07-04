@@ -201,6 +201,15 @@ pub struct AppState {
     pub current_work: Option<Work>,
     pub current_line: usize,
     pub prev_highlight_line: std::cell::Cell<Option<usize>>,
+    /// The first buffer line hidden below each column's paged bottom clip
+    /// (left/main view: the two-column `exact_end` = `cs.split`, `None` in
+    /// single-column mode; right view: `cs.page_end + 1`). Stored so
+    /// `update_highlight` can re-schedule that column's clip when the cursor
+    /// crosses the boundary — the descender allowance must collapse to 0 while
+    /// the boundary line carries the cursor-highlight band, or the reveal shows
+    /// the band's top edge as a colored sliver (see `descender_allowance`).
+    pub left_clip_boundary: std::cell::Cell<Option<usize>>,
+    pub right_clip_boundary: std::cell::Cell<Option<usize>>,
     pub page_top_line: usize,
     /// Pixels scrolled PAST `page_top_line`'s pixel top. 0 in the normal
     /// (line-aligned) case; non-zero only while paging WITHIN an over-tall prose
@@ -1504,6 +1513,8 @@ pub fn build_window(
         current_work: None,
         current_line: 0,
         prev_highlight_line: std::cell::Cell::new(None),
+        left_clip_boundary: std::cell::Cell::new(None),
+        right_clip_boundary: std::cell::Cell::new(None),
         page_top_line: 0,
         page_top_offset: 0,
         page_back_stack: Vec::new(),

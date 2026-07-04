@@ -559,7 +559,7 @@ fn scrim_bg(theme: &Theme) -> String {
 
 /// Generate GTK CSS for a theme.
 pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String {
-    format!(
+    let css = format!(
         "window {{ background-color: {root}; }} \
          .tiled {{ background-color: {bg}; }} \
          .page-turn-overlay {{ background-color: {bg}; border-radius: 12px; }} \
@@ -779,7 +779,19 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
         header_border = blend_colors(&theme.dim_fg, &theme.text_bg, 0.5),
         font = font_family,
         size = font_size,
-    )
+    );
+    // Diagnostic knob: LIT_DEBUG_CLIP_COLOR=<css color> paints every bottom-clip
+    // box (main card + overlays) that color for the run, so a clip edge that is
+    // normally invisible (card bg on card bg) can be seen and pixel-measured in a
+    // screenshot. Replaces the recurring hand-edit of `.card-bottom` to #ff0000
+    // that clip-prevention.md prescribed. Debug-only: unset means zero change.
+    match std::env::var("LIT_DEBUG_CLIP_COLOR") {
+        Ok(color) if !color.trim().is_empty() => format!(
+            "{css} .card-bottom {{ background-color: {color}; }} \
+             .gloss-bottom-clip {{ background-color: {color}; }}"
+        ),
+        _ => css,
+    }
 }
 
 #[cfg(test)]

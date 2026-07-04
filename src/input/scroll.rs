@@ -5,7 +5,7 @@ use libadwaita::prelude::AnimationExt;
 use crate::app::AppState;
 use crate::log_fmt;
 use super::viewport::{
-    visible_range, trim_visible_range, descender_guard_px, lines_per_page,
+    visible_range, trim_visible_range, descender_guard_px, ascent_ink_gap_px, lines_per_page,
 };
 
 // ---------------------------------------------------------------------------
@@ -314,6 +314,7 @@ pub fn refresh_bottom_clip(state: &AppState) {
     } else {
         None
     };
+    state.left_clip_boundary.set(left_exact_end);
     schedule_bottom_clip_update(
         state.text_view.clone(),
         state.bottom_clip.clone(),
@@ -324,6 +325,52 @@ pub fn refresh_bottom_clip(state: &AppState) {
         left_exact_end,
         state.section_starts().map(|s| s.to_vec()),
         state.one_section_per_page(),
+        Some(state.current_line),
+    );
+}
+
+/// Re-run ONE column's paged bottom clip against its STORED boundary, with the
+/// cursor's current line. Called by `update_highlight` when the cursor crosses
+/// a column's clip boundary: the descender allowance must collapse to 0 while
+/// the boundary line carries the cursor-highlight `paragraph_background` band
+/// (whose paint starts at the box top, above where glyph ink can), and reopen
+/// when the cursor leaves. Reuses the stored boundary rather than re-running
+/// `column_split` so a cursor move can never shift the split itself.
+pub(crate) fn reschedule_left_clip_for_cursor(state: &AppState) {
+    schedule_bottom_clip_update(
+        state.text_view.clone(),
+        state.bottom_clip.clone(),
+        state.scrolled_window.clone(),
+        state.page_top_line,
+        state.effective_line_count(),
+        state.is_prose(),
+        state.left_clip_boundary.get(),
+        state.section_starts().map(|s| s.to_vec()),
+        state.one_section_per_page(),
+        Some(state.current_line),
+    );
+}
+
+/// Right-column analog of `reschedule_left_clip_for_cursor`. The right view's
+/// page top is the spread's split (= the stored LEFT boundary).
+pub(crate) fn reschedule_right_clip_for_cursor(state: &AppState) {
+    let (Some(split), Some(right_end)) = (
+        state.left_clip_boundary.get(),
+        state.right_clip_boundary.get(),
+    ) else {
+        return;
+    };
+    schedule_bottom_clip_update(
+        state.right_view.clone(),
+        state.right_bottom_clip.clone(),
+        state.right_scrolled_window.clone(),
+        split,
+        state.effective_line_count(),
+        state.is_prose(),
+        Some(right_end),
+        None,
+        false,
+        Some(state.current_line),
     );
 }
 
@@ -343,16 +390,17 @@ fn schedule_bottom_clip_update(
     exact_end: Option<usize>,
     section_starts: Option<Vec<bool>>,
     one_section_per_page: bool,
+    cursor_line: Option<usize>,
 ) {
     let tv1 = text_view.clone();
     let bc1 = bottom_clip.clone();
     let sw1 = scrolled_window.clone();
     let ss1 = section_starts.clone();
     glib::idle_add_local_once(move || {
-        update_bottom_clip(&tv1, &bc1, &sw1, page_top, line_count, is_prose, exact_end, ss1.as_deref(), one_section_per_page);
+        update_bottom_clip(&tv1, &bc1, &sw1, page_top, line_count, is_prose, exact_end, ss1.as_deref(), one_section_per_page, cursor_line);
     });
     glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
-        update_bottom_clip(&text_view, &bottom_clip, &scrolled_window, page_top, line_count, is_prose, exact_end, section_starts.as_deref(), one_section_per_page);
+        update_bottom_clip(&text_view, &bottom_clip, &scrolled_window, page_top, line_count, is_prose, exact_end, section_starts.as_deref(), one_section_per_page, cursor_line);
     });
 }
 
@@ -555,6 +603,7 @@ pub(crate) fn snap_scroll_to_line_offset(state: &mut AppState, line: usize, offs
             state.bottom_clip.set_height_request(h);
         }
     }
+    state.left_clip_boundary.set(left_exact_end);
     schedule_bottom_clip_update(
         state.text_view.clone(),
         state.bottom_clip.clone(),
@@ -565,6 +614,7 @@ pub(crate) fn snap_scroll_to_line_offset(state: &mut AppState, line: usize, offs
         left_exact_end,
         state.section_starts().map(|s| s.to_vec()),
         state.one_section_per_page(),
+        Some(state.current_line),
     );
 
     if let Some(cs) = cs {
@@ -597,6 +647,7 @@ pub(crate) fn snap_scroll_to_line_offset(state: &mut AppState, line: usize, offs
         // chose cs.page_end (trimmed), so clip there verbatim rather than
         // letting update_bottom_clip re-trim with a possibly different result.
         let right_end = (cs.page_end + 1).min(line_count);
+        state.right_clip_boundary.set(Some(right_end));
         schedule_bottom_clip_update(
             state.right_view.clone(),
             state.right_bottom_clip.clone(),
@@ -607,10 +658,12 @@ pub(crate) fn snap_scroll_to_line_offset(state: &mut AppState, line: usize, offs
             Some(right_end),
             None, // exact_end set → trim path (and section clamp) never runs
             false, // two-column right view: exact_end drives the clip, not the section fill-guard
+            Some(state.current_line),
         );
     } else {
         // Single-column (prose) or layout-not-ready: never show the two-column
         // watermark.
+        state.right_clip_boundary.set(None);
         state.next_scene_watermark.set_visible(false);
     }
 }
@@ -655,14 +708,57 @@ pub(crate) fn paged_bottom_clip(space: i32, total: i32, allowance: i32) -> i32 {
 
 /// How far the paged clip's top edge may drop below the last line's logical
 /// bottom: the font's descent (`guard`, what the descenders need), capped at
-/// the inter-line spacing above the next line's ink (`spacing_above` =
-/// `pixels_above_lines`). The shared buffer renders the NEXT line immediately
-/// below the logical bottom (hidden by the clip), and GTK cannot draw its ink
-/// above `box_top + pixels_above_lines` — so a reveal within that spacing shows
-/// only descender overhang and blank space, never the next line's ascenders.
-/// Degrades to 0 (the pre-fix clip) when line_spacing is 0.
-pub(crate) fn descender_allowance(guard: i32, spacing_above: i32) -> i32 {
-    guard.min(spacing_above.max(0))
+/// the blank strip above the next line's ink (`blank_budget`, see
+/// `boundary_blank_budget`). The shared buffer renders the NEXT line
+/// immediately below the logical bottom (hidden by the clip), and its ink
+/// cannot start above `box_top + blank_budget` — so a reveal within that
+/// budget shows only descender overhang and blank space, never the next
+/// line's ascenders. Degrades to 0 (the pre-fix clip) when the budget is 0.
+pub(crate) fn descender_allowance(guard: i32, blank_budget: i32) -> i32 {
+    guard.min(blank_budget.max(0))
+}
+
+/// The guaranteed-blank strip at the top of `boundary_line`'s box (the first
+/// line hidden below a paged bottom clip): its `pixels_above_lines` spacing
+/// (the view's, unless one of the line's tags overrides it — verse uses 0)
+/// plus the font's ascent internal leading (`ascent_ink_gap_px`) scaled by the
+/// line's smallest tag scale (a 0.75-scale speaker label has a
+/// proportionally smaller leading — probing only the base font over-revealed
+/// by 1px and the line_clipping e2e caught the sliver). A whitespace-only
+/// boundary line has no ink of its own, but its 0.25-scale box is only a few
+/// px tall — the budget is capped at that box height so the reveal never
+/// punches through it into the following line's ascenders (the e2e caught
+/// exactly that 1px at a G-jump page ending on a blank line).
+fn boundary_blank_budget(
+    text_view: &sourceview5::View,
+    buf_sv: &sourceview5::Buffer,
+    boundary_line: usize,
+) -> i32 {
+    let Some(start) = buf_sv.iter_at_line(boundary_line as i32) else {
+        // Past the buffer end: nothing is rendered below, reveal freely.
+        return i32::MAX;
+    };
+    let mut end_it = start;
+    if !end_it.ends_line() {
+        end_it.forward_to_line_end();
+    }
+    if buf_sv.text(&start, &end_it, false).trim().is_empty() {
+        let (_y, h) = text_view.line_yrange(&start);
+        return h.max(0);
+    }
+    let tags = start.tags();
+    let above = tags
+        .iter()
+        .filter(|t| t.is_pixels_above_lines_set())
+        .map(|t| t.pixels_above_lines())
+        .min()
+        .unwrap_or_else(|| text_view.pixels_above_lines());
+    let scale = tags
+        .iter()
+        .filter(|t| t.is_scale_set())
+        .map(|t| t.scale())
+        .fold(1.0_f64, f64::min);
+    above.max(0) + ((ascent_ink_gap_px(text_view) as f64) * scale).floor() as i32
 }
 
 /// Final bottom-clip height for the over-tall single-paragraph case in
@@ -712,8 +808,9 @@ pub(crate) fn update_bottom_clip_public(
     is_prose: bool,
     section_starts: Option<&[bool]>,
     one_section_per_page: bool,
+    cursor_line: Option<usize>,
 ) {
-    update_bottom_clip(text_view, bottom_clip, scrolled_window, page_top, line_count, is_prose, None, section_starts, one_section_per_page);
+    update_bottom_clip(text_view, bottom_clip, scrolled_window, page_top, line_count, is_prose, None, section_starts, one_section_per_page, cursor_line);
 }
 
 /// Set the bottom clip to hide everything below the last fully-visible line.
@@ -734,6 +831,7 @@ fn update_bottom_clip(
     exact_end: Option<usize>,
     section_starts: Option<&[bool]>,
     one_section_per_page: bool,
+    cursor_line: Option<usize>,
 ) {
     let widget_height = text_view.height();
     if widget_height <= 0 {
@@ -790,8 +888,26 @@ fn update_bottom_clip(
                 total += h;
             }
         }
-        let clip = (widget_height - total).max(0);
+        // Drop the clip's top edge below the last line's logical bottom so its
+        // flush descender ink (g/y/p/comma tails) isn't sliced — capped at the
+        // strip guaranteed free of the NEXT line's ink (the shared buffer
+        // renders it right below the split; see `boundary_blank_budget`).
+        // EXCEPT while the boundary line carries the cursor highlight: its
+        // paragraph_background band paints from the box TOP (above where ink
+        // can start), so any reveal would show the band's edge as a colored
+        // sliver. update_highlight re-schedules this clip when the cursor
+        // crosses the boundary.
+        let allowance = if cursor_line == Some(end) {
+            0
+        } else {
+            descender_allowance(descender_guard, boundary_blank_budget(text_view, &buf_sv, end))
+        };
+        let clip = paged_bottom_clip(widget_height, total, allowance);
         if bottom_clip.height_request() != clip {
+            crate::logging::log(&format!(
+                "BOTTOM_CLIP_EXACT: widget_h={} total={} allowance={} clip={} page_top={} end={}",
+                widget_height, total, allowance, clip, page_top, end
+            ));
             bottom_clip.set_height_request(clip);
         }
         return;
@@ -891,7 +1007,20 @@ fn update_bottom_clip(
     } else {
         0.0
     };
-    let clip = (widget_height - display_range.total_height + scroll_offset.round() as i32).max(0);
+    // Same flush-descender allowance (and cursor-on-boundary gate) as the
+    // exact_end branch: the clip's top edge otherwise lands at the last line's
+    // logical bottom and slices its descender ink.
+    let boundary = display_range.last_fit + 1;
+    let allowance = if cursor_line == Some(boundary) {
+        0
+    } else {
+        descender_allowance(descender_guard, boundary_blank_budget(text_view, &buf_sv, boundary))
+    };
+    let clip = paged_bottom_clip(
+        widget_height + scroll_offset.round() as i32,
+        display_range.total_height,
+        allowance,
+    );
     // Skip the redundant set_height_request when the clip value would be
     // unchanged. Calling set_height_request even with the same value forces
     // GTK to revalidate layout, which can re-shape Pango glyphs by 1-2px

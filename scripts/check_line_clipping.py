@@ -68,7 +68,15 @@ def find_text_region(app_name, timeout):
     return None, f"no Text-interface widget for app '{app_name}'"
 
 
-def glyph_runs(rows_with_ink):
+def glyph_runs(rows_with_ink, merge_gap=2):
+    """Group inked rows into glyph rows, merging runs separated by <= merge_gap
+    blank rows. A descender tip ('y'/'g'/comma tails) tapers so thin that its
+    connecting rows can dip under the 1%-width ink threshold, splitting the tip
+    off as a detached 1px "row" — which then reads as a clipped last line (a
+    false positive first hit when the paged clip's descender allowance exposed
+    the true tips it used to cover). Genuine inter-line gaps are >= ~4px at any
+    reading size, so merging <= 2px gaps cannot fuse two real lines or hide a
+    real next-line sliver."""
     runs, start = [], None
     for i, v in enumerate(rows_with_ink):
         if v and start is None:
@@ -78,7 +86,13 @@ def glyph_runs(rows_with_ink):
             start = None
     if start is not None:
         runs.append((start, len(rows_with_ink) - 1))
-    return runs
+    merged = []
+    for run in runs:
+        if merged and run[0] - merged[-1][1] - 1 <= merge_gap:
+            merged[-1] = (merged[-1][0], run[1])
+        else:
+            merged.append(run)
+    return merged
 
 
 def main():
@@ -136,8 +150,15 @@ def main():
     bottom_margin = (rh - 1) - runs[-1][1]
     first_h, last_h = heights[0], heights[-1]
 
-    clip_top = (first_h < args.height_frac * median_h) or (top_margin < args.min_margin)
-    clip_bottom = (last_h < args.height_frac * median_h) or (bottom_margin < args.min_margin)
+    # A short EDGE row is clipped only if it is also shorter than every
+    # interior row: a complete-but-small row (a 0.75-scale speaker label at
+    # the page top) is legitimately under the body-text median, while a real
+    # top/bottom slice is shorter than anything else on the page.
+    min_interior = float(min(interior))
+    short_top = first_h < args.height_frac * median_h and first_h < min_interior
+    short_bottom = last_h < args.height_frac * median_h and last_h < min_interior
+    clip_top = short_top or (top_margin < args.min_margin)
+    clip_bottom = short_bottom or (bottom_margin < args.min_margin)
 
     # single-line panes can't establish a median; report low confidence.
     low_conf = len(heights) < 2

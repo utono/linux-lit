@@ -107,6 +107,7 @@ pub fn update_highlight_and_show(state: &mut AppState) {
     let line_count = state.effective_line_count();
     let is_prose = state.is_prose();
     let one_section_per_page = state.one_section_per_page();
+    let cursor_line = Some(state.current_line);
 
     // Snap scroll position synchronously. line_yrange may return 0 if GTK
     // hasn't validated the layout yet, so we defer to an idle callback.
@@ -130,7 +131,7 @@ pub fn update_highlight_and_show(state: &mut AppState) {
         // Defer clip calculation to the next idle tick so line_yrange
         // returns accurate heights after the widget is visible and laid out.
         glib::idle_add_local_once(move || {
-            super::scroll::update_bottom_clip_public(&text_view, &bottom_clip, &scrolled_window, scroll_to, line_count, is_prose, section_starts.as_deref(), one_section_per_page);
+            super::scroll::update_bottom_clip_public(&text_view, &bottom_clip, &scrolled_window, scroll_to, line_count, is_prose, section_starts.as_deref(), one_section_per_page, cursor_line);
             loading_flag.set(false);
             // Signal the resize tick to refresh layout once line metrics
             // are valid (may take one or more frames after the scrolled
@@ -174,6 +175,26 @@ pub(crate) fn auto_show_vocab_popup(state: &mut AppState) {
 /// to the visible range (page_top_line +/- margin) for performance.
 /// When dim is off, fades out the old cursor highlight smoothly.
 pub(crate) fn update_highlight(state: &mut AppState) {
+    // Cursor crossing a column's bottom-clip boundary line (the first line
+    // hidden below the clip — for the left column that is the right column's
+    // FIRST line, on-page and routinely highlighted): re-schedule that
+    // column's clip. The paged clip's descender allowance must collapse to 0
+    // while the boundary line carries the cursor-highlight band and reopen
+    // when the cursor leaves — see `descender_allowance` in scroll.rs.
+    {
+        let old = state.prev_highlight_line.get();
+        let new = Some(state.current_line);
+        if old != new {
+            let lb = state.left_clip_boundary.get();
+            let rb = state.right_clip_boundary.get();
+            if lb.is_some() && (old == lb || new == lb) {
+                super::scroll::reschedule_left_clip_for_cursor(state);
+            }
+            if rb.is_some() && (old == rb || new == rb) {
+                super::scroll::reschedule_right_clip_for_cursor(state);
+            }
+        }
+    }
     // Prose marks the current (and, under sync, the spoken) paragraph by DIMMING
     // every OTHER visible paragraph — the current one stays at full strength
     // while the rest recede. Plays/verse instead tint the current line's
