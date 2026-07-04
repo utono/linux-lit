@@ -834,12 +834,12 @@ pub fn page_forward(state: &mut AppState) {
     // canonical final spread so the tail fills both columns (covers the
     // lone-EPILOGUE empty-right case and the underfilled too-early final spread).
     // See `redirect_to_final_spread`; shared with q/j and playback sync.
-    let candidate_top = match redirect_to_final_spread(state, candidate_top) {
+    let (candidate_top, redirected_to_final) = match redirect_to_final_spread(state, candidate_top) {
         Some(anchor) => {
             log_fmt!("PAGE_FWD: final-region candidate={} -> anchor={}", candidate_top, anchor);
-            anchor
+            (anchor, true)
         }
-        None => candidate_top,
+        None => (candidate_top, false),
     };
     let effective_top = clamp_page_top_to_scroll_ceiling(state, candidate_top);
     log_fmt!(
@@ -847,8 +847,29 @@ pub fn page_forward(state: &mut AppState) {
         state.page_top_line, new_top, next_dialogue, candidate_top, effective_top, state.is_prose()
     );
     if effective_top > state.page_top_line {
+        // The final-spread redirect can pull the top FORWARD PAST `next_dialogue`
+        // (which was computed for the natural, pre-redirect turn), stranding the
+        // cursor above the page with no visible highlight. The anchor page is the
+        // work's last spread — mirror jump_to_end and land the cursor on its last
+        // on-page dialogue line. (Computed before the state mutations below so
+        // `stage_lookup`'s borrow of `state` has ended.)
+        let landing = if redirected_to_final {
+            // Fresh closure (not the fn-scope `stage_lookup`) so its borrow of
+            // `state` ends here, before the mutations below — mirrors jump_to_end.
+            let anchor_stage_lookup = |bi: usize| -> Option<i64> {
+                state.work_line_for_buffer(bi)
+                    .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+                    .map(|l| l.sub_line)
+            };
+            let cs = column_split(state, effective_top);
+            prev_dialogue_line(&state.buffer, &state.translation_lines, cs.page_end + 1, state.is_prose(), &anchor_stage_lookup)
+                .filter(|&d| d >= effective_top && d <= cs.page_end)
+                .unwrap_or(next_dialogue.min(line_count.saturating_sub(1)))
+        } else {
+            next_dialogue
+        };
         state.page_back_stack.push((state.page_top_line, state.page_top_offset));
-        state.current_line = next_dialogue;
+        state.current_line = landing;
         set_page(state, effective_top, PageDirection::Forward);
         after_page_change(state, PageChangeReason::Forward);
         return;
