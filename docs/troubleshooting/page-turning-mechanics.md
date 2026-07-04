@@ -97,6 +97,21 @@ column). That pulled top is NOT on the natural `column_split` chain, so:
   `j`, `y`) — see *Diagnosing § "FIVE paths"* in headless-testing.md;
 - `y` from it cannot tile exactly (a small benign seam) — the fuzz exempts it.
 
+A dialogue tail defeats the dialogue-below test: MND ends with the
+remainder of Robin's spoken epilogue (plain 5.1 dialogue, no trailing
+section), so "dialogue remains below `next`" is true even at the work's
+real end. `last_page_top` therefore has a SECOND true-end signal: the
+forward page chain ENDS at `next` (`next_page_top(next)` cannot advance).
+Either signal triggers the case (a) pull-forward. A mid-work
+scene-opening boundary always has further pages, so the chain-end signal
+never fires mid-work (fixed 2026-07-04; before this, all MND-* editions
+stranded one spread early and the last ~9 lines were unreachable). In the
+same class: when `x`'s landing is REDIRECTED to the final-spread anchor
+(`redirect_to_final_spread`), the cursor must be recomputed for the
+ANCHOR page (its last on-page dialogue line, mirroring `jump_to_end`) —
+`next_dialogue` was computed for the natural pre-redirect turn and the
+pull-forward can strand it ABOVE the page (no visible highlight).
+
 **`column_split` is the source of truth.** Render, the page-tiling fuzz
 invariants, `prev_page_top`, and `last_page_top` all consult it. If you change
 how a spread is measured, change `column_split` and everything follows; do NOT
