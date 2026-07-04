@@ -459,9 +459,25 @@ pub(crate) fn last_page_top(state: &AppState) -> usize {
             // through and advance `top = next` to keep walking. (`next` itself has
             // an empty right column, so it does NOT update `last_full` — the next
             // full-right-column spread the walk reaches will.)
+            // A dialogue TAIL (case a with spoken lines, e.g. MND's epilogue) is
+            // caught by the chain-end check below even though dialogue remains.
             let dialogue_at_or_below_next =
                 (next..line_count).any(|i| is_dialogue_line(&state.buffer, i, state.is_prose(), &stage_lookup));
-            if we_next && !dialogue_at_or_below_next {
+            // Second true-end signal: the forward chain ENDS at `next` — no page
+            // exists past it. A dialogue tail (MND: the remainder of Robin's
+            // spoken epilogue, plain 5.1 lines, no trailing section) makes
+            // `dialogue_at_or_below_next` true even at the work's real end, which
+            // used to misclassify it as case (b) and strand the anchor one spread
+            // short (the tail was unreachable by x/G/startup). A mid-work
+            // scene-opening boundary (case b, H8) always has further pages, so
+            // its chain continues and this stays false. Short-circuit on
+            // `we_next` so the extra layout walk only runs at empty-right
+            // boundaries, not every page.
+            let chain_ends_at_next = we_next && {
+                let nn = super::viewport::next_page_top(state, next).new_top;
+                nn >= line_count || nn <= next
+            };
+            if we_next && (!dialogue_at_or_below_next || chain_ends_at_next) {
                 // Case (a): the true end. Search [top+1, next) for the SMALLEST top
                 // whose spread leaves no dialogue below it and still has a non-empty
                 // right column — that is the canonical last spread.
