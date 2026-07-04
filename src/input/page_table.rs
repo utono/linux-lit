@@ -27,16 +27,30 @@ pub fn validate_spreads(spreads: &[Spread], ctx: &ValidateCtx) -> Result<(), Str
     if spreads.is_empty() {
         return Err("coverage: no spreads".into());
     }
-    // sanity + monotone, contiguous coverage
-    let mut expect_start = spreads[0].left_start;
-    if expect_start != 0 {
-        return Err(format!("coverage: first page starts at {expect_start}, not 0"));
-    }
+    // sanity + monotone coverage. The live engine legitimately TRIMS
+    // non-dialogue tails (dangling speaker names, blank lines, stage
+    // directions) off a page's end, so `column_split(top).page_end` can be
+    // several lines SHORT of where the next page actually starts. Consecutive
+    // recorded spreads can therefore have a gap — as long as every line in
+    // that gap is non-dialogue, nothing was lost off the page and this is not
+    // a coverage failure. A dialogue line stranded in a gap IS still a
+    // failure: that's real content the table would never surface. Pages must
+    // stay strictly ordered (`s.left_start > prev.end`); the first page's gap
+    // is checked against line 0 the same way.
+    let mut expect_start = 0usize; // one-past the previous page's end (or 0 initially)
     for (i, s) in spreads.iter().enumerate() {
-        if s.left_start != expect_start {
+        if s.left_start < expect_start {
             return Err(format!(
                 "coverage: page {} starts at {} but previous page ended at {}",
                 i + 1, s.left_start, expect_start.saturating_sub(1)
+            ));
+        }
+        if let Some(bad) = (expect_start..s.left_start)
+            .find(|&j| ctx.is_dialogue.get(j).copied().unwrap_or(false))
+        {
+            return Err(format!(
+                "coverage: dialogue line {} falls between page {} and page {}",
+                bad, i, i + 1
             ));
         }
         if let Some(sp) = s.split {
@@ -490,13 +504,29 @@ mod tests {
     #[test]
     fn gap_between_pages_fails_coverage() {
         let h = vec![10; 10];
-        let d = vec![true; 10];
+        let d = vec![true; 10]; // line 6 (in the gap) is dialogue -> still a failure
         let s = vec![
             Spread { left_start: 0, split: Some(3), end: 5 },
             Spread { left_start: 7, split: Some(9), end: 9 }, // line 6 dropped
         ];
         let err = validate_spreads(&s, &ctx(&h, &d)).unwrap_err();
         assert!(err.contains("coverage"), "got: {err}");
+    }
+
+    #[test]
+    fn non_dialogue_gap_between_pages_passes() {
+        // A trimmed non-dialogue tail (dangling speaker name / stage
+        // direction / blank line) between pages is legitimate: the live
+        // engine's column_split(top).page_end can land short of where the
+        // next page actually starts.
+        let h = vec![10; 10];
+        let mut d = vec![true; 10];
+        d[6] = false; // the gap line is non-dialogue
+        let s = vec![
+            Spread { left_start: 0, split: Some(3), end: 5 },
+            Spread { left_start: 7, split: Some(9), end: 9 }, // line 6 trimmed
+        ];
+        assert!(validate_spreads(&s, &ctx(&h, &d)).is_ok());
     }
 
     #[test]
