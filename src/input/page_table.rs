@@ -493,6 +493,30 @@ pub fn load_for_work(state: &crate::app::AppState) {
         }
     }
     let mut spreads = Vec::with_capacity(rows.len());
+    // Reverse the storage-side forward snap on page/column TOPS. Act/scene
+    // headings, separator rules, and blanks have no line_mapping rows, so a
+    // top that fell on that chrome was stored as the first MAPPED line at or
+    // after it — rendering the page from the entrance stage direction and
+    // hiding the "ACT 1 / Scene 1" heading the generator's (validated) walk
+    // actually placed at the top. Walk back over contiguous unmapped lines to
+    // the start of the chrome block, then skip any leading blanks (those are
+    // the previous page's trimmed tail, not this page's heading). A mid-page
+    // top whose predecessor is mapped walks zero steps; a blank-only gap
+    // round-trips to the stored line — the unsnap is a no-op except where
+    // heading chrome was lost.
+    let unsnap_top = |mut bl: usize| -> usize {
+        let stored = bl;
+        while bl > 0 && state.work_line_for_buffer(bl - 1).is_none() {
+            bl -= 1;
+        }
+        while bl < stored
+            && state.work_line_for_buffer(bl).is_none()
+            && crate::input::viewport::buffer_line_text(&state.buffer, bl).trim().is_empty()
+        {
+            bl += 1;
+        }
+        bl
+    };
     for r in &rows {
         let (Some(&ls), Some(&end)) = (id_to_buf.get(&r.left_start_id), id_to_buf.get(&r.end_id)) else {
             crate::logging::log("PAGES: fallback (row id not in buffer)");
@@ -500,7 +524,7 @@ pub fn load_for_work(state: &crate::app::AppState) {
         };
         let split = match r.split_id {
             Some(id) => match id_to_buf.get(&id) {
-                Some(&b) => Some(b),
+                Some(&b) => Some(unsnap_top(b)),
                 None => {
                     crate::logging::log("PAGES: fallback (split id not in buffer)");
                     return;
@@ -508,7 +532,7 @@ pub fn load_for_work(state: &crate::app::AppState) {
             },
             None => None,
         };
-        spreads.push(Spread { left_start: ls, split, end });
+        spreads.push(Spread { left_start: unsnap_top(ls), split, end });
     }
     crate::logging::log(&format!(
         "PAGES: table hit ({} pages) for {}", spreads.len(), work.abbrev));
