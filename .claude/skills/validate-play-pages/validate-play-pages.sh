@@ -15,14 +15,25 @@ works() {
 
 fail=0
 any=0
-for w in $(works); do
-  for fp in $(sqlite3 "$DB" "SELECT layout_fingerprint FROM play_pages_meta WHERE work_abbrev='$w';"); do
+while IFS= read -r w; do
+  [[ -z "$w" ]] && continue
+  while IFS= read -r fp; do
+    [[ -z "$fp" ]] && continue
     any=1
     meta=$(sqlite3 -separator ' | ' "$DB" \
       "SELECT page_count, generated_at, validated FROM play_pages_meta
        WHERE work_abbrev='$w' AND layout_fingerprint='$fp';")
     rowcount=$(sqlite3 "$DB" \
       "SELECT count(*) FROM play_pages WHERE work_abbrev='$w' AND layout_fingerprint='$fp';")
+    if [[ "$rowcount" == "0" ]]; then
+      # A meta row with no corresponding play_pages rows is a clean FAIL —
+      # don't fall through to the coverage/overlap queries below, whose
+      # MAX(page_no) would be NULL for an empty set and produce a malformed
+      # SQL literal (e.g. "b.page_no = ") that aborts the script under `set -e`.
+      echo "$w [FAIL] fp=$fp rows=0 meta=($meta) bad_rows=n/a overlaps=n/a gaps=n/a (meta row with zero pages rows)"
+      fail=1
+      continue
+    fi
     # sanity: split/end ordering per row, join sanity against line_mapping
     bad_rows=$(sqlite3 "$DB" "
       SELECT count(*) FROM play_pages p
@@ -30,7 +41,6 @@ for w in $(works); do
       LEFT JOIN line_mapping le ON le.id = p.end_id
       WHERE p.work_abbrev='$w' AND p.layout_fingerprint='$fp'
         AND (ls.id IS NULL OR le.id IS NULL
-             OR ls.work_abbrev NOT IN (SELECT work_abbrev FROM line_mapping WHERE id=p.left_start_id)
              OR p.end_id < p.left_start_id);")
     # coverage: page N+1's left_start_id must be > page N's end_id (ids are
     # document-ordered within a work), with no page_no gaps.
@@ -64,8 +74,8 @@ for w in $(works); do
     [[ "$bad_rows" != "0" || "$overlaps" != "0" || "$gaps" != "0" ]] && { status=FAIL; fail=1; }
     [[ "$rowcount" != "$(echo "$meta" | cut -d'|' -f1 | tr -d ' ')" ]] && { status=FAIL; fail=1; }
     echo "$w [$status] fp=$fp rows=$rowcount meta=($meta) bad_rows=$bad_rows overlaps=$overlaps gaps=$gaps"
-  done
-done
+  done < <(sqlite3 "$DB" "SELECT layout_fingerprint FROM play_pages_meta WHERE work_abbrev='$w';")
+done < <(works)
 
 if [[ "$any" == "0" ]]; then
   echo "No play_pages_meta rows found (nothing generated yet, or ABBR='$ABBR' has no table)."

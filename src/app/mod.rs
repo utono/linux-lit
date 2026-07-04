@@ -2000,25 +2000,33 @@ pub fn build_window(
                             crate::input::page_table::generate_and_store(&s);
                         });
                     }
-                } else if width_changed {
-                    let cw = s.config.column_width;
-                    let cc = s.column_count();
-                    let tr = s.translations_visible;
-                    apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr);
-                    apply_tiled_mode(&mut s, &vbox_for_tick, ww);
-                    // Pinned play pagination: a plain window resize (dwl
-                    // retiling — routine, not a work load) leaves any loaded
-                    // page table active with boundaries for the OLD geometry
-                    // unless we check the fingerprint here too. Same settle
-                    // delay as the deferred-layout-refresh branch above so
-                    // column geometry has actually finished reflowing before
-                    // we fingerprint it; does not regenerate — see
-                    // revalidate_on_resize's doc comment.
-                    let st = state_for_tick.clone();
-                    glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
-                        let s = st.borrow();
-                        crate::input::page_table::revalidate_on_resize(&s);
-                    });
+                } else {
+                    if width_changed {
+                        let cw = s.config.column_width;
+                        let cc = s.column_count();
+                        let tr = s.translations_visible;
+                        apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr);
+                        apply_tiled_mode(&mut s, &vbox_for_tick, ww);
+                    }
+                    if width_changed || height_changed {
+                        // Pinned play pagination: a plain window resize (dwl
+                        // retiling — routine, not a work load) leaves any loaded
+                        // page table active with boundaries for the OLD geometry
+                        // unless we check the fingerprint here too. This must also
+                        // fire on a HEIGHT-ONLY change (e.g. dwl stack-retiling
+                        // that changes height without width) — the fingerprint
+                        // includes height, so a height-only resize can go stale
+                        // just as easily as a width-only one. Same settle delay
+                        // as the deferred-layout-refresh branch above so column
+                        // geometry has actually finished reflowing before we
+                        // fingerprint it; does not regenerate — see
+                        // revalidate_on_resize's doc comment.
+                        let st = state_for_tick.clone();
+                        glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
+                            let s = st.borrow();
+                            crate::input::page_table::revalidate_on_resize(&s);
+                        });
+                    }
                 }
                 // Layout just changed (resize or post-load refresh) — page
                 // boundaries shift, so any cached page_tops index is stale.
