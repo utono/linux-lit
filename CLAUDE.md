@@ -89,8 +89,9 @@ frequency-ordered failure checklist that names the usual culprits (missing
 the over-tall single prose paragraph). Skipping it leads to guess-and-check
 cycles and fixes that re-cut glyphs (e.g. a fixed-pixel reserve instead of a
 clean visual-row boundary). When the visible result contradicts the logged clip
-value, paint the clip box a visible color (`background-color: #f00`) for one run
-— that single screenshot distinguishes "clip is 0" from "clip is mis-sized."
+value, launch with `LIT_DEBUG_CLIP_COLOR='#ff0000'` to paint every bottom-clip
+box for that run (no theme.rs edit needed) — that single screenshot
+distinguishes "clip is 0" from "clip is mis-sized."
 Clipping acceptance is pixel-level: verify on the real display (or the
 `line_clipping` / `overlay_clipping` e2e invariants), never from logs alone.
 

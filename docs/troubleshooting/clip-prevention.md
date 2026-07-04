@@ -325,6 +325,12 @@ Three clip strategies coexist deliberately; merging them changes behavior:
   `line_yrange` heights from a known `page_top` to a column-split/section
   boundary, with `descender_guard`/`BASE_BOTTOM_MARGIN`/`exact_end`. A different
   strategy (it knows the page boundary; the free-scroll mask doesn't).
+  Both its `line_yrange`-summing clips (the two-column `exact_end` branch and
+  the single-column final clip) additionally subtract a descender allowance
+  (`paged_bottom_clip` + `descender_allowance`: the font descent capped at the
+  boundary line's blank strip, zeroed while that line carries the cursor
+  highlight) so the last visible line keeps its flush descender ink — see
+  failure-checklist #10.
   **Exception — the over-tall single paragraph.** `line_yrange` is per-BUFFER-line.
   When ONE prose paragraph (one buffer line) wraps TALLER than `usable_height`,
   `visible_range` fits zero buffer lines (`count == 0`) and the paged clip can't
@@ -404,8 +410,9 @@ When a half line clips at the bottom edge of a scrolled surface:
    `bottom_clip_height(display_rows(view), scroll_val, usable_height, content_h)`
    + the `widget_height − usable_height` reserve, in the `count == 0` branch of
    `update_bottom_clip`. Diagnosing this is far easier with the clip box painted a
-   visible color (`background-color: #f00`) for one run — flush pages show NO clip
-   band, over-tall-but-fitting pages show the expected band; that one screenshot
+   visible color for one run (`LIT_DEBUG_CLIP_COLOR='#ff0000'`, see "Verifying") —
+   flush pages show NO clip band, over-tall-but-fitting pages show the expected
+   band; that one screenshot
    separates "clip is 0" from "clip is mis-sized." Exposed by the prose
    NYTimes-column narrowing (commit on `feat/prose-nyt-column`), but it was a
    latent edge case for any single paragraph taller than the viewport.
@@ -448,6 +455,39 @@ When a half line clips at the bottom edge of a scrolled surface:
    heights, add the spacing to the measurement too. See "A different clip: the
    HIGHLIGHT band cutting descenders" above. This is NOT a bottom-clip-box bug —
    no clip path (a/b/c) is involved.
+10. **MAIN CARD — the LAST line of a page/column has its descenders (g/y/p/comma
+    tails) sliced by the card-colored bottom clip.** Tell: the bottom line of a
+    column (two-column verse worst — `pixels_above/below_lines` are 0 there so
+    ink runs flush to the logical line bottom) is cut through its descenders,
+    while a ~40px+ reserve still sits below the clip. Cause: both
+    `line_yrange`-summing clips in `update_bottom_clip` (the two-column
+    `exact_end` branch and the single-column final clip) put the clip's top edge
+    at `Σ line_yrange` = the last line's LOGICAL bottom, and descender ink
+    renders flush to (or 1px past) that bottom. Fixed (2026-07-04) by dropping
+    the top edge by a **descender allowance** (`paged_bottom_clip` +
+    `descender_allowance` in `src/input/scroll.rs`): the font descent capped at
+    the **boundary line's guaranteed-blank strip** (`boundary_blank_budget` =
+    its `pixels_above_lines` + the font's ascent internal leading scaled by the
+    line's smallest tag scale). The cap matters because the shared buffer
+    renders the NEXT line immediately below the clip's top edge, merely hidden:
+    - an uncapped reveal exposes the next line's ascender tops (a base-font
+      probe alone over-revealed a 0.75-scale speaker label by 1px — measure the
+      BOUNDARY line, not the base font);
+    - a whitespace-only boundary line caps at its own short (0.25-scale) box
+      height, or the reveal punches through it into the line after;
+    - while the boundary line carries the CURSOR highlight, its
+      `paragraph_background` band paints from the box TOP, so the allowance
+      collapses to 0 — `update_highlight` re-schedules the affected column's
+      clip when the cursor crosses the stored `left_clip_boundary` /
+      `right_clip_boundary` (for the left column the boundary is the right
+      column's FIRST line, on-page and routinely highlighted).
+    Diagnose with `LIT_DEBUG_CLIP_COLOR='#ff0000'` (below) — the band's top
+    edge visibly crosses the descenders. NOT the free-scroll partial-row mask
+    and NOT the highlight band (#9): it hits the LAST line of a column
+    regardless of the cursor. Do NOT add such an allowance to the visual-row
+    paths (overlays, over-tall branch, scroll-mode): wrapped rows tile with
+    zero inter-row spacing, so there is no blank budget — any reveal there
+    exposes the next row's ink.
 
 ## Verifying
 
@@ -459,6 +499,25 @@ whole line. The pixel-level e2e invariants are `tests/line_clipping.rs` (main
 card) and `tests/overlay_clipping.rs` (synopsis overlay), both `#[ignore]`d and
 run via `./scripts/e2e-env.sh cargo test --test line_clipping --test
 overlay_clipping -- --ignored --nocapture`.
+
+**Seeing the clip box:** launch with `LIT_DEBUG_CLIP_COLOR='#ff0000'` (any CSS
+color) to paint every bottom-clip box — the main card's `.card-bottom` AND the
+overlays' `.gloss-bottom-clip` — that color for the run. This replaces the old
+"hand-edit `.card-bottom` to `#ff0000` in theme.rs, rebuild, revert" dance; the
+knob is a no-op when unset. The `exact_end` branch also logs
+`BOTTOM_CLIP_EXACT: widget_h=.. total=.. allowance=.. clip=..` (it used to be
+the only silent clip path).
+
+**Detector calibration (scripts/check_line_clipping.py):** two lessons from the
+descender-allowance work. (1) Row segmentation merges runs separated by ≤2px —
+a descender tip tapers so thin that its connecting rows fall under the 1%-width
+ink threshold, and the detached tip read as a fake 1px "clipped row" the moment
+the clip stopped covering real descender ink. (2) A short EDGE row counts as
+clipped only if it is also shorter than every interior row — a complete
+0.75-scale speaker label at the page top is legitimately under the body-text
+median. Both were detector false positives that only surfaced once production
+rendered MORE of the glyphs, i.e. "when a clip e2e fails, first ask whether the
+assertion is measuring the pre-fix rendering."
 
 ## Key files
 
