@@ -155,6 +155,18 @@ GSK_RENDERER=cairo WLR_BACKENDS=headless WLR_RENDERER=pixman \
 - Cage opens a fresh Wayland socket, normally `wayland-1` (it does **not** honor
   a `WAYLAND_DISPLAY` you pass in for its own server socket — check
   `ls /run/user/1000/wayland-*` for the new one).
+- **The headless output defaults to 1280×720** (wlroots headless backend
+  default; cage has no size flag) — but cage implements wlr-output-management,
+  so it can be resized live to the real display's geometry (verified
+  2026-07-04; the app re-lays-out and `grim` captures at the new size):
+
+```bash
+wlr-randr --output HEADLESS-1 --custom-mode 1920x1200
+```
+
+  Use this whenever the acceptance criterion depends on the production
+  geometry (pagination boundaries, page tables, spread balance) — a 720p run
+  paginates differently than the user's 1920×1200 session.
 
 ### Capture and drive
 
