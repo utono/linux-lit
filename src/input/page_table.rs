@@ -176,6 +176,206 @@ pub fn layout_fingerprint(state: &crate::app::AppState) -> String {
     fingerprint_string(&parts)
 }
 
+/// Walk the LIVE engine's forward chain once, recording every spread. This is
+/// the same chain `x` follows (next_page_top/column_split), so the recorded
+/// table reproduces exactly what paging forward shows. Includes the
+/// determinism check (design invariant 5): re-deriving a page's boundary from
+/// its own top must agree with what the chain said.
+pub fn record_spreads(state: &crate::app::AppState) -> Result<Vec<Spread>, String> {
+    let line_count = state.effective_line_count();
+    if line_count == 0 {
+        return Err("no lines".into());
+    }
+    let mut spreads = Vec::new();
+    let mut top = 0usize;
+    let mut guard = 0usize;
+    loop {
+        let cs = crate::input::viewport::column_split(state, top);
+        let split = if cs.split <= top || cs.split > cs.page_end {
+            None // empty right column (watermark) or empty left handled below
+        } else {
+            Some(cs.split)
+        };
+        // Empty LEFT column (first-spread short-opening): cs.split == top.
+        let split = if cs.split == top { Some(top) } else { split };
+        let end = cs.page_end.min(line_count.saturating_sub(1));
+        spreads.push(Spread { left_start: top, split, end });
+        let next = crate::input::viewport::next_page_top(state, top).new_top;
+        if next >= line_count || next <= top {
+            break;
+        }
+        // Determinism (invariant 5): column_split at `next` must not claim
+        // lines this spread already covered.
+        if next <= end && crate::input::viewport::column_split(state, next).page_end <= end {
+            return Err(format!("determinism: chain from {top} regressed at {next}"));
+        }
+        top = next;
+        guard += 1;
+        if guard > line_count {
+            return Err("determinism: forward chain did not terminate".into());
+        }
+    }
+    // The final spread must be the same anchor G uses.
+    let anchor = crate::input::navigation::last_page_top(state);
+    if spreads.last().map(|s| s.left_start) != Some(anchor) {
+        // Replace the trailing spread(s) with the canonical final spread so the
+        // chain and G agree (the dialogue-tail pull-forward case).
+        while spreads.last().map_or(false, |s| s.left_start >= anchor) {
+            spreads.pop();
+        }
+        let cs = crate::input::viewport::column_split(state, anchor);
+        let split = (cs.split > anchor && cs.split <= cs.page_end).then_some(cs.split);
+        spreads.push(Spread {
+            left_start: anchor,
+            split,
+            end: cs.page_end.min(line_count.saturating_sub(1)),
+        });
+        // Truncate the previous spread so coverage stays contiguous.
+        let n = spreads.len();
+        if n >= 2 {
+            let prev_end = anchor.saturating_sub(1);
+            let prev = &mut spreads[n - 2];
+            if prev.end >= anchor {
+                prev.end = prev_end;
+                if prev.split.map_or(false, |sp| sp > prev_end) {
+                    prev.split = None;
+                }
+            }
+        }
+    }
+    Ok(spreads)
+}
+
+/// Gate, record, validate, persist. Called from the app's settled-layout hook;
+/// every early return logs its reason so the fallback is diagnosable.
+pub fn generate_and_store(state: &crate::app::AppState) {
+    if std::env::var_os("LIT_NO_PAGE_TABLE").is_some() {
+        return;
+    }
+    let force = std::env::var_os("LIT_GEN_PAGE_TABLE").is_some();
+    if state.page_table_gen_attempted.get() {
+        return;
+    }
+    state.page_table_gen_attempted.set(true);
+    let Some(work) = state.current_work.as_ref() else { return };
+    if state.column_count() != 2 || state.translations_visible {
+        crate::logging::log("PAGES: gen skipped (not 2-col reader state)");
+        return;
+    }
+    if state.page_table.borrow().is_some() && !force {
+        return; // already loaded from the DB this session
+    }
+    use gtk4::prelude::{TextBufferExt, TextViewExt, WidgetExt};
+    let fp = layout_fingerprint(state);
+    let spreads = match record_spreads(state) {
+        Ok(s) => s,
+        Err(e) => {
+            crate::logging::log(&format!("PAGES: VALIDATE_FAIL {e}"));
+            return;
+        }
+    };
+    // Build the validation context from live geometry + authoritative metadata.
+    let line_count = state.effective_line_count();
+    let stage_lookup = |bi: usize| -> Option<i64> {
+        state.work_line_for_buffer(bi)
+            .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+            .map(|l| l.sub_line)
+    };
+    let is_dialogue: Vec<bool> = (0..line_count)
+        .map(|i| crate::input::viewport::is_dialogue_line(
+            &state.buffer, i, state.is_prose(), &stage_lookup))
+        .collect();
+    let heights: Vec<i32> = (0..line_count)
+        .map(|i| state.buffer.iter_at_line(i as i32)
+            .map(|it| state.text_view.line_yrange(&it).1)
+            .unwrap_or(0))
+        .collect();
+    let widget_height = state.text_view.height();
+    let guard = crate::input::viewport::descender_guard_px(&state.text_view, 0);
+    let usable = widget_height - guard - crate::input::scroll::BASE_BOTTOM_MARGIN;
+    let ss_vec = state.section_starts().map(|s| s.to_vec());
+    let ctx = ValidateCtx {
+        line_count,
+        is_dialogue: &is_dialogue,
+        section_starts: ss_vec.as_deref(),
+        heights: &heights,
+        usable_height: usable,
+    };
+    if let Err(e) = validate_spreads(&spreads, &ctx) {
+        crate::logging::log(&format!("PAGES: VALIDATE_FAIL {e}"));
+        return;
+    }
+    // Map buffer lines -> line_mapping ids. Boundary lines are always work
+    // lines (page tops/splits land on real content), so a missing mapping is
+    // a hard failure, not something to paper over.
+    let id_of = |bi: usize| -> Option<i64> {
+        state.work_line_for_buffer(bi)
+            .and_then(|wi| work.lines.get(wi))
+            .map(|l| l.id)
+    };
+    let mut rows = Vec::with_capacity(spreads.len());
+    for (i, s) in spreads.iter().enumerate() {
+        let (Some(ls), Some(end)) = (id_of(s.left_start), id_of(s.end)) else {
+            crate::logging::log(&format!(
+                "PAGES: VALIDATE_FAIL citation: page {} boundary has no line_mapping id", i + 1));
+            return;
+        };
+        let split_id = match s.split {
+            Some(sp) => match id_of(sp) {
+                Some(v) => Some(v),
+                None => {
+                    crate::logging::log(&format!(
+                        "PAGES: VALIDATE_FAIL citation: page {} split has no id", i + 1));
+                    return;
+                }
+            },
+            None => None,
+        };
+        rows.push(crate::db::play_pages::PageRow {
+            page_no: (i + 1) as i64,
+            left_start_id: ls,
+            split_id,
+            end_id: end,
+        });
+    }
+    let meta = crate::db::play_pages::PagesMeta {
+        layout_fingerprint: fp.clone(),
+        db_fingerprint: crate::snapshot::db_fingerprint(work),
+        page_count: rows.len() as i64,
+        generated_at: epoch_timestamp(),
+        validated: true,
+    };
+    match crate::db::queries::open_db_rw() {
+        Ok(mut conn) => {
+            if let Err(e) = crate::db::play_pages::ensure_schema(&conn)
+                .and_then(|_| crate::db::play_pages::store_pages(
+                    &mut conn, &work.canonical_abbrev, &meta, &rows))
+            {
+                crate::logging::log(&format!("PAGES: store failed ({e}) — will retry next load"));
+                return;
+            }
+        }
+        Err(e) => {
+            crate::logging::log(&format!("PAGES: db open failed ({e})"));
+            return;
+        }
+    }
+    crate::logging::log(&format!(
+        "PAGES: generated {} pages for {} fp={}", rows.len(), work.canonical_abbrev, fp));
+    // Make the fresh table active this session.
+    *state.page_table.borrow_mut() = Some(std::rc::Rc::new(spreads));
+}
+
+/// ISO-ish timestamp without adding a chrono dependency (not in Cargo.toml):
+/// seconds since epoch, prefixed so it's self-explaining in a DB browse.
+fn epoch_timestamp() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("epoch:{now}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

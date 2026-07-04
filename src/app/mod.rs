@@ -201,6 +201,12 @@ pub struct AppState {
     pub current_work: Option<Work>,
     pub current_line: usize,
     pub prev_highlight_line: std::cell::Cell<Option<usize>>,
+    /// Pinned play page table (buffer-line space), loaded from lit.db when the
+    /// layout fingerprint matches, or generated+stored after first settled
+    /// layout. None = live engine. See input::page_table.
+    pub page_table: std::cell::RefCell<Option<std::rc::Rc<Vec<crate::input::page_table::Spread>>>>,
+    /// One generation attempt per work load (reset in display_work).
+    pub page_table_gen_attempted: std::cell::Cell<bool>,
     /// The first buffer line hidden below each column's paged bottom clip
     /// (left/main view: the two-column `exact_end` = `cs.split`, `None` in
     /// single-column mode; right view: `cs.page_end + 1`). Stored so
@@ -1513,6 +1519,8 @@ pub fn build_window(
         current_work: None,
         current_line: 0,
         prev_highlight_line: std::cell::Cell::new(None),
+        page_table: std::cell::RefCell::new(None),
+        page_table_gen_attempted: std::cell::Cell::new(false),
         left_clip_boundary: std::cell::Cell::new(None),
         right_clip_boundary: std::cell::Cell::new(None),
         page_top_line: 0,
@@ -2028,6 +2036,16 @@ pub fn build_window(
                     // sourceview5::View exposes no AT-SPI Text interface, so this
                     // log line is how the harness locates the pane.
                     crate::input::scroll::emit_test_viewport_rect(&s);
+                }
+                // Pinned play pagination: once layout is settled, generate+store
+                // the page table if this work/layout doesn't have one (no-op when
+                // one was already loaded from lit.db, or on any fallback mode).
+                {
+                    let st = state_for_tick.clone();
+                    glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
+                        let s = st.borrow();
+                        crate::input::page_table::generate_and_store(&s);
+                    });
                 }
             }
             glib::ControlFlow::Continue
@@ -2789,6 +2807,8 @@ pub fn display_work_at_with_prepared(
     state.translations_visible = false;
     state.translation_lines = Vec::new();
     state.translation_section_starts = Vec::new();
+    state.page_table_gen_attempted.set(false);
+    *state.page_table.borrow_mut() = None;
     // Load translations for this work
     if let Some(ref work) = state.current_work {
         if let Ok(conn) = crate::db::queries::open_db() {
