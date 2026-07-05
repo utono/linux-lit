@@ -111,8 +111,11 @@ async fn handle_command(
             // Headless test runs must never attach to a real player: the
             // derived socket path can be the LIVE session's MPV when both run
             // the same work, and every test nav keypress would seek it.
-            if std::env::var_os("LIT_HEADLESS_TEST").is_some()
-                || std::env::var_os("LIT_NO_MPV").is_some()
+            // LIT_SYNC_TEST re-enables connect for the playback-sync timing
+            // test, whose DB-copy media rewrite guarantees a private socket.
+            if (std::env::var_os("LIT_HEADLESS_TEST").is_some()
+                || std::env::var_os("LIT_NO_MPV").is_some())
+                && std::env::var_os("LIT_SYNC_TEST").is_none()
             {
                 crate::logging::log("MPV: connect skipped (LIT_HEADLESS_TEST/LIT_NO_MPV)");
                 let _ = evt_tx.send(MpvEvent::ConnectionStatus(false)).await;
