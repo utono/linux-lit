@@ -28,10 +28,8 @@ fn pos_le(al: usize, ao: i32, bl: usize, bo: i32) -> bool {
 
 /// Pixel height of the half-open interval [start, end) given per-line heights.
 fn page_px(p: &ProsePage, heights: &[i32]) -> i64 {
-    let mut px: i64 = 0;
-    for l in p.start_line..=p.end_line.min(heights.len().saturating_sub(1)) {
-        px += heights[l] as i64;
-    }
+    let end = p.end_line.min(heights.len().saturating_sub(1));
+    let px: i64 = heights[p.start_line..=end].iter().map(|&h| h as i64).sum();
     px - p.start_off as i64 - (heights[p.end_line.min(heights.len() - 1)] - p.end_off) as i64
 }
 
@@ -359,10 +357,8 @@ pub fn load_for_prose_work(state: &crate::app::AppState) {
     }
     let fp = prose_layout_fingerprint(state);
     let Ok(conn) = crate::db::queries::open_db() else { return };
-    let loaded = match crate::db::prose_pages::load_pages(&conn, &work.abbrev, &fp) {
-        Ok(v) => v,
-        Err(_) => None, // missing tables etc.
-    };
+    // missing tables etc. fall back to None.
+    let loaded = crate::db::prose_pages::load_pages(&conn, &work.abbrev, &fp).unwrap_or_default();
     let Some((meta, rows)) = loaded else {
         crate::logging::log(&format!("PAGES_PROSE: no table for {} fp={}", work.abbrev, fp));
         return;

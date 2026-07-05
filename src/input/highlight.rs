@@ -31,7 +31,20 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
         crate::config::NavigationMode::EReader => {
-            if !is_line_fully_visible(state, state.current_line) {
+            // Mid-paragraph pages: `current_line == page_top_line` means the
+            // cursor's paragraph IS the one rendering at the top of this page
+            // (via a nonzero `page_top_offset`), even though
+            // `is_line_fully_visible` reports false for an over-tall
+            // straddler (it charges the FULL wrapped height and gets
+            // `count == 0`). Without this check, entering/extending visual
+            // mode (or any other `update_highlight_and_ensure_visible` call)
+            // on such a page fell through to `prose_table_boundary_for_line`,
+            // which returns the page containing the paragraph's FIRST row —
+            // yanking the view backward to an earlier page even though the
+            // cursor's line was already visible right here. See Important #2
+            // in final-review.md.
+            let already_on_page = state.current_line == state.page_top_line;
+            if !already_on_page && !is_line_fully_visible(state, state.current_line) {
                 // Prose table mode is TABLE-AUTHORITATIVE: land on the stored
                 // page (offset-aware) containing the cursor line. Only when no
                 // prose table serves this line do we fall through to the play

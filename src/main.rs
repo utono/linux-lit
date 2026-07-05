@@ -73,7 +73,7 @@ fn prose_cross_time(s: &app::AppState, bl: usize, end_off: i32) -> Option<f64> {
     // Character count of the buffer line (== canonical_text length for BH).
     let iter = s.buffer.iter_at_line(bl as i32)?;
     let char_len = {
-        let mut e = iter.clone();
+        let mut e = iter;
         e.forward_to_line_end();
         e.line_offset().max(0) as usize
     };
@@ -422,13 +422,19 @@ fn main() {
                                 {
                                     let p = table[pi];
                                     // Straddles: this page ENDS inside the cursor's
-                                    // line, and the line's first row is on THIS page
-                                    // (so its continuation is genuinely on pi+1).
-                                    if pi + 1 < table.len()
-                                        && p.end_line == buffer_line
-                                        && crate::input::prose_pages::prose_page_for_line(
-                                            &table, buffer_line) == Some(pi)
-                                    {
+                                    // line and a next page exists. Deliberately NOT
+                                    // gated on the line's first row being on THIS
+                                    // page — that would only be true on the
+                                    // paragraph's FIRST page. The generator
+                                    // normalizes full-height ends to (L+1, 0), so
+                                    // `p.end_line == buffer_line` here already means
+                                    // the paragraph genuinely continues onto pi+1,
+                                    // whether this is the paragraph's first, a
+                                    // middle, or its last page before the turn. See
+                                    // Important #1 in final-review.md — the
+                                    // first-row restriction stalled the sync turn on
+                                    // every middle page of a >=3-page paragraph.
+                                    if pi + 1 < table.len() && p.end_line == buffer_line {
                                         let already = s.pending_prose_cross
                                             .map(|(_, tp)| tp == pi + 1)
                                             .unwrap_or(false);
