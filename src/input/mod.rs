@@ -8,6 +8,7 @@ pub mod navigation;
 pub mod page_table;
 pub mod picker_dispatch;
 pub mod picker_keys;
+pub mod prose_pages;
 pub mod scroll;
 pub mod search;
 pub mod timestamps;
