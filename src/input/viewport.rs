@@ -1721,6 +1721,73 @@ pub(crate) fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
     line <= range.last_fit && range.count > 0
 }
 
+/// True when `line`'s FIRST visual row is inside the current viewport.
+///
+/// `is_line_fully_visible` charges a buffer line its FULL wrapped height via
+/// `visible_range`, which is right for "did this line finish rendering on the
+/// current page" but wrong for an over-tall prose paragraph: such a paragraph
+/// starting exactly at `page_top_line` has height greater than `usable_height`,
+/// so `visible_range` stops with `count == 0` on its very first line even
+/// though the paragraph's opening row IS on screen — `is_line_fully_visible`
+/// would (incorrectly) say "not visible" and trigger a redundant page turn.
+///
+/// This does NOT mean any pixel-band overlap counts as "visible": the paged
+/// bottom clip (`update_bottom_clip`) hides everything past the walked
+/// `visible_range` total wholesale — a line whose top pixel happens to fall
+/// before `y0 + usable_height` but after the real accumulated content height
+/// is clipped away entirely, not partially shown. So this mirrors
+/// `visible_range`'s own walk (same kernel `is_line_fully_visible` uses),
+/// with one adjustment: the first line's charged height is reduced by
+/// `page_top_offset` (the part of an over-tall paragraph already consumed by
+/// an earlier page), so a later page of the SAME straddling paragraph still
+/// correctly counts only its remaining height.
+pub(crate) fn is_line_start_visible(state: &AppState, line: usize) -> bool {
+    if state.loading_work.get() {
+        return true;
+    }
+    if line < state.page_top_line {
+        return false;
+    }
+    if line == state.page_top_line {
+        // The paragraph's own first visual row is only ON this page when the
+        // page top offset is 0 — a nonzero offset means this page begins
+        // partway down the SAME over-tall paragraph, i.e. the paragraph's
+        // start rendered on an earlier page.
+        return state.page_top_offset == 0;
+    }
+    let widget_height = state.text_view.height();
+    if widget_height <= 0 {
+        return true;
+    }
+    let guard = descender_guard_px(&state.text_view, state.page_top_line);
+    let usable = widget_height - guard - BASE_BOTTOM_MARGIN;
+    let line_count = state.effective_line_count();
+    // Walk from page_top exactly like `visible_range`'s own break condition
+    // (`total + h > usable` => stop, this line and everything after is
+    // clipped away wholesale — the renderer never partially reveals a line
+    // that doesn't fit), except the first line's charged height is reduced by
+    // the already-consumed offset so a later page of the SAME straddling
+    // paragraph only counts its remaining height.
+    let mut total: i32 = 0;
+    for i in state.page_top_line..line_count {
+        let Some(iter) = state.buffer.iter_at_line(i as i32) else { break };
+        let (_y, h) = state.text_view.line_yrange(&iter);
+        let charged = if i == state.page_top_line {
+            (h - state.page_top_offset).max(0)
+        } else {
+            h
+        };
+        if total + charged > usable {
+            return false; // `i` (and `line`, if not yet reached) is clipped
+        }
+        total += charged;
+        if i == line {
+            return true;
+        }
+    }
+    false
+}
+
 /// Count how many buffer lines are fully visible starting from `page_top_line`.
 /// Returns a calibrated estimate (35) during work load when GTK layout is
 /// invalid, and a small fallback (15) for empty or past-end buffers.

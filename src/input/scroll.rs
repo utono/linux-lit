@@ -1111,7 +1111,70 @@ pub(crate) fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize)
             // If the cursor's new line is ALREADY on the current spread (e.g. it
             // moved into the right column), do nothing — the caller updated the
             // highlight; no re-page needed.
-            if super::viewport::is_line_fully_visible(state, state.current_line) {
+            //
+            // Prose uses `is_line_start_visible`, not `is_line_fully_visible`:
+            // the latter charges a buffer line its FULL wrapped height, so an
+            // over-tall paragraph starting exactly at page_top_line reads as
+            // "not visible" even though its opening row is on screen — that
+            // false negative is what caused the original bug (a redundant page
+            // turn skipped the paragraph's own first page). Play/table paths
+            // keep the original whole-line check.
+            let already_visible = if state.is_prose() && state.column_count() == 1 {
+                super::viewport::is_line_start_visible(state, state.current_line)
+            } else {
+                super::viewport::is_line_fully_visible(state, state.current_line)
+            };
+            if already_visible {
+                return;
+            }
+            // Prose visual-row fill: advance one boundary at a time (the same
+            // rule as x — Task 3's prose_next_boundary) until the cursor
+            // line's page is reached. This is what fixes the j-past-an-
+            // over-tall-paragraph tail skip: the intermediate sub-line pages
+            // are stepped through, never jumped over.
+            //
+            // Stop condition is `page_top_line >= target`, NOT
+            // `is_line_start_visible(target)`: for an over-tall paragraph,
+            // `prose_next_boundary` steps INTO its middle (offset > 0) before
+            // ever landing exactly on its start — `is_line_start_visible`
+            // requires offset == 0 at `line == page_top_line`, so it would
+            // never go true once the walk is already past the paragraph's
+            // fresh start, and the loop would run away through the rest of
+            // the document (observed: guard-bounded runaway to page_top≈1500
+            // in a document of ~2000 lines). Landing with `page_top_line ==
+            // target` (any offset) already means `target` is showing on this
+            // page — that IS "reached," regardless of whether it started
+            // fresh or mid-paragraph.
+            if state.is_prose() && state.column_count() == 1 {
+                let target = state.current_line;
+                let mut guard = 0usize;
+                let from = (state.page_top_line, state.page_top_offset);
+                while state.page_top_line < target {
+                    let Some((nt, no)) = super::navigation::prose_next_boundary(state) else {
+                        break;
+                    };
+                    // Advance the live page state directly; one back entry
+                    // for the whole jump (matches the single-entry rule below).
+                    state.page_top_line = nt;
+                    state.page_top_offset = no;
+                    guard += 1;
+                    if guard > state.effective_line_count().max(64) {
+                        break; // safety: never loop forever
+                    }
+                }
+                if (state.page_top_line, state.page_top_offset) != from {
+                    let (nt, no) = (state.page_top_line, state.page_top_offset);
+                    // Restore pre-jump state for the back stack, then land.
+                    state.page_top_line = from.0;
+                    state.page_top_offset = from.1;
+                    state.page_back_stack.clear();
+                    state.page_back_stack.push(from);
+                    log_fmt!(
+                        "NAV_PAGE_FWD: prose row-fill current={} ({},{})->({},{})",
+                        state.current_line, from.0, from.1, nt, no
+                    );
+                    set_page_instant_offset(state, nt, no);
+                }
                 return;
             }
             // Compute where a turn/snap would land. Table mode: the stored page
