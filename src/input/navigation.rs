@@ -65,6 +65,17 @@ pub fn preroll_seek_time(start: f64) -> f64 {
     (start - SEEK_PREROLL).max(0.0)
 }
 
+/// Char-fraction interpolation of a page-break crossing time inside one
+/// line's audio window — the fallback when no phrase_timestamps exist for
+/// the playing media file. Linearly maps the boundary's char offset within
+/// the line onto the line's [start, end] audio window.
+pub fn interpolate_cross_time(start: f64, end: f64, char_off: usize, char_len: usize) -> f64 {
+    if char_len == 0 || end <= start {
+        return start;
+    }
+    start + (end - start) * (char_off.min(char_len) as f64 / char_len as f64)
+}
+
 /// Seconds to highlight a line before playback actually reaches it.
 /// Used by the MPV client's time-pos sync.
 pub const SYNC_PREROLL: f64 = 0.0;
@@ -150,6 +161,14 @@ impl PageChangeReason {
 /// the same for every caller — the differences are in the reason, not in
 /// scattered if/else around the call sites.
 pub(crate) fn after_page_change(state: &mut AppState, reason: PageChangeReason) {
+    // Task 9: cancel a scheduled prose page crossing on any page change the user
+    // (or a layout refresh) drove — manual x/y/j/k/G/gg, chapter/scene jumps,
+    // seeks, resnap, work load. Only the MpvSync path (which SCHEDULES the cross
+    // right after calling this) must not wipe it. A stale cross firing after the
+    // reader navigated away is the classic bug this guards against.
+    if reason != PageChangeReason::MpvSync {
+        state.pending_prose_cross = None;
+    }
     // F4: invalidate cache unconditionally; snap_scroll_to_line repopulates
     // if any scroll happened. For Cursor / Dialogue navigations that don't
     // page-turn, the next is_line_fully_visible call falls back to recompute
@@ -3841,6 +3860,27 @@ mod after_page_change_tests {
             "cursor-only navigation must not drag audio");
         assert!(PageChangeReason::Cursor.should_show_vocab(),
             "cursor navigation still shows vocab");
+    }
+}
+
+#[cfg(test)]
+mod interpolate_cross_time_tests {
+    use super::interpolate_cross_time;
+
+    #[test]
+    fn interpolate_cross_time_is_proportional_and_clamped() {
+        assert_eq!(interpolate_cross_time(10.0, 20.0, 50, 100), 15.0);
+        assert_eq!(interpolate_cross_time(10.0, 20.0, 0, 100), 10.0);
+        assert_eq!(interpolate_cross_time(10.0, 20.0, 200, 100), 20.0); // off clamped to len
+        assert_eq!(interpolate_cross_time(10.0, 20.0, 50, 0), 10.0);   // degenerate len
+        assert_eq!(interpolate_cross_time(10.0, 10.0, 50, 100), 10.0); // degenerate window
+        assert_eq!(interpolate_cross_time(10.0, 5.0, 50, 100), 10.0);  // inverted window
+    }
+
+    #[test]
+    fn interpolate_cross_time_quarter_and_three_quarter() {
+        assert_eq!(interpolate_cross_time(0.0, 40.0, 25, 100), 10.0);
+        assert_eq!(interpolate_cross_time(0.0, 40.0, 75, 100), 30.0);
     }
 }
 

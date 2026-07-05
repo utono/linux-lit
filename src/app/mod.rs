@@ -387,6 +387,15 @@ pub struct AppState {
     /// back to this buffer line (the timestamped source line). Cleared when
     /// CursorSync targets any other line.
     pub pending_advance_ignore_bl: Option<usize>,
+    /// Prose straddling-paragraph page crossing (Task 9). When the spoken
+    /// paragraph continues past the current page's stored boundary, this holds
+    /// `(fire_time, target_page_index)`: once MPV time_pos reaches `fire_time`,
+    /// advance the prose page grid to `target_page_index` (the paragraph's
+    /// continuation page) while the cursor stays on the same paragraph. Cleared
+    /// by any non-MpvSync page change (manual x/y/j/k/G/gg, seek), on work
+    /// switch, and when the prose table drops (resize) — a stale scheduled cross
+    /// firing after the user navigated away is the classic bug here.
+    pub pending_prose_cross: Option<(f64, usize)>,
     pub visual_selection: Option<crate::input::visual::SelectionState>,
     pub selection_tag: gtk4::TextTag,
     pub action_popup: Option<crate::input::visual::ActionPopupState>,
@@ -1628,6 +1637,7 @@ pub fn build_window(
         suppress_sync_until: None,
         pending_advance: None,
         pending_advance_ignore_bl: None,
+        pending_prose_cross: None,
         visual_selection: None,
         selection_tag,
         action_popup: None,
@@ -2061,6 +2071,11 @@ pub fn build_window(
                             }
                             // Same grid-swap re-anchor as the settled-layout hook.
                             if let Ok(mut s) = st.try_borrow_mut() {
+                                // Task 9: a resize may have dropped/regenerated the
+                                // prose grid; a cross scheduled against the old grid
+                                // is now meaningless. Cancel it (it re-schedules on
+                                // the next CursorSync if still warranted).
+                                s.pending_prose_cross = None;
                                 crate::input::page_table::resnap_to_table(&mut s);
                                 crate::input::prose_pages::resnap_prose_to_table(&mut s);
                             }
@@ -2667,6 +2682,9 @@ pub fn display_work_at_with_prepared(
     state.search_bar.hide();
     state.current_time_pos = 0.0;
     state.current_sync_scene = None;
+    // Task 9: a scheduled prose page crossing is tied to the OLD work's grid and
+    // media; drop it so it can't fire against the freshly loaded work.
+    state.pending_prose_cross = None;
     state.media_id = work.media_id;
     state
         .window
