@@ -368,7 +368,28 @@ fn main() {
                         crate::logging::log(&format!("MPV connection: {}", connected));
                     }
                     MpvEvent::PlaybackState(playing) => {
-                        state_for_events.borrow_mut().mpv_playing = playing;
+                        let mut s = state_for_events.borrow_mut();
+                        s.mpv_playing = playing;
+                        // Starting playback revives sync. Navigating onto an
+                        // UNTIMESTAMPED line suppresses CursorSync indefinitely
+                        // (no seek is possible, the cursor must stay put) — but
+                        // once the user resumes playback they expect the
+                        // highlight to follow the audio again; without this the
+                        // suppression outlives the pause and sync is dead for
+                        // the rest of the session. Brief seek debounces (500ms)
+                        // are left to expire on their own.
+                        if playing {
+                            if let Some(until) = s.suppress_sync_until {
+                                if until.saturating_duration_since(std::time::Instant::now())
+                                    > std::time::Duration::from_secs(60)
+                                {
+                                    s.suppress_sync_until = None;
+                                    crate::logging::log_always(
+                                        "SYNC: cleared indefinite suppression on playback start",
+                                    );
+                                }
+                            }
+                        }
                         crate::logging::log(&format!(
                             "MPV playback: {}",
                             if playing { "playing" } else { "paused" }

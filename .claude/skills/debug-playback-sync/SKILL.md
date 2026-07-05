@@ -145,13 +145,13 @@ Key suppression sources and durations:
 - Search navigation — 500ms
 - `cursor_to_page_bottom` (Q key) — calls `seek_to_current_line`, so 500ms or 86400s
 
-**Common failure pattern:** User navigates with `q`/`,` while paused, lands on untimestamped line (86400s suppress), then presses Tab to play. If `toggle_playback` doesn't clear the suppression (because current line also lacks a timestamp), sync stays dead.
+**Common failure pattern (FIXED 2026-07-05):** User navigates with `q`/`,` while paused, lands on untimestamped line (86400s suppress), then presses Tab to play — nothing cleared the suppression, so sync stayed dead for the session (reproduced deterministically on Err/Shr/TN/TNK/Tit/WT by the test-playback-sync skill). Fix: the `MpvEvent::PlaybackState(true)` handler in `src/main.rs` clears any suppression with >60s remaining when playback starts (logs `SYNC: cleared indefinite suppression on playback start`); brief 500ms seek debounces still expire naturally. If this recurs, check that log line is present on resume.
 
 ## Common Root Causes (ordered by frequency)
 
 1. **Wrong next-page target:** `page_turn_top` doesn't back up far enough (misses speaker name or blank separator above the next dialogue line), or backs up too far (shows end of previous paragraph)
 2. **Page turn never triggers:** `current_line > last_vis` uses strict `>`, so if the cursor reaches but equals `last_vis`, no turn happens. The highlight stalls at the bottom line
-3. **Suppression kills sync:** 86400s suppress from navigation/seek keybinds, never cleared by `toggle_playback`
+3. **Suppression kills sync:** 86400s suppress from navigation/seek keybinds. FIXED 2026-07-05 for the resume path (PlaybackState(true) clears >60s suppressions); can still bite if playback never restarts
 4. **`pending_advance` cleared prematurely:** unconditional `None` on every `CursorSync` clears it before it can fire
 5. **`last_fully_visible_line` miscounts:** includes a clipped bottom line as "fully visible", preventing the `>` condition
 6. **`line_map` translation drops events:** `buffer_to_work` verification mismatch silently skips a `CursorSync`

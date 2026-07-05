@@ -69,8 +69,13 @@ pub fn find_socket_for_work(media_paths: &[String]) -> Option<(PathBuf, String)>
     // Headless test runs must never touch real sockets: probing would connect
     // to (and stale-cleanup would DELETE) the live session's MPV socket when
     // both run the same work — a fuzz run would then seek the user's player.
-    if std::env::var_os("LIT_HEADLESS_TEST").is_some()
-        || std::env::var_os("LIT_NO_MPV").is_some()
+    // Exception: LIT_SYNC_TEST (the playback-sync timing test) re-enables
+    // discovery — that harness rewrites its private DB copy's media path so
+    // the derived socket can only be its own pre-launched mpv, never the
+    // live player's.
+    if (std::env::var_os("LIT_HEADLESS_TEST").is_some()
+        || std::env::var_os("LIT_NO_MPV").is_some())
+        && std::env::var_os("LIT_SYNC_TEST").is_none()
     {
         crate::logging::log("MPV discovery: skipped (LIT_HEADLESS_TEST/LIT_NO_MPV)");
         return None;
