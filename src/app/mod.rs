@@ -2383,6 +2383,11 @@ pub fn build_window(
                 display_work_at_with_prepared(&mut s, work, target_line_id, prepared);
             }
 
+            // Warm the concordance word-list cache for this author in the
+            // background so the first `\` opens the picker instantly instead of
+            // waiting ~10s to tokenize the whole corpus. No-op if already cached.
+            crate::input::actions::concordance::warm_word_cache(&state_clone, &handle);
+
             // After display_work, if this was a cache miss AND we have
             // both filtered_contents and line_map (i.e., text_file path
             // was valid), write the snapshot for next launch.

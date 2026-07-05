@@ -281,6 +281,62 @@ pub(crate) fn concordance_prev_in_work(
     }
 }
 
+/// Warm the concordance word-list cache for the current work's author in the
+/// background, so a later `\` press opens the picker instantly instead of
+/// waiting ~10s while it tokenizes the whole author corpus.
+///
+/// No-op when the cache already matches the author (or no work is loaded). Safe
+/// to call on every work load — the build only runs when the author changes.
+/// The picker's own `open_picker` uses the same cache, so a warm run makes the
+/// first `\` a cache hit.
+pub(crate) fn warm_word_cache(
+    state: &Rc<RefCell<AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+) {
+    let author = match state.borrow().current_work.as_ref().map(|w| w.author.clone()) {
+        Some(a) => a,
+        None => return,
+    };
+
+    // Already cached for this author? Nothing to do.
+    let already = state
+        .borrow()
+        .concordance_word_cache
+        .as_ref()
+        .is_some_and(|(a, _)| a == &author);
+    if already {
+        return;
+    }
+
+    let state_clone = Rc::clone(state);
+    let handle = tokio_handle.clone();
+    let author_clone = author.clone();
+    crate::logging::log(&format!("CONC_WARM: building word cache for author '{}'", author));
+    glib::spawn_future_local(async move {
+        let words = handle
+            .spawn_blocking(move || {
+                let conn = crate::db::queries::open_db().expect(crate::db::queries::OPEN_DB_PANIC_MSG);
+                crate::db::concordance::load_concordance_words(&conn, &author_clone)
+                    .unwrap_or_default()
+            })
+            .await
+            .unwrap_or_default();
+        let n = words.len();
+        // The user may have switched works while this ran; only store if the
+        // current author still matches what we built for (and it isn't already
+        // populated by an intervening `open_picker`).
+        let mut s = state_clone.borrow_mut();
+        let still_current = s.current_work.as_ref().map(|w| &w.author) == Some(&author);
+        let already = s.concordance_word_cache.as_ref().is_some_and(|(a, _)| a == &author);
+        if still_current && !already {
+            s.concordance_word_cache = Some((author, words));
+            crate::logging::log(&format!("CONC_WARM: cached {} words; `\\` will now open instantly", n));
+        } else {
+            crate::logging::log("CONC_WARM: discarded (author changed or already cached)");
+        }
+    });
+}
+
 /// Open the concordance picker, populating it with all content words
 /// from the current author's works (minus stopwords). Called from `Ctrl+\`.
 pub(crate) fn open_picker(
