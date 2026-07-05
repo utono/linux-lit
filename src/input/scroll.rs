@@ -1161,6 +1161,26 @@ pub(crate) fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize)
             // fresh or mid-paragraph.
             if state.is_prose() && state.column_count() == 1 {
                 let target = state.current_line;
+                // Table-authoritative: if a prose table is active, land directly
+                // on the stored page containing `target` (offset-aware). Never
+                // re-walk the live boundaries while a grid is pinned — the
+                // established play-table lesson (table_end_for_top): visibility
+                // and landing checks must read the SAME source that renders.
+                if let Some((pt, po)) =
+                    crate::input::prose_pages::prose_table_boundary_for_line(state, target)
+                {
+                    let from = (state.page_top_line, state.page_top_offset);
+                    if (pt, po) != from {
+                        state.page_back_stack.clear();
+                        state.page_back_stack.push(from);
+                        log_fmt!(
+                            "PAGES_PROSE: jump-fwd table current={} ({},{})->({},{})",
+                            target, from.0, from.1, pt, po
+                        );
+                        set_page_instant_offset(state, pt, po);
+                    }
+                    return;
+                }
                 let mut guard = 0usize;
                 let from = (state.page_top_line, state.page_top_offset);
                 while state.page_top_line < target {

@@ -227,6 +227,21 @@ pub fn jump_to_end(state: &mut AppState) {
         return;
     }
 
+    // Prose grid: land on the STORED final page (offset-aware — it can start
+    // mid-paragraph), and put the cursor on the document's last line. Mirrors
+    // the play-table branch above; keeps G on the same grid x/j/sync use so the
+    // landing is never off the rendered final page.
+    if let Some(table) = crate::input::prose_pages::active_prose_page_table(state) {
+        let p = *table.last().expect("validated tables are non-empty");
+        state.page_back_stack.clear();
+        crate::input::scroll::set_page_instant_offset(state, p.start_line, p.start_off);
+        state.current_line = line_count - 1;
+        after_page_change(state, PageChangeReason::JumpToLine);
+        log_fmt!("PAGES_PROSE: page {}/{} (G) top=({},{})",
+            table.len(), table.len(), p.start_line, p.start_off);
+        return;
+    }
+
     // Find the last dialogue line in the buffer (skips trailing stage
     // directions, blanks, exit markers). For prose works there typically
     // isn't a difference; for plays this lands on the last spoken line.

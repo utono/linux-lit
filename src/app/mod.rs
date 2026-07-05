@@ -2027,6 +2027,7 @@ pub fn build_window(
                             // cursor jump on the first sync page turn.
                             if let Ok(mut s) = st.try_borrow_mut() {
                                 crate::input::page_table::resnap_to_table(&mut s);
+                                crate::input::prose_pages::resnap_prose_to_table(&mut s);
                             }
                         });
                     }
@@ -2061,6 +2062,7 @@ pub fn build_window(
                             // Same grid-swap re-anchor as the settled-layout hook.
                             if let Ok(mut s) = st.try_borrow_mut() {
                                 crate::input::page_table::resnap_to_table(&mut s);
+                                crate::input::prose_pages::resnap_prose_to_table(&mut s);
                             }
                         });
                     }

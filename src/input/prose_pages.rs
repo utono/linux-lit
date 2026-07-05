@@ -148,6 +148,24 @@ pub fn prose_page_for_line(pages: &[ProsePage], line: usize) -> Option<usize> {
 // `PAGES_PROSE:` prefix.
 // ---------------------------------------------------------------------------
 
+/// Prose-specific layout fingerprint. Extends the play `layout_fingerprint`
+/// with the LIVE usable height (`text_view.height() - descender_guard -
+/// BASE_BOTTOM_MARGIN`). That derived value can settle ±1px across runs at the
+/// SAME window size — the play fingerprint (window geometry + font metrics)
+/// would not notice, but a 1px shift in `usable` moves a prose visual-row
+/// boundary. Encoding it keeps a stored prose grid from being loaded against a
+/// live layout that would compute a different boundary. NOTE: this does NOT
+/// change `page_table::layout_fingerprint` — the play tables' stored
+/// fingerprints must stay valid.
+pub fn prose_layout_fingerprint(state: &crate::app::AppState) -> String {
+    use gtk4::prelude::WidgetExt;
+    let base = crate::input::page_table::layout_fingerprint(state);
+    let widget_height = state.text_view.height();
+    let guard = crate::input::viewport::descender_guard_px(&state.text_view, 0);
+    let usable = widget_height - guard - crate::input::scroll::BASE_BOTTOM_MARGIN;
+    format!("{base}|uh{usable}")
+}
+
 /// Walk the LIVE engine's forward chain from (0,0), recording every page.
 /// Boundaries come from `navigation::prose_next_boundary` — the same function
 /// x/j use — so the stored grid IS the live grid.
@@ -248,7 +266,7 @@ pub fn generate_and_store_prose(state: &mut crate::app::AppState) {
         return; // already loaded from the DB this session
     }
     use gtk4::prelude::{TextBufferExt, TextViewExt, WidgetExt};
-    let fp = crate::input::page_table::layout_fingerprint(state);
+    let fp = prose_layout_fingerprint(state);
     let pages = match record_prose_pages(state) {
         Ok(p) => p,
         Err(e) => {
@@ -339,7 +357,7 @@ pub fn load_for_prose_work(state: &crate::app::AppState) {
     if state.column_count() != 1 || !state.is_prose() || state.translations_visible {
         return;
     }
-    let fp = crate::input::page_table::layout_fingerprint(state);
+    let fp = prose_layout_fingerprint(state);
     let Ok(conn) = crate::db::queries::open_db() else { return };
     let loaded = match crate::db::prose_pages::load_pages(&conn, &work.abbrev, &fp) {
         Ok(v) => v,
@@ -391,7 +409,7 @@ pub fn revalidate_prose_on_resize(state: &crate::app::AppState) {
     if state.prose_page_table.borrow().is_none() {
         return;
     }
-    let current_fp = crate::input::page_table::layout_fingerprint(state);
+    let current_fp = prose_layout_fingerprint(state);
     if current_fp == *state.prose_page_table_fp.borrow() {
         return; // still valid at this geometry
     }
@@ -439,6 +457,104 @@ pub fn prose_table_page_end(state: &crate::app::AppState) -> Option<(usize, i32)
     let p = &table[i];
     (p.start_line == state.page_top_line && p.start_off == state.page_top_offset)
         .then_some((p.end_line, p.end_off))
+}
+
+/// Last buffer line RENDERED on the stored page whose top is
+/// `(top_line, top_off)` — the prose analogue of `page_table::table_end_for_top`
+/// (the "read the table, never re-walk live" lesson). The page interval is
+/// `[start, end)` with `end` EXCLUSIVE: when `end_off > 0`, `end_line` itself
+/// has ink on the page (its first `end_off` px), so it is the last rendered
+/// line; when `end_off == 0` (normalized full-height end), `end_line` starts the
+/// NEXT page, so the last rendered line is `end_line - 1`. `None` = no prose
+/// table active, or `(top_line, top_off)` is not a canonical stored page top:
+/// callers fall back to the live `visible_range` walk.
+pub fn prose_table_last_line_for_top(
+    state: &crate::app::AppState,
+    top_line: usize,
+    top_off: i32,
+) -> Option<usize> {
+    let table = active_prose_page_table(state)?;
+    let i = prose_page_for_position(&table, top_line, top_off)?;
+    let p = &table[i];
+    if p.start_line != top_line || p.start_off != top_off {
+        return None; // not a canonical page top — live path
+    }
+    Some(if p.end_off > 0 { p.end_line } else { p.end_line.saturating_sub(1) })
+}
+
+/// Last buffer line shown WHOLE on the stored page whose top is
+/// `(top_line, top_off)` — for a clip check ("does the bottom line fit?"). A
+/// prose row-fill page can END mid-line (`end_off < end_line`'s full height):
+/// that final line is only PARTIALLY on the page (its overflow is hidden by the
+/// bottom clip and belongs to the next page), so it must NOT be required to fit
+/// whole. The last WHOLE line is then `end_line - 1`; only when the page ends at
+/// a line's full height is `end_line` itself fully shown. `None` = no prose
+/// table, or not a canonical page top (live path).
+pub fn prose_table_last_whole_line_for_top(
+    state: &crate::app::AppState,
+    top_line: usize,
+    top_off: i32,
+) -> Option<usize> {
+    use gtk4::prelude::{TextBufferExt, TextViewExt};
+    let table = active_prose_page_table(state)?;
+    let i = prose_page_for_position(&table, top_line, top_off)?;
+    let p = &table[i];
+    if p.start_line != top_line || p.start_off != top_off {
+        return None;
+    }
+    // end is EXCLUSIVE. If it lands at end_line's FULL height (or the normalized
+    // end_off == 0 form), end_line is shown whole -> it is the last whole line.
+    // Otherwise end_line is only partially shown (its overflow hidden by the
+    // bottom clip, belonging to the next page), so the last WHOLE line is the
+    // one above it.
+    if p.end_off == 0 {
+        // Ends at the previous line's full height. The last whole line is
+        // end_line-1 IF it is at/after the page's first whole line; otherwise
+        // (a single partial line) there is none.
+        return whole_line_or_none(p.end_line.wrapping_sub(1), p.start_line, p.start_off);
+    }
+    let end_line_height = state.buffer.iter_at_line(p.end_line as i32)
+        .map(|it| state.text_view.line_yrange(&it).1)
+        .unwrap_or(0);
+    if p.end_off >= end_line_height {
+        // Ends at end_line's full height -> end_line is shown whole.
+        whole_line_or_none(p.end_line, p.start_line, p.start_off)
+    } else {
+        // end_line is partial -> the last whole line is the one above it.
+        whole_line_or_none(p.end_line.wrapping_sub(1), p.start_line, p.start_off)
+    }
+}
+
+/// `Some(candidate)` if `candidate` is a genuinely whole line on a page whose
+/// first line is `start_line` (partial when `start_off > 0`): the first whole
+/// line is `start_line` when `start_off == 0`, else `start_line + 1`. Returns
+/// `None` when no whole line exists (e.g. a single over-tall paragraph page
+/// showing only a middle slice — nothing on it may be required to fit whole).
+fn whole_line_or_none(candidate: usize, start_line: usize, start_off: i32) -> Option<usize> {
+    let first_whole = if start_off > 0 { start_line + 1 } else { start_line };
+    (candidate != usize::MAX && candidate >= first_whole).then_some(candidate)
+}
+
+/// Re-anchor an off-grid (page_top_line, page_top_offset) onto the active prose
+/// grid (mirror of `page_table::resnap_to_table`). No-op when no prose table is
+/// active, the current top is already a canonical page start, or the cursor's
+/// line is not covered by the table.
+pub fn resnap_prose_to_table(state: &mut crate::app::AppState) {
+    let Some(table) = active_prose_page_table(state) else { return };
+    if prose_page_for_position(&table, state.page_top_line, state.page_top_offset)
+        .map(|i| (table[i].start_line, table[i].start_off)
+            == (state.page_top_line, state.page_top_offset))
+        .unwrap_or(false)
+    {
+        return; // already on the grid
+    }
+    let Some(i) = prose_page_for_line(&table, state.current_line) else { return };
+    let (t, o) = (table[i].start_line, table[i].start_off);
+    crate::logging::log(&format!(
+        "PAGES_PROSE: resnap off-grid ({},{}) -> ({},{}) (cursor {})",
+        state.page_top_line, state.page_top_offset, t, o, state.current_line
+    ));
+    crate::input::scroll::set_page_instant_offset(state, t, o);
 }
 
 /// ISO-ish timestamp without adding a chrono dependency: seconds since epoch,

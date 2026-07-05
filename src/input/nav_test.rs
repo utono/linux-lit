@@ -394,6 +394,7 @@ fn run_step(s: &mut AppState) {
     let step_num = s.nav_test.step;
     let pre_top = s.page_top_line;
     let pre_line = s.current_line;
+    let pre_off = s.page_top_offset;
     s.nav_test.prev_top = pre_top;
 
     // Record an expected `y` return ONLY when the very next step is PageBackward,
@@ -459,6 +460,7 @@ fn run_step(s: &mut AppState) {
 
     let post_top = s.page_top_line;
     let post_line = s.current_line;
+    let post_off = s.page_top_offset;
     let line_count = s.effective_line_count();
 
     // If a navigation was a no-op (no target found, or at end of work),
@@ -472,13 +474,34 @@ fn run_step(s: &mut AppState) {
         step_num, step, pre_top, post_top, pre_line, post_line
     );
 
-    // 1. Forward progress on x (skip if page_forward was a no-op at end of work)
-    if matches!(step, Step::PageForward) && post_top <= pre_top {
-        let is_end_noop = post_top == pre_top && post_line == pre_line;
-        if !is_end_noop {
+    // 1. Forward progress on x (skip if page_forward was a no-op at end of work).
+    // Prose row-fill pages advance by OFFSET as well as line, and the final
+    // prose page can't advance at all — so measure progress on (top, offset) and
+    // treat "page unchanged" (top AND offset) as the legitimate end no-op even
+    // when page_forward re-anchored the cursor to the page top (BH final page
+    // (7296,6): line went 7305->7296 while the page stayed put — not a
+    // regression, just no page left to turn to).
+    if matches!(step, Step::PageForward) {
+        let prose = s.column_count() == 1 && s.is_prose();
+        let advanced = if prose {
+            (post_top, post_off) > (pre_top, pre_off)
+        } else {
+            post_top > pre_top
+        };
+        let page_unchanged = post_top == pre_top && (!prose || post_off == pre_off);
+        // A prose page that can't advance is only a legit no-op on the LAST
+        // prose page (page_forward there re-anchors the cursor but leaves the
+        // page). Off the last page an unchanged page IS a real stall.
+        let on_last_prose_page = prose
+            && crate::input::prose_pages::prose_table_last_line_for_top(s, post_top, post_off)
+                .map(|end| end + 1 >= line_count)
+                .unwrap_or(false);
+        let is_end_noop = page_unchanged
+            && ((post_line == pre_line) || on_last_prose_page);
+        if !advanced && !is_end_noop {
             fail(s, step_num, step, &format!(
-                "forward progress: top {}->{}",
-                pre_top, post_top
+                "forward progress: top {}->{} off {}->{}",
+                pre_top, post_top, pre_off, post_off
             ));
         }
     }
@@ -704,14 +727,14 @@ fn run_step(s: &mut AppState) {
     // is also exempt — a trailing section (lone EPILOGUE) has no next page to go
     // to, so its marker shares the last spread.
     let on_final_spread = {
-        let lv = last_fully_visible_line(s, post_top);
+        let lv = assert_last_visible_line(s, post_top);
         lv + 1 >= line_count
             || next_dialogue_line(&s.buffer, &s.translation_lines, lv, line_count, false, no_stage_lookup())
                 .map(|d| d >= line_count)
                 .unwrap_or(true)
     };
     if s.current_work.is_some() && !on_final_spread {
-        let last_vis = last_fully_visible_line(s, post_top);
+        let last_vis = assert_last_visible_line(s, post_top);
         let split = if s.column_count() == 2 {
             crate::input::viewport::column_split(s, post_top).split
         } else {
@@ -762,7 +785,7 @@ fn run_step(s: &mut AppState) {
     // 4. Viewport fill (at least 10%)
     let widget_height = s.text_view.height();
     if widget_height > 0 {
-        let last_vis = last_fully_visible_line(s, post_top);
+        let last_vis = assert_last_visible_line(s, post_top);
         let mut total = 0i32;
         for i in post_top..=last_vis {
             if let Some(iter) = s.buffer.iter_at_line(i as i32) {
@@ -869,7 +892,7 @@ fn run_step(s: &mut AppState) {
             | Step::JumpTop | Step::JumpEnd
     );
     if is_jump && moved && line_count > 0 {
-        let last_vis = last_fully_visible_line(s, post_top);
+        let last_vis = assert_last_visible_line(s, post_top);
         if post_line < post_top || post_line > last_vis {
             fail(s, step_num, step, &format!(
                 "landing off-page: cursor={} not in visible [{}, {}]",
@@ -946,11 +969,34 @@ fn run_step(s: &mut AppState) {
             }
         }
     } else if s.column_count() == 1 && line_count > 0 && !s.loading_work.get() {
-        let last_vis = last_fully_visible_line(s, post_top);
-        if let Some(msg) = clip_violation(
-            &s.text_view, &s.scrolled_window, &s.buffer, post_top, last_vis,
-        ) {
-            fail(s, step_num, step, &format!("LINE CLIPPED: {}", msg));
+        // Prose row-fill pages can start AND end mid-line: the TOP line is
+        // scrolled partly above the viewport (top_off) and the BOTTOM line may
+        // be partly below it (its overflow hidden by the bottom clip, belonging
+        // to the next page) — neither is "clipped". So the clip check runs over
+        // [top, last WHOLE line] with the top offset allowed, not the full last
+        // rendered line (which is only partially shown by design). In table mode
+        // read both bounds from the stored page (table-authoritative); live mode
+        // falls back to the trimmed live range.
+        let top_off = if post_top == s.page_top_line { s.page_top_offset } else { 0 };
+        let table_active =
+            crate::input::prose_pages::active_prose_page_table(s).is_some();
+        let clip_bottom = crate::input::prose_pages::prose_table_last_whole_line_for_top(
+            s, post_top, top_off,
+        );
+        // In table mode `None` means the page has NO fully-shown line (a single
+        // over-tall paragraph slice) — nothing may be required to fit whole, so
+        // skip the clip check. Live mode (no table) uses the trimmed live range.
+        let run_clip = match (table_active, clip_bottom) {
+            (true, None) => None,
+            (true, Some(b)) => Some(b),
+            (false, _) => Some(assert_last_visible_line(s, post_top)),
+        };
+        if let Some(clip_bottom) = run_clip {
+            if let Some(msg) = clip_violation_off(
+                &s.text_view, &s.scrolled_window, &s.buffer, post_top, clip_bottom, top_off,
+            ) {
+                fail(s, step_num, step, &format!("LINE CLIPPED: {}", msg));
+            }
         }
     }
 
@@ -986,6 +1032,27 @@ fn run_step(s: &mut AppState) {
 /// top, and the `clamped_at_scene` scans must reach the marker beyond that
 /// gap (with `end + 1` they stop short and false-positive UNBALANCED at
 /// scene edges, e.g. MND page top=300).
+/// Last buffer line RENDERED on the page whose top is `top`, for the fuzz's
+/// landing/clip/scene assertions. In single-column prose TABLE mode the
+/// renderer shows the STORED page, whose interval can end on a mid-line offset
+/// (e.g. BH's final page `(7296,6)..(7305, full)` covers line 7305 whole) — so
+/// re-walking the live `visible_range` (which trims to 7304) false-positives
+/// "landing off-page" / "LINE CLIPPED" at the last line. Read the table's end
+/// instead: same source production renders from, same lesson as the 2-col
+/// `table_end_for_top` branch already inside `last_fully_visible_line` and the
+/// `section_starts` assertion fix. Live mode (no table) is unchanged.
+fn assert_last_visible_line(s: &AppState, top: usize) -> usize {
+    if s.column_count() == 1 && s.is_prose() {
+        let top_off = if top == s.page_top_line { s.page_top_offset } else { 0 };
+        if let Some(end) =
+            crate::input::prose_pages::prose_table_last_line_for_top(s, top, top_off)
+        {
+            return end;
+        }
+    }
+    last_fully_visible_line(s, top)
+}
+
 fn effective_column_split(
     s: &AppState,
     top: usize,
@@ -1023,6 +1090,23 @@ fn clip_violation(
     top: usize,
     bottom: usize,
 ) -> Option<String> {
+    clip_violation_off(view, scrolled, buffer, top, bottom, 0)
+}
+
+/// Clip check with a known `top_offset`: how many pixels of the TOP line the
+/// prose row-fill page INTENTIONALLY scrolls above the viewport (a page that
+/// starts mid-paragraph). Those pixels are not "clipped" — they belong to the
+/// previous page — so the top-line "cut at top" check must allow the top line's
+/// pixel top to sit up to `top_offset` (plus tolerance) above the viewport top.
+/// Play columns pass `top_offset = 0` (whole-line tops), unchanged behavior.
+fn clip_violation_off(
+    view: &sourceview5::View,
+    scrolled: &gtk4::ScrolledWindow,
+    buffer: &sourceview5::Buffer,
+    top: usize,
+    bottom: usize,
+    top_offset: i32,
+) -> Option<String> {
     // Tolerance: the descender guard + bottom margin the layout reserves on
     // purpose (a line sitting within this band is not "clipped"). Keep generous
     // enough to avoid false positives from Pango sub-pixel jitter.
@@ -1033,13 +1117,16 @@ fn clip_violation(
     if adj.page_size() <= 0.0 {
         return None; // layout not ready — don't fail closed mid-transition
     }
-    // Top visible line: its pixel TOP must not be above the viewport top.
+    // Top visible line: its pixel TOP must not be above the viewport top by MORE
+    // than the intentional row-fill offset (mid-paragraph page starts scroll the
+    // top line partly above the viewport by design — that ink is on the prior
+    // page, not clipped).
     if let Some(iter) = buffer.iter_at_line(top as i32) {
         let (y, _h) = view.line_yrange(&iter);
-        if (y as f64) < view_top - TOL {
+        if (y as f64) < view_top - top_offset as f64 - TOL {
             return Some(format!(
-                "top line {} y={} above viewport_top={:.0} (cut at top)",
-                top, y, view_top
+                "top line {} y={} above viewport_top={:.0} off={} (cut at top)",
+                top, y, view_top, top_offset
             ));
         }
     }
