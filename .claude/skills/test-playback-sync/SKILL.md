@@ -1,7 +1,7 @@
 ---
 name: test-playback-sync
 description: Use when verifying that MPV-driven playback sync turns the page at the right moment — after changing sync boundary checks, page-table landings, CursorSync handling, or timestamps — or when a sync stall/late-turn bug needs an automated headless reproduction with a real mpv
-argument-hint: <ABBR> [<ABBR>...] | all-arkangel [--boundaries N]
+argument-hint: <ABBR> [<ABBR>...] | all-arkangel | all [--boundaries N]
 ---
 
 # Test Playback Sync (real MPV, headless)
@@ -16,11 +16,20 @@ CursorSync event → boundary check → page turn.
 .claude/skills/test-playback-sync/run-sync-test.sh --boundaries 2 MND-Arkangel R2-Arkangel
 ```
 
-For every Shakespeare play (the complete Arkangel edition set):
+Selectors expand to work lists (timestamped play editions only):
 
 ```bash
-.claude/skills/test-playback-sync/run-sync-test.sh --boundaries 2 $(sqlite3 ~/utono/litdb/data/lit.db "SELECT w.abbrev FROM works w WHERE w.work_type='play' AND w.abbrev LIKE '%-Arkangel' ORDER BY w.abbrev;")
+.claude/skills/test-playback-sync/run-sync-test.sh --boundaries 2 all-arkangel
 ```
+
+```bash
+.claude/skills/test-playback-sync/run-sync-test.sh all
+```
+
+`all-arkangel` = every `-Arkangel` play (one edition per Shakespeare play);
+`all` = every timestamped play edition of any production (BBC, Naxos, Argo,
+Amb, KPR, …). Selectors mix with explicit abbrevs. The per-work media is the
+row with the MOST timestamps (sparse rows make the timing test meaningless).
 
 Run from the repo root. No e2e-env.sh wrapper needed (the script runs its own
 dbus-run-session per work). Expect ~30-45s per work; run long sweeps in the

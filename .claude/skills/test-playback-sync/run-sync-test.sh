@@ -14,6 +14,8 @@
 #
 # Usage:
 #   .claude/skills/test-playback-sync/run-sync-test.sh [--boundaries N] ABBR [ABBR...]
+#   .claude/skills/test-playback-sync/run-sync-test.sh all-arkangel     # every -Arkangel play
+#   .claude/skills/test-playback-sync/run-sync-test.sh all              # every timestamped play edition
 #
 # Requires: cage, wtype, mpv, python3, sqlite3. Never touches the live
 # session: own XDG_RUNTIME_DIR, own DB copy, own mpv, own log; cleanup kills
@@ -32,11 +34,31 @@ while [[ $# -gt 0 ]]; do
     *) WORKS+=("$1"); shift ;;
   esac
 done
-[[ ${#WORKS[@]} -gt 0 ]] || { echo "usage: run-sync-test.sh [--boundaries N] ABBR..." >&2; exit 64; }
+[[ ${#WORKS[@]} -gt 0 ]] || { echo "usage: run-sync-test.sh [--boundaries N] ABBR...|all-arkangel|all" >&2; exit 64; }
 
 [[ -f Cargo.toml ]] || { echo "error: run from the linux-lit repo root" >&2; exit 64; }
 BIN=target/debug/linux-lit
 DB_SRC="$HOME/utono/litdb/data/lit.db"
+
+# Expand selector tokens into work lists (every timestamped play edition).
+expand_selector() {
+  local filter="$1"
+  sqlite3 "$DB_SRC" "SELECT DISTINCT w.abbrev FROM works w
+    JOIN media_files m ON m.work_abbrev = w.abbrev
+    WHERE w.work_type='play' $filter
+      AND EXISTS (SELECT 1 FROM line_timestamps t WHERE t.media_id = m.id)
+    ORDER BY w.abbrev;"
+}
+EXPANDED=()
+for w in "${WORKS[@]}"; do
+  case "$w" in
+    all-arkangel) while IFS= read -r a; do EXPANDED+=("$a"); done < <(expand_selector "AND w.abbrev LIKE '%-Arkangel'") ;;
+    all)          while IFS= read -r a; do EXPANDED+=("$a"); done < <(expand_selector "") ;;
+    *)            EXPANDED+=("$w") ;;
+  esac
+done
+WORKS=("${EXPANDED[@]}")
+echo "[sync-test] ${#WORKS[@]} work(s): ${WORKS[*]}" >&2
 
 echo "[sync-test] building…" >&2
 cargo build >&2 || { echo "build failed" >&2; exit 1; }
@@ -105,11 +127,14 @@ declare -a RESULTS
 FAILS=0
 
 for W in "${WORKS[@]}"; do
-  # Media row WITH timestamps for this work.
+  # Pick the BEST-ALIGNED media (most timestamps) — a work can carry several
+  # media rows and the sparse ones (H5 media 2: two rows vs 2934 on media 63)
+  # make the timing test meaningless.
   row=$(sqlite3 "$DB" "SELECT m.id||'|'||m.path FROM media_files m
         WHERE m.work_abbrev='$W'
           AND EXISTS(SELECT 1 FROM line_timestamps t WHERE t.media_id=m.id)
-        ORDER BY m.id LIMIT 1;")
+        ORDER BY (SELECT COUNT(*) FROM line_timestamps t WHERE t.media_id=m.id) DESC
+        LIMIT 1;")
   if [[ -z "$row" ]]; then RESULTS+=("SKIP  $W (no timestamped media)"); continue; fi
   MID="${row%%|*}"; REAL="${row#*|}"
   if [[ ! -f "$REAL" ]]; then RESULTS+=("SKIP  $W (media file missing: $REAL)"); continue; fi
@@ -186,7 +211,10 @@ for W in "${WORKS[@]}"; do
     turn=$(wait_log "$LOG" "$off" "PAGE_TURN:|SYNC_SCENE_SCROLL:|SYNC_PARA_TURN:" "$TURN_TIMEOUT")
     if [[ -z "$turn" ]]; then
       seg=$(tail -c +"$((off + 1))" "$LOG")
-      if grep -q "remaining=86" <<<"$seg"; then
+      # Suppression is only the verdict when it was never cleared: a single
+      # suppressed event can race in before the playback-start clear.
+      if grep -q "remaining=86" <<<"$seg" \
+         && ! grep -q "cleared indefinite suppression" <<<"$seg"; then
         RESULTS+=("FAIL  $W b$b (CursorSync suppressed for the whole wait — indefinite-suppression bug)")
         ((wfail++)); ((FAILS++))
       elif [[ -z "$S_LAST" ]]; then
