@@ -46,7 +46,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         (":q / Esc / :q!", "quit (warns if unsaved) · force"),
     ]),
     ("Cross-reference", &[
-        ("Ctrl+Alt+p", "pick a Q&A"),
+        ("Ctrl+\\", "pick a Q&A"),
         ("Alt+g", "gloss this passage"),
         ("Ctrl+g", "view gloss for passage"),
     ]),

@@ -52,16 +52,16 @@ const UPPER_ROW: &[KeyDef] = &[
     key(";", ":", "prev bkmk", ":: toggle speed", &[]),
     key(",", "<", "prev speaker", "<: prev dlg", &[("C-,", "settings")]),
     key(".", ">", "", "", &[("C-.", "bookmarks")]),
-    key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("C-p", "lib picker"), ("S-C-p", "conc word"), ("C-M-p", "conc list")]),
+    key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("S-C-p", "conc word")]),
     key("y", "Y", "pg back", "", &[("C-y", "copy id")]),
     key("f", "F", "next font", "F: prev font", &[("M-f", "font info")]),
     key("g", "G", "", "", &[("C-g", "gloss tog"), ("S-C-g", "last gloss"), ("M-g", "gloss pick"), ("M-g", "gloss from jrnl"), ("C-g", "view gloss")]),
-    key("c", "C", "toggle ch start", "C: show chapter", &[("C-c", "set track mark")]),
+    key("c", "C", "toggle ch start", "C: show chapter", &[("C-c", "set track mark"), ("C-M-c", "conc list")]),
     key("r", "R", "next conc", "R: prev conc", &[("C-r", "next vocab"), ("S-C-r", "prev vocab"), ("M-r", "conc works")]),
     key("l", "L", "toggle signs", "", &[("S-C-l", "save+quit"), ("l", "verse audio: play/stop"), ("L", "verse audio: pick voice")]),
     key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
     ub("@", "^"),
-    key("\\", "#", "gloss tog", "◀ vocab", &[("C-\\", "conc picker"), ("M-\\", "vocab hi")]),
+    key("\\", "#", "conc picker", "◀ vocab", &[("C-\\", "lib picker"), ("M-\\", "vocab hi")]),
 ];
 const TAB_KEY: KeyDef = key("Tab", "", "play/pause", "", &[("C-Tab", "last overlay")]);
 
@@ -380,10 +380,10 @@ blocks and gg/G jump to the first/last block; Space \
 MP3 on a cache miss, cached per page) and `a` restarts it from the beginning, \
 Ctrl+n / Ctrl+p step through every Q&A in the work across bands (at a band\u{2019}s \
 last page Ctrl+n rolls into the next chapter/scene\u{2019}s first Q&A, in the same \
-order as the Ctrl+Alt+p picker), Alt+n / Alt+p jump to the \
+order as the Ctrl+\\ picker), Alt+n / Alt+p jump to the \
 next/prev scene that has pages, Alt+w switches to the Work band \u{2014} \
 whole-work pages about the work as a whole (Claude is sent only the title and \
-author, not a scene) \u{2014} and Ctrl+Alt+p opens a picker of every Q&A page in the \
+author, not a scene) \u{2014} and Ctrl+\\ opens a picker of every Q&A page in the \
 work (whole-work pages first, then scene pages in scene order) to jump straight \
 to one. Escape (or Ctrl+j) closes and returns the cursor to where you were \
 reading; Ctrl+g on a passage page cross-jumps to that passage's gloss. \
@@ -401,7 +401,7 @@ nothing opened yet this session it toasts \u{201c}No overlay to reopen.\u{201d} 
         "jrnl Q&A picker" => "Open the Q&A picker directly from the reading card \
 (Alt+j), without first opening the journal overlay. Lists every Q&A page in the \
 work \u{2014} whole-work pages first, then scene pages in scene order \u{2014} the \
-same picker the journal overlay\u{2019}s Ctrl+Alt+p opens. Choosing a page reveals the \
+same picker the journal overlay\u{2019}s Ctrl+\\ opens. Choosing a page reveals the \
 journal overlay landed on that Q&A; Escape returns you to where you were reading. \
 Toasts \u{201c}No journal pages yet\u{201d} when the work has none. \
 -> journal::open_picker_from_reader — src/input/actions/journal.rs",

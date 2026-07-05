@@ -291,7 +291,7 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
         (KeyCombo::plain("h"), Action::ShowSynopsisOverlay),
         // `\` duplicates Ctrl+g — open/close the gloss overlay (swapped with `z`).
-        (KeyCombo::plain("backslash"), Action::ToggleGlossOverlay),
+        (KeyCombo::plain("backslash"), Action::OpenConcordancePicker),
         (KeyCombo::plain("numbersign"), Action::VocabPopupPrev),
         (KeyCombo::plain("r"), Action::ConcordanceNext),
         (KeyCombo::plain("R"), Action::ConcordancePrev),
@@ -302,9 +302,8 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::alt("i"), Action::CycleScansion),
         // `'` (apostrophe) now steps bookmarks (see nav_bindings); reopening
         // BCP echoes keeps its Ctrl+Shift+E bind.
-        (KeyCombo::ctrl("backslash"), Action::OpenConcordancePicker),
         (KeyCombo::ctrl_shift("P"), Action::OpenConcordanceWordPicker),
-        (KeyCombo::ctrl_alt("p"), Action::OpenConcordanceListPicker),
+        (KeyCombo::ctrl_alt("c"), Action::OpenConcordanceListPicker),
         (KeyCombo::alt("r"), Action::OpenConcordanceWorksPicker),
         (KeyCombo::ctrl("g"), Action::ToggleGlossOverlay),
         (KeyCombo::alt("g"), Action::OpenGlossPicker),
@@ -369,7 +368,7 @@ fn app_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl("d"), Action::ToggleDebugLogging),
         (KeyCombo::ctrl_shift("T"), Action::ToggleNavTest),
         (KeyCombo::ctrl_shift("E"), Action::ReopenEchoesBcp),
-        (KeyCombo::ctrl("p"), Action::OpenLibraryPicker),
+        (KeyCombo::ctrl("backslash"), Action::OpenLibraryPicker),
         (KeyCombo::ctrl("minus"), Action::OpenRecentPicker),
         (KeyCombo::ctrl("m"), Action::OpenMediaPicker),
         (KeyCombo::ctrl("slash"), Action::OpenKeybindsOverlay),
@@ -471,9 +470,10 @@ mod tests {
         assert_eq!(km.lookup("2", false, true, false), Some(Action::JumpToPrevChapter));
         assert_eq!(km.lookup("3", false, true, false), Some(Action::JumpToNextChapter));
         assert_eq!(km.lookup("braceleft", false, false, false), Some(Action::JumpToNextScene));
-        // Shift+; (the shifted colon glyph) toasts the current act/scene or
-        // chapter.
-        assert_eq!(km.lookup("colon", false, true, false), Some(Action::ShowCurrentChapter));
+        // Shift+; (the shifted colon glyph) toggles playback speed; `+` toasts
+        // the current act/scene or chapter (swapped in e42fd92).
+        assert_eq!(km.lookup("colon", false, true, false), Some(Action::TogglePlaybackSpeed));
+        assert_eq!(km.lookup("plus", false, false, false), Some(Action::ShowCurrentChapter));
     }
 
     #[test]
