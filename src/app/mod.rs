@@ -213,6 +213,16 @@ pub struct AppState {
     pub page_table_fp: std::cell::RefCell<String>,
     /// One generation attempt per work load (reset in display_work).
     pub page_table_gen_attempted: std::cell::Cell<bool>,
+    /// Pinned prose page table (visual-row pages) for the current work, when
+    /// one was loaded/generated for the CURRENT layout fingerprint. None = live
+    /// prose engine. See input::prose_pages.
+    pub prose_page_table: std::cell::RefCell<Option<std::rc::Rc<Vec<crate::input::prose_pages::ProsePage>>>>,
+    /// The layout fingerprint the active `prose_page_table` was loaded/generated
+    /// at (empty when none active). Compared against the CURRENT fingerprint on
+    /// resize the same way `page_table_fp` is.
+    pub prose_page_table_fp: std::cell::RefCell<String>,
+    /// One prose-table generation attempt per work load (reset in display_work).
+    pub prose_page_table_gen_attempted: std::cell::Cell<bool>,
     /// The first buffer line hidden below each column's paged bottom clip
     /// (left/main view: the two-column `exact_end` = `cs.split`, `None` in
     /// single-column mode; right view: `cs.page_end + 1`). Stored so
@@ -1528,6 +1538,9 @@ pub fn build_window(
         page_table: std::cell::RefCell::new(None),
         page_table_fp: std::cell::RefCell::new(String::new()),
         page_table_gen_attempted: std::cell::Cell::new(false),
+        prose_page_table: std::cell::RefCell::new(None),
+        prose_page_table_fp: std::cell::RefCell::new(String::new()),
+        prose_page_table_gen_attempted: std::cell::Cell::new(false),
         left_clip_boundary: std::cell::Cell::new(None),
         right_clip_boundary: std::cell::Cell::new(None),
         page_top_line: 0,
@@ -1999,6 +2012,13 @@ pub fn build_window(
                                 let s = st.borrow();
                                 crate::input::page_table::load_for_work(&s);
                                 crate::input::page_table::generate_and_store(&s);
+                                crate::input::prose_pages::load_for_prose_work(&s);
+                            }
+                            // Prose generation needs &mut (drives page_top during
+                            // the walk); the play gate no-ops it for a 2-col work
+                            // and vice versa, so the two are mutually exclusive.
+                            if let Ok(mut s) = st.try_borrow_mut() {
+                                crate::input::prose_pages::generate_and_store_prose(&mut s);
                             }
                             // The load/gen above may have swapped the active grid
                             // (e.g. startup snapped to a stored table for another
@@ -2036,6 +2056,7 @@ pub fn build_window(
                             {
                                 let s = st.borrow();
                                 crate::input::page_table::revalidate_on_resize(&s);
+                                crate::input::prose_pages::revalidate_prose_on_resize(&s);
                             }
                             // Same grid-swap re-anchor as the settled-layout hook.
                             if let Ok(mut s) = st.try_borrow_mut() {
@@ -2864,6 +2885,9 @@ pub fn display_work_at_with_prepared(
     state.page_table_gen_attempted.set(false);
     *state.page_table.borrow_mut() = None;
     state.page_table_fp.borrow_mut().clear();
+    state.prose_page_table_gen_attempted.set(false);
+    *state.prose_page_table.borrow_mut() = None;
+    state.prose_page_table_fp.borrow_mut().clear();
     // Load translations for this work
     if let Some(ref work) = state.current_work {
         if let Ok(conn) = crate::db::queries::open_db() {
@@ -3326,6 +3350,7 @@ pub fn display_work_at_with_prepared(
     // hook's own load_for_work call (before generate_and_store) picks it up
     // once geometry settles.
     crate::input::page_table::load_for_work(state);
+    crate::input::prose_pages::load_for_prose_work(state);
 
     // Apply highlight, snap scroll, show the scrolled window.
     let t7 = std::time::Instant::now();

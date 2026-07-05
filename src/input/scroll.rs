@@ -1479,21 +1479,56 @@ fn snap_value_to_line_top(state: &AppState, target_y: f64) -> f64 {
 /// Greatest VISUAL-ROW top y at or below `target_y` on the main reading card —
 /// the per-wrapped-row analogue of `snap_value_to_line_top`, for paging WITHIN an
 /// over-tall prose paragraph (one buffer line wrapping to many rows, so there are
-/// no intermediate line tops to snap to). Walks real per-row rects via
-/// `crate::ui::display_rows` (the same descender-correct mechanism the overlays
-/// and the over-tall bottom-clip use — sanctioned for the main card in
-/// clip-prevention.md). Clamped to the scroll range.
+/// no intermediate line tops to snap to).
+///
+/// Seeks to the BUFFER LINE containing `target_y` (`line_at_y`) and walks only
+/// THAT line's wrapped display rows, rather than scanning every visual row from
+/// the document start. The document-start scan (`crate::ui::display_rows`) caps
+/// at 8192 visual rows: on a long prose work (e.g. Bleak House wraps to far more
+/// than 8192 rows) a `target_y` beyond that cap found NO row at/below it and
+/// snapped back to `lower` — which, during page-table generation, made
+/// `prose_next_boundary` see `snapped <= y0`, return `None` mid-document, and
+/// emit one giant final page (VALIDATE_FAIL fit). Seeking makes the snap correct
+/// at ANY depth, and O(rows-in-one-line) instead of O(rows-from-start). Clamped
+/// to the scroll range.
 pub(crate) fn snap_value_to_display_row(state: &AppState, target_y: f64) -> f64 {
+    use gtk4::prelude::{TextViewExt, TextBufferExt};
     let adj = state.scrolled_window.vadjustment();
     let lower = adj.lower();
     let max_value = (adj.upper() - adj.page_size()).max(lower);
     let target = target_y.clamp(lower, max_value);
     let tv = state.text_view.upcast_ref::<gtk4::TextView>();
+    let top_margin = tv.top_margin() as f64;
+    // The buffer line whose vertical extent contains `target`. line_at_y takes
+    // buffer-y (no top margin); iter_location returns buffer-y too, so we add
+    // top_margin to both row tops to match display_rows' coordinate space.
+    let (line_iter, _) = tv.line_at_y((target - top_margin).max(0.0) as i32);
+    let line_no = line_iter.line();
+    let buffer = tv.buffer();
+    // Walk the wrapped display rows from ONE logical line BEFORE the target's
+    // line through the target's line, keeping the greatest row top at/below
+    // `target`. Starting a line early is load-bearing: `line_at_y` returns the
+    // line whose box contains `target`, but that box begins with `pixels_above_
+    // lines` leading, so its FIRST row top can sit a few px BELOW `target` when
+    // `target` falls in that leading gap. In that case the correct snap is the
+    // previous line's LAST row (the greatest row top not exceeding `target`) —
+    // scanning only the target's own line would wrongly snap FORWARD to a row
+    // top past `target`, over-filling the page by those few px (observed: a
+    // 1px fit overshoot at a page boundary landing in a line's leading gap).
+    let start_line = line_no.saturating_sub(1);
+    let mut iter = buffer.iter_at_line(start_line).unwrap_or(line_iter);
     let mut best = lower;
-    for (row_top, _row_bottom) in crate::ui::display_rows(tv) {
-        if row_top <= target + 0.5 {
-            best = best.max(row_top);
-        } else {
+    loop {
+        let rect = tv.iter_location(&iter);
+        if rect.height() > 0 {
+            let row_top = rect.y() as f64 + top_margin;
+            if row_top <= target + 0.5 {
+                best = best.max(row_top);
+            } else {
+                break;
+            }
+        }
+        if !tv.forward_display_line(&mut iter) || iter.line() > line_no {
             break;
         }
     }

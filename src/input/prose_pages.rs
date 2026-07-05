@@ -142,6 +142,316 @@ pub fn prose_page_for_line(pages: &[ProsePage], line: usize) -> Option<usize> {
     prose_page_for_position(pages, line, 0)
 }
 
+// ---------------------------------------------------------------------------
+// GTK-bound generation / persistence / load / gate (mirrors page_table.rs
+// 323-586 for the single-column prose case). All new logging uses the
+// `PAGES_PROSE:` prefix.
+// ---------------------------------------------------------------------------
+
+/// Walk the LIVE engine's forward chain from (0,0), recording every page.
+/// Boundaries come from `navigation::prose_next_boundary` — the same function
+/// x/j use — so the stored grid IS the live grid.
+///
+/// **Pre-validation is load-bearing.** `prose_next_boundary` accumulates REAL
+/// per-line heights via `line_yrange`, but GTK4 validates a TextView's line
+/// layout lazily around the currently-scrolled viewport. A walk that only
+/// mutated `page_top_line` (no scroll) left every line past the initial
+/// validation frontier reporting a coarse single-row height ESTIMATE — so the
+/// bounded walk under-accumulated, `total - y0` never exceeded `usable`,
+/// `prose_next_boundary` returned `None` mid-document, and the "final page"
+/// spanned the whole un-walked remainder (observed: a 601941px page ~1/4 into
+/// BH). We fix that by forcing GTK to validate EVERY line's true height up
+/// front (a single `line_yrange` sweep — `line_yrange` validates the line
+/// synchronously and GTK caches the result), so the subsequent walk reads real
+/// heights the whole way WITHOUT scrolling per page (which was O(pages) full
+/// re-layouts and far too slow on a novel). The walk then just mutates the page
+/// state and restores it; it is synchronous with no GTK main-loop iteration
+/// between steps, so no idle/render callback observes the intermediate state.
+pub fn record_prose_pages(
+    state: &mut crate::app::AppState,
+) -> Result<Vec<ProsePage>, String> {
+    use gtk4::prelude::{TextBufferExt, TextViewExt};
+    let line_count = state.effective_line_count();
+    if line_count == 0 {
+        return Err("no lines".into());
+    }
+    // Force GTK to validate every line's true wrapped height once, so the
+    // per-page boundary walk below never reads a lazy single-row estimate for a
+    // far-off line (see the doc comment). The results are cached by GTK.
+    for i in 0..line_count {
+        if let Some(it) = state.buffer.iter_at_line(i as i32) {
+            let _ = state.text_view.line_yrange(&it);
+        }
+    }
+    // Drive the walk through the real page state, then restore it.
+    let saved = (state.page_top_line, state.page_top_offset);
+    state.page_top_line = 0;
+    state.page_top_offset = 0;
+    let mut pages: Vec<ProsePage> = Vec::new();
+    let mut guard = 0usize;
+    loop {
+        let start = (state.page_top_line, state.page_top_offset);
+        match crate::input::navigation::prose_next_boundary(state) {
+            Some((nl, no)) => {
+                pages.push(ProsePage {
+                    start_line: start.0, start_off: start.1,
+                    end_line: nl, end_off: no,
+                });
+                state.page_top_line = nl;
+                state.page_top_offset = no;
+            }
+            None => {
+                // Final page: ends at the document's pixel end.
+                let last = line_count - 1;
+                let h = state.buffer.iter_at_line(last as i32)
+                    .map(|it| state.text_view.line_yrange(&it).1)
+                    .unwrap_or(0);
+                pages.push(ProsePage {
+                    start_line: start.0, start_off: start.1,
+                    end_line: last, end_off: h,
+                });
+                break;
+            }
+        }
+        guard += 1;
+        if guard > line_count.max(64) * 4 {
+            state.page_top_line = saved.0;
+            state.page_top_offset = saved.1;
+            return Err("determinism: forward chain did not terminate".into());
+        }
+    }
+    state.page_top_line = saved.0;
+    state.page_top_offset = saved.1;
+    Ok(pages)
+}
+
+/// Gate, record, validate, persist. Called from the app's settled-layout hook;
+/// every early return logs its reason so the fallback is diagnosable. Takes
+/// `&mut AppState` because `record_prose_pages` drives `page_top_line`.
+pub fn generate_and_store_prose(state: &mut crate::app::AppState) {
+    if std::env::var_os("LIT_NO_PAGE_TABLE").is_some() {
+        return;
+    }
+    let force = std::env::var_os("LIT_GEN_PAGE_TABLE").is_some();
+    if state.prose_page_table_gen_attempted.get() {
+        return;
+    }
+    state.prose_page_table_gen_attempted.set(true);
+    if state.current_work.is_none() {
+        return;
+    }
+    if state.column_count() != 1 || !state.is_prose() || state.translations_visible {
+        crate::logging::log("PAGES_PROSE: gen skipped (not 1-col prose reader state)");
+        return;
+    }
+    if state.prose_page_table.borrow().is_some() && !force {
+        return; // already loaded from the DB this session
+    }
+    use gtk4::prelude::{TextBufferExt, TextViewExt, WidgetExt};
+    let fp = crate::input::page_table::layout_fingerprint(state);
+    let pages = match record_prose_pages(state) {
+        Ok(p) => p,
+        Err(e) => {
+            crate::logging::log(&format!("PAGES_PROSE: VALIDATE_FAIL {e}"));
+            return;
+        }
+    };
+    // Build the validation context from live geometry (heights measured AFTER
+    // the full forward walk, so every line has been really measured by GTK).
+    let line_count = state.effective_line_count();
+    let heights: Vec<i32> = (0..line_count)
+        .map(|i| state.buffer.iter_at_line(i as i32)
+            .map(|it| state.text_view.line_yrange(&it).1)
+            .unwrap_or(0))
+        .collect();
+    let widget_height = state.text_view.height();
+    let guard = crate::input::viewport::descender_guard_px(&state.text_view, 0);
+    let usable = widget_height - guard - crate::input::scroll::BASE_BOTTOM_MARGIN;
+    let ctx = ProseValidateCtx { line_count, heights: &heights, usable_height: usable };
+    if let Err(e) = validate_prose_pages(&pages, &ctx) {
+        crate::logging::log(&format!("PAGES_PROSE: VALIDATE_FAIL {e}"));
+        return;
+    }
+    // Citation mapping: BOUNDARY LINES ONLY (start_line / end_line of each
+    // page). A boundary line with no line_mapping id is a hard failure — do NOT
+    // snap (snapping would break the exact page-to-page adjacency the no-text-
+    // loss guarantee depends on).
+    let work = state.current_work.as_ref().unwrap();
+    let id_of = |bi: usize| -> Option<i64> {
+        state.work_line_for_buffer(bi)
+            .and_then(|wi| work.lines.get(wi))
+            .map(|l| l.id)
+    };
+    let mut rows = Vec::with_capacity(pages.len());
+    for (i, p) in pages.iter().enumerate() {
+        let (Some(start_line_id), Some(end_line_id)) = (id_of(p.start_line), id_of(p.end_line)) else {
+            crate::logging::log(&format!(
+                "PAGES_PROSE: VALIDATE_FAIL citation: page {} boundary has no line_mapping id", i + 1));
+            return;
+        };
+        rows.push(crate::db::prose_pages::ProsePageRow {
+            page_no: (i + 1) as i64,
+            start_line_id,
+            start_off: p.start_off as i64,
+            end_line_id,
+            end_off: p.end_off as i64,
+        });
+    }
+    let meta = crate::db::prose_pages::PagesMeta {
+        layout_fingerprint: fp.clone(),
+        db_fingerprint: crate::snapshot::db_fingerprint(work),
+        page_count: rows.len() as i64,
+        generated_at: epoch_timestamp(),
+        validated: true,
+    };
+    match crate::db::queries::open_db_rw() {
+        Ok(mut conn) => {
+            if let Err(e) = crate::db::prose_pages::ensure_schema(&conn)
+                .and_then(|_| crate::db::prose_pages::store_pages(
+                    &mut conn, &work.abbrev, &meta, &rows))
+            {
+                crate::logging::log(&format!("PAGES_PROSE: store failed ({e}) — will retry next load"));
+                return;
+            }
+        }
+        Err(e) => {
+            crate::logging::log(&format!("PAGES_PROSE: db open failed ({e})"));
+            return;
+        }
+    }
+    crate::logging::log(&format!(
+        "PAGES_PROSE: generated {} pages for {} fp={}", rows.len(), work.abbrev, fp));
+    // Make the fresh table active this session.
+    *state.prose_page_table.borrow_mut() = Some(std::rc::Rc::new(pages));
+    *state.prose_page_table_fp.borrow_mut() = fp;
+}
+
+/// Load a stored prose table for the current work if BOTH fingerprints match.
+/// Resolves line_mapping ids to buffer lines via the id->buffer map; any
+/// unresolvable id drops the whole table.
+pub fn load_for_prose_work(state: &crate::app::AppState) {
+    *state.prose_page_table.borrow_mut() = None;
+    state.prose_page_table_fp.borrow_mut().clear();
+    if std::env::var_os("LIT_NO_PAGE_TABLE").is_some() {
+        return;
+    }
+    let Some(work) = state.current_work.as_ref() else { return };
+    if state.column_count() != 1 || !state.is_prose() || state.translations_visible {
+        return;
+    }
+    let fp = crate::input::page_table::layout_fingerprint(state);
+    let Ok(conn) = crate::db::queries::open_db() else { return };
+    let loaded = match crate::db::prose_pages::load_pages(&conn, &work.abbrev, &fp) {
+        Ok(v) => v,
+        Err(_) => None, // missing tables etc.
+    };
+    let Some((meta, rows)) = loaded else {
+        crate::logging::log(&format!("PAGES_PROSE: no table for {} fp={}", work.abbrev, fp));
+        return;
+    };
+    if meta.db_fingerprint != crate::snapshot::db_fingerprint(work) {
+        crate::logging::log("PAGES_PROSE: fallback (db_fingerprint stale — re-import?)");
+        return;
+    }
+    // id -> buffer line, built once. No unsnap logic: no chrome snapping was
+    // done on the storage side (boundary ids are exact real paragraphs).
+    let line_count = state.effective_line_count();
+    let mut id_to_buf = std::collections::HashMap::new();
+    for bi in 0..line_count {
+        if let Some(wi) = state.work_line_for_buffer(bi) {
+            if let Some(l) = work.lines.get(wi) {
+                id_to_buf.entry(l.id).or_insert(bi);
+            }
+        }
+    }
+    let mut pages = Vec::with_capacity(rows.len());
+    for r in &rows {
+        let (Some(&start_line), Some(&end_line)) =
+            (id_to_buf.get(&r.start_line_id), id_to_buf.get(&r.end_line_id)) else {
+            crate::logging::log("PAGES_PROSE: fallback (row id not in buffer)");
+            return;
+        };
+        pages.push(ProsePage {
+            start_line,
+            start_off: r.start_off as i32,
+            end_line,
+            end_off: r.end_off as i32,
+        });
+    }
+    crate::logging::log(&format!(
+        "PAGES_PROSE: table hit ({} pages) for {}", pages.len(), work.abbrev));
+    *state.prose_page_table.borrow_mut() = Some(std::rc::Rc::new(pages));
+    *state.prose_page_table_fp.borrow_mut() = fp;
+}
+
+/// Drop a loaded/generated prose table whose fingerprint no longer matches the
+/// CURRENT layout, then try `load_for_prose_work` once. Mirror of
+/// `page_table::revalidate_on_resize`: never (re)generates on resize.
+pub fn revalidate_prose_on_resize(state: &crate::app::AppState) {
+    if state.prose_page_table.borrow().is_none() {
+        return;
+    }
+    let current_fp = crate::input::page_table::layout_fingerprint(state);
+    if current_fp == *state.prose_page_table_fp.borrow() {
+        return; // still valid at this geometry
+    }
+    crate::logging::log("PAGES_PROSE: dropped table (layout changed)");
+    *state.prose_page_table.borrow_mut() = None;
+    state.prose_page_table_fp.borrow_mut().clear();
+    load_for_prose_work(state);
+}
+
+/// The single consumption gate for the prose table. `None` when disabled, when
+/// translations are visible, when not single-column prose, or when navigation
+/// mode is not EReader.
+pub fn active_prose_page_table(
+    state: &crate::app::AppState,
+) -> Option<std::rc::Rc<Vec<ProsePage>>> {
+    if std::env::var_os("LIT_NO_PAGE_TABLE").is_some() {
+        return None;
+    }
+    if state.translations_visible
+        || state.column_count() != 1
+        || !state.is_prose()
+        || !matches!(state.config.navigation_mode, crate::config::NavigationMode::EReader)
+    {
+        return None;
+    }
+    state.prose_page_table.borrow().clone()
+}
+
+/// The stored page boundary whose interval contains `line`'s FIRST row — where
+/// a cursor-follow / sync landing for that line should put the page.
+pub fn prose_table_boundary_for_line(
+    state: &crate::app::AppState,
+    line: usize,
+) -> Option<(usize, i32)> {
+    let table = active_prose_page_table(state)?;
+    let i = prose_page_for_line(&table, line)?;
+    Some((table[i].start_line, table[i].start_off))
+}
+
+/// Exclusive end of the CURRENT page (matched by (page_top_line,
+/// page_top_offset)). None = current position is off-grid or no table.
+pub fn prose_table_page_end(state: &crate::app::AppState) -> Option<(usize, i32)> {
+    let table = active_prose_page_table(state)?;
+    let i = prose_page_for_position(&table, state.page_top_line, state.page_top_offset)?;
+    let p = &table[i];
+    (p.start_line == state.page_top_line && p.start_off == state.page_top_offset)
+        .then_some((p.end_line, p.end_off))
+}
+
+/// ISO-ish timestamp without adding a chrono dependency: seconds since epoch,
+/// prefixed so it's self-explaining in a DB browse. (Mirror of the play
+/// table's helper.)
+fn epoch_timestamp() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("epoch:{now}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

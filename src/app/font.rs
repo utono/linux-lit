@@ -143,6 +143,7 @@ pub fn adjust_font_size(state: &mut AppState, delta: i32) {
     // now-stale table (and reload a matching one) BEFORE resnapping, so the
     // resnap paginates with the correct engine.
     crate::input::page_table::revalidate_on_resize(state);
+    crate::input::prose_pages::revalidate_prose_on_resize(state);
     crate::input::navigation::resnap_page(state);
     crate::input::navigation::invalidate_page_tops(state);
     crate::config::save(&state.config);
@@ -158,6 +159,7 @@ pub fn reset_font_size(state: &mut AppState) {
     reapply_font(state);
     rebuild_line_number_gutter(state);
     crate::input::page_table::revalidate_on_resize(state);
+    crate::input::prose_pages::revalidate_prose_on_resize(state);
     crate::input::navigation::resnap_page(state);
     crate::input::navigation::invalidate_page_tops(state);
     crate::config::save(&state.config);
@@ -176,6 +178,7 @@ pub fn cycle_font(state: &mut AppState, forward: bool) {
     state.config.font_family = cycle[next].to_string();
     reapply_font(state);
     crate::input::page_table::revalidate_on_resize(state);
+    crate::input::prose_pages::revalidate_prose_on_resize(state);
     crate::input::navigation::resnap_page(state);
     crate::input::navigation::invalidate_page_tops(state);
     crate::config::save(&state.config);

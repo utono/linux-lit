@@ -960,6 +960,33 @@ pub fn page_forward(state: &mut AppState) {
         // Fall through: the normal path / jump_to_end handles the final spread.
     }
 
+    // Pinned prose table: pure index arithmetic (mirrors the play table arm).
+    if let Some(table) = crate::input::prose_pages::active_prose_page_table(state) {
+        if let Some(cur) = crate::input::prose_pages::prose_page_for_position(
+            &table, state.page_top_line, state.page_top_offset)
+        {
+            if cur + 1 >= table.len() {
+                let visible_end = super::viewport::last_fully_visible_line(state, state.page_top_line);
+                if visible_end > state.current_line {
+                    state.current_line = visible_end;
+                    after_page_change(state, PageChangeReason::Forward);
+                }
+                log_fmt!("PAGES_PROSE: page {}/{} (at end)", cur + 1, table.len());
+                return;
+            }
+            let next = table[cur + 1];
+            state.page_back_stack.push((state.page_top_line, state.page_top_offset));
+            state.current_line = next.start_line;
+            crate::input::scroll::set_page_instant_offset(state, next.start_line, next.start_off);
+            after_page_change(state, PageChangeReason::Forward);
+            log_fmt!("PAGES_PROSE: page {}/{} top=({},{})",
+                     cur + 2, table.len(), next.start_line, next.start_off);
+            return;
+        }
+        // Off-grid (resume from an old session): fall through to live fill;
+        // the next turn lands back on the grid via Task 6's resnap.
+    }
+
     // Prose visual-row fill (single column): the next page starts at the
     // snapped row boundary one viewport below the current one — paragraphs
     // split across pages, no underfill, no skipped tails. Subsumes the old
@@ -1113,6 +1140,49 @@ pub fn page_backward(state: &mut AppState) {
         after_page_change(state, PageChangeReason::Backward);
         log_fmt!("PAGES: page {}/{} top={}", cur, table.len(), prev.left_start);
         return;
+    }
+
+    // Pinned prose table (single column): index arithmetic, but ONLY when the
+    // current position sits EXACTLY on the grid. Off-grid (a resumed mid-page
+    // scroll, or an over-tall step the table doesn't model) keeps the existing
+    // back-stack/live behavior so the popped entry — which knows the precise
+    // sub-page scroll — wins. On-grid, the table is authoritative.
+    if let Some(table) = crate::input::prose_pages::active_prose_page_table(state) {
+        if let Some(cur) = crate::input::prose_pages::prose_page_for_position(
+            &table, state.page_top_line, state.page_top_offset)
+        {
+            let on_grid = table[cur].start_line == state.page_top_line
+                && table[cur].start_off == state.page_top_offset;
+            if on_grid {
+                if cur == 0 {
+                    let first = first_dialogue_line(state);
+                    if first < state.current_line {
+                        state.current_line = first;
+                        after_page_change(state, PageChangeReason::Backward);
+                    }
+                    log_fmt!("PAGES_PROSE: page 1/{} (at start)", table.len());
+                    return;
+                }
+                let prev = table[cur - 1];
+                // Drop any back-stack entry that would return us to THIS page or
+                // ahead (a stale forward-nav leftover) — the table is the source
+                // of truth for the previous page here.
+                while let Some(&(t, o)) = state.page_back_stack.last() {
+                    if (t, o) >= (prev.start_line, prev.start_off) {
+                        state.page_back_stack.pop();
+                    } else {
+                        break;
+                    }
+                }
+                state.current_line = prev.start_line;
+                crate::input::scroll::set_page_instant_offset(state, prev.start_line, prev.start_off);
+                after_page_change(state, PageChangeReason::Backward);
+                log_fmt!("PAGES_PROSE: page {}/{} top=({},{})",
+                         cur, table.len(), prev.start_line, prev.start_off);
+                return;
+            }
+        }
+        // Off-grid: fall through to the live back-stack/prev-page path below.
     }
 
     // First-spread guard: when the current spread already shows the work's first
