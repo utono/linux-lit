@@ -755,6 +755,96 @@ fn overtall_forward_step(state: &mut AppState) -> Option<i32> {
     }
 }
 
+/// Universal prose forward boundary: the next page's (top_line, offset),
+/// snapped to a real visual-row top, strictly after the current viewport.
+/// Generalizes `overtall_forward_step` from "within one over-tall paragraph"
+/// to "anywhere in the document" — pages fill with visual rows and split
+/// paragraphs at the boundary. `None` = current page shows the document tail.
+pub(crate) fn prose_next_boundary(state: &mut AppState) -> Option<(usize, i32)> {
+    use gtk4::prelude::{TextBufferExt, TextViewExt, WidgetExt};
+    let top = state.page_top_line;
+    let iter = state.buffer.iter_at_line(top as i32)?;
+    let (top_y, _h) = state.text_view.line_yrange(&iter);
+    let widget_height = state.text_view.height();
+    if widget_height <= 0 {
+        return None;
+    }
+    let guard = crate::input::viewport::descender_guard_px(&state.text_view, top);
+    let usable = widget_height - guard - crate::input::scroll::BASE_BOTTOM_MARGIN;
+    let line_count = state.effective_line_count();
+    let y0 = top_y + state.page_top_offset;
+    // Bounded forward walk from `top` (a validated point close to the current
+    // viewport) accumulating REAL per-line heights, rather than reading
+    // `line_yrange` on the document's LAST buffer line: for a large document
+    // most far-off lines are still un-validated by GTK, so their reported
+    // height is a coarse single-row estimate, not the true wrapped height —
+    // using that as a document-wide "total" corrupts the fill decision (a
+    // severe underfill was observed: pages advancing by only 1-2 lines with
+    // most of the viewport left blank). Walking from `top` keeps every
+    // `line_yrange` call on lines GTK has just measured for real.
+    let mut total = top_y; // pixel top of `top`; walk accumulates to its bottom and beyond
+    for i in top..line_count {
+        let Some(li) = state.buffer.iter_at_line(i as i32) else { break };
+        let (ly, lh) = state.text_view.line_yrange(&li);
+        total = ly + lh;
+        // Stop once we've walked far enough past the current viewport's
+        // bottom fold that we know for certain more content remains below
+        // it — no need to walk the whole document to prove that.
+        if total - y0 > usable {
+            break;
+        }
+    }
+    let raw = crate::input::viewport::prose_raw_next_boundary(y0, total, usable)?;
+    // Snap DOWN to a real visual-row top; never start a page mid-glyph-row.
+    let snapped = crate::input::scroll::snap_value_to_display_row(state, raw as f64);
+    if snapped <= y0 as f64 {
+        return None; // degenerate snap: fall back to a whole-line turn
+    }
+    // Locate the buffer line containing the snapped pixel.
+    let (bline_iter, _) = state.text_view.line_at_y(snapped as i32);
+    let bline = bline_iter.line().max(0) as usize;
+    let biter = state.buffer.iter_at_line(bline as i32)?;
+    let (by, bh) = state.text_view.line_yrange(&biter);
+    let mut new_top = bline;
+    let mut new_off = (snapped - by as f64).round() as i32;
+    // Normalize: a boundary at (or past) a line's full height is the next
+    // line's top; a boundary inside a BLANK line starts at the next line.
+    if new_off >= bh && bline + 1 < line_count {
+        new_top = bline + 1;
+        new_off = 0;
+    } else if new_off > 0
+        && crate::input::viewport::buffer_line_text(&state.buffer, bline)
+            .trim()
+            .is_empty()
+        && bline + 1 < line_count
+    {
+        new_top = bline + 1;
+        new_off = 0;
+    } else if new_off > 0 && bh <= usable && bline + 1 < line_count {
+        // A residual mid-paragraph offset is only safe to land on when that
+        // paragraph is ITSELF over-tall for the viewport (bh > usable) — the
+        // shared bottom-clip renderer (`update_bottom_clip` /
+        // `visible_range`, scroll.rs) only special-cases exactly that
+        // situation (the over-tall-paragraph `BOTTOM_CLIP_OVERTALL` path).
+        // `visible_range` otherwise walks from the new page_top charging
+        // buffer lines their FULL height with no knowledge of an already-
+        // consumed leading offset, so landing mid-way through a NORMAL-height
+        // line here would make it charge that line's full height against the
+        // remaining budget, undercount how much of the next page fits, and
+        // stop far short of a full page (observed: an 810px paragraph's tail
+        // landed on with offset 89 produced a page with only ~370px of text
+        // and a huge blank bottom). Defer the whole line to the next page
+        // instead — the paragraph wasn't over-tall to begin with, so it will
+        // read cleanly as a normal whole-line turn.
+        new_top = bline + 1;
+        new_off = 0;
+    }
+    if (new_top, new_off) <= (top, state.page_top_offset) {
+        return None;
+    }
+    Some((new_top, new_off))
+}
+
 pub fn page_forward(state: &mut AppState) {
     if state.current_work.is_none() {
         return;
@@ -877,12 +967,46 @@ pub fn page_forward(state: &mut AppState) {
         // Fall through: the normal path / jump_to_end handles the final spread.
     }
 
-    // Over-tall prose paragraph (single column): the paragraph at page_top is one
-    // buffer line taller than the viewport, so a whole-line turn would skip the
-    // rows below the fold. Advance the SCROLL by one viewport WITHIN the same
-    // line (snapped to a real visual-row top); only fall through to a line turn
-    // once the paragraph is exhausted. See
-    // docs/troubleshooting/page-turning-mechanics.md → "Prose over-tall paragraph".
+    // Prose visual-row fill (single column): the next page starts at the
+    // snapped row boundary one viewport below the current one — paragraphs
+    // split across pages, no underfill, no skipped tails. Subsumes the old
+    // over-tall-paragraph special case. Non-prose single-column works keep
+    // the whole-line path below.
+    if state.column_count() == 1 && state.is_prose() {
+        if let Some((nt, no)) = prose_next_boundary(state) {
+            state.page_back_stack.push((state.page_top_line, state.page_top_offset));
+            log_fmt!("PAGE_FWD: prose row-fill ({},{}) -> ({},{})",
+                     state.page_top_line, state.page_top_offset, nt, no);
+            let stage_lookup = |bi: usize| -> Option<i64> {
+                state.work_line_for_buffer(bi)
+                    .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+                    .map(|l| l.sub_line)
+            };
+            // Cursor: the first content line whose text is on the new page.
+            let landing = if no > 0 {
+                nt // straddling paragraph is the current content
+            } else {
+                next_dialogue_from(&state.buffer, nt, state.effective_line_count(),
+                                   state.is_prose(), &stage_lookup)
+            };
+            state.current_line = landing.min(state.effective_line_count().saturating_sub(1));
+            crate::input::scroll::set_page_instant_offset(state, nt, no);
+            after_page_change(state, PageChangeReason::Forward);
+            return;
+        }
+        // No next boundary: we are on the final page. Move the cursor to the
+        // last visible content line (mirror of the 2-col final-spread guard).
+        let visible_end = super::viewport::last_fully_visible_line(state, state.page_top_line);
+        if visible_end > state.current_line {
+            state.current_line = visible_end;
+            after_page_change(state, PageChangeReason::Forward);
+        }
+        log_fmt!("PAGE_FWD: prose final page (top={} off={})",
+                 state.page_top_line, state.page_top_offset);
+        return;
+    }
+    // Over-tall NON-prose single-column paragraph (BCP etc.): keep the old
+    // within-paragraph step so those works do not regress.
     if state.column_count() == 1 {
         if let Some(off) = overtall_forward_step(state) {
             state.page_back_stack.push((state.page_top_line, state.page_top_offset));

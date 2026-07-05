@@ -97,6 +97,19 @@ pub(crate) fn overtall_next_offset(offset: i32, para_h: i32, usable: i32) -> Opt
     }
 }
 
+/// Pure fill decision for prose visual-row paging. Given the viewport's
+/// absolute top pixel `y0`, the document's total pixel height `total`, and
+/// the `usable` viewport height: the RAW next boundary pixel, or None when
+/// the current page already shows the document tail.
+pub(crate) fn prose_raw_next_boundary(y0: i32, total: i32, usable: i32) -> Option<i32> {
+    let usable = usable.max(1);
+    if total - y0 > usable {
+        Some(y0 + usable)
+    } else {
+        None
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Trim helpers — pure + GTK-bound
 // ---------------------------------------------------------------------------
@@ -3093,5 +3106,20 @@ mod overtall_offset_tests {
     fn zero_usable_is_safe() {
         // Degenerate viewport must not divide-by-zero or loop forever.
         assert_eq!(overtall_next_offset(0, 100, 0), Some(1));
+    }
+}
+
+#[cfg(test)]
+mod prose_raw_next_boundary_tests {
+    use super::prose_raw_next_boundary;
+
+    #[test]
+    fn prose_raw_next_boundary_fills_then_stops() {
+        // 1000px doc, 300px viewport: boundaries at 300, 600, 900, then None
+        // (at y0=900 only 100px remain — the last page).
+        assert_eq!(prose_raw_next_boundary(0, 1000, 300), Some(300));
+        assert_eq!(prose_raw_next_boundary(600, 1000, 300), Some(900));
+        assert_eq!(prose_raw_next_boundary(900, 1000, 300), None);
+        assert_eq!(prose_raw_next_boundary(700, 1000, 300), None);
     }
 }
