@@ -928,8 +928,22 @@ fn update_bottom_clip(
 
     let range = visible_range(text_view, &buf_sv, page_top, line_count, usable_height);
 
-    if range.count == 0 || range.total_height == 0 {
-        // A single buffer line (prose paragraph) at page_top is TALLER than
+    // Single-column PROSE pages fill by visual row and may start AND end
+    // mid-paragraph on ANY line (design: full row-fill). Route every such page
+    // through the per-visual-row clip path — not just the over-tall
+    // (`range.count == 0`) case — because the engine guarantees each prose page
+    // top is a snapped visual-row top and each page bottom is the snap of
+    // `top + usable`, so the row-based clip (last fully-visible display row at
+    // the live scroll value, then the reserve band) is exactly correct for ALL
+    // prose pages: over-tall, mid-paragraph, or clean line top. `exact_end` is
+    // never set for single-column paths (only the two-column columns pass it),
+    // so it discriminates cleanly. Non-prose and two-column pages keep the
+    // whole-line path below byte-for-byte.
+    let prose_single_col = is_prose && exact_end.is_none();
+
+    if prose_single_col || range.count == 0 || range.total_height == 0 {
+        // For non-prose, this branch still only triggers on an over-tall line
+        // (`range.count == 0`): a single buffer line at page_top TALLER than
         // usable_height, so visible_range (which counts whole BUFFER lines) fit
         // nothing. Previously this clipped to 0, letting the over-tall paragraph
         // render flush to the card's bottom edge — exposed once the narrower
@@ -967,8 +981,8 @@ fn update_bottom_clip(
             bottom_clip.set_height_request(clip);
         }
         crate::logging::log(&format!(
-            "BOTTOM_CLIP_OVERTALL: page_top={} usable={} widget_h={} row_clip={} reserve={} -> clip={}",
-            page_top, usable_height, widget_height, row_clip, reserve, clip
+            "BOTTOM_CLIP_ROWFILL: prose_single_col={} page_top={} scroll_val={:.1} usable={} widget_h={} row_clip={} reserve={} -> clip={}",
+            prose_single_col, page_top, scroll_val_now, usable_height, widget_height, row_clip, reserve, clip
         ));
         return;
     }

@@ -1171,9 +1171,21 @@ pub(crate) fn last_fully_visible_line(state: &AppState, top: usize) -> usize {
     }
     let line_count = state.effective_line_count();
     let descender_guard = descender_guard_px(&state.text_view, top);
-    let usable_height = widget_height - descender_guard - BASE_BOTTOM_MARGIN;
-    let range = visible_range(&state.text_view, &state.buffer, top, line_count, usable_height);
+    let mut usable_height = widget_height - descender_guard - BASE_BOTTOM_MARGIN;
     let is_prose = state.is_prose();
+    // Single-column prose row-fill: a page may start mid-paragraph
+    // (`page_top_offset > 0`) on ANY line — over-tall or normal-height. When
+    // asked about the CURRENT page top, `visible_range` charges `top` its FULL
+    // wrapped height, but the leading `page_top_offset` pixels are above the
+    // viewport, so the top line's remaining height is what competes for the
+    // budget. Add the offset to `usable_height` (equivalent to reducing the
+    // first line's charged height by it — the same adjustment
+    // `is_line_start_visible` makes) so the walk counts the right number of
+    // lines. Two-column already returned above; non-prose keeps offset 0.
+    if is_prose && top == state.page_top_line && state.page_top_offset > 0 {
+        usable_height += state.page_top_offset;
+    }
+    let range = visible_range(&state.text_view, &state.buffer, top, line_count, usable_height);
     // Trim because this function feeds page-boundary placement decisions
     // (next_page_top): we don't want to put a partial verse stanza or
     // dangling speaker at the BOTTOM of the new page.

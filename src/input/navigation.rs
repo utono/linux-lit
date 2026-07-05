@@ -820,25 +820,18 @@ pub(crate) fn prose_next_boundary(state: &mut AppState) -> Option<(usize, i32)> 
     {
         new_top = bline + 1;
         new_off = 0;
-    } else if new_off > 0 && bh <= usable && bline + 1 < line_count {
-        // A residual mid-paragraph offset is only safe to land on when that
-        // paragraph is ITSELF over-tall for the viewport (bh > usable) — the
-        // shared bottom-clip renderer (`update_bottom_clip` /
-        // `visible_range`, scroll.rs) only special-cases exactly that
-        // situation (the over-tall-paragraph `BOTTOM_CLIP_OVERTALL` path).
-        // `visible_range` otherwise walks from the new page_top charging
-        // buffer lines their FULL height with no knowledge of an already-
-        // consumed leading offset, so landing mid-way through a NORMAL-height
-        // line here would make it charge that line's full height against the
-        // remaining budget, undercount how much of the next page fits, and
-        // stop far short of a full page (observed: an 810px paragraph's tail
-        // landed on with offset 89 produced a page with only ~370px of text
-        // and a huge blank bottom). Defer the whole line to the next page
-        // instead — the paragraph wasn't over-tall to begin with, so it will
-        // read cleanly as a normal whole-line turn.
-        new_top = bline + 1;
-        new_off = 0;
     }
+    // A residual mid-paragraph offset on a NON-over-tall line is now a
+    // legitimate landing: the design mandates full row-fill, so a page may
+    // start (and end) partway down any paragraph. The single-column prose
+    // bottom-clip path (`update_bottom_clip`, scroll.rs) is offset-aware — it
+    // clips per visual row against the live scroll value regardless of
+    // `range.count` — and `is_line_start_visible` / `last_fully_visible_line`
+    // both account for `page_top_offset`, so no deferral is needed. (The old
+    // "Fix 2" deferral arm rounded such a landing FORWARD to the next line's
+    // top, which made the real page taller than the `usable` budget while the
+    // next boundary was still computed as if the page had shown exactly
+    // `usable` pixels — the hidden tail rows were skipped forever. Removed.)
     if (new_top, new_off) <= (top, state.page_top_offset) {
         return None;
     }
