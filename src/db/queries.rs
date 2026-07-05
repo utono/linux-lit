@@ -3068,17 +3068,24 @@ mod tests {
 
         // Edition-leak: a base work (AWW) whose only media is a single-play file
         // shared with its own edition (AWW-BBC) is hidden — reach it via the
-        // edition. EXCEPTION: a base whose media is a multi-work bundle stays
-        // (Rom/MND: their only media is the Hamlet+Macbeth+Romeo m4b, reachable
-        // only through the base). Cym stays (has a base-only dedicated file).
+        // edition. The Hamlet+Macbeth+Romeo bundle m4b is now associated with
+        // the -BBCClassic editions (not the bases), so bases Rom/MND are
+        // media-less and filtered like 2H6. Cym stays (base-only dedicated
+        // file); Ham stays (dedicated media).
         assert!(
             !works.iter().any(|w| w.abbrev == "AWW"),
             "edition-leak base AWW should be filtered out (reach it via an edition)"
         );
-        for keep in ["Rom", "MND", "Cym", "Ham"] {
+        for gone in ["Rom", "MND"] {
+            assert!(
+                !works.iter().any(|w| w.abbrev == gone),
+                "media-less base {gone} should be filtered (bundle moved to -BBCClassic)"
+            );
+        }
+        for keep in ["Cym", "Ham", "Rom-BBCClassic"] {
             assert!(
                 works.iter().any(|w| w.abbrev == keep),
-                "{keep} should remain listed (bundle exception or has dedicated media)"
+                "{keep} should remain listed (has media association)"
             );
         }
     }
