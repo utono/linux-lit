@@ -43,6 +43,23 @@ use mpv::{MpvCommand, MpvEvent};
 /// the pixel->char fraction and the `end_char > off` phrase query tolerate small
 /// drift (the phrase query self-corrects within one phrase); the logged offset +
 /// chosen start_time make any mismatch diagnosable.
+///
+/// KNOWN LIMITATION: the pixel-fraction estimate assumes uniform row density
+/// (constant chars-per-row) across the paragraph, which real text rarely has
+/// (short/long rows from wrapping, punctuation, etc.). The resulting char-offset
+/// error grows with how deep into the paragraph the boundary sits — worst case
+/// roughly `0.2 * C * f * (1 - f)` chars, where `C` is the paragraph's total char
+/// count and `f = end_off / line_height` is the fraction into the boundary line
+/// (the bias is largest mid-paragraph and shrinks toward both ends). A boundary
+/// near the TOP of a paragraph self-corrects within one phrase (small `f`, small
+/// error), which is why this hasn't shown up as a visible bug yet. The exact fix
+/// is to map pixel position to a real text position instead of estimating from a
+/// fraction: validate the boundary line, call
+/// `text_view.buffer_to_window_coords` to convert buffer coords to window
+/// coords, then `text_view.get_iter_at_location` (or the window-space
+/// equivalent) once the line is guaranteed laid out/validated — deferred here
+/// because `iter_at_location` bails on the still-unvalidated straddling line (see
+/// above); a forced validate-then-query pass is the follow-up.
 fn prose_cross_time(s: &app::AppState, bl: usize, end_off: i32) -> Option<f64> {
     let Some(wi) = s.work_line_for_buffer(bl) else {
         crate::logging::log(&format!("SYNC_PROSE_CROSS: bail no work_line for bl={}", bl)); return None; };
@@ -509,8 +526,20 @@ fn main() {
                         // the straddling paragraph (current_line unchanged) — only
                         // the visible page window advances to its continuation.
                         if s.sync_enabled && !s.loading_work.get() {
+                            // Belt-and-braces: skip firing while an explicit seek
+                            // path (search n/N, concordance r/R, etc.) has sync
+                            // suppressed, mirroring the CursorSync suppression
+                            // check above. Read-only here — do NOT consume the
+                            // pending cross while suppressed; it stays armed and
+                            // may still fire once suppression lapses IF the
+                            // target is still valid (the explicit clears in
+                            // land_on_match_idx / concordance_position_cursor
+                            // handle the cases where it should NOT survive).
+                            let suppressed = s.suppress_sync_until
+                                .map(|until| std::time::Instant::now() < until)
+                                .unwrap_or(false);
                             if let Some((fire_at, page_idx)) = s.pending_prose_cross {
-                                if pos >= fire_at && s.mpv_playing {
+                                if pos >= fire_at && s.mpv_playing && !suppressed {
                                     s.pending_prose_cross = None;
                                     if let Some(table) =
                                         crate::input::prose_pages::active_prose_page_table(&s)

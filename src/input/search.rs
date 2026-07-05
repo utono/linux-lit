@@ -383,6 +383,11 @@ fn land_on_match_idx(state: &mut AppState, new_idx: usize) {
     state.search_match_idx = new_idx.min(total - 1);
     let line = state.search_matches[state.search_match_idx].line_index;
     state.current_line = line;
+    // This landing bypasses after_page_change's centralized clear (it calls
+    // set_page_instant directly below, not a PageChangeReason path), so clear
+    // a stale scheduled prose cross here or a later forward seek can fire it
+    // and teleport the page back to the old target.
+    state.pending_prose_cross = None;
     apply_current_highlight(state);
     state
         .search_bar
