@@ -928,8 +928,22 @@ fn update_bottom_clip(
 
     let range = visible_range(text_view, &buf_sv, page_top, line_count, usable_height);
 
-    if range.count == 0 || range.total_height == 0 {
-        // A single buffer line (prose paragraph) at page_top is TALLER than
+    // Single-column PROSE pages fill by visual row and may start AND end
+    // mid-paragraph on ANY line (design: full row-fill). Route every such page
+    // through the per-visual-row clip path — not just the over-tall
+    // (`range.count == 0`) case — because the engine guarantees each prose page
+    // top is a snapped visual-row top and each page bottom is the snap of
+    // `top + usable`, so the row-based clip (last fully-visible display row at
+    // the live scroll value, then the reserve band) is exactly correct for ALL
+    // prose pages: over-tall, mid-paragraph, or clean line top. `exact_end` is
+    // never set for single-column paths (only the two-column columns pass it),
+    // so it discriminates cleanly. Non-prose and two-column pages keep the
+    // whole-line path below byte-for-byte.
+    let prose_single_col = is_prose && exact_end.is_none();
+
+    if prose_single_col || range.count == 0 || range.total_height == 0 {
+        // For non-prose, this branch still only triggers on an over-tall line
+        // (`range.count == 0`): a single buffer line at page_top TALLER than
         // usable_height, so visible_range (which counts whole BUFFER lines) fit
         // nothing. Previously this clipped to 0, letting the over-tall paragraph
         // render flush to the card's bottom edge — exposed once the narrower
@@ -967,8 +981,8 @@ fn update_bottom_clip(
             bottom_clip.set_height_request(clip);
         }
         crate::logging::log(&format!(
-            "BOTTOM_CLIP_OVERTALL: page_top={} usable={} widget_h={} row_clip={} reserve={} -> clip={}",
-            page_top, usable_height, widget_height, row_clip, reserve, clip
+            "BOTTOM_CLIP_ROWFILL: prose_single_col={} page_top={} scroll_val={:.1} usable={} widget_h={} row_clip={} reserve={} -> clip={}",
+            prose_single_col, page_top, scroll_val_now, usable_height, widget_height, row_clip, reserve, clip
         ));
         return;
     }
@@ -1111,7 +1125,90 @@ pub(crate) fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize)
             // If the cursor's new line is ALREADY on the current spread (e.g. it
             // moved into the right column), do nothing — the caller updated the
             // highlight; no re-page needed.
-            if super::viewport::is_line_fully_visible(state, state.current_line) {
+            //
+            // Prose uses `is_line_start_visible`, not `is_line_fully_visible`:
+            // the latter charges a buffer line its FULL wrapped height, so an
+            // over-tall paragraph starting exactly at page_top_line reads as
+            // "not visible" even though its opening row is on screen — that
+            // false negative is what caused the original bug (a redundant page
+            // turn skipped the paragraph's own first page). Play/table paths
+            // keep the original whole-line check.
+            let already_visible = if state.is_prose() && state.column_count() == 1 {
+                super::viewport::is_line_start_visible(state, state.current_line)
+            } else {
+                super::viewport::is_line_fully_visible(state, state.current_line)
+            };
+            if already_visible {
+                return;
+            }
+            // Prose visual-row fill: advance one boundary at a time (the same
+            // rule as x — Task 3's prose_next_boundary) until the cursor
+            // line's page is reached. This is what fixes the j-past-an-
+            // over-tall-paragraph tail skip: the intermediate sub-line pages
+            // are stepped through, never jumped over.
+            //
+            // Stop condition is `page_top_line >= target`, NOT
+            // `is_line_start_visible(target)`: for an over-tall paragraph,
+            // `prose_next_boundary` steps INTO its middle (offset > 0) before
+            // ever landing exactly on its start — `is_line_start_visible`
+            // requires offset == 0 at `line == page_top_line`, so it would
+            // never go true once the walk is already past the paragraph's
+            // fresh start, and the loop would run away through the rest of
+            // the document (observed: guard-bounded runaway to page_top≈1500
+            // in a document of ~2000 lines). Landing with `page_top_line ==
+            // target` (any offset) already means `target` is showing on this
+            // page — that IS "reached," regardless of whether it started
+            // fresh or mid-paragraph.
+            if state.is_prose() && state.column_count() == 1 {
+                let target = state.current_line;
+                // Table-authoritative: if a prose table is active, land directly
+                // on the stored page containing `target` (offset-aware). Never
+                // re-walk the live boundaries while a grid is pinned — the
+                // established play-table lesson (table_end_for_top): visibility
+                // and landing checks must read the SAME source that renders.
+                if let Some((pt, po)) =
+                    crate::input::prose_pages::prose_table_boundary_for_line(state, target)
+                {
+                    let from = (state.page_top_line, state.page_top_offset);
+                    if (pt, po) != from {
+                        state.page_back_stack.clear();
+                        state.page_back_stack.push(from);
+                        log_fmt!(
+                            "PAGES_PROSE: jump-fwd table current={} ({},{})->({},{})",
+                            target, from.0, from.1, pt, po
+                        );
+                        set_page_instant_offset(state, pt, po);
+                    }
+                    return;
+                }
+                let mut guard = 0usize;
+                let from = (state.page_top_line, state.page_top_offset);
+                while state.page_top_line < target {
+                    let Some((nt, no)) = super::navigation::prose_next_boundary(state) else {
+                        break;
+                    };
+                    // Advance the live page state directly; one back entry
+                    // for the whole jump (matches the single-entry rule below).
+                    state.page_top_line = nt;
+                    state.page_top_offset = no;
+                    guard += 1;
+                    if guard > state.effective_line_count().max(64) {
+                        break; // safety: never loop forever
+                    }
+                }
+                if (state.page_top_line, state.page_top_offset) != from {
+                    let (nt, no) = (state.page_top_line, state.page_top_offset);
+                    // Restore pre-jump state for the back stack, then land.
+                    state.page_top_line = from.0;
+                    state.page_top_offset = from.1;
+                    state.page_back_stack.clear();
+                    state.page_back_stack.push(from);
+                    log_fmt!(
+                        "NAV_PAGE_FWD: prose row-fill current={} ({},{})->({},{})",
+                        state.current_line, from.0, from.1, nt, no
+                    );
+                    set_page_instant_offset(state, nt, no);
+                }
                 return;
             }
             // Compute where a turn/snap would land. Table mode: the stored page
@@ -1402,21 +1499,56 @@ fn snap_value_to_line_top(state: &AppState, target_y: f64) -> f64 {
 /// Greatest VISUAL-ROW top y at or below `target_y` on the main reading card —
 /// the per-wrapped-row analogue of `snap_value_to_line_top`, for paging WITHIN an
 /// over-tall prose paragraph (one buffer line wrapping to many rows, so there are
-/// no intermediate line tops to snap to). Walks real per-row rects via
-/// `crate::ui::display_rows` (the same descender-correct mechanism the overlays
-/// and the over-tall bottom-clip use — sanctioned for the main card in
-/// clip-prevention.md). Clamped to the scroll range.
+/// no intermediate line tops to snap to).
+///
+/// Seeks to the BUFFER LINE containing `target_y` (`line_at_y`) and walks only
+/// THAT line's wrapped display rows, rather than scanning every visual row from
+/// the document start. The document-start scan (`crate::ui::display_rows`) caps
+/// at 8192 visual rows: on a long prose work (e.g. Bleak House wraps to far more
+/// than 8192 rows) a `target_y` beyond that cap found NO row at/below it and
+/// snapped back to `lower` — which, during page-table generation, made
+/// `prose_next_boundary` see `snapped <= y0`, return `None` mid-document, and
+/// emit one giant final page (VALIDATE_FAIL fit). Seeking makes the snap correct
+/// at ANY depth, and O(rows-in-one-line) instead of O(rows-from-start). Clamped
+/// to the scroll range.
 pub(crate) fn snap_value_to_display_row(state: &AppState, target_y: f64) -> f64 {
+    use gtk4::prelude::{TextViewExt, TextBufferExt};
     let adj = state.scrolled_window.vadjustment();
     let lower = adj.lower();
     let max_value = (adj.upper() - adj.page_size()).max(lower);
     let target = target_y.clamp(lower, max_value);
     let tv = state.text_view.upcast_ref::<gtk4::TextView>();
+    let top_margin = tv.top_margin() as f64;
+    // The buffer line whose vertical extent contains `target`. line_at_y takes
+    // buffer-y (no top margin); iter_location returns buffer-y too, so we add
+    // top_margin to both row tops to match display_rows' coordinate space.
+    let (line_iter, _) = tv.line_at_y((target - top_margin).max(0.0) as i32);
+    let line_no = line_iter.line();
+    let buffer = tv.buffer();
+    // Walk the wrapped display rows from ONE logical line BEFORE the target's
+    // line through the target's line, keeping the greatest row top at/below
+    // `target`. Starting a line early is load-bearing: `line_at_y` returns the
+    // line whose box contains `target`, but that box begins with `pixels_above_
+    // lines` leading, so its FIRST row top can sit a few px BELOW `target` when
+    // `target` falls in that leading gap. In that case the correct snap is the
+    // previous line's LAST row (the greatest row top not exceeding `target`) —
+    // scanning only the target's own line would wrongly snap FORWARD to a row
+    // top past `target`, over-filling the page by those few px (observed: a
+    // 1px fit overshoot at a page boundary landing in a line's leading gap).
+    let start_line = line_no.saturating_sub(1);
+    let mut iter = buffer.iter_at_line(start_line).unwrap_or(line_iter);
     let mut best = lower;
-    for (row_top, _row_bottom) in crate::ui::display_rows(tv) {
-        if row_top <= target + 0.5 {
-            best = best.max(row_top);
-        } else {
+    loop {
+        let rect = tv.iter_location(&iter);
+        if rect.height() > 0 {
+            let row_top = rect.y() as f64 + top_margin;
+            if row_top <= target + 0.5 {
+                best = best.max(row_top);
+            } else {
+                break;
+            }
+        }
+        if !tv.forward_display_line(&mut iter) || iter.line() > line_no {
             break;
         }
     }

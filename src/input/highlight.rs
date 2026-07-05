@@ -9,7 +9,7 @@ use super::viewport::{
     lines_per_page, page_turn_top_state,
 };
 use super::scroll::{
-    set_page, set_page_instant, scroll_to_cursor, PageDirection,
+    set_page, set_page_instant, set_page_instant_offset, scroll_to_cursor, PageDirection,
 };
 
 // ---------------------------------------------------------------------------
@@ -31,25 +31,54 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
         crate::config::NavigationMode::EReader => {
-            if !is_line_fully_visible(state, state.current_line) {
-                // Table mode: land on the stored page containing the cursor so
-                // sync turns share x/y's page grid (the spoken line becomes the
-                // first dialogue of the new page in forward playback). Falls
-                // back to the live computation when no table serves this line.
-                let new_top = crate::input::page_table::table_top_for(state, state.current_line)
-                    .unwrap_or_else(|| {
-                        if state.current_line >= state.page_top_line {
-                            page_turn_top_state(state, state.current_line)
-                        } else {
-                            state.current_line
-                        }
-                    });
-                log_fmt!(
-                    "SYNC_PAGE: ensure_visible triggered, current_line={} page_top={} new_top={}",
-                    state.current_line, state.page_top_line, new_top
-                );
-                let dir = if state.current_line >= state.page_top_line { PageDirection::Forward } else { PageDirection::Backward };
-                set_page(state, new_top, dir);
+            // Mid-paragraph pages: `current_line == page_top_line` means the
+            // cursor's paragraph IS the one rendering at the top of this page
+            // (via a nonzero `page_top_offset`), even though
+            // `is_line_fully_visible` reports false for an over-tall
+            // straddler (it charges the FULL wrapped height and gets
+            // `count == 0`). Without this check, entering/extending visual
+            // mode (or any other `update_highlight_and_ensure_visible` call)
+            // on such a page fell through to `prose_table_boundary_for_line`,
+            // which returns the page containing the paragraph's FIRST row —
+            // yanking the view backward to an earlier page even though the
+            // cursor's line was already visible right here. See Important #2
+            // in final-review.md.
+            let already_on_page = state.current_line == state.page_top_line;
+            if !already_on_page && !is_line_fully_visible(state, state.current_line) {
+                // Prose table mode is TABLE-AUTHORITATIVE: land on the stored
+                // page (offset-aware) containing the cursor line. Only when no
+                // prose table serves this line do we fall through to the play
+                // table / live path below.
+                if let Some((pt, po)) = crate::input::prose_pages::prose_table_boundary_for_line(
+                    state, state.current_line,
+                ) {
+                    if (pt, po) != (state.page_top_line, state.page_top_offset) {
+                        log_fmt!(
+                            "PAGES_PROSE: ensure_visible current={} ({},{})->({},{})",
+                            state.current_line, state.page_top_line, state.page_top_offset, pt, po
+                        );
+                        set_page_instant_offset(state, pt, po);
+                    }
+                } else {
+                    // Table mode: land on the stored page containing the cursor so
+                    // sync turns share x/y's page grid (the spoken line becomes the
+                    // first dialogue of the new page in forward playback). Falls
+                    // back to the live computation when no table serves this line.
+                    let new_top = crate::input::page_table::table_top_for(state, state.current_line)
+                        .unwrap_or_else(|| {
+                            if state.current_line >= state.page_top_line {
+                                page_turn_top_state(state, state.current_line)
+                            } else {
+                                state.current_line
+                            }
+                        });
+                    log_fmt!(
+                        "SYNC_PAGE: ensure_visible triggered, current_line={} page_top={} new_top={}",
+                        state.current_line, state.page_top_line, new_top
+                    );
+                    let dir = if state.current_line >= state.page_top_line { PageDirection::Forward } else { PageDirection::Backward };
+                    set_page(state, new_top, dir);
+                }
             }
         }
     }
@@ -65,6 +94,49 @@ pub fn update_highlight_and_advance_page(state: &mut AppState) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
         crate::config::NavigationMode::EReader => {
+            // Prose table mode is TABLE-AUTHORITATIVE: decide whether a turn is
+            // due from the CURRENT stored page's own last rendered line (never
+            // re-walk the live engine — the play-table lesson `table_end_for_top`).
+            // `prose_table_page_end` returns the stored page's exclusive end;
+            // `end_off > 0` means `end_line` is partly on THIS page (last rendered
+            // line = end_line), else the last rendered line is `end_line - 1`. A
+            // turn is due only once the cursor passes that last rendered line —
+            // then land on the stored page (offset-aware) that contains it.
+            if state.is_prose()
+                && state.column_count() == 1
+                && crate::input::prose_pages::active_prose_page_table(state).is_some()
+            {
+                // A turn is due when the cursor passes the current page's last
+                // rendered line. `prose_table_page_end` is None when the current
+                // top is off-grid — then always re-land on the containing page
+                // (equivalent to a resnap + turn).
+                let turn_due = match crate::input::prose_pages::prose_table_page_end(state) {
+                    Some((end_line, end_off)) => {
+                        let last_rendered =
+                            if end_off > 0 { end_line } else { end_line.saturating_sub(1) };
+                        state.current_line > last_rendered
+                    }
+                    None => true, // off-grid: re-land on the stored page
+                };
+                if turn_due {
+                    if let Some((pt, po)) =
+                        crate::input::prose_pages::prose_table_boundary_for_line(
+                            state, state.current_line,
+                        )
+                    {
+                        if (pt, po) != (state.page_top_line, state.page_top_offset) {
+                            crate::logging::log_always(&format!(
+                                "PAGES_PROSE: sync page-turn current={} ({},{})->({},{})",
+                                state.current_line, state.page_top_line,
+                                state.page_top_offset, pt, po
+                            ));
+                            set_page_instant_offset(state, pt, po);
+                        }
+                    }
+                }
+                auto_show_vocab_popup(state);
+                return;
+            }
             let last_vis = last_raw_visible_line(state, state.page_top_line);
             if state.current_line > last_vis {
                 // Table mode: the stored page containing the spoken line IS the

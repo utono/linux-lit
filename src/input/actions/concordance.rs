@@ -620,6 +620,11 @@ fn concordance_position_cursor(state: &mut AppState, line_mapping_id: i64) {
     let contains_word = line_text.to_lowercase().contains(&conc_word.to_lowercase());
 
     state.current_line = buf_idx;
+    // This landing bypasses after_page_change's centralized clear (it calls
+    // update_highlight_and_center directly below, not a PageChangeReason path),
+    // so clear a stale scheduled prose cross here or a later forward seek can
+    // fire it and teleport the page back to the old target.
+    state.pending_prose_cross = None;
     update_highlight_and_center(state);
 
     let hit_seek_time = state.current_work.as_ref()

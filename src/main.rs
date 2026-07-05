@@ -23,6 +23,80 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 use mpv::{MpvCommand, MpvEvent};
 
+/// Task 9: narration time at which playback reaches the CURRENT prose page's
+/// bottom boundary, which falls inside buffer line `bl` at pixel offset
+/// `end_off`. Maps the boundary pixel row to a char offset within the buffer
+/// line by pixel FRACTION: `char_off ≈ char_len * end_off / line_height`. We
+/// deliberately do NOT use `TextView::iter_at_location` here — the boundary line
+/// sits at (or just below) the viewport fold, and `iter_at_location` returns
+/// None for any point outside GTK's currently-validated/visible layout, so it
+/// bailed silently for exactly the straddling lines we care about (observed:
+/// `iter_at_location(1,551) None`). The pixel fraction is validation-free and
+/// always resolves. Then:
+///   1. `phrase_timestamps` for the playing (line, media) when available: the
+///      first phrase whose char range extends past that offset;
+///   2. char-fraction interpolation across the line's audio window otherwise.
+///
+/// For BH the buffer line text IS the DB `canonical_text` (one line_mapping row
+/// per paragraph, rendered via the prose path — `text_file` is empty), so the
+/// buffer char offset indexes the same string the phrase char ranges do. Both
+/// the pixel->char fraction and the `end_char > off` phrase query tolerate small
+/// drift (the phrase query self-corrects within one phrase); the logged offset +
+/// chosen start_time make any mismatch diagnosable.
+///
+/// KNOWN LIMITATION: the pixel-fraction estimate assumes uniform row density
+/// (constant chars-per-row) across the paragraph, which real text rarely has
+/// (short/long rows from wrapping, punctuation, etc.). The resulting char-offset
+/// error grows with how deep into the paragraph the boundary sits — worst case
+/// roughly `0.2 * C * f * (1 - f)` chars, where `C` is the paragraph's total char
+/// count and `f = end_off / line_height` is the fraction into the boundary line
+/// (the bias is largest mid-paragraph and shrinks toward both ends). A boundary
+/// near the TOP of a paragraph self-corrects within one phrase (small `f`, small
+/// error), which is why this hasn't shown up as a visible bug yet. The exact fix
+/// is to map pixel position to a real text position instead of estimating from a
+/// fraction: validate the boundary line, call
+/// `text_view.buffer_to_window_coords` to convert buffer coords to window
+/// coords, then `text_view.get_iter_at_location` (or the window-space
+/// equivalent) once the line is guaranteed laid out/validated — deferred here
+/// because `iter_at_location` bails on the still-unvalidated straddling line (see
+/// above); a forced validate-then-query pass is the follow-up.
+fn prose_cross_time(s: &app::AppState, bl: usize, end_off: i32) -> Option<f64> {
+    let Some(wi) = s.work_line_for_buffer(bl) else {
+        crate::logging::log(&format!("SYNC_PROSE_CROSS: bail no work_line for bl={}", bl)); return None; };
+    let work = s.current_work.as_ref()?;
+    let Some(line) = work.lines.get(wi) else {
+        crate::logging::log(&format!("SYNC_PROSE_CROSS: bail no line wi={}", wi)); return None; };
+    let Some(ts) = line.timestamp.as_ref() else {
+        crate::logging::log(&format!("SYNC_PROSE_CROSS: bail no timestamp line_id={} wi={}", line.id, wi)); return None; };
+    let Some(media) = s.media_id else {
+        crate::logging::log("SYNC_PROSE_CROSS: bail no media_id"); return None; };
+    // Character count of the buffer line (== canonical_text length for BH).
+    let iter = s.buffer.iter_at_line(bl as i32)?;
+    let char_len = {
+        let mut e = iter;
+        e.forward_to_line_end();
+        e.line_offset().max(0) as usize
+    };
+    // Boundary pixel -> char offset by pixel fraction within the line.
+    let line_h = s.text_view.line_yrange(&iter).1.max(1);
+    let frac = (end_off.max(0) as f64 / line_h as f64).clamp(0.0, 1.0);
+    let char_off = ((char_len as f64) * frac).round() as usize;
+    if let Ok(conn) = crate::db::queries::open_db() {
+        if let Some(t) = crate::db::queries::phrase_crossing_time(&conn, line.id, media, char_off) {
+            crate::logging::log(&format!(
+                "SYNC_PROSE_CROSS: phrase hit line_id={} media={} char_off={}/{} (px {}/{}) -> t={:.2} (ts {:.2}..{:.2})",
+                line.id, media, char_off, char_len, end_off, line_h, t, ts.start, ts.end));
+            return Some(t);
+        }
+    }
+    // Fallback: interpolate across the line's audio window by char fraction.
+    let t = crate::input::navigation::interpolate_cross_time(ts.start, ts.end, char_off, char_len);
+    crate::logging::log(&format!(
+        "SYNC_PROSE_CROSS: interpolate line_id={} char_off={}/{} window {:.2}..{:.2} -> t={:.2}",
+        line.id, char_off, char_len, ts.start, ts.end, t));
+    Some(t)
+}
+
 fn main() {
     // Clear and set up log file
     let home = std::env::var("HOME").unwrap_or_default();
@@ -326,6 +400,60 @@ fn main() {
                                 crate::app::vocab_popup::refresh_vocab_popup(&mut s);
                             }
                         }
+                        // Prose straddling paragraph: if the spoken paragraph
+                        // continues onto the next stored prose page, schedule a
+                        // TimePos-driven turn at the moment the narration crosses
+                        // the page boundary (which falls INSIDE this paragraph).
+                        // A whole-line sync turn would flip the page too early —
+                        // as soon as the cursor lands on the paragraph — clipping
+                        // the paragraph's first rows before they're spoken. This
+                        // runs on every CursorSync; it re-derives the SAME target
+                        // while the cursor stays on the straddling paragraph, so
+                        // we skip the (DB-touching) recompute when the pending
+                        // cross already targets the right continuation page, and
+                        // clear it once the cursor is no longer on a straddle.
+                        if s.is_prose() {
+                            let mut target: Option<(f64, usize)> = None;
+                            if let Some(table) =
+                                crate::input::prose_pages::active_prose_page_table(&s)
+                            {
+                                if let Some(pi) = crate::input::prose_pages::prose_page_for_position(
+                                    &table, s.page_top_line, s.page_top_offset)
+                                {
+                                    let p = table[pi];
+                                    // Straddles: this page ENDS inside the cursor's
+                                    // line and a next page exists. Deliberately NOT
+                                    // gated on the line's first row being on THIS
+                                    // page — that would only be true on the
+                                    // paragraph's FIRST page. The generator
+                                    // normalizes full-height ends to (L+1, 0), so
+                                    // `p.end_line == buffer_line` here already means
+                                    // the paragraph genuinely continues onto pi+1,
+                                    // whether this is the paragraph's first, a
+                                    // middle, or its last page before the turn. See
+                                    // Important #1 in final-review.md — the
+                                    // first-row restriction stalled the sync turn on
+                                    // every middle page of a >=3-page paragraph.
+                                    if pi + 1 < table.len() && p.end_line == buffer_line {
+                                        let already = s.pending_prose_cross
+                                            .map(|(_, tp)| tp == pi + 1)
+                                            .unwrap_or(false);
+                                        if already {
+                                            target = s.pending_prose_cross; // unchanged; no recompute
+                                        } else if let Some(t) = prose_cross_time(&s, buffer_line, p.end_off) {
+                                            let fire = (t - crate::input::navigation::SYNC_PREROLL).max(0.0);
+                                            crate::logging::log_always(&format!(
+                                                "SYNC_PROSE_CROSS: scheduled t={:.2} fire={:.2} page {}->{} bl={} end_off={}",
+                                                t, fire, pi + 1, pi + 2, buffer_line, p.end_off));
+                                            target = Some((fire, pi + 1));
+                                        }
+                                    }
+                                }
+                            }
+                            s.pending_prose_cross = target;
+                        } else {
+                            s.pending_prose_cross = None;
+                        }
                         // Schedule a pending_advance when the current line's
                         // audio ends and the next dialogue line is
                         // untimestamped. Scene boundaries are handled
@@ -398,6 +526,51 @@ fn main() {
                     MpvEvent::TimePos(pos) => {
                         let mut s = state_for_events.borrow_mut();
                         s.current_time_pos = pos;
+
+                        // Task 9: fire a scheduled prose page crossing once the
+                        // narration reaches the boundary time. The cursor stays on
+                        // the straddling paragraph (current_line unchanged) — only
+                        // the visible page window advances to its continuation.
+                        if s.sync_enabled && !s.loading_work.get() {
+                            // Belt-and-braces: skip firing while an explicit seek
+                            // path (search n/N, concordance r/R, etc.) has sync
+                            // suppressed, mirroring the CursorSync suppression
+                            // check above. Read-only here — do NOT consume the
+                            // pending cross while suppressed; it stays armed and
+                            // may still fire once suppression lapses IF the
+                            // target is still valid (the explicit clears in
+                            // land_on_match_idx / concordance_position_cursor
+                            // handle the cases where it should NOT survive).
+                            let suppressed = s.suppress_sync_until
+                                .map(|until| std::time::Instant::now() < until)
+                                .unwrap_or(false);
+                            if let Some((fire_at, page_idx)) = s.pending_prose_cross {
+                                if pos >= fire_at && s.mpv_playing && !suppressed {
+                                    s.pending_prose_cross = None;
+                                    if let Some(table) =
+                                        crate::input::prose_pages::active_prose_page_table(&s)
+                                    {
+                                        if let Some(p) = table.get(page_idx).copied() {
+                                            // Only turn if we're not already there
+                                            // (a resnap may have advanced the page).
+                                            if (s.page_top_line, s.page_top_offset)
+                                                != (p.start_line, p.start_off)
+                                            {
+                                                crate::logging::log_always(&format!(
+                                                    "SYNC_PROSE_CROSS: fired pos={:.2} -> page {} top=({},{})",
+                                                    pos, page_idx + 1, p.start_line, p.start_off));
+                                                crate::input::scroll::set_page_instant_offset(
+                                                    &mut s, p.start_line, p.start_off);
+                                                crate::input::navigation::after_page_change(
+                                                    &mut s,
+                                                    crate::input::navigation::PageChangeReason::MpvSync,
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
 
                         // Set to the overlay's pre-move scene only when the
                         // pending_advance actually moves the cursor below.

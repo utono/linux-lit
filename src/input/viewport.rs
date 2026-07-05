@@ -97,6 +97,19 @@ pub(crate) fn overtall_next_offset(offset: i32, para_h: i32, usable: i32) -> Opt
     }
 }
 
+/// Pure fill decision for prose visual-row paging. Given the viewport's
+/// absolute top pixel `y0`, the document's total pixel height `total`, and
+/// the `usable` viewport height: the RAW next boundary pixel, or None when
+/// the current page already shows the document tail.
+pub(crate) fn prose_raw_next_boundary(y0: i32, total: i32, usable: i32) -> Option<i32> {
+    let usable = usable.max(1);
+    if total - y0 > usable {
+        Some(y0 + usable)
+    } else {
+        None
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Trim helpers — pure + GTK-bound
 // ---------------------------------------------------------------------------
@@ -1158,9 +1171,21 @@ pub(crate) fn last_fully_visible_line(state: &AppState, top: usize) -> usize {
     }
     let line_count = state.effective_line_count();
     let descender_guard = descender_guard_px(&state.text_view, top);
-    let usable_height = widget_height - descender_guard - BASE_BOTTOM_MARGIN;
-    let range = visible_range(&state.text_view, &state.buffer, top, line_count, usable_height);
+    let mut usable_height = widget_height - descender_guard - BASE_BOTTOM_MARGIN;
     let is_prose = state.is_prose();
+    // Single-column prose row-fill: a page may start mid-paragraph
+    // (`page_top_offset > 0`) on ANY line — over-tall or normal-height. When
+    // asked about the CURRENT page top, `visible_range` charges `top` its FULL
+    // wrapped height, but the leading `page_top_offset` pixels are above the
+    // viewport, so the top line's remaining height is what competes for the
+    // budget. Add the offset to `usable_height` (equivalent to reducing the
+    // first line's charged height by it — the same adjustment
+    // `is_line_start_visible` makes) so the walk counts the right number of
+    // lines. Two-column already returned above; non-prose keeps offset 0.
+    if is_prose && top == state.page_top_line && state.page_top_offset > 0 {
+        usable_height += state.page_top_offset;
+    }
+    let range = visible_range(&state.text_view, &state.buffer, top, line_count, usable_height);
     // Trim because this function feeds page-boundary placement decisions
     // (next_page_top): we don't want to put a partial verse stanza or
     // dangling speaker at the BOTTOM of the new page.
@@ -1706,6 +1731,73 @@ pub(crate) fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
         usable_height,
     );
     line <= range.last_fit && range.count > 0
+}
+
+/// True when `line`'s FIRST visual row is inside the current viewport.
+///
+/// `is_line_fully_visible` charges a buffer line its FULL wrapped height via
+/// `visible_range`, which is right for "did this line finish rendering on the
+/// current page" but wrong for an over-tall prose paragraph: such a paragraph
+/// starting exactly at `page_top_line` has height greater than `usable_height`,
+/// so `visible_range` stops with `count == 0` on its very first line even
+/// though the paragraph's opening row IS on screen — `is_line_fully_visible`
+/// would (incorrectly) say "not visible" and trigger a redundant page turn.
+///
+/// This does NOT mean any pixel-band overlap counts as "visible": the paged
+/// bottom clip (`update_bottom_clip`) hides everything past the walked
+/// `visible_range` total wholesale — a line whose top pixel happens to fall
+/// before `y0 + usable_height` but after the real accumulated content height
+/// is clipped away entirely, not partially shown. So this mirrors
+/// `visible_range`'s own walk (same kernel `is_line_fully_visible` uses),
+/// with one adjustment: the first line's charged height is reduced by
+/// `page_top_offset` (the part of an over-tall paragraph already consumed by
+/// an earlier page), so a later page of the SAME straddling paragraph still
+/// correctly counts only its remaining height.
+pub(crate) fn is_line_start_visible(state: &AppState, line: usize) -> bool {
+    if state.loading_work.get() {
+        return true;
+    }
+    if line < state.page_top_line {
+        return false;
+    }
+    if line == state.page_top_line {
+        // The paragraph's own first visual row is only ON this page when the
+        // page top offset is 0 — a nonzero offset means this page begins
+        // partway down the SAME over-tall paragraph, i.e. the paragraph's
+        // start rendered on an earlier page.
+        return state.page_top_offset == 0;
+    }
+    let widget_height = state.text_view.height();
+    if widget_height <= 0 {
+        return true;
+    }
+    let guard = descender_guard_px(&state.text_view, state.page_top_line);
+    let usable = widget_height - guard - BASE_BOTTOM_MARGIN;
+    let line_count = state.effective_line_count();
+    // Walk from page_top exactly like `visible_range`'s own break condition
+    // (`total + h > usable` => stop, this line and everything after is
+    // clipped away wholesale — the renderer never partially reveals a line
+    // that doesn't fit), except the first line's charged height is reduced by
+    // the already-consumed offset so a later page of the SAME straddling
+    // paragraph only counts its remaining height.
+    let mut total: i32 = 0;
+    for i in state.page_top_line..line_count {
+        let Some(iter) = state.buffer.iter_at_line(i as i32) else { break };
+        let (_y, h) = state.text_view.line_yrange(&iter);
+        let charged = if i == state.page_top_line {
+            (h - state.page_top_offset).max(0)
+        } else {
+            h
+        };
+        if total + charged > usable {
+            return false; // `i` (and `line`, if not yet reached) is clipped
+        }
+        total += charged;
+        if i == line {
+            return true;
+        }
+    }
+    false
 }
 
 /// Count how many buffer lines are fully visible starting from `page_top_line`.
@@ -3093,5 +3185,20 @@ mod overtall_offset_tests {
     fn zero_usable_is_safe() {
         // Degenerate viewport must not divide-by-zero or loop forever.
         assert_eq!(overtall_next_offset(0, 100, 0), Some(1));
+    }
+}
+
+#[cfg(test)]
+mod prose_raw_next_boundary_tests {
+    use super::prose_raw_next_boundary;
+
+    #[test]
+    fn prose_raw_next_boundary_fills_then_stops() {
+        // 1000px doc, 300px viewport: boundaries at 300, 600, 900, then None
+        // (at y0=900 only 100px remain — the last page).
+        assert_eq!(prose_raw_next_boundary(0, 1000, 300), Some(300));
+        assert_eq!(prose_raw_next_boundary(600, 1000, 300), Some(900));
+        assert_eq!(prose_raw_next_boundary(900, 1000, 300), None);
+        assert_eq!(prose_raw_next_boundary(700, 1000, 300), None);
     }
 }

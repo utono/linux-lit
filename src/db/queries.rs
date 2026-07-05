@@ -669,6 +669,28 @@ pub fn load_vocab_word_list(
     Ok(result)
 }
 
+/// Narration time at which the audio reaches char offset `char_off` within a
+/// line: the `start_time` of the FIRST phrase whose char range extends past
+/// that offset (`end_char > char_off`, ordered by `start_char`). Used to fire a
+/// prose page turn at the exact moment playback crosses a page boundary that
+/// falls inside a spoken paragraph. `None` = no phrase_timestamps rows for this
+/// (line, media) pair — the caller falls back to char-fraction interpolation.
+pub fn phrase_crossing_time(
+    conn: &Connection,
+    line_mapping_id: i64,
+    media_id: i64,
+    char_off: usize,
+) -> Option<f64> {
+    conn.query_row(
+        "SELECT start_time FROM phrase_timestamps \
+         WHERE line_mapping_id = ?1 AND media_id = ?2 AND end_char > ?3 \
+         ORDER BY start_char LIMIT 1",
+        rusqlite::params![line_mapping_id, media_id, char_off as i64],
+        |row| row.get(0),
+    )
+    .ok()
+}
+
 pub fn list_media_for_work(
     conn: &Connection,
     abbrev: &str,
@@ -3240,6 +3262,46 @@ mod tests {
         if list.len() > 1 {
             assert!(list[0].0 <= list[1].0, "Should be alphabetically sorted");
         }
+    }
+
+    /// `phrase_crossing_time` returns the start_time of the FIRST phrase whose
+    /// char range extends past the boundary char offset (`end_char > char_off`),
+    /// ordered by start_char — the Task-9 downstream contract for firing a prose
+    /// page turn at the moment narration crosses a mid-paragraph page boundary.
+    #[test]
+    fn phrase_crossing_time_picks_first_phrase_past_offset() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE phrase_timestamps (
+                id INTEGER PRIMARY KEY, line_mapping_id INTEGER, media_id INTEGER,
+                start_time REAL, end_time REAL, start_char INTEGER, end_char INTEGER);
+             -- one line (id 7) on media 3, four contiguous phrases 0..80.
+             INSERT INTO phrase_timestamps
+               (line_mapping_id,media_id,start_time,end_time,start_char,end_char) VALUES
+               (7,3, 10.0,12.0,  0,20),
+               (7,3, 12.0,15.0, 20,40),
+               (7,3, 15.0,18.0, 40,60),
+               (7,3, 18.0,21.0, 60,80),
+               -- a different media_id must not leak in.
+               (7,9, 99.0,99.5, 30,50);",
+        ).unwrap();
+
+        // Offset 0: the very first phrase (end_char 20 > 0).
+        assert_eq!(phrase_crossing_time(&conn, 7, 3, 0), Some(10.0));
+        // Offset 20: phrase 1 ends exactly at 20 (NOT > 20); the crossing phrase
+        // is phrase 2 (start_char 20, end_char 40) at t=12.0.
+        assert_eq!(phrase_crossing_time(&conn, 7, 3, 20), Some(12.0));
+        // Offset 25: inside phrase 2 (20..40) -> t=12.0.
+        assert_eq!(phrase_crossing_time(&conn, 7, 3, 25), Some(12.0));
+        // Offset 55: inside phrase 3 (40..60) -> t=15.0.
+        assert_eq!(phrase_crossing_time(&conn, 7, 3, 55), Some(15.0));
+        // Offset 79: last phrase (60..80) -> t=18.0.
+        assert_eq!(phrase_crossing_time(&conn, 7, 3, 79), Some(18.0));
+        // Offset 80: no phrase extends past 80 -> None (caller interpolates).
+        assert_eq!(phrase_crossing_time(&conn, 7, 3, 80), None);
+        // Unknown (line, media) pair -> None.
+        assert_eq!(phrase_crossing_time(&conn, 7, 1, 0), None);
+        assert_eq!(phrase_crossing_time(&conn, 8, 3, 0), None);
     }
 
     /// Isolated in-memory DB for the bookmark tests: a stub `line_mapping` (only

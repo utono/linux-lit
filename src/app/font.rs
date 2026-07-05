@@ -143,7 +143,16 @@ pub fn adjust_font_size(state: &mut AppState, delta: i32) {
     // now-stale table (and reload a matching one) BEFORE resnapping, so the
     // resnap paginates with the correct engine.
     crate::input::page_table::revalidate_on_resize(state);
+    crate::input::prose_pages::revalidate_prose_on_resize(state);
+    // Mirror the resize tick (src/app/mod.rs): a font change invalidates line
+    // heights, so any scheduled prose cross and the current `page_top_offset`
+    // are stale — cancel the cross (it re-schedules on the next CursorSync if
+    // still warranted) and let `resnap_prose_to_table` re-derive an on-grid
+    // offset instead of leaving `resnap_page`'s line-top scroll paired with a
+    // stale pixel offset (Minor #3, final-review.md).
+    state.pending_prose_cross = None;
     crate::input::navigation::resnap_page(state);
+    crate::input::prose_pages::resnap_prose_to_table(state);
     crate::input::navigation::invalidate_page_tops(state);
     crate::config::save(&state.config);
 }
@@ -158,7 +167,13 @@ pub fn reset_font_size(state: &mut AppState) {
     reapply_font(state);
     rebuild_line_number_gutter(state);
     crate::input::page_table::revalidate_on_resize(state);
+    crate::input::prose_pages::revalidate_prose_on_resize(state);
+    // See adjust_font_size: mirror the resize tick's cross-cancel + prose
+    // resnap so a stale pending cross / page_top_offset doesn't survive the
+    // font change (Minor #3, final-review.md).
+    state.pending_prose_cross = None;
     crate::input::navigation::resnap_page(state);
+    crate::input::prose_pages::resnap_prose_to_table(state);
     crate::input::navigation::invalidate_page_tops(state);
     crate::config::save(&state.config);
 }
@@ -176,7 +191,13 @@ pub fn cycle_font(state: &mut AppState, forward: bool) {
     state.config.font_family = cycle[next].to_string();
     reapply_font(state);
     crate::input::page_table::revalidate_on_resize(state);
+    crate::input::prose_pages::revalidate_prose_on_resize(state);
+    // See adjust_font_size: mirror the resize tick's cross-cancel + prose
+    // resnap so a stale pending cross / page_top_offset doesn't survive the
+    // font change (Minor #3, final-review.md).
+    state.pending_prose_cross = None;
     crate::input::navigation::resnap_page(state);
+    crate::input::prose_pages::resnap_prose_to_table(state);
     crate::input::navigation::invalidate_page_tops(state);
     crate::config::save(&state.config);
     let position = format!("{}/{}", next + 1, cycle.len());

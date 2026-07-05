@@ -65,6 +65,17 @@ pub fn preroll_seek_time(start: f64) -> f64 {
     (start - SEEK_PREROLL).max(0.0)
 }
 
+/// Char-fraction interpolation of a page-break crossing time inside one
+/// line's audio window — the fallback when no phrase_timestamps exist for
+/// the playing media file. Linearly maps the boundary's char offset within
+/// the line onto the line's [start, end] audio window.
+pub fn interpolate_cross_time(start: f64, end: f64, char_off: usize, char_len: usize) -> f64 {
+    if char_len == 0 || end <= start {
+        return start;
+    }
+    start + (end - start) * (char_off.min(char_len) as f64 / char_len as f64)
+}
+
 /// Seconds to highlight a line before playback actually reaches it.
 /// Used by the MPV client's time-pos sync.
 pub const SYNC_PREROLL: f64 = 0.0;
@@ -150,6 +161,14 @@ impl PageChangeReason {
 /// the same for every caller — the differences are in the reason, not in
 /// scattered if/else around the call sites.
 pub(crate) fn after_page_change(state: &mut AppState, reason: PageChangeReason) {
+    // Task 9: cancel a scheduled prose page crossing on any page change the user
+    // (or a layout refresh) drove — manual x/y/j/k/G/gg, chapter/scene jumps,
+    // seeks, resnap, work load. Only the MpvSync path (which SCHEDULES the cross
+    // right after calling this) must not wipe it. A stale cross firing after the
+    // reader navigated away is the classic bug this guards against.
+    if reason != PageChangeReason::MpvSync {
+        state.pending_prose_cross = None;
+    }
     // F4: invalidate cache unconditionally; snap_scroll_to_line repopulates
     // if any scroll happened. For Cursor / Dialogue navigations that don't
     // page-turn, the next is_line_fully_visible call falls back to recompute
@@ -224,6 +243,21 @@ pub fn jump_to_end(state: &mut AppState) {
             .unwrap_or(s.end);
         after_page_change(state, PageChangeReason::JumpToLine);
         log_fmt!("PAGES: page {}/{} (G)", table.len(), table.len());
+        return;
+    }
+
+    // Prose grid: land on the STORED final page (offset-aware — it can start
+    // mid-paragraph), and put the cursor on the document's last line. Mirrors
+    // the play-table branch above; keeps G on the same grid x/j/sync use so the
+    // landing is never off the rendered final page.
+    if let Some(table) = crate::input::prose_pages::active_prose_page_table(state) {
+        let p = *table.last().expect("validated tables are non-empty");
+        state.page_back_stack.clear();
+        crate::input::scroll::set_page_instant_offset(state, p.start_line, p.start_off);
+        state.current_line = line_count - 1;
+        after_page_change(state, PageChangeReason::JumpToLine);
+        log_fmt!("PAGES_PROSE: page {}/{} (G) top=({},{})",
+            table.len(), table.len(), p.start_line, p.start_off);
         return;
     }
 
@@ -755,6 +789,89 @@ fn overtall_forward_step(state: &mut AppState) -> Option<i32> {
     }
 }
 
+/// Universal prose forward boundary: the next page's (top_line, offset),
+/// snapped to a real visual-row top, strictly after the current viewport.
+/// Generalizes `overtall_forward_step` from "within one over-tall paragraph"
+/// to "anywhere in the document" — pages fill with visual rows and split
+/// paragraphs at the boundary. `None` = current page shows the document tail.
+pub(crate) fn prose_next_boundary(state: &mut AppState) -> Option<(usize, i32)> {
+    use gtk4::prelude::{TextBufferExt, TextViewExt, WidgetExt};
+    let top = state.page_top_line;
+    let iter = state.buffer.iter_at_line(top as i32)?;
+    let (top_y, _h) = state.text_view.line_yrange(&iter);
+    let widget_height = state.text_view.height();
+    if widget_height <= 0 {
+        return None;
+    }
+    let guard = crate::input::viewport::descender_guard_px(&state.text_view, top);
+    let usable = widget_height - guard - crate::input::scroll::BASE_BOTTOM_MARGIN;
+    let line_count = state.effective_line_count();
+    let y0 = top_y + state.page_top_offset;
+    // Bounded forward walk from `top` (a validated point close to the current
+    // viewport) accumulating REAL per-line heights, rather than reading
+    // `line_yrange` on the document's LAST buffer line: for a large document
+    // most far-off lines are still un-validated by GTK, so their reported
+    // height is a coarse single-row estimate, not the true wrapped height —
+    // using that as a document-wide "total" corrupts the fill decision (a
+    // severe underfill was observed: pages advancing by only 1-2 lines with
+    // most of the viewport left blank). Walking from `top` keeps every
+    // `line_yrange` call on lines GTK has just measured for real.
+    let mut total = top_y; // pixel top of `top`; walk accumulates to its bottom and beyond
+    for i in top..line_count {
+        let Some(li) = state.buffer.iter_at_line(i as i32) else { break };
+        let (ly, lh) = state.text_view.line_yrange(&li);
+        total = ly + lh;
+        // Stop once we've walked far enough past the current viewport's
+        // bottom fold that we know for certain more content remains below
+        // it — no need to walk the whole document to prove that.
+        if total - y0 > usable {
+            break;
+        }
+    }
+    let raw = crate::input::viewport::prose_raw_next_boundary(y0, total, usable)?;
+    // Snap DOWN to a real visual-row top; never start a page mid-glyph-row.
+    let snapped = crate::input::scroll::snap_value_to_display_row(state, raw as f64);
+    if snapped <= y0 as f64 {
+        return None; // degenerate snap: fall back to a whole-line turn
+    }
+    // Locate the buffer line containing the snapped pixel.
+    let (bline_iter, _) = state.text_view.line_at_y(snapped as i32);
+    let bline = bline_iter.line().max(0) as usize;
+    let biter = state.buffer.iter_at_line(bline as i32)?;
+    let (by, bh) = state.text_view.line_yrange(&biter);
+    let mut new_top = bline;
+    let mut new_off = (snapped - by as f64).round() as i32;
+    // Normalize: a boundary at (or past) a line's full height is the next
+    // line's top; a boundary inside a BLANK line starts at the next line.
+    if new_off >= bh && bline + 1 < line_count {
+        new_top = bline + 1;
+        new_off = 0;
+    } else if new_off > 0
+        && crate::input::viewport::buffer_line_text(&state.buffer, bline)
+            .trim()
+            .is_empty()
+        && bline + 1 < line_count
+    {
+        new_top = bline + 1;
+        new_off = 0;
+    }
+    // A residual mid-paragraph offset on a NON-over-tall line is now a
+    // legitimate landing: the design mandates full row-fill, so a page may
+    // start (and end) partway down any paragraph. The single-column prose
+    // bottom-clip path (`update_bottom_clip`, scroll.rs) is offset-aware — it
+    // clips per visual row against the live scroll value regardless of
+    // `range.count` — and `is_line_start_visible` / `last_fully_visible_line`
+    // both account for `page_top_offset`, so no deferral is needed. (The old
+    // "Fix 2" deferral arm rounded such a landing FORWARD to the next line's
+    // top, which made the real page taller than the `usable` budget while the
+    // next boundary was still computed as if the page had shown exactly
+    // `usable` pixels — the hidden tail rows were skipped forever. Removed.)
+    if (new_top, new_off) <= (top, state.page_top_offset) {
+        return None;
+    }
+    Some((new_top, new_off))
+}
+
 pub fn page_forward(state: &mut AppState) {
     if state.current_work.is_none() {
         return;
@@ -877,12 +994,73 @@ pub fn page_forward(state: &mut AppState) {
         // Fall through: the normal path / jump_to_end handles the final spread.
     }
 
-    // Over-tall prose paragraph (single column): the paragraph at page_top is one
-    // buffer line taller than the viewport, so a whole-line turn would skip the
-    // rows below the fold. Advance the SCROLL by one viewport WITHIN the same
-    // line (snapped to a real visual-row top); only fall through to a line turn
-    // once the paragraph is exhausted. See
-    // docs/troubleshooting/page-turning-mechanics.md → "Prose over-tall paragraph".
+    // Pinned prose table: pure index arithmetic (mirrors the play table arm).
+    if let Some(table) = crate::input::prose_pages::active_prose_page_table(state) {
+        if let Some(cur) = crate::input::prose_pages::prose_page_for_position(
+            &table, state.page_top_line, state.page_top_offset)
+        {
+            if cur + 1 >= table.len() {
+                let visible_end = super::viewport::last_fully_visible_line(state, state.page_top_line);
+                if visible_end > state.current_line {
+                    state.current_line = visible_end;
+                    after_page_change(state, PageChangeReason::Forward);
+                }
+                log_fmt!("PAGES_PROSE: page {}/{} (at end)", cur + 1, table.len());
+                return;
+            }
+            let next = table[cur + 1];
+            state.page_back_stack.push((state.page_top_line, state.page_top_offset));
+            state.current_line = next.start_line;
+            crate::input::scroll::set_page_instant_offset(state, next.start_line, next.start_off);
+            after_page_change(state, PageChangeReason::Forward);
+            log_fmt!("PAGES_PROSE: page {}/{} top=({},{})",
+                     cur + 2, table.len(), next.start_line, next.start_off);
+            return;
+        }
+        // Off-grid (resume from an old session): fall through to live fill;
+        // the next turn lands back on the grid via Task 6's resnap.
+    }
+
+    // Prose visual-row fill (single column): the next page starts at the
+    // snapped row boundary one viewport below the current one — paragraphs
+    // split across pages, no underfill, no skipped tails. Subsumes the old
+    // over-tall-paragraph special case. Non-prose single-column works keep
+    // the whole-line path below.
+    if state.column_count() == 1 && state.is_prose() {
+        if let Some((nt, no)) = prose_next_boundary(state) {
+            state.page_back_stack.push((state.page_top_line, state.page_top_offset));
+            log_fmt!("PAGE_FWD: prose row-fill ({},{}) -> ({},{})",
+                     state.page_top_line, state.page_top_offset, nt, no);
+            let stage_lookup = |bi: usize| -> Option<i64> {
+                state.work_line_for_buffer(bi)
+                    .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+                    .map(|l| l.sub_line)
+            };
+            // Cursor: the first content line whose text is on the new page.
+            let landing = if no > 0 {
+                nt // straddling paragraph is the current content
+            } else {
+                next_dialogue_from(&state.buffer, nt, state.effective_line_count(),
+                                   state.is_prose(), &stage_lookup)
+            };
+            state.current_line = landing.min(state.effective_line_count().saturating_sub(1));
+            crate::input::scroll::set_page_instant_offset(state, nt, no);
+            after_page_change(state, PageChangeReason::Forward);
+            return;
+        }
+        // No next boundary: we are on the final page. Move the cursor to the
+        // last visible content line (mirror of the 2-col final-spread guard).
+        let visible_end = super::viewport::last_fully_visible_line(state, state.page_top_line);
+        if visible_end > state.current_line {
+            state.current_line = visible_end;
+            after_page_change(state, PageChangeReason::Forward);
+        }
+        log_fmt!("PAGE_FWD: prose final page (top={} off={})",
+                 state.page_top_line, state.page_top_offset);
+        return;
+    }
+    // Over-tall NON-prose single-column paragraph (BCP etc.): keep the old
+    // within-paragraph step so those works do not regress.
     if state.column_count() == 1 {
         if let Some(off) = overtall_forward_step(state) {
             state.page_back_stack.push((state.page_top_line, state.page_top_offset));
@@ -996,6 +1174,49 @@ pub fn page_backward(state: &mut AppState) {
         after_page_change(state, PageChangeReason::Backward);
         log_fmt!("PAGES: page {}/{} top={}", cur, table.len(), prev.left_start);
         return;
+    }
+
+    // Pinned prose table (single column): index arithmetic, but ONLY when the
+    // current position sits EXACTLY on the grid. Off-grid (a resumed mid-page
+    // scroll, or an over-tall step the table doesn't model) keeps the existing
+    // back-stack/live behavior so the popped entry — which knows the precise
+    // sub-page scroll — wins. On-grid, the table is authoritative.
+    if let Some(table) = crate::input::prose_pages::active_prose_page_table(state) {
+        if let Some(cur) = crate::input::prose_pages::prose_page_for_position(
+            &table, state.page_top_line, state.page_top_offset)
+        {
+            let on_grid = table[cur].start_line == state.page_top_line
+                && table[cur].start_off == state.page_top_offset;
+            if on_grid {
+                if cur == 0 {
+                    let first = first_dialogue_line(state);
+                    if first < state.current_line {
+                        state.current_line = first;
+                        after_page_change(state, PageChangeReason::Backward);
+                    }
+                    log_fmt!("PAGES_PROSE: page 1/{} (at start)", table.len());
+                    return;
+                }
+                let prev = table[cur - 1];
+                // Drop any back-stack entry that would return us to THIS page or
+                // ahead (a stale forward-nav leftover) — the table is the source
+                // of truth for the previous page here.
+                while let Some(&(t, o)) = state.page_back_stack.last() {
+                    if (t, o) >= (prev.start_line, prev.start_off) {
+                        state.page_back_stack.pop();
+                    } else {
+                        break;
+                    }
+                }
+                state.current_line = prev.start_line;
+                crate::input::scroll::set_page_instant_offset(state, prev.start_line, prev.start_off);
+                after_page_change(state, PageChangeReason::Backward);
+                log_fmt!("PAGES_PROSE: page {}/{} top=({},{})",
+                         cur, table.len(), prev.start_line, prev.start_off);
+                return;
+            }
+        }
+        // Off-grid: fall through to the live back-stack/prev-page path below.
     }
 
     // First-spread guard: when the current spread already shows the work's first
@@ -3639,6 +3860,27 @@ mod after_page_change_tests {
             "cursor-only navigation must not drag audio");
         assert!(PageChangeReason::Cursor.should_show_vocab(),
             "cursor navigation still shows vocab");
+    }
+}
+
+#[cfg(test)]
+mod interpolate_cross_time_tests {
+    use super::interpolate_cross_time;
+
+    #[test]
+    fn interpolate_cross_time_is_proportional_and_clamped() {
+        assert_eq!(interpolate_cross_time(10.0, 20.0, 50, 100), 15.0);
+        assert_eq!(interpolate_cross_time(10.0, 20.0, 0, 100), 10.0);
+        assert_eq!(interpolate_cross_time(10.0, 20.0, 200, 100), 20.0); // off clamped to len
+        assert_eq!(interpolate_cross_time(10.0, 20.0, 50, 0), 10.0);   // degenerate len
+        assert_eq!(interpolate_cross_time(10.0, 10.0, 50, 100), 10.0); // degenerate window
+        assert_eq!(interpolate_cross_time(10.0, 5.0, 50, 100), 10.0);  // inverted window
+    }
+
+    #[test]
+    fn interpolate_cross_time_quarter_and_three_quarter() {
+        assert_eq!(interpolate_cross_time(0.0, 40.0, 25, 100), 10.0);
+        assert_eq!(interpolate_cross_time(0.0, 40.0, 75, 100), 30.0);
     }
 }
 
