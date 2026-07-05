@@ -146,12 +146,82 @@ fallback modes — fingerprint mismatch (font/resolution change, re-import),
 interlinear translations, scroll mode, 1-col — which use the live engine
 unchanged, and to the generator itself (the table is only as good as the
 walk it records; a walk bug becomes a VALIDATE_FAIL or a bad stored table).
-Audit stored tables with the validate-play-pages skill. One benign
-representation difference: a one-line right column whose only line is an
-unmapped blank/stage direction (no `line_mapping` row) stores as an
-empty-right page (`split_id` NULL) — the blank renders below the left
-column's clip instead of atop the right column; both are invisible, and
-extents match a live recompute.
+The final table page mirrors the canonical `G` spread (the forward-pulled
+`last_page_top` anchor), so `G`/`x`-into-the-end land on the same stored page.
+
+**Keyed by the edition's OWN abbrev, not canonical.** Each edition (`Rom`,
+`Rom-BBCClassic`, …) has its own `line_mapping` ids, so a table stored under
+the canonical base abbrev could never be loaded by a sibling edition (the
+`db_fingerprint` fails closed) while editions overwrote each other's rows under
+the shared key. Every edition therefore stores its own table; base works are
+unchanged (their abbrev IS canonical). True cross-edition sharing is a hot.db
+concern (`page_spread`, citation-keyed), not lit.db. Do not "fix" a missing
+table for an edition by pointing it at the base work's rows.
+
+**Sync page turns land on the table's grid too.** In table mode
+`update_highlight_and_advance_page` / `_ensure_visible` (`highlight.rs`) get
+the landing top from `page_table::table_top_for(state, line)` — the stored page
+containing the spoken line — instead of the live `page_turn_top_state`. Without
+this a sync-driven turn landed off the grid (force-top-aligning the spoken line;
+self-correcting on the next `x`/`y` but visibly wrong). When no table serves the
+line, both fall back to the live computation including the final-region
+redirect.
+
+**Staleness & revalidation — three triggers.** The fingerprint covers font AND
+both window dimensions, so a stale table must be dropped whenever any of them
+changes without a work reload:
+
+- **Window resize (width OR height-only):** the resize tick in `app/mod.rs`
+  schedules `page_table::revalidate_on_resize` after a 400ms settle delay so
+  column geometry has finished reflowing before it fingerprints. A HEIGHT-only
+  change (dwl stack-retiling) goes stale just as easily as a width change —
+  this branch must fire for both (it once fired only on `width_changed`).
+- **Font size/family change:** `adjust_font_size` / `reset_font_size` /
+  `cycle_font` (`app/font.rs`) revalidate (drop + reload) BEFORE the resnap —
+  the window size doesn't change, so the resize path never fires. Look for
+  `PAGES: dropped table (layout changed)`; the new font's fingerprint then runs
+  live (and may regenerate).
+- **Re-import:** the per-row `db_fingerprint` check at load fails closed.
+
+To check which engine a RUNNING instance is on, use the
+`check-page-table-usage` skill (reads the `PAGES: table hit/fallback/generated`
+log lines).
+
+**Heading chrome is un-snapped at load (the id round-trip loses it).** Act/
+scene headings and separator rules are synthesized chrome with NO `line_mapping`
+rows, so a page top falling on chrome was stored as the first MAPPED line at or
+after it — a table-driven page then opened at the entrance stage direction
+instead of `ACT 1 / Scene 1` (Rom page 2: generator walked top=21, table
+resolved top=27). `load_for_work`'s `unsnap_top` walks back over contiguous
+unmapped lines to the chrome start, then forward over leading blanks (the
+previous page's trimmed tail). Applies to both `left_start` and `split`; a
+no-op for mid-page tops and blank-only gaps. Load-side, so every stored table
+is repaired without regeneration.
+
+**Testing in table mode.** `LIT_NO_PAGE_TABLE=1` forces the live engine;
+`LIT_GEN_PAGE_TABLE=1` forces generation at the current (e.g. headless)
+geometry — `run-fuzz.sh` forwards both into the cage env. The nav-fuzz is
+table-aware: check 2f asserts `x`/`y` move exactly one page (±1) through
+`active_page_table`'s index space (edge-pinned, canonical G-seam allowed), and
+the column-boundary checks (balance, layout, jump-to-end, clipping) read the
+STORED spread via `effective_column_split` — re-deriving the boundary with a
+fresh `column_split` re-infers a boundary the renderer didn't use (the same
+assertion-re-inference class as the 2H6/Cor/Ham text-classifier false
+positives; a stored `split == None` is the sanctioned empty-right page). Audit
+stored tables with the `validate-play-pages` skill.
+
+One benign representation difference: a one-line right column whose only line
+is an unmapped blank/stage direction (no `line_mapping` row) stores as an
+empty-right page (`split_id` NULL) — the blank renders below the left column's
+clip instead of atop the right column; both are invisible, and extents match a
+live recompute.
+
+Key files: `src/input/page_table.rs` (`validate_spreads`, `layout_fingerprint`,
+`record_spreads`, `generate_and_store`, `load_for_work` + `unsnap_top`,
+`revalidate_on_resize`, `active_page_table`, `spread_for_top`, `table_top_for`,
+`page_for_line`), `src/db/play_pages.rs` (rw layer, per-edition abbrev key),
+`src/app/font.rs` (font-change revalidation), `src/app/mod.rs` (resize-tick
+revalidation), `docs/plans/2026-07-04-pinned-play-pagination-design.md`.
 
 ## Prose over-tall paragraph (sub-line paging)
 
@@ -681,8 +751,12 @@ Playback sync advances the cursor to match MPV audio position. The pipeline:
    checks if `current_line > last_raw_visible_line` (the untrimmed last
    visible line — not `last_fully_visible_line`, which trims trailing
    speakers/blanks for pagination and would cause premature turns). If so,
-   computes `page_turn_top(current_line)` and calls `set_page` with forward
-   direction. This is how playback sync triggers page turns
+   computes the landing top and calls `set_page` with forward direction. This
+   is how playback sync triggers page turns. In table mode the landing top
+   comes from `page_table::table_top_for` (the stored page containing the
+   spoken line — see *Pinned page tables*); otherwise, and as the fallback
+   when no table serves the line, `page_turn_top(current_line)` with the
+   final-region redirect
 7. **`after_page_change(MpvSync)`** — runs post-page-turn housekeeping. Does
    not seek MPV (sync-driven, not user-initiated)
 
