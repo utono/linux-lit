@@ -66,6 +66,15 @@ fn extract_author(media_path: &str, home: &str) -> String {
 /// Removes stale socket files that fail to connect.
 /// Returns (socket_path, matched_media_path).
 pub fn find_socket_for_work(media_paths: &[String]) -> Option<(PathBuf, String)> {
+    // Headless test runs must never touch real sockets: probing would connect
+    // to (and stale-cleanup would DELETE) the live session's MPV socket when
+    // both run the same work — a fuzz run would then seek the user's player.
+    if std::env::var_os("LIT_HEADLESS_TEST").is_some()
+        || std::env::var_os("LIT_NO_MPV").is_some()
+    {
+        crate::logging::log("MPV discovery: skipped (LIT_HEADLESS_TEST/LIT_NO_MPV)");
+        return None;
+    }
     for media_path in media_paths {
         let socket_path = derive_socket_path(media_path);
         let path = PathBuf::from(&socket_path);

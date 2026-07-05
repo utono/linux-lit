@@ -1104,6 +1104,11 @@ pub(crate) fn clamp_page_top_to_scroll_ceiling(state: &AppState, proposed_top: u
 /// Trims are for page-boundary placement; sync needs the physical boundary.
 pub(crate) fn last_raw_visible_line(state: &AppState, top: usize) -> usize {
     if state.column_count() == 2 {
+        // Table mode renders the stored spread; the check must read the same
+        // boundary or sync's past-the-end test never matches the screen.
+        if let Some(end) = crate::input::page_table::table_end_for_top(state, top) {
+            return end;
+        }
         return column_split(state, top).page_end;
     }
     if let Some(cached) = state.last_visible_range.get() {
@@ -1141,6 +1146,10 @@ pub(crate) struct ColumnSplit {
 /// dangling speaker at the bottom doesn't count as "visible" content.
 pub(crate) fn last_fully_visible_line(state: &AppState, top: usize) -> usize {
     if state.column_count() == 2 {
+        // Table mode renders the stored spread; see table_end_for_top.
+        if let Some(end) = crate::input::page_table::table_end_for_top(state, top) {
+            return end;
+        }
         return column_split(state, top).page_end;
     }
     let widget_height = state.text_view.height();
@@ -1669,8 +1678,10 @@ pub(crate) fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
         return false;
     }
     if state.column_count() == 2 {
-        let cs = column_split(state, state.page_top_line);
-        return line >= state.page_top_line && line <= cs.page_end;
+        // Table mode renders the stored spread; see table_end_for_top.
+        let end = crate::input::page_table::table_end_for_top(state, state.page_top_line)
+            .unwrap_or_else(|| column_split(state, state.page_top_line).page_end);
+        return line >= state.page_top_line && line <= end;
     }
     // F4: fast path — consult the cache (raw range — every line genuinely
     // rendered on screen, no F9 trim applied because "is line N drawn?" is

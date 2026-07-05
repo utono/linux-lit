@@ -603,6 +603,46 @@ pub fn table_top_for(state: &crate::app::AppState, line: usize) -> Option<usize>
     Some(table[i].left_start)
 }
 
+/// Re-anchor an off-grid `page_top_line` onto the ACTIVE table's grid after a
+/// table load/regeneration swapped the grid out from under the current page.
+/// The startup resume snap runs against whatever grid is active at snap time
+/// (often a stored table for a DIFFERENT fingerprint, dropped moments later at
+/// settled geometry) — without this, the session reads from an off-grid top
+/// until the first sync page turn re-anchors it, which the user experiences as
+/// the highlight teleporting mid-page while the page barely shifts. No-op when
+/// no table is active, the top is already canonical, or the cursor's line is
+/// not covered by the table.
+pub fn resnap_to_table(state: &mut crate::app::AppState) {
+    let Some(table) = active_page_table(state) else { return };
+    if spread_for_top(&table, state.page_top_line).is_some() {
+        return; // already on the active grid
+    }
+    let Some(i) = page_for_line(&table, state.current_line) else { return };
+    let t = table[i].left_start;
+    if t != state.page_top_line {
+        crate::logging::log(&format!(
+            "PAGES: resnap off-grid page_top {} -> {} (cursor {})",
+            state.page_top_line, t, state.current_line
+        ));
+        crate::input::scroll::set_page_instant(state, t);
+    }
+}
+
+/// End (last rendered buffer line) of the stored spread whose top is `top`,
+/// when the table drives rendering. The render path (scroll.rs) synthesizes
+/// its ColumnSplit from this same spread — column_split() is NOT consulted in
+/// table mode — so visibility/boundary checks must read the same source. The
+/// live column_split can disagree with the stored spread at a matching layout
+/// fingerprint (the fingerprint covers font metrics and window geometry, not
+/// engine behavior), and a check against the live engine then never matches
+/// what's actually on screen: playback sync and j-navigation walk the cursor
+/// past the rendered page end without turning. `None` = no table active or
+/// `top` is not a canonical stored page top; fall back to the live engine.
+pub fn table_end_for_top(state: &crate::app::AppState, top: usize) -> Option<usize> {
+    let table = active_page_table(state)?;
+    spread_for_top(&table, top).map(|s| s.end)
+}
+
 /// ISO-ish timestamp without adding a chrono dependency (not in Cargo.toml):
 /// seconds since epoch, prefixed so it's self-explaining in a DB browse.
 fn epoch_timestamp() -> String {

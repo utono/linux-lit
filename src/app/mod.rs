@@ -1995,9 +1995,19 @@ pub fn build_window(
                     {
                         let st = state_for_tick.clone();
                         glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
-                            let s = st.borrow();
-                            crate::input::page_table::load_for_work(&s);
-                            crate::input::page_table::generate_and_store(&s);
+                            {
+                                let s = st.borrow();
+                                crate::input::page_table::load_for_work(&s);
+                                crate::input::page_table::generate_and_store(&s);
+                            }
+                            // The load/gen above may have swapped the active grid
+                            // (e.g. startup snapped to a stored table for another
+                            // fingerprint that was just dropped) — re-anchor an
+                            // off-grid page top before the user sees a mid-page
+                            // cursor jump on the first sync page turn.
+                            if let Ok(mut s) = st.try_borrow_mut() {
+                                crate::input::page_table::resnap_to_table(&mut s);
+                            }
                         });
                     }
                 } else {
@@ -2023,8 +2033,14 @@ pub fn build_window(
                         // revalidate_on_resize's doc comment.
                         let st = state_for_tick.clone();
                         glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
-                            let s = st.borrow();
-                            crate::input::page_table::revalidate_on_resize(&s);
+                            {
+                                let s = st.borrow();
+                                crate::input::page_table::revalidate_on_resize(&s);
+                            }
+                            // Same grid-swap re-anchor as the settled-layout hook.
+                            if let Ok(mut s) = st.try_borrow_mut() {
+                                crate::input::page_table::resnap_to_table(&mut s);
+                            }
                         });
                     }
                 }

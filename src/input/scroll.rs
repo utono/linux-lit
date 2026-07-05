@@ -1114,8 +1114,14 @@ pub(crate) fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize)
             if super::viewport::is_line_fully_visible(state, state.current_line) {
                 return;
             }
-            // Compute where a turn/snap would land.
-            let new_top = if !state.is_prose()
+            // Compute where a turn/snap would land. Table mode: the stored page
+            // containing the new cursor line IS the landing page — same grid as
+            // x/y and playback sync (see update_highlight_and_advance_page).
+            let new_top = if let Some(t) =
+                crate::input::page_table::table_top_for(state, state.current_line)
+            {
+                t
+            } else if !state.is_prose()
                 && super::viewport::is_first_dialogue_of_scene_state(
                     state, &state.translation_lines, state.current_line,
                 )
@@ -1206,6 +1212,17 @@ pub(crate) fn scroll_after_jump_backward(state: &mut AppState) {
                 // spreads to the one that shows the cursor.
                 let old_top = state.page_top_line;
                 let target = state.current_line;
+                // Table mode: the stored page containing the target dialogue IS
+                // the landing page (same grid as x/y); the live walk below can
+                // land off the canonical grid.
+                if let Some(t) = crate::input::page_table::table_top_for(state, target) {
+                    state.page_back_stack.clear();
+                    state.page_back_stack.push((old_top, 0));
+                    log_fmt!("NAV_PAGE_BACK: table new_top={} old_top={} cursor={}",
+                             t, old_top, target);
+                    set_page_instant(state, t);
+                    return;
+                }
                 let mut new_top = super::viewport::prev_page_top(state, old_top).new_top;
                 let mut guard = 0;
                 // Keep walking back while this spread starts AFTER the target (so it
@@ -1452,11 +1469,16 @@ pub fn scroll_paragraph_to_top(state: &mut AppState, para_start: usize) {
             if para_start >= state.page_top_line
                 && !super::viewport::is_line_on_screen(state, para_start)
             {
+                // Table mode: land on the stored page containing the paragraph
+                // start — same grid as x/y and the sync advance path. A raw
+                // para_start top would put the page off the canonical grid.
+                let new_top = crate::input::page_table::table_top_for(state, para_start)
+                    .unwrap_or(para_start);
                 crate::logging::log_always(&format!(
-                    "SYNC_PARA_TURN: para_start={} page_top={}",
-                    para_start, state.page_top_line
+                    "SYNC_PARA_TURN: para_start={} page_top={} new_top={}",
+                    para_start, state.page_top_line, new_top
                 ));
-                set_page(state, para_start, PageDirection::Forward);
+                set_page(state, new_top, PageDirection::Forward);
             }
         }
     }

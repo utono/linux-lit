@@ -256,9 +256,19 @@ fn main() {
                                             && old_scene != Some(scene)
                                             && !already_visible
                                         {
-                                            let mut top = crate::input::viewport::scene_header_top_state(
+                                            // Table mode: the stored page containing
+                                            // the scene's first spoken line IS the
+                                            // scene page (the generator clamps at
+                                            // section breaks and the loader restores
+                                            // the heading chrome) — same grid as x/y.
+                                            let mut top = crate::input::page_table::table_top_for(
                                                 &s, buffer_line,
-                                            );
+                                            )
+                                            .unwrap_or_else(|| {
+                                                crate::input::viewport::scene_header_top_state(
+                                                    &s, buffer_line,
+                                                )
+                                            });
                                             // If the scene-header spread would leave
                                             // the right column empty (lone EPILOGUE),
                                             // redirect to the final-spread anchor so

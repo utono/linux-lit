@@ -108,6 +108,16 @@ async fn handle_command(
 ) {
     match cmd {
         MpvCommand::Connect(path) => {
+            // Headless test runs must never attach to a real player: the
+            // derived socket path can be the LIVE session's MPV when both run
+            // the same work, and every test nav keypress would seek it.
+            if std::env::var_os("LIT_HEADLESS_TEST").is_some()
+                || std::env::var_os("LIT_NO_MPV").is_some()
+            {
+                crate::logging::log("MPV: connect skipped (LIT_HEADLESS_TEST/LIT_NO_MPV)");
+                let _ = evt_tx.send(MpvEvent::ConnectionStatus(false)).await;
+                return;
+            }
             match connect_and_observe(&path).await {
                 Ok((r, w)) => {
                     *reader = Some(r);
