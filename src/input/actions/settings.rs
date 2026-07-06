@@ -290,6 +290,7 @@ pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &cra
 
     // Update cursor line highlight from root_color
     state.cursor_line_tag.set_property("paragraph-background", &theme.cursor_line_bg);
+    state.phrase_tag.set_property("background", &theme.phrase_highlight_bg);
 
     // Write .current_theme file
     let home = std::env::var("HOME").unwrap_or_default();
