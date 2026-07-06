@@ -140,7 +140,7 @@ pub(crate) fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, windo
         // base text_margins so logical_left lands exactly at prose_column_margin.
         // Mirrors the translations_visible branch's card-relative inset.
         let card_w = target_card_width(
-            window_width, state.config.column_width, state.column_count(), false,
+            window_width, effective_column_width(state), state.column_count(), false,
         ).min(window_width.max(1));
         (crate::ui::prose_column_margin(card_w) - state.config.text_margins as i32).max(0)
     };
@@ -205,7 +205,7 @@ pub(crate) fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, windo
         // the column is centered in the card (NYTimes body look). Recompute the
         // same card-relative value used for logical_left above.
         let card_w = target_card_width(
-            window_width, state.config.column_width, state.column_count(), false,
+            window_width, effective_column_width(state), state.column_count(), false,
         ).min(window_width.max(1));
         state.text_view.set_right_margin(crate::ui::prose_column_margin(card_w));
     } else {
@@ -274,7 +274,7 @@ pub(crate) fn apply_column_layout(state: &mut AppState) {
     // two-column card. apply_tiled_mode only sets margins/gutters, not the
     // card's width_request, so this must run too or the card keeps its old
     // (wrong) width.
-    let cw = state.config.column_width;
+    let cw = effective_column_width(state);
     let cc = state.column_count();
     let tr = state.translations_visible;
     apply_card_sizing(&state.content_hbox, ww, cw, cc, tr);
@@ -286,6 +286,46 @@ pub(crate) fn apply_column_layout(state: &mut AppState) {
         state.right_bottom_clip.set_height_request(0);
         state.next_scene_watermark.set_visible(false);
     }
+}
+
+/// Max chars per source line across the Dickens prepared texts (the longest
+/// line in `bleak-house-prepared.txt` is 78 chars; averages run ~59). The
+/// prose card is widened so a line of this many average-width chars fits on
+/// ONE rendered visual row of the centered 60% measure.
+pub(crate) const PROSE_MEASURE_CHARS: i32 = 78;
+
+/// Pure math for the prose card width: the card whose centered prose measure
+/// holds `chars` average-width characters. The prose column is inset by
+/// `prose_column_margin` (card/5) on BOTH sides, so measure = card - 2*(card/5)
+/// >= 0.6*card; invert with ceil(measure * 5 / 3). Never narrower than the
+/// configured base column width.
+pub(crate) fn prose_card_width_px(chars: i32, avg_char_w: i32, base: u32) -> u32 {
+    let measure = chars.max(0) * avg_char_w.max(0);
+    let card = (measure * 5 + 2) / 3;
+    (card.max(0) as u32).max(base)
+}
+
+/// Effective column (card) width for the CURRENT work. Prose works at the
+/// single-column layout widen so `PROSE_MEASURE_CHARS` average chars of the
+/// current font fit on one rendered row (font-adaptive — tracks font cycling
+/// and size changes); everything else uses the configured `column_width`.
+/// Pre-load (no current work) also uses the configured width so a play never
+/// flashes wide before its layout settles.
+pub(crate) fn effective_column_width(state: &AppState) -> u32 {
+    use gtk4::prelude::{TextBufferExt, TextTagExt, TextViewExt, WidgetExt};
+    if state.current_work.is_none() || !state.is_prose() || state.column_count() != 1 {
+        return state.config.column_width;
+    }
+    let ctx = state.text_view.pango_context();
+    let font_desc = state
+        .text_view
+        .buffer()
+        .tag_table()
+        .lookup("font-size")
+        .and_then(|tag| tag.font_desc());
+    let metrics = ctx.metrics(font_desc.as_ref(), None);
+    let avg = metrics.approximate_char_width() / pango::SCALE;
+    prose_card_width_px(PROSE_MEASURE_CHARS, avg, state.config.column_width)
 }
 
 /// Target card width before clamping to the window.
@@ -371,7 +411,7 @@ pub(crate) fn main_card_rect(s: &AppState) -> (i32, i32) {
     let ww = s.window.width().max(0);
     let target = target_card_width(
         ww,
-        s.config.column_width,
+        effective_column_width(s),
         s.column_count(),
         s.translations_visible,
     );
@@ -436,7 +476,26 @@ mod column_default_tests {
 
 #[cfg(test)]
 mod card_width_tests {
-    use super::target_card_width;
+    use super::{prose_card_width_px, target_card_width, PROSE_MEASURE_CHARS};
+
+    #[test]
+    fn prose_card_width_inverts_the_60_percent_measure() {
+        // 78 chars at 9px avg = 702px measure; card = ceil(702*5/3) = 1170.
+        assert_eq!(prose_card_width_px(PROSE_MEASURE_CHARS, 9, 1050), 1170);
+        // The resulting card's actual measure (card - 2*(card/5), the
+        // prose_column_margin insets) must hold the requested chars.
+        let card = prose_card_width_px(PROSE_MEASURE_CHARS, 9, 1050) as i32;
+        assert!(card - 2 * (card / 5) >= PROSE_MEASURE_CHARS * 9);
+    }
+
+    #[test]
+    fn prose_card_width_never_narrower_than_configured() {
+        // Small font: 78 * 6 = 468px measure -> 780px card, below base 1050.
+        assert_eq!(prose_card_width_px(PROSE_MEASURE_CHARS, 6, 1050), 1050);
+        // Degenerate inputs clamp safely to base.
+        assert_eq!(prose_card_width_px(0, 9, 1050), 1050);
+        assert_eq!(prose_card_width_px(PROSE_MEASURE_CHARS, 0, 1050), 1050);
+    }
 
     #[test]
     fn one_column_keeps_configured_width() {

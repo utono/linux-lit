@@ -652,7 +652,7 @@ pub fn toggle_column_layout(state: &mut AppState) {
     crate::app::layout::apply_card_sizing(
         &state.content_hbox,
         state.window.width(),
-        state.config.column_width,
+        crate::app::layout::effective_column_width(state),
         new_count,
         state.translations_visible,
     );
