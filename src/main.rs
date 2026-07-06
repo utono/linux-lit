@@ -23,85 +23,6 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 use mpv::{MpvCommand, MpvEvent};
 
-/// Task 9: narration time at which playback reaches the CURRENT prose page's
-/// bottom boundary, which falls inside buffer line `bl` at pixel offset
-/// `end_off`. Maps the boundary pixel row to a char offset within the buffer
-/// line by pixel FRACTION: `char_off ≈ char_len * end_off / line_height`. We
-/// deliberately do NOT use `TextView::iter_at_location` here — the boundary line
-/// sits at (or just below) the viewport fold, and `iter_at_location` returns
-/// None for any point outside GTK's currently-validated/visible layout, so it
-/// bailed silently for exactly the straddling lines we care about (observed:
-/// `iter_at_location(1,551) None`). The pixel fraction is validation-free and
-/// always resolves. Then:
-///   1. `phrase_timestamps` for the playing (line, media) when available: the
-///      first phrase whose char range extends past that offset;
-///   2. char-fraction interpolation across the line's audio window otherwise.
-///
-/// For BH the buffer line text IS the DB `canonical_text` (one line_mapping row
-/// per paragraph, rendered via the prose path — `text_file` is empty), so the
-/// buffer char offset indexes the same string the phrase char ranges do. Both
-/// the pixel->char fraction and the `end_char > off` phrase query tolerate small
-/// drift (the phrase query self-corrects within one phrase); the logged offset +
-/// chosen start_time make any mismatch diagnosable.
-///
-/// KNOWN LIMITATION: the pixel-fraction estimate assumes uniform row density
-/// (constant chars-per-row) across the paragraph, which real text rarely has
-/// (short/long rows from wrapping, punctuation, etc.). The resulting char-offset
-/// error grows with how deep into the paragraph the boundary sits — worst case
-/// roughly `0.2 * C * f * (1 - f)` chars, where `C` is the paragraph's total char
-/// count and `f = end_off / line_height` is the fraction into the boundary line
-/// (the bias is largest mid-paragraph and shrinks toward both ends). A boundary
-/// near the TOP of a paragraph self-corrects within one phrase (small `f`, small
-/// error), which is why this hasn't shown up as a visible bug yet. The exact fix
-/// is to map pixel position to a real text position instead of estimating from a
-/// fraction: validate the boundary line, call
-/// `text_view.buffer_to_window_coords` to convert buffer coords to window
-/// coords, then `text_view.get_iter_at_location` (or the window-space
-/// equivalent) once the line is guaranteed laid out/validated — deferred here
-/// because `iter_at_location` bails on the still-unvalidated straddling line (see
-/// above); a forced validate-then-query pass is the follow-up.
-/// Returns `(crossing_time, line_start_time)`: the wall-clock second at which
-/// narration crosses the page boundary inside buffer line `bl`, and the line's
-/// own spoken start_time (so the caller can reject a degenerate boundary whose
-/// crossing time is at/before the line's start — i.e. a boundary in the leading
-/// gap that turns the page before the paragraph is even spoken).
-fn prose_cross_time(s: &app::AppState, bl: usize, end_off: i32) -> Option<(f64, f64)> {
-    let Some(wi) = s.work_line_for_buffer(bl) else {
-        crate::logging::log(&format!("SYNC_PROSE_CROSS: bail no work_line for bl={}", bl)); return None; };
-    let work = s.current_work.as_ref()?;
-    let Some(line) = work.lines.get(wi) else {
-        crate::logging::log(&format!("SYNC_PROSE_CROSS: bail no line wi={}", wi)); return None; };
-    let Some(ts) = line.timestamp.as_ref() else {
-        crate::logging::log(&format!("SYNC_PROSE_CROSS: bail no timestamp line_id={} wi={}", line.id, wi)); return None; };
-    let Some(media) = s.media_id else {
-        crate::logging::log("SYNC_PROSE_CROSS: bail no media_id"); return None; };
-    // Character count of the buffer line (== canonical_text length for BH).
-    let iter = s.buffer.iter_at_line(bl as i32)?;
-    let char_len = {
-        let mut e = iter;
-        e.forward_to_line_end();
-        e.line_offset().max(0) as usize
-    };
-    // Boundary pixel -> char offset by pixel fraction within the line.
-    let line_h = s.text_view.line_yrange(&iter).1.max(1);
-    let frac = (end_off.max(0) as f64 / line_h as f64).clamp(0.0, 1.0);
-    let char_off = ((char_len as f64) * frac).round() as usize;
-    if let Ok(conn) = crate::db::queries::open_db() {
-        if let Some(t) = crate::db::queries::phrase_crossing_time(&conn, line.id, media, char_off) {
-            crate::logging::log(&format!(
-                "SYNC_PROSE_CROSS: phrase hit line_id={} media={} char_off={}/{} (px {}/{}) -> t={:.2} (ts {:.2}..{:.2})",
-                line.id, media, char_off, char_len, end_off, line_h, t, ts.start, ts.end));
-            return Some((t, ts.start));
-        }
-    }
-    // Fallback: interpolate across the line's audio window by char fraction.
-    let t = crate::input::navigation::interpolate_cross_time(ts.start, ts.end, char_off, char_len);
-    crate::logging::log(&format!(
-        "SYNC_PROSE_CROSS: interpolate line_id={} char_off={}/{} window {:.2}..{:.2} -> t={:.2}",
-        line.id, char_off, char_len, ts.start, ts.end, t));
-    Some((t, ts.start))
-}
-
 fn main() {
     // Clear and set up log file
     let home = std::env::var("HOME").unwrap_or_default();
@@ -445,7 +366,7 @@ fn main() {
                                             .unwrap_or(false);
                                         if already {
                                             target = s.pending_prose_cross; // unchanged; no recompute
-                                        } else if let Some((t, ts_start)) = prose_cross_time(&s, buffer_line, p.end_off) {
+                                        } else if let Some((t, ts_start)) = crate::input::navigation::prose_cross_time(&s, buffer_line, p.end_off) {
                                             let fire = (t - crate::input::navigation::SYNC_PREROLL).max(0.0);
                                             if t <= ts_start + 0.05 {
                                                 // Belt-and-braces: the boundary is at

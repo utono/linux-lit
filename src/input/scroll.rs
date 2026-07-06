@@ -410,6 +410,7 @@ pub(crate) fn set_page_instant(state: &mut AppState, new_top: usize) {
     state.page_top_line = new_top;
     state.page_top_offset = 0;
     snap_scroll_to_line(state, new_top);
+    log_first_paint(state, new_top);
 }
 
 /// Instant page set to `new_top` with a sub-line scroll `offset` (the over-tall
@@ -421,6 +422,24 @@ pub(crate) fn set_page_instant_offset(state: &mut AppState, new_top: usize, offs
     state.page_top_offset = offset;
     snap_scroll_to_line_offset(state, new_top, offset);
     refresh_bottom_clip(state);
+    log_first_paint(state, new_top);
+}
+
+/// One-shot paint-latency probe: logs when GTK draws the first frame after an
+/// instant page set, splitting "the jump felt slow" into handler time
+/// (KEY→SEEK lines, ~ms) vs layout/paint time (this line). One tick callback
+/// per page set — negligible cost, and the only visibility into perceived
+/// page-jump latency on the live session.
+fn log_first_paint(state: &AppState, new_top: usize) {
+    let set_at = std::time::Instant::now();
+    state.text_view.add_tick_callback(move |_, _| {
+        crate::logging::log(&format!(
+            "PAINT: first frame for page_top={} after {}ms",
+            new_top,
+            set_at.elapsed().as_millis()
+        ));
+        glib::ControlFlow::Break
+    });
 }
 
 /// Show a dim "Next: Act N, Scene M" label centered in an EMPTY right column

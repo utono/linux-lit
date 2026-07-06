@@ -112,6 +112,25 @@ The same app-emits-geometry contract extends to every overlay surface
 `TEST_JOURNAL_ASK_VIEWPORT_RECT`, plus content bands) — never hardcode a region
 in a test; see *headless-overlay-ui-verification.md → "The rect/band contract"*.
 
+### grim frames are STALE for transient states (cage/cairo latency)
+
+Under cage's software renderer a page turn takes ~400ms+ to reach a committed
+frame, and `grim` returns the **latest committed buffer** — so a capture 250 to
+500ms after a page-turning keypress routinely shows the PREVIOUS page (even two
+presses stale when driving quickly), while the app log has already moved on.
+Consequences:
+
+- **Never assert a transient effect (the 700ms nav flash, a toast, the karaoke
+  tint) from a screenshot when the press also changed pages** — the effect has
+  mostly faded by the time the new page's frame is committed. Assert on the log
+  (`PROSE_FLASH:`, `CHAPTER_TOAST: show`, `PHRASE_HL:`) and screenshot only the
+  settled end state.
+- An **in-place** effect (no scroll: a no-op nav flash, an overlay) captures
+  fine ~250ms after the press.
+- A stale-but-full-size PNG is a different failure from the ~2-byte
+  not-yet-mapped PNG: size checks won't catch it; compare on-screen text to the
+  expected landing before concluding a keypress was dropped.
+
 ## The environment overrides
 
 These let an **isolated** run (notably the fuzz) avoid every shared resource a
@@ -573,6 +592,11 @@ stray instance is disruptive.
   PID:** `kill "$(cat /tmp/fuzz_pid.txt)"`.
 - **Never** `pkill -f target/debug/linux-lit` — that pattern also matches the
   user's live `cargo run` session and will signal it.
+- **`pkill -f "cage -- ./target/debug/linux-lit"` can kill the Bash tool's OWN
+  shell** — the pattern text appears in the shell's command line, so the shell
+  signals itself (exit 144), the rest of the compound command never runs, and
+  the cage survives, which reads as "pkill did nothing". Kill by recorded PID,
+  or `pkill -x cage` when no other cage instance exists.
 - **Telling the live session apart from a test instance:** a test app is a child
   of a `cage` process; the user's `cargo run` session is a child of a `zsh` and
   has a long `ELAPSED`. But note a test cage and the live session can share the
@@ -618,7 +642,17 @@ stray instance is disruptive.
   on the live dwl); now fixed there.
 - **A decisive keypress produced no `ACTION:` line** → the press never landed
   (`wtype` too fast, or the window wasn't focused yet) — add settle time and a
-  warm-up key; don't debug the handler.
+  warm-up key; don't debug the handler. Note the FIRST `wtype` after launch is
+  the most commonly dropped one.
+- **Screenshot shows the page from BEFORE the press (full-size PNG, log says
+  the turn happened)** → grim frame staleness under cage's software renderer;
+  see *grim frames are STALE for transient states* above. Trust the log.
+- **`ACTION:` + `PROSE_FLASH:` with no `CURSOR_LINE:` between them** → a no-op
+  nav press (e.g. `;` with no earlier bookmark): the flush flashes the current
+  line as "nothing to jump to" feedback. Not a dropped key, not a bug.
+- **Sync/seek/karaoke behavior** (SEEK base vs start, until-resume
+  suppression, PHRASE_HL lines, karaoke dead zones) → see
+  *sync-and-karaoke-testing.md*.
 - **A shifted/uppercase keybind never fires headless** → the handler matches
   the literal character (`A`) but `wtype -M shift -k a` sends
   lowercase-with-shift; use character mode (`wtype "A"` / `type_text` / the

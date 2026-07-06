@@ -269,6 +269,40 @@ BLIND to an over-tall single buffer line, which is why this bug shipped. Visual
 acceptance is pixel-level (the dropped tail must reappear; `x`/`y` must round-trip
 the mid-paragraph stops) — verify on the real display.
 
+## Prose chapter-at-top + grid landings (pv3 lessons)
+
+Two rules added 2026-07-06, both bug classes worth re-checking after any prose
+pagination change:
+
+**Chapter-at-top is a PAGINATION rule, in one place.** A `chapter_start` line
+never renders mid-page: `prose_next_boundary` (navigation.rs) clamps the fill
+boundary to the first chapter heading whose line-box top falls inside the
+page's pixel window (`chapter_clamp` — the prose analog of the play engine's
+`clamp_at_section_break`). Because the stored `prose_pages` grid is recorded by
+walking that same function, the rule lands in the grid automatically. The page
+before a chapter ends early — SHORT pages before headings are by design, and
+`validate_prose_pages` permits them (it checks fit/adjacency/tail, not
+fullness). **Whenever the meaning of a prose boundary changes, bump the `pvN`
+tag in `prose_layout_fingerprint`** (prose_pages.rs) so every stored table
+misses and regenerates — chapter-at-top was `pv2 → pv3`.
+
+**Every prose jump landing must read the STORED grid, never the live walk.**
+`canonical_page_top_for` consults only the PLAY table; for prose it falls into
+the live whole-line engine, which knows nothing about the row-fill grid — so a
+jump routed through it lands an off-grid page (observed: `{`/`[` showing the
+chapter heading mid-page even though the pv3 grid was correct in lit.db). The
+pattern is `prose_pages::prose_table_boundary_for_line(state, target)` +
+`set_page_instant_offset` (see `chapter_jump_land_ereader` in navigation.rs);
+the canonical-walk path is the fallback for gridless works only. This is the
+prose twin of the play-side "read the TABLE, never re-walk live" lesson.
+
+**Testing trap: geometry luck.** A 720p headless run can land the same page the
+grid demands while a 1920×1200 session lands off-grid — a heading-at-top
+screenshot at cage geometry does NOT verify the landing path. Verify by
+querying the stored rows for the LIVE fingerprint (`prose_pages` where
+`layout_fingerprint` matches the session's `PAGES_PROSE: … fp=` log line) and
+asserting the landing equals that page's `(start_line_id, start_row_offset)`.
+
 Page boundaries are computed by `next_page_top()` in `viewport.rs`, which:
 
 1. Calls `last_fully_visible_line(state, top)` to find where the current page
