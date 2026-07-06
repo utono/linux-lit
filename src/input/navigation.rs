@@ -78,7 +78,7 @@ pub fn interpolate_cross_time(start: f64, end: f64, char_off: usize, char_len: u
 
 /// Seconds to highlight a line before playback actually reaches it.
 /// Used by the MPV client's time-pos sync.
-pub const SYNC_PREROLL: f64 = 0.0;
+pub const SYNC_PREROLL: f64 = 0.5;
 
 /// Minimum silent gap (seconds) between a line's end_time and the next
 /// line's start_time required to trigger an early jump to the next line
