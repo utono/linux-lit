@@ -1961,7 +1961,7 @@ pub fn build_window(
                 // that would corrupt spacer sizing and bottom clip.
                 if s.loading_work.get() {
                     if width_changed {
-                        let cw = s.config.column_width;
+                        let cw = crate::app::layout::effective_column_width(&s);
                         let cc = s.column_count();
                         let tr = s.translations_visible;
                         apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr);
@@ -1978,7 +1978,7 @@ pub fn build_window(
                         crate::log_fmt!("RESIZE_TICK: layout refresh waiting, sw_h={}", sw_h);
                         return glib::ControlFlow::Continue;
                     }
-                    let cw = s.config.column_width;
+                    let cw = crate::app::layout::effective_column_width(&s);
                     let cc = s.column_count();
                     let tr = s.translations_visible;
                     apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr);
@@ -2079,7 +2079,7 @@ pub fn build_window(
                     }
                 } else {
                     if width_changed {
-                        let cw = s.config.column_width;
+                        let cw = crate::app::layout::effective_column_width(&s);
                         let cc = s.column_count();
                         let tr = s.translations_visible;
                         apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr);

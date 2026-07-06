@@ -166,7 +166,14 @@ pub fn prose_layout_fingerprint(state: &crate::app::AppState) -> String {
     // regenerates lazily. pv2 = leading-gap page ends normalized to (L, 0) (a
     // paragraph with zero visible rows on a page is never that page's end_line
     // with a positive offset). Does NOT touch the play `layout_fingerprint`.
-    format!("{base}|uh{usable}|pv2")
+    // `cw`: the effective (prose-widened, font-adaptive) card width. The base
+    // fingerprint's window size proxied card width only while column_width was
+    // a constant; the 78-char prose measure makes card width vary with font
+    // metrics AND the measure rule, so key it explicitly — a measure-rule
+    // change must miss stored tables and regenerate, never serve stale
+    // boundaries.
+    let cw = crate::app::layout::effective_column_width(state);
+    format!("{base}|uh{usable}|cw{cw}|pv2")
 }
 
 /// Walk the LIVE engine's forward chain from (0,0), recording every page.

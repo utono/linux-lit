@@ -26,8 +26,11 @@ pub(crate) fn apply_settings_change(
         }
         SettingsChange::ColumnWidth(val) => {
             let cc = s.column_count();
-            crate::app::layout::apply_card_sizing(&s.content_hbox, s.window.width(), val, cc, s.translations_visible);
+            // Store first so the prose floor (effective_column_width = max of
+            // the 78-char measure and the configured width) sees the new value.
             s.config.column_width = val;
+            let cw = crate::app::layout::effective_column_width(&s);
+            crate::app::layout::apply_card_sizing(&s.content_hbox, s.window.width(), cw, cc, s.translations_visible);
         }
         SettingsChange::TextMargins(val) => {
             let work_type = s.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("");
