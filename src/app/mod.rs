@@ -247,6 +247,13 @@ pub struct AppState {
     pub cursor_line_tag: gtk4::TextTag,
     pub cursor_fade_tag: gtk4::TextTag,
     pub ab_dim_tag: gtk4::TextTag,
+    /// Karaoke spoken-phrase tint during narration sync (phrase_highlight.rs).
+    pub phrase_tag: gtk4::TextTag,
+    /// Cached phrase spans for the (line, media) being narrated. Empty spans
+    /// vec = cached negative result; see phrase_highlight.rs.
+    pub phrase_cache: Option<crate::input::phrase_highlight::PhraseCache>,
+    /// Last applied phrase (buffer_line, span_idx) — skips redundant re-tags.
+    pub active_phrase: Option<(usize, usize)>,
     pub page_turn_overlay: gtk4::Overlay,
     pub bottom_clip: gtk4::Box,
     pub top_spacer: gtk4::Box,
@@ -702,6 +709,17 @@ impl AppState {
         }
     }
 
+    /// Inverse of `work_line_for_buffer`: the buffer line rendering work line
+    /// `work_idx`. Identity when no line map is loaded (DB-rendered works).
+    pub fn buffer_line_for_work(&self, work_idx: usize) -> Option<usize> {
+        if let Some(ref lm) = self.line_map {
+            lm.work_to_buffer.get(work_idx).copied()
+        } else {
+            let count = self.current_work.as_ref().map_or(0, |w| w.lines.len());
+            if work_idx < count { Some(work_idx) } else { None }
+        }
+    }
+
     /// Authoritative scene/section-boundary check for a buffer line, derived
     /// from the DB `(div1,div2)` columns at load (`LineMap.section_starts`).
     /// Returns `false` when the bitmap is absent (mid-load) or out of range —
@@ -967,6 +985,14 @@ pub fn build_window(
         .paragraph_background(&theme.cursor_line_bg)
         .build();
     buffer.tag_table().add(&cursor_fade_tag);
+
+    // Span background (NOT paragraph_background): the karaoke tint covers only
+    // the spoken phrase's chars inside the full-strength prose paragraph.
+    let phrase_tag = gtk4::TextTag::builder()
+        .name("phrase-highlight")
+        .background(&theme.phrase_highlight_bg)
+        .build();
+    buffer.tag_table().add(&phrase_tag);
 
     let search_tag = gtk4::TextTag::builder()
         .name("search-match")
@@ -1566,6 +1592,9 @@ pub fn build_window(
         cursor_line_tag,
         cursor_fade_tag,
         ab_dim_tag,
+        phrase_tag,
+        phrase_cache: None,
+        active_phrase: None,
         page_turn_overlay: page_turn_overlay.clone(),
         bottom_clip,
         top_spacer,
@@ -2693,6 +2722,10 @@ pub fn display_work_at_with_prepared(
     // media; drop it so it can't fire against the freshly loaded work.
     state.pending_prose_cross = None;
     state.media_id = work.media_id;
+    // Phrase highlight is keyed to the OLD work's lines/media; reset so the
+    // first TimePos in the new work refills against the new (line, media).
+    state.phrase_cache = None;
+    state.active_phrase = None;
     state
         .window
         .set_title(Some(&format!("{} — linux-lit", work.title)));

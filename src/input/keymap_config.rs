@@ -284,6 +284,7 @@ fn media_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl("Up"), Action::VolumeUp),
         (KeyCombo::ctrl("Down"), Action::VolumeDown),
         (KeyCombo::plain("plus"), Action::ShowCurrentChapter),
+        (KeyCombo::alt("p"), Action::TogglePhraseHighlight),
     ]
 }
 

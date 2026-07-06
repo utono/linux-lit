@@ -90,6 +90,13 @@ pub struct Config {
     pub scansion_level: String,
     #[serde(default = "default_show_cursor_line")]
     pub show_cursor_line: bool,
+    /// Karaoke spoken-phrase highlight during narration sync, per work class.
+    /// Prose defaults ON; plays/poetry default OFF (no phrase_timestamps data
+    /// yet for verse — forward-looking). Alt+p toggles the current class.
+    #[serde(default = "default_phrase_highlight_prose")]
+    pub phrase_highlight_prose: bool,
+    #[serde(default)]
+    pub phrase_highlight_verse: bool,
     #[serde(default = "default_title_bar_visible")]
     pub title_bar_visible: bool,
     /// Weight of the sentiment/affect (NRC-VAD) axis in echo re-ranking, in
@@ -180,6 +187,10 @@ fn default_title_bar_visible() -> bool {
     false
 }
 
+fn default_phrase_highlight_prose() -> bool {
+    true
+}
+
 fn default_echo_affect_weight() -> f32 {
     0.0
 }
@@ -217,6 +228,8 @@ impl Default for Config {
             dim_enabled: default_dim_enabled(),
             scansion_level: default_scansion_level(),
             show_cursor_line: true,
+            phrase_highlight_prose: true,
+            phrase_highlight_verse: false,
             title_bar_visible: default_title_bar_visible(),
             echo_affect_weight: default_echo_affect_weight(),
             system_volume: default_system_volume(),
@@ -322,5 +335,15 @@ mod last_gloss_tests {
     fn config_without_last_gloss_key_loads_empty() {
         let cfg: Config = serde_json::from_str("{}").unwrap();
         assert!(cfg.last_gloss.is_empty());
+    }
+
+    #[test]
+    fn phrase_highlight_defaults_prose_on_verse_off() {
+        let cfg: Config = serde_json::from_str("{}").unwrap();
+        assert!(cfg.phrase_highlight_prose);
+        assert!(!cfg.phrase_highlight_verse);
+        let dflt = Config::default();
+        assert!(dflt.phrase_highlight_prose);
+        assert!(!dflt.phrase_highlight_verse);
     }
 }

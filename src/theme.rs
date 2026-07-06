@@ -20,6 +20,7 @@ pub struct Theme {
     pub text_bg: String,          // text area background
     pub text_fg: String,          // text foreground
     pub cursor_line_bg: String,   // current line highlight
+    pub phrase_highlight_bg: String, // spoken-phrase karaoke tint during narration sync
     pub dim_fg: String,           // dimmed text foreground (non-current lines)
     pub cursor_bg: String,        // cursor indicator background
     pub cursor_fg: String,        // cursor indicator foreground
@@ -159,6 +160,18 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
     let cursor_line_bg = str_field(lit, "cursor_line_bg")
         .unwrap_or_else(|| "rgba(86, 148, 100, 0.25)".to_string());
 
+    // Spoken-phrase karaoke tint: optional per-theme key, else the cursor-line
+    // hue at a stronger alpha so it reads inside the full-strength paragraph.
+    let phrase_highlight_bg = str_field(lit, "phrase_highlight_bg").unwrap_or_else(|| {
+        let (r, g, b) = rgba_str_to_rgb(&cursor_line_bg);
+        format!(
+            "rgba({}, {}, {}, 0.28)",
+            (r * 255.0) as u8,
+            (g * 255.0) as u8,
+            (b * 255.0) as u8
+        )
+    });
+
     // Reader-gloss tints, contrast-guaranteed (raw focuscolor is dim/indistinct
     // on ~13 themes). Off-cursor = guarded focuscolor; on-cursor = guarded
     // complement, also kept distinct from the off-cursor tint.
@@ -212,6 +225,7 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
         text_bg,
         text_fg,
         cursor_line_bg,
+        phrase_highlight_bg,
         dim_fg,
         cursor_bg,
         cursor_fg,
@@ -236,6 +250,7 @@ fn default_theme() -> Theme {
         text_bg: "#282828".to_string(),
         text_fg: "#d4be98".to_string(),
         cursor_line_bg: "rgba(255, 255, 255, 0.08)".to_string(),
+        phrase_highlight_bg: "rgba(255, 255, 255, 0.22)".to_string(),
         dim_fg: blend_colors("#d4be98", "#282828", 0.40),
         cursor_bg: "#d4be98".to_string(),
         cursor_fg: "#282828".to_string(),
