@@ -816,10 +816,32 @@ pub(crate) fn prose_next_boundary(state: &mut AppState) -> Option<(usize, i32)> 
     // severe underfill was observed: pages advancing by only 1-2 lines with
     // most of the viewport left blank). Walking from `top` keeps every
     // `line_yrange` call on lines GTK has just measured for real.
+    // Chapter-at-top rule: a chapter heading (`is_chapter`, the DB's
+    // chapter_start flag) never renders mid-page — the page breaks before it,
+    // like a printed book. Mirrors the play engine's clamp_at_section_break.
+    // Detected during the same forward walk below: the first heading whose
+    // line-box top falls inside this page's pixel window clamps the boundary
+    // to the heading's top.
+    let is_chapter_at = |bl: usize| -> bool {
+        let Some(work) = state.current_work.as_ref() else { return false };
+        if let Some(ref lm) = state.line_map {
+            lm.buffer_to_work
+                .get(bl)
+                .and_then(|o| o.as_ref())
+                .map(|wi| work.lines[*wi].is_chapter)
+                .unwrap_or(false)
+        } else {
+            work.lines.get(bl).map(|l| l.is_chapter).unwrap_or(false)
+        }
+    };
+    let mut chapter_clamp: Option<usize> = None;
     let mut total = top_y; // pixel top of `top`; walk accumulates to its bottom and beyond
     for i in top..line_count {
         let Some(li) = state.buffer.iter_at_line(i as i32) else { break };
         let (ly, lh) = state.text_view.line_yrange(&li);
+        if chapter_clamp.is_none() && i > top && ly < y0 + usable && is_chapter_at(i) {
+            chapter_clamp = Some(i);
+        }
         total = ly + lh;
         // Stop once we've walked far enough past the current viewport's
         // bottom fold that we know for certain more content remains below
@@ -828,11 +850,17 @@ pub(crate) fn prose_next_boundary(state: &mut AppState) -> Option<(usize, i32)> 
             break;
         }
     }
-    let raw = crate::input::viewport::prose_raw_next_boundary(y0, total, usable)?;
+    let Some(raw) = crate::input::viewport::prose_raw_next_boundary(y0, total, usable) else {
+        // The remaining content fits this page — but a chapter heading mid-page
+        // still forces a break so the heading opens its own (final) page.
+        return chapter_clamp.map(|c| (c, 0));
+    };
     // Snap DOWN to a real visual-row top; never start a page mid-glyph-row.
     let snapped = crate::input::scroll::snap_value_to_display_row(state, raw as f64);
     if snapped <= y0 as f64 {
-        return None; // degenerate snap: fall back to a whole-line turn
+        // Degenerate snap: fall back to a whole-line turn — unless a chapter
+        // heading inside the page window gives a well-defined break point.
+        return chapter_clamp.map(|c| (c, 0));
     }
     // Locate the buffer line containing the snapped pixel.
     let (bline_iter, _) = state.text_view.line_at_y(snapped as i32);
@@ -889,6 +917,14 @@ pub(crate) fn prose_next_boundary(state: &mut AppState) -> Option<(usize, i32)> 
     // top, which made the real page taller than the `usable` budget while the
     // next boundary was still computed as if the page had shown exactly
     // `usable` pixels — the hidden tail rows were skipped forever. Removed.)
+    // Chapter-at-top clamp: if a chapter heading would land mid-page (its top
+    // is inside this page's window but the fill boundary runs past it), break
+    // the page at the heading instead so it opens the next page.
+    if let Some(c) = chapter_clamp {
+        if c < new_top || (c == new_top && new_off > 0) {
+            return Some((c, 0));
+        }
+    }
     if (new_top, new_off) <= (top, state.page_top_offset) {
         return None;
     }
@@ -1605,11 +1641,27 @@ pub fn jump_to_prev_chapter(state: &mut AppState) {
             }
         };
         let current_chapter_start = (0..=state.current_line).rev().find(|&bl| is_chapter_at(bl));
-        match current_chapter_start {
-            Some(start) if start < state.current_line => Some(start),
+        let found = match current_chapter_start {
+            // Meaningfully past the chapter start: go to it. The +1 keeps the
+            // heading's subtitle line ("CHAPTER II" / "In Fashion") inside the
+            // at-the-start block: during narration sync the cursor rests on the
+            // subtitle, and `[` from the visible chapter header must step to
+            // the PREVIOUS chapter — a one-line hop to the heading reads as a
+            // no-op and the post-seek sync immediately drags the cursor back
+            // (the stuck-at-chapter-2 loop).
+            Some(start) if start + 1 < state.current_line => Some(start),
             Some(start) => (0..start).rev().find(|&bl| is_chapter_at(bl)),
             None => (0..state.current_line).rev().find(|&bl| is_chapter_at(bl)),
-        }
+        };
+        // Front matter (preface, dedication) precedes the first chapter_start
+        // line and has no chapter flag of its own, but the chapter toast counts
+        // it as chapter 1 — so `[` from the first flagged chapter (or from
+        // inside the front matter) lands on the work start instead of stalling.
+        // Only for works that have chapter marks at all: in a chapterless work
+        // `[` stays a no-op rather than becoming a surprise jump-to-start.
+        found.or_else(|| {
+            work.lines.iter().any(|l| l.is_chapter).then_some(0)
+        })
     };
 
     if let Some(line_idx) = target {
@@ -1619,22 +1671,41 @@ pub fn jump_to_prev_chapter(state: &mut AppState) {
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => scroll_to_cursor(state),
             crate::config::NavigationMode::EReader => {
-                if is_line_fully_visible(state, line_idx) {
-                    update_highlight_only(state);
-                } else {
-                    // Canonical spread containing the chapter line — same page the
-                    // reader reaches paging through, so the header sits where
-                    // pagination places it (consistent with bookmark jumps).
-                    let top = canonical_page_top_for(state, line_idx);
-                    set_page_instant(state, top);
-                    // See jump_to_next_chapter: a chapter/act header that fills a
-                    // degenerate spread leaves the cursor off-page; advance until
-                    // it's visible.
-                    ensure_cursor_visible_ereader(state, line_idx);
-                }
+                chapter_jump_land_ereader(state, line_idx);
             }
         }
         after_page_change(state, PageChangeReason::Chapter);
+    }
+}
+
+/// EReader landing shared by the chapter jumps. With an active prose grid the
+/// landing is the STORED page containing the target — for a chapter heading
+/// that page STARTS at the heading (chapter-at-top rule), so the header opens
+/// the page. `canonical_page_top_for` is prose-table-unaware (it consults only
+/// the play table, then walks the live whole-line engine), so routing prose
+/// through it landed off-grid pages with the heading mid-page.
+fn chapter_jump_land_ereader(state: &mut AppState, line_idx: usize) {
+    if let Some((pt, po)) =
+        crate::input::prose_pages::prose_table_boundary_for_line(state, line_idx)
+    {
+        if state.page_top_line == pt && state.page_top_offset == po {
+            update_highlight_only(state);
+        } else {
+            set_page_instant_offset(state, pt, po);
+        }
+        return;
+    }
+    if is_line_fully_visible(state, line_idx) {
+        update_highlight_only(state);
+    } else {
+        // Canonical spread containing the chapter line — same page the
+        // reader reaches paging through, so the header sits where
+        // pagination places it (consistent with bookmark jumps).
+        let top = canonical_page_top_for(state, line_idx);
+        set_page_instant(state, top);
+        // A chapter/act header that fills a degenerate spread leaves the
+        // cursor off-page; advance until it's visible.
+        ensure_cursor_visible_ereader(state, line_idx);
     }
 }
 
@@ -1682,22 +1753,12 @@ pub fn jump_to_next_chapter(state: &mut AppState) {
         match state.config.navigation_mode {
             crate::config::NavigationMode::Scroll => center_cursor(state),
             crate::config::NavigationMode::EReader => {
-                if is_line_fully_visible(state, line_idx) {
-                    update_highlight_only(state);
-                } else {
-                    // Canonical spread containing the chapter line — same page the
-                    // reader reaches paging through (consistent with bookmark jumps).
-                    let top = canonical_page_top_for(state, line_idx);
-                    set_page_instant(state, top);
-                    // canonical_page_top_for backs up to the chapter/act header so
-                    // it shows above the cursor — but when that header fills a
-                    // degenerate spread (Err/Tro: an ACT/scene header whose page is
-                    // a lone 1-line spread at a short viewport), the cursor
-                    // (line_idx, the chapter's first dialogue) lands OFF-PAGE below
-                    // it. Advance until the cursor is actually visible — same guard
-                    // as the scene jumps.
-                    ensure_cursor_visible_ereader(state, line_idx);
-                }
+                // See chapter_jump_land_ereader: prose grid page first (the
+                // header opens its stored page — chapter-at-top); the live
+                // canonical-spread walk with the degenerate-spread guard
+                // (Err/Tro: a header filling a lone 1-line spread leaves the
+                // cursor off-page) is the fallback inside it.
+                chapter_jump_land_ereader(state, line_idx);
             }
         }
         after_page_change(state, PageChangeReason::Chapter);
@@ -2506,12 +2567,21 @@ pub fn seek_to_current_line(state: &mut AppState) {
     if let Some(ts) = &work.lines[work_idx].timestamp {
         // Exact timestamp — brief suppression while MPV processes the seek.
         // Don't shorten an existing longer suppression (e.g. from display_work).
-        let new_until = std::time::Instant::now() + SYNC_SUPPRESS_SEEK;
+        // PAUSED: the seek's preroll parks the audio SEEK_PREROLL before the
+        // line, and with playback frozen the post-seek TimePos echo resolves to
+        // the PREVIOUS line and drags the cursor back a step (every nav bind
+        // visibly lost a line; `{` re-found the chapter it just left). Hold
+        // suppression until playback resumes — PlaybackState(true) clears
+        // indefinite holds, and a manual o/e scrub overwrites with its own
+        // brief hold so scrub-following while paused still works.
+        let hold = if state.mpv_playing { SYNC_SUPPRESS_SEEK } else { SYNC_SUPPRESS_INDEFINITE };
+        let new_until = std::time::Instant::now() + hold;
         if state.suppress_sync_until.map_or(true, |existing| new_until > existing) {
             state.suppress_sync_until = Some(new_until);
         }
         let seek_time = preroll_seek_time(ts.start);
-        log_fmt!("SEEK: line={} work_idx={} start={:.2} seek={:.2} suppress=500ms", state.current_line, work_idx, ts.start, seek_time);
+        log_fmt!("SEEK: line={} work_idx={} start={:.2} seek={:.2} suppress={}", state.current_line, work_idx, ts.start, seek_time,
+            if state.mpv_playing { "500ms" } else { "until-resume" });
         let _ = state
             .cmd_tx
             .try_send(crate::mpv::MpvCommand::Seek(seek_time));

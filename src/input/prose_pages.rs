@@ -161,11 +161,13 @@ pub fn prose_layout_fingerprint(state: &crate::app::AppState) -> String {
     let widget_height = state.text_view.height();
     let guard = crate::input::viewport::descender_guard_px(&state.text_view, 0);
     let usable = widget_height - guard - crate::input::scroll::BASE_BOTTOM_MARGIN;
-    // `pv2`: prose-boundary normalization version. Bumped when the meaning of a
+    // `pv3`: prose-boundary normalization version. Bumped when the meaning of a
     // stored boundary changes so every previously-stored prose table misses and
     // regenerates lazily. pv2 = leading-gap page ends normalized to (L, 0) (a
     // paragraph with zero visible rows on a page is never that page's end_line
-    // with a positive offset). Does NOT touch the play `layout_fingerprint`.
+    // with a positive offset). pv3 = chapter-at-top: the page breaks before any
+    // chapter heading, so a heading always opens a page (prose_next_boundary's
+    // chapter_clamp). Does NOT touch the play `layout_fingerprint`.
     // `cw`: the effective (prose-widened, font-adaptive) card width. The base
     // fingerprint's window size proxied card width only while column_width was
     // a constant; the 78-char prose measure makes card width vary with font
@@ -173,7 +175,7 @@ pub fn prose_layout_fingerprint(state: &crate::app::AppState) -> String {
     // change must miss stored tables and regenerate, never serve stale
     // boundaries.
     let cw = crate::app::layout::effective_column_width(state);
-    format!("{base}|uh{usable}|cw{cw}|pv2")
+    format!("{base}|uh{usable}|cw{cw}|pv3")
 }
 
 /// Walk the LIVE engine's forward chain from (0,0), recording every page.

@@ -249,6 +249,11 @@ pub struct AppState {
     pub ab_dim_tag: gtk4::TextTag,
     /// Karaoke spoken-phrase tint during narration sync (phrase_highlight.rs).
     pub phrase_tag: gtk4::TextTag,
+    /// Transient prose nav-flash tint: the cursor paragraph's background flashes
+    /// the phrase-highlight color on a nav keybind, then fades out. Color is set
+    /// per-frame by the flash animation, so no static color lives on the tag.
+    /// See highlight::flash_prose_cursor_line.
+    pub prose_flash_tag: gtk4::TextTag,
     /// Cached phrase spans for the (line, media) being narrated. Empty spans
     /// vec = cached negative result; see phrase_highlight.rs.
     pub phrase_cache: Option<crate::input::phrase_highlight::PhraseCache>,
@@ -295,6 +300,12 @@ pub struct AppState {
     pub page_turn_lock: std::rc::Rc<crate::input::navigation::PageTurnLock>,
     /// Active cursor highlight fade-out animation.
     pub cursor_fade_anim: Option<adw::TimedAnimation>,
+    /// Active prose nav-flash fade-out animation.
+    pub prose_flash_anim: Option<adw::TimedAnimation>,
+    /// Set by dispatch_action when a nav keybind fires in a prose work;
+    /// consumed by update_highlight to flash the cursor paragraph. Sync-driven
+    /// highlight updates never set it, so playback stays flash-free.
+    pub pending_prose_flash: std::cell::Cell<bool>,
     pub cmd_tx: tokio::sync::mpsc::Sender<crate::mpv::MpvCommand>,
     pub tokio_handle: tokio::runtime::Handle,
     pub playback_speed: f64,
@@ -994,6 +1005,13 @@ pub fn build_window(
         .build();
     buffer.tag_table().add(&phrase_tag);
 
+    // Prose nav-flash tint. No static color: flash_prose_cursor_line drives
+    // paragraph_background_rgba per animation frame from theme.phrase_highlight_bg.
+    let prose_flash_tag = gtk4::TextTag::builder()
+        .name("prose-flash")
+        .build();
+    buffer.tag_table().add(&prose_flash_tag);
+
     let search_tag = gtk4::TextTag::builder()
         .name("search-match")
         .background(if theme.is_light {
@@ -1593,6 +1611,7 @@ pub fn build_window(
         cursor_fade_tag,
         ab_dim_tag,
         phrase_tag,
+        prose_flash_tag,
         phrase_cache: None,
         active_phrase: None,
         page_turn_overlay: page_turn_overlay.clone(),
@@ -1621,6 +1640,8 @@ pub fn build_window(
             crate::input::navigation::PageTurnLock::new()
         ),
         cursor_fade_anim: None,
+        prose_flash_anim: None,
+        pending_prose_flash: std::cell::Cell::new(false),
         cmd_tx,
         tokio_handle: tokio_handle.clone(),
         playback_speed: 1.0,
@@ -2508,6 +2529,8 @@ pub fn clear_display(state: &mut AppState) {
     // Cancel in-flight animations (drop without skip to avoid stale callbacks)
     state.page_turn_anim = None;
     state.cursor_fade_anim = None;
+    state.prose_flash_anim = None;
+    state.pending_prose_flash.set(false);
 
     // Remove snapshot overlays left by page turn animations.
     {

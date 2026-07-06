@@ -189,6 +189,41 @@ pub enum Action {
 }
 
 impl Action {
+    /// Actions that move the reading cursor by keybind. In prose works these
+    /// flash the cursor paragraph's background with the phrase-highlight color
+    /// (see highlight::flash_prose_cursor_line); sync-driven cursor moves do
+    /// not flash.
+    pub fn flashes_prose_cursor(&self) -> bool {
+        matches!(
+            self,
+            Action::PageForward
+                | Action::PageBackward
+                | Action::PageBackwardBottom
+                | Action::JumpToStart
+                | Action::JumpToEnd
+                | Action::CursorNextDialogue
+                | Action::CursorPrevLine
+                | Action::CursorToPageBottom
+                | Action::JumpToNextDialogue
+                | Action::JumpToPrevDialogue
+                | Action::JumpToNextSpeaker
+                | Action::JumpToPrevSpeaker
+                | Action::JumpToNextChapter
+                | Action::JumpToPrevChapter
+                | Action::JumpToNextScene
+                | Action::JumpToPrevScene
+                | Action::NextBookmark
+                | Action::PrevBookmark
+                | Action::JumpToRecentBookmark
+                | Action::JumpToNextVocab
+                | Action::JumpToPrevVocab
+                | Action::ConcordanceNext
+                | Action::ConcordancePrev
+                | Action::SearchNextMatch
+                | Action::SearchPrevMatch
+        )
+    }
+
     pub fn category(&self) -> Category {
         match self {
             // Navigation

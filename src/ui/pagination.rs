@@ -45,37 +45,50 @@ pub fn paginate(block_heights: &[i32], page_height: i32) -> Vec<Page> {
 /// block of a new unit (the rest attach to the preceding unit). A page break can
 /// only fall on a unit boundary, so e.g. a gloss's Source (speaker+verse) block
 /// and the Explication that follows it stay on the same page (the "don't orphan a
-/// gloss" rule). A unit taller than a whole page still gets its own page (never
-/// dropped). `group_start[0]` is treated as true regardless. Pure — unit-tested.
+/// gloss" rule). A multi-block unit taller than a whole page is released into
+/// singleton blocks — an orphaned block on the next page beats one clipped
+/// invisibly past the viewport bottom (same degradation `paginate_note_blocks`
+/// uses; a no-Source gloss glues EVERY paragraph to unit 0, which otherwise
+/// rendered one over-tall clipped page). A single block taller than a page still
+/// gets its own page (never dropped). `group_start[0]` is treated as true
+/// regardless. Pure — unit-tested.
 pub fn paginate_grouped(block_heights: &[i32], group_start: &[bool], page_height: i32) -> Vec<Page> {
     let n = block_heights.len();
     if n == 0 {
         return Vec::new();
     }
+    let budget = page_height.max(1);
     // Unit boundaries: indices where a new unit begins (always includes 0).
     let mut unit_starts: Vec<usize> = (0..n)
         .filter(|&i| i == 0 || group_start.get(i).copied().unwrap_or(true))
         .collect();
     unit_starts.push(n); // sentinel end
-    // Sum each unit's height.
-    let unit_h: Vec<i32> = unit_starts
-        .windows(2)
-        .map(|w| block_heights[w[0]..w[1]].iter().sum())
-        .collect();
+    // Units as block ranges [start, end); an oversize multi-block unit splits
+    // into singletons so its tail blocks can flow onto following pages.
+    let mut units: Vec<(usize, usize)> = Vec::new();
+    for w in unit_starts.windows(2) {
+        let (s, e) = (w[0], w[1]);
+        let h: i32 = block_heights[s..e].iter().sum();
+        if h > budget && e - s > 1 {
+            units.extend((s..e).map(|i| (i, i + 1)));
+        } else {
+            units.push((s, e));
+        }
+    }
     // Pack whole units; translate unit-page boundaries back to block indices.
     let mut pages: Vec<Page> = Vec::new();
     let mut start_unit = 0usize;
     let mut acc = 0i32;
-    let budget = page_height.max(1);
-    for (u, &h) in unit_h.iter().enumerate() {
+    for (u, &(us, ue)) in units.iter().enumerate() {
+        let h: i32 = block_heights[us..ue].iter().sum();
         if u > start_unit && acc + h > budget {
-            pages.push(Page { start: unit_starts[start_unit], end: unit_starts[u] });
+            pages.push(Page { start: units[start_unit].0, end: us });
             start_unit = u;
             acc = 0;
         }
         acc += h;
     }
-    pages.push(Page { start: unit_starts[start_unit], end: n });
+    pages.push(Page { start: units[start_unit].0, end: n });
     pages
 }
 
@@ -276,15 +289,43 @@ mod tests {
     }
 
     #[test]
-    fn paginate_grouped_oversize_unit_gets_own_page() {
-        // A unit taller than a page (blocks 1+2 = 120 > 100) still gets its own
-        // page, never dropped or split.
+    fn paginate_grouped_oversize_multiblock_unit_splits() {
+        // A multi-block unit taller than a page (blocks 1+2 = 120 > 100) is
+        // released into singleton blocks — an orphaned block on the next page
+        // beats one clipped invisibly past the viewport bottom.
         let h = vec![40, 70, 50];
         let starts = vec![true, true, false];
         let pages = paginate_grouped(&h, &starts, 100);
         assert_eq!(pages, vec![
             Page { start: 0, end: 1 },
-            Page { start: 1, end: 3 },
+            Page { start: 1, end: 2 },
+            Page { start: 2, end: 3 },
+        ]);
+    }
+
+    #[test]
+    fn paginate_grouped_all_blocks_one_oversize_unit_paginates() {
+        // A gloss with NO Source blocks (e.g. a prose gloss of only <gloss>
+        // paragraphs) has group_start all-false: every block glues to unit 0.
+        // When that single unit exceeds the page it must split into per-block
+        // pages, not render one over-tall clipped page (gloss 21776).
+        let h = vec![30, 30, 30, 30, 30, 30, 30];
+        let starts = vec![false; 7];
+        let pages = paginate_grouped(&h, &starts, 100);
+        assert_eq!(pages, paginate(&h, 100));
+    }
+
+    #[test]
+    fn paginate_grouped_oversize_single_block_keeps_own_page() {
+        // A SINGLE block taller than a page cannot be split further; it still
+        // gets its own page (never dropped), same as plain paginate.
+        let h = vec![40, 250, 50];
+        let starts = vec![true, true, false];
+        let pages = paginate_grouped(&h, &starts, 100);
+        assert_eq!(pages, vec![
+            Page { start: 0, end: 1 },
+            Page { start: 1, end: 2 },
+            Page { start: 2, end: 3 },
         ]);
     }
 

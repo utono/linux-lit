@@ -16,6 +16,13 @@ use super::scroll::{
 // Highlight
 // ---------------------------------------------------------------------------
 
+/// Prose cursor-marking style switch. `false` (current): nav keybinds flash the
+/// cursor paragraph's background with the phrase-highlight color, fading out;
+/// no persistent marking. `true` (legacy): every OTHER visible paragraph is
+/// dimmed via `dim_tag` so the current paragraph reads at full strength — flip
+/// this back to `true` to restore the dimming behavior verbatim.
+const PROSE_DIM_OTHER_PARAGRAPHS: bool = false;
+
 /// Update highlight and ensure cursor is visible on the current page.
 /// Update highlight only (no scrolling). Used for prose sentence mode where
 /// scrolling is deferred until the next sentence is about to start.
@@ -294,11 +301,24 @@ pub(crate) fn update_highlight(state: &mut AppState) {
             }
         }
     }
-    // Prose marks the current (and, under sync, the spoken) paragraph by DIMMING
-    // every OTHER visible paragraph — the current one stays at full strength
-    // while the rest recede. Plays/verse instead tint the current line's
-    // background. Computed before the buffer borrow below.
-    let prose_dim = state.is_prose() && state.config.show_cursor_line;
+    // Prose cursor marking. Two styles, selected by PROSE_DIM_OTHER_PARAGRAPHS:
+    //  * dim (legacy): mark the current paragraph by DIMMING every OTHER visible
+    //    paragraph — the current one stays at full strength while the rest
+    //    recede. Restore by flipping the const to true.
+    //  * flash (current): no persistent marking; a nav keybind flashes the
+    //    cursor paragraph's background with the phrase-highlight color, fading
+    //    out (see flash_prose_cursor_line).
+    // Plays/verse instead tint the current line's background persistently.
+    // Computed before the buffer borrow below.
+    let prose_dim = PROSE_DIM_OTHER_PARAGRAPHS
+        && state.is_prose()
+        && state.config.show_cursor_line;
+    let prose_flash = !PROSE_DIM_OTHER_PARAGRAPHS
+        && state.is_prose()
+        && state.config.show_cursor_line;
+    // Consume the nav-flash flag unconditionally so it can't linger across a
+    // mode change (e.g. set while global dim was on) and fire spuriously later.
+    let want_flash = state.pending_prose_flash.replace(false);
 
     let buffer = &state.buffer;
     let tag = &state.dim_tag;
@@ -326,9 +346,9 @@ pub(crate) fn update_highlight(state: &mut AppState) {
         // Remove dimming in visible range
         buffer.remove_tag(tag, &vis_start_iter, &vis_end_iter);
 
-        // Apply fade-out to the old cursor line (if it changed). Prose uses a
-        // bold line (no bg tint), so there is no fade for it.
-        if state.config.show_cursor_line && !prose_dim {
+        // Apply fade-out to the old cursor line (if it changed). Prose has no
+        // persistent bg tint (dim or flash mode), so there is no fade for it.
+        if state.config.show_cursor_line && !prose_dim && !prose_flash {
         if let Some(old_line) = state.prev_highlight_line.get() {
             if old_line != state.current_line {
                 // Cancel any in-flight cursor fade
@@ -397,7 +417,9 @@ pub(crate) fn update_highlight(state: &mut AppState) {
                 }
                 if prose_dim {
                     buffer.remove_tag(tag, &line_start, &line_end);
-                } else {
+                } else if !prose_flash {
+                    // Prose flash mode has no persistent cursor tint — the
+                    // transient flash below is the only marking.
                     buffer.apply_tag(cl_tag, &line_start, &line_end);
                 }
                 // Intentional observability hook (NOT stale per-keystroke trace):
@@ -407,6 +429,12 @@ pub(crate) fn update_highlight(state: &mut AppState) {
                 // tests/saved_position_resume.rs.
                 log_fmt!("CURSOR_LINE: applied tag to line {}", state.current_line);
             }
+        }
+        // Prose nav flash: a nav keybind fired (dispatch_action set the flag) —
+        // flash the cursor paragraph's background with the phrase-highlight
+        // color and fade it out.
+        if prose_flash && want_flash {
+            flash_prose_cursor_line(state);
         }
         // When visual selection is active, apply highlight even when dim is off
         crate::input::visual::clear_selection_highlight(state);
@@ -454,6 +482,74 @@ pub(crate) fn update_highlight(state: &mut AppState) {
 
     repaint_reader_gloss_visible(state);
     crate::app::scene_synopsis::update_title_bar_scene(state);
+}
+
+/// Flush a nav-flash flag that is still armed after its action handler ran.
+/// A nav press that ends as a no-op (e.g. `'` with no bookmark ahead, `;` at
+/// the first bookmark) early-returns before update_highlight, so the armed
+/// flag would linger and fire on the next repaint — including sync-driven
+/// cursor moves, which must never flash. Consuming it here instead flashes the
+/// line the cursor is on, so every nav keybind gives the same transient cue
+/// whether or not the cursor moved.
+pub(crate) fn flush_pending_prose_flash(state: &mut AppState) {
+    if !state.pending_prose_flash.replace(false) {
+        return;
+    }
+    if PROSE_DIM_OTHER_PARAGRAPHS || !state.is_prose() || !state.config.show_cursor_line {
+        return;
+    }
+    flash_prose_cursor_line(state);
+}
+
+/// Flash the cursor paragraph's background with the phrase-highlight color,
+/// then fade it to transparent. Prose nav feedback: replaces the legacy
+/// other-paragraph dimming (PROSE_DIM_OTHER_PARAGRAPHS) with a transient cue
+/// that shares the karaoke phrase tint's visual language. The color is read
+/// from the CURRENT theme at flash time, so theme switches need no tag refresh.
+fn flash_prose_cursor_line(state: &mut AppState) {
+    // Cancel any in-flight flash; skip() drives its callback to the end value,
+    // which clears the tag from the buffer.
+    if let Some(prev) = state.prose_flash_anim.take() {
+        prev.skip();
+    }
+
+    let buffer = state.buffer.clone();
+    let flash_tag = state.prose_flash_tag.clone();
+    let (buf_start, buf_end) = buffer.bounds();
+    buffer.remove_tag(&flash_tag, &buf_start, &buf_end);
+
+    let Some(line_start) = buffer.iter_at_line(state.current_line as i32) else {
+        return;
+    };
+    let mut line_end = line_start;
+    if !line_end.ends_line() {
+        line_end.forward_to_line_end();
+    }
+    buffer.apply_tag(&flash_tag, &line_start, &line_end);
+    log_fmt!("PROSE_FLASH: line {}", state.current_line);
+
+    // Start at the phrase tint's own color/alpha so the flash's first frame
+    // matches the narration-sync phrase highlight exactly, then fade to 0.
+    let rgba = gtk4::gdk::RGBA::parse(&state.theme.phrase_highlight_bg)
+        .unwrap_or_else(|_| gtk4::gdk::RGBA::new(1.0, 1.0, 1.0, 0.22));
+    let base_alpha = rgba.alpha();
+    let target = adw::CallbackAnimationTarget::new(move |value| {
+        use gtk4::prelude::TextTagExt;
+        flash_tag.set_paragraph_background_rgba(Some(&gtk4::gdk::RGBA::new(
+            rgba.red(),
+            rgba.green(),
+            rgba.blue(),
+            value as f32 * base_alpha,
+        )));
+        if value <= 0.0 {
+            let (s, e) = buffer.bounds();
+            buffer.remove_tag(&flash_tag, &s, &e);
+        }
+    });
+    let anim = adw::TimedAnimation::new(&state.text_view, 1.0, 0.0, 700, target);
+    anim.set_easing(adw::Easing::EaseOutQuad);
+    anim.play();
+    state.prose_flash_anim = Some(anim);
 }
 
 /// Reapply the reader-gloss tints to every glossed buffer line. Off-cursor
