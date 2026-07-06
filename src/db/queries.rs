@@ -691,6 +691,43 @@ pub fn phrase_crossing_time(
     .ok()
 }
 
+/// One phrase's audio window + char range within its line's canonical text.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PhraseSpan {
+    pub start_time: f64,
+    pub end_time: f64,
+    pub start_char: usize,
+    pub end_char: usize,
+}
+
+/// All phrase spans for one (line, media), ordered by start_time. Empty vec =
+/// no phrase_timestamps rows for the pair — callers cache the negative result
+/// so works without phrase data stay inert with no per-tick re-query.
+pub fn phrase_spans_for_line(
+    conn: &Connection,
+    line_mapping_id: i64,
+    media_id: i64,
+) -> Vec<PhraseSpan> {
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT start_time, end_time, start_char, end_char FROM phrase_timestamps \
+         WHERE line_mapping_id = ?1 AND media_id = ?2 ORDER BY start_time",
+    ) else {
+        return Vec::new();
+    };
+    let rows = stmt.query_map(rusqlite::params![line_mapping_id, media_id], |row| {
+        Ok(PhraseSpan {
+            start_time: row.get(0)?,
+            end_time: row.get(1)?,
+            start_char: row.get::<_, i64>(2)?.max(0) as usize,
+            end_char: row.get::<_, i64>(3)?.max(0) as usize,
+        })
+    });
+    match rows {
+        Ok(r) => r.filter_map(Result::ok).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
 pub fn list_media_for_work(
     conn: &Connection,
     abbrev: &str,
@@ -3262,6 +3299,38 @@ mod tests {
         if list.len() > 1 {
             assert!(list[0].0 <= list[1].0, "Should be alphabetically sorted");
         }
+    }
+
+    /// `phrase_spans_for_line` returns every span for one (line, media) ordered
+    /// by start_time; an unknown pair yields an empty vec (a cacheable negative
+    /// result for the phrase-highlight driver).
+    #[test]
+    fn phrase_spans_for_line_returns_ordered_spans() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE phrase_timestamps (
+                 id INTEGER PRIMARY KEY, line_mapping_id INTEGER, media_id INTEGER,
+                 start_time REAL, end_time REAL, start_char INTEGER, end_char INTEGER);
+             INSERT INTO phrase_timestamps
+                 (line_mapping_id, media_id, start_time, end_time, start_char, end_char)
+             VALUES (7, 3, 12.0, 13.5, 20, 40),
+                    (7, 3, 10.0, 11.8, 0, 20),
+                    (7, 3, 15.0, 17.0, 40, 60),
+                    (8, 3, 99.0, 99.5, 0, 10),
+                    (7, 4, 50.0, 51.0, 0, 20);",
+        )
+        .unwrap();
+        let spans = phrase_spans_for_line(&conn, 7, 3);
+        assert_eq!(spans.len(), 3);
+        // Ordered by start_time regardless of insert order.
+        assert_eq!(
+            spans[0],
+            PhraseSpan { start_time: 10.0, end_time: 11.8, start_char: 0, end_char: 20 }
+        );
+        assert_eq!(spans[1].start_char, 20);
+        assert_eq!(spans[2].end_char, 60);
+        // No rows -> empty vec (valid negative result).
+        assert!(phrase_spans_for_line(&conn, 999, 3).is_empty());
     }
 
     /// `phrase_crossing_time` returns the start_time of the FIRST phrase whose
