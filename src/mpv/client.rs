@@ -352,7 +352,11 @@ fn find_line_for_time(
         } else {
             true
         };
-        if qualifies && time_pos >= trigger {
+        // Compare in EFFECTIVE time (same clock as the base mapping above):
+        // with a non-zero SYNC_PREROLL the whole sync surface leads the audio
+        // uniformly, gap jumps included. Comparing raw time_pos here would
+        // give gap jumps a different lead than every other sync decision.
+        if qualifies && effective_time >= trigger {
             active = idx;
         }
     }
