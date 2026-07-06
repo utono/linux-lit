@@ -1069,11 +1069,13 @@ pub fn page_forward(state: &mut AppState) {
             }
             let next = table[cur + 1];
             state.page_back_stack.push((state.page_top_line, state.page_top_offset));
-            state.current_line = next.start_line;
+            let last_on_page = if next.end_off > 0 { next.end_line } else { next.end_line.saturating_sub(1) };
+            state.current_line =
+                prose_page_landing(state, next.start_line, next.start_off, Some(last_on_page));
             crate::input::scroll::set_page_instant_offset(state, next.start_line, next.start_off);
             after_page_change(state, PageChangeReason::Forward);
-            log_fmt!("PAGES_PROSE: page {}/{} top=({},{})",
-                     cur + 2, table.len(), next.start_line, next.start_off);
+            log_fmt!("PAGES_PROSE: page {}/{} top=({},{}) cursor={}",
+                     cur + 2, table.len(), next.start_line, next.start_off, state.current_line);
             return;
         }
         // Off-grid (resume from an old session): fall through to live fill;
@@ -1090,19 +1092,10 @@ pub fn page_forward(state: &mut AppState) {
             state.page_back_stack.push((state.page_top_line, state.page_top_offset));
             log_fmt!("PAGE_FWD: prose row-fill ({},{}) -> ({},{})",
                      state.page_top_line, state.page_top_offset, nt, no);
-            let stage_lookup = |bi: usize| -> Option<i64> {
-                state.work_line_for_buffer(bi)
-                    .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
-                    .map(|l| l.sub_line)
-            };
-            // Cursor: the first content line whose text is on the new page.
-            let landing = if no > 0 {
-                nt // straddling paragraph is the current content
-            } else {
-                next_dialogue_from(&state.buffer, nt, state.effective_line_count(),
-                                   state.is_prose(), &stage_lookup)
-            };
-            state.current_line = landing.min(state.effective_line_count().saturating_sub(1));
+            // Cursor: the first FULL segment on the new page (see
+            // prose_page_landing; live path has no stored page end, so the
+            // straddler is kept only when nothing follows it).
+            state.current_line = prose_page_landing(state, nt, no, None);
             crate::input::scroll::set_page_instant_offset(state, nt, no);
             after_page_change(state, PageChangeReason::Forward);
             return;
@@ -1267,11 +1260,13 @@ pub fn page_backward(state: &mut AppState) {
                         break;
                     }
                 }
-                state.current_line = prev.start_line;
+                let last_on_page = if prev.end_off > 0 { prev.end_line } else { prev.end_line.saturating_sub(1) };
+                state.current_line =
+                    prose_page_landing(state, prev.start_line, prev.start_off, Some(last_on_page));
                 crate::input::scroll::set_page_instant_offset(state, prev.start_line, prev.start_off);
                 after_page_change(state, PageChangeReason::Backward);
-                log_fmt!("PAGES_PROSE: page {}/{} top=({},{})",
-                         cur, table.len(), prev.start_line, prev.start_off);
+                log_fmt!("PAGES_PROSE: page {}/{} top=({},{}) cursor={}",
+                         cur, table.len(), prev.start_line, prev.start_off, state.current_line);
                 return;
             }
         }
@@ -2627,6 +2622,41 @@ pub(crate) fn prose_cross_time(s: &crate::app::AppState, bl: usize, end_off: i32
     Some((t, ts.start))
 }
 
+/// Cursor landing for a prose page whose stored top is `(start_line,
+/// start_off)`. With `start_off == 0` the top line IS the first full segment.
+/// Otherwise the cursor goes to the first FULL segment — the first content
+/// line that STARTS on the page — and the normal cursor-follow seek then
+/// starts MPV at that segment's own start_time. `last_on_page` bounds the
+/// search when the stored page end is known (table arms); `None` (live-fill
+/// arm) accepts the next content line unconditionally — an over-tall straddler
+/// that fills the page returns None from the fill's own boundary logic before
+/// this matters. Falls back to the straddler itself when no line starts on the
+/// page (seek_to_current_line's cursor==page_top branch then seeks the
+/// visible rows' crossing time instead of replaying the hidden paragraph top).
+fn prose_page_landing(
+    state: &mut AppState,
+    start_line: usize,
+    start_off: i32,
+    last_on_page: Option<usize>,
+) -> usize {
+    let line_count = state.effective_line_count();
+    let clamp = |l: usize| l.min(line_count.saturating_sub(1));
+    if start_off <= 0 {
+        return clamp(start_line);
+    }
+    let stage_lookup = |bi: usize| -> Option<i64> {
+        state.work_line_for_buffer(bi)
+            .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+            .map(|l| l.sub_line)
+    };
+    let candidate = next_dialogue_from(&state.buffer, start_line + 1, line_count,
+                                       state.is_prose(), &stage_lookup);
+    match last_on_page {
+        Some(last) if candidate > last => clamp(start_line), // over-tall straddler fills the page
+        _ => clamp(candidate),
+    }
+}
+
 /// Seek MPV to the current line's start time (with preroll).
 /// Called on every cursor movement so audio follows the reader.
 /// When the target line has a timestamp, suppresses CursorSync briefly while MPV
@@ -2645,11 +2675,13 @@ pub fn seek_to_current_line(state: &mut AppState) {
 
     if let Some(ts) = &work.lines[work_idx].timestamp {
         let ts_start = ts.start;
-        // Mid-paragraph page top (x/y landed on a straddling paragraph): seek
-        // to the first VISIBLE segment of the new page — the phrase at the
-        // page-top offset — not the paragraph's start. Seeking to the start
-        // replayed previous-page audio and parked the karaoke tint above the
-        // fold, so the highlight looked absent for seconds after a page turn.
+        // Mid-paragraph page top with the cursor ON the straddler (over-tall
+        // paragraph filling the page): seek to the first VISIBLE rows — the
+        // phrase at the page-top offset — not the paragraph's start. Seeking
+        // the start replayed previous-page audio and parked the karaoke tint
+        // above the fold. Normal x/y landings put the cursor on the first
+        // FULL segment instead (prose_page_landing), so this branch does not
+        // fire and the seek is the cursor segment's own start_time.
         let base = if state.is_prose()
             && state.current_line == state.page_top_line
             && state.page_top_offset > 0

@@ -501,6 +501,16 @@ pub(crate) fn flush_pending_prose_flash(state: &mut AppState) {
     flash_prose_cursor_line(state);
 }
 
+/// Flash the reader cursor line NOW — overlay-close feedback: when an overlay
+/// (gloss / synopsis / journal) drops back to the reader, the eye needs
+/// re-orienting to where the cursor sits in the main card. Same transient cue
+/// as the nav flash; a no-op for verse (persistent cursor tint) and when the
+/// cursor line is hidden.
+pub(crate) fn flash_reader_cursor(state: &mut AppState) {
+    state.pending_prose_flash.set(true);
+    flush_pending_prose_flash(state);
+}
+
 /// Flash the cursor paragraph's background with the phrase-highlight color,
 /// then fade it to transparent. Prose nav feedback: replaces the legacy
 /// other-paragraph dimming (PROSE_DIM_OTHER_PARAGRAPHS) with a transient cue

@@ -313,18 +313,21 @@ fn handle_picker_key(
                         s.gloss_picker_from_overlay = false;
                         s.input_mode = InputMode::GlossOverlay;
                     } else {
-                        s.input_mode = InputMode::Reader;
+                        // Chokepoint: flashes the main-card cursor on return.
+                        crate::app::return_to_reader_mode(&mut s);
                     }
                 }
                 InputMode::JournalPicker => {
                     s.journal_picker.hide();
-                    // Opened from the reader (Alt+j): nothing was revealed, so go
-                    // back to the reader, not a hidden journal overlay. Opened
-                    // from the overlay (Ctrl+\): return to it.
+                    // Opened from the reader (Alt+j, or Ctrl+j on a scene with
+                    // no Q&A): nothing was revealed, so go back to the reader
+                    // — through the chokepoint, so the cursor flashes — not to
+                    // a hidden journal overlay. Opened from the overlay
+                    // (Ctrl+\): return to it.
                     if s.journal.picker_from_reader {
                         s.journal.picker_from_reader = false;
                         s.journal.return_pos = None;
-                        s.input_mode = InputMode::Reader;
+                        crate::app::return_to_reader_mode(&mut s);
                     } else {
                         s.input_mode = InputMode::JournalOverlay;
                     }
@@ -334,7 +337,8 @@ fn handle_picker_key(
                 _ => {
                     if let Some(p) = crate::input::picker_dispatch::picker_for_mode(&s, mode) {
                         p.hide();
-                        s.input_mode = InputMode::Reader;
+                        // Chokepoint: flashes the main-card cursor on return.
+                        crate::app::return_to_reader_mode(&mut s);
                     }
                 }
             }
@@ -1804,7 +1808,7 @@ fn handle_synopsis_overlay_key(
     if key_name == "Escape" {
         let mut s = state.borrow_mut();
         s.gloss_overlay.hide();
-        s.input_mode = crate::app::InputMode::Reader;
+        crate::app::return_to_reader_mode(&mut s);
         return true;
     }
 
@@ -1816,7 +1820,7 @@ fn handle_synopsis_overlay_key(
         key_state.borrow_mut().chord = ChordState::None;
         let mut s = state.borrow_mut();
         s.gloss_overlay.hide();
-        s.input_mode = crate::app::InputMode::Reader;
+        crate::app::return_to_reader_mode(&mut s);
         return true;
     }
 
@@ -1843,7 +1847,7 @@ fn handle_synopsis_overlay_key(
         "h" => {
             let mut s = state.borrow_mut();
             s.gloss_overlay.hide();
-            s.input_mode = crate::app::InputMode::Reader;
+            crate::app::return_to_reader_mode(&mut s);
             true
         }
         // `a`: always (re)start the cursor paragraph's TTS from the start,
@@ -1865,7 +1869,7 @@ fn handle_synopsis_overlay_key(
                 let mut s = state.borrow_mut();
                 s.tts.stop();
                 s.gloss_overlay.hide();
-                s.input_mode = crate::app::InputMode::Reader;
+                crate::app::return_to_reader_mode(&mut s);
             }
             crate::input::actions::journal::begin_scene_ask(state, div1, div2);
             crate::logging::log("JOURNAL-FROM-SYNOPSIS: opened scene ask from synopsis overlay");
@@ -1908,7 +1912,7 @@ fn handle_synopsis_overlay_key(
             {
                 let mut s = state.borrow_mut();
                 s.gloss_overlay.hide();
-                s.input_mode = crate::app::InputMode::Reader;
+                crate::app::return_to_reader_mode(&mut s);
             }
             crate::input::actions::journal::open_journal_scene(state);
             true

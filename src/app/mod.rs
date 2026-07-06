@@ -4100,6 +4100,7 @@ pub(crate) fn return_to_reader_mode(state: &mut AppState) {
     // (ToggleLastOverlay) can reopen it later. Synopsis renders through the
     // gloss overlay widget but carries its own InputMode::SynopsisOverlay, so
     // the GlossOverlay arm never mis-records a synopsis close.
+    let was_overlay = state.input_mode != InputMode::Reader;
     match state.input_mode {
         InputMode::GlossOverlay => state.last_overlay = Some(LastOverlay::Gloss),
         InputMode::JournalOverlay => state.last_overlay = Some(LastOverlay::Journal),
@@ -4107,6 +4108,11 @@ pub(crate) fn return_to_reader_mode(state: &mut AppState) {
     }
     state.input_mode = InputMode::Reader;
     apply_reader_gloss_highlighting(state);
+    // Re-orient the eye: flash the main-card cursor line when an overlay
+    // actually closed (never on a redundant call from reader mode).
+    if was_overlay {
+        crate::input::highlight::flash_reader_cursor(state);
+    }
 }
 
 /// Bare 3-line position restore: set `current_line` and `page_top_line` from

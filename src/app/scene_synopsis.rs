@@ -346,7 +346,7 @@ pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) 
         drop(s);
         let mut s = state.borrow_mut();
         s.gloss_overlay.hide();
-        s.input_mode = InputMode::Reader;
+        crate::app::return_to_reader_mode(&mut s);
         return;
     }
 
