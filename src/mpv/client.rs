@@ -407,16 +407,23 @@ mod tests {
         assert_eq!(parse_pause_state(line), Some(true));
     }
 
+    /// Probe times below are the EFFECTIVE times the mapping should see;
+    /// find_line_for_time adds SYNC_PREROLL internally, so subtract it here
+    /// to keep these fixtures valid at any preroll setting.
+    fn t(effective: f64) -> f64 {
+        effective - crate::input::navigation::SYNC_PREROLL
+    }
+
     #[test]
     fn test_find_line_for_time() {
         let timestamps = vec![(10, 1.0, 2.0), (20, 3.0, 4.0), (30, 5.0, 6.0)];
         let map: HashMap<i64, usize> = [(10, 0), (20, 1), (30, 2)].into();
 
-        assert_eq!(find_line_for_time(0.5, &timestamps, &map, None), None);
-        assert_eq!(find_line_for_time(1.0, &timestamps, &map, None), Some(0));
-        assert_eq!(find_line_for_time(2.5, &timestamps, &map, None), Some(0));
-        assert_eq!(find_line_for_time(3.0, &timestamps, &map, None), Some(1));
-        assert_eq!(find_line_for_time(5.0, &timestamps, &map, None), Some(2));
+        assert_eq!(find_line_for_time(t(0.5), &timestamps, &map, None), None);
+        assert_eq!(find_line_for_time(t(1.0), &timestamps, &map, None), Some(0));
+        assert_eq!(find_line_for_time(t(2.5), &timestamps, &map, None), Some(0));
+        assert_eq!(find_line_for_time(t(3.0), &timestamps, &map, None), Some(1));
+        assert_eq!(find_line_for_time(t(5.0), &timestamps, &map, None), Some(2));
     }
 
     #[test]
@@ -428,24 +435,24 @@ mod tests {
         let map: HashMap<i64, usize> = [(10, 0), (20, 1)].into();
 
         // Just before B.start - 1.5 = 4.5: still on A.
-        assert_eq!(find_line_for_time(4.4, &gap, &map, None), Some(0));
+        assert_eq!(find_line_for_time(t(4.4), &gap, &map, None), Some(0));
         // At B.start - 1.5: jump to B early.
-        assert_eq!(find_line_for_time(4.5, &gap, &map, None), Some(1));
+        assert_eq!(find_line_for_time(t(4.5), &gap, &map, None), Some(1));
         // After B starts: still B.
-        assert_eq!(find_line_for_time(6.5, &gap, &map, None), Some(1));
+        assert_eq!(find_line_for_time(t(6.5), &gap, &map, None), Some(1));
 
         // No-gap case: A ends 2.0, B starts 3.0 -> gap 1.0 <= 1.5, no early jump.
         // B.start - 1.5 = 1.5 would land mid-A, but the gap is below threshold
         // so the early jump does not apply; B becomes active only at its start.
         let nogap = vec![(10, 1.0, 2.0), (20, 3.0, 4.0)];
-        assert_eq!(find_line_for_time(2.5, &nogap, &map, None), Some(0));
-        assert_eq!(find_line_for_time(3.0, &nogap, &map, None), Some(1));
+        assert_eq!(find_line_for_time(t(2.5), &nogap, &map, None), Some(0));
+        assert_eq!(find_line_for_time(t(3.0), &nogap, &map, None), Some(1));
 
         // Invalid A.end (end == start): gap unknown -> apply the lead anyway,
         // B.start - 1.5 = 4.5.
         let badend = vec![(10, 1.0, 1.0), (20, 6.0, 7.0)];
-        assert_eq!(find_line_for_time(4.4, &badend, &map, None), Some(0));
-        assert_eq!(find_line_for_time(4.5, &badend, &map, None), Some(1));
+        assert_eq!(find_line_for_time(t(4.4), &badend, &map, None), Some(0));
+        assert_eq!(find_line_for_time(t(4.5), &badend, &map, None), Some(1));
     }
 
     #[test]
