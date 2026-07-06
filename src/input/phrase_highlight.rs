@@ -60,6 +60,129 @@ pub fn resolve_spoken_idx(
     best
 }
 
+use crate::app::AppState;
+use gtk4::prelude::*;
+
+/// Per-TimePos driver. Gates: class flag (prose vs verse), sync on, not
+/// loading, translations hidden (inflated buffer misaligns offsets), not
+/// sync-suppressed (manual seeks/nav clear the tint). Pause KEEPS the last
+/// phrase visible — it marks where the audio stopped.
+pub fn update_phrase_highlight(s: &mut AppState, pos: f64) {
+    let enabled = if s.is_prose() {
+        s.config.phrase_highlight_prose
+    } else {
+        s.config.phrase_highlight_verse
+    };
+    let suppressed = s
+        .suppress_sync_until
+        .map(|until| std::time::Instant::now() < until)
+        .unwrap_or(false);
+    if !enabled || !s.sync_enabled || s.loading_work.get() || s.translations_visible || suppressed
+    {
+        clear_phrase_highlight(s);
+        return;
+    }
+    if !s.mpv_playing {
+        return;
+    }
+    let Some(media) = s.media_id else {
+        clear_phrase_highlight(s);
+        return;
+    };
+    let Some(cursor_wi) = s.work_line_for_buffer(s.current_line) else {
+        return;
+    };
+    // The sync cursor leads by SYNC_PREROLL, so resolve the line actually
+    // being spoken at raw `pos` in a bounded window around the cursor.
+    let spoken = {
+        let Some(work) = s.current_work.as_ref() else { return };
+        let lines = &work.lines;
+        resolve_spoken_idx(
+            |i| lines.get(i).and_then(|l| l.timestamp.as_ref()).map(|t| (t.start, t.end)),
+            lines.len(),
+            cursor_wi,
+            pos,
+        )
+        .map(|wi| (wi, lines[wi].id))
+    };
+    let Some((spoken_wi, line_id)) = spoken else {
+        clear_phrase_highlight(s);
+        return;
+    };
+    let cache_stale = s
+        .phrase_cache
+        .as_ref()
+        .map(|c| c.line_mapping_id != line_id || c.media_id != media)
+        .unwrap_or(true);
+    if cache_stale {
+        let spans = crate::db::queries::open_db()
+            .map(|conn| crate::db::queries::phrase_spans_for_line(&conn, line_id, media))
+            .unwrap_or_default();
+        crate::logging::log(&format!(
+            "PHRASE_HL: cache fill line_id={} media={} spans={}",
+            line_id,
+            media,
+            spans.len()
+        ));
+        s.phrase_cache = Some(PhraseCache { line_mapping_id: line_id, media_id: media, spans });
+    }
+    let hit = s
+        .phrase_cache
+        .as_ref()
+        .and_then(|c| phrase_at_time(&c.spans, pos).map(|i| (c.spans[i], i)));
+    let Some((span, span_idx)) = hit else {
+        clear_phrase_highlight(s);
+        return;
+    };
+    let Some(bl) = s.buffer_line_for_work(spoken_wi) else {
+        return;
+    };
+    if s.active_phrase == Some((bl, span_idx)) {
+        return;
+    }
+    apply_phrase_tag(s, bl, span.start_char, span.end_char);
+    s.active_phrase = Some((bl, span_idx));
+}
+
+/// Remove the phrase tint everywhere. Cheap no-op when nothing is applied.
+pub fn clear_phrase_highlight(s: &mut AppState) {
+    if s.active_phrase.is_none() {
+        return;
+    }
+    let (bs, be) = s.buffer.bounds();
+    s.buffer.remove_tag(&s.phrase_tag, &bs, &be);
+    s.active_phrase = None;
+}
+
+/// Move the tag to `[start_char, end_char)` of buffer line `bl`, clamped to
+/// the line's char count (GTK iter offsets are unicode chars, matching the
+/// Python backfill's str indices; clamping guards data drift).
+fn apply_phrase_tag(s: &AppState, bl: usize, start_char: usize, end_char: usize) {
+    let buffer = &s.buffer;
+    let (bs, be) = buffer.bounds();
+    buffer.remove_tag(&s.phrase_tag, &bs, &be);
+    let Some(line_start) = buffer.iter_at_line(bl as i32) else {
+        return;
+    };
+    let line_chars = {
+        let mut e = line_start;
+        if !e.ends_line() {
+            e.forward_to_line_end();
+        }
+        e.line_offset().max(0) as usize
+    };
+    let sc = start_char.min(line_chars);
+    let ec = end_char.min(line_chars).max(sc);
+    if ec == sc {
+        return;
+    }
+    let mut a = line_start;
+    a.set_line_offset(sc as i32);
+    let mut b = line_start;
+    b.set_line_offset(ec as i32);
+    buffer.apply_tag(&s.phrase_tag, &a, &b);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -2722,6 +2722,10 @@ pub fn display_work_at_with_prepared(
     // media; drop it so it can't fire against the freshly loaded work.
     state.pending_prose_cross = None;
     state.media_id = work.media_id;
+    // Phrase highlight is keyed to the OLD work's lines/media; reset so the
+    // first TimePos in the new work refills against the new (line, media).
+    state.phrase_cache = None;
+    state.active_phrase = None;
     state
         .window
         .set_title(Some(&format!("{} — linux-lit", work.title)));

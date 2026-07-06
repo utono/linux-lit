@@ -638,6 +638,10 @@ fn main() {
                             }
                         }
 
+                        // Karaoke phrase highlight tracks the RAW time (the
+                        // sync cursor above leads by SYNC_PREROLL; this must not).
+                        crate::input::phrase_highlight::update_phrase_highlight(&mut s, pos);
+
                         // Mirror the advanced cursor into the translation overlay.
                         // Only when pending_advance moved it; drop the borrow first.
                         if let Some(scene_before) = ov_moved {
