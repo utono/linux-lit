@@ -859,23 +859,30 @@ pub const BCP_SENTENCE_GAP: i32 = 12;
 pub const TOP_SPACER_HEIGHT: i32 = 40;
 
 /// Pure default-column rule: works default to two columns, except a
-/// `sonnet_sequence`, which defaults to one. A sonnet sequence has each sonnet
-/// as its own `(div1, div2)` section, so the two-column "stop at scene break"
-/// rule would push every sonnet to the right column and leave the left empty;
-/// a single column lets the sonnets flow top-to-bottom instead. Split out from
-/// `default_column_count_for` so it is unit-testable without constructing a
-/// `Work`. Per-work overrides in `config.column_overrides` still take
-/// precedence (e.g. `Alt+[`), and `column_count()` forces a single column when
-/// not in EReader mode or when translations are visible.
+/// `sonnet_sequence` and every prose work type, which default to one. A sonnet
+/// sequence has each sonnet as its own `(div1, div2)` section, so the
+/// two-column "stop at scene break" rule would push every sonnet to the right
+/// column and leave the left empty; a single column lets the sonnets flow
+/// top-to-bottom instead. Prose works (`novel`/`essay_collection`/`prose_book`/
+/// `prose` — see `line_types::PROSE_TYPES`) render through the single-column
+/// prose visual-row pagination engine (`src/input/prose_pages.rs`), which is
+/// gated on `column_count()==1`; defaulting prose to two columns would route it
+/// through the play engine and disable that engine entirely. Note anthologies
+/// (`anthology`) are NOT prose — they deliberately pack two columns, so they
+/// keep the `_ => 2` default. Split out from `default_column_count_for` so it is
+/// unit-testable without constructing a `Work`. Per-work overrides in
+/// `config.column_overrides` still take precedence (e.g. `Alt+[`), and
+/// `column_count()` forces a single column when not in EReader mode or when
+/// translations are visible.
 pub(crate) fn default_column_count_for_parts(_author: &str, work_type: &str) -> u8 {
-    match work_type {
-        "sonnet_sequence" => 1,
-        _ => 2,
+    if work_type == "sonnet_sequence" || crate::db::line_types::is_prose_work(work_type) {
+        return 1;
     }
+    2
 }
 
 /// Default column count for a work: 2 columns by default, 1 for a
-/// `sonnet_sequence`.
+/// `sonnet_sequence` or any prose work type.
 pub(crate) fn default_column_count_for(work: &crate::db::models::Work) -> u8 {
     default_column_count_for_parts(&work.author, &work.work_type)
 }

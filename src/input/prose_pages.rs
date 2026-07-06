@@ -257,14 +257,20 @@ pub fn generate_and_store_prose(state: &mut crate::app::AppState) {
     if state.prose_page_table_gen_attempted.get() {
         return;
     }
-    state.prose_page_table_gen_attempted.set(true);
     if state.current_work.is_none() {
         return;
     }
+    // Reader-state gate BEFORE latching `gen_attempted`. A transient non-ready
+    // tick (e.g. the layout momentarily 2-col during startup, or translations
+    // briefly visible) must NOT burn the one-shot attempt for the session — the
+    // set below only fires once the state gate has passed, so a later settled
+    // tick can still generate. (This is the fix for the ordering bug where one
+    // early tick permanently disabled prose-table generation.)
     if state.column_count() != 1 || !state.is_prose() || state.translations_visible {
         crate::logging::log("PAGES_PROSE: gen skipped (not 1-col prose reader state)");
         return;
     }
+    state.prose_page_table_gen_attempted.set(true);
     if state.prose_page_table.borrow().is_some() && !force {
         return; // already loaded from the DB this session
     }

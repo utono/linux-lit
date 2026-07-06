@@ -415,6 +415,23 @@ mod column_default_tests {
     fn non_shakespeare_play_defaults_to_two() {
         assert_eq!(default_column_count_for_parts("Marlowe", "play"), 2);
     }
+    #[test]
+    fn prose_work_types_default_to_one() {
+        // Prose renders through the single-column prose visual-row pagination
+        // engine (gated on column_count()==1); two columns would route it
+        // through the play engine and disable prose pagination. Covers every
+        // line_types::PROSE_TYPES value.
+        assert_eq!(default_column_count_for_parts("Dickens", "novel"), 1);
+        assert_eq!(default_column_count_for_parts("Dickens", "prose"), 1);
+        assert_eq!(default_column_count_for_parts("Churchill", "prose_book"), 1);
+        assert_eq!(default_column_count_for_parts("Emerson", "essay_collection"), 1);
+    }
+    #[test]
+    fn anthology_defaults_to_two() {
+        // An anthology deliberately packs two columns; it is NOT a prose type,
+        // so the prose 1-col rule must not catch it.
+        assert_eq!(default_column_count_for_parts("Crystal", "anthology"), 2);
+    }
 }
 
 #[cfg(test)]

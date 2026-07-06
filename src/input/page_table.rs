@@ -328,12 +328,16 @@ pub fn generate_and_store(state: &crate::app::AppState) {
     if state.page_table_gen_attempted.get() {
         return;
     }
-    state.page_table_gen_attempted.set(true);
     let Some(work) = state.current_work.as_ref() else { return };
+    // Reader-state gate BEFORE latching `gen_attempted` (parity with the prose
+    // path). A transient non-ready tick (layout momentarily 1-col, or
+    // translations briefly visible) must NOT burn the one-shot attempt — the set
+    // below only fires once the 2-col state gate has passed.
     if state.column_count() != 2 || state.translations_visible {
         crate::logging::log("PAGES: gen skipped (not 2-col reader state)");
         return;
     }
+    state.page_table_gen_attempted.set(true);
     if state.page_table.borrow().is_some() && !force {
         return; // already loaded from the DB this session
     }
