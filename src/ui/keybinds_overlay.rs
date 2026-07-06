@@ -34,8 +34,8 @@ const fn bare(unshifted: &'static str, shifted: &'static str, action: &'static s
 const NUMBER_ROW: &[KeyDef] = &[
     ub("$", "~"),
     bare("+", "1", "show chapter"),
-    key("[", "2", "prev ch", "2: prev ch", &[("M-[", "col layout")]),
-    key("{", "3", "next ch", "3: next ch", &[]),
+    key("[", "2", "prev scene", "2: prev ch", &[("M-[", "col layout")]),
+    key("{", "3", "next scene", "3: next ch", &[]),
     key("(", "4", "prev bkmk", "4: prev ch", &[]),
     key("&", "5", "next bkmk", "5: next ch", &[]),
     ub("=", "6"),
@@ -52,7 +52,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key(";", ":", "prev bkmk", ":: toggle speed", &[]),
     key(",", "<", "prev speaker", "<: prev dlg", &[("C-,", "settings")]),
     key(".", ">", "", "", &[("C-.", "bookmarks")]),
-    key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("S-C-p", "conc word")]),
+    key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("S-C-p", "conc word"), ("M-p", "phrase hl")]),
     key("y", "Y", "pg back", "", &[("C-y", "copy id")]),
     key("f", "F", "next font", "F: prev font", &[("M-f", "font info")]),
     key("g", "G", "", "", &[("C-g", "gloss tog"), ("S-C-g", "last gloss"), ("M-g", "gloss pick"), ("M-g", "gloss from jrnl"), ("C-g", "view gloss")]),
@@ -302,6 +302,11 @@ concordance navigation, then step through occurrences with r / R. \
         "conc word" => "Open the concordance WORD picker — choose the word whose \
 cross-work occurrences r / R will step through. \
 -> pickers::open_concordance_word_picker — src/input/actions/pickers.rs",
+        "phrase hl" => "Toggle the karaoke spoken-phrase highlight during \
+narration sync for the current work's class (prose defaults ON; plays/poetry \
+OFF; persisted in config). The tint tracks the narrator at raw time — page \
+turns keep their preroll lead. \
+-> TogglePhraseHighlight arm — src/input/phrase_highlight.rs",
         "conc list" => "Open the concordance LIST picker (the list of occurrences \
 for the active concordance word). \
 -> pickers::open_concordance_list_picker — src/input/actions/pickers.rs",

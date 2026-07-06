@@ -2906,6 +2906,28 @@ fn dispatch_action(
         JumpToPrevVocab => crate::input::actions::concordance::jump_to_prev_vocab(state, tokio_handle),
         ConcordanceNext => crate::input::actions::concordance::concordance_next(state, tokio_handle),
         ConcordancePrev => crate::input::actions::concordance::concordance_prev(state, tokio_handle),
+        TogglePhraseHighlight => {
+            let mut s = state.borrow_mut();
+            let is_prose = s.is_prose();
+            let now_on = if is_prose {
+                s.config.phrase_highlight_prose = !s.config.phrase_highlight_prose;
+                s.config.phrase_highlight_prose
+            } else {
+                s.config.phrase_highlight_verse = !s.config.phrase_highlight_verse;
+                s.config.phrase_highlight_verse
+            };
+            crate::config::save(&s.config);
+            if !now_on {
+                crate::input::phrase_highlight::clear_phrase_highlight(&mut s);
+            }
+            let text = format!(
+                "Phrase highlight {} ({})",
+                if now_on { "ON" } else { "OFF" },
+                if is_prose { "prose" } else { "plays/poetry" },
+            );
+            crate::input::navigation::show_chapter_toast(&s, &text);
+            crate::logging::log(&format!("PHRASE_HL: toggled {}", text));
+        }
         ToggleVocabHighlight => {
             let mut s = state.borrow_mut();
             s.vocab_highlight_visible = !s.vocab_highlight_visible;

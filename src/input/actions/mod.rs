@@ -97,6 +97,9 @@ pub enum Action {
     VolumeUp,
     VolumeDown,
     TogglePlaybackSpeed,
+    /// Toggle the karaoke spoken-phrase highlight for the current work's class
+    /// (prose vs plays/poetry); persisted per class in config. Alt+p.
+    TogglePhraseHighlight,
 
     // Vocab / glossing
     ToggleVocabPopup,
@@ -223,7 +226,8 @@ impl Action {
             | Action::SeekBackward30
             | Action::VolumeUp
             | Action::VolumeDown
-            | Action::TogglePlaybackSpeed => Category::Media,
+            | Action::TogglePlaybackSpeed
+            | Action::TogglePhraseHighlight => Category::Media,
 
             // Vocab
             Action::ToggleVocabPopup
@@ -354,6 +358,7 @@ impl Action {
             Action::VolumeUp => "VolumeUp",
             Action::VolumeDown => "VolumeDown",
             Action::TogglePlaybackSpeed => "TogglePlaybackSpeed",
+            Action::TogglePhraseHighlight => "TogglePhraseHighlight",
             Action::ToggleVocabPopup => "ToggleVocabPopup",
             Action::VocabPopupNext => "VocabPopupNext",
             Action::VocabPopupPrev => "VocabPopupPrev",
