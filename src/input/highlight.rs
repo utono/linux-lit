@@ -106,15 +106,24 @@ pub fn update_highlight_and_advance_page(state: &mut AppState) {
                 && state.column_count() == 1
                 && crate::input::prose_pages::active_prose_page_table(state).is_some()
             {
-                // A turn is due when the cursor passes the current page's last
-                // rendered line. `prose_table_page_end` is None when the current
-                // top is off-grid — then always re-land on the containing page
-                // (equivalent to a resnap + turn).
+                // A turn is due when the cursor's line is no longer ON the
+                // current page. With leading-gap boundaries normalized (see
+                // `prose_next_boundary`), the on-page invariant is exact and
+                // OFFSET-AWARE: line L is on the page whose exclusive end is
+                // `(end_line, end_off)` iff `(L, 0) < (end_line, end_off)`
+                // lexicographically. So:
+                //   * a page ending at `(L, 0)` (end_off == 0) does NOT contain L
+                //     — L opens the next page (last rendered line = end_line - 1);
+                //   * a page ending at `(L, end_off>0)` DOES contain L (its first
+                //     `end_off` px have ink) — L is on-page (last rendered = end_line).
+                // Expressed directly so a stray degenerate positive-offset end
+                // (leading gap, no visible rows) can't read as on-page.
+                // `prose_table_page_end` is None when the current top is off-grid
+                // — then always re-land on the containing page (resnap + turn).
                 let turn_due = match crate::input::prose_pages::prose_table_page_end(state) {
                     Some((end_line, end_off)) => {
-                        let last_rendered =
-                            if end_off > 0 { end_line } else { end_line.saturating_sub(1) };
-                        state.current_line > last_rendered
+                        // NOT on-page  <=>  (current_line, 0) >= (end_line, end_off).
+                        (state.current_line, 0) >= (end_line, end_off)
                     }
                     None => true, // off-grid: re-land on the stored page
                 };

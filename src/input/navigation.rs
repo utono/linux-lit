@@ -841,8 +841,27 @@ pub(crate) fn prose_next_boundary(state: &mut AppState) -> Option<(usize, i32)> 
     let (by, bh) = state.text_view.line_yrange(&biter);
     let mut new_top = bline;
     let mut new_off = (snapped - by as f64).round() as i32;
+    // The offset of `bline`'s FIRST text row within its line box — the leading
+    // gap (`pixels_above_lines`). `line_yrange` gives the line box top `by`;
+    // `iter_location` on the line-start iter gives the first text row's top,
+    // which sits `first_row_top` px below `by`. A boundary snapped to at/above
+    // that first row top shows ZERO text rows of `bline` (it lands inside the
+    // leading gap), so semantically the boundary is (bline, 0): the whole
+    // paragraph belongs to the NEXT page. Leaving `new_off` positive there is
+    // the degenerate boundary that made the sync page-turn fire ~1.5s late (a
+    // page whose end_line has a positive offset but no visible rows). Normalize
+    // it to (bline, 0) so page ends/starts are exact:
+    // `prose_page_for_position(pages, bline, 0)` puts `bline` on the next page,
+    // and `set_page_instant_offset(bline, 0)` just includes the harmless
+    // leading gap. (Below, the strict-advance guard still rejects a normalized
+    // (bline, 0) that is not > the current top.)
+    let first_row_top = {
+        let rect = state.text_view.iter_location(&biter);
+        rect.y() - by // rect.y() is in the same buffer-y space as `by`
+    };
     // Normalize: a boundary at (or past) a line's full height is the next
-    // line's top; a boundary inside a BLANK line starts at the next line.
+    // line's top; a boundary inside a BLANK line starts at the next line;
+    // a boundary within `bline`'s leading gap (no text rows visible) is (bline, 0).
     if new_off >= bh && bline + 1 < line_count {
         new_top = bline + 1;
         new_off = 0;
@@ -853,6 +872,10 @@ pub(crate) fn prose_next_boundary(state: &mut AppState) -> Option<(usize, i32)> 
         && bline + 1 < line_count
     {
         new_top = bline + 1;
+        new_off = 0;
+    } else if new_off > 0 && new_off <= first_row_top {
+        // Degenerate leading-gap boundary: no text row of `bline` is on the
+        // page. Collapse to the paragraph's own top.
         new_off = 0;
     }
     // A residual mid-paragraph offset on a NON-over-tall line is now a

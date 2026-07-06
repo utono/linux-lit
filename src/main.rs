@@ -60,7 +60,12 @@ use mpv::{MpvCommand, MpvEvent};
 /// equivalent) once the line is guaranteed laid out/validated — deferred here
 /// because `iter_at_location` bails on the still-unvalidated straddling line (see
 /// above); a forced validate-then-query pass is the follow-up.
-fn prose_cross_time(s: &app::AppState, bl: usize, end_off: i32) -> Option<f64> {
+/// Returns `(crossing_time, line_start_time)`: the wall-clock second at which
+/// narration crosses the page boundary inside buffer line `bl`, and the line's
+/// own spoken start_time (so the caller can reject a degenerate boundary whose
+/// crossing time is at/before the line's start — i.e. a boundary in the leading
+/// gap that turns the page before the paragraph is even spoken).
+fn prose_cross_time(s: &app::AppState, bl: usize, end_off: i32) -> Option<(f64, f64)> {
     let Some(wi) = s.work_line_for_buffer(bl) else {
         crate::logging::log(&format!("SYNC_PROSE_CROSS: bail no work_line for bl={}", bl)); return None; };
     let work = s.current_work.as_ref()?;
@@ -86,7 +91,7 @@ fn prose_cross_time(s: &app::AppState, bl: usize, end_off: i32) -> Option<f64> {
             crate::logging::log(&format!(
                 "SYNC_PROSE_CROSS: phrase hit line_id={} media={} char_off={}/{} (px {}/{}) -> t={:.2} (ts {:.2}..{:.2})",
                 line.id, media, char_off, char_len, end_off, line_h, t, ts.start, ts.end));
-            return Some(t);
+            return Some((t, ts.start));
         }
     }
     // Fallback: interpolate across the line's audio window by char fraction.
@@ -94,7 +99,7 @@ fn prose_cross_time(s: &app::AppState, bl: usize, end_off: i32) -> Option<f64> {
     crate::logging::log(&format!(
         "SYNC_PROSE_CROSS: interpolate line_id={} char_off={}/{} window {:.2}..{:.2} -> t={:.2}",
         line.id, char_off, char_len, ts.start, ts.end, t));
-    Some(t)
+    Some((t, ts.start))
 }
 
 fn main() {
@@ -440,12 +445,52 @@ fn main() {
                                             .unwrap_or(false);
                                         if already {
                                             target = s.pending_prose_cross; // unchanged; no recompute
-                                        } else if let Some(t) = prose_cross_time(&s, buffer_line, p.end_off) {
+                                        } else if let Some((t, ts_start)) = prose_cross_time(&s, buffer_line, p.end_off) {
                                             let fire = (t - crate::input::navigation::SYNC_PREROLL).max(0.0);
-                                            crate::logging::log_always(&format!(
-                                                "SYNC_PROSE_CROSS: scheduled t={:.2} fire={:.2} page {}->{} bl={} end_off={}",
-                                                t, fire, pi + 1, pi + 2, buffer_line, p.end_off));
-                                            target = Some((fire, pi + 1));
+                                            if t <= ts_start + 0.05 {
+                                                // Belt-and-braces: the boundary is at
+                                                // or before the line's spoken start —
+                                                // a degenerate leading-gap boundary
+                                                // (should not survive prose_next_
+                                                // boundary's normalization, but if it
+                                                // does the "cross" is already in the
+                                                // past and would fire ~1.5s late on the
+                                                // next TimePos tick). Do NOT schedule;
+                                                // let update_highlight_and_advance_page
+                                                // turn the page normally.
+                                                crate::logging::log_always(&format!(
+                                                    "SYNC_PROSE_CROSS: skip degenerate t={:.2} <= ts.start {:.2} (bl={} end_off={}) — normal advance",
+                                                    t, ts_start, buffer_line, p.end_off));
+                                                target = None;
+                                            } else if fire <= s.current_time_pos {
+                                                // Legitimate cross whose fire time is
+                                                // already at/before the current
+                                                // playback position: waiting for the
+                                                // next TimePos would land the turn
+                                                // ~1.5s late. Turn NOW (same body as
+                                                // the TimePos fire path) instead of
+                                                // scheduling.
+                                                let np = table[pi + 1];
+                                                if (s.page_top_line, s.page_top_offset)
+                                                    != (np.start_line, np.start_off)
+                                                {
+                                                    crate::logging::log_always(&format!(
+                                                        "SYNC_PROSE_CROSS: fired-immediately pos={:.2} fire={:.2} -> page {} top=({},{}) bl={} end_off={}",
+                                                        s.current_time_pos, fire, pi + 2, np.start_line, np.start_off, buffer_line, p.end_off));
+                                                    crate::input::scroll::set_page_instant_offset(
+                                                        &mut s, np.start_line, np.start_off);
+                                                    crate::input::navigation::after_page_change(
+                                                        &mut s,
+                                                        crate::input::navigation::PageChangeReason::MpvSync,
+                                                    );
+                                                }
+                                                target = None; // handled; nothing pending
+                                            } else {
+                                                crate::logging::log_always(&format!(
+                                                    "SYNC_PROSE_CROSS: scheduled t={:.2} fire={:.2} page {}->{} bl={} end_off={}",
+                                                    t, fire, pi + 1, pi + 2, buffer_line, p.end_off));
+                                                target = Some((fire, pi + 1));
+                                            }
                                         }
                                     }
                                 }

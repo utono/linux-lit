@@ -161,7 +161,12 @@ pub fn prose_layout_fingerprint(state: &crate::app::AppState) -> String {
     let widget_height = state.text_view.height();
     let guard = crate::input::viewport::descender_guard_px(&state.text_view, 0);
     let usable = widget_height - guard - crate::input::scroll::BASE_BOTTOM_MARGIN;
-    format!("{base}|uh{usable}")
+    // `pv2`: prose-boundary normalization version. Bumped when the meaning of a
+    // stored boundary changes so every previously-stored prose table misses and
+    // regenerates lazily. pv2 = leading-gap page ends normalized to (L, 0) (a
+    // paragraph with zero visible rows on a page is never that page's end_line
+    // with a positive offset). Does NOT touch the play `layout_fingerprint`.
+    format!("{base}|uh{usable}|pv2")
 }
 
 /// Walk the LIVE engine's forward chain from (0,0), recording every page.
@@ -649,6 +654,34 @@ mod tests {
         // line -> page containing its FIRST row
         assert_eq!(prose_page_for_line(&p, 1), Some(0));
         assert_eq!(prose_page_for_line(&p, 2), Some(2));
+    }
+
+    #[test]
+    fn leading_gap_normalized_end_puts_line_on_next_page() {
+        // Part B invariant: a page ending exactly at (L, 0) does NOT contain L —
+        // line L belongs to the NEXT page. This is the normalized form a
+        // leading-gap boundary collapses to (prose_next_boundary Part A): the
+        // paragraph shows zero rows on this page, so its first row (L, 0) is the
+        // next page's top. Mirrors the offset-aware on-page rule the sync
+        // advance path uses: L is on the page iff (L,0) < (end_line, end_off).
+        let h = vec![100, 100, 100];
+        let p = vec![
+            // page 0 ends at (1, 0): line 1 has ZERO rows here (leading gap).
+            ProsePage { start_line: 0, start_off: 0, end_line: 1, end_off: 0 },
+            // page 1 starts at line 1's top and carries it whole into line 2.
+            ProsePage { start_line: 1, start_off: 0, end_line: 2, end_off: 100 },
+        ];
+        let c = ProseValidateCtx { line_count: 3, heights: &h, usable_height: 220 };
+        assert_eq!(validate_prose_pages(&p, &c), Ok(()));
+        // Line 1's FIRST row lands on page 1, never page 0.
+        assert_eq!(prose_page_for_line(&p, 1), Some(1),
+            "a page ending at (1,0) does not contain line 1");
+        // The exclusive-end position (1, 0) resolves to the page it OPENS (page 1),
+        // not the page it closes (page 0) — page tops are canonical.
+        assert_eq!(prose_page_for_position(&p, 1, 0), Some(1));
+        // And a true straddle (end_off > 0) DOES keep the line on-page.
+        assert_eq!(prose_page_for_position(&p, 2, 50), Some(1),
+            "line 2 with 50px on page 1 is on-page (true straddle)");
     }
 
     #[test]
