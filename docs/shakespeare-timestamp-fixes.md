@@ -139,6 +139,16 @@ the same line id), **BenCrystalOP** — 12 (incl. willow-song refrains),
       clean) has a genuinely degenerate PL alignment (2103/3558 lines in <0.3s
       collapsed spans, incl. the benign 0.6s 2.886→2.887 dip); that needs a full
       re-align, not a row edit, and is low-priority since it's an unused media.
+- [x] **PL/PR subsequently split into per-reading variant works (2026-07-07).**
+      Each Milton reading is now its own work (like the Shakespeare -Arkangel/-Argo
+      variants): `PL-Lesser` (media 225, the reader's pick), `PL-Quayle` (68),
+      `PL-Penguin` (211), `PL-BBC` (183), `PL-Griffin` (212), plus `PR-BBC` (183)
+      and `PR-Griffin` (212). Built with `scripts/split_reading.py` (base-row-copy
+      + tuple-relink, bundle-aware for the shared 183/212 media). All 65 manual
+      marks preserved, Step 6.7 gate 0-backwards on all 7, base PL/PR now own no
+      media. **So future timestamp scans should target the per-reading abbrev
+      (`PL-Lesser`, `PR-BBC`, …), not base `PL`/`PR`.** PL-Quayle keeps its
+      degenerate alignment (see above) — a future full-re-align candidate.
 
 List any edition's offending rows. **Order by BOOK POSITION, scoped to ONE
 `work_abbrev` — NOT by `line_mapping_id`.** The original scan ordered by
