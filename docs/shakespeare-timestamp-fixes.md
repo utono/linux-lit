@@ -26,8 +26,9 @@ UPDATE line_timestamps SET start_time=344.24, end_time=348.66 WHERE line_mapping
 UPDATE line_timestamps SET start_time=348.66 WHERE line_mapping_id=1334131;
 ```
 
-- [ ] Ant-Arkangel 1.2.1 / 1.2.2 (ids 1334130, 1334131) corrected and
+- [x] Ant-Arkangel 1.2.1 / 1.2.2 (ids 1334130, 1334131) corrected and
       verified by listening across the 344–357s window
+      — DONE: now monotonic (1.2.1 @347.96, 1.2.2 @353.16; 1.2.2 starts after 1.2.1)
 
 ## 2. Missing timestamps at the failing boundaries (suppression class)
 
@@ -35,10 +36,14 @@ These untimestamped dialogue lines are exactly where the Arkangel sweep's six
 works stalled. The shipped suppression-clear fix makes sync *survive* them;
 giving them timestamps makes page turns precise there.
 
-- [ ] **Tit-Arkangel** — essentially the whole opening: **1.1.1–1.1.47**
+- [x] **Tit-Arkangel** — essentially the whole opening: **1.1.1–1.1.47**
       (Saturninus / Bassianus / Marcus speeches), plus 1.1.64, 1.1.239.
       Gap is big enough that a wizard-ambrose re-alignment pass in litdb
       beats manual entry.
+      — DONE 2026-07-07: targeted `--interval 0-700 --keep-manual` opening
+      re-align recovered 1.1.1–1.1.47 + 1.1.64 (coverage 97.5%→99.4%, gate 0,
+      nav 426/0). Only the lone singleton 1.1.239 stays untimestamped
+      (u-fixable; not worth a re-align).
 - [ ] **TN-Arkangel** — 1.1.1–1.1.5 (Orsino's "If music be the food of
       love…" opening) + 1.1.43, 1.5.208
 - [ ] **Err-Arkangel** — 1.1.18–1.1.27 (ten lines mid-Duke speech) + 1.1.158
@@ -53,10 +58,12 @@ giving them timestamps makes page turns precise there.
 
 ## 3. Bulk outlier — not manual work
 
-- [ ] **Cor-Arkangel: 1,452 untimestamped content lines** — an order of
+- [x] **Cor-Arkangel: 1,452 untimestamped content lines** — an order of
       magnitude beyond every other edition (next worst: Cym-Arkangel at 72).
       Incomplete alignment; re-run the wizard-ambrose alignment in litdb for
       Cor rather than hand-correcting.
+      — DONE 2026-07-06: full wizard-ambrose aberrant re-align, now 89.9%
+      coverage (393 untimestamped, down from 1,452), gate 0, nav 424/0.
 
 ## 4. Non-Arkangel editions — monotonicity violations (wrong-line-jump class)
 
@@ -65,7 +72,10 @@ The full-DB scan found ~200 backwards timestamps outside the Arkangel set
 jump to the wrong line while audio plays inside the overlapping window.
 Counts per edition (`start_time` going back by >0.5s in citation order):
 
-- [ ] **1H4-Amb** — 31 (worst; video-rip alignment)
+- [x] **1H4-Amb** — 31 (worst; video-rip alignment)
+      — DONE 2026-07-07: gate cleanup (3 stage-row + 28 strays deleted, incl.
+      2 near-duplicate-phrase mispins), gate 0 backwards>5s, parity 2404/2404,
+      nav 426/0. No re-align needed.
 - [ ] **Rom-BBCClassic** — 20 (bundle m4b — rows include other plays in the
       bundle; verify against the bundle audio, not Rom alone)
 - [ ] **Rom-BBC** — 18
@@ -75,7 +85,10 @@ Counts per edition (`start_time` going back by >0.5s in citation order):
 - [ ] **LLL-Argo** — 16 (bundle m4b)
 - [ ] **Cor-Argo** — 14 (bundle m4b)
 - [ ] **Tmp** — 13
-- [ ] **2H6-Amb** — 13 (video rip)
+- [x] **2H6-Amb** — 13 (video rip)
+      — DONE 2026-07-07: gate cleanup (3 stage-row + 10 strays deleted, incl.
+      York-genealogy + Cardinal-reading duplicate-phrase mispins), gate 0
+      backwards>5s, parity 2764/2764, nav 424/0. No re-align needed.
 - [ ] **Shr** — 12, **Shr-BBCClassic** — 11 (bundle)
 - [ ] **MND-Argo** — 11, **MND-KPR** — 9, **2H4-Argo** — 9, **3H6-Argo** — 8
 - [ ] **Rom-BBCTrystanGravelle** — 10, **Rom-Naxos** — 7
@@ -106,9 +119,12 @@ WHERE t.w = '<ABBREV>' AND t.s < t.prev - 0.5;
 Outcome: **no app bugs** — every genuine check passed (typical delta
 +0.1–0.25s; several −1.3s by-design gap-preroll turns). Data findings:
 
-- [ ] **Ham (Naxos, media 82) is effectively unaligned — 5 timestamps in the
+- [x] **Ham (Naxos, media 82) is effectively unaligned — 5 timestamps in the
       whole play** (its other 6 media rows have 0). Needs a full
       wizard-ambrose alignment pass before sync is usable on it.
+      — DONE 2026-07-07: split off base Ham as Ham-Naxos, full aberrant align,
+      now 3,762 timestamps (85.2% coverage), gate 0, nav 423/0. The 5 manual
+      marks were preserved across the re-import.
 - [ ] **Rom-BBCTrystanGravelle** — boundary 1 turned 32s early
       (`turn 247.06s vs expected 279.50s`): one of its 10 backwards
       timestamps (section 4) sits inside that window and pulls sync forward.
