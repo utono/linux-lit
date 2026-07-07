@@ -70,7 +70,28 @@ giving them timestamps makes page turns precise there.
 The full-DB scan found ~200 backwards timestamps outside the Arkangel set
 (which had only the single Ant case above). Each one makes the highlight
 jump to the wrong line while audio plays inside the overlapping window.
-Counts per edition (`start_time` going back by >0.5s in citation order):
+Counts per edition (`start_time` going back by >0.5s in citation order).
+
+> **⚠️ Bundle counts below are INFLATED — re-scan with the corrected query.**
+> The original counts came from the `ORDER BY line_mapping_id` scan, which
+> straddles work boundaries on any m4b that bundles multiple works, reporting
+> a false backwards "jump" at each boundary (same artifact as the PL
+> false-positive in §4 tail). Re-scanned 2026-07-07 with the corrected
+> book-order query (scoped per `work_abbrev`) — real >0.5s counts are far
+> lower, and most residuals are sub-5s jitter (the leave-alone threshold):
+>
+> - Rom-BBCClassic 20→**4** (worst 7.1s) · LLL-Argo 16→**4** (all <5s) ·
+>   Cor-Argo 14→**4** (all <5s) · Shr-BBCClassic 11→**4** (worst 11.3s) ·
+>   MND-Argo 11→**1** (1.7s jitter) · 2H4-Argo 9→**2** (<5s) ·
+>   3H6-Argo 8→**1** (2.8s jitter) · MND-BBCClassic **3** (10s) ·
+>   TN-BBCClassic **4** (7.2s) · Mac-BBCClassic **1** (jitter) ·
+>   Shr-Argo **2** (<5s) · Ham-BBCClassic **15** (worst 28.6s — but the 28.6s
+>   is the deliberately-retained 2.2.57–60 Polonius block, see its
+>   wizard-ambrose bullet; not a defect).
+>
+> Net: only Ham/Shr/Rom-BBCClassic/TN/MND-BBCClassic have any >5s stray worth
+> a gate pass; the rest are jitter. Single-media editions below (Rom-BBC 18,
+> Per 16, Tmp 13, etc.) were NOT affected by the artifact — their counts stand.
 
 - [x] **1H4-Amb** — 31 (worst; video-rip alignment)
       — DONE 2026-07-07: gate cleanup (3 stage-row + 28 strays deleted, incl.
