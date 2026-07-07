@@ -101,17 +101,48 @@ Non-Shakespeare rows the same scan caught (fix in their own passes):
 the same line id), **BenCrystalOP** — 12 (incl. willow-song refrains),
 **ChurchillWC1** — 13, **Ven** — 3, **TC / Ref / DamClub6** — 1 each.
 
-List any edition's offending rows:
+- [x] **PL — the 2 "catastrophic" rows are a FALSE POSITIVE, no fix needed.**
+      Investigated 2026-07-07. Both are on line 312778 (PL 1.26 "Of Man's first
+      disobedience…") on the COMBINED "Paradise Lost & Paradise Regained"
+      recordings — media 183 (bbc-radio) and 212 (griffin-charlton). The scan
+      query's `ORDER BY line_mapping_id` straddles the PL↔PR work boundary: PR's
+      line ids (…250635 = PR 4.639, the last line) are LOWER than PL's (312778)
+      but play at the END of the ~11–16h audio (58107s / 39818s), so LAG wrongly
+      pairs "end of PR" as the predecessor of "start of PL" and reports a huge
+      drop. In true book order **PL and PR are each 0-backwards on both media**
+      (and on all 5 PL media). Lesson: the section-4 scan over-reports on any
+      media that bundles two works — verify a flagged row in book order
+      (`ORDER BY div1,div2,line_in_div,sub_line` scoped to ONE work_abbrev)
+      before treating it as corrupt. Also noted: media 68 (quayle, **priority 1,
+      NOT the reader's choice** — PL plays media 225 lesser-anton @10, which is
+      clean) has a genuinely degenerate PL alignment (2103/3558 lines in <0.3s
+      collapsed spans, incl. the benign 0.6s 2.886→2.887 dip); that needs a full
+      re-align, not a row edit, and is low-priority since it's an unused media.
+
+List any edition's offending rows. **Order by BOOK POSITION, scoped to ONE
+`work_abbrev` — NOT by `line_mapping_id`.** The original scan ordered by
+`line_mapping_id`, which straddles work boundaries on media that bundle two
+works (PL+PR, the ClassicBBC/Argo multi-play m4bs) and reports false backwards
+"jumps" at the boundary (see the PL false-positive above). This form is correct:
 
 ```sql
 WITH t AS (
-  SELECT DISTINCT m.work_abbrev w, lt.line_mapping_id lid, lt.start_time s,
-         LAG(lt.start_time) OVER (PARTITION BY lt.media_id ORDER BY lt.line_mapping_id) prev
-  FROM line_timestamps lt JOIN media_files m ON m.id = lt.media_id)
-SELECT t.lid, printf('%.2f -> %.2f', t.prev, t.s), substr(lm.canonical_text,1,50)
+  SELECT lm.id lid, lt.start_time s, lt.media_id,
+         LAG(lt.start_time) OVER (
+           PARTITION BY lt.media_id
+           ORDER BY lm.div1, lm.div2, lm.line_in_div, lm.sub_line) prev
+  FROM line_mapping lm JOIN line_timestamps lt ON lt.line_mapping_id = lm.id
+  WHERE lm.work_abbrev = '<ABBREV>')
+SELECT t.media_id, t.lid, printf('%.2f -> %.2f', t.prev, t.s),
+       substr(lm.canonical_text, 1, 50)
 FROM t JOIN line_mapping lm ON lm.id = t.lid
-WHERE t.w = '<ABBREV>' AND t.s < t.prev - 0.5;
+WHERE t.s < t.prev - 0.5
+ORDER BY t.media_id, (t.prev - t.s) DESC;
 ```
+
+(To pick the media the reader actually plays, filter to the highest-priority
+`work_media_associations.media_id` for the work — a defect on a priority-1
+media the reader never selects is low-priority.)
 
 ## 5. Non-Arkangel sweep results (2026-07-05)
 
