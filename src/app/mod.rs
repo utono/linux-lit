@@ -3598,6 +3598,18 @@ pub(super) fn setup_gutter(state: &mut AppState) {
     if let Some(old_renderer) = state.gutter_renderer.take() {
         crate::gutter::remove_gutter_renderer(&state.text_view, &old_renderer);
     }
+    // Make this idempotent. The body reads the view's CURRENT left_margin and
+    // reduces it by gutter_width to make room for the signs. On a fresh work
+    // load the margin is the full logical value, so that's correct — but on a
+    // REBUILD (e.g. a live theme switch calls setup_gutter again) the margin was
+    // already reduced by the prior run, so re-reading it here would double-reduce
+    // and push the text (and the signs) hard against the card's left edge on each
+    // switch. Restore the full logical margin first, captured at the end of the
+    // last run in `gutter_logical_left` (0 = never run yet, nothing to restore).
+    let logical_left = state.gutter_logical_left.get();
+    if logical_left > 0 {
+        state.text_view.set_left_margin(logical_left);
+    }
     {
         let new_has_ts: Vec<bool> = if let Some(ref lm) = state.line_map {
             lm.buffer_to_work
@@ -3716,7 +3728,9 @@ pub(super) fn setup_gutter(state: &mut AppState) {
         state.ab_a_line.clone(),
         state.ab_b_line.clone(),
         left_margin - left_number_allowance,
-        &state.theme.dim_fg,
+        // Signs use the text hue gently dimmed (sign_fg = 65% fg); dim_fg's
+        // heavier blend washes the hue out to a neutral grey.
+        &state.theme.sign_fg,
         // Sign column sits at position 1 (just left of text) when the left
         // column also shows outer line numbers at position 0; otherwise 0.
         if left_number_allowance > 0 { 1 } else { 0 },
@@ -3790,7 +3804,9 @@ pub(super) fn setup_gutter(state: &mut AppState) {
             state.ab_a_line.clone(),
             state.ab_b_line.clone(),
             right_left_margin,
-            &state.theme.dim_fg,
+            // Signs use the text hue gently dimmed (sign_fg = 65% fg); dim_fg's
+            // heavier blend washes the hue out to a neutral grey.
+            &state.theme.sign_fg,
             0,
         );
         state.right_view.set_left_margin(right_left_margin - gutter_width);

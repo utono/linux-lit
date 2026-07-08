@@ -303,6 +303,15 @@ pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &cra
 
     state.theme = theme.clone();
 
+    // The gutter sign renderer captures its color (theme.sign_fg) by value in a
+    // closure at build time, so a live theme switch leaves the signs painted in
+    // the OLD theme's color. Rebuild the gutter so the signs pick up the new
+    // theme's sign_fg (and dim line-number color). Only worth it when the sign
+    // column is actually built.
+    if state.gutter_renderer.is_some() {
+        crate::app::setup_gutter(state);
+    }
+
     crate::logging::log(&format!("SETTINGS: theme changed to {}", theme.display_name));
 }
 

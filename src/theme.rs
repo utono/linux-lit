@@ -22,6 +22,7 @@ pub struct Theme {
     pub cursor_line_bg: String,   // current line highlight
     pub phrase_highlight_bg: String, // spoken-phrase karaoke tint during narration sync
     pub dim_fg: String,           // dimmed text foreground (non-current lines)
+    pub sign_fg: String,          // gutter sign color: text hue, gently dimmed (65% fg)
     pub cursor_bg: String,        // cursor indicator background
     pub cursor_fg: String,        // cursor indicator foreground
     pub vocab_fg: String,         // vocabulary word highlight foreground
@@ -193,6 +194,12 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
     // Dim foreground: 40% fg blended toward bg (matching lit's playback sync)
     let dim_fg = blend_colors(&text_fg, &text_bg, 0.40);
 
+    // Gutter sign color: the text hue, dimmed (45% fg / 55% bg) so the signs
+    // clearly read as belonging to the reading-text family while sitting quieter
+    // than the text. dim_fg's heavier 40% blend washes the hue out to a
+    // near-neutral grey, which reads as a different color from the text.
+    let sign_fg = blend_colors(&text_fg, &text_bg, 0.45);
+
     let cursor_bg = highlights
         .get("Cursor")
         .and_then(|c| str_field(c, "guibg"))
@@ -227,6 +234,7 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
         cursor_line_bg,
         phrase_highlight_bg,
         dim_fg,
+        sign_fg,
         cursor_bg,
         cursor_fg,
         vocab_fg,
@@ -252,6 +260,7 @@ fn default_theme() -> Theme {
         cursor_line_bg: "rgba(255, 255, 255, 0.08)".to_string(),
         phrase_highlight_bg: "rgba(255, 255, 255, 0.22)".to_string(),
         dim_fg: blend_colors("#d4be98", "#282828", 0.40),
+        sign_fg: blend_colors("#d4be98", "#282828", 0.45),
         cursor_bg: "#d4be98".to_string(),
         cursor_fg: "#282828".to_string(),
         vocab_fg: "#d8a657".to_string(),
