@@ -55,7 +55,15 @@ giving them timestamps makes page turns precise there.
       coverage 97.5%→99.4%. The scattered singletons (1.1.43, 1.5.208, prose
       tails) stay untimestamped (u-fixable; not worth a re-align). Step 6.8
       unmatched=0 vs base TN. Nav-verify 427 steps, 0 FAIL.
-- [ ] **Err-Arkangel** — 1.1.18–1.1.27 (ten lines mid-Duke speech) + 1.1.158
+- [x] **Err-Arkangel** — 1.1.18–1.1.27 (ten lines mid-Duke speech) + 1.1.158
+      — DONE 2026-07-08: the gap was a mid-speech CONTIGUOUS block (not an
+      opening drop — 1.1.1–1.1.17 were already timed from 67.9s), with all 10
+      lines marked `is_spoken=0` (so `--spoken-no-ts` would have skipped them).
+      `--interval 0-700 --keep-manual` re-matched them cleanly (1.1.18 @130.6s →
+      1.1.27 @158.8s), 0 strays, gate clean first pass, all 8 manual marks
+      preserved. Parity 1879/1879, coverage 98.5%→99.0%, Step 6.8 unmatched=0.
+      Nav-verify 428 steps, 0 FAIL. (1.1.158 stays untimestamped — scattered
+      singleton, u-fixable.)
 - [ ] **Shr-Arkangel** — Induction: −1.1.5, −1.1.16, −1.1.18, −1.2.18,
       −1.2.147; plus 1.1.164, 1.1.258, 1.1.264
 - [ ] **TNK-Arkangel** — Prologue 0.0.1 and 0.0.33; the 1.1 song lines
