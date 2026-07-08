@@ -153,7 +153,7 @@ pub(crate) fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, windo
         // new column geometry.
         if state.gutter_logical_left.get() != logical_left {
             if let Some(old) = state.gutter_renderer.take() {
-                crate::gutter::remove_gutter_renderer(&state.text_view, &old);
+                crate::gutter::remove_gutter_renderer(&state.text_view, old);
             }
             state.text_view.set_left_margin(logical_left);
             if state.dialogue_formatting_active {

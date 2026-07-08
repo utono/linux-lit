@@ -85,9 +85,13 @@ pub fn setup_timestamp_gutter(
 }
 
 /// Remove an existing gutter renderer from the left gutter.
-pub fn remove_gutter_renderer(view: &View, renderer: &sourceview5::GutterRendererText) {
+pub fn remove_gutter_renderer(view: &View, renderer: sourceview5::GutterRendererText) {
     let gutter = sourceview5::prelude::ViewExt::gutter(view, gtk4::TextWindowType::Left);
-    gutter.remove(renderer);
+    gutter.remove(&renderer);
+    // Gutter::remove() drops the renderer's LAST ref (the wrapper's assumed
+    // ref was consumed as a floating ref by insert). Forget the wrapper so
+    // its Drop doesn't unref the already-destroyed object (GLib CRITICAL).
+    std::mem::forget(renderer);
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -255,9 +259,13 @@ pub fn setup_line_number_gutter(
     renderer
 }
 
-pub fn remove_line_number_renderer(view: &View, renderer: &sourceview5::GutterRendererText) {
+pub fn remove_line_number_renderer(view: &View, renderer: sourceview5::GutterRendererText) {
     let gutter = sourceview5::prelude::ViewExt::gutter(view, gtk4::TextWindowType::Right);
-    gutter.remove(renderer);
+    gutter.remove(&renderer);
+    // Gutter::remove() drops the renderer's LAST ref (the wrapper's assumed
+    // ref was consumed as a floating ref by insert). Forget the wrapper so
+    // its Drop doesn't unref the already-destroyed object (GLib CRITICAL).
+    std::mem::forget(renderer);
 }
 
 /// Like `setup_line_number_gutter`, but inserts the numbers into the LEFT
@@ -316,7 +324,11 @@ pub fn setup_line_number_gutter_left(
 }
 
 /// Remove a line-number renderer that was inserted into the LEFT gutter.
-pub fn remove_line_number_renderer_left(view: &View, renderer: &sourceview5::GutterRendererText) {
+pub fn remove_line_number_renderer_left(view: &View, renderer: sourceview5::GutterRendererText) {
     let gutter = sourceview5::prelude::ViewExt::gutter(view, gtk4::TextWindowType::Left);
-    gutter.remove(renderer);
+    gutter.remove(&renderer);
+    // Gutter::remove() drops the renderer's LAST ref (the wrapper's assumed
+    // ref was consumed as a floating ref by insert). Forget the wrapper so
+    // its Drop doesn't unref the already-destroyed object (GLib CRITICAL).
+    std::mem::forget(renderer);
 }

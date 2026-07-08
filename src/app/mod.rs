@@ -3120,26 +3120,26 @@ pub fn display_work_at_with_prepared(
     // Remove old gutter renderers — they'll be recreated lazily on first
     // sign column toggle (`l` key) via setup_gutter().
     if let Some(old_renderer) = state.gutter_renderer.take() {
-        crate::gutter::remove_gutter_renderer(&state.text_view, &old_renderer);
+        crate::gutter::remove_gutter_renderer(&state.text_view, old_renderer);
     }
     if let Some(old_renderer) = state.chunk_renderer.take() {
-        crate::gutter::remove_gutter_renderer(&state.text_view, &old_renderer);
+        crate::gutter::remove_gutter_renderer(&state.text_view, old_renderer);
     }
     if let Some(old_renderer) = state.line_number_renderer.take() {
         if state.line_number_renderer_on_left {
-            crate::gutter::remove_line_number_renderer_left(&state.text_view, &old_renderer);
+            crate::gutter::remove_line_number_renderer_left(&state.text_view, old_renderer);
         } else {
-            crate::gutter::remove_line_number_renderer(&state.text_view, &old_renderer);
+            crate::gutter::remove_line_number_renderer(&state.text_view, old_renderer);
         }
         let right_margin = state.config.text_margins as i32 + crate::config::EXTRA_RIGHT_MARGIN;
         state.text_view.set_right_margin(right_margin);
     }
     state.line_number_renderer_on_left = false;
     if let Some(old_renderer) = state.right_line_number_renderer.take() {
-        crate::gutter::remove_line_number_renderer(&state.right_view, &old_renderer);
+        crate::gutter::remove_line_number_renderer(&state.right_view, old_renderer);
     }
     if let Some(old_renderer) = state.right_gutter_renderer.take() {
-        crate::gutter::remove_gutter_renderer(&state.right_view, &old_renderer);
+        crate::gutter::remove_gutter_renderer(&state.right_view, old_renderer);
     }
 
     // Populate is_bookmarked eagerly so `'` / `"` bookmark navigation works
@@ -3592,7 +3592,7 @@ pub fn toggle_sign_column(state: &mut AppState) {
 /// Called lazily on first sign column toggle rather than at work load time.
 pub(super) fn setup_gutter(state: &mut AppState) {
     if let Some(old_renderer) = state.gutter_renderer.take() {
-        crate::gutter::remove_gutter_renderer(&state.text_view, &old_renderer);
+        crate::gutter::remove_gutter_renderer(&state.text_view, old_renderer);
     }
     // Make this idempotent. The body reads the view's CURRENT left_margin and
     // reduces it by gutter_width to make room for the signs. On a fresh work
@@ -3760,7 +3760,7 @@ pub(super) fn setup_gutter(state: &mut AppState) {
 
     // Set up chunk bar gutter
     if let Some(old_renderer) = state.chunk_renderer.take() {
-        crate::gutter::remove_gutter_renderer(&state.text_view, &old_renderer);
+        crate::gutter::remove_gutter_renderer(&state.text_view, old_renderer);
     }
     if !state.ab_repeat.chunks.is_empty() {
         if let Some(ref work) = state.current_work {
@@ -3782,7 +3782,7 @@ pub(super) fn setup_gutter(state: &mut AppState) {
     // text. The shared dialogue-indent tag was already reduced above by the
     // same gutter_width, so the right column's dialogue lines line up too.
     if let Some(old_renderer) = state.right_gutter_renderer.take() {
-        crate::gutter::remove_gutter_renderer(&state.right_view, &old_renderer);
+        crate::gutter::remove_gutter_renderer(&state.right_view, old_renderer);
     }
     if state.column_count() == 2 {
         // The right column keeps the SAME internal geometry as the left (so the

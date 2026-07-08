@@ -48,10 +48,10 @@ pub(crate) fn reapply_font(state: &AppState) {
 
 pub(crate) fn rebuild_line_number_gutter(state: &mut AppState) {
     if let Some(old) = state.line_number_renderer.take() {
-        crate::gutter::remove_line_number_renderer(&state.text_view, &old);
+        crate::gutter::remove_line_number_renderer(&state.text_view, old);
     }
     if let Some(old) = state.right_line_number_renderer.take() {
-        crate::gutter::remove_line_number_renderer(&state.right_view, &old);
+        crate::gutter::remove_line_number_renderer(&state.right_view, old);
     }
     let is_prose = state.current_work.as_ref()
         .map(|w| crate::db::line_types::is_prose_work(&w.work_type))
