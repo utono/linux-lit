@@ -147,8 +147,18 @@ the same line id), **BenCrystalOP** — 12 (incl. willow-song refrains),
       + tuple-relink, bundle-aware for the shared 183/212 media). All 65 manual
       marks preserved, Step 6.7 gate 0-backwards on all 7, base PL/PR now own no
       media. **So future timestamp scans should target the per-reading abbrev
-      (`PL-Lesser`, `PR-BBC`, …), not base `PL`/`PR`.** PL-Quayle keeps its
-      degenerate alignment (see above) — a future full-re-align candidate.
+      (`PL-Lesser`, `PR-BBC`, …), not base `PL`/`PR`.**
+- [x] **PL-Quayle degenerate alignment RE-ALIGNED (2026-07-07).** Root cause: the
+      quayle m4b is only 92 min — a SELECTIONS reading of **Book 1 + Book 4 only**
+      (Satan's speeches), not the full epic; the old aligner had force-mapped all
+      10,780 lines onto it (2103/3558 = 59% <0.3s collapsed spans). Re-transcribed
+      (local medium.en) + re-aligned aberrant (~35 min — PL is 3× a play), then
+      deleted the un-recorded books' scatter wholesale by `div1` (Books 2,3,5–12)
+      and the ~6 residual within-Book-1/4 strays. Final **1559 ts** (Book 1: 779,
+      Book 4: 780), **0 collapsed spans**, Step 6.7 gate **0 backwards>0.5s**, 9
+      manual marks preserved, spoken-status synced (1531 spoken; the un-recorded
+      lines correctly not-spoken). See the wizard-ambrose "Re-aligning a degenerate
+      SELECTIONS recording" lesson.
 
 List any edition's offending rows. **Order by BOOK POSITION, scoped to ONE
 `work_abbrev` — NOT by `line_mapping_id`.** The original scan ordered by
