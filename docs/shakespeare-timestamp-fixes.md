@@ -66,8 +66,20 @@ giving them timestamps makes page turns precise there.
       singleton, u-fixable.)
 - [ ] **Shr-Arkangel** — Induction: −1.1.5, −1.1.16, −1.1.18, −1.2.18,
       −1.2.147; plus 1.1.164, 1.1.258, 1.1.264
-- [ ] **TNK-Arkangel** — Prologue 0.0.1 and 0.0.33; the 1.1 song lines
+- [~] **TNK-Arkangel** — Prologue 0.0.1 and 0.0.33; the 1.1 song lines
       (1.1.4, 1.1.17, 1.1.20, 1.1.24); 1.1.229, 1.2.135, 1.4.1, 1.4.56
+      — MOSTLY DONE 2026-07-08: `--interval 0-700 --keep-manual` recovered the
+      Prologue opening (0.0.1 @39.9s, 0.0.33 @144.6s) + 1.1.24. The re-match
+      created one duplicate-phrase mispin (1.1.30 "Hear and respect me." pinned
+      onto 1.1.26's identical audio @298.6s — deleted), gate then clean. Parity
+      3343/3343, coverage 98.8%→98.9%, Step 6.8 unmatched=0, nav 425/0.
+      **3 song-line singletons remain u-fixable: 1.1.4/1.1.17/1.1.20** — the
+      whisperX transcript garbled these wedding-song lines ("Maiden pinks",
+      "Bird melodious", "boding raven") so badly the aberrant word-match can't
+      grab them; their audio positions are known (~215/253/263s) but need a
+      listen to place precisely, so leave for in-app `u`-entry. (1.1.229/1.2.135/
+      1.4.1/1.4.56 are outside the 700s window — scattered later singletons,
+      u-fixable too.)
 - [ ] **WT-Arkangel** — 1.1.18, 1.1.48, 1.2.27, 1.2.124, 1.2.173, 1.2.555 —
       all short wrap-tail fragments ("freely.", "world,"), the known
       split-line import class: check the folger-cleaned .txt source before
