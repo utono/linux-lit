@@ -2295,9 +2295,12 @@ pub fn jump_to_next_section(state: &mut AppState) {
     } else {
         jump_to_next_chapter(state);
     }
-    // Mirror `;` (ShowCurrentChapter): surface the new act/scene (or chapter)
-    // as the same transient toast after landing.
-    show_current_chapter(state);
+    // Mirror `;` (ShowCurrentChapter): surface the new act/scene as the same
+    // transient toast after landing. Prose works skip the toast — the chapter
+    // heading the jump lands on already names the destination.
+    if !state.is_prose() {
+        show_current_chapter(state);
+    }
 }
 
 /// Jump to the previous structural section: scene marker for plays,
@@ -2311,9 +2314,12 @@ pub fn jump_to_prev_section(state: &mut AppState) {
     } else {
         jump_to_prev_chapter(state);
     }
-    // Mirror `;` (ShowCurrentChapter): surface the new act/scene (or chapter)
-    // as the same transient toast after landing.
-    show_current_chapter(state);
+    // Mirror `;` (ShowCurrentChapter): surface the new act/scene as the same
+    // transient toast after landing. Prose works skip the toast — the chapter
+    // heading the jump lands on already names the destination.
+    if !state.is_prose() {
+        show_current_chapter(state);
+    }
 }
 
 /// Show the act/scene (plays) or chapter (prose) containing the current line as
@@ -2545,14 +2551,16 @@ pub fn jump_to_line(state: &mut AppState, buffer_line: usize) {
 
 /// Task 9: narration time at which playback reaches the CURRENT prose page's
 /// bottom boundary, which falls inside buffer line `bl` at pixel offset
-/// `end_off`. Maps the boundary pixel row to a char offset within the buffer
-/// line by pixel FRACTION: `char_off ≈ char_len * end_off / line_height`. We
+/// `end_off`. Maps the boundary pixel to a char offset via
+/// `display_row_char_at` (exact row walk), falling back to pixel FRACTION
+/// (`char_off ≈ char_len * end_off / line_height`) if the walk fails. We
 /// deliberately do NOT use `TextView::iter_at_location` here — the boundary line
 /// sits at (or just below) the viewport fold, and `iter_at_location` returns
 /// None for any point outside GTK's currently-validated/visible layout, so it
 /// bailed silently for exactly the straddling lines we care about (observed:
-/// `iter_at_location(1,551) None`). The pixel fraction is validation-free and
-/// always resolves. Then:
+/// `iter_at_location(1,551) None`); the row walk instead queries locations OF
+/// iters (`iter_location`), which resolves for the laid-out straddling line.
+/// Then:
 ///   1. `phrase_timestamps` for the playing (line, media) when available: the
 ///      first phrase whose char range extends past that offset;
 ///   2. char-fraction interpolation across the line's audio window otherwise.
@@ -2564,27 +2572,46 @@ pub fn jump_to_line(state: &mut AppState, buffer_line: usize) {
 /// drift (the phrase query self-corrects within one phrase); the logged offset +
 /// chosen start_time make any mismatch diagnosable.
 ///
-/// KNOWN LIMITATION: the pixel-fraction estimate assumes uniform row density
-/// (constant chars-per-row) across the paragraph, which real text rarely has
-/// (short/long rows from wrapping, punctuation, etc.). The resulting char-offset
-/// error grows with how deep into the paragraph the boundary sits — worst case
-/// roughly `0.2 * C * f * (1 - f)` chars, where `C` is the paragraph's total char
-/// count and `f = end_off / line_height` is the fraction into the boundary line
-/// (the bias is largest mid-paragraph and shrinks toward both ends). A boundary
-/// near the TOP of a paragraph self-corrects within one phrase (small `f`, small
-/// error), which is why this hasn't shown up as a visible bug yet. The exact fix
-/// is to map pixel position to a real text position instead of estimating from a
-/// fraction: validate the boundary line, call
-/// `text_view.buffer_to_window_coords` to convert buffer coords to window
-/// coords, then `text_view.get_iter_at_location` (or the window-space
-/// equivalent) once the line is guaranteed laid out/validated — deferred here
-/// because `iter_at_location` bails on the still-unvalidated straddling line (see
-/// above); a forced validate-then-query pass is the follow-up.
+/// The pixel->char mapping walks the straddling line's DISPLAY ROWS
+/// (`forward_display_line` + `iter_location`) to the row that starts at
+/// `end_off` — the first row of the NEXT page — and uses that row's start
+/// char. The straddling line is on the current page, so its layout is
+/// validated and the walk is exact. The old uniform pixel-fraction estimate
+/// remains only as a fallback when the walk fails (unvalidated layout):
+/// its error grows mid-paragraph (worst case ~`0.2 * C * f * (1 - f)` chars)
+/// and, at ~33 chars on an 855-char BH paragraph, picked the crossing phrase
+/// one early — the page turned at the start of "the coach-houses full of
+/// vehicles," so that phrase was narrated entirely off-screen (2026-07-08).
 /// Returns `(crossing_time, line_start_time)`: the wall-clock second at which
 /// narration crosses the page boundary inside buffer line `bl`, and the line's
 /// own spoken start_time (so the caller can reject a degenerate boundary whose
 /// crossing time is at/before the line's start — i.e. a boundary in the leading
 /// gap that turns the page before the paragraph is even spoken).
+/// Start char of the first display row of `line_start`'s buffer line whose
+/// top pixel (relative to the line's top) is at or past `end_off` — i.e. the
+/// first wrapped row on the NEXT prose page when the page boundary falls at
+/// `end_off` inside this line. Walks the view's real row layout, so it is
+/// exact wherever the line is laid out (the straddling line is always on the
+/// current page). None when no row reaches `end_off` (degenerate boundary or
+/// unvalidated layout) — callers fall back to the pixel-fraction estimate.
+fn display_row_char_at(
+    view: &sourceview5::View,
+    line_start: &gtk4::TextIter,
+    end_off: i32,
+) -> Option<usize> {
+    let line_top = view.line_yrange(line_start).0;
+    let mut it = *line_start;
+    loop {
+        let y = view.iter_location(&it).y() - line_top;
+        if y >= end_off {
+            return Some(it.line_offset().max(0) as usize);
+        }
+        if !view.forward_display_line(&mut it) || it.line() != line_start.line() {
+            return None;
+        }
+    }
+}
+
 pub(crate) fn prose_cross_time(s: &crate::app::AppState, bl: usize, end_off: i32) -> Option<(f64, f64)> {
     let Some(wi) = s.work_line_for_buffer(bl) else {
         crate::logging::log(&format!("SYNC_PROSE_CROSS: bail no work_line for bl={}", bl)); return None; };
@@ -2602,15 +2629,19 @@ pub(crate) fn prose_cross_time(s: &crate::app::AppState, bl: usize, end_off: i32
         e.forward_to_line_end();
         e.line_offset().max(0) as usize
     };
-    // Boundary pixel -> char offset by pixel fraction within the line.
+    // Boundary pixel -> char offset: exact display-row walk, fraction fallback.
     let line_h = s.text_view.line_yrange(&iter).1.max(1);
-    let frac = (end_off.max(0) as f64 / line_h as f64).clamp(0.0, 1.0);
-    let char_off = ((char_len as f64) * frac).round() as usize;
+    let exact = display_row_char_at(&s.text_view, &iter, end_off);
+    let char_off = exact.unwrap_or_else(|| {
+        let frac = (end_off.max(0) as f64 / line_h as f64).clamp(0.0, 1.0);
+        ((char_len as f64) * frac).round() as usize
+    });
+    let method = if exact.is_some() { "row" } else { "frac" };
     if let Ok(conn) = crate::db::queries::open_db() {
         if let Some(t) = crate::db::queries::phrase_crossing_time(&conn, line.id, media, char_off) {
             crate::logging::log(&format!(
-                "SYNC_PROSE_CROSS: phrase hit line_id={} media={} char_off={}/{} (px {}/{}) -> t={:.2} (ts {:.2}..{:.2})",
-                line.id, media, char_off, char_len, end_off, line_h, t, ts.start, ts.end));
+                "SYNC_PROSE_CROSS: phrase hit line_id={} media={} char_off={}/{} ({} px {}/{}) -> t={:.2} (ts {:.2}..{:.2})",
+                line.id, media, char_off, char_len, method, end_off, line_h, t, ts.start, ts.end));
             return Some((t, ts.start));
         }
     }
