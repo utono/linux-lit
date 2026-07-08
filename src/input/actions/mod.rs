@@ -156,6 +156,8 @@ pub enum Action {
     ToggleColumnLayout,
     TogglePreviousWork,
     ToggleDim,
+    ThemeNext,
+    ThemePrev,
     CycleScansion,
     ToggleTitleBar,
     ToggleAuthorship,
@@ -299,6 +301,8 @@ impl Action {
             | Action::ToggleSignColumn
             | Action::ToggleColumnLayout
             | Action::ToggleDim
+            | Action::ThemeNext
+            | Action::ThemePrev
             | Action::CycleScansion
             | Action::ToggleTitleBar
             | Action::ToggleAuthorship
@@ -432,6 +436,8 @@ impl Action {
             Action::ToggleColumnLayout => "ToggleColumnLayout",
             Action::TogglePreviousWork => "TogglePreviousWork",
             Action::ToggleDim => "ToggleDim",
+            Action::ThemeNext => "ThemeNext",
+            Action::ThemePrev => "ThemePrev",
             Action::CycleScansion => "CycleScansion",
             Action::ToggleTitleBar => "ToggleTitleBar",
             Action::ToggleAuthorship => "ToggleAuthorship",

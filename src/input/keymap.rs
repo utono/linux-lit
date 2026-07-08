@@ -3009,6 +3009,8 @@ fn dispatch_action(
         TogglePreviousWork => {
             crate::input::actions::pickers::toggle_previous_work(state, tokio_handle);
         }
+        ThemeNext => crate::input::actions::settings::cycle_theme(state, true),
+        ThemePrev => crate::input::actions::settings::cycle_theme(state, false),
         ToggleDim => {
             let mut s = state.borrow_mut();
             s.dim_enabled = !s.dim_enabled;

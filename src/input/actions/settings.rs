@@ -469,3 +469,51 @@ pub(crate) fn reset_to_defaults(state: &Rc<RefCell<crate::app::AppState>>) {
     let voice = crate::elevenlabs::voice_label_for_id(&s.config.elevenlabs_voice_id);
     s.settings_overlay.update_displayed_values(ls, cw, tm, nm, ts, false, &voice);
 }
+
+/// Index of the next theme in a cycle list of length `len`.
+/// `current` = position of the active theme in the list, if it is in the
+/// list at all; when it is not (e.g. set via the settings overlay), both
+/// directions jump to the first entry.
+pub(crate) fn next_cycle_index(len: usize, current: Option<usize>, forward: bool) -> usize {
+    match current {
+        Some(i) if forward => (i + 1) % len,
+        Some(i) => (i + len - 1) % len,
+        None => 0,
+    }
+}
+
+/// Alt+t / Alt+Shift+T: cycle through the curated theme list in config.
+pub(crate) fn cycle_theme(state: &Rc<RefCell<crate::app::AppState>>, forward: bool) {
+    let mut s = state.borrow_mut();
+    let cycle = s.config.theme_cycle();
+    if cycle.is_empty() {
+        return;
+    }
+    let current = cycle.iter().position(|t| *t == s.theme.name);
+    let next = next_cycle_index(cycle.len(), current, forward);
+    let theme = crate::theme::load_theme_with_fallback(&cycle[next]);
+    apply_theme_to_state(&mut s, &theme);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_cycle_index;
+
+    #[test]
+    fn cycle_forward_wraps() {
+        assert_eq!(next_cycle_index(4, Some(0), true), 1);
+        assert_eq!(next_cycle_index(4, Some(3), true), 0);
+    }
+
+    #[test]
+    fn cycle_backward_wraps() {
+        assert_eq!(next_cycle_index(4, Some(0), false), 3);
+        assert_eq!(next_cycle_index(4, Some(2), false), 1);
+    }
+
+    #[test]
+    fn current_not_in_list_jumps_to_first() {
+        assert_eq!(next_cycle_index(4, None, true), 0);
+        assert_eq!(next_cycle_index(4, None, false), 0);
+    }
+}
