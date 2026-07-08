@@ -135,14 +135,15 @@ pub(crate) fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, windo
         super::VERSE_LEFT_OFFSET
     } else {
         // Prose monocle: a centered NYTimes-style column. Inset is a fraction of
-        // the ACTUAL on-screen card width (clamped to the window), so the text
-        // centers in the cream card with ~1/3 whitespace each side. Subtract the
-        // base text_margins so logical_left lands exactly at prose_column_margin.
+        // the ACTUAL on-screen card width (clamped to the window). Uses the
+        // tighter prose_reading_card_margin (card/8) so prose text fills more of
+        // the card with less left/right padding. Subtract the base text_margins
+        // so logical_left lands exactly at that inset.
         // Mirrors the translations_visible branch's card-relative inset.
         let card_w = target_card_width(
             window_width, effective_column_width(state), state.column_count(), false,
         ).min(window_width.max(1));
-        (crate::ui::prose_column_margin(card_w) - state.config.text_margins as i32).max(0)
+        (crate::ui::prose_reading_card_margin(card_w) - state.config.text_margins as i32).max(0)
     };
     let logical_left = state.config.text_margins as i32 + left_bump;
     let gutter_active = state.gutter_renderer.is_some();
@@ -203,11 +204,11 @@ pub(crate) fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, windo
     } else if !is_verse {
         // Prose monocle: symmetric right margin == the centered left inset, so
         // the column is centered in the card (NYTimes body look). Recompute the
-        // same card-relative value used for logical_left above.
+        // same card-relative value used for logical_left above (card/8).
         let card_w = target_card_width(
             window_width, effective_column_width(state), state.column_count(), false,
         ).min(window_width.max(1));
-        state.text_view.set_right_margin(crate::ui::prose_column_margin(card_w));
+        state.text_view.set_right_margin(crate::ui::prose_reading_card_margin(card_w));
     } else {
         let logical_right = state.config.text_margins as i32
             + crate::config::EXTRA_RIGHT_MARGIN;
@@ -295,13 +296,16 @@ pub(crate) fn apply_column_layout(state: &mut AppState) {
 pub(crate) const PROSE_MEASURE_CHARS: i32 = 78;
 
 /// Pure math for the prose card width: the card whose centered prose measure
-/// holds `chars` average-width characters. The prose column is inset by
-/// `prose_column_margin` (card/5) on BOTH sides, so measure = card - 2*(card/5)
-/// >= 0.6*card; invert with ceil(measure * 5 / 3). Never narrower than the
-/// configured base column width.
+/// holds `chars` average-width characters. The prose reading card is inset by
+/// `prose_reading_card_margin` (card/D, D = `PROSE_READING_CARD_MARGIN_DIVISOR`
+/// = 8) on BOTH sides, so measure = card - 2*(card/8) = 0.75*card; invert with
+/// ceil(measure * 4 / 3). Never narrower than the configured base column width.
+/// MUST stay in sync with `prose_reading_card_margin`'s divisor.
 pub(crate) fn prose_card_width_px(chars: i32, avg_char_w: i32, base: u32) -> u32 {
     let measure = chars.max(0) * avg_char_w.max(0);
-    let card = (measure * 5 + 2) / 3;
+    // measure = card * (D - 2) / D  ⇒  card = ceil(measure * D / (D - 2)).
+    let d = crate::ui::PROSE_READING_CARD_MARGIN_DIVISOR;
+    let card = (measure * d + (d - 2 - 1)) / (d - 2);
     (card.max(0) as u32).max(base)
 }
 
@@ -479,18 +483,18 @@ mod card_width_tests {
     use super::{prose_card_width_px, target_card_width, PROSE_MEASURE_CHARS};
 
     #[test]
-    fn prose_card_width_inverts_the_60_percent_measure() {
-        // 78 chars at 9px avg = 702px measure; card = ceil(702*5/3) = 1170.
-        assert_eq!(prose_card_width_px(PROSE_MEASURE_CHARS, 9, 1050), 1170);
-        // The resulting card's actual measure (card - 2*(card/5), the
-        // prose_column_margin insets) must hold the requested chars.
-        let card = prose_card_width_px(PROSE_MEASURE_CHARS, 9, 1050) as i32;
-        assert!(card - 2 * (card / 5) >= PROSE_MEASURE_CHARS * 9);
+    fn prose_card_width_inverts_the_75_percent_measure() {
+        // 78 chars at 9px avg = 702px measure; card = ceil(702*8/6) = 936.
+        assert_eq!(prose_card_width_px(PROSE_MEASURE_CHARS, 9, 900), 936);
+        // The resulting card's actual measure (card - 2*(card/8), the
+        // prose_reading_card_margin insets) must hold the requested chars.
+        let card = prose_card_width_px(PROSE_MEASURE_CHARS, 9, 900) as i32;
+        assert!(card - 2 * (card / 8) >= PROSE_MEASURE_CHARS * 9);
     }
 
     #[test]
     fn prose_card_width_never_narrower_than_configured() {
-        // Small font: 78 * 6 = 468px measure -> 780px card, below base 1050.
+        // Small font: 78 * 6 = 468px measure -> 624px card, below base 1050.
         assert_eq!(prose_card_width_px(PROSE_MEASURE_CHARS, 6, 1050), 1050);
         // Degenerate inputs clamp safely to base.
         assert_eq!(prose_card_width_px(0, 9, 1050), 1050);
