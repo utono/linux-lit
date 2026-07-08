@@ -123,6 +123,15 @@ Non-Shakespeare rows the same scan caught (fix in their own passes):
 the same line id), **BenCrystalOP** — 12 (incl. willow-song refrains),
 **ChurchillWC1** — 13, **Ven** — 3, **TC / Ref / DamClub6** — 1 each.
 
+- [x] **Non-Shakespeare tail DONE 2026-07-07.** BenCrystalOP: 9 refrain
+      duplicate-timestamp mispins deleted (Desdemona's willow song +
+      Antony's "Brutus is an honorable man" oration), 0 gross isolated strays,
+      ts=1117. Ven: already 0 backwards>5s (the 3 flags were sub-5s jitter),
+      no action. ChurchillWC1: 0 defects — a 19.4h prose audiobook whose 13
+      flags are all sub-30s paragraph-boundary jitter (whisper-align-forced),
+      not sync-breakers. PL: see the false-positive + PL-Quayle re-align notes
+      above. TC/Ref/DamClub6 (1 each): sub-threshold, not chased.
+
 - [x] **PL — the 2 "catastrophic" rows are a FALSE POSITIVE, no fix needed.**
       Investigated 2026-07-07. Both are on line 312778 (PL 1.26 "Of Man's first
       disobedience…") on the COMBINED "Paradise Lost & Paradise Regained"
@@ -198,10 +207,13 @@ Outcome: **no app bugs** — every genuine check passed (typical delta
       — DONE 2026-07-07: split off base Ham as Ham-Naxos, full aberrant align,
       now 3,762 timestamps (85.2% coverage), gate 0, nav 423/0. The 5 manual
       marks were preserved across the re-import.
-- [ ] **Rom-BBCTrystanGravelle** — boundary 1 turned 32s early
+- [x] **Rom-BBCTrystanGravelle** — boundary 1 turned 32s early
       (`turn 247.06s vs expected 279.50s`): one of its 10 backwards
       timestamps (section 4) sits inside that window and pulls sync forward.
-      Fixing the section-4 rows fixes this.
+      — DONE 2026-07-07: §4 dup-mispins cleaned; the 247–279s window is now
+      monotonic (0.0.14 @241.4 → 1.1.6 @279.5, no backwards step), so the
+      early-pull timestamp is gone. Re-run the boundary-2 sync test to confirm
+      the turn now lands at 279.5s.
 - [ ] **2H4-Argo** — boundary 1 delta −2.04s, just past the gap-preroll
       allowance: the stored `start_time` (40722.449) looks ~0.5s late
       relative to the spoken line in the bundle audio. Minor; verify while
