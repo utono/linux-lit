@@ -97,16 +97,15 @@ Counts per edition (`start_time` going back by >0.5s in citation order).
       — DONE 2026-07-07: gate cleanup (3 stage-row + 28 strays deleted, incl.
       2 near-duplicate-phrase mispins), gate 0 backwards>5s, parity 2404/2404,
       nav 426/0. No re-align needed.
-- [ ] **Rom-BBCClassic** — 20 (bundle m4b — rows include other plays in the
-      bundle; verify against the bundle audio, not Rom alone)
+- [x] **Rom-BBCClassic** — 20 (bundle m4b) — DONE 2026-07-07: re-scan showed only ~4 real, book-order-scoped. Deleted 1 "bite your thumb" dup-mispin; residual 1 scene-overlap. Sibling plays (Ham/Mac-BBCClassic) on shared media 80 verified intact.
 - [x] **Rom-BBC** — 18
       — DONE 2026-07-07: deleted 7 duplicate-timestamp mispins; kept the documented Chorus-after-brawl reorder + scene-boundary overlaps. 0 gross isolated strays remain (residual >5s flags are legit scene-overlaps). ts=1983.
 - [x] **TN** — 17 (Feste's-song refrain mispins)
       — DONE 2026-07-07: deleted 5 "wind and the rain"/"What is your parentage?" refrain-dup mispins + 1 grossly-misplaced manual mark (1.5.167 @1034s, 260s out of place). 0 gross isolated strays remain. ts=1587.
 - [x] **Per** — 16
       — DONE 2026-07-07: deleted 3 repeated-phrase duplicate-timestamp mispins. 0 gross isolated strays remain. ts=1595.
-- [ ] **LLL-Argo** — 16 (bundle m4b)
-- [ ] **Cor-Argo** — 14 (bundle m4b)
+- [x] **LLL-Argo** — 16 (bundle m4b) — DONE 2026-07-07: 2 dup-mispins deleted, 0 backwards>5s. Sibling Argo plays on media 315 intact.
+- [x] **Cor-Argo** — 14 (bundle m4b, two-media split) — DONE 2026-07-07: 2 dup-mispins on media 312 deleted, both media 0 backwards>5s.
 - [x] **Tmp** — 13
       — DONE 2026-07-07: 0 real defects — all duplicate-timestamp pairs were legit quick-succession short lines (correctly bracketed); residual >5s flags are scene-boundary overlaps. Nothing safe to delete. ts=2050.
 - [x] **2H6-Amb** — 13 (video rip)
