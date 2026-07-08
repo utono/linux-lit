@@ -113,12 +113,11 @@ Counts per edition (`start_time` going back by >0.5s in citation order).
       — DONE 2026-07-07: gate cleanup (3 stage-row + 10 strays deleted, incl.
       York-genealogy + Cardinal-reading duplicate-phrase mispins), gate 0
       backwards>5s, parity 2764/2764, nav 424/0. No re-align needed.
-- [ ] **Shr** — 12, **Shr-BBCClassic** — 11 (bundle)
-- [ ] **MND-Argo** — 11, **MND-KPR** — 9, **2H4-Argo** — 9, **3H6-Argo** — 8
-- [ ] **Rom-BBCTrystanGravelle** — 10, **Rom-Naxos** — 7
-- [ ] **Cym-BBC** — 9 (the edition with the historical corrupt-timestamp
-      sync-jump; see wizard-ambrose Step 6.6 monotonicity gate)
-- [ ] **Ado** — 8, **R2** — 7, **WT** — 6, **Mac** — 6, **H5** — 6, **JC** — 1
+- [x] **Shr** — 12 — DONE 2026-07-07: deleted duplicate-timestamp refrain/repeated-phrase mispins; 0 gross isolated strays remain (residual >5s flags are scene-boundary overlaps, not safe to delete). 3 mispins deleted, ts=1829. (Shr-BBCClassic bundle: 4 flags, mostly <5s per the re-scan note.)
+- [x] **MND-KPR** — 9 — DONE 2026-07-07: deleted duplicate-timestamp refrain/repeated-phrase mispins; 0 gross isolated strays remain (residual >5s flags are scene-boundary overlaps, not safe to delete). 3 mispins deleted (incl. "Philomel" lullaby refrain), ts=1342. (MND-Argo/2H4-Argo/3H6-Argo bundles: <5s jitter per re-scan.)
+- [x] **Rom-BBCTrystanGravelle** — 10, **Rom-Naxos** — 7 — DONE 2026-07-07: deleted duplicate-timestamp refrain/repeated-phrase mispins; 0 gross isolated strays remain (residual >5s flags are scene-boundary overlaps, not safe to delete). 3 + 2 mispins deleted (incl. the "bite your thumb" / "Your love says" repeated Rom lines), ts=2691 / 2973.
+- [x] **Cym-BBC** — 9 — DONE 2026-07-07: deleted duplicate-timestamp refrain/repeated-phrase mispins; 0 gross isolated strays remain (residual >5s flags are scene-boundary overlaps, not safe to delete). 3 mispins deleted, ts=2518.
+- [x] **Ado** — 8, **R2** — 7, **WT** — 6, **Mac** — 6, **H5** — 6, **JC** — 1 — DONE 2026-07-07: deleted duplicate-timestamp refrain/repeated-phrase mispins; 0 gross isolated strays remain (residual >5s flags are scene-boundary overlaps, not safe to delete). Deleted: R2 6, WT 3, Mac 2, H5 2, Ado 1 (Ado gated per-scene since it's reordered; its 2 remaining manual-mark dips left as human-placed + sub-15s). JC was already 0. ts: R2 2547 / WT 2774 / Mac 1752 / H5 2932 / Ado 2153.
 
 Non-Shakespeare rows the same scan caught (fix in their own passes):
 **PL** (Paradise Lost, 2 catastrophic: `39818 -> 37` and `58107 -> 7795` on
