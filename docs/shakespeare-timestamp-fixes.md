@@ -36,6 +36,16 @@ These untimestamped dialogue lines are exactly where the Arkangel sweep's six
 works stalled. The shipped suppression-clear fix makes sync *survive* them;
 giving them timestamps makes page turns precise there.
 
+**STATUS 2026-07-08: all 6 works done.** Every contiguous/full-line gap was
+recovered via the targeted `--interval N-M --keep-manual` opening/gap re-align
+(the Tit-Arkangel recipe, generalized). Tit + Err are fully closed; TN/TNK/Shr/WT
+are `[~]` — a small residue of genuinely `u`-fixable singletons remains (whisperX-
+garbled song lines, short wrap-tail fragments, Latin, and short recurring lines
+whose duplicate-phrase mispins were deleted). All 6 pass the Step 6.7 gate (0
+sync-breaking backwards) and nav-verify (0 FAIL). The remaining singletons don't
+break sync — they sit tightly bracketed by timed neighbors — so they're optional
+in-app `u`-entry, not blockers. Lessons folded into wizard-ambrose SKILL.md.
+
 - [x] **Tit-Arkangel** — essentially the whole opening: **1.1.1–1.1.47**
       (Saturninus / Bassianus / Marcus speeches), plus 1.1.64, 1.1.239.
       Gap is big enough that a wizard-ambrose re-alignment pass in litdb
@@ -91,10 +101,22 @@ giving them timestamps makes page turns precise there.
       listen to place precisely, so leave for in-app `u`-entry. (1.1.229/1.2.135/
       1.4.1/1.4.56 are outside the 700s window — scattered later singletons,
       u-fixable too.)
-- [ ] **WT-Arkangel** — 1.1.18, 1.1.48, 1.2.27, 1.2.124, 1.2.173, 1.2.555 —
+- [~] **WT-Arkangel** — 1.1.18, 1.1.48, 1.2.27, 1.2.124, 1.2.173, 1.2.555 —
       all short wrap-tail fragments ("freely.", "world,"), the known
       split-line import class: check the folger-cleaned .txt source before
       hand-timing
+      — MOSTLY DONE 2026-07-08: `--interval 0-1900 --keep-manual` (wide window —
+      1.2.555 sits at ~1785s deep in Leontes's scene) recovered the 3 FULL-line
+      gaps (1.1.48 @202.4, 1.2.124 @546.8, 1.2.555 @1785.7). The wide window
+      re-matched 659 lines and introduced 6 short-line mispins (My lord, / How
+      my lord? / Ay my good lord / Beseech you / Nay come sit down / How caught
+      of me? — all pinned to earlier occurrences); deleted all 6 by the
+      find-the-culprit rule, gate then clean (1×1.4s jitter left). Parity
+      3455/3455, Step 6.8 unmatched=0, nav 424/0, 1 manual mark preserved.
+      **Remaining u-fixable: 1.1.18 "freely.", 1.2.27 "world," (short fragments)
+      + 1.2.173 (garbled "Most dear'st, my collop")** + the 6 short lines whose
+      mispins were deleted — all tightly bracketed by timed neighbors, so no
+      visible sync gap.
 
 ## 3. Bulk outlier — not manual work
 
