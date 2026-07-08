@@ -579,7 +579,11 @@ fn main() {
                         // SIGUSR1 = "re-read MY config and re-apply". External
                         // control: edit config.json's theme, then kill -USR1.
                         let mut s = state_for_events.borrow_mut();
-                        let name = s.config.theme_name().to_string();
+                        // Re-read the theme from config.json ON DISK — the
+                        // external-control contract is "edit config.json,
+                        // then kill -USR1"; the in-memory config only knows
+                        // the startup value.
+                        let name = crate::config::load().theme_name().to_string();
                         let theme = crate::theme::load_theme_with_fallback(&name);
                         crate::input::actions::settings::apply_theme_to_state(&mut s, &theme);
                     }
