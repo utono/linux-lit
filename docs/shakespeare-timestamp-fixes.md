@@ -64,8 +64,19 @@ giving them timestamps makes page turns precise there.
       preserved. Parity 1879/1879, coverage 98.5%→99.0%, Step 6.8 unmatched=0.
       Nav-verify 428 steps, 0 FAIL. (1.1.158 stays untimestamped — scattered
       singleton, u-fixable.)
-- [ ] **Shr-Arkangel** — Induction: −1.1.5, −1.1.16, −1.1.18, −1.2.18,
+- [~] **Shr-Arkangel** — Induction: −1.1.5, −1.1.16, −1.1.18, −1.2.18,
       −1.2.147; plus 1.1.164, 1.1.258, 1.1.264
+      — MOSTLY DONE 2026-07-08: `--interval 0-700 --keep-manual` filled all 4
+      Induction gaps (−1.1.5 @73.4, −1.1.16 @147.2, −1.1.18 @153.3, −1.2.18
+      @550.7) AND **corrected a mispinned opening cluster** — −1.1.1–4 had been
+      pinned to a garbled early @7s occurrence; the re-align moved them onto the
+      real reading @60.3s (past the "We present…" intro + applause). Cleaned 1
+      stage-row stray (−1.1.10#1) + 1 duplicate-phrase mispin (−1.1.120 "What
+      is't your Honor" @255.4s vs its ~418s home), gate then clean. Parity
+      2714/2714, Step 6.8 unmatched=0, nav 424/0. **Remaining u-fixable short
+      fragments: −1.2.147 "younger.", 1.1.258 "good and weighty.", 1.1.264
+      "Would 'twere done.", 1.1.164 (Latin "Redime te captum…")** — sub-threshold
+      word-match, leave for in-app `u`-entry.
 - [~] **TNK-Arkangel** — Prologue 0.0.1 and 0.0.33; the 1.1 song lines
       (1.1.4, 1.1.17, 1.1.20, 1.1.24); 1.1.229, 1.2.135, 1.4.1, 1.4.56
       — MOSTLY DONE 2026-07-08: `--interval 0-700 --keep-manual` recovered the
