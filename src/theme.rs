@@ -526,12 +526,14 @@ fn ensure_gloss_color_min(base_hex: &str, bg_hex: &str, avoid: &[&str], min_cont
             return cand;
         }
     }
-    // Last resort: rotate hue 150° (matches choose_vocab_fg), then sweep
-    // lightness on that hue for a rung that satisfies `ok` so the returned color
-    // is guaranteed compliant (contrast >= 3.0 vs bg, distinct from avoid) even
-    // on a pathological palette. Falls back to the highest-contrast-vs-bg
-    // candidate if (theoretically) none satisfy the full guard.
-    let new_h = (h + 150.0 / 360.0) % 1.0;
+    // Last resort: rotate the hue away from the base, sweeping lightness rungs
+    // at each rotation for one that satisfies `ok`. A single fixed rotation is
+    // not enough: the cursor tint's base is the COMPLEMENT of reader_gloss, so
+    // +150° from it lands only 30° from reader_gloss's hue — on an all-warm
+    // palette (kindle-sepia) that shipped a non-distinct pair. +150° stays the
+    // first try (matches choose_vocab_fg; existing themes keep their colors),
+    // then widening alternates. Falls back to the highest-contrast-vs-bg
+    // candidate if (theoretically) no rotation satisfies the full guard.
     let s2 = s.max(0.50);
     let rungs: &[f64] = if bg_is_light {
         &[0.36, 0.30, 0.24, 0.42, 0.18]
@@ -540,16 +542,19 @@ fn ensure_gloss_color_min(base_hex: &str, bg_hex: &str, avoid: &[&str], min_cont
     };
     let mut best = rgb_to_hex(0.0, 0.0, 0.0);
     let mut best_c = -1.0;
-    for &l in rungs {
-        let (r, g, b) = hsl_to_rgb(new_h, s2, l);
-        let cand = rgb_to_hex(r, g, b);
-        if ok(&cand) {
-            return cand;
-        }
-        let c = contrast_ratio(&cand, bg_hex);
-        if c > best_c {
-            best_c = c;
-            best = cand;
+    for rot in [150.0_f64, 210.0, 120.0, 240.0, 90.0, 270.0] {
+        let new_h = (h + rot / 360.0) % 1.0;
+        for &l in rungs {
+            let (r, g, b) = hsl_to_rgb(new_h, s2, l);
+            let cand = rgb_to_hex(r, g, b);
+            if ok(&cand) {
+                return cand;
+            }
+            let c = contrast_ratio(&cand, bg_hex);
+            if c > best_c {
+                best_c = c;
+                best = cand;
+            }
         }
     }
     best
@@ -918,6 +923,29 @@ mod tests {
         // The raw washed-out inputs must NOT survive.
         assert_ne!(t.reader_gloss, "#c4788a");
         assert_ne!(t.reader_gloss_cursor, "#56949f");
+    }
+
+    #[test]
+    fn gloss_tints_distinct_on_all_warm_palette() {
+        // kindle-sepia's palette (brown focuscolor, brown text, sepia bg)
+        // excludes the whole warm range, so BOTH tints reach the last-resort
+        // hue rotation. The cursor tint's base is the complement of
+        // reader_gloss, so a single fixed +150° rotation lands ~30° from
+        // reader_gloss's hue and used to ship a non-distinct fallback pair.
+        let json: serde_json::Value = serde_json::from_str(
+            r##"{ "meta": {"type": "light"},
+                 "dwl": {"focuscolor": "#8a6a45"},
+                 "kitty": {"background": "#e7dec7", "active_tab_foreground": "#5d4232"} }"##,
+        ).unwrap();
+        let t = resolve_theme("kindle-sepia", &json);
+        assert!(contrast_ratio(&t.reader_gloss, "#e7dec7") >= READER_GLOSS_MIN_CONTRAST,
+            "off tint {} dim on sepia bg", t.reader_gloss);
+        assert!(contrast_ratio(&t.reader_gloss_cursor, "#e7dec7") >= READER_GLOSS_MIN_CONTRAST,
+            "cursor tint {} dim on sepia bg", t.reader_gloss_cursor);
+        let distinct = hue_distance(&t.reader_gloss, &t.reader_gloss_cursor) >= 40.0
+            || contrast_ratio(&t.reader_gloss, &t.reader_gloss_cursor) >= 1.4;
+        assert!(distinct, "off {} and cursor {} not distinct",
+            t.reader_gloss, t.reader_gloss_cursor);
     }
 
     #[test]
