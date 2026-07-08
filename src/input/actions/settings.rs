@@ -304,6 +304,18 @@ pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &cra
 
     state.theme = theme.clone();
 
+    // Resync the settings overlay's own theme_index to whatever theme was just
+    // applied. Without this, a theme change made OUTSIDE the overlay's own
+    // row-0 cycling (Alt+t/Alt+Shift+T `cycle_theme`, or the SIGUSR1 handler)
+    // leaves the overlay's index stale: opening settings shows the old theme
+    // name, and Escape's `revert_to_snapshot` re-applies + persists that STALE
+    // theme, silently undoing the change. This is a no-op for the overlay's
+    // own cycle/revert paths — they already set the index to what it becomes
+    // here.
+    if let Some(idx) = state.settings_overlay.themes().iter().position(|t| t.name == theme.name) {
+        state.settings_overlay.set_theme_index(idx);
+    }
+
     // The gutter sign renderer captures its color (theme.sign_fg) by value in a
     // closure at build time, so a live theme switch leaves the signs painted in
     // the OLD theme's color. Rebuild the gutter so the signs pick up the new
