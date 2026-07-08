@@ -73,7 +73,7 @@ const HOME_ROW: &[KeyDef] = &[
     key("i", "I", "2-col translation", "", &[("M-i", "scansion"), ("C-M-i", "inline translation"), ("C-i", "page image"), ("S-C-i", "calibrate pages")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
     key("h", "H", "synopsis", "H: auto vocab", &[("C-h", "synopsis side")]),
-    key("t", "T", "", "", &[("S-C-t", "nav test")]),
+    key("t", "T", "", "", &[("S-C-t", "nav test"), ("M-t", "theme next"), ("M-S-T", "theme prev")]),
     key("n", "N", "next match", "N: prev match", &[]),
     bare("s", "S", "sync tog"),
     key("-", "_", "prev work", "", &[("C--", "recent")]),
@@ -657,6 +657,14 @@ src/input/keymap.rs",
         "nav test" => "Toggle the in-app navigation test harness (Ctrl+Shift+T) — \
 drives nav actions and asserts on-page landing; for development only. \
 -> ToggleNavTest arm — src/input/keymap.rs",
+        "theme next" => "Cycle the reader theme forward (Alt+t) through \
+config.json's theme_cycle list. linux-lit's theme is independent of the \
+system-wide theme; it never reads or writes .current_theme. \
+-> settings::cycle_theme — src/input/actions/settings.rs",
+        "theme prev" => "Cycle the reader theme backward (Alt+Shift+T) through \
+config.json's theme_cycle list. linux-lit's theme is independent of the \
+system-wide theme; it never reads or writes .current_theme. \
+-> settings::cycle_theme — src/input/actions/settings.rs",
         "scansion" => "Cycle the Wright metrical scansion overlay on verse lines: \
 off -> stress-only -> full (stress + unstressed marks), with line-type label and \
 caesura. -> input::keymap CycleScansion",

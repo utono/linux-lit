@@ -2,13 +2,19 @@
 
 This guide is for agents working on linux-lit's visual styling. It explains:
 
-1. how the app picks up a theme change made **externally** (the dwl `super+\`
-   family of binds, `darkman`, the theme scripts), and
-2. how overlays/pickers get their colors from `~/utono/themes/.config/themes`,
-   so a new overlay's colors track the active theme **and** live-update when the
+1. how the app picks up a theme change made **externally** (editing
+   `config.json` then `kill -USR1`, or the in-app `Alt+t` / `Alt+Shift+T`
+   cycle binds), and
+2. how overlays/pickers get their colors from the loaded `Theme` struct, so a
+   new overlay's colors track the active theme **and** live-update when the
    theme changes.
 
-**The one rule that makes both work:** put all overlay colors in
+**linux-lit's theme is INDEPENDENT of the system-wide theme system.** It never
+reads or writes `~/utono/themes/.config/themes/.current_theme`; `set-theme.sh`
+no longer signals linux-lit at all. The active theme lives solely in
+linux-lit's own `config.json` (`theme` field, default `kindle-sepia`).
+
+**The one rule that makes overlay theming work:** put all overlay colors in
 `theme::generate_css` using the theme tokens (`{bg}`, `{fg}`, `{dim}`, `{root}`,
 …). Everything in that one stylesheet is regenerated and swapped on every theme
 change — so a correctly-authored overlay is automatically dynamic. Hardcoded
@@ -16,49 +22,59 @@ colors (or a separate CssProvider) break this.
 
 ## The theme source of truth
 
-- `~/utono/themes/.config/themes/themes-unified.json` — every theme, keyed by
-  name. Each theme carries `kitty` (background/foreground → reader card colors),
-  `dwl.rootcolor` (the desktop/wallpaper color) + `dwl.focuscolor`, and a `lit`
-  section. `theme.rs::load_theme(name)` parses one theme into a `Theme` struct.
-- `~/utono/themes/.config/themes/.current_theme` — a one-line file holding the
-  active theme NAME. `theme.rs::current_theme_name()` reads it. The theme scripts
-  write it (`set-theme.sh`); linux-lit also writes it from its own settings
-  overlay (`apply_theme_to_state`).
-- Paths are hardcoded in `theme.rs` (`themes_path()`, `current_theme_path()`).
+- `~/utono/themes/.config/themes/themes-unified.json` — every theme's color
+  palette, keyed by name. Each theme carries `kitty` (background/foreground →
+  reader card colors), `dwl.rootcolor` (the desktop/wallpaper color) +
+  `dwl.focuscolor`, and a `lit` section. `theme.rs::load_theme(name)` /
+  `load_theme_with_fallback(name)` parse one theme into a `Theme` struct. This
+  file is read-only data for linux-lit — it does not indicate which theme is
+  *active*.
+- `~/.config/linux-lit/config.json` (or `config-dev.json` in dev mode) — the
+  ONE source of truth for the active theme. The `theme` field holds the theme
+  name (default `kindle-sepia`); `theme_cycle` holds the ordered list that
+  `Alt+t` / `Alt+Shift+T` step through (default: kindle-sepia, kindle-green,
+  zenbones-light, zenwritten-light). `config.rs::theme_name()` /
+  `theme_cycle()` read these.
+- Paths are hardcoded in `theme.rs` (`themes_path()`).
 
-## How an EXTERNAL theme change reaches the app (SIGUSR1)
+## How a theme change reaches the app
 
-The dwl theme binds and scripts do NOT talk to linux-lit directly — they signal
-it. Full chain:
+There are two ways to change the active theme, both converging on the same
+apply path:
 
-1. **dwl bind** (`super+\`, `super+shift+\`, etc.) runs a theme script:
-   - `~/utono/themes/.config/themes/set-theme.sh <name>` — full theme switch:
-     writes `.current_theme`, applies kitty/dwl/litecli/fzf/etc., then
-     **`pkill -USR1 linux-lit`** (set-theme.sh:157).
-   - the wallpaper/rootcolor cyclers (`cycle-wallpaper.sh`, dwl-mlj's
-     `n.sh`/`n-palette.sh`) mutate `dwl.rootcolor` in `themes-unified.json` and
-     likewise `pkill -USR1 linux-lit`.
-2. **linux-lit catches SIGUSR1** in a tokio signal listener
-   (`src/main.rs` ~line 90): `sig.recv()` → sends `MpvEvent::ThemeChanged` on the
-   event channel.
-3. The **event loop** handles it (`src/main.rs` ~line 404, `MpvEvent::ThemeChanged`):
-   reads `current_theme_name()`, `load_theme(...)`, then calls
-   `settings::apply_theme_to_state(&mut s, &theme)`.
-4. **`apply_theme_to_state`** (`src/input/actions/settings.rs`) is the single
-   re-theme entry point. It:
-   - rebuilds the WHOLE stylesheet: `generate_css(theme, font, size)` →
-     `state.css_provider.load_from_string(css)` (one provider, registered once at
-     startup via `style_context_add_provider_for_display`), and
-   - updates the handful of colors carried on `TextTag`s rather than CSS (dim,
-     cursor-line, reader-gloss tint = `focus_color`, vocab, selection), and
-   - stores `state.theme = theme.clone()` and writes `.current_theme`.
+1. **In-app cycling**: `Alt+t` (`Action::ThemeNext`) / `Alt+Shift+T`
+   (`Action::ThemePrev`) call `settings::cycle_theme` (in
+   `src/input/actions/settings.rs`), which steps through `config.theme_cycle()`
+   and calls `apply_theme_to_state`.
+2. **External control (SIGUSR1)**: edit `config.json`'s `theme` field directly,
+   then `kill -USR1 <linux-lit pid>` (or `pkill -USR1 linux-lit`). Full chain:
+   1. linux-lit catches SIGUSR1 in a tokio signal listener (`src/main.rs`
+      ~line 90): `sig.recv()` → sends `MpvEvent::ThemeChanged` on the event
+      channel.
+   2. The **event loop** handles it (`src/main.rs` ~line 578,
+      `MpvEvent::ThemeChanged`): re-reads the app's OWN config —
+      `s.config.theme_name()` — loads that theme with
+      `load_theme_with_fallback(...)`, then calls
+      `settings::apply_theme_to_state(&mut s, &theme)`. This is a re-read of
+      linux-lit's own `config.json`, NOT of the system-wide `.current_theme`.
 
-Because step 4 reloads the entire CSS, **any overlay styled through
-`generate_css` recolors automatically** — no per-overlay re-theme code.
+**`apply_theme_to_state`** (`src/input/actions/settings.rs`) is the single
+re-theme entry point, used by both paths above. It:
+- rebuilds the WHOLE stylesheet: `generate_css(theme, font, size)` →
+  `state.css_provider.load_from_string(css)` (one provider, registered once at
+  startup via `style_context_add_provider_for_display`), and
+- updates the handful of colors carried on `TextTag`s rather than CSS (dim,
+  cursor-line, reader-gloss tint = `focus_color`, vocab, selection), and
+- stores `state.theme = theme.clone()`, sets `state.config.theme` to the new
+  theme's name, and saves `config.json` (`config::save`) — it does NOT touch
+  `.current_theme`.
 
-> To test the path without the dwl bind: `pkill -USR1 linux-lit` after editing
-> `.current_theme`. (Do NOT do this against the user's live session unless asked
-> — see the no-cargo-run rule.)
+Because `apply_theme_to_state` reloads the entire CSS, **any overlay styled
+through `generate_css` recolors automatically** — no per-overlay re-theme code.
+
+> To test the SIGUSR1 path: edit `config.json`'s `theme` field, then
+> `pkill -USR1 linux-lit`. (Do NOT do this against the user's live session
+> unless asked — see the no-cargo-run rule.)
 
 ## How overlays/pickers consume the theme
 
@@ -90,8 +106,8 @@ substitution tokens you will use:
 .library-picker-scrim{ background-color: rgba(0,0,0,0.3); }  /* translucent dim */
 ```
 
-This is why the Ctrl+p picker recolors live on `super+\`: its colors are
-theme tokens in the shared provider.
+This is why the Ctrl+p picker recolors live on `Alt+t` / `Alt+Shift+T` (or a
+SIGUSR1-triggered reload): its colors are theme tokens in the shared provider.
 
 ### The keybind legends (gloss / synopsis / journal Ctrl+/)
 
@@ -123,21 +139,28 @@ when full occlusion is intended).
 3. If a color must live on a `TextTag` (not CSS), also set it in
    `apply_theme_to_state` so it re-applies on theme change (see the dim/cursor/
    reader-gloss tag updates there).
-4. Verify: launch, `super+\` to switch theme, confirm the overlay recolors. If it
+4. Verify: launch, `Alt+t` to switch theme, confirm the overlay recolors. If it
    doesn't, it's almost always (a) a hardcoded color, (b) CSS outside
    `generate_css`, or (c) a TextTag color not re-applied in
    `apply_theme_to_state`.
 
 ## Key files
 
-- `src/theme.rs` — `Theme`, `load_theme`, `current_theme_name`, `generate_css`
-  (the single stylesheet; token arg list at the end).
-- `src/input/actions/settings.rs` — `apply_theme_to_state` (the one re-theme
-  entry point: CSS reload + TextTag color updates + `.current_theme` write).
+- `src/theme.rs` — `Theme`, `load_theme`, `load_theme_with_fallback`,
+  `generate_css` (the single stylesheet; token arg list at the end).
+- `src/config.rs` — `theme_name()` / `theme_cycle()` accessors, `DEFAULT_THEME`
+  = `"kindle-sepia"`, `default_theme_cycle()`.
+- `src/input/actions/settings.rs` — `cycle_theme` (Alt+t / Alt+Shift+T
+  handler) and `apply_theme_to_state` (the one re-theme entry point: CSS
+  reload + TextTag color updates + `config.json` write — never
+  `.current_theme`).
+- `src/input/keymap_config.rs` — `Action::ThemeNext` / `Action::ThemePrev`
+  bound to `Alt+t` / `Alt+Shift+T`.
 - `src/main.rs` — SIGUSR1 listener (~L90) → `MpvEvent::ThemeChanged` handler
-  (~L404).
+  (~L578), which re-reads linux-lit's own `config.json`.
 - `src/app/mod.rs` — startup CSS provider registration
   (`style_context_add_provider_for_display`).
-- `~/utono/themes/.config/themes/` — `themes-unified.json`, `.current_theme`,
-  `set-theme.sh` (the `pkill -USR1 linux-lit` site), `apply-dwl.sh`,
-  `cycle-wallpaper.sh`.
+- `~/utono/themes/.config/themes/themes-unified.json` — theme color palette
+  data only (read-only for linux-lit). linux-lit does NOT read or write
+  `.current_theme` from this directory, and `set-theme.sh` no longer signals
+  linux-lit.

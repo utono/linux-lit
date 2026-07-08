@@ -506,7 +506,10 @@ Use `update_highlight_and_center` (not `center_cursor` alone) when jumping the c
 ## External Data
 
 - Database: `~/utono/litdb/data/lit.db` (read-write)
-- Themes: `~/utono/themes/.config/themes/themes-unified.json`
+- Themes: theme color palettes are read (read-only) from
+  `~/utono/themes/.config/themes/themes-unified.json`, but which theme is
+  *active* is independent of the system-wide theme — see Reader theme below.
+  linux-lit never reads or writes that system's `.current_theme` file.
 - Config: `~/.config/linux-lit/config.json` (release) **or**
   `~/.config/linux-lit/config-dev.json` (dev / `cargo run`) — see gotcha below
 
@@ -587,6 +590,15 @@ entirely.
 
 User overrides take precedence over defaults; bindings not present in
 the JSON keep their compiled-in default.
+
+### Reader theme
+
+- linux-lit's theme is INDEPENDENT of the system-wide theme system. It is
+  stored in `config.json` (`theme`, default `kindle-sepia`); `Alt+t` /
+  `Alt+Shift+T` cycle `theme_cycle` (default: kindle-sepia, kindle-green,
+  zenbones-light, zenwritten-light). SIGUSR1 re-reads the app's OWN config
+  (external control: edit config.json, then `kill -USR1`). linux-lit never
+  reads or writes `~/utono/themes/.config/themes/.current_theme`.
 
 ## Reference Codebases
 
