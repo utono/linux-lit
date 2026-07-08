@@ -576,13 +576,24 @@ fn main() {
                         crate::app::refresh_page_image(&state_for_events);
                     }
                     MpvEvent::ThemeChanged => {
+                        // SIGUSR1 = "re-read MY config and re-apply". External
+                        // control: edit config.json's theme (and/or
+                        // theme_cycle), then kill -USR1.
                         let mut s = state_for_events.borrow_mut();
-                        let theme_name = crate::theme::current_theme_name();
-                        let theme = if theme_name.is_empty() {
-                            crate::theme::load_theme("gruvbox-material")
-                        } else {
-                            crate::theme::load_theme(&theme_name)
-                        };
+                        // Re-read from config.json ON DISK — the
+                        // external-control contract is "edit config.json,
+                        // then kill -USR1"; the in-memory config only knows
+                        // the startup value. Adopt only `theme` and
+                        // `theme_cycle` from disk (NOT the whole Config) —
+                        // `load()` re-applies normalizations that would fight
+                        // other in-memory runtime state. Without adopting
+                        // theme_cycle here, apply_theme_to_state's config::save
+                        // below would clobber a disk-edited theme_cycle with
+                        // the stale in-memory one.
+                        let disk = crate::config::load();
+                        s.config.theme_cycle = disk.theme_cycle.clone();
+                        let name = disk.theme_name().to_string();
+                        let theme = crate::theme::load_theme_with_fallback(&name);
                         crate::input::actions::settings::apply_theme_to_state(&mut s, &theme);
                     }
                 }

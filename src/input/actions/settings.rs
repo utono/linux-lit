@@ -260,8 +260,8 @@ pub(crate) fn cancel_voice_picker(state: &Rc<RefCell<crate::app::AppState>>) {
     };
 }
 
-/// Apply a theme to AppState: load CSS, update tag colors, write
-/// .current_theme. Called from settings overlay's theme cycling and from
+/// Apply a theme to AppState: load CSS, update tag colors, persist
+/// config.theme. Called from settings overlay's theme cycling and from
 /// revert_to_snapshot.
 pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &crate::theme::Theme) {
     let css = crate::theme::generate_css(theme, &state.config.font_family, state.config.font_size);
@@ -295,13 +295,35 @@ pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &cra
     state.cursor_line_tag.set_property("paragraph-background", &theme.cursor_line_bg);
     state.phrase_tag.set_property("background", &theme.phrase_highlight_bg);
 
-    // Write .current_theme file
-    let home = std::env::var("HOME").unwrap_or_default();
-    let theme_path = std::path::PathBuf::from(&home)
-        .join("utono/themes/.config/themes/.current_theme");
-    let _ = std::fs::write(&theme_path, &theme.name);
+    // Persist the per-app theme. linux-lit no longer reads or writes the
+    // system-wide .current_theme — its theme is independent (default
+    // kindle-sepia). config::save is atomic and a no-op under
+    // LIT_HEADLESS_TEST.
+    state.config.theme = Some(theme.name.clone());
+    crate::config::save(&state.config);
 
     state.theme = theme.clone();
+
+    // Resync the settings overlay's own theme_index to whatever theme was just
+    // applied. Without this, a theme change made OUTSIDE the overlay's own
+    // row-0 cycling (Alt+t/Alt+Shift+T `cycle_theme`, or the SIGUSR1 handler)
+    // leaves the overlay's index stale: opening settings shows the old theme
+    // name, and Escape's `revert_to_snapshot` re-applies + persists that STALE
+    // theme, silently undoing the change. This is a no-op for the overlay's
+    // own cycle/revert paths — they already set the index to what it becomes
+    // here.
+    if let Some(idx) = state.settings_overlay.themes().iter().position(|t| t.name == theme.name) {
+        state.settings_overlay.set_theme_index(idx);
+    }
+
+    // The gutter sign renderer captures its color (theme.sign_fg) by value in a
+    // closure at build time, so a live theme switch leaves the signs painted in
+    // the OLD theme's color. Rebuild the gutter so the signs pick up the new
+    // theme's sign_fg (and dim line-number color). Only worth it when the sign
+    // column is actually built.
+    if state.gutter_renderer.is_some() {
+        crate::app::setup_gutter(state);
+    }
 
     crate::logging::log(&format!("SETTINGS: theme changed to {}", theme.display_name));
 }
@@ -458,4 +480,60 @@ pub(crate) fn reset_to_defaults(state: &Rc<RefCell<crate::app::AppState>>) {
     // Reset does not touch the preferred voice; keep the row showing it.
     let voice = crate::elevenlabs::voice_label_for_id(&s.config.elevenlabs_voice_id);
     s.settings_overlay.update_displayed_values(ls, cw, tm, nm, ts, false, &voice);
+}
+
+/// Index of the next theme in a cycle list of length `len`.
+/// `current` = position of the active theme in the list, if it is in the
+/// list at all; when it is not (e.g. set via the settings overlay), both
+/// directions jump to the first entry.
+pub(crate) fn next_cycle_index(len: usize, current: Option<usize>, forward: bool) -> usize {
+    match current {
+        Some(i) if forward => (i + 1) % len,
+        Some(i) => (i + len - 1) % len,
+        None => 0,
+    }
+}
+
+/// Alt+t / Alt+Shift+T: cycle through the curated theme list in config.
+pub(crate) fn cycle_theme(state: &Rc<RefCell<crate::app::AppState>>, forward: bool) {
+    let mut s = state.borrow_mut();
+    let cycle = s.config.theme_cycle();
+    if cycle.is_empty() {
+        return;
+    }
+    let current = cycle.iter().position(|t| *t == s.theme.name);
+    let next = next_cycle_index(cycle.len(), current, forward);
+    let theme = crate::theme::load_theme_with_fallback(&cycle[next]);
+    apply_theme_to_state(&mut s, &theme);
+    // Desktop notification, mirroring the font-cycle pattern (font.rs). The
+    // synchronous hint replaces a still-visible previous theme toast instead
+    // of stacking.
+    let position = format!("{}/{}", next + 1, cycle.len());
+    let _ = std::process::Command::new("notify-send")
+        .args(["-t", "1500", "-h", "string:x-canonical-private-synchronous:linux-lit-theme",
+               &format!("Theme [{}]", position), &s.theme.display_name])
+        .spawn();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_cycle_index;
+
+    #[test]
+    fn cycle_forward_wraps() {
+        assert_eq!(next_cycle_index(4, Some(0), true), 1);
+        assert_eq!(next_cycle_index(4, Some(3), true), 0);
+    }
+
+    #[test]
+    fn cycle_backward_wraps() {
+        assert_eq!(next_cycle_index(4, Some(0), false), 3);
+        assert_eq!(next_cycle_index(4, Some(2), false), 1);
+    }
+
+    #[test]
+    fn current_not_in_list_jumps_to_first() {
+        assert_eq!(next_cycle_index(4, None, true), 0);
+        assert_eq!(next_cycle_index(4, None, false), 0);
+    }
 }

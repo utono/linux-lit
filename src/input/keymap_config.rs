@@ -42,6 +42,9 @@ impl KeyCombo {
     pub fn ctrl_alt(key: &str) -> Self {
         Self { key: key.to_string(), ctrl: true, shift: false, alt: true }
     }
+    pub fn alt_shift(key: &str) -> Self {
+        Self { key: key.to_string(), ctrl: false, shift: true, alt: true }
+    }
 }
 
 /// Reader-mode keybinds. Per-overlay keymaps are deferred to F1.
@@ -325,6 +328,8 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("l"), Action::ToggleSignColumn),
         (KeyCombo::plain("minus"), Action::TogglePreviousWork),
         (KeyCombo::alt("d"), Action::ToggleDim),
+        (KeyCombo::alt("t"), Action::ThemeNext),
+        (KeyCombo::alt_shift("T"), Action::ThemePrev),
         (KeyCombo::plain("i"), Action::ShowTranslationOverlay),
         (KeyCombo::alt("bracketleft"), Action::ToggleColumnLayout),
         (KeyCombo::ctrl("a"), Action::ToggleAuthorship),
@@ -475,6 +480,13 @@ mod tests {
         // the current act/scene or chapter (swapped in e42fd92).
         assert_eq!(km.lookup("colon", false, true, false), Some(Action::TogglePlaybackSpeed));
         assert_eq!(km.lookup("plus", false, false, false), Some(Action::ShowCurrentChapter));
+    }
+
+    #[test]
+    fn alt_t_cycles_theme() {
+        let km = Keymap::default();
+        assert_eq!(km.lookup("t", false, false, true), Some(Action::ThemeNext));
+        assert_eq!(km.lookup("T", false, true, true), Some(Action::ThemePrev));
     }
 
     #[test]

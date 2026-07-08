@@ -958,13 +958,9 @@ pub fn build_window(
     window.connect_show(|_| crate::logging::log("STARTUP: window connect_show fired"));
     window.connect_map(|_| crate::logging::log("STARTUP: window connect_map fired"));
 
-    // Load theme
-    let theme_name = crate::theme::current_theme_name();
-    let theme = if theme_name.is_empty() {
-        crate::theme::load_theme("gruvbox-material")
-    } else {
-        crate::theme::load_theme(&theme_name)
-    };
+    // Load theme from the app's own config (independent of the system-wide
+    // theme; default kindle-sepia).
+    let theme = crate::theme::load_theme_with_fallback(config.theme_name());
     crate::logging::log("BUILD: loading_work guard active");
     crate::logging::log(&format!("Theme: {} ({})", theme.display_name, theme.name));
     crate::logging::log(&format!("Highlight color: {}", theme.cursor_line_bg));
@@ -3124,26 +3120,26 @@ pub fn display_work_at_with_prepared(
     // Remove old gutter renderers — they'll be recreated lazily on first
     // sign column toggle (`l` key) via setup_gutter().
     if let Some(old_renderer) = state.gutter_renderer.take() {
-        crate::gutter::remove_gutter_renderer(&state.text_view, &old_renderer);
+        crate::gutter::remove_gutter_renderer(&state.text_view, old_renderer);
     }
     if let Some(old_renderer) = state.chunk_renderer.take() {
-        crate::gutter::remove_gutter_renderer(&state.text_view, &old_renderer);
+        crate::gutter::remove_gutter_renderer(&state.text_view, old_renderer);
     }
     if let Some(old_renderer) = state.line_number_renderer.take() {
         if state.line_number_renderer_on_left {
-            crate::gutter::remove_line_number_renderer_left(&state.text_view, &old_renderer);
+            crate::gutter::remove_line_number_renderer_left(&state.text_view, old_renderer);
         } else {
-            crate::gutter::remove_line_number_renderer(&state.text_view, &old_renderer);
+            crate::gutter::remove_line_number_renderer(&state.text_view, old_renderer);
         }
         let right_margin = state.config.text_margins as i32 + crate::config::EXTRA_RIGHT_MARGIN;
         state.text_view.set_right_margin(right_margin);
     }
     state.line_number_renderer_on_left = false;
     if let Some(old_renderer) = state.right_line_number_renderer.take() {
-        crate::gutter::remove_line_number_renderer(&state.right_view, &old_renderer);
+        crate::gutter::remove_line_number_renderer(&state.right_view, old_renderer);
     }
     if let Some(old_renderer) = state.right_gutter_renderer.take() {
-        crate::gutter::remove_gutter_renderer(&state.right_view, &old_renderer);
+        crate::gutter::remove_gutter_renderer(&state.right_view, old_renderer);
     }
 
     // Populate is_bookmarked eagerly so `'` / `"` bookmark navigation works
@@ -3596,7 +3592,19 @@ pub fn toggle_sign_column(state: &mut AppState) {
 /// Called lazily on first sign column toggle rather than at work load time.
 pub(super) fn setup_gutter(state: &mut AppState) {
     if let Some(old_renderer) = state.gutter_renderer.take() {
-        crate::gutter::remove_gutter_renderer(&state.text_view, &old_renderer);
+        crate::gutter::remove_gutter_renderer(&state.text_view, old_renderer);
+    }
+    // Make this idempotent. The body reads the view's CURRENT left_margin and
+    // reduces it by gutter_width to make room for the signs. On a fresh work
+    // load the margin is the full logical value, so that's correct — but on a
+    // REBUILD (e.g. a live theme switch calls setup_gutter again) the margin was
+    // already reduced by the prior run, so re-reading it here would double-reduce
+    // and push the text (and the signs) hard against the card's left edge on each
+    // switch. Restore the full logical margin first, captured at the end of the
+    // last run in `gutter_logical_left` (0 = never run yet, nothing to restore).
+    let logical_left = state.gutter_logical_left.get();
+    if logical_left > 0 {
+        state.text_view.set_left_margin(logical_left);
     }
     {
         let new_has_ts: Vec<bool> = if let Some(ref lm) = state.line_map {
@@ -3716,7 +3724,9 @@ pub(super) fn setup_gutter(state: &mut AppState) {
         state.ab_a_line.clone(),
         state.ab_b_line.clone(),
         left_margin - left_number_allowance,
-        &state.theme.dim_fg,
+        // Signs use the text hue gently dimmed (sign_fg = 65% fg); dim_fg's
+        // heavier blend washes the hue out to a neutral grey.
+        &state.theme.sign_fg,
         // Sign column sits at position 1 (just left of text) when the left
         // column also shows outer line numbers at position 0; otherwise 0.
         if left_number_allowance > 0 { 1 } else { 0 },
@@ -3750,7 +3760,7 @@ pub(super) fn setup_gutter(state: &mut AppState) {
 
     // Set up chunk bar gutter
     if let Some(old_renderer) = state.chunk_renderer.take() {
-        crate::gutter::remove_gutter_renderer(&state.text_view, &old_renderer);
+        crate::gutter::remove_gutter_renderer(&state.text_view, old_renderer);
     }
     if !state.ab_repeat.chunks.is_empty() {
         if let Some(ref work) = state.current_work {
@@ -3772,7 +3782,7 @@ pub(super) fn setup_gutter(state: &mut AppState) {
     // text. The shared dialogue-indent tag was already reduced above by the
     // same gutter_width, so the right column's dialogue lines line up too.
     if let Some(old_renderer) = state.right_gutter_renderer.take() {
-        crate::gutter::remove_gutter_renderer(&state.right_view, &old_renderer);
+        crate::gutter::remove_gutter_renderer(&state.right_view, old_renderer);
     }
     if state.column_count() == 2 {
         // The right column keeps the SAME internal geometry as the left (so the
@@ -3790,7 +3800,9 @@ pub(super) fn setup_gutter(state: &mut AppState) {
             state.ab_a_line.clone(),
             state.ab_b_line.clone(),
             right_left_margin,
-            &state.theme.dim_fg,
+            // Signs use the text hue gently dimmed (sign_fg = 65% fg); dim_fg's
+            // heavier blend washes the hue out to a neutral grey.
+            &state.theme.sign_fg,
             0,
         );
         state.right_view.set_left_margin(right_left_margin - gutter_width);

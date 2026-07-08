@@ -116,6 +116,14 @@ pub struct Config {
     /// `set-startup-volume` skill.
     #[serde(default = "default_mpv_volume")]
     pub mpv_volume: u32,
+    /// Per-app theme (independent of the system-wide theme). None means
+    /// DEFAULT_THEME. Set by the settings overlay and Alt+t / Alt+Shift+T.
+    #[serde(default)]
+    pub theme: Option<String>,
+    /// Ordered list the theme-cycle keybinds walk through. None means the
+    /// compiled default reading list. Edit config.json to customize.
+    #[serde(default)]
+    pub theme_cycle: Option<Vec<String>>,
 }
 
 fn default_font_family() -> String {
@@ -130,6 +138,17 @@ pub const FONT_CYCLE: &[&str] = &[
     "IBM Plex Serif",
     "Cormorant Garamond",
 ];
+
+/// linux-lit's theme is independent of the system-wide theme system.
+/// This is the effective theme when config.json has no `theme` field.
+pub const DEFAULT_THEME: &str = "kindle-sepia";
+
+fn default_theme_cycle() -> Vec<String> {
+    ["kindle-sepia", "kindle-green", "zenbones-light", "zenwritten-light"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
 
 pub fn default_font_size() -> u32 {
     16
@@ -234,6 +253,8 @@ impl Default for Config {
             echo_affect_weight: default_echo_affect_weight(),
             system_volume: default_system_volume(),
             mpv_volume: default_mpv_volume(),
+            theme: None,
+            theme_cycle: None,
         }
     }
 }
@@ -245,6 +266,19 @@ impl Config {
         self.recent_works.retain(|a| a != abbrev);
         self.recent_works.insert(0, abbrev.to_string());
         self.recent_works.truncate(MAX_RECENT_WORKS);
+    }
+
+    /// Effective theme name: configured, else DEFAULT_THEME.
+    pub fn theme_name(&self) -> &str {
+        self.theme.as_deref().unwrap_or(DEFAULT_THEME)
+    }
+
+    /// Effective theme-cycle list: configured, else the compiled default.
+    pub fn theme_cycle(&self) -> Vec<String> {
+        match &self.theme_cycle {
+            Some(list) if !list.is_empty() => list.clone(),
+            _ => default_theme_cycle(),
+        }
     }
 }
 
@@ -345,5 +379,34 @@ mod last_gloss_tests {
         let dflt = Config::default();
         assert!(dflt.phrase_highlight_prose);
         assert!(!dflt.phrase_highlight_verse);
+    }
+
+    #[test]
+    fn theme_name_defaults_to_kindle_sepia() {
+        let config = Config::default();
+        assert_eq!(config.theme_name(), "kindle-sepia");
+    }
+
+    #[test]
+    fn theme_name_uses_configured_value() {
+        let mut config = Config::default();
+        config.theme = Some("zenbones-light".to_string());
+        assert_eq!(config.theme_name(), "zenbones-light");
+    }
+
+    #[test]
+    fn theme_cycle_defaults_to_reading_themes() {
+        let config = Config::default();
+        assert_eq!(
+            config.theme_cycle(),
+            vec!["kindle-sepia", "kindle-green", "zenbones-light", "zenwritten-light"]
+        );
+    }
+
+    #[test]
+    fn theme_cycle_uses_configured_list() {
+        let mut config = Config::default();
+        config.theme_cycle = Some(vec!["melange-light".to_string()]);
+        assert_eq!(config.theme_cycle(), vec!["melange-light"]);
     }
 }
