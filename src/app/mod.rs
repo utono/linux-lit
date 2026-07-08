@@ -958,13 +958,9 @@ pub fn build_window(
     window.connect_show(|_| crate::logging::log("STARTUP: window connect_show fired"));
     window.connect_map(|_| crate::logging::log("STARTUP: window connect_map fired"));
 
-    // Load theme
-    let theme_name = crate::theme::current_theme_name();
-    let theme = if theme_name.is_empty() {
-        crate::theme::load_theme("gruvbox-material")
-    } else {
-        crate::theme::load_theme(&theme_name)
-    };
+    // Load theme from the app's own config (independent of the system-wide
+    // theme; default kindle-sepia).
+    let theme = crate::theme::load_theme_with_fallback(config.theme_name());
     crate::logging::log("BUILD: loading_work guard active");
     crate::logging::log(&format!("Theme: {} ({})", theme.display_name, theme.name));
     crate::logging::log(&format!("Highlight color: {}", theme.cursor_line_bg));

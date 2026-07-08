@@ -37,19 +37,6 @@ fn themes_path() -> PathBuf {
     PathBuf::from(home).join("utono/themes/.config/themes/themes-unified.json")
 }
 
-fn current_theme_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_default();
-    PathBuf::from(home).join("utono/themes/.config/themes/.current_theme")
-}
-
-/// Read the current theme name from .current_theme file.
-pub fn current_theme_name() -> String {
-    std::fs::read_to_string(current_theme_path())
-        .unwrap_or_default()
-        .trim()
-        .to_string()
-}
-
 /// The blue selection-highlight background for a theme — the color used both for
 /// the reading card's visual-selection tag AND the `<hi>` marker in the gloss/
 /// synopsis/journal overlays, so a highlighted span reads the SAME in the editor
@@ -109,6 +96,29 @@ pub fn load_theme(name: &str) -> Theme {
     };
     match data.get(name) {
         Some(val) => resolve_theme(name, val),
+        None => default_theme(),
+    }
+}
+
+/// Load `name` from themes-unified.json; if absent fall back to the app
+/// default theme name, then to the hardcoded default_theme(). linux-lit's
+/// theme is independent of the system-wide .current_theme (see
+/// docs/plans/2026-07-08-independent-theme-keybinds-design.md).
+pub fn load_theme_with_fallback(name: &str) -> Theme {
+    let path = themes_path();
+    let data: Value = match std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|c| serde_json::from_str(&c).ok())
+    {
+        Some(d) => d,
+        None => return default_theme(),
+    };
+    if let Some(val) = data.get(name) {
+        return resolve_theme(name, val);
+    }
+    let fallback = crate::config::DEFAULT_THEME;
+    match data.get(fallback) {
+        Some(val) => resolve_theme(fallback, val),
         None => default_theme(),
     }
 }

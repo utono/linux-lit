@@ -260,8 +260,8 @@ pub(crate) fn cancel_voice_picker(state: &Rc<RefCell<crate::app::AppState>>) {
     };
 }
 
-/// Apply a theme to AppState: load CSS, update tag colors, write
-/// .current_theme. Called from settings overlay's theme cycling and from
+/// Apply a theme to AppState: load CSS, update tag colors, persist
+/// config.theme. Called from settings overlay's theme cycling and from
 /// revert_to_snapshot.
 pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &crate::theme::Theme) {
     let css = crate::theme::generate_css(theme, &state.config.font_family, state.config.font_size);
@@ -295,11 +295,12 @@ pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &cra
     state.cursor_line_tag.set_property("paragraph-background", &theme.cursor_line_bg);
     state.phrase_tag.set_property("background", &theme.phrase_highlight_bg);
 
-    // Write .current_theme file
-    let home = std::env::var("HOME").unwrap_or_default();
-    let theme_path = std::path::PathBuf::from(&home)
-        .join("utono/themes/.config/themes/.current_theme");
-    let _ = std::fs::write(&theme_path, &theme.name);
+    // Persist the per-app theme. linux-lit no longer reads or writes the
+    // system-wide .current_theme — its theme is independent (default
+    // kindle-sepia). config::save is atomic and a no-op under
+    // LIT_HEADLESS_TEST.
+    state.config.theme = Some(theme.name.clone());
+    crate::config::save(&state.config);
 
     state.theme = theme.clone();
 
