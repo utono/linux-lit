@@ -276,10 +276,18 @@ Outcome: **no app bugs** — every genuine check passed (typical delta
       monotonic (0.0.14 @241.4 → 1.1.6 @279.5, no backwards step), so the
       early-pull timestamp is gone. Re-run the boundary-2 sync test to confirm
       the turn now lands at 279.5s.
-- [ ] **2H4-Argo** — boundary 1 delta −2.04s, just past the gap-preroll
+- [x] **2H4-Argo** — boundary 1 delta −2.04s, just past the gap-preroll
       allowance: the stored `start_time` (40722.449) looks ~0.5s late
       relative to the spoken line in the bundle audio. Minor; verify while
       fixing its section-4 rows.
+      — DONE 2026-07-08: the −2.04s delta was a TEST-HARNESS artifact, not a
+      data defect — the Rumour Induction prologue on media 312 (-1.0.30 →
+      -1.0.39, 40708→40734s) is perfectly monotonic, gate 0 backwards. The 2
+      residual <5s flags were on the OTHER media (313, P3-tail): 2.4.319 "No
+      abuse, Hal…" mispinned onto a later "No abuse" occurrence, and 5.5.17 "It
+      doth so." duplicate-pinned onto 5.5.15's identical text. Deleted both
+      repeated-phrase mispins → both media gate 0 backwards, parity exact
+      (312: 609/609, 313: 2443/2443), Step 6.8 unmatched=0, nav 423/0.
 - 14 WARNs (Ado, JC, MND-KPR, MV, Oth, R3, Shr, TN, Ham, Mac…) are
   untimestamped landing lines with dead-air audio — the sparse-coverage
   editions; they resolve as coverage improves (sections 2/4), not app fixes.
