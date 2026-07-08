@@ -44,8 +44,17 @@ giving them timestamps makes page turns precise there.
       re-align recovered 1.1.1–1.1.47 + 1.1.64 (coverage 97.5%→99.4%, gate 0,
       nav 426/0). Only the lone singleton 1.1.239 stays untimestamped
       (u-fixable; not worth a re-align).
-- [ ] **TN-Arkangel** — 1.1.1–1.1.5 (Orsino's "If music be the food of
+- [x] **TN-Arkangel** — 1.1.1–1.1.5 (Orsino's "If music be the food of
       love…" opening) + 1.1.43, 1.5.208
+      — DONE 2026-07-08: targeted `--interval 0-700 --keep-manual` opening
+      re-align recovered 1.1.1–1.1.5 (1.1.1 @80.5s) + re-matched 1.1–1.3
+      (195 lines). The interval pass introduced 2 strays in the 1.3 prose
+      scene (a stage-row ts on `[Enter Sir Andrew.]` @498.7s + the short
+      "What's that?" 1.3.49 mispinned @504.1s) — deleted both, Step 6.7 gate
+      then 0 backwards. Spoken-status synced from ts (parity 2618/2618),
+      coverage 97.5%→99.4%. The scattered singletons (1.1.43, 1.5.208, prose
+      tails) stay untimestamped (u-fixable; not worth a re-align). Step 6.8
+      unmatched=0 vs base TN. Nav-verify 427 steps, 0 FAIL.
 - [ ] **Err-Arkangel** — 1.1.18–1.1.27 (ten lines mid-Duke speech) + 1.1.158
 - [ ] **Shr-Arkangel** — Induction: −1.1.5, −1.1.16, −1.1.18, −1.2.18,
       −1.2.147; plus 1.1.164, 1.1.258, 1.1.264
