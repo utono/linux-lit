@@ -3121,6 +3121,9 @@ pub fn display_work_at_with_prepared(
     // sign column toggle (`l` key) via setup_gutter().
     if let Some(old_renderer) = state.gutter_renderer.take() {
         crate::gutter::remove_gutter_renderer(&state.text_view, old_renderer);
+        // No gutter → no restore point. A stale value here would override the
+        // next work's freshly computed left margin inside setup_gutter().
+        state.gutter_logical_left.set(0);
     }
     if let Some(old_renderer) = state.chunk_renderer.take() {
         crate::gutter::remove_gutter_renderer(&state.text_view, old_renderer);
@@ -3602,6 +3605,10 @@ pub(super) fn setup_gutter(state: &mut AppState) {
     // and push the text (and the signs) hard against the card's left edge on each
     // switch. Restore the full logical margin first, captured at the end of the
     // last run in `gutter_logical_left` (0 = never run yet, nothing to restore).
+    // CONTRACT: a caller that intends a NEW logical margin must store it in
+    // `gutter_logical_left` (and the view margin) before calling — otherwise
+    // this restore clobbers the new value with the stale one and the gutter
+    // stays pinned at its creation-time geometry (the lost-left-padding bug).
     let logical_left = state.gutter_logical_left.get();
     if logical_left > 0 {
         state.text_view.set_left_margin(logical_left);

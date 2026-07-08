@@ -156,6 +156,12 @@ pub(crate) fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, windo
                 crate::gutter::remove_gutter_renderer(&state.text_view, old);
             }
             state.text_view.set_left_margin(logical_left);
+            // Adopt the NEW logical margin as the gutter's restore point BEFORE
+            // rebuilding: setup_gutter() re-applies gutter_logical_left first
+            // (its idempotence guard), so leaving the stale value here would
+            // clobber the margin just set and pin the gutter at its original
+            // creation-time geometry forever (the lost-left-padding bug).
+            state.gutter_logical_left.set(logical_left);
             if state.dialogue_formatting_active {
                 crate::app::formatting::apply_dialogue_formatting(state);
             }
@@ -171,6 +177,9 @@ pub(crate) fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, windo
                 crate::app::formatting::apply_dialogue_formatting(state);
             }
         }
+        // Keep the restore point in sync (a stale value from a previous work's
+        // gutter would otherwise override this pass's margin in setup_gutter).
+        state.gutter_logical_left.set(logical_left);
         super::setup_gutter(state);
     } else if state.text_view.left_margin() != logical_left {
         state.text_view.set_left_margin(logical_left);
