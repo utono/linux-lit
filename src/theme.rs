@@ -595,6 +595,41 @@ fn scrim_bg(theme: &Theme) -> String {
     darken_color(&theme.root_color, 0.80)
 }
 
+/// Scale the alpha of an `rgba(r, g, b, a)` string by `factor`. Any other
+/// color form (hex, named) passes through unchanged — the caller then reuses
+/// the undimmed color, which is a safe worst case (tint too strong, never
+/// wrong-colored or invalid CSS).
+pub fn dim_rgba_alpha(color: &str, factor: f64) -> String {
+    let inner = color
+        .trim()
+        .strip_prefix("rgba(")
+        .and_then(|r| r.strip_suffix(')'));
+    if let Some(inner) = inner {
+        let parts: Vec<&str> = inner.split(',').map(|p| p.trim()).collect();
+        if parts.len() == 4 {
+            if let Ok(a) = parts[3].parse::<f64>() {
+                return format!(
+                    "rgba({}, {}, {}, {:.3})",
+                    parts[0],
+                    parts[1],
+                    parts[2],
+                    a * factor
+                );
+            }
+        }
+    }
+    color.to_string()
+}
+
+impl Theme {
+    /// Sentence-extent tint for the vocab-sentence loop: the karaoke sweep
+    /// color at ~45% of its alpha, so the moving sweep stays readable inside
+    /// the static sentence marker.
+    pub fn vocab_sentence_bg(&self) -> String {
+        dim_rgba_alpha(&self.phrase_highlight_bg, 0.45)
+    }
+}
+
 /// Generate GTK CSS for a theme.
 pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String {
     let css = format!(
@@ -988,6 +1023,16 @@ mod tests {
                 theme.is_light
             );
         }
+    }
+
+    #[test]
+    fn dim_rgba_alpha_scales_only_the_alpha() {
+        assert_eq!(
+            dim_rgba_alpha("rgba(255, 255, 255, 0.22)", 0.45),
+            "rgba(255, 255, 255, 0.099)"
+        );
+        // Non-rgba strings pass through untouched.
+        assert_eq!(dim_rgba_alpha("#ffcc00", 0.45), "#ffcc00");
     }
 
     #[test]

@@ -255,6 +255,9 @@ pub struct AppState {
     pub ab_dim_tag: gtk4::TextTag,
     /// Karaoke spoken-phrase tint during narration sync (phrase_highlight.rs).
     pub phrase_tag: gtk4::TextTag,
+    /// Sentence-extent tint for the vocab-sentence loop mode: marks the whole
+    /// looping sentence while phrase_tag's sweep moves inside it.
+    pub vocab_sentence_tag: gtk4::TextTag,
     /// Transient prose nav-flash tint: the cursor paragraph's background flashes
     /// the phrase-highlight color on a nav keybind, then fades out. Color is set
     /// per-frame by the flash animation, so no static color lives on the tag.
@@ -1011,6 +1014,15 @@ pub fn build_window(
         .build();
     buffer.tag_table().add(&cursor_fade_tag);
 
+    // Sentence-extent tint for the vocab-sentence loop mode: marks the whole
+    // looping sentence while the phrase sweep (phrase_tag, added after this,
+    // so it wins the overlap) moves inside it.
+    let vocab_sentence_tag = gtk4::TextTag::builder()
+        .name("vocab-sentence")
+        .background(&theme.vocab_sentence_bg())
+        .build();
+    buffer.tag_table().add(&vocab_sentence_tag);
+
     // Span background (NOT paragraph_background): the karaoke tint covers only
     // the spoken phrase's chars inside the full-strength prose paragraph.
     let phrase_tag = gtk4::TextTag::builder()
@@ -1625,6 +1637,7 @@ pub fn build_window(
         cursor_fade_tag,
         ab_dim_tag,
         phrase_tag,
+        vocab_sentence_tag,
         prose_flash_tag,
         phrase_cache: None,
         active_phrase: None,
