@@ -1806,6 +1806,22 @@ impl GlossOverlay {
             (card_w - 2 * left - indent).max(1)
         };
         let pctx = self.gloss_view.pango_context();
+        // Real measured line-height at this font, used as the PER-BLOCK safety
+        // headroom in `block_height_overhead`'s Explication path (mirrors
+        // journal_overlay.rs's `text_h + line_h` per paragraph). Charging this
+        // per block — rather than once off the whole page's budget — is
+        // required because the real shortfall a flat/page-level estimate
+        // misses (per-buffer-line `pixels_below_lines` + the blank-line
+        // paragraph separator, neither modeled by a plain `pango::Layout`)
+        // accumulates once PER BLOCK BOUNDARY. A single page-level margin
+        // (subtract one `line_h` off `page_height`) is insufficient once a
+        // page packs enough small blocks that the accumulated shortfall
+        // exceeds that one line_h — exactly the TWWLN synopsis card (8 blocks:
+        // 7 one-line metadata paragraphs + Gist) at production geometry
+        // (2026-07 "Gist:" bug, confirmed to still clip after the page-level
+        // fix in commit 4df9352). Per-block charging scales proportionally
+        // with block count instead.
+        let line_h = crate::ui::pagination::measure_text_height(&pctx, "Mg", size, &family, 200);
         let markups = self.gloss_block_markups.borrow();
         let heights: Vec<i32> = blocks
             .iter()
@@ -1815,28 +1831,18 @@ impl GlossOverlay {
                     PaginatedMode::Gloss => markups.get(i).map(|s| s.as_str()),
                     PaginatedMode::Synopsis => None,
                 };
-                gloss_block_height(b, m, &pctx, &family, size, wrap_for(b.kind), doc_has_speaker)
+                gloss_block_height(b, m, &pctx, &family, size, wrap_for(b.kind), doc_has_speaker, line_h)
             })
             .collect();
         drop(markups);
-        // Safety margin: `gloss_block_height`'s Explication overhead (`PROSE_PAD`,
-        // a flat 16px) under-charges the real per-block trailing gap GTK renders
-        // (per-buffer-line `pixels_below_lines` + the blank-line paragraph
-        // separator), which a plain `pango::Layout` never models. On a page
-        // packing many small blocks (e.g. a prose synopsis's one-line metadata
-        // paragraphs) that shortfall accumulates across every block boundary, so
-        // a page whose SUMMED estimate lands just under `page_height` can still
-        // overflow the real fixed-height viewport by a few pixels — and the
-        // bottom-clip box then permanently hides that overflow (there is no
-        // scroll and no larger page to spill onto): a block reported as "fits"
-        // clips mid-sentence and its tail is never rendered on any page (2026-07
-        // TWWLN Ch.1 "Gist:" bug). Reserve one real measured line height off the
-        // packing budget — mirrors the journal overlay's proven
-        // `text_h + line_h` deliberate-headroom pattern (journal_overlay.rs) —
-        // so a block that only barely fit under the raw estimate is deferred
-        // whole (with its LeadLabel) to the next page instead of risking clip.
-        let line_h = crate::ui::pagination::measure_text_height(&pctx, "Mg", size, &family, 200);
-        let safe_budget = (page_height - line_h).max(1);
+        // No additional page-level margin: the per-block `line_h` headroom
+        // above already reserves proportional slack for every block on the
+        // page (same as journal_overlay.rs, which packs against its raw
+        // `page_height()` with no extra page-level subtraction). Stacking a
+        // page-level margin on top of the now-correct per-block charge would
+        // only re-introduce the flat-margin under-scaling this fix replaces,
+        // for no additional safety.
+        let budget = page_height.max(1);
         let pages = match self.paginated_mode.get() {
             // Gloss: keep each gloss together — a Source (speaker+verse) block and
             // the Explication(s) that follow it form one indivisible unit, so a
@@ -1848,11 +1854,11 @@ impl GlossOverlay {
                     .iter()
                     .map(|b| b.kind == BlockKind::Source)
                     .collect();
-                crate::ui::pagination::paginate_grouped(&heights, &group_start, safe_budget)
+                crate::ui::pagination::paginate_grouped(&heights, &group_start, budget)
             }
             // Synopsis: every paragraph is its own unit.
             PaginatedMode::Synopsis => {
-                crate::ui::pagination::paginate(&heights, safe_budget)
+                crate::ui::pagination::paginate(&heights, budget)
             }
         };
         drop(blocks);
@@ -2640,10 +2646,6 @@ fn line_is_speaker(buffer: &gtk4::TextBuffer, line: i32) -> bool {
 // Block height helpers for gloss overlay pagination
 // ---------------------------------------------------------------------------
 
-/// Per-paragraph spacing the rendered view adds that a plain pango::Layout omits
-/// (mirrors the journal's pad_per_para at 19pt-ish). Prose/synopsis blocks.
-const PROSE_PAD: i32 = 16;
-
 /// Conservative overhead for a Source (verse) block: the speaker heading's 36px
 /// `pixels_above_lines` + its scale-0.9 label + 10px `pixels_below_lines`, plus
 /// slack. OVER-estimate so a multi-line speech never clips its speaker label at a
@@ -2659,16 +2661,31 @@ const SPEAKER_BLOCK_OVERHEAD: i32 = 72;
 /// models, so we must over-estimate. A SPEAKERLESS source (prose gloss) renders
 /// no heading and no per-line verse gaps — plain wrapped lines — so charging the
 /// speaker reserve there only underfills pages (the "why is this 2 pages?"
-/// artifact): it pays the paragraph pad like an explication instead. For
-/// Explication (prose) blocks we add the paragraph pad that the rendered view
-/// inserts between blocks. NEVER under-estimate a source-with-speaker block —
-/// too-tall just gives it its own page; too-small clips the speaker label.
-fn block_height_overhead(is_source: bool, has_speaker: bool, text_h: i32) -> i32 {
+/// artifact): it pays the paragraph pad like an explication instead.
+///
+/// For Explication (prose/synopsis) blocks we charge `text_h + line_h` — ONE
+/// real measured line-height per block, mirroring journal_overlay.rs's
+/// `repaginate` (`text_h + line_h` per paragraph, "so packing can never
+/// under-count and clip a paragraph tail"). This REPLACES the former flat
+/// `PROSE_PAD = 16px` constant, which under-charged the real per-block
+/// trailing gap GTK renders (`pixels_below_lines` applies once per BUFFER LINE,
+/// and each block plus each blank-line separator is its own buffer line — a
+/// flat, non-font-scaled 16px never modeled that). Because this overhead is
+/// now charged once PER BLOCK rather than once per PAGE, a page packing many
+/// small blocks (e.g. a prose synopsis's one-line metadata paragraphs before
+/// the Gist section) accumulates proportional headroom instead of a single
+/// fixed page-level margin — the page-level `safe_budget` margin this file
+/// used before (one `line_h` off the whole page, regardless of block count)
+/// was insufficient exactly because it didn't scale with block count (2026-07
+/// TWWLN Ch.1 "Gist:" bug: 8 blocks per page, shortfall > 1 line_h). NEVER
+/// under-estimate a source-with-speaker block: too-tall just gives it its own
+/// page; too-small clips the speaker label.
+fn block_height_overhead(is_source: bool, has_speaker: bool, text_h: i32, line_h: i32) -> i32 {
     if is_source && has_speaker {
         // verse lines carry per-line gaps too -> 1.15 slack on the text height.
         (text_h as f32 * 1.15) as i32 + SPEAKER_BLOCK_OVERHEAD
     } else {
-        text_h + PROSE_PAD
+        text_h + line_h
     }
 }
 
@@ -2686,13 +2703,14 @@ fn gloss_block_height(
     size_pt: i32,
     wrap_w: i32,
     has_speaker: bool,
+    line_h: i32,
 ) -> i32 {
     // Leaded: the gloss view renders with `pixels_inside_wrap`
     // (ui::OVERLAY_LINE_LEADING), so wrap heights must charge the same.
     let text_h = crate::ui::pagination::measure_text_height_leaded(
         pctx, &block.display, size_pt, family, wrap_w,
     );
-    let mut h = block_height_overhead(block.kind == BlockKind::Source, has_speaker, text_h);
+    let mut h = block_height_overhead(block.kind == BlockKind::Source, has_speaker, text_h, line_h);
     let line = size_pt + size_pt / 2;
     // Synopsis: lead label paragraph(s) ride ABOVE the block body (in `attached`).
     // Plain irrefutable `let`: Attachment has the single LeadLabel variant.
@@ -2768,7 +2786,7 @@ mod apply_font_priority_tests {
 
 #[cfg(test)]
 mod block_height_tests {
-    use super::{block_height_overhead, PROSE_PAD};
+    use super::block_height_overhead;
 
     #[test]
     fn source_block_height_exceeds_prose_for_equal_text() {
@@ -2777,13 +2795,18 @@ mod block_height_tests {
         // conservative over-estimate that prevents clipping the speaker label.
         // (Pure-arithmetic check on the overhead constants; no GTK pango here —
         // factor the overhead into a pure helper `block_height_overhead(is_source,
-        // has_speaker, text_h)` that gloss_block_height calls, and test THAT.)
-        assert!(block_height_overhead(true, true, 100) > block_height_overhead(false, false, 100));
-        // Prose overhead is the journal's per-paragraph pad.
-        assert_eq!(block_height_overhead(false, false, 100), 100 + PROSE_PAD);
+        // has_speaker, text_h, line_h)` that gloss_block_height calls, and test
+        // THAT.)
+        let line_h = 20;
+        assert!(
+            block_height_overhead(true, true, 100, line_h)
+                > block_height_overhead(false, false, 100, line_h)
+        );
+        // Prose overhead is the journal's per-block `text_h + line_h` pattern.
+        assert_eq!(block_height_overhead(false, false, 100, line_h), 100 + line_h);
         // A SPEAKERLESS source (prose gloss) renders no heading and no verse
-        // gaps — it pays only the paragraph pad, so pages fill instead of
-        // splitting on phantom height.
-        assert_eq!(block_height_overhead(true, false, 100), 100 + PROSE_PAD);
+        // gaps — it pays only the per-block line_h reserve, same as an
+        // Explication, so pages fill instead of splitting on phantom height.
+        assert_eq!(block_height_overhead(true, false, 100, line_h), 100 + line_h);
     }
 }
