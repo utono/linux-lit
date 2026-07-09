@@ -12,6 +12,7 @@ pub mod escape;
 pub mod gloss;
 pub mod journal;
 pub mod pickers;
+pub mod segment_vim;
 pub mod settings;
 pub mod synopsis;
 pub mod word_copy;
@@ -134,6 +135,10 @@ pub enum Action {
     EnterVisualMode,
     WordCycleCopy,
     WordCollectCopy,
+    /// Open the cursor's segment (prose paragraph / verse line) in a read-only
+    /// vim editor seeded in visual mode, for selecting text and copying it to
+    /// the system clipboard. Nothing is ever saved back.
+    OpenSegmentVim,
 
     // Translations
     ToggleTranslations,
@@ -321,7 +326,8 @@ impl Action {
             // Selection
             Action::EnterVisualMode
             | Action::WordCycleCopy
-            | Action::WordCollectCopy => Category::Selection,
+            | Action::WordCollectCopy
+            | Action::OpenSegmentVim => Category::Selection,
 
             // Timestamps
             Action::SetStartTime
@@ -422,6 +428,7 @@ impl Action {
             Action::EnterVisualMode => "EnterVisualMode",
             Action::WordCycleCopy => "WordCycleCopy",
             Action::WordCollectCopy => "WordCollectCopy",
+            Action::OpenSegmentVim => "OpenSegmentVim",
             Action::ToggleTranslations => "ToggleTranslations",
             Action::ToggleSynopsis => "ToggleSynopsis",
             Action::ShowSynopsisOverlay => "ShowSynopsisOverlay",

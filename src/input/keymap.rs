@@ -72,6 +72,12 @@ pub fn handle_key(
         return handle_gloss_edit_key(state, key_name, key_char, is_ctrl, is_shift, tokio_handle);
     }
 
+    // SegmentVim (the reader's `v` copy-only vim view) owns ALL keys for the
+    // same reason as the two editors above.
+    if state.borrow().input_mode == crate::app::InputMode::SegmentVim {
+        return handle_segment_vim_key(state, key_name, key_char, is_ctrl);
+    }
+
     // Spacebar (no modifiers) toggles MPV play/pause from any mode, UNLESS a
     // text-input widget has focus (an Entry, or an editable TextView), in which
     // case space must type a literal space. The reader's main TextView is
@@ -140,6 +146,7 @@ pub fn handle_key(
             // GlossEdit is intercepted at the top of handle_key (before the
             // global guards), so it never reaches this match.
             crate::app::InputMode::GlossEdit => unreachable!("GlossEdit handled before mode dispatch"),
+            crate::app::InputMode::SegmentVim => unreachable!("SegmentVim handled before mode dispatch"),
             crate::app::InputMode::JournalVisual => handle_journal_visual_key(state, key_state, key_name),
             crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_state, key_name, key_char, is_ctrl, is_alt, is_shift),
             crate::app::InputMode::SynopsisVisual => handle_block_visual_key(state, key_state, key_name, &SYNOPSIS_VISUAL_CFG),
@@ -980,6 +987,60 @@ fn handle_gloss_edit_key(
             copy_to_clipboard(&text);
             true
         }
+    }
+}
+
+/// Key handler for the reader's `v` copy-only vim view (InputMode::SegmentVim).
+/// Same engine + GlossOverlay edit buffer as GlossEdit, but every persistence
+/// verb is refused: the surface exists to visually select text and copy it to
+/// the system clipboard, never to edit the segment. `:q`/`:q!`/double-Esc
+/// close; visual `y` copies with a toast and stays open for another selection.
+fn handle_segment_vim_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+    key_char: Option<char>,
+    is_ctrl: bool,
+) -> bool {
+    use crate::input::vim::{EditorAction, VimKey};
+
+    // Esc: a SINGLE Esc returns to vim Normal mode (engine-handled); TWO in
+    // quick succession close the view — same rhythm as the other vim editors.
+    if key_name == "Escape" && !is_ctrl {
+        if is_double_esc() {
+            crate::input::actions::segment_vim::close(state);
+            return true;
+        }
+        let _ = state.borrow().gloss_overlay.feed_edit_key(VimKey::Esc);
+        return true;
+    }
+
+    let Some(vk) = gtk_key_to_vim(key_name, key_char, is_ctrl) else {
+        // Swallow unmapped keys so they don't leak to other handlers.
+        return true;
+    };
+
+    let action = state.borrow().gloss_overlay.feed_edit_key(vk);
+    match action {
+        // Copy-only: every save/rewrite verb is refused with a toast. The
+        // engine's buffer may have been mutated (d/x/i are not blocked — they
+        // can help whittle a selection) but the result is never persisted.
+        EditorAction::Save | EditorAction::SaveQuit | EditorAction::OpenRewrite => {
+            crate::input::actions::segment_vim::refuse_save(state);
+            true
+        }
+        EditorAction::Cancel | EditorAction::CancelForce => {
+            crate::input::actions::segment_vim::close(state);
+            true
+        }
+        // Visual `y`: copy the selection to the system clipboard and stay open
+        // so another span can be selected.
+        EditorAction::CopyToClipboard(text) => {
+            copy_to_clipboard(&text);
+            let s = state.borrow();
+            crate::ui::toast::show_transient(&s.chapter_toast, "Copied", 2);
+            true
+        }
+        EditorAction::ToggleHighlight | EditorAction::Nop => true,
     }
 }
 
@@ -3004,6 +3065,7 @@ fn dispatch_action(
         EnterVisualMode => crate::input::visual::enter_visual_mode(&mut state.borrow_mut()),
         WordCycleCopy => crate::input::actions::word_copy::word_cycle_copy(&mut state.borrow_mut()),
         WordCollectCopy => crate::input::actions::word_copy::word_collect_copy(&mut state.borrow_mut()),
+        OpenSegmentVim => crate::input::actions::segment_vim::open(state),
 
         // Translations
         ToggleTranslations => {

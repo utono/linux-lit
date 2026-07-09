@@ -66,7 +66,7 @@ const UPPER_ROW: &[KeyDef] = &[
 const TAB_KEY: KeyDef = key("Tab", "", "play/pause", "", &[("C-Tab", "last overlay")]);
 
 const HOME_ROW: &[KeyDef] = &[
-    key("a", "A", "play from ts", "", &[("C-a", "authorship"), ("S-C-a", "attr set")]),
+    key("a", "A", "play/pause", "", &[("C-a", "authorship"), ("S-C-a", "attr set")]),
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
     key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echoes"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echo turns"), ("e", "synopsis edit (vim)")]),
     key("u", "U", "start time", "U: undo ts", &[("M-u", "set end time")]),
@@ -89,15 +89,18 @@ const BOTTOM_ROW: &[KeyDef] = &[
     bare("b", "B", ""),
     key("m", "M", "bookmark", "", &[("C-m", "media picker")]),
     key("w", "W", "copy word", "W: collect", &[("M-w", "Shx echoes"), ("C-w", "Shx echo turns"), ("S-C-w", "reopen Shx echoes")]),
-    key("v", "V", "", "V: visual mode", &[("v", "voice: add/remove"), ("C-v", "voice: cycle")]),
+    key("v", "V", "vim copy", "V: visual mode", &[("v", "voice: add/remove"), ("C-v", "voice: cycle")]),
     bare("z", "Z", "vocab ▶"),
 ];
 
 const SHIFT_KEY: KeyDef = ub("Shift", "");
+/// The spacebar sits below the bottom row physically, so it is appended to the
+/// BOTTOM ROW screen — and repeated on the MODIFIERS & SEQUENCES screen.
+const SPACE_KEY: KeyDef = bare("Space", "", "play from ts");
 
 /// Row 5: modifiers, sequences, and arrows gathered into one screen.
 const MOD_SEQ_ROW: &[KeyDef] = &[
-    bare("Space", "", "play from ts"),
+    SPACE_KEY,
     bare("gg", "", "go to start"),
     key("G", "", "", "go to end", &[]),
     bare("g;", "", "latest bookmark"),
@@ -130,7 +133,10 @@ fn row_keys(idx: usize) -> Vec<&'static KeyDef> {
         0 => NUMBER_ROW.iter().chain(std::iter::once(&BACKSPACE)).collect(),
         1 => std::iter::once(&TAB_KEY).chain(UPPER_ROW.iter()).collect(),
         2 => std::iter::once(&ESC_KEY).chain(HOME_ROW.iter()).collect(),
-        3 => std::iter::once(&SHIFT_KEY).chain(BOTTOM_ROW.iter()).collect(),
+        3 => std::iter::once(&SHIFT_KEY)
+            .chain(BOTTOM_ROW.iter())
+            .chain(std::iter::once(&SPACE_KEY))
+            .collect(),
         _ => MOD_SEQ_ROW.iter().collect(),
     }
 }
@@ -408,8 +414,12 @@ handle_block_visual_key / gloss_overlay::enter_visual \
 — src/input/keymap.rs, src/ui/gloss_overlay.rs",
 
         // ── MPV / audio ──
-        "play/pause" => "Play/pause without seeking (unlike a/Space). \
--> TogglePause arm -> MpvCommand::TogglePause — src/input/keymap.rs",
+        "play/pause" => "Play/pause without seeking (unlike Space; a and Tab \
+both bind this). -> TogglePause arm -> MpvCommand::TogglePause — src/input/keymap.rs",
+        "vim copy" => "Open the cursor's paragraph/line in a copy-only vim \
+editor, seeded in visual mode: extend with motions, y copies the selection to \
+the system clipboard, :q or double-Esc exits. Nothing is saved. \
+-> segment_vim::open — src/input/actions/segment_vim.rs",
         "toggle speed" => "Toggle playback speed between 1.0x and 1.3x. \
 -> TogglePlaybackSpeed arm (inline) -> MpvCommand::SetSpeed — \
 src/input/keymap.rs",
@@ -451,7 +461,7 @@ begins a structural chapter (distinct from Ctrl+c's audio track mark). \
         "+0.2" => "Nudge the current line's start timestamp 0.2s later (Shift+p). \
 -> timestamps::nudge_start_forward — src/input/timestamps.rs",
         "play from ts" => "Seek to the current line's start timestamp and play \
-(for pause/resume without a seek, use Tab). \
+(for pause/resume without a seek, use Tab or a). \
 -> timestamps::play_current_line — src/input/timestamps.rs",
         "clear AB" => "Dismiss a toast, else clear the A–B range / exit sub-modes. \
 -> escape::escape_reader_mode — src/input/actions/escape.rs",

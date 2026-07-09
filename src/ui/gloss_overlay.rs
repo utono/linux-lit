@@ -167,6 +167,10 @@ pub struct GlossOverlay {
     vim_engine: RefCell<Option<crate::input::vim::VimEngine>>,
     /// The raw text the editor was seeded with, for the `:q` dirty-check.
     vim_seed: RefCell<String>,
+    /// True while the editor hosts the reader's copy-only segment view
+    /// (InputMode::SegmentVim): the NORMAL footer then advertises y/`:q`
+    /// instead of the save/rewrite verbs, which that mode refuses.
+    vim_copy_only: std::cell::Cell<bool>,
     /// Block-cursor (fill, glyph-fg) colors, threaded from the theme on enter.
     vim_cursor_colors: RefCell<(String, String)>,
     /// `<hi>` highlight background (theme `cursor_line_bg`), re-asserted on the
@@ -569,6 +573,7 @@ impl GlossOverlay {
             ask_host,
             vim_engine: RefCell::new(None),
             vim_seed: RefCell::new(String::new()),
+            vim_copy_only: std::cell::Cell::new(false),
             vim_cursor_colors: RefCell::new((String::new(), String::new())),
             highlight_bg: RefCell::new(crate::ui::DEFAULT_HIGHLIGHT_BG.to_string()),
             hi_ranges: RefCell::new(Vec::new()),
@@ -719,6 +724,14 @@ impl GlossOverlay {
         self.mirror_engine();
     }
 
+    /// Mark the active edit buffer as the reader's copy-only segment view: the
+    /// NORMAL footer advertises select/copy/quit instead of save/rewrite.
+    /// Cleared automatically by `exit_edit_buffer`. Call BEFORE
+    /// `enter_edit_buffer` so the first mirror renders the right footer.
+    pub fn set_edit_copy_only(&self, on: bool) {
+        self.vim_copy_only.set(on);
+    }
+
     /// Feed one key to the engine, re-mirror, and return the resulting action.
     pub fn feed_edit_key(&self, key: crate::input::vim::VimKey) -> crate::input::vim::EditorAction {
         let action = {
@@ -769,6 +782,7 @@ impl GlossOverlay {
     /// the reading font. The caller re-renders the formatted display and resets
     /// the input mode.
     pub fn exit_edit_buffer(&self) {
+        self.vim_copy_only.set(false);
         crate::ui::clear_block_cursor(&self.gloss_view.buffer(), "gloss-vim-block");
         *self.vim_block_line.borrow_mut() = None;
         self.bar_drawing.queue_draw();
@@ -849,7 +863,11 @@ impl GlossOverlay {
         } else {
             match mode {
                 crate::input::vim::Mode::Normal => {
-                    "-- NORMAL --  (:w save \u{00b7} R rewrite \u{00b7} :q quit)".to_string()
+                    if self.vim_copy_only.get() {
+                        "-- NORMAL --  (v select \u{00b7} y copy \u{00b7} :q quit)".to_string()
+                    } else {
+                        "-- NORMAL --  (:w save \u{00b7} R rewrite \u{00b7} :q quit)".to_string()
+                    }
                 }
                 crate::input::vim::Mode::Insert => "-- INSERT --".to_string(),
                 crate::input::vim::Mode::Visual => "-- VISUAL --".to_string(),

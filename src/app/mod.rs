@@ -108,6 +108,12 @@ pub enum InputMode {
     /// rewrite. The save path branches on whether the overlay shows a gloss or a
     /// synopsis.
     GlossEdit,
+    /// Copy-only vim view of the cursor's segment (the reader's `v` bind),
+    /// hosted on the same `GlossOverlay` edit buffer as `GlossEdit` and
+    /// early-dispatched beside it. Seeded in VISUAL mode; visual `y` copies to
+    /// the system clipboard; `:q`/double-Esc exit. Save verbs are refused —
+    /// nothing is written back to the reading buffer or lit.db.
+    SegmentVim,
     SynopsisOverlay,
     SynopsisVisual,
     TranslationOverlay,

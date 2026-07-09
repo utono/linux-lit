@@ -274,10 +274,10 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
 fn media_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
         (KeyCombo::plain("s"), Action::TogglePlaybackSync),
-        // `a` and Space both play from the cursor line's start timestamp
-        // (PlayCurrentLine; Space is intercepted before dispatch in keymap.rs).
-        // Tab is a PURE pause/resume toggle — no seek (TogglePause).
-        (KeyCombo::plain("a"), Action::PlayCurrentLine),
+        // Space plays from the cursor line's start timestamp (PlayCurrentLine;
+        // it is intercepted before dispatch in keymap.rs). `a` and Tab are both
+        // a PURE pause/resume toggle — no seek (TogglePause).
+        (KeyCombo::plain("a"), Action::TogglePause),
         (KeyCombo::plain("Tab"), Action::TogglePause),
         (KeyCombo::plain("o"), Action::SeekShortBackward),
         (KeyCombo::plain("e"), Action::SeekShortForward),
@@ -350,6 +350,9 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
 fn selection_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
         (KeyCombo::plain("V"), Action::EnterVisualMode),
+        // Copy-only vim view of the cursor's segment: opens in VISUAL mode,
+        // visual `y` copies to the system clipboard, nothing is ever saved.
+        (KeyCombo::plain("v"), Action::OpenSegmentVim),
         (KeyCombo::plain("w"), Action::WordCycleCopy),
         (KeyCombo::plain("W"), Action::WordCollectCopy),
     ]
@@ -498,12 +501,16 @@ mod tests {
     #[test]
     fn keymap_lookup_distinguishes_modifiers() {
         let km = Keymap::default();
-        // "a" plain is PlayCurrentLine; Ctrl+a vs Ctrl+Shift+a differ.
+        // "a" plain is TogglePause (same as Tab); Ctrl+a vs Ctrl+Shift+a differ.
         let a_ctrl = km.lookup("a", true, false, false);
         let a_ctrl_shift = km.lookup("A", true, true, false);
         assert_ne!(a_ctrl, a_ctrl_shift);
         assert_eq!(km.lookup("f", false, false, false), Some(Action::CycleFontForward));
         assert_eq!(a_ctrl, Some(Action::ToggleAuthorship));
+        assert_eq!(km.lookup("a", false, false, false), Some(Action::TogglePause));
+        // plain v (segment vim copy) vs Shift+v (reader visual mode) differ.
+        assert_eq!(km.lookup("v", false, false, false), Some(Action::OpenSegmentVim));
+        assert_eq!(km.lookup("V", false, true, false), Some(Action::EnterVisualMode));
     }
 
     #[test]
