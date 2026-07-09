@@ -2771,6 +2771,27 @@ pub fn seek_to_current_line(state: &mut AppState) {
 // Vocab jump
 // ---------------------------------------------------------------------------
 
+/// Move the cursor to `target_line` and land on its CANONICAL spread — the
+/// same page paging through the work shows — not force-top-aligned. Shared by
+/// the vocab jumps and the vocab-sentence loop; mirrors bookmark jump_to_line
+/// and search n/N.
+pub fn land_cursor_on_line(state: &mut AppState, target_line: usize) {
+    state.current_line = target_line;
+    state.page_back_stack.clear();
+    state
+        .page_back_stack
+        .push((state.page_top_line, state.page_top_offset));
+    match state.config.navigation_mode {
+        crate::config::NavigationMode::Scroll => center_cursor(state),
+        crate::config::NavigationMode::EReader => {
+            if !is_line_fully_visible(state, target_line) {
+                set_page_instant(state, canonical_page_top_for(state, target_line));
+            }
+        }
+    }
+    after_page_change(state, PageChangeReason::Vocab);
+}
+
 /// Jump to the next vocab word occurrence after current position.
 pub fn jump_to_next_vocab(state: &mut AppState) {
     if state.vocab_matches.is_empty() {
@@ -2795,21 +2816,7 @@ pub fn jump_to_next_vocab(state: &mut AppState) {
 
     state.vocab_match_idx = Some(next_idx);
     let target_line = state.vocab_matches[next_idx].line_index;
-    state.current_line = target_line;
-    state.page_back_stack.clear();
-    state.page_back_stack.push((state.page_top_line, state.page_top_offset));
-    match state.config.navigation_mode {
-        crate::config::NavigationMode::Scroll => center_cursor(state),
-        crate::config::NavigationMode::EReader => {
-            // Land on the CANONICAL spread for this line — the same page paging
-            // through the work shows — not force-top-aligned. Mirrors bookmark
-            // jump_to_line and search n/N; previously this top-aligned target_line.
-            if !is_line_fully_visible(state, target_line) {
-                set_page_instant(state, canonical_page_top_for(state, target_line));
-            }
-        }
-    }
-    after_page_change(state, PageChangeReason::Vocab);
+    land_cursor_on_line(state, target_line);
 }
 
 
@@ -2837,19 +2844,7 @@ pub fn jump_to_prev_vocab(state: &mut AppState) {
 
     state.vocab_match_idx = Some(prev_idx);
     let target_line = state.vocab_matches[prev_idx].line_index;
-    state.current_line = target_line;
-    state.page_back_stack.clear();
-    state.page_back_stack.push((state.page_top_line, state.page_top_offset));
-    match state.config.navigation_mode {
-        crate::config::NavigationMode::Scroll => center_cursor(state),
-        crate::config::NavigationMode::EReader => {
-            // Land on the CANONICAL spread for this line (see jump_to_next_vocab).
-            if !is_line_fully_visible(state, target_line) {
-                set_page_instant(state, canonical_page_top_for(state, target_line));
-            }
-        }
-    }
-    after_page_change(state, PageChangeReason::Vocab);
+    land_cursor_on_line(state, target_line);
 }
 
 // ---------------------------------------------------------------------------
