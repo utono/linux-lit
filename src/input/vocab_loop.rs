@@ -162,6 +162,18 @@ pub fn enter_vocab_loop(state: &Rc<RefCell<AppState>>, forward: bool) -> bool {
     if !s.mpv_connected || !s.sync_enabled || s.translations_visible || s.media_id.is_none() {
         return false;
     }
+    // Most of the library has no phrase_timestamps at all for the active
+    // media. Gate on that cheaply before grouping matches into sentences and
+    // querying per-line spans, and fall back to the plain jump silently —
+    // no misleading "no vocab sentences" toast on a work that simply has no
+    // phrase data to drill with.
+    let Some(media) = s.media_id else { return false };
+    let Ok(conn) = crate::db::queries::open_db() else {
+        return false;
+    };
+    if !crate::db::queries::media_has_phrase_data(&conn, media) {
+        return false;
+    }
     let sentences = build_vocab_sentences(&s);
     if sentences.is_empty() {
         if !s.vocab_matches.is_empty() {
@@ -260,6 +272,10 @@ pub fn exit_vocab_loop(s: &mut AppState) {
     }
     let _ = s.cmd_tx.try_send(MpvCommand::ClearAbLoop);
     remove_sentence_tag(s);
+    // The mode forced the sweep on; if the configured mode is Off or
+    // playback is paused there is no next tick to clear it, and when
+    // playing the next tick repaints per the configured mode.
+    crate::input::phrase_highlight::clear_phrase_highlight(s);
     if s.input_mode == InputMode::VocabLoop {
         s.input_mode = InputMode::Reader;
     }

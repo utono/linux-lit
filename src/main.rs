@@ -144,6 +144,10 @@ fn main() {
                             crate::logging::log(&format!("CURSOR_SYNC: SKIP loading_work line_idx={}", line_idx));
                             continue;
                         }
+                        // The vocab loop pins the cursor; sync may not move it.
+                        if s.vocab_loop.is_some() {
+                            continue;
+                        }
                         if !s.sync_enabled {
                             continue;
                         }
