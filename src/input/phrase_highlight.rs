@@ -1,4 +1,5 @@
-//! Karaoke-style spoken-phrase highlight during MPV narration sync.
+//! Karaoke-style narration highlight (phrase- or line/sentence-width) during
+//! MPV narration sync.
 //!
 //! Driven from the `MpvEvent::TimePos` handler at **raw** playback time (no
 //! SYNC_PREROLL — the sync cursor leads the narration by the preroll, so the

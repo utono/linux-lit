@@ -97,8 +97,9 @@ pub enum Action {
     VolumeUp,
     VolumeDown,
     TogglePlaybackSpeed,
-    /// Toggle the karaoke spoken-phrase highlight for the current work's class
-    /// (prose vs plays/poetry); persisted per class in config. Alt+p.
+    /// Cycle the karaoke narration highlight for the current work's class
+    /// (prose vs plays/poetry): Off -> Phrase -> Line; persisted per class in
+    /// config. Alt+p.
     TogglePhraseHighlight,
 
     // Vocab / glossing
