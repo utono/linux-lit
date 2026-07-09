@@ -178,7 +178,7 @@ pub fn tint_range(
 }
 
 /// Text of buffer line `bl` (no trailing newline). Empty when out of range.
-fn buffer_line_text(s: &AppState, bl: usize) -> String {
+pub(crate) fn buffer_line_text(s: &AppState, bl: usize) -> String {
     let buffer = &s.buffer;
     let Some(start) = buffer.iter_at_line(bl as i32) else {
         return String::new();
@@ -191,7 +191,12 @@ fn buffer_line_text(s: &AppState, bl: usize) -> String {
 }
 
 /// The karaoke mode for the current work's class (prose vs verse flag).
+/// The vocab-sentence loop always shows the phrase sweep, whatever the
+/// class's configured mode — restored implicitly when the mode exits.
 fn active_mode(s: &AppState) -> PhraseHighlightMode {
+    if s.vocab_loop.is_some() {
+        return PhraseHighlightMode::Phrase;
+    }
     if s.is_prose() {
         s.config.phrase_highlight_prose
     } else {
@@ -341,13 +346,26 @@ pub fn clear_phrase_highlight(s: &mut AppState) {
     s.active_phrase = None;
 }
 
-/// Move the tag to `[start_char, end_char)` of buffer line `bl`, clamped to
-/// the line's char count (GTK iter offsets are unicode chars, matching the
-/// Python backfill's str indices; clamping guards data drift).
+/// Move the phrase sweep tag to `[start_char, end_char)` of buffer line `bl`.
 fn apply_phrase_tag(s: &AppState, bl: usize, start_char: usize, end_char: usize) {
+    let tag = s.phrase_tag.clone();
+    let (bs, be) = s.buffer.bounds();
+    s.buffer.remove_tag(&tag, &bs, &be);
+    apply_char_range_tag(s, &tag, bl, start_char, end_char);
+}
+
+/// Apply `tag` to `[start_char, end_char)` of buffer line `bl`, clamped to
+/// the line's char count (GTK iter offsets are unicode chars, matching the
+/// Python backfill's str indices; clamping guards data drift). Does NOT
+/// remove prior applications — callers own their tag's lifecycle.
+pub(crate) fn apply_char_range_tag(
+    s: &AppState,
+    tag: &gtk4::TextTag,
+    bl: usize,
+    start_char: usize,
+    end_char: usize,
+) {
     let buffer = &s.buffer;
-    let (bs, be) = buffer.bounds();
-    buffer.remove_tag(&s.phrase_tag, &bs, &be);
     let Some(line_start) = buffer.iter_at_line(bl as i32) else {
         return;
     };
@@ -367,7 +385,7 @@ fn apply_phrase_tag(s: &AppState, bl: usize, start_char: usize, end_char: usize)
     a.set_line_offset(sc as i32);
     let mut b = line_start;
     b.set_line_offset(ec as i32);
-    buffer.apply_tag(&s.phrase_tag, &a, &b);
+    buffer.apply_tag(tag, &a, &b);
 }
 
 #[cfg(test)]

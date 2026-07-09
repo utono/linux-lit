@@ -736,6 +736,19 @@ pub fn phrase_spans_for_line(
     }
 }
 
+/// Whether ANY phrase_timestamps rows exist for this media. Cheap gate so
+/// no-phrase-data works skip vocab-sentence resolution entirely (and its
+/// per-line span queries) and fall back to the plain vocab jump silently.
+pub fn media_has_phrase_data(conn: &Connection, media_id: i64) -> bool {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM phrase_timestamps WHERE media_id = ?1)",
+        [media_id],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|v| v != 0)
+    .unwrap_or(false)
+}
+
 pub fn list_media_for_work(
     conn: &Connection,
     abbrev: &str,

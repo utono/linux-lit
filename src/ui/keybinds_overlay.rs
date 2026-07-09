@@ -383,9 +383,12 @@ the synthesized verse reading and play it. \
 -> concordance::concordance_next — src/input/actions/concordance.rs",
         "prev conc" => "Previous concordance hit for the active word (cross-work). \
 -> concordance::concordance_prev — src/input/actions/concordance.rs",
-        "next vocab" => "Jump to the next vocabulary word. \
+        "next vocab" => "Jump to the next vocabulary word. On phrase-data works \
+this instead enters the vocab-sentence loop mode (sentence repeats via MPV \
+ab-loop; n/p step, a/Space pause, Esc exits). \
 -> concordance::jump_to_next_vocab — src/input/actions/concordance.rs",
-        "prev vocab" => "Jump to the previous vocabulary word. \
+        "prev vocab" => "Jump to the previous vocabulary word (backward entry \
+into the vocab-sentence loop mode on phrase-data works — see next vocab). \
 -> concordance::jump_to_prev_vocab — src/input/actions/concordance.rs",
         "vocab hi" => "Toggle vocabulary-word highlighting (saved per work). \
 -> ToggleVocabHighlight arm -> app::apply_vocab_highlighting / \

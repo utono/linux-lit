@@ -139,19 +139,28 @@ pub(crate) fn handle_word_selection(
     });
 }
 
-/// Jump to the next vocab match. Always plain vocab jump (ignores concordance state).
+/// Jump to the next vocab match. When the playing media has phrase data and
+/// at least one vocab sentence resolves, Ctrl+r enters the vocab-sentence
+/// loop mode instead; otherwise the plain jump (unchanged behavior).
 pub(crate) fn jump_to_next_vocab(
     state: &Rc<RefCell<AppState>>,
     _tokio_handle: &tokio::runtime::Handle,
 ) {
+    if crate::input::vocab_loop::enter_vocab_loop(state, true) {
+        return;
+    }
     navigation::jump_to_next_vocab(&mut state.borrow_mut());
 }
 
-/// Jump to the previous vocab match. Always plain vocab jump (ignores concordance state).
+/// Jump to the previous vocab match, or enter the vocab-sentence loop mode
+/// backward (see jump_to_next_vocab).
 pub(crate) fn jump_to_prev_vocab(
     state: &Rc<RefCell<AppState>>,
     _tokio_handle: &tokio::runtime::Handle,
 ) {
+    if crate::input::vocab_loop::enter_vocab_loop(state, false) {
+        return;
+    }
     navigation::jump_to_prev_vocab(&mut state.borrow_mut());
 }
 

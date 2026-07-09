@@ -294,6 +294,9 @@ pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &cra
     // Update cursor line highlight from root_color
     state.cursor_line_tag.set_property("paragraph-background", &theme.cursor_line_bg);
     state.phrase_tag.set_property("background", &theme.phrase_highlight_bg);
+    state
+        .vocab_sentence_tag
+        .set_property("background", &theme.vocab_sentence_bg());
 
     // Persist the per-app theme. linux-lit no longer reads or writes the
     // system-wide .current_theme — its theme is independent (default

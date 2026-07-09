@@ -114,6 +114,11 @@ pub enum InputMode {
     /// the system clipboard; `:q`/double-Esc exit. Save verbs are refused —
     /// nothing is written back to the reading buffer or lit.db.
     SegmentVim,
+    /// Fully modal vocab-sentence drill loop (Ctrl+r when the playing media
+    /// has phrase data): the sentence under review repeats via MPV ab-loop;
+    /// n/p step between vocab sentences, a/Space toggles pause, Escape (or
+    /// Ctrl+r) exits. All other keys are swallowed.
+    VocabLoop,
     SynopsisOverlay,
     SynopsisVisual,
     TranslationOverlay,
@@ -255,6 +260,9 @@ pub struct AppState {
     pub ab_dim_tag: gtk4::TextTag,
     /// Karaoke spoken-phrase tint during narration sync (phrase_highlight.rs).
     pub phrase_tag: gtk4::TextTag,
+    /// Sentence-extent tint for the vocab-sentence loop mode: marks the whole
+    /// looping sentence while phrase_tag's sweep moves inside it.
+    pub vocab_sentence_tag: gtk4::TextTag,
     /// Transient prose nav-flash tint: the cursor paragraph's background flashes
     /// the phrase-highlight color on a nav keybind, then fades out. Color is set
     /// per-frame by the flash animation, so no static color lives on the tag.
@@ -511,6 +519,7 @@ pub struct AppState {
     pub vocab_words: std::collections::HashSet<String>,
     pub vocab_matches: Vec<VocabMatch>,
     pub vocab_match_idx: Option<usize>,
+    pub vocab_loop: Option<crate::input::vocab_loop::VocabLoopState>,
     pub vocab_tag: gtk4::TextTag,
     /// Foreground tint applied to source lines covered by a `reader-gloss`
     /// passage. Color comes from `theme.reader_gloss` — the contrast-guarded
@@ -1010,6 +1019,15 @@ pub fn build_window(
         .paragraph_background(&theme.cursor_line_bg)
         .build();
     buffer.tag_table().add(&cursor_fade_tag);
+
+    // Sentence-extent tint for the vocab-sentence loop mode: marks the whole
+    // looping sentence while the phrase sweep (phrase_tag, added after this,
+    // so it wins the overlap) moves inside it.
+    let vocab_sentence_tag = gtk4::TextTag::builder()
+        .name("vocab-sentence")
+        .background(&theme.vocab_sentence_bg())
+        .build();
+    buffer.tag_table().add(&vocab_sentence_tag);
 
     // Span background (NOT paragraph_background): the karaoke tint covers only
     // the spoken phrase's chars inside the full-strength prose paragraph.
@@ -1625,6 +1643,7 @@ pub fn build_window(
         cursor_fade_tag,
         ab_dim_tag,
         phrase_tag,
+        vocab_sentence_tag,
         prose_flash_tag,
         phrase_cache: None,
         active_phrase: None,
@@ -1768,6 +1787,7 @@ pub fn build_window(
         vocab_words: std::collections::HashSet::new(),
         vocab_matches: Vec::new(),
         vocab_match_idx: None,
+        vocab_loop: None,
         vocab_tag,
         reader_gloss_tag,
         reader_gloss_cursor_tag,
@@ -2775,6 +2795,9 @@ pub fn display_work_at_with_prepared(
     // Task 9: a scheduled prose page crossing is tied to the OLD work's grid and
     // media; drop it so it can't fire against the freshly loaded work.
     state.pending_prose_cross = None;
+    // A vocab-sentence loop never survives a work switch (its buffer lines,
+    // media id, and ab-loop all belong to the old work).
+    crate::input::vocab_loop::exit_vocab_loop(state);
     state.media_id = work.media_id;
     // Phrase highlight is keyed to the OLD work's lines/media; reset so the
     // first TimePos in the new work refills against the new (line, media).
