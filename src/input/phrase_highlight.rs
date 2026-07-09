@@ -68,7 +68,7 @@ use gtk4::prelude::*;
 /// sync-suppressed (manual seeks/nav clear the tint). Pause KEEPS the last
 /// phrase visible — it marks where the audio stopped.
 pub fn update_phrase_highlight(s: &mut AppState, pos: f64) {
-    let enabled = if s.is_prose() {
+    let mode = if s.is_prose() {
         s.config.phrase_highlight_prose
     } else {
         s.config.phrase_highlight_verse
@@ -77,7 +77,7 @@ pub fn update_phrase_highlight(s: &mut AppState, pos: f64) {
         .suppress_sync_until
         .map(|until| std::time::Instant::now() < until)
         .unwrap_or(false);
-    if !enabled || !s.sync_enabled || s.loading_work.get() || s.translations_visible || suppressed
+    if !mode.is_on() || !s.sync_enabled || s.loading_work.get() || s.translations_visible || suppressed
     {
         clear_phrase_highlight(s);
         return;
