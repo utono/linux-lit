@@ -190,28 +190,85 @@ fn buffer_line_text(s: &AppState, bl: usize) -> String {
     buffer.text(&start, &end, false).to_string()
 }
 
-/// Per-TimePos driver. Gates: class flag (prose vs verse), sync on, not
-/// loading, translations hidden (inflated buffer misaligns offsets), not
-/// sync-suppressed (manual seeks/nav clear the tint). Pause KEEPS the last
-/// phrase visible — it marks where the audio stopped.
-pub fn update_phrase_highlight(s: &mut AppState, pos: f64) {
-    let mode = if s.is_prose() {
+/// The karaoke mode for the current work's class (prose vs verse flag).
+fn active_mode(s: &AppState) -> PhraseHighlightMode {
+    if s.is_prose() {
         s.config.phrase_highlight_prose
     } else {
         s.config.phrase_highlight_verse
-    };
+    }
+}
+
+/// Per-TimePos driver. Gates: class flag (prose vs verse), sync on,
+/// translations hidden (inflated buffer misaligns offsets). While paused or
+/// mid-load the tint is KEPT as-is — it marks where the audio stopped, or the
+/// pending phrase painted at startup / by a seek keybind. During sync
+/// suppression (manual seeks/nav) the tint clears UNLESS a pending-phrase
+/// paint is holding it (do_mpv_seek paints the seek target and holds it
+/// through its own suppression window).
+pub fn update_phrase_highlight(s: &mut AppState, pos: f64) {
+    let mode = active_mode(s);
+    if !mode.is_on() || !s.sync_enabled || s.translations_visible {
+        clear_phrase_highlight(s);
+        return;
+    }
+    if !s.mpv_playing || s.loading_work.get() {
+        return;
+    }
     let suppressed = s
         .suppress_sync_until
         .map(|until| std::time::Instant::now() < until)
         .unwrap_or(false);
-    if !mode.is_on() || !s.sync_enabled || s.loading_work.get() || s.translations_visible || suppressed
-    {
-        clear_phrase_highlight(s);
+    if suppressed {
+        let held = s
+            .phrase_paint_hold
+            .map(|until| std::time::Instant::now() < until)
+            .unwrap_or(false);
+        if !held {
+            clear_phrase_highlight(s);
+        }
         return;
     }
-    if !s.mpv_playing {
+    paint_phrase_at(s, pos, false);
+}
+
+/// Paint the phrase at an arbitrary timecode (the time a seek keybind just
+/// sent to MPV, or the resume line's start time at startup) so the karaoke
+/// tint shows what WILL be narrated there, without waiting for live TimePos
+/// ticks. Returns true when the mode gates passed and the paint path ran, so
+/// the caller can hold the tint through its sync-suppression window.
+pub fn paint_pending_phrase(s: &mut AppState, pos: f64) -> bool {
+    let mode = active_mode(s);
+    if !mode.is_on() || !s.sync_enabled || s.translations_visible {
+        return false;
+    }
+    paint_phrase_at(s, pos, true);
+    true
+}
+
+/// Startup / work-load: tint the phrase that will begin to play — the phrase
+/// at the cursor (resume) line's start time — so the resume point is visible
+/// before playback starts. No-op while playing (live sync owns the tint),
+/// or when the line is untimestamped / the work has no phrase data.
+pub fn show_startup_phrase(s: &mut AppState) {
+    if s.mpv_playing {
         return;
     }
+    let Some(start) = s.work_line_for_buffer(s.current_line).and_then(|wi| {
+        s.current_work.as_ref()?.lines.get(wi)?.timestamp.as_ref().map(|t| t.start)
+    }) else {
+        return;
+    };
+    paint_pending_phrase(s, start);
+}
+
+/// Resolve the spoken line near the sync cursor and tint the phrase active at
+/// raw `pos`. Clears the tint when no line/span matches (pos outside phrase
+/// data). `snap_forward` widens the miss case for pending paints: a `pos`
+/// BEFORE the resolved line's first span tints that first span (the phrase
+/// that will play) instead of clearing.
+fn paint_phrase_at(s: &mut AppState, pos: f64, snap_forward: bool) {
+    let mode = active_mode(s);
     let Some(media) = s.media_id else {
         clear_phrase_highlight(s);
         return;
@@ -253,10 +310,11 @@ pub fn update_phrase_highlight(s: &mut AppState, pos: f64) {
         ));
         s.phrase_cache = Some(PhraseCache { line_mapping_id: line_id, media_id: media, spans });
     }
-    let hit = s
-        .phrase_cache
-        .as_ref()
-        .and_then(|c| phrase_at_time(&c.spans, pos).map(|i| (c.spans[i], i)));
+    let hit = s.phrase_cache.as_ref().and_then(|c| {
+        phrase_at_time(&c.spans, pos)
+            .or_else(|| if snap_forward && !c.spans.is_empty() { Some(0) } else { None })
+            .map(|i| (c.spans[i], i))
+    });
     let Some((span, span_idx)) = hit else {
         clear_phrase_highlight(s);
         return;

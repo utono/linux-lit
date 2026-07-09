@@ -265,6 +265,9 @@ pub struct AppState {
     pub phrase_cache: Option<crate::input::phrase_highlight::PhraseCache>,
     /// Last applied phrase (buffer_line, span_idx) — skips redundant re-tags.
     pub active_phrase: Option<(usize, usize)>,
+    /// Keep a pending-phrase paint (seek keybind target) through sync
+    /// suppression: TimePos ticks inside this window must not clear the tint.
+    pub phrase_paint_hold: Option<std::time::Instant>,
     pub page_turn_overlay: gtk4::Overlay,
     pub bottom_clip: gtk4::Box,
     pub top_spacer: gtk4::Box,
@@ -1625,6 +1628,7 @@ pub fn build_window(
         prose_flash_tag,
         phrase_cache: None,
         active_phrase: None,
+        phrase_paint_hold: None,
         page_turn_overlay: page_turn_overlay.clone(),
         bottom_clip,
         top_spacer,
@@ -2776,6 +2780,7 @@ pub fn display_work_at_with_prepared(
     // first TimePos in the new work refills against the new (line, media).
     state.phrase_cache = None;
     state.active_phrase = None;
+    state.phrase_paint_hold = None;
     state
         .window
         .set_title(Some(&format!("{} — linux-lit", work.title)));
@@ -3469,6 +3474,10 @@ pub fn display_work_at_with_prepared(
     let t7 = std::time::Instant::now();
     crate::input::navigation::update_highlight_and_show(state);
     crate::logging::log(&format!("TIMING: update_highlight {:.0}ms", t7.elapsed().as_millis()));
+
+    // Karaoke: tint the phrase that will begin to play (the resume line's
+    // start time) so it's visible before playback starts.
+    crate::input::phrase_highlight::show_startup_phrase(state);
 
     crate::logging::log(&format!("TIMING: display_work total {:.0}ms", t0.elapsed().as_millis()));
 }

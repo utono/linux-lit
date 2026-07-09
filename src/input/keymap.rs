@@ -3291,11 +3291,18 @@ fn dispatch_action(
 }
 
 /// MPV seek with brief sync suppression. Common pattern for o/e/O/E/Left.
+/// With karaoke on, the phrase at the seek target is tinted immediately so
+/// the highlight tracks the timecode sent to MPV; the paint is held through
+/// the suppression window (post-seek TimePos ticks would otherwise clear it).
 fn do_mpv_seek(state: &Rc<RefCell<AppState>>, offset: f64) {
     let mut s = state.borrow_mut();
+    let target = (s.current_time_pos + offset).max(0.0);
     let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SeekRelative(offset));
     s.suppress_sync_until =
         Some(std::time::Instant::now() + crate::input::navigation::SYNC_SUPPRESS_SEEK);
+    if crate::input::phrase_highlight::paint_pending_phrase(&mut s, target) {
+        s.phrase_paint_hold = s.suppress_sync_until;
+    }
 }
 
 /// Vocab popup key handler with auto-hide timer reset.
