@@ -550,6 +550,18 @@ fn flash_prose_cursor_line(state: &mut AppState, hold: bool) {
     let rgba = gtk4::gdk::RGBA::parse(&state.theme.phrase_highlight_bg)
         .unwrap_or_else(|_| gtk4::gdk::RGBA::new(1.0, 1.0, 1.0, 0.22));
     let base_alpha = rgba.alpha();
+    // Paint the tint at FULL strength now, before any animation frame runs —
+    // the tag object keeps the 0-alpha rgba from the end of its last fade, so
+    // a deferred start would otherwise show nothing until the first callback.
+    {
+        use gtk4::prelude::TextTagExt;
+        flash_tag.set_paragraph_background_rgba(Some(&gtk4::gdk::RGBA::new(
+            rgba.red(),
+            rgba.green(),
+            rgba.blue(),
+            base_alpha,
+        )));
+    }
     let (duration, hold_frac) = if hold { (1050_u32, 350.0 / 1050.0) } else { (700, 0.0) };
     let target = adw::CallbackAnimationTarget::new(move |value| {
         use gtk4::prelude::TextTagExt;
@@ -576,7 +588,22 @@ fn flash_prose_cursor_line(state: &mut AppState, hold: bool) {
     });
     let anim = adw::TimedAnimation::new(&state.text_view, 1.0, 0.0, duration, target);
     anim.set_easing(adw::Easing::Linear);
-    anim.play();
+    if hold {
+        // Page-turn flash: don't start the clock until the NEW page's first
+        // painted frame. The first paint after an instant page set can take
+        // ~800ms on the live display (observed PAINT: 821ms at 1920x1200), so
+        // a wall-clock hold spent the whole flash before anything was visible.
+        // The tint is already applied at full alpha above; this one-shot tick
+        // (the same first-frame signal log_first_paint uses) starts the
+        // hold+fade once the page is actually on screen.
+        let a = anim.clone();
+        state.text_view.add_tick_callback(move |_, _| {
+            a.play();
+            glib::ControlFlow::Break
+        });
+    } else {
+        anim.play();
+    }
     state.prose_flash_anim = Some(anim);
 }
 
