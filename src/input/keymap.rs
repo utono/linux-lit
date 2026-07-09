@@ -1432,6 +1432,13 @@ fn handle_gloss_key(
             crate::input::actions::gloss::begin_edit(state);
             true
         }
+        // R: ask-Claude rewrite of the displayed gloss, straight from the read
+        // view (same prompt the vim editor's `R` opens — no need to enter `e`
+        // first). Opens in INSERT. Mirrors journal `R`.
+        "R" => {
+            crate::input::actions::gloss::begin_rewrite(state);
+            true
+        }
         // u: undo the last `e` edit (single-level), behind a y/Esc confirmation.
         "u" => {
             crate::input::actions::gloss::show_undo_confirmation(
@@ -1877,6 +1884,13 @@ fn handle_synopsis_overlay_key(
         }
         "e" => {
             crate::input::actions::synopsis::begin_edit(state);
+            true
+        }
+        // R: ask-Claude rewrite of the displayed synopsis, straight from the
+        // read view (same prompt the vim editor's `R` opens — no need to enter
+        // `e` first). Opens in INSERT. Mirrors journal/gloss `R`.
+        "R" => {
+            crate::input::actions::synopsis::begin_rewrite(state);
             true
         }
         // c: copy the current scene's scene_synopses.id to the clipboard + toast,

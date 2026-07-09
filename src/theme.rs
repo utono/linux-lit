@@ -565,13 +565,12 @@ fn ensure_gloss_color_min(base_hex: &str, bg_hex: &str, avoid: &[&str], min_cont
 /// toward a paper cream. Dark themes already have a soft, non-garish `text_bg`,
 /// so they are left untouched.
 fn gloss_background(theme: &Theme) -> String {
-    if theme.is_light {
-        // Rosé Pine Dawn's base background: a soft warm off-white that takes the
-        // harsh edge off pure white without reading as a saturated cream.
-        "#faf4ed".to_string()
-    } else {
-        theme.text_bg.clone()
-    }
+    // The overlays (gloss/synopsis/journal/translation + their ask cards) paint
+    // the SAME paper as the main reading card: the theme's `text_bg`. Light
+    // themes used to substitute a fixed Rosé Pine Dawn off-white (#faf4ed),
+    // which made every overlay visibly mismatch the card on any other light
+    // theme (user request: overlay theme must match the main card's theme).
+    theme.text_bg.clone()
 }
 
 /// The inset-panel fill for the prose overlays. It now paints the card's own

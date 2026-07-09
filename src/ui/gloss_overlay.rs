@@ -188,8 +188,9 @@ pub struct GlossOverlay {
 /// `.gloss-text` CSS at the reader's config size.
 pub(crate) const GLOSS_DEFAULT_FONT_FAMILY: &str = "Charter";
 /// Default overlay reading-font size (pt). Shared by the gloss + journal overlays
-/// so they always render at the same size (never drift). 17pt matches the reader
-/// card's default.
+/// so they always render at the same size (never drift). Pre-first-work default
+/// only: `reapply_font` syncs both overlays to the reader card's configured size
+/// on every work load / size change (`sync_reader_font_size`).
 pub(crate) const GLOSS_DEFAULT_FONT_SIZE: i32 = 18;
 
 /// Card-matching layout for a PROSE synopsis: render it in the main reading
@@ -637,6 +638,18 @@ impl GlossOverlay {
                 let ei = buffer.iter_at_offset(e as i32);
                 buffer.apply_tag(&tag, &si, &ei);
             }
+        }
+    }
+
+    /// Follow the reader card's font SIZE (the family stays the overlay's own
+    /// reading family). Called from `reapply_font` so the overlay always renders
+    /// at the main card's current size — on work load and on +/- size changes —
+    /// instead of the fixed `GLOSS_DEFAULT_FONT_SIZE`. Pagination is safe: every
+    /// show path repaginates, and size changes only happen in reader mode.
+    pub fn sync_reader_font_size(&self, size: i32) {
+        if self.font_size.get() != size {
+            self.font_size.set(size);
+            self.apply_font();
         }
     }
 
@@ -1748,11 +1761,26 @@ impl GlossOverlay {
         // body margin.
         let card_w = self.last_card_size.get().0;
         let left = self.gloss_view.left_margin();
+        // Speakerless source (prose): the verse renders at the shallower
+        // QUOTE_SPEAKER_INDENT (populate_verse_buffer), so measure at that
+        // width — and without the speaker-label reserve (block_height_overhead):
+        // no heading renders, so the reserve only underfilled pages. When any
+        // block carries a speaker, measure every Source at the deep verse indent
+        // with the full reserve — a mixed page renders deep, and the doc-level
+        // check only ever over-counts (never clips).
+        let doc_has_speaker = self
+            .gloss_block_markups
+            .borrow()
+            .iter()
+            .any(|m| crate::ui::gloss_render::markup_has_displayed_speaker(m));
         // bar_left == left in gloss mode; the right margin is `left`.
         let wrap_for = |kind: BlockKind| -> i32 {
             let indent = match (self.paginated_mode.get(), kind) {
-                (PaginatedMode::Gloss, BlockKind::Source) => {
+                (PaginatedMode::Gloss, BlockKind::Source) if doc_has_speaker => {
                     crate::ui::gloss_render::QUOTE_VERSE_INDENT
+                }
+                (PaginatedMode::Gloss, BlockKind::Source) => {
+                    crate::ui::gloss_render::QUOTE_SPEAKER_INDENT
                 }
                 (PaginatedMode::Gloss, _) => crate::ui::gloss_render::QUOTE_BODY_INDENT,
                 (PaginatedMode::Synopsis, _) => 0,
@@ -1769,7 +1797,7 @@ impl GlossOverlay {
                     PaginatedMode::Gloss => markups.get(i).map(|s| s.as_str()),
                     PaginatedMode::Synopsis => None,
                 };
-                gloss_block_height(b, m, &pctx, &family, size, wrap_for(b.kind))
+                gloss_block_height(b, m, &pctx, &family, size, wrap_for(b.kind), doc_has_speaker)
             })
             .collect();
         drop(markups);
@@ -2589,14 +2617,18 @@ const PROSE_PAD: i32 = 16;
 /// grew from 56 to 72 to keep the over-estimate conservative.
 const SPEAKER_BLOCK_OVERHEAD: i32 = 72;
 
-/// Conservative per-block height overhead. For Source (verse) blocks the speaker
-/// heading carries `pixels_above_lines(36)` + a `scale(0.9)` label + a 10px
-/// `pixels_below_lines` gap that a plain `pango::Layout` never models, so we must
-/// over-estimate. For Explication (prose) blocks we add the paragraph pad that the
-/// rendered view inserts between blocks. NEVER under-estimate a Source block —
+/// Conservative per-block height overhead. For Source (verse) blocks WITH a
+/// speaker heading, the heading carries `pixels_above_lines(36)` + a `scale(0.9)`
+/// label + a 10px `pixels_below_lines` gap that a plain `pango::Layout` never
+/// models, so we must over-estimate. A SPEAKERLESS source (prose gloss) renders
+/// no heading and no per-line verse gaps — plain wrapped lines — so charging the
+/// speaker reserve there only underfills pages (the "why is this 2 pages?"
+/// artifact): it pays the paragraph pad like an explication instead. For
+/// Explication (prose) blocks we add the paragraph pad that the rendered view
+/// inserts between blocks. NEVER under-estimate a source-with-speaker block —
 /// too-tall just gives it its own page; too-small clips the speaker label.
-fn block_height_overhead(is_source: bool, text_h: i32) -> i32 {
-    if is_source {
+fn block_height_overhead(is_source: bool, has_speaker: bool, text_h: i32) -> i32 {
+    if is_source && has_speaker {
         // verse lines carry per-line gaps too -> 1.15 slack on the text height.
         (text_h as f32 * 1.15) as i32 + SPEAKER_BLOCK_OVERHEAD
     } else {
@@ -2617,13 +2649,14 @@ fn gloss_block_height(
     family: &str,
     size_pt: i32,
     wrap_w: i32,
+    has_speaker: bool,
 ) -> i32 {
     // Leaded: the gloss view renders with `pixels_inside_wrap`
     // (ui::OVERLAY_LINE_LEADING), so wrap heights must charge the same.
     let text_h = crate::ui::pagination::measure_text_height_leaded(
         pctx, &block.display, size_pt, family, wrap_w,
     );
-    let mut h = block_height_overhead(block.kind == BlockKind::Source, text_h);
+    let mut h = block_height_overhead(block.kind == BlockKind::Source, has_speaker, text_h);
     let line = size_pt + size_pt / 2;
     // Synopsis: lead label paragraph(s) ride ABOVE the block body (in `attached`).
     // Plain irrefutable `let`: Attachment has the single LeadLabel variant.
@@ -2703,14 +2736,18 @@ mod block_height_tests {
 
     #[test]
     fn source_block_height_exceeds_prose_for_equal_text() {
-        // A Source (verse, has a speaker heading + per-line gaps) block must measure
-        // TALLER than an Explication block of the same text — the conservative
-        // over-estimate that prevents clipping the speaker label.
+        // A Source block WITH a speaker heading (verse: heading + per-line gaps)
+        // must measure TALLER than an Explication block of the same text — the
+        // conservative over-estimate that prevents clipping the speaker label.
         // (Pure-arithmetic check on the overhead constants; no GTK pango here —
         // factor the overhead into a pure helper `block_height_overhead(is_source,
-        // text_h)` that gloss_block_height calls, and test THAT.)
-        assert!(block_height_overhead(true, 100) > block_height_overhead(false, 100));
+        // has_speaker, text_h)` that gloss_block_height calls, and test THAT.)
+        assert!(block_height_overhead(true, true, 100) > block_height_overhead(false, false, 100));
         // Prose overhead is the journal's per-paragraph pad.
-        assert_eq!(block_height_overhead(false, 100), 100 + PROSE_PAD);
+        assert_eq!(block_height_overhead(false, false, 100), 100 + PROSE_PAD);
+        // A SPEAKERLESS source (prose gloss) renders no heading and no verse
+        // gaps — it pays only the paragraph pad, so pages fill instead of
+        // splitting on phantom height.
+        assert_eq!(block_height_overhead(true, false, 100), 100 + PROSE_PAD);
     }
 }

@@ -401,7 +401,21 @@ pub(crate) fn vim_open_rewrite(
         s.gloss_overlay.exit_edit_buffer();
         s.input_mode = crate::app::InputMode::SynopsisOverlay;
     }
+    begin_rewrite(state);
+}
+
+/// `R` in the synopsis overlay (read view OR via the vim editor's `R`): open the
+/// ask-Claude synopsis rewrite prompt. Directly reachable from the read view —
+/// entering the `e` editor first is unnecessary (mirrors journal/gloss
+/// `begin_rewrite`). Opens in INSERT: a rewrite instruction is always typed
+/// fresh, so skip vim-NORMAL (fed through the engine so the mirror and
+/// `-- INSERT --` hint stay truthful).
+pub(crate) fn begin_rewrite(state: &Rc<RefCell<AppState>>) {
     show_edit_prompt(state);
+    let _ = state
+        .borrow()
+        .gloss_overlay
+        .feed_ask_vim_key(crate::input::vim::VimKey::Char('i'));
 }
 
 /// Alt+g in the synopsis card: open the gloss overlay for the whole work, with

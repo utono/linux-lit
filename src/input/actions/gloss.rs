@@ -1022,7 +1022,21 @@ pub(crate) fn vim_open_rewrite(
         s.input_mode = crate::app::InputMode::GlossOverlay;
     }
     // Open the existing ask-Claude edit dialog (GlossPromptMode::Edit).
+    begin_rewrite(state);
+}
+
+/// `R` in the gloss overlay (read view OR via the vim editor's `R`): open the
+/// ask-Claude rewrite (edit) prompt for the displayed gloss. Directly reachable
+/// from the read view — entering the `e` editor first is unnecessary (mirrors
+/// journal `begin_rewrite`). Opens in INSERT: a rewrite instruction is always
+/// typed fresh, so skip vim-NORMAL (fed through the engine so the mirror and
+/// `-- INSERT --` hint stay truthful).
+pub(crate) fn begin_rewrite(state: &Rc<RefCell<AppState>>) {
     show_edit_dialog(state);
+    let _ = state
+        .borrow()
+        .gloss_overlay
+        .feed_ask_vim_key(crate::input::vim::VimKey::Char('i'));
 }
 
 /// Undo the last `e` gloss edit (single-level): restore the snapshot in

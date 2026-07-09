@@ -783,6 +783,16 @@ impl JournalOverlay {
         self.apply_font();
     }
 
+    /// Follow the reader card's font SIZE (the family stays the overlay's own
+    /// reading family). Mirrors `GlossOverlay::sync_reader_font_size` — the two
+    /// overlays share their size (never drift), so both follow the main card.
+    pub fn sync_reader_font_size(&self, size: i32) {
+        if self.font_size.get() != size {
+            self.font_size.set(size);
+            self.apply_font();
+        }
+    }
+
     /// Swap to the monospace edit font, stashing the current reading family so
     /// `end_edit_font` can restore it. Size is unchanged. Idempotent: a second
     /// call without an intervening `end_edit_font` no-ops (the reading family is

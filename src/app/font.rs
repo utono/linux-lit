@@ -42,6 +42,12 @@ pub(crate) fn reapply_font(state: &AppState) {
     let highest = state.buffer.tag_table().size() - 1;
     state.translation_text_tag.set_priority(highest);
     state.authorship_tag.set_priority(highest.saturating_sub(1).max(1));
+    // The gloss/synopsis + journal overlays follow the reader card's font SIZE
+    // (their reading family stays their own): synced here so a work load or a
+    // +/- size change keeps the overlays at the main card's size instead of the
+    // fixed GLOSS_DEFAULT_FONT_SIZE.
+    state.gloss_overlay.sync_reader_font_size(state.config.font_size as i32);
+    state.journal_overlay.sync_reader_font_size(state.config.font_size as i32);
     log(&format!("FONT: reapply_font size={}pt via TextTag", state.config.font_size));
     update_spacer_heights(state);
 }

@@ -22,12 +22,14 @@ pub(crate) const QUOTE_BODY_INDENT: i32 = 20;
 /// Left inset (past the accent bar) of the speaker label heading the quoted
 /// source turn. Echo quotes and citations share this indent.
 pub(crate) const QUOTE_SPEAKER_INDENT: i32 = 48;
-/// Left inset (past the accent bar) of the quoted source verse: one main-card
-/// dialogue step past the speaker label, so the source turn reads with the same
-/// speaker→dialogue hang-indent as the main reading card. This is the DEEPEST
-/// indent any gloss block uses — the paginated height measurement
-/// (`GlossOverlay::repaginate`) subtracts it from the wrap width so estimates
-/// over-count (never clip).
+/// Left inset (past the accent bar) of the quoted source verse WHEN the turn
+/// has a speaker label: one main-card dialogue step past the label, so the
+/// source turn reads with the same speaker→dialogue hang-indent as the main
+/// reading card. A speakerless source (prose works) has nothing to hang past,
+/// so its lines sit at `QUOTE_SPEAKER_INDENT` instead — the deep indent read
+/// as arbitrary there. This is the DEEPEST indent any gloss block uses — the
+/// paginated height measurement (`GlossOverlay::repaginate`) subtracts it from
+/// the wrap width so estimates over-count (never clip).
 pub(crate) const QUOTE_VERSE_INDENT: i32 = QUOTE_SPEAKER_INDENT + crate::app::DIALOGUE_INDENT;
 
 /// Apply italic styling to any `[bracket]` spans found after `base_offset` in
@@ -43,6 +45,24 @@ fn header_tag_base(name: &str, left_margin: i32) -> gtk4::builders::TextTagBuild
         .weight(700)
         .scale(0.9)
         .left_margin(left_margin)
+}
+
+/// True when `name` is a speaker label the renderer will actually display.
+/// `populate_verse_buffer` drops empty / "UNKNOWN" labels (stored prose glosses
+/// carry `<speaker>UNKNOWN</speaker>`), so anything deciding indent or height
+/// by "does this doc have a speaker" must apply the SAME filter — a raw
+/// `contains("<speaker>")` check sees the UNKNOWN tag and diverges.
+pub(crate) fn is_displayed_speaker(name: &str) -> bool {
+    !(name.trim().is_empty() || name.eq_ignore_ascii_case("UNKNOWN"))
+}
+
+/// True when `markup` contains a speaker label that will actually render
+/// (parsed with the real tag parser + the render filter above). Used by
+/// `GlossOverlay::repaginate` so measurement matches `populate_verse_buffer`.
+pub(crate) fn markup_has_displayed_speaker(markup: &str) -> bool {
+    parse_gloss_tags(markup)
+        .iter()
+        .any(|el| matches!(el, GlossElement::Speaker(n) if is_displayed_speaker(n)))
 }
 
 pub(crate) fn apply_bracket_styling(
@@ -170,15 +190,35 @@ pub(crate) fn populate_verse_buffer(
         }
     };
 
+    // Drop empty / "UNKNOWN" speaker labels: prose works (novels) have no
+    // speaker, and a stored gloss may carry `<speaker>UNKNOWN</speaker>`. Filtering
+    // here (rather than skipping mid-loop) keeps the spacing logic correct — the
+    // first real element becomes `first`. New glosses no longer emit the tag at
+    // all (build_source_header), so this guards pre-existing stored data.
+    let elements: Vec<GlossElement> = parse_gloss_tags(gloss)
+        .into_iter()
+        .filter(|el| !matches!(el, GlossElement::Speaker(n) if !is_displayed_speaker(n)))
+        .collect();
+    let has_speaker = elements
+        .iter()
+        .any(|el| matches!(el, GlossElement::Speaker(_)));
+
     // The explication (FOCUS body) sits flush ~12px right of the accent bar, like
     // the journal answer. The speaker label + verse (the dim source header) are
     // INDENTED further right so the source reads as a set-off block quote above
-    // the flush explication; the verse hangs one main-card dialogue step PAST the
-    // speaker label, so the quoted turn keeps the reading card's speaker→dialogue
-    // rhythm.
+    // the flush explication; when the turn has a speaker label the verse hangs
+    // one main-card dialogue step PAST it, keeping the reading card's
+    // speaker→dialogue rhythm. A speakerless source (prose) sits at the speaker
+    // level — there is no label to hang past, and the deep indent read as
+    // arbitrary over-indentation.
     let quote_body = bar_left + QUOTE_BODY_INDENT; // explication (gloss-para) — flush, the focus
     let quote_speaker = bar_left + QUOTE_SPEAKER_INDENT;
-    let quote_verse = bar_left + QUOTE_VERSE_INDENT;
+    let quote_verse = bar_left
+        + if has_speaker {
+            QUOTE_VERSE_INDENT
+        } else {
+            QUOTE_SPEAKER_INDENT
+        };
 
     // Speaker + verse "header" styling: bold 700, 0.9 scale, space below, the
     // speaker in small-caps (it's a name label). The header renders in the
@@ -224,11 +264,20 @@ pub(crate) fn populate_verse_buffer(
     // leading like the journal answer body, so the reader's eye lands on the
     // explication. The speaker + verse above are the header (bold/scale-0.9,
     // full ink; set off by the hang-indent).
+    //
+    // Spacing groups a unit visually. WITH a speaker (plays) the speaker tag's
+    // own 36px top gap separates units, so the explication carries 24 above /
+    // 10 below. SPEAKERLESS (prose) has no speaker tag, so with the same values
+    // the big gap fell INSIDE a unit (source → its gloss: 24) and the small one
+    // BETWEEN units (gloss → next source: 10) — backwards. Invert for prose:
+    // the source reads as its gloss's heading (tight 10 above the gloss), and
+    // the unit break gets the wide gap (32 below the gloss).
+    let (para_above, para_below) = if has_speaker { (24, 10) } else { (10, 32) };
     let para_builder = gtk4::TextTag::builder()
         .name("gloss-para")
         .left_margin(quote_body)
-        .pixels_above_lines(24)
-        .pixels_below_lines(10)
+        .pixels_above_lines(para_above)
+        .pixels_below_lines(para_below)
         .scale(1.0);
     let para_tag = match dim_color {
         Some(c) => para_builder.foreground(c).build(),
@@ -312,15 +361,6 @@ pub(crate) fn populate_verse_buffer(
     tag_table.add(&citation_tag);
     tag_table.add(&pron_tag);
 
-    // Drop empty / "UNKNOWN" speaker labels: prose works (novels) have no
-    // speaker, and a stored gloss may carry `<speaker>UNKNOWN</speaker>`. Filtering
-    // here (rather than skipping mid-loop) keeps the spacing logic correct — the
-    // first real element becomes `first`. New glosses no longer emit the tag at
-    // all (build_source_header), so this guards pre-existing stored data.
-    let elements: Vec<GlossElement> = parse_gloss_tags(gloss)
-        .into_iter()
-        .filter(|el| !matches!(el, GlossElement::Speaker(n) if n.trim().is_empty() || n.eq_ignore_ascii_case("UNKNOWN")))
-        .collect();
     let mut first = true;
     let mut only_speakers_so_far = true;
     // Whether we have reached the echo list (`<gloss>` elements). Speaker
