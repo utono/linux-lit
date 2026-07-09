@@ -83,7 +83,7 @@ const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 const BOTTOM_ROW: &[KeyDef] = &[
     bare("'", "\"", "next bkmk"),
     key("q", "Q", "next speaker", "Q: next dlg", &[]),
-    key("j", "J", "cursor \u{2193}", "J: next speaker", &[("C-j", "journal tog"), ("M-j", "jrnl Q&A picker"), ("r", "jrnl from gloss"), ("C-j", "view jrnl"), ("C-S-j", "move jrnl band")]),
+    key("j", "J", "cursor \u{2193}", "J: next speaker", &[("C-j", "journal tog"), ("M-j", "jrnl Q&A picker"), ("C-j", "view jrnl"), ("C-S-j", "move jrnl band")]),
     key("k", "K", "cursor \u{2191}", "K: prev speaker", &[]),
     bare("x", "X", "pg fwd"),
     bare("b", "B", ""),
@@ -216,339 +216,200 @@ fn describe(label: &str) -> Option<&'static str> {
     let key = strip_shift_prefix(label);
     let d = match key {
         // ── Page / cursor navigation ──
-        "pg fwd" => "Turn one page forward in the e-reader pagination (the cursor \
-follows to the new page top). Aliased on x. \
+        "pg fwd" => "Turn one page forward (aliased on x). \
 -> navigation::page_forward — src/input/navigation.rs",
-        "pg back" => "Turn one page backward in the e-reader pagination. Aliased \
-on y. (In the synopsis overlay's Shift+V visual mode, y instead yanks the \
-selected paragraphs to the clipboard.) \
+        "pg back" => "Turn one page backward (aliased on y). \
 -> navigation::page_backward — src/input/navigation.rs",
-        "page ↓" => "Page forward by one screen (Space). \
+        "page ↓" => "Page forward one screen (Space). \
 -> navigation::page_forward — src/input/navigation.rs",
-        "page ↑" => "Page backward by one screen (Shift+Space). \
+        "page ↑" => "Page backward one screen (Shift+Space). \
 -> navigation::page_backward — src/input/navigation.rs",
-        "cursor ↓" | "cursor down" => "Move the cursor down one dialogue line, \
-turning the page when it reaches the bottom, and seek audio to that line's \
-start timestamp. \
+        "cursor ↓" | "cursor down" => "Cursor down one dialogue line (turns the \
+page at the bottom); seeks audio to the line. \
 -> navigation::cursor_next_dialogue — src/input/navigation.rs",
-        "cursor ↑" | "cursor up" => "Move the cursor up one dialogue line, \
-turning the page when it reaches the top, and seek audio to that line's \
-start timestamp. \
+        "cursor ↑" | "cursor up" => "Cursor up one dialogue line; seeks audio to \
+the line. \
 -> navigation::cursor_prev_line — src/input/navigation.rs",
-        "prev dlg" => "Jump the cursor to the previous line of dialogue, skipping \
-speaker names, stage directions, and blank lines. \
+        "prev dlg" => "Jump to the previous dialogue line. \
 -> navigation::jump_to_prev_dialogue — src/input/navigation.rs",
-        "next dlg" => "Jump the cursor to the next line of dialogue, skipping \
-speaker names, stage directions, and blank lines. \
+        "next dlg" => "Jump to the next dialogue line. \
 -> navigation::jump_to_next_dialogue — src/input/navigation.rs",
-        "next speaker" => "Jump the cursor to the first dialogue line of the next \
-speaker turn — the next time the speaker changes — and seek audio to it. \
+        "next speaker" => "Jump to the next speaker turn and seek audio to it. \
 -> navigation::jump_to_next_speaker — src/input/navigation.rs",
-        "prev speaker" => "If mid-speech, jump the cursor to the first dialogue line \
-of the CURRENT speaker's block; if already at the block top, step to the first \
-line of the previous speaker turn. Seeks audio to the landing line. \
+        "prev speaker" => "Jump to the top of the current speaker turn; from there, \
+the previous turn. Seeks audio. \
 -> navigation::jump_to_prev_speaker — src/input/navigation.rs",
-        "go to start" => "Jump to the very first line of the work (gg). \
+        "go to start" => "Jump to the first line (gg). \
 -> navigation::jump_to_start — src/input/navigation.rs",
-        "go to end" => "Jump to the very last line of the work (G). \
+        "go to end" => "Jump to the last line (G). \
 -> navigation::jump_to_end — src/input/navigation.rs",
-        "pg back btm" => "Turn one page backward and land the cursor on the bottom \
-line of the new page (Shift+Up). \
+        "pg back btm" => "Page backward, landing the cursor on the new page's \
+bottom line (Shift+Up). \
 -> navigation::page_backward_bottom — src/input/navigation.rs",
 
         // ── Chapters / scenes ──
-        "prev ch" => "Jump to the previous chapter (prose) or act (play) — a div1 \
-boundary sourced from (div1,div2) divisions, independent of any loaded audio. In \
-a play the cursor lands on the act's FIRST DIALOGUE line, never the entrance \
-stage direction. -> navigation::jump_to_prev_chapter — src/input/navigation.rs",
-        "next ch" => "Jump to the next chapter (prose) or act (play) — a div1 \
-boundary sourced from (div1,div2) divisions, independent of any loaded audio. In \
-a play the cursor lands on the act's FIRST DIALOGUE line, never the entrance \
-stage direction. -> navigation::jump_to_next_chapter — src/input/navigation.rs",
-        "prev scene" => "Jump to the first line of the CURRENT scene (plays) or \
-chapter (prose); pressed again from that first line, jump to the previous \
-scene/chapter. Toasts the landing act/scene or chapter. \
+        "prev ch" => "Jump to the previous chapter (prose) or act (play). \
+-> navigation::jump_to_prev_chapter — src/input/navigation.rs",
+        "next ch" => "Jump to the next chapter (prose) or act (play). \
+-> navigation::jump_to_next_chapter — src/input/navigation.rs",
+        "prev scene" => "Jump to the current scene/chapter's first line; pressed \
+there, the previous one. \
 -> navigation::jump_to_prev_section — src/input/navigation.rs",
-        "next scene" => "Jump to the first line of the next scene (plays) or \
-chapter (prose). Toasts the landing act/scene or chapter. \
+        "next scene" => "Jump to the next scene (plays) or chapter (prose). \
 -> navigation::jump_to_next_section — src/input/navigation.rs",
 
         // ── Bookmarks ──
-        "bookmark" => "Toggle a bookmark on the current line (writes/removes a \
-bookmark row in lit.db and updates the sign column). \
+        "bookmark" => "Toggle a bookmark on the current line. \
 -> bookmarks::toggle_bookmark — src/input/actions/bookmarks.rs",
-        "prev bkmk" => "Jump the cursor to the previous bookmarked line in this \
-work. -> navigation::prev_bookmark — src/input/navigation.rs",
-        "next bkmk" => "Jump the cursor to the next bookmarked line in this work. \
+        "prev bkmk" => "Jump to the previous bookmark. \
+-> navigation::prev_bookmark — src/input/navigation.rs",
+        "next bkmk" => "Jump to the next bookmark. \
 -> navigation::next_bookmark — src/input/navigation.rs",
-        "latest bookmark" => "Jump to the most recently added bookmark (g; \
-sequence). -> bookmarks::jump_to_recent_bookmark — src/input/actions/bookmarks.rs",
-        "bookmarks" => "Open the bookmark picker: a list of this work's bookmarks \
-to jump to. -> pickers::open_bookmark_picker — src/input/actions/pickers.rs",
+        "latest bookmark" => "Jump to the most recently added bookmark (g;). \
+-> bookmarks::jump_to_recent_bookmark — src/input/actions/bookmarks.rs",
+        "bookmarks" => "Open the bookmark picker. \
+-> pickers::open_bookmark_picker — src/input/actions/pickers.rs",
 
         // ── Pickers / overlays ──
-        "lib picker" => "Open the library picker to switch works: browse by \
-author, then by work, with fuzzy filtering. The chosen work opens at your \
-saved position, or at the first dialogue line on first open. \
+        "lib picker" => "Open the library picker to switch works. \
 -> pickers::open_library_picker_from_reader — src/input/actions/pickers.rs \
 (opens via app::display_work_at_with_prepared — src/app.rs)",
-        "media picker" => "Open the media picker to choose which audio file syncs \
-with this work; the MPV socket path is derived from the file path. \
+        "media picker" => "Open the media picker to choose the synced audio file. \
 -> pickers::open_media_picker — src/input/actions/pickers.rs",
-        "conc picker" => "Open the concordance picker: a stopword-filtered list \
-of words used across this author's works. Pick a word to start cross-work \
-concordance navigation, then step through occurrences with r / R. \
+        "conc picker" => "Open the concordance picker (author-wide word list; \
+step hits with r / R). \
 -> concordance::open_picker — src/input/actions/concordance.rs",
-        "conc word" => "Open the concordance WORD picker — choose the word whose \
-cross-work occurrences r / R will step through. \
+        "conc word" => "Open the concordance word picker. \
 -> pickers::open_concordance_word_picker — src/input/actions/pickers.rs",
-        "phrase hl" => "Toggle the karaoke spoken-phrase highlight during \
-narration sync for the current work's class (prose defaults ON; plays/poetry \
-OFF; persisted in config). The tint tracks the narrator at raw time — page \
-turns keep their preroll lead. \
+        "phrase hl" => "Toggle the karaoke spoken-phrase highlight for this \
+work's class (saved to config). \
 -> TogglePhraseHighlight arm — src/input/phrase_highlight.rs",
-        "conc list" => "Open the concordance LIST picker (the list of occurrences \
-for the active concordance word). \
+        "conc list" => "Open the concordance occurrence-list picker. \
 -> pickers::open_concordance_list_picker — src/input/actions/pickers.rs",
-        "conc works" => "Open the concordance WORKS picker — choose which work to \
-jump into for the active concordance word. \
+        "conc works" => "Open the concordance works picker. \
 -> pickers::open_concordance_works_picker — src/input/actions/pickers.rs",
-        "recent" => "Open the recent-works picker (most-recently-used works). \
+        "recent" => "Open the recent-works picker. \
 -> pickers::open_recent_picker — src/input/actions/pickers.rs",
-        "prev work" => "Toggle back to the previously open work (a quick A/B swap \
-between the last two works, like vim's Ctrl-^). \
+        "prev work" => "Swap back to the previously open work (like vim's Ctrl-^). \
 -> pickers::toggle_previous_work — src/input/actions/pickers.rs",
-        "settings" => "Open the settings overlay (margins, offsets, and other \
-reader options). -> settings::open_settings — src/input/actions/settings.rs",
-        "keybinds" => "Open this keyboard-shortcut overlay. Also works inside the \
-gloss and synopsis overlays (Ctrl+/), returning to that overlay when closed. \
+        "settings" => "Open the settings overlay. \
+-> settings::open_settings — src/input/actions/settings.rs",
+        "keybinds" => "Open this keyboard-shortcut overlay. \
 -> pickers::open_keybinds_overlay / open_keybinds_from_mode — \
 src/input/actions/pickers.rs (drawing: src/ui/keybinds_overlay.rs)",
-        "search" => "Open the in-text search bar (forward: first match at or after \
-the cursor); Escape restores the pre-search reader position. -> OpenSearch arm \
+        "search" => "Open in-text search, forward. -> OpenSearch arm \
 (inline) -> search::clear_search — src/input/keymap.rs, src/input/search.rs",
-        "search back" => "Open the in-text search bar searching BACKWARD (?: last \
-match at or before the cursor); otherwise identical to /. -> OpenSearchBackward \
+        "search back" => "Open in-text search, backward (?). -> OpenSearchBackward \
 arm (inline) — src/input/keymap.rs, src/input/search.rs",
-        "next match" => "Move to the next search match (reactivates the last \
-search pattern if search was cancelled; stops at the last match with a toast, \
-no wrap) — or, when a concordance is active, the next concordance hit within \
-this work. \
+        "next match" => "Next search match — or next concordance hit when a \
+concordance is active. \
 -> SearchNextMatch arm -> search::reactivate_and_step / concordance::concordance_next_in_work \
 — src/input/keymap.rs",
-        "prev match" => "Move to the previous search match (reactivates the last \
-search pattern if search was cancelled; stops at the first match with a toast, \
-no wrap) — or the previous concordance hit within this work when a concordance \
-is active. \
+        "prev match" => "Previous search match — or previous concordance hit when \
+a concordance is active. \
 -> SearchPrevMatch arm -> search::reactivate_and_step / concordance::concordance_prev_in_work \
 — src/input/keymap.rs",
 
         // ── Gloss / echo system ──
-        "gloss tog" => "Open the gloss overlay for the current passage (close with \
-Escape or n). \
-A gloss is a saved AI commentary on a highlighted passage — a \
-teacher-style Q&A note, an inner-monologue cross-reference, or a terse \
-reader-focused gloss. If a gloss is \
-already loaded it reopens that one without re-querying the database. Inside the \
-overlay, j/k (or q/comma) move the cursor block; Space (or Tab) reads the cursor \
-block aloud; Ctrl+j goes to the passage's journal while Ctrl+g returns to the \
-reader; Shift+Space \
-batch-synthesizes every prose (explication) block to \
-cached ElevenLabs MP3s (cache only, no playback), showing a \
-\u{201c}Synthesizing\u{2026}\u{201d} toast. \
+        "gloss tog" => "Open the gloss overlay for the current passage; its binds \
+are on its Ctrl+/ legend. \
 -> gloss::toggle_overlay — src/input/actions/gloss.rs; \
 gloss::synth_all_prose_blocks — src/input/actions/gloss.rs",
-        "gloss pick" => "Open a fuzzy-filterable list of every passage in this \
-work that has a saved gloss (teacher-generic, inner-monologue, or reader-gloss). \
-Alt+t cycles the type filter teacher-generic -> inner-monologue -> reader-gloss. \
-Each row shows the speaker, the first source line, and the citation; confirming \
-loads that passage's glosses into the overlay and jumps the reader to it. \
+        "gloss pick" => "Open the gloss picker (Alt+t cycles the type filter). \
 -> pickers::open_gloss_picker — src/input/actions/pickers.rs (confirm: \
 handle_gloss_picker_key in src/input/keymap.rs)",
-        "journal tog" => "Open or close the Q&A journal for the current scene. \
-The journal is a per-work notebook: each scene holds zero or more \u{201c}pages,\u{201d} \
-where a page is one question you asked and the answer Claude gave. It opens on the \
-scene under the reading cursor; if that scene has no pages yet it opens the \
-work-wide Q&A picker instead (so you can jump to any existing Q&A), and if the \
-whole work has no pages yet it toasts \u{201c}No journal pages yet.\u{201d} \
-Inside the overlay: r asks a new question \
-(Claude answers, drawing on its knowledge of the whole work, in the work\u{2019}s own \
-genre \u{2014} novel/chapter, play/scene, epic/book, etc.), e opens an edit \
-card (Question + Answer pre-filled, plus an optional rewrite-instruction field): \
-Ctrl+Enter submits \u{2014} with an instruction it sends the Q&A + instruction to \
-Claude and saves the revised answer, with the field empty it saves your hand-edits \
-straight to lit.db (no Claude); u undoes the last edit after a y/Esc confirm. \
-D deletes the current page, j/k (or q/comma, \
-matching the reading card) move the paragraph cursor (the left accent bar) between \
-blocks and gg/G jump to the first/last block; Space \
-(or Tab) plays/stops the cursor paragraph\u{2019}s TTS (synthesizing a plain-prose ElevenLabs \
-MP3 on a cache miss, cached per page) and `a` restarts it from the beginning, \
-Ctrl+n / Ctrl+p step through every Q&A in the work across bands (at a band\u{2019}s \
-last page Ctrl+n rolls into the next chapter/scene\u{2019}s first Q&A, in the same \
-order as the Ctrl+\\ picker), Alt+n / Alt+p jump to the \
-next/prev scene that has pages, Alt+w switches to the Work band \u{2014} \
-whole-work pages about the work as a whole (Claude is sent only the title and \
-author, not a scene) \u{2014} and Ctrl+\\ opens a picker of every Q&A page in the \
-work (whole-work pages first, then scene pages in scene order) to jump straight \
-to one. Escape (or Ctrl+j) closes and returns the cursor to where you were \
-reading; Ctrl+g on a passage page cross-jumps to that passage's gloss. \
+        "journal tog" => "Open or close the Q&A journal for the current scene; \
+its binds are on its Ctrl+/ legend. \
 -> journal::toggle_overlay — src/input/actions/journal.rs (overlay keys: \
 handle_journal_key in src/input/keymap.rs)",
-        "last overlay" => "Flip between the reading card and whichever of the \
-gloss / journal overlays you last had open. From the reader it reopens the last \
-one (the gloss for the cursor line, or the journal on the cursor\u{2019}s scene) \u{2014} \
-fresh from the cursor, exactly like pressing Ctrl+g / Ctrl+j; from inside that \
-overlay it closes it back to the reader. Which overlay is remembered is recorded \
-whenever either closes (by toggle, Escape, or undo-return), so opening with \
-Ctrl+j and closing with Escape still lets Ctrl+Tab reopen the journal. With \
-nothing opened yet this session it toasts \u{201c}No overlay to reopen.\u{201d} \
+        "last overlay" => "Reopen the last-used gloss/journal overlay; from inside \
+it, close back to the reader. \
 -> gloss::toggle_last_overlay — src/input/actions/gloss.rs",
-        "jrnl Q&A picker" => "Open the Q&A picker directly from the reading card \
-(Alt+j), without first opening the journal overlay. Lists every Q&A page in the \
-work \u{2014} whole-work pages first, then scene pages in scene order \u{2014} the \
-same picker the journal overlay\u{2019}s Ctrl+\\ opens. Choosing a page reveals the \
-journal overlay landed on that Q&A; Escape returns you to where you were reading. \
-Toasts \u{201c}No journal pages yet\u{201d} when the work has none. \
+        "jrnl Q&A picker" => "Open Journal Q&A picker. \
 -> journal::open_picker_from_reader — src/input/actions/journal.rs",
-        "last gloss" => "Reopen the gloss overlay on the most recently viewed \
-gloss in this work, restored to the gloss type that was on screen. The reference \
-is remembered per work and persists across restarts; it is updated whenever a \
-gloss is viewed or freshly created. Toasts \u{201c}No recent gloss\u{201d} when \
-there is none recorded, or the remembered passage was deleted or no longer \
-resolves. \
+        "last gloss" => "Reopen the most recently viewed gloss in this work. \
 -> gloss::open_last_gloss — src/input/actions/gloss.rs",
         // ── Gloss ↔ journal cross-view (Task 7) ──
-        "jrnl from gloss" => "While the gloss overlay is open (r): create a \
-journal Q&A page for the gloss\u{2019}s current source passage. Closes the gloss overlay, \
-opens the journal overlay in the Passage band, and presents the ask card so you can \
-pose a question. Uses the same passage markup (speaker/verse/stage) the journal \
-passage renderer displays. \
--> journal::begin_passage_ask — src/input/actions/journal.rs \
-(handler: handle_gloss_key \u{2018}r\u{2019} arm \u{2014} src/input/keymap.rs)",
-        "gloss from jrnl" => "While the journal overlay is open on a passage page (Alt+g): \
-create (or show cached) a reader-gloss for the passage cited by the current journal page. \
-If the passage already has a reader-gloss it opens instantly; otherwise calls Claude and \
-saves. Toasts \u{201c}Not a passage page\u{201d} when the current band is Work or Scene. \
+        "gloss from jrnl" => "On a journal passage page (Alt+g): open (or create) \
+the reader-gloss for the cited passage. \
 -> journal::action_gloss_from_journal_passage \
 \u{2014} src/input/actions/journal.rs",
-        "view jrnl" => "While the gloss overlay is open (Ctrl+j only \u{2014} Ctrl+g now returns to \
-the reader): view the journal passage pages for the gloss\u{2019}s current source passage. Looks \
-up journal entries whose start/end citations match the open gloss; if found, closes the gloss \
-overlay and opens the journal overlay in the Passage band on the first page. When the passage \
-has no journal page, falls back to the author corpus band (if the author has corpus notes); \
-toasts \u{201c}No journal page for this passage\u{201d} only when neither exists. \
+        "view jrnl" => "From the gloss overlay (Ctrl+j): open the journal pages \
+for the gloss's passage. \
 -> journal::view_journal_from_gloss \
 \u{2014} src/input/actions/journal.rs",
-        "move jrnl band" => "While the journal overlay is open (Ctrl+Shift+J): move the \
-current Q&A page to a different band. Opens a picker listing every scene/chapter in \
-the work plus a \u{201c}whole work\u{201d} row (the current band omitted); Enter re-targets \
-the entry\u{2019}s scope + (div1,div2) in lit.db and follows it to its new band. Passage \
-pages can\u{2019}t be moved. \
+        "move jrnl band" => "From the journal overlay (Ctrl+Shift+J): move the \
+current Q&A page to another band. \
 -> journal::open_move_picker / confirm_move_picker \u{2014} src/input/actions/journal.rs",
-        "view gloss" => "While the journal overlay is open on a passage page (Ctrl+g or \
-Ctrl+j): view the gloss for the passage cited by the current journal page. Looks up \
-glosses by the page\u{2019}s start_citation; if found, closes the journal overlay and opens \
-the gloss overlay on that passage (reader-gloss preferred). Toasts \u{201c}Not a passage \
-page\u{201d} or \u{201c}No gloss for this passage\u{201d} as appropriate. \
+        "view gloss" => "On a journal passage page (Ctrl+g / Ctrl+j): open the \
+gloss for the cited passage. \
 -> journal::view_gloss_from_journal \
 \u{2014} src/input/actions/journal.rs",
-        "BCP echo turns" => "List every speaker turn in this work that has cached \
-Book of Common Prayer inner-monologue echoes (echo_work_abbrev LIKE 'BCP%'). \
-Selecting a turn jumps the cursor to its first line and reopens its stored BCP \
-echoes instantly. BCP echoes are precomputed (ws-book-of-common-prayer-references) \
-— this channel never runs a live search. -> echoes::open_echo_turns_picker(Bcp) \
+        "BCP echo turns" => "Pick a speaker turn with cached BCP echoes and reopen \
+them. -> echoes::open_echo_turns_picker(Bcp) \
 — src/input/actions/echoes.rs (confirm: echoes::confirm_echo_turns_pick)",
-        "BCP echoes" => "Show cached Book of Common Prayer inner-monologue echoes \
-for the current speaker turn — liturgical passages that resonate with the speech, \
-to animate performance. Cache-only: no live Voyage search. \
+        "BCP echoes" => "Show cached BCP echoes for the current speaker turn. \
 -> echoes::show_echoes_for_cursor_line(Bcp) — src/input/actions/echoes.rs",
-        "reopen BCP echoes" => "Reopen the BCP echoes overlay with the most recent \
-results, without running a new search. \
+        "reopen BCP echoes" => "Reopen the last BCP echo results. \
 -> echoes::reopen_echoes(Bcp) — src/input/actions/echoes.rs",
-        "Shx echo turns" => "List every speaker turn in this work that has cached \
-Shakespeare-to-Shakespeare cross-work echoes (echo_work_abbrev NOT LIKE 'BCP%') — \
-thematically similar passages found by a prior echo search. Selecting a turn \
-jumps the cursor to its first line and reopens its stored echoes instantly. \
+        "Shx echo turns" => "Pick a speaker turn with cached Shakespeare echoes \
+and reopen them. \
 -> echoes::open_echo_turns_picker(Shakespeare) — src/input/actions/echoes.rs",
-        "Shx echoes" => "Run a cross-work echo search on the current speaker turn: \
-embed the turn, find thematically similar passages elsewhere in the author's \
-works, and show them in the echoes overlay. \
+        "Shx echoes" => "Run a cross-work echo search on the current speaker turn. \
 -> echoes::show_echoes_for_cursor_line(Shakespeare) — src/input/actions/echoes.rs",
-        "reopen Shx echoes" => "Reopen the Shakespeare echoes overlay with the most \
-recent echo results, without running a new search. \
+        "reopen Shx echoes" => "Reopen the last Shakespeare echo results. \
 -> echoes::reopen_echoes(Shakespeare) — src/input/actions/echoes.rs",
-        "voice: add/remove" => "While the gloss overlay is open, open the voice \
-picker to add or remove a voice associated with this gloss (toggles voice-set \
-membership). -> open_voice_picker(GlossOverlay) — src/input/actions/settings.rs",
-        "voice: cycle" => "While the gloss overlay is open, cycle which associated \
-voice plays for this gloss. \
+        "voice: add/remove" => "In the gloss overlay: add or remove a voice for \
+this gloss. -> open_voice_picker(GlossOverlay) — src/input/actions/settings.rs",
+        "voice: cycle" => "In the gloss overlay: cycle the gloss's active voice. \
 -> cycle_active_voice — src/input/actions/gloss.rs",
-        "verse audio: play/stop" => "While the gloss overlay is open, on a source \
-verse: play or stop the synthesized (ElevenLabs) reading in the gloss's active \
-voice — the AI voice, separate from the recorded media that space/a play. \
-Starting it pauses the MPV recording so they don't overlap; press again to stop \
-(recording stays paused, resume with space). Cache miss synthesizes on first \
-play. -> toggle_source_tts — src/input/actions/gloss.rs",
-        "verse audio: pick voice" => "While the gloss overlay is open, on a source \
-verse: open the voice picker for the synthesized reading; confirming sets that \
-voice as the gloss's active voice and plays the verse (pausing MPV first). If \
-the synthesized audio is already playing, this stops it instead. R is the only \
-key that opens the picker; r replays in the current active voice. \
+        "verse audio: play/stop" => "In the gloss overlay: play/stop the \
+synthesized reading of the source verse (pauses MPV first). \
+-> toggle_source_tts — src/input/actions/gloss.rs",
+        "verse audio: pick voice" => "In the gloss overlay: pick the voice for \
+the synthesized verse reading and play it. \
 -> pick_source_voice — src/input/actions/gloss.rs",
 
         // ── Vocab ──
-        "next conc" => "Step to the next concordance hit for the active word — \
-cross-work, loading the new work in place and seeking MPV to the hit line. \
-Shows a \"no concordance active\" toast if no word is selected. \
+        "next conc" => "Next concordance hit for the active word (cross-work). \
 -> concordance::concordance_next — src/input/actions/concordance.rs",
-        "prev conc" => "Step to the previous concordance hit for the active word \
-(cross-work, loads the work in place). \
+        "prev conc" => "Previous concordance hit for the active word (cross-work). \
 -> concordance::concordance_prev — src/input/actions/concordance.rs",
-        "next vocab" => "Jump the cursor to the next vocabulary word in the work \
-(words you have collected for study), independent of any active concordance. \
+        "next vocab" => "Jump to the next vocabulary word. \
 -> concordance::jump_to_next_vocab — src/input/actions/concordance.rs",
-        "prev vocab" => "Jump the cursor to the previous vocabulary word in the \
-work. -> concordance::jump_to_prev_vocab — src/input/actions/concordance.rs",
-        "vocab hi" => "Toggle highlighting of vocabulary words in the text (state \
-saved per-work in lit.db). -> ToggleVocabHighlight arm -> app::apply_vocab_highlighting / \
+        "prev vocab" => "Jump to the previous vocabulary word. \
+-> concordance::jump_to_prev_vocab — src/input/actions/concordance.rs",
+        "vocab hi" => "Toggle vocabulary-word highlighting (saved per work). \
+-> ToggleVocabHighlight arm -> app::apply_vocab_highlighting / \
 app::remove_vocab_highlighting — src/input/keymap.rs, src/app.rs",
-        "auto vocab" => "Toggle the auto vocabulary popup, which shows definitions \
-for the current line's vocab words as the cursor moves. \
+        "auto vocab" => "Toggle the auto vocabulary popup. \
 -> ToggleVocabPopup arm -> app::open_vocab_popup / close_vocab_popup — \
 src/input/keymap.rs, src/app.rs",
-        "vocab ▶" => "Step forward through the vocabulary popup's words for the \
-current line. -> handle_vocab_popup_key(.., true) — src/input/keymap.rs",
-        "◀ vocab" => "Step backward through the vocabulary popup's words for the \
-current line. -> handle_vocab_popup_key(.., false) — src/input/keymap.rs",
+        "vocab ▶" => "Next word in the vocabulary popup. \
+-> handle_vocab_popup_key(.., true) — src/input/keymap.rs",
+        "◀ vocab" => "Previous word in the vocabulary popup. \
+-> handle_vocab_popup_key(.., false) — src/input/keymap.rs",
 
         // ── Word copy / visual ──
-        "copy word" => "Copy the word under the cursor to the clipboard; repeated \
-presses cycle outward through adjacent words. \
+        "copy word" => "Copy the word under the cursor; repeated presses cycle \
+adjacent words. \
 -> word_copy::word_cycle_copy — src/input/actions/word_copy.rs",
-        "copy id" => "Copy the current line's line-mapping id (and media id, when \
-present) to the clipboard via wl-copy — useful for debugging and lit.db edits. \
+        "copy id" => "Copy the current line's line-mapping id (and media id) to \
+the clipboard. \
 -> CopyLineMappingId arm (inline) — src/input/keymap.rs",
         "collect" => "Collect the word under the cursor into the vocabulary list \
 and copy it. -> word_copy::word_collect_copy — src/input/actions/word_copy.rs",
-        "visual mode" => "Enter visual selection mode (vim-style); then y yanks, \
-i shows echoes for the selection, Return opens the action popup, Esc/V exits. \
-The synopsis overlay (h) has its own Shift+V visual mode: j/k (and gg/G) extend \
-a paragraph-block selection, y yanks the selected paragraphs to the clipboard \
-(blank-line joined) and exits, Esc/Shift+V cancels. The gloss overlay (Ctrl+g) \
-likewise has Shift+V visual mode: j/k (and gg/G) extend a block selection, y \
-yanks the selected blocks' full text (source verse + gloss, as displayed) and \
-exits, Esc/Shift+V cancels; there Ctrl+V cycles the active voice. \
+        "visual mode" => "Enter visual selection mode: y yanks, i shows echoes, \
+Return opens the action popup, Esc/V exits. \
 -> visual::enter_visual_mode — src/input/visual.rs; \
 handle_block_visual_key / gloss_overlay::enter_visual \
 — src/input/keymap.rs, src/ui/gloss_overlay.rs",
 
         // ── MPV / audio ──
-        "play/pause" => "Pure play/pause toggle of the synced audio. Does NOT \
-seek — playback resumes wherever it was paused (unlike `a`/Space, which seek to \
-the cursor line's start timestamp). \
+        "play/pause" => "Play/pause without seeking (unlike a/Space). \
 -> TogglePause arm -> MpvCommand::TogglePause — src/input/keymap.rs",
-        "toggle speed" => "Toggle MPV playback speed between 1.0x and 1.3x (shows \
-a toast). -> TogglePlaybackSpeed arm (inline) -> MpvCommand::SetSpeed — \
+        "toggle speed" => "Toggle playback speed between 1.0x and 1.3x. \
+-> TogglePlaybackSpeed arm (inline) -> MpvCommand::SetSpeed — \
 src/input/keymap.rs",
         "seek −3.5" => "Seek MPV back 3.5 seconds. \
 -> do_mpv_seek(state, -3.5) — src/input/keymap.rs",
@@ -562,135 +423,99 @@ src/input/keymap.rs",
 -> VolumeUp arm -> MpvCommand::VolumeAdjust(5.0) — src/input/keymap.rs",
         "volume −" => "Lower MPV volume by 5. \
 -> VolumeDown arm -> MpvCommand::VolumeAdjust(-5.0) — src/input/keymap.rs",
-        "sync tog" => "Toggle playback sync: when on, the cursor and page follow \
-MPV's audio position automatically; a toast shows the new state. \
+        "sync tog" => "Toggle playback sync (cursor and page follow the audio). \
 -> TogglePlaybackSync arm (inline) — src/input/keymap.rs",
 
         // ── Timestamps ──
-        "start time" | "set start time" => "Set the audio start timestamp for the \
-current line from MPV's current playback position and write it to lit.db \
-(updates the sign column). -> timestamps::set_start_time — src/input/timestamps.rs",
-        "set end time" => "Set the audio end timestamp for the current line from \
-MPV's current playback position. \
+        "start time" | "set start time" => "Set the current line's start timestamp \
+from MPV's position. -> timestamps::set_start_time — src/input/timestamps.rs",
+        "set end time" => "Set the current line's end timestamp from MPV's \
+position. \
 -> timestamps::set_end_time — src/input/timestamps.rs",
-        "set track mark" => "Set an audio track mark on the current line at MPV's \
-current playback position (export metadata for ffmpeg chapter embedding), written \
-to line_timestamps.is_track_mark in lit.db. Export-only — it does NOT affect \
-chapter nav or the gutter chapter sign, which follow structural divisions. \
-Distinct from the structural chapter that plain 'c' toggles. \
+        "set track mark" => "Set an audio track mark on the current line (ffmpeg \
+chapter export only; distinct from the structural chapter 'c' toggles). \
 -> timestamps::set_chapter — src/input/timestamps.rs",
         "toggle ch start" => "Prose only: toggle whether the cursor's paragraph \
-begins a structural chapter — a (div1,div2) division boundary. Flips \
-line_mapping.chapter_start in lit.db, re-derives the work's chapter divisions, and \
-reloads in place with the cursor preserved. In prose this is what '(' / '&' jump \
-between and what the ▸ gutter chapter sign marks; plays carry no chapter marks (▸ \
-never shows) and '(' / '&' jump acts from (div1) metadata instead. Distinct from \
-the audio track mark that Ctrl+c sets. \
+begins a structural chapter (distinct from Ctrl+c's audio track mark). \
 -> chapters::toggle_chapter_start — src/input/actions/chapters.rs",
-        "show chapter" => "Show the current act/scene (plays) or chapter (prose) \
-for the line the cursor is on, as a transient toast. \
+        "show chapter" => "Toast the current act/scene or chapter. \
 -> navigation::show_current_chapter — src/input/navigation.rs",
-        "delete ts" => "Delete the current line's saved timestamp from lit.db \
-(undoable). -> timestamps::delete_timestamp — src/input/timestamps.rs",
-        "undo ts" => "Undo the last timestamp edit (the most recent u start-time \
-set, Ctrl+c track mark, or timestamp delete), restoring the previous value in \
-lit.db. -> timestamps::undo_timestamp — src/input/timestamps.rs",
+        "delete ts" => "Delete the current line's timestamp (undoable). \
+-> timestamps::delete_timestamp — src/input/timestamps.rs",
+        "undo ts" => "Undo the last timestamp edit. \
+-> timestamps::undo_timestamp — src/input/timestamps.rs",
         "nudge −0.2" => "Nudge the current line's start timestamp 0.2s earlier. \
 -> timestamps::nudge_start_backward — src/input/timestamps.rs",
         "+0.2" => "Nudge the current line's start timestamp 0.2s later (Shift+p). \
 -> timestamps::nudge_start_forward — src/input/timestamps.rs",
-        "play from ts" => "Seek MPV to the current line's saved start timestamp \
-and play from there (`a` and Space). For a pure pause/resume with no seek, use \
-Tab (play/pause). -> timestamps::play_current_line — src/input/timestamps.rs",
-        "clear AB" => "Dismiss any visible toast, else clear the A–B repeat range \
-/ exit reader sub-modes (Esc). \
+        "play from ts" => "Seek to the current line's start timestamp and play \
+(for pause/resume without a seek, use Tab). \
+-> timestamps::play_current_line — src/input/timestamps.rs",
+        "clear AB" => "Dismiss a toast, else clear the A–B range / exit sub-modes. \
 -> escape::escape_reader_mode — src/input/actions/escape.rs",
 
         // ── Fonts ──
-        "next font" => "Cycle to the next font in the font-cycling list. \
+        "next font" => "Next font in the cycling list. \
 -> app::cycle_font(.., true) — src/app.rs",
-        "prev font" => "Cycle to the previous font in the font-cycling list (Shift+f). \
+        "prev font" => "Previous font in the cycling list (Shift+f). \
 -> app::cycle_font(.., false) — src/app.rs",
-        "font +" => "Increase the reader font size by one step (saved to config). \
+        "font +" => "Increase the font size. \
 -> app::adjust_font_size(.., 1) — src/app.rs",
-        "font −" => "Decrease the reader font size by one step (saved to config). \
+        "font −" => "Decrease the font size. \
 -> app::adjust_font_size(.., -1) — src/app.rs",
-        "reset font" => "Reset the reader font size to the default. \
+        "reset font" => "Reset the font size to the default. \
 -> app::reset_font_size — src/app.rs",
-        "font info" => "Show a toast with the current font name and size. \
+        "font info" => "Toast the current font name and size. \
 -> app::show_font_info — src/app.rs",
 
         // ── Display toggles ──
-        "toggle signs" => "Toggle the sign column — the left gutter dots/markers \
-that flag timestamps, chapters, bookmarks, and A/B points. \
+        "toggle signs" => "Toggle the sign column (left gutter markers). \
 -> app::toggle_sign_column — src/app.rs",
-        "synopsis" => "Show the synopsis overlay for the current scene. Inside \
-it, j/k (or q/comma) move the cursor block (left accent bar) and gg/G jump \
-first/last, like the gloss overlay; Space (or Tab) plays/stops the cursor paragraph's TTS \
-(synthesizing on a cache miss); Shift+Space batch-synthesizes every synopsis paragraph to \
-cached ElevenLabs MP3s (cache only, no playback), showing a \u{201c}Synthesizing\u{2026}\u{201d} \
-toast. Ctrl+p / Ctrl+n step to the previous / next scene's synopsis, clamping at \
-the ends (no wraparound); a whole-work synopsis sorts first (before Act 1), so \
-from Act 1 Scene 1, Ctrl+p shows the whole-work overview. e edits the \
-current synopsis in place (no new row); u undoes the last edit after a y/Esc \
-confirm; r opens a journal Q&A for the displayed scene/chapter. \
+        "synopsis" => "Show the synopsis overlay for the current scene; its binds \
+are on its Ctrl+/ legend. \
 -> app::show_synopsis_overlay — src/app.rs; \
 gloss::read_current_synopsis_block, gloss::synth_all_synopsis_blocks \
 — src/input/actions/gloss.rs (Ctrl+h toggles \
 the side panel via app::toggle_synopsis).",
-        "synopsis side" => "Toggle the persistent synopsis side panel (distinct \
-from h's transient synopsis overlay). -> app::toggle_synopsis — src/app.rs",
-        "synopsis edit (vim)" => "While the synopsis overlay is open (h), press e to \
-edit the scene synopsis IN PLACE in a modal vim editor (raw text, monospace font): \
-motions/edits, :w/:wq save, :q/:q! quit, double-Esc exits. R opens the ask-Claude \
-rewrite card instead. -> synopsis::begin_edit (R -> show_edit_prompt) — \
+        "synopsis side" => "Toggle the persistent synopsis side panel. \
+-> app::toggle_synopsis — src/app.rs",
+        "synopsis edit (vim)" => "In the synopsis overlay: e edits the synopsis \
+in a modal vim editor; R opens the ask-Claude rewrite card. \
+-> synopsis::begin_edit (R -> show_edit_prompt) — \
 src/input/actions/synopsis.rs",
-        "col layout" => "Toggle between one-column and two-column (spread) page \
-layout. -> navigation::toggle_column_layout — src/input/navigation.rs",
-        "authorship" => "Toggle authorship formatting on/off — visually marks each \
-line by its attributed author (for collaboratively-written works). Toasts \"No \
-authorship data\" when the work has none. -> ToggleAuthorship arm -> \
+        "col layout" => "Toggle one-column / two-column (spread) layout. \
+-> navigation::toggle_column_layout — src/input/navigation.rs",
+        "authorship" => "Toggle authorship formatting (marks lines by attributed \
+author). -> ToggleAuthorship arm -> \
 app::apply_authorship_formatting — src/input/keymap.rs, src/app.rs",
-        "attr set" => "Pick which attribution set to apply (when a work has more \
-than one scholarly authorship attribution). -> PickAttributionSet arm — \
+        "attr set" => "Pick which attribution set to apply. \
+-> PickAttributionSet arm — \
 src/input/keymap.rs",
-        "nav test" => "Toggle the in-app navigation test harness (Ctrl+Shift+T) — \
-drives nav actions and asserts on-page landing; for development only. \
+        "nav test" => "Toggle the in-app navigation test harness (dev only). \
 -> ToggleNavTest arm — src/input/keymap.rs",
-        "theme next" => "Cycle the reader theme forward (Alt+t) through \
-config.json's theme_cycle list. linux-lit's theme is independent of the \
-system-wide theme; it never reads or writes .current_theme. \
+        "theme next" => "Cycle the reader theme forward (Alt+t). \
 -> settings::cycle_theme — src/input/actions/settings.rs",
-        "theme prev" => "Cycle the reader theme backward (Alt+Shift+T) through \
-config.json's theme_cycle list. linux-lit's theme is independent of the \
-system-wide theme; it never reads or writes .current_theme. \
+        "theme prev" => "Cycle the reader theme backward (Alt+Shift+T). \
 -> settings::cycle_theme — src/input/actions/settings.rs",
-        "scansion" => "Cycle the Wright metrical scansion overlay on verse lines: \
-off -> stress-only -> full (stress + unstressed marks), with line-type label and \
-caesura. -> input::keymap CycleScansion",
-        "2-col translation" => "Open the scrolling two-column translation overlay \
-(Alt+i) for the current scene (source text beside its translation), with its own \
-nav, playback, and sync binds. Distinct from Ctrl+Alt+i's inline translation \
-column. -> app::show_translation_overlay — src/app.rs",
-        "inline translation" => "Toggle the parallel inline translation column \
-(Ctrl+Alt+i) alongside the text (pauses MPV first). \
+        "scansion" => "Cycle the metrical scansion overlay: off -> stress-only -> \
+full. -> input::keymap CycleScansion",
+        "2-col translation" => "Open the two-column translation overlay (Alt+i; \
+distinct from Ctrl+Alt+i's inline column). \
+-> app::show_translation_overlay — src/app.rs",
+        "inline translation" => "Toggle the inline translation column \
+(Ctrl+Alt+i). \
 -> app::toggle_translations — src/app.rs",
-        "page image" => "Toggle the main card between rendered text and the \
-page-scan image (Ctrl+i) for the cursor's current page (BCP1549 etc.). The shown \
-leaf follows the cursor, so it tracks media playback. No-op for works without \
-page images. -> app::toggle_image_view — src/app.rs",
-        "calibrate pages" => "Enter page-image calibration (Ctrl+Shift+I): the \
-card shows each page scan with a caption; move the cursor (j/k) to the line that \
-begins the page and press Enter to record it and advance. n/p step pages, gg/G \
-jump to the first/last page, Esc saves. Fills page_images start/end ranges so the \
-leaf tracks the cursor. -> app::enter_page_calibration — src/app.rs",
-        "dim tog" => "Toggle dimming of lines outside the current A–B sync range \
-and refresh the highlight. -> ToggleDim arm (inline) — src/input/keymap.rs",
-        "save+quit" => "Save the current reading position, tell MPV to quit, and \
-close the window. -> SaveAndQuit arm -> app::save_position — src/input/keymap.rs, \
+        "page image" => "Toggle between rendered text and the page-scan image \
+(Ctrl+i). -> app::toggle_image_view — src/app.rs",
+        "calibrate pages" => "Enter page-image calibration (Ctrl+Shift+I): Enter \
+records the line that begins each page scan, Esc saves. \
+-> app::enter_page_calibration — src/app.rs",
+        "dim tog" => "Toggle dimming of lines outside the A–B range. \
+-> ToggleDim arm (inline) — src/input/keymap.rs",
+        "save+quit" => "Save the reading position, quit MPV, close the window. \
+-> SaveAndQuit arm -> app::save_position — src/input/keymap.rs, \
 src/app.rs",
-        "debug log" => "Toggle debug logging on/off (briefly shows a gear/blocked \
-icon). The log file is linux-lit-dev.log / linux-lit-release.log. \
+        "debug log" => "Toggle debug logging. \
 -> ToggleDebugLogging arm (inline) — src/input/keymap.rs, src/logging.rs",
 
         _ => return None,
@@ -1013,11 +838,11 @@ fn draw_row_screen(
     // desc_font, ~345px, which overran the old 270px action column.
     let desc_x = panel_x + pad + 540.0; // wrapped blurb column (gap after action)
     let desc_max_w = panel_x + panel_w - pad - desc_x; // free width for blurbs
-    let row_pad: f64 = 24.0; // vertical breathing room per binding row
+    let row_pad: f64 = 12.0; // vertical breathing room per binding row
     let desc_line_h: f64 = 30.0; // line height inside a wrapped blurb
     let base_row_h: f64 = 36.0; // height of a row with no blurb
     let desc_font: f64 = 22.0; // blurb font size
-    let shift_gap: f64 = 2.0 * desc_line_h; // two blank lines above the shifted key
+    let shift_gap: f64 = desc_line_h; // one blank line above the shifted key
 
     // Pre-pass: wrap each blurb and record per-row height so the panel grows to
     // fit. Each blurb renders as wrapped prose, then a blank line, then the code
