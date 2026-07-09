@@ -5,6 +5,9 @@
 //! spoken line is resolved independently near the cursor). Spans come from
 //! `phrase_timestamps` via `queries::phrase_spans_for_line`, cached per
 //! (line_mapping_id, media_id) in `AppState.phrase_cache`.
+//! In LINE mode the tint widens to the whole buffer line (verse) or the
+//! containing sentence (prose) via tint_range/sentence_bounds; the span
+//! resolution and caching are identical in every mode.
 
 use crate::db::queries::PhraseSpan;
 
@@ -152,7 +155,39 @@ pub fn sentence_bounds(text: &str, start_char: usize, end_char: usize) -> (usize
 }
 
 use crate::app::AppState;
+use crate::config::PhraseHighlightMode;
 use gtk4::prelude::*;
+
+/// Char range to tag for the active span: the span itself in Phrase mode;
+/// in Line mode the whole buffer line (verse) or the containing sentence
+/// (prose). Off never reaches here (gated in update_phrase_highlight).
+pub fn tint_range(
+    mode: PhraseHighlightMode,
+    is_prose: bool,
+    line_text: &str,
+    span: PhraseSpan,
+) -> (usize, usize) {
+    match mode {
+        PhraseHighlightMode::Line if is_prose => {
+            sentence_bounds(line_text, span.start_char, span.end_char)
+        }
+        PhraseHighlightMode::Line => (0, line_text.chars().count()),
+        _ => (span.start_char, span.end_char),
+    }
+}
+
+/// Text of buffer line `bl` (no trailing newline). Empty when out of range.
+fn buffer_line_text(s: &AppState, bl: usize) -> String {
+    let buffer = &s.buffer;
+    let Some(start) = buffer.iter_at_line(bl as i32) else {
+        return String::new();
+    };
+    let mut end = start;
+    if !end.ends_line() {
+        end.forward_to_line_end();
+    }
+    buffer.text(&start, &end, false).to_string()
+}
 
 /// Per-TimePos driver. Gates: class flag (prose vs verse), sync on, not
 /// loading, translations hidden (inflated buffer misaligns offsets), not
@@ -231,7 +266,9 @@ pub fn update_phrase_highlight(s: &mut AppState, pos: f64) {
     if s.active_phrase == Some((bl, span_idx)) {
         return;
     }
-    apply_phrase_tag(s, bl, span.start_char, span.end_char);
+    let line_text = buffer_line_text(s, bl);
+    let (sc, ec) = tint_range(mode, s.is_prose(), &line_text, span);
+    apply_phrase_tag(s, bl, sc, ec);
     s.active_phrase = Some((bl, span_idx));
 }
 
@@ -370,5 +407,19 @@ mod tests {
     fn sentence_bounds_clamps_out_of_range_span() {
         // Offsets beyond the text clamp instead of panicking (data drift guard).
         assert_eq!(sentence_bounds("Hi.", 10, 20), (3, 3));
+    }
+
+    #[test]
+    fn tint_range_by_mode_and_class() {
+        use crate::config::PhraseHighlightMode::{Line, Phrase};
+        let sp = span(10.0, 11.0, 4, 7); // "two" in the text below
+        let text = "One two. Three four.";
+        // Phrase mode: exactly the span, both classes.
+        assert_eq!(tint_range(Phrase, true, text, sp), (4, 7));
+        assert_eq!(tint_range(Phrase, false, text, sp), (4, 7));
+        // Line mode, verse: the whole line.
+        assert_eq!(tint_range(Line, false, text, sp), (0, 20));
+        // Line mode, prose: the sentence containing the span.
+        assert_eq!(tint_range(Line, true, text, sp), (0, 8));
     }
 }
