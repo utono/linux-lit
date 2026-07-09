@@ -903,6 +903,12 @@ pub(crate) fn vim_open_rewrite(
         &s.theme.cursor_bg,
         &s.theme.cursor_fg,
     );
+    // A rewrite instruction is always typed fresh — skip vim-NORMAL and open
+    // the prompt directly in INSERT (fed through the engine so the mirror and
+    // `-- INSERT --` hint stay truthful).
+    let _ = s
+        .journal_overlay
+        .feed_ask_vim_key(crate::input::vim::VimKey::Char('i'));
 }
 
 /// `R` in the journal overlay (NOT the vim editor): open the ask card to collect
@@ -934,6 +940,12 @@ pub(crate) fn begin_rewrite(state: &Rc<RefCell<AppState>>) {
         &s.theme.cursor_bg,
         &s.theme.cursor_fg,
     );
+    // A rewrite instruction is always typed fresh — skip vim-NORMAL and open
+    // the prompt directly in INSERT (fed through the engine so the mirror and
+    // `-- INSERT --` hint stay truthful).
+    let _ = s
+        .journal_overlay
+        .feed_ask_vim_key(crate::input::vim::VimKey::Char('i'));
 }
 
 /// Undo the last `e` journal edit (single-level): restore the snapshot in
