@@ -856,6 +856,23 @@ pub(crate) fn prose_next_boundary(state: &mut AppState) -> Option<(usize, i32)> 
     };
     // Snap DOWN to a real visual-row top; never start a page mid-glyph-row.
     let snapped = crate::input::scroll::snap_value_to_display_row(state, raw as f64);
+    // Row-fit correction: when `raw` falls in the ink-free gap AFTER the
+    // snapped row's bottom (inter-paragraph spacing), that row fully fits
+    // this page — the live bottom clip shows it (`bottom_clip_height` admits
+    // any row whose bottom fits the budget), so leaving the boundary at its
+    // top stores a grid one VISIBLE row short: the sync turn fires a row
+    // early and the next page re-shows a row already read. Advance the
+    // boundary to the next row's top, bounded by the same spacing-sized
+    // slack the fit invariant tolerates (a pathological gap keeps the snap).
+    let snapped = match crate::input::scroll::next_row_top_if_row_fits(state, snapped, raw as f64) {
+        Some(next_top)
+            if next_top - y0 as f64
+                <= (usable + crate::input::prose_pages::prose_fit_slack(&state.text_view)) as f64 =>
+        {
+            next_top
+        }
+        _ => snapped,
+    };
     if snapped <= y0 as f64 {
         // Degenerate snap: fall back to a whole-line turn — unless a chapter
         // heading inside the page window gives a well-defined break point.

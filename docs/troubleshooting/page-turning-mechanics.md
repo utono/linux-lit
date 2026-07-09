@@ -269,10 +269,10 @@ BLIND to an over-tall single buffer line, which is why this bug shipped. Visual
 acceptance is pixel-level (the dropped tail must reappear; `x`/`y` must round-trip
 the mid-paragraph stops) — verify on the real display.
 
-## Prose chapter-at-top + grid landings (pv3 lessons)
+## Prose grid lessons (pv3 chapter-at-top + landings, pv4 row-fit)
 
-Two rules added 2026-07-06, both bug classes worth re-checking after any prose
-pagination change:
+Rules added 2026-07-06 (pv3) and 2026-07-09 (pv4), all bug classes worth
+re-checking after any prose pagination change:
 
 **Chapter-at-top is a PAGINATION rule, in one place.** A `chapter_start` line
 never renders mid-page: `prose_next_boundary` (navigation.rs) clamps the fill
@@ -295,6 +295,23 @@ pattern is `prose_pages::prose_table_boundary_for_line(state, target)` +
 `set_page_instant_offset` (see `chapter_jump_land_ereader` in navigation.rs);
 the canonical-walk path is the fallback for gridless works only. This is the
 prose twin of the play-side "read the TABLE, never re-walk live" lesson.
+
+**pv4: a row whose INK fits stays on its page (row-fit correction,
+2026-07-09).** `prose_next_boundary` snaps the raw fill boundary (`y0 +
+usable`) DOWN to the nearest display-row top. When that raw pixel lands in
+the ink-free gap AFTER a row's bottom (inter-paragraph spacing), the snap
+put the boundary at that row's TOP — assigning a fully-fitting row to the
+NEXT page. But the live bottom clip (`bottom_clip_height`) admits any row
+whose ink bottom fits the budget, so the reader SAW the row on the current
+page while the grid disagreed: the sync turn fired one visible row early and
+the next page re-showed a row already read (BH "at a loss how to receive it.
+I hinted that the climate—"). Fix: `next_row_top_if_row_fits` (scroll.rs)
+advances the boundary to the next row's top when the snapped row's ink
+bottom is within the raw budget, bounded by `prose_fit_slack` (paragraph
+spacing + wrap spacing + rounding); `validate_prose_pages` tolerates the
+same slack in its fit check, since the box-space overshoot is trailing
+whitespace, never ink. The grid and the clip now agree on which rows a page
+shows. Boundary meaning changed → `pv3 → pv4`.
 
 **Testing trap: geometry luck.** A 720p headless run can land the same page the
 grid demands while a 1920×1200 session lands off-grid — a heading-at-top
@@ -808,6 +825,41 @@ when `find_line_for_time` lands on a line in the new scene.
 When a manually-set timestamp has no valid end time (`end <= start`), the
 fallback `end_time` is: the next timestamped line's `start - 0.2s` (clamped
 to at least `start`), or `start + 5.0s` if no next timestamp exists.
+
+### Prose straddling paragraph: scheduled phrase-boundary turn (pending_prose_cross)
+
+The whole-line rule (step 6) cannot turn a page whose boundary falls INSIDE
+the spoken paragraph — the cursor stays on the straddling line, `current >
+last_vis` never fires, and the karaoke tint runs off the bottom of the page.
+The CursorSync handler (main.rs) therefore schedules a TimePos-driven turn
+whenever the cursor's paragraph is the stored prose page's `end_line` and a
+next page exists:
+
+- `pending_prose_cross = Some((fire_at, next_page_idx))`; on each `TimePos`
+  event, `pos >= fire_at` turns to the stored next page top via
+  `set_page_instant_offset` (cursor unchanged — only the window advances)
+- `fire_at` comes from `prose_cross_time` (navigation.rs): the page-boundary
+  pixel offset is converted to a char offset by walking the straddling
+  line's real display rows (`display_row_char_at`; uniform pixel-fraction is
+  the fallback), then `phrase_crossing_time` (db/queries.rs) resolves the
+  first `phrase_timestamps` span whose `end_char` extends past that offset
+- **The fire time is ALWAYS that phrase's `start_time`** (2026-07-09): the
+  page turns the moment the first word of a phrase that continues onto the
+  next page is highlighted, so its continuation is readable as it is
+  narrated. This holds for a phrase that STRADDLES the boundary too — its
+  on-page head (often one turned-under word, BH "…behind the door, | where")
+  is knowingly cut by the turn. The earlier mid-phrase char-fraction
+  interpolation turned only when narration reached the boundary character,
+  which parked the tint on the old page while the phrase ran off-screen
+- Degenerate boundary (`crossing time <= line start`) → do not schedule; the
+  normal whole-line advance handles it. Fire time already past the current
+  position → turn immediately (waiting for the next TimePos lands ~1.5s late)
+- No `phrase_timestamps` rows for the (line, media) pair → fall back to
+  whole-line char-fraction interpolation across the line's audio window
+
+Log prefix: `SYNC_PROSE_CROSS:` (scheduled / fired / fired-immediately /
+skip degenerate / phrase hit vs interpolate). Cleared by explicit seek paths
+(search, concordance), work/font changes, and non-prose works.
 
 ### Suppression
 

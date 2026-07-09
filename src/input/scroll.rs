@@ -1560,6 +1560,52 @@ fn snap_value_to_line_top(state: &AppState, target_y: f64) -> f64 {
 /// emit one giant final page (VALIDATE_FAIL fit). Seeking makes the snap correct
 /// at ANY depth, and O(rows-in-one-line) instead of O(rows-from-start). Clamped
 /// to the scroll range.
+/// Prose row-fit correction for a fill boundary. `snapped` is the greatest
+/// display-row top at/below the raw boundary pixel `raw` (from
+/// `snap_value_to_display_row`). When `raw` falls in the whitespace BETWEEN
+/// that row's ink bottom and the next row's top (inter-paragraph spacing, or
+/// a blank separator's leading), the snapped row FULLY FITS on the page —
+/// excluding it desynchronizes the stored page grid from the live bottom
+/// clip (`bottom_clip_height` admits any row whose BOTTOM fits the budget),
+/// so the reader SEES the row on this page while the table assigns it to the
+/// next: the sync page turn fired one visible row early and the next page
+/// re-showed a row already read (BH "at a loss how to receive it. I hinted
+/// that the climate—", 2026-07-09). Returns `Some(next display row top)`
+/// when the snapped row's bottom is within `raw`; `None` when the row
+/// genuinely straddles `raw` (keep `snapped`), can't be located, or is the
+/// document's last row.
+pub(crate) fn next_row_top_if_row_fits(state: &AppState, snapped: f64, raw: f64) -> Option<f64> {
+    use gtk4::prelude::TextViewExt;
+    let tv = state.text_view.upcast_ref::<gtk4::TextView>();
+    let top_margin = tv.top_margin() as f64;
+    let (mut iter, _) = tv.line_at_y((snapped - top_margin).max(0.0) as i32);
+    for _ in 0..1024 {
+        let rect = tv.iter_location(&iter);
+        let row_top = rect.y() as f64 + top_margin;
+        if rect.height() > 0 && (row_top - snapped).abs() <= 0.5 {
+            if row_top + rect.height() as f64 > raw + 0.5 {
+                return None; // straddles the budget: the snap is correct
+            }
+            // Fits: the boundary belongs at the NEXT display row's top.
+            let mut next = iter;
+            for _ in 0..64 {
+                if !tv.forward_display_line(&mut next) {
+                    return None; // document tail
+                }
+                let r = tv.iter_location(&next);
+                if r.height() > 0 {
+                    return Some(r.y() as f64 + top_margin);
+                }
+            }
+            return None;
+        }
+        if row_top > snapped + 0.5 || !tv.forward_display_line(&mut iter) {
+            return None;
+        }
+    }
+    None
+}
+
 pub(crate) fn snap_value_to_display_row(state: &AppState, target_y: f64) -> f64 {
     use gtk4::prelude::{TextViewExt, TextBufferExt};
     let adj = state.scrolled_window.vadjustment();

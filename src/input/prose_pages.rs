@@ -19,6 +19,21 @@ pub struct ProseValidateCtx<'a> {
     pub heights: &'a [i32],
     /// widget_height - descender_guard - BASE_BOTTOM_MARGIN at that layout.
     pub usable_height: i32,
+    /// Ink-free overshoot the fit invariant tolerates (see `prose_fit_slack`).
+    /// A boundary advanced past a row whose INK fits the budget may land up
+    /// to one inter-paragraph gap past `usable_height` in BOX space — that
+    /// excess is trailing/leading spacing only, never glyph ink.
+    pub fit_slack: i32,
+}
+
+/// Maximum ink-free pixel gap between one display row's bottom and the next
+/// row's top: the paragraph spacing (`pixels_below_lines` + `pixels_above_lines`)
+/// plus intra-paragraph wrap spacing, plus rounding. Bounds both the
+/// `next_row_top_if_row_fits` boundary correction in `prose_next_boundary`
+/// and the validator's fit tolerance, so the two stay provably consistent.
+pub fn prose_fit_slack(view: &sourceview5::View) -> i32 {
+    use gtk4::prelude::TextViewExt;
+    view.pixels_above_lines() + view.pixels_below_lines() + view.pixels_inside_wrap() + 2
 }
 
 /// Lexicographic order on (line, off).
@@ -90,12 +105,14 @@ pub fn validate_prose_pages(
                 ));
             }
         }
-        // fit: the page's pixel height must fit the viewport.
+        // fit: the page's pixel height must fit the viewport. `fit_slack`
+        // tolerates a boundary advanced past a fully-fitting row into the
+        // following inter-paragraph gap (box-space overshoot with no ink).
         let px = page_px(p, ctx.heights);
-        if px > ctx.usable_height as i64 {
+        if px > (ctx.usable_height + ctx.fit_slack) as i64 {
             return Err(format!(
-                "fit: page {} spans {}px > usable {}",
-                i + 1, px, ctx.usable_height
+                "fit: page {} spans {}px > usable {} (+slack {})",
+                i + 1, px, ctx.usable_height, ctx.fit_slack
             ));
         }
         if px <= 0 {
@@ -175,7 +192,10 @@ pub fn prose_layout_fingerprint(state: &crate::app::AppState) -> String {
     // change must miss stored tables and regenerate, never serve stale
     // boundaries.
     let cw = crate::app::layout::effective_column_width(state);
-    format!("{base}|uh{usable}|cw{cw}|pv3")
+    // pv4: row-fit boundary correction (a row whose ink fits the budget stays
+    // on its page even when the raw boundary lands in the following gap) —
+    // pv3 tables have one-row-short pages at such boundaries.
+    format!("{base}|uh{usable}|cw{cw}|pv4")
 }
 
 /// Walk the LIVE engine's forward chain from (0,0), recording every page.
@@ -303,7 +323,12 @@ pub fn generate_and_store_prose(state: &mut crate::app::AppState) {
     let widget_height = state.text_view.height();
     let guard = crate::input::viewport::descender_guard_px(&state.text_view, 0);
     let usable = widget_height - guard - crate::input::scroll::BASE_BOTTOM_MARGIN;
-    let ctx = ProseValidateCtx { line_count, heights: &heights, usable_height: usable };
+    let ctx = ProseValidateCtx {
+        line_count,
+        heights: &heights,
+        usable_height: usable,
+        fit_slack: prose_fit_slack(&state.text_view),
+    };
     if let Err(e) = validate_prose_pages(&pages, &ctx) {
         crate::logging::log(&format!("PAGES_PROSE: VALIDATE_FAIL {e}"));
         return;
@@ -602,7 +627,7 @@ mod tests {
     }
 
     fn ctx(h: &[i32]) -> ProseValidateCtx<'_> {
-        ProseValidateCtx { line_count: h.len(), heights: h, usable_height: 120 }
+        ProseValidateCtx { line_count: h.len(), heights: h, usable_height: 120, fit_slack: 0 }
     }
 
     #[test]
@@ -686,7 +711,7 @@ mod tests {
             // page 1 starts at line 1's top and carries it whole into line 2.
             ProsePage { start_line: 1, start_off: 0, end_line: 2, end_off: 100 },
         ];
-        let c = ProseValidateCtx { line_count: 3, heights: &h, usable_height: 220 };
+        let c = ProseValidateCtx { line_count: 3, heights: &h, usable_height: 220, fit_slack: 0 };
         assert_eq!(validate_prose_pages(&p, &c), Ok(()));
         // Line 1's FIRST row lands on page 1, never page 0.
         assert_eq!(prose_page_for_line(&p, 1), Some(1),
@@ -707,7 +732,7 @@ mod tests {
             ProsePage { start_line: 0, start_off: 0, end_line: 0, end_off: 100 },
             ProsePage { start_line: 1, start_off: 0, end_line: 1, end_off: 100 },
         ];
-        let c = ProseValidateCtx { line_count: 2, heights: &h, usable_height: 120 };
+        let c = ProseValidateCtx { line_count: 2, heights: &h, usable_height: 120, fit_slack: 0 };
         assert_eq!(validate_prose_pages(&p, &c), Ok(()));
     }
 }

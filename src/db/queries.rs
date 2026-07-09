@@ -669,38 +669,34 @@ pub fn load_vocab_word_list(
     Ok(result)
 }
 
-/// Narration time at which the audio reaches char offset `char_off` within a
-/// line, from the FIRST phrase whose char range extends past that offset
-/// (`end_char > char_off`, ordered by `start_char`). A phrase that STARTS at or
-/// after the offset yields its `start_time`; a phrase that STRADDLES the offset
-/// (starts before it) yields a char-fraction interpolation of the crossing
-/// INSIDE its audio window — turning at the straddler's start would flip the
-/// page while its on-page head is still being narrated, so the head's karaoke
-/// tint never showed (BH "the stables |full of horses," split at the row
-/// boundary). Used to fire a prose page turn at the exact moment playback
-/// crosses a page boundary that falls inside a spoken paragraph. `None` = no
-/// phrase_timestamps rows for this (line, media) pair — the caller falls back
-/// to whole-line char-fraction interpolation.
+/// Narration start time of the FIRST phrase whose char range extends past
+/// char offset `char_off` within a line (`end_char > char_off`, ordered by
+/// `start_char`) — i.e. the first phrase that is (wholly or partly) on the
+/// NEXT prose page when the page boundary falls at `char_off`. Always the
+/// phrase's `start_time`, including for a phrase that STRADDLES the offset:
+/// the page must turn the moment that phrase's first word is highlighted, so
+/// its continuation is readable on the new page as it is narrated (BH "…sat
+/// down behind the door, |where" — waiting for the mid-phrase crossing left
+/// the karaoke tint parked on the old page while "where…" ran off-screen).
+/// The straddler's on-page head (often one turned-under word) is knowingly
+/// cut by the turn. Used to fire a prose page turn when a page boundary falls
+/// inside a spoken paragraph. `None` = no phrase_timestamps rows for this
+/// (line, media) pair — the caller falls back to whole-line char-fraction
+/// interpolation.
 pub fn phrase_crossing_time(
     conn: &Connection,
     line_mapping_id: i64,
     media_id: i64,
     char_off: usize,
 ) -> Option<f64> {
-    let (start_time, end_time, start_char, end_char): (f64, f64, i64, i64) = conn
-        .query_row(
-            "SELECT start_time, end_time, start_char, end_char FROM phrase_timestamps \
-             WHERE line_mapping_id = ?1 AND media_id = ?2 AND end_char > ?3 \
-             ORDER BY start_char LIMIT 1",
-            rusqlite::params![line_mapping_id, media_id, char_off as i64],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )
-        .ok()?;
-    if start_char < char_off as i64 && end_char > start_char && end_time > start_time {
-        let frac = (char_off as i64 - start_char) as f64 / (end_char - start_char) as f64;
-        return Some(start_time + (end_time - start_time) * frac);
-    }
-    Some(start_time)
+    conn.query_row(
+        "SELECT start_time FROM phrase_timestamps \
+         WHERE line_mapping_id = ?1 AND media_id = ?2 AND end_char > ?3 \
+         ORDER BY start_char LIMIT 1",
+        rusqlite::params![line_mapping_id, media_id, char_off as i64],
+        |row| row.get(0),
+    )
+    .ok()
 }
 
 /// One phrase's audio window + char range within its line's canonical text.
@@ -3348,11 +3344,11 @@ mod tests {
     /// `phrase_crossing_time` resolves the FIRST phrase whose char range
     /// extends past the boundary char offset (`end_char > char_off`, ordered by
     /// start_char) — the Task-9 downstream contract for firing a prose page
-    /// turn at the moment narration crosses a mid-paragraph page boundary. A
-    /// phrase starting at/after the offset yields its start_time; a phrase
-    /// STRADDLING the offset yields the char-fraction interpolated crossing
-    /// inside its window (turning at the straddler's start flipped the page
-    /// while its on-page head was still being narrated).
+    /// turn. It ALWAYS yields that phrase's start_time, straddler included:
+    /// the page turns the moment the first word of a phrase continuing onto
+    /// the next page is highlighted (not at a mid-phrase interpolated
+    /// crossing, which parked the tint on the old page while the phrase's
+    /// continuation was narrated off-screen).
     #[test]
     fn phrase_crossing_time_picks_first_phrase_past_offset() {
         let conn = Connection::open_in_memory().unwrap();
@@ -3376,13 +3372,13 @@ mod tests {
         // Offset 20: phrase 1 ends exactly at 20 (NOT > 20); the crossing phrase
         // is phrase 2 (start_char 20, end_char 40) at t=12.0.
         assert_eq!(phrase_crossing_time(&conn, 7, 3, 20), Some(12.0));
-        // Offset 25: STRADDLES phrase 2 (chars 20..40, t 12..15): 5/20 into the
-        // chars -> 12.0 + 0.25 * 3.0 = 12.75.
-        assert_eq!(phrase_crossing_time(&conn, 7, 3, 25), Some(12.75));
-        // Offset 55: straddles phrase 3 (40..60, t 15..18): 15/20 -> 17.25.
-        assert_eq!(phrase_crossing_time(&conn, 7, 3, 55), Some(17.25));
-        // Offset 79: straddles the last phrase (60..80, t 18..21): 19/20 -> 20.85.
-        assert_eq!(phrase_crossing_time(&conn, 7, 3, 79), Some(20.85));
+        // Offset 25: STRADDLES phrase 2 (chars 20..40, t 12..15) — still that
+        // phrase's start_time, so the turn fires as its first word highlights.
+        assert_eq!(phrase_crossing_time(&conn, 7, 3, 25), Some(12.0));
+        // Offset 55: straddles phrase 3 (40..60, t 15..18) -> its start, 15.0.
+        assert_eq!(phrase_crossing_time(&conn, 7, 3, 55), Some(15.0));
+        // Offset 79: straddles the last phrase (60..80, t 18..21) -> 18.0.
+        assert_eq!(phrase_crossing_time(&conn, 7, 3, 79), Some(18.0));
         // Offset 80: no phrase extends past 80 -> None (caller interpolates).
         assert_eq!(phrase_crossing_time(&conn, 7, 3, 80), None);
         // Unknown (line, media) pair -> None.
