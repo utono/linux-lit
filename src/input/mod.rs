@@ -16,3 +16,4 @@ pub mod timestamps;
 pub mod viewport;
 pub mod vim;
 pub mod visual;
+pub mod vocab_loop;
