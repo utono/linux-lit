@@ -1819,6 +1819,24 @@ impl GlossOverlay {
             })
             .collect();
         drop(markups);
+        // Safety margin: `gloss_block_height`'s Explication overhead (`PROSE_PAD`,
+        // a flat 16px) under-charges the real per-block trailing gap GTK renders
+        // (per-buffer-line `pixels_below_lines` + the blank-line paragraph
+        // separator), which a plain `pango::Layout` never models. On a page
+        // packing many small blocks (e.g. a prose synopsis's one-line metadata
+        // paragraphs) that shortfall accumulates across every block boundary, so
+        // a page whose SUMMED estimate lands just under `page_height` can still
+        // overflow the real fixed-height viewport by a few pixels — and the
+        // bottom-clip box then permanently hides that overflow (there is no
+        // scroll and no larger page to spill onto): a block reported as "fits"
+        // clips mid-sentence and its tail is never rendered on any page (2026-07
+        // TWWLN Ch.1 "Gist:" bug). Reserve one real measured line height off the
+        // packing budget — mirrors the journal overlay's proven
+        // `text_h + line_h` deliberate-headroom pattern (journal_overlay.rs) —
+        // so a block that only barely fit under the raw estimate is deferred
+        // whole (with its LeadLabel) to the next page instead of risking clip.
+        let line_h = crate::ui::pagination::measure_text_height(&pctx, "Mg", size, &family, 200);
+        let safe_budget = (page_height - line_h).max(1);
         let pages = match self.paginated_mode.get() {
             // Gloss: keep each gloss together — a Source (speaker+verse) block and
             // the Explication(s) that follow it form one indivisible unit, so a
@@ -1830,11 +1848,11 @@ impl GlossOverlay {
                     .iter()
                     .map(|b| b.kind == BlockKind::Source)
                     .collect();
-                crate::ui::pagination::paginate_grouped(&heights, &group_start, page_height.max(1))
+                crate::ui::pagination::paginate_grouped(&heights, &group_start, safe_budget)
             }
             // Synopsis: every paragraph is its own unit.
             PaginatedMode::Synopsis => {
-                crate::ui::pagination::paginate(&heights, page_height.max(1))
+                crate::ui::pagination::paginate(&heights, safe_budget)
             }
         };
         drop(blocks);
