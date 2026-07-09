@@ -2795,6 +2795,9 @@ pub fn display_work_at_with_prepared(
     // Task 9: a scheduled prose page crossing is tied to the OLD work's grid and
     // media; drop it so it can't fire against the freshly loaded work.
     state.pending_prose_cross = None;
+    // A vocab-sentence loop never survives a work switch (its buffer lines,
+    // media id, and ab-loop all belong to the old work).
+    crate::input::vocab_loop::exit_vocab_loop(state);
     state.media_id = work.media_id;
     // Phrase highlight is keyed to the OLD work's lines/media; reset so the
     // first TimePos in the new work refills against the new (line, media).

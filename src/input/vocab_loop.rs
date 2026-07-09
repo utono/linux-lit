@@ -66,7 +66,7 @@ pub fn group_matches_into_sentences(
 pub fn sentence_time_range(spans: &[PhraseSpan], sc: usize, ec: usize) -> Option<(f64, f64)> {
     let mut it = spans.iter().filter(|sp| sp.start_char < ec && sp.end_char > sc);
     let first = it.next()?;
-    let last = it.last().unwrap_or(first);
+    let last = it.next_back().unwrap_or(first);
     Some((first.start_time, last.end_time))
 }
 

@@ -191,7 +191,12 @@ pub(crate) fn buffer_line_text(s: &AppState, bl: usize) -> String {
 }
 
 /// The karaoke mode for the current work's class (prose vs verse flag).
+/// The vocab-sentence loop always shows the phrase sweep, whatever the
+/// class's configured mode — restored implicitly when the mode exits.
 fn active_mode(s: &AppState) -> PhraseHighlightMode {
+    if s.vocab_loop.is_some() {
+        return PhraseHighlightMode::Phrase;
+    }
     if s.is_prose() {
         s.config.phrase_highlight_prose
     } else {

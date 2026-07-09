@@ -497,7 +497,7 @@ fn main() {
                         // narration reaches the boundary time. The cursor stays on
                         // the straddling paragraph (current_line unchanged) — only
                         // the visible page window advances to its continuation.
-                        if s.sync_enabled && !s.loading_work.get() {
+                        if s.sync_enabled && !s.loading_work.get() && s.vocab_loop.is_none() {
                             // Belt-and-braces: skip firing while an explicit seek
                             // path (search n/N, concordance r/R, etc.) has sync
                             // suppressed, mirroring the CursorSync suppression
@@ -543,7 +543,7 @@ fn main() {
                         let mut ov_moved: Option<(i64, i64)> = None;
 
                         // Advance to untimestamped next line when current line's audio ends
-                        if s.sync_enabled && !s.loading_work.get() {
+                        if s.sync_enabled && !s.loading_work.get() && s.vocab_loop.is_none() {
                             if let Some((end_time, next_bl, _source_wi)) = s.pending_advance {
                                 if pos >= end_time {
                                     s.pending_advance_ignore_bl = Some(s.current_line);
