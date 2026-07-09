@@ -281,9 +281,11 @@ step hits with r / R). \
 -> concordance::open_picker — src/input/actions/concordance.rs",
         "conc word" => "Open the concordance word picker. \
 -> pickers::open_concordance_word_picker — src/input/actions/pickers.rs",
-        "phrase hl" => "Toggle the karaoke spoken-phrase highlight for this \
-work's class (saved to config). \
--> TogglePhraseHighlight arm — src/input/phrase_highlight.rs",
+        "phrase hl" => "Cycle the karaoke narration highlight for this work's \
+class: OFF -> PHRASE (spoken phrase) -> LINE (whole verse line / prose \
+sentence; the default). Saved to config. \
+-> TogglePhraseHighlight arm — src/input/keymap.rs \
+(driver: src/input/phrase_highlight.rs)",
         "conc list" => "Open the concordance occurrence-list picker. \
 -> pickers::open_concordance_list_picker — src/input/actions/pickers.rs",
         "conc works" => "Open the concordance works picker. \

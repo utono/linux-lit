@@ -2946,20 +2946,21 @@ fn dispatch_action(
         TogglePhraseHighlight => {
             let mut s = state.borrow_mut();
             let is_prose = s.is_prose();
-            let now_on = if is_prose {
-                s.config.phrase_highlight_prose = !s.config.phrase_highlight_prose;
+            let mode = if is_prose {
+                s.config.phrase_highlight_prose = s.config.phrase_highlight_prose.cycle();
                 s.config.phrase_highlight_prose
             } else {
-                s.config.phrase_highlight_verse = !s.config.phrase_highlight_verse;
+                s.config.phrase_highlight_verse = s.config.phrase_highlight_verse.cycle();
                 s.config.phrase_highlight_verse
             };
             crate::config::save(&s.config);
-            if !now_on {
-                crate::input::phrase_highlight::clear_phrase_highlight(&mut s);
-            }
+            // Clear on EVERY transition (not just Off) so a stale phrase-width
+            // tint never lingers when entering LINE mode; the next TimePos
+            // tick repaints at the new mode's width.
+            crate::input::phrase_highlight::clear_phrase_highlight(&mut s);
             let text = format!(
                 "Phrase highlight {} ({})",
-                if now_on { "ON" } else { "OFF" },
+                mode.label(),
                 if is_prose { "prose" } else { "plays/poetry" },
             );
             crate::input::navigation::show_chapter_toast(&s, &text);

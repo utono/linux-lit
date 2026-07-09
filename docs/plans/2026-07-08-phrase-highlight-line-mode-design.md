@@ -23,6 +23,12 @@ existing phrase behavior available.
 - **Prose "line" = current sentence**, not the whole paragraph (a prose buffer
   line is a full wrapped paragraph — too large a block). Verse "line" = the
   whole buffer line.
+- **Line is the default** (amended mid-implementation, 2026-07-08): the prose
+  default mode is `Line` (sentence highlighting), and the legacy boolean
+  `true` deserializes to `Line` — NOT `Phrase` — so a stored `true` from the
+  boolean era lands on sentences (stored config values override compiled
+  defaults, so mapping `true` to `Phrase` would have pinned existing configs
+  to phrase-width forever). Verse default stays `Off`.
 
 ## Design
 
