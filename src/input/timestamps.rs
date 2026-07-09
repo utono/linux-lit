@@ -275,6 +275,44 @@ pub fn play_current_line(state: &mut AppState) -> bool {
         Some(ts) => ts.start,
         None => return false,
     };
+    // Prose straddler at the page top: the segment's head rows (where the
+    // seeked start_time's text lives) are on an EARLIER page, so replaying
+    // from the start would park the narration and karaoke tint above the
+    // fold. Turn back to the page holding the segment's first row first —
+    // the cursor stays on the segment and playback is visible from its start.
+    if state.is_prose() && state.current_line == state.page_top_line && state.page_top_offset > 0 {
+        if let Some(table) = crate::input::prose_pages::active_prose_page_table(state) {
+            if let Some(pi) = crate::input::prose_pages::prose_page_for_position(
+                &table,
+                state.current_line,
+                0,
+            ) {
+                let p = table[pi];
+                if (state.page_top_line, state.page_top_offset) != (p.start_line, p.start_off) {
+                    crate::logging::log(&format!(
+                        "PLAY_LINE: straddler at page top — back to page {} top=({},{})",
+                        pi + 1,
+                        p.start_line,
+                        p.start_off
+                    ));
+                    crate::input::scroll::set_page_instant_offset(state, p.start_line, p.start_off);
+                    crate::input::navigation::after_page_change(
+                        state,
+                        crate::input::navigation::PageChangeReason::Backward,
+                    );
+                }
+            }
+        } else {
+            // Live-engine fallback: no stored page grid — put the segment's
+            // first row at the page top so its start is visible.
+            crate::logging::log("PLAY_LINE: straddler at page top — live fallback, segment row 0 to top");
+            crate::input::scroll::set_page_instant(state, state.current_line);
+            crate::input::navigation::after_page_change(
+                state,
+                crate::input::navigation::PageChangeReason::Backward,
+            );
+        }
+    }
     let seek_time = crate::input::navigation::preroll_seek_time(start);
     let _ = state.cmd_tx.try_send(crate::mpv::MpvCommand::ResumeAndSeek(seek_time));
     // Suppress cursor sync so cursor stays on this line
