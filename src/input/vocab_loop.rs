@@ -98,6 +98,174 @@ pub fn step_index(idx: usize, len: usize, forward: bool) -> usize {
     }
 }
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use gtk4::prelude::*;
+
+use crate::app::{AppState, InputMode};
+use crate::input::phrase_highlight::{apply_char_range_tag, buffer_line_text};
+use crate::mpv::MpvCommand;
+
+/// Build the work's vocab-sentence list for the active media: group matches
+/// into sentences, resolve each sentence's audio window from its line's
+/// phrase spans, drop sentences without phrase data. Spans are fetched once
+/// per distinct line (one prose paragraph often holds many vocab sentences).
+fn build_vocab_sentences(s: &AppState) -> Vec<VocabSentence> {
+    let Some(media) = s.media_id else {
+        return Vec::new();
+    };
+    let Ok(conn) = crate::db::queries::open_db() else {
+        return Vec::new();
+    };
+    let grouped = group_matches_into_sentences(&s.vocab_matches, &|bl| buffer_line_text(s, bl));
+    let mut spans_cache: std::collections::HashMap<i64, Vec<PhraseSpan>> =
+        std::collections::HashMap::new();
+    let mut out = Vec::new();
+    for (bl, (sc, ec), words) in grouped {
+        let Some(wi) = s.work_line_for_buffer(bl) else {
+            continue;
+        };
+        let Some(line_id) = s
+            .current_work
+            .as_ref()
+            .and_then(|w| w.lines.get(wi))
+            .map(|l| l.id)
+        else {
+            continue;
+        };
+        let spans = spans_cache
+            .entry(line_id)
+            .or_insert_with(|| crate::db::queries::phrase_spans_for_line(&conn, line_id, media));
+        let Some((start_time, end_time)) = sentence_time_range(spans, sc, ec) else {
+            continue;
+        };
+        out.push(VocabSentence {
+            buffer_line: bl,
+            sent_start_char: sc,
+            sent_end_char: ec,
+            start_time,
+            end_time,
+            words,
+        });
+    }
+    out
+}
+
+/// Enter the loop mode at the first vocab sentence at/after (forward) or
+/// before (backward) the cursor. Returns false when the mode cannot start —
+/// the caller falls back to the plain vocab jump. Requires connected MPV,
+/// an active media id, sync on, and translations hidden (inflated buffer
+/// misaligns char offsets, same gate as the phrase sweep).
+pub fn enter_vocab_loop(state: &Rc<RefCell<AppState>>, forward: bool) -> bool {
+    let mut s = state.borrow_mut();
+    if !s.mpv_connected || !s.sync_enabled || s.translations_visible || s.media_id.is_none() {
+        return false;
+    }
+    let sentences = build_vocab_sentences(&s);
+    if sentences.is_empty() {
+        if !s.vocab_matches.is_empty() {
+            crate::input::navigation::show_chapter_toast(&s, "no vocab sentences with audio");
+        }
+        return false;
+    }
+    let idx = start_index(&sentences, s.current_line, forward);
+    s.vocab_loop = Some(VocabLoopState { sentences, idx });
+    s.input_mode = InputMode::VocabLoop;
+    crate::logging::log("VOCAB_LOOP: enter");
+    activate_current(&mut s);
+    true
+}
+
+/// n/p inside the mode: step the index (wrapping) and re-activate.
+pub fn advance(state: &Rc<RefCell<AppState>>, forward: bool) {
+    let mut s = state.borrow_mut();
+    remove_sentence_tag(&s);
+    {
+        let Some(vl) = s.vocab_loop.as_mut() else {
+            return;
+        };
+        vl.idx = step_index(vl.idx, vl.sentences.len(), forward);
+    }
+    activate_current(&mut s);
+}
+
+/// Land on, tint, and start looping the current sentence. One funnel for
+/// entry and n/p so the ab-loop, tint, toast, and sync suppression can never
+/// drift apart.
+fn activate_current(s: &mut AppState) {
+    let (sentence, idx, len) = {
+        let Some(vl) = s.vocab_loop.as_ref() else {
+            return;
+        };
+        (vl.sentences[vl.idx].clone(), vl.idx, vl.sentences.len())
+    };
+    crate::input::navigation::land_cursor_on_line(s, sentence.buffer_line);
+    // A loop never coexists with a scheduled sync page turn or line advance.
+    s.pending_prose_cross = None;
+    s.pending_advance = None;
+    // Gapless native loop; ResumeAndSeek unpauses and jumps to the start.
+    let _ = s.cmd_tx.try_send(MpvCommand::SetAbLoop {
+        a: sentence.start_time,
+        b: sentence.end_time,
+    });
+    let _ = s.cmd_tx.try_send(MpvCommand::ResumeAndSeek(sentence.start_time));
+    s.suppress_sync_until = Some(
+        std::time::Instant::now() + crate::input::navigation::SYNC_SUPPRESS_SEEK,
+    );
+    // Paint the first phrase immediately (same pattern as do_mpv_seek) so the
+    // sweep shows before live TimePos ticks arrive.
+    if crate::input::phrase_highlight::paint_pending_phrase(s, sentence.start_time) {
+        s.phrase_paint_hold = s.suppress_sync_until;
+    }
+    apply_char_range_tag(
+        s,
+        &s.vocab_sentence_tag.clone(),
+        sentence.buffer_line,
+        sentence.sent_start_char,
+        sentence.sent_end_char,
+    );
+    crate::input::navigation::show_chapter_toast(
+        s,
+        &format!("vocab {}/{} — {}", idx + 1, len, sentence.words.join(", ")),
+    );
+    crate::logging::log(&format!(
+        "VOCAB_LOOP: {}/{} line={} chars=[{},{}) t=[{:.2},{:.2}] words={:?}",
+        idx + 1,
+        len,
+        sentence.buffer_line,
+        sentence.sent_start_char,
+        sentence.sent_end_char,
+        sentence.start_time,
+        sentence.end_time,
+        sentence.words
+    ));
+}
+
+/// Remove the sentence-extent tint everywhere.
+fn remove_sentence_tag(s: &AppState) {
+    let (bs, be) = s.buffer.bounds();
+    s.buffer.remove_tag(&s.vocab_sentence_tag, &bs, &be);
+}
+
+/// The ONE exit funnel: Escape/Ctrl+r in-mode, and defensively on work
+/// switch. Clears the MPV ab-loop (a leaked loop would trap normal
+/// playback), drops the state and tint, and returns to Reader. Playback
+/// continues from wherever it is; normal sync resumes on the next TimePos.
+/// No handling is needed for MPV quit/disconnect — the ab-loop lives in the
+/// MPV process and dies with it.
+pub fn exit_vocab_loop(s: &mut AppState) {
+    if s.vocab_loop.take().is_none() {
+        return;
+    }
+    let _ = s.cmd_tx.try_send(MpvCommand::ClearAbLoop);
+    remove_sentence_tag(s);
+    if s.input_mode == InputMode::VocabLoop {
+        s.input_mode = InputMode::Reader;
+    }
+    crate::logging::log("VOCAB_LOOP: exit");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

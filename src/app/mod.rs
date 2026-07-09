@@ -114,6 +114,11 @@ pub enum InputMode {
     /// the system clipboard; `:q`/double-Esc exit. Save verbs are refused —
     /// nothing is written back to the reading buffer or lit.db.
     SegmentVim,
+    /// Fully modal vocab-sentence drill loop (Ctrl+r when the playing media
+    /// has phrase data): the sentence under review repeats via MPV ab-loop;
+    /// n/p step between vocab sentences, a/Space toggles pause, Escape (or
+    /// Ctrl+r) exits. All other keys are swallowed.
+    VocabLoop,
     SynopsisOverlay,
     SynopsisVisual,
     TranslationOverlay,
@@ -514,6 +519,7 @@ pub struct AppState {
     pub vocab_words: std::collections::HashSet<String>,
     pub vocab_matches: Vec<VocabMatch>,
     pub vocab_match_idx: Option<usize>,
+    pub vocab_loop: Option<crate::input::vocab_loop::VocabLoopState>,
     pub vocab_tag: gtk4::TextTag,
     /// Foreground tint applied to source lines covered by a `reader-gloss`
     /// passage. Color comes from `theme.reader_gloss` — the contrast-guarded
@@ -1781,6 +1787,7 @@ pub fn build_window(
         vocab_words: std::collections::HashSet::new(),
         vocab_matches: Vec::new(),
         vocab_match_idx: None,
+        vocab_loop: None,
         vocab_tag,
         reader_gloss_tag,
         reader_gloss_cursor_tag,

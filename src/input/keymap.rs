@@ -135,6 +135,7 @@ pub fn handle_key(
             | crate::app::InputMode::JournalMovePicker
             | crate::app::InputMode::GlossPicker => handle_picker_key(state, key_name, is_ctrl, is_alt, tokio_handle, mode),
             crate::app::InputMode::Settings => handle_settings_key(state, key_name, is_ctrl),
+            crate::app::InputMode::VocabLoop => handle_vocab_loop_key(state, key_name, is_ctrl),
             crate::app::InputMode::VoicePicker => handle_voice_picker_key(state, key_name, is_ctrl),
             crate::app::InputMode::Search => handle_search_key(state, key_name),
             crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, key_char, is_ctrl, is_shift, is_alt, tokio_handle),
@@ -2695,6 +2696,32 @@ fn handle_overlay_keybinds_key(
         }
     }
     true // consume all keys while the legend is up (modal)
+}
+
+/// Fully modal vocab-sentence loop keys: n/p step, a/Space toggles pause,
+/// Escape or Ctrl+r exits. EVERYTHING else is swallowed (returns true) so
+/// no reader bind can fire mid-drill.
+fn handle_vocab_loop_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+    is_ctrl: bool,
+) -> bool {
+    match key_name {
+        "n" if !is_ctrl => crate::input::vocab_loop::advance(state, true),
+        "p" if !is_ctrl => crate::input::vocab_loop::advance(state, false),
+        "a" | "space" if !is_ctrl => {
+            let _ = state
+                .borrow()
+                .cmd_tx
+                .try_send(crate::mpv::MpvCommand::TogglePause);
+        }
+        "Escape" => crate::input::vocab_loop::exit_vocab_loop(&mut state.borrow_mut()),
+        "r" | "R" if is_ctrl => {
+            crate::input::vocab_loop::exit_vocab_loop(&mut state.borrow_mut())
+        }
+        _ => {}
+    }
+    true
 }
 
 fn handle_keybinds_key(
