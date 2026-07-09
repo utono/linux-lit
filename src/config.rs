@@ -23,8 +23,8 @@ pub enum TransitionStyle {
 
 /// Karaoke narration highlight granularity per work class (see
 /// src/input/phrase_highlight.rs). Serialized as a lowercase string; legacy
-/// boolean configs deserialize as true=Line, false=Off (Line — the whole
-/// verse line / prose sentence — is the default "on" state).
+/// boolean configs deserialize as true=Phrase, false=Off (Phrase — the
+/// spoken-phrase span — is the default "on" state).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PhraseHighlightMode {
@@ -70,7 +70,7 @@ impl<'de> Deserialize<'de> for PhraseHighlightMode {
             Str(String),
         }
         match Raw::deserialize(deserializer)? {
-            Raw::Bool(true) => Ok(PhraseHighlightMode::Line),
+            Raw::Bool(true) => Ok(PhraseHighlightMode::Phrase),
             Raw::Bool(false) => Ok(PhraseHighlightMode::Off),
             Raw::Str(s) => match s.as_str() {
                 "off" => Ok(PhraseHighlightMode::Off),
@@ -154,9 +154,10 @@ pub struct Config {
     #[serde(default = "default_show_cursor_line")]
     pub show_cursor_line: bool,
     /// Karaoke narration highlight granularity, per work class: `off`,
-    /// `phrase` (spoken phrase span), or `line` (whole verse line / prose
-    /// sentence — still requires phrase data; the default for prose). Legacy
-    /// boolean configs load as true=line, false=off. Alt+p cycles the class.
+    /// `phrase` (spoken phrase span; the default for prose), or `line`
+    /// (whole verse line / prose sentence — still requires phrase data).
+    /// Legacy boolean configs load as true=phrase, false=off. Alt+p cycles
+    /// the current class.
     #[serde(default = "default_phrase_highlight_prose")]
     pub phrase_highlight_prose: PhraseHighlightMode,
     #[serde(default = "default_phrase_highlight_verse")]
@@ -271,7 +272,7 @@ fn default_title_bar_visible() -> bool {
 }
 
 fn default_phrase_highlight_prose() -> PhraseHighlightMode {
-    PhraseHighlightMode::Line
+    PhraseHighlightMode::Phrase
 }
 
 fn default_phrase_highlight_verse() -> PhraseHighlightMode {
@@ -315,7 +316,7 @@ impl Default for Config {
             dim_enabled: default_dim_enabled(),
             scansion_level: default_scansion_level(),
             show_cursor_line: true,
-            phrase_highlight_prose: PhraseHighlightMode::Line,
+            phrase_highlight_prose: PhraseHighlightMode::Phrase,
             phrase_highlight_verse: PhraseHighlightMode::Off,
             title_bar_visible: default_title_bar_visible(),
             echo_affect_weight: default_echo_affect_weight(),
@@ -440,25 +441,25 @@ mod last_gloss_tests {
     }
 
     #[test]
-    fn phrase_highlight_defaults_prose_line_verse_off() {
+    fn phrase_highlight_defaults_prose_phrase_verse_off() {
         let cfg: Config = serde_json::from_str("{}").unwrap();
-        assert_eq!(cfg.phrase_highlight_prose, PhraseHighlightMode::Line);
+        assert_eq!(cfg.phrase_highlight_prose, PhraseHighlightMode::Phrase);
         assert_eq!(cfg.phrase_highlight_verse, PhraseHighlightMode::Off);
         let dflt = Config::default();
-        assert_eq!(dflt.phrase_highlight_prose, PhraseHighlightMode::Line);
+        assert_eq!(dflt.phrase_highlight_prose, PhraseHighlightMode::Phrase);
         assert_eq!(dflt.phrase_highlight_verse, PhraseHighlightMode::Off);
     }
 
     #[test]
     fn phrase_highlight_mode_legacy_bools_deserialize() {
-        // Legacy ON means the default "on" state — Line (sentence in prose) —
-        // so a stored `true` from the boolean era lands on sentences, not
-        // phrases (stored values override compiled defaults).
+        // Legacy ON means the default "on" state — Phrase — so a stored
+        // `true` from the boolean era keeps phrase-width highlighting
+        // (stored values override compiled defaults).
         let cfg: Config = serde_json::from_str(
             r#"{"phrase_highlight_prose": true, "phrase_highlight_verse": false}"#,
         )
         .unwrap();
-        assert_eq!(cfg.phrase_highlight_prose, PhraseHighlightMode::Line);
+        assert_eq!(cfg.phrase_highlight_prose, PhraseHighlightMode::Phrase);
         assert_eq!(cfg.phrase_highlight_verse, PhraseHighlightMode::Off);
     }
 
