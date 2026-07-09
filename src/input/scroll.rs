@@ -1314,6 +1314,32 @@ pub(crate) fn scroll_after_jump_backward(state: &mut AppState) {
             if super::viewport::is_line_fully_visible(state, state.current_line) {
                 return;
             }
+            // Prose table mode is TABLE-AUTHORITATIVE — mirror of the jump-fwd
+            // branch above: land on the stored page (offset-aware) containing
+            // the target paragraph's FIRST row. This also covers the
+            // mid-paragraph page top (`current_line == page_top_line` with
+            // `page_top_offset > 0`): the `,` target's tail renders at the top
+            // of this page, so the strict `current_line < page_top_line` check
+            // below never fires and the paragraph's start stayed off-screen —
+            // `,` after a `q` page turn looked like a no-op and the seek
+            // anchored to the paragraph's last visible phrase.
+            if state.is_prose() && state.column_count() == 1 {
+                if let Some((pt, po)) = crate::input::prose_pages::prose_table_boundary_for_line(
+                    state, state.current_line,
+                ) {
+                    let from = (state.page_top_line, state.page_top_offset);
+                    if (pt, po) != from {
+                        state.page_back_stack.clear();
+                        state.page_back_stack.push(from);
+                        log_fmt!(
+                            "PAGES_PROSE: jump-bwd table current={} ({},{})->({},{})",
+                            state.current_line, from.0, from.1, pt, po
+                        );
+                        set_page_instant_offset(state, pt, po);
+                    }
+                    return;
+                }
+            }
             if state.current_line < state.page_top_line {
                 // The cursor stepped above the current page top (it was on the
                 // left column's top line). Turn to the PREVIOUS full page and put
