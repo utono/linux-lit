@@ -450,7 +450,7 @@ fn handle_picker_key(
                         let passages = s.gloss_picker.items.clone();
                         // Remember where the reader was so Escape returns here
                         // (instead of jumping to the glossed passage).
-                        s.gloss_return_pos = Some((s.current_line, s.page_top_line));
+                        s.gloss_return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
                         // Shared open path (also used by the cursor open) — from
                         // the picker, so Escape uses the picker return path.
                         crate::input::actions::gloss::open_gloss_overlay(
@@ -2869,7 +2869,7 @@ fn dispatch_action(
             s.search_backward = matches!(action, OpenSearchBackward);
             // Remember where the reader was so Escape can restore it (live
             // search moves current_line/page_top_line as the user types).
-            s.search_return_pos = Some((s.current_line, s.page_top_line));
+            s.search_return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
             s.search_bar.show();
             s.input_mode = crate::app::InputMode::Search;
         }

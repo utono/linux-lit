@@ -300,7 +300,9 @@ pub(crate) fn set_page(state: &mut AppState, new_top: usize, direction: PageDire
 /// Re-scroll to the current page_top and recalculate the bottom clip.
 /// Called after font/size changes that invalidate line heights.
 pub fn resnap_page(state: &mut AppState) {
-    snap_scroll_to_line(state, state.page_top_line);
+    // Offset-aware: a prose row-fill page top can sit mid-paragraph; snapping
+    // to the line's row 0 re-anchored the page above its stored boundary.
+    snap_scroll_to_line_offset(state, state.page_top_line, state.page_top_offset);
 }
 
 /// Re-run `update_bottom_clip` against the current viewport state without

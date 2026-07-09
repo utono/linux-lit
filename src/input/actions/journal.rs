@@ -79,7 +79,7 @@ pub struct PendingPassage {
 pub struct JournalState {
     pub pages: Vec<crate::db::journal::JournalPage>,
     pub page_index: usize,
-    pub return_pos: Option<(usize, usize)>,
+    pub return_pos: Option<(usize, usize, i32)>,
     pub prompt_mode: JournalPromptMode,
     /// Set by `action_journal_qa` before opening the ask card; read and
     /// consumed by `ask_claude` when the band is `Passage`.
@@ -438,7 +438,7 @@ pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) {
     }
 
     let mut s = state.borrow_mut();
-    s.journal.return_pos = Some((s.current_line, s.page_top_line));
+    s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
     s.journal_band = JournalBand::Scene(d1, d2);
     s.journal.page_index = 0;
     s.input_mode = InputMode::JournalOverlay;
@@ -659,7 +659,7 @@ pub(crate) fn begin_passage_ask(
     source_text: String,
 ) {
     let mut s = state.borrow_mut();
-    s.journal.return_pos = Some((s.current_line, s.page_top_line));
+    s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
     s.journal.prompt_mode = JournalPromptMode::Ask;
     let band = JournalBand::Passage { div1, div2, start, end };
     s.journal.pending_passage = Some(PendingPassage {
@@ -688,7 +688,7 @@ pub(crate) fn begin_passage_ask(
 /// reader mode. The journal labels the band "scene" or "chapter" per work type.
 pub(crate) fn begin_scene_ask(state: &Rc<RefCell<AppState>>, div1: i64, div2: i64) {
     let mut s = state.borrow_mut();
-    s.journal.return_pos = Some((s.current_line, s.page_top_line));
+    s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
     s.journal.prompt_mode = JournalPromptMode::Ask;
     s.journal_band = JournalBand::Scene(div1, div2);
     s.journal.page_index = 0;
@@ -1057,7 +1057,7 @@ fn rewrite_with_claude(
         let anchor_work_line = s
             .journal
             .return_pos
-            .and_then(|(buf, _top)| s.work_line_for_buffer(buf))
+            .and_then(|(buf, _top, _off)| s.work_line_for_buffer(buf))
             .unwrap_or(0);
         let context = rewrite_context(&s, &band, &work_type, anchor_work_line, &passage_source);
         (model, context, work_type, p.question.clone(), p.answer.clone())
@@ -1119,7 +1119,7 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
         let anchor_work_line = s
             .journal
             .return_pos
-            .and_then(|(buf, _top)| s.work_line_for_buffer(buf))
+            .and_then(|(buf, _top, _off)| s.work_line_for_buffer(buf))
             .unwrap_or(0);
         let scene_text = match band {
             JournalBand::Work => String::new(),
@@ -1358,7 +1358,7 @@ pub(crate) fn open_picker_from_reader(state: &Rc<RefCell<AppState>>) {
     if s.current_work.is_none() {
         return;
     }
-    s.journal.return_pos = Some((s.current_line, s.page_top_line));
+    s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
     s.journal.picker_from_reader = true;
     if !populate_and_show_picker(&mut s) {
         // Empty journal: nothing shown, drop the half-set reader-return state.
@@ -1635,7 +1635,7 @@ pub(crate) fn action_gloss_from_journal_passage(state: &Rc<RefCell<AppState>>) {
     let own_idx = all_glosses.iter().position(|g| g.gloss_type == "reader-gloss");
     if let Some(idx) = own_idx {
         let mut s = state.borrow_mut();
-        s.gloss_return_pos = Some((s.current_line, s.page_top_line));
+        s.gloss_return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
         s.gloss_original_text = Some(ctx.source_text.clone());
         let pairs = ctx.source_line_pairs();
         let gloss_text = &all_glosses[idx].gloss_text;
@@ -1658,7 +1658,7 @@ pub(crate) fn action_gloss_from_journal_passage(state: &Rc<RefCell<AppState>>) {
     // Phase 4: cache miss — show loading card and call Claude.
     {
         let mut s = state.borrow_mut();
-        s.gloss_return_pos = Some((s.current_line, s.page_top_line));
+        s.gloss_return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
         s.gloss_original_text = Some(ctx.source_text.clone());
         let (cw, h) = crate::app::layout::overlay_card_size(&s);
         s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color));
@@ -1798,7 +1798,7 @@ pub(crate) fn view_gloss_from_journal(state: &Rc<RefCell<AppState>>) {
         let pos = s.journal.return_pos.take();
         crate::app::restore_saved_position(&mut s, pos);
         // Save gloss return position so Escape in the gloss overlay returns here.
-        s.gloss_return_pos = Some((s.current_line, s.page_top_line));
+        s.gloss_return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
     }
 
     // Phase 4: open the gloss overlay on the passage.
@@ -1872,7 +1872,7 @@ pub(crate) fn view_journal_from_gloss(state: &Rc<RefCell<AppState>>) {
 
     {
         let mut s = state.borrow_mut();
-        s.journal.return_pos = Some((s.current_line, s.page_top_line));
+        s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
         s.journal_band = band;
         s.journal.page_index = 0;
         s.input_mode = InputMode::JournalOverlay;

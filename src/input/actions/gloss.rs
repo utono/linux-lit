@@ -2665,7 +2665,7 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
     // All resolution done; mutate state and open the overlay under one borrow.
     let mut s = state.borrow_mut();
     // Remember the reader page so Escape returns here.
-    s.gloss_return_pos = Some((s.current_line, s.page_top_line));
+    s.gloss_return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
     // Opened from the reader cursor, not the picker (from_picker = false): Escape
     // uses the saved reader page, not the picker return path.
     open_gloss_overlay(&mut s, passages, passage_index, passage, all_glosses, false, None);
@@ -2771,7 +2771,7 @@ pub(crate) fn open_last_gloss(state: &Rc<RefCell<AppState>>) {
 
     let mut s = state.borrow_mut();
     // Remember the reader page so Escape returns here (from_picker = false).
-    s.gloss_return_pos = Some((s.current_line, s.page_top_line));
+    s.gloss_return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
     open_gloss_overlay(
         &mut s,
         passages,

@@ -325,13 +325,17 @@ pub struct AppState {
     /// or after the cursor), true = backward (`?`, seek last match at or before
     /// the cursor). Set when the search bar opens.
     pub search_backward: bool,
-    /// Reader position (current_line, page_top_line) saved when search opens, so
-    /// Escape can cancel the live-search jump and restore the original page.
-    pub search_return_pos: Option<(usize, usize)>,
-    /// Reader position (current_line, page_top_line) saved when a gloss overlay
-    /// opens (picker, MRU toggle, or from synopsis), so Escape restores the page
-    /// the user was on instead of jumping to the glossed passage.
-    pub gloss_return_pos: Option<(usize, usize)>,
+    /// Reader position (current_line, page_top_line, page_top_offset) saved when
+    /// search opens, so Escape can cancel the live-search jump and restore the
+    /// original page. The offset matters for prose row-fill pages whose top sits
+    /// mid-paragraph — dropping it re-anchored the restored page at the
+    /// paragraph's row 0 (the "Esc out of an overlay repaginates" bug).
+    pub search_return_pos: Option<(usize, usize, i32)>,
+    /// Reader position (current_line, page_top_line, page_top_offset) saved when
+    /// a gloss overlay opens (picker, MRU toggle, or from synopsis), so Escape
+    /// restores the page the user was on instead of jumping to the glossed
+    /// passage.
+    pub gloss_return_pos: Option<(usize, usize, i32)>,
     /// Which reader overlay (gloss/journal) was most recently open, so
     /// `ToggleLastOverlay` (Ctrl+Tab) can reopen it from the reader. Set at the
     /// close chokepoint `return_to_reader_mode`.
@@ -1479,9 +1483,9 @@ pub fn build_window(
     authorship_picker.overlay.add_overlay(&word_status_label);
 
     let chapter_toast = gtk4::Label::new(None);
-    chapter_toast.set_valign(gtk4::Align::Start);
+    chapter_toast.set_valign(gtk4::Align::End);
     chapter_toast.set_halign(gtk4::Align::Center);
-    chapter_toast.set_margin_top(32);
+    chapter_toast.set_margin_bottom(32);
     chapter_toast.add_css_class("chapter-toast");
     chapter_toast.set_visible(false);
     authorship_picker.overlay.add_overlay(&chapter_toast);
@@ -4158,10 +4162,11 @@ pub(crate) fn return_to_reader_mode(state: &mut AppState) {
 /// Bare 3-line position restore: set `current_line` and `page_top_line` from
 /// `pos` if `Some`. Used by handoff paths that immediately open another overlay
 /// (no resnap/highlight needed — the incoming overlay open handles layout).
-pub(crate) fn restore_saved_position(s: &mut AppState, pos: Option<(usize, usize)>) {
-    if let Some((line, top)) = pos {
+pub(crate) fn restore_saved_position(s: &mut AppState, pos: Option<(usize, usize, i32)>) {
+    if let Some((line, top, off)) = pos {
         s.current_line = line;
         s.page_top_line = top;
+        s.page_top_offset = off;
     }
 }
 
@@ -4169,10 +4174,11 @@ pub(crate) fn restore_saved_position(s: &mut AppState, pos: Option<(usize, usize
 /// from `pos` then calls `resnap_page` and `update_highlight` to re-tile the
 /// canonical spread. Used by the "final close" paths that return the user to the
 /// reader without immediately opening another overlay.
-pub(crate) fn restore_saved_position_resnap(s: &mut AppState, pos: Option<(usize, usize)>) {
-    if let Some((line, top)) = pos {
+pub(crate) fn restore_saved_position_resnap(s: &mut AppState, pos: Option<(usize, usize, i32)>) {
+    if let Some((line, top, off)) = pos {
         s.current_line = line;
         s.page_top_line = top;
+        s.page_top_offset = off;
         crate::input::scroll::resnap_page(s);
         crate::input::highlight::update_highlight(s);
     }
