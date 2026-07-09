@@ -409,6 +409,7 @@ pub(crate) fn set_page_instant(state: &mut AppState, new_top: usize) {
     clear_old_page_dim(state);
     state.page_top_line = new_top;
     state.page_top_offset = 0;
+    state.prose_flash_hold.set(true);
     snap_scroll_to_line(state, new_top);
     log_first_paint(state, new_top);
 }
@@ -420,6 +421,7 @@ pub(crate) fn set_page_instant_offset(state: &mut AppState, new_top: usize, offs
     clear_old_page_dim(state);
     state.page_top_line = new_top;
     state.page_top_offset = offset;
+    state.prose_flash_hold.set(true);
     snap_scroll_to_line_offset(state, new_top, offset);
     refresh_bottom_clip(state);
     log_first_paint(state, new_top);

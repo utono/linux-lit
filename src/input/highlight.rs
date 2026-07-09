@@ -318,7 +318,10 @@ pub(crate) fn update_highlight(state: &mut AppState) {
         && state.config.show_cursor_line;
     // Consume the nav-flash flag unconditionally so it can't linger across a
     // mode change (e.g. set while global dim was on) and fire spuriously later.
+    // The hold flag (set by the instant page-set paths) is consumed alongside
+    // it so a sync-driven page turn can't leak a hold into a later flash.
     let want_flash = state.pending_prose_flash.replace(false);
+    let flash_hold = state.prose_flash_hold.replace(false);
 
     let buffer = &state.buffer;
     let tag = &state.dim_tag;
@@ -434,7 +437,7 @@ pub(crate) fn update_highlight(state: &mut AppState) {
         // flash the cursor paragraph's background with the phrase-highlight
         // color and fade it out.
         if prose_flash && want_flash {
-            flash_prose_cursor_line(state);
+            flash_prose_cursor_line(state, flash_hold);
         }
         // When visual selection is active, apply highlight even when dim is off
         crate::input::visual::clear_selection_highlight(state);
@@ -498,7 +501,8 @@ pub(crate) fn flush_pending_prose_flash(state: &mut AppState) {
     if PROSE_DIM_OTHER_PARAGRAPHS || !state.is_prose() || !state.config.show_cursor_line {
         return;
     }
-    flash_prose_cursor_line(state);
+    let hold = state.prose_flash_hold.replace(false);
+    flash_prose_cursor_line(state, hold);
 }
 
 /// Flash the reader cursor line NOW — overlay-close feedback: when an overlay
@@ -516,7 +520,10 @@ pub(crate) fn flash_reader_cursor(state: &mut AppState) {
 /// other-paragraph dimming (PROSE_DIM_OTHER_PARAGRAPHS) with a transient cue
 /// that shares the karaoke phrase tint's visual language. The color is read
 /// from the CURRENT theme at flash time, so theme switches need no tag refresh.
-fn flash_prose_cursor_line(state: &mut AppState) {
+/// `hold` (a page turn preceded the flash): keep full strength for ~350ms
+/// before fading, so the blink lands after the new page's first paint instead
+/// of decaying while the page is still laying out.
+fn flash_prose_cursor_line(state: &mut AppState, hold: bool) {
     // Cancel any in-flight flash; skip() drives its callback to the end value,
     // which clears the tag from the buffer.
     if let Some(prev) = state.prose_flash_anim.take() {
@@ -536,28 +543,39 @@ fn flash_prose_cursor_line(state: &mut AppState) {
         line_end.forward_to_line_end();
     }
     buffer.apply_tag(&flash_tag, &line_start, &line_end);
-    log_fmt!("PROSE_FLASH: line {}", state.current_line);
+    log_fmt!("PROSE_FLASH: line {} hold={}", state.current_line, hold);
 
     // Start at the phrase tint's own color/alpha so the flash's first frame
     // matches the narration-sync phrase highlight exactly, then fade to 0.
     let rgba = gtk4::gdk::RGBA::parse(&state.theme.phrase_highlight_bg)
         .unwrap_or_else(|_| gtk4::gdk::RGBA::new(1.0, 1.0, 1.0, 0.22));
     let base_alpha = rgba.alpha();
+    let (duration, hold_frac) = if hold { (1050_u32, 350.0 / 1050.0) } else { (700, 0.0) };
     let target = adw::CallbackAnimationTarget::new(move |value| {
         use gtk4::prelude::TextTagExt;
+        // `value` runs 1→0 linearly. Hold full alpha through `hold_frac` of
+        // the run, then ease-out-quad to 0 — with hold_frac == 0 this is
+        // exactly the original EaseOutQuad fade.
+        let t = 1.0 - value;
+        let f = if t <= hold_frac {
+            1.0
+        } else {
+            let u = (t - hold_frac) / (1.0 - hold_frac);
+            (1.0 - u) * (1.0 - u)
+        };
         flash_tag.set_paragraph_background_rgba(Some(&gtk4::gdk::RGBA::new(
             rgba.red(),
             rgba.green(),
             rgba.blue(),
-            value as f32 * base_alpha,
+            f as f32 * base_alpha,
         )));
         if value <= 0.0 {
             let (s, e) = buffer.bounds();
             buffer.remove_tag(&flash_tag, &s, &e);
         }
     });
-    let anim = adw::TimedAnimation::new(&state.text_view, 1.0, 0.0, 700, target);
-    anim.set_easing(adw::Easing::EaseOutQuad);
+    let anim = adw::TimedAnimation::new(&state.text_view, 1.0, 0.0, duration, target);
+    anim.set_easing(adw::Easing::Linear);
     anim.play();
     state.prose_flash_anim = Some(anim);
 }

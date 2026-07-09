@@ -306,6 +306,11 @@ pub struct AppState {
     /// consumed by update_highlight to flash the cursor paragraph. Sync-driven
     /// highlight updates never set it, so playback stays flash-free.
     pub pending_prose_flash: std::cell::Cell<bool>,
+    /// Set by the instant page-set paths, consumed with the flag above: the
+    /// nav-flash follows a page turn, so it holds full strength briefly before
+    /// fading — an immediate fade burns its brightest phase before the new
+    /// page's first paint and the q/, turn showed no visible blink.
+    pub prose_flash_hold: std::cell::Cell<bool>,
     pub cmd_tx: tokio::sync::mpsc::Sender<crate::mpv::MpvCommand>,
     pub tokio_handle: tokio::runtime::Handle,
     pub playback_speed: f64,
@@ -1638,6 +1643,7 @@ pub fn build_window(
         cursor_fade_anim: None,
         prose_flash_anim: None,
         pending_prose_flash: std::cell::Cell::new(false),
+        prose_flash_hold: std::cell::Cell::new(false),
         cmd_tx,
         tokio_handle: tokio_handle.clone(),
         playback_speed: 1.0,
@@ -1847,8 +1853,12 @@ pub fn build_window(
         if let Ok(mut s) = state.try_borrow_mut() {
             crate::input::scroll::ensure_scroll_range(&s);
             snap_near_end_to_canonical(&mut s);
-            let top = s.page_top_line;
-            crate::input::navigation::snap_scroll_to_line(&mut s, top);
+            let (top, off) = (s.page_top_line, s.page_top_offset);
+            crate::input::scroll::snap_scroll_to_line_offset(&mut s, top, off);
+            // Startup orientation cue: flash the cursor line on first reveal
+            // (held, like a page-turn blink). No-op with no work / for verse.
+            s.prose_flash_hold.set(true);
+            crate::input::highlight::flash_reader_cursor(&mut s);
         }
     }
     {
@@ -2091,6 +2101,11 @@ pub fn build_window(
                             if let Ok(mut s) = st.try_borrow_mut() {
                                 crate::input::page_table::resnap_to_table(&mut s);
                                 crate::input::prose_pages::resnap_prose_to_table(&mut s);
+                                // Orientation cue AFTER the page has settled at
+                                // final geometry (a reveal-time flash was spent
+                                // before the post-settle resnap moved the page).
+                                s.prose_flash_hold.set(true);
+                                crate::input::highlight::flash_reader_cursor(&mut s);
                             }
                         });
                     }
@@ -2153,8 +2168,14 @@ pub fn build_window(
                 if !s.trust_restored_page.replace(false) {
                     snap_near_end_to_canonical(&mut s);
                 }
-                let top = s.page_top_line;
-                crate::input::navigation::snap_scroll_to_line(&mut s, top);
+                // Offset-aware: a prose page top can sit MID-paragraph
+                // ((line, px_offset) from the row-fill grid). Snapping to the
+                // line's row 0 here silently scrolled 171px above the stored
+                // boundary after the startup resnap, rendering rows the page
+                // table (and the bottom clip) doesn't account for — the
+                // "clipped partial row at the bottom on startup" bug.
+                let (top, off) = (s.page_top_line, s.page_top_offset);
+                crate::input::scroll::snap_scroll_to_line_offset(&mut s, top, off);
                 // The synchronous snap above can race ahead of GTK's layout pass:
                 // when a buffer swap (a scansion toggle) changes the content
                 // height, `adjustment.upper` is momentarily stale, so column_split
@@ -2167,8 +2188,8 @@ pub fn build_window(
                     if let Ok(mut s) = state_idle.try_borrow_mut() {
                         crate::input::navigation::invalidate_page_tops(&s);
                         crate::input::scroll::ensure_scroll_range(&s);
-                        let top = s.page_top_line;
-                        crate::input::navigation::snap_scroll_to_line(&mut s, top);
+                        let (top, off) = (s.page_top_line, s.page_top_offset);
+                        crate::input::scroll::snap_scroll_to_line_offset(&mut s, top, off);
                     }
                 });
                 // Reveal LAST: apply_tiled_mode, snap_scroll, and the label
@@ -2178,8 +2199,8 @@ pub fn build_window(
                 if do_reveal {
                     crate::log_fmt!("STARTUP: revealing vbox (sw_h={})", s.scrolled_window.height());
                     vbox_for_tick.set_opacity(1.0);
-                    let top = s.page_top_line;
-                    crate::input::navigation::snap_scroll_to_line(&mut s, top);
+                    let (top, off) = (s.page_top_line, s.page_top_offset);
+                    crate::input::scroll::snap_scroll_to_line_offset(&mut s, top, off);
                     // Headless UI test harness: emit the reading viewport's
                     // rectangle in window (== screenshot) coordinates so the
                     // line-clipping detector can target it via --region.

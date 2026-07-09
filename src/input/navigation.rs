@@ -17,7 +17,6 @@ pub use super::scroll::resnap_page;
 pub use super::scroll::refresh_bottom_clip;
 pub use super::scroll::scroll_paragraph_to_top;
 pub(crate) use super::scroll::PageTurnLock;
-pub(crate) use super::scroll::snap_scroll_to_line;
 
 // highlight.rs — pub items
 pub use super::highlight::{
