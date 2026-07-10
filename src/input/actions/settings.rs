@@ -44,6 +44,12 @@ pub(crate) fn apply_settings_change(
             }
         }
         SettingsChange::Theme(theme) => {
+            let v = s.config.bg_variant_for(&theme.name);
+            let theme = if v == 0 {
+                theme
+            } else {
+                Box::new(crate::theme::load_theme_with_fallback(&theme.name, v))
+            };
             apply_theme_to_state(&mut s, &theme);
         }
         SettingsChange::Navigation(mode) => {
@@ -506,7 +512,8 @@ pub(crate) fn cycle_theme(state: &Rc<RefCell<crate::app::AppState>>, forward: bo
     }
     let current = cycle.iter().position(|t| *t == s.theme.name);
     let next = next_cycle_index(cycle.len(), current, forward);
-    let theme = crate::theme::load_theme_with_fallback(&cycle[next], 0);
+    let variant = s.config.bg_variant_for(&cycle[next]);
+    let theme = crate::theme::load_theme_with_fallback(&cycle[next], variant);
     apply_theme_to_state(&mut s, &theme);
     // Desktop notification, mirroring the font-cycle pattern (font.rs). The
     // synchronous hint replaces a still-visible previous theme toast instead
@@ -515,6 +522,27 @@ pub(crate) fn cycle_theme(state: &Rc<RefCell<crate::app::AppState>>, forward: bo
     let _ = std::process::Command::new("notify-send")
         .args(["-t", "1500", "-h", "string:x-canonical-private-synchronous:linux-lit-theme",
                &format!("Theme [{}]", position), &s.theme.display_name])
+        .spawn();
+}
+
+/// Ctrl+t: cycle the current theme's background variant (0 → 1 → 2 → 0).
+/// The index persists per theme (config.bg_variants); the theme is
+/// re-resolved so every bg-derived color (karaoke, panels, guards)
+/// follows the new background. See
+/// docs/plans/2026-07-10-bg-variant-cycling-design.md.
+pub(crate) fn cycle_bg_variant(state: &Rc<RefCell<crate::app::AppState>>) {
+    let mut s = state.borrow_mut();
+    let name = s.theme.name.clone();
+    let next = (s.theme.bg_variant + 1) % crate::theme::BG_VARIANT_COUNT;
+    // Insert BEFORE apply_theme_to_state — it saves the config snapshot.
+    s.config.bg_variants.insert(name.clone(), next);
+    let theme = crate::theme::load_theme_with_fallback(&name, next);
+    apply_theme_to_state(&mut s, &theme);
+    let _ = std::process::Command::new("notify-send")
+        .args(["-t", "1500", "-h",
+               "string:x-canonical-private-synchronous:linux-lit-theme",
+               &format!("Background [{}/{}]", next + 1, crate::theme::BG_VARIANT_COUNT),
+               &s.theme.text_bg])
         .spawn();
 }
 

@@ -616,17 +616,20 @@ fn main() {
                         // Re-read from config.json ON DISK — the
                         // external-control contract is "edit config.json,
                         // then kill -USR1"; the in-memory config only knows
-                        // the startup value. Adopt only `theme` and
-                        // `theme_cycle` from disk (NOT the whole Config) —
-                        // `load()` re-applies normalizations that would fight
-                        // other in-memory runtime state. Without adopting
-                        // theme_cycle here, apply_theme_to_state's config::save
-                        // below would clobber a disk-edited theme_cycle with
-                        // the stale in-memory one.
+                        // the startup value. Adopt only `theme`,
+                        // `theme_cycle`, and `bg_variants` from disk (NOT the
+                        // whole Config) — `load()` re-applies normalizations
+                        // that would fight other in-memory runtime state.
+                        // Without adopting theme_cycle/bg_variants here,
+                        // apply_theme_to_state's config::save below would
+                        // clobber disk-edited values with the stale
+                        // in-memory ones.
                         let disk = crate::config::load();
                         s.config.theme_cycle = disk.theme_cycle.clone();
+                        s.config.bg_variants = disk.bg_variants.clone();
                         let name = disk.theme_name().to_string();
-                        let theme = crate::theme::load_theme_with_fallback(&name, 0);
+                        let variant = s.config.bg_variant_for(&name);
+                        let theme = crate::theme::load_theme_with_fallback(&name, variant);
                         crate::input::actions::settings::apply_theme_to_state(&mut s, &theme);
                     }
                 }
