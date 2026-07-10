@@ -988,7 +988,10 @@ pub fn build_window(
 
     // Load theme from the app's own config (independent of the system-wide
     // theme; default kindle-sepia).
-    let theme = crate::theme::load_theme_with_fallback(config.theme_name());
+    let theme = crate::theme::load_theme_with_fallback(
+        config.theme_name(),
+        config.bg_variant_for(config.theme_name()),
+    );
     crate::logging::log("BUILD: loading_work guard active");
     crate::logging::log(&format!("Theme: {} ({})", theme.display_name, theme.name));
     crate::logging::log(&format!("Highlight color: {}", theme.cursor_line_bg));

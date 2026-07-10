@@ -93,9 +93,10 @@ unchanged by variants (foreground family is stable across variants).
 - Handler lives with the other theme actions in
   `src/input/actions/settings.rs`: compute the new `Theme` via
   `apply_bg_variant`, funnel through the existing `apply_theme_to_state`
-  (repaints CSS, tags, overlays), persist the index, toast
-  `Background: base` / `lighter` / `lightest` (or `variant 1/2` for
-  hand-authored ones).
+  (repaints CSS, tags, overlays), persist the index, toast title
+  `Background [n/3]` with the resolved `text_bg` hex as the body (shipped
+  format — more informative than a base/lighter/lightest label and what was
+  visually verified).
 - `apply_theme_to_state` must NOT reset the variant when called from Alt+t —
   it applies the target theme's saved variant instead.
 
