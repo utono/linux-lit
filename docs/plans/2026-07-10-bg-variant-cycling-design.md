@@ -1,139 +1,83 @@
-# Ctrl+t Background-Variant Cycling — Design
+# Ctrl+t Root-Color-Variant Cycling — Design
 
 Date: 2026-07-10
-Status: approved (brainstormed with user)
+Status: approved (brainstormed with user; PIVOTED same day — see below)
+
+## Pivot note (2026-07-10)
+
+The first shipped version (merged 2084486) varied the **main card's
+background**. That mischaracterized the request: the user wants variants for
+the **root color** — the field OUTSIDE the main card (`theme.root_color`,
+sourced from `dwl.rootcolor`) — and explicitly NO variants for the card
+background. This doc describes the corrected feature; the refit reuses the
+shipped machinery (per-theme persisted index, Ctrl+t action, restore on
+every theme-apply path, overlay docs) and changes only what varies.
 
 ## Problem
 
-The user wants, for every theme, three background colors — each a variant of
-that theme's background color family — cycled with Ctrl+t. The karaoke
-(phrase-highlight) tint must follow the background so the highlight always
-sits in the same color family as the page. Today the only way to get a
-lighter background is to author a whole sibling theme (kindle-sepia →
-sepia-light → sepia-lightest were built by hand this way).
+For every theme, Ctrl+t cycles three root colors — each a variant of the
+theme's root-color family. The main card's background, text colors, and all
+reading-surface tints (cursor line, karaoke) are untouched by the cycle.
 
 ## Decisions (from brainstorming)
 
-- Variants are **computed automatically** by default, stepping **toward
-  white** (the sepia ladder shape), with an optional **hand-authored
-  override** per theme (needed because sepia-lightest's second variant is a
-  cool grey `#f0f0f0`, not a lighter warm cream — sampled from the user's
-  kitty prompt-highlight band, which reads light-blue against warm chrome).
-- The chosen variant **persists per theme** in the app config.
-- Variant 0 is always the theme's designed background, untouched.
+- **Variant 0 is always the theme's designed `dwl.rootcolor`** — resolution
+  byte-identical to no-variant behavior.
+- **Candidates first:** themes whose `dwl` section carries
+  `rootcolor_candidates` (e.g. kindle-sepia's `#41819b`, `#286983`,
+  `#08526b`) cycle those. Candidates equal to the designed rootcolor are
+  skipped; the remaining ones fill variants 1–2 in array order.
+- **Computed fallback** for themes without (enough) candidates: variant 1 =
+  root blended 25% toward `#ffffff` (lighter, same hue); variant 2 = root
+  darkened via the existing `darken_color(root, 0.7)` (darker, same hue).
+  A too-short candidate list fills the remaining slots computed.
+- The chosen variant **persists per theme** in the app config
+  (`root_variants: {theme_name: 0|1|2}`), ours-wins on merge like `theme`.
 
-## Variant model
+## What re-derives, what is pinned
 
-Each theme has exactly 3 variants, index 0–2:
-
-- **Index 0** — the designed background; resolution is byte-identical to
-  today's behavior.
-- **Index 1–2, hand-authored** — read from
-  `<theme>."linux-lit".bg_variants` in `themes-unified.json`: an array of up
-  to 2 objects:
-
-```json
-"bg_variants": [
-  { "bg": "#f0f0f0",
-    "phrase_highlight_bg": "rgba(69, 89, 100, 0.14)",
-    "cursor_line_bg": "rgba(69, 89, 100, 0.12)" }
-]
-```
-
-  Only `bg` is required; omitted tints fall back to the computed rule below.
-  If the array has 1 entry, variant 2 is computed.
-- **Index 1–2, computed** — `bg` blended toward `#ffffff` at 65% (variant 1)
-  and 90% (variant 2). These ratios approximate the approved sepia ladder
-  (`#e7dec7 → #f7f2e2 → #fdfbf2`) — the hand-picked hexes are not exact
-  uniform blends, and exact reproduction is not a goal. Alpha-based tints keep their hue and
-  scale alpha: `cursor_line_bg` and `phrase_highlight_bg` at ×0.7
-  (variant 1) and ×0.5 (variant 2) of the theme's value.
-
-### Application point: substitute before derivation
-
-The variant is applied **inside theme resolution**, not as a post-hoc patch:
-`resolve_theme` produces the base values, then a pure function
-`apply_bg_variant(theme_json, base, idx) -> Theme` substitutes `text_bg`
-(and the two explicit tints when authored) and re-runs the existing
-derivation pipeline against the new background:
-
-- `dim_fg`, `sign_fg` — fg/bg blends, re-derived.
-- `overlay_panel_bg`, `scrim_bg` — re-derived.
-- `reader_gloss`, `reader_gloss_cursor` — contrast guards re-run against the
-  new bg (guards already exist; no new logic).
-- `phrase_highlight_bg` (karaoke) — authored value, else alpha-scaled from
-  the theme's value. This satisfies "karaoke matches the background family":
-  a cool variant carries a cool tint, warm carries warm.
-
-`root_color`, `focus_color`, `text_fg`, `cursor_bg/fg`, `vocab_fg` are
-unchanged by variants (foreground family is stable across variants).
-
-## Persistence
-
-`config.json` / `config-dev.json` gain one field:
-
-```json
-"bg_variants": { "sepia-lightest": 1, "kindle-green": 2 }
-```
-
-- Map of theme name → variant index (0–2). Absent theme or absent map = 0.
-- Written through the existing config save path (merge-on-save aware:
-  the field must be marked dirty when changed, per the multi-instance
-  config rules).
-- Alt+t theme switches look up the NEW theme's saved index and apply it —
-  each theme remembers its own variant.
-- SIGUSR1 config reload applies the stored index like any other setting.
+- **Varies:** `root_color`; `scrim_bg` (derived from root) re-derives; the
+  journal overlay bar color follows via `apply_theme_to_state`.
+- **Pinned (never varies):** `text_bg`, `text_fg`, `cursor_line_bg`,
+  `phrase_highlight_bg` (karaoke), `dim_fg`, `sign_fg`, `cursor_bg/fg`,
+  `vocab_fg`, `reader_gloss*`, `overlay_panel_bg`, `focus_color`.
+  (`rootcolor_borders`-driven focuscolor coupling is out of scope — the
+  reader keeps the theme's single designed `focuscolor`.)
 
 ## Keybind and dispatch
 
-- New `Action::BgVariantNext` — cycles the active theme's index 0→1→2→0.
-- Bound to **Ctrl+t** (currently unbound in the reader) in BOTH
-  `src/input/keymap_config.rs` defaults and the stowed
+- `Action::RootVariantNext` on **Ctrl+t** — cycles 0→1→2→0 — in BOTH
+  `src/input/keymap_config.rs` and the stowed
   `~/tty-dotfiles/linux-lit/.config/linux-lit/keymap.json`.
-- Handler lives with the other theme actions in
-  `src/input/actions/settings.rs`: compute the new `Theme` via
-  `apply_bg_variant`, funnel through the existing `apply_theme_to_state`
-  (repaints CSS, tags, overlays), persist the index, toast title
-  `Background [n/3]` with the resolved `text_bg` hex as the body (shipped
-  format — more informative than a base/lighter/lightest label and what was
-  visually verified).
-- `apply_theme_to_state` must NOT reset the variant when called from Alt+t —
-  it applies the target theme's saved variant instead.
+- Handler `cycle_root_variant` in `src/input/actions/settings.rs`: insert
+  the new index into `config.root_variants` BEFORE `apply_theme_to_state`
+  (which saves config); toast title `Root [n/3]`, body = resolved
+  `root_color` hex.
+- Every theme-apply path restores the target theme's saved index via
+  `config.root_variant_for(name)`: Alt+t cycle, startup, SIGUSR1 reload
+  (which also adopts `root_variants` from disk), settings-overlay change
+  arm, and settings-overlay Escape revert.
 
-## Seed data (themes-unified.json)
+## Data
 
-- `sepia-lightest.linux-lit.bg_variants` =
-  `[{ bg: "#f0f0f0", phrase_highlight_bg: "rgba(69, 89, 100, 0.14)",
-  cursor_line_bg: "rgba(69, 89, 100, 0.12)" }]` — the exact screenshot
-  color with cool slate tints. Variant 2 stays computed.
-- No other theme gets seed data; all others use the computed ladder.
-
-## UI mirrors to update
-
-- Ctrl+/ keybinds overlay (`src/ui/keybinds_overlay.rs`): add Ctrl+t to the
-  right `KeyDef` row + a `describe()` arm — run the
-  `update-cairo-keybinds-overlay` skill's three-pass cross-reference.
+- kindle-sepia already carries `rootcolor_candidates` — no seeding needed.
+- sepia-light / sepia-lightest have no candidates → computed teal
+  variants (user can author candidates later).
+- The obsolete `sepia-lightest."linux-lit".bg_variants` key is removed from
+  themes-unified.json.
 
 ## Testing
 
-- Unit tests (pure, no GTK) in `theme.rs`:
-  - blend-toward-white math hits the sepia ladder values;
-  - alpha scaling of rgba strings;
-  - `bg_variants` JSON parsing (0, 1, 2 entries; missing tints; malformed
-    entries skipped);
-  - index 0 returns a `Theme` identical to the un-varied resolution;
-  - contrast guards re-run (gloss tint differs between variant 0 and a
-    hand-authored cool variant).
-- Config round-trip test for the `bg_variants` map (absent = empty).
-- Headless cage screenshot of sepia-lightest at variant 1 as visual
-  acceptance: cool `#f0f0f0` page with cool karaoke tint during playback
-  sync (or with a phrase tag forced visible).
+- Unit (theme.rs): variant-0 identity; candidates used in order with the
+  designed root skipped; short/absent candidate lists fall back computed
+  per-slot; `text_bg` + both tints byte-identical across all variants;
+  modulo wrap.
+- Config: `root_variants` roundtrip + wrap-on-corrupt.
+- Headless cage acceptance: the outer field changes color across three
+  Ctrl+t presses while the card stays cream; wrap on the fourth.
 
 ## Out of scope
 
-- Removing the hand-built sepia-light / sepia-lightest themes from the
-  Alt+t cycle (kindle-sepia + Ctrl+t roughly reproduces them; user decides
-  later).
-- Reverse-cycling bind (Ctrl+Shift+T) — YAGNI until asked.
-- System-wide (kitty/nvim/firefox) variant support — this is a linux-lit
-  reader feature only.
+- `rootcolor_borders` focus/border coupling (dwl-side concern).
+- Reverse-cycling bind.
+- The retired card-bg variant behavior (removed, not kept behind a flag).

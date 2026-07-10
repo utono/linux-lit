@@ -330,7 +330,7 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::alt("d"), Action::ToggleDim),
         (KeyCombo::alt("t"), Action::ThemeNext),
         (KeyCombo::alt_shift("T"), Action::ThemePrev),
-        (KeyCombo::ctrl("t"), Action::BgVariantNext),
+        (KeyCombo::ctrl("t"), Action::RootVariantNext),
         (KeyCombo::plain("i"), Action::ShowTranslationOverlay),
         (KeyCombo::alt("bracketleft"), Action::ToggleColumnLayout),
         (KeyCombo::ctrl("a"), Action::ToggleAuthorship),
@@ -494,9 +494,9 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_t_cycles_bg_variant() {
+    fn ctrl_t_cycles_root_variant() {
         let km = Keymap::default();
-        assert_eq!(km.lookup("t", true, false, false), Some(Action::BgVariantNext));
+        assert_eq!(km.lookup("t", true, false, false), Some(Action::RootVariantNext));
     }
 
     #[test]

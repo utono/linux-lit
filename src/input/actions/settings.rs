@@ -44,7 +44,7 @@ pub(crate) fn apply_settings_change(
             }
         }
         SettingsChange::Theme(theme) => {
-            let v = s.config.bg_variant_for(&theme.name);
+            let v = s.config.root_variant_for(&theme.name);
             let theme = if v == 0 {
                 theme
             } else {
@@ -371,7 +371,7 @@ pub(crate) fn revert_to_snapshot(state: &Rc<RefCell<crate::app::AppState>>) {
     // Revert theme if changed
     if let Some(snap_theme) = s.settings_overlay.themes().get(snap_ti) {
         let snap_theme = snap_theme.clone();
-        let v = s.config.bg_variant_for(&snap_theme.name);
+        let v = s.config.root_variant_for(&snap_theme.name);
         let snap_theme = if v == 0 {
             snap_theme
         } else {
@@ -518,7 +518,7 @@ pub(crate) fn cycle_theme(state: &Rc<RefCell<crate::app::AppState>>, forward: bo
     }
     let current = cycle.iter().position(|t| *t == s.theme.name);
     let next = next_cycle_index(cycle.len(), current, forward);
-    let variant = s.config.bg_variant_for(&cycle[next]);
+    let variant = s.config.root_variant_for(&cycle[next]);
     let theme = crate::theme::load_theme_with_fallback(&cycle[next], variant);
     apply_theme_to_state(&mut s, &theme);
     // Desktop notification, mirroring the font-cycle pattern (font.rs). The
@@ -531,24 +531,24 @@ pub(crate) fn cycle_theme(state: &Rc<RefCell<crate::app::AppState>>, forward: bo
         .spawn();
 }
 
-/// Ctrl+t: cycle the current theme's background variant (0 → 1 → 2 → 0).
-/// The index persists per theme (config.bg_variants); the theme is
-/// re-resolved so every bg-derived color (karaoke, panels, guards)
-/// follows the new background. See
+/// Ctrl+t: cycle the current theme's ROOT-color variant (0 → 1 → 2 → 0).
+/// The index persists per theme (config.root_variants); the theme is
+/// re-resolved so root_color (and its derivative scrim_bg) follow the new
+/// root while the card background and reading tints stay pinned. See
 /// docs/plans/2026-07-10-bg-variant-cycling-design.md.
-pub(crate) fn cycle_bg_variant(state: &Rc<RefCell<crate::app::AppState>>) {
+pub(crate) fn cycle_root_variant(state: &Rc<RefCell<crate::app::AppState>>) {
     let mut s = state.borrow_mut();
     let name = s.theme.name.clone();
-    let next = (s.theme.bg_variant + 1) % crate::theme::BG_VARIANT_COUNT;
+    let next = (s.theme.root_variant + 1) % crate::theme::ROOT_VARIANT_COUNT;
     // Insert BEFORE apply_theme_to_state — it saves the config snapshot.
-    s.config.bg_variants.insert(name.clone(), next);
+    s.config.root_variants.insert(name.clone(), next);
     let theme = crate::theme::load_theme_with_fallback(&name, next);
     apply_theme_to_state(&mut s, &theme);
     let _ = std::process::Command::new("notify-send")
         .args(["-t", "1500", "-h",
                "string:x-canonical-private-synchronous:linux-lit-theme",
-               &format!("Background [{}/{}]", next + 1, crate::theme::BG_VARIANT_COUNT),
-               &s.theme.text_bg])
+               &format!("Root [{}/{}]", next + 1, crate::theme::ROOT_VARIANT_COUNT),
+               &s.theme.root_color])
         .spawn();
 }
 
