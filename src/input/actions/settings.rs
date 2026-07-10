@@ -371,6 +371,12 @@ pub(crate) fn revert_to_snapshot(state: &Rc<RefCell<crate::app::AppState>>) {
     // Revert theme if changed
     if let Some(snap_theme) = s.settings_overlay.themes().get(snap_ti) {
         let snap_theme = snap_theme.clone();
+        let v = s.config.bg_variant_for(&snap_theme.name);
+        let snap_theme = if v == 0 {
+            snap_theme
+        } else {
+            crate::theme::load_theme_with_fallback(&snap_theme.name, v)
+        };
         s.settings_overlay.set_theme_index(snap_ti);
         apply_theme_to_state(&mut s, &snap_theme);
     }

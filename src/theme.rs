@@ -1260,6 +1260,7 @@ mod tests {
         assert_eq!(v0.cursor_bg, v1.cursor_bg);
         assert_eq!(v0.cursor_bg, v2.cursor_bg);
         assert_eq!(v0.vocab_fg, v1.vocab_fg);
+        assert_eq!(v0.vocab_fg, v2.vocab_fg);
     }
 }
 
