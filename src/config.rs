@@ -487,8 +487,13 @@ pub fn save(config: &Config) {
         }
         None => config.clone(),
     };
-    // Atomic write: write to temp, then rename
-    let tmp = path.with_extension("tmp");
+    // Atomic write: write to temp, then rename. The temp name is per-process:
+    // with multiple instances saving concurrently, a shared name would let one
+    // instance truncate the file another is about to rename — installing
+    // partial JSON whose parse failure downgrades the next save to a full
+    // snapshot (the clobber this merge exists to prevent). A pid-tmp leaked by
+    // a crash is harmless.
+    let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
     if let Ok(json) = serde_json::to_string_pretty(&to_write) {
         if fs::write(&tmp, &json).is_ok() {
             let _ = fs::rename(&tmp, &path);

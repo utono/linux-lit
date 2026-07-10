@@ -79,6 +79,13 @@ landing on the same slot re-derives the same socket names.
 
 MPV keeps `wayland-app-id=mpv-lit`, so the dwl tag-10 rule is unaffected.
 
+Accepted tradeoff (slot drift): players outlive the app, and discovery only
+probes the process's own slot namespace. If both instances exit and a single
+relaunch takes slot 1, a still-playing `i2-` player is never rediscovered —
+its window stays visible on tag 10 (not silent), and a possible follow-up is
+probing other infixes as adoption candidates when the own-slot socket is
+absent.
+
 ### 3. GTK multi-instance + window title
 
 - `main.rs`: add `.flags(gio::ApplicationFlags::NON_UNIQUE)` to the
