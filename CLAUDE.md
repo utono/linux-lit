@@ -25,6 +25,13 @@ gotchas. When you refresh it, REPLACE stale state rather than prepending a new
 block on top of the old ones. (This project deliberately opts OUT of the global
 `~/CLAUDE.md` "After a Commit" rule.)
 
+## To-Do List
+
+`docs/to-do/to-do.md` is the running list of reader bugs and feature requests.
+**Update it as to-dos are completed:** when an item is done, put a `[X]` to
+the left of the item (at the start of its first line). Do not delete
+completed items — the `[X]` marks them done.
+
 ## Debug Log
 
 The app writes debug logs to:

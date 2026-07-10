@@ -8,3 +8,10 @@ to the main card
 in main card 'shift+;' bind should cycle between setting playback speed 1x 1.3x .9x
 
 in main card the 'G' bind appears to be failing to navigate and/or render last page
+
+the 'o' and 'e' binds in main card should effect a page turn if the karaoke highlighting
+is moved off the current page
+
+put in ~/utono/linux-lit/CLAUDE.md that this file
+/home/mlj/utono/linux-lit/docs/to-do/to-do.md should be updated as the to-dos are
+completed. put a '\[X\]' to the left of a to-do item as they are completed.
