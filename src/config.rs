@@ -690,7 +690,7 @@ mod last_gloss_tests {
         c.root_variants.insert("kindle-sepia".into(), 2);
         assert_eq!(c.root_variant_for("kindle-sepia"), 2);
         c.root_variants.insert("kindle-sepia".into(), 7); // malformed config
-        assert_eq!(c.root_variant_for("kindle-sepia"), 1); // 7 % 3
+        assert_eq!(c.root_variant_for("kindle-sepia"), 2); // 7 % 5
     }
 
     #[test]
