@@ -1889,10 +1889,12 @@ pub fn build_window(
             snap_near_end_to_canonical(&mut s);
             let (top, off) = (s.page_top_line, s.page_top_offset);
             crate::input::scroll::snap_scroll_to_line_offset(&mut s, top, off);
-            // Startup orientation cue: flash the cursor line on first reveal
-            // (held, like a page-turn blink). No-op with no work / for verse.
-            s.prose_flash_hold.set(true);
-            crate::input::highlight::flash_reader_cursor(&mut s);
+            // Startup orientation cue: karaoke-tint the phrase that will play
+            // (the resume line's start time) instead of flashing the cursor
+            // paragraph. Repaint here because snap/highlight work since
+            // display_work's paint may have cleared the tint. No-op while
+            // playing / for works without phrase data / karaoke off.
+            crate::input::phrase_highlight::show_startup_phrase(&mut s);
         }
     }
     {
@@ -2136,10 +2138,10 @@ pub fn build_window(
                                 crate::input::page_table::resnap_to_table(&mut s);
                                 crate::input::prose_pages::resnap_prose_to_table(&mut s);
                                 // Orientation cue AFTER the page has settled at
-                                // final geometry (a reveal-time flash was spent
-                                // before the post-settle resnap moved the page).
-                                s.prose_flash_hold.set(true);
-                                crate::input::highlight::flash_reader_cursor(&mut s);
+                                // final geometry: re-assert the startup karaoke
+                                // tint (the resnap above may have repainted the
+                                // buffer and dropped the reveal-time paint).
+                                crate::input::phrase_highlight::show_startup_phrase(&mut s);
                             }
                         });
                     }
