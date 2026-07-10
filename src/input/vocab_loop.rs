@@ -109,8 +109,9 @@ use crate::mpv::MpvCommand;
 
 /// Build the work's vocab-sentence list for the active media: group matches
 /// into sentences, resolve each sentence's audio window from its line's
-/// phrase spans, drop sentences without phrase data. Spans are fetched once
-/// per distinct line (one prose paragraph often holds many vocab sentences).
+/// phrase spans, drop sentences without phrase data. All spans are fetched in
+/// ONE bulk query (phrase_spans_for_media) — the per-line query form made
+/// Ctrl+r stall ~13s on a full novel (5.9k lines × ~2ms query overhead).
 fn build_vocab_sentences(s: &AppState) -> Vec<VocabSentence> {
     let Some(media) = s.media_id else {
         return Vec::new();
@@ -119,8 +120,7 @@ fn build_vocab_sentences(s: &AppState) -> Vec<VocabSentence> {
         return Vec::new();
     };
     let grouped = group_matches_into_sentences(&s.vocab_matches, &|bl| buffer_line_text(s, bl));
-    let mut spans_cache: std::collections::HashMap<i64, Vec<PhraseSpan>> =
-        std::collections::HashMap::new();
+    let spans_by_line = crate::db::queries::phrase_spans_for_media(&conn, media);
     let mut out = Vec::new();
     for (bl, (sc, ec), words) in grouped {
         let Some(wi) = s.work_line_for_buffer(bl) else {
@@ -134,9 +134,9 @@ fn build_vocab_sentences(s: &AppState) -> Vec<VocabSentence> {
         else {
             continue;
         };
-        let spans = spans_cache
-            .entry(line_id)
-            .or_insert_with(|| crate::db::queries::phrase_spans_for_line(&conn, line_id, media));
+        let Some(spans) = spans_by_line.get(&line_id) else {
+            continue;
+        };
         let Some((start_time, end_time)) = sentence_time_range(spans, sc, ec) else {
             continue;
         };

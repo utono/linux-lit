@@ -736,6 +736,43 @@ pub fn phrase_spans_for_line(
     }
 }
 
+/// ALL phrase spans for a media, grouped per line (each vec ordered by
+/// start_time). One bulk query instead of one per line: the vocab-sentence
+/// loop's eager build touched thousands of lines, and the per-call overhead
+/// of phrase_spans_for_line made Ctrl+r take ~13s on a full novel (measured;
+/// the bulk form is ~0.03s for the same 41k rows).
+pub fn phrase_spans_for_media(
+    conn: &Connection,
+    media_id: i64,
+) -> std::collections::HashMap<i64, Vec<PhraseSpan>> {
+    let mut out: std::collections::HashMap<i64, Vec<PhraseSpan>> =
+        std::collections::HashMap::new();
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT line_mapping_id, start_time, end_time, start_char, end_char \
+         FROM phrase_timestamps WHERE media_id = ?1 \
+         ORDER BY line_mapping_id, start_time",
+    ) else {
+        return out;
+    };
+    let rows = stmt.query_map([media_id], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            PhraseSpan {
+                start_time: row.get(1)?,
+                end_time: row.get(2)?,
+                start_char: row.get::<_, i64>(3)?.max(0) as usize,
+                end_char: row.get::<_, i64>(4)?.max(0) as usize,
+            },
+        ))
+    });
+    if let Ok(r) = rows {
+        for (line_id, span) in r.filter_map(Result::ok) {
+            out.entry(line_id).or_default().push(span);
+        }
+    }
+    out
+}
+
 /// Whether ANY phrase_timestamps rows exist for this media. Cheap gate so
 /// no-phrase-data works skip vocab-sentence resolution entirely (and its
 /// per-line span queries) and fall back to the plain vocab jump silently.
