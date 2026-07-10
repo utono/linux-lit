@@ -2405,38 +2405,56 @@ pub fn show_current_chapter(state: &mut AppState) {
     };
 
     let current_bl = state.current_line;
-    let has_implicit_first = chapter_lines[0] > 0;
-    let total = chapter_lines.len() + if has_implicit_first { 1 } else { 0 };
 
-    let (chapter_num, title) = match chapter_lines.iter().rposition(|&bl| bl <= current_bl) {
-        Some(idx) => {
-            let num = idx + 1 + if has_implicit_first { 1 } else { 0 };
-            (num, work_line_text(chapter_lines[idx]).trim().to_string())
-        }
+    // Chapter number and total come from the authoritative div1 metadata,
+    // never from counting heading lines in the buffer. Counting markers
+    // miscounted whenever front matter (div1 == 0: preface, prologue)
+    // precedes Chapter 1 — the old "implicit first chapter" inference showed
+    // "Chapter 8 of 68" for BH's Chapter VII (67 chapters + prologue).
+    let (div1, _) = crate::app::scene_synopsis::current_scene_divs(state);
+    let max_div1 = work.lines.iter().map(|l| l.div1).max().unwrap_or(0);
+
+    // The displayed heading text still comes from the nearest marker line at
+    // or before the cursor (display only, not structure).
+    let title = match chapter_lines.iter().rposition(|&bl| bl <= current_bl) {
+        Some(idx) => work_line_text(chapter_lines[idx]).trim().to_string(),
         None => {
-            // Before the first marker — this is the implicit Chapter 1.
-            // Scan backward from the cursor for a line containing
-            // "chapter" or "part " to find its heading; fall back to work title.
-            let title = (0..=current_bl)
+            // Before the first marker (an unmarked opening chapter): scan
+            // backward for a heading-ish line; fall back to the work title.
+            (0..=current_bl)
                 .rev()
                 .map(|bl| work_line_text(bl).trim())
                 .find(|t| {
                     let lower = t.to_lowercase();
                     lower.contains("chapter") || lower.contains("part ")
                 })
-                .unwrap_or("")
-                .to_string();
-            let title = if title.is_empty() {
-                work.title.clone()
-            } else {
-                title
-            };
-            (1, title)
+                .filter(|t| !t.is_empty())
+                .map(|t| t.to_string())
+                .unwrap_or_else(|| work.title.clone())
         }
     };
 
-    let text = format!("{} — Chapter {} of {} — {}", abbrev, chapter_num, total, title);
+    let text = match prose_chapter_numbering(div1, max_div1) {
+        Some((num, total)) => {
+            format!("{} — Chapter {} of {} — {}", abbrev, num, total, title)
+        }
+        // Front matter (prologue/preface): not a chapter, so no "M of N".
+        None => format!("{} — Front matter — {}", abbrev, work.title),
+    };
     show_chapter_toast(state, &text);
+}
+
+/// Chapter-toast numbering for prose works, read from the authoritative
+/// `div1` metadata (see CLAUDE.md → authoritative-boundary principle).
+/// Returns `Some((current, total))` for a real chapter; `None` when the
+/// cursor is in front matter (`div1 == 0`, which is not a chapter) or the
+/// metadata is degenerate.
+fn prose_chapter_numbering(div1: i64, max_div1: i64) -> Option<(i64, i64)> {
+    if div1 >= 1 && max_div1 >= 1 {
+        Some((div1, max_div1))
+    } else {
+        None
+    }
 }
 
 /// Show `text` in the chapter toast for 3 seconds.
@@ -2860,6 +2878,31 @@ pub fn jump_to_prev_vocab(state: &mut AppState) {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod chapter_toast_tests {
+    use super::prose_chapter_numbering;
+
+    #[test]
+    fn real_chapter_reads_div1_directly() {
+        // BH-Barrett regression: cursor in CHAPTER VII with a front-matter
+        // prologue used to show "Chapter 8 of 68"; div1 says 7 of 67.
+        assert_eq!(prose_chapter_numbering(7, 67), Some((7, 67)));
+        assert_eq!(prose_chapter_numbering(1, 67), Some((1, 67)));
+        assert_eq!(prose_chapter_numbering(67, 67), Some((67, 67)));
+    }
+
+    #[test]
+    fn front_matter_is_not_a_chapter() {
+        assert_eq!(prose_chapter_numbering(0, 67), None);
+    }
+
+    #[test]
+    fn degenerate_metadata_yields_no_numbering() {
+        assert_eq!(prose_chapter_numbering(5, 0), None);
+        assert_eq!(prose_chapter_numbering(-1, 67), None);
+    }
+}
 
 #[cfg(test)]
 mod page_turn_tests {
