@@ -73,7 +73,7 @@ const HOME_ROW: &[KeyDef] = &[
     key("i", "I", "2-col translation", "", &[("M-i", "scansion"), ("C-M-i", "inline translation"), ("C-i", "page image"), ("S-C-i", "calibrate pages")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
     key("h", "H", "synopsis", "H: auto vocab", &[("C-h", "synopsis side")]),
-    key("t", "T", "", "", &[("S-C-t", "nav test"), ("M-t", "theme next"), ("M-S-T", "theme prev")]),
+    key("t", "T", "", "", &[("C-t", "bg variant"), ("S-C-t", "nav test"), ("M-t", "theme next"), ("M-S-T", "theme prev")]),
     key("n", "N", "next match", "N: prev match", &[]),
     bare("s", "S", "sync tog"),
     key("-", "_", "prev work", "", &[("C--", "recent")]),
@@ -508,6 +508,13 @@ app::apply_authorship_formatting — src/input/keymap.rs, src/app.rs",
 src/input/keymap.rs",
         "nav test" => "Toggle the in-app navigation test harness (dev only). \
 -> ToggleNavTest arm — src/input/keymap.rs",
+        "bg variant" => "Cycle the current theme's background between its \
+three variants (Ctrl+t): the designed color plus two lighter \
+same-family alternates — hand-authored per theme in \
+themes-unified.json bg_variants, else computed toward white. \
+The cursor-line and karaoke tints follow the background; the \
+chosen variant persists per theme. \
+-> cycle_bg_variant — src/input/actions/settings.rs",
         "theme next" => "Cycle the reader theme forward (Alt+t). \
 -> settings::cycle_theme — src/input/actions/settings.rs",
         "theme prev" => "Cycle the reader theme backward (Alt+Shift+T). \
