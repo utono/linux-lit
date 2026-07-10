@@ -531,15 +531,21 @@ pub(crate) fn cycle_theme(state: &Rc<RefCell<crate::app::AppState>>, forward: bo
         .spawn();
 }
 
-/// Ctrl+t: cycle the current theme's ROOT-color variant (0 → 1 → 2 → 0).
-/// The index persists per theme (config.root_variants); the theme is
-/// re-resolved so root_color (and its derivative scrim_bg) follow the new
-/// root while the card background and reading tints stay pinned. See
+/// Ctrl+t / Ctrl+Shift+T: cycle the current theme's ROOT-color variant
+/// forward (0 → 1 → ... → 4 → 0) or backward. The index persists per theme
+/// (config.root_variants); the theme is re-resolved so root_color (and its
+/// derivative scrim_bg) follow the new root while the card background and
+/// reading tints stay pinned. See
 /// docs/plans/2026-07-10-bg-variant-cycling-design.md.
-pub(crate) fn cycle_root_variant(state: &Rc<RefCell<crate::app::AppState>>) {
+pub(crate) fn cycle_root_variant(state: &Rc<RefCell<crate::app::AppState>>, forward: bool) {
     let mut s = state.borrow_mut();
     let name = s.theme.name.clone();
-    let next = (s.theme.root_variant + 1) % crate::theme::ROOT_VARIANT_COUNT;
+    let count = crate::theme::ROOT_VARIANT_COUNT;
+    let next = if forward {
+        (s.theme.root_variant + 1) % count
+    } else {
+        (s.theme.root_variant + count - 1) % count
+    };
     // Insert BEFORE apply_theme_to_state — it saves the config snapshot.
     s.config.root_variants.insert(name.clone(), next);
     let theme = crate::theme::load_theme_with_fallback(&name, next);

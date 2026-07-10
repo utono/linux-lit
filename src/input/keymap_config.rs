@@ -331,6 +331,7 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::alt("t"), Action::ThemeNext),
         (KeyCombo::alt_shift("T"), Action::ThemePrev),
         (KeyCombo::ctrl("t"), Action::RootVariantNext),
+        (KeyCombo::ctrl_shift("T"), Action::RootVariantPrev),
         (KeyCombo::plain("i"), Action::ShowTranslationOverlay),
         (KeyCombo::alt("bracketleft"), Action::ToggleColumnLayout),
         (KeyCombo::ctrl("a"), Action::ToggleAuthorship),
@@ -376,7 +377,7 @@ fn app_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
         (KeyCombo::plain("Escape"), Action::EscapeReaderMode),
         (KeyCombo::ctrl("d"), Action::ToggleDebugLogging),
-        (KeyCombo::ctrl_shift("T"), Action::ToggleNavTest),
+        (KeyCombo::ctrl_alt("t"), Action::ToggleNavTest),
         (KeyCombo::ctrl_shift("E"), Action::ReopenEchoesBcp),
         (KeyCombo::ctrl("backslash"), Action::OpenLibraryPicker),
         (KeyCombo::ctrl("minus"), Action::OpenRecentPicker),
@@ -497,6 +498,8 @@ mod tests {
     fn ctrl_t_cycles_root_variant() {
         let km = Keymap::default();
         assert_eq!(km.lookup("t", true, false, false), Some(Action::RootVariantNext));
+        assert_eq!(km.lookup("T", true, true, false), Some(Action::RootVariantPrev));
+        assert_eq!(km.lookup("t", true, false, true), Some(Action::ToggleNavTest));
     }
 
     #[test]

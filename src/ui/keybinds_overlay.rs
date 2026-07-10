@@ -73,7 +73,7 @@ const HOME_ROW: &[KeyDef] = &[
     key("i", "I", "2-col translation", "", &[("M-i", "scansion"), ("C-M-i", "inline translation"), ("C-i", "page image"), ("S-C-i", "calibrate pages")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
     key("h", "H", "synopsis", "H: auto vocab", &[("C-h", "synopsis side")]),
-    key("t", "T", "", "", &[("C-t", "root variant"), ("S-C-t", "nav test"), ("M-t", "theme next"), ("M-S-T", "theme prev")]),
+    key("t", "T", "", "", &[("C-t", "root variant"), ("S-C-T", "root variant prev"), ("C-M-t", "nav test"), ("M-t", "theme next"), ("M-S-T", "theme prev")]),
     key("n", "N", "next match", "N: prev match", &[]),
     bare("s", "S", "sync tog"),
     key("-", "_", "prev work", "", &[("C--", "recent")]),
@@ -506,8 +506,12 @@ app::apply_authorship_formatting — src/input/keymap.rs, src/app.rs",
         "attr set" => "Pick which attribution set to apply. \
 -> PickAttributionSet arm — \
 src/input/keymap.rs",
-        "nav test" => "Toggle the in-app navigation test harness (dev only). \
+        "nav test" => "Toggle the in-app navigation test harness (Ctrl+Alt+t, dev \
+only). \
 -> ToggleNavTest arm — src/input/keymap.rs",
+        "root variant prev" => "Cycle the ROOT color backward through the same \
+five variants as Ctrl+t (Ctrl+Shift+T). \
+-> cycle_root_variant — src/input/actions/settings.rs",
         "root variant" => "Cycle the ROOT color (the field outside the card) \
 through five same-family variants (Ctrl+t): the designed color, then the \
 four alternates ordered lightest to darkest (dwl.rootcolor_candidates \

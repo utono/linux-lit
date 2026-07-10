@@ -51,13 +51,15 @@ reading-surface tints (cursor line, karaoke) are untouched by the cycle.
 
 ## Keybind and dispatch
 
-- `Action::RootVariantNext` on **Ctrl+t** — cycles 0→1→2→0 — in BOTH
+- `Action::RootVariantNext` on **Ctrl+t** (forward, 0→1→...→4→0) and
+  `Action::RootVariantPrev` on **Ctrl+Shift+T** (backward; this displaced
+  `ToggleNavTest`, which moved to **Ctrl+Alt+t**) — in BOTH
   `src/input/keymap_config.rs` and the stowed
   `~/tty-dotfiles/linux-lit/.config/linux-lit/keymap.json`.
-- Handler `cycle_root_variant` in `src/input/actions/settings.rs`: insert
-  the new index into `config.root_variants` BEFORE `apply_theme_to_state`
-  (which saves config); toast title `Root [n/3]`, body = resolved
-  `root_color` hex.
+- Handler `cycle_root_variant(state, forward)` in
+  `src/input/actions/settings.rs`: insert the new index into
+  `config.root_variants` BEFORE `apply_theme_to_state` (which saves
+  config); toast title `Root [n/5]`, body = resolved `root_color` hex.
 - Every theme-apply path restores the target theme's saved index via
   `config.root_variant_for(name)`: Alt+t cycle, startup, SIGUSR1 reload
   (which also adopts `root_variants` from disk), settings-overlay change
@@ -84,5 +86,4 @@ reading-surface tints (cursor line, karaoke) are untouched by the cycle.
 ## Out of scope
 
 - `rootcolor_borders` focus/border coupling (dwl-side concern).
-- Reverse-cycling bind.
 - The retired card-bg variant behavior (removed, not kept behind a flag).
