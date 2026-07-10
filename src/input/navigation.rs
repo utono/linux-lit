@@ -2762,6 +2762,13 @@ pub fn seek_to_current_line(state: &mut AppState) {
         let _ = state
             .cmd_tx
             .try_send(crate::mpv::MpvCommand::Seek(seek_time));
+        // Karaoke: move the tint to the phrase that will play at the seek
+        // target — the first phrase of the new cursor segment (or of the
+        // visible rows in the straddler branch) — and hold it through the
+        // sync suppression, mirroring the o/e scrub path in do_mpv_seek.
+        if crate::input::phrase_highlight::paint_pending_phrase(state, base) {
+            state.phrase_paint_hold = state.suppress_sync_until;
+        }
     } else {
         // No timestamp — suppress indefinitely so cursor stays put
         log_fmt!("SEEK: line={} work_idx={} NO_TIMESTAMP suppress=86400s", state.current_line, work_idx);
