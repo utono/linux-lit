@@ -21,11 +21,16 @@ pub fn derive_socket_path(media_path: &str) -> String {
         .unwrap_or_default()
         .to_string_lossy();
 
+    // Per-instance namespace: "" for slot 1 (legacy paths, reattach
+    // compatibility), "i{n}-" for slot n >= 2 — so discovery can only ever
+    // find/connect/stale-clean THIS instance's players.
+    let infix = crate::instance::socket_infix();
+
     let is_ytdlp = media_path.contains("/yt-dlp-mlj/");
     let socket_path = if is_ytdlp {
-        format!("/tmp/mpvsocket-ytdlp-{}-{}", author, basename)
+        format!("/tmp/mpvsocket-{}ytdlp-{}-{}", infix, author, basename)
     } else {
-        format!("/tmp/mpvsocket-{}-{}", author, basename)
+        format!("/tmp/mpvsocket-{}{}-{}", infix, author, basename)
     };
 
     if socket_path.len() > 95 {
@@ -217,6 +222,16 @@ mod tests {
         let path = format!("{}/Music/author/{}.m4b", home, long_name);
         let socket = derive_socket_path(&path);
         assert!(socket.len() <= 95);
+    }
+
+    #[test]
+    fn test_socket_infix_splices_after_prefix() {
+        // derive_socket_path always uses the process slot (1 in unit tests →
+        // no infix, asserted by the existing tests). The slot-n shape is
+        // pinned here via the pure helper so a format drift can't slip in.
+        let infix = crate::instance::socket_infix_for(2);
+        let path = format!("/tmp/mpvsocket-{}shakespeare-william-Hamlet.m4b", infix);
+        assert_eq!(path, "/tmp/mpvsocket-i2-shakespeare-william-Hamlet.m4b");
     }
 
     #[test]
