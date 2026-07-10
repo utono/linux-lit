@@ -294,7 +294,7 @@ fn resolve_theme_variant(name: &str, val: &Value, variant: u8) -> Theme {
     let cursor_fg = highlights
         .get("Cursor")
         .and_then(|c| str_field(c, "guifg"))
-        .unwrap_or_else(|| text_bg.clone());
+        .unwrap_or_else(|| base_bg.clone());
 
     let vocab_orig = highlights
         .get("VocabWord")
@@ -1247,6 +1247,19 @@ mod tests {
                 theme.is_light
             );
         }
+    }
+
+    #[test]
+    fn cursor_colors_do_not_vary_with_background_variant() {
+        let json: serde_json::Value = serde_json::from_str(SEPIA_JSON).unwrap();
+        let v0 = resolve_theme_variant("s", &json, 0);
+        let v1 = resolve_theme_variant("s", &json, 1);
+        let v2 = resolve_theme_variant("s", &json, 2);
+        assert_eq!(v0.cursor_fg, v1.cursor_fg);
+        assert_eq!(v0.cursor_fg, v2.cursor_fg);
+        assert_eq!(v0.cursor_bg, v1.cursor_bg);
+        assert_eq!(v0.cursor_bg, v2.cursor_bg);
+        assert_eq!(v0.vocab_fg, v1.vocab_fg);
     }
 }
 
