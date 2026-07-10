@@ -105,7 +105,9 @@ MPV keeps `wayland-app-id=mpv-lit`, so the dwl tag-10 rule is unaffected.
 instances, whoever exits last reverts the other's reading positions. The fix
 lives inside `save()` so all call sites (~15) inherit it:
 
-- A module-level static `Mutex<HashSet<String>>` of **dirty work abbrevs**.
+- A module-level static `Mutex<Vec<String>>` of **dirty work abbrevs** (a Vec
+  with linear dedup rather than a HashSet: `Mutex::new(Vec::new())` is
+  const-constructible in a static; the set holds a handful of abbrevs).
   Every site that updates `work_positions` for a work also marks that abbrev
   dirty; a parallel session-opened list (in recency order) feeds
   `recent_works`.
