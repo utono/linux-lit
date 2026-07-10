@@ -2806,9 +2806,13 @@ pub fn display_work_at_with_prepared(
     state.phrase_cache = None;
     state.active_phrase = None;
     state.phrase_paint_hold = None;
-    state
-        .window
-        .set_title(Some(&format!("{} — linux-lit", work.title)));
+    let slot = crate::instance::slot();
+    let window_title = if slot > 1 {
+        format!("{} — linux-lit [{}]", work.title, slot)
+    } else {
+        format!("{} — linux-lit", work.title)
+    };
+    state.window.set_title(Some(&window_title));
     state.title_bar_label.set_text(&format!("{}, {}", work.author, work.title));
     state.title_bar_scene_label.set_text("");
     if state.concordance_state.is_none() {
