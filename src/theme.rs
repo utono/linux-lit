@@ -10,35 +10,40 @@ const READER_GLOSS_MIN_CONTRAST: f64 = 4.5;
 
 /// Number of root-color variants every theme has (index 0 = designed root).
 /// Cycled by Ctrl+t; see docs/plans/2026-07-10-bg-variant-cycling-design.md.
-pub const ROOT_VARIANT_COUNT: u8 = 3;
+pub const ROOT_VARIANT_COUNT: u8 = 5;
 
-/// Root color for `variant` (0-2). Variant 0 = the designed root. Themes
-/// with dwl.rootcolor_candidates cycle those (candidates equal to the
-/// designed root are skipped, remaining fill slots 1-2 in array order);
-/// missing slots compute: variant 1 = 25% toward white, variant 2 =
-/// darkened (same hue). See the design doc.
+/// Root color for `variant` (0-4). Variant 0 = the designed root. Slots 1-2:
+/// themes with dwl.rootcolor_candidates cycle those (candidates equal to the
+/// designed root are skipped, remaining fill in array order); missing slots
+/// compute (slot 1 = 25% toward white, slot 2 = darkened, same hue). Slots
+/// 3-4 are always the two BRIGHTER computed steps (50% and 70% toward
+/// white). See the design doc.
 fn root_variant_color(val: &Value, designed_root: &str, variant: u8) -> String {
-    if variant == 0 {
-        return designed_root.to_string();
-    }
-    let candidates: Vec<String> = val
-        .get("dwl")
-        .and_then(|d| d.get("rootcolor_candidates"))
-        .and_then(|c| c.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str())
-                .filter(|s| !s.eq_ignore_ascii_case(designed_root))
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default();
-    if let Some(c) = candidates.get((variant - 1) as usize) {
-        return c.clone();
-    }
     match variant {
-        1 => blend_colors("#ffffff", designed_root, 0.25),
-        _ => darken_color(designed_root, 0.7),
+        0 => designed_root.to_string(),
+        1 | 2 => {
+            let candidates: Vec<String> = val
+                .get("dwl")
+                .and_then(|d| d.get("rootcolor_candidates"))
+                .and_then(|c| c.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .filter(|s| !s.eq_ignore_ascii_case(designed_root))
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            if let Some(c) = candidates.get((variant - 1) as usize) {
+                return c.clone();
+            }
+            match variant {
+                1 => blend_colors("#ffffff", designed_root, 0.25),
+                _ => darken_color(designed_root, 0.7),
+            }
+        }
+        3 => blend_colors("#ffffff", designed_root, 0.50),
+        _ => blend_colors("#ffffff", designed_root, 0.70),
     }
 }
 
@@ -1177,11 +1182,38 @@ mod tests {
     }
 
     #[test]
-    fn variant_index_wraps_modulo_count() {
+    fn brighter_slots_blend_toward_white_for_all_themes() {
+        // Slots 3-4 are the two brighter computed steps — present even on a
+        // theme whose slots 1-2 come from authored candidates.
         let json: serde_json::Value = serde_json::from_str(CANDIDATES_JSON).unwrap();
         let v3 = resolve_theme_variant("s", &json, 3);
+        let v4 = resolve_theme_variant("s", &json, 4);
+        assert_eq!(v3.root_color, blend_colors("#ffffff", "#08526b", 0.50));
+        assert_eq!(v4.root_color, blend_colors("#ffffff", "#08526b", 0.70));
+        // And on a candidates-less theme too.
+        let plain: serde_json::Value = serde_json::from_str(
+            r##"{ "meta": {"type": "light"},
+                  "dwl": {"rootcolor": "#08526b"},
+                  "kitty": {"background": "#e7dec7", "active_tab_foreground": "#5d4232"} }"##)
+            .unwrap();
+        let p3 = resolve_theme_variant("s", &plain, 3);
+        let p4 = resolve_theme_variant("s", &plain, 4);
+        assert_eq!(p3.root_color, blend_colors("#ffffff", "#08526b", 0.50));
+        assert_eq!(p4.root_color, blend_colors("#ffffff", "#08526b", 0.70));
+        // Card surface stays pinned on the new slots as well.
         let v0 = resolve_theme_variant("s", &json, 0);
-        assert_eq!(v3.root_color, v0.root_color); // 3 % 3 = 0
+        assert_eq!(v0.text_bg, v3.text_bg);
+        assert_eq!(v0.text_bg, v4.text_bg);
+        assert_eq!(v0.cursor_line_bg, v4.cursor_line_bg);
+        assert_eq!(v0.phrase_highlight_bg, v4.phrase_highlight_bg);
+    }
+
+    #[test]
+    fn variant_index_wraps_modulo_count() {
+        let json: serde_json::Value = serde_json::from_str(CANDIDATES_JSON).unwrap();
+        let v5 = resolve_theme_variant("s", &json, 5);
+        let v0 = resolve_theme_variant("s", &json, 0);
+        assert_eq!(v5.root_color, v0.root_color); // 5 % 5 = 0
     }
 
     #[test]

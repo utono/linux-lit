@@ -509,10 +509,11 @@ src/input/keymap.rs",
         "nav test" => "Toggle the in-app navigation test harness (dev only). \
 -> ToggleNavTest arm — src/input/keymap.rs",
         "root variant" => "Cycle the ROOT color (the field outside the card) \
-between the designed color and two same-family variants (Ctrl+t): \
-themes-unified.json dwl.rootcolor_candidates when present, else \
-computed lighter/darker. Card background and reading tints are \
-unchanged; the chosen variant persists per theme. \
+through five same-family variants (Ctrl+t): the designed color, two from \
+themes-unified.json dwl.rootcolor_candidates when present (else computed \
+lighter/darker), and two brighter steps (50%/70% toward white). Card \
+background and reading tints are unchanged; the chosen variant persists \
+per theme. \
 -> cycle_root_variant — src/input/actions/settings.rs",
         "theme next" => "Cycle the reader theme forward (Alt+t). \
 -> settings::cycle_theme — src/input/actions/settings.rs",
