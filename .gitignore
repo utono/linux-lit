@@ -1,7 +1,5 @@
-linux-lit-dev.log
-linux-lit-dev-2.log
-linux-lit-dev-stderr.log
-linux-lit-dev-stderr-2.log
+# All dev logs incl. per-instance-slot suffixes (-2, -3, ...) and stderr tees
+linux-lit-dev*.log
 linux-lit-release.log
 linux-lit-stderr.log
 target/
