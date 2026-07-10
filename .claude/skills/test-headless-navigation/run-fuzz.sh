@@ -4,9 +4,11 @@
 # `cargo run` session: it uses a private DB copy and log, never the shared ones.
 #
 # A "fuzz run" drives the in-process nav-test harness (src/input/nav_test.rs) in
-# its random mode: ~750 seeded-random jumps (x/y/2/3/gg/G/chapter), with an
+# its random mode: ~750 seeded-random jumps (x/y/2/3/gg/G/chapter/search — the
+# search step runs the REAL `/` path via execute_search_with_query), with an
 # invariant checked after each (on-page landing, y round-trip, no mid-page scene
-# break, viewport fill, cursor-is-dialogue). Each violation logs `NAV_TEST: FAIL`.
+# break, viewport fill, no full-card blank clip, cursor-is-dialogue). Each
+# violation logs `NAV_TEST: FAIL`.
 #
 # MUST be launched through the env wrapper (dbus + AT-SPI), e.g.:
 #   ./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz.sh [--secs N]

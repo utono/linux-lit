@@ -574,6 +574,60 @@ pub(crate) fn display_rows(view: &gtk4::TextView) -> Vec<(f64, f64)> {
     rows
 }
 
+/// Visual `(row_top, row_bottom)` pairs like `display_rows`, but only for rows
+/// overlapping the viewport `[top_y, top_y + viewport_h)` — seeked via
+/// `line_at_y` instead of walked from the document start. `display_rows`' scan
+/// caps at 8192 visual rows, so on a long prose work (TrollopeBBC wraps to
+/// ~40k rows) any viewport past that cap saw NO rows and a truncated content
+/// height; `bottom_clip_height` then covered the ENTIRE card (the blank-page-
+/// after-`G` bug, 2026-07-10). Seeking makes the row set correct at ANY scroll
+/// depth and O(rows-in-viewport). Starts one logical line before the line
+/// containing `top_y` so a row whose box begins in `pixels_above_lines`
+/// leading just above the viewport top is still included (same rationale as
+/// `snap_value_to_display_row`).
+pub(crate) fn display_rows_window(
+    view: &gtk4::TextView,
+    top_y: f64,
+    viewport_h: f64,
+) -> Vec<(f64, f64)> {
+    use gtk4::prelude::*;
+    let mut rows: Vec<(f64, f64)> = Vec::new();
+    let top_margin = view.top_margin() as f64;
+    let bottom_y = top_y + viewport_h;
+    let buffer = view.buffer();
+    let (line_iter, _) = view.line_at_y((top_y - top_margin).max(0.0) as i32);
+    let start_line = line_iter.line().saturating_sub(1);
+    let mut iter = buffer.iter_at_line(start_line).unwrap_or(line_iter);
+    let end = buffer.end_iter();
+    for _ in 0..2048 {
+        let rect = view.iter_location(&iter);
+        if rect.height() > 0 {
+            let top = rect.y() as f64 + top_margin;
+            if top >= bottom_y {
+                break;
+            }
+            rows.push((top, top + rect.height() as f64));
+        }
+        if iter == end || !view.forward_display_line(&mut iter) {
+            break;
+        }
+    }
+    rows
+}
+
+/// True bottom of the document's ink in scroll coordinates: the last buffer
+/// line's `line_yrange` bottom plus the view's top margin. The document-end
+/// value `bottom_clip_height` needs as `content_h` — independent of any
+/// capped row walk (see `display_rows_window`) and of the vadjustment's
+/// `upper`, which includes the page-sized `bottom_margin` headroom
+/// `ensure_scroll_range` adds.
+pub(crate) fn content_ink_height(view: &gtk4::TextView) -> f64 {
+    use gtk4::prelude::*;
+    let end = view.buffer().end_iter();
+    let (y, h) = view.line_yrange(&end);
+    (y + h) as f64 + view.top_margin() as f64
+}
+
 /// Logical-line `(row_top, row_bottom)` pairs in vadjustment/scroll coordinate
 /// space, from the line at `top_val` down to the first line whose top reaches
 /// `top_val + viewport_h`. The logical-line analog of `display_rows` (which
@@ -730,6 +784,33 @@ mod bottom_clip_tests {
             uniform_remainder, 4,
             "uniform-step estimate must differ from the correct per-row clip"
         );
+    }
+
+    #[test]
+    fn truncated_row_walk_blanked_deep_pages_windowed_rows_do_not() {
+        // THE BLANK-PAGE-AFTER-`G` BUG (TrollopeBBC, 2026-07-10). The ROWFILL
+        // clip fed bottom_clip_height rows walked from the DOCUMENT START with
+        // an 8192-row cap: deep into a long prose work the viewport saw NO
+        // rows and content_h was truncated to the cap's last row (~310k px),
+        // so the doc-end guard fired mid-document and the clip covered the
+        // whole card. Model it: viewport at 1,236,133 (the logged G page),
+        // 1112px tall, truncated content_h=310,725 -> clip == full viewport.
+        let bug_rows: [(f64, f64); 0] = [];
+        let clip = bottom_clip_height(&bug_rows, 1_236_133.0, 1112.0, 310_725.0);
+        assert_eq!(clip, 926_520 + 1112 - 1112); // == logged row_clip 926520
+        assert!(clip as f64 >= 1112.0, "old inputs blank the whole card");
+
+        // With SEEKED rows overlapping the live viewport and the TRUE content
+        // bottom (past the viewport), the clip covers only the partial last
+        // row, exactly like a shallow page.
+        let rows = [
+            (1_236_120.0, 1_236_158.0),
+            (1_236_158.0, 1_236_196.0),
+            (1_237_196.0, 1_237_234.0),
+            (1_237_234.0, 1_237_272.0), // straddles bottom_y = 1,237,245
+        ];
+        let clip = bottom_clip_height(&rows, 1_236_133.0, 1112.0, 1_300_000.0);
+        assert_eq!(clip, (1_237_245.0_f64 - 1_237_234.0) as i32); // 11px
     }
 }
 

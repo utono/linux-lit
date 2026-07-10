@@ -988,10 +988,18 @@ fn update_bottom_clip(
         // (`widget_height - usable_height` = descender_guard + BASE_BOTTOM_MARGIN)
         // the clip must also cover, giving the same bottom gap a normal full page
         // keeps.
+        // Rows are seeked around the LIVE viewport (not walked from the
+        // document start): `display_rows` caps at 8192 visual rows, so past
+        // ~8192 rows into a long prose work it returned an empty window and a
+        // truncated content height, and the clip covered the ENTIRE card —
+        // every page near the end of TrollopeBBC rendered blank (`G`, then
+        // each `y`, 2026-07-10). `content_ink_height` reads the true document
+        // bottom straight from the last line's yrange, so the doc-end guard in
+        // `bottom_clip_height` only fires on the real last page.
         let tv: &gtk4::TextView = text_view.upcast_ref();
-        let rows = crate::ui::display_rows(tv);
         let scroll_val_now = scrolled_window.vadjustment().value();
-        let content_h = rows.last().map(|&(_, b)| b).unwrap_or(0.0);
+        let rows = crate::ui::display_rows_window(tv, scroll_val_now, usable_height as f64);
+        let content_h = crate::ui::content_ink_height(tv);
         let row_clip = crate::ui::bottom_clip_height(
             &rows,
             scroll_val_now,

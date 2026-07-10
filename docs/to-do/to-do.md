@@ -7,7 +7,7 @@ to the main card
 
 in main card 'shift+;' bind should cycle between setting playback speed 1x 1.3x .9x
 
-in main card the 'G' bind appears to be failing to navigate and/or render last page
+[X] in main card the 'G' bind appears to be failing to navigate and/or render last page
 
 the 'o' and 'e' binds in main card should effect a page turn if the karaoke highlighting
 is moved off the current page

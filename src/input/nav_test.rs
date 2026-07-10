@@ -82,9 +82,16 @@ impl Step {
             | Step::NextBookmark | Step::PrevBookmark
             | Step::JumpTop | Step::JumpEnd
             | Step::NextDialogue | Step::PrevDialogue => true,
-            // SyncAdvance has its own slow cadence; SearchJump is a simulation —
-            // both are covered by the random body, not the per-anchor sweep.
-            Step::SyncAdvance | Step::SearchJump => false,
+            // SearchJump drives the REAL `/` path (execute_search_with_query +
+            // prose-grid landing), so it belongs in the per-anchor sweep. It
+            // must NOT be left to the random body: the coverage prelude alone
+            // exceeds MAX_STEPS (phase 3 re-anchors per action across 24 scene
+            // anchors), so the random body is truncated away and anything
+            // "covered by the random body" never actually runs (discovered
+            // 2026-07-10 — no fuzz run had ever executed a SearchJump).
+            Step::SearchJump => true,
+            // SyncAdvance has its own slow cadence — excluded from the sweep.
+            Step::SyncAdvance => false,
         }
     }
 }
@@ -432,20 +439,34 @@ fn run_step(s: &mut AppState) {
         Step::NextDialogue => navigation::jump_to_next_dialogue(s),
         Step::PrevDialogue => navigation::jump_to_prev_dialogue(s),
         Step::SearchJump => {
-            // Simulate a search jump to a DIALOGUE line ~50 lines ahead (a real
-            // search lands on matched text, which the cursor invariant expects to
-            // be dialogue — an arbitrary +50 could land on a speaker/stage line).
+            // Drive the REAL `/` search path (execute_search_with_query:
+            // collect matches → highlight → land on the canonical spread →
+            // seek), not a simulated cursor move. Query = the first word of
+            // ≥4 chars on a DIALOGUE line ~50 ahead, so the query always has
+            // at least one match at/after the cursor (that word itself) and
+            // the landing tends to be a dialogue line (cursor invariant).
             let line_count = s.effective_line_count();
             let raw = (s.current_line + 50).min(line_count.saturating_sub(1));
             let target = next_dialogue_line(&s.buffer, &s.translation_lines, raw, line_count, false, no_stage_lookup())
                 .filter(|&d| d < line_count)
                 .unwrap_or(raw);
-            s.current_line = target;
-            let entry = (s.page_top_line, s.page_top_offset);
-            if s.page_back_stack.last() != Some(&entry) {
-                s.page_back_stack.push(entry);
+            let word = buffer_line_text(&s.buffer, target)
+                .split(|c: char| !c.is_alphanumeric())
+                .find(|w| w.len() >= 4)
+                .map(str::to_string);
+            if let Some(word) = word {
+                // land_on_match_idx pushes the back-stack itself.
+                crate::input::search::execute_search_with_query(s, &word);
+            } else {
+                // No usable word on the target line (blank/short) — fall back
+                // to the old simulated jump so the step still moves.
+                s.current_line = target;
+                let entry = (s.page_top_line, s.page_top_offset);
+                if s.page_back_stack.last() != Some(&entry) {
+                    s.page_back_stack.push(entry);
+                }
+                crate::input::highlight::update_highlight_and_center(s);
             }
-            crate::input::highlight::update_highlight_and_center(s);
         }
         Step::SyncAdvance => {
             let line_count = s.effective_line_count();
@@ -798,6 +819,26 @@ fn run_step(s: &mut AppState) {
             fail(s, step_num, step, &format!(
                 "viewport fill {:.0}% < 10% (top={} last={} height={} content={})",
                 fill_pct, post_top, last_vis, widget_height, total
+            ));
+        }
+    }
+
+    // 4c. BLANK PAGE: the bottom-clip box must never cover the whole
+    // single-column card. Check 4 measures buffer line heights, so it PASSES
+    // while the clip overlay blanks everything — exactly how the
+    // display_rows 8192-row truncation bug (every page near the end of a
+    // long prose work rendered blank after G/y, 2026-07-10) survived the
+    // fuzz. The clip recompute is scheduled after scroll, so the value read
+    // here may belong to the previous step — fine for this bug class, which
+    // is a PERSISTENT full-card clip, not a one-frame transient. Two-column
+    // spreads are exempt: an empty LEFT column legitimately clips the full
+    // height by design (`exact_end <= page_top` in update_bottom_clip).
+    if s.column_count() == 1 && widget_height > 0 && !s.loading_work.get() {
+        let clip_h = s.bottom_clip.height_request();
+        if clip_h >= widget_height {
+            fail(s, step_num, step, &format!(
+                "BLANK PAGE: bottom_clip {}px covers card {}px (top={})",
+                clip_h, widget_height, post_top
             ));
         }
     }

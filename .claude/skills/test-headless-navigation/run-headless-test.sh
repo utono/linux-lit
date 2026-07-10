@@ -66,6 +66,13 @@ Screenshot / clipping test (this script):
   --no-clip          screenshot + review only; skip the line-clipping assertion
   --region X,Y,W,H   force the clip region (default: the app-reported viewport)
   --settle MS        pause after each step before capture (default 500)
+  --start-work ABBR  hermetic start work (LIT_START_WORK) — pin the work under
+                     test instead of the config's last_work
+  --start-pos N      hermetic start line (LIT_START_POS)
+
+  Isolated from a live session: private log (/tmp/headless-test.log via
+  LIT_LOG_PATH), private DB copy (/tmp/headless-lit.db via LIT_DB_PATH), no
+  config writes (LIT_HEADLESS_TEST), no MPV.
 
   Key tokens (space-separated within a --step): a bare token is one xkb keysym
   (j, x, g, Escape); `+mod:key` is a chord (+shift:g -> Shift+G); `@TEXT` types
@@ -124,6 +131,8 @@ STEPS=()          # one checkpoint per --step "KEYS" (argv array; no delimiter p
 NO_CLIP=0
 FORCE_REGION=""
 SETTLE_MS=500
+START_WORK="${LIT_START_WORK:-}"
+START_POS="${LIT_START_POS:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -133,13 +142,23 @@ while [[ $# -gt 0 ]]; do
     --no-clip) NO_CLIP=1; shift ;;
     --region) FORCE_REGION="$2"; shift 2 ;;
     --settle) SETTLE_MS="$2"; shift 2 ;;
+    --start-work) START_WORK="$2"; shift 2 ;;
+    --start-pos)  START_POS="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "error: unknown option '$1'" >&2; echo >&2; usage; exit 64 ;;
   esac
 done
 
 BIN=target/debug/linux-lit
-DEV_LOG="$HOME/utono/linux-lit/linux-lit-dev.log"
+# Private per-run log via LIT_LOG_PATH. The old scheme truncated and grepped the
+# SHARED slot-1 dev log — with a live `cargo run` session holding slot 1, this
+# run takes slot 2 and writes linux-lit-dev-2.log, so the TEST_VIEWPORT_RECT
+# grep matched nothing AND the truncation wiped the user's live log.
+RUN_LOG=/tmp/headless-test.log
+# Private DB copy — sharing lit.db with a live session causes SQLite lock
+# contention (same reason run-fuzz.sh copies it).
+DB_SRC="$HOME/utono/litdb/data/lit.db"
+DB_COPY=/tmp/headless-lit.db
 UIDIR=target/ui
 mkdir -p "$UIDIR"
 
@@ -153,17 +172,28 @@ echo "[headless-test] building…" >&2
 cargo build >&2 || { echo "build failed" >&2; exit 1; }
 
 # --- fresh isolated runtime dir + cage --------------------------------------
-: > "$DEV_LOG" 2>/dev/null || true   # truncate so we read THIS run's rect
+echo "[headless-test] copying DB → $DB_COPY" >&2
+\cp -f "$DB_SRC" "$DB_COPY" || { echo "DB copy failed" >&2; exit 1; }
+: > "$RUN_LOG"
 RT="$(mktemp -d)"
 cleanup() { kill "$CAGE_PID" 2>/dev/null || true; rm -rf "$RT" 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
-XDG_RUNTIME_DIR="$RT" \
+# Hermetic-start overrides (only set when requested, so an empty value never
+# overrides the config's last_work).
+HERMETIC=()
+[[ -n "$START_WORK" ]] && HERMETIC+=("LIT_START_WORK=$START_WORK")
+[[ -n "$START_POS"  ]] && HERMETIC+=("LIT_START_POS=$START_POS")
+
+env -u WAYLAND_DISPLAY \
+  XDG_RUNTIME_DIR="$RT" \
   WLR_BACKENDS=headless WLR_RENDERER=pixman WLR_RENDERER_ALLOW_SOFTWARE=1 \
   WLR_LIBINPUT_NO_DEVICES=1 WLR_HEADLESS_OUTPUTS=1 \
   GDK_BACKEND=wayland GSK_RENDERER=cairo \
   LIT_DEV=1 LIT_HEADLESS_TEST=1 \
-  cage -- "$BIN" >"$RT/cage.log" 2>&1 &
+  LIT_LOG_PATH="$RUN_LOG" LIT_DB_PATH="$DB_COPY" \
+  "${HERMETIC[@]}" \
+  cage -- "$BIN" --headless-test >"$RT/cage.log" 2>&1 &
 CAGE_PID=$!
 
 # --- wait for cage's wayland socket -----------------------------------------
@@ -180,11 +210,11 @@ echo "[headless-test] cage socket: $WAYLAND_DISPLAY" >&2
 # --- wait for the reader to reveal (and learn the viewport rect) -------------
 REGION="$FORCE_REGION"
 for _ in $(seq 1 80); do
-  if grep -q "TEST_VIEWPORT_RECT" "$DEV_LOG" 2>/dev/null; then break; fi
+  if grep -q "TEST_VIEWPORT_RECT" "$RUN_LOG" 2>/dev/null; then break; fi
   sleep 0.1
 done
 if [[ -z "$REGION" ]]; then
-  RECT_LINE="$(grep "TEST_VIEWPORT_RECT" "$DEV_LOG" 2>/dev/null | tail -1)"
+  RECT_LINE="$(grep "TEST_VIEWPORT_RECT" "$RUN_LOG" 2>/dev/null | tail -1)"
   if [[ -n "$RECT_LINE" ]]; then
     # "…TEST_VIEWPORT_RECT x y w h" → "x,y,w,h"
     REGION="$(echo "$RECT_LINE" | sed -E 's/.*TEST_VIEWPORT_RECT ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+).*/\1,\2,\3,\4/')"

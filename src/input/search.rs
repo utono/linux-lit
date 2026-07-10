@@ -11,7 +11,14 @@ use crate::app::{AppState, SearchMatch};
 pub fn execute_search(state_rc: &Rc<RefCell<AppState>>) {
     let mut state = state_rc.borrow_mut();
     let query = state.search_bar.query();
+    execute_search_with_query(&mut state, &query);
+}
 
+/// Core of `execute_search`, callable with a direct `&mut AppState`. The nav
+/// fuzz drives the REAL `/` search path through this (collect → highlight →
+/// land on the canonical spread → seek) instead of simulating the jump; the
+/// entry-driven path above just reads the search bar's text and delegates.
+pub(crate) fn execute_search_with_query(state: &mut AppState, query: &str) {
     clear_highlights(&state);
     state.search_matches.clear();
     state.search_match_idx = 0;
@@ -73,12 +80,12 @@ pub fn execute_search(state_rc: &Rc<RefCell<AppState>>) {
                 .position(|m| m.line_index >= cur)
                 .unwrap_or(0)
         };
-        land_on_match_idx(&mut state, idx);
+        land_on_match_idx(state, idx);
         // Submit behaves like n/N: always seek MPV to the found line's start
         // time; keep playing if it was already playing, stay paused otherwise.
         // (Previously this force-paused WITHOUT seeking, so a later resume
         // played from a stale position, not the match.)
-        seek_and_resume(&mut state);
+        seek_and_resume(state);
     } else {
         state.search_bar.update_counter(0, 0);
     }
@@ -247,6 +254,15 @@ fn seek_and_resume(state: &mut AppState) {
     state.prev_highlight_line.set(None);
     state.suppress_sync_until =
         Some(std::time::Instant::now() + crate::input::navigation::SYNC_SUPPRESS_SEEK);
+    // Karaoke: keep the narration tint present through the search jump — move
+    // it to the phrase that will play at the match line's start and hold it
+    // through the suppression window (mirrors seek_to_current_line's nav-cue
+    // paint). Without this, `/`-Return and n/N landings left the tint behind
+    // on the pre-search line (or cleared) until live TimePos ticks repainted
+    // it, so the karaoke marking vanished mid-search.
+    if crate::input::phrase_highlight::paint_pending_phrase(state, start) {
+        state.phrase_paint_hold = state.suppress_sync_until;
+    }
 }
 
 /// Clear all search state: highlights and matches.
@@ -409,8 +425,67 @@ fn land_on_match_idx(state: &mut AppState, new_idx: usize) {
         // matched line can land off-page below it. Advance until the cursor is
         // actually visible — same guard the chapter jump uses.
         crate::input::navigation::ensure_cursor_visible_ereader(state, line);
+        snap_match_to_prose_grid(state);
     } else {
         crate::input::scroll::center_cursor(state);
+    }
+    // Route the landing through update_highlight like EVERY other cursor-
+    // moving nav path. Without it, a next-match landing on the SAME page
+    // (scroll churn nets to zero: set_page_instant forward, prose-grid snap
+    // straight back) left the freshly applied current-match tag un-rendered —
+    // in the buffer at the right range (has_tag readback true, priority above
+    // the pale tag) but still painting the pale all-matches background until
+    // some later tag churn re-laid-out the line (a j/k press revealed it;
+    // queue_draw alone did NOT — the cached display line, not the paint, was
+    // stale). update_highlight's visible-range tag pass forces that relayout,
+    // and also keeps the clip-boundary rescheduling invariants that all other
+    // cursor moves maintain. Repro: TrollopeBBC `/felix` Return then `n`
+    // (2026-07-10).
+    crate::input::highlight::update_highlight(state);
+}
+
+/// Prose-table mode: re-anchor a search landing onto the stored prose grid.
+/// `canonical_page_top_for` returns a bare LINE, but prose page tops are
+/// `(line, row-offset px)` — the landing therefore sat off-grid (e.g. (904,0)
+/// vs the grid's (904,34)) and the NEXT `x` advanced only the few px to the
+/// next grid boundary instead of a full page (TrollopeBBC, 2026-07-10).
+/// Anchor to the page containing the MATCH'S OWN wrapped row, not the line's
+/// first row: on a paragraph split across pages the matched word can sit on a
+/// later row belonging to the next page, and the first-row rule would leave
+/// the word hidden under the bottom clip. No-op for plays (their canonical
+/// landing already reads the play table) and for live-engine prose.
+fn snap_match_to_prose_grid(state: &mut AppState) {
+    use gtk4::prelude::{TextBufferExt, TextViewExt};
+    let Some(table) = crate::input::prose_pages::active_prose_page_table(state) else {
+        return;
+    };
+    let total = state.search_matches.len();
+    if total == 0 {
+        return;
+    }
+    let m = &state.search_matches[state.search_match_idx.min(total - 1)];
+    let (line, byte_start) = (m.line_index, m.byte_start);
+    // Pixel offset of the match's display row within its line. 0 on any
+    // failure — degrades to the line's first row, the pre-existing landing.
+    let off = (|| {
+        let line_start = state.buffer.iter_at_line(line as i32)?;
+        let m_iter = state
+            .buffer
+            .iter_at_line_index(line as i32, byte_start as i32)?;
+        let line_top = state.text_view.line_yrange(&line_start).0;
+        Some(state.text_view.iter_location(&m_iter).y() - line_top)
+    })()
+    .unwrap_or(0)
+    .max(0);
+    if let Some(i) = crate::input::prose_pages::prose_page_for_position(&table, line, off) {
+        let (t, o) = (table[i].start_line, table[i].start_off);
+        if (t, o) != (state.page_top_line, state.page_top_offset) {
+            crate::logging::log(&format!(
+                "SEARCH: prose-grid landing ({},{}) -> ({},{}) match=({},{})",
+                state.page_top_line, state.page_top_offset, t, o, line, off
+            ));
+            crate::input::scroll::set_page_instant_offset(state, t, o);
+        }
     }
 }
 
@@ -462,6 +537,10 @@ fn apply_current_highlight(state: &AppState) {
     let mut match_end = line_start;
     match_end.forward_chars(char_end);
     state.buffer.apply_tag(&state.search_current_tag, &match_start, &match_end);
+    crate::log_fmt!(
+        "SEARCH_HL: current idx={} line={} chars={}..{}",
+        state.search_match_idx, m.line_index, char_start, char_end
+    );
 }
 
 fn remove_current_highlight(state: &AppState) {
