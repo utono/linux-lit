@@ -225,11 +225,10 @@ fn activate_current(s: &mut AppState) {
     s.suppress_sync_until = Some(
         std::time::Instant::now() + crate::input::navigation::SYNC_SUPPRESS_SEEK,
     );
-    // Paint the first phrase immediately (same pattern as do_mpv_seek) so the
-    // sweep shows before live TimePos ticks arrive.
-    if crate::input::phrase_highlight::paint_pending_phrase(s, sentence.start_time) {
-        s.phrase_paint_hold = s.suppress_sync_until;
-    }
+    // No karaoke sweep in this mode (active_mode forces Off while looping) —
+    // clear any tint left from normal playback; the sentence tag below is the
+    // only highlight.
+    crate::input::phrase_highlight::clear_phrase_highlight(s);
     apply_char_range_tag(
         s,
         &s.vocab_sentence_tag.clone(),
