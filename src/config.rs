@@ -2,6 +2,26 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
+
+/// Works whose per-work config entries (position, position id, last gloss)
+/// THIS instance changed. `save()` only overwrites these keys in the
+/// on-disk file, so a concurrently running instance's newer entries for
+/// OTHER works survive this instance's exit.
+static DIRTY_WORKS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// Works opened this session, most recent first — merged to the front of
+/// `recent_works` on save.
+static SESSION_RECENT: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Mark a work's per-work config entries as changed by this instance.
+/// Call at every site that writes `work_positions`, `work_position_ids`,
+/// or `last_gloss` for a work.
+pub fn mark_work_dirty(abbrev: &str) {
+    let mut d = DIRTY_WORKS.lock().unwrap();
+    if !d.iter().any(|a| a == abbrev) {
+        d.push(abbrev.to_string());
+    }
+}
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -335,6 +355,10 @@ impl Config {
         self.recent_works.retain(|a| a != abbrev);
         self.recent_works.insert(0, abbrev.to_string());
         self.recent_works.truncate(MAX_RECENT_WORKS);
+        let mut s = SESSION_RECENT.lock().unwrap();
+        s.retain(|a| a != abbrev);
+        s.insert(0, abbrev.to_string());
+        s.truncate(MAX_RECENT_WORKS);
     }
 
     /// Effective theme name: configured, else DEFAULT_THEME.
@@ -392,6 +416,48 @@ pub fn load() -> Config {
     config
 }
 
+/// Merge this instance's snapshot over the freshly-read on-disk config.
+/// Per-work maps take the DISK value except for works this instance touched
+/// (dirty) or keys the disk doesn't have; `recent_works` puts this
+/// session's opens first. All scalar fields (font, theme, last_work, ...)
+/// come from `ours` — last-writer-wins, the natural MRU semantic.
+fn merge_configs(
+    ours: &Config,
+    disk: Config,
+    dirty: &[String],
+    session_recent: &[String],
+) -> Config {
+    fn overlay<V: Clone>(
+        ours: &HashMap<String, V>,
+        disk: HashMap<String, V>,
+        dirty: &[String],
+    ) -> HashMap<String, V> {
+        let mut out = disk;
+        for (k, v) in ours {
+            if dirty.iter().any(|d| d == k) || !out.contains_key(k) {
+                out.insert(k.clone(), v.clone());
+            }
+        }
+        out
+    }
+
+    let mut merged = ours.clone();
+    merged.work_positions = overlay(&ours.work_positions, disk.work_positions, dirty);
+    merged.work_position_ids =
+        overlay(&ours.work_position_ids, disk.work_position_ids, dirty);
+    merged.last_gloss = overlay(&ours.last_gloss, disk.last_gloss, dirty);
+
+    let mut recent: Vec<String> = session_recent.to_vec();
+    for a in disk.recent_works {
+        if !recent.iter().any(|r| r == &a) {
+            recent.push(a);
+        }
+    }
+    recent.truncate(MAX_RECENT_WORKS);
+    merged.recent_works = recent;
+    merged
+}
+
 pub fn save(config: &Config) {
     // Hermetic test runs: under LIT_HEADLESS_TEST the app must NEVER write config
     // back. A headless/fuzz run starts from LIT_START_WORK/LIT_START_POS (or the
@@ -406,12 +472,97 @@ pub fn save(config: &Config) {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
+    // Merge over the freshly-read file so a concurrently running instance's
+    // per-work entries survive this instance's saves (see merge_configs).
+    // Read/parse failure (missing or corrupt file) falls back to writing the
+    // full snapshot, exactly the pre-merge behavior.
+    let to_write = match fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<Config>(&s).ok())
+    {
+        Some(disk) => {
+            let dirty = DIRTY_WORKS.lock().unwrap().clone();
+            let session = SESSION_RECENT.lock().unwrap().clone();
+            merge_configs(config, disk, &dirty, &session)
+        }
+        None => config.clone(),
+    };
     // Atomic write: write to temp, then rename
     let tmp = path.with_extension("tmp");
-    if let Ok(json) = serde_json::to_string_pretty(config) {
+    if let Ok(json) = serde_json::to_string_pretty(&to_write) {
         if fs::write(&tmp, &json).is_ok() {
             let _ = fs::rename(&tmp, &path);
         }
+    }
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+
+    fn cfg() -> Config {
+        serde_json::from_str("{}").unwrap()
+    }
+
+    #[test]
+    fn other_instances_positions_survive() {
+        // Ours loaded Ham=5 at startup (stale) and only touched BH.
+        // Disk meanwhile has Ham=99 (the other instance's newer save).
+        let mut ours = cfg();
+        ours.work_positions.insert("Ham".into(), 5);
+        ours.work_positions.insert("BH".into(), 10);
+        let mut disk = cfg();
+        disk.work_positions.insert("Ham".into(), 99);
+        disk.work_positions.insert("BH".into(), 1);
+        let merged = merge_configs(&ours, disk, &["BH".into()], &[]);
+        assert_eq!(merged.work_positions["Ham"], 99); // disk wins: not dirty
+        assert_eq!(merged.work_positions["BH"], 10); // ours wins: dirty
+    }
+
+    #[test]
+    fn ours_only_undirty_key_is_kept() {
+        // A key the disk lost entirely (e.g. truncated file) is restored
+        // from our snapshot even when not dirty.
+        let mut ours = cfg();
+        ours.work_position_ids.insert("Oth".into(), 42);
+        let merged = merge_configs(&ours, cfg(), &[], &[]);
+        assert_eq!(merged.work_position_ids["Oth"], 42);
+    }
+
+    #[test]
+    fn last_gloss_merges_by_dirty_key() {
+        let mut ours = cfg();
+        ours.last_gloss.insert(
+            "Ham".into(),
+            LastGloss { start_citation: "Ham.1.1.1".into(), gloss_type: "reader-gloss".into() },
+        );
+        let mut disk = cfg();
+        disk.last_gloss.insert(
+            "Ham".into(),
+            LastGloss { start_citation: "Ham.5.2.300".into(), gloss_type: "reader-gloss".into() },
+        );
+        let not_dirty = merge_configs(&ours, disk.clone(), &[], &[]);
+        assert_eq!(not_dirty.last_gloss["Ham"].start_citation, "Ham.5.2.300");
+        let dirty = merge_configs(&ours, disk, &["Ham".into()], &[]);
+        assert_eq!(dirty.last_gloss["Ham"].start_citation, "Ham.1.1.1");
+    }
+
+    #[test]
+    fn recent_works_session_opens_go_first() {
+        let mut disk = cfg();
+        disk.recent_works = vec!["Ham".into(), "Oth".into()];
+        let merged = merge_configs(&cfg(), disk, &[], &["BH".into()]);
+        assert_eq!(merged.recent_works, vec!["BH", "Ham", "Oth"]);
+    }
+
+    #[test]
+    fn scalars_are_last_writer_wins() {
+        let mut ours = cfg();
+        ours.last_work = Some("BH".into());
+        let mut disk = cfg();
+        disk.last_work = Some("Ham".into());
+        let merged = merge_configs(&ours, disk, &[], &[]);
+        assert_eq!(merged.last_work.as_deref(), Some("BH"));
     }
 }
 

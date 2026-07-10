@@ -871,6 +871,7 @@ impl AppState {
                 start_citation: ctx.start_citation.clone(),
                 gloss_type: gloss_type.to_string(),
             };
+            crate::config::mark_work_dirty(&work);
             self.config.last_gloss.insert(work, entry);
             crate::config::save(&self.config);
         }
@@ -2788,6 +2789,7 @@ pub fn display_work_at_with_prepared(
         {
             state.config.work_position_ids.insert(old_work.abbrev.clone(), id);
         }
+        crate::config::mark_work_dirty(&old_work.abbrev);
     }
 
     crate::input::search::clear_search(state);
@@ -3946,6 +3948,7 @@ pub fn save_position(state: &mut AppState) {
             .map(|l| l.id);
         state.config.last_work = Some(abbrev.clone());
         state.config.work_positions.insert(abbrev.clone(), state.current_line); // legacy fallback
+        crate::config::mark_work_dirty(&abbrev);
         if let Some(id) = id {
             state.config.work_position_ids.insert(abbrev, id);
         }

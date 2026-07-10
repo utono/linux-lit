@@ -109,6 +109,10 @@ lives inside `save()` so all call sites (~15) inherit it:
   Every site that updates `work_positions` for a work also marks that abbrev
   dirty; a parallel session-opened list (in recency order) feeds
   `recent_works`.
+- **Implementation addendum (2026-07-09):** positions live in THREE per-work
+  maps, not one — `work_positions` (legacy line-number fallback),
+  `work_position_ids` (line-id keyed, primary), and `last_gloss`. All three
+  get the identical dirty-key overlay in `merge_configs`.
 - On save: re-read the config file fresh from disk. For `work_positions`,
   start from the file's map and overwrite only dirty keys with this instance's
   values. For `recent_works`, move this session's opened works to the front of
