@@ -178,7 +178,10 @@ pub(crate) fn after_page_change(state: &mut AppState, reason: PageChangeReason) 
     // downstream consumers (vocab popup positioning) see the new cursor.
     update_highlight(state);
 
-    if reason.should_seek() {
+    // While the vocab-sentence loop is active it owns MPV entirely (SetAbLoop
+    // + ResumeAndSeek to the SENTENCE start); the line-start seek here would
+    // double-seek right before it — audible blip, wasted command.
+    if reason.should_seek() && state.vocab_loop.is_none() {
         seek_to_current_line(state);
     }
 
