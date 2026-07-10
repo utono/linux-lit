@@ -32,6 +32,7 @@ fn try_lock_slot(dir: &Path, n: u32) -> Option<File> {
     let file = fs::OpenOptions::new()
         .create(true)
         .write(true)
+        .truncate(false)
         .open(&path)
         .ok()?;
     match file.try_lock() {
