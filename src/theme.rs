@@ -12,39 +12,54 @@ const READER_GLOSS_MIN_CONTRAST: f64 = 4.5;
 /// Cycled by Ctrl+t; see docs/plans/2026-07-10-bg-variant-cycling-design.md.
 pub const ROOT_VARIANT_COUNT: u8 = 5;
 
-/// Root color for `variant` (0-4). Variant 0 = the designed root. Slots 1-2:
-/// themes with dwl.rootcolor_candidates cycle those (candidates equal to the
-/// designed root are skipped, remaining fill in array order); missing slots
-/// compute (slot 1 = 25% toward white, slot 2 = darkened, same hue). Slots
-/// 3-4 are always the two BRIGHTER computed steps (50% and 70% toward
-/// white). See the design doc.
+/// Root color for `variant` (0-4). Variant 0 = the designed root. The other
+/// four are the alternates — two from dwl.rootcolor_candidates when present
+/// (candidates equal to the designed root are skipped), else computed (25%
+/// toward white + darkened), plus two brighter computed steps (50% and 70%
+/// toward white) — presented in LIGHTEST-to-DARKEST order, so Ctrl+t walks a
+/// predictable brightness ladder. See the design doc.
 fn root_variant_color(val: &Value, designed_root: &str, variant: u8) -> String {
-    match variant {
-        0 => designed_root.to_string(),
-        1 | 2 => {
-            let candidates: Vec<String> = val
-                .get("dwl")
-                .and_then(|d| d.get("rootcolor_candidates"))
-                .and_then(|c| c.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str())
-                        .filter(|s| !s.eq_ignore_ascii_case(designed_root))
-                        .map(str::to_string)
-                        .collect()
-                })
-                .unwrap_or_default();
-            if let Some(c) = candidates.get((variant - 1) as usize) {
-                return c.clone();
-            }
-            match variant {
-                1 => blend_colors("#ffffff", designed_root, 0.25),
-                _ => darken_color(designed_root, 0.7),
-            }
-        }
-        3 => blend_colors("#ffffff", designed_root, 0.50),
-        _ => blend_colors("#ffffff", designed_root, 0.70),
+    if variant == 0 {
+        return designed_root.to_string();
     }
+    let candidates: Vec<String> = val
+        .get("dwl")
+        .and_then(|d| d.get("rootcolor_candidates"))
+        .and_then(|c| c.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .filter(|s| !s.eq_ignore_ascii_case(designed_root))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let slot = |i: usize| -> String {
+        match candidates.get(i) {
+            Some(c) => c.clone(),
+            None if i == 0 => blend_colors("#ffffff", designed_root, 0.25),
+            None => darken_color(designed_root, 0.7),
+        }
+    };
+    let mut pool = vec![
+        slot(0),
+        slot(1),
+        blend_colors("#ffffff", designed_root, 0.50),
+        blend_colors("#ffffff", designed_root, 0.70),
+    ];
+    pool.sort_by(|a, b| {
+        relative_luminance(b)
+            .partial_cmp(&relative_luminance(a))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    pool[(variant - 1) as usize].clone()
+}
+
+/// WCAG relative luminance of a hex color (0.0 = black, 1.0 = white).
+fn relative_luminance(hex: &str) -> f64 {
+    let (r, g, b) = hex_to_rgb(hex);
+    let lin = |c: f64| if c <= 0.03928 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+    0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
 }
 
 /// Resolved theme colors for linux-lit.
@@ -401,10 +416,7 @@ fn hex_to_rgb(hex: &str) -> (f64, f64, f64) {
 /// wallpapers. Returns slightly off-pure colors so the text reads as a soft
 /// label rather than harsh pure black/white.
 fn contrast_on(bg_hex: &str) -> &'static str {
-    let (r, g, b) = hex_to_rgb(bg_hex);
-    // sRGB -> linear, then relative luminance.
-    let lin = |c: f64| if c <= 0.03928 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
-    let lum = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    let lum = relative_luminance(bg_hex);
     if lum > 0.4 {
         "#1a1a1a" // dark text on a light wallpaper
     } else {
@@ -1109,14 +1121,22 @@ mod tests {
     }
 
     #[test]
-    fn candidates_fill_variants_in_order_skipping_designed() {
+    fn candidates_and_brighter_sorted_lightest_to_darkest() {
+        // Pool: candidates #41819b/#286983 (designed #08526b skipped) + the
+        // 50%/70%-toward-white blends (#83a8b5/#b4cbd2), sorted light->dark.
         let json: serde_json::Value = serde_json::from_str(CANDIDATES_JSON).unwrap();
         let v0 = resolve_theme_variant("s", &json, 0);
-        let v1 = resolve_theme_variant("s", &json, 1);
-        let v2 = resolve_theme_variant("s", &json, 2);
-        assert_eq!(v0.root_color, "#08526b");
-        assert_eq!(v1.root_color, "#41819b");
-        assert_eq!(v2.root_color, "#286983");
+        assert_eq!(v0.root_color, "#08526b"); // designed stays slot 0
+        let roots: Vec<String> = (1..=4)
+            .map(|i| resolve_theme_variant("s", &json, i).root_color)
+            .collect();
+        assert_eq!(roots[0], blend_colors("#ffffff", "#08526b", 0.70));
+        assert_eq!(roots[1], blend_colors("#ffffff", "#08526b", 0.50));
+        assert_eq!(roots[2], "#41819b");
+        assert_eq!(roots[3], "#286983");
+        for w in roots.windows(2) {
+            assert!(relative_luminance(&w[0]) >= relative_luminance(&w[1]));
+        }
     }
 
     #[test]
@@ -1127,12 +1147,17 @@ mod tests {
                   "kitty": {"background": "#e7dec7", "active_tab_foreground": "#5d4232"} }"##)
             .unwrap();
         let v0 = resolve_theme_variant("s", &json, 0);
-        let v1 = resolve_theme_variant("s", &json, 1);
-        let v2 = resolve_theme_variant("s", &json, 2);
-        assert_eq!(v1.root_color, blend_colors("#ffffff", "#08526b", 0.25));
-        assert_eq!(v2.root_color, darken_color("#08526b", 0.7));
-        assert_ne!(v1.root_color, v0.root_color);
-        assert_ne!(v2.root_color, v0.root_color);
+        let roots: Vec<String> = (1..=4)
+            .map(|i| resolve_theme_variant("s", &json, i).root_color)
+            .collect();
+        // Pool = 25%-lighter, darkened, 50%, 70% — sorted lightest->darkest.
+        assert_eq!(roots[0], blend_colors("#ffffff", "#08526b", 0.70));
+        assert_eq!(roots[1], blend_colors("#ffffff", "#08526b", 0.50));
+        assert_eq!(roots[2], blend_colors("#ffffff", "#08526b", 0.25));
+        assert_eq!(roots[3], darken_color("#08526b", 0.7));
+        for r in &roots {
+            assert_ne!(*r, v0.root_color);
+        }
     }
 
     #[test]
@@ -1143,10 +1168,15 @@ mod tests {
                           "rootcolor_candidates": ["#41819b", "#08526b"]},
                   "kitty": {"background": "#e7dec7", "active_tab_foreground": "#5d4232"} }"##)
             .unwrap();
-        let v1 = resolve_theme_variant("s", &json, 1);
-        let v2 = resolve_theme_variant("s", &json, 2);
-        assert_eq!(v1.root_color, "#41819b");
-        assert_eq!(v2.root_color, darken_color("#08526b", 0.7));
+        // One usable candidate (#41819b) + darkened fill + the two brighter
+        // blends, sorted lightest->darkest.
+        let roots: Vec<String> = (1..=4)
+            .map(|i| resolve_theme_variant("s", &json, i).root_color)
+            .collect();
+        assert_eq!(roots[0], blend_colors("#ffffff", "#08526b", 0.70));
+        assert_eq!(roots[1], blend_colors("#ffffff", "#08526b", 0.50));
+        assert_eq!(roots[2], "#41819b");
+        assert_eq!(roots[3], darken_color("#08526b", 0.7));
     }
 
     #[test]
@@ -1182,30 +1212,16 @@ mod tests {
     }
 
     #[test]
-    fn brighter_slots_blend_toward_white_for_all_themes() {
-        // Slots 3-4 are the two brighter computed steps — present even on a
-        // theme whose slots 1-2 come from authored candidates.
+    fn card_surface_pinned_on_extended_slots() {
+        // The two extra slots (3-4) pin the card surface like slots 1-2 do.
         let json: serde_json::Value = serde_json::from_str(CANDIDATES_JSON).unwrap();
-        let v3 = resolve_theme_variant("s", &json, 3);
-        let v4 = resolve_theme_variant("s", &json, 4);
-        assert_eq!(v3.root_color, blend_colors("#ffffff", "#08526b", 0.50));
-        assert_eq!(v4.root_color, blend_colors("#ffffff", "#08526b", 0.70));
-        // And on a candidates-less theme too.
-        let plain: serde_json::Value = serde_json::from_str(
-            r##"{ "meta": {"type": "light"},
-                  "dwl": {"rootcolor": "#08526b"},
-                  "kitty": {"background": "#e7dec7", "active_tab_foreground": "#5d4232"} }"##)
-            .unwrap();
-        let p3 = resolve_theme_variant("s", &plain, 3);
-        let p4 = resolve_theme_variant("s", &plain, 4);
-        assert_eq!(p3.root_color, blend_colors("#ffffff", "#08526b", 0.50));
-        assert_eq!(p4.root_color, blend_colors("#ffffff", "#08526b", 0.70));
-        // Card surface stays pinned on the new slots as well.
         let v0 = resolve_theme_variant("s", &json, 0);
-        assert_eq!(v0.text_bg, v3.text_bg);
-        assert_eq!(v0.text_bg, v4.text_bg);
-        assert_eq!(v0.cursor_line_bg, v4.cursor_line_bg);
-        assert_eq!(v0.phrase_highlight_bg, v4.phrase_highlight_bg);
+        for i in 3..=4 {
+            let v = resolve_theme_variant("s", &json, i);
+            assert_eq!(v0.text_bg, v.text_bg);
+            assert_eq!(v0.cursor_line_bg, v.cursor_line_bg);
+            assert_eq!(v0.phrase_highlight_bg, v.phrase_highlight_bg);
+        }
     }
 
     #[test]
