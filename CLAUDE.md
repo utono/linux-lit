@@ -186,9 +186,13 @@ wtype "3"                          # send keystrokes to the focused reader
 - `wtype` works (virtual-keyboard protocol, no seat needed) **once the window is
   focused**; `ydotool`/libinput do not (seat owned by dwl). Modifier chords use
   `-M`/`-m`, e.g. `wtype -M ctrl -k j -m ctrl` for Ctrl+j.
-- **The shared dev log (`linux-lit-dev.log`) is NOT reliable here** — the user's
-  live instance writes to the same file, so its tail reflects the live session,
-  not the cage one. Trust the screenshot, not the log, when both instances run.
+- **Log location depends on the instance slot.** With the user's live instance
+  running (it holds slot 1), a manual cage run on the same
+  `XDG_RUNTIME_DIR=/run/user/1000` takes slot 2 and writes
+  `linux-lit-dev-2.log` — a separate file, so tails no longer interleave. The
+  cage run's MPV sockets are likewise `i2-`-prefixed, so it can no longer
+  touch the live session's players. Prefer `LIT_LOG_PATH` anyway for an
+  explicit per-run log; trust the screenshot over any log when in doubt.
 - Then `Read` the PNG to inspect the result.
 
 ### Useful key sequences for verification

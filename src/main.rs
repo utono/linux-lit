@@ -5,6 +5,7 @@ mod config;
 mod db;
 mod gutter;
 mod input;
+mod instance;
 mod logging;
 mod mode;
 mod claude;
@@ -24,6 +25,10 @@ use libadwaita as adw;
 use mpv::{MpvCommand, MpvEvent};
 
 fn main() {
+    // Acquire the per-process instance slot FIRST — the log filename and
+    // all MPV socket names derive from it. Slot 1 == today's behavior.
+    let slot = instance::acquire();
+
     // Clear and set up log file
     let home = std::env::var("HOME").unwrap_or_default();
     // LIT_LOG_PATH lets an isolated run (e.g. the headless nav-fuzz) write to its
@@ -31,16 +36,30 @@ fn main() {
     let log_path = if let Ok(p) = std::env::var("LIT_LOG_PATH") {
         p
     } else {
-        let log_filename = if mode::is_dev_mode() {
-            "linux-lit-dev.log"
+        let base = if mode::is_dev_mode() {
+            "linux-lit-dev"
         } else {
-            "linux-lit-release.log"
+            "linux-lit-release"
+        };
+        let log_filename = if slot == 1 {
+            format!("{}.log", base)
+        } else {
+            format!("{}-{}.log", base, slot)
         };
         format!("{}/utono/linux-lit/{}", home, log_filename)
     };
     let _ = std::fs::write(&log_path, "");
     logging::init(&log_path);
     crate::logging::log("STARTUP: main entry");
+    crate::logging::log_always(&format!("INSTANCE: slot {}", slot));
+    if let Ok(req) = std::env::var("LIT_INSTANCE") {
+        if req != slot.to_string() {
+            crate::logging::log_always(&format!(
+                "INSTANCE: LIT_INSTANCE={} unavailable, fell back to slot {}",
+                req, slot
+            ));
+        }
+    }
 
     // Handle --clear-cache: delete all snapshot files and exit immediately.
     // Maintenance command; doesn't proceed to launch the window.
@@ -67,8 +86,13 @@ fn main() {
 
     adw::init().expect("Failed to initialize libadwaita");
 
+    // NON_UNIQUE: each launch gets its own GApplication. Without it a second
+    // process forwards activate to the running instance over D-Bus and exits
+    // — the hard blocker for multi-instance. The app id is unchanged, so the
+    // dwl tag-3 window rule keeps matching.
     let application = gtk4::Application::builder()
         .application_id(app_id)
+        .flags(gtk4::gio::ApplicationFlags::NON_UNIQUE)
         .build();
 
     application.connect_activate(|gtk_app| {

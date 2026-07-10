@@ -79,6 +79,13 @@ landing on the same slot re-derives the same socket names.
 
 MPV keeps `wayland-app-id=mpv-lit`, so the dwl tag-10 rule is unaffected.
 
+Accepted tradeoff (slot drift): players outlive the app, and discovery only
+probes the process's own slot namespace. If both instances exit and a single
+relaunch takes slot 1, a still-playing `i2-` player is never rediscovered —
+its window stays visible on tag 10 (not silent), and a possible follow-up is
+probing other infixes as adoption candidates when the own-slot socket is
+absent.
+
 ### 3. GTK multi-instance + window title
 
 - `main.rs`: add `.flags(gio::ApplicationFlags::NON_UNIQUE)` to the
@@ -105,10 +112,16 @@ MPV keeps `wayland-app-id=mpv-lit`, so the dwl tag-10 rule is unaffected.
 instances, whoever exits last reverts the other's reading positions. The fix
 lives inside `save()` so all call sites (~15) inherit it:
 
-- A module-level static `Mutex<HashSet<String>>` of **dirty work abbrevs**.
+- A module-level static `Mutex<Vec<String>>` of **dirty work abbrevs** (a Vec
+  with linear dedup rather than a HashSet: `Mutex::new(Vec::new())` is
+  const-constructible in a static; the set holds a handful of abbrevs).
   Every site that updates `work_positions` for a work also marks that abbrev
   dirty; a parallel session-opened list (in recency order) feeds
   `recent_works`.
+- **Implementation addendum (2026-07-09):** positions live in THREE per-work
+  maps, not one — `work_positions` (legacy line-number fallback),
+  `work_position_ids` (line-id keyed, primary), and `last_gloss`. All three
+  get the identical dirty-key overlay in `merge_configs`.
 - On save: re-read the config file fresh from disk. For `work_positions`,
   start from the file's map and overwrite only dirty keys with this instance's
   values. For `recent_works`, move this session's opened works to the front of

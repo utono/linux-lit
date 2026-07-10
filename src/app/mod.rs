@@ -871,6 +871,7 @@ impl AppState {
                 start_citation: ctx.start_citation.clone(),
                 gloss_type: gloss_type.to_string(),
             };
+            crate::config::mark_work_dirty(&work);
             self.config.last_gloss.insert(work, entry);
             crate::config::save(&self.config);
         }
@@ -2788,6 +2789,7 @@ pub fn display_work_at_with_prepared(
         {
             state.config.work_position_ids.insert(old_work.abbrev.clone(), id);
         }
+        crate::config::mark_work_dirty(&old_work.abbrev);
     }
 
     crate::input::search::clear_search(state);
@@ -2806,9 +2808,13 @@ pub fn display_work_at_with_prepared(
     state.phrase_cache = None;
     state.active_phrase = None;
     state.phrase_paint_hold = None;
-    state
-        .window
-        .set_title(Some(&format!("{} — linux-lit", work.title)));
+    let slot = crate::instance::slot();
+    let window_title = if slot > 1 {
+        format!("{} — linux-lit [{}]", work.title, slot)
+    } else {
+        format!("{} — linux-lit", work.title)
+    };
+    state.window.set_title(Some(&window_title));
     state.title_bar_label.set_text(&format!("{}, {}", work.author, work.title));
     state.title_bar_scene_label.set_text("");
     if state.concordance_state.is_none() {
@@ -3942,6 +3948,7 @@ pub fn save_position(state: &mut AppState) {
             .map(|l| l.id);
         state.config.last_work = Some(abbrev.clone());
         state.config.work_positions.insert(abbrev.clone(), state.current_line); // legacy fallback
+        crate::config::mark_work_dirty(&abbrev);
         if let Some(id) = id {
             state.config.work_position_ids.insert(abbrev, id);
         }
