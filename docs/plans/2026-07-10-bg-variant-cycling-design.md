@@ -25,17 +25,17 @@ reading-surface tints (cursor line, karaoke) are untouched by the cycle.
   of the themes need two more variants that are brighter").
 - **Variant 0 is always the theme's designed `dwl.rootcolor`** — resolution
   byte-identical to no-variant behavior.
-- **Candidates first (slots 1–2):** themes whose `dwl` section carries
-  `rootcolor_candidates` (e.g. kindle-sepia's `#41819b`, `#286983`,
-  `#08526b`) cycle those. Candidates equal to the designed rootcolor are
-  skipped; the remaining ones fill variants 1–2 in array order.
-- **Computed fallback** for themes without (enough) candidates: variant 1 =
-  root blended 25% toward `#ffffff` (lighter, same hue); variant 2 = root
-  darkened via the existing `darken_color(root, 0.7)` (darker, same hue).
-  A too-short candidate list fills the remaining slots computed.
-- **Brighter slots (3–4), always computed:** root blended 50% (variant 3)
-  and 70% (variant 4) toward `#ffffff` — present for every theme,
-  candidates or not.
+- **The four alternates (slots 1–4) are ordered LIGHTEST to DARKEST**
+  (2026-07-10, user request) — Ctrl+t walks a predictable brightness
+  ladder after the designed color. The pool before sorting:
+  - Two from `dwl.rootcolor_candidates` where present (e.g. kindle-sepia's
+    `#41819b`, `#286983`; entries equal to the designed rootcolor are
+    skipped). Themes without (enough) candidates fill computed: root
+    blended 25% toward `#ffffff`, and root darkened via
+    `darken_color(root, 0.7)`.
+  - Two brighter computed steps for every theme: root blended 50% and 70%
+    toward `#ffffff`.
+  Sorting is by WCAG relative luminance, descending.
 - The chosen variant **persists per theme** in the app config
   (`root_variants: {theme_name: 0|1|2}`), ours-wins on merge like `theme`.
 

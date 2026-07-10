@@ -509,9 +509,9 @@ src/input/keymap.rs",
         "nav test" => "Toggle the in-app navigation test harness (dev only). \
 -> ToggleNavTest arm — src/input/keymap.rs",
         "root variant" => "Cycle the ROOT color (the field outside the card) \
-through five same-family variants (Ctrl+t): the designed color, two from \
-themes-unified.json dwl.rootcolor_candidates when present (else computed \
-lighter/darker), and two brighter steps (50%/70% toward white). Card \
+through five same-family variants (Ctrl+t): the designed color, then the \
+four alternates ordered lightest to darkest (dwl.rootcolor_candidates \
+when present else computed, plus two brighter toward-white steps). Card \
 background and reading tints are unchanged; the chosen variant persists \
 per theme. \
 -> cycle_root_variant — src/input/actions/settings.rs",
