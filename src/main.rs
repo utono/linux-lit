@@ -482,6 +482,11 @@ fn main() {
                                     > std::time::Duration::from_secs(60)
                                 {
                                     s.suppress_sync_until = None;
+                                    // Drop the paint-hold with it: a paused nav
+                                    // seek sets phrase_paint_hold to the same
+                                    // far-future instant, and a stale hold could
+                                    // outlast a later, shorter suppression.
+                                    s.phrase_paint_hold = None;
                                     crate::logging::log_always(
                                         "SYNC: cleared indefinite suppression on playback start",
                                     );

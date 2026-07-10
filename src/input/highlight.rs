@@ -305,23 +305,26 @@ pub(crate) fn update_highlight(state: &mut AppState) {
     //  * dim (legacy): mark the current paragraph by DIMMING every OTHER visible
     //    paragraph — the current one stays at full strength while the rest
     //    recede. Restore by flipping the const to true.
-    //  * flash (current): no persistent marking; a nav keybind flashes the
-    //    cursor paragraph's background with the phrase-highlight color, fading
-    //    out (see flash_prose_cursor_line).
+    //  * flash-off (current): no persistent marking and no nav flash — the
+    //    moving karaoke tint (seek_to_current_line paints the new segment's
+    //    first phrase) is the nav cue. flash_prose_cursor_line now fires ONLY
+    //    from the self-contained overlay-close path (flash_reader_cursor arms
+    //    + flushes in one call; it never routes through here).
     // Plays/verse instead tint the current line's background persistently.
     // Computed before the buffer borrow below.
     let prose_dim = PROSE_DIM_OTHER_PARAGRAPHS
         && state.is_prose()
         && state.config.show_cursor_line;
-    let prose_flash = !PROSE_DIM_OTHER_PARAGRAPHS
+    // In non-dim prose the cursor line carries NO persistent bg tint (the
+    // karaoke tint is the marking); verse keeps the persistent cursor tint.
+    let prose_no_tint = !PROSE_DIM_OTHER_PARAGRAPHS
         && state.is_prose()
         && state.config.show_cursor_line;
-    // Consume the nav-flash flag unconditionally so it can't linger across a
-    // mode change (e.g. set while global dim was on) and fire spuriously later.
-    // The hold flag (set by the instant page-set paths) is consumed alongside
-    // it so a sync-driven page turn can't leak a hold into a later flash.
-    let want_flash = state.pending_prose_flash.replace(false);
-    let flash_hold = state.prose_flash_hold.replace(false);
+    // Consume any leftover flash/hold flags unconditionally so a flag set by
+    // the page-set paths (prose_flash_hold) or a raced overlay-close arm can't
+    // linger and leak into a later overlay-close flash.
+    state.pending_prose_flash.replace(false);
+    state.prose_flash_hold.replace(false);
 
     let buffer = &state.buffer;
     let tag = &state.dim_tag;
@@ -351,7 +354,7 @@ pub(crate) fn update_highlight(state: &mut AppState) {
 
         // Apply fade-out to the old cursor line (if it changed). Prose has no
         // persistent bg tint (dim or flash mode), so there is no fade for it.
-        if state.config.show_cursor_line && !prose_dim && !prose_flash {
+        if state.config.show_cursor_line && !prose_dim && !prose_no_tint {
         if let Some(old_line) = state.prev_highlight_line.get() {
             if old_line != state.current_line {
                 // Cancel any in-flight cursor fade
@@ -420,9 +423,9 @@ pub(crate) fn update_highlight(state: &mut AppState) {
                 }
                 if prose_dim {
                     buffer.remove_tag(tag, &line_start, &line_end);
-                } else if !prose_flash {
-                    // Prose flash mode has no persistent cursor tint — the
-                    // transient flash below is the only marking.
+                } else if !prose_no_tint {
+                    // Non-dim prose has no persistent cursor tint — the
+                    // karaoke tint is the only marking.
                     buffer.apply_tag(cl_tag, &line_start, &line_end);
                 }
                 // Intentional observability hook (NOT stale per-keystroke trace):
@@ -433,12 +436,8 @@ pub(crate) fn update_highlight(state: &mut AppState) {
                 log_fmt!("CURSOR_LINE: applied tag to line {}", state.current_line);
             }
         }
-        // Prose nav flash: a nav keybind fired (dispatch_action set the flag) —
-        // flash the cursor paragraph's background with the phrase-highlight
-        // color and fade it out.
-        if prose_flash && want_flash {
-            flash_prose_cursor_line(state, flash_hold);
-        }
+        // (Nav binds no longer flash here; the overlay-close flash is armed +
+        // flushed entirely inside flash_reader_cursor.)
         // When visual selection is active, apply highlight even when dim is off
         crate::input::visual::clear_selection_highlight(state);
         crate::input::visual::apply_selection_highlight(state);
