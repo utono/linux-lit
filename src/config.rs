@@ -209,11 +209,11 @@ pub struct Config {
     /// compiled default reading list. Edit config.json to customize.
     #[serde(default)]
     pub theme_cycle: Option<Vec<String>>,
-    /// Per-theme background-variant index (0-2) chosen with Ctrl+t. Keyed
-    /// by theme name; absent = 0 (the designed background). Merged
-    /// ours-wins on save, like `theme` itself (see merge_configs).
+    /// Per-theme ROOT-color-variant index (0-2) chosen with Ctrl+t. Keyed
+    /// by theme name; absent = 0 (the designed root). Merged ours-wins on
+    /// save, like `theme` itself (see merge_configs).
     #[serde(default)]
-    pub bg_variants: HashMap<String, u8>,
+    pub root_variants: HashMap<String, u8>,
 }
 
 fn default_font_family() -> String {
@@ -349,7 +349,7 @@ impl Default for Config {
             mpv_volume: default_mpv_volume(),
             theme: None,
             theme_cycle: None,
-            bg_variants: HashMap::new(),
+            root_variants: HashMap::new(),
         }
     }
 }
@@ -380,10 +380,10 @@ impl Config {
         }
     }
 
-    /// Saved background-variant index for `theme_name`, wrapped into range.
-    pub fn bg_variant_for(&self, theme_name: &str) -> u8 {
-        self.bg_variants.get(theme_name).copied().unwrap_or(0)
-            % crate::theme::BG_VARIANT_COUNT
+    /// Saved root-color-variant index for `theme_name`, wrapped into range.
+    pub fn root_variant_for(&self, theme_name: &str) -> u8 {
+        self.root_variants.get(theme_name).copied().unwrap_or(0)
+            % crate::theme::ROOT_VARIANT_COUNT
     }
 }
 
@@ -684,21 +684,21 @@ mod last_gloss_tests {
     }
 
     #[test]
-    fn bg_variant_for_defaults_to_zero_and_wraps() {
+    fn root_variant_for_defaults_to_zero_and_wraps() {
         let mut c: Config = serde_json::from_str("{}").unwrap();
-        assert_eq!(c.bg_variant_for("kindle-sepia"), 0);
-        c.bg_variants.insert("kindle-sepia".into(), 2);
-        assert_eq!(c.bg_variant_for("kindle-sepia"), 2);
-        c.bg_variants.insert("kindle-sepia".into(), 7); // malformed config
-        assert_eq!(c.bg_variant_for("kindle-sepia"), 1); // 7 % 3
+        assert_eq!(c.root_variant_for("kindle-sepia"), 0);
+        c.root_variants.insert("kindle-sepia".into(), 2);
+        assert_eq!(c.root_variant_for("kindle-sepia"), 2);
+        c.root_variants.insert("kindle-sepia".into(), 7); // malformed config
+        assert_eq!(c.root_variant_for("kindle-sepia"), 1); // 7 % 3
     }
 
     #[test]
-    fn bg_variants_roundtrip_serde() {
+    fn root_variants_roundtrip_serde() {
         let mut c: Config = serde_json::from_str("{}").unwrap();
-        c.bg_variants.insert("sepia-lightest".into(), 1);
+        c.root_variants.insert("sepia-lightest".into(), 1);
         let json = serde_json::to_string(&c).unwrap();
         let back: Config = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.bg_variant_for("sepia-lightest"), 1);
+        assert_eq!(back.root_variant_for("sepia-lightest"), 1);
     }
 }
