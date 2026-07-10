@@ -189,12 +189,14 @@ pub struct GlossOverlay {
 /// Default font for the synopsis/gloss/echoes overlay cards.
 /// Default overlay reading-font family. Shared (like `GLOSS_DEFAULT_FONT_SIZE`) so
 /// the journal overlay applies the SAME font tag instead of falling back to the
-/// `.gloss-text` CSS at the reader's config size.
+/// `.gloss-text` CSS at the reader's config size. Pre-first-work default only:
+/// `reapply_font` syncs the overlay to the reader card's configured family too,
+/// on every work load / size change (`sync_reader_font`).
 pub(crate) const GLOSS_DEFAULT_FONT_FAMILY: &str = "Charter";
 /// Default overlay reading-font size (pt). Shared by the gloss + journal overlays
 /// so they always render at the same size (never drift). Pre-first-work default
 /// only: `reapply_font` syncs both overlays to the reader card's configured size
-/// on every work load / size change (`sync_reader_font_size`).
+/// on every work load / size change (`sync_reader_font`).
 pub(crate) const GLOSS_DEFAULT_FONT_SIZE: i32 = 18;
 
 /// Card-matching layout for a PROSE synopsis: render it in the main reading
@@ -646,13 +648,25 @@ impl GlossOverlay {
         }
     }
 
-    /// Follow the reader card's font SIZE (the family stays the overlay's own
-    /// reading family). Called from `reapply_font` so the overlay always renders
-    /// at the main card's current size — on work load and on +/- size changes —
-    /// instead of the fixed `GLOSS_DEFAULT_FONT_SIZE`. Pagination is safe: every
-    /// show path repaginates, and size changes only happen in reader mode.
-    pub fn sync_reader_font_size(&self, size: i32) {
-        if self.font_size.get() != size {
+    /// Follow the reader card's font FAMILY and SIZE. Called from `reapply_font`
+    /// so the overlay's default body font always matches the main card's
+    /// currently configured font — on work load, on +/- size changes, and on f/F
+    /// family cycling — instead of drifting to the fixed `GLOSS_DEFAULT_FONT_*`.
+    /// Pagination is safe: every show path repaginates, and reader font changes
+    /// only happen in reader mode (the overlay is closed, or a stale page just
+    /// gets repaginated on next show). Does NOT run while `begin_edit_font` has
+    /// stashed the reading family for the mono edit swap — clobbering
+    /// `font_family` mid-edit would corrupt the stash `end_edit_font` restores
+    /// from, and no work-load/font-size change can fire while the vim editor is
+    /// open anyway (both routes are reader-mode only), so this is belt-and-braces.
+    pub fn sync_reader_font(&self, family: &str, size: i32) {
+        if self.pre_edit_family.borrow().is_some() {
+            return;
+        }
+        let family_changed = self.font_family.borrow().as_str() != family;
+        let size_changed = self.font_size.get() != size;
+        if family_changed || size_changed {
+            *self.font_family.borrow_mut() = family.to_string();
             self.font_size.set(size);
             self.apply_font();
         }
@@ -980,9 +994,9 @@ impl GlossOverlay {
     }
 
     /// Restore the body-sized bold `gloss-title` style on the shared title (the
-    /// synopsis view swaps it to the quiet `journal-title`). Idempotent.
+    /// synopsis view swaps it to the quiet `synopsis-header`). Idempotent.
     fn set_gloss_title_style(&self) {
-        self.title.remove_css_class("journal-title");
+        self.title.remove_css_class("synopsis-header");
         self.title.add_css_class("gloss-title");
     }
 
@@ -1356,11 +1370,13 @@ impl GlossOverlay {
         let bar_left = prose_card.as_ref().map(|p| (p.left_margin - 60).max(0)).unwrap_or(inset);
         let title_left = prose_card.as_ref().map(|p| p.left_margin).unwrap_or(inset);
         self.title.set_text(title);
-        // The synopsis title uses the quiet journal-title style (small, dim,
-        // normal weight) rather than the body-sized bold gloss-title, matching the
-        // journal Q&A overlay. The gloss-result paths restore gloss-title.
+        // The synopsis title uses its own quiet `synopsis-header` style (dim,
+        // normal weight, underlined) rather than the body-sized bold gloss-title.
+        // Scoped separately from `.gloss-header` (the gloss card's ORIGINAL/GLOSS
+        // section headers + ask-card title) so bumping this size never touches
+        // those. The gloss-result paths restore gloss-title.
         self.title.remove_css_class("gloss-title");
-        self.title.add_css_class("journal-title");
+        self.title.add_css_class("synopsis-header");
         self.title.set_visible(true);
         self.title.set_vexpand(false);
         self.title.set_valign(Align::Start);
