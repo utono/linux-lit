@@ -179,13 +179,11 @@ pub fn handle_key(
             if state.borrow().visual_selection.is_some() {
                 crate::input::visual::extend_to_start(&mut state.borrow_mut());
             } else {
-                arm_prose_flash(state);
                 navigation::jump_to_start(&mut state.borrow_mut());
             }
             return true;
         } else if key_name == "semicolon" {
             // g; — jump to most recently created bookmark
-            arm_prose_flash(state);
             crate::input::actions::bookmarks::jump_to_recent_bookmark(state, tokio_handle);
             return true;
         }
@@ -2895,16 +2893,6 @@ fn handle_visual_key(
     }
 }
 
-/// Arm the prose nav-flash: in a prose work, the next update_highlight call
-/// flashes the cursor paragraph's background with the phrase-highlight color
-/// (see highlight::flash_prose_cursor_line). No-op for plays/verse.
-fn arm_prose_flash(state: &Rc<RefCell<AppState>>) {
-    let s = state.borrow();
-    if s.is_prose() {
-        s.pending_prose_flash.set(true);
-    }
-}
-
 /// Execute an Action by calling its corresponding verb. The key is always
 /// consumed when a mapped action is dispatched.
 fn dispatch_action(
@@ -2914,13 +2902,9 @@ fn dispatch_action(
     tokio_handle: &tokio::runtime::Handle,
 ) {
     crate::logging::log(&format!("ACTION: {}", action.name()));
-    // Prose nav feedback: nav keybinds flash the cursor paragraph's background
-    // (phrase-highlight color, fading out). The flag is consumed by
-    // update_highlight during the handler call below; sync-driven cursor moves
-    // never set it.
-    if action.flashes_prose_cursor() {
-        arm_prose_flash(state);
-    }
+    // Nav keybinds no longer flash the cursor paragraph — the karaoke tint
+    // moving to the new segment's first phrase (seek_to_current_line) is the
+    // nav cue. flash_reader_cursor remains for overlay-close re-orientation.
     use crate::input::actions::Action::*;
     match action {
         // Page navigation
@@ -3308,13 +3292,6 @@ fn dispatch_action(
         }
     }
 
-    // A nav handler that no-ops (e.g. `'` with no bookmark ahead) never reaches
-    // update_highlight, so the flag armed above would linger and flash on the
-    // next sync repaint. Flush it: flash the line the cursor is on, so every
-    // nav keybind gives the same cue whether or not the cursor moved.
-    if action.flashes_prose_cursor() {
-        crate::input::highlight::flush_pending_prose_flash(&mut state.borrow_mut());
-    }
 }
 
 /// MPV seek with brief sync suppression. Common pattern for o/e/O/E/Left.
