@@ -3099,7 +3099,8 @@ fn dispatch_action(
         }
         ThemeNext => crate::input::actions::settings::cycle_theme(state, true),
         ThemePrev => crate::input::actions::settings::cycle_theme(state, false),
-        RootVariantNext => crate::input::actions::settings::cycle_root_variant(state),
+        RootVariantNext => crate::input::actions::settings::cycle_root_variant(state, true),
+        RootVariantPrev => crate::input::actions::settings::cycle_root_variant(state, false),
         ToggleDim => {
             let mut s = state.borrow_mut();
             s.dim_enabled = !s.dim_enabled;

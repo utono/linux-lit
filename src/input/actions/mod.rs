@@ -165,6 +165,7 @@ pub enum Action {
     ThemeNext,
     ThemePrev,
     RootVariantNext,
+    RootVariantPrev,
     CycleScansion,
     ToggleTitleBar,
     ToggleAuthorship,
@@ -276,6 +277,7 @@ impl Action {
             | Action::ThemeNext
             | Action::ThemePrev
             | Action::RootVariantNext
+            | Action::RootVariantPrev
             | Action::CycleScansion
             | Action::ToggleTitleBar
             | Action::ToggleAuthorship
@@ -414,6 +416,7 @@ impl Action {
             Action::ThemeNext => "ThemeNext",
             Action::ThemePrev => "ThemePrev",
             Action::RootVariantNext => "RootVariantNext",
+            Action::RootVariantPrev => "RootVariantPrev",
             Action::CycleScansion => "CycleScansion",
             Action::ToggleTitleBar => "ToggleTitleBar",
             Action::ToggleAuthorship => "ToggleAuthorship",

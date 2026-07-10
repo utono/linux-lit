@@ -1,13 +1,13 @@
 ---
 name: configure-nav-test
-description: Use when changing what the Ctrl+Shift+T in-app navigation test harness tests — switching between sync-only, jumps-only, or full test modes
+description: Use when changing what the Ctrl+Alt+t in-app navigation test harness tests — switching between sync-only, jumps-only, or full test modes
 argument-hint: sync-only | jumps-only | full
 ---
 
 # Configure Navigation Test Harness
 
 Modify the `build_script()` function in `src/input/nav_test.rs` to change
-which navigation patterns the Ctrl+Shift+T test exercises.
+which navigation patterns the Ctrl+Alt+t test exercises.
 
 ## Modes
 
@@ -71,7 +71,7 @@ fn build_script() -> Vec<Step> {
 3. Optionally adjust `MAX_STEPS` (default 500) — for sync-only with 40-step
    script, 500 steps = ~12 full passes through the work
 4. `cargo build`
-5. In the app: press `gg` to start from the beginning, then `Ctrl+Shift+T`
+5. In the app: press `gg` to start from the beginning, then `Ctrl+Alt+t`
 
 ## Invariants Checked (all modes)
 
