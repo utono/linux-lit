@@ -626,7 +626,7 @@ fn main() {
                         let disk = crate::config::load();
                         s.config.theme_cycle = disk.theme_cycle.clone();
                         let name = disk.theme_name().to_string();
-                        let theme = crate::theme::load_theme_with_fallback(&name);
+                        let theme = crate::theme::load_theme_with_fallback(&name, 0);
                         crate::input::actions::settings::apply_theme_to_state(&mut s, &theme);
                     }
                 }

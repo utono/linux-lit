@@ -8,6 +8,55 @@ use std::path::PathBuf;
 /// glossed lines read clearly while staying a distinct tint (body text is ~6.7).
 const READER_GLOSS_MIN_CONTRAST: f64 = 4.5;
 
+/// Number of background variants every theme has (index 0 = designed bg).
+/// Cycled by Ctrl+t; see docs/plans/2026-07-10-bg-variant-cycling-design.md.
+pub const BG_VARIANT_COUNT: u8 = 3;
+
+/// Blend fraction toward #ffffff for computed variants 1 and 2.
+const BG_VARIANT_BLEND: [f64; 2] = [0.65, 0.90];
+
+/// Alpha scale for cursor-line / karaoke tints at computed variants 1 and 2.
+const BG_VARIANT_ALPHA: [f64; 2] = [0.7, 0.5];
+
+/// Hand-authored variant entry from `<theme>."linux-lit".bg_variants`.
+struct AuthoredVariant {
+    bg: String,
+    cursor_line_bg: Option<String>,
+    phrase_highlight_bg: Option<String>,
+}
+
+/// Authored entry for `variant` (1 or 2), if present and well-formed
+/// (`bg` is required; a malformed entry falls back to computed).
+fn authored_variant(val: &Value, variant: u8) -> Option<AuthoredVariant> {
+    let arr = val.get("linux-lit")?.get("bg_variants")?.as_array()?;
+    let entry = arr.get((variant - 1) as usize)?;
+    let bg = str_field(entry, "bg")?;
+    Some(AuthoredVariant {
+        bg,
+        cursor_line_bg: str_field(entry, "cursor_line_bg"),
+        phrase_highlight_bg: str_field(entry, "phrase_highlight_bg"),
+    })
+}
+
+/// Scale the alpha of an `rgba(r, g, b, a)` string; non-rgba strings and
+/// factor 1.0 pass through unchanged.
+fn scale_rgba_alpha(s: &str, factor: f64) -> String {
+    if (factor - 1.0).abs() < f64::EPSILON {
+        return s.to_string();
+    }
+    let inner = s
+        .trim()
+        .strip_prefix("rgba(")
+        .and_then(|r| r.strip_suffix(')'));
+    let Some(inner) = inner else { return s.to_string() };
+    let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
+    if parts.len() != 4 {
+        return s.to_string();
+    }
+    let Ok(a) = parts[3].parse::<f64>() else { return s.to_string() };
+    format!("rgba({}, {}, {}, {:.2})", parts[0], parts[1], parts[2], a * factor)
+}
+
 /// Resolved theme colors for linux-lit.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -30,6 +79,7 @@ pub struct Theme {
     pub reader_gloss_cursor: String, // glossed line that is ALSO the cursor block
     pub overlay_panel_bg: String, // inset prose-overlay panel tint (barely-there)
     pub scrim_bg: String,         // full-bleed overlay matting (dimmed vs root_color)
+    pub bg_variant: u8,           // active background variant (0 = designed)
 }
 
 fn themes_path() -> PathBuf {
@@ -104,7 +154,7 @@ pub fn load_theme(name: &str) -> Theme {
 /// default theme name, then to the hardcoded default_theme(). linux-lit's
 /// theme is independent of the system-wide .current_theme (see
 /// docs/plans/2026-07-08-independent-theme-keybinds-design.md).
-pub fn load_theme_with_fallback(name: &str) -> Theme {
+pub fn load_theme_with_fallback(name: &str, variant: u8) -> Theme {
     let path = themes_path();
     let data: Value = match std::fs::read_to_string(&path)
         .ok()
@@ -114,16 +164,20 @@ pub fn load_theme_with_fallback(name: &str) -> Theme {
         None => return default_theme(),
     };
     if let Some(val) = data.get(name) {
-        return resolve_theme(name, val);
+        return resolve_theme_variant(name, val, variant);
     }
     let fallback = crate::config::DEFAULT_THEME;
     match data.get(fallback) {
-        Some(val) => resolve_theme(fallback, val),
+        Some(val) => resolve_theme_variant(fallback, val, variant),
         None => default_theme(),
     }
 }
 
 fn resolve_theme(name: &str, val: &Value) -> Theme {
+    resolve_theme_variant(name, val, 0)
+}
+
+fn resolve_theme_variant(name: &str, val: &Value, variant: u8) -> Theme {
     let meta = val.get("meta").unwrap_or(&Value::Null);
     let dwl = val.get("dwl").unwrap_or(&Value::Null);
     let kitty = val.get("kitty").unwrap_or(&Value::Null);
@@ -142,7 +196,7 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
         .unwrap_or(name)
         .to_string();
 
-    let text_bg = str_field(kitty, "background").unwrap_or_else(|| {
+    let base_bg = str_field(kitty, "background").unwrap_or_else(|| {
         if is_light {
             "#ffffff".to_string()
         } else {
@@ -160,28 +214,50 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
 
     let root_color = str_field(dwl, "rootcolor").unwrap_or_else(|| {
         // Dark themes: darken kitty.background by shifting toward black
-        darken_color(&text_bg, 0.6)
+        darken_color(&base_bg, 0.6)
     });
 
     // Focused-window border color (dwl `focuscolor`) — reused to tint source
     // lines covered by a reader-gloss passage. Falls back to the text fg.
     let focus_color = str_field(dwl, "focuscolor").unwrap_or_else(|| text_fg.clone());
 
+    let variant = variant % BG_VARIANT_COUNT;
+    let authored = if variant == 0 { None } else { authored_variant(val, variant) };
+    let alpha_factor = if variant == 0 { 1.0 } else { BG_VARIANT_ALPHA[(variant - 1) as usize] };
+    let text_bg = match (&authored, variant) {
+        (Some(a), _) => a.bg.clone(),
+        (_, 0) => base_bg.clone(),
+        (_, v) => blend_colors("#ffffff", &base_bg, BG_VARIANT_BLEND[(v - 1) as usize]),
+    };
+
     let lit = val.get("linux-lit").unwrap_or(&Value::Null);
-    let cursor_line_bg = str_field(lit, "cursor_line_bg")
-        .unwrap_or_else(|| "rgba(86, 148, 100, 0.25)".to_string());
+    let cursor_line_bg = authored
+        .as_ref()
+        .and_then(|a| a.cursor_line_bg.clone())
+        .unwrap_or_else(|| {
+            let base = str_field(lit, "cursor_line_bg")
+                .unwrap_or_else(|| "rgba(86, 148, 100, 0.25)".to_string());
+            scale_rgba_alpha(&base, alpha_factor)
+        });
 
     // Spoken-phrase karaoke tint: optional per-theme key, else the cursor-line
     // hue at a stronger alpha so it reads inside the full-strength paragraph.
-    let phrase_highlight_bg = str_field(lit, "phrase_highlight_bg").unwrap_or_else(|| {
-        let (r, g, b) = rgba_str_to_rgb(&cursor_line_bg);
-        format!(
-            "rgba({}, {}, {}, 0.28)",
-            (r * 255.0) as u8,
-            (g * 255.0) as u8,
-            (b * 255.0) as u8
-        )
-    });
+    let phrase_highlight_bg = authored
+        .as_ref()
+        .and_then(|a| a.phrase_highlight_bg.clone())
+        .unwrap_or_else(|| match str_field(lit, "phrase_highlight_bg") {
+            Some(explicit) => scale_rgba_alpha(&explicit, alpha_factor),
+            None => {
+                let (r, g, b) = rgba_str_to_rgb(&cursor_line_bg);
+                format!(
+                    "rgba({}, {}, {}, {:.2})",
+                    (r * 255.0) as u8,
+                    (g * 255.0) as u8,
+                    (b * 255.0) as u8,
+                    0.28 * alpha_factor
+                )
+            }
+        });
 
     // Reader-gloss tints, contrast-guaranteed (raw focuscolor is dim/indistinct
     // on ~13 themes). Off-cursor = guarded focuscolor; on-cursor = guarded
@@ -252,6 +328,7 @@ fn resolve_theme(name: &str, val: &Value) -> Theme {
         reader_gloss_cursor,
         overlay_panel_bg: String::new(),
         scrim_bg: String::new(),
+        bg_variant: variant,
     };
     theme.overlay_panel_bg = overlay_panel_bg(&theme);
     theme.scrim_bg = scrim_bg(&theme);
@@ -283,6 +360,7 @@ fn default_theme() -> Theme {
         ),
         overlay_panel_bg: String::new(),
         scrim_bg: String::new(),
+        bg_variant: 0,
     };
     theme.overlay_panel_bg = overlay_panel_bg(&theme);
     theme.scrim_bg = scrim_bg(&theme);
@@ -1037,6 +1115,101 @@ mod tests {
         );
         // Non-rgba strings pass through untouched.
         assert_eq!(dim_rgba_alpha("#ffcc00", 0.45), "#ffcc00");
+    }
+
+    const SEPIA_JSON: &str = r##"{ "meta": {"display": "S", "type": "light"},
+        "dwl": {"rootcolor": "#08526b", "focuscolor": "#8a6a45"},
+        "kitty": {"background": "#e7dec7", "active_tab_foreground": "#5d4232"},
+        "linux-lit": {"cursor_line_bg": "rgba(93, 66, 50, 0.14)",
+                      "phrase_highlight_bg": "rgba(93, 66, 50, 0.28)"} }"##;
+
+    const AUTHORED_JSON: &str = r##"{ "meta": {"display": "S", "type": "light"},
+        "kitty": {"background": "#fdfbf2", "active_tab_foreground": "#5d4232"},
+        "linux-lit": {"cursor_line_bg": "rgba(93, 66, 50, 0.10)",
+          "bg_variants": [
+            {"bg": "#f0f0f0",
+             "phrase_highlight_bg": "rgba(69, 89, 100, 0.14)",
+             "cursor_line_bg": "rgba(69, 89, 100, 0.12)"}
+          ]} }"##;
+
+    #[test]
+    fn variant_zero_is_identical_to_base_resolution() {
+        let json: serde_json::Value = serde_json::from_str(SEPIA_JSON).unwrap();
+        let base = resolve_theme("s", &json);
+        let v0 = resolve_theme_variant("s", &json, 0);
+        assert_eq!(base.text_bg, v0.text_bg);
+        assert_eq!(base.cursor_line_bg, v0.cursor_line_bg);
+        assert_eq!(base.phrase_highlight_bg, v0.phrase_highlight_bg);
+        assert_eq!(base.dim_fg, v0.dim_fg);
+        assert_eq!(base.root_color, v0.root_color);
+        assert_eq!(v0.bg_variant, 0);
+    }
+
+    #[test]
+    fn computed_variants_blend_toward_white_and_scale_alphas() {
+        let json: serde_json::Value = serde_json::from_str(SEPIA_JSON).unwrap();
+        let v1 = resolve_theme_variant("s", &json, 1);
+        let v2 = resolve_theme_variant("s", &json, 2);
+        assert_eq!(v1.text_bg, blend_colors("#ffffff", "#e7dec7", 0.65));
+        assert_eq!(v2.text_bg, blend_colors("#ffffff", "#e7dec7", 0.90));
+        // alpha 0.14 ×0.7 ≈ 0.10; 0.28 ×0.5 = 0.14
+        assert_eq!(v1.cursor_line_bg, "rgba(93, 66, 50, 0.10)");
+        assert_eq!(v2.phrase_highlight_bg, "rgba(93, 66, 50, 0.14)");
+        // root color pinned to the designed bg's derivation, not the variant's
+        assert_eq!(v1.root_color, "#08526b");
+        // derivation ran against the NEW bg
+        assert_ne!(v1.dim_fg, resolve_theme("s", &json).dim_fg);
+        assert_eq!(v2.bg_variant, 2);
+    }
+
+    #[test]
+    fn authored_variant_overrides_bg_and_tints() {
+        let json: serde_json::Value = serde_json::from_str(AUTHORED_JSON).unwrap();
+        let v1 = resolve_theme_variant("s", &json, 1);
+        assert_eq!(v1.text_bg, "#f0f0f0");
+        assert_eq!(v1.phrase_highlight_bg, "rgba(69, 89, 100, 0.14)");
+        assert_eq!(v1.cursor_line_bg, "rgba(69, 89, 100, 0.12)");
+        // only 1 authored entry → variant 2 falls back to computed
+        let v2 = resolve_theme_variant("s", &json, 2);
+        assert_eq!(v2.text_bg, blend_colors("#ffffff", "#fdfbf2", 0.90));
+    }
+
+    #[test]
+    fn authored_entry_without_tints_scales_the_theme_tints() {
+        let json: serde_json::Value = serde_json::from_str(
+            r##"{ "meta": {"type": "light"},
+                  "kitty": {"background": "#e7dec7"},
+                  "linux-lit": {"cursor_line_bg": "rgba(93, 66, 50, 0.20)",
+                                "bg_variants": [{"bg": "#f0f0f0"}]} }"##).unwrap();
+        let v1 = resolve_theme_variant("s", &json, 1);
+        assert_eq!(v1.text_bg, "#f0f0f0");
+        assert_eq!(v1.cursor_line_bg, "rgba(93, 66, 50, 0.14)"); // 0.20 × 0.7
+    }
+
+    #[test]
+    fn malformed_authored_entry_falls_back_to_computed() {
+        let json: serde_json::Value = serde_json::from_str(
+            r##"{ "meta": {"type": "light"},
+                  "kitty": {"background": "#e7dec7"},
+                  "linux-lit": {"bg_variants": [{"note": "no bg key"}]} }"##).unwrap();
+        let v1 = resolve_theme_variant("s", &json, 1);
+        assert_eq!(v1.text_bg, blend_colors("#ffffff", "#e7dec7", 0.65));
+    }
+
+    #[test]
+    fn scale_rgba_alpha_scales_only_the_alpha() {
+        assert_eq!(scale_rgba_alpha("rgba(93, 66, 50, 0.28)", 0.5),
+                   "rgba(93, 66, 50, 0.14)");
+        assert_eq!(scale_rgba_alpha("rgba(1, 2, 3, 0.10)", 1.0),
+                   "rgba(1, 2, 3, 0.10)");           // factor 1.0 = unchanged
+        assert_eq!(scale_rgba_alpha("#not-rgba", 0.5), "#not-rgba"); // passthrough
+    }
+
+    #[test]
+    fn variant_index_wraps_modulo_count() {
+        let json: serde_json::Value = serde_json::from_str(SEPIA_JSON).unwrap();
+        let v3 = resolve_theme_variant("s", &json, 3);
+        assert_eq!(v3.text_bg, resolve_theme("s", &json).text_bg); // 3 % 3 = 0
     }
 
     #[test]

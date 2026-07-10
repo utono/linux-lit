@@ -506,7 +506,7 @@ pub(crate) fn cycle_theme(state: &Rc<RefCell<crate::app::AppState>>, forward: bo
     }
     let current = cycle.iter().position(|t| *t == s.theme.name);
     let next = next_cycle_index(cycle.len(), current, forward);
-    let theme = crate::theme::load_theme_with_fallback(&cycle[next]);
+    let theme = crate::theme::load_theme_with_fallback(&cycle[next], 0);
     apply_theme_to_state(&mut s, &theme);
     // Desktop notification, mirroring the font-cycle pattern (font.rs). The
     // synchronous hint replaces a still-visible previous theme toast instead
