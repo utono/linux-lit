@@ -65,6 +65,9 @@ pub(crate) fn close_chat_layout(s: &mut AppState) {
     s.chat = Default::default();
     s.chat_panel.render_rows(&[]);
     s.chat_layout_open = false;
+    s.chat_placement = ChatPlacement::Pinned;
+    s.chat_panel.container.remove_css_class("chat-panel-float");
+    s.chat_panel.container.set_margin_start(24);
     reapply_card_margins(s);
     s.input_mode = crate::app::InputMode::Reader;
     s.chat_panel.hide();
@@ -132,13 +135,29 @@ fn float_side_for_cursor(s: &AppState) -> ChatPlacement {
     }
 }
 
-/// Re-check the chat panel against the CURRENT settled geometry: close with
-/// a toast when the freed left space is too tight (e.g. after switching to a
-/// two-column play), else re-size the panel to the new card rect.
+/// Re-check the chat panel against the CURRENT settled geometry, converting
+/// the placement to match the new work's layout: a two-column target floats
+/// the panel over a column (never closes); a single-column target pins the
+/// card right again, or closes with a toast when the freed space is too
+/// tight.
 pub(crate) fn regate_panel(s: &mut AppState) {
     if !s.chat_layout_open {
         return;
     }
+    if s.column_count() == 2 {
+        s.chat_placement = float_side_for_cursor(s);
+        reapply_card_margins(s); // un-pin the card if we arrived from Pinned
+        size_panel(s);
+        set_panel_header(s);
+        crate::logging::log(&format!(
+            "CHAT: regate floated panel ({:?})",
+            s.chat_placement
+        ));
+        return;
+    }
+    s.chat_placement = ChatPlacement::Pinned;
+    s.chat_panel.container.remove_css_class("chat-panel-float");
+    reapply_card_margins(s); // pin the card right again
     let ww = s.window.width().max(0);
     let (card_w, _) = crate::app::layout::main_card_rect(s);
     let free = ww - card_w - 2 * crate::app::layout::CARD_OUTER_MARGIN;
@@ -164,6 +183,23 @@ pub(crate) fn toggle_chat_layout(state_rc: &Rc<RefCell<AppState>>) {
         focus_prompt(&mut s);
         return;
     }
+    if s.column_count() == 2 {
+        // Two-column: float over the column the cursor is NOT in. No
+        // free-space gate — a 2-col card always has column-width room.
+        s.chat_placement = float_side_for_cursor(&s);
+        s.chat_layout_open = true;
+        reapply_card_margins(&s); // chat_pinned()==false → card untouched
+        size_panel(&s);
+        set_panel_header(&s);
+        s.chat_panel.show();
+        crate::logging::log(&format!(
+            "CHAT: layout opened floating ({:?})",
+            s.chat_placement
+        ));
+        focus_prompt(&mut s);
+        return;
+    }
+    s.chat_placement = ChatPlacement::Pinned;
     let ww = s.window.width().max(0);
     let (card_w, _) = crate::app::layout::main_card_rect(&s);
     let free = ww - card_w - 2 * crate::app::layout::CARD_OUTER_MARGIN;
