@@ -725,7 +725,7 @@ pub(crate) fn begin_ask(state: &Rc<RefCell<AppState>>) {
 /// rewrite instruction that references the band (e.g. "now that this is in the
 /// work band, broaden the opening") has the context it needs. The question, the
 /// current answer, and the instruction follow in "revise this answer" shape.
-fn rewrite_user_message(context: &str, question: &str, answer: &str, instruction: &str) -> String {
+pub(crate) fn rewrite_user_message(context: &str, question: &str, answer: &str, instruction: &str) -> String {
     format!(
         "{}\n\nOriginal question:\n{}\n\nCurrent answer:\n{}\n\nRevise the answer per this instruction (return only the revised answer):\n{}",
         context, question, answer, instruction,

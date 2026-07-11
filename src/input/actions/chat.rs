@@ -275,6 +275,13 @@ pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
 /// page, mark it, and pivot the panel into the revision loop on that entry.
 pub(crate) fn save_selected_exchange(state_rc: &Rc<RefCell<AppState>>) {
     let mut s = state_rc.borrow_mut();
+    if let Some(id) = s.chat.revision_of {
+        // Already saved: `s` re-confirms (row is persisted on every
+        // successful revision); just toast.
+        let _ = id;
+        crate::ui::toast::show_transient(&s.chapter_toast, "Entry is saved", 2);
+        return;
+    }
     let idx = s.chat.cursor;
     let Some(e) = s.chat.exchanges.get(idx) else { return };
     let Some(work) = s.current_work.as_ref() else { return };
@@ -343,13 +350,131 @@ pub(crate) fn set_panel_header(s: &AppState) {
     s.chat_panel.set_header(&w.title, &w.author, &scene);
 }
 
-// TEMPORARY (Task 6): `chat_revision::submit_revision` is consumed by
-// `submit_chat_prompt`'s revision-mode branch but not implemented until
-// Task 8. This stub keeps the build green in the meantime.
+/// Parse a revision reply of the form "Q: ...\nA: ..." (A may span
+/// paragraphs). Falls back to (fallback_q, whole reply) when the format is
+/// absent, so a format-ignoring model still yields a usable answer.
+pub(crate) fn parse_revised_qa(reply: &str, fallback_q: &str) -> (String, String) {
+    let trimmed = reply.trim();
+    if let Some(rest) = trimmed.strip_prefix("Q:") {
+        if let Some(a_pos) = rest.find("\nA:") {
+            let q = rest[..a_pos].trim().to_string();
+            let a = rest[a_pos + 3..].trim().to_string();
+            if !q.is_empty() && !a.is_empty() {
+                return (q, a);
+            }
+        }
+    }
+    (fallback_q.to_string(), trimmed.to_string())
+}
+
+#[cfg(test)]
+mod revision_tests {
+    use super::parse_revised_qa;
+
+    #[test]
+    fn parses_q_and_multiparagraph_a() {
+        let (q, a) = parse_revised_qa(
+            "Q: Sharper question?\nA: First paragraph.\n\nSecond paragraph.",
+            "old q",
+        );
+        assert_eq!(q, "Sharper question?");
+        assert_eq!(a, "First paragraph.\n\nSecond paragraph.");
+    }
+
+    #[test]
+    fn falls_back_when_format_absent() {
+        let (q, a) = parse_revised_qa("Just a plain revised answer.", "old q");
+        assert_eq!(q, "old q");
+        assert_eq!(a, "Just a plain revised answer.");
+    }
+
+    #[test]
+    fn falls_back_when_a_missing() {
+        let (q, a) = parse_revised_qa("Q: only a question", "old q");
+        assert_eq!(q, "old q");
+        assert_eq!(a, "Q: only a question");
+    }
+}
+
+/// Ctrl+Enter revision loop: sends a rewrite instruction for the saved entry,
+/// parses Claude's revised Q&A, and updates the same journal row in place.
 pub(crate) mod chat_revision {
     use super::*;
+
+    /// Ctrl+Enter in revision mode: the prompt text is an instruction to
+    /// revise the saved entry. Empty instruction = no-op (hand edits are not
+    /// a chat concern). Claude may rewrite both Q and A (fixed output format,
+    /// parsed leniently by parse_revised_qa).
     pub(crate) fn submit_revision(state_rc: &Rc<RefCell<AppState>>) {
-        let s = state_rc.borrow();
-        crate::ui::toast::show_transient(&s.chapter_toast, "Revision lands in a later task", 2);
+        let (id, q, a, context, instruction, model) = {
+            let s = state_rc.borrow();
+            let Some(id) = s.chat.revision_of else { return };
+            let instruction = s.chat_panel.take_input_text().trim().to_string();
+            if instruction.is_empty() {
+                crate::ui::toast::show_transient(&s.chapter_toast, "Type a revision instruction", 2);
+                return;
+            }
+            let Some(e) = s.chat.exchanges.iter().find(|e| e.saved_id == Some(id)) else {
+                return;
+            };
+            let Some(work) = s.current_work.as_ref() else { return };
+            let scene = crate::app::scene_synopsis::scene_label_for(&s, e.div1, e.div2);
+            let context = format!(
+                "Work: {} by {}\nThis Q&A is filed under a PASSAGE in {}\n\nPassage:\n{}\n\nReturn the revised Q&A in exactly this format:\nQ: <revised question>\nA: <revised answer>",
+                work.title, work.author, scene, e.source_markup,
+            );
+            (
+                id,
+                e.question.clone(),
+                e.answer.clone(),
+                context,
+                instruction,
+                s.config.claude_model.clone(),
+            )
+        };
+        let user_msg =
+            crate::input::actions::journal::rewrite_user_message(&context, &q, &a, &instruction);
+        let work_type = state_rc
+            .borrow()
+            .current_work
+            .as_ref()
+            .map(|w| w.work_type.clone())
+            .unwrap_or_default();
+        {
+            let s = state_rc.borrow();
+            crate::ui::toast::show_persistent(&s.chapter_toast, "Rewriting\u{2026}");
+        }
+        let model_for_db = model.clone();
+        crate::input::actions::claude_bridge::run_claude_request(
+            state_rc,
+            crate::gloss::journal_qa_prompt(&work_type),
+            user_msg,
+            model,
+            move |st, reply| {
+                let mut s = st.borrow_mut();
+                let (new_q, new_a) = super::parse_revised_qa(&reply, &q);
+                if let Some(e) = s.chat.exchanges.iter_mut().find(|e| e.saved_id == Some(id)) {
+                    e.question = new_q.clone();
+                    e.answer = new_a.clone();
+                }
+                super::render_saved_entry(&s, &new_q, &new_a);
+                // Persist immediately: the revision loop's `s` re-update path
+                // also exists, but the design stores exactly the model's
+                // latest output, so write it now.
+                if let Ok(conn) = crate::db::queries::open_db_rw() {
+                    if let Err(err) = crate::db::journal::update_journal_page(
+                        &conn, id, &new_q, &new_a, &model_for_db,
+                    ) {
+                        crate::logging::log(&format!("CHAT: revision save failed: {}", err));
+                    }
+                    crate::input::actions::journal::purge_journal_audio(&conn, id);
+                }
+                crate::ui::toast::show_transient(&s.chapter_toast, "Rewritten", 2);
+            },
+            |st, msg| {
+                let s = st.borrow();
+                crate::ui::toast::show_transient(&s.chapter_toast, msg, 4);
+            },
+        );
     }
 }
