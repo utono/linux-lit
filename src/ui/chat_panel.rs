@@ -18,7 +18,6 @@ pub enum TranscriptRow {
 
 pub struct ChatPanel {
     pub container: gtk4::Box,
-    header_title: gtk4::Label,
     header_scene: gtk4::Label,
     transcript_box: gtk4::Box,
     transcript_scroll: gtk4::ScrolledWindow,
@@ -32,9 +31,6 @@ impl ChatPanel {
         container.set_margin_start(24);
         container.set_visible(false);
 
-        let header_title = gtk4::Label::new(None);
-        header_title.set_halign(gtk4::Align::Start);
-        header_title.add_css_class("chat-panel-header");
         let header_scene = gtk4::Label::new(None);
         header_scene.set_halign(gtk4::Align::Start);
         header_scene.add_css_class("chat-panel-header");
@@ -54,7 +50,6 @@ impl ChatPanel {
         let input = crate::ui::ask_card::AskCard::new(0, &transcript_scroll);
         input.container().add_css_class("chat-input");
 
-        container.append(&header_title);
         container.append(&header_scene);
         container.append(&rule);
         container.append(&transcript_scroll);
@@ -62,7 +57,6 @@ impl ChatPanel {
 
         Self {
             container,
-            header_title,
             header_scene,
             transcript_box,
             transcript_scroll,
@@ -70,9 +64,10 @@ impl ChatPanel {
         }
     }
 
-    pub fn set_header(&self, title: &str, author: &str, scene: &str) {
-        self.header_title
-            .set_text(&format!("{} \u{2014} {}", title, author));
+    /// Header shows ONLY the journal Q&A band (chapter/scene label) — the
+    /// work title/author line was dropped by request (the title bar already
+    /// names the work).
+    pub fn set_header(&self, scene: &str) {
         self.header_scene.set_text(scene);
     }
 

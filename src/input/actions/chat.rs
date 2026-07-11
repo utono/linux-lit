@@ -545,7 +545,7 @@ pub(crate) fn set_panel_header(s: &AppState) {
         .map(|l| (l.div1, l.div2))
         .unwrap_or((0, 0));
     let scene = crate::app::scene_synopsis::synopsis_label(s, d1, d2);
-    s.chat_panel.set_header(&w.title, &w.author, &scene);
+    s.chat_panel.set_header(&scene);
 }
 
 /// Parse a revision reply of the form "Q: ...\nA: ..." (A may span
