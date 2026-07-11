@@ -308,6 +308,14 @@ pub struct AppState {
     pub content_hbox: gtk4::Box,
     /// Chat layout (Tab): card pinned right, left chat panel visible.
     pub chat_layout_open: bool,
+    /// Set by `chat::on_work_switched` when a work switch happened with the
+    /// panel open: the panel's width hold was released immediately (so it
+    /// can't inflate the window), and the real re-gate/resize is deferred
+    /// until the resize tick observes settled (non-changing) geometry —
+    /// reading `s.window.width()` at the work-switch hook point can observe
+    /// a transient in-flight size (e.g. mid-reflow into a two-column work)
+    /// rather than the compositor-settled width.
+    pub chat_regate_pending: bool,
     pub vbox: gtk4::Box,
     pub window: ApplicationWindow,
     pub config: Config,
@@ -1687,6 +1695,7 @@ pub fn build_window(
         right_gutter_renderer: None,
         content_hbox: content_hbox.clone(),
         chat_layout_open: false,
+        chat_regate_pending: false,
         vbox: vbox.clone(),
         window: window.clone(),
         config,
@@ -2271,6 +2280,17 @@ pub fn build_window(
                     // sourceview5::View exposes no AT-SPI Text interface, so this
                     // log line is how the harness locates the pane.
                     crate::input::scroll::emit_test_viewport_rect(&s);
+                }
+                // Chat layout: a work switch with the panel open deferred its
+                // re-gate to here (see `chat::on_work_switched`) because
+                // `s.window.width()` at the switch hook point can be a
+                // transient, not-yet-settled size. Only consume the flag on a
+                // frame where the width did NOT change — that's the settled
+                // case; a width-changing frame means geometry is still
+                // moving, so wait for a later, quiet tick.
+                if s.chat_regate_pending && !width_changed {
+                    s.chat_regate_pending = false;
+                    crate::input::actions::chat::regate_panel(&mut s);
                 }
             }
             glib::ControlFlow::Continue
@@ -3030,6 +3050,24 @@ pub fn display_work_at_with_prepared(
     let work_is_prose = crate::db::line_types::is_prose_work(&work_type);
     let vbox = state.vbox.clone();
     let ww = state.window.width();
+    // Update the card's width_request for THIS work's column count/layout
+    // BEFORE apply_tiled_mode below sets the two-column children's widths.
+    // Without this, content_hbox keeps the PREVIOUS work's (possibly
+    // single-column, narrower) width_request while apply_tiled_mode already
+    // requests the new work's two-column widths on its children — GTK's
+    // natural-size measurement then sees children wider than their parent's
+    // request and grows the toplevel window past its true settled width
+    // (observed: BH (1050, 1-col) -> Hamlet (2-col, columns request 1520+)
+    // grew the window from 1920 to 2407 before the deferred resize-tick
+    // refresh caught up). The resize tick's own `apply_card_sizing` call
+    // (layout_refresh branch) still runs afterward and is a no-op once the
+    // width already matches.
+    {
+        let cw = crate::app::layout::effective_column_width(state);
+        let cc = state.column_count();
+        let tr = state.translations_visible;
+        apply_card_sizing(&state.content_hbox.clone(), ww, cw, cc, tr, state.chat_layout_open);
+    }
     apply_tiled_mode(state, &vbox, ww);
     // Non-prose works (plays, poems, epics) use tight 0px global spacing.
     // Prose uses the configured line_spacing. Reset on every load so the

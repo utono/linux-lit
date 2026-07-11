@@ -62,15 +62,40 @@ pub(crate) fn close_chat_layout(s: &mut AppState) {
 
 /// Work switch with the panel open: history clears (context would be from
 /// another work). The new work's card geometry may no longer leave enough
-/// free space for the panel (works can pin different layouts), so re-gate
-/// exactly like `toggle_chat_layout` does; if there's still room, re-size the
-/// panel to the new geometry before refreshing the header.
+/// free space for the panel (works can pin different layouts), so it must be
+/// re-gated — but NOT here: at this hook point (inside
+/// `display_work_at_with_prepared`, before the rest of `display_work`'s
+/// column/layout setup runs) `s.window.width()` can observe a transient,
+/// not-yet-settled window size — e.g. the panel's OWN stale width_request
+/// (sized for the old work's layout) plus the new work's wider two-column
+/// card can together push GTK to grow the window past its true fixed
+/// compositor width before it settles back down. Gating on that transient
+/// width computes free space against a phantom, oversized window and wrongly
+/// decides "stays open" when the settled geometry would say "close" —
+/// leaving the panel visibly overlapping the new card.
+///
+/// So: release the panel's width hold immediately (it can't inflate the
+/// window if it no longer asks for a fixed size), and defer the real
+/// re-gate/resize to `regate_panel`, run from the resize tick once geometry
+/// has settled (see `chat_regate_pending` in `app/mod.rs`).
 pub(crate) fn on_work_switched(s: &mut AppState) {
     if !s.chat_layout_open {
         return;
     }
     s.chat = Default::default();
     s.chat_panel.render_rows(&[]);
+    s.chat_panel.size_to_natural();
+    s.chat_regate_pending = true;
+    crate::logging::log("CHAT: work switch — regate deferred");
+}
+
+/// Re-check the chat panel against the CURRENT settled geometry: close with
+/// a toast when the freed left space is too tight (e.g. after switching to a
+/// two-column play), else re-size the panel to the new card rect.
+pub(crate) fn regate_panel(s: &mut AppState) {
+    if !s.chat_layout_open {
+        return;
+    }
     let ww = s.window.width().max(0);
     let (card_w, _) = crate::app::layout::main_card_rect(s);
     let free = ww - card_w - 2 * crate::app::layout::CARD_OUTER_MARGIN;
@@ -85,6 +110,7 @@ pub(crate) fn on_work_switched(s: &mut AppState) {
     }
     size_panel(s);
     set_panel_header(s);
+    crate::logging::log(&format!("CHAT: regate kept panel (free={}px)", free));
 }
 
 pub(crate) fn toggle_chat_layout(state_rc: &Rc<RefCell<AppState>>) {

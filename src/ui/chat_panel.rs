@@ -81,6 +81,17 @@ impl ChatPanel {
         self.container.set_height_request(h.max(0));
     }
 
+    /// Release the panel's explicit width/height hold (-1 = unset the
+    /// request in GTK). Used when a work switch invalidates the panel's
+    /// current size hold BEFORE the new geometry is known, so the stale
+    /// request can't inflate the window while the real re-gate is deferred
+    /// to settled geometry (see `chat::on_work_switched` /
+    /// `chat::regate_panel`).
+    pub fn size_to_natural(&self) {
+        self.container.set_width_request(-1);
+        self.container.set_height_request(-1);
+    }
+
     pub fn show(&self) {
         self.container.set_visible(true);
     }
