@@ -61,7 +61,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key("l", "L", "toggle signs", "", &[("C-l", "chat side"), ("S-C-l", "save+quit"), ("l", "verse audio: play/stop"), ("L", "verse audio: pick voice")]),
     key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
     ub("@", "^"),
-    key("\\", "#", "conc picker", "◀ vocab", &[("C-\\", "lib picker"), ("M-\\", "vocab hi")]),
+    key("\\", "#", "conc picker", "", &[("C-\\", "lib picker"), ("M-\\", "vocab hi")]),
 ];
 const TAB_KEY: KeyDef = key("Tab", "", "chat layout", "", &[("C-Tab", "last overlay")]);
 
@@ -396,10 +396,9 @@ app::remove_vocab_highlighting — src/input/keymap.rs, src/app.rs",
         "auto vocab" => "Toggle the auto vocabulary popup. \
 -> ToggleVocabPopup arm -> app::open_vocab_popup / close_vocab_popup — \
 src/input/keymap.rs, src/app.rs",
-        "vocab ▶" => "Next word in the vocabulary popup (stays up; Ctrl+- hides). \
+        "vocab ▶" => "Next word in the vocabulary popup (stays up and follows \
+the cursor/playback line; Ctrl+- hides). \
 -> handle_vocab_popup_key(.., true) — src/input/keymap.rs",
-        "◀ vocab" => "Previous word in the vocabulary popup (stays up; Ctrl+- hides). \
--> handle_vocab_popup_key(.., false) — src/input/keymap.rs",
         "hide vocab" => "Fade the vocabulary popup out (it no longer auto-hides). \
 -> fade_out_vocab_popup — src/input/keymap.rs",
 
@@ -639,7 +638,6 @@ fn expand_action(label: &str) -> String {
         "font −" => "decrease font size",
         "reset font" => "reset font size",
         "vocab ▶" => "next vocab word",
-        "◀ vocab" => "previous vocab word",
         "hide vocab" => "hide vocab popup",
         _ => return label.to_string(),
     };

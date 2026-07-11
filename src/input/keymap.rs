@@ -3494,9 +3494,11 @@ fn do_mpv_seek(state: &Rc<RefCell<AppState>>, offset: f64) {
     }
 }
 
-/// Vocab popup key handler. The popup is STICKY: it stays visible until
-/// HideVocabPopup (Ctrl+-) or the H auto-vocab toggle dismisses it — the old
-/// 3-second auto-hide timer is gone by design.
+/// Vocab popup key handler. The popup is STICKY and FOLLOWS the cursor and
+/// playback line (same `vocab_popup.auto` follow hook Shift+H uses — see
+/// `update_highlight` in src/input/highlight.rs): it stays up, tracking the
+/// current line, until HideVocabPopup (Ctrl+-) or the H auto-vocab toggle
+/// dismisses it. The old 3-second auto-hide timer is gone by design.
 fn handle_vocab_popup_key(state: &Rc<RefCell<AppState>>, forward: bool) {
     let popup_visible = state.borrow().vocab_popup.popup.is_visible();
     if popup_visible {
@@ -3508,16 +3510,23 @@ fn handle_vocab_popup_key(state: &Rc<RefCell<AppState>>, forward: bool) {
     } else {
         crate::app::vocab_popup::open_vocab_popup(&mut state.borrow_mut());
     }
+    let mut s = state.borrow_mut();
+    // A popup opened (or cycled) from the keyboard follows the cursor and
+    // playback line exactly like Shift+H's auto mode.
+    s.vocab_popup.auto = true;
     // Invalidate any pending fade (defensive; nothing arms one anymore).
-    let s = state.borrow();
     s.vocab_popup.fade_gen.set(s.vocab_popup.fade_gen.get() + 1);
 }
 
 /// Ctrl+-: fade the vocab popup out (500ms, EaseOutQuad — the same animation
 /// the old auto-hide used). Idempotent: no-op when the popup isn't visible.
+/// Also clears the follow flag — leaving `auto` set would let the highlight
+/// hook reopen the popup on the very next cursor move.
 fn fade_out_vocab_popup(state: &Rc<RefCell<AppState>>) {
-    let s = state.borrow();
+    let mut s = state.borrow_mut();
+    s.vocab_popup.auto = false;
     s.vocab_popup.fade_gen.set(s.vocab_popup.fade_gen.get() + 1);
+    let s = &*s;
     if !s.vocab_popup.popup.is_visible() {
         return;
     }

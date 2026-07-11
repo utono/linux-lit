@@ -295,7 +295,6 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("h"), Action::ShowSynopsisOverlay),
         // `\` duplicates Ctrl+g — open/close the gloss overlay (swapped with `z`).
         (KeyCombo::plain("backslash"), Action::OpenConcordancePicker),
-        (KeyCombo::plain("numbersign"), Action::VocabPopupPrev),
         (KeyCombo::plain("r"), Action::ConcordanceNext),
         (KeyCombo::plain("R"), Action::ConcordancePrev),
         (KeyCombo::ctrl("r"), Action::JumpToNextVocab),
@@ -447,9 +446,9 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::plain("Tab")), Some(&Action::ToggleChatLayout));
         assert_eq!(m.get(&KeyCombo::plain("minus")), Some(&Action::VocabPopupNext));
         assert_eq!(m.get(&KeyCombo::ctrl("minus")), Some(&Action::HideVocabPopup));
-        // z freed; # keeps prev; pause still reachable on a.
+        // z and # freed; pause still reachable on a.
         assert_eq!(m.get(&KeyCombo::plain("z")), None);
-        assert_eq!(m.get(&KeyCombo::plain("numbersign")), Some(&Action::VocabPopupPrev));
+        assert_eq!(m.get(&KeyCombo::plain("numbersign")), None);
         assert_eq!(m.get(&KeyCombo::plain("a")), Some(&Action::TogglePause));
     }
 
