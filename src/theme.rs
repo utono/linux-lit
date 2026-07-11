@@ -890,7 +890,8 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
            border-left: 2px solid alpha({fg}, 0.35); padding-left: 8px; }} \
          .chat-error {{ color: alpha({fg}, 0.55); font-style: italic; }} \
          .chat-saved {{ color: {dim}; }} \
-         .chat-input {{ border: 1px solid alpha({fg}, 0.30); border-radius: 6px; }} \
+         .chat-input {{ background-color: {bg}; \
+           border: 1px solid alpha({fg}, 0.30); border-radius: 6px; }} \
          .picker-box {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
            padding: 16px; border-radius: 8px; }} \
          .legend-box {{ background-color: {bg}; color: {fg}; \
