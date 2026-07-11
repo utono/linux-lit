@@ -125,11 +125,17 @@ pub fn enter_visual_block_mode(state: &mut AppState) {
         return;
     }
     let cursor = state.current_line;
+    // The blank-line rule needs a .txt-built buffer. text_file alone isn't
+    // proof: if the file was unreadable, display fell back to the DB-join
+    // buffer (line_map None) and the blank-line walk would select the whole
+    // buffer. Every successful text-file/BCP prep sets a line_map, so require
+    // both.
     let has_text_file = state
         .current_work
         .as_ref()
         .and_then(|w| w.text_file.as_ref())
-        .is_some();
+        .is_some()
+        && state.line_map.is_some();
     let bounds = {
         let buffer = &state.buffer;
         let is_blank_or_sep = |idx: usize| {
