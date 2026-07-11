@@ -166,6 +166,8 @@ pub fn handle_key(
             crate::app::InputMode::ActionPopup => handle_action_popup_key(state, key_name, is_ctrl, tokio_handle),
             crate::app::InputMode::Visual => handle_visual_key(state, key_state, key_name, is_ctrl, tokio_handle),
             crate::app::InputMode::PageCalibration => handle_page_calibration_key(state, key_state, key_name),
+            crate::app::InputMode::ChatPrompt => handle_chat_prompt_key(state, key_name, key_char, is_ctrl),
+            crate::app::InputMode::ChatTranscript => handle_chat_transcript_key(state, key_name, is_ctrl),
             crate::app::InputMode::Reader => unreachable!(),
         };
     }
@@ -1040,6 +1042,75 @@ fn handle_segment_vim_key(
             true
         }
         EditorAction::ToggleHighlight | EditorAction::Nop => true,
+    }
+}
+
+/// Chat prompt focus: Tab cycles to the transcript BEFORE the vim editor can
+/// consume it; Ctrl+Tab closes the panel; everything else feeds the embedded
+/// AskCard vim editor via the shared ask_vim_intercept (Ctrl+Enter submits).
+fn handle_chat_prompt_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+    key_char: Option<char>,
+    is_ctrl: bool,
+) -> bool {
+    if (key_name == "Tab" || key_name == "ISO_Left_Tab") && is_ctrl {
+        crate::input::actions::chat::close_chat_layout(&mut state.borrow_mut());
+        return true;
+    }
+    if key_name == "Tab" || key_name == "ISO_Left_Tab" {
+        crate::input::actions::chat::focus_transcript(&mut state.borrow_mut());
+        return true;
+    }
+    match ask_vim_intercept(
+        true,
+        key_name,
+        key_char,
+        is_ctrl,
+        state,
+        |st, k| st.borrow().chat_panel.feed_input_vim_key(k),
+        crate::input::actions::chat::submit_chat_prompt,
+        |_st| {}, // Escape closes nothing in the chat prompt (vim Normal only)
+        |st, t| st.borrow().chat_panel.paste_input_text(t),
+    ) {
+        AskIntercept::Consumed => true,
+        AskIntercept::NotHandled => true, // prompt focus consumes everything
+    }
+}
+
+/// Chat transcript focus: j/k move the exchange cursor, s saves the selected
+/// exchange (Task 7), Tab cycles to the reader, Ctrl+Tab closes.
+fn handle_chat_transcript_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+    is_ctrl: bool,
+) -> bool {
+    match key_name {
+        "Tab" | "ISO_Left_Tab" if is_ctrl => {
+            crate::input::actions::chat::close_chat_layout(&mut state.borrow_mut());
+            true
+        }
+        "Tab" | "ISO_Left_Tab" => {
+            crate::input::actions::chat::focus_reader(&mut state.borrow_mut());
+            true
+        }
+        "j" => {
+            crate::input::actions::chat::transcript_cursor_move(&mut state.borrow_mut(), 1);
+            true
+        }
+        "k" => {
+            crate::input::actions::chat::transcript_cursor_move(&mut state.borrow_mut(), -1);
+            true
+        }
+        "s" => {
+            crate::input::actions::chat::save_selected_exchange(state);
+            true
+        }
+        "Escape" => {
+            crate::input::actions::chat::focus_reader(&mut state.borrow_mut());
+            true
+        }
+        _ => true,
     }
 }
 
@@ -3103,7 +3174,14 @@ fn dispatch_action(
         }
         ToggleGlossOverlay => crate::input::actions::gloss::toggle_overlay(state),
         ToggleJournalOverlay => crate::input::actions::journal::toggle_overlay(state),
-        ToggleLastOverlay => crate::input::actions::gloss::toggle_last_overlay(state),
+        ToggleLastOverlay => {
+            let panel_open = state.borrow().chat_layout_open;
+            if panel_open {
+                crate::input::actions::chat::close_chat_layout(&mut state.borrow_mut());
+            } else {
+                crate::input::actions::gloss::toggle_last_overlay(state)
+            }
+        }
         OpenJournalPicker => crate::input::actions::journal::open_picker_from_reader(state),
         OpenGlossPicker => crate::input::actions::pickers::open_gloss_picker(state, tokio_handle),
         OpenLastGloss => crate::input::actions::gloss::open_last_gloss(state),

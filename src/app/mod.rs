@@ -152,6 +152,12 @@ pub enum InputMode {
     /// the cursor line; Enter marks the cursor line as that page's start and
     /// advances to the next page.
     PageCalibration,
+    /// Chat layout: the panel's vim prompt owns keys (Tab cycles to the
+    /// transcript; Ctrl+Tab closes the panel; Ctrl+Enter submits).
+    ChatPrompt,
+    /// Chat layout: the transcript owns keys (j/k exchange cursor, s saves,
+    /// Tab cycles to the reader, Ctrl+Tab closes).
+    ChatTranscript,
 }
 
 /// Which of the two toggleable reader overlays (gloss / journal) was most

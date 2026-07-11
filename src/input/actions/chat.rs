@@ -37,9 +37,9 @@ pub(crate) fn close_chat_layout(s: &mut AppState) {
 pub(crate) fn toggle_chat_layout(state_rc: &Rc<RefCell<AppState>>) {
     let mut s = state_rc.borrow_mut();
     if s.chat_layout_open {
-        // Panel already open: Tab (from reader focus) cycles INTO the panel;
-        // full cycle behavior lands with the focus task. For now close.
-        close_chat_layout(&mut s);
+        // Panel already open: Tab (from reader focus) cycles INTO the prompt;
+        // closing is Ctrl+Tab's job (ToggleLastOverlay shadow).
+        focus_prompt(&mut s);
         return;
     }
     let ww = s.window.width().max(0);
@@ -56,9 +56,53 @@ pub(crate) fn toggle_chat_layout(state_rc: &Rc<RefCell<AppState>>) {
     s.chat_layout_open = true;
     reapply_card_margins(&s);
     size_panel(&s);
-    set_panel_header(&s);
     s.chat_panel.show();
     crate::logging::log(&format!("CHAT: layout opened (free={}px)", free));
+    focus_prompt(&mut s);
+}
+
+/// Chat layout: the panel's vim prompt gains input focus. Opens the ask-card
+/// input (title/hint/theme colors) and sets the panel header for the current
+/// cursor position.
+pub(crate) fn focus_prompt(s: &mut AppState) {
+    s.input_mode = crate::app::InputMode::ChatPrompt;
+    s.chat_panel.open_input(
+        "Ask about this passage",
+        "Ctrl+Enter send \u{b7} Tab cycle",
+        &s.theme.cursor_bg,
+        &s.theme.cursor_fg,
+    );
+    set_panel_header(s);
+}
+
+/// Chat layout: the transcript pane gains input focus (j/k move the exchange
+/// cursor, s saves, Tab cycles to the reader, Ctrl+Tab closes).
+pub(crate) fn focus_transcript(s: &mut AppState) {
+    s.input_mode = crate::app::InputMode::ChatTranscript;
+}
+
+/// Chat layout: the reader pane gains input focus (full reader keys live;
+/// the panel stays open and visible).
+pub(crate) fn focus_reader(s: &mut AppState) {
+    s.input_mode = crate::app::InputMode::Reader;
+}
+
+/// Submit the chat prompt's current text as a new turn. Stubbed here (toast);
+/// implemented in Task 6.
+pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
+    let s = state_rc.borrow();
+    crate::ui::toast::show_transient(&s.chapter_toast, "Chat send lands in the next task", 2);
+}
+
+/// Move the transcript exchange cursor by `delta`. Stubbed here; implemented
+/// in a later task.
+pub(crate) fn transcript_cursor_move(_s: &mut AppState, _delta: i32) {}
+
+/// Save the transcript's currently selected exchange. Stubbed here; implemented
+/// in Task 7.
+pub(crate) fn save_selected_exchange(state_rc: &Rc<RefCell<AppState>>) {
+    let s = state_rc.borrow();
+    crate::ui::toast::show_transient(&s.chapter_toast, "Save lands in a later task", 2);
 }
 
 /// Size the panel to the freed left space at the card's height.
