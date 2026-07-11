@@ -264,6 +264,8 @@ pub(crate) fn focus_prompt(s: &mut AppState) {
         s.chat_panel.open_input(title, hint, &s.theme.cursor_bg, &s.theme.cursor_fg);
     }
     set_panel_header(s);
+    // Tab-cycle cue: flash the widget that just became active.
+    s.chat_panel.flash_input();
 }
 
 /// The honest title/hint pair for the current chat mode (revision vs ask).
@@ -279,12 +281,17 @@ fn prompt_title_hint(s: &AppState) -> (&'static str, &'static str) {
 /// cursor, s saves, Tab cycles to the reader, Ctrl+Tab closes).
 pub(crate) fn focus_transcript(s: &mut AppState) {
     s.input_mode = crate::app::InputMode::ChatTranscript;
+    // Tab-cycle cue: flash the widget that just became active.
+    s.chat_panel.flash_transcript();
 }
 
 /// Chat layout: the reader pane gains input focus (full reader keys live;
 /// the panel stays open and visible).
 pub(crate) fn focus_reader(s: &mut AppState) {
     s.input_mode = crate::app::InputMode::Reader;
+    // Tab-cycle cue: flash the widget that just became active.
+    use gtk4::prelude::Cast;
+    crate::ui::flash_widget(s.content_hbox.clone().upcast_ref::<gtk4::Widget>());
 }
 
 /// Submit the chat prompt's current text as a new turn: builds the segment

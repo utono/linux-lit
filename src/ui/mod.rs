@@ -111,6 +111,18 @@ pub(crate) const OVERLAY_LINE_LEADING: i32 = 2;
 /// applying the font tag in each overlay's `apply_font`. The gloss and journal
 /// overlays both render verse via `gloss_render::populate_verse_buffer`, so both
 /// own these tag names and must stay in sync — hence one shared helper.
+/// Briefly pulse a widget's opacity as a "this is now active" cue (Tab focus
+/// cycling in the chat layout: input box / transcript / main card). One dip
+/// to 0.35 for 140ms, then restore — theme-neutral, no CSS needed.
+pub(crate) fn flash_widget(widget: &gtk4::Widget) {
+    use gtk4::prelude::*;
+    let w = widget.clone();
+    w.set_opacity(0.35);
+    gtk4::glib::timeout_add_local_once(std::time::Duration::from_millis(140), move || {
+        w.set_opacity(1.0);
+    });
+}
+
 pub(crate) fn reassert_italic_tags(table: &gtk4::TextTagTable) {
     use gtk4::prelude::*;
     let top = table.size();

@@ -87,6 +87,16 @@ impl ChatPanel {
         self.container.set_height_request(-1);
     }
 
+    /// Flash the input box as the "now active" Tab-cycle cue.
+    pub fn flash_input(&self) {
+        crate::ui::flash_widget(self.input.container().upcast_ref());
+    }
+
+    /// Flash the transcript area as the "now active" Tab-cycle cue.
+    pub fn flash_transcript(&self) {
+        crate::ui::flash_widget(self.transcript_scroll.upcast_ref());
+    }
+
     pub fn show(&self) {
         self.container.set_visible(true);
     }
