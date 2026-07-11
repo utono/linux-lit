@@ -16,3 +16,6 @@ scripts/data/NRC-VAD-Lexicon.txt
 CLAUDE-activeContext.md
 # Transient plan file (per CLAUDE.md, plans go here; never source)
 PLAN.md
+
+# Superpowers brainstorm/SDD session artifacts (mockups, ledgers; not source)
+.superpowers/

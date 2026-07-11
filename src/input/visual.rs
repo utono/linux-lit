@@ -6,6 +6,10 @@ use crate::app::AppState;
 pub struct SelectionState {
     pub anchor_line: usize,
     pub cursor_line: usize,
+    /// True when visual mode was entered via Ctrl+a (AskPassage): Return then
+    /// confirms the Journal Q&A ask directly instead of opening the Action
+    /// menu. Extending the selection with j/k/G/gg keeps the flag.
+    pub pending_ask: bool,
 }
 
 impl SelectionState {
@@ -13,6 +17,7 @@ impl SelectionState {
         Self {
             anchor_line: line,
             cursor_line: line,
+            pending_ask: false,
         }
     }
 
@@ -24,6 +29,31 @@ impl SelectionState {
     }
 }
 
+/// Inclusive `(start, end)` of the contiguous block of non-boundary lines
+/// containing `cursor`. A "boundary" line (blank line or separator, decided by
+/// the caller's closure) delimits the block: prose paragraphs and play
+/// speeches are both blank-line-delimited in the reader buffer, so this yields
+/// the paragraph (prose) or the speech including its speaker label (plays).
+/// Returns `None` when `cursor` is out of range or is itself a boundary line —
+/// callers fall back to a single-line selection.
+pub(crate) fn block_bounds(
+    line_count: usize,
+    cursor: usize,
+    is_boundary: impl Fn(usize) -> bool,
+) -> Option<(usize, usize)> {
+    if cursor >= line_count || is_boundary(cursor) {
+        return None;
+    }
+    let mut start = cursor;
+    while start > 0 && !is_boundary(start - 1) {
+        start -= 1;
+    }
+    let mut end = cursor;
+    while end + 1 < line_count && !is_boundary(end + 1) {
+        end += 1;
+    }
+    Some((start, end))
+}
 
 /// Apply the selection_tag to all lines in the visual selection range.
 /// Also removes dim_tag from those lines so they appear at full brightness.
@@ -79,6 +109,71 @@ pub fn enter_visual_mode(state: &mut AppState) {
     state.input_mode = crate::app::InputMode::Visual;
     crate::input::navigation::update_highlight_and_ensure_visible(state);
     crate::logging::log(&format!("VISUAL: entered at line {}", state.current_line));
+}
+
+/// Ctrl+a (AskPassage): enter visual mode with the blank-line-delimited block
+/// around the cursor pre-selected (prose paragraph / play speech incl. speaker
+/// label) and `pending_ask` set, so a second Ctrl+a or Return opens the
+/// Journal Q&A ask card directly. On a blank/separator line, falls back to a
+/// single-line selection (same as V), still flagged pending-ask.
+/// On DB-join buffers (works with no text_file, where one buffer line renders
+/// one work row and no blank lines exist) the block is the run of lines
+/// sharing the cursor's work row instead.
+pub fn enter_visual_block_mode(state: &mut AppState) {
+    let line_count = state.effective_line_count();
+    if line_count == 0 {
+        return;
+    }
+    let cursor = state.current_line;
+    // The blank-line rule needs a .txt-built buffer. text_file alone isn't
+    // proof: if the file was unreadable, display fell back to the DB-join
+    // buffer (line_map None) and the blank-line walk would select the whole
+    // buffer. Every successful text-file/BCP prep sets a line_map, so require
+    // both.
+    let has_text_file = state
+        .current_work
+        .as_ref()
+        .and_then(|w| w.text_file.as_ref())
+        .is_some()
+        && state.line_map.is_some();
+    let bounds = {
+        let buffer = &state.buffer;
+        let is_blank_or_sep = |idx: usize| {
+            let text = crate::input::viewport::buffer_line_text(buffer, idx);
+            let t = text.trim();
+            t.is_empty() || crate::db::line_types::is_separator(t)
+        };
+        if has_text_file {
+            // .txt-built buffer (plays, prepared prose): paragraphs and
+            // speeches are blank-line-delimited.
+            block_bounds(line_count, cursor, &is_blank_or_sep)
+        } else {
+            // DB-join buffer (no text_file, e.g. Bleak House prose; BCP
+            // sentence splits): there are NO blank lines — each buffer line
+            // renders one work row, so the cursor's paragraph is the run of
+            // buffer lines mapping to the SAME work row (one line for a
+            // prose paragraph; the whole prayer for BCP sentence splits).
+            match state.work_line_for_buffer(cursor) {
+                Some(cursor_row) => block_bounds(line_count, cursor, |idx| {
+                    is_blank_or_sep(idx)
+                        || state.work_line_for_buffer(idx) != Some(cursor_row)
+                }),
+                None => None,
+            }
+        }
+    };
+    let (start, end) = bounds.unwrap_or((cursor, cursor));
+    state.visual_selection = Some(SelectionState {
+        anchor_line: start,
+        cursor_line: end,
+        pending_ask: true,
+    });
+    state.current_line = end;
+    state.input_mode = crate::app::InputMode::Visual;
+    crate::input::navigation::update_highlight_and_ensure_visible(state);
+    crate::logging::log(&format!(
+        "VISUAL: ask-block entered {}..{} (cursor was {})", start, end, cursor
+    ));
 }
 
 /// Yank (copy) the visual selection to clipboard, then exit visual mode.
@@ -401,7 +496,7 @@ fn action_external_command(state: &mut AppState, command: &str) {
 }
 
 
-fn action_journal_qa(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+pub(crate) fn action_journal_qa(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
     // Phase 1 — build context while holding borrow.
     let (div1, div2, start, end, source_text) = {
         let state = state_rc.borrow();
@@ -927,5 +1022,57 @@ pub fn reload_current_work(state: &mut AppState) {
             }
         }
         Err(e) => crate::logging::log(&format!("VISUAL: open_db failed: {}", e)),
+    }
+}
+
+#[cfg(test)]
+mod block_bounds_tests {
+    use super::block_bounds;
+
+    /// Test harness: boundary = blank or separator line, same rule
+    /// enter_visual_block_mode uses.
+    fn bounds(lines: &[&str], cursor: usize) -> Option<(usize, usize)> {
+        let texts: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
+        let is_boundary = |idx: usize| {
+            let t = texts[idx].trim();
+            t.is_empty() || crate::db::line_types::is_separator(t)
+        };
+        block_bounds(lines.len(), cursor, is_boundary)
+    }
+
+    #[test]
+    fn paragraph_mid_buffer() {
+        let lines = ["First para.", "", "Second para line 1.", "line 2.", "line 3.", "", "Third."];
+        assert_eq!(bounds(&lines, 3), Some((2, 4)));
+        // Every line of the block maps to the same bounds.
+        assert_eq!(bounds(&lines, 2), Some((2, 4)));
+        assert_eq!(bounds(&lines, 4), Some((2, 4)));
+    }
+
+    #[test]
+    fn speech_includes_speaker_label() {
+        // A play speech: speaker label + verse lines form one contiguous block.
+        let lines = ["", "HAMLET", "To be, or not to be: that is the question:", "Whether 'tis nobler in the mind to suffer", ""];
+        assert_eq!(bounds(&lines, 2), Some((1, 3)));
+    }
+
+    #[test]
+    fn cursor_on_blank_line_is_none() {
+        let lines = ["First.", "", "Second."];
+        assert_eq!(bounds(&lines, 1), None);
+    }
+
+    #[test]
+    fn block_at_buffer_start_and_end() {
+        let lines = ["Line a.", "Line b.", "", "Tail line 1.", "Tail line 2."];
+        assert_eq!(bounds(&lines, 0), Some((0, 1)));
+        assert_eq!(bounds(&lines, 4), Some((3, 4)));
+    }
+
+    #[test]
+    fn cursor_out_of_range_is_none() {
+        let lines = ["Only line."];
+        assert_eq!(bounds(&lines, 5), None);
+        assert_eq!(bounds(&[], 0), None);
     }
 }

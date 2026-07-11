@@ -49,6 +49,22 @@ single-line visual mode, same as `V` (still flagged entered-via-A). The
 expansion is a small pure helper over buffer-line texts, unit-testable without
 GTK.
 
+**Two buffer structures need two different rules.** Works with a `text_file`
+(plays, prepared prose) render from a `.txt` source where paragraphs and
+speeches are genuinely blank-line-delimited, so the rule above applies as-is.
+Works with NO `text_file` (e.g. Bleak House prose, BCP sentence splits) render
+via the DB-join path (`src/app/mod.rs` "Default: join work.lines") — one
+buffer line per `work.lines` row, joined with a single `\n` and no blank lines
+at all. On those buffers the blank-line/separator rule never fires, so
+`block_bounds` walks to both ends of the buffer and selects everything. This
+was found via headless e2e on Bleak House: Ctrl+a selected the entire
+7306-line buffer (0..7305) instead of one paragraph. The fix branches on
+`current_work.text_file.is_some()`: when absent, the boundary predicate adds
+"buffer line `idx` maps to a different `work_line_for_buffer` row than the
+cursor's row," so the block is the run of buffer lines sharing the cursor's
+work row (one row for an ordinary prose paragraph; the whole prayer for a
+BCP sentence split) — never the whole buffer.
+
 ## Keybind reshuffle
 
 `Ctrl+a` is currently `ToggleAuthorship`. It moves to plain `A` (Shift+a, free
