@@ -3156,6 +3156,7 @@ fn dispatch_action(
             crate::config::save(&s.config);
             crate::logging::log(&format!("DIM: {}", if s.dim_enabled { "on" } else { "off" }));
         }
+        ToggleChatLayout => crate::input::actions::chat::toggle_chat_layout(state),
         CycleScansion => {
             let mut s = state.borrow_mut();
             // Populate the cache on first use (or for a freshly loaded work).

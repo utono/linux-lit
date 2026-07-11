@@ -63,7 +63,7 @@ const UPPER_ROW: &[KeyDef] = &[
     ub("@", "^"),
     key("\\", "#", "conc picker", "◀ vocab", &[("C-\\", "lib picker"), ("M-\\", "vocab hi")]),
 ];
-const TAB_KEY: KeyDef = key("Tab", "", "play/pause", "", &[("C-Tab", "last overlay")]);
+const TAB_KEY: KeyDef = key("Tab", "", "chat layout", "", &[("C-Tab", "last overlay")]);
 
 const HOME_ROW: &[KeyDef] = &[
     key("a", "A", "play/pause", "A: authorship", &[("C-a", "ask passage"), ("S-C-a", "attr set")]),
@@ -76,7 +76,7 @@ const HOME_ROW: &[KeyDef] = &[
     key("t", "T", "", "", &[("C-t", "root variant"), ("S-C-T", "root variant prev"), ("C-M-t", "nav test"), ("M-t", "theme next"), ("M-S-T", "theme prev")]),
     key("n", "N", "next match", "N: prev match", &[]),
     bare("s", "S", "sync tog"),
-    key("-", "_", "prev work", "", &[("C--", "recent")]),
+    key("-", "_", "play/pause", "", &[("C--", "recent")]),
 ];
 const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 
@@ -298,8 +298,6 @@ prose sentence). Saved to config. \
 -> pickers::open_concordance_works_picker — src/input/actions/pickers.rs",
         "recent" => "Open the recent-works picker. \
 -> pickers::open_recent_picker — src/input/actions/pickers.rs",
-        "prev work" => "Swap back to the previously open work (like vim's Ctrl-^). \
--> pickers::toggle_previous_work — src/input/actions/pickers.rs",
         "settings" => "Open the settings overlay. \
 -> settings::open_settings — src/input/actions/settings.rs",
         "keybinds" => "Open this keyboard-shortcut overlay. \
@@ -333,6 +331,10 @@ handle_journal_key in src/input/keymap.rs)",
         "last overlay" => "Reopen the last-used gloss/journal overlay; from inside \
 it, close back to the reader. \
 -> gloss::toggle_last_overlay — src/input/actions/gloss.rs",
+        "chat layout" => "Toggle the left chat panel layout: the reading card pins \
+to the right at unchanged size and the freed left space becomes a Claude chat \
+panel for journal Q&A. \
+-> ToggleChatLayout arm -> chat::toggle_chat_layout — src/input/actions/chat.rs",
         "jrnl Q&A picker" => "Open Journal Q&A picker. \
 -> journal::open_picker_from_reader — src/input/actions/journal.rs",
         "last gloss" => "Reopen the most recently viewed gloss in this work. \
@@ -417,7 +419,7 @@ handle_block_visual_key / gloss_overlay::enter_visual \
 — src/input/keymap.rs, src/ui/gloss_overlay.rs",
 
         // ── MPV / audio ──
-        "play/pause" => "Play/pause without seeking (unlike Space; a and Tab \
+        "play/pause" => "Play/pause without seeking (unlike Space; a and - \
 both bind this). -> TogglePause arm -> MpvCommand::TogglePause — src/input/keymap.rs",
         "vim copy" => "Open the cursor's paragraph/line in a copy-only vim \
 editor, seeded in visual mode: extend with motions, y copies the selection to \
@@ -468,7 +470,7 @@ newline-separated. \
         "+0.2" => "Nudge the current line's start timestamp 0.2s later (Shift+p). \
 -> timestamps::nudge_start_forward — src/input/timestamps.rs",
         "play from ts" => "Seek to the current line's start timestamp and play \
-(for pause/resume without a seek, use Tab or a). \
+(for pause/resume without a seek, use - or a). \
 -> timestamps::play_current_line — src/input/timestamps.rs",
         "clear AB" => "Dismiss a toast, else clear the A–B range / exit sub-modes. \
 -> escape::escape_reader_mode — src/input/actions/escape.rs",

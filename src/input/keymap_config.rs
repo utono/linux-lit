@@ -275,10 +275,11 @@ fn media_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
         (KeyCombo::plain("s"), Action::TogglePlaybackSync),
         // Space plays from the cursor line's start timestamp (PlayCurrentLine;
-        // it is intercepted before dispatch in keymap.rs). `a` and Tab are both
+        // it is intercepted before dispatch in keymap.rs). `a` and `-` are both
         // a PURE pause/resume toggle — no seek (TogglePause).
         (KeyCombo::plain("a"), Action::TogglePause),
-        (KeyCombo::plain("Tab"), Action::TogglePause),
+        // '-' is the pause toggle (Tab moved to the chat layout).
+        (KeyCombo::plain("minus"), Action::TogglePause),
         (KeyCombo::plain("o"), Action::SeekShortBackward),
         (KeyCombo::plain("e"), Action::SeekShortForward),
         (KeyCombo::plain("O"), Action::SeekLongBackward),
@@ -326,7 +327,8 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("f"), Action::CycleFontForward),
         (KeyCombo::plain("F"), Action::CycleFontBackward),
         (KeyCombo::plain("l"), Action::ToggleSignColumn),
-        (KeyCombo::plain("minus"), Action::TogglePreviousWork),
+        // Tab toggles the chat layout; TogglePreviousWork is unbound (Ctrl+minus recent picker covers it).
+        (KeyCombo::plain("Tab"), Action::ToggleChatLayout),
         (KeyCombo::alt("d"), Action::ToggleDim),
         (KeyCombo::alt("t"), Action::ThemeNext),
         (KeyCombo::alt_shift("T"), Action::ThemePrev),
@@ -437,6 +439,14 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::ctrl_alt("i")), Some(&Action::ToggleTranslations));
         assert_eq!(m.get(&KeyCombo::ctrl("i")), Some(&Action::ToggleImageView));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("I")), Some(&Action::EnterPageCalibration));
+    }
+
+    #[test]
+    fn tab_toggles_chat_layout_and_minus_toggles_pause() {
+        let m = default_reader_bindings();
+        assert_eq!(m.get(&KeyCombo::plain("Tab")), Some(&Action::ToggleChatLayout));
+        assert_eq!(m.get(&KeyCombo::plain("minus")), Some(&Action::TogglePause));
+        assert_eq!(m.get(&KeyCombo::ctrl("minus")), Some(&Action::OpenRecentPicker));
     }
 
     #[test]

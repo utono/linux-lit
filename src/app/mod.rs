@@ -300,6 +300,8 @@ pub struct AppState {
     /// two-column mode. Mirrors `gutter_renderer` on the left `text_view`.
     pub right_gutter_renderer: Option<sourceview5::GutterRendererText>,
     pub content_hbox: gtk4::Box,
+    /// Chat layout (Tab): card pinned right, left chat panel visible.
+    pub chat_layout_open: bool,
     pub vbox: gtk4::Box,
     pub window: ApplicationWindow,
     pub config: Config,
@@ -1668,6 +1670,7 @@ pub fn build_window(
         right_line_number_renderer: None,
         right_gutter_renderer: None,
         content_hbox: content_hbox.clone(),
+        chat_layout_open: false,
         vbox: vbox.clone(),
         window: window.clone(),
         config,
@@ -2031,7 +2034,7 @@ pub fn build_window(
                         let cw = crate::app::layout::effective_column_width(&s);
                         let cc = s.column_count();
                         let tr = s.translations_visible;
-                        apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr);
+                        apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr, s.chat_layout_open);
                     }
                     return glib::ControlFlow::Continue;
                 }
@@ -2048,7 +2051,7 @@ pub fn build_window(
                     let cw = crate::app::layout::effective_column_width(&s);
                     let cc = s.column_count();
                     let tr = s.translations_visible;
-                    apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr);
+                    apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr, s.chat_layout_open);
                     apply_tiled_mode(&mut s, &vbox_for_tick, ww);
                     // In two-column mode the left/right text_view widths must
                     // have reflowed to their FINAL two-column geometry before
@@ -2154,7 +2157,7 @@ pub fn build_window(
                         let cw = crate::app::layout::effective_column_width(&s);
                         let cc = s.column_count();
                         let tr = s.translations_visible;
-                        apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr);
+                        apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr, s.chat_layout_open);
                         apply_tiled_mode(&mut s, &vbox_for_tick, ww);
                     }
                     if width_changed || height_changed {
