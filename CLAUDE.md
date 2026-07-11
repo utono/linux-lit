@@ -38,6 +38,9 @@ The app writes debug logs to:
 
 - **Dev build** (`cargo run`): `~/utono/linux-lit/linux-lit-dev.log`
 - **Release build**: `~/utono/linux-lit/linux-lit-release.log`
+- **Additional instances** (multi-instance slots): slot n≥2 writes a
+  `-{n}`-suffixed log (e.g. `linux-lit-dev-2.log`) — check which file has
+  fresh timestamps before trusting a tail.
 
 The log is cleared on every app launch. Use `log_fmt!()` macro (from `src/logging.rs`) to add log lines.
 
@@ -106,7 +109,7 @@ Clipping acceptance is pixel-level: verify on the real display (or the
 
 Verify changes compile with `cargo build` but do not run the app — the user will run `cargo run` themselves.
 
-**Important:** `cargo run` is for development only. Only run one instance at a time — multiple instances share the same log file and database, and restarting one won't update the other.
+**Important:** `cargo run` is for development only. Multiple instances are supported (per-process slots: own log suffix, own `i{n}-` MPV sockets, config merge-on-save), but remember a running instance predates any rebuild — restarting one instance won't update another.
 
 ```bash
 cargo build
@@ -126,11 +129,7 @@ exception below lets an agent verify GUI changes **without touching the user's
 live session**, by running the reader inside a throwaway headless compositor
 (`cage`) on its own Wayland socket and screenshotting it with `grim`.
 
-**This DOES work from the agent's own shell — prefer it over asking the user.**
-It has been run successfully mid-session (nested `cage` on `wayland-1` while the
-user's dwl held `wayland-0`, app rendered, `wtype` drove it, `grim` captured a
-real screenshot). Earlier notes saying "the agent can't launch cage / gets
-SIGTERM'd" are **stale/overcautious** — treat headless verify as a first resort
+**This DOES work from the agent's own shell — treat it as the first resort**
 for any on-screen acceptance criterion, and only fall back to asking the user
 (see *When to ASK THE USER* below) if a launch genuinely fails after a retry.
 The two gotchas that make it *look* broken are both handled below: the first
@@ -202,18 +201,14 @@ wtype "3"                          # send keystrokes to the focused reader
   explicit per-run log; trust the screenshot over any log when in doubt.
 - Then `Read` the PNG to inspect the result.
 
-### Useful key sequences for verification
+### Driving the reader in a headless run
 
-- `5` / `4` — next / previous chapter (jumps the cursor onto the `CHAPTER N`
-  heading). `3`/`2` step scenes/sections instead (`2` = first line of the
-  current scene/chapter, thereafter previous; `3` = next); bookmarks are on
-  `&`/`(`. Front matter (before Chapter 1) has chapter number 0 and no
-  synopsis, so `h` shows nothing there — advance into a chapter first.
-- `h` — open the synopsis overlay for the current chapter; `Ctrl+g` glosses.
-- `j` / `k` — scroll. While an overlay is open these scroll the overlay; with no
-  overlay they scroll the reading buffer. To stress overlay top/bottom clipping,
-  open the overlay then `j` repeatedly to reach the last line.
-- `Escape` — close the overlay.
+Key names drift — before scripting a drive, confirm the current binds in
+`src/input/keymap_config.rs` (plus the stowed `keymap.json` override). Stable
+behaviors worth knowing: front matter (before Chapter 1) has chapter number 0
+and no synopsis, so the synopsis key shows nothing there — advance into a
+chapter first; while an overlay is open, line-scroll keys scroll the overlay
+(not the buffer), and Escape closes it.
 
 ### Clean up
 
@@ -266,7 +261,9 @@ Design notes (so you don't re-derive them):
   aborts with a stack overflow.
 - **MPV is skipped in tests.** The harness sets `LIT_HEADLESS_TEST=1`;
   `launch_mpv` then does not spawn MPV at all — otherwise its window covers the
-  reader in the test compositor and the process leaks across runs.
+  reader in the test compositor and the process leaks across runs. NOTE:
+  `LIT_HEADLESS_TEST` does not stop the app CONNECTING to an already-running
+  live MPV socket — add `LIT_NO_MPV=1` in manual cage runs to fully isolate.
 - **Region via the app, not AT-SPI.** linux-lit's `sourceview5::View` exposes no
   AT-SPI Text interface, so the clipping detector can't auto-find the pane. On
   reveal (under `LIT_HEADLESS_TEST`) the app logs `TEST_VIEWPORT_RECT x y w h`
@@ -289,11 +286,6 @@ first-shot timing issue). If it truly won't launch, do **not** claim the change
 is verified — build, run `cargo test --bins` (the pure-logic suite), state
 plainly that the launch failed, and **ask the user to run the e2e command** and
 paste the result / screenshot.
-
-The old blanket claim "an agent cannot launch cage — the seat is owned / it gets
-SIGTERM'd" is **stale**; don't skip straight to asking. The SIGTERM/exit-144 case
-was usually the cleanup `pkill` (or a prior instance) killing the run, not the
-seat — launch first, and scope the eventual cleanup to `cage -- ...` only.
 
 Even when you CAN verify headlessly, the manual single-work launch is still worth
 handing to the user for a final eyeball on the real GL renderer (cage uses cairo
@@ -352,13 +344,18 @@ gating this).
 ## Key Files
 
 - `src/main.rs` — entry point, Tokio runtime, channel bridge, MPV event loop (TimePos, PlaybackState, ConnectionStatus)
-- `src/app.rs` — GTK4 window, AppState, display_work, clear_display, prepare_text_for_display
+- `src/app/mod.rs` — GTK4 window, AppState, display_work, the resize tick
+- `src/app/text_prep.rs` — text-file read/clean/prepare for display
+- `src/app/layout.rs` — card sizing/margins (`apply_card_sizing`, `main_card_rect`)
 - `src/config.rs` — ~/.config/linux-lit/config.json persistence
 - `src/input/keymap.rs` — key event routing, gg state machine, dispatch_action
 - `src/input/keymap_config.rs` — compiled-in default keybinds, keymap.json loader
 - `src/input/navigation.rs` — cursor movement, page turns, scroll logic
 - `src/input/actions/mod.rs` — Action enum with all reader-mode actions
-- `src/input/actions/concordance.rs` — concordance picker, cross-work navigation, r/R handlers
+- `src/input/actions/concordance.rs` — concordance picker, cross-work navigation, next/prev hit + vocab jump handlers
+- `src/input/actions/chat.rs` — chat layout (panel toggle, send/save/revision flows)
+- `src/input/segments.rs` — cursor-segment context for chat prompts
+- `src/input/vocab_loop.rs` — vocab-sentence drill loop mode
 - `src/input/actions/pickers.rs` — library/media/bookmark picker open/confirm handlers
 - `src/input/highlight.rs` — update_highlight, update_highlight_and_center
 - `src/input/scroll.rs` — set_page, set_page_instant, center_cursor
@@ -375,9 +372,10 @@ gating this).
 - `scripts/check_line_clipping.py` — fail-closed pixel line-clipping detector (`--region`)
 - `scripts/e2e-env.sh` — headless WLR/GTK env + dbus + AT-SPI registry wrapper
 - `src/input/scroll.rs::emit_test_viewport_rect` — logs `TEST_VIEWPORT_RECT` for the harness
-- `src/ui/library_picker.rs` — Ctrl+p work picker with fuzzy filter
-- `src/ui/concordance_picker.rs` — Ctrl+\ concordance word picker
-- `src/ui/media_picker.rs` — Ctrl+Shift+M media file picker
+- `src/ui/library_picker.rs` — work picker with fuzzy filter
+- `src/ui/concordance_picker.rs` — concordance word picker
+- `src/ui/media_picker.rs` — media file picker
+- `src/ui/chat_panel.rs` — left chat panel (chat layout)
 - `src/logging.rs` — file-based debug logging
 
 ## Keyboard Layout
@@ -398,7 +396,7 @@ When searching for a keybind in linux-lit, **always check source** — primarily
 
 Cross-work concordance navigation for searching word occurrences across an author's works.
 
-- **Ctrl+\\** — opens concordance picker with stopword-filtered word list for the current author
+- The concordance picker opens a stopword-filtered word list for the current author
 - Concordance hit stepping (cross-work, loads new work in-place) falls back to a "no concordance active" toast if no word selected, and seeks MPV to the hit line's own start time (not sentence start). ConcordanceNext is currently unbound by choice.
 - Vocab word jumps (next/prev, ignoring concordance state) enter the **vocab-sentence loop mode** on works whose playing media has `phrase_timestamps`: the sentence containing the vocab word repeats gaplessly (MPV ab-loop) with a static sentence tint (no karaoke sweep); stepping/pause/exit are modal. See `src/input/vocab_loop.rs`.
 - For the CURRENT keys of all of these, read `src/input/keymap_config.rs` (and the user's `keymap.json` override) — do not trust key names written in prose docs; they drift.
@@ -506,7 +504,7 @@ geometry. Audit with the `validate-play-pages` skill.
 - `AppState.mpv_connected` tracks whether an IPC connection is active
 - `AppState.mpv_playing` tracks playback state
 - `AppState.pending_loadfile_seek` stores a deferred seek that fires on the first `TimePos` event after `loadfile` (event-driven, not timer-based)
-- Socket paths are derived from media file paths: `/tmp/mpvsocket-{author}-{basename}`
+- Socket paths are derived from media file paths: `/tmp/mpvsocket-{author}-{basename}` (instance slots ≥2 prefix `i{n}-` so parallel instances never share a player)
 - `display_work` skips MPV discovery when `skip_mpv_discovery` is set (used by concordance cross-work jumps that open the media picker instead)
 
 Key files: `src/mpv/client.rs`, `src/mpv/commands.rs`, `src/mpv/discovery.rs`
@@ -606,11 +604,11 @@ the JSON keep their compiled-in default.
 ### Reader theme
 
 - linux-lit's theme is INDEPENDENT of the system-wide theme system. It is
-  stored in `config.json` (`theme`, default `kindle-sepia`); `Alt+t` /
-  `Alt+Shift+T` cycle `theme_cycle` (default: kindle-sepia, kindle-green,
-  zenbones-light, zenwritten-light). SIGUSR1 re-reads the app's OWN config
-  (external control: edit config.json, then `kill -USR1`). linux-lit never
-  reads or writes `~/utono/themes/.config/themes/.current_theme`.
+  stored in the app's own config (`theme` + `theme_cycle` — current defaults
+  live in `src/config.rs`; the stored config wins over compiled defaults).
+  Theme-next/prev binds cycle `theme_cycle`; SIGUSR1 re-reads the app's OWN
+  config (external control: edit the config, then `kill -USR1`). linux-lit
+  never reads or writes `~/utono/themes/.config/themes/.current_theme`.
 
 ## Reference Codebases
 
