@@ -3015,6 +3015,7 @@ pub fn display_work_at_with_prepared(
     // (`if state.vocab_highlight_visible { apply_vocab_highlighting }`) reads it.
     state.vocab_highlight_visible = work.vocab_highlight;
     state.current_work = Some(work);
+    crate::input::actions::chat::on_work_switched(state);
 
     // Build buffer text (with or without sign column)
     state.line_map = None;

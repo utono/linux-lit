@@ -51,11 +51,24 @@ pub(crate) fn close_chat_layout(s: &mut AppState) {
     if !s.chat_layout_open {
         return;
     }
+    s.chat = Default::default();
+    s.chat_panel.render_rows(&[]);
     s.chat_layout_open = false;
     reapply_card_margins(s);
     s.input_mode = crate::app::InputMode::Reader;
     s.chat_panel.hide();
     crate::logging::log("CHAT: layout closed");
+}
+
+/// Work switch with the panel open: history clears (context would be from
+/// another work), the panel stays open, header refreshes.
+pub(crate) fn on_work_switched(s: &mut AppState) {
+    if !s.chat_layout_open {
+        return;
+    }
+    s.chat = Default::default();
+    s.chat_panel.render_rows(&[]);
+    set_panel_header(s);
 }
 
 pub(crate) fn toggle_chat_layout(state_rc: &Rc<RefCell<AppState>>) {
