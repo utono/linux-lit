@@ -6,6 +6,10 @@ use crate::app::AppState;
 pub struct SelectionState {
     pub anchor_line: usize,
     pub cursor_line: usize,
+    /// True when visual mode was entered via Ctrl+a (AskPassage): Return then
+    /// confirms the Journal Q&A ask directly instead of opening the Action
+    /// menu. Extending the selection with j/k/G/gg keeps the flag.
+    pub pending_ask: bool,
 }
 
 impl SelectionState {
@@ -13,6 +17,7 @@ impl SelectionState {
         Self {
             anchor_line: line,
             cursor_line: line,
+            pending_ask: false,
         }
     }
 
@@ -104,6 +109,39 @@ pub fn enter_visual_mode(state: &mut AppState) {
     state.input_mode = crate::app::InputMode::Visual;
     crate::input::navigation::update_highlight_and_ensure_visible(state);
     crate::logging::log(&format!("VISUAL: entered at line {}", state.current_line));
+}
+
+/// Ctrl+a (AskPassage): enter visual mode with the blank-line-delimited block
+/// around the cursor pre-selected (prose paragraph / play speech incl. speaker
+/// label) and `pending_ask` set, so a second Ctrl+a or Return opens the
+/// Journal Q&A ask card directly. On a blank/separator line, falls back to a
+/// single-line selection (same as V), still flagged pending-ask.
+pub fn enter_visual_block_mode(state: &mut AppState) {
+    let line_count = state.effective_line_count();
+    if line_count == 0 {
+        return;
+    }
+    let cursor = state.current_line;
+    let bounds = {
+        let buffer = &state.buffer;
+        block_bounds(line_count, cursor, |idx| {
+            let text = crate::input::viewport::buffer_line_text(buffer, idx);
+            let t = text.trim();
+            t.is_empty() || crate::db::line_types::is_separator(t)
+        })
+    };
+    let (start, end) = bounds.unwrap_or((cursor, cursor));
+    state.visual_selection = Some(SelectionState {
+        anchor_line: start,
+        cursor_line: end,
+        pending_ask: true,
+    });
+    state.current_line = end;
+    state.input_mode = crate::app::InputMode::Visual;
+    crate::input::navigation::update_highlight_and_ensure_visible(state);
+    crate::logging::log(&format!(
+        "VISUAL: ask-block entered {}..{} (cursor was {})", start, end, cursor
+    ));
 }
 
 /// Yank (copy) the visual selection to clipboard, then exit visual mode.
