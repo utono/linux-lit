@@ -321,7 +321,7 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
         let source_markup =
             crate::input::actions::echoes::build_source_header(&seg.cursor_lines, &gctx.speaker);
         let (genre, unit, _units) = crate::gloss::genre_unit(&work.work_type);
-        let scene = crate::app::scene_synopsis::scene_label_for(&s, seg.div1, seg.div2);
+        let scene = crate::app::scene_synopsis::synopsis_label(&s, seg.div1, seg.div2);
         let mut unit_label = unit.to_string();
         if let Some(c) = unit_label.get_mut(0..1) {
             c.make_ascii_uppercase();
@@ -544,7 +544,7 @@ pub(crate) fn set_panel_header(s: &AppState) {
         .and_then(|wi| w.lines.get(wi))
         .map(|l| (l.div1, l.div2))
         .unwrap_or((0, 0));
-    let scene = crate::app::scene_synopsis::scene_label_for(s, d1, d2);
+    let scene = crate::app::scene_synopsis::synopsis_label(s, d1, d2);
     s.chat_panel.set_header(&w.title, &w.author, &scene);
 }
 
@@ -616,7 +616,7 @@ pub(crate) mod chat_revision {
                 return;
             };
             let Some(work) = s.current_work.as_ref() else { return };
-            let scene = crate::app::scene_synopsis::scene_label_for(&s, e.div1, e.div2);
+            let scene = crate::app::scene_synopsis::synopsis_label(&s, e.div1, e.div2);
             let context = format!(
                 "Work: {} by {}\nThis Q&A is filed under a PASSAGE in {}\n\nPassage:\n{}\n\nReturn the revised Q&A in exactly this format:\nQ: <revised question>\nA: <revised answer>",
                 work.title, work.author, scene, e.source_markup,
