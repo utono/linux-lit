@@ -316,6 +316,9 @@ pub struct AppState {
     /// a transient in-flight size (e.g. mid-reflow into a two-column work)
     /// rather than the compositor-settled width.
     pub chat_regate_pending: bool,
+    /// Where an open chat panel sits: pinned beside the card (single-column)
+    /// or floating over one reading column (two-column). Session-only.
+    pub chat_placement: crate::input::actions::chat::ChatPlacement,
     pub vbox: gtk4::Box,
     pub window: ApplicationWindow,
     pub config: Config,
@@ -735,6 +738,15 @@ impl AppState {
     /// translation lines. Paginating the inflated buffer with that bound yields
     /// degenerate (one-line) or underfilled spreads. The single-column scroll
     /// path walks the real buffer and handles translations correctly.
+    /// True only when the chat layout is open in its PINNED (single-column)
+    /// form — the only placement where the card yields space to the panel.
+    /// Float placements overlay a column and must NOT pin the card, so every
+    /// apply_card_sizing site reads this, not chat_layout_open.
+    pub fn chat_pinned(&self) -> bool {
+        self.chat_layout_open
+            && self.chat_placement == crate::input::actions::chat::ChatPlacement::Pinned
+    }
+
     pub fn column_count(&self) -> u8 {
         if !matches!(self.config.navigation_mode, crate::config::NavigationMode::EReader) {
             return 1;
@@ -1696,6 +1708,7 @@ pub fn build_window(
         content_hbox: content_hbox.clone(),
         chat_layout_open: false,
         chat_regate_pending: false,
+        chat_placement: crate::input::actions::chat::ChatPlacement::Pinned,
         vbox: vbox.clone(),
         window: window.clone(),
         config,
@@ -2061,7 +2074,7 @@ pub fn build_window(
                         let cw = crate::app::layout::effective_column_width(&s);
                         let cc = s.column_count();
                         let tr = s.translations_visible;
-                        apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr, s.chat_layout_open);
+                        apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr, s.chat_pinned());
                     }
                     return glib::ControlFlow::Continue;
                 }
@@ -2078,7 +2091,7 @@ pub fn build_window(
                     let cw = crate::app::layout::effective_column_width(&s);
                     let cc = s.column_count();
                     let tr = s.translations_visible;
-                    apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr, s.chat_layout_open);
+                    apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr, s.chat_pinned());
                     apply_tiled_mode(&mut s, &vbox_for_tick, ww);
                     // In two-column mode the left/right text_view widths must
                     // have reflowed to their FINAL two-column geometry before
@@ -2184,7 +2197,7 @@ pub fn build_window(
                         let cw = crate::app::layout::effective_column_width(&s);
                         let cc = s.column_count();
                         let tr = s.translations_visible;
-                        apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr, s.chat_layout_open);
+                        apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr, s.chat_pinned());
                         if s.chat_layout_open {
                             crate::input::actions::chat::size_panel(&s);
                         }
@@ -3079,7 +3092,7 @@ pub fn display_work_at_with_prepared(
         let cw = crate::app::layout::effective_column_width(state);
         let cc = state.column_count();
         let tr = state.translations_visible;
-        apply_card_sizing(&state.content_hbox.clone(), ww, cw, cc, tr, state.chat_layout_open);
+        apply_card_sizing(&state.content_hbox.clone(), ww, cw, cc, tr, state.chat_pinned());
     }
     apply_tiled_mode(state, &vbox, ww);
     // Non-prose works (plays, poems, epics) use tight 0px global spacing.

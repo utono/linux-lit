@@ -10,6 +10,16 @@ use std::rc::Rc;
 /// Minimum freed left space (px) required to open the chat layout.
 const CHAT_MIN_PANEL_W: i32 = 500;
 
+/// Where the open chat panel sits. Pinned = single-column layout (card pinned
+/// right, panel in the freed left space). Float* = two-column layout (panel
+/// overlays one reading column; the card is untouched).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ChatPlacement {
+    Pinned,
+    FloatLeft,
+    FloatRight,
+}
+
 /// One question/answer turn in the chat transcript.
 pub(crate) struct Exchange {
     pub question: String,
@@ -34,7 +44,8 @@ pub(crate) struct ChatState {
     pub pending: bool,
 }
 
-/// Re-apply the card margins for the current chat_layout_open value.
+/// Re-apply the card margins for the current chat placement. Only a PINNED
+/// open panel pins the card right; float placements leave the card alone.
 pub(crate) fn reapply_card_margins(s: &AppState) {
     let ww = s.window.width().max(0);
     crate::app::layout::apply_card_sizing(
@@ -43,7 +54,7 @@ pub(crate) fn reapply_card_margins(s: &AppState) {
         crate::app::layout::effective_column_width(s),
         s.column_count(),
         s.translations_visible,
-        s.chat_layout_open,
+        s.chat_pinned(),
     );
 }
 

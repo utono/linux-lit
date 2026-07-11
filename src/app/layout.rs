@@ -287,7 +287,7 @@ pub(crate) fn apply_column_layout(state: &mut AppState) {
     let cw = effective_column_width(state);
     let cc = state.column_count();
     let tr = state.translations_visible;
-    apply_card_sizing(&state.content_hbox, ww, cw, cc, tr, state.chat_layout_open);
+    apply_card_sizing(&state.content_hbox, ww, cw, cc, tr, state.chat_pinned());
     apply_tiled_mode(state, &vbox, ww);
     let two_col = state.column_count() == 2;
     state.right_scrolled_overlay.set_visible(two_col);

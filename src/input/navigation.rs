@@ -657,7 +657,7 @@ pub fn toggle_column_layout(state: &mut AppState) {
         crate::app::layout::effective_column_width(state),
         new_count,
         state.translations_visible,
-        state.chat_layout_open,
+        state.chat_pinned(),
     );
 
     // Page boundaries depend on column_count(); the cached page-tops index is
