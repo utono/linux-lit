@@ -170,6 +170,8 @@ pub enum Action {
     ToggleDim,
     /// Tab: toggle the left chat panel layout (card pins right).
     ToggleChatLayout,
+    /// Ctrl+l: flip a floating chat panel to the other reading column.
+    ChatPanelFlipSide,
     ThemeNext,
     ThemePrev,
     RootVariantNext,
@@ -285,6 +287,7 @@ impl Action {
             | Action::ToggleColumnLayout
             | Action::ToggleDim
             | Action::ToggleChatLayout
+            | Action::ChatPanelFlipSide
             | Action::ThemeNext
             | Action::ThemePrev
             | Action::RootVariantNext
@@ -429,6 +432,7 @@ impl Action {
             Action::TogglePreviousWork => "TogglePreviousWork",
             Action::ToggleDim => "ToggleDim",
             Action::ToggleChatLayout => "ToggleChatLayout",
+            Action::ChatPanelFlipSide => "ChatPanelFlipSide",
             Action::ThemeNext => "ThemeNext",
             Action::ThemePrev => "ThemePrev",
             Action::RootVariantNext => "RootVariantNext",

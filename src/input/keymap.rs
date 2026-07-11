@@ -1062,6 +1062,10 @@ fn handle_chat_prompt_key(
         crate::input::actions::chat::focus_transcript(&mut state.borrow_mut());
         return true;
     }
+    if key_name == "l" && is_ctrl {
+        crate::input::actions::chat::flip_panel_side(&mut state.borrow_mut());
+        return true;
+    }
     match ask_vim_intercept(
         true,
         key_name,
@@ -1104,6 +1108,10 @@ fn handle_chat_transcript_key(
         }
         "s" => {
             crate::input::actions::chat::save_selected_exchange(state);
+            true
+        }
+        "l" if is_ctrl => {
+            crate::input::actions::chat::flip_panel_side(&mut state.borrow_mut());
             true
         }
         "Escape" => {
@@ -3236,6 +3244,9 @@ fn dispatch_action(
             crate::logging::log(&format!("DIM: {}", if s.dim_enabled { "on" } else { "off" }));
         }
         ToggleChatLayout => crate::input::actions::chat::toggle_chat_layout(state),
+        ChatPanelFlipSide => {
+            crate::input::actions::chat::flip_panel_side(&mut state.borrow_mut())
+        }
         CycleScansion => {
             let mut s = state.borrow_mut();
             // Populate the cache on first use (or for a freshly loaded work).

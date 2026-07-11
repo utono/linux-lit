@@ -135,6 +135,21 @@ fn float_side_for_cursor(s: &AppState) -> ChatPlacement {
     }
 }
 
+/// Ctrl+l: flip a floating panel to the other column. No-op when closed or
+/// pinned (single-column has no "other side").
+pub(crate) fn flip_panel_side(s: &mut AppState) {
+    if !s.chat_layout_open {
+        return;
+    }
+    s.chat_placement = match s.chat_placement {
+        ChatPlacement::FloatLeft => ChatPlacement::FloatRight,
+        ChatPlacement::FloatRight => ChatPlacement::FloatLeft,
+        ChatPlacement::Pinned => return,
+    };
+    size_panel(s);
+    crate::logging::log(&format!("CHAT: panel flipped ({:?})", s.chat_placement));
+}
+
 /// Re-check the chat panel against the CURRENT settled geometry, converting
 /// the placement to match the new work's layout: a two-column target floats
 /// the panel over a column (never closes); a single-column target pins the

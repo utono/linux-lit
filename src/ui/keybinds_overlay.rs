@@ -58,7 +58,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key("g", "G", "", "", &[("C-g", "gloss tog"), ("S-C-g", "last gloss"), ("M-g", "gloss pick"), ("M-g", "gloss from jrnl"), ("C-g", "view gloss")]),
     key("c", "C", "toggle ch start", "C: show chapter", &[("C-c", "set track mark"), ("C-M-c", "conc list")]),
     key("r", "R", "next conc", "R: prev conc", &[("C-r", "next vocab"), ("S-C-r", "prev vocab"), ("M-r", "conc works")]),
-    key("l", "L", "toggle signs", "", &[("S-C-l", "save+quit"), ("l", "verse audio: play/stop"), ("L", "verse audio: pick voice")]),
+    key("l", "L", "toggle signs", "", &[("C-l", "chat side"), ("S-C-l", "save+quit"), ("l", "verse audio: play/stop"), ("L", "verse audio: pick voice")]),
     key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
     ub("@", "^"),
     key("\\", "#", "conc picker", "◀ vocab", &[("C-\\", "lib picker"), ("M-\\", "vocab hi")]),
@@ -492,6 +492,9 @@ newline-separated. \
         // ── Display toggles ──
         "toggle signs" => "Toggle the sign column (left gutter markers). \
 -> app::toggle_sign_column — src/app.rs",
+        "chat side" => "Flip the floating chat panel to the other reading \
+column (two-column works; no-op when pinned or closed). \
+-> chat::flip_panel_side — src/input/actions/chat.rs",
         "synopsis" => "Show the synopsis overlay for the current scene; its binds \
 are on its Ctrl+/ legend. \
 -> app::show_synopsis_overlay — src/app.rs; \
@@ -615,6 +618,7 @@ fn expand_action(label: &str) -> String {
         "vocab hi" => "toggle vocab highlight",
         "auto vocab" => "toggle auto-vocab popup",
         "toggle signs" => "toggle sign column",
+        "chat side" => "flip chat panel column",
         "sync tog" => "toggle playback sync",
         "dim tog" => "toggle dim",
         "debug log" => "toggle debug log",

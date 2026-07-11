@@ -347,6 +347,8 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl("w"), Action::ShowEchoTurnsShx),
         (KeyCombo::ctrl_shift("W"), Action::ReopenEchoesShx),
         (KeyCombo::ctrl("h"), Action::ToggleSynopsis),
+        // Ctrl+l: flip a floating chat panel to the other reading column.
+        (KeyCombo::ctrl("l"), Action::ChatPanelFlipSide),
         (KeyCombo::ctrl("comma"), Action::OpenSettingsOverlay),
     ]
 }
@@ -449,6 +451,13 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::plain("z")), None);
         assert_eq!(m.get(&KeyCombo::plain("numbersign")), Some(&Action::VocabPopupPrev));
         assert_eq!(m.get(&KeyCombo::plain("a")), Some(&Action::TogglePause));
+    }
+
+    #[test]
+    fn ctrl_l_flips_chat_panel_side() {
+        let m = default_reader_bindings();
+        assert_eq!(m.get(&KeyCombo::ctrl("l")), Some(&Action::ChatPanelFlipSide));
+        assert_eq!(m.get(&KeyCombo::plain("l")), Some(&Action::ToggleSignColumn));
     }
 
     #[test]
