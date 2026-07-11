@@ -528,7 +528,7 @@ pub(crate) mod chat_revision {
                 crate::ui::toast::show_transient(&s.chapter_toast, "Rewritten", 2);
             },
             move |st, msg| {
-                let mut s = st.borrow_mut();
+                let s = st.borrow_mut();
                 crate::ui::toast::show_transient(&s.chapter_toast, msg, 4);
                 // Restore the failed instruction for retry, mirroring
                 // submit_chat_prompt's error path.
