@@ -234,7 +234,7 @@ pub const FONT_CYCLE: &[&str] = &[
 pub const DEFAULT_THEME: &str = "kindle-sepia";
 
 fn default_theme_cycle() -> Vec<String> {
-    ["kindle-sepia", "kindle-green", "zenbones-light", "zenwritten-light"]
+    ["kindle-sepia", "kindle-green", "green-light", "green-lightest", "zenbones-light", "zenwritten-light"]
         .iter()
         .map(|s| s.to_string())
         .collect()
@@ -672,7 +672,14 @@ mod last_gloss_tests {
         let config = Config::default();
         assert_eq!(
             config.theme_cycle(),
-            vec!["kindle-sepia", "kindle-green", "zenbones-light", "zenwritten-light"]
+            vec![
+                "kindle-sepia",
+                "kindle-green",
+                "green-light",
+                "green-lightest",
+                "zenbones-light",
+                "zenwritten-light"
+            ]
         );
     }
 
