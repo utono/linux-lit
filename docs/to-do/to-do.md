@@ -19,6 +19,6 @@ completed. put a '\[X\]' to the left of a to-do item as they are completed.
 [X] like for kindle-sepia, based on kindle-green create a green-light and a green-lightest,
 with root color variants for each
 
-change '-' bind to do what 'z' currently does but instead of hiding the vocab popup after
+[X] change '-' bind to do what 'z' currently does but instead of hiding the vocab popup after
 a certain duration, do not hide it. 'ctrl+-' should hide the vocab popup. '-' should
 cycle through the words in the segment like does 'z'
