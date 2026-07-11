@@ -3,6 +3,9 @@
 Date: 2026-07-10
 Status: approved (brainstormed with visual mockups; treatment C selected)
 Mockups: `.superpowers/brainstorm/979386-1783729919/content/layout*.html`
+Updated 2026-07-10 after the `ask-passage` branch landed (Ctrl+a block-select →
+ask card, `docs/plans/2026-07-10-ask-passage-keybind-design.md`) — notes marked
+**[ask-passage]** reflect what that branch built or discovered.
 
 ## Overview
 
@@ -99,6 +102,21 @@ New helper `segment_context(state, n)` built on the pure `block_bounds`
 outward for `n = 2` neighbors on each side (truncating at chapter/buffer
 edges). The user message contains:
 
+**[ask-passage] Block discovery is buffer-structure-dependent — reuse the
+shipped rule, don't re-derive it.** The ask-passage branch found (via headless
+e2e on Bleak House) that the blank-line rule only works for `.txt`-built
+buffers; works with NO `text_file` (BH and all default DB-join prose) render
+one work row per buffer line with no blank lines at all, so a naive
+blank-line walk selects the entire 7306-line buffer.
+`visual::enter_visual_block_mode` already implements the correct dual rule:
+blank-line/separator boundaries when `current_work.text_file` is set,
+same-`work_line_for_buffer`-row boundaries otherwise. Factor that bounds
+computation out of `enter_visual_block_mode` into a shared
+`cursor_block_bounds(state) -> Option<(usize, usize)>` and build
+`segment_context` on it — the ±2 neighbor walk must use the SAME boundary
+semantics (next blank-delimited block on `.txt` buffers; next work row on
+DB-join buffers).
+
 - title, author, chapter/scene (`div1`/`div2`)
 - the five segments in order, the cursor's segment explicitly marked
 - the user's question
@@ -122,9 +140,17 @@ History resets on panel close and on work switch.
 
 1. Explore multi-turn until an exchange is worth keeping.
 2. With the transcript focused, `j`/`k` select an exchange; **`s`** saves it
-   to `journal_entries`: `scope='passage'`, `kind='qa'`, citations and
-   `source_text` from the segment context attached to that exchange,
+   via the existing `db::journal::save_passage_page` (the table is the
+   journal *pages* store — there is no `journal_entries` table): citations
+   and `source_text` from the segment context attached to that exchange,
    `claude_model` provenance, keyed by `Work.canonical_abbrev`.
+   **[ask-passage]** For the saved page to render correctly in the journal
+   overlay's passage band, derive the citation pair the way
+   `action_journal_qa` does — `gloss::build_context_for_type(work, lines,
+   "reader-gloss")` for `start_citation`/`end_citation`/`div1`/`div2` — and
+   store `source_text` as the same `<speaker>/<verse>` markup produced by
+   `echoes::build_source_header`. Matching both keeps chat-saved pages
+   indistinguishable from Ctrl+a ask-card pages in the band.
 3. The transcript then **clears and is replaced by the saved entry itself**
    (the stored Q and A rendered as the panel content).
 4. The input stays live; prompts are now **revision instructions** against
@@ -132,7 +158,16 @@ History resets on panel close and on work switch.
    the current entry text + the instruction + the original passage context,
    and returns a revised Q&A that replaces the panel content. Revisions may
    rewrite both the question and the answer.
-5. **`s` again UPDATEs the same journal row** (never a second insert).
+   **[ask-passage]** This machinery already exists: `journal.rs`'s
+   `rewrite_with_claude` (used by the ask card's vim `R` path) assembles
+   exactly this shape via `rewrite_context` + `rewrite_user_message`, saves,
+   snapshots `journal_undo`, and purges stale TTS audio. Reuse or lightly
+   generalize it rather than writing a parallel revision path.
+5. **`s` again UPDATEs the same journal row** (never a second insert) —
+   `db::journal::update_journal_page` already exists (the vim `:w` path uses
+   it); no new DB function is needed. **[ask-passage]** Any update MUST also
+   call `purge_journal_audio(conn, id)` as the existing save/rewrite paths
+   do, or the journal overlay replays stale cached TTS for the old answer.
    Revise → save iterates freely. The stored artifact is always exactly the
    model's latest output — the gloss `R`-rewrite pattern, no chat noise.
 6. Fresh start: Tab to the reader and ask a new question (or reopen the
@@ -143,10 +178,18 @@ changes there. A toast + `✓ saved` mark confirm each save/update.
 
 ## Keybind changes
 
-- `Tab` (reader): `TogglePause` → `ToggleChatLayout`
+- `Tab` (reader): `TogglePause` → `ToggleChatLayout`. (Pause stays reachable
+  on plain `a` regardless — Tab was a duplicate bind.)
 - `-` (reader): `TogglePreviousWork` → `TogglePause`; `TogglePreviousWork`
   retired (Ctrl+`-` recent picker remains)
 - `Ctrl+Tab`: unchanged binding; shadowed to "close chat panel" while open
+- **[ask-passage] `Ctrl+a` interplay (decide during implementation):**
+  reader-mode `Ctrl+a` now block-selects and opens the modal ask card
+  (second `Ctrl+a`/Return). With the chat panel open and the reader focused,
+  recommend `Ctrl+a` seed the chat prompt with the cursor block as its
+  context chip instead of opening the modal ask card — one Q&A entry point
+  per layout, no card-over-panel stacking. If the modal card is allowed over
+  the open panel instead, define which surface owns focus on its close.
 - Update **both** `keymap_config.rs` and the stowed
   `~/tty-dotfiles/linux-lit/.config/linux-lit/keymap.json`, plus the Ctrl+/
   keybinds overlay (keycaps + `describe()` arms — run
@@ -172,10 +215,13 @@ changes there. A toast + `✓ saved` mark confirm each save/update.
   handlers; session state (`Vec<Exchange>`: question, answer, context,
   saved-entry id)
 - `src/claude.rs` — add `send_chat`
-- `src/input/segments.rs` (or `visual.rs`) — `segment_context` on
-  `block_bounds` (pure)
+- `src/input/segments.rs` (or `visual.rs`) — `segment_context` on the shared
+  `cursor_block_bounds` factored out of `enter_visual_block_mode`
+  (**[ask-passage]** carries the text_file/DB-join dual boundary rule)
 - `src/app/layout.rs` — asymmetric margin branch in `apply_card_sizing`
-- `src/db/journal.rs` — `update_journal_entry` (UPDATE for the revision loop)
+- `src/db/journal.rs` — no new UPDATE needed: reuse `update_journal_page` +
+  `purge_journal_audio` (**[ask-passage]** both exist and are exercised by
+  the ask card's vim-save/rewrite paths)
 - keymap files + keybinds overlay as above
 
 ## Testing
