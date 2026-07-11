@@ -100,6 +100,38 @@ pub(crate) fn on_work_switched(s: &mut AppState) {
     crate::logging::log("CHAT: work switch — regate deferred");
 }
 
+/// Pure boundary test: is `line` rendered in the RIGHT column of a spread
+/// whose right column starts at `split` and whose last line is `end`?
+pub(crate) fn line_in_right_column(line: usize, split: Option<usize>, end: usize) -> bool {
+    split.is_some_and(|sp| line >= sp && line <= end)
+}
+
+/// Which column holds the cursor on the CURRENT spread. Table mode reads the
+/// stored spread (authoritative); live mode falls back to column_split. Both
+/// are (div1,div2)-derived boundaries — never text inference.
+fn cursor_in_right_column(s: &AppState) -> bool {
+    let line = s.current_line;
+    if let Some(table) = crate::input::page_table::active_page_table(s) {
+        if let Some(sp) = crate::input::page_table::spread_for_top(&table, s.page_top_line) {
+            return line_in_right_column(line, sp.split, sp.end);
+        }
+    }
+    let cs = crate::input::viewport::column_split(s, s.page_top_line);
+    // Live ColumnSplit encodes "no right column" as split > page_end
+    // (see the table synthesis in scroll.rs); normalize to Option.
+    let split = (cs.split <= cs.page_end).then_some(cs.split);
+    line_in_right_column(line, split, cs.page_end)
+}
+
+/// The float side that does NOT cover the cursor's column.
+fn float_side_for_cursor(s: &AppState) -> ChatPlacement {
+    if cursor_in_right_column(s) {
+        ChatPlacement::FloatLeft
+    } else {
+        ChatPlacement::FloatRight
+    }
+}
+
 /// Re-check the chat panel against the CURRENT settled geometry: close with
 /// a toast when the freed left space is too tight (e.g. after switching to a
 /// two-column play), else re-size the panel to the new card rect.
@@ -572,5 +604,19 @@ pub(crate) mod chat_revision {
                 s.chat_panel.paste_input_text(&instruction_err);
             },
         );
+    }
+}
+
+#[cfg(test)]
+mod placement_tests {
+    use super::*;
+
+    #[test]
+    fn line_in_right_column_respects_split_and_end() {
+        assert!(!line_in_right_column(5, None, 40)); // no right column
+        assert!(!line_in_right_column(5, Some(20), 40)); // left side
+        assert!(line_in_right_column(20, Some(20), 40)); // first right line
+        assert!(line_in_right_column(40, Some(20), 40)); // last line
+        assert!(!line_in_right_column(41, Some(20), 40)); // off-page
     }
 }
