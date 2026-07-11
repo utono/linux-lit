@@ -55,10 +55,10 @@ const UPPER_ROW: &[KeyDef] = &[
     key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("S-C-p", "conc word"), ("M-p", "phrase hl")]),
     key("y", "Y", "pg back", "", &[("C-y", "copy id")]),
     key("f", "F", "next font", "F: prev font", &[("M-f", "font info")]),
-    key("g", "G", "", "G: go to end", &[("C-g", "gloss tog"), ("S-C-g", "last gloss"), ("M-g", "gloss pick"), ("M-g", "gloss from jrnl"), ("C-g", "view gloss")]),
+    key("g", "G", "", "G: go to end", &[("C-g", "gloss tog"), ("S-C-g", "last gloss"), ("M-g", "gloss pick")]),
     key("c", "C", "toggle ch start", "C: show chapter", &[("C-c", "set track mark"), ("C-M-c", "conc list")]),
     key("r", "R", "vocab \u{25b6}", "R: prev conc", &[("C-r", "hide vocab"), ("S-C-r", "prev vocab"), ("M-r", "conc works")]),
-    key("l", "L", "toggle signs", "", &[("C-l", "chat side"), ("S-C-l", "save+quit"), ("l", "verse audio: play/stop"), ("L", "verse audio: pick voice")]),
+    key("l", "L", "toggle signs", "", &[("C-l", "chat side"), ("S-C-l", "save+quit")]),
     key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
     ub("@", "^"),
     key("\\", "#", "conc picker", "", &[("C-\\", "lib picker"), ("M-\\", "vocab hi")]),
@@ -68,7 +68,7 @@ const TAB_KEY: KeyDef = key("Tab", "", "chat layout", "", &[("C-Tab", "last over
 const HOME_ROW: &[KeyDef] = &[
     key("a", "A", "play/pause", "A: authorship", &[("C-a", "ask passage"), ("S-C-a", "attr set")]),
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
-    key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echoes"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echo turns"), ("e", "synopsis edit (vim)")]),
+    key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echoes"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echo turns")]),
     key("u", "U", "start time", "U: undo ts", &[("M-u", "set end time")]),
     key("i", "I", "2-col translation", "", &[("M-i", "scansion"), ("C-M-i", "inline translation"), ("C-i", "page image"), ("S-C-i", "calibrate pages")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
@@ -83,13 +83,13 @@ const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 const BOTTOM_ROW: &[KeyDef] = &[
     bare("'", "\"", "next bkmk"),
     key("q", "Q", "next speaker", "Q: next dlg", &[]),
-    key("j", "J", "cursor \u{2193}", "J: next speaker", &[("C-j", "journal tog"), ("M-j", "jrnl Q&A picker"), ("C-j", "view jrnl"), ("C-S-j", "move jrnl band")]),
+    key("j", "J", "cursor \u{2193}", "J: next speaker", &[("C-j", "journal tog"), ("M-j", "jrnl Q&A picker")]),
     key("k", "K", "cursor \u{2191}", "K: prev speaker", &[]),
     bare("x", "X", "pg fwd"),
     bare("b", "B", ""),
     key("m", "M", "bookmark", "", &[("C-m", "media picker")]),
     key("w", "W", "copy word", "W: collect", &[("M-w", "Shx echoes"), ("C-w", "Shx echo turns"), ("S-C-w", "reopen Shx echoes")]),
-    key("v", "V", "vim copy", "V: visual mode", &[("v", "voice: add/remove"), ("C-v", "voice: cycle")]),
+    key("v", "V", "vim copy", "V: visual mode", &[]),
     bare("z", "Z", ""),
 ];
 
@@ -337,22 +337,6 @@ panel for journal Q&A. \
 -> journal::open_picker_from_reader — src/input/actions/journal.rs",
         "last gloss" => "Reopen the most recently viewed gloss in this work. \
 -> gloss::open_last_gloss — src/input/actions/gloss.rs",
-        // ── Gloss ↔ journal cross-view (Task 7) ──
-        "gloss from jrnl" => "On a journal passage page (Alt+g): open (or create) \
-the reader-gloss for the cited passage. \
--> journal::action_gloss_from_journal_passage \
-\u{2014} src/input/actions/journal.rs",
-        "view jrnl" => "From the gloss overlay (Ctrl+j): open the journal pages \
-for the gloss's passage. \
--> journal::view_journal_from_gloss \
-\u{2014} src/input/actions/journal.rs",
-        "move jrnl band" => "From the journal overlay (Ctrl+Shift+J): move the \
-current Q&A page to another band. \
--> journal::open_move_picker / confirm_move_picker \u{2014} src/input/actions/journal.rs",
-        "view gloss" => "On a journal passage page (Ctrl+g / Ctrl+j): open the \
-gloss for the cited passage. \
--> journal::view_gloss_from_journal \
-\u{2014} src/input/actions/journal.rs",
         "BCP echo turns" => "Pick a speaker turn with cached BCP echoes and reopen \
 them. -> echoes::open_echo_turns_picker(Bcp) \
 — src/input/actions/echoes.rs (confirm: echoes::confirm_echo_turns_pick)",
@@ -367,16 +351,6 @@ and reopen them. \
 -> echoes::show_echoes_for_cursor_line(Shakespeare) — src/input/actions/echoes.rs",
         "reopen Shx echoes" => "Reopen the last Shakespeare echo results. \
 -> echoes::reopen_echoes(Shakespeare) — src/input/actions/echoes.rs",
-        "voice: add/remove" => "In the gloss overlay: add or remove a voice for \
-this gloss. -> open_voice_picker(GlossOverlay) — src/input/actions/settings.rs",
-        "voice: cycle" => "In the gloss overlay: cycle the gloss's active voice. \
--> cycle_active_voice — src/input/actions/gloss.rs",
-        "verse audio: play/stop" => "In the gloss overlay: play/stop the \
-synthesized reading of the source verse (pauses MPV first). \
--> toggle_source_tts — src/input/actions/gloss.rs",
-        "verse audio: pick voice" => "In the gloss overlay: pick the voice for \
-the synthesized verse reading and play it. \
--> pick_source_voice — src/input/actions/gloss.rs",
 
         // ── Vocab ──
         "prev conc" => "Previous concordance hit for the active word (cross-work). \
@@ -506,10 +480,6 @@ gloss::read_current_synopsis_block, gloss::synth_all_synopsis_blocks \
 the side panel via app::toggle_synopsis).",
         "synopsis side" => "Toggle the persistent synopsis side panel. \
 -> app::toggle_synopsis — src/app.rs",
-        "synopsis edit (vim)" => "In the synopsis overlay: e edits the synopsis \
-in a modal vim editor; R opens the ask-Claude rewrite card. \
--> synopsis::begin_edit (R -> show_edit_prompt) — \
-src/input/actions/synopsis.rs",
         "col layout" => "Toggle one-column / two-column (spread) layout. \
 -> navigation::toggle_column_layout — src/input/navigation.rs",
         "ask passage" => "Auto-select the paragraph (prose) or speech (plays) \
