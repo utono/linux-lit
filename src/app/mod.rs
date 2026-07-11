@@ -598,6 +598,7 @@ pub struct AppState {
     pub title_bar_label: gtk4::Label,
     pub title_bar_scene_label: gtk4::Label,
     pub chat_panel: crate::ui::chat_panel::ChatPanel,
+    pub chat: crate::input::actions::chat::ChatState,
     /// Index of the current sentence group (for prose with text_file).
     pub current_sentence_group: Option<usize>,
     /// Tracks the start line of the current paragraph to detect transitions.
@@ -1851,6 +1852,7 @@ pub fn build_window(
         title_bar_label,
         title_bar_scene_label,
         chat_panel,
+        chat: Default::default(),
         current_sentence_group: None,
         current_paragraph_start: None,
         current_sync_scene: None,

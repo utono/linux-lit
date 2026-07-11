@@ -10,6 +10,30 @@ use std::rc::Rc;
 /// Minimum freed left space (px) required to open the chat layout.
 const CHAT_MIN_PANEL_W: i32 = 500;
 
+/// One question/answer turn in the chat transcript.
+pub(crate) struct Exchange {
+    pub question: String,
+    pub answer: String,
+    pub chip: String,
+    pub user_msg: String,
+    pub div1: i64,
+    pub div2: i64,
+    pub start_citation: String,
+    pub end_citation: String,
+    pub source_markup: String,
+    pub saved_id: Option<i64>,
+}
+
+/// Chat-layout session state: the transcript of exchanges, the selected
+/// exchange (for save/revision), and whether a request is in flight.
+#[derive(Default)]
+pub(crate) struct ChatState {
+    pub exchanges: Vec<Exchange>,
+    pub cursor: usize,
+    pub revision_of: Option<i64>,
+    pub pending: bool,
+}
+
 /// Re-apply the card margins for the current chat_layout_open value.
 pub(crate) fn reapply_card_margins(s: &AppState) {
     let ww = s.window.width().max(0);
@@ -87,16 +111,165 @@ pub(crate) fn focus_reader(s: &mut AppState) {
     s.input_mode = crate::app::InputMode::Reader;
 }
 
-/// Submit the chat prompt's current text as a new turn. Stubbed here (toast);
-/// implemented in Task 6.
+/// Submit the chat prompt's current text as a new turn: builds the segment
+/// context + gloss context for the cursor's passage, assembles the multi-turn
+/// history from prior exchanges, and dispatches the Claude chat request.
 pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
-    let s = state_rc.borrow();
-    crate::ui::toast::show_transient(&s.chapter_toast, "Chat send lands in the next task", 2);
+    // Revision mode: the prompt text is an instruction, not a question.
+    if state_rc.borrow().chat.revision_of.is_some() {
+        chat_revision::submit_revision(state_rc);
+        return;
+    }
+    let (question, system, user_msg, turns, model, chip, meta) = {
+        let s = state_rc.borrow();
+        if s.chat.pending {
+            crate::ui::toast::show_transient(&s.chapter_toast, "Waiting for the previous reply\u{2026}", 2);
+            return;
+        }
+        let question = s.chat_panel.take_input_text().trim().to_string();
+        if question.is_empty() {
+            return;
+        }
+        let Some(work) = s.current_work.as_ref() else { return };
+        let Some(seg) = crate::input::segments::segment_context(&s, 2) else {
+            crate::ui::toast::show_transient(&s.chapter_toast, "No passage at the cursor", 2);
+            return;
+        };
+        let Some(gctx) = crate::gloss::build_context_for_type(work, &seg.cursor_lines, "reader-gloss") else {
+            crate::ui::toast::show_transient(&s.chapter_toast, "No passage at the cursor", 2);
+            return;
+        };
+        let source_markup =
+            crate::input::actions::echoes::build_source_header(&seg.cursor_lines, &gctx.speaker);
+        let (genre, unit, _units) = crate::gloss::genre_unit(&work.work_type);
+        let scene = crate::app::scene_synopsis::scene_label_for(&s, seg.div1, seg.div2);
+        let mut unit_label = unit.to_string();
+        if let Some(c) = unit_label.get_mut(0..1) {
+            c.make_ascii_uppercase();
+        }
+        let user_msg = crate::input::segments::chat_user_message(
+            genre, &work.title, &work.author, &unit_label, &scene,
+            &seg.segments, seg.cursor_index, &question,
+        );
+        // Prior turns: each exchange contributes its full user_msg (context
+        // embedded, so history stays coherent as the cursor moves) + answer.
+        let mut turns: Vec<crate::claude::ChatTurn> = Vec::new();
+        for e in &s.chat.exchanges {
+            turns.push(crate::claude::ChatTurn { role: "user", content: e.user_msg.clone() });
+            turns.push(crate::claude::ChatTurn { role: "assistant", content: e.answer.clone() });
+        }
+        turns.push(crate::claude::ChatTurn { role: "user", content: user_msg.clone() });
+        let chip: String = seg.segments[seg.cursor_index].chars().take(120).collect();
+        let meta = (
+            seg.div1,
+            seg.div2,
+            gctx.start_citation.clone(),
+            gctx.end_citation.clone(),
+            source_markup,
+        );
+        (
+            question,
+            crate::gloss::journal_qa_prompt(&work.work_type),
+            user_msg,
+            turns,
+            s.config.claude_model.clone(),
+            chip,
+            meta,
+        )
+    };
+
+    {
+        let mut s = state_rc.borrow_mut();
+        s.chat.pending = true;
+        render_transcript_with_thinking(&s, &question, &chip);
+    }
+
+    let (div1, div2, start_citation, end_citation, source_markup) = meta;
+    let question_ok = question.clone();
+    let question_err = question;
+    crate::input::actions::claude_bridge::run_claude_chat_request(
+        state_rc,
+        system,
+        turns,
+        model,
+        move |st, answer| {
+            let mut s = st.borrow_mut();
+            s.chat.pending = false;
+            s.chat.exchanges.push(Exchange {
+                question: question_ok.clone(),
+                answer,
+                chip: chip.clone(),
+                user_msg: user_msg.clone(),
+                div1,
+                div2,
+                start_citation: start_citation.clone(),
+                end_citation: end_citation.clone(),
+                source_markup: source_markup.clone(),
+                saved_id: None,
+            });
+            s.chat.cursor = s.chat.exchanges.len() - 1;
+            render_transcript(&s);
+        },
+        move |st, msg| {
+            let mut s = st.borrow_mut();
+            s.chat.pending = false;
+            render_transcript_with_error(&s, msg);
+            // Restore the failed question for retry.
+            s.chat_panel.paste_input_text(&question_err);
+        },
+    );
 }
 
-/// Move the transcript exchange cursor by `delta`. Stubbed here; implemented
-/// in a later task.
-pub(crate) fn transcript_cursor_move(_s: &mut AppState, _delta: i32) {}
+fn transcript_rows(s: &AppState) -> Vec<crate::ui::chat_panel::TranscriptRow> {
+    use crate::ui::chat_panel::TranscriptRow as R;
+    let mut rows = Vec::new();
+    let mut prev_chip: Option<&str> = None;
+    for (i, e) in s.chat.exchanges.iter().enumerate() {
+        if prev_chip != Some(e.chip.as_str()) {
+            rows.push(R::Chip(e.chip.clone()));
+        }
+        prev_chip = Some(e.chip.as_str());
+        let marker = if i == s.chat.cursor { "\u{25b8} " } else { "" };
+        rows.push(R::Question(format!("{}Q: {}", marker, e.question)));
+        rows.push(R::Answer(e.answer.clone()));
+        if e.saved_id.is_some() {
+            rows.push(R::SavedMark);
+        }
+    }
+    rows
+}
+
+pub(crate) fn render_transcript(s: &AppState) {
+    s.chat_panel.render_rows(&transcript_rows(s));
+}
+
+fn render_transcript_with_thinking(s: &AppState, question: &str, chip: &str) {
+    use crate::ui::chat_panel::TranscriptRow as R;
+    let mut rows = transcript_rows(s);
+    rows.push(R::Chip(chip.to_string()));
+    rows.push(R::Question(format!("Q: {}", question)));
+    rows.push(R::Thinking);
+    s.chat_panel.render_rows(&rows);
+}
+
+fn render_transcript_with_error(s: &AppState, msg: &str) {
+    use crate::ui::chat_panel::TranscriptRow as R;
+    let mut rows = transcript_rows(s);
+    rows.push(R::Error(msg.to_string()));
+    s.chat_panel.render_rows(&rows);
+}
+
+/// Move the transcript exchange cursor by `delta`, clamped to bounds, and
+/// re-render.
+pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
+    let n = s.chat.exchanges.len();
+    if n == 0 {
+        return;
+    }
+    let cur = s.chat.cursor as i32 + delta;
+    s.chat.cursor = cur.clamp(0, n as i32 - 1) as usize;
+    render_transcript(s);
+}
 
 /// Save the transcript's currently selected exchange. Stubbed here; implemented
 /// in Task 7.
@@ -126,4 +299,15 @@ pub(crate) fn set_panel_header(s: &AppState) {
         .unwrap_or((0, 0));
     let scene = crate::app::scene_synopsis::scene_label_for(s, d1, d2);
     s.chat_panel.set_header(&w.title, &w.author, &scene);
+}
+
+// TEMPORARY (Task 6): `chat_revision::submit_revision` is consumed by
+// `submit_chat_prompt`'s revision-mode branch but not implemented until
+// Task 8. This stub keeps the build green in the meantime.
+pub(crate) mod chat_revision {
+    use super::*;
+    pub(crate) fn submit_revision(state_rc: &Rc<RefCell<AppState>>) {
+        let s = state_rc.borrow();
+        crate::ui::toast::show_transient(&s.chapter_toast, "Revision lands in a later task", 2);
+    }
 }
