@@ -271,11 +271,53 @@ pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
     render_transcript(s);
 }
 
-/// Save the transcript's currently selected exchange. Stubbed here; implemented
-/// in Task 7.
+/// `s` on the transcript: save the selected exchange as a passage journal
+/// page, mark it, and pivot the panel into the revision loop on that entry.
 pub(crate) fn save_selected_exchange(state_rc: &Rc<RefCell<AppState>>) {
-    let s = state_rc.borrow();
-    crate::ui::toast::show_transient(&s.chapter_toast, "Save lands in a later task", 2);
+    let mut s = state_rc.borrow_mut();
+    let idx = s.chat.cursor;
+    let Some(e) = s.chat.exchanges.get(idx) else { return };
+    let Some(work) = s.current_work.as_ref() else { return };
+    let abbrev = work.canonical_abbrev.clone();
+    let model = s.config.claude_model.clone();
+    let (q, a) = (e.question.clone(), e.answer.clone());
+    let saved = crate::db::queries::open_db_rw().and_then(|conn| {
+        crate::db::journal::save_passage_page(
+            &conn, &abbrev, e.div1, e.div2,
+            &e.start_citation, &e.end_citation, &e.source_markup,
+            &e.question, &e.answer, &model,
+        )
+    });
+    match saved {
+        Ok(id) => {
+            s.chat.exchanges[idx].saved_id = Some(id);
+            s.chat.revision_of = Some(id);
+            render_saved_entry(&s, &q, &a);
+            s.chat_panel.open_input(
+                "Revise this entry",
+                "Ctrl+Enter send \u{b7} s update \u{b7} Tab cycle",
+                &s.theme.cursor_bg,
+                &s.theme.cursor_fg,
+            );
+            s.input_mode = crate::app::InputMode::ChatPrompt;
+            crate::ui::toast::show_transient(&s.chapter_toast, "Saved", 2);
+            crate::logging::log(&format!("CHAT: saved exchange as journal page {}", id));
+        }
+        Err(err) => {
+            crate::ui::toast::show_transient(&s.chapter_toast, "Save failed", 3);
+            crate::logging::log(&format!("CHAT: save failed: {}", err));
+        }
+    }
+}
+
+/// Revision view: the panel content IS the saved entry (Q + A), no history.
+pub(crate) fn render_saved_entry(s: &AppState, question: &str, answer: &str) {
+    use crate::ui::chat_panel::TranscriptRow as R;
+    s.chat_panel.render_rows(&[
+        R::SavedMark,
+        R::Question(format!("Q: {}", question)),
+        R::Answer(answer.to_string()),
+    ]);
 }
 
 /// Size the panel to the freed left space at the card's height.

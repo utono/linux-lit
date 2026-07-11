@@ -1494,7 +1494,7 @@ pub(crate) fn confirm_move_picker(state: &Rc<RefCell<AppState>>) {
 /// not enabled app-wide. Called when an entry is DELETED and also when its answer
 /// is EDITED/REWRITTEN — the cached per-paragraph audio no longer matches the new
 /// text, so it must be dropped or Space would replay the stale take.
-fn purge_journal_audio(conn: &rusqlite::Connection, id: i64) {
+pub(crate) fn purge_journal_audio(conn: &rusqlite::Connection, id: i64) {
     if let Ok(paths) = crate::db::queries::delete_journal_audio(conn, id) {
         for p in paths {
             let _ = std::fs::remove_file(&p);
