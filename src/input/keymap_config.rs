@@ -393,6 +393,11 @@ fn app_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::shift("slash"), Action::OpenSearchBackward),
         (KeyCombo::ctrl_shift("L"), Action::SaveAndQuit),
         (KeyCombo::ctrl("y"), Action::CopyLineMappingId),
+        // Shift+'+' — copy work abbrev + active media path + large whisperX
+        // JSON. The RPD number-row plus key (<AE01>) delivers `1` at the
+        // shift level; bind both delivery forms (cf. `question` above).
+        (KeyCombo::shift("1"), Action::CopyWorkInfo),
+        (KeyCombo::plain("1"), Action::CopyWorkInfo),
         (KeyCombo::plain("n"), Action::SearchNextMatch),
         (KeyCombo::plain("N"), Action::SearchPrevMatch),
     ]
@@ -485,6 +490,10 @@ mod tests {
         // the current act/scene or chapter (swapped in e42fd92).
         assert_eq!(km.lookup("colon", false, true, false), Some(Action::TogglePlaybackSpeed));
         assert_eq!(km.lookup("plus", false, false, false), Some(Action::ShowCurrentChapter));
+        // Shift+'+' (the shifted `1` glyph on RPD <AE01>) copies the work
+        // abbrev + media path + large whisperX JSON; both delivery forms.
+        assert_eq!(km.lookup("1", false, true, false), Some(Action::CopyWorkInfo));
+        assert_eq!(km.lookup("1", false, false, false), Some(Action::CopyWorkInfo));
     }
 
     #[test]

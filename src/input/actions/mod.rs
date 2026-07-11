@@ -188,6 +188,7 @@ pub enum Action {
     ToggleDebugLogging,
     ToggleNavTest,
     CopyLineMappingId,
+    CopyWorkInfo,
     EscapeReaderMode,
 
     // Multi-key chords (entry — completion handled by KeyState)
@@ -313,6 +314,7 @@ impl Action {
             | Action::ToggleDebugLogging
             | Action::ToggleNavTest
             | Action::CopyLineMappingId
+            | Action::CopyWorkInfo
             | Action::EscapeReaderMode
             | Action::PendingG
             | Action::SearchNextMatch
@@ -435,6 +437,7 @@ impl Action {
             Action::ToggleDebugLogging => "ToggleDebugLogging",
             Action::ToggleNavTest => "ToggleNavTest",
             Action::CopyLineMappingId => "CopyLineMappingId",
+            Action::CopyWorkInfo => "CopyWorkInfo",
             Action::EscapeReaderMode => "EscapeReaderMode",
             Action::PendingG => "PendingG",
             Action::SearchNextMatch => "SearchNextMatch",

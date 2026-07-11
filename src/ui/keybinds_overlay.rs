@@ -33,7 +33,7 @@ const fn bare(unshifted: &'static str, shifted: &'static str, action: &'static s
 
 const NUMBER_ROW: &[KeyDef] = &[
     ub("$", "~"),
-    bare("+", "1", "show chapter"),
+    key("+", "1", "show chapter", "1: copy work info", &[]),
     key("[", "2", "prev scene", "2: prev ch", &[("M-[", "col layout")]),
     key("{", "3", "next scene", "3: next ch", &[]),
     key("(", "4", "prev bkmk", "4: prev ch", &[]),
@@ -455,6 +455,10 @@ begins a structural chapter (distinct from Ctrl+c's audio track mark). \
 -> chapters::toggle_chapter_start — src/input/actions/chapters.rs",
         "show chapter" => "Toast the current act/scene or chapter. \
 -> navigation::show_current_chapter — src/input/navigation.rs",
+        "copy work info" => "Copy the work abbrev, the active media file path, \
+and its large-model whisperX transcript JSON (if present) to the clipboard, \
+newline-separated. \
+-> CopyWorkInfo arm (inline) — src/input/keymap.rs",
         "delete ts" => "Delete the current line's timestamp (undoable). \
 -> timestamps::delete_timestamp — src/input/timestamps.rs",
         "undo ts" => "Undo the last timestamp edit. \
@@ -610,6 +614,7 @@ fn expand_action(label: &str) -> String {
         "set track mark" => "set audio track mark",
         "toggle ch start" => "toggle structural chapter",
         "show chapter" => "show current chapter",
+        "copy work info" => "copy abbrev + media + whisperX",
         "bookmarks" => "bookmark picker",
         "start time" => "set start time",
         "set end time" => "set end time",

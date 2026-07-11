@@ -2893,6 +2893,29 @@ fn handle_visual_key(
     }
 }
 
+/// Locate the large-model whisperX transcript for a media file:
+/// `<media dir>/whisperx-cache/<stem>.whisperX-transcript-large-v3*.json`
+/// (the trailing `*` covers language suffixes like `.en`). Returns the first
+/// match sorted by name, or None — smaller models (medium) never substitute.
+fn find_large_whisperx_json(media_path: &str) -> Option<String> {
+    let p = std::path::Path::new(media_path);
+    let stem = p.file_stem()?.to_str()?;
+    let cache = p.parent()?.join("whisperx-cache");
+    let prefix = format!("{}.whisperX-transcript-large-v3", stem);
+    let mut hits: Vec<String> = std::fs::read_dir(&cache)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with(&prefix) && name.ends_with(".json")
+        })
+        .map(|e| e.path().to_string_lossy().into_owned())
+        .collect();
+    hits.sort();
+    hits.into_iter().next()
+}
+
 /// Execute an Action by calling its corresponding verb. The key is always
 /// consumed when a mapped action is dispatched.
 fn dispatch_action(
@@ -3236,6 +3259,55 @@ fn dispatch_action(
             s.speed_toast.set_margin_start(0);
             s.speed_toast.set_margin_end(0);
             crate::ui::toast::show_transient(&s.speed_toast, &format!("Copied {}", clip), 3);
+        }
+        CopyWorkInfo => {
+            let s = state.borrow();
+            let Some(work) = s.current_work.as_ref() else { return };
+            let abbrev = work.abbrev.clone();
+            // Active media: the path whose media_id matches the playing one,
+            // else the work's primary media.
+            let media_path = s
+                .media_id
+                .and_then(|mid| {
+                    work.media_ids
+                        .iter()
+                        .position(|&m| m == mid)
+                        .and_then(|i| work.media_paths.get(i))
+                })
+                .or_else(|| work.media_paths.first())
+                .cloned();
+            drop(s);
+            let whisperx = media_path.as_deref().and_then(find_large_whisperx_json);
+            let mut clip = abbrev.clone();
+            if let Some(ref mp) = media_path {
+                clip.push('\n');
+                clip.push_str(mp);
+            }
+            if let Some(ref wx) = whisperx {
+                clip.push('\n');
+                clip.push_str(wx);
+            }
+            if let Ok(mut child) = std::process::Command::new("wl-copy")
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+            {
+                use std::io::Write;
+                if let Some(ref mut stdin) = child.stdin {
+                    let _ = stdin.write_all(clip.as_bytes());
+                }
+                let _ = child.wait();
+            }
+            crate::logging::log(&format!("CLIPBOARD: copied work info {}", clip.replace('\n', " | ")));
+            let msg = match (media_path.is_some(), whisperx.is_some()) {
+                (true, true) => format!("Copied {} + media + whisperX", abbrev),
+                (true, false) => format!("Copied {} + media (no large whisperX)", abbrev),
+                (false, _) => format!("Copied {} (no media)", abbrev),
+            };
+            let s = state.borrow();
+            s.speed_toast.set_halign(gtk4::Align::Center);
+            s.speed_toast.set_margin_start(0);
+            s.speed_toast.set_margin_end(0);
+            crate::ui::toast::show_transient(&s.speed_toast, &msg, 3);
         }
 
         // Multi-key chord entry
