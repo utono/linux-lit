@@ -464,7 +464,7 @@ fn action_external_command(state: &mut AppState, command: &str) {
 }
 
 
-fn action_journal_qa(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+pub(crate) fn action_journal_qa(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
     // Phase 1 — build context while holding borrow.
     let (div1, div2, start, end, source_text) = {
         let state = state_rc.borrow();

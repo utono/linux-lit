@@ -164,7 +164,7 @@ pub fn handle_key(
             crate::app::InputMode::SynopsisKeybindsOverlay => handle_overlay_keybinds_key(state, key_name, is_ctrl, OverlayLegend::Synopsis),
             crate::app::InputMode::JournalKeybindsOverlay => handle_overlay_keybinds_key(state, key_name, is_ctrl, OverlayLegend::Journal),
             crate::app::InputMode::ActionPopup => handle_action_popup_key(state, key_name, is_ctrl, tokio_handle),
-            crate::app::InputMode::Visual => handle_visual_key(state, key_state, key_name, tokio_handle),
+            crate::app::InputMode::Visual => handle_visual_key(state, key_state, key_name, is_ctrl, tokio_handle),
             crate::app::InputMode::PageCalibration => handle_page_calibration_key(state, key_state, key_name),
             crate::app::InputMode::Reader => unreachable!(),
         };
@@ -2850,9 +2850,17 @@ fn handle_visual_key(
     state: &Rc<RefCell<AppState>>,
     key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
+    is_ctrl: bool,
     tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
     match key_name {
+        // Ctrl+a — open the Journal Q&A ask card for the selection directly
+        // (skips the Action menu). Works for ask-entered AND V-entered
+        // selections, so the menu is never required for Journal Q&A.
+        "a" if is_ctrl => {
+            crate::input::visual::action_journal_qa(state);
+            true
+        }
         "j" => {
             crate::input::visual::move_selection_cursor(&mut state.borrow_mut(), 1);
             true
@@ -2879,7 +2887,18 @@ fn handle_visual_key(
             true
         }
         "Return" => {
-            crate::input::visual::open_action_popup(&mut state.borrow_mut());
+            // Ask-entered selection (Ctrl+a): Return is a direct confirm.
+            // V-entered selection: Return opens the Action menu (unchanged).
+            let pending_ask = state
+                .borrow()
+                .visual_selection
+                .as_ref()
+                .is_some_and(|s| s.pending_ask);
+            if pending_ask {
+                crate::input::visual::action_journal_qa(state);
+            } else {
+                crate::input::visual::open_action_popup(&mut state.borrow_mut());
+            }
             true
         }
         "i" => {
