@@ -591,6 +591,7 @@ pub struct AppState {
     pub title_bar: gtk4::Box,
     pub title_bar_label: gtk4::Label,
     pub title_bar_scene_label: gtk4::Label,
+    pub chat_panel: crate::ui::chat_panel::ChatPanel,
     /// Index of the current sentence group (for prose with text_file).
     pub current_sentence_group: Option<usize>,
     /// Tracks the start line of the current paragraph to detect transitions.
@@ -1583,12 +1584,20 @@ pub fn build_window(
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     vbox.append(&authorship_picker.overlay);
 
+    // Left chat panel (Tab chat layout): bare-on-root overlay, not in the
+    // size-bearing widget chain (see feedback_picker_overlay_not_chain).
+    // Hidden until toggle_chat_layout shows it and sizes it via size_panel.
+    let chat_panel = crate::ui::chat_panel::ChatPanel::new();
+    chat_panel.container.set_halign(gtk4::Align::Start);
+    chat_panel.container.set_valign(gtk4::Align::Center);
+
     concordance_bar.container.set_valign(gtk4::Align::End);
     title_bar.set_valign(gtk4::Align::End);
     let outer_overlay = gtk4::Overlay::new();
     outer_overlay.set_child(Some(&vbox));
     outer_overlay.add_overlay(&concordance_bar.container);
     outer_overlay.add_overlay(&title_bar);
+    outer_overlay.add_overlay(&chat_panel.container);
 
     // Suppress startup flicker: hide content until the deferred layout
     // refresh fires (after dwl has tiled the window AND display_work
@@ -1835,6 +1844,7 @@ pub fn build_window(
         title_bar,
         title_bar_label,
         title_bar_scene_label,
+        chat_panel,
         current_sentence_group: None,
         current_paragraph_start: None,
         current_sync_scene: None,
@@ -2158,6 +2168,9 @@ pub fn build_window(
                         let cc = s.column_count();
                         let tr = s.translations_visible;
                         apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr, s.chat_layout_open);
+                        if s.chat_layout_open {
+                            crate::input::actions::chat::size_panel(&s);
+                        }
                         apply_tiled_mode(&mut s, &vbox_for_tick, ww);
                     }
                     if width_changed || height_changed {

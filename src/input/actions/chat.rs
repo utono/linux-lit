@@ -30,6 +30,7 @@ pub(crate) fn close_chat_layout(s: &mut AppState) {
     s.chat_layout_open = false;
     reapply_card_margins(s);
     s.input_mode = crate::app::InputMode::Reader;
+    s.chat_panel.hide();
     crate::logging::log("CHAT: layout closed");
 }
 
@@ -54,5 +55,31 @@ pub(crate) fn toggle_chat_layout(state_rc: &Rc<RefCell<AppState>>) {
     }
     s.chat_layout_open = true;
     reapply_card_margins(&s);
+    size_panel(&s);
+    set_panel_header(&s);
+    s.chat_panel.show();
     crate::logging::log(&format!("CHAT: layout opened (free={}px)", free));
+}
+
+/// Size the panel to the freed left space at the card's height.
+pub(crate) fn size_panel(s: &AppState) {
+    let ww = s.window.width().max(0);
+    let (card_w, card_h) = crate::app::layout::main_card_rect(s);
+    let end = crate::app::layout::CARD_OUTER_MARGIN;
+    // left outer margin (24) + gap to the card (16)
+    let w = ww - card_w - end - 24 - 16;
+    s.chat_panel.size_to(w, card_h);
+}
+
+pub(crate) fn set_panel_header(s: &AppState) {
+    let Some(w) = s.current_work.as_ref() else {
+        return;
+    };
+    let (d1, d2) = s
+        .work_line_for_buffer(s.current_line)
+        .and_then(|wi| w.lines.get(wi))
+        .map(|l| (l.div1, l.div2))
+        .unwrap_or((0, 0));
+    let scene = crate::app::scene_synopsis::scene_label_for(s, d1, d2);
+    s.chat_panel.set_header(&w.title, &w.author, &scene);
 }
